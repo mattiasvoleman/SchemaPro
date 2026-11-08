@@ -15,6 +15,7 @@ export const RETENTION_DATA_TYPES = [
   "COVER_REQUESTS",
   "CRISIS_DRILLS",
   "CRISIS_ALARMS",
+  "CHECKLISTS",
   "DEPARTED_PEOPLE",
 ] as const;
 export type RetentionDataType = (typeof RETENTION_DATA_TYPES)[number];

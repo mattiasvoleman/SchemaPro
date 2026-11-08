@@ -66,6 +66,9 @@ export class SubjectsService {
             // Ämnesfördelning: no rule unless the school wrote one.
             maxLessonsPerDay: dto.maxLessonsPerDay ?? null,
             minDaysBetween: dto.minDaysBetween ?? null,
+            // Placeringsregler, regel 1: unmarked unless the school marked it.
+            notFirstInDay: dto.notFirstInDay ?? false,
+            notLastInDay: dto.notLastInDay ?? false,
           },
         });
         return toSubjectResponse(row);
@@ -111,6 +114,8 @@ export class SubjectsService {
             ...(dto.minDaysBetween !== undefined
               ? { minDaysBetween: dto.minDaysBetween }
               : {}),
+            ...(dto.notFirstInDay !== undefined ? { notFirstInDay: dto.notFirstInDay } : {}),
+            ...(dto.notLastInDay !== undefined ? { notLastInDay: dto.notLastInDay } : {}),
           },
         });
         return toSubjectResponse(row);

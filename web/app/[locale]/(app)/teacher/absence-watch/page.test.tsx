@@ -37,4 +37,15 @@ describe("the mentor's page", () => {
     expect(screen.queryByRole("switch", { name: "Frånvarobevakning" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Lägg till|Redigera|Ta bort/ })).not.toBeInTheDocument();
   });
+
+  it("leads on to the absence statistics over time, which has no menu row of its own", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <NextIntlClientProvider locale="sv" messages={sv} timeZone="Europe/Stockholm" onError={(error) => { throw error; }}>
+          <TeacherAbsenceWatchPage />
+        </NextIntlClientProvider>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole("link", { name: "Frånvarostatistik över tid" })).toHaveAttribute("href", expect.stringContaining("/teacher/absence-stats"));
+  });
 });

@@ -30,11 +30,33 @@ describe('P3’s statements are unchanged by the options', () => {
   it.each([
     ['deliveredLessons', () => deliveredLessons(WINDOW), 'bae6b546037745129311eb73794929b3dc32107a582edc3eea07bc6afa88b036'],
     ['deliveredLessons({})', () => deliveredLessons(WINDOW, {}), 'bae6b546037745129311eb73794929b3dc32107a582edc3eea07bc6afa88b036'],
-    ['audienceStatement', () => audienceStatement(WINDOW), 'e06c44e00670c88e723e9a521fd926994bd2be5b155db8a9235621fd4c6924fc'],
     ['datesStatement', () => datesStatement(WINDOW, ['2026-09-25']), '2b24fedf493008b11b904247076da5d2c3a40d48884c85c01f7246a1cc07dc88'],
     ['horizonStatement', () => horizonStatement(WINDOW), 'ad3cc12f7ecee14fc6e7769193f22eb19a7bc52efc4d2c0f3a5a17564eb15e8d'],
   ] as const)('%s is 8d2fb2e’s to the byte', (_name, build, expected) => {
     expect(hash(build())).toBe(expected);
+  });
+});
+
+/**
+ * Elevens lektion för dagen added one column to the audience statements and to
+ * no other: "movedOffIds", the pupils moved off a lesson for the day, which
+ * the audience groups by. The classification under it (deliveredLessons with
+ * the default options, above) is still 8d2fb2e's to the byte; this is the
+ * audience statement as D7 wrote it, and a school with no move has the rows it
+ * had. A later commit that changes it says so here.
+ */
+describe('the audience statement carries the pupils moved off a lesson (Elevens lektion för dagen)', () => {
+  it('is the statement the pull request pinned, and groups by the column', () => {
+    const statement = audienceStatement(WINDOW);
+    expect(statement.sql).toMatch(/"movedOffIds"/);
+    expect(statement.sql).toMatch(/GROUP BY 1, 2, 3, 4, 5, 6\s*$/);
+    expect(hash(statement)).toBe('8a405048dfc6255557d83e183a4a256abe945356a3383db715ca2244f7ca809e');
+  });
+
+  it('is the only one: P3’s classification, the dates, the horizon, the credits and the hours are without it', () => {
+    for (const statement of [deliveredLessons(WINDOW), datesStatement(WINDOW, ['2026-09-25']), horizonStatement(WINDOW), staffingCreditStatement(WINDOW, { from: '2026-09-01', to: '2026-09-30' }, null), substituteHoursStatement(WINDOW, { from: '2026-09-01', to: '2026-09-30' })]) {
+      expect(statement.sql).not.toMatch(/movedOffIds|LessonPupilMoves/);
+    }
   });
 });
 
@@ -111,7 +133,7 @@ describe('staffingCreditStatement (statement E)', () => {
       const cte = (sql: string) => sql.slice(sql.indexOf('WITH l AS ('), sql.indexOf(')\n    SELECT'));
       expect(cte(cut.sql)).toBe(cte(plain.sql));
       expect(cut.sql).toMatch(/width_bucket\("date", \?::date\[\]\)::int AS "segment"/);
-      expect(cut.sql).toMatch(/GROUP BY 1, 2, 3, 4, 5, 6\s*$/);
+      expect(cut.sql).toMatch(/GROUP BY 1, 2, 3, 4, 5, 6, 7\s*$/);
       expect(cut.values.at(-1)).toEqual(['2026-11-02', '2027-01-11']);
     });
 
@@ -124,6 +146,41 @@ describe('staffingCreditStatement (statement E)', () => {
     it('leaves P3’s own statement pinned', () => {
       expect(audienceStatement(WINDOW).sql).not.toMatch(/segment/);
     });
+  });
+});
+
+/**
+ * Analys och planering asks statement E for a person who has left with `endedBy`: only the lessons over by the
+ * instant they were deactivated (D6's `endsAt <= deactivatedAt`). It is a condition on which rows are asked
+ * about and is in no statement unless asked for, so every pinned statement above is unchanged by it.
+ */
+describe('endedBy (a person who has left)', () => {
+  const range = { from: '2026-09-07', to: '2026-09-18' };
+  const left = new Date('2026-09-15T10:00:00.000Z');
+
+  it('is absent from every statement that is not asked, so the default is byte for byte what it was', () => {
+    expect(hash(staffingCreditStatement(WINDOW, range, null, null, null))).toBe(hash(staffingCreditStatement(WINDOW, range, null)));
+    expect(hash(deliveredLessons(WINDOW, { subjects: 'all', audience: 'groups', range, endedBy: undefined }))).toBe(
+      hash(deliveredLessons(WINDOW, { subjects: 'all', audience: 'groups', range })),
+    );
+    for (const statement of [deliveredLessons(WINDOW), audienceStatement(WINDOW), substituteHoursStatement(WINDOW, range), staffingCreditStatement(WINDOW, range, 'me')]) {
+      expect(statement.sql).not.toContain('"endsAt" <=');
+    }
+  });
+
+  it('adds the one condition on the lesson\'s end, with the instant as a value, and nothing else', () => {
+    const asked = staffingCreditStatement(WINDOW, range, 'me', null, left);
+    const plain = staffingCreditStatement(WINDOW, range, 'me');
+    expect(asked.sql).toContain('AND cl."endsAt" <= ?::timestamptz');
+    expect(asked.values).toContainEqual(left);
+    expect(asked.sql.replace(/\s+AND cl\."endsAt" <= \?::timestamptz/, '')).toBe(plain.sql);
+    expect(asked.values.filter((value) => value !== left)).toEqual(plain.values);
+  });
+
+  it('is asked of the classification\'s own rows, so a lesson a vikarie took is still displaced', () => {
+    const { sql } = staffingCreditStatement(WINDOW, range, 'me', null, left);
+    expect(sql).toContain(`THEN 'DISPLACED'`);
+    expect(sql.indexOf('"endsAt" <=')).toBeLessThan(sql.indexOf('JOIN "CalendarLessonTeachers" t'));
   });
 });
 

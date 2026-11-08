@@ -951,20 +951,17 @@ describe('AcademicYearsService', () => {
       );
     });
 
-    it('deletes the year’s lessons before the year, so no cascade order decides which tombstones are filed', async () => {
+    it('leaves the year’s lessons to the database: AcademicYears_a_lessons_go_first takes them, for every door and every profile', async () => {
       tx.academicYear.delete.mockResolvedValue({ id: YEAR_ID });
 
       await service.remove(YEAR_ID, testUser());
 
-      expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({
-        where: { studentGroup: { academicYearId: YEAR_ID } },
-      });
-      expect(tx.calendarLesson.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
-        tx.academicYear.delete.mock.invocationCallOrder[0]!,
-      );
+      // A DELETE of them from here would be judged by DRIFT and the year's by PLANERING, and would delete nothing,
+      // without an error, for a profile with only the one. The tombstones are pinned by tk4 and RLS 385-387.
+      expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
     });
 
-    it('deletes no lesson of a year whose pupils have not moved', async () => {
+    it('deletes no year whose pupils have not moved', async () => {
       tx.user.count.mockResolvedValue(3);
 
       await expect(service.remove(YEAR_ID, testUser())).rejects.toThrow(ConflictException);

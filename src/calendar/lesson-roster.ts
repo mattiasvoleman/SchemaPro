@@ -38,6 +38,14 @@ import { keptByOf, replacedPupils, replacingBySubject, yearsOf } from '../common
  * register, the broadcast and the notices keep agreeing — as Ersättande
  * grupper did.
  *
+ * And, for ACTIVE, the pupils moved off the lesson for the day (Elevens lektion
+ * för dagen, LessonPupilMoves): a pupil a teacher, a mentor or an administrator
+ * sent to a parallel lesson is on that lesson (a named pupil, the move's
+ * arrival) and not on this one, whichever way they reached it. RECORDED takes
+ * nobody off here either: a register queued on a phone before the move must
+ * still drain, and the attendance service turns the moved pupil's entry away
+ * itself (a mark on a lesson the pupil was moved off would count for nobody).
+ *
  * Its basis is CURRENT (roster-readers.inventory.spec.ts): real people at
  * dated lessons, read as they are now. It writes no row itself, but its
  * callers write attendance and tell people, and nobody is told about next
@@ -63,6 +71,12 @@ export interface RosterScope {
   groupIds: readonly string[];
   /** Pupils named on the lesson itself. */
   participantIds: readonly string[];
+  /**
+   * Pupils moved off the lesson for the day (LessonPupilMoves, read from the
+   * move's source). Taken off the ACTIVE roster whichever way they reached
+   * the lesson, a named row of theirs included: the move is the later word.
+   */
+  movedOffIds?: readonly string[];
 }
 
 export interface RosterOptions {
@@ -108,11 +122,13 @@ export function scopeOf(lesson: {
   studentGroupId: string;
   extraGroups?: readonly { studentGroupId: string }[];
   participants?: readonly { studentId: string }[];
+  movedOff?: readonly { studentId: string }[];
 }): RosterScope {
   return {
     subjectId: lesson.subjectId,
     groupIds: [lesson.studentGroupId, ...(lesson.extraGroups ?? []).map((group) => group.studentGroupId)],
     participantIds: (lesson.participants ?? []).map((row) => row.studentId),
+    ...(lesson.movedOff && lesson.movedOff.length > 0 ? { movedOffIds: lesson.movedOff.map((row) => row.studentId) } : {}),
   };
 }
 
@@ -243,6 +259,9 @@ export async function rostersOf(tx: Tx, scopes: readonly RosterScope[], options:
         roster.delete(studentId);
       }
     }
+    // Elevens lektion för dagen: moved off for the day. Only the ACTIVE list (who is
+    // told, who the register lists); RECORDED stays the superset it is.
+    if (active) for (const studentId of scope.movedOffIds ?? []) roster.delete(studentId);
     return roster;
   });
 }
@@ -268,10 +287,34 @@ export async function calendarLessonRosters(
     })) ?? [];
   const named = new Map<string, { studentId: string }[]>();
   for (const row of participants) named.set(row.calendarLessonId, [...(named.get(row.calendarLessonId) ?? []), row]);
+  const movedOff = options.pupils === 'ACTIVE' ? await movedOffOf(tx, lessons.map((lesson) => lesson.id), options.among) : new Map<string, { studentId: string }[]>();
   const rosters = await rostersOf(
     tx,
-    lessons.map((lesson) => scopeOf({ ...lesson, participants: named.get(lesson.id) ?? [] })),
+    lessons.map((lesson) => scopeOf({ ...lesson, participants: named.get(lesson.id) ?? [], movedOff: movedOff.get(lesson.id) ?? [] })),
     options,
   );
   return new Map(lessons.map((lesson, index) => [lesson.id, rosters[index]!]));
+}
+
+/**
+ * The pupils moved off each of these lessons for the day, by lesson id (Elevens
+ * lektion för dagen): one statement however many lessons, through the caller's
+ * own arms (a teacher reads the moves of the lessons they teach and of the
+ * pupils they mentor, which are the lessons whose lists they ask for). Only
+ * those of `among`, when given.
+ */
+export async function movedOffOf(
+  tx: Tx,
+  lessonIds: readonly string[],
+  among?: readonly string[],
+): Promise<Map<string, { studentId: string }[]>> {
+  const out = new Map<string, { studentId: string }[]>();
+  if (lessonIds.length === 0) return out;
+  const rows =
+    (await tx.lessonPupilMove.findMany({
+      where: { fromLessonId: { in: [...lessonIds] }, ...(among ? { studentId: { in: [...among] } } : {}) },
+      select: { fromLessonId: true, studentId: true },
+    })) ?? [];
+  for (const row of rows) out.set(row.fromLessonId, [...(out.get(row.fromLessonId) ?? []), { studentId: row.studentId }]);
+  return out;
 }

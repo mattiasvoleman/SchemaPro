@@ -76,11 +76,12 @@ export class ScheduleActivitiesController {
 
   @Patch(':id')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  update(
+  async update(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateScheduleActivityDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
+    await this.activities.refuseWhenAnExam(id, user);
     return this.activities.update(id, dto, user);
   }
 
@@ -106,10 +107,11 @@ export class ScheduleActivitiesController {
   @Post(':id/remove')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  remove(
+  async remove(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<RemovePreview> {
+    await this.activities.refuseWhenAnExam(id, user);
     return this.activities.remove(id, user);
   }
 }

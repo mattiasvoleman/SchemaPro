@@ -112,4 +112,23 @@ describe.each([
       }
     });
   });
+
+  describe.each(['notFirstInDay', 'notLastInDay'] as const)('%s (Placeringsregler, regel 1)', (mark) => {
+    it('accepts true, false and an absence', async () => {
+      await expect(failing(cls, { ...base, [mark]: true })).resolves.toEqual([]);
+      await expect(failing(cls, { ...base, [mark]: false })).resolves.toEqual([]);
+      await expect(failing(cls, { ...base })).resolves.toEqual([]);
+    });
+
+    it('refuses null and a string, which a NOT NULL mark with a default has no meaning for', async () => {
+      await expect(failing(cls, { ...base, [mark]: null })).resolves.toEqual([mark]);
+      await expect(failing(cls, { ...base, [mark]: 'true' })).resolves.toEqual([mark]);
+      await expect(failing(cls, { ...base, [mark]: 1 })).resolves.toEqual([mark]);
+    });
+
+    it('names the field in Swedish', async () => {
+      const errors = await validate(plainToInstance(cls, { ...base, [mark]: 'ja' }));
+      expect(Object.values(errors[0]!.constraints ?? {})[0]).toMatch(new RegExp(`^${mark}: `));
+    });
+  });
 });

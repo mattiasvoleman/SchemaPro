@@ -84,6 +84,7 @@ export const PUBLICATION_SETTINGS: PublicationSettings = {
   gateDayOpsLost: "WARN",
   gateEmptyHalf: "WARN",
   gateOtherSchool: "WARN",
+  gateDeviations: "WARN",
 };
 
 // --- Lessons as the gateway names them ----------------------------------------------

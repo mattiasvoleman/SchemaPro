@@ -495,12 +495,16 @@ export async function skolansDagChecks(owner: Client, api: PrismaService, marker
   });
 
   await check('(sd-j) those who decide write the teachers’ share; the planner, the expedition, the läsare and a teacher do not', async () => {
-    assert.deepEqual(await day.settings(anna), { teacherView: 'ALL' });
-    assert.deepEqual(await day.updateSettings({ teacherView: 'NONE' }, admin), { teacherView: 'NONE' });
+    // guardianNoticeOnMove (Elevens lektion för dagen): off until the school says so, and a PUT of the view alone leaves it.
+    assert.deepEqual(await day.settings(anna), { teacherView: 'ALL', guardianNoticeOnMove: false });
+    assert.deepEqual(await day.updateSettings({ teacherView: 'NONE' }, admin), { teacherView: 'NONE', guardianNoticeOnMove: false });
+    assert.deepEqual(await day.updateSettings({ teacherView: 'NONE', guardianNoticeOnMove: true }, admin), { teacherView: 'NONE', guardianNoticeOnMove: true });
+    assert.deepEqual(await day.updateSettings({ teacherView: 'ALL' }, admin), { teacherView: 'ALL', guardianNoticeOnMove: true }, 'a PUT of the view alone turned the guardian notice off');
+    assert.deepEqual(await day.updateSettings({ teacherView: 'NONE', guardianNoticeOnMove: false }, admin), { teacherView: 'NONE', guardianNoticeOnMove: false });
     for (const who of [expedition, reader, anna]) {
       await assert.rejects(day.updateSettings({ teacherView: 'ALL' }, who), `${who.role} wrote the decision`);
     }
-    assert.deepEqual(await day.settings(expedition), { teacherView: 'NONE' });
+    assert.deepEqual(await day.settings(expedition), { teacherView: 'NONE', guardianNoticeOnMove: false });
     assert.equal((await all(`SELECT 1 FROM "SchoolDaySettings" WHERE "schoolId" = $1`, [s])).length, 1);
   });
 

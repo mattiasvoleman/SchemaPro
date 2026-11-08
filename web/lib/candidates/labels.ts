@@ -29,6 +29,7 @@ export const VARIANT_KEYS: Readonly<Record<string, string>> = {
   TEACHER_GAPS: "variant.TEACHER_GAPS",
   SPREAD: "variant.SPREAD",
   FREE: "variant.FREE",
+  BEST_EFFORT: "variant.BEST_EFFORT",
 };
 
 /**
@@ -53,12 +54,20 @@ const SWEDISH_VARIANT_NAMES: Readonly<Record<string, string>> = {
   TEACHER_GAPS: "Färre håltimmar för lärarna",
   SPREAD: "Jämnare veckor",
   FREE: "Friare placering",
+  BEST_EFFORT: "Bästa möjliga",
 };
 
 export function safetyVersionName(candidate: Pick<CandidateView, "variant" | "ordinal">): string {
   const label = SWEDISH_VARIANT_NAMES[candidate.variant] ?? candidate.variant;
   return `Före schemaförslag ${candidate.ordinal} – ${label}`;
 }
+
+/**
+ * Bästa möjliga schema: the code the gateway gives its one candidate. Its
+ * sentences differ from a batch's because there are no "other" candidates to
+ * have met the same obstacle.
+ */
+export const BEST_EFFORT_VARIANT = "BEST_EFFORT";
 
 /** Why a candidate has no timetable to compare, said in its column's head. */
 export const SOLVER_KEYS: Readonly<Record<string, string>> = {
@@ -101,6 +110,7 @@ export const RUN_ERROR_KEYS: Readonly<Record<string, string>> = {
   CANDIDATE_ENGINE_TIMEOUT: "runErrors.CANDIDATE_ENGINE_TIMEOUT",
   CANDIDATE_ENGINE_FAILED: "runErrors.CANDIDATE_ENGINE_FAILED",
   ENGINE_LACKS_CANDIDATES: "runErrors.ENGINE_LACKS_CANDIDATES",
+  ENGINE_LACKS_BEST_EFFORT: "runErrors.ENGINE_LACKS_BEST_EFFORT",
   CANDIDATES_FIRST_FAILED: "runErrors.CANDIDATES_FIRST_FAILED",
   CANDIDATES_NONE_APPLICABLE: "runErrors.CANDIDATES_NONE_APPLICABLE",
   CANDIDATE_RUN_INTERRUPTED: "runErrors.CANDIDATE_RUN_INTERRUPTED",
@@ -147,13 +157,21 @@ export const FIRST_FAILED_KEYS = {
   timeout: "runErrors.CANDIDATES_FIRST_TIMEOUT",
   named: "runErrors.CANDIDATES_FIRST_FAILED",
   unnamed: "runErrors.CANDIDATES_FIRST_FAILED_UNNAMED",
+  // Bästa möjliga schema has one candidate: nothing "the others" could have met.
+  bestEffortTimeout: "runErrors.BEST_EFFORT_TIMEOUT",
+  bestEffortNamed: "runErrors.BEST_EFFORT_FAILED",
+  bestEffortUnnamed: "runErrors.BEST_EFFORT_FAILED_UNNAMED",
 } as const;
 
 export function firstFailedKey(
-  first: Pick<CandidateView, "solverStatus"> | undefined,
+  first: Pick<CandidateView, "solverStatus"> & Partial<Pick<CandidateView, "variant">> | undefined,
   somethingListed: boolean,
 ): string {
-  if (first?.solverStatus === "TIMEOUT") return FIRST_FAILED_KEYS.timeout;
+  const alone = first?.variant === BEST_EFFORT_VARIANT;
+  if (first?.solverStatus === "TIMEOUT") {
+    return alone ? FIRST_FAILED_KEYS.bestEffortTimeout : FIRST_FAILED_KEYS.timeout;
+  }
+  if (alone) return somethingListed ? FIRST_FAILED_KEYS.bestEffortNamed : FIRST_FAILED_KEYS.bestEffortUnnamed;
   return somethingListed ? FIRST_FAILED_KEYS.named : FIRST_FAILED_KEYS.unnamed;
 }
 
@@ -186,6 +204,11 @@ export const REQUEST_ERROR_KEYS: Readonly<Record<string, string>> = {
   SCHEDULE_CANDIDATE_BUSY: "errors.SCHEDULE_CANDIDATE_BUSY",
   SCHEDULE_CANDIDATE_NOT_APPLICABLE: "errors.SCHEDULE_CANDIDATE_NOT_APPLICABLE",
   SCHEDULE_CANDIDATE_STALE: "errors.SCHEDULE_CANDIDATE_STALE",
+  // Bästa möjliga schema: the start while the school's switch is off, and an
+  // apply whose avsteg were not accepted as they stand (the digest left out or
+  // not the candidate's).
+  BEST_EFFORT_NOT_ENABLED: "errors.BEST_EFFORT_NOT_ENABLED",
+  SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED: "errors.SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED",
 };
 
 export function requestErrorKey(

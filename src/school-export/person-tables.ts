@@ -100,6 +100,12 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   AbsenceWatchFindings: dump(['studentId'], 'ATTENDANCE'),
   MasterLessonStudents: dump(['studentId'], 'ROSTER'),
   CalendarLessonStudents: dump(['studentId'], 'ROSTER'),
+  // Elevens lektion för dagen (20270122091000): the days a pupil was moved to a parallel lesson, and the moves a
+  // member of staff made. A pupil's lessons are theirs, whoever moved them, but the row is about a pupil and a
+  // member of staff acts in it: in the extract of the one who moved the pupil, the pupil, the two lessons and the
+  // mark the move displaced (a status and a free note about a child, written by a colleague) are not the extract's,
+  // only who moved and when (the review of #281, MEDEL-2). In the pupil's own, everything stays.
+  LessonPupilMoves: aboutPupil(dump(['studentId', 'movedById'], 'ROSTER'), 'studentId', ['displacedMark', 'fromLessonId', 'toLessonId']),
   StudentGroupMembers: dump(['studentId'], 'ROSTER'),
   StudentEnrollments: dump(['studentId'], 'ROSTER'),
   TimplanStatements: dump(['studentId'], 'TEACHING_TIME'),
@@ -146,8 +152,26 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   // (data/notiser.csv carries the title); the body is the sender's own writing and is in the sender's extract.
   AckReceipts: dump(['guardianId', 'studentId'], 'GUARDIANS'),
   AckRequests: dump(['authorId']),
+  // Checklistor (20270129091000): what a pupil has been instructed in and has consented to (the pupil's own extract), and what
+  // a member of staff gave, wrote or made (theirs). A list is named by its class and its title, which are the school's. Both
+  // tables are about a pupil and a member of staff acts in them: in the staff member's extract the pupil, the note and the
+  // reason of a voided proof, and the answer (what the guardian decided, who gave it, when, and what was written beside it) are
+  // empty, and only the act stays: who ticked or wrote, when, on which template or list (granskning #288, M1).
+  InstructionProofs: aboutPupil(dump(['studentId', 'instructorId', 'recordedById', 'voidedById']), 'studentId', ['note', 'voidReason']),
+  ConsentEntries: aboutPupil(dump(['studentId', 'recordedById']), 'studentId', ['kind', 'givenOn', 'givenBy', 'note']),
+  ConsentLists: dump(['createdById']),
   SharedTeacherMarks: dump(['teacherId']),
+  // Klasslärarens schema (20270128090000): whom a class was given to and who gave it, and the drafts a klasslärare wrote
+  // or published (their words are the dates and hours they asked for, and a note of at most 200 characters).
+  ClassTeacherAppointments: dump(['userId', 'appointedByUserId']),
+  ClassTeacherChanges: dump(['authorId', 'publishedByUserId']),
   ScheduleActivityTeachers: dump(['teacherId']),
+  // Provplanering (20270127090000): the watch a teacher keeps at an exam (room and exam in the row's keys).
+  ExamInvigilators: dump(['teacherId']),
+  ExamSittings: {
+    excluded:
+      'En sal ett prov skrivs i, med antalet skrivande och bokningen som håller salen. Ingen person står på raden; vakterna i salen är ExamInvigilators, som registerutdraget lämnar ut efter lärarens nyckel.',
+  },
 
   // What the person decided, published or wrote.
   PublicTimetableLinks: dump(['targetTeacherId', 'targetStudentId', 'createdByUserId']),
@@ -156,6 +180,7 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   TimetablePublications: dump(['publishedByUserId']),
   CancellationBatches: dump(['createdByUserId', 'reversedByUserId']),
   ScheduleActivities: dump(['createdByUserId', 'removedByUserId']),
+  Exams: dump(['createdByUserId']),
   RetentionDecisions: dump(['decidedById']),
   LeaveDelegationDecisions: dump(['decidedById']),
   AttendanceSharingDecisions: dump(['decidedById']),

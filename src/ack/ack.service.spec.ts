@@ -195,6 +195,7 @@ describe('AckService', () => {
 
     it.each([
       ['KV429', 'ACK_TOO_MANY_REQUESTS'],
+      ['KV427', 'ACK_SENDER_DAY_LIMIT'],
       ['KV428', 'ACK_TOO_MANY_RECIPIENTS'],
     ])('answers the database’s %s with a 429 and its own code, and nothing else', async (state, code) => {
       const { tx, service } = setup();
@@ -214,8 +215,23 @@ describe('AckService', () => {
       await expect(service.create(dto, admin)).rejects.toBe(other);
     });
 
+    it('tells the sender over the day’s share that another administrator can send the request, in the text a log keeps', async () => {
+      // The web shows its own catalogue's text for the code; this one is what the gateway answers, for a log and for a
+      // client that shows the message. Without it the sentence was in no test (the web's test took the old text as a part).
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_enabled()': [{ enabled: true }] });
+      tx['user']!['findMany']!.mockResolvedValue([{ id: 'p-1' }, { id: 'p-2' }]);
+      tx['guardianStudent']!['findMany']!.mockResolvedValue([{ studentId: 'p-1', guardianId: 'g-1' }]);
+      tx['ackRequest']!['createMany']!.mockRejectedValue(sqlState('KV427'));
+      const error = await service.create(dto, admin).catch((e: unknown) => e);
+      const message = (error as { response: { message: string } }).response.message;
+      expect(message).toContain('Inget har skickats.');
+      expect(message).toContain('Måste förfrågan gå ut nu kan en annan administratör skicka den, eftersom var och en har en egen andel.');
+    });
+
     it.each([
       ['ACK_TOO_MANY_REQUESTS', 'ACK_TOO_MANY_REQUESTS'],
+      ['ACK_SENDER_DAY_LIMIT', 'ACK_SENDER_DAY_LIMIT'],
       ['ACK_TOO_MANY_RECIPIENTS', 'ACK_TOO_MANY_RECIPIENTS'],
     ])('answers a model query that the trigger refused in another class of error, by the text it raised (%s)', async (text, code) => {
       const { tx, service } = setup();
@@ -232,6 +248,91 @@ describe('AckService', () => {
       tx['user']!['findMany']!.mockResolvedValue([{ id: 'p-1' }, { id: 'p-2' }]);
       tx['guardianStudent']!['findMany']!.mockResolvedValue([{ studentId: 'p-1', guardianId: 'g-1' }]);
       await expect(service.create(dto, teacher)).resolves.toMatchObject({ pupils: 1, guardians: 1 });
+    });
+  });
+
+  /**
+   * Checklistor's consent list asks the guardians through create (the rule ALL) and links the request to its list in
+   * the same transaction: createThen is create with a callback that runs before the commit.
+   */
+  describe('createThen', () => {
+    const dto = { title: 'Samtycke: Fotografering', body: 'Vi får fotografera.', rule: 'ALL' as const, studentIds: ['p-1', 'p-2', 'p-1'] };
+
+    /** Kvittens on, two pupils, and one guardian for the first of them. */
+    function ready(tx: TxMock) {
+      raw(tx, { 'app.ack_enabled()': [{ enabled: true }] });
+      tx['user']!['findMany']!.mockResolvedValue([{ id: 'p-1' }, { id: 'p-2' }]);
+      tx['guardianStudent']!['findMany']!.mockResolvedValue([{ studentId: 'p-1', guardianId: 'g-1' }]);
+    }
+    const firstCall = (mock: jest.Mock) => mock.mock.invocationCallOrder[0]!;
+
+    it('runs the callback in the same transaction, with the request just written, after the receipts and the notices', async () => {
+      const { tx, prisma, notifications, service } = setup();
+      ready(tx);
+      const then = jest.fn().mockResolvedValue('linked');
+      const { created, result } = await service.createThen(dto, admin, then);
+      expect(result).toBe('linked');
+      expect(created).toMatchObject({ pupils: 1, guardians: 1, withoutGuardian: ['p-2'] });
+      // The callback is handed the transaction and the very request that was written.
+      expect(then).toHaveBeenCalledTimes(1);
+      expect(then).toHaveBeenCalledWith(tx, created);
+      expect(tx['ackRequest']!['createMany']!.mock.calls[0]![0].data[0].id).toBe(created.id);
+      // One transaction for all of it.
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+      expect(firstCall(tx['ackRequest']!['createMany']!)).toBeLessThan(firstCall(tx['ackReceipt']!['createMany']!));
+      expect(firstCall(tx['ackReceipt']!['createMany']!)).toBeLessThan(firstCall(notifications.notifyUsers));
+      expect(firstCall(notifications.notifyUsers)).toBeLessThan(firstCall(then));
+    });
+
+    it('leaves create as it was: the same four fields, and no callback to wait for', async () => {
+      const { tx, prisma, service } = setup();
+      ready(tx);
+      const created = await service.create(dto, admin);
+      expect(created).toEqual({ id: expect.any(String), pupils: 1, guardians: 1, withoutGuardian: ['p-2'] });
+      expect(Object.keys(created).sort()).toEqual(['guardians', 'id', 'pupils', 'withoutGuardian']);
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+      expect(tx['ackRequest']!['createMany']!.mock.calls[0]![0].data[0].id).toBe(created.id);
+    });
+
+    it('does not run the callback when the request is refused before it is written', async () => {
+      const { tx, service } = setup();
+      const then = jest.fn();
+      raw(tx, { 'app.ack_enabled()': [{ enabled: false }] });
+      await expect(service.createThen(dto, admin, then)).rejects.toMatchObject({ response: { code: 'ACK_DISABLED' } });
+      ready(tx);
+      tx['user']!['findMany']!.mockResolvedValue([{ id: 'p-1' }]);
+      await expect(service.createThen(dto, admin, then)).rejects.toMatchObject({ response: { code: 'ACK_UNKNOWN_PUPIL' } });
+      tx['user']!['findMany']!.mockResolvedValue([{ id: 'p-1' }, { id: 'p-2' }]);
+      raw(tx, { 'app.ack_enabled()': [{ enabled: true }], 'app.ack_mentee_ids()': [{ ids: ['p-1'] }] });
+      await expect(service.createThen(dto, teacher, then)).rejects.toMatchObject({ response: { code: 'ACK_NOT_YOUR_PUPIL' } });
+      tx['guardianStudent']!['findMany']!.mockResolvedValue([]);
+      await expect(service.createThen(dto, admin, then)).rejects.toMatchObject({ response: { code: 'ACK_NO_GUARDIANS' } });
+      expect(then).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['KV429', 'ACK_TOO_MANY_REQUESTS'],
+      ['KV428', 'ACK_TOO_MANY_RECIPIENTS'],
+    ])('answers the database’s %s with a 429 and its own code, as create does, and does not run the callback', async (state, code) => {
+      const { tx, service } = setup();
+      ready(tx);
+      const then = jest.fn();
+      tx['ackRequest']!['createMany']!.mockRejectedValue(sqlState(state));
+      const error = await service.createThen(dto, admin, then).catch((e: unknown) => e);
+      expect((error as { getStatus(): number }).getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
+      expect((error as { response: { code: string } }).response.code).toBe(code);
+      // The receipts' own statement can be the one over the day's limit.
+      tx['ackRequest']!['createMany']!.mockResolvedValue({ count: 1 });
+      tx['ackReceipt']!['createMany']!.mockRejectedValue(sqlState(state));
+      await expect(service.createThen(dto, admin, then)).rejects.toMatchObject({ response: { code } });
+      expect(then).not.toHaveBeenCalled();
+    });
+
+    it('lets an error from the callback through as it is, so that the transaction rolls back with the request', async () => {
+      const { tx, service } = setup();
+      ready(tx);
+      const refused = new Error('CONSENT_LIST_CLOSED');
+      await expect(service.createThen(dto, admin, async () => Promise.reject(refused))).rejects.toBe(refused);
     });
   });
 
@@ -259,7 +360,7 @@ describe('AckService', () => {
       expect(tx.$executeRaw).not.toHaveBeenCalled();
     });
 
-    it.each(['SENT', 'NOT_NEEDED', 'LAPSED', 'STOPPED', 'OFF'] as const)('says %s when that is how the reminder ended', async (outcome) => {
+    it.each(['NOT_NEEDED', 'LAPSED', 'STOPPED', 'OFF'] as const)('says %s when that is how the reminder ended', async (outcome) => {
       const { tx, service } = setup();
       tx['ackRequest']!['findMany']!.mockResolvedValue([
         { id: 'r-1', title: 'A', rule: 'ANY', authorName: 'M', createdAt: new Date('2026-11-02T08:00:00Z'), remindAt: new Date('2026-11-04T08:00:00Z'), reminderOutcome: outcome },
@@ -291,6 +392,30 @@ describe('AckService', () => {
     });
   });
 
+  describe('list: a reminder that went', () => {
+    const row = (reminderMirroredAt: Date | null) => ({
+      id: 'r-1', title: 'A', rule: 'ANY', authorName: 'M', createdAt: new Date('2026-11-02T08:00:00Z'), remindAt: new Date('2026-11-04T08:00:00Z'),
+      reminderOutcome: 'SENT', reminderMirroredAt,
+    });
+
+    it('says SENT only when the delivery has said the e-mail and the push were taken, and WRITTEN while it has not', async () => {
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_status': [] });
+      tx['ackRequest']!['findMany']!.mockResolvedValue([row(new Date('2026-11-04T08:16:00Z'))]);
+      expect((await service.list(admin)).items[0]!.reminder).toBe('SENT');
+      tx['ackRequest']!['findMany']!.mockResolvedValue([row(null)]);
+      expect((await service.list(admin)).items[0]!.reminder).toBe('WRITTEN');
+    });
+
+    it('reads the column it needs', async () => {
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_status': [] });
+      tx['ackRequest']!['findMany']!.mockResolvedValue([]);
+      await service.list(admin);
+      expect(tx['ackRequest']!['findMany']!.mock.calls[0]![0].select).toMatchObject({ reminderMirroredAt: true });
+    });
+  });
+
   describe('detail', () => {
     const request = {
       id: REQ,
@@ -303,6 +428,7 @@ describe('AckService', () => {
       remindAt: new Date('2026-11-04T08:00:00Z'),
       reminderSentAt: new Date('2026-11-04T08:15:00Z'),
       reminderOutcome: 'SENT',
+      reminderMirroredAt: new Date('2026-11-04T08:16:00Z'),
     };
     const receipt = (studentId: string, guardianId: string, ackedAt: Date | null, last = 'Ett') => ({
       studentId,
@@ -318,6 +444,14 @@ describe('AckService', () => {
       tx['ackRequest']!['findUnique']!.mockResolvedValue(null);
       await expect(service.detail(REQ, teacher)).rejects.toBeInstanceOf(NotFoundException);
       expect(tx['ackReceipt']!['findMany']).not.toHaveBeenCalled();
+    });
+
+    it('says WRITTEN, with no time for the mail, while the delivery has not said the e-mail and the push were taken', async () => {
+      const { tx, service } = setup();
+      tx['ackRequest']!['findUnique']!.mockResolvedValue({ ...request, reminderMirroredAt: null });
+      tx['ackReceipt']!['findMany']!.mockResolvedValue([]);
+      raw(tx, { 'app.ack_status': [], 'app.ack_open_pairs': [] });
+      expect(await service.detail(REQ, admin)).toMatchObject({ reminder: 'WRITTEN', reminderSentAt: '2026-11-04T08:15:00.000Z', reminderMirroredAt: null, mayStopReminder: false });
     });
 
     it('says per guardian whether they confirmed, wait, or can no longer, per pupil whether it is met, and records the read', async () => {
@@ -344,6 +478,7 @@ describe('AckService', () => {
         rule: 'ALL',
         authorName: 'Mentor A',
         reminderSentAt: '2026-11-04T08:15:00.000Z',
+        reminderMirroredAt: '2026-11-04T08:16:00.000Z',
         reminder: 'SENT',
         mayStopReminder: false,
       });
@@ -558,6 +693,78 @@ describe('AckService', () => {
       expect(warn.mock.calls[0]![0]).not.toContain('r-1');
     });
 
+    describe('what the delivery says about the batch', () => {
+      /** The pass with one request due, and the listener the delivery was given for it. */
+      async function passWithListener(): Promise<{ tx: TxMock; service: AckService; settle: (delivered: boolean) => Promise<void>; warn: jest.SpyInstance }> {
+        const { tx, notifications, service } = setup();
+        const warn = jest.spyOn((service as unknown as { logger: { warn(m: string): void } }).logger, 'warn').mockImplementation(() => undefined);
+        due(tx, ['r-1'], { 'r-1': [notice('n-1', 'g-1')] });
+        await service.remind();
+        const listener = notifications.deliverCommitted.mock.calls[0]![1] as ((delivered: boolean) => void) | undefined;
+        expect(listener).toEqual(expect.any(Function));
+        tx.$executeRaw.mockClear();
+        return { tx, service, warn, settle: async (delivered) => { listener!(delivered); await new Promise((resolve) => setImmediate(resolve)); } };
+      }
+
+      it('marks the request as taken by its channels when the delivery says so, in its own transaction, and not before', async () => {
+        const { tx, settle } = await passWithListener();
+        expect(tx.$executeRaw).not.toHaveBeenCalled();
+        await settle(true);
+        expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+        const asked = tx.$executeRaw.mock.calls[0]![0] as { sql: string; values: unknown[] };
+        expect(asked.sql).toContain('app.ack_reminder_mirrored(');
+        expect(asked.values).toEqual(['r-1']);
+      });
+
+      it('marks the request it was told of, not the last one the pass worked on', async () => {
+        const { tx, notifications, service } = setup();
+        due(tx, ['r-1', 'r-2'], { 'r-1': [notice('n-1', 'g-1')], 'r-2': [notice('n-2', 'g-2')] });
+        await service.remind();
+        tx.$executeRaw.mockClear();
+        (notifications.deliverCommitted.mock.calls[0]![1] as (delivered: boolean) => void)(true);
+        await new Promise((resolve) => setImmediate(resolve));
+        expect((tx.$executeRaw.mock.calls[0]![0] as { values: unknown[] }).values).toEqual(['r-1']);
+      });
+
+      // The first listener alone cannot tell the request of its own from the first of the queue: both are r-1. Each
+      // listener marks the request it was made for, whichever one the pass reached it from and whatever order the
+      // delivery answers in (the e-mail lane and the alarm lane do not finish in the order they were queued).
+      it('marks each request by its own listener, in whatever order the delivery answers', async () => {
+        const { tx, notifications, service } = setup();
+        due(tx, ['r-1', 'r-2', 'r-3'], { 'r-1': [notice('n-1', 'g-1')], 'r-2': [notice('n-2', 'g-2')], 'r-3': [notice('n-3', 'g-3')] });
+        await service.remind();
+        expect(notifications.deliverCommitted).toHaveBeenCalledTimes(3);
+        tx.$executeRaw.mockClear();
+        const listeners = notifications.deliverCommitted.mock.calls.map((call) => call[1] as (delivered: boolean) => void);
+        for (const at of [2, 0, 1]) {
+          listeners[at]!(true);
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        expect(tx.$executeRaw.mock.calls.map((call) => (call[0] as { values: unknown[] }).values[0])).toEqual(['r-3', 'r-1', 'r-2']);
+      });
+
+      it('marks nothing, and says so without naming anyone, when a channel did not take the batch: the request stays WRITTEN', async () => {
+        const { tx, settle, warn } = await passWithListener();
+        await settle(false);
+        expect(tx.$executeRaw).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith('A reminder was written to the inboxes but its e-mail or push was not taken by its channel');
+      });
+
+      it('does not let a mark that fails reach anyone: it is logged, and the request stays WRITTEN', async () => {
+        const { tx, settle, warn } = await passWithListener();
+        tx.$executeRaw.mockRejectedValue(sqlState('57014'));
+        await expect(settle(true)).resolves.toBeUndefined();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('stays WRITTEN [PrismaClientKnownRequestError, sqlstate=57014]'));
+      });
+
+      it('hands the delivery nothing to hear about for a request that wrote no notice', async () => {
+        const { tx, notifications, service } = setup();
+        due(tx, ['r-1'], { 'r-1': [] });
+        await service.remind();
+        expect(notifications.deliverCommitted).not.toHaveBeenCalled();
+      });
+    });
+
     it('stops at its budget and counts what it left for the next pass', async () => {
       const { tx, notifications, service } = setup();
       due(tx, ['r-1', 'r-2', 'r-3'], { 'r-1': [notice('n-1', 'g-1')] });
@@ -587,6 +794,69 @@ describe('AckService', () => {
       const boom = new Error('connection reset');
       tx.$queryRaw.mockRejectedValue(boom);
       await expect(service.remind()).rejects.toBe(boom);
+    });
+  });
+  describe('usage', () => {
+    /** The rows as the database answers them: the ME row carries the caller's person id, a SENDER row the sender's. */
+    const answer = (...rows: Array<[string, string | null, number, number]>) =>
+      rows.map(([scope, author_name, used, cap]) => ({ scope, author_id: scope === 'SCHOOL' ? null : scope === 'ME' ? 'person-1' : `sender-${author_name}`, author_name, used, cap }));
+
+    it('gives an administrator the school, their own share and the largest senders, as the database counted them', async () => {
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_usage': answer(['SCHOOL', null, 15000, 20000], ['ME', null, 100, 8000], ['SENDER', 'Anna Rektor', 9000, 8000], ['SENDER', 'Bo Mentor', 1500, 2000]) });
+      expect(await service.usage(admin)).toEqual({
+        school: { used: 15000, limit: 20000 },
+        mine: { used: 100, limit: 8000 },
+        senders: [{ name: 'Anna Rektor', used: 9000, limit: 8000 }, { name: 'Bo Mentor', used: 1500, limit: 2000 }],
+      });
+      const asked = tx.$queryRaw.mock.calls[0]![0] as { sql: string; values: unknown[] };
+      // The column list is the contract: without author_id the gateway cannot tell a person's share from a reader's none.
+      expect(asked.sql.replace(/\s+/g, ' ')).toContain('SELECT scope, author_id, author_name, used, cap FROM app.ack_usage(');
+      expect(asked.values).toEqual([5]);
+    });
+
+    it('says an administrator with no sender yet has none (an empty list, not a missing one)', async () => {
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_usage': answer(['SCHOOL', null, 0, 20000], ['ME', null, 0, 8000]) });
+      expect(await service.usage(admin)).toMatchObject({ school: { used: 0, limit: 20000 }, senders: [] });
+    });
+
+    it('gives a teacher their own share and nothing of the school or of the others', async () => {
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_usage': answer(['ME', null, 66, 2000]) });
+      expect(await service.usage(teacher)).toEqual({ school: null, mine: { used: 66, limit: 2000 }, senders: null });
+    });
+
+    // The huvudman's reader and the school's läsare are staff who can read the usage and cannot send: the database gives
+    // them an ME row of nothing used, but with no person id, since there is no person. "Your share 0 of 8 000" would
+    // be a share they do not have; the answer has none (the card shows nothing of it).
+    it('gives a login with no person no share of its own: mine is null, the school and the senders as they are', async () => {
+      const { tx, service } = setup();
+      tx.$queryRaw.mockResolvedValue([
+        { scope: 'SCHOOL', author_id: null, author_name: null, used: 15, cap: 20000 },
+        { scope: 'ME', author_id: null, author_name: null, used: 0, cap: 8000 },
+        { scope: 'SENDER', author_id: 'sender-1', author_name: 'Anna Rektor', used: 15, cap: 8000 },
+      ]);
+      expect(await service.usage(admin)).toEqual({
+        school: { used: 15, limit: 20000 },
+        mine: null,
+        senders: [{ name: 'Anna Rektor', used: 15, limit: 8000 }],
+      });
+    });
+
+    it('gives a person their share even when nothing is used, and a share is never null for them', async () => {
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_usage': answer(['ME', null, 0, 2000]) });
+      expect(await service.usage(teacher)).toEqual({ school: null, mine: { used: 0, limit: 2000 }, senders: null });
+    });
+
+    it('turns the database’s refusal of a person who is no staff into a 403, and lets another failure through', async () => {
+      const { tx, service } = setup();
+      tx.$queryRaw.mockRejectedValue(sqlState('KV403'));
+      await expect(service.usage(guardian)).rejects.toBeInstanceOf(ForbiddenException);
+      const boom = new Error('connection reset');
+      tx.$queryRaw.mockRejectedValue(boom);
+      await expect(service.usage(admin)).rejects.toBe(boom);
     });
   });
 });

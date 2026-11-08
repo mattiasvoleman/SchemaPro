@@ -547,6 +547,19 @@ export class Ss12000Service {
           named: lesson.participants.map((entry) => entry.studentId),
         })),
       );
+      // Elevens lektion för dagen: the pupils moved off a lesson for the day are excluded from its event, a
+      // named one included (the move is the later word), and a pupil moved onto it is a named pupil already.
+      // Read under the service principal, which holds an arm on the moves of its school.
+      const moved =
+        lessons.length === 0
+          ? []
+          : await tx.lessonPupilMove.findMany({
+              where: { fromLessonId: { in: lessons.map((lesson) => lesson.id) } },
+              select: { fromLessonId: true, studentId: true },
+            });
+      const movedOff = new Map<string, Set<string>>();
+      for (const row of moved) movedOff.set(row.fromLessonId, (movedOff.get(row.fromLessonId) ?? new Set()).add(row.studentId));
+      for (const [lessonId, pupils] of movedOff) excluded.set(lessonId, [...new Set([...(excluded.get(lessonId) ?? []), ...pupils])].sort());
       await recordRead(tx, 'ROSTER', [
         ...lessons.flatMap((lesson) => lesson.participants.map((entry) => entry.studentId)),
         ...[...excluded.values()].flat(),
@@ -570,7 +583,7 @@ export class Ss12000Service {
             personId: assignment.teacherId,
             role: assignment.role,
           })),
-          studentIds: lesson.participants.map((entry) => entry.studentId),
+          studentIds: lesson.participants.map((entry) => entry.studentId).filter((studentId) => !movedOff.get(lesson.id)?.has(studentId)),
           ...excludedField(excluded.get(lesson.id)),
           room: lesson.room
             ? { id: lesson.room.id, displayName: lesson.room.name }

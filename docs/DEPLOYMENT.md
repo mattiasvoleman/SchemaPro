@@ -132,6 +132,67 @@ Once the access-token hook is on (§11.2), every sign-in and refresh reads
 on either starts with `SET lock_timeout = '1s';` and is rerun if it times
 out, so that it never makes every sign-in wait behind it (§11.2).
 
+### 2.1 A migration that stopped, and the index it can leave behind
+
+Prisma records a migration that stopped as failed, and the next
+`migrate deploy` refuses (P3009) until it is told what to do about it:
+`prisma migrate resolve --rolled-back <name>`, the name being in the message,
+and then `migrate deploy` again, which runs the file **from its first
+statement**. A file with a DO block runs as one transaction and leaves nothing
+behind. A file that builds an index with `CREATE INDEX CONCURRENTLY` cannot run
+in a transaction, so Prisma runs it one statement at a time, and a build that
+is cancelled (a statement timeout, `pg_cancel_backend`, a dropped connection)
+or that fails (a unique index over rows that are not unique) leaves its index in
+the catalogue **invalid**: not used by the planner, and holding its name. Whether
+writes still maintain it depends on where the build stopped. One that failed in
+its second phase (`indisready = true`) is kept up to date by every write; one
+that failed in the first, as a unique index over duplicates does, is not
+(`indisready = false`), so it is no index to rely on in either case, and the
+query in step 1 below shows both flags. The rerun then stops at the same
+statement with
+
+```
+ERROR: relation "<index>" already exists   (SQLSTATE 42P07)
+```
+
+which does not say that the index is invalid, or that the way on is to drop it.
+`IF NOT EXISTS` would not help: it sees the name, skips the statement, and the
+migration is recorded as applied with the index still invalid (tried). So the
+file does not use it, and the recovery is by hand, as the database's owner, on
+the direct connection:
+
+1. Find what a stopped build left. This reads the catalogue only:
+
+   ```sql
+   SELECT c.relname AS index, t.relname AS "table", i.indisvalid, i.indisready
+     FROM pg_index i
+     JOIN pg_class c ON c.oid = i.indexrelid
+     JOIN pg_class t ON t.oid = i.indrelid
+    WHERE NOT i.indisvalid AND c.relnamespace = 'public'::regnamespace
+    ORDER BY c.relname COLLATE "C";
+   ```
+
+   Nothing is invalid when no build was interrupted. An index in the result
+   that belongs to another migration than the one that stopped is somebody
+   else's to look at first.
+2. Drop each one the migration was building, without taking the table's writes
+   with it, and outside a transaction (`psql -c` is enough):
+   `DROP INDEX CONCURRENTLY "<index>";`
+3. Read the migration's other statements. The ones that ran before the
+   interrupted one run again, so each has to be safe to repeat (a `VALIDATE
+   CONSTRAINT` of a validated key is; a `CREATE` without `IF NOT EXISTS` of
+   something that exists is not and has to be undone first). A failed unique
+   build means rows to settle first: the error names the key that is not
+   unique.
+4. `prisma migrate resolve --rolled-back <name>`, then `prisma migrate
+   deploy`, then the query of step 1 again: no row.
+
+The files that build an index concurrently are found with `grep -l
+CONCURRENTLY prisma/migrations/*/migration.sql`. Each states its own recovery in
+its header (20270115090100 does: `DROP INDEX CONCURRENTLY
+"CalendarLessons_subjectId_schoolId_idx"` is its step 2, and its other
+statements, thirty-eight `VALIDATE CONSTRAINT`, are safe to repeat).
+
 ## 3. Create the API's least-privilege database role
 
 The API must **never** connect as `postgres` (the owner bypasses RLS). Create
@@ -192,6 +253,7 @@ Run it with:
 | `API_KEY` | the generated `AI_ENGINE_API_KEY` |
 | `ALLOWED_ORIGINS` | the API's origin, e.g. `https://api.yourschool.example` |
 | `SOLVER_MAX_TIME_SECONDS` | `60`: the solve budget in seconds (raise for very large schools). A solve that times out answers after this plus `SOLVER_PROBE_SECONDS` (default `20`). The old `SOLVER_TIMEOUT_SECONDS` is gone: nothing read it. |
+| `EXAM_SOLVER_MAX_TIME_SECONDS` | `20` (default): the budget of the exam planner (`POST /api/v1/plan-exams`, Provplanering), apart from the generator's. A short budget never refuses: a greedy plan is the floor and the answer from the first instant, so less time means fewer exams placed or a clumsier plan. A request can ask for less and never for more. The API waits 90 s for it. |
 
 The solver needs no database and no PII ever reaches it. Keep it on a private
 network reachable only by the API if your host supports it.
@@ -239,7 +301,9 @@ Run it with (see `.env.example` for the full annotated list):
 | `SCHOOL_EXPORT_BACKGROUND` | `on` (default) or `off`: the 30-second job of the whole-school export (`/admin/dataskydd`). It takes the oldest order, if any, builds the zip as the administrator who ordered it (their login and school under row-level security) and stores it in pieces in `SchoolExportChunks`; a file is fetchable for three days and then deleted. With no order a pass is one expiry check and one claim. Needs migration `20270114090000`: run it before the API that has this job |
 | `ABSENCE_WATCH_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Frånvarobevakning's nightly count. A school's night starts at 05:00 its local time, once a night, and only for a school whose administrator has turned the bevakning on (`/admin/absence-watch`; off for every school until then). The night counts the pupils over the school's limits as of yesterday and, on the first day after a whole week or month, writes the digest of each group that has a limit. Off, nothing is counted or sent and the findings already made stay |
 | `REPORTING_RATE_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Rapporteringsgrad's nightly job. A school's night starts at 06:00 its local time, once a night, for every school with a lesson in the last 90 days (the count is not a switch; only the reminders and the weekly notice are, under `/admin/reporting-rate`). The night stores each teacher's held and reported lessons per day, tells the teachers of lessons that stood open past the school's limit (if the school turned that on) and, on Mondays, tells rektor and the full administrators the week's totals (likewise). **Off, this is the emergency brake:** nothing is counted, reminded or sent, the days already stored stay and the pages show them unchanged (they stop getting newer), and a teacher's list of open lessons, which reads the lessons live, still answers. A value that is neither `on` nor `off` is refused at start |
+| `ABSENCE_STATS_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of Frånvarostatistik's nightly job. A school's night starts at 07:00 its local time, once a night, for every school with a lesson in the last 90 days (the count is not a switch). The night stores the sums of absence per class and month, and for the whole school, without a pupil's id, for the months of the last 62 days and up to three older months a night until the three läsår are filled in. **Off, this is the emergency brake:** no month is counted, the sums already stored stay and the pages show them unchanged; the doors that count a pupil's own months from the marks (`/admin/reports?tab=absence-stats`, `/teacher/absence-stats`) still answer. A value that is neither `on` nor `off` is refused at start |
 | `ACK_BACKGROUND` | `on` (default) or `off`: the quarter-hourly pass of Kvittens' reminders (`ack-reminders` in `JobRuns`). It reminds, once, each guardian who has not confirmed themself a request whose time the school chose has come, one request at a time and each in a transaction of its own; a school with kvittens off, or with no reminder time, has nothing for it to do. `off` stops every reminder in every school; the requests, the confirmations and the notices of a new request go on. The test setup turns it off. |
+| `MEAL_LETTER_BACKGROUND` | `on` (default) or `off`: the two-minute look of Måltidskollen's daily letter to the kitchen (`meal-letter` in `JobRuns`). It asks which schools have the letter on, an address and a cut-off that has passed today by no more than three hours, with a sitting today, takes each school's day once (`JobClaims`, claimed by one instance) and sends the letter through the delivery that is already there (`sendLetter`, one mail at the mail pace, so it needs `RESEND_API_KEY` like every mail). The letter is off for every school until its administrator turns it on under Drift › Måltidskollen, so `on` does nothing for a school that has not. `off` stops every letter in every school; the page, the file and the counts go on. The test setup turns it off. |
 
 No `DIRECT_URL` here: that is the owner connection from step 2, and the API
 never reads it. Keeping owner credentials out of the API's environment is the
@@ -1691,16 +1755,20 @@ Walk the full product loop once, in order:
   **What one person can send, and what the queue carries.** A request to a
   whole school is some 4 000 notices and 82 mails (49 on BCC, one every 500 ms:
   about 41 s of the delivery queue) and a push to each. A person therefore
-  writes at most **10 requests an hour** and a school gets at most **20 000
-  new receipts in 24 hours** (five requests to every guardian of a school of
-  2 000 pupils, far more than a school needs; under four minutes of mail a day
-  at most: 20 000 addresses, 49 to a mail, one mail every half second): the 11th request or the receipts past the day's are refused
-  whole with 429 (`ACK_TOO_MANY_REQUESTS`, `ACK_TOO_MANY_RECIPIENTS`) by the
-  database (triggers; the owner and the migrations are not counted, and the
-  two limits take an advisory lock each, the sender's first and the school's
+  writes at most **10 requests an hour**, a sender has a **share of the day**
+  (since 20270119090000: **8 000 new receipts in 24 hours for an administrator,
+  2 000 for a teacher**, counted over the receipts of the requests the person
+  wrote), and a school gets at most **20 000 new receipts in 24 hours** (five
+  requests to every guardian of a school of 2 000 pupils, far more than a school
+  needs; under four minutes of mail a day at most: 20 000 addresses, 49 to a
+  mail, one mail every half second): the 11th request, the receipts past the
+  sender's share and the receipts past the day's are refused whole with 429
+  (`ACK_TOO_MANY_REQUESTS`, `ACK_SENDER_DAY_LIMIT`, `ACK_TOO_MANY_RECIPIENTS`)
+  by the database (triggers; the owner and the migrations are not counted, and
+  the limits take an advisory lock each, the sender's first and the school's
   then, so two requests at the limit do not both pass), and `POST
   /api/v1/acknowledgements` is throttled to five a minute besides. To change a
-  number is a migration. The delivery has a second, **urgent lane** for the
+  number is a migration (`app.ack_day_limit` holds all three). The delivery has a second, **urgent lane** for the
   crisis alarm and its end (`CRISIS_ALARM`, `CRISIS_ENDED`): a wave of mails
   never stands in front of an alarm's push (ten minutes of life); the lanes
   share the providers' pace (mails go one at a time in the order they ask,
@@ -1778,6 +1846,88 @@ Walk the full product loop once, in order:
   `git grep -nE 'notification\.(findMany|findFirst|findUnique|groupBy|aggregate)'
   src` first, and delete the notices in the same transaction as the rollback
   below if one has landed.
+  **Hardening after the three reviews (20270119090000, one migration, the
+  gateway and the web in one release; Kvittens is off everywhere until a school
+  turns it on, so none of it is seen before then).** Four things the reviews
+  found, in the order they were found:
+  *(1) The delivery's mail chain survives an error.* Every mail asks for a turn
+  in one chain shared by both lanes; a turn that threw closed the e-mail of the
+  whole process until it was restarted. A turn that throws now costs only its own
+  mail (logged `Email dispatch skipped [turn, <error name>]`).
+  *(2) A request to Resend or Expo that is not answered is given up.* The
+  calls had no time limit, so a mail that never got an answer held its lane for
+  as long as the runtime waits (five minutes), and the ordinary lane carries every
+  school's notices. A mail now waits **10 s** (`EMAIL_TIMEOUT_MS`; Resend answers in
+  well under one) and is then logged (`Email dispatch failed [timeout 10000 ms]`)
+  and not sent again, like any refused mail; an Expo request waits **10 s**
+  (`REQUEST_TIMEOUT_MS`, the answer's body under the same limit), counts as a
+  network error and is retried after 1, 2 and 4 s as before, so a chunk Expo never
+  answers is given up after 47 s and its messages are answered `RequestFailed`. A
+  retry after a timeout can send a push twice if the first reached Expo; a lost push
+  is the worse of the two. A Resend that does not answer at all still costs every
+  mail of a wave its ten seconds: check it first when mail stops (`Email dispatch
+  failed [timeout` in the log).
+  *(3) A reminder reads "Skickad" only when the mail went.* The pass writes the
+  notices and marks the request SENT in one transaction, as before; the e-mail and
+  the push go after the commit through the delivery's queue. The delivery now says,
+  when it has finished the batch, whether every mail and push was taken by its
+  channel (Resend answered 2xx; Expo took the request, a device it calls gone is not
+  a refusal), or that there was nothing outside the inbox to send, and the gateway
+  records it in `AckRequests."reminderMirroredAt"` (`app.ack_reminder_mirrored`,
+  which answers nothing to a login that is a person). Until then, and for good if
+  it never comes, the gateway calls the reminder `WRITTEN` and the staff's list says
+  *Lagd i inkorgen* (the notices are in the inboxes, and nothing more is known)
+  where it said *Skickad*; the detail page says what is and is not known. **Known
+  limit:** the e-mail and the push of a reminder go to the delivery's in-memory
+  queue after the commit, as every other notice does, so a process that stops
+  between the commit and the send loses them: the inbox notices are written, the
+  request reads *Lagd i inkorgen* for good, and nothing sends the reminder again.
+  A whole-school wave is some 41 s of mail and 8 s of push, so **do not release
+  while one is going** (`SELECT count(*), min("remindAt") FROM "AckRequests" WHERE
+  "remindAt" <= now() AND "reminderOutcome" IS NULL` is empty, and the last
+  `JobRuns` row of `ack-reminders` is a few minutes old at most, when the pass has
+  just finished), and read the requests that stayed `WRITTEN` afterwards (`SELECT
+  count(*) FROM "AckRequests" WHERE "reminderOutcome" = 'SENT' AND
+  "reminderMirroredAt" IS NULL AND "reminderSentAt" < now() - interval '15
+  minutes'`). A refused batch (Resend or Expo answering with an error) leaves the
+  request `WRITTEN` the same way.
+  *(4) A sender cannot use up the school's day.* The school's 20 000 rows were
+  shared by all senders: two mentor accounts, each writing the ten requests an hour
+  for a class of 30 (66 rows each), reach 15 840 rows a day each. Each sender now has
+  a share of the day (8 000 for an administrator, 2 000 for a teacher; refused whole
+  with `KV427`, `ACK_SENDER_DAY_LIMIT`, 429, before the school's own limit is
+  looked at). The numbers: a whole-school request is pupils x guardians (4 000 for
+  2 000 pupils with two guardians each, 5 700 for the largest school counted on, 2 600
+  pupils), and an administrator's 8 000 holds one of those and a half more; a mentor
+  asks about 30 to 60 pupils, 66 to 132 rows a request, and 2 000 is fifteen to thirty
+  requests a day. Against the school's 20 000: no one sender, and no two
+  administrators, can use the day up (3 x 8 000 can; ten teachers can). An
+  administrator reads the use on the Kvittens page (`GET
+  /api/v1/acknowledgements/usage`: the school's rows of the last 24 hours, their own
+  share, and the five who used most), the same numbers the limits refuse by. The
+  share is counted per author of the request, over the requests written in the last
+  24 hours. The migration adds one nullable column and its check to the requests table (empty while no school has turned kvittens on)
+  under a 5 s `lock_timeout`, three functions (`app.ack_reminder_mirrored`,
+  `app.ack_day_limit`, `app.ack_usage`) and replaces `app.ack_receipts_limit`, so
+  there are 22 `app.ack_%` functions after it, all definer with a pinned
+  `search_path`, 16 the API role may run and six the owner's alone. It touches no
+  other table, takes no lock on `Users` or `Schools`, and the gallring functions are
+  not touched. **Before it:** `SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON
+  n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname LIKE 'ack\_%'` is 19,
+  `SELECT count(*) FROM "AckRequests"` is the number you expect (zero while no school
+  has turned kvittens on), and no session holds a lock on `AckRequests`. **After it
+  and before the merge:** the count is 22; `SELECT count(*) FROM pg_attribute WHERE
+  attrelid = '"AckRequests"'::regclass AND attname = 'reminderMirroredAt'` is 1;
+  `app.ack_day_limit('SCHOOL')`, `('SCHOOL_ADMIN')` and `('TEACHER')` are 20000, 8000
+  and 2000; `anon`, `authenticated` and `service_role` can run none of the
+  `app.ack_%` functions. **The API before the release** does not know the column or the
+  functions and writes the notices as before, so it keeps working between the migration
+  and the deploy; the web before the release does not draw `WRITTEN` and shows the
+  state's name, which is a cosmetic fault until the web is deployed (the web and the
+  gateway are one release). **Rolling it back:** a revert of the code is harmless; the
+  column and the functions stay unread, and `app.ack_receipts_limit` keeps the sender
+  shares, which only makes the database stricter than the old gateway knew
+  (it would answer `KV427` as an error and not as a 429 until the code is back).
   **Rollback of the code** is a revert; the tables stay and are unread. Rollback
   of the data, only if nothing in it is wanted: `BEGIN; DELETE FROM
   "Notifications" WHERE "type"::text IN ('ACK_REQUESTED', 'ACK_REMINDER');
@@ -1787,6 +1937,861 @@ Walk the full product loop once, in order:
   above. Count the notices first (`SELECT count(*) FROM "Notifications" WHERE
   "type"::text LIKE 'ACK\_%'`). What a rollback changes: nobody can ask or
   confirm, and the requests already made are gone.
+  *(5) What the lock of 20270119090000 taught, for the next migration of a table
+  with rows.* That file's `ADD COLUMN` and `ADD CONSTRAINT` came first, and a file
+  is one implicit transaction: `ACCESS EXCLUSIVE` on `AckRequests` was taken at its
+  start and held to its end, past the functions and the DO block. Its comment said
+  "a few milliseconds"; the independent review measured 1.85 s on a loaded test host.
+  With one session holding a read on the table (a pooled connection left idle in a
+  transaction) the 5 s `lock_timeout` ended the run at 5.5 s and rolled it back
+  whole, and an ordinary `SELECT` that arrived a second after the waiting `ALTER`
+  queued 4.4 s behind it. Nothing is wrong while the table is empty (no school has
+  turned kvittens on), and the file has run in production, so it is not changed.
+  **The rule for the next one:** put the `ALTER` statements LAST in the file, so the
+  lock is held only over them; or take the lock `NOWAIT` in a retry loop with a 30 s
+  ceiling and a message that names the `prisma migrate resolve --rolled-back` the
+  next try needs, as 20270117091000 does for `Schools` and `Users`. A single
+  `lock_timeout` is not enough: it bounds the wait and not the hold, and the queue
+  behind a waiting lock request is the harm.
+  *(6) The three doors of the delivery answer no login at all (20270202090000, after
+  the reviews of #277 and #289).* `app.ack_remind_queue` (the list of due request ids),
+  `app.ack_remind_request` and `app.ack_reminder_mirrored` stood back for a session that
+  resolves to a person, and a login with no person row (the huvudman's reader, the
+  municipality's administrator) slipped past that; the list handed such a login every
+  school's due request ids. They now answer nothing to a session with any claims, and
+  are run only by the delivery's door, which sets none. The migration replaces the three
+  bodies (the guard is the only difference, the same text in all three) and touches no
+  table, so it takes no table lock. **Before it:** `md5(prosrc)` of `app.ack_remind_queue`
+  is `1917f84de8c01162277654565db52463`, of `app.ack_remind_request`
+  `894541402de92108263324294f19c4db` and of `app.ack_reminder_mirrored`
+  `edaea80452b04494beeb73668086bcc0`; **after it** they are
+  `7a4ed5aa8bf98b87a1f85dc542c56b80`, `6836f7ae29327c074a4dc7b62776837b` and
+  `308fe14167295988d49d575cdf0f1856`, the count of `app.ack_%` functions is still 22,
+  and `app.ack_usage` (`2534cef97c828b5999ce076aff18f9d3`) and the gallring functions
+  are untouched. A session with any claims, a person or not, is handed nothing by any
+  of the three. Functions outside Kvittens that guard on `app.current_user_id() IS NOT
+  NULL` as "logged in" are not changed here; each wants its own pass, with a 450o-style
+  test per door.
+- **Ett läsårs lektioner tas bort först**: 20270120090000 adds the function
+  `app.academic_year_lessons_go_first()` (SECURITY DEFINER, `search_path`
+  pinned to `public, pg_temp`, EXECUTE revoked from PUBLIC and from `anon`,
+  `authenticated`, `service_role` and `app_authenticated`: a trigger needs none)
+  and the trigger `AcademicYears_a_lessons_go_first` (BEFORE DELETE, per row),
+  which deletes the lessons of the year's classes before the year goes. No
+  table, row, column, policy or grant is touched, and none of the SS12000
+  flow's functions is restated. Why: removing a year cascades into its lessons
+  by two routes, and which runs first is the order of the keys' triggers by
+  name (`RI_ConstraintTrigger_a_<oid>`); 20270115090000 moved the classes' key
+  to the end, so the master lessons' key runs first, the lessons lose their
+  master lesson before they go, and `app.ss12000_v_lessons()` files an
+  `AdhocActivity` tombstone for each (a year with two keyed lessons and one
+  ad hoc: 3, not 1). Nothing is lost: the consumers are sent ids they never
+  had. The service for removing a year did it right since #272 by deleting the
+  lessons itself, which is one way in, and judged by another policy (DRIFT) than
+  the year's (PLANERING): a profile with only the second would have deleted no
+  lesson and no error. The trigger is every way in (the service, SQL,
+  PostgREST) and every profile; the service no longer deletes the lessons
+  itself. **The trigger runs as the owner, like the cascade it comes before:**
+  the referential action deletes the same rows as the owner and passes row
+  security, row security is not forced on the tables, and the trigger fires only
+  for a year the caller's own DELETE policy let through (another school's
+  administrator and a teacher reach no row, so no trigger; RLS sections
+  386-387). It takes `AcademicYears` in SHARE ROW EXCLUSIVE, NOWAIT, in a loop
+  with a 30 s ceiling: reads and foreign-key checks go on, writes to the table
+  wait for the file (milliseconds), and if it is not free in 30 s it stops with
+  nothing changed (`prisma migrate resolve --rolled-back
+  20270120090000_ett_lasars_lektioner_tas_bort_forst_pa_varje_vag`, then deploy
+  again). **The migration goes in first, then the merge:** the API before it
+  deletes the lessons itself and the trigger then finds none; the API after it
+  leaves them to the trigger, and without the trigger a removal files the extra
+  tombstones until it is there. The file's checksum (sha256, what Prisma
+  records) is `aee367080f074e85ebb1ed43380670de25a24f1744d1f98ce286a7c6c839d108`.
+  **Before the migration**, as the owner, all of it read-only:
+  `SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NULL OR
+  rolled_back_at IS NOT NULL ORDER BY migration_name COLLATE "C"` returns no
+  row; `SELECT max(migration_name COLLATE "C") FROM _prisma_migrations WHERE
+  finished_at IS NOT NULL AND rolled_back_at IS NULL` is
+  `20270119090000_en_avsandare_har_en_andel_av_dygnet_och_en_paminnelse_vet_om_brevet_gick`
+  (#277's, the last one applied in production when this was written; any from
+  `20270118090000` on that is not this one passes); `prisma migrate status`
+  lists exactly this migration as pending; `SELECT to_regprocedure('app.academic_year_lessons_go_first()'),
+  (SELECT count(*) FROM pg_trigger WHERE tgrelid = '"AcademicYears"'::regclass
+  AND tgname = 'AcademicYears_a_lessons_go_first')` is NULL and 0; the BEFORE
+  DELETE triggers on the table are none (`SELECT tgname FROM pg_trigger WHERE
+  tgrelid = '"AcademicYears"'::regclass AND NOT tgisinternal AND tgtype & 10 =
+  10 ORDER BY tgname COLLATE "C"` returns no row); no session sits idle in a
+  transaction that holds `AcademicYears` (`SELECT pid, state, now() -
+  xact_start AS age, left(query, 70) FROM pg_stat_activity WHERE datname =
+  current_database() AND pid <> pg_backend_pid() AND xact_start < now() -
+  interval '3 seconds' ORDER BY age DESC`). **Information:** which of the two
+  keys the year's removal runs first in production, as the trigger names order
+  them (the database compares them as bytes, hence the collation):
+  `SELECT c.conrelid::regclass AS child, t.tgname FROM pg_trigger t JOIN
+  pg_constraint c ON c.oid = t.tgconstraint WHERE t.tgrelid =
+  '"AcademicYears"'::regclass AND t.tgisinternal AND t.tgtype & 8 = 8 AND
+  c.conrelid IN ('"StudentGroups"'::regclass, '"MasterLessons"'::regclass) ORDER
+  BY t.tgname COLLATE "C"`: with `"MasterLessons"` first a removal files the
+  extra tombstones today.
+  **After it, before the merge:** `SELECT t.tgtype, t.tgenabled, t.tgfoid::regproc
+  FROM pg_trigger t WHERE t.tgrelid = '"AcademicYears"'::regclass AND t.tgname =
+  'AcademicYears_a_lessons_go_first'` is `11` (BEFORE, DELETE, per row), `O`,
+  `app.academic_year_lessons_go_first`; `SELECT p.prosecdef, p.proconfig,
+  p.proowner = c.relowner AS owner_of_the_tables, (SELECT count(*) FROM
+  aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a WHERE a.grantee
+  <> p.proowner) AS other_grantees, md5(p.prosrc) FROM pg_proc p, pg_class c
+  WHERE p.oid = 'app.academic_year_lessons_go_first()'::regprocedure AND c.oid =
+  '"AcademicYears"'::regclass` is `true`, `{"search_path=public, pg_temp"}`,
+  `true`, `0`, `3dbf3391e7a8ec8649239b9a02054ebb`; `SELECT r,
+  has_function_privilege(r, 'app.academic_year_lessons_go_first()', 'EXECUTE')
+  FROM unnest(ARRAY['anon', 'authenticated', 'service_role',
+  'app_authenticated']) r ORDER BY r COLLATE "C"` is false four times;
+  `SELECT relname, relforcerowsecurity FROM pg_class WHERE oid IN
+  ('"AcademicYears"'::regclass, '"CalendarLessons"'::regclass,
+  '"StudentGroups"'::regclass) ORDER BY relname COLLATE "C"` is false three
+  times; and the flow's own functions are what they were,
+  `SELECT proname, md5(prosrc) FROM pg_proc WHERE pronamespace =
+  'app'::regnamespace AND proname IN ('ss12000_bury', 'ss12000_v_lessons',
+  'ss12000_year_is_emitted') ORDER BY proname COLLATE "C"` being
+  `91f0808502e6f703283c02ca1fe33c2b`, `31d7cd85b4db4a00995a4f5275f45253` and
+  `4fef216a7588f169db98a639de67193f` before and after (read on a database built
+  by the migrations). The behaviour is not tried against production (it would
+  delete): it is the adapter probe's `tk4` and RLS sections 385-387, on every
+  run of the Database job.
+  **Rolling back** is two steps, as the owner on the direct connection, and the
+  API goes back with them: the API before this release deletes a year's lessons
+  itself (it has since #272), so with the trigger gone it still files the right
+  tombstones; the API of this release leaves the lessons to the trigger, and
+  with the trigger gone and that API left in place a removal files the extra
+  tombstones again.
+  (1) Drop the two objects behind a lock guard. `DROP TRIGGER` takes ACCESS
+  EXCLUSIVE on `AcademicYears`, and a drop that waits for one open reader makes
+  every later read of the table, and every foreign-key check against it, queue
+  behind it (measured: a plain `SELECT count(*)` waited 5.2 s behind a bare
+  `DROP TRIGGER` that waited for one open reader). With the guard it gives up
+  after a second with `55P03`, drops nothing, and the reader that came meanwhile
+  waited 0.9 s; rerun it until it goes through (measured: 251 ms once the reader
+  was gone):
+
+  ```sql
+  BEGIN;
+  SET LOCAL lock_timeout = '1s';
+  DROP TRIGGER "AcademicYears_a_lessons_go_first" ON "AcademicYears";
+  DROP FUNCTION app.academic_year_lessons_go_first();
+  COMMIT;
+  ```
+
+  (2) Decide what Prisma is told, because the migration is still recorded as
+  applied after the drop, and `prisma migrate resolve --rolled-back` is not the
+  command for it: it refuses an applied migration (`P3012`, "not in a failed
+  state"; it is for one that stopped, as in the ceiling above and §2.1).
+  - To be able to bring the trigger back with `prisma migrate deploy`, delete
+    the record, deliberately, as the owner and after the drop, never before it
+    (the file creates the function and the trigger without `IF NOT EXISTS` and
+    stops at objects that are still there):
+    `DELETE FROM _prisma_migrations WHERE migration_name =
+    '20270120090000_ett_lasars_lektioner_tas_bort_forst_pa_varje_vag';` removes
+    one row; `prisma migrate status` then lists the migration as pending and
+    `migrate deploy` applies the file again from its first statement (tried:
+    the function with `md5(prosrc)` `3dbf3391e7a8ec8649239b9a02054ebb`, the
+    trigger `11`, `O`, and the checksum above come back). That is the way to
+    put the API of this release back.
+  - Or leave the record. Then the database stays rolled back: a later
+    `migrate deploy` says there is nothing to apply and does not recreate the
+    trigger (tried), so the API of this release must not be put back until the
+    file has been applied by hand (`psql -f`, as the owner).
+
+  What it changes: with the API before this release nothing; with the API of
+  this release left in place, removing a year goes back to the keys' order and
+  files the extra tombstones; nothing is lost either way.
+  **The composite keys' ON UPDATE:** the same release adds RLS section 388,
+  which fails the next composite key that holds a school and follows its parent
+  when the parent is updated (`ON UPDATE CASCADE`; make it `NO ACTION`, as
+  20270115090000 did for 38). 98 older ones are named in the section, and the
+  list only gets shorter. No migration changes any of them: moving a parent to
+  another school is not something any code path does, and the swap would take
+  ACCESS EXCLUSIVE on `Users`, `StudentGroups` and the other parents together.
+
+- **Frånvarostatistik över tid**: 20270121090000 adds the table
+  `AbsenceStatsMonths` (the sums of absence per class and month, and per school
+  and month, with no column that names a person and no key to `Users`) and
+  fifteen `app.absence_stats_*` functions (all SECURITY DEFINER with a pinned
+  `search_path` but `app.absence_stats_min_group()`, which reads nothing, and
+  `app.absence_stats_lessons()`, see (9)). The
+  table has row security and **no policy and no grant**: only the functions read or
+  write it, so a PostgREST call and the API's own role are refused (42501); the
+  functions' EXECUTE is the API role's for the ten the gateway and the job call,
+  and nobody's for the rest (five: the group size, the window's first month, the
+  two access checks and the lessons). No existing row is touched, no existing table gains a
+  column, and `app.gallring_due` and `app.gallring_purge` are **not** rewritten
+  (their md5 stay what the previous migration left them: due `f884a3c7…`, purge
+  `21746d39…`, pseudonymise `6f18f62f…` in production). The new keys take `Schools`
+  and `StudentGroups` in SHARE ROW EXCLUSIVE, NOWAIT, together in a loop: reads and
+  foreign-key checks go on, writes to the two wait for the file, and if both are not
+  free at once in 30 s it stops with nothing changed (`prisma migrate resolve
+  --rolled-back 20270121090000_franvaron_over_tre_lasar_lagras_per_klass_och_manad_aldrig_per_elev`,
+  then deploy again). The API before the release knows none of the objects, so it keeps
+  working between the migration and the deploy. The migration goes in first, then the
+  merge.
+  **What is on after the deploy.** The nightly job counts for every school with a
+  lesson in the last 90 days (`app.reporting_schools()`), from 07:00 its local time:
+  the months of the last 62 days, and three older months a night, newest first, until
+  the three latest läsår are in (about a week; a school with fewer läsår is done sooner).
+  One month of a school of 2 000 pupils is a few seconds (`scripts/bench/absence-stats.sql`
+  measures it), each in a transaction of its own that asks for 9 s. Nothing is switched
+  on per school: the sums hold no pupil. The pages read them: the "Frånvarostatistik"
+  tab of `/admin/reports` for every administrator profile, `/teacher/absence-stats` for a
+  mentor, the sums of the school and the classes (never a pupil) for the huvudman's
+  reader.
+  **Decisions, written in the migration's header and in the PR:** (1) *What is
+  stored.* Sums per class and month and per school and month, never a row per pupil. A
+  pupil's own months, a class's pupils and every pattern are counted from the marks that are
+  left, when asked; they go with the marks when attendance is purged. (2) *The smallest
+  group is five.* A class with fewer than five pupils has no stored month; a month in which
+  fewer than five pupils have a registered mark stores no minute (only the lessons and the
+  reporting rate, which are the teachers'); a class of fewer than five pupils with a mark in
+  the period has no pattern. The number is `app.absence_stats_min_group()`, the CHECKs
+  `AbsenceStatsMonths_a_group_has_five_pupils` and `…_a_figure_has_five_pupils_behind_it`,
+  and `MIN_GROUP` in `src/absence-stats/absence-stats.ts`; a jest spec holds the four to one
+  number. (3) *The sums outlive the attendance.* They are not purged with it (that is
+  what reaches three läsår when attendance is kept for less); the job removes the months
+  before the third latest läsår, and they go with their school or class. **A school that
+  has decided to purge attendance after a month still has three läsår of sums.** Say so in
+  the release note. (4) *A month whose marks may be gone is not counted again:* once the
+  school has ever chosen PURGE_AFTER for attendance, no month before the shortest period it
+  ever chose is recounted (a later KEEP does not give the marks back), the same guard as
+  Rapporteringsgrad's. (5) *Who reads what:* administrators of every profile (as the
+  attendance report), a mentor their own pupils and classes by the mentor definition of
+  Frånvarobevakningen as of today, the huvudman's reader the sums only. (6) *Protected
+  identity:* a marked pupil is in no list and in no mentor's reach; the sums count them; the
+  print is the web's and holds them out. (7) *Reads are logged:* a class's pupils and a
+  pupil's card are recorded as ATTENDANCE and PEOPLE; the sums are not. (8) *No gender
+  split:* the model has no such field and none is added. (9) *The lessons of a month
+  are Rapporteringsgradens, but not of the teachers who work now.* `app.absence_stats_lessons`
+  is `app.reporting_lessons` (20270112090100) with one line changed: D2 asks whether the
+  teacher is active **now** (`Users."isActive"`), the history asks whether she had not left
+  when the lesson was over (`"deactivatedAt" IS NULL OR "endsAt" <= "deactivatedAt"`).
+  Without it a month, once stored, lost every lesson of a teacher who has since left and
+  was never counted again (the plan asks only for months without a row). The two are
+  one definition in two texts, and a jest spec (`absence-stats-definition.spec.ts`) and
+  the owner's section 392o fail if they differ in anything but that line, so whoever
+  rewrites `app.reporting_lessons` next (Elevens lektion för dagen, 20270122, adds a
+  condition about a pupil moved off a lesson) must restate `app.absence_stats_lessons` with it, in
+  the same migration, after its md5 guard (the body's md5 is in the PR). (10) *A class's
+  pupils are the class's own, and add up to the class:* `app.absence_stats_class_pupils` lists the
+  pupils enrolled in **the class itself** some day of the period (never those who only sat in
+  a predecessor and went to another class or left: their mentor is somebody else, and the
+  class's mentor cannot open their card), and counts a listed pupil's marks for the days she
+  was in the class or a predecessor (the segment of `StudentEnrollments` that covers the
+  lesson's date, as the class's months and patterns count them), not every mark of the
+  period; her own card shows all of them. For a period inside the class the pupils' sums are
+  the class's month; for a period that reaches back into a predecessor they are less than
+  the cohort's sum in the series, by the pupils who did not come along.
+  **Release note** (in these words or others): *From the first night after this release
+  Rastra counts, every night, the school's and each class's absence by month for the last
+  three läsår, without recording any individual pupil, and shows it with the reporting rate
+  beside it. Sums over fewer than five pupils are never kept or shown. Administrators see
+  the school, the classes and every pupil's own months (counted from the registrations that
+  are still stored); a mentor sees their own pupils and classes; the huvudman's reader sees
+  the sums. The sums are kept for three läsår also where attendance is purged earlier.*
+  **Before the migration**, as the owner: `SELECT count(*) FROM pg_proc WHERE proname LIKE
+  'absence\_stats\_%'` and `SELECT count(*) FROM pg_tables WHERE tablename =
+  'AbsenceStatsMonths'` are both 0; `prisma migrate status` lists exactly this migration as
+  pending; no session sits idle in a transaction that holds `Schools` or `StudentGroups`
+  (`SELECT pid, state, now() - xact_start FROM pg_stat_activity WHERE xact_start IS NOT NULL
+  AND state <> 'active'`). **After it:** the 15 functions exist, the table has
+  row security and `SELECT count(*) FROM pg_policies WHERE tablename = 'AbsenceStatsMonths'`
+  is 0; `SELECT has_table_privilege('app_authenticated', '"AbsenceStatsMonths"', 'SELECT')`
+  is false (and, on Postgres 17, `MAINTAIN` too); the gallring functions' `md5(prosrc)` are
+  what they were before. **The morning after the first night** (07:00 local, every school):
+  `SELECT count(*), min(month), max(month) FROM "AbsenceStatsMonths" WHERE "schoolId" = ...`
+  has the months of the last 62 days and three more; after a week, the school's earliest
+  läsår; no row has `pupils` under 5; `JobRuns` has `absence-stats` with `failed` 0.
+  **Rollback of the code** is a revert; the table stays and is unread. Rollback of the
+  data, only if nothing in it is wanted: `DROP TABLE "AbsenceStatsMonths"; DROP FUNCTION
+  app.absence_stats_min_group(), …` (the fifteen, by name); the gallring functions were
+  never touched.
+
+- **Elevens lektion för dagen** (D7): 20270122090000 adds the
+  `NotificationType` value `LESSON_PUPIL_MOVED` and nothing else (a value
+  cannot be used in the transaction that adds it, so it is a file of its own,
+  taking no lock). 20270122091000 adds the table `LessonPupilMoves`, the column
+  `CalendarLessonStudents."moveId"` (nullable, key to the move, `ON DELETE
+  CASCADE`) and `SchoolDaySettings."guardianNoticeOnMove"` (`false`), twelve
+  `app.lesson_pupil_*` / `app.lesson_move_*` functions, five triggers, five
+  read arms on the table and the restated bodies of seven readers and of D6's
+  `absence_stats_lessons` (below). It
+  takes `Schools`, `Users` and `CalendarLessons` in SHARE ROW EXCLUSIVE and
+  `CalendarLessonStudents` and `SchoolDaySettings` in ACCESS EXCLUSIVE, all
+  together, NOWAIT, in a retry loop of 30 s (a register save or a cancellation
+  writes `Users` and `CalendarLessons` in one transaction, so no order of locks
+  is safe). If the loop gives up after 30 s it has changed nothing, but Prisma
+  has written an unfinished attempt to `_prisma_migrations`, and the next
+  `migrate deploy` answers **P3009** until `prisma migrate resolve --rolled-back
+  20270122091000_en_elev_byter_till_en_parallell_lektion_for_en_dag` has been
+  run (the lock loop's own error message says so); only then run it again.
+  Deploy order: **migrate first**, then merge (the old API knows none of the
+  new columns and writes none of them; it does not read a move either, but there
+  is none before the new API runs).
+  **What a move is.** A teacher of one of the lessons, the pupil's mentor that
+  day, or an administrator with Drift moves one pupil from a lesson to a lesson
+  that overlaps it in time, for that date, and can take it back. The pupil's
+  arrival is a named pupil on the target (a row in `CalendarLessonStudents`
+  carrying `moveId`), so every reader that already reads named pupils sees the
+  pupil there; the departure is read where a replacing group's "off" is read.
+  The pupil's mark on the lesson they left is set to `UNKNOWN` (which the
+  absence watch, the minute statistics and the SS12000 attendance leave out) and
+  kept in `displacedMark`; Ångra puts it back if nobody has written one since.
+  A mark on the lesson they were moved to stops Ångra and a move on (409
+  `LESSON_MOVE_HAS_ATTENDANCE`). The table has no write arm: it is written only
+  by `app.lesson_pupil_move` and `app.lesson_pupil_move_undo` (definer, the API
+  role's), which lock the lessons in id order (`FOR NO KEY UPDATE`) before
+  anything else; a register save takes the lesson's row `FOR SHARE` through
+  `app.lesson_pupil_register_lock`, so a save and a move meet in one order. (The
+  lock is a function of its own because a teacher has no UPDATE policy on
+  `CalendarLessons` and a row lock under row security runs that policy: taken
+  from the gateway it locked nothing for a teacher. The adapter probe, check
+  `lm-f`, found it.) A move falls with either lesson when it is cancelled,
+  replaced by an activity or moved so that they no longer overlap
+  (`CalendarLessons_pupil_moves_lapse`, only when time or status changes), and
+  with either pupil or lesson when one is deleted. The state codes of the
+  refusals are `LM403`–`LM416`, answered as coded 403/404/409
+  (`LESSON_MOVE_*`; `LM416` is `LESSON_MOVE_LESSON_OVER`, below). Nothing
+  touches `MasterLessons`.
+  The delivered time's audience statement (`audienceStatement`, the timplan)
+  gains one column, `movedOffIds`, behind an option only it asks for; every
+  other statement of P3 is byte for byte what it was (pinned in
+  `timplan-delivered.sql.spec.ts`).
+  **The seven readers** restated, each weighed against its previous body before
+  it is replaced (the migration stops otherwise): `current_student_replaced_lesson_ids`
+  (was 20261211090000, md5 `40ec1dad4dc5024dfbad454679c742e9`),
+  `calendar_feed_pupil_lessons` (20270118090000, `edec662e41a36cca8086484a5de74895`),
+  `timetable_pupil_days` (`16164f62372b5886f55743657fac1d46`),
+  `timetable_week_days` (`d871d3d16dbd336b80ea677ac23abded`),
+  `reporting_lessons` (20270112090100, `d6a074eea241802f4e7bbd980e4f29ea`),
+  `gallring_due` (20270117091000, `f884a3c77b5234c3d77ae6b77d17f0e7`) and
+  `gallring_purge` (`21746d3990375d467cdeec6294308363`). The gallring pair gain
+  one branch, `LessonPupilMoves` under ATTENDANCE (a move goes when its source
+  lesson's date is older than the school's limit); a later release that rewrites
+  them must carry it. **New md5 (to check after the migration):**
+  `calendar_feed_pupil_lessons` `57bc5d8b0a656a4d9f0cf3ceecd9d247`,
+  `current_student_replaced_lesson_ids` `51f95a8e3c19c2a4e958c3bb5ad18fee`,
+  `gallring_due` `a7b1da5813d0acf54b1474ad6f96c9c3`, `gallring_purge`
+  `b23e04aec610ebbf1795b832d5054273`, `reporting_lessons`
+  `a263885deea0dd2f172362d0ed374167`, `timetable_pupil_days`
+  `0a4b0e9f21ce6625edc3edf6e7b7b4e1`, `timetable_week_days`
+  `c05f78b5c1392ca7218d8780d85a253a`. **D6's `absence_stats_lessons`**
+  (Frånvarostatistik över tid, 20270121090000, which must be run first: the
+  migration weighs it and stops otherwise) is D2's `reporting_lessons` but for the
+  line about the teacher, and a month D6 has stored must say what the reporting
+  rate says for the same month, so it gets the same condition (a pupil moved
+  off a lesson is not on its list): md5 `bece0015a55c5a41f4824c2e6550e85d`
+  before, **`265b9b21353ecd7e441397f99e565643`** after; it stays `LANGUAGE sql
+  STABLE`, not definer, with no `SET` and no grant (D6's tests
+  `absence-stats-definition.spec.ts` and section 392o hold it to being
+  `reporting_lessons` but for that line, and fail the build without the patch).
+  `absence_stats_month` (`38e6f66e73a8b1463403a873a9b9ebb4`) is untouched.
+  Read the readers with `SELECT p.proname, md5(p.prosrc) FROM pg_proc p JOIN pg_namespace n
+  ON n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname IN
+  ('current_student_replaced_lesson_ids', 'calendar_feed_pupil_lessons',
+  'timetable_pupil_days', 'timetable_week_days', 'reporting_lessons',
+  'gallring_due', 'gallring_purge') ORDER BY p.proname COLLATE "C"` (prod
+  sorts en_US, so compare the md5 per name, not the order). The migrations'
+  sha256: 20270122090000 `7beae1596b32c59ab6201ec7748823afb66f5240f8cab580b323bcfd1d1e8e01`,
+  20270122091000 `a80b82488d3b910a32c0aea5c115371af397a8a3e72ae665658f36d095191b97`
+  (the second changes if the file is edited after this was written: check
+  `shasum -a 256` of the merged file). The two doors' md5 (`prosrc`) and the
+  new function the reviews of #281 added before the migration was run:
+  `lesson_pupil_move` `8b2bc446f5550bde8cba9123c82bba42`,
+  `lesson_pupil_move_undo` `8d4a88be4e23e9f4191b969b488ed7b0` and
+  `lesson_move_may_correct` `43ae32c8ef504e8f4bd35b96330a6745`.
+  **What is decided, for a conversation with the school (BESLUT):** a move is for
+  today or later (a past day's register is not edited this way). **A lesson
+  that has ended** (409 `LESSON_MOVE_LESSON_OVER`, `LM416`): the day is not the
+  hour, the register of a finished lesson is its teachers', and a move writes
+  the pupil's mark on the lesson it leaves, so (1) **no new move** is made off
+  a lesson that has ended, for anybody; (2) **Ångra and a move back** after the
+  source's end, the same day, are for an administrator with Drift and for a
+  teacher on **the source** (the one whose mark is put back, with its author
+  and time), and for nobody else: the teacher of the target alone, the
+  pupil's mentor, a pupil or a guardian get `LM416` or `LM403`; (3) **a move
+  on** from the lesson the pupil was moved to writes nothing on the first
+  source (its mark row is untouched, the displaced mark is carried to the new
+  move), so the first source's end does not matter; the rule is asked of the
+  lesson the pupil is taken out of: once that one has ended too, only an
+  administrator with Drift and a teacher on it may move the pupil on (a lesson
+  a pupil is moved into that has already ended is not refused: the target is
+  the target teacher's affair, as before). Ångra never takes away a mark on
+  the target: a mark of the pupil there (anything but Okänd) refuses Ångra, a
+  move back and a move on (409 `LESSON_MOVE_HAS_ATTENDANCE`, `LM415`) for
+  everybody, the administrator and the source teacher too, and the mark
+  stands. After midnight (`LM414`) a move can no longer be undone or moved on at
+  all: the register of the source lists the moved pupil as moved away and saves
+  nothing for them, so a mistake found the next day is corrected in SQL by whoever
+  runs the database (the rollback statement below puts the marks back); no free-text
+  reason is stored (a note about a child would be a record nobody asked for);
+  the teachers of both lessons are always told (the one who moved the pupil
+  excepted), **the guardian only if the school says so** (Drift › Skolans dag,
+  off by default; the push and the e-mail say that a pupil's lesson has changed
+  and when, never who and never the pupil); Ångra and a move on are refused
+  once the pupil has a mark on the lesson they were moved to; a lesson that is
+  cancelled or replaced takes its moves with it and the set-aside mark is not
+  put back (the pupil may have gone there); a lesson whose pupils all come from
+  a class list still counts as held in the reporting rate when every pupil has
+  been moved off (only a lesson of named pupils is handled). **Known limits:**
+  a pupil's own direct read of a moved-in lesson does not show the teacher's
+  name until the teacher's rows reach the pupil (the gateway's week does); the
+  app has no screen for moving (a notice and the type, and the realtime
+  broadcast keeps the register current); a lesson that is deleted (a
+  republication that removes a base lesson) takes the moves on it with it, as a
+  cancellation does, and a mark that was set aside on the source stays
+  `UNKNOWN` (the set-aside copy goes with the move, and nobody is told: a
+  deletion is not a cancellation); the register is where it is corrected; a
+  move that gallring removes
+  (the source's date older than the school's attendance limit) takes the
+  arrival with it, so the delivered time (`movedOffIds`) and the rosters of a
+  lesson older than that limit read it as if the pupil had never been moved:
+  the delivered time of a year older than the attendance limit is not stable.
+  **Measure** (`scripts/bench/lesson-moves.ts`: two schools of 60 classes of 25
+  pupils and six lessons a day, one with 120 pupils moved to a parallel lesson;
+  medians of 21 adjacent pairs on a shared Mac, so load moves both alike): the
+  whole day's rosters as an administrator read them 194 ms without moves and
+  124 ms with (the difference is the host's, the moved pupils are fewer on the
+  lessons they left); a register opening 51 and 53 ms; a pupil's own lessons
+  11.6 and 12.6 ms; the calendar feed for fifty pupils 372 and 291 ms; a
+  guardian's week of a moved child 122 and 143 ms (the child's moves are one
+  more indexed read, the lesson they went to has its own teachers and room).
+  The statements the feature adds execute in 0.02 ms each on the database
+  (`EXPLAIN ANALYZE`, best of 21). No hot table gained a policy arm.
+  **Release note** (in these words or others): *A teacher, a mentor or an
+  administrator can now move one pupil to a parallel lesson for a day, from the
+  register, the klassbok or the lesson list, and take it back. The pupil is
+  counted where they are: in the register of the lesson they went to, not as
+  absent from the one they left; the pupil's and the guardian's schedule and
+  calendar follow. A guardian is told only if the school chooses so under Drift
+  › Skolans dag.*
+  **Before the migrations**, as the owner: no `LessonPupilMoves` table and no
+  `app.lesson_pupil_%` function exist, `prisma migrate status` lists exactly
+  the two new migrations as pending, no session sits idle in a transaction that
+  holds `Users`, `Schools` or `CalendarLessons`, the seven readers carry
+  the md5 above, D6's 20270121090000 is applied and `absence_stats_lessons`
+  carries `bece0015a55c5a41f4824c2e6550e85d`, and `_prisma_migrations` has no unfinished row (an earlier
+  attempt that gave up leaves one: P3009). **After them, before the merge:** `LessonPupilMoves` has row
+  security on with five policies, all `TO app_authenticated`, and
+  `app_authenticated` holds SELECT and nothing else (`SELECT
+  has_table_privilege('app_authenticated', 'public."LessonPupilMoves"', 'INSERT,
+  UPDATE, DELETE, TRUNCATE')` is false; no MAINTAIN on 17); `anon`,
+  `authenticated` and `service_role` hold nothing that writes; four of the
+  twelve functions are executable by `app_authenticated`
+  (`lesson_pupil_move`, `lesson_pupil_move_undo`, `lesson_move_is_mentor`,
+  `lesson_pupil_register_lock`) and none by `anon`, `authenticated` or
+  `service_role`; `SELECT count(*) FROM "LessonPupilMoves"` is 0; the enum has
+  the value; no invalid index and no lock wait. **After the merge:** in a test
+  school with a teacher, a mentor and two parallel lessons: move a pupil, see
+  them in the target's register and in the guardian's week, save the source's
+  register, take the move back, and read the log for `Pupil moved` and for a
+  `LESSON_MOVE_*` that is not a 4xx.
+  **Rolling back the API** leaves the table and the functions unread, but a
+  move that stands makes the old code count the pupil on both lessons (the
+  arrival is a named pupil it reads, the departure it does not know). Before a
+  revert, put the marks back and take the moves away in one transaction:
+  `BEGIN; UPDATE "AttendanceRecords" a SET "status" =
+  (m."displacedMark" ->> 'status')::"AttendanceStatus", "note" =
+  m."displacedMark" ->> 'note', "recordedAt" = (m."displacedMark" ->>
+  'recordedAt')::timestamptz, "recordedById" = (m."displacedMark" ->>
+  'recordedById')::uuid, "updatedAt" = now() FROM "LessonPupilMoves" m
+  WHERE m."displacedMark" IS NOT NULL AND a."calendarLessonId" =
+  m."fromLessonId" AND a."studentId" = m."studentId" AND a."status" =
+  'UNKNOWN'; DELETE FROM "LessonPupilMoves"; COMMIT;` (the arrivals go with the
+  moves). The schema stays; dropping it is a migration of its own, and the seven
+  readers go back to the bodies named above and `absence_stats_lessons` to D6's
+  (`bece0015…`, its migration's text).
+- **Måltidskollen**: 20270123090000 adds one table, `KitchenSettings` (a row per
+  school: the cut-off for reported absence, whether the daily letter to the
+  kitchen is on, and the kitchen's address; three policies, SELECT, INSERT and
+  UPDATE to `app_authenticated`, nothing else, no MAINTAIN), and five
+  functions, all SECURITY DEFINER with a pinned `search_path` and `jit = off`:
+  `app.meal_counts` (the count, the owner's alone), `app.meal_counts_for_me`,
+  `app.meal_letter_last_for_me`, `app.meal_letter_schools` and `app.meal_letter`
+  (the four doors the API role may run). No existing table is touched and no
+  existing function replaced (gallring is unchanged), and no enum gains a value:
+  the letter is a mail to an address, not a notice to a user. The migration locks
+  `Schools` alone, `NOWAIT` in a 30-second loop (the key from the new table), and
+  can be rerun after a refusal. **Off for every school**: with no row the cut-off
+  is none, so no absence is taken off, and no letter goes. The counts read
+  `CalendarLunches` (the published schedule), active pupils by home class,
+  `AbsenceReports` that cover the whole sitting (first reported before the day's
+  cut-off in the school's own time), replacement lessons of an activity over the
+  sitting (shown, counted), and pedagogisk lunch duties with fixed slots; they
+  carry numbers and the names of classes, never a pupil, and are not recorded in
+  the read log. `GET /api/v1/meal-counts` answers at most 14 days from today and
+  refuses a day before today; `/csv` is the same days in windows-1252 with `;`.
+  **Release note** (in these words or others): *Rastra can now give the kitchen
+  the number of portions for each lunch sitting, from the published schedule, as
+  a page to print, a file for Excel and, if the school wants it, a letter every
+  school day at the time the kitchen places its order. Allergies and diets are
+  not stored in Rastra and are not included. Nothing is sent until the school has
+  turned the letter on under Drift › Måltidskollen.*
+  **Before the migration**, as the owner: no `KitchenSettings` table and no
+  `app.meal_%` function exist (`SELECT count(*) FROM pg_tables WHERE tablename =
+  'KitchenSettings'` and `SELECT count(*) FROM pg_proc WHERE proname LIKE
+  'meal\_%'` are both 0), `prisma migrate status` lists exactly this migration as
+  pending, and no session sits idle in a transaction that holds `Schools`
+  (`SELECT pid, state, now() - xact_start FROM pg_stat_activity WHERE state =
+  'idle in transaction'`).
+  **After it, before the merge:** `KitchenSettings` has row security on and
+  exactly three policies, all `TO app_authenticated`; `app_authenticated` holds
+  SELECT, INSERT and UPDATE on it and nothing else (`has_table_privilege(...,
+  'DELETE, TRUNCATE')` is false; no MAINTAIN), `anon` and `authenticated` nothing;
+  there are five `app.meal_%` functions, all definer with `search_path=public,
+  pg_temp` and `jit=off`, four executable by `app_authenticated` and none by
+  `anon`, `authenticated`, `service_role` or PUBLIC, and `app.meal_counts` by none
+  of them; `SELECT count(*) FROM "KitchenSettings"` is 0.
+  **After the merge:** `JobRuns` gets a row for `meal-letter` within two minutes
+  of the new instance serving, its counts `{"schools": 0}`; `GET
+  /api/v1/meal-counts?days=7` answers for every school, `staffModelled: false` for
+  one that has placed no pedagogisk lunch. In a test school: give a cut-off and
+  an address under Drift › Måltidskollen, turn the letter on a few minutes
+  before the cut-off, and read the log for `Meal letter [school=...` and, if it
+  was not taken, `Meal letter not sent`. A letter needs `RESEND_API_KEY`; without
+  it the claim stays open and is retried until three hours after the cut-off.
+  **#277** changes the delivery's mail (a timeout, a turn that throws, whether a
+  mail was taken). `sendLetter` calls `sendEmails` and reads a `false` answer as
+  "not taken" where #277 gives one, so it needs no edit when #277 is in.
+  **Rollback of the code** is a revert; the table and the functions stay and are
+  unread. Rollback of the data, only if nothing in it is wanted: `DROP FUNCTION
+  app.meal_letter(uuid, date), app.meal_letter_schools(timestamptz, integer),
+  app.meal_letter_last_for_me(), app.meal_counts_for_me(date, date),
+  app.meal_counts(uuid, date, date); DROP TABLE "KitchenSettings";` and `prisma
+  migrate resolve --rolled-back 20270123090000_koket_far_portionerna_per_sittning`.
+  What a rollback changes: the page answers 404, no letter goes, and the cut-offs
+  and addresses the schools entered are gone.
+
+- **Bästa möjliga schema**: 20270125090000 adds three columns and nothing else:
+  `LunchSettings."generatorBestEffort"` (boolean, NOT NULL, default false: the
+  Skolregler switch), `ScheduleCandidates."deviations"` (jsonb, nullable, a
+  list or NULL by the CHECK `ScheduleCandidates_deviations_is_a_list`) and
+  `PublicationSettings."gateDeviations"` (`PublishGateMode`, NOT NULL, default
+  WARN: the policy of the new publish check `PUB_DEVIATIONS`). **It is off for
+  every school until that school turns it on**; the migration turns nothing on
+  and changes no row, so every Skolregler row reads off, every candidate reads
+  null (it did not come from the mode) and every settings row reads WARN. With
+  the switch on, an administrator who plans can ask a schemaförslag run for
+  *one* candidate (`mode: 'BEST_EFFORT'`) that the engine places even when the
+  school's own shaping rules cannot all hold: a teacher's cap of minutes a day,
+  a part-timer's days, a subject's cap per day and its days apart, and a
+  subject's locked rooms may give way, and the candidate lists which did and by
+  how much. Everything else stays hard (a double booking, a lesson outside the
+  frame times, the walk between sites, a teacher's lunch and rest, a teacher
+  marked unavailable, a requirement's own room type, lunch, lesson lengths, a
+  block's shared start, the group's daily cap): the list is the engine's
+  (`optimization-engine/app/solver/relaxation.py`), not a setting. **The apply
+  of a candidate with deviations needs the administrator to accept exactly that
+  list** (`acceptedDeviations`, the candidate's digest): without it the apply is
+  409 `SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED` and writes nothing, and with
+  the school's switch turned off again it is 409 `BEST_EFFORT_NOT_ENABLED`
+  whatever the digest. **The acceptance is kept in the REGENERATE entry of
+  `ScheduleChangeLogs`** (`after`: the accepted list, its digest and the moment;
+  who accepted is the entry's own `actorId`), not in a table of its own, so the
+  registerutdrag, the removal inventory, the school export and `people-files`
+  have nothing new to classify; the accepted list in `after` carries no Users id
+  and no name, because no person-removal reaches that JSON by column. The
+  candidate's own copy keeps a cap's teacher as a Users id in `subjectIds`,
+  server-only and named when the page reads it, as a free-day note does (and
+  not at all for a person with a protected identity); **a sentence about a
+  part-timer's days is stored in the hidden form for every reader** (the code
+  `TEACHER_WORK_DAYS_HIDDEN`, no figure, no post, no teacher, its own English
+  and not the refusal's "one of the reasons the timetable could not be made"),
+  as every sentence about a post's days is: the figure is HR data and the
+  candidate page has no HR path. "Uppdatera förslagen" on a batch of the mode
+  keeps the mode (the request names `refreshOf` alone) and is refused 409
+  `BEST_EFFORT_NOT_ENABLED` if the school has switched it off since; a refusal
+  of a hard rule by the mode's one candidate ends the run
+  `CANDIDATES_FIRST_FAILED`, as for any first candidate. The new publish check
+  `PUB_DEVIATIONS` reminds the publisher of the accepted list until a
+  publication follows the apply (WARN, or REFUSE if the school sets
+  `gateDeviations`). It takes ACCESS EXCLUSIVE on `LunchSettings`,
+  `PublicationSettings` and `ScheduleCandidates`, NOWAIT and together in a loop
+  (the generator reads the first at the start of every run, a publish reads the
+  second, the Schemaförslag page polls the third every two seconds while a run
+  goes); a refusal gives back whatever it got and tries again 50 ms later, and
+  if the three are not free at once in 30 s it stops with nothing changed —
+  `prisma migrate resolve --rolled-back
+  20270125090000_ett_schemaforslag_kan_saga_vilka_av_skolans_regler_som_gav_vika`,
+  then deploy again. Before: the three columns absent from
+  `information_schema.columns`. After: the three present, and `SELECT count(*)
+  FROM "LunchSettings" WHERE "generatorBestEffort"`, `SELECT count(*) FROM
+  "ScheduleCandidates" WHERE "deviations" IS NOT NULL` and `SELECT count(*) FROM
+  "PublicationSettings" WHERE "gateDeviations" <> 'WARN'` all 0. No grant and no
+  policy moves (RLS sections 410–414 hold it). The API before the release names
+  only the old columns, so it keeps working between the migration and the
+  deploy: its Skolregler upsert does not name the switch (a save leaves it as it
+  was), a candidate it stores has null deviations, and its settings read leaves
+  the policy at its default. **Deploy order and the engine:** the engine ships
+  with the API from the same merge, additive (`relaxation` is optional in the
+  request and `deviations` appears in the answer only when it was asked for), and
+  the API sends `relaxation` only for a run the school asked the mode for, so
+  nothing changes for a school that has not turned the switch on. In the few
+  minutes an API can meet an engine from before the release, a run of the mode
+  fails as 503 `ENGINE_LACKS_BEST_EFFORT` ("try again in a few minutes") and
+  never as a refusal of the week. **Rolling it back:** the engine before this
+  release refuses the field (its request models are `extra="forbid"`: 422), so
+  an engine rolled back alone fails the mode's runs of any school that turned
+  the switch on; roll the API back first, or with the engine (the API before
+  the release never sends it). If the API must stay, turn the switch off for
+  every school before the engine goes back (`UPDATE "LunchSettings" SET
+  "generatorBestEffort" = false WHERE "generatorBestEffort";`, as the owner), and
+  tell the schools it was. **Do not roll the API back while a candidate with
+  deviations is on the page**: an API from before the release does not know the
+  column and would apply it without the school accepting what gave way. The
+  candidates are swept after a week; a school that has not used the mode has
+  none. The columns can stay through a rollback.
+
+- **Placeringsregler**: 20270126090000 adds the enum `PlacementRuleMode`
+  (`OFF`, `SOFT`, `HARD`) and thirteen columns, all with a default and none
+  with a rewrite: on `LunchSettings` (the Skolregler row) the mode and the
+  weight of each of three rules (`placementEdgeMode`/`placementEdgeWeight`,
+  `placementPlacesMode`/`placementPlacesWeight`,
+  `placementSharedMode`/`placementSharedWeight`: OFF, 250) and the four limits
+  of the second (`maxClassRoomsPerDay`, `maxTeacherRoomsPerDay`,
+  `maxClassBuildingsPerDay`, `maxTeacherBuildingsPerDay`: null);
+  on `Subjects` `notFirstInDay` and `notLastInDay`, and on `Rooms`
+  `canBeShared` (false). Ten CHECKs, each named `LunchSettings_…_check`: a
+  weight is 1 to 1000, a limit 1 to 20 or null (rule 2 is "at most N different room groups and buildings a day", 1 being a single one, not a count of changes), and rule 2 that is on
+  has at least one limit (`…_placementPlaces_needs_a_limit_check`; the API
+  says so first, a 400 with the code `PLACEMENT_PLACES_NEEDS_A_LIMIT`).
+  **Only rule 3 (Delade salar) is offered HARD**: rules 1 and 2 are OFF or
+  SOFT until a hard one is measured (a hard rule 1 cost 4.5 times the first
+  timetable, a hard rule 2 2.8 to 3.6 times with eight workers, 9 with one,
+  against a production limit of 60 s at the floor). The two last CHECKs say
+  so (`LunchSettings_placementEdgeMode_off_or_soft_check` and
+  `LunchSettings_placementPlacesMode_off_or_soft_check`), because the
+  Skolregler row is also written by a school's administrator straight against
+  PostgREST and a stored HARD would go to the engine and lock the card; the
+  API refuses a request that names HARD for them (400, the codes
+  `PLACEMENT_EDGE_HARD_NOT_OFFERED` and `PLACEMENT_PLACES_HARD_NOT_OFFERED`),
+  the gateway reads a stored one as SOFT in any case, and the engine still
+  builds all six. Offering a hard rule 1 or 2 later is dropping its CHECK, a
+  migration of its own, with the card and the API. No new
+  table, so no arm, no GRANT and nothing in the role matrix moves (RLS
+  sections 415 to 419 hold it, role by role, as the API's role and as
+  PostgREST's). **All three rules are OFF for every school until that school
+  turns them on**: the migration turns nothing on and changes no row, and an
+  OFF rule sends the engine nothing, so the payload, the model and the answer
+  are the ones a school without the rules gets, byte for byte. The migration
+  takes ACCESS EXCLUSIVE on `LunchSettings`, `Subjects` and `Rooms`, NOWAIT
+  and together in a loop (20270125090000, Bästa möjliga schema, takes
+  `LunchSettings` the same way and runs first; the two never wait for each
+  other) (the generator reads all three, in no fixed order, at
+  the start of every run), so it never waits while it holds one; if the three
+  are not free at once in 30 s it stops with nothing changed (`prisma migrate
+  resolve --rolled-back
+  20270126090000_tre_placeringsregler_som_ar_avstangda_tills_skolan_slar_pa_dem`,
+  then deploy again). The API before the release names none of the columns: its
+  upsert of the Skolregler, its creates and updates of subjects and rooms and
+  the CSV import leave them as they are or read the defaults (RLS section
+  419). **The order is the migration, then the merge (API and engine from one
+  merge), then the web**: a web ahead of the API sends fields the old API
+  refuses (400). The engine's new fields are optional and are sent only for a
+  school with a rule on, which none has until it turns one on after the
+  deploy. The SS12000 providers emit nothing new (a mark moves no `meta.modified`).
+  **Rolling back:** the columns can stay, nothing before the release reads
+  them. The engine before the release refuses `placementRules`, a room's
+  `building` or `shareable` and a lock's `studentCount` (its request models
+  are `extra="forbid"`: 422), so once a school has a rule on, an engine rolled
+  back alone fails that school's Generera and schemaförslag. Roll the API back
+  first, or with the engine; if the API must stay, switch the rules off for
+  every school before the engine goes back (`UPDATE "LunchSettings" SET
+  "placementEdgeMode" = 'OFF', "placementPlacesMode" = 'OFF',
+  "placementSharedMode" = 'OFF' WHERE "placementEdgeMode" <> 'OFF' OR
+  "placementPlacesMode" <> 'OFF' OR "placementSharedMode" <> 'OFF';`, as the
+  owner) and tell the schools it was. Which schools have a rule on: `SELECT
+  "schoolId", "placementEdgeMode", "placementPlacesMode",
+  "placementSharedMode" FROM "LunchSettings" WHERE "placementEdgeMode" <> 'OFF'
+  OR "placementPlacesMode" <> 'OFF' OR "placementSharedMode" <> 'OFF';`.
+  Before the migration the thirteen columns are absent from
+  `information_schema.columns`; after it `SELECT count(*) FROM "LunchSettings"
+  WHERE "placementEdgeMode" <> 'OFF' OR "placementPlacesMode" <> 'OFF' OR
+  "placementSharedMode" <> 'OFF'`, `SELECT count(*) FROM "Subjects" WHERE
+  "notFirstInDay" OR "notLastInDay"` and `SELECT count(*) FROM "Rooms" WHERE
+  "canBeShared"` are all 0, and so is `SELECT count(*) FROM "LunchSettings"
+  WHERE "placementEdgeMode" = 'HARD' OR "placementPlacesMode" = 'HARD'` (the
+  two CHECKs keep it so).
+- **Klasslärarens schema**: 20270128090000 adds the enums
+  `ClassTeacherChangeKind` and `ClassTeacherChangeStatus`, the tables
+  `ClassTeacherAppointments`, `ClassTeacherSettings`, `ClassTeacherOpenTimes`
+  and `ClassTeacherChanges` (nineteen policies, all `TO app_authenticated`), and
+  twenty-one `app.class_teacher_*` / `app.is_class_teacher` functions, every one
+  SECURITY DEFINER with a pinned `search_path`: ten the API role may run, nine
+  that take the school as an argument and that nobody may run (the entry points
+  call them as the owner), and two triggers' guards nobody may call. No existing row is touched, no existing
+  table gains a column, nothing reaches the engine, and `gallring_due`,
+  `gallring_purge` and `gallring_pseudonymise` are not restated (their
+  `md5(prosrc)` are the same before and after). The new keys take `Schools`,
+  `AcademicYears`, `StudentGroups`, `Users`, `Rooms`, `MasterLessons` and
+  `CalendarLessons` in SHARE ROW EXCLUSIVE, NOWAIT, all at once, in a loop with
+  a 30 s ceiling: reads and foreign-key checks go on, writes to those tables
+  wait for the file (milliseconds, the new tables are empty), and if the locks
+  are not free in 30 s it stops with nothing changed (`prisma migrate resolve
+  --rolled-back 20270128090000_en_klasslarare_utses_och_andrar_sin_klass_inom_ramen`,
+  then deploy again). The API before the release knows none of the objects, so
+  it keeps working between the migration and the deploy. **The migration goes
+  in first, then the merge.**
+  **Before the migration**, as the owner: `SHOW server_version` is 17.x;
+  `prisma migrate status` lists exactly this migration as pending; the file's
+  checksum (sha256, what Prisma records) is `177bc639b8de0e1bf01feb4684dd015bafe4bda1a49694ab5637821090dceefa`;
+  `SELECT to_regclass('"ClassTeacherChanges"')` is NULL; no session sits idle in
+  a transaction that holds one of the seven tables above (the query of the
+  Vikariefrågan entry).
+  **After it, before the merge:** `SELECT count(*) FROM pg_policies WHERE
+  tablename LIKE 'ClassTeacher%'` is 19 and `SELECT count(*) FROM pg_proc WHERE
+  pronamespace = 'app'::regnamespace AND (proname LIKE 'class\_teacher\_%' OR
+  proname = 'is_class_teacher')` is 21; the four tables have row security on;
+  `app_authenticated` holds SELECT, INSERT, UPDATE and DELETE on appointments,
+  open times and changes, SELECT, INSERT and UPDATE on the settings, no
+  MAINTAIN; `anon` and `authenticated` nothing; `has_function_privilege('anon',
+  'app.class_teacher_actor(uuid)', 'EXECUTE')`, the same for `authenticated` and
+  `service_role`, are false; every table is empty.
+  **What it is.** A teacher is appointed klasslärare of one class by an
+  administrator who writes Schemaläggning (`/admin/class-teachers`); a mentor is
+  not one. The klasslärare then moves, cancels or changes the room of one
+  date's lesson, moves or splits a lesson of the class's grundschema, and sees
+  the clashes live, inside a **frame**: the hours the schemaläggare has opened
+  (none until some are), never a lesson with another teacher, a block, a half
+  class, a replacing group, a shared post, a teacher shared with another school
+  or a room lent to or from one, and nothing already past (by the instant: today
+  at an hour that has passed is past), covered or with a register, and nothing of
+  a läsår that has ended (`YEAR_ENDED`; a date to move a lesson to must lie in
+  the class's läsår). The frame is one statement in the database
+  (`app.class_teacher_frame`), asked by row security on every write and by the
+  gateway first, which names the reason. **What a klasslärare writes is a
+  draft** in a table of its own; nothing reaches the timetable until it is
+  published, by the schemaläggare (area Publicering) or, when the school has
+  switched `selfPublish` on (off until someone does), by the klasslärare for
+  their own class. Publication runs the editor's own services
+  (`MasterLessonsService.update/create`, `CalendarLessonsService.cancel/
+  changeRoom`), as the administrator who made the appointment
+  (`app.class_teacher_actor`, only to the klasslärare of the class, the way
+  Vikariefrågan places a yes as the sender); an appointment whose administrator
+  is removed, deactivated or no longer writes Schemaläggning, Drift and
+  Publicering **lapses** (409 `CLASS_TEACHER_APPOINTER_GONE`) until another
+  administrator makes it again. Two people at once never overwrite each other:
+  a draft carries a hash of the lesson it was written against and a revision,
+  and a clash is a 409 that says what changed. **A change is held to the rules
+  the editor holds a placement to and to no rules of its own**: the clash rule
+  (`MasterLessonsService.findConflicts`) for the template, and for one date the
+  same rule held against that date's lessons, and G1's board rules (the stage's
+  ramtid, the class's meal, a closure on årskurser: `src/swaps/board-rules.ts`)
+  for both. **Publishing is claimed**: of two who publish the same draft at once
+  one carries it out (the other is told it is gone). **A change of the template
+  in a school that publishes at once** moves the future dated lessons and removes
+  the ones that would land in the past or past the template's end; the klasslärare
+  is told how many (and how many carry a lesson log) before it is published, and a
+  lesson that was moved, or given another room, for its date is met as a clash
+  until the date has passed or it is put back, since the change would put it on
+  a third day or in the template's room again. **A DRAFT school** (publishMode
+  DRAFT) hides its grundschema from teachers; the klasslärare reads their own
+  class's through `app.class_teacher_master_lessons`, and the check and the
+  preview name a clash with the rest of the draft by its kind alone ("the room is
+  taken"), never whose lesson or when. A published template change lands in the
+  school's draft like any other grundschema edit, for the schemaläggare's ordinary
+  publication.
+  **Rollover:** appointments do not carry into the next läsår (a new läsår has
+  new classes); the administrator appoints again. An appointment on a läsår that
+  has ended is no longer offered (`GET /api/v1/class-teacher/mine`) and every
+  change of its classes is refused by the database (`YEAR_ENDED`).
+  **After the merge:** `GET /api/v1/class-teachers/settings` answers
+  `{"selfPublish": false}`; as a teacher with no appointment `GET
+  /api/v1/class-teacher/mine` answers `{"classes": [], "selfPublish": false}`.
+  In a test school: appoint a teacher to a class, open Monday 08:00-12:00 for
+  every class, and as the teacher cancel a lesson of that class for next
+  Monday; it shows under Utkast for the schemaläggare, and publishing it
+  cancels the lesson and tells the class. Read the log for `A class teacher
+  change was carried out but could not be marked published`.
+  **Rolling back the API** leaves four tables and the functions nobody reads;
+  the routes answer 404. To remove them (only if the feature is abandoned):
+  `DROP TABLE "ClassTeacherChanges", "ClassTeacherOpenTimes",
+  "ClassTeacherSettings", "ClassTeacherAppointments"; DROP TYPE
+  "ClassTeacherChangeKind", "ClassTeacherChangeStatus";` then drop the functions
+  (`SELECT p.oid::regprocedure FROM pg_proc p WHERE p.proname LIKE
+  'class\_teacher\_%' OR p.proname = 'is_class_teacher'`) and `prisma migrate
+  resolve --rolled-back 20270128090000_en_klasslarare_utses_och_andrar_sin_klass_inom_ramen`.
+
+- **Checklistor** (instruktionsbevis and samtyckeslistor per klass): 20270129090000 adds the
+  `RetentionDataType` value `CHECKLISTS` and nothing else (a value cannot be used in the transaction that adds
+  it, so it is a file of its own, taking no lock). 20270129091000 adds the tables `InstructionTemplates`,
+  `InstructionProofs`, `ConsentLists`, `ConsentEntries` and `ConsentAsks`, the enums `ConsentEntryKind` and
+  `ConsentEntrySource`, thirteen functions (all SECURITY DEFINER with a pinned `search_path`: seven the API role
+  runs, six the owner's alone, the stamps and the bridge), five stamping triggers on the new tables, one
+  statement trigger on `AckReceipts` (`AckReceipts_consent`, AFTER UPDATE with both transition tables: it does
+  nothing for a request that belongs to no consent list), nineteen policies for the API role, and
+  `app.gallring_due` and `app.gallring_purge` again with the new kind. No existing row is touched and no existing
+  table gains a column. The new keys take `Schools`, `Users`, `StudentGroups`, `Subjects`, `AckRequests` and
+  `AckReceipts` in SHARE ROW EXCLUSIVE, NOWAIT, together in a loop: reads and foreign-key checks go on, writes to
+  those wait for the file, and if all six are not free at once in 30 s it stops with nothing changed (`prisma
+  migrate resolve --rolled-back 20270129091000_instruktionsbevis_och_samtyckeslistor_per_klass`, then deploy
+  again). The API before the release knows none of the objects and never asks for the new kind, so it keeps
+  working between the migration and the deploy; the migrations go in first, then the merge. The gallring
+  functions are built on the bodies Elevens lektion för dagen (D7, 20270122091000) left, which are `main`'s and
+  production's before this release: the md5 of the bodies is `a7b1da5813d0acf54b1474ad6f96c9c3` (due) and
+  `b23e04aec610ebbf1795b832d5054273` (purge) before, and `166943b0d5d22801fe9a1be96a722d95` and
+  `2390088f88e967fda35af6d56e63d3f9` after; the difference is the one branch marked `checklistor` in each
+  (three tables in `due`, three deletes in `purge`), and D7's `LessonPupilMoves` branch is carried in both. (An
+  earlier version of this migration was built on 20270117091000's bodies, `f884a3c7…` and `21746d39…`, and
+  would have dropped D7's branch without a git conflict, since the stamp puts this file after D7's; the review
+  of #288 found it, `src/gallring/gallring-branches.spec.ts` now fails on any phase that does, and RLS 433 checks the
+  branch in the database. **Check `md5(prosrc)` before this migration: it must be D7's.**) `gallring_pseudonymise`
+  (`6f18f62fc354bde849aa2e8b01eeceda`) is not touched, on purpose (see the decision below).
+  **Nothing changes for a school until someone uses it**: the pages are `/admin/checklists` and
+  `/teacher/checklists`, and asking the guardians in the app needs Kvittens (F4) to be on for the school.
+  **What is decided, for a conversation with the school:**
+  - *A proof is the pupil's, not the class's.* `InstructionProofs` carries a pupil and a template, never a class
+    or a group, so it follows the pupil through a change of class and the year rollover (the rollover moves
+    `Users.studentGroupId` and nothing else). A tick made in error is voided with a reason and stays; the same
+    pupil, template and day is one proof; no role can change or remove one.
+  - *"Sparas permanent" means this retention rule* (the new kind `CHECKLISTS` on Dataskydd): proofs and consents
+    are kept as long as the pupil is at the school and then as long as the school decides. Until the school
+    records a period nothing is purged (the default is "ej beslutat"), and a pupil who is still at the school
+    never has anything due, whatever period was chosen: only rows of a pupil who has left (`Users.deactivatedAt`)
+    more than that period ago, and consent lists that are older than the period and empty, are removed. An
+    instruction proof can be needed for the work-environment responsibility long after the pupil has left, which
+    is why the default keeps it. **A proof names its pupil only as long as the pupil is not pseudonymised**, and
+    that is the school's separate choice for *Avgångna personer*: a school that wants to be able to show *who* was
+    instructed must choose at least as long a period there as for *Checklistor*. The pseudonymisation does not
+    touch the proofs (a proof of a pseudonymised pupil stays, without a name), nor the free text staff wrote in
+    them: `ConsentEntries.givenBy` (who gave the answer, often a guardian's name) and the two `note` columns stay
+    until the rows are purged, so the *Checklistor* period also decides how long a guardian's name is kept
+    (granskning #288, LÅG-4; `gallring_pseudonymise` is a third shared function and is left alone); this is
+    flagged in the pull request.
+  - *A consent is a guardian's.* Staff write it down from a paper, a call or a meeting (who wrote it and when are
+    the database's; the date on the paper and who gave it are the writer's), or ask the guardians through Kvittens
+    with the rule ALL, which is the only confirmation there is: when the last guardian a request asked has
+    confirmed it, a trigger writes the pupil's answer (source `KVITTENS`). Two guardians who confirm at the same
+    moment are serialised by a lock of the trigger's own, per request, so the answer is written once, by whichever
+    is last. A confirmation that is only "met" because the other guardian's custody ended is *not* written as a
+    consent: nobody said yes after it. Nor does the last confirmation undo what staff wrote after the request was
+    made: a `WITHDRAWN` or a `DECLINED` newer than the request stays the latest answer (the trigger writes nothing
+    for that pupil), and the pupil is granted again only by a request made after it, the school asking again
+    (granskning #288, MEDEL-2). An answer is only ever added: a consent taken back is another answer,
+    `WITHDRAWN`, and the list shows it at once; what a pupil's consent is now is the latest answer
+    (`src/checklists/consent-state.ts`), or "frågad i appen" while a request made after it waits for a guardian.
+    The guardians' own withdrawal in the app is not built (a follow-up): until then staff write it down.
+  - *Who may do what.* An administrator under Drift manages templates and reads and writes everything of the
+    school (the läsare reads and writes nothing). A teacher ticks the pupils in their own groups and lessons of
+    the school's active year (`app.checklist_taught_ids`: the lessons where they are teacher or co-teacher, a
+    parked lesson excluded, with the lesson's classes, teaching groups and named pupils) and reads those and their
+    mentees; consents are written by the mentor (the same mentor definition as Kvittens and the frånvarobevakning).
+    Guardians and pupils see nothing here; they confirm in Meddelanden.
+  - *Skyddad identitet.* The screen names every pupil the staff member may read, a protected one too, as the
+    register does (the staff who ticks has the pupil in their register already, and a consent that is not on the
+    page is a consent nobody looked for). The **sheet for paper** (`GET …/roster/print` and `GET …/consent-lists/:id/print`)
+    is built by the gateway and holds the marked out: they are not in its rows or counts, `heldOut` says how many, and
+    the paper says so. It is the gateway's and not the browser's because a teacher, who prints too, cannot read the
+    marks (the register of marks is the administrators'): `app.checklist_protected_ids` tells the gateway, for the
+    ids it is given, which are marked (a teacher is told only about the pupils they read, an administrator about any
+    pupil of the school), and the gateway passes none of them on. The list of who can have given an instruction
+    leaves a colleague with a protected identity out for a teacher, as Skolans dag does for the staff on one screen. There is no export file. The tables are in
+    the registerutdrag, in the removal's inventory and so in the whole-school export's person tables.
+  Reads that name pupils (a roster, a list, a pupil's card) are recorded in the läslogg as PEOPLE.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this
@@ -3454,3 +4459,65 @@ anywhere else. The splash has a light and a dark ground. The native view
 behind the screens is set once, at build time, so the app repaints it
 whenever the phone switches. The device check is §15.4 step 5, on an iPhone
 and an Android phone.
+
+## 16. Analysis and planning ("Analys och planering")
+
+Key figures per teacher and school, a cost basis per pupil and a payroll basis
+with accounts, under `/admin/analysis` (route family `/api/v1/analysis`). The
+migration `20270130090000_en_skola_har_skoldelar_och_kostnadssatser_for_analys`
+adds the enum `StaffCostCategory` and two tables, `SchoolParts` (a skoldel: a
+cost centre with a name, an account and the årskurser it holds, in the
+nine-year numbering, never overlapping within a school) and `StaffCostRates`
+(the school's cost of an hour per staff category, in SEK). Neither holds a
+person: no individual salary is stored, and the category is derived when a
+basis is made. Everything else is computed per request from rows that exist,
+and no job, notice or setting is added.
+
+### 16.1 Deploy order
+
+1. Run the migration before the merge (section 2). It takes `Schools` in
+   `SHARE ROW EXCLUSIVE` with `NOWAIT` in a loop for at most 30 seconds, and
+   stops with nothing done if the table is never free (rerun it after
+   `prisma migrate resolve --rolled-back`). The API before this release is
+   unaffected: it never reads either table.
+2. Merge. The API deploys from `main`; there is no engine change and no new
+   environment variable.
+3. Verify (as the owner): `SELECT count(*) FROM pg_policies WHERE tablename IN
+   ('SchoolParts','StaffCostRates');` is 8, `app_authenticated` holds SELECT,
+   INSERT, UPDATE and DELETE on both and nothing else, and no other role holds
+   anything (PostgreSQL 17: not MAINTAIN either).
+
+### 16.2 What each reader gets
+
+- Key figures: every administrator profile, without tjänstgöringsgrad unless
+  the profile reads HR data; the huvudman's reader gets the school's figures
+  and no teacher's row. A teacher has none of it.
+- Cost basis: rektor, a full administrator, a reader with HR-läs, and the
+  huvudman's reader (as sums). Refused to the rest with
+  `ANALYSIS_COST_NOT_YOURS`.
+- Payroll basis and its file: rektor, a full administrator and a reader with
+  HR-läs, never the huvudman's reader (`HR_NOT_YOURS` before anything is read).
+  The file keeps people with a protected identity and says how many
+  (`protectedInFile`); both are recorded in the read log.
+  A person who has been deactivated (`Users.deactivatedAt`) is booked up to
+  that moment and no further: lessons and covers that were over by it
+  (`endsAt <= deactivatedAt`, D6's rule, through statement E's `endedBy`), the
+  stored uppdrag and the rastvakt to the day before the school's date of it,
+  and nothing for a period wholly after; `ANALYSIS_LEFT_IN_PERIOD` says how
+  many. A person made active again has no stamp and is booked as if they had
+  never left (the earlier leave is not kept).
+- Writes (a skoldel, a rate): those who decide, in the gateway (`@Decides`)
+  and in the database's arms.
+
+### 16.3 Operations
+
+- The four views are limited to 20 a minute per login and route (429,
+  `ANALYSIS_RATE_LIMITED`, with `Retry-After`), not per address: a school's
+  staff share one. The global per-address bucket for these routes is 600.
+- The views are built in the API process. Measured on a school of 120
+  teachers and 2 000 pupils: see the PR for the figures and the method.
+- The payroll CSV is Windows-1252 (`text/csv; charset=windows-1252`): a
+  character it cannot hold is written as the nearest letter and counted in a
+  notice. The Excel file keeps every character.
+- Rolling back the API past this release leaves two unused tables. Nothing
+  else reads them.

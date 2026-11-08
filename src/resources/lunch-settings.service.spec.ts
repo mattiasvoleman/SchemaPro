@@ -107,6 +107,17 @@ describe('LunchSettingsService', () => {
     generatorKeepsTravelTime: false,
     generatorKeepsPupilGapsDown: false,
     generatorKeepsConsecutiveTeaching: false,
+    generatorBestEffort: false,
+    placementEdgeMode: 'OFF',
+    placementEdgeWeight: 250,
+    placementPlacesMode: 'OFF',
+    placementPlacesWeight: 250,
+    maxClassRoomsPerDay: null,
+    maxTeacherRoomsPerDay: null,
+    maxClassBuildingsPerDay: null,
+    maxTeacherBuildingsPerDay: null,
+    placementSharedMode: 'OFF',
+    placementSharedWeight: 250,
     createdAt: new Date('2026-08-01T00:00:00.000Z'),
     updatedAt: new Date('2026-08-01T00:00:00.000Z'),
     ...overrides,
@@ -215,6 +226,36 @@ describe('LunchSettingsService', () => {
       };
       expect(older.update).not.toHaveProperty('generatorKeepsConsecutiveTeaching');
       expect(older.create).not.toHaveProperty('generatorKeepsConsecutiveTeaching');
+    });
+
+    it('writes the best-effort switch when the form sends it, on both halves of the upsert, true and false alike', async () => {
+      for (const value of [true, false]) {
+        tx.lunchSetting.upsert.mockClear();
+        tx.lunchSetting.upsert.mockResolvedValue(storedRow({ generatorBestEffort: value }));
+        await expect(service.upsert(dto({ generatorBestEffort: value }), testUser())).resolves.toMatchObject({
+          generatorBestEffort: value,
+        });
+        const sent = tx.lunchSetting.upsert.mock.calls[0]?.[0] as {
+          create: Record<string, unknown>;
+          update: Record<string, unknown>;
+        };
+        // false is a decision too: dropped as falsy it could never be turned off again.
+        expect(sent.create['generatorBestEffort']).toBe(value);
+        expect(sent.update['generatorBestEffort']).toBe(value);
+      }
+    });
+
+    it('leaves the best-effort switch alone when a tab from before it does not send one', async () => {
+      // Writing `false` here would withdraw the consent a colleague gave, and
+      // with it every candidate with deviations still on the page.
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+      await service.upsert(dto({ generatorKeepsConsecutiveTeaching: true }), testUser());
+      const older = tx.lunchSetting.upsert.mock.calls[0]?.[0] as {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      };
+      expect(older.update).not.toHaveProperty('generatorBestEffort');
+      expect(older.create).not.toHaveProperty('generatorBestEffort');
     });
 
     it('stores an absent seat count as null rather than dropping the field', async () => {
@@ -374,6 +415,276 @@ describe('LunchSettingsService', () => {
       await expect(service.upsert(dto(), testUser())).rejects.toBeInstanceOf(
         ConflictException,
       );
+    });
+  });
+
+  describe('Placeringsregler', () => {
+    type Sent = { create: Record<string, unknown>; update: Record<string, unknown> };
+    // The last call: a test that PUTs twice reads the second.
+    const sentOf = () => tx.lunchSetting.upsert.mock.calls.at(-1)?.[0] as Sent;
+    const refusal = async (promise: Promise<unknown>) => {
+      try {
+        await promise;
+      } catch (error) {
+        return error as BadRequestException;
+      }
+      return null;
+    };
+
+    it('answers with the ten columns under exactly their names, from the stored row', async () => {
+      tx.lunchSetting.findUnique.mockResolvedValue(
+        storedRow({ placementEdgeMode: 'SOFT', placementPlacesMode: 'SOFT', maxClassRoomsPerDay: 2, placementSharedMode: 'HARD', placementSharedWeight: 60 }),
+      );
+
+      const answer = await service.get(testUser());
+
+      expect(answer).toMatchObject({
+        placementEdgeMode: 'SOFT',
+        placementEdgeWeight: 250,
+        placementPlacesMode: 'SOFT',
+        placementPlacesWeight: 250,
+        maxClassRoomsPerDay: 2,
+        maxTeacherRoomsPerDay: null,
+        maxClassBuildingsPerDay: null,
+        maxTeacherBuildingsPerDay: null,
+        placementSharedMode: 'HARD',
+        placementSharedWeight: 60,
+      });
+    });
+
+    it('writes the columns a request names, on both arms of the upsert, and only those', async () => {
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+      await service.upsert(dto({ placementEdgeMode: 'SOFT', placementEdgeWeight: 400, placementSharedMode: 'SOFT', placementSharedWeight: 60 }), testUser());
+
+      for (const arm of [sentOf().create, sentOf().update]) {
+        expect(arm).toMatchObject({ placementEdgeMode: 'SOFT', placementEdgeWeight: 400, placementSharedMode: 'SOFT', placementSharedWeight: 60 });
+        expect(arm).not.toHaveProperty('placementPlacesMode');
+        expect(arm).not.toHaveProperty('maxClassRoomsPerDay');
+      }
+      // Nothing of rule 2 was said, so the stored row is not even read.
+      expect(tx.lunchSetting.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('leaves all ten alone when a tab from before them PUTs the row, so a rule a colleague turned on stays on', async () => {
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+      await service.upsert(dto(), testUser());
+
+      for (const column of Object.keys(storedRow()).filter((key) => /^(placement|max.*PerDay$)/.test(key) && !key.startsWith('maxLessons'))) {
+        expect(sentOf().update).not.toHaveProperty(column);
+        expect(sentOf().create).not.toHaveProperty(column);
+      }
+      expect(tx.lunchSetting.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('clears a limit with null, the key written, and keeps one the request leaves out', async () => {
+      tx.lunchSetting.findUnique.mockResolvedValue({ ...rule2({}), placementPlacesMode: 'SOFT', maxTeacherRoomsPerDay: 4, maxClassRoomsPerDay: 2 });
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+      await service.upsert(dto({ maxClassRoomsPerDay: null }), testUser());
+
+      expect(sentOf().update).toHaveProperty('maxClassRoomsPerDay', null);
+      expect(sentOf().update).not.toHaveProperty('maxTeacherRoomsPerDay');
+    });
+
+    /** What the stored row holds of rule 2 (the only columns the service reads for the check). */
+    const rule2 = (overrides: Record<string, unknown>) => ({
+      placementPlacesMode: 'OFF',
+      maxClassRoomsPerDay: null,
+      maxTeacherRoomsPerDay: null,
+      maxClassBuildingsPerDay: null,
+      maxTeacherBuildingsPerDay: null,
+      ...overrides,
+    });
+
+    it('refuses turning rule 2 SOFT on with no limit anywhere: a 400 with a code, and nothing written', async () => {
+      tx.lunchSetting.findUnique.mockResolvedValue(rule2({}));
+
+      const error = await refusal(service.upsert(dto({ placementPlacesMode: 'SOFT' }), testUser()));
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect(error!.getResponse()).toMatchObject({ code: 'PLACEMENT_PLACES_NEEDS_A_LIMIT', message: expect.stringContaining('placementPlacesMode') });
+      expect(tx.lunchSetting.upsert).not.toHaveBeenCalled();
+    });
+
+    it('reads the stored row, in the same transaction, for the limits the request leaves out', async () => {
+      tx.lunchSetting.findUnique.mockResolvedValue(rule2({ maxClassBuildingsPerDay: 1 }));
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+      const user = testUser();
+
+      await service.upsert(dto({ placementPlacesMode: 'SOFT' }), user);
+
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+      expect(tx.lunchSetting.findUnique).toHaveBeenCalledWith({
+        where: { schoolId: SCHOOL_ID },
+        select: {
+          placementPlacesMode: true,
+          maxClassRoomsPerDay: true,
+          maxTeacherRoomsPerDay: true,
+          maxClassBuildingsPerDay: true,
+          maxTeacherBuildingsPerDay: true,
+        },
+      });
+      expect(sentOf().update).toMatchObject({ placementPlacesMode: 'SOFT' });
+    });
+
+    it('turns rule 2 on with a limit set in the same request, on a school with no row yet', async () => {
+      tx.lunchSetting.findUnique.mockResolvedValue(null);
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+      await service.upsert(dto({ placementPlacesMode: 'SOFT', placementPlacesWeight: 100, maxTeacherBuildingsPerDay: 1 }), testUser());
+
+      expect(sentOf().create).toMatchObject({ placementPlacesMode: 'SOFT', maxTeacherBuildingsPerDay: 1 });
+    });
+
+    it('refuses clearing the last limit of a rule that is on, and admits turning it off in the same request', async () => {
+      tx.lunchSetting.findUnique.mockResolvedValue(rule2({ placementPlacesMode: 'SOFT', maxClassRoomsPerDay: 2 }));
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+      expect(await refusal(service.upsert(dto({ maxClassRoomsPerDay: null }), testUser()))).toBeInstanceOf(BadRequestException);
+      expect(tx.lunchSetting.upsert).not.toHaveBeenCalled();
+
+      await service.upsert(dto({ placementPlacesMode: 'OFF', maxClassRoomsPerDay: null }), testUser());
+      expect(tx.lunchSetting.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets rule 1 and rule 3 be turned on with nothing marked: they do nothing until a subject or a room is', async () => {
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+      await service.upsert(dto({ placementEdgeMode: 'SOFT', placementSharedMode: 'HARD' }), testUser());
+
+      expect(sentOf().update).toMatchObject({ placementEdgeMode: 'SOFT', placementSharedMode: 'HARD' });
+    });
+
+    it('does not take rule 1 as HARD until it is measured: a 400 with its own code, before anything is read or written', async () => {
+      const error = await refusal(service.upsert(dto({ placementEdgeMode: 'HARD' }), testUser()));
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect(error!.getResponse()).toMatchObject({ code: 'PLACEMENT_EDGE_HARD_NOT_OFFERED', message: expect.stringContaining('placementEdgeMode') });
+      expect(prisma.withRls).not.toHaveBeenCalled();
+      expect(tx.lunchSetting.upsert).not.toHaveBeenCalled();
+    });
+
+    it('does not take rule 2 as HARD either, on the same terms: its own code, before anything is read or written, with or without a limit', async () => {
+      for (const body of [dto({ placementPlacesMode: 'HARD' }), dto({ placementPlacesMode: 'HARD', maxClassRoomsPerDay: 2 })]) {
+        const error = await refusal(service.upsert(body, testUser()));
+
+        expect(error).toBeInstanceOf(BadRequestException);
+        expect(error!.getResponse()).toMatchObject({ code: 'PLACEMENT_PLACES_HARD_NOT_OFFERED', message: expect.stringContaining('placementPlacesMode') });
+      }
+      expect(prisma.withRls).not.toHaveBeenCalled();
+      expect(tx.lunchSetting.findUnique).not.toHaveBeenCalled();
+      expect(tx.lunchSetting.upsert).not.toHaveBeenCalled();
+    });
+
+    it('takes rules 1 and 2 as OFF and SOFT and rule 3 as HARD: rule 3 is the one that is offered hard', async () => {
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+      for (const mode of ['OFF', 'SOFT'] as const) {
+        await service.upsert(dto({ placementEdgeMode: mode }), testUser());
+        await service.upsert(dto({ placementPlacesMode: mode, maxClassRoomsPerDay: 2 }), testUser());
+      }
+      await service.upsert(dto({ placementSharedMode: 'HARD' }), testUser());
+
+      expect(tx.lunchSetting.upsert).toHaveBeenCalledTimes(5);
+      expect(sentOf().update).toMatchObject({ placementSharedMode: 'HARD' });
+    });
+
+    it('answers a stored HARD of rule 1 or rule 2 as the SOFT it is held at, and rule 3 as stored (the CHECK keeps the first two out; this is the last line)', async () => {
+      tx.lunchSetting.findUnique.mockResolvedValue(
+        storedRow({ placementEdgeMode: 'HARD', placementPlacesMode: 'HARD', maxClassRoomsPerDay: 2, placementSharedMode: 'HARD' }),
+      );
+
+      const answer = await service.get(testUser());
+
+      expect(answer).toMatchObject({ placementEdgeMode: 'SOFT', placementPlacesMode: 'SOFT', placementSharedMode: 'HARD' });
+    });
+
+    describe('the create half of the upsert, which Postgres judges before it finds the row', () => {
+      it('carries the rule 2 that is stored under what the request names, so the mode alone does not propose a rule with no limit', async () => {
+        tx.lunchSetting.findUnique.mockResolvedValue(rule2({ placementPlacesMode: 'OFF', maxClassRoomsPerDay: 2, maxTeacherBuildingsPerDay: 1 }));
+        tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+        await service.upsert(dto({ placementPlacesMode: 'SOFT' }), testUser());
+
+        expect(sentOf().create).toMatchObject({
+          placementPlacesMode: 'SOFT',
+          maxClassRoomsPerDay: 2,
+          maxTeacherBuildingsPerDay: 1,
+          maxTeacherRoomsPerDay: null,
+        });
+        // The update half is what it was: only what the request names.
+        expect(sentOf().update).toMatchObject({ placementPlacesMode: 'SOFT' });
+        expect(sentOf().update).not.toHaveProperty('maxClassRoomsPerDay');
+      });
+
+      it('lets what the request names win over what is stored, a null clearing the limit', async () => {
+        tx.lunchSetting.findUnique.mockResolvedValue(rule2({ placementPlacesMode: 'SOFT', maxClassRoomsPerDay: 2, maxTeacherRoomsPerDay: 3 }));
+        tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+        await service.upsert(dto({ maxClassRoomsPerDay: null, maxTeacherRoomsPerDay: 5 }), testUser());
+
+        expect(sentOf().create).toMatchObject({ placementPlacesMode: 'SOFT', maxClassRoomsPerDay: null, maxTeacherRoomsPerDay: 5 });
+      });
+
+      it('keeps Bästa möjliga schema’s switch (G2) beside the stored rule 2: each side’s fields are in both halves only when named', async () => {
+        tx.lunchSetting.findUnique.mockResolvedValue(rule2({ placementPlacesMode: 'OFF', maxClassRoomsPerDay: 2 }));
+        tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+        await service.upsert(dto({ generatorBestEffort: true, placementPlacesMode: 'SOFT' }), testUser());
+
+        expect(sentOf().create).toMatchObject({ generatorBestEffort: true, placementPlacesMode: 'SOFT', maxClassRoomsPerDay: 2 });
+        expect(sentOf().update).toMatchObject({ generatorBestEffort: true, placementPlacesMode: 'SOFT' });
+        expect(sentOf().update).not.toHaveProperty('maxClassRoomsPerDay');
+
+        // A tab from before either: neither field is written, in either half.
+        await service.upsert(dto(), testUser());
+        for (const arm of [sentOf().create, sentOf().update]) {
+          expect(arm).not.toHaveProperty('generatorBestEffort');
+          expect(arm).not.toHaveProperty('placementPlacesMode');
+        }
+        // The stored rule 2 is not read for a request that does not touch it, and the switch alone does not touch it.
+        tx.lunchSetting.findUnique.mockClear();
+        await service.upsert(dto({ generatorBestEffort: false }), testUser());
+        expect(tx.lunchSetting.findUnique).not.toHaveBeenCalled();
+        expect(sentOf().create).toMatchObject({ generatorBestEffort: false });
+      });
+
+      it('adds nothing of the stored row to a request that says nothing about rule 2, or to a school with no row', async () => {
+        tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+        await service.upsert(dto({ placementEdgeMode: 'SOFT' }), testUser());
+        expect(sentOf().create).not.toHaveProperty('placementPlacesMode');
+        expect(sentOf().create).not.toHaveProperty('maxClassRoomsPerDay');
+
+        tx.lunchSetting.findUnique.mockResolvedValue(null);
+        await service.upsert(dto({ placementPlacesMode: 'SOFT', maxTeacherBuildingsPerDay: 1 }), testUser());
+        expect(Object.keys(sentOf().create).filter((key) => key.startsWith('max') && key !== 'maxLessonsPerDayPerGroup')).toEqual(['maxTeacherBuildingsPerDay']);
+      });
+    });
+
+    it('answers the database’s own CHECK, met by a request that raced another, with the same 400', async () => {
+      tx.lunchSetting.findUnique.mockResolvedValue(rule2({ maxClassRoomsPerDay: 2 }));
+      tx.lunchSetting.upsert.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Invalid `upsert()` invocation', {
+          code: 'P2039',
+          clientVersion: Prisma.prismaVersion.client,
+          meta: { driverAdapterError: { cause: { originalCode: '23514', originalMessage: 'new row for relation "LunchSettings" violates check constraint "LunchSettings_placementPlaces_needs_a_limit_check"' } } },
+        }),
+      );
+
+      const error = await refusal(service.upsert(dto({ placementPlacesMode: 'SOFT' }), testUser()));
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect(error!.getResponse()).toMatchObject({ code: 'PLACEMENT_PLACES_NEEDS_A_LIMIT' });
+    });
+
+    it('lets any other refusal take the route it always did', async () => {
+      tx.lunchSetting.upsert.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Simulated P2003', { code: 'P2003', clientVersion: Prisma.prismaVersion.client }),
+      );
+
+      await expect(service.upsert(dto({ placementEdgeMode: 'SOFT' }), testUser())).rejects.toBeInstanceOf(ConflictException);
     });
   });
 });

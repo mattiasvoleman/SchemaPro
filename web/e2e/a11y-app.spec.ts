@@ -83,6 +83,13 @@ for (const route of APP_ROUTES) {
 const WRITE_VERBS =
   /^(lägg (till|upp|in)|ny|nytt|nya|skapa|spara|ta bort|radera|redigera|ändra|byt|importera|publicera|generera|tilldela|kopiera|rulla|lås|avboka|boka|bjud in|arkivera|godkänn|avslå|bevilja|koppla|ladda upp|tillämpa|ställ in|registrera|fördela|tillsätt|återkalla|synka|aktivera|avsluta|behåll|beräkna förslag|placera|parkera|dela|flytta|återställ|avbryt publicering|ersätt|gör)\b/i;
 
+/**
+ * The open pages (gate null) that still carry the area notice for a läsare, because they hold
+ * controls of several areas (NOTICE_AREAS in lib/admin-areas.ts): Personer, and Klasslärare, whose
+ * menu row marks it current and so shows the notice.
+ */
+const NOTICE_PAGES = ["/admin/people", "/admin/class-teachers"];
+
 /** Reading controls whose names begin with a write verb: `page` as on disk, `name` the control's. */
 const READ_CONTROLS: Array<{ page: string; name: RegExp; reason: string }> = [];
 
@@ -122,7 +129,7 @@ for (const route of APP_ROUTES.filter((entry) => entry.page.startsWith("/admin")
       await expect(page.getByRole("heading", { level: 1, name: "Sidan hör till ett annat område" })).toBeVisible();
       return;
     }
-    if (gate === null && !route.page.startsWith("/admin/people")) {
+    if (gate === null && !NOTICE_PAGES.some((page) => route.page.startsWith(page))) {
       await expect(notice).toHaveCount(0);
     } else {
       await expect(notice).toBeVisible();

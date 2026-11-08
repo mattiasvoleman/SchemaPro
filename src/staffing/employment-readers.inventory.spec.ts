@@ -22,6 +22,9 @@ import { join, relative } from 'node:path';
  *  4. a file classified POST that reads one of the three figures: it was
  *     classified as reading only that a post or a period exists, a period's
  *     dates, or what a period never changes (signature, avtalsform);
+ *  4b. a file classified HANDED that reads a post itself: it formats a figure
+ *     its caller has already chosen on a date (postOn) — a payroll file's
+ *     Tjänstgöringsgrad column — and names neither table nor a period helper;
  *  5. a change in the set of files classified NEXT: a file that reads the
  *     year-start post where the post on a date is the right answer. Since
  *     "Perioder i export och rullning" moved the SS12000 Duty there is none;
@@ -62,7 +65,7 @@ import { join, relative } from 'node:path';
 const ROOT = join(__dirname, '..', '..');
 const SRC = join(ROOT, 'src');
 
-type Basis = 'PERIODS' | 'POST' | 'WRITES' | 'NEXT';
+type Basis = 'PERIODS' | 'POST' | 'WRITES' | 'HANDED' | 'NEXT';
 
 const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
   'src/staffing/load-input.ts': {
@@ -189,6 +192,22 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     basis: 'POST',
     why: 'a hand edit counts the year’s posts with a day limit (a _count in a read it already makes) and reads the days of those it warns about; a period never states them',
   },
+  'src/swaps/swap-snapshot.ts': {
+    basis: 'POST',
+    why: 'Byten och flyttar reads the days and the limit for teaching in a row of the posts of the teachers who teach a placed lesson, to count the breaches a swap makes or mends; no figure of the post (percent, reduction, target) and no period',
+  },
+  'src/analysis/analysis.service.ts': {
+    basis: 'PERIODS',
+    why: 'Analys och planering: the payroll basis reads each teacher’s tjänstgöringsgrad on the period’s last day (postOn), and the key figures on the school’s today inside the läsår, with the day in the answer',
+  },
+  'src/analysis/key-figures.ts': {
+    basis: 'PERIODS',
+    why: 'nyckeltal: a teacher’s tjänstgöringsgrad, and the school’s heltidstjänster by it, are the post on one day (postOn), for a reader with HR-läs only',
+  },
+  'src/analysis/payroll-files.ts': {
+    basis: 'HANDED',
+    why: 'the payroll file’s Tjänstgöringsgrad column formats the figure the service chose on the period’s last day; it reads no post and no period',
+  },
 };
 
 /** The readers left on the year-start post, written out: see 5. */
@@ -303,6 +322,10 @@ const DAYS_READERS: Record<string, { use: DaysUse; why: string }> = {
     use: 'WORDS',
     why: 'the hand edit’s TEACHER_WEEK_TOO_MANY_DAYS and TEACHER_CONSECUTIVE_TOO_LONG warnings: the figures with readsHr, the *_HIDDEN code otherwise',
   },
+  'src/swaps/swap-snapshot.ts': {
+    use: 'WORDS',
+    why: 'Byten och flyttar judges with the days and the limit for every reader alike and answers a COUNT of breaches per proposal: no figure, no teacher named, no weekday (swap-soft.ts); the read of the posts is a row in the läslogg (EMPLOYMENT)',
+  },
   'src/cover/cover-context.ts': {
     use: 'WORDS',
     why: 'the Vikarietavla’s WORK_DAYS and CONSECUTIVE_TEACHING rules read each candidate’s days and limit in the post read it already makes; maskFindings words them for the reader',
@@ -336,6 +359,17 @@ describe('who reads a post, and whether they read its periods (20261022120000)',
       .map(([path]) => path)
       .filter((path) => !PERIODS_READ.test(files.find((file) => file.path === path)?.text ?? ''));
     expect(silent).toEqual([]);
+  });
+
+  it('holds a file classified HANDED to naming no table and no period helper: the figure it formats is handed to it', () => {
+    const reading = Object.entries(CLASSIFIED)
+      .filter(([, entry]) => entry.basis === 'HANDED')
+      .map(([path]) => path)
+      .filter((path) => {
+        const text = files.find((file) => file.path === path)?.text ?? '';
+        return TABLE_READ.test(text) || PERIODS_READ.test(text);
+      });
+    expect(reading).toEqual([]);
   });
 
   it('holds a file classified POST to reading none of the three figures a period changes', () => {

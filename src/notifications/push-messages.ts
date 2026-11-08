@@ -268,6 +268,12 @@ const SV: Record<PushKind, Template> = {
     bare: 'Skolan ber dig bekräfta ett meddelande. Öppna appen för att läsa det.',
     many: 'Skolan ber dig bekräfta ett meddelande. Öppna appen för att läsa det.',
   },
+  LESSON_PUPIL_MOVED: {
+    title: 'Elevs lektion ändrad',
+    one: 'En elevs lektion {when} har ändrats. Öppna appen för att se vilken.',
+    bare: 'En elevs lektion har ändrats. Öppna appen för att se vilken.',
+    many: '{count} elevers lektioner har ändrats. Öppna appen för att se vilka.',
+  },
   ACK_REMINDER: {
     title: 'Påminnelse från skolan',
     one: 'Ett meddelande från skolan väntar på din bekräftelse. Öppna appen för att läsa det.',
@@ -483,6 +489,12 @@ const EN: Record<PushKind, Template> = {
     one: 'The school asks you to confirm a message. Open the app to read it.',
     bare: 'The school asks you to confirm a message. Open the app to read it.',
     many: 'The school asks you to confirm a message. Open the app to read it.',
+  },
+  LESSON_PUPIL_MOVED: {
+    title: 'Pupil lesson changed',
+    one: "A pupil's lesson {when} has changed. Open the app to see which.",
+    bare: "A pupil's lesson has changed. Open the app to see which.",
+    many: "{count} pupils' lessons have changed. Open the app to see which.",
   },
   ACK_REMINDER: {
     title: 'Reminder from the school',

@@ -98,6 +98,72 @@ describe('SubjectAccessService', () => {
     await expect(service.extract(testUser({ schoolId: SCHOOL }), PUPIL, false)).rejects.toThrow('the log is down');
   });
 
+  describe('Checklistor: a pupil\'s proof and a pupil\'s consent answer in the extract of the member of staff who made them', () => {
+    const TEACHER = '88888888-8888-4888-8888-888888888888';
+    const MENTOR = '99999999-9999-4999-8999-999999999999';
+    const proof = {
+      id: 'c1', schoolId: SCHOOL, templateId: 't1', studentId: PUPIL, instructedOn: '2026-11-02', instructorId: TEACHER, recordedById: TEACHER,
+      recordedAt: '2026-11-02T09:00:00+00:00', note: 'Eleven var orolig och behövde extra stöd', voidedAt: '2026-11-03T09:00:00+00:00', voidedById: TEACHER, voidReason: 'Fel elev',
+    };
+    const answer = {
+      id: 'e1', schoolId: SCHOOL, listId: 'l1', studentId: PUPIL, kind: 'DECLINED', source: 'REGISTERED', givenOn: '2026-11-04', givenBy: 'pappa Bertil',
+      note: 'Vill inte ha bild på nätet', ackRequestId: null, recordedById: MENTOR, recordedAt: '2026-11-04T09:00:00+00:00',
+    };
+
+    /** The tables are read by name: the proof and the answer come back whoever is asked for, as the database would for the person who wrote them. */
+    const tables = () =>
+      tx.$queryRaw.mockImplementation(async (sql: unknown) => {
+        const text = textOf(sql);
+        if (text.includes('FROM "InstructionProofs" t')) return [{ j: JSON.stringify(proof) }];
+        if (text.includes('FROM "ConsentEntries" t')) return [{ j: JSON.stringify(answer) }];
+        return [];
+      });
+    const csvOf = async (who: string, name: string) => {
+      const result = await service.extract(testUser({ schoolId: SCHOOL }), who, false);
+      const text = unzip(result.contentBase64).get(name)?.toString('utf8');
+      expect(text).toBeDefined();
+      const [header, row] = text!.replace(/^\uFEFF/, '').split('\r\n').map((line) => line.split(';'));
+      return Object.fromEntries(header!.map((column, index) => [column, row![index]]));
+    };
+
+    it("empties the pupil and the proof's note and reason in a teacher's extract, and keeps the act: who ticked, and which template and day", async () => {
+      tx.user.findUnique.mockResolvedValue({ id: TEACHER });
+      tables();
+      const row = await csvOf(TEACHER, 'data/person/instructionproofs.csv');
+      expect(row).toMatchObject({ studentId: '', note: '', voidReason: '' });
+      expect(row).toMatchObject({ instructorId: TEACHER, recordedById: TEACHER, voidedById: TEACHER, templateId: 't1', instructedOn: '2026-11-02' });
+    });
+
+    it("empties the pupil and what the guardian decided, who gave it and the note in a mentor's extract, and keeps the act: who wrote, when, on which list", async () => {
+      tx.user.findUnique.mockResolvedValue({ id: MENTOR });
+      tables();
+      const row = await csvOf(MENTOR, 'data/person/consententries.csv');
+      expect(row).toMatchObject({ studentId: '', kind: '', givenOn: '', givenBy: '', note: '' });
+      expect(row).toMatchObject({ recordedById: MENTOR, listId: 'l1', source: 'REGISTERED', recordedAt: '2026-11-04T09:00:00+00:00' });
+    });
+
+    it("leaves both whole in the pupil's own extract", async () => {
+      tables();
+      const proofs = await csvOf(PUPIL, 'data/person/instructionproofs.csv');
+      expect(proofs).toMatchObject({ studentId: PUPIL, note: proof.note, voidReason: 'Fel elev' });
+      const answers = await csvOf(PUPIL, 'data/person/consententries.csv');
+      expect(answers).toMatchObject({ studentId: PUPIL, kind: 'DECLINED', givenOn: '2026-11-04', givenBy: 'pappa Bertil', note: answer.note });
+    });
+
+    it('counts the emptied cells in the manifest, and records no read about the pupil in a staff extract', async () => {
+      tx.user.findUnique.mockResolvedValue({ id: TEACHER });
+      tables();
+      const result = await service.extract(testUser({ schoolId: SCHOOL }), TEACHER, false);
+      const manifest = JSON.parse(unzip(result.contentBase64).get('manifest.json')!.toString('utf8')) as { files: Array<{ path: string; tommaCeller?: number }> };
+      expect(manifest.files.find((file) => file.path === 'data/person/instructionproofs.csv')?.tommaCeller).toBe(3);
+      expect(manifest.files.find((file) => file.path === 'data/person/consententries.csv')?.tommaCeller).toBe(5);
+      // The läslogg row of the read names the persons the extract holds rows about: the teacher, and not the pupil the rows are about.
+      const reads = JSON.stringify(tx.$executeRaw.mock.calls);
+      expect(reads).toContain(TEACHER);
+      expect(reads).not.toContain(PUPIL);
+    });
+  });
+
   it('keeps an extract to 64 MB', () => {
     expect(MAX_EXTRACT_BYTES).toBe(64 * 1024 * 1024);
   });

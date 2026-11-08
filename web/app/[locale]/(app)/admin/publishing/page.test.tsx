@@ -68,6 +68,7 @@ const SETTINGS: PublicationSettings = {
   gateDayOpsLost: "WARN",
   gateEmptyHalf: "WARN",
   gateOtherSchool: "WARN",
+  gateDeviations: "WARN",
   viewerAudience: "STAFF",
   viewerClassMode: "OFF",
   viewerGroupMode: "OFF",
@@ -322,6 +323,48 @@ describe("/admin/publishing", () => {
     await user.click(await screen.findByRole("option", { name: "Stoppar" }));
     await user.click(screen.getByRole("button", { name: "Spara" }));
     await waitFor(() => expect(put).toHaveBeenCalledWith("/api/v1/publication-settings", { gateClashes: "REFUSE" }));
+  });
+});
+
+describe("/admin/publishing › Avsteg från skolans regler", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    server.settings = { ...SETTINGS };
+    server.draft = {
+      academicYearId: "y26",
+      publishMode: "DRAFT",
+      publicationId: "ht",
+      added: [],
+      changed: [],
+      removed: [],
+      pendingRemovals: 0,
+    };
+    answer();
+  });
+
+  const NAME = "Avsteg från skolans regler i det senast tillämpade schemat";
+
+  it("lists the check among the others, as a warning until the school says otherwise", async () => {
+    renderPage();
+    const trigger = await screen.findByRole("combobox", { name: NAME });
+    expect(trigger).toHaveTextContent("Varnar");
+    expect(trigger).toHaveAttribute("data-writes-inert", "PUBLICERING");
+  });
+
+  it("saves the check alone when the school makes it stop a publish", async () => {
+    put.mockResolvedValueOnce({ ...SETTINGS, gateDeviations: "REFUSE", stored: true });
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("combobox", { name: NAME }));
+    await user.click(await screen.findByRole("option", { name: "Stoppar" }));
+    await user.click(screen.getByRole("button", { name: "Spara" }));
+    await waitFor(() => expect(put).toHaveBeenCalledWith("/api/v1/publication-settings", { gateDeviations: "REFUSE" }));
+  });
+
+  it("reads a school that set it to stop as stopping", async () => {
+    server.settings = { ...SETTINGS, gateDeviations: "REFUSE", stored: true };
+    renderPage();
+    expect(await screen.findByRole("combobox", { name: NAME })).toHaveTextContent("Stoppar");
   });
 });
 

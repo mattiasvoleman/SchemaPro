@@ -27,10 +27,12 @@ import {
   ACK_NOT_YOUR_PUPIL,
   ACK_PASS_BUDGET_MS,
   ACK_QUEUE_LIMIT,
+  ACK_SENDER_DAY_LIMIT,
   ACK_TOO_MANY_RECIPIENTS,
   ACK_TOO_MANY_REQUESTS,
   ACK_UNKNOWN_PUPIL,
   PAGE_DEFAULT,
+  USAGE_SENDERS,
 } from './ack';
 import { requestedEntries, type ReminderRow, reminderEntries } from './ack-notices';
 import type {
@@ -46,6 +48,7 @@ import type {
   AckReminderState,
   AckReminderStopped,
   AckSettingsView,
+  AckUsage,
 } from './ack-views';
 import type { AckPageQueryDto, AckSettingsDto, CreateAckRequestDto } from './dto/ack.dto';
 
@@ -62,8 +65,13 @@ interface StatusRow {
 const RECEIPT_CHUNK = 1000;
 const fullName = (person: { firstName: string; lastName: string }) => `${person.firstName} ${person.lastName}`;
 
-/** Where a request's one reminder stands, from what the row says. */
-function reminderOf(request: { remindAt: Date | null; reminderOutcome: AckReminderOutcome | null }): AckReminderState {
+/**
+ * Where a request's one reminder stands, from what the row says. SENT is only said when the delivery has also said
+ * that the e-mail and the push were taken (reminderMirroredAt); until it has, and for good if the process stopped with
+ * them in its queue, it is WRITTEN: in the inboxes, and nothing more is known.
+ */
+function reminderOf(request: { remindAt: Date | null; reminderOutcome: AckReminderOutcome | null; reminderMirroredAt: Date | null }): AckReminderState {
+  if (request.reminderOutcome === 'SENT' && !request.reminderMirroredAt) return 'WRITTEN';
   if (request.reminderOutcome) return request.reminderOutcome;
   return request.remindAt ? 'SCHEDULED' : 'NONE';
 }
@@ -88,6 +96,7 @@ function sqlStateOf(error: unknown): string | null {
   const named = /Code: `([0-9A-Z]{5})`/.exec(message)?.[1];
   if (named) return named;
   if (message.includes('ACK_TOO_MANY_REQUESTS')) return 'KV429';
+  if (message.includes('ACK_SENDER_DAY_LIMIT')) return 'KV427';
   if (message.includes('ACK_TOO_MANY_RECIPIENTS')) return 'KV428';
   return null;
 }
@@ -103,8 +112,9 @@ function sqlStateOf(error: unknown): string | null {
  * and they cannot confirm it (KV410), and they do not hold up an ALL request.
  *
  * WHAT A SENDER MAY SEND is limited by the database (10 requests an hour for a
- * person, 20 000 receipts a day for a school: KV429 and KV428, here a 429), and
- * the route is throttled besides. THE REMINDER is worked through a request at a
+ * person, a share of the day for a person, 20 000 receipts a day for a school:
+ * KV429, KV427 and KV428, here a 429), and the route is throttled besides.
+ * The shares and the school's use are read by usage(). THE REMINDER is worked through a request at a
  * time, each in a transaction of its own (see remind).
  *
  * WHAT IS READ AND RECORDED. A staff member opening a request reads pupils'
@@ -192,13 +202,35 @@ export class AckService {
    * (the arms of AckReceipts), so this answers first with a code.
    */
   async create(dto: CreateAckRequestDto, user: AuthenticatedUser): Promise<AckCreated> {
+    return (await this.createThen(dto, user, async () => undefined)).created;
+  }
+
+  /**
+   * create, and then `then` in the same transaction, with the request just written: a request that something else
+   * must hang on (Checklistor's consent list asks the guardians through this, with the rule ALL, and links the
+   * request to the list) is written together with that link or not at all, and the limits answer as they do for
+   * create. `then` runs after the receipts and the notices are written and before the commit.
+   */
+  async createThen<T>(
+    dto: CreateAckRequestDto,
+    user: AuthenticatedUser,
+    then: (tx: PrismaClient, created: AckCreated) => Promise<T>,
+  ): Promise<{ created: AckCreated; result: T }> {
     try {
-      return await this.write(dto, user);
+      return await this.write(dto, user, then);
     } catch (error) {
       switch (sqlStateOf(error)) {
         case 'KV429':
           throw new HttpException(
             { code: ACK_TOO_MANY_REQUESTS, message: 'Du har skickat tio meddelanden den senaste timmen. Vänta en stund och försök igen.' },
+            HttpStatus.TOO_MANY_REQUESTS,
+          );
+        case 'KV427':
+          throw new HttpException(
+            {
+              code: ACK_SENDER_DAY_LIMIT,
+              message: 'Du har bett om kvittens från så många vårdnadshavare det senaste dygnet att den här förfrågan skulle gå över din andel av dagen. Inget har skickats. Välj färre elever eller försök igen senare. Måste förfrågan gå ut nu kan en annan administratör skicka den, eftersom var och en har en egen andel.',
+            },
             HttpStatus.TOO_MANY_REQUESTS,
           );
         case 'KV428':
@@ -212,7 +244,11 @@ export class AckService {
     }
   }
 
-  private async write(dto: CreateAckRequestDto, user: AuthenticatedUser): Promise<AckCreated> {
+  private async write<T>(
+    dto: CreateAckRequestDto,
+    user: AuthenticatedUser,
+    then: (tx: PrismaClient, created: AckCreated) => Promise<T>,
+  ): Promise<{ created: AckCreated; result: T }> {
     const schoolId = requireSchoolId(user);
     const authorId = requireUserId(user);
     const studentIds = [...new Set(dto.studentIds)];
@@ -259,7 +295,8 @@ export class AckService {
       const guardianIds = [...new Set(links.map((link) => link.guardianId))];
       const entry = requestedEntries(id, dto.title);
       await this.notifications.notifyUsers(tx, { schoolId, userIds: guardianIds, type: 'ACK_REQUESTED', meta: entry.meta, email: entry.email });
-      return { id, pupils: asked.size, guardians: guardianIds.length, withoutGuardian };
+      const created: AckCreated = { id, pupils: asked.size, guardians: guardianIds.length, withoutGuardian };
+      return { created, result: await then(tx, created) };
     });
   }
 
@@ -275,7 +312,7 @@ export class AckService {
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: limit + 1,
         ...(query.after ? { cursor: { id: query.after }, skip: 1 } : {}),
-        select: { id: true, title: true, rule: true, authorName: true, createdAt: true, remindAt: true, reminderOutcome: true },
+        select: { id: true, title: true, rule: true, authorName: true, createdAt: true, remindAt: true, reminderOutcome: true, reminderMirroredAt: true },
       });
       const { rows: requests, next } = pageOf(found, limit);
       const status = await this.statusOf(tx, requests.map((request) => request.id));
@@ -319,6 +356,7 @@ export class AckService {
           remindAt: true,
           reminderSentAt: true,
           reminderOutcome: true,
+          reminderMirroredAt: true,
         },
       });
       if (!request) throw this.notFound();
@@ -372,6 +410,7 @@ export class AckService {
         createdAt: request.createdAt.toISOString(),
         remindAt: request.remindAt?.toISOString() ?? null,
         reminderSentAt: request.reminderSentAt?.toISOString() ?? null,
+        reminderMirroredAt: request.reminderMirroredAt?.toISOString() ?? null,
         reminder,
         mayStopReminder: reminder === 'SCHEDULED' && (await this.mayStop(tx, user, request.authorId)),
         pupils: shown,
@@ -489,8 +528,13 @@ export class AckService {
    * the next pass; the ones after it are still done, and a pass that runs out
    * of its minute leaves the rest for the next. The database writes the
    * notices and hands them back with the addresses; the e-mail and the push go
-   * after each request's commit through the delivery that is there. A failed
-   * delivery is the delivery's to retry; the reminder is marked either way.
+   * after each request's commit through the delivery that is there. The
+   * request is SENT at the commit, which is what the database knows: the
+   * notices are in the inboxes. That the e-mail and the push were taken by
+   * their channels is the delivery's word, said when it has finished the batch
+   * (markMirrored); until then, and for good if the process stops with the batch
+   * in its queue or a channel refuses it, the request reads WRITTEN. Nothing
+   * sends a reminder twice.
    */
   async remind(budgetMs: number = ACK_PASS_BUDGET_MS): Promise<{ reminded: number; requests: number; failed: number; left: number }> {
     const started = Date.now();
@@ -508,13 +552,63 @@ export class AckService {
         );
         requests += 1;
         reminded += rows.length;
-        if (rows.length > 0) this.notifications.deliverCommitted(reminderEntries(rows));
+        if (rows.length > 0) {
+          const requestId = queue[at]!.request_id;
+          this.notifications.deliverCommitted(reminderEntries(rows), (delivered) => {
+            if (delivered) void this.markMirrored(requestId);
+            else this.logger.warn('A reminder was written to the inboxes but its e-mail or push was not taken by its channel');
+          });
+        }
       } catch (error) {
         failed += 1;
         this.logger.warn(`A request's reminder failed and stays in the queue [${errorName(error)}, sqlstate=${sqlStateOf(error) ?? 'none'}]`);
       }
     }
     return { reminded, requests, failed, left: queue.length - at };
+  }
+
+  /** Records that the delivery handed a SENT reminder's e-mail and push to their channels. Never throws: the request stays WRITTEN. */
+  private async markMirrored(requestId: string): Promise<void> {
+    try {
+      await this.prisma.withDeliveryService((tx) => tx.$executeRaw(Prisma.sql`SELECT app.ack_reminder_mirrored(${requestId}::uuid)`));
+    } catch (error) {
+      this.logger.warn(`A reminder's delivery could not be recorded and stays WRITTEN [${errorName(error)}, sqlstate=${sqlStateOf(error) ?? 'none'}]`);
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // The day's limits
+
+  /**
+   * How much of the day's limits has been used, for staff: the caller's own share (a teacher's 2 000 rows, an
+   * administrator's 8 000), and for an administrator also the school's 20 000 and the senders who have used most.
+   * The numbers are the database's (app.ack_usage asks the same function the limit does), counted over the last 24
+   * hours as the limits are; a row is one guardian asked about one pupil.
+   */
+  async usage(user: AuthenticatedUser): Promise<AckUsage> {
+    requireSchoolId(user);
+    try {
+      const rows = await this.prisma.withRls(user, (tx) =>
+        tx.$queryRaw<Array<{ scope: 'SCHOOL' | 'ME' | 'SENDER'; author_id: string | null; author_name: string | null; used: number; cap: number }>>(
+          Prisma.sql`SELECT scope, author_id, author_name, used, cap FROM app.ack_usage(${USAGE_SENDERS}::integer)`,
+        ),
+      );
+      const line = (row: { used: number; cap: number }) => ({ used: Number(row.used), limit: Number(row.cap) });
+      const school = rows.find((row) => row.scope === 'SCHOOL');
+      const mine = rows.find((row) => row.scope === 'ME');
+      return {
+        school: school ? line(school) : null,
+        // A login with no person (the huvudman's reader) is given an ME row of nothing used, but with no person id: it
+        // has no share and cannot send, so the answer has no share of its own to show (the database's word, not ours).
+        mine: mine?.author_id ? line(mine) : null,
+        senders: school ? rows.filter((row) => row.scope === 'SENDER').map((row) => ({ name: row.author_name ?? '', ...line(row) })) : null,
+      };
+    } catch (error) {
+      if (sqlStateOf(error) === 'KV403') {
+        throw new ForbiddenException({ code: ACK_NOT_STAFF, message: 'Bara personal kan se förbrukningen.' });
+      }
+      throw error;
+    }
   }
 
   // -------------------------------------------------------------------

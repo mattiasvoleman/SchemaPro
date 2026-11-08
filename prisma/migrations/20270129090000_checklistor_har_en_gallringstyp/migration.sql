@@ -1,0 +1,26 @@
+-- Checklistor har en gallringstyp.
+--
+-- Checklistor (20270129091000) låter skolan spara instruktionsbevis ("eleven
+-- har fått instruktion i cirkelsågen, den 3 oktober, av Anna") och samtycken
+-- ("vårdnadshavaren har samtyckt till fotografering") per elev. Det är uppgifter
+-- som ska finnas kvar länge: ett bevis kan behövas för arbetsmiljöansvaret
+-- långt efter att eleven slutat. De gallras därför inte med notiserna eller
+-- något annat som redan har en tid, utan med en gallringstyp för sig:
+--
+--   * CHECKLISTS   instruktionsbevisen och samtyckena. Förvalet i varje skola
+--                  är "ej beslutat", och ingenting gallras förrän skolan
+--                  skrivit en tid på /admin/dataskydd. Även med en tid gallras
+--                  bara det som hör till en elev som har slutat, och bara när
+--                  eleven slutat för mer än den tiden sedan: en elev som går
+--                  kvar på skolan har sina bevis kvar, hur lång tid skolan än
+--                  valt.
+--
+-- Egen migrering: ett värde som läggs till i en enum kan inte användas i den
+-- transaktion som lägger till det (som 20261026090000, 20270102090000 och
+-- 20270113090000), och nästa fil kompilerar app.gallring_due, en LANGUAGE
+-- sql-funktion som nämner typen. Inget annat står här, ingen rad skrivs, och
+-- inget lås tas: ALTER TYPE ... ADD VALUE tar inget lås på någon tabell, så den
+-- API-version som körs medan migreringen går märker ingenting. Den känner inte
+-- typen och ber aldrig om den.
+
+ALTER TYPE "RetentionDataType" ADD VALUE IF NOT EXISTS 'CHECKLISTS';
