@@ -192,8 +192,12 @@ export class ExternalBookingsController {
     return this.external.preview(dto, user);
   }
 
+  /**
+   * Registering is the expedition's, a few people at one address, but a term for forty rooms is forty of them in a
+   * row (the phase measures it), so the ceiling per address is high; the preview, which writes nothing, has none beyond the global.
+   */
   @Post()
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
   create(@Body() dto: CreateExternalBookingDto, @CurrentUser() user: AuthenticatedUser): Promise<ExternalBookingResult> {
     return this.external.create(dto, user);
   }
