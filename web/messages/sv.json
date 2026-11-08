@@ -230,7 +230,9 @@
     "crisis": "Krisläge",
     "myCrisis": "Larm",
     "schemavisaren": "Schemavisaren",
-    "schoolDay": "Skolans dag"
+    "schoolDay": "Skolans dag",
+    "classSchedule": "Klassens schema",
+    "classTeachers": "Klasslärare"
   },
   "dashboard": {
     "title": "Översikt",

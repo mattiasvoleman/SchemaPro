@@ -230,7 +230,9 @@
     "crisis": "Crisis mode",
     "myCrisis": "Alarm",
     "schemavisaren": "Timetable viewer",
-    "schoolDay": "School day"
+    "schoolDay": "School day",
+    "classSchedule": "Class schedule",
+    "classTeachers": "Class teachers"
   },
   "dashboard": {
     "title": "Dashboard",
