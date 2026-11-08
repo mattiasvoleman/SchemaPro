@@ -84,7 +84,7 @@ describe("the expedition's notice of days that clash with a lesson (Lokal)", () 
 
   it("leads to the list of external bookings, and says nothing of a number it was not given", () => {
     expect(noticeHref(row("EXTERNAL_BOOKING_CLASH", meta))).toBe("/admin/external-bookings");
-    expect(say("sv", row("EXTERNAL_BOOKING_CLASH", null))).toContain("0 dagar");
+    expect(say("sv", row("EXTERNAL_BOOKING_CLASH", {}))).toContain("0 dagar");
   });
 });
 
