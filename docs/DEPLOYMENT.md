@@ -4135,6 +4135,13 @@ and no job, notice or setting is added.
   HR-läs, never the huvudman's reader (`HR_NOT_YOURS` before anything is read).
   The file keeps people with a protected identity and says how many
   (`protectedInFile`); both are recorded in the read log.
+  A person who has been deactivated (`Users.deactivatedAt`) is booked up to
+  that moment and no further: lessons and covers that were over by it
+  (`endsAt <= deactivatedAt`, D6's rule, through statement E's `endedBy`), the
+  stored uppdrag and the rastvakt to the day before the school's date of it,
+  and nothing for a period wholly after; `ANALYSIS_LEFT_IN_PERIOD` says how
+  many. A person made active again has no stamp and is booked as if they had
+  never left (the earlier leave is not kept).
 - Writes (a skoldel, a rate): those who decide, in the gateway (`@Decides`)
   and in the database's arms.
 

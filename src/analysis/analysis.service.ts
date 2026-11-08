@@ -34,6 +34,7 @@ import {
   type SchoolPartView,
 } from './analysis.types';
 import { audiencesOf, type Audiences } from './audience';
+import { coverStands, cutDuties, leaversOf, leftBy, lessonDays } from './leavers';
 import { buildCostBasis, type SubstituteRow } from './cost-basis';
 import { buildKeyFigures } from './key-figures';
 import { buildPayroll } from './payroll-basis';
@@ -332,12 +333,43 @@ export class AnalysisService {
       const credits =
         spans.published === null ? [] : await tx.$queryRaw<StaffingCreditRow[]>(staffingCreditStatement(window, { from, to }, null, null));
       const teaching = new Map<string, { userId: string; studentGroupId: string; minutes: number }>();
-      for (const row of credits) {
-        if (row.kind !== 'T' || row.personId === null || row.bucket !== 'DELIVERED' || (row.role !== 'LEAD' && row.role !== 'ASSISTANT')) continue;
-        const key = `${row.personId}|${row.studentGroupId}`;
-        const entry = teaching.get(key) ?? { userId: row.personId, studentGroupId: row.studentGroupId, minutes: 0 };
-        entry.minutes += Number(row.minutes);
-        teaching.set(key, entry);
+      const addTeaching = (rows: readonly StaffingCreditRow[]) => {
+        for (const row of rows) {
+          if (row.kind !== 'T' || row.personId === null || row.bucket !== 'DELIVERED' || (row.role !== 'LEAD' && row.role !== 'ASSISTANT')) continue;
+          const key = `${row.personId}|${row.studentGroupId}`;
+          const entry = teaching.get(key) ?? { userId: row.personId, studentGroupId: row.studentGroupId, minutes: 0 };
+          entry.minutes += Number(row.minutes);
+          teaching.set(key, entry);
+        }
+      };
+      addTeaching(credits);
+
+      // A person who has left is booked up to the day they left and no further (leavers.ts). Everyone in the
+      // period's rows is asked about, one read; the few who are inactive and dated have their lessons asked
+      // again for themselves alone, over the days up to the stamp and only the lessons over by it (statement E's
+      // `endedBy`), in place of the rows the whole period gave them.
+      const asked = new Set<string>([...teaching.values()].map((entry) => entry.userId));
+      for (const duty of read.input.duties) asked.add(duty.userId);
+      for (const row of hours.rows) asked.add(row.userId);
+      const zone = await tx.academicYear.findUnique({
+        where: { id: query.academicYearId },
+        select: { school: { select: { timezone: true } } },
+      });
+      const timezone = zone?.school?.timezone ?? 'Europe/Stockholm';
+      const inactive =
+        asked.size === 0
+          ? []
+          : await tx.user.findMany({
+              where: { id: { in: [...asked] }, isActive: false, deactivatedAt: { not: null } },
+              select: { id: true, deactivatedAt: true },
+            });
+      const leavers = leaversOf(inactive, (at) => asDay(todayInZone(timezone, at)));
+      const leftInPeriod = [...leavers.values()].filter((leaver) => leftBy(leaver, to));
+      for (const leaver of leftInPeriod) {
+        for (const [key, entry] of [...teaching]) if (entry.userId === leaver.userId) teaching.delete(key);
+        const days = lessonDays(leaver, from, to);
+        if (days === null || spans.published === null) continue;
+        addTeaching(await tx.$queryRaw<StaffingCreditRow[]>(staffingCreditStatement(window, days, leaver.userId, null, leaver.at)));
       }
 
       const employments = new Map(read.input.employments.map((post) => [post.userId, post]));
@@ -349,8 +381,10 @@ export class AnalysisService {
         to,
         year: { startDate: yearStart, endDate: yearEnd },
         teaching: [...teaching.values()],
-        substitutes: hours.rows.map((row) => ({ userId: row.userId, studentGroupId: row.studentGroupId, minutes: row.minutes })),
-        duties: read.input.duties,
+        substitutes: hours.rows
+          .filter((row) => coverStands(row, leavers))
+          .map((row) => ({ userId: row.userId, studentGroupId: row.studentGroupId, minutes: row.minutes })),
+        duties: cutDuties(read.input.duties, leavers, yearEnd),
         closures: read.input.closures,
         parts,
         partOfGroup,
@@ -374,6 +408,7 @@ export class AnalysisService {
       if (clamped) notices.push({ code: 'ANALYSIS_PERIOD_CLAMPED', params: { from, to } });
       if (spans.published === null) notices.push({ code: 'ANALYSIS_NOTHING_PUBLISHED', params: {} });
       if (hours.toCheck.length > 0) notices.push({ code: 'ANALYSIS_COVER_TO_CHECK', params: { lessons: hours.toCheck.length } });
+      if (leftInPeriod.length > 0) notices.push({ code: 'ANALYSIS_LEFT_IN_PERIOD', params: { people: leftInPeriod.length } });
       if (built.dutiesUnallocated > 0) notices.push({ code: 'ANALYSIS_DUTIES_UNALLOCATED', params: { people: built.dutiesUnallocated } });
       if (protectedInAnswer > 0) notices.push({ code: 'ANALYSIS_PROTECTED_IN_FILE', params: { people: protectedInAnswer } });
 

@@ -59,6 +59,8 @@ export type AnalysisNoticeCode =
   | 'ANALYSIS_NOTHING_PUBLISHED'
   /** Held cover lessons whose substitute was away over the lesson are left out of the file, as in the vikarie export. */
   | 'ANALYSIS_COVER_TO_CHECK'
+  /** People who left (were deactivated) by the period's last day are booked up to that day: lessons over by it, uppdrag to the day before. */
+  | 'ANALYSIS_LEFT_IN_PERIOD'
   /** Uppdrag with no teaching to follow are on a line of their own: no skoldel, no konto. */
   | 'ANALYSIS_DUTIES_UNALLOCATED'
   /** People with a protected identity are in the file, as payroll pays everyone. */

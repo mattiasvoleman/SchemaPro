@@ -8510,6 +8510,7 @@
       "ANALYSIS_PERIOD_CLAMPED": "Perioden är beskuren till läsåret: {from} – {to}.",
       "ANALYSIS_NOTHING_PUBLISHED": "Inget schema är publicerat, så ingen undervisning har hållits och inga timmar kan anges.",
       "ANALYSIS_COVER_TO_CHECK": "{lessons} hållna vikariepass är utelämnade, eftersom vikarien själv var frånvarande över lektionen. De granskas under Rapporter, Vikarietimmar.",
+      "ANALYSIS_LEFT_IN_PERIOD": "{people} personer har slutat före periodens slut. Deras tid räknas till den dag de avaktiverades (lektioner som tagit slut före avaktiveringen, uppdrag till dagen före), och den som slutat före perioden finns inte med.",
       "ANALYSIS_DUTIES_UNALLOCATED": "{people} personer har uppdrag men ingen undervisning eller inget vikariepass i perioden. Deras uppdrag ligger på en rad utan skoldel och konto, för skolan att boka för hand.",
       "ANALYSIS_PROTECTED_IN_FILE": "{people} personer med skyddad identitet finns med i underlaget, eftersom lönen ska betalas till alla.",
       "ANALYSIS_CHARACTERS_REPLACED": "{characters} tecken som windows-1252 inte rymmer är ersatta i CSV-filen. Excel-filen behåller dem."

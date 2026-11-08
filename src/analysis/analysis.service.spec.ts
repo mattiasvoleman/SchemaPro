@@ -373,6 +373,14 @@ describe('AnalysisService', () => {
       expect(result.protectedInAnswer).toBe(0);
     });
 
+    it('calls a pool member who also has a post personal, and one who has none the vikariepool', async () => {
+      // BO has a post (and is in the pool); pool-1 has none.
+      tx.substitutePoolMember.findMany.mockResolvedValue([{ userId: 'pool-1' }, { userId: BO }]);
+      const result = await service.payrollBasis(query, rektor());
+      expect(result.people.find((person) => person.userId === BO)!.kind).toBe('STAFF');
+      expect(result.people.find((person) => person.userId === 'pool-1')!.kind).toBe('POOL');
+    });
+
     it('states the tjänstgöringsgrad in force on the period\'s last day, a post that changes during the year included', async () => {
       const input = schoolInput();
       input.employments = input.employments.map((post) =>
@@ -425,6 +433,119 @@ describe('AnalysisService', () => {
       expect(result.people).toHaveLength(1);
     });
 
+    describe('a person who has left (leavers.ts)', () => {
+      const withDuty = () => {
+        const input = schoolInput({ duties: [{ userId: ANNA, minutesPerWeek: 50, countsAsTeaching: false }] });
+        (readLoadInput as jest.Mock).mockResolvedValue({ year: { startDate: '2026-08-17', endDate: '2027-06-11' }, input });
+      };
+      /** Statement E asked again for one person: the whole period's rows for everybody, those rows for her alone. */
+      const leaverStatement = (statement: { sql?: string }) => (statement.sql ?? '').includes('"endsAt" <=');
+      const answerWith = (everyone: unknown[], her: unknown[]) =>
+        tx.$queryRaw.mockImplementation(async (statement: { sql?: string; strings?: readonly string[] }) => {
+          queries.push({ text: (statement.strings ?? []).join('?') });
+          return leaverStatement(statement) ? her : everyone;
+        });
+      const leaverQueries = () => tx.$queryRaw.mock.calls.map((call) => call[0] as { sql: string; values: unknown[] }).filter(leaverStatement);
+      const everyone = () => [credit(), credit({ studentGroupId: 'g8a', minutes: 180 }), credit({ role: 'ASSISTANT', personId: CY, studentGroupId: 'gman', minutes: 60 })];
+
+      it('books the lessons that were over by the stamp and the uppdrag to the day before, and says someone left', async () => {
+        withDuty();
+        answerWith(everyone(), [credit({ minutes: 180, lessons: 3 })]);
+        // 12:00 on 12 November in Stockholm.
+        tx.user.findMany.mockResolvedValueOnce([{ id: ANNA, deactivatedAt: new Date('2026-11-12T11:00:00.000Z') }]);
+
+        const result = await service.payrollBasis(query, rektor());
+
+        const asked = leaverQueries();
+        expect(asked).toHaveLength(1);
+        // Her alone, the days up to the school's date of the stamp, and only what ended by the stamp.
+        expect(asked[0]!.values).toContain(ANNA);
+        expect(asked[0]!.values).toContainEqual(new Date('2026-11-12T11:00:00.000Z'));
+        expect(asked[0]!.values).toEqual(expect.arrayContaining(['2026-11-02', '2026-11-12']));
+        const anna = result.people.find((person) => person.userId === ANNA)!;
+        // Not the 720 minutes the lessons still carrying her give; the uppdrag of 10 minutes a day for 2-11 November.
+        expect(anna).toMatchObject({ teachingMinutes: 180, dutyMinutes: 80 });
+        expect(result.people.find((person) => person.userId === CY)).toMatchObject({ teachingMinutes: 60 });
+        expect(result.notices).toContainEqual({ code: 'ANALYSIS_LEFT_IN_PERIOD', params: { people: 1 } });
+      });
+
+      it('books nobody who left before the period began: no question asked, no line, and the notice', async () => {
+        withDuty();
+        answerWith(everyone(), [credit({ minutes: 9999 })]);
+        tx.user.findMany.mockResolvedValueOnce([{ id: ANNA, deactivatedAt: new Date('2026-10-20T10:00:00.000Z') }]);
+
+        const result = await service.payrollBasis(query, rektor());
+
+        expect(leaverQueries()).toHaveLength(0);
+        expect(result.people.some((person) => person.userId === ANNA)).toBe(false);
+        expect(result.lines.some((line) => line.userId === ANNA)).toBe(false);
+        expect(result.people.find((person) => person.userId === CY)).toMatchObject({ teachingMinutes: 60 });
+        expect(result.notices).toContainEqual({ code: 'ANALYSIS_LEFT_IN_PERIOD', params: { people: 1 } });
+      });
+
+      it('leaves a person who left after the period as they always were, with no notice', async () => {
+        withDuty();
+        answerWith(everyone(), [credit({ minutes: 9999 })]);
+        tx.user.findMany.mockResolvedValueOnce([{ id: ANNA, deactivatedAt: new Date('2026-12-01T10:00:00.000Z') }]);
+
+        const result = await service.payrollBasis(query, rektor());
+
+        expect(leaverQueries()).toHaveLength(0);
+        expect(result.people.find((person) => person.userId === ANNA)).toMatchObject({ teachingMinutes: 720, dutyMinutes: 200 });
+        expect(result.notices.map((notice) => notice.code)).not.toContain('ANALYSIS_LEFT_IN_PERIOD');
+      });
+
+      it('takes the school\'s date of the stamp, not UTC\'s: 00:30 on 13 November in Stockholm is still 12 November in UTC', async () => {
+        withDuty();
+        answerWith(everyone(), [credit({ minutes: 60, lessons: 1 })]);
+        tx.user.findMany.mockResolvedValueOnce([{ id: ANNA, deactivatedAt: new Date('2026-11-12T23:30:00.000Z') }]);
+
+        const result = await service.payrollBasis(query, rektor());
+
+        expect(leaverQueries()[0]!.values).toEqual(expect.arrayContaining(['2026-11-02', '2026-11-13']));
+        // The uppdrag run to the 12th: 2-6, 9-12 is nine days of 10 minutes.
+        expect(result.people.find((person) => person.userId === ANNA)).toMatchObject({ teachingMinutes: 60, dutyMinutes: 90 });
+      });
+
+      it('books a vikarie\'s cover only if it was over when they left', async () => {
+        cover.hours.mockResolvedValue(
+          hours({
+            rows: [
+              coverRow({ lessonId: 'a', userId: 'pool-1', minutes: 45, endsAt: '2026-11-05T08:45:00.000Z' }),
+              coverRow({ lessonId: 'b', userId: 'pool-1', minutes: 45, endsAt: '2026-11-10T09:00:00.000Z' }),
+              coverRow({ lessonId: 'c', userId: 'pool-1', minutes: 45, endsAt: '2026-11-17T09:00:00.000Z' }),
+            ],
+          }),
+        );
+        // Over at 09:00 on the 10th counts; the one on the 17th does not.
+        tx.user.findMany.mockResolvedValueOnce([{ id: 'pool-1', deactivatedAt: new Date('2026-11-10T09:00:00.000Z') }]);
+
+        const result = await service.payrollBasis(query, rektor());
+
+        expect(result.people.find((person) => person.userId === 'pool-1')).toMatchObject({ substituteMinutes: 90 });
+        expect(result.notices).toContainEqual({ code: 'ANALYSIS_LEFT_IN_PERIOD', params: { people: 1 } });
+      });
+
+      it('asks nobody about activity when there is nobody in the rows, and asks for the people in them in one read', async () => {
+        (readPublishedSpans as jest.Mock).mockResolvedValue({ horizon: [], published: null, publishedDays: [] });
+        cover.hours.mockResolvedValue(hours());
+        const input = schoolInput({ duties: [] });
+        (readLoadInput as jest.Mock).mockResolvedValue({ year: { startDate: '2026-08-17', endDate: '2027-06-11' }, input });
+        tx.user.findMany.mockClear();
+        await service.payrollBasis(query, rektor());
+        expect(tx.user.findMany).not.toHaveBeenCalled();
+
+        tx.$queryRaw.mockResolvedValue(everyone());
+        (readPublishedSpans as jest.Mock).mockResolvedValue({ horizon: [], published: { from: '2026-08-17', through: '2027-06-11' }, publishedDays: [] });
+        await service.payrollBasis(query, rektor());
+        expect(tx.user.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.user.findMany).toHaveBeenCalledWith({
+          where: { id: { in: expect.arrayContaining([ANNA, CY]) }, isActive: false, deactivatedAt: { not: null } },
+          select: { id: true, deactivatedAt: true },
+        });
+      });
+    });
+
     it('cuts a period to the läsår, says so, and refuses one outside it or longer than the vikarie export allows', async () => {
       const cut = await service.payrollBasis({ academicYearId: YEAR_ID, from: '2026-06-20', to: '2026-08-30' }, rektor());
       expect(cut.from).toBe('2026-08-17');
@@ -473,6 +594,15 @@ describe('AnalysisService', () => {
         expect(lines.find((line) => line.includes('Vikariepool'))).toContain(';Vikariepool;;');
         expect(result.protectedInFile).toBe(0);
         expect(result.notices.map((notice) => notice.code)).not.toContain('ANALYSIS_CHARACTERS_REPLACED');
+      });
+
+      it('says how many people with a protected identity are in the file, by name and not by count alone', async () => {
+        tx.personProtection.findMany.mockResolvedValue([{ userId: BO }]);
+        const result = await service.payrollFile({ ...query, format: 'CSV' }, rektor());
+        expect(result.protectedInFile).toBe(1);
+        expect(result.notices).toContainEqual({ code: 'ANALYSIS_PROTECTED_IN_FILE', params: { people: 1 } });
+        // Payroll pays everyone: the person is in the file.
+        expect(new TextDecoder('windows-1252').decode(Buffer.from(result.contentBase64, 'base64'))).toContain('bo@example.invalid');
       });
 
       it('says how many characters 1252 could not hold', async () => {
