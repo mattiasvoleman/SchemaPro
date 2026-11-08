@@ -419,14 +419,17 @@ $$;
 
 -- The pupils among the given ids whom the school has marked as having a protected identity (skyddad identitet). The register
 -- is the administrators' to read, and a teacher prints a list too: the gateway asks this when it builds a sheet for paper,
--- leaves the marked out of the sheet and says how many, and hands the ids to nobody. Empty for anyone but staff, and for ids
--- of another school.
+-- leaves the marked out of the sheet and says how many, and hands the ids to nobody. An administrator is told about any pupil
+-- of the school; a teacher only about the pupils the teacher reads (app.checklist_visible_ids: the ones they teach or mentor),
+-- since the gateway asks about no others and the answer must not tell a teacher who is marked among the pupils they cannot see.
+-- Empty for anyone else, and for ids of another school.
 CREATE FUNCTION app.checklist_protected_ids(p_ids uuid[]) RETURNS uuid[]
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
   SELECT coalesce(array_agg(DISTINCT p."userId" ORDER BY p."userId"), '{}'::uuid[])
     FROM "PersonProtections" p
    WHERE p."schoolId" = app.current_school_id() AND p."userId" = ANY (p_ids)
-     AND app.current_user_role() IN ('TEACHER', 'SCHOOL_ADMIN')
+     AND (app.current_user_role() = 'SCHOOL_ADMIN'
+          OR (app.current_user_role() = 'TEACHER' AND p."userId" = ANY ((SELECT app.checklist_visible_ids())::uuid[])))
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -1195,7 +1198,7 @@ COMMENT ON FUNCTION app.checklist_class_ids() IS
 COMMENT ON FUNCTION app.checklist_mentee_class_ids() IS
   'Checklistor: the home classes of the calling teacher''s mentees, for the policies that let a teacher make a list.';
 COMMENT ON FUNCTION app.checklist_protected_ids(uuid[]) IS
-  'Checklistor: the pupils among the given ids the school has marked as having a protected identity, for the gateway that builds a sheet for paper (it leaves them out and counts them); empty for anyone but staff.';
+  'Checklistor: the pupils among the given ids the school has marked as having a protected identity, for the gateway that builds a sheet for paper (it leaves them out and counts them); an administrator is told about any pupil of the school, a teacher about the pupils they read; empty for anyone else.';
 COMMENT ON FUNCTION app.checklist_void_proof(uuid, text) IS
   'Checklistor: voids a tick made in error (the writer, or an administrator under Drift); the tick stays with who, when and why; idempotent; CL403 not staff who may, CL404 no such proof, CL422 no reason.';
 COMMENT ON FUNCTION app.checklist_close_list(uuid) IS

@@ -47600,21 +47600,32 @@ END $$;
 ROLLBACK;
 
 -- 431, the marks: a teacher cannot read the school's marks of a protected identity (the administrators' register), and the gateway
--- builds the sheet for paper by asking which of the pupils are marked. Staff are told which among the ids given; nobody else is told
--- anything, and nobody is told of another school's marks.
+-- builds the sheet for paper by asking which of the pupils are marked. An administrator is told which among the ids given, any pupil
+-- of the school; a teacher only about the pupils they read (they teach or mentor), since the gateway asks about no others and the
+-- answer must not tell a teacher who is marked among the pupils they cannot see (granskning #288, S2). Nobody else is told anything,
+-- and nobody is told of another school's marks. The fixture marks p4, who is a mentee of t2 and no one else's.
 BEGIN;
 SELECT pg_temp.cl_as('full');
 DO $$
 DECLARE
   who text;
+  want text;
   ids uuid[];
+  everyone uuid[];
 BEGIN
   PERFORM pg_temp.cl_load();
   ids := ARRAY[pg_temp.clf('p1'), pg_temp.clf('p4'), pg_temp.clf('p3')];
+  everyone := ARRAY[pg_temp.clf('p1'), pg_temp.clf('p2'), pg_temp.clf('p3'), pg_temp.clf('p4'), pg_temp.clf('p5'), pg_temp.clf('p6'), pg_temp.clf('p7')];
   IF (SELECT count(*) FROM "PersonProtections") < 1 THEN RAISE EXCEPTION 'checklistor 431: the administrator reads no mark (the fixture marks p4)'; END IF;
-  FOREACH who IN ARRAY ARRAY['full', 'expedition', 'lasare', 't1', 't2', 't3', 't5'] LOOP
+  FOR who, want IN SELECT * FROM (VALUES
+      ('full', 'p4'), ('expedition', 'p4'), ('lasare', 'p4'),
+      ('t2', 'p4'),
+      ('t1', ''), ('t3', ''), ('t4', ''), ('t5', ''), ('t6', '')) v(k, w)
+  LOOP
     PERFORM pg_temp.cl_as(who);
-    PERFORM pg_temp.cl_expect('431 marks, ' || who || ' is told the marked among the ids', (SELECT string_agg(substr(u.email, 4, 2), ',') FROM "Users" u WHERE u.id = ANY (app.checklist_protected_ids(ids))), 'p4');
+    PERFORM pg_temp.cl_expect('431 marks, ' || who || ' is told the marked among the pupils they may read in the ids', coalesce((SELECT string_agg(substr(u.email, 4, 2), ',') FROM "Users" u WHERE u.id = ANY (app.checklist_protected_ids(ids))), ''), want);
+    -- Asked about the whole school: a teacher who reads p4 is told p4 and no one else; one who reads no one is told nothing at all.
+    PERFORM pg_temp.cl_expect('431 marks, ' || who || ' asking about every pupil of the school', cardinality(app.checklist_protected_ids(everyone))::text, CASE WHEN want = '' THEN '0' ELSE '1' END);
     PERFORM pg_temp.cl_expect('431 marks, ' || who || ' is told nothing about ids that are not marked', cardinality(app.checklist_protected_ids(ARRAY[pg_temp.clf('p1'), pg_temp.clf('p3')]))::text, '0');
     PERFORM pg_temp.cl_expect('431 marks, ' || who || ' asks about nobody', cardinality(app.checklist_protected_ids('{}'::uuid[]))::text, '0');
   END LOOP;
