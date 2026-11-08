@@ -4654,6 +4654,101 @@
     halvas lektion är ett eget kort.
   </p>
 
+  <h4>Byten och bytkedjor</h4>
+  <p>
+    Vill du flytta en lektion men tiden är upptagen? Öppna lektionen med
+    <span class="ui">Justera lektion</span> och tryck
+    <span class="ui">Föreslå byten</span>. Du får lektioner som kan byta tid med
+    den, och <em>kedjor om tre</em> där den tar nästa lektions tid, nästa tar
+    en tredjes och den tredje tar din. Sökningen tar någon sekund.
+  </p>
+  <p>
+    Varje förslag har prövats mot samma regler som en flytt för hand — ingen
+    lärare, sal eller elev dubbelbokad, inga stängda tider — och dessutom mot
+    ramtiderna, klassernas lunch, veckoregler för årskurser och de andra
+    skolornas hållpunkter: en lärare som delas med en annan skola flyttas aldrig
+    in på en tid hon är där, och en utlånad sal flyttas inte in på lånetiden. Är
+    en regel inte uppfylld syns förslaget inte. Står det inget förslag har inget
+    byte funnits som håller alla reglerna; lås upp en lektion eller frigör en
+    tid och sök igen.
+  </p>
+  <p>
+    <strong>Lektioner som ligger parallellt följer alltid med.</strong>
+    Är lektionen medlem i ett parallellt block (4.2), ena halvan av en
+    klass som delats i halvklasser, eller en ersättande grupp (tillsammans med
+    klassens lektion i ämnet den ersätter) flyttas de lektioner som ligger
+    bredvid den på samma tid tillsammans med den, och förslaget namnger varje
+    lektion som följer med och varför. Ingenting delas upp i det tysta. En
+    låst lektion flyttas inte som någon annans partner; den du valde själv får
+    vara låst, och det står i förslaget.
+  </p>
+  <p>
+    Under varje förslag ser du vad det kostar i de mjuka reglerna, före och
+    efter: elevernas håltimmar (räknade som i rapporten Håltimmar), lärarnas
+    håltimmar, ämnesfördelningens brott och lärarens dag (längd, antal dagar
+    och sammanhängande undervisning). För lärarens dag visas bara antal brott,
+    aldrig gränserna, eftersom de hör till tjänsten. Bäst först: förslagen
+    ordnas efter vad de förbättrar och hur få lektioner de flyttar.
+  </p>
+  <p>
+    <strong>Tillämpa</strong> flyttar alla lektionerna i förslaget som ett enda
+    drag. Innan något flyttas sparas schemat som versionen <em>Före byte</em>,
+    kommande publicerade lektioner i kalendern följer med (utom där närvaro
+    redan registrerats), varje flyttad lektion får en rad i ändringsloggen och
+    berörda klasser får samma avisering som vid en flytt för hand. I
+    utkastläge (5.7) är bytet ett utkast tills du publicerar, och
+    publiceringens kontroller gäller som vanligt. Meddelandet efter
+    <span class="ui">Tillämpa</span> har en <span class="ui">Ångra</span>-knapp
+    i femton sekunder; därefter återställer du versionen <em>Före byte</em>
+    under <span class="ui">Versioner</span> (5.5). Grundschemats egen
+    ångra-historik töms vid ett byte, som vid en återställd version.
+  </p>
+  <div class="note">
+    <span class="label">Kalenderlektioner som bytet tar bort — och vad Ångra ger tillbaka</span>
+    <p>
+      Ett byte flyttar alltid minst en lektion till en tidigare veckodag. En
+      publicerad lektion i kalendern som flytten skulle lägga på en tid som
+      redan varit (eller utanför lektionens veckor) flyttas inte utan
+      <em>tas bort</em>, med vikarie, lektionslogg och läxa. Vilka förslag som
+      gör det står före <span class="ui">Tillämpa</span>: ett förslag som
+      tar bort kalenderlektioner har en gul ruta, <em>Tar bort N publicerade
+      lektioner ur kalendern</em>. Meddelandet efter Tillämpa säger hur många
+      som följde med och hur många som togs bort.
+    </p>
+    <p>
+      <span class="ui">Ångra</span> sätter tillbaka <em>lektionerna i
+      grundschemat</em> på sina gamla tider och flyttar tillbaka de publicerade
+      lektioner som följde med. Det lägger inte tillbaka kalenderlektioner som
+      redan tagits bort, och inte heller vikarien, lektionsloggen eller läxan på
+      dem; meddelandet efter Ångra räknar dem. <span class="ui">Publicera</span>
+      igen skapar nya kalenderlektioner på de gamla tiderna, men utan det som
+      hängde på de borttagna. Ångra sparar också en säkerhetsversion, <em>Före
+      ångra</em>, bredvid <em>Före byte</em>. I utkastläge (5.7) rörs kalendern
+      inte förrän du publicerar, så där tas ingenting bort av ett byte.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">Vad förslagen inte prövar</span>
+    <p>
+      Korridortiden i ramtiderna och restiden mellan skolområden prövas inte
+      (en flytt för hand varnar för restid, ett byte gör det inte). På ett
+      rutnät som inte är hela timmar kan enstaka kedjor där en tredje lektion
+      frigör en delvis överlappande tid saknas bland förslagen; de som visas är
+      alltid prövade. Lektionerna som byter tid är kvar som genererade, så
+      nästa <span class="ui">Generera</span> kan flytta dem igen: lås dem om de
+      ska ligga kvar.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">När schemat hunnit ändras</span>
+    <p>
+      Har någon flyttat en av lektionerna sedan förslagen räknades fram, eller
+      skulle bytet nu dela upp parallella lektioner eller flytta en låst
+      lektion, nekas <span class="ui">Tillämpa</span> med ett meddelande som
+      säger vilket och förslagen hämtas på nytt. Inget har då ändrats.
+    </p>
+  </div>
+
   <h3 id="s54"><span class="num">5.4</span>Salsoptimering</h3>
   <p>
     Genereringen väljer för varje lektion en <em>sort</em> av sal — ett
