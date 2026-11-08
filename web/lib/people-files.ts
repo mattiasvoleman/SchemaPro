@@ -79,6 +79,11 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
     rule: "HOLDS_OUT",
     why: "Names teachers beside their lessons and no pupil: a teacher the school has marked as having a protected identity is shown as 'Skyddad identitet' in the row and in every lesson, and the sheet says how many were left out. The marks are read at the click, and a read that fails prints nothing.",
   },
+  "components/absence-stats/pupil-print.ts": {
+    files: "a pupil's frånvarostatistik printed (Skriv ut on the elevkort, which is also how a PDF is made): one A4 for the development talk",
+    rule: "HOLDS_OUT",
+    why: "Names one pupil and the pupil's absence: a pupil the school has marked as having a protected identity is never printed, and the card says so. An administrator's marks are read at the click and a read that fails prints nothing; the card of a pupil the gateway flags (isProtected) has no button, and a mentor, who may not read the marks, is never handed a marked pupil.",
+  },
   "app/[locale]/(app)/admin/reports/staffing-report.tsx": {
     files: "tjanstefordelning-….csv (samverkan), scb-pedagogisk-personal-….txt and .csv",
     rule: "KEEPS_AND_SAYS",
@@ -137,6 +142,16 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
   "components/import/csv-import-dialog.tsx": { files: "the import templates", rule: "NAMES_NOBODY", why: "Headers only." },
   "components/timplan/timplan-import-dialog.tsx": { files: "the timplan template", rule: "NAMES_NOBODY", why: "Headers only." },
   "lib/csv.ts": { files: "the import templates", rule: "NAMES_NOBODY", why: "Headers only (downloadTemplate)." },
+  "app/[locale]/(app)/admin/meals/page.tsx": {
+    files: "Måltidskollen printed (Skriv ut, which is also how a PDF is made): the day or the week ahead",
+    rule: "NAMES_NOBODY",
+    why: "Counts and the names of classes (7A, 8B), never a pupil: the portions of each lunch sitting, the absence taken off as a number and the staff as a number. A protected pupil is a pupil in a count and is named nowhere.",
+  },
+  "lib/meal-counts-queries.ts": {
+    files: "portioner-<yyyy-mm-dd>[-<yyyy-mm-dd>].csv",
+    rule: "NAMES_NOBODY",
+    why: "The gateway's file of the same counts (windows-1252, ;): a row per day and sitting with the classes' names and numbers, no pupil. This only hands the bytes over (downloadMealCsv).",
+  },
   "lib/school-export.ts": {
     files: "rastra-skolexport-<skola>-<datum>.zip",
     rule: "HANDS_OVER",

@@ -124,6 +124,9 @@
         - link "Kvittens":
           - /url: /sv/admin/acknowledgements
       - listitem:
+        - link "Måltidskollen":
+          - /url: /sv/admin/meals
+      - listitem:
         - link "Klassbok":
           - /url: /sv/admin/klassbok
     - list:

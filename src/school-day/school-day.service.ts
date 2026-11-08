@@ -100,10 +100,11 @@ export class SchoolDayService {
   async updateSettings(dto: SchoolDaySettingsDto, user: AuthenticatedUser): Promise<SchoolDaySettingsView> {
     const schoolId = requireSchoolId(user);
     return this.prisma.withRls(user, async (tx) => {
+      const notice = dto.guardianNoticeOnMove === undefined ? {} : { guardianNoticeOnMove: dto.guardianNoticeOnMove };
       await tx.schoolDaySettings.upsert({
         where: { schoolId },
-        create: { schoolId, teacherView: dto.teacherView },
-        update: { teacherView: dto.teacherView },
+        create: { schoolId, teacherView: dto.teacherView, ...notice },
+        update: { teacherView: dto.teacherView, ...notice },
       });
       return this.readSettings(tx, schoolId);
     });
@@ -316,8 +317,8 @@ export class SchoolDayService {
   }
 
   private async readSettings(tx: PrismaClient, schoolId: string): Promise<SchoolDaySettingsView> {
-    const row = await tx.schoolDaySettings.findUnique({ where: { schoolId }, select: { teacherView: true } });
-    return { teacherView: row?.teacherView ?? 'NONE' };
+    const row = await tx.schoolDaySettings.findUnique({ where: { schoolId }, select: { teacherView: true, guardianNoticeOnMove: true } });
+    return { teacherView: row?.teacherView ?? 'NONE', guardianNoticeOnMove: row?.guardianNoticeOnMove ?? false };
   }
 
   /** What the caller may have. A teacher whose school chose NONE has neither the grids nor the search. */

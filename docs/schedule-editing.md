@@ -35,6 +35,72 @@ Implemented feature set (Tiers 1–3 of the flexibility roadmap).
 - **PDF export** — `web/lib/pdf.ts` renders the filtered timetable as a day-sectioned PDF (new deps `jspdf`, `jspdf-autotable`), alongside the existing iCal export and print.
 - **Open-slot finder** — in the Add-lesson dialog: pick a subject and class (plus optional additional classes that must also be free, e.g. for joint activities — a student's availability is their class's), then "Search open slots". The finder scans the week for slots where every chosen class is free (lessons incl. co-teachers + weekly UNAVAILABLE constraints) and pairs each slot with the class's **assigned subject teacher** from the requirements matrix; when no assigned teacher is free in a slot, it offers a **fallback teacher** who teaches the subject and is free (marked "fallback"). Assigned-teacher matches always rank first; clicking a match fills day, time, and teacher into the form. Logic in `findOpenSlots` (`web/lib/placement-search.ts`), which the timetable fetches with the lesson dialogs.
 
+## Swaps and chains (Byten och flyttar, G1)
+
+`POST /api/v1/swaps/suggest` answers, for one picked lesson, the **swaps**
+(two units exchange slots) and **chains of three** (A to B's slot, B to C's, C
+to A's) that hold every hard rule, each with the parallel lessons that go along
+and what it costs in the soft ones. `POST /api/v1/swaps/apply` writes a
+proposal. Code in `src/swaps/`, dialog in `web/components/schedule/swap-dialog.tsx`
+(button "Föreslå byten" in Justera lektion).
+
+- **One definition of the hard rules.** Every proposal offered has been judged by
+  `MasterLessonsService.findConflicts` (teacher, room, class and shared pupils,
+  weekly unavailability, pupil buffers, halves, replacing groups) as ONE move —
+  the movers left out of where they stood and laid where they go, the way a
+  block card is moved. On top of it the grid's own hard kinds: ramtider, the
+  class's lunch sitting, weekly rules on whole årskurser, and the other schools'
+  holds (a shared teacher's lessons elsewhere, a room lent out or borrowed,
+  `other-school-holds.ts`). The search prunes with a *subset* of the clash rule
+  (same teacher, room, class, weekly row), so the prune can lose a proposal, never
+  admit one. `swaps.service.spec.ts` holds the search against a brute force that
+  knows only "does anything overlap": it finds exactly the clash-free swaps and
+  chains. `SwapReads` (a `ConflictReads`) answers the rule's day read from the
+  year snapshot; a spec shows the same answers as the database read for every
+  placement.
+- **Why the API and not the engine.** The engine's rules are constraints of a
+  model, not predicates; asking it means rebuilding the school's model per
+  question with anonymised ids both ways. The write path's rules are functions.
+  The engine, its contract and `/openapi.json` are untouched, so there is
+  nothing to deploy beside the API and no per-school switch.
+- **A unit moves whole.** A lesson and the lessons laid beside it at the same
+  day, clock and weeks: the same parallel block (or a block on its times), the
+  two halves of one class, a replacing group and the class lesson it replaces
+  with a pupil in common. `apply` refuses a move set that parts one
+  (`SWAP_SPLITS_PARALLEL`), moves a locked lesson that is not the picked one
+  (`SWAP_LOCKED`), or names a lesson that no longer stands where the page saw it
+  (`SWAP_STALE`). Slots must be of one length.
+- **Soft costs** (counts, never words): pupils' idle minutes (the håltimmesrapport's
+  number — `swap-gaps.spec.ts` replays all cases of
+  `src/common/__fixtures__/pupil-gaps-cases.json`), teachers' idle minutes,
+  ämnesfördelning breaches, teacher-day breaches (cap, days, stretch; the post's
+  limits are HR data, so a count and a read recorded as EMPLOYMENT), and lessons
+  moved. Travel between sites and the delade lektioner's shares are not measured.
+- **Apply** is the template's write path: `enterGrundschemaWrite` (DRAFT or
+  DIRECT), the edit's share of the regeneration lock, rows held `FOR NO KEY UPDATE`
+  in id order, a safety version (`snapshotInTransaction`), a guarded
+  `updateMany` per lesson, `propagateTemplateChange` to the published calendar, a
+  `ScheduleChangeLogs` row per lesson, the `SCHEDULE_CHANGED` notice, realtime. The
+  answer's `undo` is the same moves reversed; send them to the same route.
+- **What it takes out of the calendar, said beforehand.** `propagateTemplateChange`
+  removes (does not move) a published calendar lesson that a move would carry
+  to a time that has begun, or off the template's weeks ("never into the past"),
+  and its vikarie, lesson log and homework go with it (`ON DELETE CASCADE`).
+  A swap always moves a lesson to an earlier weekday, so it can. Each proposal of
+  `suggest` carries `removedCalendarLessons`: the count of those rows, computed
+  from the rows `reconcilableLessons` selects by `wouldRemoveOnUpdate` — the
+  same `standsAt` decision the write path makes, held to the same number by
+  `swap-calendar.spec.ts` — and zero in a DRAFT layer, which leaves the calendar
+  alone. `apply` answers `removedCalendarLessons` too. **Undo restores the
+  master lessons and moves the followed calendar lessons back; it does not
+  recreate removed ones** (nor their vikarie or log). Publishing again creates new
+  rows at the old times. The dialog says so before Tillämpa and after Ångra.
+- **A clock is 00:00 to 23:59.** The apply's clocks are `^([01]\d|2[0-3]):[0-5]\d$`
+  and the minutes the clash rule judges are read from the *parsed* time
+  (`clockMinutes`), the value that is written: `parseTimeString` wraps an hour
+  past 23 into the next day, so `34:00` used to be judged at minute 2040 and
+  stored as 10:00.
+
 ## Lesson participants (multi-class & individual students)
 
 A lesson keeps its primary class but can additionally contain **extra classes**

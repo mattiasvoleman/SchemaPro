@@ -58,6 +58,7 @@
       <li><span>4.6 Öppna lektioner och din rapporteringsgrad</span><span class="dots"></span><span class="pg" data-pg="s46"></span></li>
       <li><span>4.7 När det larmar: uppropet</span><span class="dots"></span><span class="pg" data-pg="s47"></span></li>
       <li><span>4.8 Be en vårdnadshavare bekräfta ett meddelande</span><span class="dots"></span><span class="pg" data-pg="s48"></span></li>
+      <li><span>4.9 Dina elevers frånvaro över tid</span><span class="dots"></span><span class="pg" data-pg="s49"></span></li>
     </ol>
     <li><span>5 · Boka lokal</span><span class="dots"></span><span class="pg" data-pg="ch5"></span></li>
     <li><span>6 · Notiser</span><span class="dots"></span><span class="pg" data-pg="ch6"></span></li>
@@ -442,6 +443,31 @@
     Du kan öppna samma lektion igen och ändra det du registrerat — det är inte
     låst efter första sparningen.
   </p>
+  <h4 id="flytta-elev-larare">Flytta en elev till en parallell lektion</h4>
+  <p>
+    Knappen <span class="ui">Flytta elev</span> överst i registret flyttar en elev
+    till en annan lektion som pågår samtidigt, för just den dagen. Du får flytta
+    en elev om du undervisar den här lektionen eller den lektion eleven ska till,
+    eller om du är elevens mentor (mentorn når samma knapp i klassboken). Välj
+    eleven och därefter lektionen; lektioner som inte går att välja står kvar i
+    listan med skälet. Blir salen överfull får du en varning men flytten görs.
+    En elev flyttas inte från en lektion som redan är slut. Har du flyttat en elev
+    som du upptäcker är fel efter att lektionen slutat, ångrar du flytten bara om du
+    undervisar lektionen eleven flyttades från (din markering kommer tillbaka med ditt
+    namn och din tid); undervisar du bara den nya lektionen ber du läraren på den
+    gamla eller en administratör ångra den, samma dag. Efter midnatt går en flytt inte
+    att ångra.
+  </p>
+  <p>
+    Eleven försvinner då från den här lektionens lista och står på den nya. I
+    registret finns ett avsnitt <em>Flyttade elever</em> med de elever som flyttats
+    från eller till lektionen, och en knapp <span class="ui">Ångra</span>. En elev
+    som flyttats bort räknas inte som frånvarande hos dig: en markering du redan
+    gjort läggs åt sidan och kommer tillbaka om flytten ångras. Har eleven fått en
+    närvaromarkering på den nya lektionen går flytten inte att ångra förrän den
+    markeringen tagits bort. Du får en notis när en elev flyttas till eller från din
+    lektion.
+  </p>
   <p>
     När du öppnar elevlistan skrivs klasslistan i skolans läslogg. Den
     närvaro som redan är registrerad skrivs också, om det finns någon, och
@@ -743,6 +769,38 @@
     öppna förfrågan och välj <span class="ui">Stoppa påminnelsen</span> (så att ingen påminns om
     det felaktiga), skicka en ny förfrågan med rätt text och be skolans administratör om hjälp.
   </p>
+
+  <h3 id="s49"><span class="num">4.9</span>Dina elevers frånvaro över tid</h3>
+  <p>
+    Är du mentor för en klass kan du se hur frånvaron utvecklas månad för månad
+    över de tre senaste läsåren, för klassen och för var och en av dina mentorselever,
+    inför utvecklingssamtal. Sidan heter <span class="path">Frånvarostatistik</span>
+    och nås med länken på Frånvarobevakning. Den är tom om du inte är mentor.
+  </p>
+  <ul>
+    <li><strong>Klassen:</strong> klassens månader (förra årets klass och årets läses som en följd), med <em>samma månad året före</em> under varje månad, och klassens <strong>mönster</strong>: veckodag, pass (lektionens starttid) och ämne.</li>
+    <li><strong>Eleverna:</strong> varje mentorselev med sin frånvaro under perioden, och för en elev ett kort med elevens tre läsår månad för månad, klassens månader bredvid och en knapp <span class="ui">Skriv ut</span> för utvecklingssamtalet.</li>
+    <li><strong>Rapporteringsgraden</strong> (4.6) står bredvid varje månad: hur stor del av klassens hållna lektioner som har ett sparat register. En låg frånvaro i en månad med låg rapporteringsgrad säger mindre än den ser ut att göra; en månad utan registrerade minuter står som <em>ingen registrering</em>, aldrig som noll.</li>
+  </ul>
+  <p>
+    Minuterna räknas som i frånvarobevakningen (4.5): <em>Sen</em> är 15 minuters ogiltig
+    frånvaro och en sen ankomst som räknas för sig, och en inställd lektion är aldrig
+    frånvaro. En elev räknas till den klass hen gick i den dag lektionen hölls.
+  </p>
+  <div class="warn">
+    <span class="label">Det du ser, och det du inte ser</span>
+    <p>
+      Du ser bara dina egna mentorselever och klasser. En elev som skolan markerat
+      med skyddad identitet finns inte i listan och går inte att öppna, och ingenting
+      skrivs ut för en sådan elev; saknas en elev i din lista är det därför. En
+      elevs statistik räknas av de markeringar som finns kvar: närvaro som skolan
+      gallrat syns inte, och kortet säger från vilken dag markeringar finns. En
+      siffra för en grupp bygger på minst fem elever. När du öppnar en klass lista
+      eller en elevs kort skrivs det i skolans läslogg att du läst elevernas
+      närvaro och namn. Berätta inte vidare det du ser för den som inte har med
+      eleven att göra.
+    </p>
+  </div>
 
 </section>
 

@@ -97,6 +97,8 @@ export interface GroupRemovalConsequences extends Record<GroupKeyKind, number> {
   attendanceMarks: number;
   /** Lesson logs (klassbok entries) on those lessons, which go with them. */
   lessonLogs: number;
+  /** Days on which a pupil was moved to or from a parallel lesson of those lessons (Elevens lektion för dagen), which go with them. */
+  lessonMoves: number;
   /** Groups linked to the school's SS12000 source, which its next sync may add again. */
   fromSource: number;
 }
@@ -121,6 +123,7 @@ async function groupRemovalConsequences(
     successors: await tx.studentGroup.count({ where: { predecessorId: { in: all }, id: { notIn: all } } }),
     attendanceMarks: await tx.attendanceRecord.count({ where: { calendarLesson: inGroups } }),
     lessonLogs: await tx.lessonLog.count({ where: { calendarLesson: inGroups } }),
+    lessonMoves: await tx.lessonPupilMove.count({ where: { OR: [{ fromLesson: inGroups }, { toLesson: inGroups }] } }),
     fromSource: groups.filter((group) => group.ss12000Id !== null).length,
   };
 }

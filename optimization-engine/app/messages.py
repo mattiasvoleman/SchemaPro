@@ -631,6 +631,48 @@ MESSAGES: dict[str, str] = {
         "timetable could not be made. The limit is shown to the principal, a full administrator "
         "and anyone with HR read access."
     ),
+    # ---- Bästa möjliga schema: what gave way ------------------------------
+    # Sent by THIS engine under `deviations`, never under `conflicts`: a rule
+    # that was broken in a timetable that WAS placed, counted on the timetable
+    # that came back (app/solver/relaxation.py). Each sentence says the rule,
+    # how far it gave way, and the value the rule would need for this very
+    # timetable to hold ("needed") — not a promise that no other timetable
+    # keeps it. The names are the refusals' (a rule's or a post's id, a
+    # requirement the gateway realises), and the post's sentence carries WORK_DAYS
+    # in its code so the gateway masks it for a reader without HR read access,
+    # as it masks every sentence that carries a post's days.
+    "DEVIATION_TEACHER_DAILY_CAP": (
+        "The cap of {minutes} minutes of teaching a day that the teacher working-time rule "
+        "{rule} sets gave way on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
+        "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}: the teacher "
+        "teaches {taught} minutes, {over} over. This timetable holds with the cap at "
+        "{needed} minutes, or with that day's lessons moved to another day."
+    ),
+    "DEVIATION_TEACHER_WORK_DAYS": (
+        "The teacher's post {limit} allows teaching on at most {days, plural, one {# day} "
+        "other {# days}} a week, and this timetable has the teacher on {taught}: "
+        "{over, plural, one {# day} other {# days}} over. It holds with "
+        "{needed, plural, one {# day} other {# days}} on the post, or with the lessons of the "
+        "lightest days moved."
+    ),
+    "DEVIATION_SUBJECT_PER_DAY": (
+        "{requirement} has {count, plural, one {# lesson} other {# lessons}} on "
+        "{day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} "
+        "6 {Saturday} 7 {Sunday} other {day {day}}}, against a limit of {maxPerDay} a day: "
+        "{over, plural, one {# lesson} other {# lessons}} over. It holds with the limit at "
+        "{needed}, or with one of them on another day."
+    ),
+    "DEVIATION_SUBJECT_DAYS_APART": (
+        "{requirement} has lessons {closest, plural, one {# day} other {# days}} apart where "
+        "the rule asks for at least {minDaysBetween} ({pairs, plural, one {# pair of days} "
+        "other {# pairs of days}} too close). It holds with the rule at {needed}, or with "
+        "those lessons moved apart."
+    ),
+    "DEVIATION_ROOM_LOCK": (
+        "{requirement} has {lessons, plural, one {# lesson} other {# lessons}} of "
+        "{of} in a room outside the rooms the subject is locked to. It holds if the lock "
+        "is opened for the subject, or if a locked room is free at those times."
+    ),
     # Sent by the GATEWAY after a run that worked: a wish the timetable did not
     # keep, which is a note beside a result and never a refusal of one.
     #
@@ -892,6 +934,64 @@ MESSAGES: dict[str, str] = {
         "{time})."
     ),
 
+    # ---- Placeringsregler (G3) -------------------------------------------
+    # The school's own placement rules, named when the week cannot keep one.
+    # `requirement` and `room` are ids the gateway realises into names, as in
+    # every sentence above; no sentence names a person (a teacher's limit is
+    # named by the rule, not the teacher).
+    "SUBJECT_EDGE_CANNOT_BE_KEPT": (
+        "{requirement}: the school rules keep this subject {edge, select, FIRST {from opening} "
+        "other {from closing}} a class's day, and the week cannot hold that for every lesson of "
+        "it. Give the class lessons of other subjects to {edge, select, FIRST {start} other "
+        "{end}} the day with, allow the subject at the {edge, select, FIRST {start} other "
+        "{end}} of the day, or turn the rule to Soft under School rules."
+    ),
+    "PLACES_CANNOT_BE_KEPT": (
+        "The school rules allow {party, select, class {a class} other {a teacher}} at most "
+        "{limit, plural, one {# {kind, select, room {kind of room} other {building}}} other "
+        "{# {kind, select, room {kinds of room} other {buildings}}}} a day, and the week cannot "
+        "keep that for everyone. Raise the limit, turn the rule to Soft under School rules, or "
+        "let the lessons use {kind, select, room {fewer kinds of room} other {fewer buildings}}."
+    ),
+    "SHARED_ROOM_CANNOT_BE_KEPT": (
+        "{room} is shared by several groups at once, and the week cannot place its lessons so "
+        "that their pupils together fit its seats at every moment. Move a lesson out of the room, "
+        "raise its capacity, take the shared mark off the room, or turn the rule to Soft under "
+        "School rules."
+    ),
+    "PLACEMENT_EDGE_DAY_TOO_SHORT": (
+        "{requirement} cannot be placed: the school rules keep it {edges, select, both {neither "
+        "first nor last} first {from being first} other {from being last}} in a class's day, "
+        "which takes at least {needed} lessons that day, and the class has at most {maxPerDay} a "
+        "day. Allow more lessons a day, or relax the rule for the subject."
+    ),
+    "PLACEMENT_EDGE_NO_OTHER_LESSON": (
+        "{requirement}: the school rules keep this subject {edge, select, FIRST {from opening} "
+        "other {from closing}} a class's day, but every lesson the class has is of subjects that "
+        "rule applies to, so one of them would have to {edge, select, FIRST {open} other "
+        "{close}} it. Give the class a lesson of another subject, or relax the rule."
+    ),
+    "PLACEMENT_PLACES_FORCED": (
+        "{party, select, class {A class} other {A teacher}} has lessons that can only be in "
+        "{places, plural, one {# {kind, select, room {kind of room} other {building}}} other "
+        "{# {kind, select, room {kinds of room} other {buildings}}}}, but the school rules allow "
+        "at most {limit, plural, one {# {kind, select, room {kind of room} other {building}}} "
+        "other {# {kind, select, room {kinds of room} other {buildings}}}} in a day, which takes "
+        "{days, plural, one {# day} other {# days}} and the week has "
+        "{open, plural, one {# day} other {# days}}. Raise the limit or let the lessons use "
+        "other rooms."
+    ),
+    "SHARED_ROOM_LOCK_OVER_CAPACITY": (
+        "A locked lesson in {room} has {pupils, plural, one {# pupil} other {# pupils}}, and the "
+        "room seats {capacity}. Move the lesson, raise the room's capacity, or turn the rule off "
+        "or to Soft under School rules."
+    ),
+    "SHARED_ROOM_LOCKS_OVER_CAPACITY": (
+        "Locked lessons in {room} put {pupils, plural, one {# pupil} other {# pupils}} in it at "
+        "once, and the room seats {capacity}. Move one of the lessons, raise the room's capacity, "
+        "or turn the rule off or to Soft under School rules."
+    ),
+
     # ---- The timeout probe ----------------------------------------------
     "PROBE_NOTHING_HELPED": (
         "No timetable was found within {budget} s, and none of the {rules, plural, "
@@ -978,6 +1078,19 @@ MESSAGES: dict[str, str] = {
     "PROBE_SOLVED_WITHOUT_DISTRIBUTION": (
         "With the subjects' distribution rules dropped — at most a number of lessons a day, "
         "no consecutive days — a timetable was found in {seconds} s."
+    ),
+    # Placeringsregler: a rule the school made HARD, dropped for the probe.
+    "PROBE_SOLVED_WITHOUT_SUBJECT_EDGES": (
+        "Without the rule that keeps subjects from opening or closing a class's day, a "
+        "timetable was found in {seconds} s."
+    ),
+    "PROBE_SOLVED_WITHOUT_PLACE_LIMITS": (
+        "Without the limits on different rooms and buildings a day, a timetable was found in "
+        "{seconds} s."
+    ),
+    "PROBE_SOLVED_WITHOUT_SHARED_ROOMS": (
+        "Without the rule that the pupils in a shared room fit its seats, a timetable was found "
+        "in {seconds} s."
     ),
     "PROBE_SOLVED_WITHOUT_BLOCKS": (
         "With the blocks dropped, so that the lessons of a block could take different times, a "

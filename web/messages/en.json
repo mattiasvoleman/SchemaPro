@@ -230,7 +230,8 @@
     "crisis": "Crisis mode",
     "myCrisis": "Alarm",
     "schemavisaren": "Timetable viewer",
-    "schoolDay": "School day"
+    "schoolDay": "School day",
+    "meals": "Meal counts"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -1546,6 +1547,9 @@
     "lessonsGenerated": "{count} master lessons generated",
     "infeasibleHint": "The constraints cannot all be met at once. The summary and the conflicts below say what needs to change.",
     "timeoutHint": "The solver did not find a schedule within its time budget. This does not mean your requirements are impossible — try running it again, or ask your administrator to raise the solver time limit. Relaxing tight availability windows also makes a schedule easier to find.",
+    "bestEffortOffer": "The school has Best possible timetable on. Under Timetable proposals you can lay a timetable that breaks as few of the school's own rules as possible and see which gave way.",
+    "bestEffortOfferLink": "Compute the best possible",
+    "bestEffortOfferTimeout": "Generate ran out of time without proving anything: a timetable with deviations may come back where a longer run of Generate would have avoided them.",
     "conflicts": "Detected conflicts",
     "noConflicts": "No conflicts reported.",
     "notesTitle": "Wishes that could not be kept",
@@ -1572,6 +1576,7 @@
     "ruleTravel": "The generator keeps the travel time between sites",
     "rulePupilGaps": "The generator keeps pupils' idle time down",
     "ruleConsecutive": "The generator tries to keep teachers' teaching in a row within their limit",
+    "ruleBestEffort": "Best possible timetable is on: Timetable proposals can lay a timetable with deviations from the school's rules",
     "rulesEdit": "Change",
     "noYearTitle": "{count, plural, one {One group} other {# groups}} in the curriculum entries has no year",
     "noYearBody": "The solver reads “no year” as “unrestricted”: frame times and breaks do not apply to these groups’ lessons, so they can land straight across a break. The year is derived from the members’ home classes, or from the group’s own year when it has no members.",
@@ -1841,6 +1846,75 @@
     "stale": "The timetable has changed since the proposal was computed. Compute a new proposal.",
     "undoStale": "The timetable has changed since the optimisation, so it cannot be undone from here. Restore the version “Före salsoptimering” under Versions."
   },
+  "swaps": {
+    "title": "Swaps and moves",
+    "body": "Lessons that can trade times with this one without anything being double-booked, and chains of three where each lesson takes the next one's time. Every proposal has been judged by the same rules as a hand move, and you see what it costs before anything changes. The lessons that trade times stay generated, so the next Generate can move them again: lock them if they are to stay.",
+    "computing": "Looking for swaps…",
+    "failed": "The proposals could not be fetched.",
+    "retry": "Try again",
+    "closeAction": "Close",
+    "parked": "The lesson is on the tray and has no time to trade. Put it back in the timetable first.",
+    "notPlaced": "The lesson is not in the master timetable and cannot be swapped.",
+    "lockedPicked": "The lesson is locked. You may move it, but the generator leaves it as it is until you unlock it.",
+    "withParallel": "This lesson stands in parallel with {count, plural, =1 {1 other lesson} other {# other lessons}}. They always move together.",
+    "none": "No swap or chain can be made without a double booking or a broken rule. Unlock a lesson or free a time and search again.",
+    "found": "{count, plural, =1 {1 proposal} other {# proposals}}, the best first",
+    "truncated": "The search stopped when its time ran out, so there may be more proposals. The ones above have been judged.",
+    "swap": "Swap",
+    "chain": "Chain of three",
+    "picked": "Picked",
+    "locked": "Locked",
+    "moveLine": "{from} → {to}",
+    "unnamedTeacher": "unknown teacher",
+    "follows": "Goes along",
+    "followsBecause": "{lesson} ({reason})",
+    "parallel": {
+      "BLOCK": "same block",
+      "SAME_TIMES": "block on the same times",
+      "HALF": "the other half of the class",
+      "REPLACING": "replacing group"
+    },
+    "otherSchools": "Other schools",
+    "external": {
+      "SHARED_TEACHER": "{teacher} is at {schools} {when}. The lesson stays clear of that time.",
+      "ROOM_LENT": "{room} is lent to {schools} {when}. The lesson stays clear of that time.",
+      "ROOM_BORROWED": "{room} is borrowed from {schools} and is only available within the loan, not {when}."
+    },
+    "hardTitle": "Hard rules held",
+    "notChecked": "The proposals do not check the changeover time in the frames or the travel time between sites.",
+    "hard": {
+      "CLASH": "no double booking of teacher, room or pupils, and no closed times",
+      "FRAME": "the school day's frames",
+      "LUNCH": "the classes' lunch",
+      "GRADE_RULE": "weekly rules on years",
+      "OTHER_SCHOOL": "the other schools' lessons and lent rooms"
+    },
+    "softTitle": "What it costs in the soft rules",
+    "soft": {
+      "PUPIL_GAPS": "Pupils' idle hours",
+      "TEACHER_GAPS": "Teachers' idle hours",
+      "DISTRIBUTION": "Subject distribution",
+      "TEACHER_DAY": "Teacher's day",
+      "MOVED_LESSONS": "Lessons moved"
+    },
+    "minutes": "{count} min",
+    "breaches": "{count, plural, =0 {no breaches} =1 {1 breach} other {# breaches}}",
+    "lessons": "{count, plural, =1 {1 lesson} other {# lessons}}",
+    "apply": "Apply",
+    "applied": "{count, plural, =1 {1 lesson changed time.} other {# lessons changed time.}} The timetable as it was before was saved as a version.",
+    "calendarUpdated": "{count, plural, =1 {1 published lesson in the calendar followed.} other {# published lessons in the calendar followed.}}",
+    "calendarRemoved": "{count, plural, =1 {1 published lesson in the calendar was removed, with its substitute, lesson log and homework.} other {# published lessons in the calendar were removed, with their substitutes, lesson logs and homework.}}",
+    "removesCalendar": "{count, plural, =1 {Removes 1 published lesson from the calendar} other {Removes # published lessons from the calendar}}: they would land before now or outside the lesson's weeks. Their substitute, lesson log and homework go with them, and Undo does not put them back.",
+    "undo": "Undo",
+    "undone": "The swap is undone. The lessons stand at their old times in the master timetable.",
+    "undoneCalendar": "{count, plural, =1 {1 published lesson in the calendar was moved back.} other {# published lessons in the calendar were moved back.}}",
+    "undoneNotRestored": "{count, plural, =1 {1 calendar lesson that was removed does not come back by itself. Publish again to create a new one, without its substitute, lesson log and homework.} other {# calendar lessons that were removed do not come back by themselves. Publish again to create new ones, without their substitutes, lesson logs and homework.}}",
+    "stale": "The timetable has changed since the proposals were computed. The proposals are fetched again.",
+    "splitsParallel": "The swap would part lessons that stand in parallel, so nothing changed. The proposals are fetched again.",
+    "lockedPartner": "The swap would move a locked lesson, so nothing changed. The proposals are fetched again.",
+    "undoStale": "The timetable has changed since the swap, so it cannot be undone from here. Restore the version “Före byte” under Versions.",
+    "openButton": "Suggest swaps"
+  },
   "dayPlanner": {
     "title": "Day planner",
     "subtitle": "Cancel lessons and assign substitutes for a specific day",
@@ -2017,6 +2091,7 @@
       "attendance": "Attendance",
       "staffing": "Staffing",
       "cover": "Cover hours",
+      "absenceStats": "Absence statistics",
       "title": "Reports",
       "subtitle": "Attendance, staffing and cover hours for a period"
     },
@@ -2343,6 +2418,7 @@
       "ACK_REQUESTED": "The school asks you to confirm: {title}",
       "ACK_REMINDER": "Reminder: the school is waiting for your confirmation of {title}"
     },
+    "lessonPupilMoved": "A pupil’s lesson ({when}) is now {subject}.",
     "lessonReportReminder": "{count, plural, one {# new lesson was held} other {# new lessons were held}} at least {limitDays, plural, one {# day} other {# days}} ago with no saved register. Older open lessons may remain. See My reporting.",
     "reportingRateDigest": "Reporting rate {from} – {to}: {reported, number} of {held, plural, one {# lesson held} other {# lessons held}} had a saved register. See Reporting rate.",
     "cover": {
@@ -2952,6 +3028,86 @@
   "grades": {
     "grade": "{grade, plural, =0 {Reception} other {Year #}}"
   },
+  "placementRules": {
+    "title": "Placement rules",
+    "intro": "Three rules for where lessons land in the day and in which rooms. They apply when Generate lays the timetable, and all three are off until the school turns them on. Each rule can be:",
+    "mode": {
+      "OFF": "Off",
+      "SOFT": "Soft",
+      "HARD": "Hard"
+    },
+    "modeHint": {
+      "OFF": "The rule is not used.",
+      "SOFT": "A wish with a weight, which Generate weighs against the other wishes. Generate tries to keep the rule but never refuses because it did not manage.",
+      "HARD": "A requirement, which only Shared rooms can be for now. If it cannot hold together with the rest of the rules, the timetable cannot be laid: Generate then refuses and prints the reason."
+    },
+    "weight": "Weight",
+    "weightHint": "1–1000. For comparison, a wished-for free day weighs 40 and teaching in a row weighs 250.",
+    "weightInvalid": "Enter a whole number from 1 to 1000.",
+    "edge": {
+      "title": "Not first or last in the day",
+      "hint": "Some subjects should not be a class's first or last lesson of the day. Which ones is marked on the subject itself, under Subjects. A class's day is all the lessons its pupils attend, teaching groups and halves included.",
+      "hardHint": "Hard is not offered for this rule yet: a hard rule can make Generate take much longer, and it has not been measured on a large school. Choose Off or Soft.",
+      "count": "{count, plural, =0 {No subject is marked yet.} one {# subject is marked.} other {# subjects are marked.}}",
+      "link": "Mark subjects"
+    },
+    "places": {
+      "title": "Rooms and buildings per day",
+      "hint": "At most this many different buildings and rooms a day, for a class and for a teacher separately. 1 means a single one all day. Building is the room's own Building field under Rooms; rooms without a building count as the same building. Equal rooms of the same type, size and year levels count as one room. The rule counts how many different ones are visited, not in what order: a day that goes A–B–A counts as two buildings. A class is counted on its own group's lessons.",
+      "hardHint": "Hard is not offered for this rule yet: a hard rule can make Generate take much longer, and it has not been measured on a large school. Soft kept the limits in the measurement. Choose Off or Soft."
+    },
+    "limit": {
+      "classRoom": "The class's different rooms per day",
+      "teacherRoom": "The teacher's different rooms per day",
+      "classBuilding": "The class's different buildings per day",
+      "teacherBuilding": "The teacher's different buildings per day"
+    },
+    "limitPlaceholder": "No limit",
+    "limitsHint": "Leave empty for no limit. 1 means a single one. At most 20.",
+    "limitInvalid": "Enter a whole number from 1 to 20, or leave it empty.",
+    "limitsMissing": "Set at least one limit, or the rule has nothing to hold. Choose Off if you do not want it.",
+    "errors": {
+      "PLACEMENT_EDGE_HARD_NOT_OFFERED": "The rule Not first or last in the day cannot be hard yet. Choose Off or Soft.",
+      "PLACEMENT_PLACES_NEEDS_A_LIMIT": "The rule Rooms and buildings per day needs at least one limit when it is Soft. Set a limit or choose Off.",
+      "PLACEMENT_PLACES_HARD_NOT_OFFERED": "The rule Rooms and buildings per day cannot be hard yet. Choose Off or Soft."
+    },
+    "shared": {
+      "title": "Shared rooms",
+      "hint": "Applies only to rooms marked Can be shared under Rooms. Hard: the number of pupils in the room at once always fits the room's capacity. Soft: the capacity may be exceeded, at a weight per pupil over it.",
+      "weightHint": "1–1000 per pupil over capacity, counted at the room's worst moment. For comparison, a wished-for free day weighs 40 and teaching in a row weighs 250."
+    },
+    "subject": {
+      "legend": "Placement in the day",
+      "hint": "Applies to the class's day, that is all the lessons its pupils attend, teaching groups and halves included. The rules are turned on under School rules, Placement rules; until then the boxes change nothing.",
+      "notFirst": "Not the first lesson of the day",
+      "notLast": "Not the last lesson of the day"
+    },
+    "room": {
+      "canBeShared": "Can be shared by several groups at once",
+      "hint": "The room can have several groups at once, as long as their pupils together fit the room's capacity. Needs the room to have a capacity. Applies only when the Shared rooms rule is on under School rules, Placement rules; otherwise the room holds one group at a time as before.",
+      "needsCapacity": "The room has no capacity set and so is not shared: it holds one group at a time until you set a capacity above."
+    },
+    "summary": {
+      "edge": {
+        "SOFT": "Not first or last in the day: soft, weight {weight}",
+        "HARD": "Not first or last in the day: hard"
+      },
+      "places": {
+        "SOFT": "Rooms and buildings per day: soft, weight {weight} ({limits})",
+        "HARD": "Rooms and buildings per day: hard ({limits})"
+      },
+      "shared": {
+        "SOFT": "Shared rooms: soft, weight {weight}",
+        "HARD": "Shared rooms: hard"
+      },
+      "limit": {
+        "classRoom": "class rooms {count}",
+        "teacherRoom": "teacher rooms {count}",
+        "classBuilding": "class buildings {count}",
+        "teacherBuilding": "teacher buildings {count}"
+      }
+    }
+  },
   "lunch": {
     "title": "Lunch and dining hall",
     "hint": "The solver keeps a lunch break free for every class and staggers the sittings so the dining hall is never over-filled.",
@@ -2983,7 +3139,25 @@
     "consecutive": "The generator tries to keep teachers' teaching in a row within their limit",
     "consecutiveHint": "Off by default. When on, Generate weighs in each teacher's limit on teaching in a row, which the principal or a full administrator has set on the teacher's post. It is a wish, not a promise: Generate says after the run when it did not manage it, and names the teachers to the principal, a full administrator and anyone with HR read. The wish ranks above keeping the previous timetable's places and above the pupils' idle time, so turn it on before the first generation if you can. Generating again on an existing timetable moves many lessons, not only the flagged teachers': on our test school between a fifth and nearly half.",
     "consecutiveWithPupilGapsTitle": "The pupils' idle time and the teachers' limits are both on",
-    "consecutiveWithPupilGaps": "When both weigh in, the generation has a lot to trade against each other, and on the default search time the teachers' limits were often not kept in our measurements. Generate says after the run when it did not manage it. Turn on both only if you want that anyway."
+    "consecutiveWithPupilGaps": "When both weigh in, the generation has a lot to trade against each other, and on the default search time the teachers' limits were often not kept in our measurements. Generate says after the run when it did not manage it. Turn on both only if you want that anyway.",
+    "bestEffort": "Best possible timetable",
+    "bestEffortHint": "Off by default. When on, Timetable proposals gets the button Compute the best possible, which lays a timetable even when Generate refuses because the school's own rules do not fit together. The timetable is laid so that as few rules as possible are broken, and each rule that gave way is listed as a deviation with how much. A timetable with deviations is applied only once you explicitly accept them, and publishing warns about them. Generate and the ordinary proposals run as before.",
+    "bestEffortNeverTitle": "Never gives way, in any mode:",
+    "bestEffortNeverOverlap": "A teacher, a class, a pupil or a room booked twice.",
+    "bestEffortNeverFrames": "Lessons outside the school's frame times.",
+    "bestEffortNeverTravel": "The travel time between schools and sites.",
+    "bestEffortNeverTeacher": "A teacher's lunch and night's rest, and a teacher marked as unavailable.",
+    "bestEffortNeverMeals": "Lunch, the dining hall and the breaks.",
+    "bestEffortNeverRooms": "The room type, capacity and school years that a curriculum entry requires.",
+    "bestEffortNeverLessons": "Lesson lengths and the number of lessons per week.",
+    "bestEffortNeverShared": "The pupils in a shared room against its capacity, when Shared rooms is set to Hard.",
+    "bestEffortNeverGroups": "A parallel block's shared start, and a group's own cap per day (Max lessons per day above).",
+    "bestEffortMayTitle": "Can give way, and is then listed as a deviation:",
+    "bestEffortMayCap": "A teacher's cap on teaching per day (the working-time rule).",
+    "bestEffortMayDays": "How many days a week a teacher teaches under the post.",
+    "bestEffortMayDistribution": "A subject's distribution over the week: at most so many lessons a day, and so many days between.",
+    "bestEffortMayRoomLock": "Room locks: a subject being allowed only in certain rooms.",
+    "bestEffortOrder": "They give way in order of mildness, the days between a subject's lessons first and the days of a post last, and only when no timetable exists without the deviation. As little as possible is then broken."
   },
   "conflictCategories": {
     "AVAILABILITY": "Availability",
@@ -2997,7 +3171,10 @@
     "TEACHER_OVERLAP": "Teacher clash",
     "TIMEOUT_PROBE": "Rule that does not fit (measured, not proved)",
     "SUBJECT_DISTRIBUTION": "Subject distribution",
-    "TEACHING_BLOCK": "Parallel blocks"
+    "TEACHING_BLOCK": "Parallel blocks",
+    "PLACEMENT_EDGE": "First and last lesson",
+    "PLACEMENT_PLACES": "Rooms and buildings per day",
+    "SHARED_ROOM": "Shared rooms"
   },
   "gaps": {
     "title": "Gaps and idle time",
@@ -4295,6 +4472,11 @@
     "DEMAND_CLIQUE_HOURS_SHORT": "Too many lessons for the hours: student group {group} and the {sharingGroups, plural, one {# other group} other {# other groups}} sharing its pupils may never overlap, and between them need {demandMinutes} minutes of lessons a week, but the frame times{lunch, select, none { and the locked lessons} other {, the locked lessons and the lunch}} leave at most {capacityMinutes}. Widen the frame{lunch, select, none { or unlock a lesson in the middle of the day} other {, unlock a lesson in the middle of the day, or move the lunch window}}.",
     "DEMAND_REQUIREMENTS_EXCEED_WEEK": "Lessons of {requirements, plural, one {# requirement} other {# requirements}} need {demandMinutes} minutes a week and the week offers {capacityMinutes}.",
     "DEMAND_YEAR_WEEK_SHORT": "The week does not hold {grades, select, any {the classes with unknown years} other {year {grades}}}: the lessons, the margins between them and the lunch breaks need at least {demandMinutes} minutes, even if lessons could be cut into pieces, and the frame times leave {capacityMinutes}. Widen the frame times or take lessons out{shared, select, none {} other {, and see below for teachers who stand on groups that would otherwise run together}}.",
+    "DEVIATION_ROOM_LOCK": "{requirement} has {lessons, plural, one {# lesson} other {# lessons}} of {of} in a room outside the rooms the subject is locked to. It holds if the lock is opened for the subject, or if a locked room is free at those times.",
+    "DEVIATION_SUBJECT_DAYS_APART": "{requirement} has lessons {closest, plural, one {# day} other {# days}} apart where the rule asks for at least {minDaysBetween} ({pairs, plural, one {# pair of days} other {# pairs of days}} too close). It holds with the rule at {needed}, or with those lessons moved apart.",
+    "DEVIATION_SUBJECT_PER_DAY": "{requirement} has {count, plural, one {# lesson} other {# lessons}} on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}, against a limit of {maxPerDay} a day: {over, plural, one {# lesson} other {# lessons}} over. It holds with the limit at {needed}, or with one of them on another day.",
+    "DEVIATION_TEACHER_DAILY_CAP": "The cap of {minutes} minutes of teaching a day that the teacher working-time rule {rule} sets gave way on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}: the teacher teaches {taught} minutes, {over} over. This timetable holds with the cap at {needed} minutes, or with that day's lessons moved to another day.",
+    "DEVIATION_TEACHER_WORK_DAYS": "The teacher's post {limit} allows teaching on at most {days, plural, one {# day} other {# days}} a week, and this timetable has the teacher on {taught}: {over, plural, one {# day} other {# days}} over. It holds with {needed, plural, one {# day} other {# days}} on the post, or with the lessons of the lightest days moved.",
     "TEACHER_SHARED_BY_PARALLEL_GROUPS": "One teacher stands on {groups, plural, one {# group} other {# groups}} of {grades, select, any {the classes with unknown years} other {year {grades}}} that take pupils from the same classes, {minutes} minutes a week in all. A teacher cannot be in two places, so those groups cannot run at the same time, and every class they share has to sit through them one after the other. Give each group a teacher of its own and run them as a parallel block, or let each group take pupils from fewer classes.",
     "DEMAND_TEACHER_HOURS_SHORT": "Too many lessons for {teachers, plural, one {one teacher's hours} other {the hours of # teachers}}: a teacher gives one lesson at a time, and the lessons named here need more of the week than the school day, the frame times, the rasts, the margins around the lessons and the teacher's locked lessons leave them. No rule has to give way; the hours do. Widen the frame times, shorten the margins, unlock a lesson, or give some of the lessons to another teacher.",
     "DEMAND_TEACHER_LESSONS_EXCEED_ROOM": "One teacher gives the lessons of {requirements, plural, one {# requirement} other {# requirements}}, and they need {demandMinutes} minutes a week. They can fall on {days, plural, one {# day} other {# days}} of the week's {weekDays}, and there the school day, the frame times, the rasts, the margins around the lessons and the teacher's locked lessons leave them at most {capacityMinutes}.",
@@ -4401,6 +4583,14 @@
     "BLOCK_SAME_TIMES_TEACHERS": "{block} takes the times of {other}, and has more teachers that {other} does not than the entries of {other} have room for beside their own. Give the entries of {block} the teachers of {other}, or take a co-teacher off {other}.",
     "BLOCK_SPLIT": "{block} is split: this lesson has left the rest of the block and now counts as placed by hand. Unless every lesson of the block is locked, the next generation refuses the block as partly locked. Move it back with the block, or lock all of the block's lessons.",
     "TRAVEL_TIME_SHORT": "{party, select, TEACHER {{name}} other {The pupils in {name}}} cannot make it from {from} to {to}: {gap} min between the lessons, and the walk takes {minutes} min ({other} {time}).",
+    "SUBJECT_EDGE_CANNOT_BE_KEPT": "{requirement}: the school rules keep this subject {edge, select, FIRST {from opening} other {from closing}} a class's day, and the week cannot hold that for every lesson of it. Give the class lessons of other subjects to {edge, select, FIRST {start} other {end}} the day with, allow the subject at the {edge, select, FIRST {start} other {end}} of the day, or turn the rule to Soft under School rules.",
+    "PLACES_CANNOT_BE_KEPT": "The school rules allow {party, select, class {a class} other {a teacher}} at most {limit, plural, one {# {kind, select, room {kind of room} other {building}}} other {# {kind, select, room {kinds of room} other {buildings}}}} a day, and the week cannot keep that for everyone. Raise the limit, turn the rule to Soft under School rules, or let the lessons use {kind, select, room {fewer kinds of room} other {fewer buildings}}.",
+    "SHARED_ROOM_CANNOT_BE_KEPT": "{room} is shared by several groups at once, and the week cannot place its lessons so that their pupils together fit its seats at every moment. Move a lesson out of the room, raise its capacity, take the shared mark off the room, or turn the rule to Soft under School rules.",
+    "PLACEMENT_EDGE_DAY_TOO_SHORT": "{requirement} cannot be placed: the school rules keep it {edges, select, both {neither first nor last} first {from being first} other {from being last}} in a class's day, which takes at least {needed} lessons that day, and the class has at most {maxPerDay} a day. Allow more lessons a day, or relax the rule for the subject.",
+    "PLACEMENT_EDGE_NO_OTHER_LESSON": "{requirement}: the school rules keep this subject {edge, select, FIRST {from opening} other {from closing}} a class's day, but every lesson the class has is of subjects that rule applies to, so one of them would have to {edge, select, FIRST {open} other {close}} it. Give the class a lesson of another subject, or relax the rule.",
+    "PLACEMENT_PLACES_FORCED": "{party, select, class {A class} other {A teacher}} has lessons that can only be in {places, plural, one {# {kind, select, room {kind of room} other {building}}} other {# {kind, select, room {kinds of room} other {buildings}}}}, but the school rules allow at most {limit, plural, one {# {kind, select, room {kind of room} other {building}}} other {# {kind, select, room {kinds of room} other {buildings}}}} in a day, which takes {days, plural, one {# day} other {# days}} and the week has {open, plural, one {# day} other {# days}}. Raise the limit or let the lessons use other rooms.",
+    "SHARED_ROOM_LOCK_OVER_CAPACITY": "A locked lesson in {room} has {pupils, plural, one {# pupil} other {# pupils}}, and the room seats {capacity}. Move the lesson, raise the room's capacity, or turn the rule off or to Soft under School rules.",
+    "SHARED_ROOM_LOCKS_OVER_CAPACITY": "Locked lessons in {room} put {pupils, plural, one {# pupil} other {# pupils}} in it at once, and the room seats {capacity}. Move one of the lessons, raise the room's capacity, or turn the rule off or to Soft under School rules.",
     "TEACHER_LUNCH_WINDOW_TOO_NARROW": "The teacher working-time rule {rule} guarantees a {minutes}-minute lunch inside {windowStart}-{windowEnd}, and that window holds {remaining, plural, one {# minute} other {# minutes}} of the school day. Widen the window, shorten the lunch, or move it inside the hours the school teaches in.",
     "TEACHER_LUNCH_LEAVES_NO_START": "{causes, select, locked {Locked lessons} closed {Reservations on the teacher} locked_closed {Locked lessons and reservations on the teacher} other {These rules}} leave the teacher working-time rule {rule} no {minutes}-minute lunch inside {windowStart}-{windowEnd} on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}. Move a locked lesson, shorten the reservation, or widen the window.",
     "TEACHER_REST_LONGER_THAN_THE_NIGHT": "The teacher working-time rule {rule} asks for {restMinutes} minutes between the last lesson of one day and the first of the next, and the longest night this week can give is {nightMinutes} minutes: the teacher's {lessons, plural, one {# lesson} other {# lessons}} cannot all be placed on days that are not next to each other. Shorten the rest, lengthen the school day, or give this teacher fewer lessons.",
@@ -4421,6 +4611,9 @@
     "TEACHER_WEEK_TOO_MANY_DAYS": "{role, select, CO_TEACHER {The co-teacher} other {The teacher}} of {requirement} now teaches on {days} days a week, more than the {max} their post allows.",
     "TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN": "{role, select, CO_TEACHER {The co-teacher} other {The teacher}} of {requirement} now teaches on more days a week than their post allows. The days are shown to the principal, a full administrator and anyone with HR read access.",
     "PROBE_SOLVED_WITHOUT_TRAVEL": "With the travel time between the school's sites dropped, a timetable was found in {seconds} s.",
+    "PROBE_SOLVED_WITHOUT_PLACE_LIMITS": "Without the limits on different rooms and buildings a day, a timetable was found in {seconds} s.",
+    "PROBE_SOLVED_WITHOUT_SHARED_ROOMS": "Without the rule that the pupils in a shared room fit its seats, a timetable was found in {seconds} s.",
+    "PROBE_SOLVED_WITHOUT_SUBJECT_EDGES": "Without the rule that keeps subjects from opening or closing a class's day, a timetable was found in {seconds} s.",
     "PROBE_TRAVEL_UNMEASURED": "The travel time between the school's sites is turned on. Searching without it for {seconds} s did not find a timetable either, so whether it is the difference was not measured. A run with it turned off under School rules shows that.",
     "TRAVEL_PROBE_SUMMARY": "No timetable satisfies every rule, and the solver could not name which of them collide. With the travel time between the school's sites dropped a timetable was found in {seconds} s, so it is the travel time below that makes the week impossible.",
     "PUPILS_TRAVEL_CANNOT_BE_KEPT": "The school rules ask the generator to keep the travel time between the school's sites for pupils with lessons on two sites on one day, after their time to change, rounded up to whole start steps of {stepMinutes} min. {measured, select, 1 {That travel time is what makes the week impossible: without it, a timetable exists that keeps every other rule, and in it the pupils of the groups named here have less time than the travel time between two lessons on different sites.} 2 {That travel time makes the week impossible on its own: even with the other rules set aside, the lessons of the groups named here cannot be placed so that it fits. The week has other causes too: it stays impossible without the travel time.} other {That travel time is one of the rules that cannot all hold at once for the groups named here; whether it alone is the difference could not be measured.}} Let these groups' lessons use rooms on one site, shorten the travel time under Rooms, Sites, or turn it off under School rules.",
@@ -4951,7 +5144,8 @@
       "PUB_RANGE_GAP": "School days without a published timetable",
       "PUB_DAY_OPS_LOST": "Day changes that disappear",
       "PUB_EMPTY_HALF": "Class halves without pupils",
-      "PUB_OTHER_SCHOOL": "Clashes with the huvudman's other schools (shared teachers, lent and borrowed rooms)"
+      "PUB_OTHER_SCHOOL": "Clashes with the huvudman's other schools (shared teachers, lent and borrowed rooms)",
+      "PUB_DEVIATIONS": "Deviations from the school's rules in the latest applied timetable"
     },
     "severity": {
       "REFUSE": "Stops",
@@ -4980,6 +5174,7 @@
       "PUB_DAY_OPS_LOST": "{count, plural, one {# day change} other {# day changes}} (substitute, room change, note) disappear with lessons that are removed.",
       "PUB_FROM_IN_PAST": "The validity starts before today, so days that have passed may get lessons afterwards.",
       "PUB_LUNCH_NOT_SET": "Lunch is not set up, so no meals are published.",
+      "PUB_DEVIATIONS": "{count, plural, one {# rule gave way} other {# rules gave way}} in the latest applied timetable proposal (Best possible timetable). The list shows which. Change the rule or move the lessons to remove the deviation, or publish anyway.",
       "PUB_NOTHING_TO_PUBLISH": "There is nothing new to publish."
     },
     "reviewTitle": "Publish the timetable",
@@ -6116,6 +6311,7 @@
       "COVER_REQUEST_ACCEPTED": "Colleagues who said yes to my request",
       "ABSENCE_WATCH_DIGEST": "Absence summary",
       "ACK_REQUESTED": "Messages from the school for you to confirm",
+      "LESSON_PUPIL_MOVED": "Pupils who change lesson for a day",
       "ACK_REMINDER": "Reminder about a message waiting for your confirmation",
       "LESSON_REPORT_REMINDER": "Reminders about open lessons",
       "REPORTING_RATE_DIGEST": "Weekly reporting-rate note",
@@ -6137,7 +6333,7 @@
     "kind": {
       "ATTENDANCE": {
         "name": "Attendance",
-        "body": "Attendance records of lessons before the cutoff date."
+        "body": "Attendance records of lessons before the cutoff date. Monthly absence sums per class and for the school, with no individual pupils and at least five pupils behind every figure, are kept for three school years whatever you decide here."
       },
       "ABSENCE_REPORTS": {
         "name": "Absence reports",
@@ -6709,6 +6905,12 @@
       "start": "Compute proposals",
       "starting": "Starting…",
       "started": "The proposals are being computed. You can leave the page meanwhile.",
+      "startBestEffort": "Compute the best possible",
+      "startedBestEffort": "The best possible timetable is being computed. You can leave the page meanwhile.",
+      "bestEffortHint": "Compute the best possible lays a timetable even when Generate refuses because the school's own rules do not fit together, and lists the rules that gave way. Double bookings, frame times and travel time never give way. You accept the deviations before the timetable is applied.",
+      "replaceBestEffortTitle": "Replace the saved proposals?",
+      "replaceBestEffortBody": "You have a saved set of {count, plural, one {# proposal} other {# proposals}}. When the best possible is computed it replaces the whole set, and the proposals you have now cannot be brought back. If the run fails, the set stays.",
+      "replaceBestEffortConfirm": "Replace and compute",
       "compare": "Compare the proposals",
       "blockedGenerating": "Generate is running for this school year. Proposals can be computed once the run has finished.",
       "blockedPrerequisites": "Proposals can be computed once the prerequisites above are met.",
@@ -6749,6 +6951,7 @@
       "TEACHER_GAPS": "Fewer gaps for teachers",
       "SPREAD": "More even weeks",
       "FREE": "Freer placement",
+      "BEST_EFFORT": "Best possible",
       "unknown": "Proposal {ordinal}"
     },
     "solver": {
@@ -6770,9 +6973,13 @@
       "CANDIDATE_ENGINE_TIMEOUT": "The timetable engine did not answer in time. Try again in a moment.",
       "CANDIDATE_ENGINE_FAILED": "The scheduling engine answered with an error. Try again in a moment.",
       "ENGINE_LACKS_CANDIDATES": "The timetable engine is older than the rest of the service and cannot compute proposals yet. Try again in a few minutes.",
+      "ENGINE_LACKS_BEST_EFFORT": "The timetable engine is older than the rest of the service and cannot compute a best-possible timetable yet. Try again in a few minutes.",
       "CANDIDATES_FIRST_FAILED": "The first proposal got no timetable, and the others would have met the same obstacle. What stopped it is below.",
       "CANDIDATES_FIRST_FAILED_UNNAMED": "The first proposal got no timetable, and the others would have met the same obstacle.",
       "CANDIDATES_FIRST_TIMEOUT": "The first proposal could not be finished in time, so the others were not computed.",
+      "BEST_EFFORT_FAILED": "No timetable could be laid, even with the school's own rules allowed to give way. What stopped it is a rule that never gives way, shown below.",
+      "BEST_EFFORT_FAILED_UNNAMED": "No timetable could be laid, even with the school's own rules allowed to give way.",
+      "BEST_EFFORT_TIMEOUT": "The best possible timetable did not finish within the time.",
       "CANDIDATES_NONE_APPLICABLE": "None of the proposals produced a timetable that can be applied.",
       "CANDIDATE_RUN_INTERRUPTED": "The service restarted while the proposals were being computed. Compute them again.",
       "CANDIDATE_RUN_ABANDONED": "The proposals stopped responding and have been cancelled. Compute them again.",
@@ -6797,6 +7004,8 @@
       "SCHEDULE_CANDIDATE_NOT_APPLICABLE": "The proposal cannot be applied: the run is not finished, or the proposal got no timetable.",
       "SCHEDULE_CANDIDATE_STALE": "The base timetable has changed since the proposals were computed. Refresh the proposals and compare again.",
       "SCHEDULE_CANDIDATE_STALE_PARTS": "The base timetable has changed since the proposals were computed: {parts}. Refresh the proposals and compare again.",
+      "BEST_EFFORT_NOT_ENABLED": "Best possible timetable is off for the school. Turn it on under School rules on Availability.",
+      "SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED": "The proposal's deviations were not accepted as they stand now. Open Apply again, read the deviations and accept them.",
       "CANDIDATE_GONE": "The proposal no longer exists. It may have been deleted or replaced by newer proposals.",
       "TOO_MANY": "Too many attempts in a short time. Wait a minute and try again.",
       "generic": "Something went wrong. Try again."
@@ -6814,6 +7023,7 @@
       "title": "The proposals could not be computed {date}",
       "cancelledTitle": "The proposals were cancelled",
       "conflicts": "What stopped the first proposal",
+      "conflictsBestEffort": "What stopped the timetable",
       "daysWhere": "This page shows the days to nobody, the principal included. The principal, a full administrator and anyone with HR read access see which teacher and how many days in the teacher's post and in the answer when they generate the timetable.",
       "olderBatch": "The comparison below is of the proposals from {date}.",
       "again": "Compute proposals again from Generate timetable"
@@ -6853,6 +7063,7 @@
       "currentSchedule": "Current timetable",
       "candidate": "Proposal {ordinal}",
       "sameAs": "Same as proposal {ordinal}",
+      "withDeviations": "With deviations ({count})",
       "applied": "Applied"
     },
     "row": {
@@ -6868,6 +7079,8 @@
       "wishesHint": "Teachers given lessons on the weekday they wish to have free, or teaching longer in a row than their limit",
       "pupils": "Pupils' gaps",
       "pupilsHint": "Minutes per pupil in an ordinary week",
+      "deviations": "Deviations from the rules",
+      "deviationsHint": "The school's own rules that gave way. The sentences are under Review a proposal.",
       "apply": "Apply"
     },
     "cell": {
@@ -6883,6 +7096,7 @@
       "wishNobody": "A teacher",
       "delta": "{delta} against current",
       "unplaced": "{lines, plural, =0 {All placed} one {# line · {minutes} min a week} other {# lines · {minutes} min a week}}",
+      "deviations": "{count, plural, =0 {No deviations} one {# deviation} other {# deviations}}",
       "lines": "{count, plural, one {# line} other {# lines}}",
       "movedOf": "{moved} of {of}",
       "notApplicable": "Not applicable",
@@ -6907,12 +7121,21 @@
       "applying": "Applying…",
       "checking": "Checking that the proposal still fits the draft…",
       "noLonger": "The proposal no longer fits the draft",
-      "noLongerHint": "The timetable has changed since the proposals were made, or now meets an obstacle. Close the dialog to see what changed."
+      "noLongerHint": "The timetable has changed since the proposals were made, or now meets an obstacle. Close the dialog to see what changed.",
+      "deviationsTitle": "{count, plural, one {# deviation from the school's rules} other {# deviations from the school's rules}}",
+      "deviationsIntro": "No timetable existed that kept every rule, so this one was laid with some of them allowed to give way. Read the deviations before you apply. That you accepted them is saved with the application, and publishing warns about them until the timetable has been published.",
+      "acceptDeviations": "I accept these deviations"
     },
     "review": {
       "title": "Review a proposal",
       "hint": "Who is worse off, and which lessons move.",
-      "pick": "Proposal"
+      "pick": "Proposal",
+      "deviationsTitle": "Deviations from the school's rules",
+      "deviationsHint": "The rules that were allowed to give way so that a timetable could be laid, with what each rule would have to be set to for this timetable to keep it.",
+      "deviationsNone": "Nothing gave way: the timetable keeps all of the school's rules."
+    },
+    "deviations": {
+      "daysHidden": "A teacher's limit on how many days a week they teach gave way in this timetable. The days are shown to the principal, a full administrator and anyone with HR read access."
     },
     "worse": {
       "title": "Worse for",
@@ -7227,6 +7450,7 @@
       "mentorDuties": "{count, plural, one {# mentor duty loses} other {# mentor duties lose}} the class",
       "sharedLessons": "{count, plural, one {# lesson} other {# lessons}} in the master timetable and the calendar shared with other groups lose the group",
       "lessonLogs": "{count, plural, one {# lesson log} other {# lesson logs}} on those lessons",
+      "lessonMoves": "{count, plural, one {# move of a pupil to a parallel lesson} other {# moves of pupils to parallel lessons}} for a day on those lessons",
       "lunchSittings": "{count, plural, one {# lunch} other {# lunches}} in the master timetable",
       "calendarBreaks": "{count, plural, one {# break or lunch} other {# breaks and lunches}} in the calendar",
       "availabilityConstraints": "{count, plural, one {# availability rule} other {# availability rules}}",
@@ -8407,6 +8631,362 @@
       "loadFailed": "The choice could not be loaded",
       "loadFailedHint": "Nothing has changed. Try again, or reload the page in a moment."
     }
+  },
+  "lessonMoves": {
+    "action": "Move pupil",
+    "title": "Move a pupil to a parallel lesson",
+    "description": "The pupil is moved for this lesson's day. The rest of the timetable is as it was, and the move can be undone.",
+    "pupil": "Pupil",
+    "pupilPlaceholder": "Choose a pupil",
+    "noPupils": "No pupil on the lesson is one you may move.",
+    "pupilsFailed": "The pupils could not be loaded.",
+    "pupilsFailedHint": "Try again in a moment.",
+    "arrived": "moved here",
+    "candidates": "Lessons that overlap {subject} {start}–{end}",
+    "noCandidates": "No other lesson overlaps this one in time.",
+    "candidatesFailed": "The lessons could not be loaded.",
+    "candidatesFailedHint": "Try again in a moment.",
+    "headcount": "{count, plural, one {# pupil} other {# pupils}}",
+    "capacity": "the room holds {count}",
+    "confirm": "Move",
+    "moved": "The pupil has been moved.",
+    "undone": "The move is undone.",
+    "undo": "Undo",
+    "sectionTitle": "Moved pupils",
+    "sectionDescription": "Pupils moved to or from this lesson for the day. They count on the lesson they attend, not as absent from this one.",
+    "departure": "Moved to {subject} ({className}, {start}–{end})",
+    "arrival": "Comes from {subject} ({className}, {start}–{end})",
+    "movedBy": "moved by {name}",
+    "warning": {
+      "TARGET_ROOM_OVER_CAPACITY": "The room holds {capacity} but gets {headcount}"
+    },
+    "refusal": {
+      "LESSON_MOVE_NOT_PARALLEL": "Does not overlap in time",
+      "LESSON_MOVE_LESSON_OVER": "The lesson the pupil leaves is over",
+      "LESSON_MOVE_LESSON_NOT_HELD": "{side, select, FROM {The lesson the pupil leaves is not held} other {Is cancelled}}",
+      "LESSON_MOVE_REPLACED_BY_ACTIVITY": "Is replaced by a schedule-breaking activity",
+      "LESSON_MOVE_ALREADY_ON_TARGET": "The pupil is already on this lesson",
+      "LESSON_MOVE_PUPIL_DOUBLE_BOOKED": "The pupil has another lesson at the same time"
+    },
+    "errors": {
+      "LESSON_MOVE_NOT_ALLOWED": "You may not move this pupil. An administrator with Drift, a teacher of either lesson and the pupil's mentor may.",
+      "LESSON_MOVE_NOT_FOUND": "The move no longer exists.",
+      "LESSON_MOVE_LESSON_NOT_FOUND": "The lesson does not exist.",
+      "LESSON_MOVE_NOT_PARALLEL": "The lessons do not overlap in time, so the pupil cannot be moved there.",
+      "LESSON_MOVE_LESSON_NOT_HELD": "{side, select, FROM {The lesson the pupil leaves is not held.} other {The lesson the pupil is to be moved to is cancelled.}}",
+      "LESSON_MOVE_REPLACED_BY_ACTIVITY": "{side, select, FROM {The lesson the pupil leaves is replaced by a schedule-breaking activity.} other {The lesson the pupil is to be moved to is replaced by a schedule-breaking activity.}}",
+      "LESSON_MOVE_IN_THE_PAST": "A move is made for today or later.",
+      "LESSON_MOVE_LESSON_OVER": "The lesson is over. A pupil is not moved off a lesson that has ended. A move already made can be undone the same day by an administrator with Drift or a teacher of the lesson the pupil was moved from, and moved on by an administrator with Drift or a teacher of the lesson the pupil is on. Ask one of them.",
+      "LESSON_MOVE_PUPIL_NOT_ON_LESSON": "The pupil is not on the lesson.",
+      "LESSON_MOVE_ALREADY_ON_TARGET": "The pupil is already on that lesson.",
+      "LESSON_MOVE_PUPIL_DOUBLE_BOOKED": "The pupil would have two lessons at once.",
+      "LESSON_MOVE_HAS_ATTENDANCE": "The pupil already has an attendance mark on the lesson they were moved to. Take the mark away first.",
+      "LESSON_MOVE_EXISTS": "The pupil is already moved from the lesson.",
+      "LESSON_MOVE_CHANGED": "The move changed just now. Try again.",
+      "LESSON_MOVE_NOT_A_PUPIL": "The pupil does not exist."
+    },
+    "settings": {
+      "title": "Notice when a pupil changes lesson",
+      "description": "The teachers of the two lessons are always told. Here the school chooses whether the guardian is told too when the child is moved to a parallel lesson for a day.",
+      "guardianNotice": "Tell the guardian when a child changes lesson for a day",
+      "hint": "The notice says that a child's lesson has changed and when, never who moved the child. Off by default.",
+      "saved": "The choice is saved.",
+      "loadFailed": "The choice could not be loaded.",
+      "loadFailedHint": "Try again in a moment."
+    }
+  },
+  "absenceStats": {
+    "title": "Absence statistics over time",
+    "teacherSubtitle": "Absence in the classes you are mentor for, month by month over three school years",
+    "backToWatch": "To Absence watch",
+    "link": "Absence statistics over time",
+    "intro": "Excused and unexcused absence as a percentage of the registered minutes, month by month over three school years: for the school, for each class and for each pupil. The reporting rate stands beside it, because a month in which few lessons have a saved register says less than its figure suggests. The count runs every night for the days up to and including yesterday, and no figure is shown for a group of fewer than {min} pupils.",
+    "percent": "{percent}%",
+    "minutes": "{count} min",
+    "retry": "Try again",
+    "loadFailedHint": "No figures are shown and nothing has changed. Try again, or reload the page in a moment.",
+    "period": {
+      "label": "Period",
+      "YEAR": "School year so far",
+      "PREVIOUS": "Previous school year",
+      "LAST_90": "Last 90 days",
+      "ALL": "All three school years",
+      "range": "The period is {from} – {to}"
+    },
+    "school": {
+      "title": "The school, month by month",
+      "description": "All classes together. Under a figure is the same month a year before, when there is one.",
+      "caption": "The school's absence per month",
+      "loadFailed": "The school's absence could not be loaded",
+      "emptyTitle": "No absence to show yet",
+      "emptyBody": "The figures are counted every night for the days up to and including yesterday. The first ones come when a lesson has its marks saved."
+    },
+    "series": {
+      "column": {
+        "month": "Month",
+        "pupils": "Pupils with a mark",
+        "valid": "Excused absence",
+        "invalid": "Unexcused absence",
+        "late": "Late arrivals",
+        "reporting": "Reporting rate"
+      },
+      "year": "School year {name}",
+      "going": "So far, through {date}",
+      "classNames": "Class: {names}",
+      "pupilsOf": "{registered} of {pupils}",
+      "figure": "{minutes} · {percent}",
+      "previous": "Last year: {value}",
+      "previousNone": "Last year: no figure",
+      "noFigure": "No figure: fewer than {min} pupils have marks",
+      "noLessons": "No lessons held",
+      "reportedOf": "{reported} of {held} lessons",
+      "empty": "No month has been counted yet. The figures are counted every night for the days up to and including yesterday."
+    },
+    "chart": {
+      "label": "Chart of excused and unexcused absence per month. The same figures are in the table below.",
+      "axis": "Share of the registered minutes",
+      "invalid": "Unexcused absence",
+      "valid": "Excused absence",
+      "previous": "The same month a year before",
+      "going": "Month in progress",
+      "none": "No figure"
+    },
+    "classes": {
+      "title": "Classes",
+      "description": "The sum of the class's months over the period. Choose a class for its months, patterns and pupils.",
+      "mentorDescription": "The classes you are mentor for, summed over the period. Choose a class for its months, patterns and pupils.",
+      "caption": "Absence per class",
+      "column": {
+        "class": "Class",
+        "open": "Show the class"
+      },
+      "monthsCounted": "{count, plural, =0 {no month with a figure} one {# month with a figure} other {# months with a figure}}",
+      "open": "Show",
+      "openNamed": "Show class {name}",
+      "empty": {
+        "admin": {
+          "title": "No classes to show",
+          "body": "Classes with pupils and saved marks are shown here."
+        },
+        "mentor": {
+          "title": "You are not the mentor of any class",
+          "body": "The classes where you have the assignment mentorship are shown here."
+        }
+      },
+      "loadFailed": "The classes could not be loaded"
+    },
+    "class": {
+      "title": "Class {name}",
+      "loadFailed": "The class's months and patterns could not be loaded",
+      "series": {
+        "title": "The class, month by month",
+        "description": "The class and its predecessors, if the class has changed name or year. Under a figure is the same month a year before, when there is one.",
+        "caption": "Absence per month in class {name}"
+      },
+      "patterns": {
+        "title": "Patterns",
+        "description": "On which weekdays, in which lesson slots and in which subjects absence falls over the period, as a share of the registered minutes."
+      }
+    },
+    "patterns": {
+      "suppressedTitle": "Patterns are not shown",
+      "suppressedBody": "Fewer than {min} pupils have marks in the period. A pattern would then point out individual pupils.",
+      "empty": "No marks in the period.",
+      "groupSize": "The pattern rests on {count, plural, one {# pupil} other {# pupils}} with marks.",
+      "recorded": "{minutes} registered",
+      "caption": {
+        "weekdays": "Absence per weekday",
+        "slots": "Absence per lesson slot",
+        "subjects": "Absence per subject"
+      },
+      "column": {
+        "weekdays": "Weekday",
+        "slots": "Lesson slot (start time)",
+        "subjects": "Subject",
+        "valid": "Excused",
+        "invalid": "Unexcused",
+        "total": "Together"
+      }
+    },
+    "pupils": {
+      "title": "Pupils",
+      "description": "Each pupil's absence over the period, as a basis for development talks. Opening the list and the pupil cards is recorded in the access log.",
+      "caption": "The pupils' absence in the class",
+      "column": {
+        "pupil": "Pupil",
+        "card": "Pupil card"
+      },
+      "noRegistration": "No registration in the period",
+      "open": "Pupil card",
+      "openNamed": "Show the pupil card for {name}",
+      "heldOut": "{count, plural, one {# pupil with a protected identity is not shown in the list.} other {# pupils with a protected identity are not shown in the list.}}",
+      "empty": {
+        "title": "No pupils to show",
+        "body": "The class has no pupils on its list in the period."
+      },
+      "loadFailed": "The pupils could not be loaded"
+    },
+    "reader": {
+      "title": "Pupils are not shown to the huvudman's reader",
+      "body": "The huvudman's reader sees the sums of the school and its classes, never an individual pupil. The pupil list and the pupil cards are therefore hidden."
+    },
+    "card": {
+      "back": "To class {name}",
+      "backList": "To the pupil list",
+      "class": "Class {name}",
+      "noClass": "No class",
+      "period": "The patterns cover {from} – {to}",
+      "print": "Print",
+      "protectedTitle": "The pupil has a protected identity",
+      "protectedBody": "The card is shown to you here, but it is never printed. Nothing is printed for a pupil with a protected identity.",
+      "printProtected": "Nothing is printed for a pupil with a protected identity",
+      "printProtectedBody": "Nothing has been printed.",
+      "printFailed": "Protected identity could not be checked",
+      "printFailedHint": "Nothing has been printed. Try again in a moment.",
+      "printUseButton": "The pupil card is printed with the Print button on the card, not with the browser's print.",
+      "basisTitle": "What the figures rest on",
+      "marksFrom": "Marks are kept from {from} to {to}. Attendance before {from} has been purged or was never reported; those months show as “No registration”, not as no absence.",
+      "noMarks": "No marks are left for the pupil. Attendance has been purged or was never reported, and no month has a figure.",
+      "readNote": "Opening the pupil card is recorded in the access log.",
+      "noRegistration": "No registration",
+      "recorded": "Registered minutes",
+      "months": {
+        "title": "Month by month",
+        "description": "The pupil against the class: the class's excused and unexcused absence and its reporting rate stand beside it. Under a figure is the same month a year before, when there is one.",
+        "caption": "Absence per month for {name}"
+      },
+      "column": {
+        "class": "The class",
+        "classReporting": "The class's reporting rate"
+      },
+      "lessons": "{count, plural, one {# lesson} other {# lessons}} with a mark",
+      "previousNone": "Last year: no registration",
+      "classFigures": "Excused {valid} · unexcused {invalid}",
+      "classNoFigure": "No figure for the class",
+      "noClassSeries": "The pupil is not in a class, so there is no class to compare with.",
+      "patterns": {
+        "title": "The pupil's patterns",
+        "description": "On which weekdays, in which lesson slots and in which subjects the pupil's absence falls over the period."
+      },
+      "loadFailed": "The pupil card could not be loaded"
+    },
+    "sheet": {
+      "title": "Absence over time",
+      "printed": "Printed {date}",
+      "monthsLabel": "Months",
+      "patternsLabel": "Patterns",
+      "patterns": "Patterns, {from} – {to}",
+      "column": {
+        "valid": "Excused %",
+        "invalid": "Unexcused %",
+        "class": "Class %",
+        "reporting": "Rep. %"
+      },
+      "legend": "Excused and unexcused are the pupil's share of the registered minutes. Class is the class's excused and unexcused absence together, Rep. the class's reporting rate. “–” means a figure is missing: no registration for the pupil, or too few pupils in the class.",
+      "footer": "Information about an individual pupil, as a basis for a development talk. Keep and dispose of the printout according to the school's routines."
+    }
+  },
+  "meals": {
+    "title": "Meal counts",
+    "subtitle": "Portions per lunch sitting, for the kitchen.",
+    "intro": "The counts come from the published schedule: the pupils of the classes that eat in the sitting, less absence reported before the cut-off, plus staff who eat with them. They run from today, because class lists are today's.",
+    "view": {
+      "label": "View",
+      "day": "The day",
+      "week": "The week ahead"
+    },
+    "day": {
+      "pick": "Day",
+      "previous": "Previous day",
+      "next": "Next day",
+      "today": "Today"
+    },
+    "actions": {
+      "print": "Print",
+      "csv": "Download file for Excel",
+      "csvFailed": "The file could not be downloaded. Try again in a moment."
+    },
+    "print": {
+      "dayTitle": "Portions {date}",
+      "weekTitle": "Portions {from} – {to}",
+      "school": "Rastra Meal counts"
+    },
+    "kpi": {
+      "portions": "Portions",
+      "pupils": "Pupils",
+      "absent": "Absence, taken off",
+      "staff": "Staff",
+      "after": "Reported after the cut-off",
+      "notIncluded": "Not included",
+      "afterDetail": "Shown, not taken off"
+    },
+    "table": {
+      "captionDay": "Portions per sitting {date}",
+      "captionWeek": "Portions per day, the week ahead",
+      "column": {
+        "sitting": "Sitting",
+        "sittings": "Sittings",
+        "classes": "Classes",
+        "date": "Day",
+        "pupils": "Pupils",
+        "absent": "Absence before the cut-off",
+        "staff": "Staff",
+        "portions": "Portions",
+        "after": "After the cut-off"
+      },
+      "activity": "activity",
+      "activityTitle": "The class has a schedule-breaking activity over the sitting and is counted in.",
+      "total": "Total",
+      "none": "No sitting",
+      "open": "Show the day",
+      "openFor": "Show {date}",
+      "notIncluded": "–"
+    },
+    "empty": {
+      "title": "No lunch in the published schedule on this day",
+      "body": "That goes for weekends, holidays and days the schedule is not published for. Lunch is published with the schedule."
+    },
+    "emptyWeek": {
+      "title": "No lunch in the published schedule for the coming week",
+      "body": "Publish the schedule, or pick another day under The day."
+    },
+    "notes": {
+      "title": "How it is counted",
+      "cutoff": "Absence reported before {time} on the day is taken off. Absence reported later is not taken off but shown on its own, so you see what has changed since the order.",
+      "noCutoff": "No cut-off is set, so no absence is taken off. Set one under Cut-off and letter.",
+      "partial": "Only absence that covers the whole sitting is taken off: a pupil who is away for part of it eats.",
+      "staff": "Staff are counted from the pedagogical lunch with a fixed time placed under Staffing.",
+      "noStaff": "Staff are not included: no pedagogical lunch with a fixed time is placed under Staffing.",
+      "activity": "Classes with a schedule-breaking activity over the sitting are counted in, because the activity does not say whether the class eats at school.",
+      "diet": "Allergies and diets are not included. They are not stored in Rastra."
+    },
+    "settings": {
+      "title": "Cut-off and letter to the kitchen",
+      "description": "The cut-off is the time of day the kitchen places its order. The letter goes every school day at the cut-off to the kitchen's address, through Rastra's ordinary mail.",
+      "cutoffLabel": "Cut-off",
+      "cutoffHint": "The school's time, HH:MM. With no cut-off no absence is taken off.",
+      "emailLabel": "Kitchen address",
+      "emailHint": "One address. It is the school's, not a user's, and is used only for the letter.",
+      "letterLabel": "Send a letter to the kitchen every school day",
+      "letterOn": "The letter goes at {time} every day that has a sitting.",
+      "letterOff": "The letter is off. None goes until you turn it on.",
+      "letterNeeds": "Set a cut-off and a kitchen address to turn the letter on.",
+      "privacy": "The letter and the file hold only counts and the names of classes, never a pupil's name.",
+      "lastLetter": "Last letter: {date}",
+      "noLetterYet": "No letter has gone yet.",
+      "save": "Save",
+      "saved": "The settings are saved.",
+      "problem": {
+        "cutoff": "The cut-off must be a time, HH:MM.",
+        "email": "The kitchen address must be one e-mail address.",
+        "letter": "The letter can only be on when a cut-off and a kitchen address are set."
+      },
+      "loadFailed": "The settings could not be loaded",
+      "loadFailedHint": "Nothing has changed. Try again, or reload the page in a moment."
+    },
+    "loadFailed": "The portions could not be loaded",
+    "loadFailedHint": "Nothing has changed. Try again, or reload the page in a moment.",
+    "retry": "Try again"
   },
   "exams": {
     "title": "Exams and exam rooms",

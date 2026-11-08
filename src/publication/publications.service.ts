@@ -47,6 +47,7 @@ import {
   type GateLesson,
 } from './publication-gates.reader';
 import { otherSchoolFinding } from './other-school-finding';
+import { deviationsFinding } from './deviation-finding';
 import {
   classifyOverlap,
   effectiveSegments,
@@ -840,6 +841,7 @@ export class PublicationsService {
       await lunchFinding(tx, context.schoolId),
       await blockSplitFinding(tx, context.year.id, context.lessons),
       await emptyHalfFinding(tx, context.year.id, context.lessons),
+      await deviationsFinding(tx, context.year.id),
     ];
     if (context.mode === 'DIRECT' && context.validFrom < context.today) {
       findings.push({

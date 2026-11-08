@@ -822,6 +822,19 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     reason:
       'The rastvaktsschema is the old year’s: the new year’s passes are planned against its own staff and rasts; the areas stay.',
   },
+  /**
+   * Frånvarostatistik över tid (20270121090000): the sums of a class's month,
+   * counted by a nightly job from that month's lessons and marks, with no
+   * pupil in a row. A class of the old year stays (the activation closes it,
+   * it does not delete it) and keeps its months: they are the history the
+   * statistics read three läsår back, and the cohort is followed from class to
+   * class by predecessorId, not by copying a row.
+   */
+  AbsenceStatsMonth: {
+    kind: 'SKIPPED',
+    reason:
+      'The sums of the old year’s months stay with the old year’s classes, which the activation closes and keeps; the new year’s classes get their own months from the nightly count of their own lessons.',
+  },
 };
 
 const isOn = (disposition: Disposition, options: RolloverOptions): boolean =>

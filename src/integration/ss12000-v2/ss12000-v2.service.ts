@@ -1189,20 +1189,26 @@ export class Ss12000V2Service {
         .sort((a, b) => (a.duty.id < b.duty.id ? -1 : 1));
       const groups = [lesson.studentGroupId, ...(parts.extraGroups.get(lesson.id) ?? []).map((row) => row.studentGroupId)];
       const named = (parts.students.get(lesson.id) ?? []).map((row) => row.studentId);
+      // Elevens lektion för dagen: the pupils moved off this lesson for the day do not take part, whether they
+      // are members of its groups or named on it. A pupil moved ONTO it is a named pupil (the move's arrival),
+      // and takes part as any named pupil outside its groups does.
+      const movedOff = parts.movedOff.get(lesson.id) ?? [];
+      const movedOffSet = new Set(movedOff);
       // A pupil named outside the activity's groups participates; a member of
       // them whom THE RULE takes off (common/replacing-groups.ts: SvA7's
       // pupils on 7A's svenska) does not. S1's own way to say that a member
       // of the activity's group is not on this event.
-      const off = bySubject.has(lesson.subjectId)
-        ? lessonPupils(
-            { subjectId: lesson.subjectId, groupIds: groups, keptBy: keptByOf(model.groupsById.get(lesson.studentGroupId)), academicYearId: yearId, named },
-            groupMembers,
-            bySubject,
-            yearOf,
-          ).off
-        : [];
+      const off =
+        bySubject.has(lesson.subjectId) || movedOff.length > 0
+          ? lessonPupils(
+              { subjectId: lesson.subjectId, groupIds: groups, keptBy: keptByOf(model.groupsById.get(lesson.studentGroupId)), academicYearId: yearId, named, movedOff },
+              groupMembers,
+              bySubject,
+              yearOf,
+            ).off
+          : [];
       const studentExceptions = [
-        ...named.filter((studentId) => !groups.some((groupId) => groupMembers.get(groupId)?.has(studentId))).map((id) => ({ id, participates: true })),
+        ...named.filter((studentId) => !movedOffSet.has(studentId) && !groups.some((groupId) => groupMembers.get(groupId)?.has(studentId))).map((id) => ({ id, participates: true })),
         ...off.map((id) => ({ id, participates: false })),
       ]
         .map(({ id, participates }) => {

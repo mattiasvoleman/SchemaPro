@@ -398,6 +398,7 @@ const OFFERED: Record<Persona, NotificationTypeName[]> = {
   // A message the school asks them to confirm, and the one reminder (Kvittens).
   guardian: [
     ...LESSON_NOTICES,
+    "LESSON_PUPIL_MOVED",
     "LEAVE_DECIDED",
     "ABSENCE_UNREPORTED",
     "ABSENCE_WATCH_DIGEST",
@@ -407,7 +408,7 @@ const OFFERED: Record<Persona, NotificationTypeName[]> = {
   ],
   student: [...LESSON_NOTICES, "LEAVE_DECIDED"],
   // Rapporteringsgrad: a teacher is told of lessons left open, a rektor or full administrator of the week's share.
-  teacher: [...STAFF_NOTICES, "ABSENCE_WATCH_DIGEST", "LESSON_REPORT_REMINDER"],
+  teacher: [...STAFF_NOTICES, "LESSON_PUPIL_MOVED", "ABSENCE_WATCH_DIGEST", "LESSON_REPORT_REMINDER"],
   admin: [...STAFF_NOTICES, "ABSENCE_WATCH_DIGEST", "REPORTING_RATE_DIGEST"],
 };
 /** Sent whatever is chosen: the unreported absence to a guardian, a cover lesson's withdrawal to staff. */

@@ -68,6 +68,12 @@ export interface FamilyLesson {
    */
   topic: string | null;
   homework: string | null;
+  /**
+   * True when the child is on this lesson because they were moved to it for the day (Elevens lektion
+   * för dagen): the lesson is a parallel one to the one they would have had. Nothing of who moved
+   * them, and nothing of the lesson they left.
+   */
+  movedHere: boolean;
 }
 
 export interface FamilyMeal {
@@ -247,8 +253,25 @@ export class FamilyScheduleService {
           orderBy: [{ startsAt: 'asc' }, { endsAt: 'asc' }, { id: 'asc' }],
         })) ?? [];
 
+      // Elevens lektion för dagen: the lessons the child was moved off for a day are not theirs that day, and
+      // those they were moved to are. The guardian's arm on the lessons is per guardian and knows nothing of
+      // the move (calendar_lessons_guardian_select), so the move is read here, through the guardian's own
+      // arm on LessonPupilMoves.
+      const rowIds = rows.map((row) => row.id);
+      const moves =
+        rowIds.length === 0
+          ? []
+          : ((await tx.lessonPupilMove.findMany({
+              where: { studentId: child.id, OR: [{ fromLessonId: { in: rowIds } }, { toLessonId: { in: rowIds } }] },
+              select: { fromLessonId: true, toLessonId: true },
+            })) ?? []);
+      const movedOff = new Set(moves.map((move) => move.fromLessonId));
+      const movedHere = new Set(moves.map((move) => move.toLessonId));
+
       const teachingSet = new Set(teaching);
       const lessons = rows.filter((row) => {
+        if (movedOff.has(row.id)) return false;
+        if (movedHere.has(row.id)) return true;
         const date = asDay(row.date);
         const named = row.participants.length > 0;
         const viaTeaching =
@@ -326,6 +349,7 @@ export class FamilyScheduleService {
             substitute: said?.substitute ?? false,
             topic: logs.get(row.id)?.topic ?? null,
             homework: logs.get(row.id)?.homework ?? null,
+            movedHere: movedHere.has(row.id),
           };
         }),
         lunches: (lunches ?? [])
