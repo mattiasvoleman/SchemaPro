@@ -1,6 +1,6 @@
 import type { ExecutionContext } from '@nestjs/common';
 import { HttpException } from '@nestjs/common';
-import { ANALYSIS_RATE_LIMITED, AnalysisThrottlerGuard, PER_LOGIN } from './analysis-throttler.guard';
+import { ANALYSIS_RATE_LIMITED, AnalysisThrottlerGuard, PER_ADDRESS, PER_LOGIN } from './analysis-throttler.guard';
 
 /**
  * The four views build a school's figures in the API process, so they are limited per verified login and route,
@@ -15,6 +15,11 @@ describe('AnalysisThrottlerGuard', () => {
         getResponse: () => ({ setHeader: (name: string, value: string) => (headers[name] = value) }),
       }),
     }) as unknown as ExecutionContext;
+
+  it('keeps the limits DEPLOYMENT.md §16.3 states: 20 a minute for a login and route, 600 for an address', () => {
+    expect(PER_LOGIN).toEqual({ limit: 20, ttl: 60_000 });
+    expect(PER_ADDRESS).toEqual({ limit: 600, ttl: 60_000 });
+  });
 
   it('lets one login through PER_LOGIN.limit times a window, then refuses it 429 with Retry-After and a code', async () => {
     const guard = new AnalysisThrottlerGuard();

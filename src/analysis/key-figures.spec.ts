@@ -100,6 +100,23 @@ describe('buildKeyFigures: per school', () => {
     expect(school.teachers).toBe(3);
   });
 
+  it('counts a teacher with a post and no teaching in no figure of the teaching: not the teachers, not per 100 pupils, not the pupils per teacher', () => {
+    const input = schoolInput();
+    const idle = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const withIdle = buildKeyFigures({
+      planned: report({ employments: [...input.employments, { ...input.employments[0]!, userId: idle, signature: 'IDL' }] }),
+      scheduled: null,
+      audiences,
+      fullTimeMinutesPerWeek: 1080,
+      readsHr: true,
+      employmentOn: '2026-10-15',
+    });
+    expect(withIdle.teachers.map((row) => row.userId)).toContain(idle);
+    expect(withIdle.school.teachers).toBe(3);
+    expect(withIdle.school.teachersPer100Pupils).toBe(50);
+    expect(withIdle.school.pupilsPerTeacher).toBe(2);
+  });
+
   it("states the lärartäthet from the teaching alone: the load's minutes over the riktmärke, per 100 pupils", () => {
     // 420 + 180 + 60 = 660 charged minutes: the co-teacher's row charges CY the same hour as ANNA.
     const minutes = report().teachers.reduce((sum, row) => sum + row.assignedMinutesPerWeek, 0);

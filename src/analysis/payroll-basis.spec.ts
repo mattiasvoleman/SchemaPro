@@ -137,6 +137,19 @@ describe('buildPayroll: uppdrag', () => {
     expect(result.dutiesUnallocated).toBe(0);
   });
 
+  it("weighs a person's cover as well as their teaching when it shares their uppdrag over the skoldelar", () => {
+    // 60 minutes taught in the högstadium and 180 covered in the lågstadium: the uppdrag follow all 240, a quarter and three quarters.
+    const result = payroll({
+      teaching: [{ userId: 'anna', studentGroupId: 'g7', minutes: 60 }],
+      substitutes: [{ userId: 'anna', studentGroupId: 'g1', minutes: 180 }],
+      duties: [{ userId: 'anna', minutesPerWeek: 50, countsAsTeaching: false }],
+    });
+    const byPart = (id: string) => result.lines.find((line) => line.schoolPartId === id)!;
+    expect(byPart('high').dutyMinutes).toBe(50);
+    expect(byPart('low').dutyMinutes).toBe(150);
+    expect(result.dutiesUnallocated).toBe(0);
+  });
+
   it('gives a person with nothing to follow a line of their own with no skoldel, and counts them', () => {
     const result = payroll({ duties: [{ userId: 'anna', minutesPerWeek: 50, countsAsTeaching: false }] });
     expect(result.lines).toEqual([
