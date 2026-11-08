@@ -329,10 +329,10 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   LessonPupilMoves: readOnly,
   RoomBookings: only('DRIFT'),
   // Lokal (20270204091000): a booking of a resource is Drift's as a room's is. A series of external
-  // bookings is registered and cancelled by Drift, never deleted by an administrator (gallring
-  // removes it with its days).
+  // bookings is registered and cancelled by Drift, and removed with its days once it is over or
+  // cancelled (the hirer may ask to be forgotten before gallring does it).
   ResourceBookings: only('DRIFT'),
-  ExternalBookings: just('DRIFT', 'insert', 'update'),
+  ExternalBookings: only('DRIFT'),
   SubstituteAvailabilities: only('DRIFT'),
   SubstitutePoolMembers: only('DRIFT'),
   // Rastvakt i vardagen (20261210090000): the board's decisions on an

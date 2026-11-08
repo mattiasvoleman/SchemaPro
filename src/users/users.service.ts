@@ -18,6 +18,7 @@ import { PrismaService } from '../database/prisma.service';
 import { tellNewMentors } from '../family/leave-notices';
 import { NotificationsService } from '../notifications/notifications.service';
 import { requireSchoolId } from '../common/utils/request-context';
+import { todayInZone } from '../common/utils/time';
 import { listNames, rethrowPrismaError } from '../common/utils/prisma-errors';
 import { lockTeachers } from '../cover/cover-decisions';
 import {
@@ -749,6 +750,17 @@ export class UsersService {
         if (booked) {
           throw hasBookedPassCovers(booked.date.toISOString().slice(0, 10));
         }
+        // Lokal (20270204091000): the days of an external booking this person registered are bookings in
+        // their name, and the key from a booking to its booker is CASCADE like every booking's. A hall let
+        // to an association every Tuesday would go free without a word. Refused while a series they
+        // registered is still running; the way out is to cancel it, or to have it registered again by a
+        // colleague, which is a new series.
+        const running = await tx.externalBooking.findFirst({
+          where: { registeredById: id, cancelledAt: null, endDate: { gte: todayInZone(await schoolZone(tx)) } },
+          select: { endDate: true },
+          orderBy: { endDate: 'asc' },
+        });
+        if (running) throw registeredRunningExternalBookings(running.endDate.toISOString().slice(0, 10));
         await tx.user.delete({ where: { id } });
         // Somebody who was never contacted has no identity to delete: `authId`
         // is a placeholder uuid written at create time and matching nothing at
@@ -1356,6 +1368,21 @@ function hasBookedPassCovers(firstDate: string): ConflictException {
       'Ångra besluten på vikarietavlan först, så att vikarien får veta det.',
     code: 'USER_HAS_BOOKED_PASS_COVERS',
     params: { date: firstDate },
+  });
+}
+
+/** The school's zone, for "today" in a refusal that compares dates. */
+async function schoolZone(tx: PrismaClient): Promise<string> {
+  return (await tx.school.findFirst({ select: { timezone: true } }))?.timezone ?? 'Europe/Stockholm';
+}
+
+function registeredRunningExternalBookings(lastDate: string): ConflictException {
+  return new ConflictException({
+    message:
+      `Personen har registrerat en extern bokning som pågår till ${lastDate}. ` +
+      'Avboka den under Externa bokningar först, eller låt en kollega registrera den på nytt.',
+    code: 'EXTERNAL_BOOKINGS_REGISTERED',
+    params: { date: lastDate },
   });
 }
 

@@ -51,7 +51,7 @@
 -- läsningar i webbläsaren. Resurser och slag är grunddata (Planering) och läses av
 -- personal. Bokningar skrivs av personal (en lärares egen, en administratörs under
 -- Drift) och avbokas av ägaren; en lärare kan bara ändra sin egen rad till
--- CANCELLED. En serie läses av administratörer och skrivs av Drift. Dagarna i
+-- CANCELLED. En serie läses av administratörer, skrivs av Drift och tas bort av Drift när den slutat eller avbokats (den hyrande kan be att bli glömd före gallringen). Dagarna i
 -- en serie skrivs bara av en administratör under Drift: en trigger vägrar en
 -- lärare som sätter externalBookingId, och att peka på en serie som inte är
 -- radens egen sal eller resurs.
@@ -68,7 +68,7 @@
 -- har bookedById = den som registrerade, och nyckeln därifrån är CASCADE som varje
 -- bokning: en sal skulle tyst bli ledig. Gatewayen vägrar därför att ta bort en
 -- person som registrerat en pågående serie (EXTERNAL_BOOKINGS_REGISTERED) och
--- säger hur det löses. En sal eller en resurs som hyrs ut tas inte bort heller
+-- säger hur det löses. En sal eller en resurs som hyrs ut tas inte bort heller, så länge en serie för den finns
 -- (RESTRICT).
 --
 -- ## Gallring
@@ -76,10 +76,12 @@
 -- En extern bokning är personuppgifter om någon som inte är användare och har sin
 -- egen gallringstyp, EXTERNAL_BOOKINGS (20270204090000): en serie gallras när den
 -- slutat (slutdatum) eller avbokats för längre sedan än skolans tid, med sina dagar
--- genom nyckeln. app.gallring_due och app.gallring_purge nedan är 20270117091000:s
--- kroppar (de bär Kvittens, Krisläges, Rapporteringsgrads, Frånvarobevakningens,
--- Vikariefrågans och Skyddad identitets grenar) med en gren märkt "extern bokning";
--- en senare release som skriver om funktionerna igen måste bära varje gren.
+-- genom nyckeln. app.gallring_due och app.gallring_purge nedan är 20270129091000:s
+-- kroppar (Checklistors, som bär Elevens lektion för dagens, Kvittens', Krisläges,
+-- Rapporteringsgrads, Frånvarobevakningens, Vikariefrågans och Skyddad identitets
+-- grenar) med en gren märkt "extern bokning"; en senare release som skriver om
+-- funktionerna igen måste bära varje gren (src/gallring/gallring-branches.spec.ts
+-- fäller en som tappas).
 --
 -- ## Vid sidan av det API som körs
 --
@@ -556,6 +558,12 @@ BEGIN
                     AND "bookedById" = (select app.current_user_id())
                     AND ((select app.current_user_role()) = 'TEACHER'
                          OR ((select app.current_user_role()) = 'SCHOOL_ADMIN' AND (select app.current_user_may('DRIFT', true)))));
+    -- An administrator under Drift books for anyone, as the rooms' admin arm does.
+    CREATE POLICY "resource_bookings_admin_insert" ON "ResourceBookings"
+        FOR INSERT TO "app_authenticated"
+        WITH CHECK ("schoolId" = (select app.current_school_id())
+                    AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
+                    AND (select app.current_user_may('DRIFT', true)));
     -- Unlike the rooms' own arm, this one changes a booking to CANCELLED and to
     -- nothing else: a booking that waits for a decision cannot approve itself.
     CREATE POLICY "resource_bookings_own_update" ON "ResourceBookings"
@@ -578,8 +586,8 @@ BEGIN
                AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
                AND (select app.current_user_may('DRIFT', true)));
 
-    -- Series: an administrator reads, Drift writes. No arm deletes: gallring
-    -- removes a series with its days, and a removed room or person is refused.
+    -- Series: an administrator reads, Drift writes and removes a series that is over or
+    -- cancelled; gallring removes one with its days at the school's time.
     CREATE POLICY "external_bookings_admin_select" ON "ExternalBookings"
         FOR SELECT TO "app_authenticated"
         USING ("schoolId" = (select app.current_school_id())
@@ -596,6 +604,15 @@ BEGIN
         WITH CHECK ("schoolId" = (select app.current_school_id())
                     AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
                     AND (select app.current_user_may('DRIFT', true)));
+    -- A series that is over or cancelled can be removed with its days: the hirer asks to be
+    -- forgotten before gallring would, and a room that was once let out is otherwise never deleted
+    -- (the key from the series is RESTRICT). One that is running cannot: the hall would go free.
+    CREATE POLICY "external_bookings_admin_delete" ON "ExternalBookings"
+        FOR DELETE TO "app_authenticated"
+        USING ("schoolId" = (select app.current_school_id())
+               AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
+               AND (select app.current_user_may('DRIFT', true))
+               AND ("cancelledAt" IS NOT NULL OR "endDate" < (select app.school_today())));
 
     FOREACH tbl IN ARRAY ARRAY['ResourceTypes', 'Resources', 'ResourceBookings', 'ExternalBookings'] LOOP
       EXECUTE format('REVOKE ALL ON %I FROM "app_authenticated"', tbl);
@@ -603,7 +620,7 @@ BEGIN
     GRANT SELECT, INSERT, UPDATE, DELETE ON "ResourceTypes" TO "app_authenticated";
     GRANT SELECT, INSERT, UPDATE, DELETE ON "Resources" TO "app_authenticated";
     GRANT SELECT, INSERT, UPDATE, DELETE ON "ResourceBookings" TO "app_authenticated";
-    GRANT SELECT, INSERT, UPDATE ON "ExternalBookings" TO "app_authenticated";
+    GRANT SELECT, INSERT, UPDATE, DELETE ON "ExternalBookings" TO "app_authenticated";
   END IF;
 
   FOREACH tbl IN ARRAY ARRAY['ResourceTypes', 'Resources', 'ResourceBookings', 'ExternalBookings'] LOOP
@@ -629,12 +646,14 @@ $$;
 
 -- ---------------------------------------------------------------------------
 -- Gallring: a series goes with the school's choice for EXTERNAL_BOOKINGS, with
--- its days through the key. Both bodies are 20270117091000's (prod md5 before:
--- due f884a3c77b5234c3d77ae6b77d17f0e7, purge 21746d3990375d467cdeec6294308363)
--- plus the one branch marked "extern bokning", so none of Kvittens', Krisläges,
--- Rapporteringsgrads, Frånvarobevakningens, Vikariefrågans or Skyddad identitets
--- is lost. A later release that restates the functions again must carry every
--- branch (RLS section 350 and 374 fail on a branch that is gone).
+-- its days through the key. Both bodies are 20270129091000's (prod md5 before:
+-- due 166943b0d5d22801fe9a1be96a722d95, purge 2390088f88e967fda35af6d56e63d3f9)
+-- plus the one branch marked "extern bokning", so none of Checklistors, Elevens
+-- lektion för dagens, Kvittens', Krisläges, Rapporteringsgrads,
+-- Frånvarobevakningens, Vikariefrågans or Skyddad identitets is lost. A later
+-- release that restates the functions again must carry every branch
+-- (src/gallring/gallring-branches.spec.ts and RLS sections 350 and 374 fail on
+-- a branch that is gone).
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION app.gallring_due(p_school uuid, p_type "RetentionDataType", p_before date, p_today date)
@@ -663,6 +682,12 @@ LANGUAGE sql STABLE AS $$
     FROM school, "public"."ReportingReminders" r
    WHERE p_type = 'ATTENDANCE' AND r."schoolId" = school."id" AND r."lessonDate" < p_before
   UNION ALL
+  -- elevens lektion: a move goes with the register of the day it took a pupil out of
+  SELECT 'LessonPupilMoves', mv."id"
+    FROM school, "public"."LessonPupilMoves" mv
+    JOIN "public"."CalendarLessons" l ON l."id" = mv."fromLessonId" AND l."schoolId" = mv."schoolId"
+   WHERE p_type = 'ATTENDANCE' AND mv."schoolId" = school."id" AND l."date" < p_before
+  UNION ALL
   SELECT 'AbsenceReports', r."id"
     FROM school, "public"."AbsenceReports" r
    WHERE p_type = 'ABSENCE_REPORTS' AND r."schoolId" = school."id" AND r."date" < p_before
@@ -679,6 +704,24 @@ LANGUAGE sql STABLE AS $$
   SELECT 'AckRequests', k."id"
     FROM school, "public"."AckRequests" k
    WHERE p_type = 'NOTIFICATIONS' AND k."schoolId" = school."id" AND k."createdAt" < school.before_at
+  UNION ALL
+  -- checklistor: what belongs to a pupil who has left, and the lists that are old and empty
+  SELECT 'InstructionProofs', p."id"
+    FROM school, "public"."InstructionProofs" p
+    JOIN "public"."Users" s ON s."id" = p."studentId" AND s."schoolId" = p."schoolId"
+   WHERE p_type = 'CHECKLISTS' AND p."schoolId" = school."id"
+     AND NOT s."isActive" AND s."deactivatedAt" < school.before_at
+  UNION ALL
+  SELECT 'ConsentEntries', e."id"
+    FROM school, "public"."ConsentEntries" e
+    JOIN "public"."Users" s ON s."id" = e."studentId" AND s."schoolId" = e."schoolId"
+   WHERE p_type = 'CHECKLISTS' AND e."schoolId" = school."id"
+     AND NOT s."isActive" AND s."deactivatedAt" < school.before_at
+  UNION ALL
+  SELECT 'ConsentLists', l."id"
+    FROM school, "public"."ConsentLists" l
+   WHERE p_type = 'CHECKLISTS' AND l."schoolId" = school."id" AND l."createdAt" < school.before_at
+     AND NOT EXISTS (SELECT 1 FROM "public"."ConsentEntries" e WHERE e."listId" = l."id" AND e."schoolId" = l."schoolId")
   UNION ALL
   SELECT 'ScheduleChangeLogs', c."id"
     FROM school, "public"."ScheduleChangeLogs" c
@@ -796,6 +839,14 @@ BEGIN
         GET DIAGNOSTICS step = ROW_COUNT;
         n := n + step;
       END IF;
+      -- elevens lektion
+      IF n < budget THEN
+        DELETE FROM "LessonPupilMoves" WHERE "id" IN (
+          SELECT d."id" FROM app.gallring_due(r."schoolId", p_type, cutoff, today) d
+           WHERE d."tbl" = 'LessonPupilMoves' LIMIT budget - n);
+        GET DIAGNOSTICS step = ROW_COUNT;
+        n := n + step;
+      END IF;
     WHEN 'ABSENCE_REPORTS' THEN
       DELETE FROM "AbsenceReports" WHERE "id" IN (
         SELECT d."id" FROM app.gallring_due(r."schoolId", p_type, cutoff, today) d
@@ -816,6 +867,26 @@ BEGIN
         DELETE FROM "AckRequests" WHERE "id" IN (
           SELECT d."id" FROM app.gallring_due(r."schoolId", p_type, cutoff, today) d
            WHERE d."tbl" = 'AckRequests' LIMIT budget - n);
+        GET DIAGNOSTICS step = ROW_COUNT;
+        n := n + step;
+      END IF;
+    -- checklistor: the proofs and the answers of a pupil who has left, then the lists that are left empty
+    WHEN 'CHECKLISTS' THEN
+      DELETE FROM "InstructionProofs" WHERE "id" IN (
+        SELECT d."id" FROM app.gallring_due(r."schoolId", p_type, cutoff, today) d
+         WHERE d."tbl" = 'InstructionProofs' LIMIT budget);
+      GET DIAGNOSTICS n = ROW_COUNT;
+      IF n < budget THEN
+        DELETE FROM "ConsentEntries" WHERE "id" IN (
+          SELECT d."id" FROM app.gallring_due(r."schoolId", p_type, cutoff, today) d
+           WHERE d."tbl" = 'ConsentEntries' LIMIT budget - n);
+        GET DIAGNOSTICS step = ROW_COUNT;
+        n := n + step;
+      END IF;
+      IF n < budget THEN
+        DELETE FROM "ConsentLists" WHERE "id" IN (
+          SELECT d."id" FROM app.gallring_due(r."schoolId", p_type, cutoff, today) d
+           WHERE d."tbl" = 'ConsentLists' LIMIT budget - n);
         GET DIAGNOSTICS step = ROW_COUNT;
         n := n + step;
       END IF;

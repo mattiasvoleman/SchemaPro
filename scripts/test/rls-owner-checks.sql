@@ -5038,3 +5038,177 @@ BEGIN
                             (SELECT ("reminderMirroredAt" > "reminderSentAt")::text FROM "AckRequests" WHERE id = waits), 'true');
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Lokal (K3, 20270204091000), section 444b-d, on the owner's side: what gallring does with a series of external bookings and its
+-- days, what the removal of the person who registered one leaves, and what a delete of a school takes. 440-443 and 444a are
+-- rls-policies.sql's.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.lo_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN RAISE EXCEPTION E'lokal %: got\n%\nwanted\n%', p_label, p_got, p_want; END IF;
+END $$;
+
+-- 444b: gallring. A series that has ended, or been cancelled, longer ago than the school's period goes with its days (and only
+-- then); a series that runs never does, however long the period; nothing is due under another kind; the other school's stay.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-lokal-school');
+  other uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-lokal-annan');
+  full_ uuid := (SELECT id FROM "Users" WHERE email = 'lk-full@example.invalid');
+  full_o uuid := (SELECT id FROM "Users" WHERE email = 'lk-annan-full@example.invalid');
+  hall uuid := (SELECT id FROM "Rooms" WHERE "schoolId" = school AND name = 'Idrottshallen');
+  hall_o uuid := (SELECT id FROM "Rooms" WHERE "schoolId" = other);
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+  old_ended uuid; old_cancelled uuid; recent uuid; running uuid; theirs uuid;
+  run uuid;
+  n integer;
+  total integer := 0;
+  counts jsonb;
+  src text;
+BEGIN
+  -- Four series of the school: over for 500 days, cancelled 500 days ago (its last day only 165 days past), over for 100 days, running.
+  -- Each has one day; the old ones' days are past.
+  INSERT INTO "ExternalBookings" ("schoolId", "roomId", organisation, "contactName", "contactPhone", weekdays, "startDate", "endDate", "startTime", "endTime", "registeredById")
+  VALUES (school, hall, 'Gammal', 'A', '070', ARRAY[2]::smallint[], today - 600, today - 500, '18:00', '20:00', full_) RETURNING id INTO old_ended;
+  INSERT INTO "ExternalBookings" ("schoolId", "roomId", organisation, "contactName", "contactPhone", weekdays, "startDate", "endDate", "startTime", "endTime", "registeredById", "cancelledAt")
+  VALUES (school, hall, 'Avbokad', 'B', '070', ARRAY[2]::smallint[], today - 560, today - 165, '18:00', '20:00', full_, now() - interval '500 days') RETURNING id INTO old_cancelled;
+  INSERT INTO "ExternalBookings" ("schoolId", "roomId", organisation, "contactName", "contactPhone", weekdays, "startDate", "endDate", "startTime", "endTime", "registeredById")
+  VALUES (school, hall, 'Nyss slut', 'C', '070', ARRAY[2]::smallint[], today - 200, today - 100, '18:00', '20:00', full_) RETURNING id INTO recent;
+  INSERT INTO "ExternalBookings" ("schoolId", "roomId", organisation, "contactName", "contactPhone", weekdays, "startDate", "endDate", "startTime", "endTime", "registeredById")
+  VALUES (school, hall, 'Pågår', 'D', '070', ARRAY[2]::smallint[], today - 10, today + 60, '18:00', '20:00', full_) RETURNING id INTO running;
+  INSERT INTO "ExternalBookings" ("schoolId", "roomId", organisation, "contactName", "contactPhone", weekdays, "startDate", "endDate", "startTime", "endTime", "registeredById")
+  VALUES (other, hall_o, 'Annans gamla', 'E', '070', ARRAY[2]::smallint[], today - 600, today - 500, '18:00', '20:00', full_o) RETURNING id INTO theirs;
+  INSERT INTO "RoomBookings" ("schoolId", "roomId", "bookedById", title, "startsAt", "endsAt", "updatedAt", "externalBookingId")
+  SELECT x."schoolId", x."roomId", x."registeredById", 'Extern bokning', (x."endDate" - 3 + time '18:00')::timestamp AT TIME ZONE 'Europe/Stockholm', (x."endDate" - 3 + time '20:00')::timestamp AT TIME ZONE 'Europe/Stockholm', now(), x.id
+    FROM "ExternalBookings" x WHERE x.id IN (old_ended, old_cancelled, recent, running, theirs);
+  -- A booking of the school's own that gallring must not touch.
+  INSERT INTO "RoomBookings" ("schoolId", "roomId", "bookedById", title, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, hall, full_, 'Egen', now() - interval '600 days', now() - interval '600 days' + interval '1 hour', now());
+
+  -- What is due a year on, by the one predicate: the two old series, not the one that ended 100 days ago, not the running one,
+  -- not the other school's; and nothing of it under any other kind.
+  PERFORM pg_temp.lo_expect('444b due',
+    (SELECT string_agg(d.id::text, ' ' ORDER BY d.id::text) FROM app.gallring_due(school, 'EXTERNAL_BOOKINGS', today - 365, today) d WHERE d.tbl = 'ExternalBookings'),
+    (SELECT string_agg(i::text, ' ' ORDER BY i::text) FROM unnest(ARRAY[old_ended, old_cancelled]) i));
+  PERFORM pg_temp.lo_expect('444b nothing is due of anything else',
+    (SELECT count(*)::text FROM app.gallring_due(school, 'EXTERNAL_BOOKINGS', today - 365, today) d WHERE d.tbl <> 'ExternalBookings'), '0');
+  IF EXISTS (SELECT 1 FROM unnest(ARRAY['ATTENDANCE', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'NOTIFICATIONS', 'CHANGE_LOGS', 'ABSENCE_REASONS', 'ACCESS_LOG', 'COVER_REQUESTS',
+                                         'CRISIS_DRILLS', 'CRISIS_ALARMS', 'CHECKLISTS', 'DEPARTED_PEOPLE']::"RetentionDataType"[]) t
+              WHERE EXISTS (SELECT 1 FROM app.gallring_due(school, t, today - 365, today) d WHERE d.tbl = 'ExternalBookings')) THEN
+    RAISE EXCEPTION 'lokal 444b: a series is due under another kind than EXTERNAL_BOOKINGS';
+  END IF;
+  -- A running series is never due, however far on the cutoff is, until it has ended.
+  PERFORM pg_temp.lo_expect('444b a running series is not due',
+    (SELECT count(*)::text FROM app.gallring_due(school, 'EXTERNAL_BOOKINGS', today + 30, today) d WHERE d.id = running), '0');
+  PERFORM pg_temp.lo_expect('444b a series of the other school is not due under this school''s run',
+    (SELECT count(*)::text FROM app.gallring_due(school, 'EXTERNAL_BOOKINGS', today - 365, today) d WHERE d.id = theirs), '0');
+
+  -- No decision: nothing goes. A decision of twelve months: the run takes the two series, one at a time, with their days.
+  run := app.gallring_begin(school, now());
+  IF app.gallring_purge(run, 'EXTERNAL_BOOKINGS', 100) <> 0 THEN RAISE EXCEPTION 'lokal 444b: a school with no decision lost a series'; END IF;
+  PERFORM app.gallring_finish(run, '{}', now());
+  ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
+  INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
+  VALUES (school, 'EXTERNAL_BOOKINGS', 'PURGE_AFTER', 12, 'LK 444', full_, now() - interval '2 days');
+  ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
+  run := app.gallring_begin(school, now());
+  IF app.gallring_purge(run, 'EXTERNAL_BOOKINGS', 1) <> 1 THEN RAISE EXCEPTION 'lokal 444b: a batch of one took more or less than one series'; END IF;
+  LOOP
+    n := app.gallring_purge(run, 'EXTERNAL_BOOKINGS', 1);
+    EXIT WHEN n = 0;
+    total := total + n;
+  END LOOP;
+  PERFORM app.gallring_finish(run, '{}', now());
+  IF total <> 1 THEN RAISE EXCEPTION 'lokal 444b: the batches after the first took % more series, not one', total; END IF;
+  SELECT g.counts INTO counts FROM "GallringRuns" g WHERE g.id = run;
+  IF (counts ->> 'EXTERNAL_BOOKINGS')::integer <> 2 THEN RAISE EXCEPTION 'lokal 444b: the run counts % under EXTERNAL_BOOKINGS, not two series', counts ->> 'EXTERNAL_BOOKINGS'; END IF;
+  PERFORM pg_temp.lo_expect('444b what is left of the school',
+    (SELECT string_agg(organisation, ',' ORDER BY organisation) FROM "ExternalBookings" WHERE "schoolId" = school), 'Nyss slut,Pågår');
+  PERFORM pg_temp.lo_expect('444b the days went with their series, and the school''s own booking stayed',
+    (SELECT string_agg(coalesce(x.organisation, title), ',' ORDER BY coalesce(x.organisation, title))
+       FROM "RoomBookings" b LEFT JOIN "ExternalBookings" x ON x.id = b."externalBookingId" WHERE b."schoolId" = school),
+    'Egen,Nyss slut,Pågår');
+  PERFORM pg_temp.lo_expect('444b the other school was left alone',
+    (SELECT count(*)::text FROM "ExternalBookings" WHERE "schoolId" = other) || '/' || (SELECT count(*)::text FROM "RoomBookings" WHERE "schoolId" = other), '1/1');
+
+  -- The branch is there in the source (and the others are kept: RLS sections 350 and 374 and src/gallring/gallring-branches.spec.ts say which).
+  SELECT prosrc INTO src FROM pg_proc WHERE oid = 'app.gallring_due(uuid, "RetentionDataType", date, date)'::regprocedure;
+  IF src NOT LIKE '%''ExternalBookings''%' OR src NOT LIKE '%EXTERNAL_BOOKINGS%' THEN RAISE EXCEPTION 'lokal 444b: gallring_due has no branch for the external bookings'; END IF;
+  SELECT prosrc INTO src FROM pg_proc WHERE oid = 'app.gallring_purge(uuid, "RetentionDataType", integer)'::regprocedure;
+  IF src NOT LIKE '%WHEN ''EXTERNAL_BOOKINGS'' THEN%' OR src NOT LIKE '%DELETE FROM "ExternalBookings"%' THEN RAISE EXCEPTION 'lokal 444b: gallring_purge has no branch for the external bookings'; END IF;
+END $$;
+ROLLBACK;
+
+-- 444c: a person who registered a series is removed. The series stays, with nobody as its registrar; the days they booked go with
+-- them (the key from a booking to its booker is CASCADE, as every booking's), which is why the gateway refuses the removal of a
+-- person whose series still runs; the person's other bookings of a resource go too, and a decision they made stays, unlinked.
+BEGIN;
+DO $$
+DECLARE
+  school uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-lokal-school');
+  hall uuid := (SELECT id FROM "Rooms" WHERE "schoolId" = school AND name = 'Idrottshallen');
+  gone uuid;
+  decider uuid;
+  rtype uuid; res uuid; series uuid; mine uuid; decided uuid;
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+BEGIN
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'lk-borta@example.invalid', 'Lokal', 'Borta', 'SCHOOL_ADMIN', gen_random_uuid(), true, now()) RETURNING id INTO gone;
+  decider := (SELECT id FROM "Users" WHERE email = 'lk-t2@example.invalid');
+  INSERT INTO "ResourceTypes" ("schoolId", name) VALUES (school, 'Borttagningens') RETURNING id INTO rtype;
+  INSERT INTO "Resources" ("schoolId", "resourceTypeId", name, quantity) VALUES (school, rtype, 'Borttagningens resurs', 10) RETURNING id INTO res;
+  INSERT INTO "ExternalBookings" ("schoolId", "roomId", organisation, "contactName", "contactEmail", weekdays, "startDate", "endDate", "startTime", "endTime", "registeredById")
+  VALUES (school, hall, 'Registrerad av den borttagne', 'F', 'f@example.invalid', ARRAY[2]::smallint[], today + 300, today + 330, '18:00', '20:00', gone) RETURNING id INTO series;
+  INSERT INTO "RoomBookings" ("schoolId", "roomId", "bookedById", title, "startsAt", "endsAt", "updatedAt", "externalBookingId")
+  VALUES (school, hall, gone, 'Extern bokning', ((today + 305) + time '18:00')::timestamp AT TIME ZONE 'Europe/Stockholm', ((today + 305) + time '20:00')::timestamp AT TIME ZONE 'Europe/Stockholm', now(), series);
+  INSERT INTO "ResourceBookings" ("schoolId", "resourceId", "bookedById", title, quantity, "startsAt", "endsAt")
+  VALUES (school, res, gone, 'Den borttagnes', 1, now() + interval '300 days', now() + interval '300 days 1 hour') RETURNING id INTO mine;
+  INSERT INTO "ResourceBookings" ("schoolId", "resourceId", "bookedById", title, quantity, status, "decidedById", "decidedAt", "startsAt", "endsAt")
+  VALUES (school, res, decider, 'Beslutad av den borttagne', 1, 'APPROVED', gone, now(), now() + interval '301 days', now() + interval '301 days 1 hour') RETURNING id INTO decided;
+
+  DELETE FROM "Users" WHERE id = gone;
+  PERFORM pg_temp.lo_expect('444c the series stays, with nobody as registrar',
+    (SELECT concat_ws('|', count(*), count("registeredById")) FROM "ExternalBookings" WHERE id = series), '1|0');
+  PERFORM pg_temp.lo_expect('444c the days they booked went with them', (SELECT count(*)::text FROM "RoomBookings" WHERE "externalBookingId" = series), '0');
+  PERFORM pg_temp.lo_expect('444c their other bookings went too', (SELECT count(*)::text FROM "ResourceBookings" WHERE id = mine), '0');
+  PERFORM pg_temp.lo_expect('444c a decision they made stays, unlinked',
+    (SELECT concat_ws('|', count(*), count("decidedById")) FROM "ResourceBookings" WHERE id = decided), '1|0');
+END $$;
+ROLLBACK;
+
+-- 444d: the removal of a school takes everything of Lokal (the keys from the four tables to Schools are CASCADE), and a resource or
+-- a room that has a series is not deleted from under it, nor a kind that has a resource (restrict), by anyone.
+BEGIN;
+DO $$
+DECLARE
+  school uuid;
+  hall uuid;
+  rtype uuid; res uuid; series uuid;
+BEGIN
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ('RLS Lokal tillfällig', 'rls-lokal-tillfallig', 'Europe/Stockholm', now()) RETURNING id INTO school;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'Tillfälliga hallen', now()) RETURNING id INTO hall;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'lk-tillf@example.invalid', 'Lokal', 'Tillfällig', 'SCHOOL_ADMIN', gen_random_uuid(), true, now());
+  INSERT INTO "ResourceTypes" ("schoolId", name) VALUES (school, 'Slag') RETURNING id INTO rtype;
+  INSERT INTO "Resources" ("schoolId", "resourceTypeId", name) VALUES (school, rtype, 'Resurs') RETURNING id INTO res;
+  INSERT INTO "ExternalBookings" ("schoolId", "resourceId", "resourceQuantity", organisation, "contactName", "contactPhone", weekdays, "startDate", "endDate", "startTime", "endTime")
+  VALUES (school, res, 1, 'Förening', 'G', '070', ARRAY[3]::smallint[], current_date + 10, current_date + 20, '18:00', '19:00') RETURNING id INTO series;
+  BEGIN
+    DELETE FROM "Resources" WHERE id = res;
+    RAISE EXCEPTION 'lokal 444d: a resource that is let out was deleted';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "ResourceTypes" WHERE id = rtype;
+    RAISE EXCEPTION 'lokal 444d: a kind with a resource was deleted';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  DELETE FROM "Schools" WHERE id = school;
+  PERFORM pg_temp.lo_expect('444d nothing of the school is left',
+    (SELECT concat_ws('/', (SELECT count(*) FROM "ResourceTypes" WHERE "schoolId" = school), (SELECT count(*) FROM "Resources" WHERE "schoolId" = school),
+                      (SELECT count(*) FROM "ExternalBookings" WHERE "schoolId" = school), (SELECT count(*) FROM "ResourceBookings" WHERE "schoolId" = school))), '0/0/0/0');
+END $$;
+ROLLBACK;

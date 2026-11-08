@@ -221,7 +221,8 @@ export type NotificationType =
   | 'REPORTING_RATE_DIGEST'
   | 'ACK_REQUESTED'
   | 'ACK_REMINDER'
-  | 'LESSON_PUPIL_MOVED';
+  | 'LESSON_PUPIL_MOVED'
+  | 'EXTERNAL_BOOKING_CLASH';
 
 export interface NotificationRow {
   readonly id: string;
