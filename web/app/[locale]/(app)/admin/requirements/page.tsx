@@ -154,6 +154,13 @@ import {
 import { useStaffingLoad, useTeacherQualifications } from "@/lib/staffing-queries";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { REQUIREMENT_SHARES_KEY, sharesByRequirement, sharesRefusal, useRequirementShares } from "@/lib/requirement-shares";
+import {
+  REQUIREMENT_PLACEMENTS_KEY,
+  placementsByRequirement,
+  placementsRefusal,
+  useRequirementPlacements,
+} from "@/lib/requirement-placements";
+import { PlacedBadge, placementsSummary } from "@/components/timplan/placed-badge";
 import type { ShareDraft } from "@/components/timplan/lesson-shares-fields";
 import type { LessonShare } from "@/lib/lesson-shares";
 import { buildGradeSpans } from "@/lib/grade-span";
@@ -273,6 +280,18 @@ const draftsOf = (shares: readonly LessonShare[]): ShareDraft[] =>
 const LessonSharesFields = lazy(() =>
   import("@/components/timplan/lesson-shares-fields").then((module) => ({
     default: module.LessonSharesFields,
+  })),
+);
+/**
+ * Förlägg, fetched the first time "Förlägg …" is pressed (and mounted only
+ * then, behind placingUsed): a school places lessons a few times a year, the
+ * rows, the verdicts and the room list are most of the dialog, and the route
+ * has no room to carry them (its budget is 190 KB). React's own lazy(), as the
+ * timetable holds SwapDialog; the page keeps the mark, the read and the button.
+ */
+const PlacementDialog = lazy(() =>
+  import("@/components/timplan/placement-dialog").then((module) => ({
+    default: module.PlacementDialog,
   })),
 );
 /** Holds the recurrence box's place in the dialog while its code arrives. */
@@ -466,6 +485,11 @@ export default function RequirementsPage() {
     refetch: refetchShares,
   } = useRequirementShares(activeYearId);
   const sharesOf = useMemo(() => sharesByRequirement(shareRows), [shareRows]);
+  // Förlagda poster: the lessons placed by hand on each post, for its mark. A
+  // failed read leaves the posts unmarked and the page as it was; the dialog
+  // reads the post's own rows and says so when it cannot.
+  const { data: placementRows } = useRequirementPlacements(activeYearId);
+  const placementsOf = useMemo(() => placementsByRequirement(placementRows), [placementRows]);
   /** The rows with their shares beside them, for the Block panel's teacher warning. */
   const sharedRequirements = useMemo(
     () => (requirements ?? []).map((row) => (sharesOf.has(row.id) ? { ...row, shares: sharesOf.get(row.id) } : row)),
@@ -594,6 +618,8 @@ export default function RequirementsPage() {
   }>("/api/v1/teaching-requirements", [
     ["requirements", activeYearId ?? ""],
     [...REQUIREMENT_SHARES_KEY, activeYearId ?? ""],
+    // A post that is changed or removed takes its placed lessons' marks with it.
+    [...REQUIREMENT_PLACEMENTS_KEY, activeYearId ?? ""],
     // A save that names or changes a teacher moves their load and the
     // candidate badges this dialog draws from it; without these the badge
     // would read the minutes from before the save.
@@ -663,6 +689,13 @@ export default function RequirementsPage() {
   }, [blocksMode, blocksModule, tCommon]);
   const reader = useReadOnly();
   const [cell, setCell] = useState<CellTarget | null>(null);
+  /**
+   * Förlägg: the post whose lessons are being placed, and whether the dialog's
+   * code has ever been asked for. Kept mounted from the first press on, so
+   * that closing it animates out as the others do.
+   */
+  const [placing, setPlacing] = useState<{ post: TeachingRequirement; name: string } | null>(null);
+  const [placingUsed, setPlacingUsed] = useState(false);
   /** The class post being split by term, with the dialog's module once fetched. */
   const [termHalves, setTermHalves] = useState<{ module: TermHalvesModule; post: TeachingRequirement } | null>(null);
   /** Ta bort asks first: a ConfirmDialog over the cell dialog, named after the cell. */
@@ -1087,6 +1120,13 @@ export default function RequirementsPage() {
       const shares = sharesRefusal(error);
       if (shares && t.has(`shares.problem.${shares.rule}`)) {
         toast.error(t(`shares.problem.${shares.rule}`));
+        return;
+      }
+      // Förlagda poster: the post has lessons placed that the change no longer
+      // fits (a length, the count, the weeks, a block, a share).
+      const placed = placementsRefusal(error);
+      if (placed?.kind === "FIT" && t.has(`placements.problem.${placed.reason}`)) {
+        toast.error(t("placements.editRefused", { reason: t(`placements.problem.${placed.reason}`) }));
         return;
       }
       toast.error(error instanceof Error ? error.message : tCommon("error"));
@@ -1621,6 +1661,8 @@ export default function RequirementsPage() {
                       const badge = requirement
                         ? recurrenceBadge(requirement, tTimetable)
                         : null;
+                      // Förlagda poster: the lessons placed by hand on the post.
+                      const placed = requirement ? placementsOf.get(requirement.id) : undefined;
                       // Mål mode paints a CLASS cell from the timplan's line,
                       // including a cell with no post that the plan asks for
                       // ("0 / 180"). A teaching group has no årskurs and so no
@@ -1686,7 +1728,11 @@ export default function RequirementsPage() {
                                       subject: subject.name,
                                       lessons: requirement.lessonsPerWeek,
                                       minutes: requirement.minutesPerLesson,
-                                    })) + (targetSentence ? `. ${targetSentence}` : "")
+                                    })) +
+                              (targetSentence ? `. ${targetSentence}` : "") +
+                              // The mark's words, for the same reason as the badge's
+                              // above: a label replaces what is inside the cell.
+                              (placed ? `. ${t("placements.badgeNote", { rows: placementsSummary(placed, t, tCommon) })}` : "")
                             }
                             onClick={() => openCell(group.id, subject.id)}
                             // An empty cell's "+" adds a post: planering's.
@@ -1740,6 +1786,7 @@ export default function RequirementsPage() {
                             ) : (
                               <Plus className="size-4" />
                             )}
+                            {placed ? <PlacedBadge rows={placed} /> : null}
                           </button>
                         </td>
                       );
@@ -2042,6 +2089,28 @@ export default function RequirementsPage() {
                 onChange={(next) => setForm({ ...form, ...next })}
               />
             </Suspense>
+            {/* Förlagda poster: where the post's lessons are placed, and the way to place them. A reader sees the first and not the second. */}
+            {cell?.existing && placementsOf.has(cell.existing.id) ? (
+              <p className="text-sm">
+                <PlacedBadge rows={placementsOf.get(cell.existing.id)!} withRows />
+              </p>
+            ) : null}
+            {cell?.existing && !reader ? (
+              <Button
+                data-writes="PLANERING"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setPlacing({
+                    post: cell.existing!,
+                    name: `${groupOf(cell.groupId)?.name ?? ""} · ${subjectOf(cell.subjectId)?.name ?? ""}`,
+                  });
+                  setPlacingUsed(true);
+                }}
+              >
+                {t("placements.action")}
+              </Button>
+            ) : null}
             {/* A class's post for the whole year, not shared between teachers, can become posts on its halves, which take turns over two periods. */}
             {cell?.existing && !cell.existing.blockId && !cell.existing.startDate && !cell.existing.endDate &&
             !sharesOf.has(cell.existing.id) && groupOf(cell.groupId)?.kind === "CLASS" ? (
@@ -2256,6 +2325,21 @@ export default function RequirementsPage() {
           posts={requirements}
           onClose={() => setTermHalves(null)}
         />
+      ) : null}
+
+      {/* Over the cell dialog, as the confirmation below is: Avbryt returns to the post as it was. */}
+      {placingUsed ? (
+        <Suspense fallback={null}>
+          <PlacementDialog
+            open={placing !== null}
+            onOpenChange={(open) => {
+              if (!open) setPlacing(null);
+            }}
+            requirement={placing?.post ?? null}
+            name={placing?.name ?? null}
+            shared={placing ? sharesOf.has(placing.post.id) : false}
+          />
+        </Suspense>
       ) : null}
 
       {/* Over the cell dialog, not instead of it: Avbryt returns to the post as it was. */}

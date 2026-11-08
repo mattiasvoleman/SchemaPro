@@ -124,6 +124,12 @@ describe("why a run ended without a batch", () => {
     expect(refusalKey("BLOCK_PARTLY_LOCKED_SUMMARY")).toBe("refusal.BLOCK_PARTLY_LOCKED_SUMMARY");
     expect(refusalKey("YEAR_TOO_FAR_AHEAD")).toBe("refusal.other");
   });
+
+  it("names a placed lesson that can no longer stand where it is placed, with a sentence of its own", () => {
+    // The pre-check's code (Förlagda poster): a proposal cannot be applied until the placement is changed.
+    expect(refusalKey("PLACEMENTS_REFUSED_SUMMARY")).toBe("refusal.PLACEMENTS_REFUSED_SUMMARY");
+    expect(REFUSAL_KEYS.PLACEMENTS_REFUSED_SUMMARY).not.toBe("refusal.other");
+  });
 });
 
 describe("every refusal of the routes has a sentence (design §3, §4)", () => {

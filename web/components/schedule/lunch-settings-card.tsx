@@ -539,6 +539,7 @@ export function LunchSettingsCard() {
                   <li>{t("bestEffortNeverLessons")}</li>
                   <li>{t("bestEffortNeverShared")}</li>
                   <li>{t("bestEffortNeverGroups")}</li>
+                  <li>{t("bestEffortNeverPlaced")}</li>
                 </ul>
                 <p className="font-medium text-foreground">{t("bestEffortMayTitle")}</p>
                 <ul className="list-disc space-y-0.5 pl-5">
