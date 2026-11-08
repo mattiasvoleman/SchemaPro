@@ -48416,6 +48416,7 @@ ROLLBACK;
 -- ---------------------------------------------------------------------------
 
 BEGIN;
+SELECT set_config('app.test_school_b', :'school_b', true);
 DO $$
 DECLARE
   who record;
@@ -48456,6 +48457,14 @@ BEGIN
   PERFORM pg_temp.d8_expect('401 the first school is untouched by the other''s change', (SELECT "cutoffTime"::text FROM "KitchenSettings"), '08:45:00');
   -- A row for a school that is not the caller's is refused.
   PERFORM pg_temp.d8_refuses('INSERT INTO "KitchenSettings" ("schoolId") VALUES (gen_random_uuid())', '42501', 'a row for a school that is not the caller''s');
+  -- Nor can the caller's own row be moved to another school: the check on the new row refuses it, ahead of the
+  -- foreign key (a school that does not exist would be 23503 without it) and of the key (the other school has no row,
+  -- so a real school would go through without it, and the letter of that school would then go to this address).
+  PERFORM pg_temp.d8_refuses('UPDATE "KitchenSettings" SET "schoolId" = gen_random_uuid()', '42501', 'moving the row to a school that does not exist');
+  PERFORM pg_temp.d8_refuses(format('UPDATE "KitchenSettings" SET "schoolId" = %L, "kitchenEmail" = ''angripare@example.invalid''', current_setting('app.test_school_b')),
+                             '42501', 'moving the row, with another address, to a real school that has none');
+  PERFORM pg_temp.d8_expect('401 the row is still the caller''s own after the refused moves',
+    (SELECT count(*) || '/' || bool_and("schoolId" = app.current_school_id() AND "kitchenEmail" = 'kok@example.invalid') FROM "KitchenSettings"), '1/true');
 END $$;
 ROLLBACK;
 
@@ -48657,6 +48666,8 @@ DO $$
 DECLARE
   d0 date := current_date + 3;
   school uuid;
+  school2 uuid;
+  last0 date;
   due text;
   doc jsonb;
 BEGIN
@@ -48686,6 +48697,28 @@ BEGIN
   PERFORM pg_temp.d8_expect('403 an unknown school', (app.meal_letter(gen_random_uuid(), d0) IS NULL)::text, 'true');
   PERFORM pg_temp.d8_as(pg_temp.d8_auth(31));
   PERFORM pg_temp.d8_expect('403 a school with the letter off', (app.meal_letter(app.current_school_id(), d0) IS NULL)::text, 'true');
+
+  -- "Senaste brev" on the page is the last day a claim was FINISHED, in the caller's own school. The job takes a claim
+  -- first and finishes it only when the letter has been handed over, so an open claim is a letter that has not gone,
+  -- and another school's claim is not this school's.
+  school2 := app.current_school_id();
+  PERFORM pg_temp.d8_as(pg_temp.d8_auth(1));
+  last0 := app.meal_letter_last_for_me();
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM * FROM app.job_claim_nightly('meal-letter', 0, ARRAY[school], 1, ((d0 + time '08:45') AT TIME ZONE 'Europe/Stockholm'));
+  PERFORM pg_temp.d8_as(pg_temp.d8_auth(1));
+  PERFORM pg_temp.d8_expect('403 a claim that is still open is no letter', (app.meal_letter_last_for_me() IS NOT DISTINCT FROM last0)::text, 'true');
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM app.job_claim_finished('meal-letter', school, d0, ((d0 + time '08:46') AT TIME ZONE 'Europe/Stockholm'));
+  PERFORM pg_temp.d8_as(pg_temp.d8_auth(1));
+  PERFORM pg_temp.d8_expect('403 a finished claim is the last letter', app.meal_letter_last_for_me()::text, d0::text);
+  -- A later day whose claim is open (the retry after a refused mail) does not move it, and nor does another school's day.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM * FROM app.job_claim_nightly('meal-letter', 0, ARRAY[school], 1, (((d0 + 1) + time '08:45') AT TIME ZONE 'Europe/Stockholm'));
+  PERFORM * FROM app.job_claim_nightly('meal-letter', 0, ARRAY[school2], 1, (((d0 + 2) + time '08:45') AT TIME ZONE 'Europe/Stockholm'));
+  PERFORM app.job_claim_finished('meal-letter', school2, d0 + 2, (((d0 + 2) + time '08:46') AT TIME ZONE 'Europe/Stockholm'));
+  PERFORM pg_temp.d8_as(pg_temp.d8_auth(1));
+  PERFORM pg_temp.d8_expect('403 an open later claim and another school''s letter leave it', app.meal_letter_last_for_me()::text, d0::text);
 END $$;
 ROLLBACK;
 
