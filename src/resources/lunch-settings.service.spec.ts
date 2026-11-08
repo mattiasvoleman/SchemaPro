@@ -107,6 +107,7 @@ describe('LunchSettingsService', () => {
     generatorKeepsTravelTime: false,
     generatorKeepsPupilGapsDown: false,
     generatorKeepsConsecutiveTeaching: false,
+    generatorBestEffort: false,
     createdAt: new Date('2026-08-01T00:00:00.000Z'),
     updatedAt: new Date('2026-08-01T00:00:00.000Z'),
     ...overrides,
@@ -215,6 +216,36 @@ describe('LunchSettingsService', () => {
       };
       expect(older.update).not.toHaveProperty('generatorKeepsConsecutiveTeaching');
       expect(older.create).not.toHaveProperty('generatorKeepsConsecutiveTeaching');
+    });
+
+    it('writes the best-effort switch when the form sends it, on both halves of the upsert, true and false alike', async () => {
+      for (const value of [true, false]) {
+        tx.lunchSetting.upsert.mockClear();
+        tx.lunchSetting.upsert.mockResolvedValue(storedRow({ generatorBestEffort: value }));
+        await expect(service.upsert(dto({ generatorBestEffort: value }), testUser())).resolves.toMatchObject({
+          generatorBestEffort: value,
+        });
+        const sent = tx.lunchSetting.upsert.mock.calls[0]?.[0] as {
+          create: Record<string, unknown>;
+          update: Record<string, unknown>;
+        };
+        // false is a decision too: dropped as falsy it could never be turned off again.
+        expect(sent.create['generatorBestEffort']).toBe(value);
+        expect(sent.update['generatorBestEffort']).toBe(value);
+      }
+    });
+
+    it('leaves the best-effort switch alone when a tab from before it does not send one', async () => {
+      // Writing `false` here would withdraw the consent a colleague gave, and
+      // with it every candidate with deviations still on the page.
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+      await service.upsert(dto({ generatorKeepsConsecutiveTeaching: true }), testUser());
+      const older = tx.lunchSetting.upsert.mock.calls[0]?.[0] as {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      };
+      expect(older.update).not.toHaveProperty('generatorBestEffort');
+      expect(older.create).not.toHaveProperty('generatorBestEffort');
     });
 
     it('stores an absent seat count as null rather than dropping the field', async () => {

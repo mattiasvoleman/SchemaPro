@@ -25,6 +25,7 @@ export const GATE_CODES = [
   "PUB_TIMPLAN",
   "PUB_BLOCK_SPLIT",
   "PUB_EMPTY_HALF",
+  "PUB_DEVIATIONS",
   "PUB_RANGE_OVERLAP",
   "PUB_RANGE_GAP",
   "PUB_WEEK_SPLIT",
@@ -53,6 +54,7 @@ export const GATE_POLICY_KEYS = [
   "gateDayOpsLost",
   "gateEmptyHalf",
   "gateOtherSchool",
+  "gateDeviations",
 ] as const;
 export type GatePolicyKey = (typeof GATE_POLICY_KEYS)[number];
 export type GatePolicy = Record<GatePolicyKey, GateMode>;
@@ -75,6 +77,7 @@ export const GATE_OF_POLICY: Record<GatePolicyKey, GateCode> = {
   gateDayOpsLost: "PUB_DAY_OPS_LOST",
   gateEmptyHalf: "PUB_EMPTY_HALF",
   gateOtherSchool: "PUB_OTHER_SCHOOL",
+  gateDeviations: "PUB_DEVIATIONS",
 };
 
 export type TeacherDisplay = "NONE" | "SIGNATURE" | "NAME";

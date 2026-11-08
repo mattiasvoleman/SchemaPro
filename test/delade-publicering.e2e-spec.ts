@@ -164,6 +164,26 @@ describe('Delade lokaler och lärare: publicering och bokning (e2e)', () => {
       .expect(400);
   });
 
+  it('takes the policy of the deviations check (Bästa möjliga schema) as its own column, WARN or REFUSE and nothing else', async () => {
+    harness.tx.publicationSettings.upsert.mockImplementation(async ({ create }: { create: Record<string, unknown> }) => ({
+      publishMode: 'DIRECT',
+      ...create,
+    }));
+    const put = await request(http())
+      .put('/api/v1/publication-settings')
+      .set('x-test-user', admin())
+      .send({ gateDeviations: 'REFUSE' })
+      .expect(200);
+    expect(harness.tx.publicationSettings.upsert).toHaveBeenCalledWith(expect.objectContaining({ update: { gateDeviations: 'REFUSE' } }));
+    expect(put.body).toMatchObject({ gateDeviations: 'REFUSE' });
+    await request(http()).put('/api/v1/publication-settings').set('x-test-user', admin()).send({ gateDeviations: 'IGNORE' }).expect(400);
+    await request(http()).put('/api/v1/publication-settings').set('x-test-user', admin()).send({ gateDeviations: null }).expect(200);
+
+    harness.tx.publicationSettings.findUnique.mockResolvedValue(null);
+    const read = await request(http()).get('/api/v1/publication-settings').set('x-test-user', admin()).expect(200);
+    expect(read.body).toMatchObject({ gateDeviations: 'WARN', stored: false });
+  });
+
   it('refuses a booking of a room in the window it is lent to another school, and takes it back', async () => {
     const { tx } = harness;
     tx.room.findUnique.mockResolvedValue({ id: ROOM, requiresApproval: false });

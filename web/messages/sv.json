@@ -1547,6 +1547,9 @@
     "lessonsGenerated": "{count} grundschemapass genererade",
     "infeasibleHint": "Begränsningarna går inte att uppfylla samtidigt. Sammanfattningen och konflikterna nedan säger vad som behöver ändras.",
     "timeoutHint": "Lösaren hittade inget schema inom sin tidsbudget. Det betyder inte att dina krav är omöjliga — försök köra igen, eller be din administratör höja lösarens tidsgräns. Att lätta på snäva tillgänglighetsfönster gör också schemat lättare att hitta.",
+    "bestEffortOffer": "Skolan har Bästa möjliga schema på. Under Schemaförslag kan du lägga ett schema som bryter så få av skolans egna regler som möjligt och se vilka som gav vika.",
+    "bestEffortOfferLink": "Ta fram bästa möjliga",
+    "bestEffortOfferTimeout": "Generera hann inte bevisa något utan fick slut på tid: ett schema med avsteg kan komma tillbaka där en längre körning av Generera hade sluppit dem.",
     "conflicts": "Upptäckta konflikter",
     "noConflicts": "Inga konflikter rapporterade.",
     "notesTitle": "Önskemål som inte gick att hålla",
@@ -1573,6 +1576,7 @@
     "ruleTravel": "Generatorn håller restiden mellan skolområdena",
     "rulePupilGaps": "Generatorn håller nere elevernas håltimmar",
     "ruleConsecutive": "Generatorn försöker hålla lärarnas sammanhängande undervisning",
+    "ruleBestEffort": "Bästa möjliga schema är på: Schemaförslag kan lägga ett schema med avsteg från skolans regler",
     "rulesEdit": "Ändra",
     "noYearTitle": "{count, plural, one {En grupp} other {# grupper}} i timplansposterna saknar årskurs",
     "noYearBody": "Motorn läser ”ingen årskurs” som ”obegränsad”: ramtider och raster gäller inte för dessa gruppers lektioner, så de kan hamna rakt över en rast. Årskursen härleds ur medlemmarnas hemklasser, eller ur gruppens egen årskurs om den saknar medlemmar.",
@@ -3055,7 +3059,24 @@
     "consecutive": "Generatorn försöker hålla lärarnas sammanhängande undervisning",
     "consecutiveHint": "Av som standard. När den är på väger Generera in varje lärares gräns för undervisning i följd, som rektor eller en fullständig administratör har satt på lärarens anställning. Det är ett önskemål, inte ett löfte: Generera säger efter körningen om det inte lyckades, och namnger lärarna för rektor, en fullständig administratör och den som har HR-läs. Önskemålet går före att behålla förra schemats platser och före elevernas håltimmar, så slå på det före den första genereringen om du kan. Körs Generera om på ett befintligt schema flyttas många lektioner, inte bara de flaggade lärarnas: på vår testskola mellan en femtedel och nästan hälften.",
     "consecutiveWithPupilGapsTitle": "Elevernas håltimmar och lärarnas gränser står på samtidigt",
-    "consecutiveWithPupilGaps": "När båda väger in har genereringen mycket att pröva mot varandra, och på den sökningstid som är standard blev lärarnas gränser ofta inte hållna i våra mätningar. Generera säger efter körningen om det inte lyckades. Slå bara på båda om du vill det trots det."
+    "consecutiveWithPupilGaps": "När båda väger in har genereringen mycket att pröva mot varandra, och på den sökningstid som är standard blev lärarnas gränser ofta inte hållna i våra mätningar. Generera säger efter körningen om det inte lyckades. Slå bara på båda om du vill det trots det.",
+    "bestEffort": "Bästa möjliga schema",
+    "bestEffortHint": "Av som standard. När den är på får du under Schemaförslag knappen Ta fram bästa möjliga, som lägger ett schema även när Generera vägrar för att skolans egna regler inte går ihop. Schemat läggs så att så få regler som möjligt bryts, och varje regel som gav vika listas som ett avsteg med hur mycket. Ett schema med avsteg tillämpas först när du uttryckligen godtar avstegen, och publiceringen varnar för dem. Generera och de vanliga förslagen körs som förut.",
+    "bestEffortNeverTitle": "Ger aldrig vika, i något läge:",
+    "bestEffortNeverOverlap": "Dubbelbokning av en lärare, en klass, en elev eller en sal.",
+    "bestEffortNeverFrames": "Lektioner utanför skolans ramtider.",
+    "bestEffortNeverTravel": "Restiden mellan skolor och platser.",
+    "bestEffortNeverTeacher": "Lärarens lunch och nattvila, och en lärare som är markerad som inte tillgänglig.",
+    "bestEffortNeverMeals": "Lunch, matsal och raster.",
+    "bestEffortNeverRooms": "Rummets typ, antal platser och årskurser som en timplanspost kräver.",
+    "bestEffortNeverLessons": "Lektionernas längd och antalet lektioner per vecka.",
+    "bestEffortNeverGroups": "Parallella blocks gemensamma start, och gruppens eget tak per dag (Max lektioner per dag ovan).",
+    "bestEffortMayTitle": "Kan ge vika, och listas då som avsteg:",
+    "bestEffortMayCap": "Lärarens tak för undervisning per dag (arbetstidsregeln).",
+    "bestEffortMayDays": "Hur många dagar i veckan en lärare undervisar enligt tjänsten.",
+    "bestEffortMayDistribution": "Ämnets fördelning över veckan: högst så många lektioner per dag, och så många dagar emellan.",
+    "bestEffortMayRoomLock": "Rumslås: att ett ämne bara får ligga i vissa rum.",
+    "bestEffortOrder": "De ger vika i den ordning de är lindrigast: ämnets dagar emellan först och tjänstens dagar sist, och bara när inget schema finns utan avsteget. Då bryts så lite som möjligt."
   },
   "conflictCategories": {
     "AVAILABILITY": "Tillgänglighet",
@@ -4360,6 +4381,11 @@
     "noSourceAction": "Välj läsår"
   },
   "engineMessages": {
+    "DEVIATION_ROOM_LOCK": "{requirement} har {lessons, plural, one {# lektion} other {# lektioner}} av {of} i ett rum utanför de rum ämnet är låst till. Det håller om låset öppnas för ämnet, eller om ett låst rum är ledigt de tiderna.",
+    "DEVIATION_SUBJECT_DAYS_APART": "{requirement} har lektioner {closest, plural, one {# dag} other {# dagar}} från varandra där regeln kräver minst {minDaysBetween} ({pairs, plural, one {# par dagar} other {# par dagar}} för nära). Det håller med regeln satt till {needed}, eller om lektionerna flyttas isär.",
+    "DEVIATION_SUBJECT_PER_DAY": "{requirement} har {count, plural, one {# lektion} other {# lektioner}} {day, select, 1 {på måndagen} 2 {på tisdagen} 3 {på onsdagen} 4 {på torsdagen} 5 {på fredagen} 6 {på lördagen} 7 {på söndagen} other {dag {day}}}, mot en gräns på {maxPerDay} per dag: {over, plural, one {# lektion} other {# lektioner}} för mycket. Det håller med gränsen satt till {needed}, eller om en av lektionerna ligger en annan dag.",
+    "DEVIATION_TEACHER_DAILY_CAP": "Taket på {minutes} minuters undervisning per dag som arbetstidsregeln {rule} sätter gav vika {day, select, 1 {på måndagen} 2 {på tisdagen} 3 {på onsdagen} 4 {på torsdagen} 5 {på fredagen} 6 {på lördagen} 7 {på söndagen} other {dag {day}}}: läraren undervisar {taught} minuter, {over} över. Det håller med taket satt till {needed} minuter, eller om dagens lektioner flyttas till en annan dag.",
+    "DEVIATION_TEACHER_WORK_DAYS": "Tjänsten {limit} tillåter undervisning högst {days, plural, one {# dag} other {# dagar}} i veckan, och i det här schemat undervisar läraren {taught}: {over, plural, one {# dag} other {# dagar}} för mycket. Det håller med {needed, plural, one {# dag} other {# dagar}} i tjänsten, eller om lektionerna på de lättaste dagarna flyttas.",
     "LUNCH_HALL_CANNOT_FEED_THE_SCHOOL": "Matsalen räcker inte till hela skolan på {day, select, 1 {måndagen} 2 {tisdagen} 3 {onsdagen} 4 {torsdagen} 5 {fredagen} 6 {lördagen} 7 {söndagen} other {dag {day}}}: {students, plural, one {# elev} other {# elever}} som äter {minutes} minuter var behöver {needed} elevminuter, och {seats} platser under {windowStart}–{windowEnd} ger {offered}. Lägg till platser, vidga lunchfönstret, eller korta lunchen.",
     "LUNCH_SEATS_CANNOT_STAGGER": "Luncherna går inte att sprida inom matsalens {seats} platser.",
     "LUNCH_GROUP_LARGER_THAN_HALL": "Klassen {group} har {students, plural, one {# elev} other {# elever}} som äter lunch, fler än matsalens {seats} platser.",
@@ -5013,7 +5039,8 @@
       "PUB_RANGE_GAP": "Skoldagar utan publicerat schema",
       "PUB_DAY_OPS_LOST": "Dagsändringar som försvinner",
       "PUB_EMPTY_HALF": "Halvklasser utan elever",
-      "PUB_OTHER_SCHOOL": "Krockar med huvudmannens andra skolor (delade lärare, lånade och utlånade salar)"
+      "PUB_OTHER_SCHOOL": "Krockar med huvudmannens andra skolor (delade lärare, lånade och utlånade salar)",
+      "PUB_DEVIATIONS": "Avsteg från skolans regler i det senast tillämpade schemat"
     },
     "severity": {
       "REFUSE": "Stoppar",
@@ -5042,6 +5069,7 @@
       "PUB_DAY_OPS_LOST": "{count, plural, one {# dagsändring} other {# dagsändringar}} (vikarie, salsbyte, anteckning) försvinner med lektioner som tas bort.",
       "PUB_FROM_IN_PAST": "Giltigheten börjar före i dag, så dagar som redan varit kan få lektioner i efterhand.",
       "PUB_LUNCH_NOT_SET": "Lunch är inte inställd, så inga måltider publiceras.",
+      "PUB_DEVIATIONS": "{count, plural, one {# regel gav vika} other {# regler gav vika}} i det senast tillämpade schemaförslaget (Bästa möjliga schema). Listan visar vilka. Ändra regeln eller flytta lektionerna för att få bort avsteget, eller publicera ändå.",
       "PUB_NOTHING_TO_PUBLISH": "Det finns inget nytt att publicera."
     },
     "reviewTitle": "Publicera schemat",
@@ -6771,6 +6799,12 @@
       "start": "Ta fram förslag",
       "starting": "Startar…",
       "started": "Förslagen tas fram. Du kan lämna sidan under tiden.",
+      "startBestEffort": "Ta fram bästa möjliga",
+      "startedBestEffort": "Bästa möjliga schema tas fram. Du kan lämna sidan under tiden.",
+      "bestEffortHint": "Ta fram bästa möjliga lägger ett schema även när Generera vägrar för att skolans egna regler inte går ihop, och listar de regler som gav vika. Dubbelbokningar, ramtider och restid ger aldrig vika. Du godtar avstegen innan schemat tillämpas.",
+      "replaceBestEffortTitle": "Ersätta de sparade förslagen?",
+      "replaceBestEffortBody": "Du har en sparad omgång med {count, plural, one {# förslag} other {# förslag}}. När bästa möjliga är framtaget ersätter det hela omgången, och förslagen du har nu går inte att få tillbaka. Misslyckas körningen finns omgången kvar.",
+      "replaceBestEffortConfirm": "Ersätt och ta fram",
       "compare": "Jämför förslagen",
       "blockedGenerating": "Generera kör för läsåret just nu. Förslag går att ta fram när körningen är klar.",
       "blockedPrerequisites": "Förslag kan tas fram när förutsättningarna ovan är uppfyllda.",
@@ -6811,6 +6845,7 @@
       "TEACHER_GAPS": "Färre håltimmar för lärarna",
       "SPREAD": "Jämnare veckor",
       "FREE": "Friare placering",
+      "BEST_EFFORT": "Bästa möjliga",
       "unknown": "Förslag {ordinal}"
     },
     "solver": {
@@ -6832,9 +6867,13 @@
       "CANDIDATE_ENGINE_TIMEOUT": "Schemamotorn svarade inte i tid. Försök igen om en stund.",
       "CANDIDATE_ENGINE_FAILED": "Schemamotorn svarade med ett fel. Försök igen om en stund.",
       "ENGINE_LACKS_CANDIDATES": "Schemamotorn är äldre än resten av tjänsten och kan inte ta fram förslag ännu. Försök igen om några minuter.",
+      "ENGINE_LACKS_BEST_EFFORT": "Schemamotorn är äldre än resten av tjänsten och kan inte ta fram bästa möjliga schema ännu. Försök igen om några minuter.",
       "CANDIDATES_FIRST_FAILED": "Det första förslaget fick inget schema, och de andra hade mött samma hinder. Det som stoppade det står nedan.",
       "CANDIDATES_FIRST_FAILED_UNNAMED": "Det första förslaget fick inget schema, och de andra hade mött samma hinder.",
       "CANDIDATES_FIRST_TIMEOUT": "Det första förslaget hann inte bli klart inom tiden, så de andra togs inte fram.",
+      "BEST_EFFORT_FAILED": "Inget schema gick att lägga, inte heller med skolans egna regler som fick ge vika. Det som stoppade det är en regel som aldrig ger vika, och den står nedan.",
+      "BEST_EFFORT_FAILED_UNNAMED": "Inget schema gick att lägga, inte heller med skolans egna regler som fick ge vika.",
+      "BEST_EFFORT_TIMEOUT": "Bästa möjliga schema hann inte bli klart inom tiden.",
       "CANDIDATES_NONE_APPLICABLE": "Inget av förslagen gav ett schema som går att tillämpa.",
       "CANDIDATE_RUN_INTERRUPTED": "Tjänsten startades om medan förslagen togs fram. Ta fram dem igen.",
       "CANDIDATE_RUN_ABANDONED": "Förslagen slutade svara och har avbrutits. Ta fram dem igen.",
@@ -6859,6 +6898,8 @@
       "SCHEDULE_CANDIDATE_NOT_APPLICABLE": "Förslaget går inte att tillämpa: körningen är inte klar, eller förslaget fick inget schema.",
       "SCHEDULE_CANDIDATE_STALE": "Grundschemat har ändrats sedan förslagen togs fram. Uppdatera förslagen och jämför igen.",
       "SCHEDULE_CANDIDATE_STALE_PARTS": "Grundschemat har ändrats sedan förslagen togs fram: {parts}. Uppdatera förslagen och jämför igen.",
+      "BEST_EFFORT_NOT_ENABLED": "Bästa möjliga schema är avstängt för skolan. Slå på det under Skolregler på Tillgänglighet.",
+      "SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED": "Förslagets avsteg godtogs inte som de står nu. Öppna Tillämpa igen, läs avstegen och godta dem.",
       "CANDIDATE_GONE": "Förslaget finns inte längre. Det kan ha tagits bort eller ersatts av nyare förslag.",
       "TOO_MANY": "För många försök på kort tid. Vänta en minut och försök igen.",
       "generic": "Något gick fel. Försök igen."
@@ -6876,6 +6917,7 @@
       "title": "Förslagen kunde inte tas fram {date}",
       "cancelledTitle": "Förslagen avbröts",
       "conflicts": "Det som stoppade det första förslaget",
+      "conflictsBestEffort": "Det som stoppade schemat",
       "daysWhere": "Här visas dagarna inte för någon, inte heller för rektor. Rektor, en fullständig administratör och den som har HR-läs ser vilken lärare och hur många dagar i lärarens tjänst och i svaret när de genererar schemat.",
       "olderBatch": "Jämförelsen nedan gäller förslagen från {date}.",
       "again": "Ta fram förslag igen från Generera schema"
@@ -6915,6 +6957,7 @@
       "currentSchedule": "Nuvarande schema",
       "candidate": "Förslag {ordinal}",
       "sameAs": "Samma som förslag {ordinal}",
+      "withDeviations": "Med avsteg ({count})",
       "applied": "Tillämpat"
     },
     "row": {
@@ -6930,6 +6973,8 @@
       "wishesHint": "Lärare som får lektioner den veckodag de önskat ha ledig, eller undervisar längre i följd än sin gräns",
       "pupils": "Elevernas håltimmar",
       "pupilsHint": "Minuter per elev i en vanlig vecka",
+      "deviations": "Avsteg från reglerna",
+      "deviationsHint": "Skolans egna regler som gav vika. Meningarna står under Granska ett förslag.",
       "apply": "Tillämpa"
     },
     "cell": {
@@ -6945,6 +6990,7 @@
       "wishNobody": "En lärare",
       "delta": "{delta} mot nuvarande",
       "unplaced": "{lines, plural, =0 {Allt placerat} one {# rad · {minutes} min i veckan} other {# rader · {minutes} min i veckan}}",
+      "deviations": "{count, plural, =0 {Inga avsteg} one {# avsteg} other {# avsteg}}",
       "lines": "{count, plural, one {# rad} other {# rader}}",
       "movedOf": "{moved} av {of}",
       "notApplicable": "Ej tillämpligt",
@@ -6969,12 +7015,21 @@
       "applying": "Tillämpar…",
       "checking": "Kontrollerar att förslaget fortfarande passar utkastet…",
       "noLonger": "Förslaget passar inte längre utkastet",
-      "noLongerHint": "Grundschemat har ändrats sedan förslagen togs fram, eller möter nu ett hinder. Stäng dialogen och se vad som ändrats."
+      "noLongerHint": "Grundschemat har ändrats sedan förslagen togs fram, eller möter nu ett hinder. Stäng dialogen och se vad som ändrats.",
+      "deviationsTitle": "{count, plural, one {# avsteg från skolans regler} other {# avsteg från skolans regler}}",
+      "deviationsIntro": "Inget schema fanns som höll alla regler, så det här lades med några som fick ge vika. Läs avstegen innan du tillämpar. Att du godtagit dem sparas tillsammans med tillämpningen, och publiceringen varnar för dem tills schemat har publicerats.",
+      "acceptDeviations": "Jag godtar de här avstegen"
     },
     "review": {
       "title": "Granska ett förslag",
       "hint": "Vem som får det sämre, och vilka lektioner som flyttas.",
-      "pick": "Förslag"
+      "pick": "Förslag",
+      "deviationsTitle": "Avsteg från skolans regler",
+      "deviationsHint": "Reglerna som fick ge vika för att ett schema skulle gå att lägga, med vad regeln skulle behöva vara för att just det här schemat ska hålla den.",
+      "deviationsNone": "Inget gav vika: schemat håller alla skolans regler."
+    },
+    "deviations": {
+      "daysHidden": "En lärares gräns för hur många dagar i veckan hen undervisar gav vika i det här schemat. Dagarna visas för rektor, en fullständig administratör och den som har HR-läs."
     },
     "worse": {
       "title": "Blir sämre för",

@@ -1453,6 +1453,8 @@ model PublicationSettings {
   gateEmptyHalf      PublishGateMode @default(WARN)
   /// A lesson that meets another school of the huvudman (PUB_OTHER_SCHOOL, 20261217090100).
   gateOtherSchool    PublishGateMode @default(WARN)
+  /// A timetable applied from a candidate with deviations that no publication has followed (PUB_DEVIATIONS, 20270125090000).
+  gateDeviations     PublishGateMode @default(WARN)
   /// The public viewer (20261011120000): everything off by default.
   publicViewerEnabled  Boolean        @default(false)
   publicGroups         Boolean        @default(false)
@@ -2862,6 +2864,12 @@ model ScheduleCandidate {
   /// OptimizationJob.notes (the teacher's Users id server-only, named when read). Null on a candidate with no timetable
   /// and on every candidate before 20261127090000; [] when every wish is kept (DB CHECK: a list).
   notes        Json?
+  /// Bästa möjliga schema (20270125090000): the rules that gave way in the candidate's timetable, one conflict-shaped
+  /// entry each (category DEVIATION; code, scalar params, the sentence's English, the names of what it is about, and the
+  /// teacher's Users id server-only in subjectIds, named when read). A days-bearing entry is stored in its hidden form,
+  /// as a refusal about a post's days is. Written once with the candidate: the table has no UPDATE grant and keeps none.
+  /// Null: the candidate did not come from the mode. []: the mode ran and nothing gave way (DB CHECK: null or a list).
+  deviations   Json?
   /// The engine's summary of a candidate that found no timetable (e.g. PROBE_NOTHING_HELPED), and its values,
   /// scalars only, as OptimizationJob keeps conflictSummaryCode/Params: what the page says stopped it.
   errorCode    String?
@@ -4180,6 +4188,16 @@ model LunchSetting {
   /// switch is the school's: it moves lessons of every teacher who has the
   /// rule. In this row for the reason the others are: the same form.
   generatorKeepsConsecutiveTeaching Boolean @default(false)
+  /// Bästa möjliga schema (20270125090000): whether an administrator who plans
+  /// may ask for a timetable in which the school's own shaping rules (a
+  /// teacher's cap per day, a part-timer's days, a subject's per-day cap and
+  /// days apart, a subject's rooms) may give way, listed as deviations the
+  /// school accepts before it is applied. OFF until the school turns it on: a
+  /// timetable that breaks a rule of the school's is the school's to ask for,
+  /// and a migration must not turn it on. Off, the run is refused
+  /// (BEST_EFFORT_NOT_ENABLED) and nothing is sent to the engine that was not
+  /// sent before. In this row for the reason the others are: the same form.
+  generatorBestEffort      Boolean  @default(false)
   createdAt                DateTime @default(now()) @db.Timestamptz(6)
   updatedAt                DateTime @updatedAt @db.Timestamptz(6)
 

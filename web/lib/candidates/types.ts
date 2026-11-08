@@ -22,7 +22,7 @@ export type CandidateSolverStatus = "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "TIM
  * engine's benchmarks may retune or drop a variant, and a code this build has
  * never heard of is shown as "Förslag N" rather than refused.
  */
-export type CandidateVariant = "KEEP" | "TEACHER_GAPS" | "SPREAD" | "FREE" | (string & {});
+export type CandidateVariant = "KEEP" | "TEACHER_GAPS" | "SPREAD" | "FREE" | "BEST_EFFORT" | (string & {});
 
 export interface CandidateRun {
   id: string;
@@ -101,6 +101,22 @@ export interface CandidateView {
    * empty when every wish is kept. Absent from an older gateway.
    */
   notes?: CandidateConflict[] | null;
+  /**
+   * Bästa möjliga schema: the school's own rules the candidate's timetable
+   * breaks, said as the engine's DEVIATION_* sentences (category "DEVIATION",
+   * values in params, the school's names in resourceNames). The gateway has
+   * already masked what the reader may not see (a post's days, for a reader
+   * without HR-läs); nothing here masks again. NULL: the candidate did not come
+   * from that mode. EMPTY: the mode ran and nothing gave way, which is not a
+   * deviation and is not marked as one. Absent from an older gateway, which is
+   * null.
+   */
+  deviations?: CandidateConflict[] | null;
+  /**
+   * sha256 (hex) of the stored deviations: what an apply sends back as
+   * `acceptedDeviations` to say they were read. Null when there are none.
+   */
+  deviationsDigest?: string | null;
 }
 
 export interface CandidateBatch {
@@ -146,6 +162,12 @@ export interface CandidateCheck {
   futureCalendarLessons: number;
   /** DIRECT: cover assignments on those calendar lessons; 0 in DRAFT. */
   coverAssignments: number;
+  /**
+   * The same two fields as the candidate's, read again with the check (the
+   * apply dialog re-reads it as it opens). Absent from an older gateway.
+   */
+  deviations?: CandidateConflict[] | null;
+  deviationsDigest?: string | null;
 }
 
 /** GET candidates/:id/lessons: one stored lesson, resolved from its requirement at read time. */
@@ -172,6 +194,12 @@ export interface StartCandidatesRequest {
   weights?: Record<string, number>;
   /** "Uppdatera förslagen": re-solve this SUCCEEDED run's candidates on today's basis. */
   refreshOf?: string;
+  /**
+   * Bästa möjliga schema: ONE candidate, laid with the relaxable rules as
+   * prices. The gateway refuses it unless the school has the switch on
+   * (409 BEST_EFFORT_NOT_ENABLED). `count` is not sent with it.
+   */
+  mode?: "BEST_EFFORT";
 }
 
 export interface CandidateApplyResult {
