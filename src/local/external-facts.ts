@@ -178,7 +178,9 @@ export interface LateLesson {
  * The lessons that hold a room at any of the given spans, read after the days of a series are written: the room is
  * held by us until we commit, so what is found here landed (a publication) between the plan and the writes. Only
  * lessons, and only the room's own index: the check runs once for every series, and the broader read of the clash
- * list (a join to the series and the room) was the largest single cost of registering one.
+ * list (a join to the series and the room) was the largest single cost of registering one. The index is asked from
+ * two days before each day: a lesson that began earlier than that and still runs is not found. That holds because
+ * the schedule writers make lessons of a few hours (CalendarLessons itself has no CHECK on the length).
  */
 export async function readLateLessons(
   tx: PrismaClient,
@@ -199,7 +201,9 @@ export async function readLateLessons(
        SELECT x."startsAt", x."endsAt", x."subjectId", x."studentGroupId" FROM "CalendarLessons" x
         WHERE x."roomId" = ${roomId}::uuid AND x."startsAt" >= t.s - interval '2 days' AND x."startsAt" < t.e AND x."endsAt" > t.s
           AND x."status" IN ('SCHEDULED', 'COMPLETED')
+        ORDER BY x."startsAt"
         LIMIT ${limit}) l
+     ORDER BY l."startsAt"
      LIMIT ${limit}`;
   if (found.length === 0) return [];
   const subjectIds = [...new Set(found.map((row) => row.subjectId).filter((id): id is string => id !== null))];

@@ -29,8 +29,8 @@
  *   (ld)  the series' own life: the contact changes, the rule does not, cancel, cancel a day, remove;
  *   (le)  the report: a week of the hall as the figures say, and the CSV;
  *   (lf)  forty rooms, a term of Tuesdays each, a full schedule: the whole registration in under 2 s (or, on a
- *         machine slower than the one the phase measured on, within ten reads of a room's lessons a series, a
- *         read the probe measures first on the same machine, and a step-by-step account of where a series goes).
+ *         machine slower than the one the phase measured on, within eighty empty transactions a series, which the
+ *         probe measures first on the same connection; it also prints where a series goes);
  */
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
@@ -318,6 +318,49 @@ async function checks(owner: PrismaClient, api: PrismaService, slug: string): Pr
     assert.equal((await external.clashes(asAdmin)).filter((c) => c.seriesId === seriesId).length, 0);
   });
 
+  // --- (lb2) the check after the days are written ------------------------------------------------------
+  await check('(lb2) the check after the days are written finds the lessons that overlap a day of the room, in order, and no others', async () => {
+    const room = await owner.room.create({ data: { schoolId: s, name: 'Lb2' } });
+    const other = await owner.room.create({ data: { schoolId: s, name: 'Lb2 annan' } });
+    const first = tuesdayOnOrAfter(dayShift(todayIso, 300));
+    const days = [0, 1, 2, 3, 4].map((n) => dayShift(first, 7 * n));
+    const spans = await Promise.all(days.map(async (d) => ({ startsAt: await local(d, '18:00'), endsAt: await local(d, '20:00') })));
+    const lesson = async (roomId: string, day: string, from: string, to: string, status: 'SCHEDULED' | 'COMPLETED' | 'CANCELLED' = 'SCHEDULED') =>
+      owner.calendarLesson.create({
+        data: { schoolId: s, subjectId: subject.id, studentGroupId: group.id, roomId, date: new Date(`${day}T00:00:00Z`), startsAt: await local(day, from), endsAt: await local(day, to), status },
+      });
+    // Not found: touching the day before and after it, a cancelled lesson, and a lesson in another room.
+    await lesson(room.id, days[0]!, '17:00', '18:00');
+    await lesson(room.id, days[0]!, '20:00', '21:00');
+    await lesson(room.id, days[3]!, '19:00', '19:30', 'CANCELLED');
+    await lesson(other.id, days[4]!, '18:30', '19:00');
+    // Found: overlapping the start, the whole day and the inside of one, the end, and a lesson that was held.
+    await lesson(room.id, days[1]!, '17:30', '18:30');
+    await lesson(room.id, days[2]!, '08:00', '22:00');
+    await lesson(room.id, days[2]!, '18:30', '19:30');
+    await lesson(room.id, days[3]!, '18:30', '19:00', 'COMPLETED');
+    await lesson(room.id, days[4]!, '19:30', '20:30');
+    const expected = [
+      await local(days[1]!, '17:30'),
+      await local(days[2]!, '08:00'),
+      await local(days[2]!, '18:30'),
+      await local(days[3]!, '18:30'),
+      await local(days[4]!, '19:30'),
+    ].map((t) => t.toISOString());
+    const found = await api.withRls(asAdmin, (tx) => readLateLessons(tx, room.id, spans, 20));
+    assert.deepEqual(found.map((l) => l.startsAt.toISOString()), expected, 'the five that overlap, in the order they start');
+    assert.ok(found.every((l) => l.lesson === 'Idrott och hälsa 7A'), 'each is named by its subject and its class');
+    const backwards = await api.withRls(asAdmin, (tx) => readLateLessons(tx, room.id, [...spans].reverse(), 20));
+    assert.deepEqual(backwards.map((l) => l.startsAt.toISOString()), expected, 'in the order they start however the days are given');
+    const few = await api.withRls(asAdmin, (tx) => readLateLessons(tx, room.id, spans, 3));
+    assert.deepEqual(few.map((l) => l.startsAt.toISOString()), expected.slice(0, 3), 'a limit keeps the first by start');
+    assert.deepEqual(await api.withRls(asAdmin, (tx) => readLateLessons(tx, other.id, spans.slice(0, 4), 20)), [], 'the other room has no lesson on those days');
+    // The same answer from the whole registration: a lesson in the room on a day it books refuses the series.
+    const refused = await refusal(external.create({ target: 'ROOM', roomId: room.id, weekdays: [2], startDate: days[0]!, endDate: days[4]!, startTime: '18:00', endTime: '20:00', ...organisation }, asAdmin));
+    assert.deepEqual([refused.status, refused.code], [409, 'EXTERNAL_BOOKING_CONFLICTS'], 'the preview finds the same lessons before anything is written');
+    assert.equal(await owner.roomBooking.count({ where: { schoolId: s, roomId: room.id } }), 0);
+  });
+
   await check("(lg) the register extract of the person who registered a series says that they did, and none of what the hirer left", async () => {
     const answer = await new SubjectAccessService(api).extract(asAdmin, admin.id, false);
     const dir = mkdtempSync(join(tmpdir(), 'k3-probe-'));
@@ -377,7 +420,7 @@ async function checks(owner: PrismaClient, api: PrismaService, slug: string): Pr
   });
 
   // --- (lf) forty rooms, a term -----------------------------------------------------------------------
-  await check('(lf) forty rooms, a term of Tuesday evenings each, against a full schedule: registered in under 2 s, or in the cost of ten lesson reads a series where the machine is slower than the one the phase measured on', async () => {
+  await check('(lf) forty rooms, a term of Tuesday evenings each, against a full schedule: registered in under 2 s, or in eighty empty transactions a series where the machine is slower than the one the phase measured on', async () => {
     const rooms = [];
     for (let i = 0; i < 40; i++) rooms.push(await owner.room.create({ data: { schoolId: s, name: `Sal ${String(i + 1).padStart(2, '0')}` } }));
     const termStart = tuesdayOnOrAfter(dayShift(todayIso, 200));
@@ -396,11 +439,10 @@ async function checks(owner: PrismaClient, api: PrismaService, slug: string): Pr
     // A school with this many lessons has been analysed by autovacuum long before anyone books a room; the bulk
     // insert above has not been, and the planner would price the table by its size on disk alone.
     await owner.$executeRawUnsafe('ANALYZE "CalendarLessons"');
-    // What this machine charges for a statement under row-level security. The statement is a lesson read for a room
-    // (nine runs, the median): it costs a transaction, the policy of CalendarLessons planned and a few index probes, and
-    // so it scales with the machine the way a series does, which an empty transaction does not (a runner of two cores
-    // that also runs Postgres plans three times slower than a laptop and starts a transaction as fast). The empty
-    // transaction is printed for comparison.
+    // The floor of a request on this machine: an empty transaction under the same claims (the median of nine). A
+    // series makes about a dozen statements, most of them planned under row-level security, and costs 10-20 of these
+    // on a laptop and 30-40 on a runner of two cores that also runs Postgres (measured on CI at 35-40). The gate is
+    // eighty: room for a slow runner, and a series that asks one statement for each of its twenty days is over it.
     const ruleSpans = expandRule({ weekdays: [2], intervalWeeks: 1, startDate: termStart, endDate: termEnd, startTime: '18:00', endTime: '20:00' }, TZ);
     const timed = async (run: () => Promise<unknown>) => {
       const took: number[] = [];
@@ -412,7 +454,6 @@ async function checks(owner: PrismaClient, api: PrismaService, slug: string): Pr
       return took.sort((a, b) => a - b)[4]!;
     };
     const floor = await timed(() => api.withRls(asAdmin, (tx) => tx.$queryRaw`SELECT 1`));
-    const lessonRead = await timed(() => api.withRls(asAdmin, (tx) => readLateLessons(tx, rooms[0]!.id, ruleSpans, 5)));
     const started = process.hrtime.bigint();
     let days = 0;
     for (const room of rooms) {
@@ -420,7 +461,7 @@ async function checks(owner: PrismaClient, api: PrismaService, slug: string): Pr
       days += made.created;
     }
     const ms = Number(process.hrtime.bigint() - started) / 1e6;
-    console.log(`     40 rooms, ${days} days, ${rows} lessons: ${ms.toFixed(0)} ms; a lesson read here is ${lessonRead.toFixed(1)} ms (an empty transaction ${floor.toFixed(1)}), so a series costs ${(ms / 40 / lessonRead).toFixed(1)} lesson reads`);
+    console.log(`     40 rooms, ${days} days, ${rows} lessons: ${ms.toFixed(0)} ms; an empty transaction here is ${floor.toFixed(1)} ms, so a series costs ${(ms / 40 / floor).toFixed(1)} of them`);
     // Where a series spends it, on the same machine and the same data (the median of nine runs of each step, in ms):
     // what the log of a slow runner needs to say which statement it was.
     const median = async (label: string, run: () => Promise<unknown>) => {
@@ -445,10 +486,9 @@ async function checks(owner: PrismaClient, api: PrismaService, slug: string): Pr
       return external.create({ target: 'ROOM', roomId: rooms[shifted]!.id, weekdays: [2], startDate: tuesdayOnOrAfter(from), endDate: dayShift(tuesdayOnOrAfter(from), 7 * 19), startTime: '18:00', endTime: '20:00', ...organisation, organisation: `Senare ${shifted}` }, asAdmin);
     });
     assert.equal(days, 40 * 20);
-    // Under the phase's 2 s, as measured on the developer machine; on a slower one, a series that costs no more than
-    // ten of the reads a registration is made of (it makes about six statements, and a regression that asks for one
-    // per day would be twenty times that).
-    assert.ok(ms < 2000 || ms / 40 <= 10 * lessonRead, `registered in ${ms.toFixed(0)} ms: over the phase's 2000 ms, and over ten lesson reads (${lessonRead.toFixed(1)} ms) a series`);
+    // Under the phase's 2 s, as measured on the developer machine; on a slower one, no more than eighty empty
+    // transactions a series (the floor above).
+    assert.ok(ms < 2000 || ms / 40 <= 80 * floor, `registered in ${ms.toFixed(0)} ms: over the phase's 2000 ms, and over eighty empty transactions (${floor.toFixed(1)} ms) a series`);
   });
 }
 
