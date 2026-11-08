@@ -122,6 +122,7 @@
 --   app.timetable_pupil_days                  en ankomst gör inte lektionen "bara för de namngivna"
 --   app.timetable_week_days                   (samma sak på klassens, lärarens och salens sida)
 --   app.reporting_lessons                     en namngiven elev som flyttats bort räknas inte som elev på listan
+--   app.absence_stats_lessons (D6)            samma ändring (D6:s kropp är reporting_lessons med en annan lärarrad)
 --   app.gallring_due / app.gallring_purge     flytten gallras med närvaron
 --
 -- ## Skolans val
@@ -186,6 +187,7 @@ BEGIN
     ('app.calendar_feed_pupil_lessons(uuid, uuid, date, date, text, "TeacherDisplay")', '20270118090000', 'edec662e41a36cca8086484a5de74895'),
     ('app.timetable_pupil_days(uuid, uuid, date, text, "TeacherDisplay")', '20270118090000', '16164f62372b5886f55743657fac1d46'),
     ('app.reporting_lessons(uuid, date, date, timestamptz)', '20270112090100', 'd6a074eea241802f4e7bbd980e4f29ea'),
+    ('app.absence_stats_lessons(uuid, date, date, timestamptz)', '20270121090000', 'bece0015a55c5a41f4824c2e6550e85d'),
     ('app.gallring_due(uuid, "RetentionDataType", date, date)', '20270117091000', 'f884a3c77b5234c3d77ae6b77d17f0e7'),
     ('app.gallring_purge(uuid, "RetentionDataType", integer)', '20270117091000', '21746d3990375d467cdeec6294308363')
   ) AS t(sig, wrote, expected)
@@ -1131,6 +1133,72 @@ LANGUAGE sql STABLE AS $$
     JOIN "public"."Users" u
       ON u."id" = t."teacherId" AND u."schoolId" = cl."schoolId"
      AND u."role" = 'TEACHER' AND u."isActive"
+   CROSS JOIN LATERAL (
+           SELECT EXISTS (SELECT 1 FROM "public"."AttendanceRecords" a
+                           WHERE a."calendarLessonId" = t."calendarLessonId" AND a."status" <> 'UNKNOWN') AS "saved") r
+   WHERE cl."schoolId" = p_school
+     AND cl."date" BETWEEN p_from AND p_to
+     AND cl."status" IN ('SCHEDULED', 'COMPLETED')
+     AND cl."endsAt" <= p_now
+     AND (
+           r."saved"
+        OR EXISTS (SELECT 1 FROM "public"."Users" p
+                    WHERE p."studentGroupId" = cl."studentGroupId" AND p."role" = 'STUDENT' AND p."isActive")
+        OR EXISTS (SELECT 1 FROM "public"."StudentEnrollments" e
+                    WHERE e."studentGroupId" = cl."studentGroupId"
+                      AND e."validFrom" <= cl."date" AND (e."validTo" IS NULL OR cl."date" < e."validTo"))
+        OR EXISTS (SELECT 1 FROM "public"."StudentGroupMembers" m
+                    JOIN "public"."Users" p ON p."id" = m."studentId"
+                   WHERE m."studentGroupId" = cl."studentGroupId" AND p."role" = 'STUDENT')
+        OR EXISTS (SELECT 1 FROM "public"."CalendarLessonGroups" x
+                    JOIN "public"."Users" p ON p."studentGroupId" = x."studentGroupId"
+                   WHERE x."calendarLessonId" = cl."id" AND p."role" = 'STUDENT' AND p."isActive")
+        OR EXISTS (SELECT 1 FROM "public"."CalendarLessonGroups" x
+                    JOIN "public"."StudentEnrollments" e ON e."studentGroupId" = x."studentGroupId"
+                   WHERE x."calendarLessonId" = cl."id"
+                     AND e."validFrom" <= cl."date" AND (e."validTo" IS NULL OR cl."date" < e."validTo"))
+        OR EXISTS (SELECT 1 FROM "public"."CalendarLessonGroups" x
+                    JOIN "public"."StudentGroupMembers" m ON m."studentGroupId" = x."studentGroupId"
+                    JOIN "public"."Users" p ON p."id" = m."studentId"
+                   WHERE x."calendarLessonId" = cl."id" AND p."role" = 'STUDENT')
+        OR EXISTS (SELECT 1 FROM "public"."CalendarLessonStudents" n
+                    JOIN "public"."Users" p ON p."id" = n."studentId"
+                   WHERE n."calendarLessonId" = cl."id" AND p."role" = 'STUDENT'
+                     -- Elevens lektion för dagen: a named pupil moved off the lesson is not on its list.
+                     AND NOT EXISTS (SELECT 1 FROM "public"."LessonPupilMoves" mv
+                                      WHERE mv."fromLessonId" = cl."id" AND mv."studentId" = n."studentId"))
+         )
+     AND NOT EXISTS (
+           SELECT 1 FROM "public"."TeacherAbsences" ab
+            WHERE ab."schoolId" = cl."schoolId" AND ab."userId" = t."teacherId"
+              AND ab."status" = 'ACTIVE'
+              AND ab."startsAt" < cl."endsAt" AND cl."startsAt" < ab."endsAt")
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Frånvarostatistik över tid (D6, 20270121090000): samma fråga, samma villkor.
+-- D6:s app.absence_stats_lessons är D2:s app.reporting_lessons tecken för tecken utom
+-- en rad (läraren räknas om hen inte hade slutat när lektionen var slut), och en månad
+-- D6 lagrat ska säga det Rapporteringsgraden säger för samma månad. D7:s villkor
+-- ovan gäller därför den också: en lektion vars enda namngivna elever flyttats bort
+-- har ingen lista att rapportera. Kroppen är reporting_lessons ovan med den raden
+-- utbytt mot D6:s och namnet bytt; funktionen förblir LANGUAGE sql STABLE, inte
+-- definer och utan SET, och inga rättigheter skrivs om (CREATE OR REPLACE behåller
+-- ägarens). D6:s jest-prov och avsnitt 392o fäller annars. Funktionsvakten ovan
+-- väger D6:s kropp mot dess md5 och stoppar om D6 inte är körd.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION app.absence_stats_lessons(p_school uuid, p_from date, p_to date, p_now timestamptz)
+RETURNS TABLE (lesson_id uuid, teacher_id uuid, day date,
+               starts_at timestamptz, ends_at timestamptz, reported boolean)
+LANGUAGE sql STABLE AS $$
+  SELECT cl."id", t."teacherId", cl."date", cl."startsAt", cl."endsAt", r."saved"
+    FROM "public"."CalendarLessons" cl
+    JOIN "public"."CalendarLessonTeachers" t
+      ON t."calendarLessonId" = cl."id" AND t."schoolId" = cl."schoolId"
+    JOIN "public"."Users" u
+      ON u."id" = t."teacherId" AND u."schoolId" = cl."schoolId"
+     AND u."role" = 'TEACHER' AND (u."deactivatedAt" IS NULL OR cl."endsAt" <= u."deactivatedAt")
    CROSS JOIN LATERAL (
            SELECT EXISTS (SELECT 1 FROM "public"."AttendanceRecords" a
                            WHERE a."calendarLessonId" = t."calendarLessonId" AND a."status" <> 'UNKNOWN') AS "saved") r

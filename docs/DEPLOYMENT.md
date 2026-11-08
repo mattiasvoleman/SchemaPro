@@ -2180,7 +2180,8 @@ Walk the full product loop once, in order:
   `CalendarLessonStudents."moveId"` (nullable, key to the move, `ON DELETE
   CASCADE`) and `SchoolDaySettings."guardianNoticeOnMove"` (`false`), twelve
   `app.lesson_pupil_*` / `app.lesson_move_*` functions, five triggers, five
-  read arms on the table and the restated bodies of seven readers (below). It
+  read arms on the table and the restated bodies of seven readers and of D6's
+  `absence_stats_lessons` (below). It
   takes `Schools`, `Users` and `CalendarLessons` in SHARE ROW EXCLUSIVE and
   `CalendarLessonStudents` and `SchoolDaySettings` in ACCESS EXCLUSIVE, all
   together, NOWAIT, in a retry loop of 30 s (a register save or a cancellation
@@ -2240,14 +2241,25 @@ Walk the full product loop once, in order:
   `b23e04aec610ebbf1795b832d5054273`, `reporting_lessons`
   `a263885deea0dd2f172362d0ed374167`, `timetable_pupil_days`
   `0a4b0e9f21ce6625edc3edf6e7b7b4e1`, `timetable_week_days`
-  `c05f78b5c1392ca7218d8780d85a253a`; read with `SELECT p.proname, md5(p.prosrc) FROM pg_proc p JOIN pg_namespace n
+  `c05f78b5c1392ca7218d8780d85a253a`. **D6's `absence_stats_lessons`**
+  (Frånvarostatistik över tid, 20270121090000, which must be run first: the
+  migration weighs it and stops otherwise) is D2's `reporting_lessons` but for the
+  line about the teacher, and a month D6 has stored must say what the reporting
+  rate says for the same month, so it gets the same condition (a pupil moved
+  off a lesson is not on its list): md5 `bece0015a55c5a41f4824c2e6550e85d`
+  before, **`265b9b21353ecd7e441397f99e565643`** after; it stays `LANGUAGE sql
+  STABLE`, not definer, with no `SET` and no grant (D6's tests
+  `absence-stats-definition.spec.ts` and section 392o hold it to being
+  `reporting_lessons` but for that line, and fail the build without the patch).
+  `absence_stats_month` (`38e6f66e73a8b1463403a873a9b9ebb4`) is untouched.
+  Read the readers with `SELECT p.proname, md5(p.prosrc) FROM pg_proc p JOIN pg_namespace n
   ON n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname IN
   ('current_student_replaced_lesson_ids', 'calendar_feed_pupil_lessons',
   'timetable_pupil_days', 'timetable_week_days', 'reporting_lessons',
   'gallring_due', 'gallring_purge') ORDER BY p.proname COLLATE "C"` (prod
   sorts en_US, so compare the md5 per name, not the order). The migrations'
   sha256: 20270122090000 `7beae1596b32c59ab6201ec7748823afb66f5240f8cab580b323bcfd1d1e8e01`,
-  20270122091000 `2756bbf91375e959112cba46e4e239157a4636670a9dedf0d66ba2c71e336b44`
+  20270122091000 `a80b82488d3b910a32c0aea5c115371af397a8a3e72ae665658f36d095191b97`
   (the second changes if the file is edited after this was written: check
   `shasum -a 256` of the merged file). The two doors' md5 (`prosrc`) and the
   new function the reviews of #281 added before the migration was run:
@@ -2322,8 +2334,9 @@ Walk the full product loop once, in order:
   **Before the migrations**, as the owner: no `LessonPupilMoves` table and no
   `app.lesson_pupil_%` function exist, `prisma migrate status` lists exactly
   the two new migrations as pending, no session sits idle in a transaction that
-  holds `Users`, `Schools` or `CalendarLessons`, and the seven readers carry
-  the md5 above, and `_prisma_migrations` has no unfinished row (an earlier
+  holds `Users`, `Schools` or `CalendarLessons`, the seven readers carry
+  the md5 above, D6's 20270121090000 is applied and `absence_stats_lessons`
+  carries `bece0015a55c5a41f4824c2e6550e85d`, and `_prisma_migrations` has no unfinished row (an earlier
   attempt that gave up leaves one: P3009). **After them, before the merge:** `LessonPupilMoves` has row
   security on with five policies, all `TO app_authenticated`, and
   `app_authenticated` holds SELECT and nothing else (`SELECT
@@ -2351,8 +2364,9 @@ Walk the full product loop once, in order:
   WHERE m."displacedMark" IS NOT NULL AND a."calendarLessonId" =
   m."fromLessonId" AND a."studentId" = m."studentId" AND a."status" =
   'UNKNOWN'; DELETE FROM "LessonPupilMoves"; COMMIT;` (the arrivals go with the
-  moves). The schema stays; dropping it is a migration of its own and the seven
-  readers go back to the bodies named above.
+  moves). The schema stays; dropping it is a migration of its own, and the seven
+  readers go back to the bodies named above and `absence_stats_lessons` to D6's
+  (`bece0015…`, its migration's text).
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this
