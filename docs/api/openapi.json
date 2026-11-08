@@ -7,6 +7,9 @@
   },
   "tags": [
     {
+      "name": "AbsenceStats"
+    },
+    {
       "name": "AbsenceWatch"
     },
     {
@@ -83,6 +86,9 @@
     },
     {
       "name": "LessonLog"
+    },
+    {
+      "name": "LessonMoves"
     },
     {
       "name": "LocalTimplans"
@@ -212,6 +218,9 @@
     },
     {
       "name": "SupervisionWeek"
+    },
+    {
+      "name": "Swaps"
     },
     {
       "name": "TeacherAbsenceReasons"
@@ -420,6 +429,343 @@
             "DRIFT"
           ]
         }
+      }
+    },
+    "/api/v1/absence-stats/classes": {
+      "get": {
+        "tags": [
+          "AbsenceStats"
+        ],
+        "operationId": "AbsenceStatsController_classes",
+        "parameters": [
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/absence-stats/classes/{classId}": {
+      "get": {
+        "tags": [
+          "AbsenceStats"
+        ],
+        "operationId": "AbsenceStatsController_classView",
+        "parameters": [
+          {
+            "name": "classId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/absence-stats/classes/{classId}/pupils": {
+      "get": {
+        "tags": [
+          "AbsenceStats"
+        ],
+        "operationId": "AbsenceStatsController_classPupils",
+        "parameters": [
+          {
+            "name": "classId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/absence-stats/pupils/{studentId}": {
+      "get": {
+        "tags": [
+          "AbsenceStats"
+        ],
+        "operationId": "AbsenceStatsController_pupil",
+        "parameters": [
+          {
+            "name": "studentId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/absence-stats/school": {
+      "get": {
+        "tags": [
+          "AbsenceStats"
+        ],
+        "operationId": "AbsenceStatsController_school",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
+      }
+    },
+    "/api/v1/absence-stats/window": {
+      "get": {
+        "tags": [
+          "AbsenceStats"
+        ],
+        "operationId": "AbsenceStatsController_window",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN",
+          "TEACHER"
+        ]
       }
     },
     "/api/v1/absence-watch": {
@@ -8405,6 +8751,270 @@
         ],
         "x-rate-limit": {
           "limit": 60,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/lesson-moves": {
+      "post": {
+        "tags": [
+          "LessonMoves"
+        ],
+        "operationId": "LessonMovesController_move",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveLessonPupilDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER",
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 30,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/lesson-moves/lessons/{lessonId}": {
+      "get": {
+        "tags": [
+          "LessonMoves"
+        ],
+        "operationId": "LessonMovesController_forLesson",
+        "parameters": [
+          {
+            "name": "lessonId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER",
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/lesson-moves/lessons/{lessonId}/candidates": {
+      "get": {
+        "tags": [
+          "LessonMoves"
+        ],
+        "operationId": "LessonMovesController_candidates",
+        "parameters": [
+          {
+            "name": "lessonId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "studentId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER",
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/lesson-moves/lessons/{lessonId}/pupils": {
+      "get": {
+        "tags": [
+          "LessonMoves"
+        ],
+        "operationId": "LessonMovesController_pupils",
+        "parameters": [
+          {
+            "name": "lessonId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER",
+          "SCHOOL_ADMIN"
+        ]
+      }
+    },
+    "/api/v1/lesson-moves/{id}": {
+      "delete": {
+        "tags": [
+          "LessonMoves"
+        ],
+        "operationId": "LessonMovesController_undo",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "TEACHER",
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 30,
           "ttlSeconds": 60
         }
       }
@@ -18305,6 +18915,118 @@
         ]
       }
     },
+    "/api/v1/swaps/apply": {
+      "post": {
+        "tags": [
+          "Swaps"
+        ],
+        "operationId": "SwapsController_apply",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplySwapDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING",
+            "DRIFT"
+          ]
+        }
+      }
+    },
+    "/api/v1/swaps/suggest": {
+      "post": {
+        "tags": [
+          "Swaps"
+        ],
+        "operationId": "SwapsController_suggest",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestSwapsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING",
+            "DRIFT"
+          ]
+        }
+      }
+    },
     "/api/v1/teacher-absence-reasons": {
       "get": {
         "tags": [
@@ -21947,6 +22669,34 @@
           "changes"
         ]
       },
+      "ApplySwapDto": {
+        "type": "object",
+        "properties": {
+          "lessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "moves": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 60,
+            "items": {
+              "$ref": "#/components/schemas/SwapMoveDto"
+            }
+          },
+          "propagate": {
+            "type": "boolean"
+          },
+          "versionName": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "lessonId",
+          "moves"
+        ]
+      },
       "AssignSubstituteDto": {
         "type": "object",
         "properties": {
@@ -25420,6 +26170,28 @@
           "endTime"
         ]
       },
+      "MoveLessonPupilDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "fromLessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "toLessonId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "studentId",
+          "fromLessonId",
+          "toLessonId"
+        ]
+      },
       "MoveLunchSittingDto": {
         "type": "object",
         "properties": {
@@ -25457,6 +26229,7 @@
                 "LEAVE_REQUESTED",
                 "LESSON_CANCELLED",
                 "LESSON_COVER_WITHDRAWN",
+                "LESSON_PUPIL_MOVED",
                 "LESSON_REINSTATED",
                 "LESSON_REPORT_REMINDER",
                 "LESSON_ROOM_CHANGED",
@@ -26406,6 +27179,9 @@
               "NONE",
               "ROOMS"
             ]
+          },
+          "guardianNoticeOnMove": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -26834,6 +27610,64 @@
         },
         "required": [
           "personId"
+        ]
+      },
+      "SuggestSwapsDto": {
+        "type": "object",
+        "properties": {
+          "lessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 30
+          }
+        },
+        "required": [
+          "lessonId"
+        ]
+      },
+      "SwapMoveDto": {
+        "type": "object",
+        "properties": {
+          "lessonId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "from": {
+            "$ref": "#/components/schemas/SwapSlotDto"
+          },
+          "to": {
+            "$ref": "#/components/schemas/SwapSlotDto"
+          }
+        },
+        "required": [
+          "lessonId",
+          "from",
+          "to"
+        ]
+      },
+      "SwapSlotDto": {
+        "type": "object",
+        "properties": {
+          "dayOfWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 7
+          },
+          "startTime": {
+            "type": "string"
+          },
+          "endTime": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "dayOfWeek",
+          "startTime",
+          "endTime"
         ]
       },
       "SwitchPublishModeDto": {

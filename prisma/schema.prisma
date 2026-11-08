@@ -123,6 +123,8 @@ enum NotificationType {
   ACK_REQUESTED
   /// One reminder to a guardian who has not confirmed in the time the school chose; says only that a request waits (20270117090000).
   ACK_REMINDER
+  /// A pupil was moved to a parallel lesson for one day (D7, 20270122090000): to the teachers of the two lessons, and, when the school has said so (SchoolDaySettings.guardianNoticeOnMove), to the pupil's guardians. Subject and time only; a guardian's push names no child.
+  LESSON_PUPIL_MOVED
 }
 
 /// A decision on an absent rastvakt's pass (20261210090000).
@@ -281,6 +283,7 @@ model School {
   absenceWatchLimits      AbsenceWatchLimit[]
   absenceWatchFindings    AbsenceWatchFinding[]
   absenceWatchDigests     AbsenceWatchDigest[]
+  absenceStatsMonths      AbsenceStatsMonth[]
   reportingSettings       ReportingSetting?
   teacherReportingDays    TeacherReportingDay[]
   reportingReminders      ReportingReminder[]
@@ -431,6 +434,10 @@ model User {
   masterLessonJoins   MasterLessonStudent[]   @relation("MasterLessonParticipant")
   groupMemberships    StudentGroupMember[]    @relation("TeachingGroupStudent")
   calendarLessonJoins CalendarLessonStudent[] @relation("CalendarLessonParticipant")
+  /// Elevens lektion för dagen (D7): the lessons this pupil was moved between for a day, and the
+  /// moves this member of staff made (SET NULL of movedById on the other side).
+  lessonMoves         LessonPupilMove[]       @relation("MovedPupil")
+  lessonMovesMade     LessonPupilMove[]       @relation("MovedByStaff")
   /// The home-class history (timplan P4), written only by a trigger on this
   /// table; see StudentEnrollment.
   enrollments         StudentEnrollment[]     @relation("EnrollmentStudent")
@@ -1986,6 +1993,8 @@ model StudentGroup {
   timplanCredits          TimplanCredit[]
   /// The pupils' segments in this class (StudentEnrollment.studentGroupId).
   enrollments             StudentEnrollment[]
+  /// The class's absence by month (AbsenceStatsMonth); a deleted class takes its history.
+  absenceStatsMonths      AbsenceStatsMonth[]
 
   @@unique([schoolId, academicYearId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.
@@ -2362,6 +2371,10 @@ model CalendarLesson {
   attendanceRecords AttendanceRecord[]
   extraGroups       CalendarLessonGroup[]
   participants      CalendarLessonStudent[]
+  /// Elevens lektion för dagen (D7): the pupils moved off this lesson and the
+  /// pupils moved onto it. A move goes when either lesson does.
+  movesFrom         LessonPupilMove[]       @relation("MoveFrom")
+  movesTo           LessonPupilMove[]       @relation("MoveTo")
   /// Set while the lesson's template was deleted in a DRAFT school and no publish has settled it.
   pendingRemovals   PublicationPendingRemoval[]
   batchLessons      CancellationBatchLesson[]
@@ -2487,15 +2500,69 @@ model CalendarLessonStudent {
   schoolId         String   @db.Uuid
   calendarLessonId String   @db.Uuid
   studentId        String   @db.Uuid
+  /// Set when the row is the arrival of a pupil moved here for the day
+  /// (LessonPupilMove, D7): the move owns the row, and undoing or lapsing the
+  /// move takes it with it (ON DELETE CASCADE). Null for every other named
+  /// pupil. A reader that takes "the lesson names pupils" to mean "the lesson
+  /// is only for them" must not count these rows (app.timetable_pupil_days).
+  moveId           String?  @db.Uuid
   createdAt        DateTime @default(now()) @db.Timestamptz(6)
 
-  calendarLesson CalendarLesson @relation(fields: [calendarLessonId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
-  student        User           @relation("CalendarLessonParticipant", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  calendarLesson CalendarLesson  @relation(fields: [calendarLessonId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  student        User            @relation("CalendarLessonParticipant", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  move           LessonPupilMove? @relation(fields: [moveId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([calendarLessonId, studentId])
   @@index([schoolId])
   @@index([studentId])
+  /// The move's cascade (20270122090000).
+  @@index([moveId, schoolId])
   @@map("CalendarLessonStudents")
+}
+
+/// Elevens lektion för dagen (D7, 20270122090000): one pupil is moved, for the
+/// one date of two parallel lessons, from the lesson the pupil would have been
+/// on (fromLesson) to another that overlaps it in time (toLesson). The
+/// template (MasterLesson) is never touched.
+///
+/// How it reads. The arrival is a named pupil of the target
+/// (CalendarLessonStudent.moveId = this row), so every reader of named pupils
+/// sees it; the departure is the one thing the model had no word for, and every
+/// reader of who is on a lesson subtracts it where it subtracts a replacing
+/// group's pupils (calendar/lesson-roster.ts, app.current_student_replaced_lesson_ids).
+/// The pupil's register mark on the source, if any, is set aside in
+/// displacedMark (status UNKNOWN counts for nobody) so that undoing the move
+/// can put it back. Written only by app.lesson_pupil_move and
+/// app.lesson_pupil_move_undo; a move lapses (the row goes) when either lesson
+/// stops being held or the two stop overlapping. The keys, CHECKs, triggers and
+/// RLS (sections 395-399) are the migration's.
+model LessonPupilMove {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId      String   @db.Uuid
+  studentId     String   @db.Uuid
+  fromLessonId  String   @db.Uuid
+  toLessonId    String   @db.Uuid
+  /// Who moved the pupil; null once that person is gone.
+  movedById     String?  @db.Uuid
+  /// The pupil's mark on the source before the move: status, note, recordedAt
+  /// and recordedById, or null if there was none.
+  displacedMark Json?
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+
+  fromLesson CalendarLesson @relation("MoveFrom", fields: [fromLessonId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  toLesson   CalendarLesson @relation("MoveTo", fields: [toLessonId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  student    User           @relation("MovedPupil", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  movedBy    User?          @relation("MovedByStaff", fields: [movedById, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  arrivals   CalendarLessonStudent[]
+
+  @@unique([fromLessonId, schoolId, studentId])
+  @@unique([toLessonId, schoolId, studentId])
+  @@unique([id, schoolId])
+  @@index([studentId, schoolId, createdAt])
+  @@index([movedById, schoolId])
+  /// Gallring's predicate and the school's list (20270122090000).
+  @@index([schoolId, createdAt])
+  @@map("LessonPupilMoves")
 }
 
 // -----------------------------------------------------------------------------
@@ -5522,6 +5589,46 @@ model AbsenceWatchFinding {
   @@map("AbsenceWatchFindings")
 }
 
+/// Frånvarostatistik över tid (20270121090000): the absence of the whole school
+/// (studentGroupId null) or of one class, one row per month, written by
+/// app.absence_stats_month every night and by nothing else, and read only by
+/// the app.absence_stats_* functions (the table has RLS and no policy, and no
+/// grant). NO PUPIL: there is no column that names a person, and a test fails
+/// a table that gets one. Minst fem elever: a class with fewer than five
+/// pupils has no row, and a month in which fewer than five pupils had a
+/// registered mark has no minutes (null), both held by CHECK constraints. The
+/// minutes are Frånvarobevakningens (PRESENT, EXCUSED, ABSENT, LATE 15 minutes
+/// at most a lesson, UNKNOWN nowhere), the lessons Rapporteringsgradens
+/// (app.reporting_lessons). Not gallrad with the attendance, on purpose: that is
+/// what reaches three läsår when attendance is kept shorter; it goes with its
+/// school or class, and the job removes months before the third läsår.
+/// Not visible here, and load-bearing: the two partial unique indexes
+/// AbsenceStatsMonths_class_month_key and AbsenceStatsMonths_school_month_key.
+model AbsenceStatsMonth {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String   @db.Uuid
+  studentGroupId   String?  @db.Uuid
+  month            DateTime @db.Date
+  throughDay       DateTime @db.Date
+  pupils           Int
+  pupilsRegistered Int
+  recordedMinutes  Int?
+  validMinutes     Int?
+  absentMinutes    Int?
+  lateMinutes      Int?
+  lateCount        Int?
+  lessonsHeld      Int
+  lessonsReported  Int
+  computedAt       DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  school       School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  studentGroup StudentGroup? @relation(fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  /// The key's index: a class that is removed looks for its months.
+  @@index([studentGroupId, schoolId])
+  @@map("AbsenceStatsMonths")
+}
+
 /// The ledger of written digests: one row per school, group and period end, so
 /// a digest is written once. Counts only.
 model AbsenceWatchDigest {
@@ -5823,6 +5930,10 @@ enum SchoolDayTeacherView {
 model SchoolDaySettings {
   schoolId    String               @id @db.Uuid
   teacherView SchoolDayTeacherView @default(NONE)
+  /// Whether a guardian is told when their child is moved to a parallel lesson for a day
+  /// (Elevens lektion för dagen, 20270122091000). Off until the school says so; teachers
+  /// of the two lessons are told either way.
+  guardianNoticeOnMove Boolean     @default(false)
   createdAt   DateTime             @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
 

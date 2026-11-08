@@ -2905,7 +2905,9 @@ END $$;
 -- nightly claims that only the app.job_* functions touch, with no grant
 -- (section 80); `ReportingReminders` (20270112090100) holds the ledger of the
 -- lessons a teacher was reminded of, which only app.reporting_remind touches,
--- likewise with no grant (section 347). A new table cannot be added
+-- likewise with no grant (section 347); `AbsenceStatsMonths` (20270121090000)
+-- holds the sums of absence per class and month, which only the app.absence_stats_*
+-- functions read or write, with no grant (sections 390-393). A new table cannot be added
 -- without either satisfying the rule or changing it on purpose.
 --
 -- The floor guards the query itself: a catalog filter that quietly stopped
@@ -2943,7 +2945,7 @@ BEGIN
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = 'public' AND c.relkind = 'r'
     AND c.relname NOT IN ('_prisma_migrations', 'PushTickets', 'Ss12000SourceSecrets', 'IntegrationKeyWebhookSecrets',
-                          'JobRuns', 'JobClaims', 'LeaveRequestNotices', 'ReportingReminders')
+                          'JobRuns', 'JobClaims', 'LeaveRequestNotices', 'ReportingReminders', 'AbsenceStatsMonths')
     AND c.relrowsecurity
     AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid);
 
@@ -20218,6 +20220,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('LeaveDelegationDecisions', '{DECIDES}', '{}', '{}', '{}'),
   ('LeaveRequests', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('LessonLogs', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
+  ('LessonPupilMoves', '{}', '{}', '{}', '{}'),
   ('LocalTimplanEntries', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('LocalTimplans', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('LunchServings', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
@@ -31226,7 +31229,7 @@ ROLLBACK;
 -- jobs (gallring, the job runner, push receipts, the candidates' sweep,
 -- SS12000 housekeeping and delivery, the absence watch's count and
 -- digest, Frånvarobevakning, Rapporteringsgrad's count, reminders and
--- weekly notice, and Kvittens' reminder of one request) ask for no principal and no route
+-- weekly notice, Frånvarostatistik's month and trim, and Kvittens' reminder of one request) ask for no principal and no route
 -- calls them: the reader gets nothing through them that an empty session
 -- would not. They are named rather than inferred from the writes, since
 -- which of them write depends on the arguments a call happens to get; a
@@ -31258,6 +31261,7 @@ DECLARE
   writes_by_design constant text[] := ARRAY['app.personal_data_read'];
   job_functions constant text[] := ARRAY[
     'app.ack_remind_request',
+    'app.absence_stats_month', 'app.absence_stats_trim',
     'app.absence_watch_digest', 'app.absence_watch_evaluate',
     'app.gallring_begin', 'app.gallring_claim_person', 'app.gallring_departed_due', 'app.gallring_finish',
     'app.gallring_pseudonymise', 'app.gallring_purge',
@@ -44346,6 +44350,7 @@ DECLARE
   p3 uuid := current_setting('app.test_rls355_p3')::uuid;
   p4 uuid := current_setting('app.test_rls355_p4')::uuid;
   stamp timestamptz;
+  find_at timestamptz;
 BEGIN
   -- Not the administration's "not in the building" of 355g, and not a pupil nobody found.
   PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'RETRACTED', now())$q$, school, al, c2, c1, p3),
@@ -44359,19 +44364,25 @@ BEGIN
   IF stamp IS NULL THEN RAISE EXCEPTION 'krisläge: the teacher does not read the withdrawal she made'; END IF;
   PERFORM set_config('app.test_rls355_stamp', stamp::text, true);
   -- A withdrawal older than the find it withdraws is not one (a pupil of her own list this time).
+  -- The withdrawal is counted from the find's own stored time (the row says it, after the stamp has had its say), one
+  -- second before it, and not from the clock: a margin of clock_timestamp() - 5 ms is only as good as the time the
+  -- statements in between take, and on a loaded host they take longer, which made the withdrawal newer than the find.
   INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at)
-  VALUES (gen_random_uuid(), school, al, c1, current_setting('app.test_rls355_p1')::uuid, 'FOUND', clock_timestamp());
-  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'RETRACTED', clock_timestamp() - interval '5 milliseconds')$q$,
-                                 school, al, c1, current_setting('app.test_rls355_p1')),
+  VALUES (gen_random_uuid(), school, al, c1, current_setting('app.test_rls355_p1')::uuid, 'FOUND', clock_timestamp())
+  RETURNING "at" INTO find_at;
+  IF find_at IS NULL THEN RAISE EXCEPTION 'krisläge: the teacher does not read the find she made'; END IF;
+  PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'RETRACTED', %L)$q$,
+                                 school, al, c1, current_setting('app.test_rls355_p1'), find_at - interval '1 second'),
                           'KL413', 'a withdrawal older than the find');
   INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at)
   VALUES (gen_random_uuid(), school, al, c1, current_setting('app.test_rls355_p1')::uuid, 'RETRACTED', clock_timestamp());
   -- Twice is nothing to withdraw.
   PERFORM pg_temp.refuses(format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'RETRACTED', now())$q$, school, al, cn, c1, p4),
                           'KL413', 'a second withdrawal');
-  -- An older mark that arrives late does not bring the find back.
+  -- An older mark that arrives late does not bring the find back (counted from the withdrawal's stored time, a second
+  -- before it, like the withdrawal above).
   INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at)
-  VALUES (gen_random_uuid(), school, al, cn, c1, p4, 'FOUND', stamp - interval '5 milliseconds');
+  VALUES (gen_random_uuid(), school, al, cn, c1, p4, 'FOUND', stamp - interval '1 second');
 END $$;
 SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
 DO $$
@@ -44792,7 +44803,8 @@ DECLARE
 BEGIN
   SELECT string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod), ',' ORDER BY a.attnum) INTO cols
     FROM pg_attribute a WHERE a.attrelid = 'public."SchoolDaySettings"'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
-  IF cols IS DISTINCT FROM 'schoolId:uuid,teacherView:"SchoolDayTeacherView",createdAt:timestamp(6) with time zone,updatedAt:timestamp(6) with time zone' THEN
+  -- guardianNoticeOnMove: Elevens lektion för dagen (20270122091000), the school's choice of telling a guardian.
+  IF cols IS DISTINCT FROM 'schoolId:uuid,teacherView:"SchoolDayTeacherView",createdAt:timestamp(6) with time zone,updatedAt:timestamp(6) with time zone,guardianNoticeOnMove:boolean' THEN
     RAISE EXCEPTION 'skolans dag 365: SchoolDaySettings has the columns %', cols;
   END IF;
   SELECT string_agg(e.enumlabel, ',' ORDER BY e.enumsortorder) INTO def
@@ -47007,6 +47019,1301 @@ BEGIN
   -- refuses the column on anything but a SENT reminder.
   PERFORM pg_temp.kv_refuses(format($q$INSERT INTO "AckRequests" ("schoolId", title, body, "reminderMirroredAt") VALUES (%L, 'Redan märkt', 'B', now())$q$, app.current_school_id()),
                              '23514', 'a request written with its reminder already mailed');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Frånvarostatistik över tid (D6, 20270121090000), sections 390-394.
+--
+-- The fixtures' school rls-franvarostatistik-school has three läsår, a cohort
+-- that follows its class (FS6A -> FS7A -> FS8A), a second class (FS8B), a tiny
+-- one (FS8C, three pupils), three Septembers of lessons and marks and a
+-- pupil the school has marked as having a protected identity (see the
+-- fixtures). The months are counted by the same function the nightly job
+-- calls, in 391o and 392o on the owner's side; here the API's role reads them.
+--
+--   390  who reads what: every door, every kind of caller, the same call
+--        for each; the table itself is nobody's
+--   391  the figures the doors answer, month by month, class by class, pupil by
+--        pupil: what the fixtures' marks come to
+--   392  the protected identity and the smallest group: a marked pupil in no
+--        list and in no mentor's reach, in the sums; a class of fewer than five
+--        in no row and no pattern
+--   393  the catalogue: who may run which function, and that none of them
+--        runs for the others
+--   394  the mentor is the mentor of Frånvarobevakningen: the pupils and the
+--        classes a mentor reaches are the ones the watch hands them
+--
+-- Logins (…d6 + 0000 + n): 01 full, 02 rektor, 03 expedition, 05 läsare, 06
+-- mentor of FS8A, 07 mentor of FS8B, 08 a teacher with no class, 0011..0019 the
+-- pupils p1..p9 (p9 is marked), 41 p1's guardian, 51 the other school's
+-- administrator; and the huvudman's planner (…d60000000061) who reads the school.
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- Section 390: who reads what. Every door, every kind of caller (the full
+-- administrator, the läsare, the huvudman's planner as the läsare, the mentor of
+-- one class, the mentor of another, a teacher with no class, a pupil, a guardian,
+-- nobody, the other school's administrator), the same call for each, and the
+-- table itself nobody's.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.d6_as(p_sub text, p_school text, p_q text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  n integer;
+BEGIN
+  PERFORM set_config('request.jwt.claims', CASE WHEN p_sub IS NULL THEN '' ELSE json_build_object('sub', p_sub, 'role', 'authenticated')::text END, true);
+  PERFORM set_config('app.chosen_school_id', coalesce(p_school, ''), true);
+  BEGIN
+    IF p_q ~* '^\s*(INSERT|UPDATE|DELETE)' THEN
+      EXECUTE p_q;
+      RETURN 'ok';
+    END IF;
+    EXECUTE 'SELECT count(*) FROM (' || p_q || ') x' INTO n;
+    RETURN 'ok:' || n;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN 'err:' || SQLSTATE;
+  END;
+END $$;
+
+CREATE FUNCTION pg_temp.d6_text(p_sub text, p_school text, p_q text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+  t text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', CASE WHEN p_sub IS NULL THEN '' ELSE json_build_object('sub', p_sub, 'role', 'authenticated')::text END, true);
+  PERFORM set_config('app.chosen_school_id', coalesce(p_school, ''), true);
+  EXECUTE 'SELECT coalesce(string_agg(t, '' | '' ORDER BY t), '''') FROM (' || p_q || ') x(t)' INTO t;
+  RETURN t;
+END $$;
+
+BEGIN;
+DO $$
+DECLARE
+  full_sub  constant text := '00000000-0000-4000-8000-d60000000001';
+  rektor    constant text := '00000000-0000-4000-8000-d60000000002';
+  expedit   constant text := '00000000-0000-4000-8000-d60000000003';
+  lasare    constant text := '00000000-0000-4000-8000-d60000000005';
+  m1        constant text := '00000000-0000-4000-8000-d60000000006';
+  m2        constant text := '00000000-0000-4000-8000-d60000000007';
+  t3        constant text := '00000000-0000-4000-8000-d60000000008';
+  pupil1    constant text := '00000000-0000-4000-8000-d60000000011';
+  guardian  constant text := '00000000-0000-4000-8000-d60000000041';
+  other     constant text := '00000000-0000-4000-8000-d60000000051';
+  planner   constant text := '00000000-0000-4000-8000-d60000000061';
+  school uuid;
+  c8a uuid; c8b uuid; c8c uuid;
+  p1 uuid; p9 uuid; p11 uuid;
+  r record;
+  got text;
+  wrong text[] := '{}';
+  n int := 0;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', full_sub)::text, true);
+  school := app.current_school_id();
+  SELECT id INTO c8a FROM "StudentGroups" WHERE "schoolId" = school AND name = 'FS8A';
+  SELECT id INTO c8b FROM "StudentGroups" WHERE "schoolId" = school AND name = 'FS8B';
+  SELECT id INTO c8c FROM "StudentGroups" WHERE "schoolId" = school AND name = 'FS8C';
+  SELECT id INTO p1 FROM "Users" WHERE "schoolId" = school AND email = 'fs-p1@example.invalid';
+  SELECT id INTO p9 FROM "Users" WHERE "schoolId" = school AND email = 'fs-p9@example.invalid';
+  SELECT id INTO p11 FROM "Users" WHERE "schoolId" = school AND email = 'fs-p11@example.invalid';
+  IF school IS NULL OR c8a IS NULL OR c8b IS NULL OR c8c IS NULL OR p1 IS NULL OR p9 IS NULL OR p11 IS NULL THEN
+    RAISE EXCEPTION 'frånvarostatistik 390: the fixtures did not run (school %, classes %/%/%, pupils %/%/%)', school, c8a, c8b, c8c, p1, p9, p11;
+  END IF;
+
+  FOR r IN
+    SELECT * FROM (VALUES
+      -- who, the school named, the call, what comes back: ok:<rows> or err:<SQLSTATE>
+      -- The window: an administrator or a teacher, nobody else.
+      ('390a full: window',        full_sub, NULL, $q$SELECT * FROM app.absence_stats_window()$q$, 'ok:1'),
+      ('390a lasare: window',      lasare,   NULL, $q$SELECT * FROM app.absence_stats_window()$q$, 'ok:1'),
+      ('390a mentor: window',      m1,       NULL, $q$SELECT * FROM app.absence_stats_window()$q$, 'ok:1'),
+      ('390a teacher: window',     t3,       NULL, $q$SELECT * FROM app.absence_stats_window()$q$, 'ok:1'),
+      ('390a pupil: window',       pupil1,   NULL, $q$SELECT * FROM app.absence_stats_window()$q$, 'err:AS403'),
+      ('390a guardian: window',    guardian, NULL, $q$SELECT * FROM app.absence_stats_window()$q$, 'err:AS403'),
+      ('390a nobody: window',      NULL,     NULL, $q$SELECT * FROM app.absence_stats_window()$q$, 'err:AS403'),
+      ('390a reader: window',      planner,  school::text, $q$SELECT * FROM app.absence_stats_window()$q$, 'ok:1'),
+      -- The school's months: every administrator profile, the reader too; no teacher.
+      ('390b full: school',        full_sub, NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'ok:4'),
+      ('390b rektor: school',      rektor,   NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'ok:4'),
+      ('390b expedition: school',  expedit,  NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'ok:4'),
+      ('390b lasare: school',      lasare,   NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'ok:4'),
+      ('390b reader: school',      planner,  school::text, $q$SELECT * FROM app.absence_stats_series()$q$, 'ok:4'),
+      ('390b mentor: school',      m1,       NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'err:AS403'),
+      ('390b teacher: school',     t3,       NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'err:AS403'),
+      ('390b pupil: school',       pupil1,   NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'err:AS403'),
+      ('390b guardian: school',    guardian, NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'err:AS403'),
+      ('390b nobody: school',      NULL,     NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'err:AS403'),
+      ('390b other school: school', other,   NULL, $q$SELECT * FROM app.absence_stats_series()$q$, 'ok:0'),
+      -- A class: an administrator any, the reader too, a mentor their own (and its predecessors), nobody else.
+      ('390c full: 8A',            full_sub, NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8a), 'ok:3'),
+      ('390c reader: 8A',          planner,  school::text, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8a), 'ok:3'),
+      ('390c mentor A: 8A',        m1,       NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8a), 'ok:3'),
+      ('390c mentor A: 8B',        m1,       NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8b), 'err:AS403'),
+      ('390c mentor B: 8B',        m2,       NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8b), 'ok:2'),
+      ('390c mentor B: 8A',        m2,       NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8a), 'err:AS403'),
+      ('390c teacher: 8A',         t3,       NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8a), 'err:AS403'),
+      ('390c pupil: 8A',           pupil1,   NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8a), 'err:AS403'),
+      ('390c other school: 8A',    other,    NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8a), 'err:AS404'),
+      ('390c full: no such class', full_sub, NULL, $q$SELECT * FROM app.absence_stats_series('00000000-0000-4000-8000-00000000dead')$q$, 'err:AS404'),
+      ('390c full: the tiny class has no row', full_sub, NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8c), 'ok:0'),
+      -- The classes of a period: an administrator all with a row, a mentor their own and the predecessors.
+      ('390d full: classes',       full_sub, NULL, $q$SELECT * FROM app.absence_stats_classes('2024-08-01', '2026-12-31')$q$, 'ok:4'),
+      ('390d reader: classes',     planner,  school::text, $q$SELECT * FROM app.absence_stats_classes('2024-08-01', '2026-12-31')$q$, 'ok:4'),
+      ('390d mentor A: classes',   m1,       NULL, $q$SELECT * FROM app.absence_stats_classes('2024-08-01', '2026-12-31')$q$, 'ok:3'),
+      ('390d mentor B: classes',   m2,       NULL, $q$SELECT * FROM app.absence_stats_classes('2024-08-01', '2026-12-31')$q$, 'ok:1'),
+      ('390d teacher: classes',    t3,       NULL, $q$SELECT * FROM app.absence_stats_classes('2024-08-01', '2026-12-31')$q$, 'ok:0'),
+      ('390d pupil: classes',      pupil1,   NULL, $q$SELECT * FROM app.absence_stats_classes('2024-08-01', '2026-12-31')$q$, 'err:AS403'),
+      ('390d full: a period backwards', full_sub, NULL, $q$SELECT * FROM app.absence_stats_classes('2026-12-31', '2026-01-01')$q$, 'err:AS400'),
+      ('390d full: a period of four years', full_sub, NULL, $q$SELECT * FROM app.absence_stats_classes('2022-01-01', '2026-12-31')$q$, 'err:AS400'),
+      -- The pupils of a class: an administrator with an own id, the class's mentor; never the reader.
+      ('390e full: pupils of 8A',  full_sub, NULL, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8a), 'ok:9'),
+      ('390e lasare: pupils of 8A', lasare,  NULL, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8a), 'ok:9'),
+      ('390e reader: pupils of 8A', planner, school::text, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8a), 'err:AS403'),
+      ('390e mentor A: pupils of 8A', m1,    NULL, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8a), 'ok:8'),
+      ('390e mentor A: pupils of 8B', m1,    NULL, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8b), 'err:AS403'),
+      ('390e teacher: pupils of 8A', t3,     NULL, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8a), 'err:AS403'),
+      ('390e guardian: pupils of 8A', guardian, NULL, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8a), 'err:AS403'),
+      ('390e other school: pupils of 8A', other, NULL, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8a), 'err:AS404'),
+      -- One pupil: an administrator with an own id, the pupil's mentor; never the reader, another class's mentor or the pupil.
+      ('390f full: p1',            full_sub, NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'ok:1'),
+      ('390f expedition: p1',      expedit,  NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'ok:1'),
+      ('390f reader: p1',          planner,  school::text, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'err:AS403'),
+      ('390f mentor A: p1',        m1,       NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'ok:1'),
+      ('390f mentor B: p1',        m2,       NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'err:AS403'),
+      ('390f mentor B: p11',       m2,       NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p11), 'ok:1'),
+      ('390f mentor A: p11',       m1,       NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p11), 'err:AS403'),
+      ('390f teacher: p1',         t3,       NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'err:AS403'),
+      ('390f the pupil: p1',       pupil1,   NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'err:AS403'),
+      ('390f guardian: p1',        guardian, NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'err:AS403'),
+      ('390f other school: p1',    other,    NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p1), 'err:AS404'),
+      ('390f full: no such pupil', full_sub, NULL, $q$SELECT * FROM app.absence_stats_pupil_head('00000000-0000-4000-8000-00000000dead')$q$, 'err:AS404'),
+      ('390f full: a teacher is no pupil', full_sub, NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, (SELECT id FROM "Users" WHERE "schoolId" = school AND email = 'fs-m1@example.invalid')), 'err:AS404'),
+      ('390g full: p1 months',     full_sub, NULL, format($q$SELECT * FROM app.absence_stats_pupil(%L, '2024-08-01', '2026-11-06')$q$, p1), 'ok:3'),
+      ('390g mentor A: p1 months', m1,       NULL, format($q$SELECT * FROM app.absence_stats_pupil(%L, '2024-08-01', '2026-11-06')$q$, p1), 'ok:3'),
+      ('390g reader: p1 months',   planner,  school::text, format($q$SELECT * FROM app.absence_stats_pupil(%L, '2024-08-01', '2026-11-06')$q$, p1), 'err:AS403'),
+      ('390g mentor B: p1 months', m2,       NULL, format($q$SELECT * FROM app.absence_stats_pupil(%L, '2024-08-01', '2026-11-06')$q$, p1), 'err:AS403'),
+      ('390g full: a pupil’s period backwards', full_sub, NULL, format($q$SELECT * FROM app.absence_stats_pupil(%L, '2026-11-06', '2024-08-01')$q$, p1), 'err:AS400'),
+      -- The patterns: a class's for an administrator (the reader too) and the class's mentor, a pupil's as the pupil's card.
+      ('390h full: 8A patterns',   full_sub, NULL, format($q$SELECT * FROM app.absence_stats_patterns(%L, NULL, '2026-08-01', '2026-10-31')$q$, c8a), 'ok:11'),
+      ('390h reader: 8A patterns', planner,  school::text, format($q$SELECT * FROM app.absence_stats_patterns(%L, NULL, '2026-08-01', '2026-10-31')$q$, c8a), 'ok:11'),
+      ('390h mentor A: 8A patterns', m1,     NULL, format($q$SELECT * FROM app.absence_stats_patterns(%L, NULL, '2026-08-01', '2026-10-31')$q$, c8a), 'ok:11'),
+      ('390h mentor A: 8B patterns', m1,     NULL, format($q$SELECT * FROM app.absence_stats_patterns(%L, NULL, '2026-08-01', '2026-10-31')$q$, c8b), 'err:AS403'),
+      ('390h full: p1 patterns',   full_sub, NULL, format($q$SELECT * FROM app.absence_stats_patterns(NULL, %L, '2024-08-01', '2026-11-06')$q$, p1), 'ok:11'),
+      ('390h mentor A: p1 patterns', m1,     NULL, format($q$SELECT * FROM app.absence_stats_patterns(NULL, %L, '2024-08-01', '2026-11-06')$q$, p1), 'ok:11'),
+      ('390h reader: p1 patterns', planner,  school::text, format($q$SELECT * FROM app.absence_stats_patterns(NULL, %L, '2024-08-01', '2026-11-06')$q$, p1), 'err:AS403'),
+      ('390h mentor B: p1 patterns', m2,     NULL, format($q$SELECT * FROM app.absence_stats_patterns(NULL, %L, '2024-08-01', '2026-11-06')$q$, p1), 'err:AS403'),
+      ('390h full: a class and a pupil', full_sub, NULL, format($q$SELECT * FROM app.absence_stats_patterns(%L, %L, '2026-08-01', '2026-10-31')$q$, c8a, p1), 'err:AS400'),
+      ('390h full: neither',       full_sub, NULL, $q$SELECT * FROM app.absence_stats_patterns(NULL, NULL, '2026-08-01', '2026-10-31')$q$, 'err:AS400'),
+      -- The table: nobody's.
+      ('390i full: the table',     full_sub, NULL, $q$SELECT * FROM "AbsenceStatsMonths"$q$, 'err:42501'),
+      ('390i mentor: the table',   m1,       NULL, $q$SELECT * FROM "AbsenceStatsMonths"$q$, 'err:42501'),
+      ('390i reader: the table',   planner,  school::text, $q$SELECT * FROM "AbsenceStatsMonths"$q$, 'err:42501'),
+      ('390i full: write the table', full_sub, NULL, $q$INSERT INTO "AbsenceStatsMonths" ("schoolId", month, "throughDay", pupils, "pupilsRegistered", "lessonsHeld", "lessonsReported") SELECT id, '2020-01-01', '2020-01-31', 9, 0, 0, 0 FROM "Schools"$q$, 'err:42501')
+    ) v(label, sub, named, q, expected)
+  LOOP
+    got := pg_temp.d6_as(r.sub, r.named, r.q);
+    n := n + 1;
+    IF got IS DISTINCT FROM r.expected THEN
+      wrong := wrong || format('%s: %s, expected %s', r.label, got, r.expected);
+    END IF;
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION E'frånvarostatistik 390: % of % calls were not what they should be:\n%', cardinality(wrong), n, array_to_string(wrong, E'\n');
+  END IF;
+  RAISE NOTICE 'frånvarostatistik 390: % calls, all as expected', n;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 391: what the doors answer. The fixtures' marks, counted by hand
+-- (see the fixtures): each month of the school, each class and each pupil.
+--
+-- FS8A, September 2026: 22 weekdays of three lessons, one cancelled (the 10th
+-- at 08:00: counted for nothing, though every pupil was marked absent on it)
+-- and one day nobody was marked (the 24th), so 65 lessons held and 62 with a
+-- register; nine pupils, p4 without a mark on the 21 lessons of 10:00:
+-- 62 * 9 - 21 = 537 marks of 50 minutes = 26 850. p2 excused for six lessons
+-- (300), p1 absent four Mondays at 08:00 and p9 on the 2nd for three lessons
+-- (350), p3 late four Fridays (4 marks, 60 minutes).
+-- FS8B: 66 lessons, 63 with a register, six pupils: 63 * 6 * 50 = 18 900,
+-- p11 absent five Tuesdays at 09:00 (250). FS8C (three pupils): 63 * 3 * 50 = 9 450
+-- and in no class row, but in the school's 26 850 + 18 900 + 9 450 = 55 200.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  full_sub constant text := '00000000-0000-4000-8000-d60000000001';
+  school uuid;
+  c8a uuid; c8b uuid;
+  p1 uuid; p3 uuid;
+  wrong text[] := '{}';
+  r record;
+  got text;
+  fig constant text := $f$coalesce(recorded_minutes::text, '-') || '/' || coalesce(valid_minutes::text, '-') || '/' || coalesce(absent_minutes::text, '-') || '/' || coalesce(late_minutes::text, '-') || '/' || coalesce(late_count::text, '-')$f$;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', full_sub)::text, true);
+  school := app.current_school_id();
+  SELECT id INTO c8a FROM "StudentGroups" WHERE "schoolId" = school AND name = 'FS8A';
+  SELECT id INTO c8b FROM "StudentGroups" WHERE "schoolId" = school AND name = 'FS8B';
+  SELECT id INTO p1 FROM "Users" WHERE "schoolId" = school AND email = 'fs-p1@example.invalid';
+  SELECT id INTO p3 FROM "Users" WHERE "schoolId" = school AND email = 'fs-p3@example.invalid';
+
+  FOR r IN
+    SELECT * FROM (VALUES
+      ('391a the school''s months, as: month pupils/registered recorded/valid/absent/late/lateCount held/reported',
+       format($q$SELECT to_char(month, 'YYYY-MM') || ' ' || pupils || '/' || pupils_registered || ' ' || %s || ' ' || lessons_held || '/' || lessons_reported FROM app.absence_stats_series()$q$, fig),
+       '2024-09 9/9 28350/0/200/60/4 63/63 | 2025-09 9/9 29700/0/200/60/4 66/66 | 2026-08 18/3 -/-/-/-/- 15/15 | 2026-09 18/18 55200/300/600/60/4 197/188'),
+      ('391b FS8A and the classes before it, a cohort',
+       format($q$SELECT to_char(month, 'YYYY-MM') || ' ' || class_name || ' ' || pupils || '/' || pupils_registered || ' ' || %s || ' ' || lessons_held || '/' || lessons_reported FROM app.absence_stats_series(%L)$q$, fig, c8a),
+       '2024-09 FS6A 9/9 28350/0/200/60/4 63/63 | 2025-09 FS7A 9/9 29700/0/200/60/4 66/66 | 2026-09 FS8A 9/9 26850/300/350/60/4 65/62'),
+      ('391c FS8B: August with three of six marked has no minutes, only the lessons',
+       format($q$SELECT to_char(month, 'YYYY-MM') || ' ' || class_name || ' ' || pupils || '/' || pupils_registered || ' ' || %s || ' ' || lessons_held || '/' || lessons_reported FROM app.absence_stats_series(%L)$q$, fig, c8b),
+       '2026-08 FS8B 6/3 -/-/-/-/- 15/15 | 2026-09 FS8B 6/6 18900/0/250/0/0 66/63'),
+      ('391d the classes of the läsår so far, the months with a figure counted',
+       $q$SELECT class_name || ' ' || year_name || ' ' || months_counted || ' ' || pupils || '/' || pupils_registered || ' ' || recorded_minutes || '/' || valid_minutes || '/' || absent_minutes || '/' || late_minutes || '/' || late_count || ' ' || lessons_held || '/' || lessons_reported FROM app.absence_stats_classes('2026-08-01', '2026-10-31')$q$,
+       'FS8A FS 26/27 1 9/9 26850/300/350/60/4 65/62 | FS8B FS 26/27 1 6/6 18900/0/250/0/0 81/78'),
+      ('391e a period inside one month is the whole month',
+       $q$SELECT class_name || ' ' || recorded_minutes FROM app.absence_stats_classes('2026-09-15', '2026-09-16')$q$,
+       'FS8A 26850 | FS8B 18900'),
+      ('391f a period of two years back reaches the cohort’s three classes',
+       $q$SELECT class_name || ' ' || year_name || ' ' || months_counted FROM app.absence_stats_classes('2024-08-01', '2026-12-31')$q$,
+       'FS6A FS 24/25 1 | FS7A FS 25/26 1 | FS8A FS 26/27 1 | FS8B FS 26/27 1'),
+      ('391g p1: three months, one absent lesson a week, from the marks that are left',
+       format($q$SELECT to_char(month, 'YYYY-MM') || ' ' || %s || ' ' || lessons FROM app.absence_stats_pupil(%L, '2024-08-01', '2026-11-06')$q$, fig, p1),
+       '2024-09 3150/0/200/0/0 63 | 2025-09 3300/0/200/0/0 66 | 2026-09 3100/0/200/0/0 62'),
+      ('391h p3: late on the Fridays, 15 minutes each, 50-minute lessons',
+       format($q$SELECT to_char(month, 'YYYY-MM') || ' ' || %s FROM app.absence_stats_pupil(%L, '2026-09-01', '2026-09-30')$q$, fig, p3),
+       '2026-09 3100/0/0/60/4'),
+      ('391i p1’s patterns over three Septembers: the weekday, the pass and the subject of each year’s absent lesson (200 minutes each); the minutes are p1’s marks: 20 or 21 lessons of 50 minutes at each pass',
+       format($q$SELECT dimension || ' ' || CASE WHEN dimension = 'SUBJECT' THEN label ELSE key END || ' ' || recorded_minutes || '/' || absent_minutes FROM app.absence_stats_patterns(NULL, %L, '2024-08-01', '2026-11-06') WHERE absent_minutes > 0$q$, p1),
+       'SLOT 08:00 3150/200 | SLOT 09:00 3200/200 | SLOT 10:00 3200/200 | SUBJECT Idrott 3200/200 | SUBJECT Matematik 3150/200 | SUBJECT Svenska 3200/200 | WEEKDAY 1 2100/200 | WEEKDAY 3 1950/200 | WEEKDAY 4 1600/200'),
+      ('391j FS8A’s patterns over the läsår: the Mondays are p1’s, the Wednesday p9’s (the marked pupil is in the sums), p2 is excused on a Thursday and a Friday, the Fridays are p3’s',
+       format($q$SELECT dimension || ' ' || key || ' ' || recorded_minutes || '/' || valid_minutes || '/' || absent_minutes || '/' || late_minutes || '/' || late_count FROM app.absence_stats_patterns(%L, NULL, '2026-08-01', '2026-10-31') WHERE dimension = 'WEEKDAY'$q$, c8a),
+       'WEEKDAY 1 5200/0/200/0/0 | WEEKDAY 2 6500/0/0/0/0 | WEEKDAY 3 6500/0/150/0/0 | WEEKDAY 4 3450/150/0/0/0 | WEEKDAY 5 5200/150/0/60/4'),
+      ('391k FS8A’s patterns over the three läsår are the cohort’s: FS6A, FS7A and FS8A, 28 350 + 29 700 + 26 850 recorded minutes, and none of FS8B’s',
+       format($q$SELECT sum(recorded_minutes)::text FROM app.absence_stats_patterns(%L, NULL, '2024-08-01', '2026-11-06') WHERE dimension = 'WEEKDAY'$q$, c8a),
+       '84900')
+    ) v(label, q, expected)
+  LOOP
+    got := pg_temp.d6_text(full_sub, NULL, r.q);
+    IF got IS DISTINCT FROM r.expected THEN
+      wrong := wrong || format(E'%s:\n   got      %s\n   expected %s', r.label, got, r.expected);
+    END IF;
+  END LOOP;
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION E'frånvarostatistik 391: %', array_to_string(wrong, E'\n');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 392: the protected identity and the smallest group.
+--
+-- A pupil the school has marked is in no list that names pupils: an
+-- administrator's list of a class has an empty row in the marked pupil's
+-- place (no id, no name, no figure), a mentor's has nothing, and a mentor
+-- cannot open the pupil. The class's sums count them (the school's
+-- 55 200 = 26 850 + 18 900 + 9 450 holds p9's absence). A class of fewer than
+-- five pupils has no month stored and no pattern: three pupils in FS8C, six
+-- in FS8B of whom three were marked in August.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  full_sub constant text := '00000000-0000-4000-8000-d60000000001';
+  m1 constant text := '00000000-0000-4000-8000-d60000000006';
+  planner constant text := '00000000-0000-4000-8000-d60000000061';
+  school uuid;
+  c8a uuid; c8c uuid;
+  p9 uuid;
+  got text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', full_sub)::text, true);
+  school := app.current_school_id();
+  SELECT id INTO c8a FROM "StudentGroups" WHERE "schoolId" = school AND name = 'FS8A';
+  SELECT id INTO c8c FROM "StudentGroups" WHERE "schoolId" = school AND name = 'FS8C';
+  SELECT id INTO p9 FROM "Users" WHERE "schoolId" = school AND email = 'fs-p9@example.invalid';
+
+  -- The administrator's list: eight named, one in the marked pupil's place with nothing in it.
+  got := pg_temp.d6_text(full_sub, NULL, format($q$SELECT coalesce(first_name, '-') || ' ' || coalesce(last_name, '-') || ' ' || coalesce(student_id::text, '-') || ' ' || is_protected || ' ' || coalesce(recorded_minutes::text, '-') || coalesce(absent_minutes::text, '-') FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31') WHERE is_protected OR student_id IS NULL OR first_name IS NULL$q$, c8a));
+  IF got IS DISTINCT FROM '- - - true --' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: the marked pupil is in an administrator''s list as [%]', got;
+  END IF;
+  IF pg_temp.d6_text(full_sub, NULL, format($q$SELECT student_id::text FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31') WHERE student_id = %L$q$, c8a, p9)) <> '' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: the marked pupil''s id is in an administrator''s list';
+  END IF;
+  -- The mentor's: nothing in the place, and the name nowhere in what the door answers.
+  got := pg_temp.d6_text(m1, NULL, format($q$SELECT row_to_json(x)::text FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31') x$q$, c8a));
+  IF got LIKE '%Statistik09%' OR got LIKE '%' || p9::text || '%' OR got LIKE '%"is_protected":true%' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: a mentor''s list of the class holds the marked pupil: %', got;
+  END IF;
+  IF pg_temp.d6_as(m1, NULL, format($q$SELECT * FROM app.absence_stats_class_pupils(%L, '2026-08-01', '2026-10-31')$q$, c8a)) <> 'ok:8' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: a mentor''s list of the class has a row too many or too few';
+  END IF;
+  -- Nor can the mentor open the pupil, in any of the three doors that name one.
+  IF pg_temp.d6_as(m1, NULL, format($q$SELECT * FROM app.absence_stats_pupil_head(%L)$q$, p9)) <> 'err:AS403'
+     OR pg_temp.d6_as(m1, NULL, format($q$SELECT * FROM app.absence_stats_pupil(%L, '2026-08-01', '2026-10-31')$q$, p9)) <> 'err:AS403'
+     OR pg_temp.d6_as(m1, NULL, format($q$SELECT * FROM app.absence_stats_patterns(NULL, %L, '2026-08-01', '2026-10-31')$q$, p9)) <> 'err:AS403' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: a mentor opened the marked pupil';
+  END IF;
+  -- An administrator opens the pupil, and is told that the pupil is marked (the web prints nothing for them).
+  IF pg_temp.d6_text(full_sub, NULL, format($q$SELECT first_name || ' ' || is_protected FROM app.absence_stats_pupil_head(%L)$q$, p9)) <> 'Elev true' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: an administrator does not get the marked pupil, marked';
+  END IF;
+  -- The sums count the pupil: FS8A's 350 absent minutes are p1's four Mondays and p9's three lessons.
+  IF pg_temp.d6_text(full_sub, NULL, format($q$SELECT absent_minutes::text FROM app.absence_stats_series(%L) WHERE month = '2026-09-01'$q$, c8a)) <> '350' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: the class''s sum leaves out the marked pupil';
+  END IF;
+
+  -- The smallest group. FS8C has no month in any table of sums, and a pattern of it is one row that says so.
+  IF pg_temp.d6_as(full_sub, NULL, format($q$SELECT * FROM app.absence_stats_series(%L)$q$, c8c)) <> 'ok:0' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: a class of three has a month';
+  END IF;
+  IF pg_temp.d6_text(full_sub, NULL, $q$SELECT class_name FROM app.absence_stats_classes('2024-08-01', '2026-12-31')$q$) LIKE '%FS8C%' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: a class of three is in the table of classes';
+  END IF;
+  FOREACH got IN ARRAY ARRAY[full_sub, planner] LOOP
+    IF pg_temp.d6_text(got, CASE WHEN got = planner THEN school::text END,
+         format($q$SELECT dimension || '/' || group_size || '/' || suppressed || '/' || coalesce(recorded_minutes::text, '-') || coalesce(absent_minutes::text, '-') FROM app.absence_stats_patterns(%L, NULL, '2026-08-01', '2026-10-31')$q$, c8c))
+       <> 'ALL/3/true/--' THEN
+      RAISE EXCEPTION 'frånvarostatistik 392: the patterns of a class of three are not one row that says so (caller %)', got;
+    END IF;
+  END LOOP;
+  -- A pupil's own patterns have no group, so they are not held back.
+  IF pg_temp.d6_text(full_sub, NULL, format($q$SELECT DISTINCT suppressed::text FROM app.absence_stats_patterns(NULL, %L, '2026-08-01', '2026-10-31')$q$, p9)) <> 'false' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: a pupil’s patterns are held back as a group''s';
+  END IF;
+  -- August 2026: FS8B has six pupils and three marked, so its month has the lessons and no minute; the school's, with 18 pupils, has the same three marked and no minute either.
+  IF pg_temp.d6_text(full_sub, NULL, $q$SELECT class_name || ' ' || pupils || '/' || pupils_registered || ' ' || coalesce(recorded_minutes::text, '-') || ' ' || lessons_held || '/' || lessons_reported FROM app.absence_stats_series((SELECT id FROM "StudentGroups" WHERE name = 'FS8B')) WHERE month = '2026-08-01'$q$)
+     <> 'FS8B 6/3 - 15/15' THEN
+    RAISE EXCEPTION 'frånvarostatistik 392: August''s month of FS8B';
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 393: the catalogue. Who may run which function, and what the table
+-- gives anybody.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  names constant text[] := ARRAY['absence_stats_min_group', 'absence_stats_window_first', 'absence_stats_window', 'absence_stats_plan',
+    'absence_stats_lessons', 'absence_stats_month', 'absence_stats_trim', 'absence_stats_pupil_access', 'absence_stats_class_access', 'absence_stats_series',
+    'absence_stats_classes', 'absence_stats_class_pupils', 'absence_stats_pupil_head', 'absence_stats_pupil', 'absence_stats_patterns'];
+  api constant text[] := ARRAY['absence_stats_window', 'absence_stats_plan', 'absence_stats_month', 'absence_stats_trim', 'absence_stats_series',
+    'absence_stats_classes', 'absence_stats_class_pupils', 'absence_stats_pupil_head', 'absence_stats_pupil', 'absence_stats_patterns'];
+  writers constant text[] := ARRAY['absence_stats_month', 'absence_stats_trim'];
+  f record;
+  wrong text[] := '{}';
+  found int;
+  role_name text;
+  priv text;
+BEGIN
+  SELECT count(*) INTO found FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname LIKE 'absence\_stats\_%';
+  IF found <> cardinality(names) THEN
+    RAISE EXCEPTION 'frånvarostatistik 393: % functions called absence_stats_*, not the % this section knows', found, cardinality(names);
+  END IF;
+  FOR f IN SELECT p.oid, p.proname, p.prosecdef, p.provolatile, p.proconfig FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'app' AND p.proname = ANY (names) ORDER BY p.proname
+  LOOP
+    -- Two are not definers: the group size (no secret, reads nothing) and the lessons (D2's function with one line
+    -- changed, which is inlined into the definer that calls it and so has no path of its own: every name in it is
+    -- schema-qualified, and the owner's section 392o holds it to D2's text). The lessons are still the owner's alone.
+    IF f.proname NOT IN ('absence_stats_min_group', 'absence_stats_lessons') AND NOT f.prosecdef THEN
+      wrong := wrong || format('%s is not SECURITY DEFINER', f.proname);
+    END IF;
+    IF f.proname NOT IN ('absence_stats_min_group', 'absence_stats_lessons') AND NOT EXISTS (SELECT 1 FROM unnest(f.proconfig) c WHERE c LIKE 'search_path=%') THEN
+      wrong := wrong || format('%s has no search_path', f.proname);
+    END IF;
+    IF f.proname = 'absence_stats_lessons' AND (f.prosecdef OR f.proconfig IS NOT NULL OR f.provolatile <> 's') THEN
+      wrong := wrong || format('%s is not a plain STABLE function that can be inlined', f.proname);
+    END IF;
+    IF (f.proname = ANY (writers)) <> (f.provolatile = 'v') THEN
+      wrong := wrong || format('%s is %s: only %s write', f.proname, f.provolatile, writers);
+    END IF;
+    IF (f.proname = ANY (api)) <> has_function_privilege('app_authenticated', f.oid, 'EXECUTE') THEN
+      wrong := wrong || format('%s: the API role %s run it', f.proname, CASE WHEN f.proname = ANY (api) THEN 'cannot' ELSE 'can' END);
+    END IF;
+    FOREACH role_name IN ARRAY ARRAY['authenticated', 'anon', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) AND has_function_privilege(role_name, f.oid, 'EXECUTE') THEN
+        wrong := wrong || format('%s: %s can run it', f.proname, role_name);
+      END IF;
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_proc p2, aclexplode(coalesce(p2.proacl, acldefault('f', p2.proowner))) a WHERE p2.oid = f.oid AND a.grantee = 0) THEN
+      wrong := wrong || format('%s: PUBLIC can run it', f.proname);
+    END IF;
+  END LOOP;
+
+  -- The table: row security on, no policy at all, no privilege for anybody (the owner's alone).
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = '"AbsenceStatsMonths"'::regclass) THEN
+    wrong := wrong || 'AbsenceStatsMonths has no row security';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'AbsenceStatsMonths') THEN
+    wrong := wrong || 'AbsenceStatsMonths has a policy';
+  END IF;
+  FOREACH role_name IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon'] LOOP
+    FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) AND has_table_privilege(role_name, '"AbsenceStatsMonths"', priv) THEN
+        wrong := wrong || format('%s holds %s on AbsenceStatsMonths', role_name, priv);
+      END IF;
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) AND has_any_column_privilege(role_name, '"AbsenceStatsMonths"', 'SELECT') THEN
+      wrong := wrong || format('%s reads a column of AbsenceStatsMonths', role_name);
+    END IF;
+  END LOOP;
+  IF current_setting('server_version_num')::int >= 170000 AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_authenticated') THEN
+    IF has_table_privilege('app_authenticated', '"AbsenceStatsMonths"', 'MAINTAIN') THEN
+      wrong := wrong || 'app_authenticated holds MAINTAIN on AbsenceStatsMonths';
+    END IF;
+  END IF;
+  IF cardinality(wrong) > 0 THEN
+    RAISE EXCEPTION E'frånvarostatistik 393:\n%', array_to_string(wrong, E'\n');
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Elevens lektion för dagen (D7, 20270122091000), sections 395-398: a pupil is
+-- moved, for one date, from a lesson to a parallel one. Fixtures:
+-- rls-d7-school (and rls-d7-annan), planted once by the fixtures script, with
+-- fixed ids; the lessons are tomorrow's. The owner's half is 399o in
+-- rls-owner-checks.sql (the readers that no login may call, gallring, the keys).
+--
+--   395  the two doors and what a move is (parallel, held, one per lesson);
+--        the mark on the source; Ångra; a move that falls
+--   396  who may move a pupil, who reads a move, and that nobody writes one
+--        but the doors
+--   397  what the pupil's own arms and the guardian's say
+--   398  the catalogue: the arms, the privileges, the keys, the doors
+-- ---------------------------------------------------------------------------
+
+-- The helpers the sections share. Temporary, so they die with the session.
+CREATE FUNCTION pg_temp.d7_as(p_auth text) RETURNS void LANGUAGE sql AS $$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', p_auth)::text, true)
+$$;
+-- A login by the number of the person: 01 full, 03 expedition, 05 läsare, 06 t1, 07 t2, 08 m, 09 t4,
+-- 11 p1, 12 p2, 13 p3, 21 g1, 22 g2, 31 the other school's administrator, 34 its teacher.
+CREATE FUNCTION pg_temp.d7_auth(n integer) RETURNS text LANGUAGE sql AS $$
+  SELECT '00000000-0000-4000-8000-d7000000' || lpad(n::text, 2, '0') || '00'
+$$;
+-- A person or a school by name; a lesson by its number (d7000000-0000-4000-8000-000000000aNN).
+CREATE FUNCTION pg_temp.d7f(p_name text) RETURNS uuid LANGUAGE sql AS $$
+  SELECT CASE p_name
+    WHEN 'school' THEN 'd7000000-0000-4000-8000-0000000000c1'
+    WHEN 'other' THEN 'd7000000-0000-4000-8000-0000000000c2'
+    ELSE ('d7000000-0000-4000-8000-b000000000' || CASE p_name
+      WHEN 'full' THEN '01' WHEN 'expedition' THEN '03' WHEN 'lasare' THEN '05' WHEN 't1' THEN '06' WHEN 't2' THEN '07'
+      WHEN 'm' THEN '08' WHEN 't4' THEN '09' WHEN 'p1' THEN '11' WHEN 'p2' THEN '12' WHEN 'p3' THEN '13'
+      WHEN 'g1' THEN '21' WHEN 'g2' THEN '22' WHEN 'pa' THEN '31' WHEN 'po' THEN '32' WHEN 'to' THEN '34' END)::uuid
+  END
+$$;
+CREATE FUNCTION pg_temp.d7_l(n integer) RETURNS uuid LANGUAGE sql AS $$
+  SELECT ('d7000000-0000-4000-8000-000000000a' || lpad(n::text, 2, '0'))::uuid
+$$;
+CREATE FUNCTION pg_temp.d7_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'elevens lektion %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $$;
+-- A statement that must fail with exactly this SQLSTATE.
+CREATE FUNCTION pg_temp.d7_refuses(p_sql text, p_state text, p_what text) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE p_sql;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM p_state THEN
+    RAISE EXCEPTION 'elevens lektion: % should be refused with %, was %', p_what, p_state, got;
+  END IF;
+END $$;
+-- The door, as a statement: move p_pupil off p_from onto p_to (lessons by number).
+CREATE FUNCTION pg_temp.d7_move(p_pupil text, p_from integer, p_to integer) RETURNS text LANGUAGE sql AS $$
+  SELECT format('SELECT app.lesson_pupil_move(%L, %L, %L)', pg_temp.d7f(p_pupil), pg_temp.d7_l(p_from), pg_temp.d7_l(p_to))
+$$;
+-- The moves the caller reads, as one text: "pupil:from>to" by the last two digits of their ids.
+CREATE FUNCTION pg_temp.d7_moves() RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(right(m."studentId"::text, 2) || ':' || right(m."fromLessonId"::text, 2) || '>' || right(m."toLessonId"::text, 2),
+                             ', ' ORDER BY m."studentId", m."fromLessonId"), '')
+    FROM "LessonPupilMoves" m
+$$;
+-- A mark of a pupil on a lesson, written by the administrator whose claims are set.
+CREATE FUNCTION pg_temp.d7_mark(p_pupil text, p_lesson integer, p_status "AttendanceStatus", p_note text DEFAULT NULL) RETURNS void LANGUAGE sql AS $$
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, note, "recordedAt", "recordedById", "updatedAt")
+  VALUES (pg_temp.d7f('school'), pg_temp.d7_l(p_lesson), pg_temp.d7f(p_pupil), p_status, p_note, now() - interval '1 hour', pg_temp.d7f('t1'), now())
+$$;
+CREATE FUNCTION pg_temp.d7_mark_of(p_pupil text, p_lesson integer) RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce((SELECT a.status::text || coalesce('/' || a.note, '') FROM "AttendanceRecords" a
+                    WHERE a."calendarLessonId" = pg_temp.d7_l(p_lesson) AND a."studentId" = pg_temp.d7f(p_pupil)), 'none')
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Section 395: the two doors and what a move is.
+-- ---------------------------------------------------------------------------
+
+-- A move: the pupil is on the target (an arrival the move owns) and off the
+-- source; the mark on the source counts for nobody and is kept; Ångra puts it
+-- back.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT pg_temp.d7_mark('p1', 1, 'ABSENT', 'sjuk');
+DO $$
+DECLARE
+  mv uuid;
+BEGIN
+  mv := app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  IF mv IS NULL THEN RAISE EXCEPTION 'move: no id came back'; END IF;
+  PERFORM pg_temp.d7_expect('move: the row', pg_temp.d7_moves(), '11:01>02');
+  PERFORM pg_temp.d7_expect('move: the arrival is the target''s named pupil, owned by the move',
+    (SELECT string_agg(right(n."calendarLessonId"::text, 2) || ':' || (n."moveId" = mv)::text, ',') FROM "CalendarLessonStudents" n WHERE n."studentId" = pg_temp.d7f('p1')),
+    '02:true');
+  PERFORM pg_temp.d7_expect('move: the mark on the source counts for nobody', pg_temp.d7_mark_of('p1', 1), 'UNKNOWN');
+  PERFORM pg_temp.d7_expect('move: ... and is kept',
+    (SELECT m."displacedMark" ->> 'status' || '/' || (m."displacedMark" ->> 'note') FROM "LessonPupilMoves" m WHERE m.id = mv), 'ABSENT/sjuk');
+  PERFORM pg_temp.d7_expect('move: who moved', (SELECT (m."movedById" = pg_temp.d7f('full'))::text FROM "LessonPupilMoves" m WHERE m.id = mv), 'true');
+  PERFORM app.lesson_pupil_move_undo(mv);
+  PERFORM pg_temp.d7_expect('undo: no move', pg_temp.d7_moves(), '');
+  PERFORM pg_temp.d7_expect('undo: no arrival', (SELECT count(*)::text FROM "CalendarLessonStudents" n WHERE n."studentId" = pg_temp.d7f('p1')), '0');
+  PERFORM pg_temp.d7_expect('undo: the mark is back', pg_temp.d7_mark_of('p1', 1), 'ABSENT/sjuk');
+  PERFORM pg_temp.d7_refuses('SELECT app.lesson_pupil_move_undo(''' || mv || ''')', 'LM404', 'Ångra of a move that is gone');
+END $$;
+ROLLBACK;
+
+-- Moved on, and moved back: the move keeps the lesson the pupil started on.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+DO $$
+BEGIN
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(2), pg_temp.d7_l(3));
+  PERFORM pg_temp.d7_expect('on: one move, from where they started', pg_temp.d7_moves(), '11:01>03');
+  PERFORM pg_temp.d7_expect('on: the arrival is on the last lesson only',
+    (SELECT string_agg(right(n."calendarLessonId"::text, 2), ',') FROM "CalendarLessonStudents" n WHERE n."studentId" = pg_temp.d7f('p1')), '03');
+  -- Back to where they started: the move is undone, and the answer is NULL.
+  IF app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(3), pg_temp.d7_l(1)) IS NOT NULL THEN
+    RAISE EXCEPTION 'back: a move came back, not NULL';
+  END IF;
+  PERFORM pg_temp.d7_expect('back: no move', pg_temp.d7_moves(), '');
+  PERFORM pg_temp.d7_expect('back: no arrival', (SELECT count(*)::text FROM "CalendarLessonStudents" n WHERE n."studentId" = pg_temp.d7f('p1')), '0');
+END $$;
+ROLLBACK;
+
+-- What a move is: parallel, held, in the school, a pupil, once.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+DO $$
+BEGIN
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 4), 'LM412', 'a lesson that does not overlap (W is at 11:00)');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 1), 'LM412', 'a lesson onto itself');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 5), 'LM410', 'a lesson that is cancelled');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 6), 'LM413', 'a lesson an activity has replaced');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 5, 1), 'LM410', 'a source that is cancelled');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 7), 'LM404', 'a lesson of another school');
+  PERFORM pg_temp.d7_refuses(format('SELECT app.lesson_pupil_move(%L, %L, %L)', pg_temp.d7f('po'), pg_temp.d7_l(1), pg_temp.d7_l(2)), 'LM404', 'a pupil of another school');
+  PERFORM pg_temp.d7_refuses(format('SELECT app.lesson_pupil_move(%L, %L, %L)', pg_temp.d7f('t1'), pg_temp.d7_l(1), pg_temp.d7_l(2)), 'LM404', 'somebody who is not a pupil');
+  -- Z (09:30-10:30) overlaps X (09:00-10:00) by half: parallel.
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(3));
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 2), 'LM409', 'a second move off the same lesson');
+END $$;
+ROLLBACK;
+
+-- A mark on the lesson the pupil was moved to keeps them there: Ångra, and a move
+-- on, are refused until it is taken back. A mark on the source is not that.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+DO $$
+DECLARE
+  mv uuid;
+BEGIN
+  mv := app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  PERFORM pg_temp.d7_mark('p1', 2, 'PRESENT');
+  PERFORM pg_temp.d7_refuses('SELECT app.lesson_pupil_move_undo(''' || mv || ''')', 'LM415', 'Ångra of a move whose target holds a mark of the pupil');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 2, 3), 'LM415', 'a move on from a lesson that holds a mark of the pupil');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 2, 1), 'LM415', 'a move back from a lesson that holds a mark of the pupil');
+  PERFORM pg_temp.d7_expect('the move stands', pg_temp.d7_moves(), '11:01>02');
+END $$;
+ROLLBACK;
+
+-- Ångra puts the mark back only if nobody has written one since.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT pg_temp.d7_mark('p1', 1, 'EXCUSED', 'ledig');
+DO $$
+DECLARE
+  mv uuid;
+BEGIN
+  mv := app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  -- A register saved for the source after the move (a phone's queue, say) is a mark Ångra must not write over.
+  UPDATE "AttendanceRecords" SET status = 'PRESENT', note = NULL WHERE "calendarLessonId" = pg_temp.d7_l(1) AND "studentId" = pg_temp.d7f('p1');
+  PERFORM app.lesson_pupil_move_undo(mv);
+  PERFORM pg_temp.d7_expect('a newer mark stands', pg_temp.d7_mark_of('p1', 1), 'PRESENT');
+END $$;
+ROLLBACK;
+
+-- A pupil with no mark on the source: nothing is kept, nothing is put back.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+DO $$
+DECLARE
+  mv uuid;
+BEGIN
+  mv := app.lesson_pupil_move(pg_temp.d7f('p2'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  PERFORM pg_temp.d7_expect('no mark, nothing kept', (SELECT coalesce(m."displacedMark"::text, 'null') FROM "LessonPupilMoves" m WHERE m.id = mv), 'null');
+  PERFORM pg_temp.d7_expect('no mark written', pg_temp.d7_mark_of('p2', 1), 'none');
+  PERFORM app.lesson_pupil_move_undo(mv);
+  PERFORM pg_temp.d7_expect('no mark after Ångra', pg_temp.d7_mark_of('p2', 1), 'none');
+END $$;
+ROLLBACK;
+
+-- A pupil already named on the target is on it; a pupil whose day has passed is not moved.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId") VALUES (pg_temp.d7f('school'), pg_temp.d7_l(2), pg_temp.d7f('p1'));
+DO $$
+BEGIN
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 2), 'LM409', 'a pupil who is named on the target already');
+END $$;
+ROLLBACK;
+
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+-- Both lessons three days back, together, so that they still overlap.
+UPDATE "CalendarLessons" SET date = date - 3, "startsAt" = "startsAt" - interval '3 days', "endsAt" = "endsAt" - interval '3 days'
+ WHERE id IN (pg_temp.d7_l(1), pg_temp.d7_l(2));
+DO $$
+BEGIN
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 2), 'LM414', 'a move for a day that has passed');
+END $$;
+ROLLBACK;
+
+-- The day is not the hour (the review of #281, MEDEL-1). A lesson that ended this morning is still today's, and its
+-- register is its teachers': the door writes the pupil's mark on the source (UNKNOWN, by the mover), so a teacher of
+-- the target alone could erase a colleague's mark by moving the pupil off a lesson that was over. LM416, for the
+-- target's teacher and for the administrator alike, and the mark stands, with its author.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT pg_temp.d7_mark('p1', 1, 'ABSENT', 'skolkade enligt t1');
+-- Both lessons today, both over and still overlapping: the first ended half an hour ago, the second ten minutes ago.
+UPDATE "CalendarLessons" SET date = (now() AT TIME ZONE 'Europe/Stockholm')::date,
+       "startsAt" = now() - interval '2 hours', "endsAt" = now() - interval '30 minutes' WHERE id = pg_temp.d7_l(1);
+UPDATE "CalendarLessons" SET date = (now() AT TIME ZONE 'Europe/Stockholm')::date,
+       "startsAt" = now() - interval '90 minutes', "endsAt" = now() - interval '10 minutes' WHERE id = pg_temp.d7_l(2);
+DO $$
+BEGIN
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(7));
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 2), 'LM416', 'the teacher of the target alone moving a pupil off a lesson that ended half an hour ago');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(6));
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 2), 'LM416', 'the teacher of the source, too: it is the lesson that is over');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 2), 'LM416', 'the administrator with Drift: the register is where a finished lesson is corrected');
+  PERFORM pg_temp.d7_expect('no move', pg_temp.d7_moves(), '');
+  PERFORM pg_temp.d7_expect('the colleague''s mark stands, with its note', pg_temp.d7_mark_of('p1', 1), 'ABSENT/skolkade enligt t1');
+  PERFORM pg_temp.d7_expect('... and with its author and time',
+    (SELECT (a."recordedById" = pg_temp.d7f('t1') AND a."recordedAt" < now() - interval '30 minutes')::text FROM "AttendanceRecords" a
+      WHERE a."calendarLessonId" = pg_temp.d7_l(1) AND a."studentId" = pg_temp.d7f('p1')), 'true');
+  PERFORM pg_temp.d7_expect('no arrival', (SELECT count(*)::text FROM "CalendarLessonStudents" n WHERE n."studentId" = pg_temp.d7f('p1')), '0');
+END $$;
+ROLLBACK;
+
+-- The clock is the source's end and nothing else: a lesson that is running (it began an hour ago) lets a pupil go, the
+-- second it ends it does not (now() is the transaction's, so a lesson ending exactly now is over), and the target being
+-- over is the target's affair and not the source's.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+DO $$
+DECLARE
+  today date := (now() AT TIME ZONE 'Europe/Stockholm')::date;
+BEGIN
+  UPDATE "CalendarLessons" SET date = today, "startsAt" = now() - interval '1 hour', "endsAt" = now() + interval '1 second' WHERE id = pg_temp.d7_l(1);
+  UPDATE "CalendarLessons" SET date = today, "startsAt" = now() - interval '1 hour', "endsAt" = now() + interval '1 hour' WHERE id = pg_temp.d7_l(2);
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(7));
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  PERFORM pg_temp.d7_expect('a lesson that began an hour ago and ends in a second lets a pupil go', pg_temp.d7_moves(), '11:01>02');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM app.lesson_pupil_move_undo((SELECT m.id FROM "LessonPupilMoves" m));
+  PERFORM pg_temp.d7_expect('and Ångra while it runs', pg_temp.d7_moves(), '');
+  UPDATE "CalendarLessons" SET "endsAt" = now() WHERE id = pg_temp.d7_l(1);
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 2), 'LM416', 'a lesson that ends exactly now');
+  -- Ångra reads the same clock: the move was made while the source ran, and the source ends exactly now.
+  UPDATE "CalendarLessons" SET "endsAt" = now() + interval '1 hour' WHERE id = pg_temp.d7_l(1);
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  UPDATE "CalendarLessons" SET "endsAt" = now() WHERE id = pg_temp.d7_l(1);
+  -- The teacher of the target alone is who the clock stops (an administrator and the source's teacher may correct).
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(7));
+  PERFORM pg_temp.d7_refuses('SELECT app.lesson_pupil_move_undo(''' || (SELECT m.id FROM "LessonPupilMoves" m) || ''')', 'LM416', 'Ångra of a move whose source ends exactly now, by the teacher of the target');
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 2, 1), 'LM416', 'a move back to a source that ends exactly now, by the teacher of the target');
+  -- A move on takes the pupil out of the lesson they stand on: that one ends exactly now, and the first source's teacher is not its teacher.
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  UPDATE "CalendarLessons" SET "endsAt" = now() WHERE id = pg_temp.d7_l(2);
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(6));
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 2, 3), 'LM416', 'a move on from a lesson that ends exactly now, by a teacher who is not its teacher');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  UPDATE "CalendarLessons" SET "endsAt" = now() + interval '1 hour' WHERE id = pg_temp.d7_l(2);
+  UPDATE "CalendarLessons" SET "endsAt" = now() + interval '1 hour' WHERE id = pg_temp.d7_l(1);
+  PERFORM app.lesson_pupil_move_undo((SELECT m.id FROM "LessonPupilMoves" m));
+  PERFORM pg_temp.d7_expect('Ångra once the source runs again', pg_temp.d7_moves(), '');
+  -- The target over and the source running: the pupil's mark is on the source, and the source is not over.
+  UPDATE "CalendarLessons" SET "endsAt" = now() + interval '1 hour' WHERE id = pg_temp.d7_l(1);
+  UPDATE "CalendarLessons" SET "startsAt" = now() - interval '2 hours', "endsAt" = now() - interval '1 minute' WHERE id = pg_temp.d7_l(2);
+  PERFORM pg_temp.d7_expect('a target that is over is not the source''s reason', (SELECT (app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2)) IS NOT NULL)::text), 'true');
+END $$;
+ROLLBACK;
+
+-- After a lesson is over (the review of #281, round 2, MEDEL-1). A move that was made while the lesson ran can be wrong, and the
+-- moment it is found is often the lesson's end; the correction (Ångra, a move back, a move on) is for those who may save the
+-- lesson's register, an administrator with Drift and a teacher on it, and for nobody else; a new move off a lesson that is over
+-- is for nobody. The first source ended half an hour ago; the target runs on (or ended ten minutes ago, 'onward_over').
+-- One statement for the lessons, so that the lapse (it looks when the statement is done) finds them overlapping still.
+CREATE FUNCTION pg_temp.d7_today(p_second_over boolean) RETURNS void LANGUAGE sql AS $$
+  UPDATE "CalendarLessons" SET date = (now() AT TIME ZONE 'Europe/Stockholm')::date,
+         "startsAt" = CASE id WHEN pg_temp.d7_l(1) THEN now() - interval '2 hours'
+                              WHEN pg_temp.d7_l(2) THEN now() - interval '90 minutes' ELSE now() - interval '1 hour' END,
+         "endsAt" = CASE id WHEN pg_temp.d7_l(1) THEN now() - interval '30 minutes'
+                            WHEN pg_temp.d7_l(2) THEN CASE WHEN p_second_over THEN now() - interval '10 minutes' ELSE now() + interval '30 minutes' END
+                            ELSE now() + interval '1 hour' END
+   WHERE id IN (pg_temp.d7_l(1), pg_temp.d7_l(2), pg_temp.d7_l(3))
+$$;
+
+-- Who, by which way. 1 is the administrator with Drift, 3 the expedition (Drift too), 5 the läsare, 6 the teacher of the source
+-- (lesson 1), 7 of the target (2), 8 the mentor of the pupil's class, 9 a teacher of lesson 3 and of neither of the others.
+-- 'undo' is Ångra, 'back' a move back to the start, 'onward' a move on to lesson 3 while lesson 2 still runs, 'onward_over' the
+-- same once lesson 2 is over too, 'new' a first move of another pupil off the lesson that is over.
+BEGIN;
+DO $$
+DECLARE
+  who record;
+  mv uuid;
+BEGIN
+  FOR who IN SELECT * FROM (VALUES
+      ('undo', 1, 'ok'), ('undo', 3, 'ok'), ('undo', 6, 'ok'), ('undo', 5, 'LM403'), ('undo', 7, 'LM416'), ('undo', 8, 'LM416'),
+      ('undo', 9, 'LM403'), ('undo', 11, 'LM403'), ('undo', 12, 'LM403'), ('undo', 21, 'LM403'), ('undo', 31, 'LM404'), ('undo', 34, 'LM404'),
+      ('back', 1, 'ok'), ('back', 3, 'ok'), ('back', 6, 'ok'), ('back', 5, 'LM403'), ('back', 7, 'LM416'), ('back', 8, 'LM416'),
+      ('back', 9, 'LM403'), ('back', 11, 'LM403'), ('back', 21, 'LM403'), ('back', 31, 'LM404'),
+      ('onward', 1, 'ok'), ('onward', 6, 'ok'), ('onward', 7, 'ok'), ('onward', 8, 'ok'), ('onward', 9, 'ok'), ('onward', 5, 'LM403'),
+      ('onward', 11, 'LM403'), ('onward', 21, 'LM403'),
+      ('onward_over', 1, 'ok'), ('onward_over', 3, 'ok'), ('onward_over', 7, 'ok'), ('onward_over', 6, 'LM416'), ('onward_over', 8, 'LM416'),
+      ('onward_over', 9, 'LM416'), ('onward_over', 5, 'LM403'), ('onward_over', 11, 'LM403'), ('onward_over', 21, 'LM403'),
+      ('new', 1, 'LM416'), ('new', 3, 'LM416'), ('new', 6, 'LM416'), ('new', 7, 'LM416'), ('new', 8, 'LM416'), ('new', 5, 'LM403'),
+      ('new', 9, 'LM403'), ('new', 11, 'LM403'), ('new', 21, 'LM403')) AS t(way, login, wanted)
+  LOOP
+    BEGIN
+      PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+      PERFORM pg_temp.d7_mark('p1', 1, 'ABSENT', 'sjuk');
+      mv := app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+      PERFORM pg_temp.d7_today(who.way = 'onward_over');
+      PERFORM pg_temp.d7_as(pg_temp.d7_auth(who.login));
+      IF who.way = 'undo' THEN
+        PERFORM app.lesson_pupil_move_undo(mv);
+      ELSIF who.way = 'back' THEN
+        PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(2), pg_temp.d7_l(1));
+      ELSIF who.way IN ('onward', 'onward_over') THEN
+        PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(2), pg_temp.d7_l(3));
+      ELSE
+        PERFORM app.lesson_pupil_move(pg_temp.d7f('p2'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+      END IF;
+      IF who.wanted <> 'ok' THEN RAISE EXCEPTION 'D7_TEST_FALL: login % was let through (%)', who.login, who.way; END IF;
+      RAISE EXCEPTION 'D7_TEST_ROLLBACK';
+    EXCEPTION
+      WHEN OTHERS THEN
+        IF SQLERRM = 'D7_TEST_ROLLBACK' THEN
+          IF who.wanted <> 'ok' THEN RAISE EXCEPTION 'elevens lektion: login % was let through (%)', who.login, who.way; END IF;
+        ELSIF SQLERRM LIKE 'D7_TEST_FALL%' THEN
+          RAISE;
+        ELSIF SQLSTATE IS DISTINCT FROM who.wanted THEN
+          RAISE EXCEPTION 'elevens lektion: after the end, % by login % was refused with % (%), not %', who.way, who.login, SQLSTATE, SQLERRM, who.wanted;
+        END IF;
+    END;
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- What a correction does after the end. Ångra, by the source's teacher, puts their own mark back with its author and time;
+-- the pupil is off the target, and no move stands.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT pg_temp.d7_mark('p1', 1, 'EXCUSED', 'ledig');
+SELECT app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+SELECT pg_temp.d7_today(false);
+SELECT pg_temp.d7_as(pg_temp.d7_auth(6));
+DO $$
+BEGIN
+  PERFORM pg_temp.d7_expect('the lapse keeps a move whose lessons still overlap', pg_temp.d7_moves(), '11:01>02');
+  PERFORM pg_temp.d7_expect('the source teacher''s mark is set aside', pg_temp.d7_mark_of('p1', 1), 'UNKNOWN');
+  PERFORM app.lesson_pupil_move_undo((SELECT m.id FROM "LessonPupilMoves" m));
+  PERFORM pg_temp.d7_expect('Ångra by the source''s teacher after the end: no move', pg_temp.d7_moves(), '');
+  PERFORM pg_temp.d7_expect('... the mark is back', pg_temp.d7_mark_of('p1', 1), 'EXCUSED/ledig');
+  PERFORM pg_temp.d7_expect('... with its author and its time, not the corrector''s',
+    (SELECT (a."recordedById" = pg_temp.d7f('t1') AND a."recordedAt" < now() - interval '30 minutes')::text FROM "AttendanceRecords" a
+      WHERE a."calendarLessonId" = pg_temp.d7_l(1) AND a."studentId" = pg_temp.d7f('p1')), 'true');
+  PERFORM pg_temp.d7_expect('... and no arrival', (SELECT count(*)::text FROM "CalendarLessonStudents" n WHERE n."studentId" = pg_temp.d7f('p1')), '0');
+END $$;
+ROLLBACK;
+
+-- A move back by an administrator is the same: the source's mark back, with its author.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT pg_temp.d7_mark('p1', 1, 'ABSENT', 'sjuk');
+SELECT app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+SELECT pg_temp.d7_today(false);
+DO $$
+BEGIN
+  IF app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(2), pg_temp.d7_l(1)) IS NOT NULL THEN
+    RAISE EXCEPTION 'elevens lektion: a move back after the end is a move';
+  END IF;
+  PERFORM pg_temp.d7_expect('a move back by an administrator after the end: no move', pg_temp.d7_moves(), '');
+  PERFORM pg_temp.d7_expect('... the mark is back with its author',
+    (SELECT (a.status::text || '/' || a.note || '/' || (a."recordedById" = pg_temp.d7f('t1'))::text) FROM "AttendanceRecords" a
+      WHERE a."calendarLessonId" = pg_temp.d7_l(1) AND a."studentId" = pg_temp.d7f('p1')), 'ABSENT/sjuk/true');
+END $$;
+ROLLBACK;
+
+-- A move on writes nothing on the first source: its mark row is not touched (the same version of the row, xmin), the displaced
+-- mark is carried to the new move, and the pupil is on the new lesson only. Ångra of that puts the mark back.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT pg_temp.d7_mark('p1', 1, 'ABSENT', 'sjuk');
+SELECT app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+SELECT pg_temp.d7_today(false);
+CREATE TEMP TABLE d7_rowversion AS
+  SELECT a.xmin::text AS v FROM "AttendanceRecords" a WHERE a."calendarLessonId" = pg_temp.d7_l(1) AND a."studentId" = pg_temp.d7f('p1');
+SELECT pg_temp.d7_as(pg_temp.d7_auth(7));
+DO $$
+BEGIN
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(2), pg_temp.d7_l(3));
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM pg_temp.d7_expect('a move on after the first source ended: from the first source', pg_temp.d7_moves(), '11:01>03');
+  PERFORM pg_temp.d7_expect('... writes nothing on the first source''s mark row',
+    (SELECT (a.xmin::text = (SELECT v FROM pg_temp.d7_rowversion) AND a.status = 'UNKNOWN')::text FROM "AttendanceRecords" a
+      WHERE a."calendarLessonId" = pg_temp.d7_l(1) AND a."studentId" = pg_temp.d7f('p1')), 'true');
+  PERFORM pg_temp.d7_expect('... carries the displaced mark', (SELECT m."displacedMark" ->> 'note' FROM "LessonPupilMoves" m), 'sjuk');
+  PERFORM pg_temp.d7_expect('... the pupil is on the new lesson only',
+    (SELECT string_agg(right(n."calendarLessonId"::text, 2), ',') FROM "CalendarLessonStudents" n WHERE n."studentId" = pg_temp.d7f('p1')), '03');
+  -- ... and Ångra of that, by the first source's teacher, puts the mark back with its author.
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(6));
+  PERFORM app.lesson_pupil_move_undo((SELECT m.id FROM "LessonPupilMoves" m));
+  PERFORM pg_temp.d7_expect('Ångra of a move on, by the first source''s teacher', pg_temp.d7_mark_of('p1', 1), 'ABSENT/sjuk');
+END $$;
+ROLLBACK;
+
+-- A mark on the target stands: Ångra and a move back never take it away. The target's teacher marked the pupil after the end of
+-- the source; the correction is refused (LM415) for the administrator and the source's teacher alike, and the mark and the move stay.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT pg_temp.d7_mark('p1', 1, 'EXCUSED', 'ledig');
+SELECT app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+SELECT pg_temp.d7_today(false);
+SELECT pg_temp.d7_mark('p1', 2, 'PRESENT');
+DO $$
+DECLARE
+  mv uuid := (SELECT id FROM "LessonPupilMoves");
+  login integer;
+BEGIN
+  FOREACH login IN ARRAY ARRAY[1, 6] LOOP
+    PERFORM pg_temp.d7_as(pg_temp.d7_auth(login));
+    PERFORM pg_temp.d7_refuses('SELECT app.lesson_pupil_move_undo(''' || mv || ''')', 'LM415', 'Ångra of a move whose target holds a mark, by login ' || login);
+    PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 2, 1), 'LM415', 'a move back from a target that holds a mark, by login ' || login);
+  END LOOP;
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM pg_temp.d7_expect('the target''s mark stands', pg_temp.d7_mark_of('p1', 2), 'PRESENT');
+  PERFORM pg_temp.d7_expect('and the move', pg_temp.d7_moves(), '11:01>02');
+  PERFORM pg_temp.d7_expect('and the source''s mark stays set aside', pg_temp.d7_mark_of('p1', 1), 'UNKNOWN');
+END $$;
+ROLLBACK;
+
+-- Ångra for a day that has passed (LM414), a source an activity has replaced (LM413, as the source) and an arrival that is
+-- not its move's (LM409): the guards no section had a case for.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+DO $$
+DECLARE
+  mv uuid := (SELECT id FROM "LessonPupilMoves");
+BEGIN
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 6, 1), 'LM413', 'a source an activity has replaced');
+  PERFORM pg_temp.d7_refuses(
+    format('INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId", "moveId") VALUES (%L, %L, %L, %L)',
+           pg_temp.d7f('school'), pg_temp.d7_l(2), pg_temp.d7f('p2'), mv), 'LM409', 'an arrival for another pupil than the move''s');
+  PERFORM pg_temp.d7_refuses(
+    format('INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId", "moveId") VALUES (%L, %L, %L, %L)',
+           pg_temp.d7f('school'), pg_temp.d7_l(3), pg_temp.d7f('p1'), mv), 'LM409', 'an arrival on another lesson than the move''s');
+END $$;
+UPDATE "CalendarLessons" SET date = date - 3, "startsAt" = "startsAt" - interval '3 days', "endsAt" = "endsAt" - interval '3 days'
+ WHERE id IN (pg_temp.d7_l(1), pg_temp.d7_l(2));
+DO $$
+BEGIN
+  PERFORM pg_temp.d7_refuses('SELECT app.lesson_pupil_move_undo(''' || (SELECT id FROM "LessonPupilMoves") || ''')', 'LM414', 'Ångra for a day that has passed');
+  PERFORM pg_temp.d7_expect('the move stands', pg_temp.d7_moves(), '11:01>02');
+END $$;
+ROLLBACK;
+
+-- A move falls when its lessons no longer carry it: a lesson cancelled, replaced by an activity or
+-- moved so that the two no longer overlap. A time that still overlaps changes nothing.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+DO $$
+BEGIN
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  -- Still parallel: 09:00-10:00 now 09:15-10:15.
+  UPDATE "CalendarLessons" SET "startsAt" = "startsAt" + interval '15 minutes', "endsAt" = "endsAt" + interval '15 minutes' WHERE id = pg_temp.d7_l(2);
+  PERFORM pg_temp.d7_expect('lapse: a time that still overlaps keeps it', pg_temp.d7_moves(), '11:01>02');
+  -- A note: nothing about time or status.
+  UPDATE "CalendarLessons" SET note = 'ny sal' WHERE id = pg_temp.d7_l(2);
+  PERFORM pg_temp.d7_expect('lapse: a note keeps it', pg_temp.d7_moves(), '11:01>02');
+  -- Moved to 11:15: no longer parallel.
+  UPDATE "CalendarLessons" SET "startsAt" = "startsAt" + interval '2 hours', "endsAt" = "endsAt" + interval '2 hours' WHERE id = pg_temp.d7_l(2);
+  PERFORM pg_temp.d7_expect('lapse: lessons that no longer overlap', pg_temp.d7_moves(), '');
+  PERFORM pg_temp.d7_expect('lapse: the arrival goes with it', (SELECT count(*)::text FROM "CalendarLessonStudents" WHERE "studentId" = pg_temp.d7f('p1')), '0');
+END $$;
+ROLLBACK;
+
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+DO $$
+BEGIN
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  UPDATE "CalendarLessons" SET status = 'CANCELLED', "cancelCause" = 'EVENT' WHERE id = pg_temp.d7_l(1);
+  PERFORM pg_temp.d7_expect('lapse: the source replaced by an activity', pg_temp.d7_moves(), '');
+END $$;
+ROLLBACK;
+
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+DO $$
+BEGIN
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  UPDATE "CalendarLessons" SET status = 'CANCELLED' WHERE id = pg_temp.d7_l(2);
+  PERFORM pg_temp.d7_expect('lapse: the target cancelled', pg_temp.d7_moves(), '');
+  -- Reinstated: the pupil is on their own lesson, and nothing brings the move back.
+  UPDATE "CalendarLessons" SET status = 'SCHEDULED' WHERE id = pg_temp.d7_l(2);
+  PERFORM pg_temp.d7_expect('lapse: a reinstated lesson does not bring it back', pg_temp.d7_moves(), '');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 396: who may move a pupil, who reads a move, and that nobody writes
+-- one but the doors.
+-- ---------------------------------------------------------------------------
+
+-- Who may: an administrator with Drift (not the läsare), a teacher who teaches
+-- the source, the target or the lesson the pupil is on, or mentors the pupil
+-- the day of the move. Nobody else.
+BEGIN;
+DO $$
+DECLARE
+  who record;
+  mv uuid;
+BEGIN
+  -- (login number, what, pupil, from, to, wanted: ok or the SQLSTATE)
+  FOR who IN SELECT * FROM (VALUES
+      (1,  'full administrator',               'p1', 1, 2, 'ok'),
+      (3,  'expedition (Drift)',               'p1', 1, 2, 'ok'),
+      (5,  'läsare',                           'p1', 1, 2, 'LM403'),
+      (6,  'teacher of the source',            'p1', 1, 2, 'ok'),
+      (7,  'teacher of the target',            'p1', 1, 2, 'ok'),
+      (8,  'mentor of the pupil''s class',     'p1', 1, 2, 'ok'),
+      (8,  'mentor of another class',          'p3', 2, 1, 'LM403'),
+      (9,  'teacher of neither',               'p1', 1, 2, 'LM403'),
+      (11, 'a pupil',                          'p1', 1, 2, 'LM403'),
+      (21, 'a guardian',                       'p1', 1, 2, 'LM403'),
+      (31, 'another school''s administrator',  'p1', 1, 2, 'LM404'),
+      (34, 'another school''s teacher',        'p1', 1, 2, 'LM404')) AS t(login, what, pupil, a, b, wanted)
+  LOOP
+    BEGIN
+      PERFORM pg_temp.d7_as(pg_temp.d7_auth(who.login));
+      mv := app.lesson_pupil_move(pg_temp.d7f(who.pupil), pg_temp.d7_l(who.a), pg_temp.d7_l(who.b));
+      IF who.wanted <> 'ok' THEN RAISE EXCEPTION 'D7_TEST_FALL: % moved a pupil', who.what; END IF;
+      RAISE EXCEPTION 'D7_TEST_ROLLBACK';
+    EXCEPTION
+      WHEN OTHERS THEN
+        IF SQLERRM = 'D7_TEST_ROLLBACK' THEN
+          IF who.wanted <> 'ok' THEN RAISE EXCEPTION 'elevens lektion: % was let through', who.what; END IF;
+        ELSIF SQLERRM LIKE 'D7_TEST_FALL%' THEN
+          RAISE;
+        ELSIF SQLSTATE IS DISTINCT FROM who.wanted THEN
+          RAISE EXCEPTION 'elevens lektion: % was refused with % (%), not %', who.what, SQLSTATE, SQLERRM, who.wanted;
+        END IF;
+    END;
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- A teacher of the lesson the pupil is on may send them on, and Ångra; a teacher of neither may not.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(6));
+DO $$
+DECLARE
+  mv uuid;
+BEGIN
+  mv := app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(9));
+  PERFORM pg_temp.d7_refuses('SELECT app.lesson_pupil_move_undo(''' || mv || ''')', 'LM403', 'Ångra by a teacher of neither lesson (the gateway cannot even read the move for them: 404 there)');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(7));
+  PERFORM app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(2), pg_temp.d7_l(3));
+  -- The move now reads X to Z. T2 teaches neither: it is no longer theirs to read.
+  PERFORM pg_temp.d7_expect('the sending teacher no longer reads it', pg_temp.d7_moves(), '');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM pg_temp.d7_expect('the move was sent on', pg_temp.d7_moves(), '11:01>03');
+  PERFORM app.lesson_pupil_move_undo((SELECT m.id FROM "LessonPupilMoves" m));
+  PERFORM pg_temp.d7_expect('and Ångra', pg_temp.d7_moves(), '');
+END $$;
+ROLLBACK;
+
+-- Ångra has no role check of its own: lesson_move_may is the whole of it, and for a pupil, a guardian and a läsare its ELSE is
+-- what refuses (the review of #281, MEDEL-3). Another school's administrator and teacher do not find the move at all; the
+-- school filter of the lookup is what says so, because the definer would otherwise read and delete it across the border.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+DO $$
+DECLARE
+  who record;
+  mv uuid := (SELECT id FROM "LessonPupilMoves");
+BEGIN
+  FOR who IN SELECT * FROM (VALUES
+      (5,  'the läsare',                       'LM403'),
+      (9,  'a teacher of neither lesson',      'LM403'),
+      (11, 'the moved pupil themselves',       'LM403'),
+      (12, 'a classmate',                      'LM403'),
+      (13, 'a pupil of the other class',       'LM403'),
+      (21, 'the pupil''s guardian',            'LM403'),
+      (22, 'another pupil''s guardian',        'LM403'),
+      (31, 'another school''s administrator',  'LM404'),
+      (34, 'another school''s teacher',        'LM404')) AS t(login, what, wanted)
+  LOOP
+    PERFORM pg_temp.d7_as(pg_temp.d7_auth(who.login));
+    PERFORM pg_temp.d7_refuses('SELECT app.lesson_pupil_move_undo(''' || mv || ''')', who.wanted, 'Ångra by ' || who.what);
+  END LOOP;
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM pg_temp.d7_expect('the move stands after all of them', pg_temp.d7_moves(), '11:01>02');
+  PERFORM pg_temp.d7_expect('... with its arrival', (SELECT count(*)::text FROM "CalendarLessonStudents" n WHERE n."moveId" = mv), '1');
+END $$;
+ROLLBACK;
+
+-- Who reads a move, through their own arms. The move: p1 from X to Y.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+DO $$
+DECLARE
+  who record;
+BEGIN
+  FOR who IN SELECT * FROM (VALUES
+      (1,  'an administrator',            '11:01>02'),
+      (5,  'the läsare',                  '11:01>02'),
+      (6,  'the teacher of the source',   '11:01>02'),
+      (7,  'the teacher of the target',   '11:01>02'),
+      (8,  'the mentor of the pupil',     '11:01>02'),
+      (9,  'a teacher of neither',        ''),
+      (11, 'the pupil',                   '11:01>02'),
+      (12, 'a classmate',                 ''),
+      (13, 'a pupil of the other class',  ''),
+      (21, 'the pupil''s guardian',       '11:01>02'),
+      (22, 'another pupil''s guardian',   ''),
+      (31, 'another school''s administrator', '')) AS t(login, what, wanted)
+  LOOP
+    PERFORM pg_temp.d7_as(pg_temp.d7_auth(who.login));
+    PERFORM pg_temp.d7_expect('reads: ' || who.what, pg_temp.d7_moves(), who.wanted);
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- Nobody writes a move but the doors: no arm, no privilege, for any role.
+BEGIN;
+DO $$
+DECLARE
+  who integer;
+  verb text;
+BEGIN
+  FOREACH who IN ARRAY ARRAY[1, 6, 8, 11, 21] LOOP
+    PERFORM pg_temp.d7_as(pg_temp.d7_auth(who));
+    FOREACH verb IN ARRAY ARRAY[
+      format('INSERT INTO "LessonPupilMoves" ("schoolId", "studentId", "fromLessonId", "toLessonId") VALUES (%L, %L, %L, %L)', pg_temp.d7f('school'), pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2)),
+      'UPDATE "LessonPupilMoves" SET "movedById" = NULL',
+      'DELETE FROM "LessonPupilMoves"'] LOOP
+      PERFORM pg_temp.d7_refuses(verb, '42501', 'a direct write by login ' || who);
+    END LOOP;
+  END LOOP;
+END $$;
+ROLLBACK;
+
+-- The doors answer the API's role alone: not PostgREST's (anon is the catalogue's, 398).
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM pg_temp.d7_refuses(pg_temp.d7_move('p1', 1, 2), '42501', 'the door as authenticated');
+  PERFORM pg_temp.d7_refuses('SELECT app.lesson_pupil_move_undo(gen_random_uuid())', '42501', 'Ångra as authenticated');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 397: what the pupil's own arms and the guardian's say.
+-- ---------------------------------------------------------------------------
+
+-- The lessons of the day a login reads, as a text of numbers: the pupil's own arms
+-- (PostgREST reads CalendarLessons by date alone, so RLS is the only filter).
+CREATE FUNCTION pg_temp.d7_day() RETURNS text LANGUAGE sql AS $$
+  SELECT coalesce(string_agg(right(l.id::text, 2), ',' ORDER BY l.id), '')
+    FROM "CalendarLessons" l WHERE l.id::text LIKE 'd7000000%'
+$$;
+
+-- The pupil's own week: the lesson they were moved to is theirs and the one they
+-- were moved off is not; a classmate keeps theirs and sees nothing of the other.
+BEGIN;
+SELECT pg_temp.d7_as(pg_temp.d7_auth(1));
+SELECT app.lesson_pupil_move(pg_temp.d7f('p1'), pg_temp.d7_l(1), pg_temp.d7_l(2));
+DO $$
+DECLARE
+  mv uuid := (SELECT id FROM "LessonPupilMoves");
+BEGIN
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(11));
+  PERFORM pg_temp.d7_expect('the moved pupil''s own arms', pg_temp.d7_day(), '02,04');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(12));
+  PERFORM pg_temp.d7_expect('a classmate''s arms', pg_temp.d7_day(), '01,04');
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(13));
+  PERFORM pg_temp.d7_expect('the other class''s arms: the arrival changes nothing for them', pg_temp.d7_day(), '02,03,05,06');
+  -- The guardian's arm is per guardian and knows nothing of the move: it still reads the source
+  -- (the gateway takes it off the child's week with the move it reads), and reads the target by the
+  -- name the arrival gives.
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(21));
+  PERFORM pg_temp.d7_expect('the guardian''s arm', pg_temp.d7_day(), '01,02,04');
+  -- Ångra: everything is as it was.
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(1));
+  PERFORM app.lesson_pupil_move_undo(mv);
+  PERFORM pg_temp.d7_as(pg_temp.d7_auth(11));
+  PERFORM pg_temp.d7_expect('after Ångra', pg_temp.d7_day(), '01,04');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 398: the catalogue. The arms, the privileges, the keys, the doors.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  got text;
+  fn text;
+BEGIN
+  -- The table: security on, five arms, all for the API's role, all reads, all naming the school.
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = '"LessonPupilMoves"'::regclass) THEN
+    RAISE EXCEPTION 'LessonPupilMoves has no row-level security';
+  END IF;
+  SELECT string_agg(policyname || ':' || cmd || ':' || roles::text, ', ' ORDER BY policyname COLLATE "C") INTO got
+    FROM pg_policies WHERE tablename = 'LessonPupilMoves';
+  PERFORM pg_temp.d7_expect('the arms', got,
+    'lesson_pupil_moves_admin_select:SELECT:{app_authenticated}, lesson_pupil_moves_guardian_select:SELECT:{app_authenticated}, '
+    'lesson_pupil_moves_service_select:SELECT:{app_authenticated}, lesson_pupil_moves_student_select:SELECT:{app_authenticated}, '
+    'lesson_pupil_moves_teacher_select:SELECT:{app_authenticated}');
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'LessonPupilMoves' AND qual NOT LIKE '%current_school_id%' AND qual NOT LIKE '%current_service_school_id%') THEN
+    RAISE EXCEPTION 'an arm of LessonPupilMoves does not name the school';
+  END IF;
+  -- Privileges: the API's role reads; nobody writes.
+  SELECT string_agg(r.rolname || ':' || p.priv, ', ' ORDER BY r.rolname COLLATE "C", p.priv COLLATE "C") INTO got
+    FROM pg_roles r,
+         unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) AS p(priv)
+   WHERE r.rolname IN ('app_authenticated', 'authenticated', 'anon', 'service_role')
+     AND has_table_privilege(r.rolname, '"LessonPupilMoves"', p.priv);
+  -- (service_role keeps the SELECT every table gives it, as on the tables of the phases before; it writes nothing.)
+  PERFORM pg_temp.d7_expect('the privileges', got, 'app_authenticated:SELECT, service_role:SELECT');
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    IF EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname IN ('authenticated', 'app_authenticated', 'service_role', 'anon')
+                 AND has_table_privilege(r.rolname, '"LessonPupilMoves"', 'MAINTAIN')) THEN
+      RAISE EXCEPTION 'a role holds MAINTAIN on LessonPupilMoves';
+    END IF;
+  END IF;
+  -- The keys: every one is composite with the school, and what each does on delete.
+  SELECT string_agg(conname || ':' || confdeltype::text, ', ' ORDER BY conname COLLATE "C") INTO got
+    FROM pg_constraint WHERE conrelid = '"LessonPupilMoves"'::regclass AND contype = 'f';
+  PERFORM pg_temp.d7_expect('the keys of the move', got,
+    'LessonPupilMoves_fromLessonId_schoolId_fkey:c, LessonPupilMoves_movedById_schoolId_fkey:n, LessonPupilMoves_schoolId_fkey:c, '
+    'LessonPupilMoves_studentId_schoolId_fkey:c, LessonPupilMoves_toLessonId_schoolId_fkey:c');
+  SELECT string_agg(conname || ':' || confdeltype::text || ':' || confupdtype::text, ', ') INTO got
+    FROM pg_constraint WHERE conrelid = '"CalendarLessonStudents"'::regclass AND conname = 'CalendarLessonStudents_moveId_schoolId_fkey';
+  PERFORM pg_temp.d7_expect('the arrival''s key', got, 'CalendarLessonStudents_moveId_schoolId_fkey:c:a');
+  IF (SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'LessonPupilMoves_movedById_schoolId_fkey')
+     NOT LIKE '%ON DELETE SET NULL ("movedById")%' THEN
+    RAISE EXCEPTION 'the mover''s key nulls more than the mover';
+  END IF;
+  -- The functions: definer with a pinned path; the four doors the API role's, nothing else anybody's.
+  FOREACH fn IN ARRAY ARRAY['lesson_pupil_move', 'lesson_pupil_move_undo', 'lesson_pupil_move_remove', 'lesson_move_may', 'lesson_move_may_correct', 'lesson_move_is_mentor',
+                            'lesson_pupil_move_is_parallel', 'lesson_pupil_move_tells_the_integrations', 'lesson_pupil_moves_lapse',
+                            'lesson_pupil_arrival_is_the_moves', 'lesson_pupil_arrival_goes_with_the_move', 'lesson_pupil_register_lock'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                    WHERE n.nspname = 'app' AND p.proname = fn AND p.prosecdef
+                      AND p.proconfig @> ARRAY['search_path=public, pg_temp']) THEN
+      RAISE EXCEPTION 'app.% is not a definer with its path pinned', fn;
+    END IF;
+  END LOOP;
+  SELECT string_agg(p.proname || ':' || has_function_privilege('app_authenticated', p.oid, 'EXECUTE')::text, ', ' ORDER BY p.proname COLLATE "C") INTO got
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'app' AND (p.proname LIKE 'lesson\_pupil\_%' OR p.proname LIKE 'lesson\_move\_%');
+  PERFORM pg_temp.d7_expect('who may execute', got,
+    'lesson_move_is_mentor:true, lesson_move_may:false, lesson_move_may_correct:false, lesson_pupil_arrival_goes_with_the_move:false, lesson_pupil_arrival_is_the_moves:false, '
+    'lesson_pupil_move:true, lesson_pupil_move_is_parallel:false, lesson_pupil_move_remove:false, lesson_pupil_move_tells_the_integrations:false, '
+    'lesson_pupil_move_undo:true, lesson_pupil_moves_lapse:false, lesson_pupil_register_lock:true');
+  IF EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace, pg_roles r
+              WHERE n.nspname = 'app' AND (p.proname LIKE 'lesson\_pupil\_%' OR p.proname LIKE 'lesson\_move\_%')
+                AND r.rolname IN ('anon', 'authenticated', 'service_role')
+                AND has_function_privilege(r.rolname, p.oid, 'EXECUTE')) THEN
+    RAISE EXCEPTION 'a PostgREST role or the service role may execute a function of Elevens lektion för dagen';
+  END IF;
+  -- The triggers: there, and on. The lapse looks at three columns and nothing else.
+  SELECT string_agg(c.relname || '.' || t.tgname || ':' || t.tgenabled::text, ', ' ORDER BY t.tgname COLLATE "C") INTO got
+    FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+   WHERE NOT t.tgisinternal AND t.tgname IN ('CalendarLessonStudents_arrival_is_the_moves', 'CalendarLessonStudents_arrival_goes_with_the_move',
+         'LessonPupilMoves_are_parallel', 'LessonPupilMoves_tell_the_integrations', 'CalendarLessons_pupil_moves_lapse');
+  PERFORM pg_temp.d7_expect('the triggers', got,
+    'CalendarLessonStudents.CalendarLessonStudents_arrival_goes_with_the_move:O, CalendarLessonStudents.CalendarLessonStudents_arrival_is_the_moves:O, '
+    'CalendarLessons.CalendarLessons_pupil_moves_lapse:O, LessonPupilMoves.LessonPupilMoves_are_parallel:O, LessonPupilMoves.LessonPupilMoves_tell_the_integrations:O');
+  IF (SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgname = 'CalendarLessons_pupil_moves_lapse')
+     NOT LIKE '%UPDATE OF "startsAt", "endsAt", status ON%' THEN
+    RAISE EXCEPTION 'the lapse does not look at exactly time and status: %', (SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgname = 'CalendarLessons_pupil_moves_lapse');
+  END IF;
+  -- The school's choice: off, as a school that never said is.
+  IF (SELECT column_default FROM information_schema.columns WHERE table_name = 'SchoolDaySettings' AND column_name = 'guardianNoticeOnMove') <> 'false' THEN
+    RAISE EXCEPTION 'a guardian is told of a move unless the school says it should not be';
+  END IF;
+
+  -- The restated readers carry what they are for, and what they had before.
+  FOR fn, got IN SELECT * FROM (VALUES
+      ('app.current_student_replaced_lesson_ids()', 'LessonPupilMoves'),
+      ('app.calendar_feed_pupil_lessons(uuid, uuid, date, date, text, "TeacherDisplay")', 'LessonPupilMoves'),
+      ('app.calendar_feed_pupil_lessons(uuid, uuid, date, date, text, "TeacherDisplay")', 'g.subject = cl."subjectId"'),
+      ('app.timetable_pupil_days(uuid, uuid, date, text, "TeacherDisplay")', '"moveId" IS NULL'),
+      ('app.reporting_lessons(uuid, date, date, timestamptz)', 'LessonPupilMoves'),
+      ('app.gallring_due(uuid, "RetentionDataType", date, date)', 'LessonPupilMoves'),
+      ('app.gallring_purge(uuid, "RetentionDataType", integer)', 'LessonPupilMoves')) AS t(f, needle)
+  LOOP
+    IF position(got IN (SELECT p.prosrc FROM pg_proc p WHERE p.oid = to_regprocedure(fn))) = 0 THEN
+      RAISE EXCEPTION '% lost something it had (%)', fn, got;
+    END IF;
+  END LOOP;
+  IF position('"moveId" IS NULL' IN (SELECT p.prosrc FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'app' AND p.proname = 'timetable_week_days')) = 0 THEN
+    RAISE EXCEPTION 'the week builder counts an arrival as a lesson for named pupils';
+  END IF;
+  -- ... and every gallring branch of the phases before.
+  FOREACH fn IN ARRAY ARRAY['AttendanceRecords', 'AbsenceWatchFindings', 'TeacherReportingDays', 'ReportingReminders', 'AbsenceReports', 'LeaveRequests',
+                            'Notifications', 'AckRequests', 'ScheduleChangeLogs', 'TeacherEmploymentLogs', 'GuardianStudentHistory', 'PersonProtectionEvents',
+                            'TeacherAbsences', 'PersonalDataAccess', 'CoverRequests', 'CoverConfirmations', 'CrisisAlarms', 'Users', 'LessonPupilMoves'] LOOP
+    IF position('''' || fn || '''' IN (SELECT p.prosrc FROM pg_proc p WHERE p.oid = to_regprocedure('app.gallring_due(uuid, "RetentionDataType", date, date)'))) = 0 THEN
+      RAISE EXCEPTION 'gallring_due lost its branch for %', fn;
+    END IF;
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY['AttendanceRecords', 'AbsenceWatchFindings', 'TeacherReportingDays', 'ReportingReminders', 'LessonPupilMoves', 'AbsenceReports',
+                            'CoverRequests', 'CrisisAlarms'] LOOP
+    IF position('d."tbl" = ''' || fn || '''' IN (SELECT p.prosrc FROM pg_proc p WHERE p.oid = to_regprocedure('app.gallring_purge(uuid, "RetentionDataType", integer)'))) = 0 THEN
+      RAISE EXCEPTION 'gallring_purge lost its branch for %', fn;
+    END IF;
+  END LOOP;
 END $$;
 ROLLBACK;
 

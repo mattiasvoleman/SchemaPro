@@ -1,9 +1,9 @@
 "use client";
 
-import { use, useMemo, useState } from "react";
+import { Suspense, lazy, use, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Check, CheckCheck, Loader2, NotebookPen } from "lucide-react";
+import { ArrowLeftRight, Check, CheckCheck, Loader2, NotebookPen } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import {
   isNotOnLesson,
@@ -15,6 +15,7 @@ import {
   useSubjects,
   type AttendanceEntryInput,
 } from "@/lib/queries";
+import { useLessonMoves } from "@/lib/lesson-moves-queries";
 import { ATTENDANCE_STATUS_VARIANT, type StatusVariant } from "@/lib/status-variants";
 import type { AttendanceStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -28,6 +29,15 @@ import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const STATUSES: AttendanceStatus[] = ["PRESENT", "LATE", "ABSENT", "EXCUSED"];
+
+/*
+ * Elevens lektion för dagen: the dialog that moves a pupil to a parallel lesson
+ * and the list of the pupils moved to or from this one, fetched when the list
+ * has something to show or the teacher asks (React.lazy, not next/dynamic).
+ */
+const LessonMovesSection = lazy(() =>
+  import("@/components/lesson-moves/lesson-moves-section").then((module) => ({ default: module.LessonMovesSection })),
+);
 
 /*
  * The chosen status is drawn in its status colour as an edge and a tint, with
@@ -54,6 +64,12 @@ export default function LessonAttendancePage({
   const tStatus = useTranslations("attendanceStatus");
   const tCommon = useTranslations("common");
   const locale = useLocale();
+
+  const tMove = useTranslations("lessonMoves");
+  const [moving, setMoving] = useState(false);
+  // The moves of this lesson, read with the page: the list below and the section's chunk wait for there to be one.
+  const lessonMoves = useLessonMoves(lessonId);
+  const hasMoves = (lessonMoves.data?.departures.length ?? 0) + (lessonMoves.data?.arrivals.length ?? 0) > 0;
 
   const lessonQuery = useLesson(lessonId);
   const lesson = lessonQuery.data;
@@ -166,13 +182,20 @@ export default function LessonAttendancePage({
         ) : null
       }
       actions={
-        // The lesson's ämne och läxa and its note to the substitute (Lektionslogg).
-        <Button asChild variant="outline">
-          <Link href={`/teacher/lektion/${lessonId}`}>
-            <NotebookPen aria-hidden="true" />
-            {t("lessonLog")}
-          </Link>
-        </Button>
+        <>
+          {/* Elevens lektion för dagen: one pupil to a parallel lesson, for this day. */}
+          <Button variant="outline" data-writes="DRIFT" onClick={() => setMoving(true)}>
+            <ArrowLeftRight aria-hidden="true" />
+            {tMove("action")}
+          </Button>
+          {/* The lesson's ämne och läxa and its note to the substitute (Lektionslogg). */}
+          <Button asChild variant="outline">
+            <Link href={`/teacher/lektion/${lessonId}`}>
+              <NotebookPen aria-hidden="true" />
+              {t("lessonLog")}
+            </Link>
+          </Button>
+        </>
       }
     />
   );
@@ -290,6 +313,12 @@ export default function LessonAttendancePage({
           })}
         </ul>
       </SectionCard>
+
+      {moving || hasMoves ? (
+        <Suspense fallback={null}>
+          <LessonMovesSection lessonId={lessonId} moving={moving} onMovingChange={setMoving} />
+        </Suspense>
+      ) : null}
 
       {/* Held at the bottom of the screen on a long roster, so the teacher
           does not scroll back past thirty pupils to save. */}

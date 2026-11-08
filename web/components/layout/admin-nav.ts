@@ -1,3 +1,4 @@
+import "server-only";
 import {
   BarChart3,
   BookOpen,
@@ -5,6 +6,7 @@ import {
   CalendarDays,
   CalendarOff,
   CalendarRange,
+  CalendarSearch,
   ClipboardCheck,
   Coffee,
   GraduationCap,
@@ -21,7 +23,7 @@ import {
   UserX,
   UtensilsCrossed,
 } from "lucide-react";
-import type { NavSection } from "@/components/layout/app-shell";
+import type { NavGroup } from "./role-nav";
 
 /*
  * The admin menu follows the manual's four phases, one group each, in the
@@ -36,11 +38,14 @@ import type { NavSection } from "@/components/layout/app-shell";
  * up once and serves every phase. Dataskydd och gallring, set up once too,
  * stands beside it.
  *
- * Several entries share an icon with another entry on purpose. The shell is
- * on every (app) route's bill, so an icon of its own would cost every page
- * bytes for a glyph; each shared one says which entry it borrows from.
+ * Several entries share an icon with another entry. They did so for the
+ * bundle, while the menu was code in the chunk every (app) route loads and a
+ * glyph of its own cost every page bytes; it is data from the server now
+ * (role-nav.tsx), and a new entry may have the icon that says it best. The
+ * shared ones stay as they are: a menu that changes its pictures is a change
+ * for the people who know it by them.
  */
-export const ADMIN_NAV: NavSection[] = [
+export const ADMIN_NAV: NavGroup[] = [
   {
     labelKey: null,
     items: [
@@ -56,7 +61,7 @@ export const ADMIN_NAV: NavSection[] = [
       { labelKey: "setup", href: "/admin/setup", icon: GraduationCap },
       // Directly after Kom igång, which creates a school's first läsår: this
       // is where every later one comes from (Rulla vidare) and becomes the
-      // current one (Aktivera). Kom igång's own icon, already in the shell.
+      // current one (Aktivera). Kom igång's own icon.
       { labelKey: "years", href: "/admin/years", icon: GraduationCap },
       { labelKey: "subjects", href: "/admin/subjects", icon: BookOpen },
       { labelKey: "rooms", href: "/admin/rooms", icon: MapPin },
@@ -89,8 +94,7 @@ export const ADMIN_NAV: NavSection[] = [
       // single lesson exists.
       { labelKey: "breaks", href: "/admin/breaks", icon: CalendarOff },
       // The positive half of tillgänglighet's question: the hours a whole
-      // stage may be taught in at all. The publishing icon's twin, already in
-      // the shell.
+      // stage may be taught in at all. The publishing icon's twin.
       { labelKey: "frameTimes", href: "/admin/frame-times", icon: CalendarRange },
       { labelKey: "rasts", href: "/admin/rasts", icon: Coffee },
       { labelKey: "supervision", href: "/admin/supervision", icon: Coffee },
@@ -108,21 +112,19 @@ export const ADMIN_NAV: NavSection[] = [
       { labelKey: "timetable", href: "/admin/timetable", icon: CalendarDays },
       // Next to the grid it is used against: finslipning starts once a base
       // schedule exists, and every answer there is read off this one.
-      // The day planner's icon: CalendarSearch was the only row of the menu to use it, and its code
-      // (240 B gzipped) sat in the shell of every admin page. /admin/gaps carries it itself now.
-      { labelKey: "gaps", href: "/admin/gaps", icon: CalendarClock },
+      { labelKey: "gaps", href: "/admin/gaps", icon: CalendarSearch },
       // Last in the phase, as in the manual: a schedule is published once it
       // is refined. The mode (direct or utkast), which published timetable is
       // valid when, and the checks. The ramtider's icon — a validity range is a
       // range of dates too.
       { labelKey: "publishing", href: "/admin/publishing", icon: CalendarRange },
       // Right after what it shows: the published timetable outside Rastra, to whom and with which
-      // codes. Publicering's icon again, already in the shell (a new glyph here costs every route).
+      // codes. Publicering's icon again.
       { labelKey: "schemavisaren", href: "/admin/schemavisaren", icon: CalendarRange },
-      // Kalenderprenumeration, per audience: Publicering's icon, already in the shell.
+      // Kalenderprenumeration, per audience: Publicering's icon.
       { labelKey: "calendarFeeds", href: "/admin/calendar-feeds", icon: CalendarRange },
       // Schema som fil: the grundschema as a table or an Untis or aSc file, and back in as locked
-      // lessons. Last in the phase, after the feeds it is a sibling of; Publicering's icon, already in the shell.
+      // lessons. Last in the phase, after the feeds it is a sibling of; Publicering's icon.
       { labelKey: "scheduleExchange", href: "/admin/schedule-exchange", icon: CalendarRange },
     ],
   },
@@ -131,13 +133,12 @@ export const ADMIN_NAV: NavSection[] = [
     items: [
       // Krisläge: the roll call of an utrymning or inrymning, first in the phase
       // because it is the page nobody should have to look for. The attendance
-      // icon (Ledighetsansökningar), already in the shell: the same act of
-      // ticking pupils off, in a different hour.
+      // icon (Ledighetsansökningar): the same act of ticking pupils off, in a
+      // different hour.
       { labelKey: "crisis", href: "/admin/crisis", icon: ClipboardCheck },
       // Skolans dag: the whole school's day and week as classes, teachers or
       // rooms, and who is free. Before the day planner it reads from: the
-      // overview first, the single lesson after. The timetable's icon,
-      // already in the shell.
+      // overview first, the single lesson after. The timetable's icon.
       { labelKey: "schoolDay", href: "/admin/school-day", icon: CalendarDays },
       { labelKey: "dayPlanner", href: "/admin/lessons", icon: CalendarClock },
       { labelKey: "teacherAbsence", href: "/admin/teacher-absence", icon: UserX },
@@ -156,20 +157,20 @@ export const ADMIN_NAV: NavSection[] = [
       { labelKey: "roomBookings", href: "/admin/room-bookings", icon: MapPin },
       { labelKey: "reports", href: "/admin/reports", icon: BarChart3 },
       // Frånvarobevakning: the limits for absence and the pupils who passed
-      // one, counted from the attendance Rapporter reads. The reports' icon,
-      // already in the shell: both are figures over the same attendance.
+      // one, counted from the attendance Rapporter reads. The reports' icon:
+      // both are figures over the same attendance.
       { labelKey: "absenceWatch", href: "/admin/absence-watch", icon: BarChart3 },
       // Rapporteringsgrad: each teacher's share of the lessons held whose
       // register is saved, beside Frånvarobevakning, which counts the same
-      // registers from the pupils' side. The reports' icon again, already in
-      // the shell.
+      // registers from the pupils' side. The reports' icon again.
       { labelKey: "reportingRate", href: "/admin/reporting-rate", icon: BarChart3 },
       // Kvittens: staff ask guardians to confirm a message, and see who has.
-      // The attendance icon (Ledighetsansökningar), already in the shell: a
+      // The attendance icon (Ledighetsansökningar): a
       // confirmation is a tick against a name, like the register's.
       { labelKey: "acknowledgements", href: "/admin/acknowledgements", icon: ClipboardCheck },
       // Måltidskollen: the portions of each lunch sitting, for the kitchen. The lunch services' icon
-      // (Lunchsittningar), already in the shell: the same meal, counted instead of placed.
+      // (Lunchsittningar): the same meal, counted instead of placed, and an icon the menu already
+      // names, so the row costs the document its label and path and no drawing of its own.
       { labelKey: "meals", href: "/admin/meals", icon: UtensilsCrossed },
       // Lektionslogg's klassbok: a class's lessons over a period, printed. The subjects' book.
       { labelKey: "classBook", href: "/admin/klassbok", icon: BookOpen },
@@ -180,8 +181,8 @@ export const ADMIN_NAV: NavSection[] = [
     items: [
       // Dataskydd och gallring: how long each kind of data is kept. Like
       // Integrationer it is set up once and serves every phase, so it sits
-      // with it, before it, and Integrationer stays last. Integrationer's key,
-      // already in the shell: both pages decide who and what reaches the
+      // with it, before it, and Integrationer stays last. Integrationer's key:
+      // both pages decide who and what reaches the
       // school's data.
       { labelKey: "dataProtection", href: "/admin/dataskydd", icon: KeyRound },
       { labelKey: "integrations", href: "/admin/integrations", icon: KeyRound },

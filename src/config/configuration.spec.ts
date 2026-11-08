@@ -84,6 +84,7 @@ describe('loadConfiguration', () => {
       mealLetter: { background: true },
       // Unset: the nightly reporting rate ticks (it counts every school; only the reminders and the weekly notice are switches).
       reportingRate: { background: true },
+      absenceStats: { background: true },
       // Unset: the reminder pass of Kvittens ticks.
       ack: { background: true },
       // Unset: 30 s a candidate, two runs at once, four workers, the sweep on.
@@ -139,6 +140,12 @@ describe('loadConfiguration', () => {
     expect(loadConfiguration(env({ ACK_BACKGROUND: 'off' })).ack.background).toBe(false);
     expect(loadConfiguration(env({ ACK_BACKGROUND: 'on' })).ack.background).toBe(true);
     expect(loadConfiguration(env({})).ack.background).toBe(true);
+  });
+
+  it('turns the absence stats tick off only for ABSENCE_STATS_BACKGROUND=off', () => {
+    expect(loadConfiguration(env({ ABSENCE_STATS_BACKGROUND: 'off' })).absenceStats.background).toBe(false);
+    expect(loadConfiguration(env({ ABSENCE_STATS_BACKGROUND: 'on' })).absenceStats.background).toBe(true);
+    expect(loadConfiguration(env({})).absenceStats.background).toBe(true);
   });
 
   it('turns the reporting rate tick off only for REPORTING_RATE_BACKGROUND=off', () => {

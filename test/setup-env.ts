@@ -63,6 +63,9 @@ process.env['MEAL_LETTER_BACKGROUND'] = 'off';
 // The nightly reporting rate (src/reporting-rate): no tick in tests either; a
 // spec drives ReportingRateJob.tick itself.
 process.env['REPORTING_RATE_BACKGROUND'] = 'off';
+// The nightly months' sums of Frånvarostatistik (src/absence-stats): no tick in
+// tests either; a spec drives AbsenceStatsJob.tick itself.
+process.env['ABSENCE_STATS_BACKGROUND'] = 'off';
 // Kvittens' reminder pass: a spec drives AckJob.tick itself.
 process.env['ACK_BACKGROUND'] = 'off';
 // The schemaförslag sweep (src/optimization/schedule-candidates.service.ts):

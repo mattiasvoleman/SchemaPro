@@ -98,6 +98,11 @@ export interface ReportingRateConfig {
   background: boolean;
 }
 
+export interface AbsenceStatsConfig {
+  /** The nightly months' sums of Frånvarostatistik (ABSENCE_STATS_BACKGROUND, default on). */
+  background: boolean;
+}
+
 export interface AckConfig {
   /** The reminder pass of Kvittens (ACK_BACKGROUND, default on). */
   background: boolean;
@@ -143,6 +148,7 @@ export interface Configuration {
   absenceWatch: AbsenceWatchConfig;
   mealLetter: MealLetterConfig;
   reportingRate: ReportingRateConfig;
+  absenceStats: AbsenceStatsConfig;
   ack: AckConfig;
   candidates: CandidatesConfig;
 }
@@ -224,6 +230,9 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     },
     reportingRate: {
       background: env.REPORTING_RATE_BACKGROUND !== 'off',
+    },
+    absenceStats: {
+      background: env.ABSENCE_STATS_BACKGROUND !== 'off',
     },
     ack: {
       background: env.ACK_BACKGROUND !== 'off',

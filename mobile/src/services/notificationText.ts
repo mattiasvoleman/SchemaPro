@@ -105,6 +105,14 @@ export function notificationText(entry: NotificationRow, t: Translate, locale: L
         ? t('notifications.text.absenceWatchDigestOpen', { span, count: open, crossed })
         : t('notifications.text.absenceWatchDigestBack', { span, count: crossed });
     }
+    case 'LESSON_PUPIL_MOVED':
+      // Elevens lektion för dagen: the two subjects and the time, never who moved the pupil and never the
+      // pupil: a teacher finds them in the register, a guardian is told of their own child.
+      return t(meta['undone'] === true ? 'notifications.text.lessonPupilMovedUndone' : 'notifications.text.lessonPupilMoved', {
+        from: str('fromSubjectName'),
+        to: str('toSubjectName'),
+        when: when('startsAt'),
+      });
     case 'LESSON_REPORT_REMINDER': {
       // Rapporteringsgrad: how many lessons stand open and the school's limit,
       // never which lesson, its subject, its class or its time. The count is
