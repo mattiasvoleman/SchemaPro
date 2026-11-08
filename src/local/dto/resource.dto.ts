@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsInt,
@@ -9,10 +10,12 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { trimmed } from './trim';
 
 /** A kind of bookable resource the school has named: Surfplattor, Minibuss, Aulan. */
 export class CreateResourceTypeDto {
   @IsString()
+  @Transform(trimmed)
   @MinLength(1)
   @MaxLength(60)
   name!: string;
@@ -21,6 +24,7 @@ export class CreateResourceTypeDto {
 export class UpdateResourceTypeDto {
   @IsOptional()
   @IsString()
+  @Transform(trimmed)
   @MinLength(1)
   @MaxLength(60)
   name?: string;
@@ -33,6 +37,7 @@ export class UpdateResourceTypeDto {
  */
 export class CreateResourceDto {
   @IsString()
+  @Transform(trimmed)
   @MinLength(1)
   @MaxLength(80)
   name!: string;
@@ -66,6 +71,7 @@ export class CreateResourceDto {
 export class UpdateResourceDto {
   @IsOptional()
   @IsString()
+  @Transform(trimmed)
   @MinLength(1)
   @MaxLength(80)
   name?: string;

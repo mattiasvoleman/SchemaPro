@@ -868,10 +868,21 @@ describe('Lokal (e2e)', () => {
 
     const longText = (length: number) => 'x'.repeat(length);
 
+    it('answers a text of only spaces as it answers an empty one: a 400 problem that names the field, and nothing reaches the table', async () => {
+      const blank = await http().post('/api/v1/resource-types').set('x-test-user', admin).send({ name: '   ' }).expect(400);
+      const empty = await http().post('/api/v1/resource-types').set('x-test-user', admin).send({ name: '' }).expect(400);
+      expect(blank.type).toBe('application/problem+json');
+      expect(blank.body).toMatchObject({ status: 400, errors: { body: ['name must be longer than or equal to 1 characters'] } });
+      expect(blank.body.errors).toEqual(empty.body.errors);
+      expect(harness.prisma.withRls).not.toHaveBeenCalled();
+      expect(table('resourceType', 'create')).not.toHaveBeenCalled();
+    });
+
     describe('resource types and resources', () => {
       it.each([
         ['no name', {}],
         ['a blank name', { name: '' }],
+        ['a name of only spaces, which the table counts as nothing', { name: '   ' }],
         ['a name of 61 characters', { name: longText(61) }],
         ['a name that is a number', { name: 5 }],
         ['a field it does not know', { name: 'Aulan', schoolId: SCHOOL_ID }],
@@ -879,6 +890,7 @@ describe('Lokal (e2e)', () => {
 
       it('refuses a rename to a blank or a long name, and an id that is not a uuid', async () => {
         await refuses('patch', `/api/v1/resource-types/${TYPE_ID}`, { name: '' })();
+        await refuses('patch', `/api/v1/resource-types/${TYPE_ID}`, { name: '  \t ' })();
         await refuses('patch', `/api/v1/resource-types/${TYPE_ID}`, { name: longText(61) })();
         await refuses('patch', '/api/v1/resource-types/not-an-id', { name: 'x' })();
         await http().delete('/api/v1/resource-types/not-an-id').set('x-test-user', admin).expect(400);
@@ -888,6 +900,7 @@ describe('Lokal (e2e)', () => {
       const good = { name: 'Surfplattor', resourceTypeId: TYPE_ID };
       it.each([
         ['no name', { resourceTypeId: TYPE_ID }],
+        ['a name of only spaces', { ...good, name: '   ' }],
         ['a name of 81 characters', { ...good, name: longText(81) }],
         ['no kind', { name: 'Surfplattor' }],
         ['a kind that is not a uuid', { ...good, resourceTypeId: 'plattor' }],
@@ -901,6 +914,7 @@ describe('Lokal (e2e)', () => {
 
       it.each([
         ['a blank name', { name: '' }],
+        ['a name of only spaces', { name: '   ' }],
         ['a kind that is not a uuid', { resourceTypeId: 'plattor' }],
         ['a quantity of 0', { quantity: 0 }],
         ['a quantity of 1001', { quantity: 1001 }],
@@ -930,6 +944,7 @@ describe('Lokal (e2e)', () => {
       it.each([
         ['a resource that is not a uuid', { ...good, resourceId: 'plattor' }],
         ['no title', { ...good, title: '' }],
+        ['a title of only spaces', { ...good, title: '   ' }],
         ['a title of 121 characters', { ...good, title: longText(121) }],
         ['a quantity of 0', { ...good, quantity: 0 }],
         ['a quantity of 1001', { ...good, quantity: 1001 }],
@@ -993,6 +1008,9 @@ describe('Lokal (e2e)', () => {
       it.each([
         ['no organisation', registration({ organisation: undefined })],
         ['a blank organisation', registration({ organisation: '' })],
+        ['an organisation of only spaces', registration({ organisation: '   ' })],
+        ['a contact name of only spaces', registration({ contactName: ' \t ' })],
+        ['a telephone number of 4 characters of which 2 are spaces', registration({ contactPhone: ' 12 ' })],
         ['an organisation of 121 characters', registration({ organisation: longText(121) })],
         ['no contact name', registration({ contactName: undefined })],
         ['a contact name of 121 characters', registration({ contactName: longText(121) })],
@@ -1011,6 +1029,9 @@ describe('Lokal (e2e)', () => {
 
       it.each([
         ['a blank organisation', { organisation: '' }],
+        ['an organisation of only spaces', { organisation: '  ' }],
+        ['a contact name of only spaces', { contactName: '   ' }],
+        ['a telephone number of 4 characters of which 2 are spaces', { contactPhone: ' 12 ' }],
         ['a contact name of 121 characters', { contactName: longText(121) }],
         ['a telephone number of 2 characters', { contactPhone: '07' }],
         ['an address that is not one', { contactEmail: 'kim' }],

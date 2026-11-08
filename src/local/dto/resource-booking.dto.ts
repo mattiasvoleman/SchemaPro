@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import {
   IsIn,
   IsInt,
@@ -10,6 +11,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { trimmed } from './trim';
 
 /** A member of staff reserves some of a resource for a datetime range. */
 export class CreateResourceBookingDto {
@@ -17,6 +19,7 @@ export class CreateResourceBookingDto {
   resourceId!: string;
 
   @IsString()
+  @Transform(trimmed)
   @MinLength(1)
   @MaxLength(120)
   title!: string;

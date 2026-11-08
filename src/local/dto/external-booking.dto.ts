@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -16,6 +17,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { trimmed } from './trim';
 import { IsCalendarDate } from '../../resources/dto/is-calendar-date';
 
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -87,11 +89,13 @@ export class ExternalBookingRuleDto {
  */
 export class CreateExternalBookingDto extends ExternalBookingRuleDto {
   @IsString()
+  @Transform(trimmed)
   @MinLength(1)
   @MaxLength(120)
   organisation!: string;
 
   @IsString()
+  @Transform(trimmed)
   @MinLength(1)
   @MaxLength(120)
   contactName!: string;
@@ -99,6 +103,7 @@ export class CreateExternalBookingDto extends ExternalBookingRuleDto {
   /** At least one of the telephone number and the address (the table's CHECK). */
   @IsOptional()
   @IsString()
+  @Transform(trimmed)
   @MinLength(3)
   @MaxLength(40)
   contactPhone?: string | null;
@@ -132,18 +137,21 @@ export class CreateExternalBookingDto extends ExternalBookingRuleDto {
 export class UpdateExternalBookingDto {
   @IsOptional()
   @IsString()
+  @Transform(trimmed)
   @MinLength(1)
   @MaxLength(120)
   organisation?: string;
 
   @IsOptional()
   @IsString()
+  @Transform(trimmed)
   @MinLength(1)
   @MaxLength(120)
   contactName?: string;
 
   @IsOptional()
   @IsString()
+  @Transform(trimmed)
   @MinLength(3)
   @MaxLength(40)
   contactPhone?: string | null;
