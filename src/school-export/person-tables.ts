@@ -147,9 +147,12 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   AckReceipts: dump(['guardianId', 'studentId'], 'GUARDIANS'),
   AckRequests: dump(['authorId']),
   // Checklistor (20270129091000): what a pupil has been instructed in and has consented to (the pupil's own extract), and what
-  // a member of staff gave, wrote or made (theirs). A list is named by its class and its title, which are the school's.
-  InstructionProofs: dump(['studentId', 'instructorId', 'recordedById', 'voidedById']),
-  ConsentEntries: dump(['studentId', 'recordedById']),
+  // a member of staff gave, wrote or made (theirs). A list is named by its class and its title, which are the school's. Both
+  // tables are about a pupil and a member of staff acts in them: in the staff member's extract the pupil, the note and the
+  // reason of a voided proof, and the answer (what the guardian decided, who gave it, when, and what was written beside it) are
+  // empty, and only the act stays: who ticked or wrote, when, on which template or list (granskning #288, M1).
+  InstructionProofs: aboutPupil(dump(['studentId', 'instructorId', 'recordedById', 'voidedById']), 'studentId', ['note', 'voidReason']),
+  ConsentEntries: aboutPupil(dump(['studentId', 'recordedById']), 'studentId', ['kind', 'givenOn', 'givenBy', 'note']),
   ConsentLists: dump(['createdById']),
   SharedTeacherMarks: dump(['teacherId']),
   ScheduleActivityTeachers: dump(['teacherId']),
