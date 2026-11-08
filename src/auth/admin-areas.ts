@@ -268,6 +268,13 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   ScheduleActivities: only('DRIFT'),
   ScheduleActivityLessons: only('DRIFT'),
   ScheduleActivityTeachers: only('DRIFT'),
+  // Provplanering (20270127090000): an exam becomes an activity, so Drift's.
+  ExamGroups: only('DRIFT'),
+  ExamInvigilators: only('DRIFT'),
+  ExamPlanSettings: only('DRIFT'),
+  ExamRooms: only('DRIFT'),
+  ExamSittings: only('DRIFT'),
+  Exams: only('DRIFT'),
   CoverSettings: only('DRIFT'),
   LeaveRequests: only('DRIFT'),
   // Lektionslogg (20261203090000): rektor removes a log that should not

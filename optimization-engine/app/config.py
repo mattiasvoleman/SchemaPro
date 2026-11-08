@@ -74,6 +74,16 @@ class Settings(BaseSettings):
     staff_solver_max_time_seconds: float = Field(
         default=10.0, alias="STAFF_SOLVER_MAX_TIME_SECONDS",
     )
+    # The exam planner's budget (POST /api/v1/plan-exams), its own for the room
+    # budget's reason: a provvecka is planned behind a button with someone
+    # watching the spinner, and leaving every exam unplaced is a valid answer
+    # from the first instant, so a short budget only ever means fewer exams
+    # placed or a clumsier plan, never a refusal. Twenty seconds, because a
+    # week of 20-30 exams is a bigger problem than a room proposal; a request
+    # can ask for less (search.maxTimeSeconds) and never for more.
+    exam_solver_max_time_seconds: float = Field(
+        default=20.0, alias="EXAM_SOLVER_MAX_TIME_SECONDS",
+    )
 
     schedule_day_start_minutes: int = Field(default=480, alias="SCHEDULE_DAY_START_MINUTES")
     schedule_day_end_minutes: int = Field(default=1080, alias="SCHEDULE_DAY_END_MINUTES")
@@ -251,6 +261,7 @@ class Settings(BaseSettings):
         "solver_max_time_seconds",
         "room_solver_max_time_seconds",
         "staff_solver_max_time_seconds",
+        "exam_solver_max_time_seconds",
     )
     @classmethod
     def validate_positive_timeout(cls, value: float) -> float:

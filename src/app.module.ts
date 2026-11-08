@@ -48,6 +48,7 @@ import { ReportingRateModule } from './reporting-rate/reporting-rate.module';
 import { AbsenceStatsModule } from './absence-stats/absence-stats.module';
 import { AckModule } from './ack/ack.module';
 import { SchoolDayModule } from './school-day/school-day.module';
+import { ExamsModule } from './exams/exams.module';
 import { GallringModule } from './gallring/gallring.module';
 import { SchoolExportModule } from './school-export/school-export.module';
 import { AccessLogModule } from './access-log/access-log.module';
@@ -162,6 +163,7 @@ import type { ThrottleConfig } from './config/configuration';
     AbsenceStatsModule,
     AckModule,
     SchoolDayModule,
+    ExamsModule,
     AccessLogModule,
     OpenApiModule,
     SchoolUnitsModule,

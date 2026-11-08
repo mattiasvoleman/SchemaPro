@@ -1428,4 +1428,56 @@ MESSAGES: dict[str, str] = {
         "settled as they are, or record qualifications so that fewer teachers are candidates "
         "for each entry, and try again."
     ),
+
+    # ---- The exam planner (POST /api/v1/plan-exams) ------------------------
+    # Sent by THIS engine, from app/solver/exam_solver.py. None of them names a
+    # person, a subject or a class: the class reasons carry the class as an
+    # opaque `classId` in their params (not used by the English), which the
+    # gateway maps back so the page can name it. Each is judged on the final
+    # plan: the exam was tried at every one of its times against the exams
+    # already placed, and this is the rule that stopped the most of them.
+    "EXAM_NO_SLOT": (
+        "The exam has no time it can be held at. Widen its window or give it a date."
+    ),
+    "EXAM_NO_ROOM_SEATS": (
+        "{writers, plural, one {# pupil writes} other {# pupils write}} the exam, but the "
+        "exam rooms that are free for it seat at most {seats}, even with no other exam in "
+        "them. Mark more rooms as exam rooms, or split the exam."
+    ),
+    "EXAM_NO_INVIGILATORS": (
+        "{needed, plural, one {# invigilator is} other {# invigilators are}} needed, but at "
+        "most {free} {free, plural, one {teacher is} other {teachers are}} free at the "
+        "exam's best time, even with no other exam to watch. Add teachers to the pool or "
+        "free some of theirs."
+    ),
+    "EXAM_CLASS_DAY_CAP": (
+        "The class already has {limit, plural, one {# exam} other {# exams}} a day, which is "
+        "its limit, on every day the exam could be held."
+    ),
+    "EXAM_CLASS_WEEK_CAP": (
+        "The class already has {limit, plural, one {# exam} other {# exams}} a week, which is "
+        "its limit, in every week the exam could be held."
+    ),
+    "EXAM_CLASS_CLASH": (
+        "Another exam for the same class takes every time the exam could be held."
+    ),
+    "EXAM_ROOMS_TAKEN": (
+        "Other exams in the plan hold the exam rooms at every time the exam could be held: "
+        "{writers, plural, one {# pupil writes} other {# pupils write}} it, and at best "
+        "{seats} seats are free."
+    ),
+    "EXAM_INVIGILATORS_TAKEN": (
+        "Other exams in the plan hold the teachers at every time the exam could be held: "
+        "{needed, plural, one {# invigilator is} other {# invigilators are}} needed, and at "
+        "best {free} {free, plural, one {teacher is} other {teachers are}} free."
+    ),
+    "EXAM_NOT_REACHED": (
+        "The search ended before it found a place for the exam, although there is a time "
+        "nothing else in the plan stops. Plan again, with more time if you can."
+    ),
+    "EXAM_MODEL_TOO_LARGE": (
+        "There are too many possible combinations of exam, room and invigilator to weigh in "
+        "one go: about {variables} model variables against a limit of {limit}. Fewer exams, "
+        "fewer candidate times per exam or a smaller pool of teachers bring it down."
+    ),
 }

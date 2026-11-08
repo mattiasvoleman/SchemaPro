@@ -180,6 +180,8 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('Ss12000DutyLinks', ['userId', 'schoolId'], 'CASCADE', others),
   key('SupervisionShifts', ['userId', 'schoolId'], 'CASCADE', others),
   key('ScheduleActivityTeachers', ['teacherId', 'schoolId'], 'CASCADE', others),
+  // Provplanering (20270127090000): the watch a teacher keeps at an exam goes with the person; the exam stays.
+  key('ExamInvigilators', ['teacherId', 'schoolId'], 'CASCADE', others),
   key('SupervisionCovers', ['substituteId', 'schoolId'], 'CASCADE', others),
   // Vikariefrågan (20270102091000): a question they were asked and a pass they confirmed.
   key('CoverRequestRecipients', ['userId', 'schoolId'], 'CASCADE', others),
@@ -220,6 +222,7 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('CancellationBatches', ['reversedByUserId', 'schoolId'], 'SET NULL', kept),
   key('ScheduleActivities', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
   key('ScheduleActivities', ['removedByUserId', 'schoolId'], 'SET NULL', kept),
+  key('Exams', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
   key('PublicTimetableLinks', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
   key('TeacherAbsences', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
   key('TeacherAbsences', ['withdrawnByUserId', 'schoolId'], 'SET NULL', kept),
@@ -359,6 +362,9 @@ export const STUDENT_BELOW: readonly BelowKey<never>[] = [
   // Elevens lektion för dagen: a pupil's move takes the pupil's arrival with it (the pupil's own arrival row is
   // counted above, by the pupil's key; this is the same row reached through the move).
   below('LessonPupilMoves', 'CalendarLessonStudents', ['moveId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
+  // Provplanering (20270127090000): a booking made by a person who goes is cancelled with them, and the sitting of an exam
+  // that booking held stays with its room and its writers, without the booking (its key is SET NULL); counted with the other rows.
+  below('RoomBookings', 'ExamSittings', ['bookingId', 'schoolId'], 'SET NULL', { with: 'otherRows' }),
   below('TeacherEmployments', 'TeacherEmploymentPeriods', ['employmentId', 'schoolId', 'userId', 'academicYearId'], 'CASCADE', {
     with: 'otherRows',
   }),

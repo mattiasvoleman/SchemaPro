@@ -1721,6 +1721,8 @@ model ScheduleActivity {
   batch    CancellationBatch          @relation(fields: [batchId, schoolId], references: [id, schoolId], onDelete: Cascade)
   teachers ScheduleActivityTeacher[]
   lessons  ScheduleActivityLesson[]
+  /// The exam this activity carries, if it does (Provplanering, 20270127090000).
+  exams    Exam[]
 
   @@unique([id, schoolId])
   @@unique([batchId])
@@ -1766,6 +1768,137 @@ model ScheduleActivityLesson {
   @@index([studentGroupId, schoolId])
   @@index([schoolId])
   @@map("ScheduleActivityLessons")
+}
+
+/// Provplanering (20270127090000): the school's decisions about exams. One row
+/// per school; the engine is off until the school turns it on (enabled).
+model ExamPlanSettings {
+  schoolId              String   @id @db.Uuid
+  enabled               Boolean  @default(false)
+  /// At most this many exams a class writes on one day, and in one week (CHECKs).
+  maxPerClassPerDay     Int      @default(1)
+  maxPerClassPerWeek    Int      @default(3)
+  /// A room with x writers has max(1, ceil(x / this)) invigilators (CHECK 1..200).
+  writersPerInvigilator Int      @default(30)
+  /// Minutes before a room or an invigilator can start the next exam (CHECK 0..120).
+  turnoverMinutes       Int      @default(10)
+  /// The subject the replacement lessons of an exam are held in: one that does not count toward the timplan.
+  replacementSubjectId  String?  @db.Uuid
+  updatedAt             DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([replacementSubjectId, schoolId])
+  @@map("ExamPlanSettings")
+}
+
+/// A room the school lets exams be written in, and how many seats an exam has
+/// there (which may be fewer than the room's capacity). A row is the mark.
+model ExamRoom {
+  roomId    String   @id @db.Uuid
+  schoolId  String   @db.Uuid
+  seats     Int
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([schoolId])
+  @@map("ExamRooms")
+}
+
+/// A prov (20270127090000). The window is what the school asked for (WEEK: any
+/// span of at most 31 days, with optional daily bounds; FIXED: a date and a
+/// start, a nationellt prov). Planned means activityId is set: the plan itself
+/// (day, time) is the activity's avbokning, and the rooms and invigilators are
+/// ExamSittings and ExamInvigilators.
+model Exam {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String    @db.Uuid
+  academicYearId  String    @db.Uuid
+  /// The subject the exam is in: it counts toward the timplan and is credited the exam's minutes.
+  subjectId       String    @db.Uuid
+  name            String
+  lengthMinutes   Int
+  writers         Int
+  /// WEEK or FIXED (CHECK).
+  windowKind      String
+  windowFrom      DateTime  @db.Date
+  windowTo        DateTime  @db.Date
+  /// FIXED only.
+  fixedStart      DateTime? @db.Time(6)
+  /// WEEK only: the earliest start and the latest end of the exam on any day of the window.
+  earliestStart   DateTime? @db.Time(6)
+  latestEnd       DateTime? @db.Time(6)
+  /// Set while the exam is planned: the schemabrytande aktivitet that carries it.
+  activityId      String?   @db.Uuid
+  /// Why the last run could not place it (a code of the engine's or the gateway's), with its figures.
+  lastReason      String?
+  lastReasonParams Json?
+  lastPlannedAt   DateTime? @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+  createdByUserId String?   @db.Uuid
+
+  activity  ScheduleActivity?  @relation(fields: [activityId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  groups    ExamGroup[]
+  sittings  ExamSitting[]
+
+  @@unique([id, schoolId])
+  @@index([schoolId])
+  @@index([academicYearId, schoolId, windowFrom])
+  @@index([subjectId, schoolId])
+  @@index([activityId, schoolId])
+  @@index([createdByUserId, schoolId])
+  @@map("Exams")
+}
+
+/// The classes and groups an exam is for. studentGroupId is no foreign key
+/// (the ScheduleActivities precedent): a class deleted from the year is
+/// dropped from the exam when it is read.
+model ExamGroup {
+  examId         String @db.Uuid
+  studentGroupId String @db.Uuid
+  schoolId       String @db.Uuid
+
+  exam Exam @relation(fields: [examId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([examId, studentGroupId])
+  @@index([studentGroupId, schoolId])
+  @@index([schoolId])
+  @@map("ExamGroups")
+}
+
+/// A room an exam is written in, with how many write there, and the booking
+/// that holds the room.
+model ExamSitting {
+  examId    String  @db.Uuid
+  roomId    String  @db.Uuid
+  schoolId  String  @db.Uuid
+  writers   Int
+  bookingId String? @db.Uuid
+
+  exam          Exam               @relation(fields: [examId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  invigilators  ExamInvigilator[]
+
+  @@id([examId, roomId])
+  @@unique([examId, roomId, schoolId])
+  @@index([roomId, schoolId])
+  @@index([bookingId, schoolId])
+  @@index([schoolId])
+  @@map("ExamSittings")
+}
+
+/// A teacher who keeps watch in a room at an exam. Personnel only; never a
+/// teacher with a protected identity (the planner leaves them out of the pool).
+model ExamInvigilator {
+  examId    String @db.Uuid
+  roomId    String @db.Uuid
+  teacherId String @db.Uuid
+  schoolId  String @db.Uuid
+
+  sitting ExamSitting @relation(fields: [examId, roomId, schoolId], references: [examId, roomId, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([examId, roomId, teacherId])
+  @@unique([examId, teacherId])
+  @@index([teacherId, schoolId])
+  @@index([schoolId])
+  @@map("ExamInvigilators")
 }
 
 /// A shared, revocable link to the public viewer (20261011120000). Only the
@@ -3028,6 +3161,8 @@ model RoomBooking {
   // (roomId, tstzrange(startsAt, endsAt)), limited to PENDING and APPROVED
   // rows, is what stops two people holding one room at one hour. Prisma cannot
   // express it — see migration 20260822131500_a_room_is_booked_once.
+  /// The target of ExamSittings.bookingId (20270127090000).
+  @@unique([id, schoolId])
   @@index([schoolId, startsAt])
   @@index([roomId, startsAt])
   @@index([bookedById, startsAt])

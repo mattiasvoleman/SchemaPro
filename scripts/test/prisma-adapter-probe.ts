@@ -145,6 +145,7 @@ import { sweepTioarigSchool, tioarigChecks } from './probe-tioarig';
 import { lessonLogChecks, sweepLessonLogSchool } from './probe-lesson-log';
 import { scheduleActivityChecks, sweepScheduleActivitySchool } from './probe-schemabrytande';
 import { scheduleActivityPublicationChecks, sweepScheduleActivityPublicationSchools } from './probe-schemabrytande-publication';
+import { examChecks, sweepExamSchool } from './probe-prov';
 import { rastvaktChecks, sweepRastvaktSchool } from './probe-rastvakt';
 import { coverRequestsChecks, sweepCoverRequestsSchool } from './probe-cover-requests';
 import { krislageChecks, sweepKrislageSchool } from './probe-krislage';
@@ -6040,6 +6041,7 @@ async function runChecks(
   await lessonLogChecks(owner, api, MARKER, check);
   await scheduleActivityChecks(owner, api, MARKER, check);
   await scheduleActivityPublicationChecks(owner, api, MARKER, check);
+  await examChecks(owner, api, MARKER, check);
   await rastvaktChecks(owner, api, MARKER, check);
   await tenantKeyChecks(owner, api, MARKER, check);
   await coverRequestsChecks(owner, api, MARKER, check);
@@ -6540,6 +6542,7 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepLessonLogSchool(owner, MARKER);
   await sweepScheduleActivitySchool(owner, MARKER);
   await sweepScheduleActivityPublicationSchools(owner, MARKER);
+  await sweepExamSchool(owner, MARKER);
   await sweepRastvaktSchool(owner, MARKER);
   // The tenant keys' two schools, likewise.
   await sweepTenantKeySchools(owner, MARKER);
