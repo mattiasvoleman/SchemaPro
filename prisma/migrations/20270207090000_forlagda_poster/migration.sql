@@ -186,10 +186,10 @@
 -- Production runs this while the API before it serves requests. The new table's
 -- keys take Schools, TeachingRequirements and Rooms in SHARE ROW EXCLUSIVE
 -- (writes wait, reads do not); the two triggers take TeachingRequirements and
--- TeachingRequirementShares in the same mode; the new column of MasterLessons
--- takes ACCESS EXCLUSIVE. Requests take these
+-- TeachingRequirementShares in the same mode; the new columns of MasterLessons
+-- and PublishedLessons take ACCESS EXCLUSIVE. Requests take these
 -- in every order, so a migration that waited for one while holding another
--- could close a cycle. So all five are taken first, NOWAIT and together: a
+-- could close a cycle. So all six are taken first, NOWAIT and together: a
 -- refusal rolls the subtransaction back and with it whatever it got, and it
 -- tries again 50 ms later. It never waits while it holds a lock, and no request
 -- queues behind it. After 30 s of refusals it stops with nothing done and can
@@ -212,10 +212,11 @@ BEGIN
       LOCK TABLE "TeachingRequirementShares" IN SHARE ROW EXCLUSIVE MODE NOWAIT;
       LOCK TABLE "Rooms" IN SHARE ROW EXCLUSIVE MODE NOWAIT;
       LOCK TABLE "MasterLessons" IN ACCESS EXCLUSIVE MODE NOWAIT;
+      LOCK TABLE "PublishedLessons" IN ACCESS EXCLUSIVE MODE NOWAIT;
       EXIT;
     EXCEPTION WHEN lock_not_available THEN
       IF clock_timestamp() > give_up THEN
-        RAISE EXCEPTION 'Schools, TeachingRequirements, TeachingRequirementShares, Rooms and MasterLessons were not free at once in 30 s: nothing is changed, run the migration again';
+        RAISE EXCEPTION 'Schools, TeachingRequirements, TeachingRequirementShares, Rooms, MasterLessons and PublishedLessons were not free at once in 30 s: nothing is changed. Run prisma migrate resolve --rolled-back 20270207090000_forlagda_poster, then deploy again';
       END IF;
       PERFORM pg_sleep(0.05);
     END;
@@ -294,6 +295,16 @@ ALTER TABLE "MasterLessons" ADD COLUMN "fromPlacement" BOOLEAN NOT NULL DEFAULT 
 
 COMMENT ON COLUMN "MasterLessons"."fromPlacement" IS
   'True on a lesson Generera wrote from a förläggning (TeachingRequirementPlacements); locked and generated both. Every Generera replaces such a lesson. A flag and not a key: the timplan replaces a post''s rows whole, with new ids.';
+
+-- And on the grundschema a DRAFT publication published, which discarding the
+-- draft writes back: without it a placed lesson came back as an ordinary lock
+-- beside its förläggning, and every Generera of the school was refused for a
+-- clash with itself (review of #293, MEDEL-2). A constant default, so the
+-- table is not rewritten; granted by table like its other columns.
+ALTER TABLE "PublishedLessons" ADD COLUMN "fromPlacement" BOOLEAN NOT NULL DEFAULT false;
+
+COMMENT ON COLUMN "PublishedLessons"."fromPlacement" IS
+  'The published lesson''s MasterLessons.fromPlacement, written back when a draft is discarded.';
 
 -- ---------------------------------------------------------------------------
 -- The placements fit the post.

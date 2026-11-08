@@ -578,6 +578,8 @@ export class MasterLessonsService {
         where: { id },
         select: {
           ...LESSON_SELECT,
+          // Förlagda poster: a lesson Generera wrote from a förläggning (below).
+          fromPlacement: true,
           school: {
             select: {
               id: true,
@@ -660,6 +662,7 @@ export class MasterLessonsService {
       if (candidate.startMinutes >= candidate.endMinutes) {
         throw new BadRequestException('startTime must be before endTime.');
       }
+      if (lesson.fromPlacement) assertPlacedLessonStands(lesson, candidate);
 
       // A lesson being set aside occupies nothing, so there is nothing for it
       // to clash with — the whole point of the tray is that A can leave slot X
@@ -815,7 +818,11 @@ export class MasterLessonsService {
            * make each nudge a second, invisible lock and leave the padlock
            * meaning nothing.
            */
-          ...(writesWindow && !restatesWindow ? { isGenerated: false } : {}),
+          // Never on a lesson Generera wrote from a förläggning: its window
+          // is the post's and cannot change here (assertPlacedLessonStands),
+          // and handed over it would be kept beside its förläggning as a
+          // second copy of the same lesson (review of #293, MEDEL-2).
+          ...(writesWindow && !restatesWindow && !lesson.fromPlacement ? { isGenerated: false } : {}),
           // The block's say comes last: joining a card makes the lesson the
           // card's, whatever the window above said (the window is the card's
           // own, or the slot would not be the card's), and a split is the
@@ -2846,6 +2853,75 @@ export class MasterLessonsService {
 }
 
 // ---------------------------------------------------------------------------
+
+/** The problem `code` of an edit that would move or change a förlagd lesson (Förlagda poster). */
+export const LESSON_IS_PLACED = 'LESSON_IS_PLACED';
+
+/**
+ * FÖRLAGDA POSTER: a lesson Generera wrote from a förläggning on its
+ * timplanspost (fromPlacement) is the förläggning's in the grundschema, and
+ * the next Generera writes it again from the förläggning. Moved, given another
+ * room, teacher, weeks, class or pupils by hand, it would either be put back
+ * without a word, or — once the edit handed it to the school (a window, a
+ * second class, named pupils) — be kept beside its förläggning, and every
+ * Generera of the school would then be refused for a clash with itself
+ * (review of #293, MEDEL-2). So the edit is refused, saying where the lesson
+ * is changed. Locking, unlocking and parking it change nothing of that, and
+ * a save that restates what the lesson already is (the dialog sends every
+ * field) is no change.
+ */
+function assertPlacedLessonStands(
+  lesson: {
+    dayOfWeek: number;
+    startTime: Date;
+    endTime: Date;
+    roomId: string | null;
+    teacherId: string | null;
+    coTeacherId: string | null;
+    recurrence: LessonRecurrence;
+    startDate: Date | null;
+    endDate: Date | null;
+    studentGroupId: string;
+    extraGroups: { studentGroupId: string }[];
+    participants: { studentId: string }[];
+  },
+  candidate: {
+    dayOfWeek: number;
+    startMinutes: number;
+    endMinutes: number;
+    roomId: string | null;
+    teacherId: string | null;
+    coTeacherId: string | null;
+    recurrence: LessonRecurrence;
+    startDate: Date | null;
+    endDate: Date | null;
+    extraGroupIds: string[];
+    studentIds: string[];
+  },
+): void {
+  const day = (value: Date | null) => (value ? value.toISOString().slice(0, 10) : null);
+  const sameSet = (a: readonly string[], b: readonly string[]) =>
+    new Set(a).size === new Set(b).size && a.every((id) => b.includes(id));
+  const stands =
+    candidate.dayOfWeek === lesson.dayOfWeek &&
+    candidate.startMinutes === toMinutes(lesson.startTime) &&
+    candidate.endMinutes === toMinutes(lesson.endTime) &&
+    candidate.roomId === lesson.roomId &&
+    candidate.teacherId === lesson.teacherId &&
+    candidate.coTeacherId === lesson.coTeacherId &&
+    candidate.recurrence === lesson.recurrence &&
+    day(candidate.startDate) === day(lesson.startDate) &&
+    day(candidate.endDate) === day(lesson.endDate) &&
+    sameSet(candidate.extraGroupIds, lesson.extraGroups.map((entry) => entry.studentGroupId).filter((id) => id !== lesson.studentGroupId)) &&
+    sameSet(candidate.studentIds, lesson.participants.map((entry) => entry.studentId));
+  if (!stands) {
+    throw new ConflictException({
+      message:
+        'Lektionen är förlagd på timplanen och skrivs om därifrån vid varje Generera. Ändra förläggningen på timplansposten i stället.',
+      code: LESSON_IS_PLACED,
+    });
+  }
+}
 
 const LESSON_SELECT = {
   id: true,

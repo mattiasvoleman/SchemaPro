@@ -1603,6 +1603,9 @@ model PublishedLesson {
   isLocked       Boolean
   isGenerated    Boolean
   isParked       Boolean
+  /// Förlagda poster: the lesson's MasterLesson.fromPlacement, written back
+  /// when the draft is discarded (20270207090000).
+  fromPlacement  Boolean          @default(false)
   recurrence     LessonRecurrence
   startDate      DateTime?        @db.Date
   endDate        DateTime?        @db.Date

@@ -56693,6 +56693,24 @@ BEGIN
     has_column_privilege('app_authenticated', '"MasterLessons"', 'fromPlacement', 'SELECT')
     AND has_column_privilege('app_authenticated', '"MasterLessons"', 'fromPlacement', 'INSERT')
     AND has_column_privilege('app_authenticated', '"MasterLessons"', 'fromPlacement', 'UPDATE'));
+
+  -- PublishedLessons.fromPlacement (review of #293, MEDEL-2): the flag a discarded draft writes back, the same
+  -- shape, held by the table's grants as its isGenerated is, and commented.
+  SELECT format('%s %s %s', format_type(a.atttypid, a.atttypmod), CASE WHEN a.attnotnull THEN 'NN' ELSE 'N' END, pg_get_expr(d.adbin, d.adrelid))
+    INTO got FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = '"PublishedLessons"'::regclass AND a.attname = 'fromPlacement' AND NOT a.attisdropped;
+  PERFORM pg_temp.fl_expect('465 PublishedLessons.fromPlacement', got, 'boolean NN false');
+  PERFORM pg_temp.fl_expect('465 PublishedLessons.fromPlacement has no grant of its own',
+    (SELECT attacl IS NULL FROM pg_attribute WHERE attrelid = '"PublishedLessons"'::regclass AND attname = 'fromPlacement')::text, 'true');
+  FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] LOOP
+      PERFORM pg_temp.fl_expect(format('465 %s %s on PublishedLessons.fromPlacement as on its isGenerated', r, priv),
+        has_column_privilege(r, '"PublishedLessons"', 'fromPlacement', priv)::text, has_column_privilege(r, '"PublishedLessons"', 'isGenerated', priv)::text);
+    END LOOP;
+  END LOOP;
+  PERFORM pg_temp.fl_true('465 PublishedLessons.fromPlacement is commented',
+    coalesce(col_description('"PublishedLessons"'::regclass, (SELECT attnum FROM pg_attribute WHERE attrelid = '"PublishedLessons"'::regclass AND attname = 'fromPlacement')), '') <> '');
   RAISE NOTICE 'fl 465: % checks', current_setting('fl.checks');
 END $$;
 ROLLBACK;
