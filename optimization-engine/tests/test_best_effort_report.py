@@ -12,7 +12,10 @@ refusal that no test held: a mutant of each survived tests/test_best_effort.py's
        in (`_worst_week`), not the least;
     4. a week the hard rules alone cannot hold is explained on THE HARD PART of
        the week (`_explain_infeasible(hard, ...)`), so the refusal never names a
-       rule that, in this mode, gives way.
+       rule that, in this mode, gives way, in phase 1a and (second round of the
+       review) in phase 1b;
+    5. the zero floor of "at most N a day" (second round): lessons the school
+       locked on a day beyond N are not the generated lessons' breach.
 
 THE WEEKS ARE THE REVIEWER'S SEEDS (10008, 10011, 10007 and 20025), small
 random weeks from the generator below, solved with one worker and a fixed seed,
@@ -35,6 +38,8 @@ import random
 from collections import Counter, defaultdict
 from typing import Any
 from uuid import UUID
+
+import pytest
 
 from app.config import Settings
 from app.schemas.schedule import OptimizeScheduleRequest, OptimizeScheduleResponse, ScheduledLesson
@@ -468,3 +473,61 @@ class TestTheRefusalOnWeeksNobodyChose:
         }
         for code in codes:
             assert not any(code.startswith(soft) for soft in SOFT_REFUSALS), codes
+
+    @pytest.mark.parametrize("seed", [20025, 20056, 20079, 20081])
+    def test_the_same_when_phase_one_a_gets_no_time_and_phase_one_b_proves_it(
+        self, seed: int, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The second `_explain_infeasible(hard, ...)` (second round of the
+        # review, LÅG-R2-4). Phase 1a is given no time, so the week is proved
+        # impossible by phase 1b, which explains it by its own call. In
+        # production the road needs phase 1a to run out its 60 seconds with no
+        # answer first, so it is rare, and its consequence is the one of the
+        # first call: a refusal that names a rule that gives way.
+        monkeypatch.setattr(SchedulerSolver, "CLEAN_SAT_CAP_SECONDS", 0.0)
+        _, _, response = solve(seed, probes=True)
+        assert response.status == "INFEASIBLE"
+        assert response.conflicts is not None
+        names = {detail.code for detail in response.conflicts.conflicts}
+        assert names == {"AVAIL_CONSTRAINT_BLOCKS_LESSONS", "ROOM_NO_ROOM_FOR_REQUIREMENT"}, names
+        for code in [response.conflicts.summary_code, *names]:
+            assert not any(code.startswith(soft) for soft in SOFT_REFUSALS), code
+
+
+class TestTheFloorOfAtMostNADay:
+    def test_lessons_locked_beyond_the_cap_are_not_the_generated_lesson_s_breach(self) -> None:
+        # Second round of the review, LÅG-R2-5. "At most one a day", two lessons
+        # the school locked on Monday (already two, a fact) and one generated
+        # lesson on the only day there is: the generated lesson adds ONE over
+        # the cap, not two. Without the floor at zero (`per_day - locked[day]`
+        # is -1) the report said two, a number nothing the school could change
+        # would explain.
+        teacher, locked_teacher, group, subject, room = (str(UUID(int=n, version=4)) for n in range(1, 6))
+        locks = [
+            {
+                "id": str(UUID(int=10 + hour, version=4)), "teacherId": locked_teacher, "studentGroupId": group,
+                "dayOfWeek": 1, "startTime": f"{8 + hour:02d}:00:00", "endTime": f"{9 + hour:02d}:00:00",
+            }
+            for hour in range(2)
+        ]
+        payload = {
+            "requestId": str(UUID(int=20, version=4)),
+            "academicYearId": str(UUID(int=21, version=4)),
+            "requirements": [{
+                "id": str(UUID(int=22, version=4)), "subjectId": subject, "studentGroupId": group, "teacherId": teacher,
+                "lessonsPerWeek": 1, "minutesPerLesson": 60, "studentGroupSize": 24, "minGradeLevel": 7,
+                "maxGradeLevel": 7, "maxLessonsPerDay": 1, "lockedDays": [1, 1],
+            }],
+            "rooms": [{"id": room, "capacity": 30}],
+            "fixedLessons": locks,
+            "relaxation": {"mode": "BEST_EFFORT"},
+        }
+        response = SchedulerSolver(Settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1", SCHEDULE_DAY_END_MINUTES=720)).solve(
+            OptimizeScheduleRequest.model_validate(payload),
+        )
+        assert response.status in ("OPTIMAL", "FEASIBLE")
+        (detail,) = response.deviations or []
+        assert detail.code == "DEVIATION_SUBJECT_PER_DAY"
+        assert {key: detail.params[key] for key in ("maxPerDay", "count", "over", "needed")} == {
+            "maxPerDay": 1, "count": 3, "over": 1, "needed": 3,
+        }
