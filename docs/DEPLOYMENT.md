@@ -2078,7 +2078,7 @@ Walk the full product loop once, in order:
   cannot be used in the transaction that adds it, so it is a file of its own,
   taking no lock). 20270122091000 adds the table `LessonPupilMoves`, the column
   `CalendarLessonStudents."moveId"` (nullable, key to the move, `ON DELETE
-  CASCADE`) and `SchoolDaySettings."guardianNoticeOnMove"` (`false`), eleven
+  CASCADE`) and `SchoolDaySettings."guardianNoticeOnMove"` (`false`), twelve
   `app.lesson_pupil_*` / `app.lesson_move_*` functions, five triggers, five
   read arms on the table and the restated bodies of seven readers (below). It
   takes `Schools`, `Users` and `CalendarLessons` in SHARE ROW EXCLUSIVE and
@@ -2147,20 +2147,37 @@ Walk the full product loop once, in order:
   'gallring_due', 'gallring_purge') ORDER BY p.proname COLLATE "C"` (prod
   sorts en_US, so compare the md5 per name, not the order). The migrations'
   sha256: 20270122090000 `7beae1596b32c59ab6201ec7748823afb66f5240f8cab580b323bcfd1d1e8e01`,
-  20270122091000 `5d82a347c26825ad40de70f5974fb10a70f0e5e80d553fc041d63c29914c5588`
+  20270122091000 `2756bbf91375e959112cba46e4e239157a4636670a9dedf0d66ba2c71e336b44`
   (the second changes if the file is edited after this was written: check
-  `shasum -a 256` of the merged file). The two doors' md5 (`prosrc`), the only
-  new functions the review of #281 changed before the migration was run:
-  `lesson_pupil_move` `9304007c95318be11c5b7db3571ed1b0` and
-  `lesson_pupil_move_undo` `e08b03d2835967b75717ca1f3f5a2c9c`.
+  `shasum -a 256` of the merged file). The two doors' md5 (`prosrc`) and the
+  new function the reviews of #281 added before the migration was run:
+  `lesson_pupil_move` `8b2bc446f5550bde8cba9123c82bba42`,
+  `lesson_pupil_move_undo` `8d4a88be4e23e9f4191b969b488ed7b0` and
+  `lesson_move_may_correct` `43ae32c8ef504e8f4bd35b96330a6745`.
   **What is decided, for a conversation with the school (BESLUT):** a move is for
-  today or later (a past day's register is not edited this way), and never out
-  of a lesson that has ended (409 `LESSON_MOVE_LESSON_OVER`, `LM416`, the same
-  for Ångra and a move on or back): the day is not the hour, the register of a
-  finished lesson is its teachers', and a move writes the pupil's mark on the
-  lesson it leaves, so the teacher of the target alone could have erased a
-  colleague's mark; an administrator corrects a finished lesson in its
-  register, where the mark gets an author; no free-text
+  today or later (a past day's register is not edited this way). **A lesson
+  that has ended** (409 `LESSON_MOVE_LESSON_OVER`, `LM416`): the day is not the
+  hour, the register of a finished lesson is its teachers', and a move writes
+  the pupil's mark on the lesson it leaves, so (1) **no new move** is made off
+  a lesson that has ended, for anybody; (2) **Ångra and a move back** after the
+  source's end, the same day, are for an administrator with Drift and for a
+  teacher on **the source** (the one whose mark is put back, with its author
+  and time), and for nobody else: the teacher of the target alone, the
+  pupil's mentor, a pupil or a guardian get `LM416` or `LM403`; (3) **a move
+  on** from the lesson the pupil was moved to writes nothing on the first
+  source (its mark row is untouched, the displaced mark is carried to the new
+  move), so the first source's end does not matter; the rule is asked of the
+  lesson the pupil is taken out of: once that one has ended too, only an
+  administrator with Drift and a teacher on it may move the pupil on (a lesson
+  a pupil is moved into that has already ended is not refused: the target is
+  the target teacher's affair, as before). Ångra never takes away a mark on
+  the target: a mark of the pupil there (anything but Okänd) refuses Ångra, a
+  move back and a move on (409 `LESSON_MOVE_HAS_ATTENDANCE`, `LM415`) for
+  everybody, the administrator and the source teacher too, and the mark
+  stands. After midnight (`LM414`) a move can no longer be undone or moved on at
+  all: the register of the source lists the moved pupil as moved away and saves
+  nothing for them, so a mistake found the next day is corrected in SQL by whoever
+  runs the database (the rollback statement below puts the marks back); no free-text
   reason is stored (a note about a child would be a record nobody asked for);
   the teachers of both lessons are always told (the one who moved the pupil
   excepted), **the guardian only if the school says so** (Drift › Skolans dag,
@@ -2213,7 +2230,7 @@ Walk the full product loop once, in order:
   has_table_privilege('app_authenticated', 'public."LessonPupilMoves"', 'INSERT,
   UPDATE, DELETE, TRUNCATE')` is false; no MAINTAIN on 17); `anon`,
   `authenticated` and `service_role` hold nothing that writes; four of the
-  eleven functions are executable by `app_authenticated`
+  twelve functions are executable by `app_authenticated`
   (`lesson_pupil_move`, `lesson_pupil_move_undo`, `lesson_move_is_mentor`,
   `lesson_pupil_register_lock`) and none by `anon`, `authenticated` or
   `service_role`; `SELECT count(*) FROM "LessonPupilMoves"` is 0; the enum has
