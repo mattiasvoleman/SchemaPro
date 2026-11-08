@@ -140,6 +140,15 @@ export async function protectedAmong(tx: PrismaClient, ids: readonly string[]): 
   return new Set(row?.ids ?? []);
 }
 
+/**
+ * The staff of the school whom it has marked as having a protected identity, for a teacher or an administrator
+ * (app.school_day_protected_staff, Skolans dag's rule): a list of the whole staff leaves them out for a teacher.
+ */
+export async function protectedStaff(tx: PrismaClient): Promise<Set<string>> {
+  const rows = (await tx.$queryRaw<Array<{ id: string }>>`SELECT app.school_day_protected_staff() AS "id"`) ?? [];
+  return new Set(rows.map((row) => row.id));
+}
+
 /** May the caller void a tick: the one who wrote it, or an administrator who writes Drift (app.checklist_void_proof says the same). */
 export function canVoidProof(user: AuthenticatedUser, recordedById: string | null): boolean {
   if (user.role === Role.SCHOOL_ADMIN) return adminWrites(user);

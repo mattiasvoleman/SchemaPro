@@ -398,6 +398,34 @@ describe('InstructionService', () => {
       const { service } = setup();
       expect(await service.instructors(admin)).toEqual([]);
     });
+
+    describe('a colleague the school has marked as having a protected identity (granskning #288, LÅG-2)', () => {
+      const staffRows = [
+        { id: 'u-1', firstName: 'Ada', lastName: 'Ek' },
+        { id: 'teacher-1', firstName: 'Tora', lastName: 'Lind' },
+        { id: 'u-3', firstName: 'Skyddad', lastName: 'Kollega' },
+      ];
+
+      it('is left out for a teacher, without id or count, and the teacher themselves stays even when marked', async () => {
+        const { tx, service } = setup();
+        tx['user']!['findMany']!.mockResolvedValue(staffRows);
+        raw(tx, { 'school_day_protected_staff': [{ id: 'u-3' }] });
+        expect(await service.instructors(teacher)).toEqual([
+          { id: 'u-1', name: 'Ada Ek' },
+          { id: 'teacher-1', name: 'Tora Lind' },
+        ]);
+        raw(tx, { 'school_day_protected_staff': [{ id: 'u-3' }, { id: 'teacher-1' }] });
+        expect((await service.instructors(teacher)).map((person) => person.id)).toEqual(['u-1', 'teacher-1']);
+      });
+
+      it('is named for an administrator, who reads the register, and the database is not asked', async () => {
+        const { tx, service } = setup();
+        tx['user']!['findMany']!.mockResolvedValue(staffRows);
+        raw(tx, { 'school_day_protected_staff': [{ id: 'u-3' }] });
+        expect((await service.instructors(admin)).map((person) => person.id)).toEqual(['u-1', 'teacher-1', 'u-3']);
+        expect(tx.$queryRaw).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe('roster', () => {

@@ -19,6 +19,7 @@ import {
   canVoidProof,
   messageOf,
   protectedAmong,
+  protectedStaff,
   translateRefusal,
 } from './checklists';
 import type { GroupChoice, Instructor, ProofRoster, ProofRow, ProofsWritten, ProofView, ProofVoided, TemplateView } from './checklists-views';
@@ -155,7 +156,11 @@ export class InstructionService {
     });
   }
 
-  /** The staff who can have given an instruction: the school's active teachers and administrators. */
+  /**
+   * The staff who can have given an instruction: the school's active teachers and administrators. To a teacher the whole staff on
+   * one screen leaves out a colleague the school has marked as having a protected identity, with no id and no count, as Skolans dag
+   * does (the answer has no field that says someone is left out); the teacher themselves stays, and an administrator reads everyone.
+   */
   async instructors(user: AuthenticatedUser): Promise<Instructor[]> {
     const schoolId = requireSchoolId(user);
     return this.prisma.withRls(user, async (tx) => {
@@ -164,7 +169,8 @@ export class InstructionService {
         select: { id: true, firstName: true, lastName: true },
         orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
       });
-      return staff.map((person) => ({ id: person.id, name: fullName(person) }));
+      const marked = user.role === Role.TEACHER ? await protectedStaff(tx) : new Set<string>();
+      return staff.filter((person) => person.id === user.userId || !marked.has(person.id)).map((person) => ({ id: person.id, name: fullName(person) }));
     });
   }
 
