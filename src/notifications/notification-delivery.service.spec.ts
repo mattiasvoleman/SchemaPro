@@ -840,4 +840,22 @@ describe('NotificationDeliveryService (mail and push in one batch)', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(expo.send).toHaveBeenCalledTimes(1);
   });
+
+  // The order is today's, and it is pinned so that changing it is a decision and not a slip: the push comes after the
+  // batch's mails, so a Resend that does not answer holds an alarm's push for up to the mail timeout and the turn in
+  // the mail chain (the push's own life is ten minutes). Sending the push first would take that wait away; this test
+  // is the one to change with it.
+  it('sends the batch’s mails first and its push after them', async () => {
+    const order: string[] = [];
+    fetchMock.mockImplementation(async () => {
+      order.push('mail');
+      return { ok: true, status: 200 };
+    });
+    expo.send.mockImplementation(async (messages: unknown[]) => {
+      order.push('push');
+      return messages.map((_m, i) => ({ status: 'ok', id: `ticket-${i}-abc` }));
+    });
+    expect(await told([alarm()])).toEqual([true]);
+    expect(order).toEqual(['mail', 'push']);
+  });
 });

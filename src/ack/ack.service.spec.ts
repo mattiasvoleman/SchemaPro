@@ -215,6 +215,20 @@ describe('AckService', () => {
       await expect(service.create(dto, admin)).rejects.toBe(other);
     });
 
+    it('tells the sender over the day’s share that another administrator can send the request, in the text a log keeps', async () => {
+      // The web shows its own catalogue's text for the code; this one is what the gateway answers, for a log and for a
+      // client that shows the message. Without it the sentence was in no test (the web's test took the old text as a part).
+      const { tx, service } = setup();
+      raw(tx, { 'app.ack_enabled()': [{ enabled: true }] });
+      tx['user']!['findMany']!.mockResolvedValue([{ id: 'p-1' }, { id: 'p-2' }]);
+      tx['guardianStudent']!['findMany']!.mockResolvedValue([{ studentId: 'p-1', guardianId: 'g-1' }]);
+      tx['ackRequest']!['createMany']!.mockRejectedValue(sqlState('KV427'));
+      const error = await service.create(dto, admin).catch((e: unknown) => e);
+      const message = (error as { response: { message: string } }).response.message;
+      expect(message).toContain('Inget har skickats.');
+      expect(message).toContain('Måste förfrågan gå ut nu kan en annan administratör skicka den, eftersom var och en har en egen andel.');
+    });
+
     it.each([
       ['ACK_TOO_MANY_REQUESTS', 'ACK_TOO_MANY_REQUESTS'],
       ['ACK_SENDER_DAY_LIMIT', 'ACK_SENDER_DAY_LIMIT'],
