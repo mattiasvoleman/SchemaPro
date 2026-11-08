@@ -53,6 +53,7 @@ interface World {
   resourceFacts: Array<Record<string, unknown>>;
   counts: Array<Record<string, unknown>>;
   clashes: Array<Record<string, unknown>>;
+  late: Array<{ startsAt: Date; endsAt: Date; lesson: string }>;
 }
 
 const freshWorld = (): World => ({
@@ -61,7 +62,7 @@ const freshWorld = (): World => ({
   resourceFacts: [],
   counts: [],
   clashes: [],
-  late: [] as Array<{ startsAt: Date; endsAt: Date; lesson: string }>,
+  late: [],
 });
 
 const noFacts = { date: null, dow: null, smin: null, emin: null };
