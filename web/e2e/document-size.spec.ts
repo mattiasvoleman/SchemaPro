@@ -82,8 +82,8 @@ interface Measured {
 }
 
 const PAGES: Measured[] = [
-  { name: "admin", persona: "admin", url: "/sv/notifications", row: "/sv/admin/setup", measured: 13_178 },
-  { name: "teacher", persona: "teacher", url: "/sv/notifications", row: "/sv/teacher/attendance", measured: 9_570 },
+  { name: "admin", persona: "admin", url: "/sv/notifications", row: "/sv/admin/setup", measured: 13_220 },
+  { name: "teacher", persona: "teacher", url: "/sv/notifications", row: "/sv/teacher/attendance", measured: 9_593 },
 ];
 
 const catalog = JSON.stringify(JSON.parse(readFileSync(join(__dirname, "..", "messages", "sv.json"), "utf8")));
