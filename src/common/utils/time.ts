@@ -92,18 +92,33 @@ function normalizeTime(time: string): string {
   return /^\d{2}:\d{2}$/.test(time) ? `${time}:00` : time;
 }
 
+/**
+ * One formatter per zone: constructing an Intl.DateTimeFormat costs far more than formatting with one, and a
+ * term of 20 days is 40 conversions (a series of external bookings, a publication's thousands).
+ */
+const ZONE_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+function zoneFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = ZONE_FORMATTERS.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+    ZONE_FORMATTERS.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 function shiftByZoneOffset(naive: Date, timeZone: string, probe?: Date): Date {
   const reference = probe ?? naive;
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
+  const formatter = zoneFormatter(timeZone);
 
   const parts = formatter.formatToParts(reference);
   const get = (type: string): number =>

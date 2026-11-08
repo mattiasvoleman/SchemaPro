@@ -4646,6 +4646,90 @@ BEGIN
   INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (req, m, lst);
 END $$;
 
+-- Lokal (20270204091000), sections 440-444: a school of its own, with its people and
+-- the room, the pupil group and the subject a lesson needs, planted once as the owner.
+-- The resources, the series and the lessons themselves are the sections'.
+--
+--   …f90000000001  FULL         …f90000000004  EXPEDITION     …f90000000006  T1, teacher
+--   …f90000000002  REKTOR       …f90000000005  LASARE         …f90000000007  T2, teacher
+--   …f90000000003  SCHEMALAGGARE  …f90000000011  a pupil     …f90000000021  the pupil's guardian
+--   …f90000000031  the other school's FULL     …f90000000032  its teacher
+DO $$
+DECLARE
+  s1 uuid;
+  s2 uuid;
+  y uuid;
+  g uuid;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-lokal-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Lokal', 'rls-lokal-school', 'Europe/Stockholm', now()) RETURNING id INTO s1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s1, 'Lokal', current_date - 700, current_date + 700, true, now()) RETURNING id INTO y;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (s1, y, 'LK7A', 7, now()) RETURNING id INTO g;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s1, 'Idrott och hälsa', 'LKID', now());
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (s1, 'Idrottshallen', now()), (s1, 'Klassrum 12', now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
+    (s1, 'lk-full@example.invalid', 'Lokal', 'Full', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-f90000000001', true, now()),
+    (s1, 'lk-rektor@example.invalid', 'Lokal', 'Rektor', 'SCHOOL_ADMIN', 'REKTOR', '00000000-0000-4000-8000-f90000000002', true, now()),
+    (s1, 'lk-schemalaggare@example.invalid', 'Lokal', 'Schemaläggare', 'SCHOOL_ADMIN', 'SCHEMALAGGARE', '00000000-0000-4000-8000-f90000000003', true, now()),
+    (s1, 'lk-expedition@example.invalid', 'Lokal', 'Expedition', 'SCHOOL_ADMIN', 'EXPEDITION', '00000000-0000-4000-8000-f90000000004', true, now()),
+    (s1, 'lk-lasare@example.invalid', 'Lokal', 'Läsare', 'SCHOOL_ADMIN', 'LASARE', '00000000-0000-4000-8000-f90000000005', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (s1, 'lk-t1@example.invalid', 'Lokal', 'Lärare Ett', 'TEACHER', '00000000-0000-4000-8000-f90000000006', true, now()),
+    (s1, 'lk-t2@example.invalid', 'Lokal', 'Lärare Två', 'TEACHER', '00000000-0000-4000-8000-f90000000007', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s1, 'lk-p1@example.invalid', 'Lokal', 'Elev Ett', 'STUDENT', '00000000-0000-4000-8000-f90000000011', true, g, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s1, 'lk-g1@example.invalid', 'Lokal', 'Vårdnadshavare', 'GUARDIAN', '00000000-0000-4000-8000-f90000000021', true, now());
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId")
+  SELECT s1, gu."id", pu."id" FROM "Users" gu, "Users" pu
+   WHERE gu."schoolId" = s1 AND gu.email = 'lk-g1@example.invalid' AND pu."schoolId" = s1 AND pu.email = 'lk-p1@example.invalid';
+
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+  VALUES ('RLS Lokal annan', 'rls-lokal-annan', 'Europe/Stockholm', now()) RETURNING id INTO s2;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (s2, 'Annans hall', now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt") VALUES
+    (s2, 'lk-annan-full@example.invalid', 'Annan', 'Full', 'SCHOOL_ADMIN', 'FULL', '00000000-0000-4000-8000-f90000000031', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES
+    (s2, 'lk-annan-t@example.invalid', 'Annan', 'Lärare', 'TEACHER', '00000000-0000-4000-8000-f90000000032', true, now());
+END $$;
+
+-- The matrix school's rows for Lokal (20270204091000), so the role matrix (section
+-- 116) has a row of each table to probe: a kind and a resource, a booking of it, and a
+-- series of external bookings with one day in the school's first room. Written once, by the owner.
+DO $$
+DECLARE
+  m uuid;
+  admin_ uuid;
+  room_ uuid;
+  rtype uuid;
+  res uuid;
+  series uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "ResourceTypes" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  SELECT id INTO admin_ FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000105';
+  SELECT id INTO room_ FROM "Rooms" WHERE "schoolId" = m ORDER BY name LIMIT 1;
+  IF admin_ IS NULL OR room_ IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the matrix school lacks the administrator or the room for the Lokal rows';
+  END IF;
+  INSERT INTO "ResourceTypes" ("schoolId", name) VALUES (m, 'Surfplattor') RETURNING id INTO rtype;
+  INSERT INTO "Resources" ("schoolId", "resourceTypeId", name, quantity) VALUES (m, rtype, 'Klassuppsättning surfplattor', 30) RETURNING id INTO res;
+  INSERT INTO "ResourceBookings" ("schoolId", "resourceId", "bookedById", title, quantity, "startsAt", "endsAt")
+  VALUES (m, res, admin_, 'Matteprov', 10, now() + interval '400 days', now() + interval '400 days 1 hour');
+  -- Cancelled, so that the matrix can delete it (an administrator removes a series that is over or cancelled).
+  INSERT INTO "ExternalBookings" ("schoolId", "roomId", organisation, "contactName", "contactPhone", weekdays, "startDate", "endDate", "startTime", "endTime", "registeredById", "cancelledAt")
+  VALUES (m, room_, 'Hjo innebandy', 'Kim Kontakt', '070-0000000', ARRAY[2]::smallint[], current_date + 400, current_date + 410, '18:00', '20:00', admin_, now()) RETURNING id INTO series;
+  INSERT INTO "RoomBookings" ("schoolId", "roomId", "bookedById", title, "startsAt", "endsAt", "updatedAt", "externalBookingId")
+  VALUES (m, room_, admin_, 'Extern bokning', (current_date + 405)::timestamp AT TIME ZONE 'Europe/Stockholm' + interval '18 hours', (current_date + 405)::timestamp AT TIME ZONE 'Europe/Stockholm' + interval '20 hours', now(), series);
+END $$;
+
 -- The matrix school's row for Ledighetspolicyn (20270205091000), so the role matrix
 -- (section 116) has a row of LeavePolicies to copy. All three choices are off, as a school
 -- with no row has them: the matrix school's other tests file leave requests, and a policy

@@ -35,6 +35,7 @@ import { UsersModule } from './users/users.module';
 import { CalendarModule } from './calendar/calendar.module';
 import { SwapsModule } from './swaps/swaps.module';
 import { RoomBookingsModule } from './room-bookings/room-bookings.module';
+import { LocalModule } from './local/local.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { StaffingModule } from './staffing/staffing.module';
 import { TimplanModule } from './timplan/timplan.module';
@@ -151,6 +152,7 @@ import type { ThrottleConfig } from './config/configuration';
     CalendarModule,
     SwapsModule,
     RoomBookingsModule,
+    LocalModule,
     RealtimeModule,
     StaffingModule,
     TimplanModule,

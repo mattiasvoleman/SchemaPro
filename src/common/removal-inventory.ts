@@ -200,6 +200,8 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   // Kvittens (20270117091000): the requests a guardian was asked, and the ones asked about a pupil, go with the person.
   key('AckReceipts', ['guardianId', 'schoolId'], 'CASCADE', others),
   key('AckReceipts', ['studentId', 'schoolId'], 'CASCADE', others),
+  // Lokal (20270204091000): a booking of a resource is its booker's, as a room booking is.
+  key('ResourceBookings', ['bookedById', 'schoolId'], 'CASCADE', others),
   // Checklistor (20270129091000): a pupil's instruction proofs and answers on consent lists go with the pupil.
   key('InstructionProofs', ['studentId', 'schoolId'], 'CASCADE', others),
   key('ConsentEntries', ['studentId', 'schoolId'], 'CASCADE', others),
@@ -235,6 +237,11 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('LeaveRequests', ['decidedById', 'schoolId'], 'SET NULL', kept),
   key('LeaveRequests', ['referredById', 'schoolId'], 'SET NULL', kept),
   key('RoomBookings', ['decidedById', 'schoolId'], 'SET NULL', kept),
+  // Lokal (20270204091000): the decider of a booking of a resource, and the one who registered a series of
+  // external bookings, are unlinked; the series stays (its hirer is not the person). A person with a running
+  // series is refused first (UsersService.remove), for the days they booked go with them.
+  key('ResourceBookings', ['decidedById', 'schoolId'], 'SET NULL', kept),
+  key('ExternalBookings', ['registeredById', 'schoolId'], 'SET NULL', kept),
   key('TimplanStatementPublications', ['publishedByUserId', 'schoolId'], 'SET NULL', kept),
   key('TimetablePublications', ['publishedByUserId', 'schoolId'], 'SET NULL', kept),
   key('CancellationBatches', ['createdByUserId', 'schoolId'], 'SET NULL', kept),

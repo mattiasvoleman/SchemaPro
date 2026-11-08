@@ -1603,6 +1603,66 @@ describe('UsersService', () => {
       );
     });
 
+    describe('a series of external bookings the person registered (Lokal)', () => {
+      // The days they booked are bookings in their name, and the key to the booker is CASCADE:
+      // deleting them would free a hall let to an association every Tuesday, without a word.
+      const NOW = new Date('2027-01-20T12:00:00.000Z');
+
+      beforeEach(() => {
+        jest.useFakeTimers({ now: NOW, doNotFake: ['nextTick', 'setImmediate'] });
+        tx.user.findUnique.mockResolvedValue({ authId: AUTH_ID, invitedAt: null });
+        tx.user.delete.mockResolvedValue({ id: USER_ID });
+      });
+
+      afterEach(() => {
+        jest.useRealTimers();
+      });
+
+      it('409s while a series they registered is running, naming the date it ends, and deletes nothing', async () => {
+        tx.externalBooking.findFirst.mockResolvedValue({ endDate: new Date('2027-03-02T00:00:00.000Z') });
+
+        const error = await service.remove(USER_ID, testUser()).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({
+          code: 'EXTERNAL_BOOKINGS_REGISTERED',
+          params: { date: '2027-03-02' },
+        });
+        expect((error as ConflictException).message).toContain('Personen har registrerat en extern bokning som pågår till 2027-03-02.');
+        expect((error as ConflictException).message).toContain('Avboka den under Externa bokningar först');
+        expect(tx.user.delete).not.toHaveBeenCalled();
+        expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+      });
+
+      it('asks for a series that is not cancelled and not over, the one ending first, by the school’s today', async () => {
+        await service.remove(USER_ID, testUser());
+
+        expect(tx.externalBooking.findFirst).toHaveBeenCalledWith({
+          where: { registeredById: USER_ID, cancelledAt: null, endDate: { gte: new Date('2027-01-20T00:00:00.000Z') } },
+          select: { endDate: true },
+          orderBy: { endDate: 'asc' },
+        });
+        // Before the delete it would otherwise cascade.
+        expect(tx.externalBooking.findFirst.mock.invocationCallOrder[0]!).toBeLessThan(tx.user.delete.mock.invocationCallOrder[0]!);
+      });
+
+      it('reckons today on the school’s own zone, which is a day ahead of UTC in the morning in New Zealand', async () => {
+        tx.school.findFirst.mockResolvedValue({ timezone: 'Pacific/Auckland' });
+
+        await service.remove(USER_ID, testUser());
+
+        expect(tx.externalBooking.findFirst.mock.calls[0]![0].where.endDate).toEqual({ gte: new Date('2027-01-21T00:00:00.000Z') });
+      });
+
+      it('deletes the person when the series they registered are over or cancelled', async () => {
+        tx.externalBooking.findFirst.mockResolvedValue(null);
+
+        await expect(service.remove(USER_ID, testUser())).resolves.toBeUndefined();
+
+        expect(tx.user.delete).toHaveBeenCalledWith({ where: { id: USER_ID } });
+      });
+    });
+
     it('maps a P2025 race on the delete itself to 404', async () => {
       tx.user.findUnique.mockResolvedValue({ authId: AUTH_ID });
       tx.user.delete.mockRejectedValue(knownError('P2025'));

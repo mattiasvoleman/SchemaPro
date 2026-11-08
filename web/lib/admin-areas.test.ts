@@ -92,6 +92,34 @@ describe("admin areas (Roller i skolan)", () => {
     expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/checklists")?.areas).toEqual(["DRIFT"]);
   });
 
+  it("gates Resurser by Planering, as the lokaler it sits beside: a planner writes the kinds and the resources, the läsare reads both, the expedition has no page", () => {
+    expect(PAGE_GATES["/admin/resources"]).toBe("PLANERING");
+    expect(gateOfPath("/sv/admin/resources")).toBe("PLANERING");
+    expect(profileOpens("SCHEMALAGGARE", "PLANERING")).toBe(true);
+    expect(closedPages("EXPEDITION").map((page) => page.path)).toContain("/admin/resources");
+    expect(closedPages("LASARE").map((page) => page.path)).not.toContain("/admin/resources");
+    expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/resources")?.areas).toEqual(["PLANERING"]);
+  });
+
+  it("gates Externa bokningar by Drift, as the lokalbokningar its days stand among: the expedition registers, the läsare reads the series and registers none", () => {
+    expect(PAGE_GATES["/admin/external-bookings"]).toBe("DRIFT");
+    expect(gateOfPath("/en/admin/external-bookings")).toBe("DRIFT");
+    expect(profileOpens("EXPEDITION", "DRIFT")).toBe(true);
+    expect(profileOpens("SCHEMALAGGARE", "DRIFT")).toBe(true);
+    expect(closedPages("EXPEDITION").map((page) => page.path)).not.toContain("/admin/external-bookings");
+    expect(closedPages("LASARE").map((page) => page.path)).not.toContain("/admin/external-bookings");
+    expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/external-bookings")?.areas).toEqual(["DRIFT"]);
+  });
+
+  it("opens Utnyttjande to every administrator: it reads only and names no person, so no area gates it and nobody has it read-only", () => {
+    expect(PAGE_GATES["/admin/utilisation"]).toBeNull();
+    expect(gateOfPath("/sv/admin/utilisation")).toBeNull();
+    for (const profile of ["FULL", "REKTOR", "SCHEMALAGGARE", "EXPEDITION", "LASARE"] as const) {
+      expect(closedPages(profile).map((page) => page.path)).not.toContain("/admin/utilisation");
+      expect(readOnlyPages(profile).map((page) => page.path)).not.toContain("/admin/utilisation");
+    }
+  });
+
   it("gates Schemavisaren by Publicering, as the publication it shows: a planner writes it, the läsare reads it, the expedition has no page", () => {
     expect(PAGE_GATES["/admin/schemavisaren"]).toBe(PAGE_GATES["/admin/publishing"]);
     expect(gateOfPath("/en/admin/schemavisaren")).toBe("PUBLICERING");

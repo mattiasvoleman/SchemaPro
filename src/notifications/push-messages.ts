@@ -274,6 +274,12 @@ const SV: Record<PushKind, Template> = {
     bare: 'En elevs lektion har ändrats. Öppna appen för att se vilken.',
     many: '{count} elevers lektioner har ändrats. Öppna appen för att se vilka.',
   },
+  EXTERNAL_BOOKING_CLASH: {
+    title: 'Externa bokningar',
+    one: 'En extern bokning krockar med en lektion. Öppna appen för att se vilken.',
+    bare: 'En extern bokning krockar med en lektion. Öppna appen för att se vilken.',
+    many: 'Externa bokningar krockar med lektioner. Öppna appen för att se vilka.',
+  },
   ACK_REMINDER: {
     title: 'Påminnelse från skolan',
     one: 'Ett meddelande från skolan väntar på din bekräftelse. Öppna appen för att läsa det.',
@@ -495,6 +501,12 @@ const EN: Record<PushKind, Template> = {
     one: "A pupil's lesson {when} has changed. Open the app to see which.",
     bare: "A pupil's lesson has changed. Open the app to see which.",
     many: "{count} pupils' lessons have changed. Open the app to see which.",
+  },
+  EXTERNAL_BOOKING_CLASH: {
+    title: 'External bookings',
+    one: 'An external booking clashes with a lesson. Open the app to see which.',
+    bare: 'An external booking clashes with a lesson. Open the app to see which.',
+    many: 'External bookings clash with lessons. Open the app to see which.',
   },
   ACK_REMINDER: {
     title: 'Reminder from the school',

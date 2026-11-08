@@ -115,6 +115,9 @@ export function notificationText(entry: NotificationRow, t: Translate, locale: L
         to: str('toSubjectName'),
         when: when('startsAt'),
       });
+    case 'EXTERNAL_BOOKING_CLASH':
+      // Lokal: that days clash, never the hirer (who is not a user) or which room; the list is on the web.
+      return t('notifications.text.externalBookingClash');
     case 'LESSON_REPORT_REMINDER': {
       // Rapporteringsgrad: how many lessons stand open and the school's limit,
       // never which lesson, its subject, its class or its time. The count is
