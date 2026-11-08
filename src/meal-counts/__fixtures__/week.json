@@ -1,0 +1,294 @@
+{
+  "from": "2027-02-04",
+  "to": "2027-02-10",
+  "rows": {
+    "cutoff": "08:30",
+    "staffModelled": true,
+    "classes": [
+      {
+        "day": "2027-02-04",
+        "groupId": "00000000-0000-4000-8000-0000000000224",
+        "name": "7A",
+        "start": "10:30",
+        "end": "11:00",
+        "pupils": 24,
+        "absentBefore": 1,
+        "absentAfter": 1,
+        "underActivity": false
+      },
+      {
+        "day": "2027-02-04",
+        "groupId": "00000000-0000-4000-8000-0000000000225",
+        "name": "7B",
+        "start": "10:30",
+        "end": "11:00",
+        "pupils": 25,
+        "absentBefore": 2,
+        "absentAfter": 0,
+        "underActivity": false
+      },
+      {
+        "day": "2027-02-04",
+        "groupId": "00000000-0000-4000-8000-0000000000330",
+        "name": "10A",
+        "start": "11:00",
+        "end": "11:30",
+        "pupils": 30,
+        "absentBefore": 0,
+        "absentAfter": 3,
+        "underActivity": true
+      },
+      {
+        "day": "2027-02-05",
+        "groupId": "00000000-0000-4000-8000-0000000000224",
+        "name": "7A",
+        "start": "10:30",
+        "end": "11:00",
+        "pupils": 24,
+        "absentBefore": 0,
+        "absentAfter": 0,
+        "underActivity": false
+      },
+      {
+        "day": "2027-02-05",
+        "groupId": "00000000-0000-4000-8000-0000000000225",
+        "name": "7B",
+        "start": "10:30",
+        "end": "11:00",
+        "pupils": 25,
+        "absentBefore": 0,
+        "absentAfter": 0,
+        "underActivity": false
+      },
+      {
+        "day": "2027-02-08",
+        "groupId": "00000000-0000-4000-8000-0000000000222",
+        "name": "8A",
+        "start": "11:15",
+        "end": "11:45",
+        "pupils": 22,
+        "absentBefore": 3,
+        "absentAfter": 0,
+        "underActivity": false
+      }
+    ],
+    "staff": [
+      {
+        "day": "2027-02-04",
+        "start": "10:30",
+        "end": "11:00",
+        "staff": 4
+      },
+      {
+        "day": "2027-02-05",
+        "start": "10:30",
+        "end": "11:00",
+        "staff": 4
+      }
+    ]
+  },
+  "view": {
+    "from": "2027-02-04",
+    "to": "2027-02-10",
+    "cutoff": "08:30",
+    "staffModelled": true,
+    "days": [
+      {
+        "date": "2027-02-04",
+        "weekday": 4,
+        "sittings": [
+          {
+            "start": "10:30",
+            "end": "11:00",
+            "classes": [
+              {
+                "groupId": "00000000-0000-4000-8000-0000000000224",
+                "name": "7A",
+                "pupils": 24,
+                "absentBefore": 1,
+                "absentAfter": 1,
+                "underActivity": false,
+                "portions": 23
+              },
+              {
+                "groupId": "00000000-0000-4000-8000-0000000000225",
+                "name": "7B",
+                "pupils": 25,
+                "absentBefore": 2,
+                "absentAfter": 0,
+                "underActivity": false,
+                "portions": 23
+              }
+            ],
+            "pupils": 49,
+            "absentBefore": 3,
+            "staff": 4,
+            "portions": 50,
+            "absentAfter": 1,
+            "underActivity": 0
+          },
+          {
+            "start": "11:00",
+            "end": "11:30",
+            "classes": [
+              {
+                "groupId": "00000000-0000-4000-8000-0000000000330",
+                "name": "10A",
+                "pupils": 30,
+                "absentBefore": 0,
+                "absentAfter": 3,
+                "underActivity": true,
+                "portions": 30
+              }
+            ],
+            "pupils": 30,
+            "absentBefore": 0,
+            "staff": 0,
+            "portions": 30,
+            "absentAfter": 3,
+            "underActivity": 30
+          }
+        ],
+        "totals": {
+          "pupils": 79,
+          "absentBefore": 3,
+          "staff": 4,
+          "portions": 80,
+          "absentAfter": 4,
+          "underActivity": 30
+        }
+      },
+      {
+        "date": "2027-02-05",
+        "weekday": 5,
+        "sittings": [
+          {
+            "start": "10:30",
+            "end": "11:00",
+            "classes": [
+              {
+                "groupId": "00000000-0000-4000-8000-0000000000224",
+                "name": "7A",
+                "pupils": 24,
+                "absentBefore": 0,
+                "absentAfter": 0,
+                "underActivity": false,
+                "portions": 24
+              },
+              {
+                "groupId": "00000000-0000-4000-8000-0000000000225",
+                "name": "7B",
+                "pupils": 25,
+                "absentBefore": 0,
+                "absentAfter": 0,
+                "underActivity": false,
+                "portions": 25
+              }
+            ],
+            "pupils": 49,
+            "absentBefore": 0,
+            "staff": 4,
+            "portions": 53,
+            "absentAfter": 0,
+            "underActivity": 0
+          }
+        ],
+        "totals": {
+          "pupils": 49,
+          "absentBefore": 0,
+          "staff": 4,
+          "portions": 53,
+          "absentAfter": 0,
+          "underActivity": 0
+        }
+      },
+      {
+        "date": "2027-02-06",
+        "weekday": 6,
+        "sittings": [],
+        "totals": {
+          "pupils": 0,
+          "absentBefore": 0,
+          "staff": 0,
+          "portions": 0,
+          "absentAfter": 0,
+          "underActivity": 0
+        }
+      },
+      {
+        "date": "2027-02-07",
+        "weekday": 7,
+        "sittings": [],
+        "totals": {
+          "pupils": 0,
+          "absentBefore": 0,
+          "staff": 0,
+          "portions": 0,
+          "absentAfter": 0,
+          "underActivity": 0
+        }
+      },
+      {
+        "date": "2027-02-08",
+        "weekday": 1,
+        "sittings": [
+          {
+            "start": "11:15",
+            "end": "11:45",
+            "classes": [
+              {
+                "groupId": "00000000-0000-4000-8000-0000000000222",
+                "name": "8A",
+                "pupils": 22,
+                "absentBefore": 3,
+                "absentAfter": 0,
+                "underActivity": false,
+                "portions": 19
+              }
+            ],
+            "pupils": 22,
+            "absentBefore": 3,
+            "staff": 0,
+            "portions": 19,
+            "absentAfter": 0,
+            "underActivity": 0
+          }
+        ],
+        "totals": {
+          "pupils": 22,
+          "absentBefore": 3,
+          "staff": 0,
+          "portions": 19,
+          "absentAfter": 0,
+          "underActivity": 0
+        }
+      },
+      {
+        "date": "2027-02-09",
+        "weekday": 2,
+        "sittings": [],
+        "totals": {
+          "pupils": 0,
+          "absentBefore": 0,
+          "staff": 0,
+          "portions": 0,
+          "absentAfter": 0,
+          "underActivity": 0
+        }
+      },
+      {
+        "date": "2027-02-10",
+        "weekday": 3,
+        "sittings": [],
+        "totals": {
+          "pupils": 0,
+          "absentBefore": 0,
+          "staff": 0,
+          "portions": 0,
+          "absentAfter": 0,
+          "underActivity": 0
+        }
+      }
+    ]
+  }
+}

@@ -231,6 +231,7 @@
     "myCrisis": "Alarm",
     "schemavisaren": "Timetable viewer",
     "schoolDay": "School day",
+    "meals": "Meal counts",
     "analysis": "Analysis and planning"
   },
   "dashboard": {
@@ -8913,5 +8914,107 @@
       "legend": "Excused and unexcused are the pupil's share of the registered minutes. Class is the class's excused and unexcused absence together, Rep. the class's reporting rate. “–” means a figure is missing: no registration for the pupil, or too few pupils in the class.",
       "footer": "Information about an individual pupil, as a basis for a development talk. Keep and dispose of the printout according to the school's routines."
     }
+  },
+  "meals": {
+    "title": "Meal counts",
+    "subtitle": "Portions per lunch sitting, for the kitchen.",
+    "intro": "The counts come from the published schedule: the pupils of the classes that eat in the sitting, less absence reported before the cut-off, plus staff who eat with them. They run from today, because class lists are today's.",
+    "view": {
+      "label": "View",
+      "day": "The day",
+      "week": "The week ahead"
+    },
+    "day": {
+      "pick": "Day",
+      "previous": "Previous day",
+      "next": "Next day",
+      "today": "Today"
+    },
+    "actions": {
+      "print": "Print",
+      "csv": "Download file for Excel",
+      "csvFailed": "The file could not be downloaded. Try again in a moment."
+    },
+    "print": {
+      "dayTitle": "Portions {date}",
+      "weekTitle": "Portions {from} – {to}",
+      "school": "Rastra Meal counts"
+    },
+    "kpi": {
+      "portions": "Portions",
+      "pupils": "Pupils",
+      "absent": "Absence, taken off",
+      "staff": "Staff",
+      "after": "Reported after the cut-off",
+      "notIncluded": "Not included",
+      "afterDetail": "Shown, not taken off"
+    },
+    "table": {
+      "captionDay": "Portions per sitting {date}",
+      "captionWeek": "Portions per day, the week ahead",
+      "column": {
+        "sitting": "Sitting",
+        "sittings": "Sittings",
+        "classes": "Classes",
+        "date": "Day",
+        "pupils": "Pupils",
+        "absent": "Absence before the cut-off",
+        "staff": "Staff",
+        "portions": "Portions",
+        "after": "After the cut-off"
+      },
+      "activity": "activity",
+      "activityTitle": "The class has a schedule-breaking activity over the sitting and is counted in.",
+      "total": "Total",
+      "none": "No sitting",
+      "open": "Show the day",
+      "openFor": "Show {date}",
+      "notIncluded": "–"
+    },
+    "empty": {
+      "title": "No lunch in the published schedule on this day",
+      "body": "That goes for weekends, holidays and days the schedule is not published for. Lunch is published with the schedule."
+    },
+    "emptyWeek": {
+      "title": "No lunch in the published schedule for the coming week",
+      "body": "Publish the schedule, or pick another day under The day."
+    },
+    "notes": {
+      "title": "How it is counted",
+      "cutoff": "Absence reported before {time} on the day is taken off. Absence reported later is not taken off but shown on its own, so you see what has changed since the order.",
+      "noCutoff": "No cut-off is set, so no absence is taken off. Set one under Cut-off and letter.",
+      "partial": "Only absence that covers the whole sitting is taken off: a pupil who is away for part of it eats.",
+      "staff": "Staff are counted from the pedagogical lunch with a fixed time placed under Staffing.",
+      "noStaff": "Staff are not included: no pedagogical lunch with a fixed time is placed under Staffing.",
+      "activity": "Classes with a schedule-breaking activity over the sitting are counted in, because the activity does not say whether the class eats at school.",
+      "diet": "Allergies and diets are not included. They are not stored in Rastra."
+    },
+    "settings": {
+      "title": "Cut-off and letter to the kitchen",
+      "description": "The cut-off is the time of day the kitchen places its order. The letter goes every school day at the cut-off to the kitchen's address, through Rastra's ordinary mail.",
+      "cutoffLabel": "Cut-off",
+      "cutoffHint": "The school's time, HH:MM. With no cut-off no absence is taken off.",
+      "emailLabel": "Kitchen address",
+      "emailHint": "One address. It is the school's, not a user's, and is used only for the letter.",
+      "letterLabel": "Send a letter to the kitchen every school day",
+      "letterOn": "The letter goes at {time} every day that has a sitting.",
+      "letterOff": "The letter is off. None goes until you turn it on.",
+      "letterNeeds": "Set a cut-off and a kitchen address to turn the letter on.",
+      "privacy": "The letter and the file hold only counts and the names of classes, never a pupil's name.",
+      "lastLetter": "Last letter: {date}",
+      "noLetterYet": "No letter has gone yet.",
+      "save": "Save",
+      "saved": "The settings are saved.",
+      "problem": {
+        "cutoff": "The cut-off must be a time, HH:MM.",
+        "email": "The kitchen address must be one e-mail address.",
+        "letter": "The letter can only be on when a cut-off and a kitchen address are set."
+      },
+      "loadFailed": "The settings could not be loaded",
+      "loadFailedHint": "Nothing has changed. Try again, or reload the page in a moment."
+    },
+    "loadFailed": "The portions could not be loaded",
+    "loadFailedHint": "Nothing has changed. Try again, or reload the page in a moment.",
+    "retry": "Try again"
   }
 }

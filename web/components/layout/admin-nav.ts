@@ -172,6 +172,10 @@ export const ADMIN_NAV: NavGroup[] = [
       // The attendance icon (Ledighetsansökningar): a
       // confirmation is a tick against a name, like the register's.
       { labelKey: "acknowledgements", href: "/admin/acknowledgements", icon: ClipboardCheck },
+      // Måltidskollen: the portions of each lunch sitting, for the kitchen. The lunch services' icon
+      // (Lunchsittningar): the same meal, counted instead of placed, and an icon the menu already
+      // names, so the row costs the document its label and path and no drawing of its own.
+      { labelKey: "meals", href: "/admin/meals", icon: UtensilsCrossed },
       // Lektionslogg's klassbok: a class's lessons over a period, printed. The subjects' book.
       { labelKey: "classBook", href: "/admin/klassbok", icon: BookOpen },
     ],

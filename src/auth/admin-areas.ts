@@ -250,6 +250,10 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   ReportingDigests: readOnly,
   ReportingSettings: just('DRIFT', 'insert', 'update'),
   TeacherReportingDays: readOnly,
+  // Måltidskollen (20270123090000): the cut-off, the letter's switch and the kitchen's address are
+  // Drift's, as the attendance and the leave the counts rest on. The settings are never deleted:
+  // the letter is turned off. The counts are not stored: app.meal_counts reads them.
+  KitchenSettings: just('DRIFT', 'insert', 'update'),
   AttendanceRecords: only('DRIFT'),
   CalendarLessonGroups: only('DRIFT'),
   CalendarLessonStudents: only('DRIFT'),

@@ -91,7 +91,8 @@
       <li><span>6.15 Skolans dag i ett svep</span><span class="dots"></span><span class="pg" data-pg="s615"></span></li>
       <li><span>6.16 Kvittens: be en vårdnadshavare bekräfta ett meddelande</span><span class="dots"></span><span class="pg" data-pg="s616"></span></li>
       <li><span>6.17 Frånvarostatistik över tid</span><span class="dots"></span><span class="pg" data-pg="s617"></span></li>
-      <li><span>6.18 Analys och planering</span><span class="dots"></span><span class="pg" data-pg="s618"></span></li>
+      <li><span>6.18 Måltidskollen: portioner för köket</span><span class="dots"></span><span class="pg" data-pg="s618"></span></li>
+      <li><span>6.19 Analys och planering</span><span class="dots"></span><span class="pg" data-pg="s619"></span></li>
     </ol>
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
     <ol>
@@ -7042,8 +7043,71 @@
     genom knappen, så använd knappen för papper som ska lämna rummet. Inget kön
     redovisas: Rastra har inget könsfält och statistiken skapar inget.
   </p>
+  <h3 id="s618"><span class="num">6.18</span>Måltidskollen: portioner för köket</h3>
+  <p>
+    <strong>Måltidskollen</strong> ger köket antalet portioner för varje lunchsittning,
+    räknat från det <em>publicerade</em> schemat. Sidan finns under
+    <span class="path">Drift › Måltidskollen</span> och visar <span class="ui">Dagen</span>
+    med sina sittningar och <span class="ui">Veckan framåt</span> med en rad för varje dag.
+    Båda går att skriva ut, och båda går att hämta som en fil för Excel. Alla administratörer
+    ser antalen; brytpunkten och brevet ändras av den som skriver Drift (rektor, fullständig
+    administratör, schemaläggare och expedition), och en läsare ser dem utan att kunna ändra.
+  </p>
 
-  <h3 id="s618"><span class="num">6.18</span>Analys och planering</h3>
+  <h4>Vad en portion är</h4>
+  <p>
+    Antalet för en sittning och en dag är eleverna i klasserna som äter i sittningen, minus
+    <strong>anmäld frånvaro (6.7) som kommit före brytpunkten</strong>, plus
+    <strong>personal som äter med</strong>. Sittningarna kommer från lunchmåltiderna som
+    publiceras med schemat (5.6), så en helg, ett lov och en dag som schemat inte är
+    publicerat för har ingen sittning. Antalen gäller från och med i dag, upp till 14 dagar
+    framåt, eftersom klasslistorna är dagens.
+  </p>
+  <ul>
+    <li><strong>Eleverna</strong> är de aktiva eleverna i klassen. En elev som har slutat räknas inte.</li>
+    <li><strong>Frånvaron</strong> dras bara av när anmälan täcker <em>hela</em> sittningen: en elev som är borta en del av den äter. Hel dag, beviljad ledighet och en tid som omfattar sittningen räknas; ett läkarbesök som slutar före sittningens slut gör det inte.</li>
+    <li><strong>Brytpunkten</strong> är en tid på dagen som skolan väljer, den tid köket lägger sin beställning. Frånvaro som anmälts före den dagen klockan brytpunkten är avdragen. Frånvaro som anmäls <em>senare</em> dras aldrig av: den visas för sig som <span class="ui">Anmäld efter brytpunkten</span>, så att köket ser vad som ändrats sedan beställningen utan att siffran det beställde efter ändras. Utan brytpunkt dras ingen frånvaro av, och sidan säger det.</li>
+    <li><strong>Personal</strong> räknas bara när skolan har lagt en <em>pedagogisk lunch</em> med fast tid under Tjänstefördelning (4.3). Läraren hör till den sittning vars tid den fasta tiden överlappar mest, en gång per dag. En frånvarande lärare dras inte av, eftersom en vikarie ofta tar platsen. Har skolan inte lagt någon pedagogisk lunch står personalen utanför, och sidan, filen och brevet säger det.</li>
+    <li><strong>En schemabrytande aktivitet</strong> (6.5) säger inte om klassen äter i skolan, så den dras inte av. En klass med en ersättningslektion över sittningen märks <span class="ui">aktivitet</span> och räknas med, eftersom ett kök som beställer för få portioner är värre än ett som beställer för många. Vet du att klassen äter någon annanstans: räkna av den själv.</li>
+  </ul>
+  <div class="warn">
+    <span class="label">Allergier och kostval ingår inte</span>
+    <p>
+      Allergier och kostval är hälsouppgifter, och de lagras inte i Rastra. Sidan, filen och
+      brevet har varken en kolumn eller ett ord för dem. Köket får dem på samma sätt som
+      förut.
+    </p>
+  </div>
+
+  <h4>Skriv ut och Excel</h4>
+  <p>
+    <span class="ui">Skriv ut</span> skriver ut det som visas, dagen eller veckan, med
+    kontrollerna utelämnade. <span class="ui">Hämta fil för Excel</span> hämtar samma dagar
+    som en fil med en rad per dag och sittning: klasserna med sina portioner, eleverna,
+    avdragen frånvaro, personalen, portionerna och frånvaro som anmälts efter brytpunkten.
+    Filen är i det format svenska Excel öppnar utan omvägar, teckenkodning Windows-1252 med
+    semikolon mellan kolumnerna, så å, ä och ö blir rätt. Den innehåller bara antal och
+    klassernas namn, aldrig en elevs namn.
+  </p>
+
+  <h4>Brevet till köket</h4>
+  <p>
+    Under <span class="ui">Brytpunkt och brev till köket</span> anger du brytpunkten och en
+    <strong>köksadress</strong>, och slår på brevet. Det är <strong>avstängt</strong> för
+    varje skola tills du gör det. Brevet går sedan varje dag som har en sittning, vid
+    brytpunkten, till köksadressen. Det är skolans adress, till exempel en gemensam
+    funktionsbrevlåda, och ingen användare: den som äger adressen behöver inget konto i Rastra.
+    Brevet säger portionerna per sittning och klasserna med sina antal, och att allt som
+    anmäls efter brytpunkten inte är avdraget. Det innehåller aldrig ett namn.
+  </p>
+  <ul>
+    <li>Brevet gäller <strong>samma dag</strong>. Det går inom tre timmar efter brytpunkten: ett brev efter lunchen är inget brev, så ett brev som inte gått då går inte alls.</li>
+    <li>Siffrorna i brevet är de som gällde vid brytpunkten, även om brevet går en stund senare. Det som kommit in sedan står som <em>anmäld efter</em>.</li>
+    <li>Ett brev som inte kunde skickas, till exempel för att e-post inte är inställt, provas igen inom samma tre timmar. Sidan visar <span class="ui">Senaste brev</span> med dagen det senast gick.</li>
+    <li>Brevet skickas med Rastras vanliga e-post, i samma takt som alla andra utskick.</li>
+  </ul>
+
+  <h3 id="s619"><span class="num">6.19</span>Analys och planering</h3>
   <p>
     <span class="path">Drift › Analys och planering</span> samlar tre underlag som skolan annars
     räknar för hand: <strong>nyckeltal</strong> per lärare och skola, <strong>kostnad per elev</strong>
