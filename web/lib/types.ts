@@ -585,6 +585,16 @@ export interface LunchSettings {
    * Vikarietavlan keep the limit whatever this says.
    */
   generatorKeepsConsecutiveTeaching?: boolean;
+  /**
+   * Bästa möjliga schema: Schemaförslag may lay a week with some of the
+   * school's own rules broken when no week keeps them all, and says which gave
+   * way (a candidate's `deviations`). The list that may give way is short
+   * (a teacher's daily cap and days, the subject distribution, a room lock);
+   * a double booking, the frame times and the walk between sites never do
+   * (optimization-engine/app/solver/relaxation.py). Off by default; optional
+   * for an API from before the switch, read as off.
+   */
+  generatorBestEffort?: boolean;
 }
 
 export type LessonRecurrence = "ALL_WEEKS" | "ODD_WEEKS" | "EVEN_WEEKS";

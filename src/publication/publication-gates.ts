@@ -27,6 +27,7 @@ export const GATE_CODES = [
   'PUB_TIMPLAN',
   'PUB_BLOCK_SPLIT',
   'PUB_EMPTY_HALF',
+  'PUB_DEVIATIONS',
   'PUB_RANGE_OVERLAP',
   'PUB_RANGE_GAP',
   'PUB_WEEK_SPLIT',
@@ -58,6 +59,7 @@ export interface GatePolicy {
   gateDayOpsLost: GateMode;
   gateEmptyHalf: GateMode;
   gateOtherSchool: GateMode;
+  gateDeviations: GateMode;
 }
 
 export const GATE_POLICY_KEYS = [
@@ -77,6 +79,7 @@ export const GATE_POLICY_KEYS = [
   'gateDayOpsLost',
   'gateEmptyHalf',
   'gateOtherSchool',
+  'gateDeviations',
 ] as const satisfies readonly (keyof GatePolicy)[];
 
 /** No row: every check WARNs. */
@@ -105,6 +108,12 @@ export const GATE_COLUMN: Record<GateCode, keyof GatePolicy | null> = {
   // A half of a class with lessons and no pupils (Halvklasser): its lessons
   // would reach nobody's week.
   PUB_EMPTY_HALF: 'gateEmptyHalf',
+  // Bästa möjliga schema: the timetable the grundschema holds was applied from
+  // a candidate whose rules gave way, accepted by an administrator, and no
+  // publication has followed. A column of its own: a school may stop a publish
+  // on a clash and only be reminded of a deviation it accepted itself, or the
+  // other way round.
+  PUB_DEVIATIONS: 'gateDeviations',
   PUB_RANGE_OVERLAP: 'gateOverlap',
   PUB_RANGE_GAP: 'gateGap',
   PUB_WEEK_SPLIT: 'gateWeekSplit',

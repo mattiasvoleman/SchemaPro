@@ -89,6 +89,7 @@ export class UpsertPublicationSettingsDto {
   @IsOptional() @IsIn(GATE_MODES) gateDayOpsLost?: 'WARN' | 'REFUSE';
   @IsOptional() @IsIn(GATE_MODES) gateEmptyHalf?: 'WARN' | 'REFUSE';
   @IsOptional() @IsIn(GATE_MODES) gateOtherSchool?: 'WARN' | 'REFUSE';
+  @IsOptional() @IsIn(GATE_MODES) gateDeviations?: 'WARN' | 'REFUSE';
 
   // The public viewer (20261011120000) and its lägen (20270118090000): who may
   // look, and how each kind of schedule is shown. Off, and for staff, by default.
@@ -143,6 +144,7 @@ const _everyGateHasAField: Record<(typeof GATE_POLICY_KEYS)[number], GateKeysOfD
   gateDayOpsLost: 'gateDayOpsLost',
   gateEmptyHalf: 'gateEmptyHalf',
   gateOtherSchool: 'gateOtherSchool',
+  gateDeviations: 'gateDeviations',
 };
 void _everyGateHasAField;
 

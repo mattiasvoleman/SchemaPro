@@ -54,6 +54,9 @@ export const LUNCH_SETTINGS: LunchSettings = {
   // undervisning), the same way: the switch checked and the generate page's
   // line for it.
   generatorKeepsConsecutiveTeaching: true,
+  // Bästa möjliga schema, the same way: the switch checked with its two lists,
+  // the generate page's line for it and, in Schemaförslag, the second button.
+  generatorBestEffort: true,
 };
 
 // --- Generation ----------------------------------------------------------------

@@ -631,6 +631,48 @@ MESSAGES: dict[str, str] = {
         "timetable could not be made. The limit is shown to the principal, a full administrator "
         "and anyone with HR read access."
     ),
+    # ---- Bästa möjliga schema: what gave way ------------------------------
+    # Sent by THIS engine under `deviations`, never under `conflicts`: a rule
+    # that was broken in a timetable that WAS placed, counted on the timetable
+    # that came back (app/solver/relaxation.py). Each sentence says the rule,
+    # how far it gave way, and the value the rule would need for this very
+    # timetable to hold ("needed") — not a promise that no other timetable
+    # keeps it. The names are the refusals' (a rule's or a post's id, a
+    # requirement the gateway realises), and the post's sentence carries WORK_DAYS
+    # in its code so the gateway masks it for a reader without HR read access,
+    # as it masks every sentence that carries a post's days.
+    "DEVIATION_TEACHER_DAILY_CAP": (
+        "The cap of {minutes} minutes of teaching a day that the teacher working-time rule "
+        "{rule} sets gave way on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
+        "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}: the teacher "
+        "teaches {taught} minutes, {over} over. This timetable holds with the cap at "
+        "{needed} minutes, or with that day's lessons moved to another day."
+    ),
+    "DEVIATION_TEACHER_WORK_DAYS": (
+        "The teacher's post {limit} allows teaching on at most {days, plural, one {# day} "
+        "other {# days}} a week, and this timetable has the teacher on {taught}: "
+        "{over, plural, one {# day} other {# days}} over. It holds with "
+        "{needed, plural, one {# day} other {# days}} on the post, or with the lessons of the "
+        "lightest days moved."
+    ),
+    "DEVIATION_SUBJECT_PER_DAY": (
+        "{requirement} has {count, plural, one {# lesson} other {# lessons}} on "
+        "{day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} "
+        "6 {Saturday} 7 {Sunday} other {day {day}}}, against a limit of {maxPerDay} a day: "
+        "{over, plural, one {# lesson} other {# lessons}} over. It holds with the limit at "
+        "{needed}, or with one of them on another day."
+    ),
+    "DEVIATION_SUBJECT_DAYS_APART": (
+        "{requirement} has lessons {closest, plural, one {# day} other {# days}} apart where "
+        "the rule asks for at least {minDaysBetween} ({pairs, plural, one {# pair of days} "
+        "other {# pairs of days}} too close). It holds with the rule at {needed}, or with "
+        "those lessons moved apart."
+    ),
+    "DEVIATION_ROOM_LOCK": (
+        "{requirement} has {lessons, plural, one {# lesson} other {# lessons}} of "
+        "{of} in a room outside the rooms the subject is locked to. It holds if the lock "
+        "is opened for the subject, or if a locked room is free at those times."
+    ),
     # Sent by the GATEWAY after a run that worked: a wish the timetable did not
     # keep, which is a note beside a result and never a refusal of one.
     #

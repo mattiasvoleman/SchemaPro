@@ -140,18 +140,34 @@ export function useOriginMasters(academicYearId: string | null) {
 }
 
 /**
- * POST candidates/:id/apply. Whatever the outcome everything the write can
- * have touched is read again: the grid and this page's draft, the meals, the
- * versions (a safety version was saved), the calendar in DIRECT, and the
- * batch and its check — a refused apply means somebody else wrote, and the
- * page should show that too.
+ * POST candidates/:id/apply. A candidate with avsteg (Bästa möjliga schema)
+ * is applied only against the digest of exactly those, sent as
+ * `acceptedDeviations`: 409 SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED
+ * otherwise, and nothing is written.
+ *
+ * Whatever the outcome everything the write can have touched is read again:
+ * the grid and this page's draft, the meals, the versions (a safety version
+ * was saved), the calendar in DIRECT, and the batch and its check — a refused
+ * apply means somebody else wrote, and the page should show that too.
  */
 export function useApplyCandidate() {
   const queryClient = useQueryClient();
   return useMutation({
     retry: false,
-    mutationFn: ({ candidateId, expectedMode }: { candidateId: string; expectedMode: PublishMode }) =>
-      api.post<CandidateApplyResult>(`/api/v1/optimization/candidates/${candidateId}/apply`, { expectedMode }),
+    mutationFn: ({
+      candidateId,
+      expectedMode,
+      acceptedDeviations,
+    }: {
+      candidateId: string;
+      expectedMode: PublishMode;
+      /** The candidate's deviationsDigest, for a candidate with avsteg that the admin has accepted; left out otherwise. */
+      acceptedDeviations?: string;
+    }) =>
+      api.post<CandidateApplyResult>(`/api/v1/optimization/candidates/${candidateId}/apply`, {
+        expectedMode,
+        ...(acceptedDeviations !== undefined ? { acceptedDeviations } : {}),
+      }),
     onSettled: () => {
       for (const queryKey of [
         ["masterLessons"],

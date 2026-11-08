@@ -578,6 +578,8 @@ export interface LunchSettingsInput {
   generatorKeepsPupilGapsDown?: boolean;
   /** The same for the teachers' limit on teaching in a row. */
   generatorKeepsConsecutiveTeaching?: boolean;
+  /** The same for Bästa möjliga schema. */
+  generatorBestEffort?: boolean;
 }
 
 export function useSaveLunchSettings() {

@@ -1,4 +1,5 @@
 import request from 'supertest';
+import { deviationsDigestOf, storedDeviationsOf } from '../src/optimization/deviations';
 import { OptimizationProxyService } from '../src/optimization/optimization-proxy.service';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 
@@ -130,6 +131,51 @@ describe('Schemaförslag (e2e)', () => {
       expect(response.body).toMatchObject({ code: 'CANDIDATES_RUNNING' });
     });
 
+    describe('Bästa möjliga schema (mode BEST_EFFORT)', () => {
+      const start = (body: Record<string, unknown>) =>
+        request(http()).post('/api/v1/optimization/candidates').set('x-test-user', admin()).send({ academicYearId: YEAR_ID, ...body });
+
+      it('answers 409 BEST_EFFORT_NOT_ENABLED, in Swedish, while the school’s switch is off, and inserts nothing', async () => {
+        harness.tx['lunchSetting']!['findUnique']!.mockResolvedValue({ generatorBestEffort: false });
+        const response = await start({ mode: 'BEST_EFFORT' }).expect(409);
+        expect(response.body).toMatchObject({
+          code: 'BEST_EFFORT_NOT_ENABLED',
+          detail: 'Skolan har inte slagit på bästa möjliga schema. Slå på det under Skolregler först.',
+        });
+        expect(harness.tx['scheduleCandidateRun']!['create']).not.toHaveBeenCalled();
+      });
+
+      it('starts ONE candidate with the switch on, for a year with no draft at all', async () => {
+        harness.tx['lunchSetting']!['findUnique']!.mockResolvedValue({ generatorBestEffort: true });
+        harness.tx['masterLesson']!['count']!.mockResolvedValue(0);
+        const response = await start({ mode: 'BEST_EFFORT', count: 4 }).expect(202);
+        await settle();
+        expect(response.body).toEqual({ runId: RUN_ID });
+        expect(harness.tx['scheduleCandidateRun']!['create']).toHaveBeenCalledWith({
+          data: expect.objectContaining({ requested: 1, leaseSeconds: 190, refreshOfId: null }),
+          select: { id: true },
+        });
+      });
+
+      it('refuses a mode that is not the one, and the mode together with a refresh, with 400 and inserts nothing', async () => {
+        await start({ mode: 'FANCY' }).expect(400);
+        await start({ mode: 7 }).expect(400);
+        const response = await start({ mode: 'BEST_EFFORT', refreshOf: RUN_ID }).expect(400);
+        expect(response.body).toMatchObject({ code: 'BEST_EFFORT_NO_REFRESH' });
+        expect(harness.tx['scheduleCandidateRun']!['create']).not.toHaveBeenCalled();
+      });
+
+      it('is for the administrators who plan: an expedition is refused before the school’s switch is read', async () => {
+        const refused = await request(http())
+          .post('/api/v1/optimization/candidates')
+          .set('x-test-user', as('EXPEDITION'))
+          .send({ academicYearId: YEAR_ID, mode: 'BEST_EFFORT' })
+          .expect(403);
+        expect(refused.body).toMatchObject({ code: 'AREA_NOT_YOURS' });
+        expect(harness.tx['lunchSetting']!['findUnique']).not.toHaveBeenCalled();
+      });
+    });
+
     it('answers 404 REFRESH_GONE for a refresh of a batch that is gone', async () => {
       harness.tx['scheduleCandidateRun']!['findUnique']!.mockResolvedValue(null);
       const response = await request(http())
@@ -249,11 +295,50 @@ describe('Schemaförslag (e2e)', () => {
           metrics: { moved: 3, movedOf: 40, roomChanges: 1, kept: 37, sameAs: null },
           conflicts: [],
           notes: [shownWish],
+          // An ordinary candidate: not the mode's, so null — not an empty list — and nothing to accept.
+          deviations: null,
+          deviationsDigest: null,
         });
         // Whose wish, named for every reader; the id stays on the server.
         expect(response.body.draftNotes).toEqual([shownWish]);
         expect(response.text).not.toMatch(new RegExp(`subjectIds|${BO}`));
       }
+    });
+
+    it('shows the rules that gave way with the cap’s teacher named and no id of anybody, and the digest to accept', async () => {
+      const RULE = '77777777-7777-4777-8777-777777777777';
+      const stored = storedDeviationsOf([
+        {
+          category: 'DEVIATION', code: 'DEVIATION_TEACHER_DAILY_CAP',
+          params: { rule: RULE, day: 1, minutes: 360, taught: 375, over: 15, needed: 375 },
+          message: `The cap that the working-time rule ${RULE} sets gave way on Monday.`,
+          requirementIds: [], roomIds: [], constraintIds: [], resourceIds: [RULE], resourceNames: [], subjectIds: [BO],
+        },
+        {
+          category: 'DEVIATION', code: 'DEVIATION_TEACHER_WORK_DAYS', params: {}, message: 'hidden',
+          requirementIds: [], roomIds: [], constraintIds: [], resourceIds: [], resourceNames: [], subjectIds: [],
+        },
+      ]);
+      harness.tx['scheduleCandidateRun']!['findFirst']!.mockResolvedValue({
+        ...runRow,
+        draftNotes: [],
+        candidates: [{ ...runRow.candidates[0]!, variant: 'BEST_EFFORT', notes: [], deviations: stored }],
+      });
+      harness.tx['user']!['findMany']!.mockResolvedValue([{ id: BO, firstName: 'Bo', lastName: 'Ek' }]);
+      harness.tx['personProtection']!['findMany']!.mockResolvedValue([]);
+
+      const response = await request(http())
+        .get(`/api/v1/optimization/candidates?academicYearId=${YEAR_ID}`)
+        .set('x-test-user', admin())
+        .expect(200);
+
+      const view = response.body.latest.candidates[0];
+      expect(view.deviations).toEqual([
+        expect.objectContaining({ category: 'DEVIATION', code: 'DEVIATION_TEACHER_DAILY_CAP', params: expect.objectContaining({ rule: 'Bo Ek', minutes: 360 }) }),
+        expect.objectContaining({ category: 'DEVIATION', code: 'TEACHER_WORK_DAYS_HIDDEN', params: {} }),
+      ]);
+      expect(view.deviationsDigest).toBe(deviationsDigestOf(CANDIDATE_ID, stored));
+      expect(response.text).not.toMatch(new RegExp(`subjectIds|${BO}|${RULE}`));
     });
 
     it('refuses a year that is no uuid', async () => {
@@ -337,7 +422,16 @@ describe('Schemaförslag (e2e)', () => {
         .get(`/api/v1/optimization/candidates/runs/${RUN_ID}/check`)
         .set('x-test-user', admin())
         .expect(200);
-      expect(response.body).toEqual({ stale: false, changed: [], refusalCode: null, mode: 'DRAFT', futureCalendarLessons: 0, coverAssignments: 0 });
+      expect(response.body).toEqual({
+        stale: false,
+        changed: [],
+        refusalCode: null,
+        mode: 'DRAFT',
+        futureCalendarLessons: 0,
+        coverAssignments: 0,
+        deviations: null,
+        deviationsDigest: null,
+      });
       // Not READ ONLY since Lärarens dag: the fetch writes its Läslogg row for
       // the posts' day limits it reads. Nothing of the timetable is written.
       expect(harness.tx.$executeRaw.mock.calls.map((call) => sqlOf(call))).not.toContain('SET TRANSACTION READ ONLY');
@@ -391,6 +485,92 @@ describe('Schemaförslag (e2e)', () => {
         'room-optimization',
         'staffing-proposal',
       ]);
+    });
+
+    describe('a candidate whose rules gave way (Bästa möjliga schema)', () => {
+      const deviations = storedDeviationsOf([
+        {
+          category: 'DEVIATION',
+          code: 'DEVIATION_SUBJECT_PER_DAY',
+          params: { requirement: 'Matematik för 7A', day: 2, maxPerDay: 1, count: 2, over: 1, needed: 2 },
+          message: 'Matematik för 7A has 2 lessons on Tuesday.',
+          requirementIds: [], roomIds: [], constraintIds: [], resourceIds: [], resourceNames: [],
+        },
+      ]);
+      const digest = deviationsDigestOf(CANDIDATE_ID, deviations)!;
+      const arrange = () => {
+        harness.tx['lunchSetting']!['findUnique']!.mockResolvedValue({ generatorBestEffort: true });
+        harness.tx['scheduleCandidate']!['findUnique']!.mockResolvedValue(
+          candidate({ ordinal: 1, variant: 'BEST_EFFORT', deviations }),
+        );
+        harness.tx['scheduleCandidateRun']!['findUnique']!.mockResolvedValue({
+          id: RUN_ID,
+          status: 'SUCCEEDED',
+          createdAt: new Date('2026-10-17T08:00:00.000Z'),
+          ...basis,
+        });
+        harness.tx['scheduleVersion']!['create']!.mockResolvedValue({ id: 'version-1', academicYearId: YEAR_ID, name: 'x', lessonCount: 0, createdAt: new Date() });
+        harness.tx['masterLesson']!['deleteMany']!.mockResolvedValue({ count: 0 });
+        harness.tx['masterLesson']!['count']!.mockResolvedValue(0);
+      };
+      const apply = (body: Record<string, unknown>) =>
+        request(http())
+          .post(`/api/v1/optimization/candidates/${CANDIDATE_ID}/apply`)
+          .set('x-test-user', admin())
+          .send({ expectedMode: 'DRAFT', ...body });
+
+      it('is refused 409 SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED, with the count as a param that survives the problem filter, and writes nothing', async () => {
+        arrange();
+        const response = await apply({}).expect(409);
+        expect(response.body).toMatchObject({ code: 'SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED', params: { count: 1 } });
+        const wrong = await apply({ acceptedDeviations: 'f'.repeat(64) }).expect(409);
+        expect(wrong.body).toMatchObject({ code: 'SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED' });
+        expect(harness.tx['scheduleVersion']!['create']).not.toHaveBeenCalled();
+        expect(harness.tx['scheduleChangeLog']!['create']).not.toHaveBeenCalled();
+        expect(harness.tx['masterLesson']!['deleteMany']).not.toHaveBeenCalled();
+      });
+
+      it('is applied with the digest, and the REGENERATE entry keeps what was accepted', async () => {
+        arrange();
+        await apply({ acceptedDeviations: digest }).expect(200);
+        expect(harness.tx['scheduleChangeLog']!['create']).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            action: 'REGENERATE',
+            after: expect.objectContaining({
+              source: 'CANDIDATE',
+              variant: 'BEST_EFFORT',
+              deviationsDigest: digest,
+              acceptedAt: expect.any(String),
+              deviations: [expect.objectContaining({ code: 'DEVIATION_SUBJECT_PER_DAY' })],
+            }),
+          }),
+        });
+      });
+
+      it('is refused 409 BEST_EFFORT_NOT_ENABLED, whatever digest, once the school has switched the mode off', async () => {
+        arrange();
+        harness.tx['lunchSetting']!['findUnique']!.mockResolvedValue({ generatorBestEffort: false });
+        const response = await apply({ acceptedDeviations: digest }).expect(409);
+        expect(response.body).toMatchObject({ code: 'BEST_EFFORT_NOT_ENABLED' });
+        expect(harness.tx['scheduleChangeLog']!['create']).not.toHaveBeenCalled();
+      });
+
+      it('refuses a digest that is no string, or longer than any digest, with 400 before anything is read', async () => {
+        await apply({ acceptedDeviations: 5 }).expect(400);
+        await apply({ acceptedDeviations: 'a'.repeat(129) }).expect(400);
+        await apply({ acceptedDeviations: ['x'] }).expect(400);
+        expect(harness.tx['scheduleCandidate']!['findUnique']).not.toHaveBeenCalled();
+      });
+
+      it('takes no digest from a candidate of an ordinary run', async () => {
+        arrange();
+        harness.tx['scheduleCandidate']!['findUnique']!.mockResolvedValue(candidate());
+        await apply({}).expect(200);
+        // Nothing about deviations in the entry it writes.
+        const entry = harness.tx['scheduleChangeLog']!['create']!.mock.calls[0]![0] as { data: { after: Record<string, unknown> } };
+        expect(entry.data.after).not.toHaveProperty('deviations');
+        expect(entry.data.after).not.toHaveProperty('deviationsDigest');
+      });
     });
 
     it('answers 409 SCHEDULE_CANDIDATE_STALE with the parts that changed as params, which survive the problem filter', async () => {

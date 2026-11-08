@@ -264,6 +264,13 @@ const RULES_FIELDS = [
  */
 const SEARCH_FIELDS = ['maxSeconds', 'probes', 'seed', 'workers'];
 
+/**
+ * Bästa möjliga schema (Relaxation in schemas/schedule.py): sent ONLY on the
+ * call of a run the school asked the mode for. An engine older than the field
+ * refuses a request that carries it, whole (ENGINE_LACKS_BEST_EFFORT).
+ */
+const RELAXATION_FIELDS = ['mode'];
+
 describe('AI engine wire contract', () => {
   /** The tx of the most recent buildPayload, for assertions about the QUERIES. */
   let lastTx: ReturnType<typeof createTxMock>;
@@ -282,7 +289,7 @@ describe('AI engine wire contract', () => {
     moreRequirements: Record<string, unknown>[] = [],
     configure: (tx: ReturnType<typeof createTxMock>) => void = () => undefined,
     /** A schemaförslag candidate's call instead of Generera's: the same fetch, then solveCandidate. */
-    candidate?: { weights: ObjectiveWeights | null; call: CallShape },
+    candidate?: { weights: ObjectiveWeights | null; call: CallShape; bestEffort?: boolean },
   ): Promise<Record<string, unknown>> => {
     const tx = createTxMock();
     lastTx = tx;
@@ -470,6 +477,9 @@ describe('AI engine wire contract', () => {
               })),
             )),
             conflicts: null,
+            // As the engine answers a request that carries `relaxation`: a
+            // list, empty when nothing gave way; and no key otherwise.
+            ...(payload['relaxation'] ? { deviations: [] } : {}),
           },
         });
       }),
@@ -487,6 +497,7 @@ describe('AI engine wire contract', () => {
       await proxy.solveCandidate(prepared, {
         weights: candidate.weights,
         search: searchFor(candidate.call, { maxSeconds: 30, workers: 4 }),
+        ...(candidate.bestEffort ? { bestEffort: true } : {}),
         timeoutMs: 75_000,
       });
       return sent;
@@ -543,6 +554,28 @@ describe('AI engine wire contract', () => {
     expect(payload['search']).toEqual({ workers: 4, probes: false, maxSeconds: 30, seed: 1 });
     // And waits for it exactly as long as the run said, on both timeouts.
     expect(lastPost.mock.calls[0][2]).toMatchObject({ timeout: 75_000 });
+  });
+
+  it('sends a candidate of Bästa möjliga schema the same plus `relaxation`, and relaxation exactly its one field', async () => {
+    const payload = await buildPayload({}, [], [], () => undefined, {
+      weights: null,
+      call: { variant: 'BEST_EFFORT', seed: null, lead: true },
+      bestEffort: true,
+    });
+    expect(Object.keys(payload).sort()).toEqual([...PAYLOAD_FIELDS, 'relaxation', 'search'].sort());
+    // The engine's Relaxation (schemas/schedule.py): the mode and nothing else — which rules may give way is its own list.
+    expect(Object.keys(payload['relaxation'] as object)).toEqual(RELAXATION_FIELDS);
+    expect(payload['relaxation']).toEqual({ mode: 'BEST_EFFORT' });
+    expect(payload['search']).toEqual({ workers: 4, probes: true, maxSeconds: 30 });
+  });
+
+  it('sends a candidate that did not ask for the mode no `relaxation`, not even an undefined one', async () => {
+    const payload = await buildPayload({}, [], [], () => undefined, {
+      weights: null,
+      call: { variant: 'KEEP', seed: null, lead: true },
+    });
+    expect(Object.keys(payload)).not.toContain('relaxation');
+    expect(Object.keys(await buildPayload())).not.toContain('relaxation');
   });
 
   it('sends the KEEP candidate Generera\'s request with the workers, the probes and the budget, and its weights when it has some', async () => {

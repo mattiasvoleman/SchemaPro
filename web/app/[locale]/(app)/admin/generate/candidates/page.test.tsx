@@ -866,3 +866,315 @@ describe("a run that is not a batch", () => {
     expect(screen.getByText("scheduleCandidates.section.retention")).toBeInTheDocument();
   });
 });
+
+/*
+ * Bästa möjliga schema: the candidate of the mode, its avsteg, and the tick
+ * that the apply of one needs. The gateway has already masked what a reader may
+ * not see; these tests hold what the page does with the lists it is handed.
+ */
+describe("Bästa möjliga schema", () => {
+  const deviation = (code: string, params: Record<string, string | number>, resourceNames: string[] = []) => ({
+    category: "DEVIATION",
+    code,
+    params,
+    message: `English for ${code}`,
+    resourceNames,
+  });
+  const CAP = deviation("DEVIATION_TEACHER_DAILY_CAP", { minutes: 360, day: 2 }, ["Anna Ek"]);
+  const LOCK = deviation("DEVIATION_ROOM_LOCK", { lessons: 1, of: 2 });
+  const bestEffort = (overrides: Record<string, unknown> = {}, ordinal = 1) =>
+    candidate(ordinal, "BEST_EFFORT", { deviations: [CAP, LOCK], deviationsDigest: `digest-${ordinal}`, ...overrides });
+  const batchOf = (...candidates: unknown[]) => ({
+    run: { ...RUN, requested: candidates.length, progress: candidates.length },
+    candidates,
+  });
+  const show = (...candidates: unknown[]) => {
+    const batch = batchOf(...candidates);
+    state.overview = { latest: batch, batch, unplaced: { lines: 0, minutes: 0, draftLines: 1, draftMinutes: 40 } };
+  };
+  const head = (ordinal: number) =>
+    within(table()).getByRole("columnheader", { name: new RegExp(`scheduleCandidates\\.table\\.candidate\\(${ordinal}\\)`) });
+  const confirmButton = () => screen.getByRole("button", { name: "scheduleCandidates.apply.confirm" });
+  const accept = () => screen.getByRole("checkbox", { name: "scheduleCandidates.apply.acceptDeviations" });
+
+  describe("marking", () => {
+    it("marks a candidate with avsteg, with their number, in its column and in a row of their own", () => {
+      show(bestEffort());
+      render(<CandidatesPage />);
+
+      expect(head(1)).toHaveTextContent("scheduleCandidates.table.withDeviations(2)");
+      expect(head(1)).toHaveTextContent("scheduleCandidates.variant.BEST_EFFORT");
+      const row = within(table()).getByRole("rowheader", { name: /^scheduleCandidates\.row\.deviations(?!Hint)/ }).closest("tr")!;
+      expect([...row.querySelectorAll("td")].map((cell) => cell.textContent)).toEqual([
+        "—scheduleCandidates.cell.notApplicable",
+        "scheduleCandidates.cell.deviations(2)",
+      ]);
+    });
+
+    it("marks nothing for a candidate whose list is null, and nothing for one whose list is empty", () => {
+      // null: the candidate is not from the mode. []: the mode ran and nothing
+      // gave way, which is a result and not an avsteg.
+      show(candidate(1, "KEEP", { deviations: null }), bestEffort({ deviations: [], deviationsDigest: null }, 2));
+      render(<CandidatesPage />);
+
+      expect(head(1)).not.toHaveTextContent("withDeviations");
+      expect(head(2)).not.toHaveTextContent("withDeviations");
+      // The row is there, since one candidate came from the mode: 0 for it, not applicable for the other.
+      const row = within(table()).getByRole("rowheader", { name: /^scheduleCandidates\.row\.deviations(?!Hint)/ }).closest("tr")!;
+      expect([...row.querySelectorAll("td")].map((cell) => cell.textContent)).toEqual([
+        "—scheduleCandidates.cell.notApplicable",
+        "scheduleCandidates.cell.notApplicable",
+        "scheduleCandidates.cell.deviations(0)",
+      ]);
+    });
+
+    it.each([
+      ["absent (a gateway from before the mode)", {}],
+      ["null", { deviations: null }],
+    ])("draws no row and no mark in a batch of the ordinary kind whose field is %s", (_, fields) => {
+      show(candidate(1, "KEEP", fields), candidate(2, "SPREAD", fields));
+      render(<CandidatesPage />);
+
+      expect(within(table()).queryByRole("rowheader", { name: /^scheduleCandidates\.row\.deviations(?!Hint)/ })).toBeNull();
+      expect(table().textContent).not.toContain("withDeviations");
+    });
+  });
+
+  describe("reviewing", () => {
+    it("lists the avsteg as sentences in a list, with the names the gateway put beside them", () => {
+      show(bestEffort());
+      render(<CandidatesPage />);
+
+      expect(screen.getByRole("heading", { name: "scheduleCandidates.review.deviationsTitle" })).toBeInTheDocument();
+      const list = screen.getByRole("list", { name: "scheduleCandidates.review.deviationsTitle" });
+      const items = within(list).getAllByRole("listitem");
+      expect(items.map((item) => item.textContent)).toEqual([
+        "engineMessages.DEVIATION_TEACHER_DAILY_CAP(360|2)Anna Ek",
+        "engineMessages.DEVIATION_ROOM_LOCK(1|2)",
+      ]);
+    });
+
+    it("says that nothing gave way for a run of the mode with an empty list, and draws no list", () => {
+      show(bestEffort({ deviations: [], deviationsDigest: null }));
+      render(<CandidatesPage />);
+
+      expect(screen.getByText("scheduleCandidates.review.deviationsNone")).toBeInTheDocument();
+      expect(screen.queryByRole("list", { name: "scheduleCandidates.review.deviationsTitle" })).toBeNull();
+    });
+
+    it("draws no avsteg section for a candidate that did not come from the mode", () => {
+      render(<CandidatesPage />);
+      expect(screen.queryByRole("heading", { name: "scheduleCandidates.review.deviationsTitle" })).toBeNull();
+    });
+
+    it.each([
+      ["the hidden code", deviation("TEACHER_WORK_DAYS_HIDDEN", {}, ["Anna Ek"])],
+      ["the deviation's own code with its days taken out", deviation("DEVIATION_TEACHER_WORK_DAYS", { limit: "Tjänst", over: 1 }, ["Anna Ek"])],
+    ])("says a post's days as hidden, in a deviation's words and with no name, for %s", (_, masked) => {
+      show(bestEffort({ deviations: [masked] }));
+      render(<CandidatesPage />);
+
+      const list = screen.getByRole("list", { name: "scheduleCandidates.review.deviationsTitle" });
+      expect(list.textContent).toBe("scheduleCandidates.deviations.daysHidden");
+    });
+  });
+
+  describe("applying", () => {
+    it("lists the avsteg in the dialog and holds both confirms until they are ticked", async () => {
+      show(bestEffort());
+      apply.mutateAsync.mockResolvedValue({ lessonsCreated: 3, versionId: "v-1" });
+      render(<CandidatesPage />);
+      const user = userEvent.setup();
+
+      await user.click(applyButton(1, "BEST_EFFORT"));
+      const dialog = screen.getByRole("dialog");
+      const list = within(dialog).getByRole("list", { name: "scheduleCandidates.apply.deviationsTitle(2)" });
+      expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+      expect(accept()).not.toBeChecked();
+      expect(confirmButton()).toBeDisabled();
+
+      // A press on a button that is held does nothing.
+      await user.click(confirmButton());
+      expect(apply.mutateAsync).not.toHaveBeenCalled();
+
+      await user.click(accept());
+      expect(accept()).toBeChecked();
+      expect(confirmButton()).toBeEnabled();
+      await user.click(confirmButton());
+      expect(apply.mutateAsync).toHaveBeenCalledWith({
+        candidateId: "c-1",
+        expectedMode: "DRAFT",
+        acceptedDeviations: "digest-1",
+      });
+    });
+
+    it("puts focus on the tick when the dialog opens, and gives it back to the button that opened it", async () => {
+      show(bestEffort());
+      render(<CandidatesPage />);
+      const user = userEvent.setup();
+
+      const opener = applyButton(1, "BEST_EFFORT");
+      await user.click(opener);
+      // The list above it has nothing to press; the tick is the first thing to do.
+      await waitFor(() => expect(accept()).toHaveFocus());
+
+      await user.click(screen.getByRole("button", { name: "common.cancel" }));
+      await waitFor(() => expect(opener).toHaveFocus());
+    });
+
+    it("gives the box a label of its own and describes it by the count, so a screen reader hears what is accepted", async () => {
+      show(bestEffort());
+      render(<CandidatesPage />);
+
+      await userEvent.setup().click(applyButton(1, "BEST_EFFORT"));
+      const dialog = screen.getByRole("dialog");
+      const described = document.getElementById(accept().getAttribute("aria-describedby") ?? "");
+      expect(described?.textContent).toBe("scheduleCandidates.apply.deviationsTitle(2)");
+      expect(within(dialog).getByText("scheduleCandidates.apply.deviationsIntro")).toBeInTheDocument();
+    });
+
+    it("sends the digest of the candidate that is applied, not of another in the batch", async () => {
+      show(bestEffort({ deviationsDigest: "digest-1" }), bestEffort({ deviations: [LOCK] }, 2));
+      apply.mutateAsync.mockResolvedValue({ lessonsCreated: 3, versionId: "v-1" });
+      render(<CandidatesPage />);
+      const user = userEvent.setup();
+
+      await user.click(applyButton(2, "BEST_EFFORT"));
+      await user.click(accept());
+      await user.click(confirmButton());
+
+      expect(apply.mutateAsync).toHaveBeenCalledTimes(1);
+      expect(apply.mutateAsync).toHaveBeenCalledWith({ candidateId: "c-2", expectedMode: "DRAFT", acceptedDeviations: "digest-2" });
+    });
+
+    it("takes the digest from the check when the candidate came without one", async () => {
+      show(bestEffort({ deviationsDigest: null }));
+      state.check = { ...CHECK, deviations: [CAP, LOCK], deviationsDigest: "digest-from-check" };
+      apply.mutateAsync.mockResolvedValue({ lessonsCreated: 3, versionId: "v-1" });
+      render(<CandidatesPage />);
+      const user = userEvent.setup();
+
+      await user.click(applyButton(1, "BEST_EFFORT"));
+      await user.click(accept());
+      await user.click(confirmButton());
+
+      expect(apply.mutateAsync).toHaveBeenCalledWith({
+        candidateId: "c-1",
+        expectedMode: "DRAFT",
+        acceptedDeviations: "digest-from-check",
+      });
+    });
+
+    it.each([
+      ["an empty list", { deviations: [], deviationsDigest: null }],
+      ["an empty list that still carries a digest", { deviations: [], deviationsDigest: "left-over" }],
+      ["no list at all", { deviations: null, deviationsDigest: "left-over" }],
+      ["a gateway that sends neither field", {}],
+    ])("asks for no tick and sends no digest for a candidate with %s", async (_, fields) => {
+      show(candidate(1, "KEEP", fields));
+      apply.mutateAsync.mockResolvedValue({ lessonsCreated: 3, versionId: "v-1" });
+      render(<CandidatesPage />);
+      const user = userEvent.setup();
+
+      await user.click(applyButton(1, "KEEP"));
+      expect(screen.queryByRole("checkbox")).toBeNull();
+      expect(confirmButton()).toBeEnabled();
+      await user.click(confirmButton());
+
+      // Exactly the body of an ordinary apply: not even an undefined key.
+      expect(apply.mutateAsync).toHaveBeenCalledTimes(1);
+      expect(Object.keys(apply.mutateAsync.mock.calls[0]![0]).sort()).toEqual(["candidateId", "expectedMode"]);
+    });
+
+    it("holds the tick to one opening: closed and opened again, it is not ticked", async () => {
+      show(bestEffort());
+      render(<CandidatesPage />);
+      const user = userEvent.setup();
+
+      await user.click(applyButton(1, "BEST_EFFORT"));
+      await user.click(accept());
+      expect(confirmButton()).toBeEnabled();
+      await user.click(screen.getByRole("button", { name: "common.cancel" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+
+      await user.click(applyButton(1, "BEST_EFFORT"));
+      expect(accept()).not.toBeChecked();
+      expect(confirmButton()).toBeDisabled();
+    });
+
+    it("keeps holding the confirm while the check is being read, ticked or not", async () => {
+      show(bestEffort());
+      state.checkFetching = true;
+      render(<CandidatesPage />);
+      const user = userEvent.setup();
+
+      await user.click(applyButton(1, "BEST_EFFORT"));
+      await user.click(accept());
+      expect(confirmButton()).toBeDisabled();
+    });
+
+    it("also holds the direct confirm until the tick, and keeps the way round to draft mode", async () => {
+      show(bestEffort());
+      state.check = { ...CHECK, mode: "DIRECT", futureCalendarLessons: 4, coverAssignments: 0 };
+      apply.mutateAsync.mockResolvedValue({ lessonsCreated: 3, versionId: "v-1" });
+      render(<CandidatesPage />);
+      const user = userEvent.setup();
+
+      await user.click(applyButton(1, "BEST_EFFORT"));
+      const direct = screen.getByRole("button", { name: "scheduleCandidates.apply.direct" });
+      expect(direct).toBeDisabled();
+      expect(screen.getByRole("link", { name: "scheduleCandidates.apply.switchFirst" })).toBeInTheDocument();
+      await user.click(accept());
+      await user.click(direct);
+      expect(apply.mutateAsync).toHaveBeenCalledWith({
+        candidateId: "c-1",
+        expectedMode: "DIRECT",
+        acceptedDeviations: "digest-1",
+      });
+    });
+
+    it("says in words that the avsteg were not accepted as they stand when the gateway refuses", async () => {
+      show(bestEffort());
+      apply.mutateAsync.mockRejectedValue(
+        new ApiError(409, "Refused.", "SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED", { count: 2 }),
+      );
+      render(<CandidatesPage />);
+      const user = userEvent.setup();
+
+      await user.click(applyButton(1, "BEST_EFFORT"));
+      await user.click(accept());
+      await user.click(confirmButton());
+      expect(toast.error).toHaveBeenCalledWith("scheduleCandidates.errors.SCHEDULE_CANDIDATE_DEVIATIONS_NOT_ACCEPTED");
+    });
+  });
+
+  describe("a run of the mode that found nothing to place", () => {
+    const failed = (overrides: Record<string, unknown> = {}) => ({
+      latest: {
+        run: { ...RUN, id: "run-2", status: "FAILED", errorCode: "CANDIDATES_FIRST_FAILED", requested: 1, progress: 1 },
+        candidates: [candidate(1, "BEST_EFFORT", { solverStatus: "INFEASIBLE", metrics: null, conflicts: [], ...overrides })],
+      },
+      batch: null,
+      unplaced: null,
+    });
+
+    it("does not speak of other candidates, since there are none", () => {
+      state.overview = failed({
+        conflicts: [{ category: "TEACHER_OVERLAP", code: "TEACHER_DOUBLE_BOOKED", params: { n: 2 }, message: "x", resourceNames: ["Bo Ek"] }],
+      });
+      render(<CandidatesPage />);
+
+      expect(screen.getByText("scheduleCandidates.runErrors.BEST_EFFORT_FAILED")).toBeInTheDocument();
+      expect(screen.queryByText("scheduleCandidates.runErrors.CANDIDATES_FIRST_FAILED")).toBeNull();
+      expect(screen.getByRole("heading", { name: "scheduleCandidates.failed.conflictsBestEffort" })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "scheduleCandidates.failed.conflicts" })).toBeNull();
+    });
+
+    it("says that it ran out of time in the mode's own words", () => {
+      state.overview = failed({ solverStatus: "TIMEOUT" });
+      render(<CandidatesPage />);
+
+      expect(screen.getByText("scheduleCandidates.runErrors.BEST_EFFORT_TIMEOUT")).toBeInTheDocument();
+    });
+  });
+});
