@@ -49168,6 +49168,8 @@ DECLARE
   req3 uuid;
   today date;
   n integer;
+  lst3 uuid;
+  req4 uuid;
 BEGIN
   PERFORM pg_temp.cl_load();
   school := pg_temp.clf('school');
@@ -49243,6 +49245,22 @@ BEGIN
     (SELECT string_agg(kind::text || '/' || source::text, ',' ORDER BY "recordedAt", id) FROM "ConsentEntries" WHERE "listId" = lst AND "studentId" = pg_temp.clf('p1')), 'WITHDRAWN/REGISTERED,GRANTED/KVITTENS');
   SELECT count(*) INTO n FROM "ConsentEntries" WHERE "listId" = lst AND "studentId" = pg_temp.clf('p1') AND "ackRequestId" = req3;
   IF n <> 1 THEN RAISE EXCEPTION 'checklistor 432: the new request wrote % answers, not one', n; END IF;
+
+  -- A withdrawal is its list's (granskning #288, round 2, LÅG-5): the withdrawal and the no above are on two other lists and newer than
+  -- this request, and p1 is still granted on the list the request is for.
+  lst3 := gen_random_uuid();
+  INSERT INTO "ConsentLists" (id, "schoolId", "studentGroupId", title, body) VALUES (lst3, school, pg_temp.clf('c7a'), 'Utflykt', 'Jag samtycker.');
+  req4 := gen_random_uuid();
+  INSERT INTO "AckRequests" (id, "schoolId", title, body, rule) VALUES (req4, school, 'Samtycke: Utflykt', 'Jag samtycker.', 'ALL');
+  INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES (req4, school, pg_temp.clf('p1'), pg_temp.clf('g1')), (req4, school, pg_temp.clf('p1'), pg_temp.clf('g2'));
+  INSERT INTO "ConsentAsks" ("ackRequestId", "schoolId", "listId") VALUES (req4, school, lst3);
+  PERFORM pg_temp.cl_as('g1');
+  PERFORM app.ack_confirm(req4);
+  PERFORM pg_temp.cl_as('g2');
+  PERFORM app.ack_confirm(req4);
+  PERFORM pg_temp.cl_as('full');
+  PERFORM pg_temp.cl_expect('432 between: a withdrawal on another list does not stop the grant on this one',
+    (SELECT string_agg(kind::text || '/' || source::text, ',') FROM "ConsentEntries" WHERE "listId" = lst3 AND "studentId" = pg_temp.clf('p1')), 'GRANTED/KVITTENS');
 END $$;
 ROLLBACK;
 
