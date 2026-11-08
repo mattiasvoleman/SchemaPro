@@ -61,6 +61,7 @@ import { AbsenceWatchModule } from '../../src/absence-watch/absence-watch.module
 import { ReportingRateModule } from '../../src/reporting-rate/reporting-rate.module';
 import { AbsenceStatsModule } from '../../src/absence-stats/absence-stats.module';
 import { AckModule } from '../../src/ack/ack.module';
+import { LessonMovesModule } from '../../src/lesson-moves/lesson-moves.module';
 import { SchoolDayModule } from '../../src/school-day/school-day.module';
 import { ClassTeacherModule } from '../../src/class-teacher/class-teacher.module';
 import { GallringModule } from '../../src/gallring/gallring.module';
@@ -197,6 +198,8 @@ export const FEATURE_MODULES = [
   // Frånvarostatistik's job likewise.
   AbsenceStatsModule,
   AckModule,
+  // Elevens lektion för dagen: moves a pupil to a parallel lesson for a day; no timer.
+  LessonMovesModule,
   SchoolDayModule,
   ClassTeacherModule,
   SignInModule,

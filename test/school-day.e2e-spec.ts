@@ -59,7 +59,7 @@ describe('/api/v1/school-day (e2e)', () => {
         expect(grid.body).toMatchObject({ from: '2027-03-29', to: '2027-03-29', access: { admin: true, grids: true, freeTeachers: true } });
         const free = await get('/free?date=2027-03-29&from=10:00&to=11:00', as).expect(200);
         expect(free.body).toMatchObject({ date: '2027-03-29', from: '10:00', to: '11:00', rooms: [{ id: 'r1', name: 'Sal 1', code: null }] });
-        await get('/settings', as).expect(200, { teacherView: 'NONE' });
+        await get('/settings', as).expect(200, { teacherView: 'NONE', guardianNoticeOnMove: false });
       }
     });
 
@@ -92,9 +92,9 @@ describe('/api/v1/school-day (e2e)', () => {
     const teacher = asUser({ role: 'TEACHER' as never });
 
     it('reads the decision, to know whether to show the page', async () => {
-      await get('/settings', teacher).expect(200, { teacherView: 'NONE' });
+      await get('/settings', teacher).expect(200, { teacherView: 'NONE', guardianNoticeOnMove: false });
       setView('ROOMS');
-      await get('/settings', teacher).expect(200, { teacherView: 'ROOMS' });
+      await get('/settings', teacher).expect(200, { teacherView: 'ROOMS', guardianNoticeOnMove: false });
     });
 
     it('is refused with SCHOOL_DAY_NOT_OPEN while the school has not decided', async () => {

@@ -32,6 +32,7 @@ export interface NotificationRow {
     | "ABSENCE_WATCH_DIGEST"
     | "ACK_REQUESTED"
     | "ACK_REMINDER"
+    | "LESSON_PUPIL_MOVED"
     | "CRISIS_ALARM"
     | "CRISIS_ENDED"
     | "CRISIS_GUARDIAN_AFTER"
@@ -116,6 +117,11 @@ export function noticeText(entry: NotificationRow, t: NoticeTranslator): string 
       // Kvittens: the message's title, which is behind the login (the push and the e-mail say
       // only that a message waits), and never the child. One key per type under "ack", for the bundle.
       return t(`ack.${entry.type}`, { title: str("title") });
+    case "LESSON_PUPIL_MOVED":
+      // Elevens lektion för dagen: the lesson the pupil is on now (where they went, or where they are back when
+      // the move is undone) and its time, never who moved them or who they are. One sentence for both, because
+      // this chunk is in every route's own JavaScript and the admin tier has bytes to spare for no more.
+      return t("lessonPupilMoved", { subject: str("subjectName"), when });
     case "LESSON_REPORT_REMINDER":
       // Rapporteringsgrad: how many lessons and the school's limit, never which
       // lesson, its subject, its class or its time (the e-mail says no more).

@@ -46,6 +46,7 @@ export interface GroupRemovalConsequences {
   calendarLessons: number;
   attendanceMarks: number;
   lessonLogs: number;
+  lessonMoves: number;
   availabilityConstraints: number;
   lunchSittings: number;
   calendarBreaks: number;

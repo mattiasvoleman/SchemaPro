@@ -56,6 +56,7 @@
           - text: 13:00–14:00 Matematik
           - paragraph: Ingen lärare · Sal 101
           - paragraph: "Läxa: Uppgift 5.1–5.4"
+          - 'button "Flytta elev: Matematik 13:00"': Flytta elev
     - region "torsdag <datum>":
       - heading "torsdag <datum>" [level=3]
       - list:
@@ -63,4 +64,5 @@
           - text: 08:10–08:40 Mentorstid
           - paragraph: Anna Lind · Sal 101
           - paragraph: Inget skrivet.
+          - 'button "Flytta elev: Mentorstid 08:10"': Flytta elev
     - paragraph: Med i klassboken är klassens egna lektioner och de lektioner där någon av klassens elever deltar, till exempel språkval. Notiser till vikarier står aldrig här.

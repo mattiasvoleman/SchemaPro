@@ -82,6 +82,7 @@ describe("describeGroupRemoval", () => {
     calendarLessons: 0,
     attendanceMarks: 0,
     lessonLogs: 0,
+    lessonMoves: 0,
     availabilityConstraints: 0,
     lunchSittings: 0,
     calendarBreaks: 0,
@@ -222,7 +223,7 @@ describe("GroupsBulkDialogs", () => {
         refused: [],
         consequences: {
           halves: 1, homePupils: 20, successors: 0, memberships: 0, requirements: 9, masterLessons: 0, sharedLessons: 0,
-          calendarLessons: 0, attendanceMarks: 0, lessonLogs: 0, availabilityConstraints: 0, lunchSittings: 0,
+          calendarLessons: 0, attendanceMarks: 0, lessonLogs: 0, lessonMoves: 0, availabilityConstraints: 0, lunchSittings: 0,
           calendarBreaks: 0, timplanCredits: 0, publicLinks: 0, enrolments: 20, mentorDuties: 0, classTeacher: 0, fromSource: 0,
         },
       })

@@ -1021,12 +1021,14 @@ describe('StudentGroupsService', () => {
         });
         tx.attendanceRecord.count.mockResolvedValue(1000);
         tx.lessonLog.count.mockResolvedValue(9);
+        tx.lessonPupilMove.count.mockResolvedValue(0);
         tx.studentGroup.count.mockResolvedValue(1);
       };
       const counted = () => [
         ...countStatements(),
         ...tx.attendanceRecord.count.mock.calls,
         ...tx.lessonLog.count.mock.calls,
+        ...tx.lessonPupilMove.count.mock.calls,
         ...tx.studentGroup.count.mock.calls,
       ];
 
@@ -1098,6 +1100,7 @@ describe('StudentGroupsService', () => {
             successors: 1,
             attendanceMarks: 1000,
             lessonLogs: 9,
+            lessonMoves: 0,
             enrolments: 25,
             mentorDuties: 1,
             classTeacher: 6,
@@ -1121,6 +1124,10 @@ describe('StudentGroupsService', () => {
         // The attendance marks and lesson logs are on the groups’ calendar lessons.
         expect(tx.attendanceRecord.count).toHaveBeenCalledWith({ where: { calendarLesson: inGroups } });
         expect(tx.lessonLog.count).toHaveBeenCalledWith({ where: { calendarLesson: inGroups } });
+        // A move is counted once, whichever of its two lessons the group holds.
+        expect(tx.lessonPupilMove.count).toHaveBeenCalledWith({
+          where: { OR: [{ fromLesson: { studentGroupId: { in: [G1, G2, HALF] } } }, { toLesson: { studentGroupId: { in: [G1, G2, HALF] } } }] },
+        });
         // A successor the call deletes as well loses nothing it keeps.
         expect(tx.studentGroup.count).toHaveBeenCalledWith({
           where: { predecessorId: { in: [G1, G2, HALF] }, id: { notIn: [G1, G2, HALF] } },
@@ -1177,7 +1184,7 @@ describe('StudentGroupsService', () => {
         const dryRunCounts = {
           halves: 0, homePupils: 12, memberships: 30, requirements: 4, masterLessons: 7, sharedLessons: 3,
           calendarLessons: 200, availabilityConstraints: 3, lunchSittings: 5, calendarBreaks: 10, timplanCredits: 1,
-          publicLinks: 3, successors: 1, attendanceMarks: 1000, lessonLogs: 9, enrolments: 25, mentorDuties: 1, fromSource: 0,
+          publicLinks: 3, successors: 1, attendanceMarks: 1000, lessonLogs: 9, lessonMoves: 0, enrolments: 25, mentorDuties: 1, fromSource: 0,
         };
 
         it('deletes when nothing grew since the dry run, and answers no counts', async () => {

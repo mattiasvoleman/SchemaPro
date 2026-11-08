@@ -47,6 +47,9 @@ const answers = vi.hoisted(() => ({
 }));
 
 vi.mock("@/utils/supabase/client", () => ({ createClient: () => ({}) }));
+// Elevens lektion för dagen: the page asks which pupils were moved to or from the lesson. This file is about the
+// register's list, so nobody was: the list of moves (and its chunk) is in components/lesson-moves/lesson-moves.test.tsx.
+vi.mock("@/lib/lesson-moves-queries", () => ({ useLessonMoves: () => ({ data: { departures: [], arrivals: [] } }) }));
 vi.mock("@/i18n/navigation", () => ({
   Link: ({ children, ...rest }: { children: React.ReactNode }) => <a {...rest}>{children}</a>,
 }));

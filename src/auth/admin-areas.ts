@@ -298,6 +298,12 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   CrisisCalls: just('DRIFT', 'insert'),
   CrisisPupils: just('DRIFT', 'insert'),
   CrisisReports: just('DRIFT', 'insert'),
+  // Elevens lektion för dagen (20270122091000): a pupil moved to a parallel
+  // lesson for a day. Read by every administrator and written by none: the
+  // doors (app.lesson_pupil_move, app.lesson_pupil_move_undo) ask Drift
+  // themselves, and a teacher who teaches either lesson or mentors the pupil
+  // may move them too, which no administrator's arm could say.
+  LessonPupilMoves: readOnly,
   RoomBookings: only('DRIFT'),
   SubstituteAvailabilities: only('DRIFT'),
   SubstitutePoolMembers: only('DRIFT'),
