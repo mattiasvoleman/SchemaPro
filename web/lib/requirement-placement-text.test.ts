@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { MessageLookup } from "@/lib/engine-message";
-import { clockOfMinutes, fitSentence, minutesOfClock, verdictSentence } from "./requirement-placement-text";
+import { ApiError } from "@/lib/api";
+import {
+  clockOfMinutes,
+  fitSentence,
+  minutesOfClock,
+  placementChangeSentence,
+  verdictSentence,
+} from "./requirement-placement-text";
 
 /**
  * The words of Förlägg are the catalogues' (i18n/placements-messages.test.ts
@@ -63,5 +70,35 @@ describe("why the rows do not fit the post", () => {
 
   it("is a general one for a rule this build does not know", () => {
     expect(fitSentence(t, "SOMETHING_NEW")).toBe("problem.UNKNOWN()");
+  });
+});
+
+describe("a refused change of a post's teacher", () => {
+  const t = lookup(["problem.TEACHER", "problem.NO_TEACHER", "problem.UNKNOWN", "changeFirst", "editRefused"]);
+  const named = { reason: "TEACHER", day: 2, start: "10:00", end: "11:00", weeks: "ODD_WEEKS" };
+
+  it("names the placement to change first, by its day, its time and its weeks, and says why", () => {
+    const error = new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", named);
+    expect(placementChangeSentence(t, error)).toBe(
+      "changeFirst(reason=problem.TEACHER(),day=2,start=10:00,end=11:00,weeks=ODD_WEEKS)",
+    );
+  });
+
+  it("says in general words which of the post's lessons are placed, when no placement is named", () => {
+    const error = new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { reason: "NO_TEACHER" });
+    expect(placementChangeSentence(t, error)).toBe("editRefused(reason=problem.NO_TEACHER())");
+  });
+
+  it("is a general sentence for a reason this build does not know", () => {
+    const error = new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { ...named, reason: "SOMETHING_NEW" });
+    expect(placementChangeSentence(t, error)).toContain("reason=problem.UNKNOWN()");
+  });
+
+  it.each([
+    ["another 409", new ApiError(409, "x", "SCHEDULE_BUSY")],
+    ["a judge's refusal of a row", new ApiError(409, "x", "REQUIREMENT_PLACEMENT_REFUSED", { index: 0, reason: "ROOM" })],
+    ["a plain error", new Error("boom")],
+  ])("is null for %s, which the caller shows as every other failure", (_what, error) => {
+    expect(placementChangeSentence(t, error)).toBeNull();
   });
 });

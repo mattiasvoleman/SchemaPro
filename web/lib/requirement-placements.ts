@@ -32,6 +32,12 @@ export interface PlacementInput {
   minutes: number;
   roomId: string;
   recurrence: PlacementRecurrence;
+  /**
+   * Delade lektioner: whose lesson it is. Required (not null) on every row of
+   * a post that shares its lessons between teachers; left out on a post that
+   * shares nothing, whose teacher is the lesson's.
+   */
+  teacherId?: string | null;
 }
 
 /** One placed lesson as the gateway answers it. */
@@ -45,6 +51,8 @@ export interface RequirementPlacement {
   roomId: string;
   roomName: string;
   recurrence: PlacementRecurrence;
+  /** Null on a post that shares nothing, and on a shared post's lesson whose teacher was deleted since. */
+  teacherId: string | null;
 }
 
 /** Why a placed lesson cannot stand where it is (the gateway's judge, placement-judge.ts). */
@@ -106,7 +114,12 @@ export function placementsByRequirement(
  *   - FIT: the rows do not fit the post (REQUIREMENT_PLACEMENTS_DO_NOT_FIT),
  *     whether it was the PUT of rows that did not fit it or a change of the
  *     post the rows no longer fit. `reason` is LENGTH, COUNT, WEEKS, PAIRS,
- *     BLOCK, SHARES or POST.
+ *     BLOCK or POST, or one of Delade lektioner's: NO_TEACHER, TEACHER,
+ *     TEACHER_LENGTH, TEACHER_PAIRS, TEACHER_COUNT. `params` is what came with
+ *     it: from the PUT a per-teacher reason may carry `index`, the row's place
+ *     in the list that was sent; from a change of the post's teacher or
+ *     shares it carries `day`, `start`, `end` and `weeks`, which name the
+ *     placement that has to be changed (or removed) first.
  *   - ROW: the first row the judge refuses (REQUIREMENT_PLACEMENT_REFUSED).
  *     `index` is its place in the list that was sent, `reason` the judge's and
  *     `params` the rest of what the sentence is written from.
@@ -115,14 +128,14 @@ export function placementsByRequirement(
  * (requirements.placements.*).
  */
 export type PlacementsRefusal =
-  | { kind: "FIT"; reason: string }
+  | { kind: "FIT"; reason: string; params: Record<string, string | number> }
   | { kind: "ROW"; index: number; reason: string; params: Record<string, string | number> };
 
 export function placementsRefusal(error: unknown): PlacementsRefusal | null {
   if (!(error instanceof ApiError) || error.status !== 409) return null;
   const params = error.params;
   if (error.code === "REQUIREMENT_PLACEMENTS_DO_NOT_FIT") {
-    return typeof params?.reason === "string" ? { kind: "FIT", reason: params.reason } : null;
+    return typeof params?.reason === "string" ? { kind: "FIT", reason: params.reason, params } : null;
   }
   if (error.code === "REQUIREMENT_PLACEMENT_REFUSED") {
     if (typeof params?.reason !== "string" || typeof params.index !== "number") return null;

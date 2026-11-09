@@ -352,6 +352,7 @@ interface PlacementFixture {
   roomId: string;
   roomName: string;
   recurrence: "ALL_WEEKS" | "ODD_WEEKS" | "EVEN_WEEKS";
+  teacherId: string | null;
 }
 
 interface YearTimplanFixture {
@@ -470,18 +471,22 @@ vi.mock("@/components/timplan/placement-dialog", () => ({
     onOpenChange,
     requirement,
     name,
-    shared,
+    shares,
+    teacherName,
   }: {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     requirement: { id: string } | null;
     name: string | null;
-    shared: boolean;
+    shares?: { teacherId: string | null; lessons: number; minutes: number }[];
+    teacherName?: (id: string) => string | null;
   }) =>
     open ? (
       // Outside the post's dialog, so outside the pointer-events its modal leaves alone.
       <section aria-label="placement-dialog" style={{ pointerEvents: "auto" }}>
-        {`${requirement?.id}: ${name}${shared ? " (shared)" : ""}`}
+        {`${requirement?.id}: ${name}${
+          shares ? ` (shares: ${shares.map((share) => `${teacherName?.(share.teacherId!)} ${share.lessons}x${share.minutes}`).join(", ")})` : ""
+        }`}
         <button type="button" onClick={() => onOpenChange(false)}>
           close-placement
         </button>
@@ -3413,6 +3418,7 @@ describe("Förlagda poster on the timplan", () => {
     roomId: "room-sim",
     roomName: "Simhallen",
     recurrence: "ODD_WEEKS",
+    teacherId: null,
     ...extra,
   });
   // The mocked translator echoes: the common key for Tuesday, then the row's values.
@@ -3532,14 +3538,28 @@ describe("Förlagda poster on the timplan", () => {
       expect(screen.queryByRole("region", { name: "placement-dialog" })).toBeNull();
     });
 
-    it("tells the dialog when the post shares its lessons, which cannot be placed", async () => {
+    it("hands the dialog the post's shares and the page's name for each teacher, which it needs to place a shared post", async () => {
+      state.people = loaded([
+        { id: "t-bo", role: "TEACHER", firstName: "Bo", lastName: "Lind", email: "bo@example.test", isActive: true, studentGroupId: null },
+      ]);
       state.shares = loaded([{ requirementId: "r-so", teacherId: "t-bo", lessons: 1, minutes: 60 }]);
       render(<RequirementsPage />);
       const user = userEvent.setup();
       await user.click(soCell());
       await user.click(screen.getByRole("button", { name: "placements.action" }));
 
-      expect(await screen.findByRole("region", { name: "placement-dialog" })).toHaveTextContent("(shared)");
+      expect(await screen.findByRole("region", { name: "placement-dialog" })).toHaveTextContent(
+        "(shares: Bo Lind 1x60)",
+      );
+    });
+
+    it("hands it no shares for a post that shares nothing", async () => {
+      render(<RequirementsPage />);
+      const user = userEvent.setup();
+      await user.click(soCell());
+      await user.click(screen.getByRole("button", { name: "placements.action" }));
+
+      expect(await screen.findByRole("region", { name: "placement-dialog" })).not.toHaveTextContent("shares");
     });
 
     it("offers nothing to place on a cell with no post", async () => {
@@ -3583,6 +3603,36 @@ describe("Förlagda poster on the timplan", () => {
 
       await waitFor(() =>
         expect(toast.error).toHaveBeenCalledWith("placements.editRefused(placements.problem.COUNT)"),
+      );
+    });
+
+    it("names the placement that has to be changed first when the change was one of teacher", async () => {
+      updateMock.mockRejectedValue(
+        new ApiError(409, "Förläggningen måste ändras först.", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", {
+          reason: "TEACHER",
+          day: 2,
+          start: "10:00",
+          end: "11:00",
+          weeks: "ODD_WEEKS",
+        }),
+      );
+      await edit();
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(
+          "placements.changeFirst(placements.problem.TEACHER|2|10:00|11:00|ODD_WEEKS)",
+        ),
+      );
+    });
+
+    it("says the reason alone when the gateway names no placement", async () => {
+      updateMock.mockRejectedValue(
+        new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { reason: "NO_TEACHER" }),
+      );
+      await edit();
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith("placements.editRefused(placements.problem.NO_TEACHER)"),
       );
     });
 

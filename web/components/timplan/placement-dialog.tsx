@@ -8,6 +8,7 @@ import { Plus, X } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { useRooms } from "@/lib/queries";
 import { isMixed, lengthPartsOf, lessonCountOf } from "@/lib/lesson-lengths";
+import { lessonTeachersOf, teacherPartsOf, type LessonShare } from "@/lib/lesson-shares";
 import {
   placementsRefusal,
   type PlacementInput,
@@ -65,12 +66,25 @@ import { Notice } from "@/components/ui/notice";
  * can be saved: the post's lengths, the post's weeks, and no more lessons than
  * the post has, a pair of odd and even weeks counted as one.
  *
+ * A POST THAT SHARES ITS LESSONS BETWEEN TEACHERS (Delade lektioner: the
+ * huvudlärare takes every lesson no share takes, each share gives another
+ * teacher some lessons of one length) is placed lesson by lesson, each with its
+ * teacher: a "Lärare" field on every row, among the post's teachers that have a
+ * part, and a line that counts each teacher's placed lessons against their part
+ * ("Anna 1 av 2, Bo 1 av 1"). A row's lengths are its teacher's, so choosing
+ * another teacher can change the length. A part nobody teaches (a share whose
+ * teacher was deleted, or a post with no huvudlärare) cannot be placed: the
+ * line says it needs a teacher first, and no row can be given to it. A post that
+ * shares nothing is exactly what it was: no Lärare field, rows sent without a
+ * teacher.
+ *
  * ODD AND EVEN WEEKS ON A POST OF EVERY WEEK go in pairs: an odd row and an
  * even row of one length are one lesson in two places ("udda veckor tisdag i
  * simhallen, jämna veckor torsdag"). The engine cannot lay half a lesson of an
  * every-week post, so a lone odd row is refused (PAIRS). The dialog says so
  * under the rows, and the add button, once it holds a lone row, adds the
- * other half of that pair.
+ * other half of that pair. On a shared post a pair is one lesson and so one
+ * teacher's (TEACHER_PAIRS): both halves are counted, and added, per teacher.
  */
 
 interface RowDraft {
@@ -79,6 +93,8 @@ interface RowDraft {
   day: string;
   start: string;
   minutes: string;
+  /** Delade lektioner: whose lesson, or "" when none is chosen (always "" on a post that shares nothing). */
+  teacherId: string;
   roomId: string;
   /** The stored room's name, for a room the list no longer offers. */
   roomName: string | null;
@@ -89,6 +105,7 @@ interface RowDraft {
 
 interface FieldErrors {
   start?: string;
+  teacher?: string;
   room?: string;
 }
 
@@ -99,19 +116,24 @@ export interface PlacementDialogProps {
   requirement: TeachingRequirement | null;
   /** What the post is called ("7A · Slöjd"), for the title. */
   name: string | null;
-  /** Whether the post shares its lessons between teachers, which a placement cannot. */
-  shared: boolean;
+  /** The post's shares (Delade lektioner): the lessons it gives teachers besides its own. Empty or absent: the post's teacher takes every lesson. */
+  shares?: readonly LessonShare[];
+  /** A teacher's name, or null when it is not known; the page's own list of people. */
+  teacherName?: (id: string) => string | null;
 }
 
 const DAYS = [1, 2, 3, 4, 5] as const;
 
-/** The lessons the rows are, a pair of odd and even weeks of one length counting as one. */
+/** What a pair is made of: one teacher's lessons of one length (the teacher is "" on a post that shares nothing). */
+const unitOf = (row: RowDraft) => `${row.teacherId}|${row.minutes}`;
+
+/** The lessons the rows are, a pair of odd and even weeks of one length and one teacher counting as one. */
 function lessonsDrafted(rows: readonly RowDraft[], postWeeks: PlacementRecurrence): number {
   if (postWeeks !== "ALL_WEEKS") return rows.length;
   let lessons = rows.filter((row) => row.recurrence === "ALL_WEEKS").length;
-  for (const minutes of new Set(rows.map((row) => row.minutes))) {
-    const odd = rows.filter((row) => row.minutes === minutes && row.recurrence === "ODD_WEEKS").length;
-    const even = rows.filter((row) => row.minutes === minutes && row.recurrence === "EVEN_WEEKS").length;
+  for (const unit of new Set(rows.map(unitOf))) {
+    const odd = rows.filter((row) => unitOf(row) === unit && row.recurrence === "ODD_WEEKS").length;
+    const even = rows.filter((row) => unitOf(row) === unit && row.recurrence === "EVEN_WEEKS").length;
     lessons += Math.max(odd, even);
   }
   return lessons;
@@ -120,16 +142,16 @@ function lessonsDrafted(rows: readonly RowDraft[], postWeeks: PlacementRecurrenc
 /** A row on an every-week post whose other half is not there yet, and the weeks that other half runs. */
 function loneRow(rows: readonly RowDraft[], postWeeks: PlacementRecurrence): { row: RowDraft; missing: PlacementRecurrence } | null {
   if (postWeeks !== "ALL_WEEKS") return null;
-  for (const minutes of new Set(rows.map((row) => row.minutes))) {
-    const odd = rows.filter((row) => row.minutes === minutes && row.recurrence === "ODD_WEEKS");
-    const even = rows.filter((row) => row.minutes === minutes && row.recurrence === "EVEN_WEEKS");
+  for (const unit of new Set(rows.map(unitOf))) {
+    const odd = rows.filter((row) => unitOf(row) === unit && row.recurrence === "ODD_WEEKS");
+    const even = rows.filter((row) => unitOf(row) === unit && row.recurrence === "EVEN_WEEKS");
     if (odd.length > even.length) return { row: odd[odd.length - 1]!, missing: "EVEN_WEEKS" };
     if (even.length > odd.length) return { row: even[even.length - 1]!, missing: "ODD_WEEKS" };
   }
   return null;
 }
 
-export function PlacementDialog({ open, onOpenChange, requirement, name, shared }: PlacementDialogProps) {
+export function PlacementDialog({ open, onOpenChange, requirement, name, shares, teacherName }: PlacementDialogProps) {
   const t = useTranslations("requirements.placements");
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -143,7 +165,8 @@ export function PlacementDialog({ open, onOpenChange, requirement, name, shared 
             // A fresh form per post, so nothing of the last one is left in it.
             key={requirement.id}
             requirement={requirement}
-            shared={shared}
+            shares={shares ?? []}
+            teacherName={teacherName}
             onClose={() => onOpenChange(false)}
           />
         ) : null}
@@ -154,11 +177,13 @@ export function PlacementDialog({ open, onOpenChange, requirement, name, shared 
 
 function PlacementForm({
   requirement,
-  shared,
+  shares,
+  teacherName,
   onClose,
 }: {
   requirement: TeachingRequirement;
-  shared: boolean;
+  shares: readonly LessonShare[];
+  teacherName: ((id: string) => string | null) | undefined;
   onClose: () => void;
 }) {
   const t = useTranslations("requirements.placements");
@@ -174,9 +199,32 @@ function PlacementForm({
   const parts = lengthPartsOf(requirement);
   const mixed = isMixed(requirement);
   const total = lessonCountOf(requirement);
-  // A post in a block is placed with its block, and a post that shares its
-  // lessons names a teacher per lesson: neither can be placed (BLOCK, SHARES).
-  const blocked = requirement.blockId ? "BLOCK" : shared ? "SHARES" : null;
+  // A post in a block is placed with its block, and cannot be placed here (BLOCK).
+  const blocked = requirement.blockId ? "BLOCK" : null;
+
+  // Delade lektioner. Every teacher with a part of the post's lessons, the
+  // huvudlärare first; a part nobody teaches is counted apart, because it
+  // cannot be placed. A slot is one teacher's lessons of one length, which is
+  // what a row can be given: a post that shares nothing has one slot per
+  // length and no teacher.
+  const shared = shares.length > 0;
+  const post = { ...requirement, shares };
+  const lessonParts = shared ? teacherPartsOf(post) : [];
+  const teachers = lessonParts.flatMap((part) => (part.teacherId === null ? [] : [{ ...part, teacherId: part.teacherId }]));
+  const untaught = lessonParts.reduce((sum, part) => sum + (part.teacherId === null ? part.lessons : 0), 0);
+  const lessonsOf = shared ? lessonTeachersOf(post) : [];
+  const slots = shared
+    ? teachers.flatMap(({ teacherId }) =>
+        parts
+          .map(({ minutes }) => ({
+            teacherId,
+            minutes,
+            count: lessonsOf.filter((lesson) => lesson.teacherId === teacherId && lesson.minutes === minutes).length,
+          }))
+          .filter((slot) => slot.count > 0),
+      )
+    : parts.map(({ minutes, count }) => ({ teacherId: "", minutes, count }));
+  const nameOf = (teacherId: string) => teacherName?.(teacherId) ?? t("teacherUnnamed");
 
   const read = useQuery({
     queryKey: placementsOfKey(requirement.id),
@@ -207,6 +255,7 @@ function PlacementForm({
         day: String(placement.dayOfWeek),
         start: placement.startTime,
         minutes: String(placement.minutes),
+        teacherId: placement.teacherId ?? "",
         roomId: placement.roomId,
         roomName: placement.roomName,
         recurrence: placement.recurrence,
@@ -229,9 +278,30 @@ function PlacementForm({
   const pairsId = `${uid}-pairs`;
 
   const list = rows ?? [];
-  const drafted = lessonsDrafted(list, postWeeks);
   const lone = loneRow(list, postWeeks);
-  const canAdd = !readOnly && (drafted < total || lone !== null);
+  // The first lesson the post still has to place: of the first length (and, on a
+  // shared post, the first teacher) that has one left.
+  const open = slots.find(
+    (slot) =>
+      lessonsDrafted(
+        list.filter((row) => row.teacherId === slot.teacherId && Number(row.minutes) === slot.minutes),
+        postWeeks,
+      ) < slot.count,
+  );
+  const canAdd = !readOnly && (open !== undefined || lone !== null);
+  // Each teacher's placed lessons against their part: "Anna 1 av 2, Bo 1 av 1".
+  const counts = teachers
+    .map((part) =>
+      t("teacherCount", {
+        name: nameOf(part.teacherId),
+        placed: lessonsDrafted(
+          list.filter((row) => row.teacherId === part.teacherId),
+          postWeeks,
+        ),
+        of: part.lessons,
+      }),
+    )
+    .join(", ");
   const stale = list.filter((row) => row.verdict !== null && !row.verdict.ok).length;
   const storedCount = read.data?.placements.length ?? 0;
 
@@ -245,16 +315,31 @@ function PlacementForm({
     });
   };
 
+  /** The lengths a row can have: its teacher's (any of the post's while none is chosen), and the one it has. */
+  const lengthsOf = (row: RowDraft): number[] => {
+    const own = slots.filter((slot) => slot.teacherId === row.teacherId).map((slot) => slot.minutes);
+    const offered = own.length > 0 ? own : parts.map((part) => part.minutes);
+    return offered.includes(Number(row.minutes)) ? offered : [...offered, Number(row.minutes)];
+  };
+
+  /** Another teacher keeps the row's length when they have it, and otherwise takes their first. */
+  const chooseTeacher = (row: RowDraft, teacherId: string) => {
+    const own = slots.filter((slot) => slot.teacherId === teacherId).map((slot) => slot.minutes);
+    update(row.key, {
+      teacherId,
+      ...(own.length > 0 && !own.includes(Number(row.minutes)) ? { minutes: String(own[0]) } : {}),
+    });
+  };
+
   const add = () => {
-    // The first length the post still has a lesson to place of.
-    const open = parts.find((part) => lessonsDrafted(list.filter((row) => Number(row.minutes) === part.minutes), postWeeks) < part.count);
     const row: RowDraft = lone
       ? { ...lone.row, key: nextKey, start: "", recurrence: lone.missing, verdict: null }
       : {
           key: nextKey,
           day: "1",
           start: "",
-          minutes: String((open ?? parts[0]!).minutes),
+          minutes: String((open ?? slots[0]!).minutes),
+          teacherId: (open ?? slots[0]!).teacherId,
           roomId: "",
           roomName: null,
           recurrence: postWeeks,
@@ -292,10 +377,11 @@ function PlacementForm({
       const problem: FieldErrors = {};
       const start = startProblem(row);
       if (start) problem.start = start;
+      if (shared && !row.teacherId) problem.teacher = t("problemTeacher");
       if (!row.roomId) problem.room = t("problemRoom");
-      if (problem.start || problem.room) {
+      if (problem.start || problem.teacher || problem.room) {
         errors[row.key] = problem;
-        first ??= problem.start ? id("start", row.key) : id("room", row.key);
+        first ??= problem.start ? id("start", row.key) : problem.teacher ? id("teacher", row.key) : id("room", row.key);
       }
     }
     setFieldErrors(errors);
@@ -310,6 +396,8 @@ function PlacementForm({
       minutes: Number(row.minutes),
       roomId: row.roomId,
       recurrence: row.recurrence,
+      // Whose lesson, on a post that shares its lessons; a post that shares nothing sends none.
+      ...(shared ? { teacherId: row.teacherId } : {}),
     }));
     setSaving(true);
     try {
@@ -329,8 +417,15 @@ function PlacementForm({
           setFocusId(topId);
         }
       } else if (refusal?.kind === "FIT") {
-        setTopError(fitSentence(t, refusal.reason));
-        setFocusId(topId);
+        // A per-teacher rule names the row it holds of (its place in the list that was sent).
+        const row = typeof refusal.params.index === "number" ? list[refusal.params.index] : undefined;
+        if (row) {
+          setRefused({ key: row.key, text: fitSentence(t, refusal.reason) });
+          setFocusId(id(shared && refusal.reason.includes("TEACHER") ? "teacher" : "day", row.key));
+        } else {
+          setTopError(fitSentence(t, refusal.reason));
+          setFocusId(topId);
+        }
       } else if (error instanceof ApiError && error.code === "SCHEDULE_BUSY") {
         setTopError(t("busy"));
         setFocusId(topId);
@@ -379,17 +474,33 @@ function PlacementForm({
           ) : null}
           {roomsFailed ? <Notice tone="destructive">{t("roomsFailed")}</Notice> : null}
 
+          {shared ? (
+            // Said as the rows change, so a reader hears how many lessons each teacher has left.
+            <div aria-live="polite" className="space-y-2">
+              {counts ? <p className="text-sm">{t("perTeacher", { counts })}</p> : null}
+              {untaught > 0 ? (
+                <Notice tone="warning" role={null}>
+                  {t("noTeacher", { count: untaught })}
+                </Notice>
+              ) : null}
+            </div>
+          ) : null}
+
           {list.length === 0 ? <p className="text-sm text-muted-foreground">{t("empty")}</p> : null}
 
           {list.map((row, index) => {
             const errors = fieldErrors[row.key] ?? {};
             const stored = row.verdict && !row.verdict.ok ? row.verdict : null;
+            // A shared post's lesson that no teacher takes (its teacher was deleted since): said until one is chosen.
+            const needsTeacher = shared && row.teacherId === "";
             const rowError =
               refused?.key === row.key
                 ? refused.text
                 : stored
                   ? verdictSentence(t, stored.reason, stored.params)
-                  : null;
+                  : needsTeacher && !errors.teacher
+                    ? fitSentence(t, "NO_TEACHER")
+                    : null;
             const rowErrorId = id("error", row.key);
             const end = Number.isFinite(minutesOfClock(row.start))
               ? clockOfMinutes(minutesOfClock(row.start) + Number(row.minutes))
@@ -433,6 +544,32 @@ function PlacementForm({
                       onChange={(event) => update(row.key, { start: event.target.value })}
                     />
                   </FormField>
+                  {shared ? (
+                    <FormField id={id("teacher", row.key)} label={t("teacher")} error={errors.teacher}>
+                      {(control) => (
+                        <NativeSelect
+                          {...control}
+                          aria-invalid={control["aria-invalid"] ?? (needsTeacher ? true : undefined)}
+                          aria-describedby={
+                            [control["aria-describedby"], rowError ? rowErrorId : undefined].filter(Boolean).join(" ") || undefined
+                          }
+                          value={row.teacherId}
+                          onChange={(event) => chooseTeacher(row, event.target.value)}
+                        >
+                          <option value="">{t("teacherPlaceholder")}</option>
+                          {teachers.map((part) => (
+                            <option key={part.teacherId} value={part.teacherId}>
+                              {nameOf(part.teacherId)}
+                            </option>
+                          ))}
+                          {/* A teacher the post no longer gives a lesson is kept as stored, and the gateway says what is wrong. */}
+                          {row.teacherId && !teachers.some((part) => part.teacherId === row.teacherId) ? (
+                            <option value={row.teacherId}>{nameOf(row.teacherId)}</option>
+                          ) : null}
+                        </NativeSelect>
+                      )}
+                    </FormField>
+                  ) : null}
                   {mixed ? (
                     <div className="space-y-1.5">
                       <Label htmlFor={id("length", row.key)}>{t("length")}</Label>
@@ -441,9 +578,9 @@ function PlacementForm({
                         value={row.minutes}
                         onChange={(event) => update(row.key, { minutes: event.target.value })}
                       >
-                        {parts.map((part) => (
-                          <option key={part.minutes} value={part.minutes}>
-                            {t("minutes", { minutes: part.minutes })}
+                        {lengthsOf(row).map((minutes) => (
+                          <option key={minutes} value={minutes}>
+                            {t("minutes", { minutes })}
                           </option>
                         ))}
                       </NativeSelect>
@@ -523,7 +660,7 @@ function PlacementForm({
 
           {postWeeks === "ALL_WEEKS" ? (
             <p id={pairsId} className="text-xs text-muted-foreground">
-              {t("pairsHint")}
+              {t(shared ? "pairsHintShared" : "pairsHint")}
             </p>
           ) : null}
 
@@ -543,7 +680,7 @@ function PlacementForm({
               </Button>
               {canAdd ? null : (
                 <p id={`${addId}-full`} className="text-xs text-muted-foreground">
-                  {t("addFull", { count: total })}
+                  {shared ? t("addFullShared") : t("addFull", { count: total })}
                 </p>
               )}
             </div>

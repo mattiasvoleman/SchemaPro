@@ -733,6 +733,30 @@ describe("StaffingProposalDialog", () => {
       expect(toast.error).not.toHaveBeenCalled();
     });
 
+    it("names the placement to change first, and the row, when a change of lead would leave placed lessons without theirs", async () => {
+      const user = userEvent.setup();
+      post.mockImplementation(async (path: string) => {
+        if (path === PROPOSE) return proposal();
+        throw new ApiError(409, "Förläggningen tisdag 10:00–11:00 måste ändras först.", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", {
+          reason: "TEACHER",
+          day: 2,
+          start: "10:00",
+          end: "11:00",
+          weeks: "ODD_WEEKS",
+          requirementId: "r-mu-8b",
+        });
+      });
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(
+        "Musik för 8B: Posten sparades inte. Förläggningen tisdag 10:00–11:00 (udda veckor) måste ändras eller tas bort först. Förläggningens lärare har ingen lektion på posten.",
+      );
+      expect(screen.getByText("Förslag per post")).toBeInTheDocument();
+    });
+
     it("says an undo the staffing has moved past, and an undo the policy refuses", async () => {
       const user = userEvent.setup();
       let undoError: ApiError = new ApiError(409, "stale", "STAFF_PROPOSAL_STALE");

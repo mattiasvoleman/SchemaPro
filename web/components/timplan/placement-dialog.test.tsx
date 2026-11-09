@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
+import type { LessonShare } from "@/lib/lesson-shares";
 import type { TeachingRequirement } from "@/lib/types";
 import { PlacementDialog } from "./placement-dialog";
 
@@ -75,6 +76,7 @@ const stored = (extra: Record<string, unknown> = {}) => ({
   roomId: "room-sim",
   roomName: "Simhallen",
   recurrence: "ALL_WEEKS",
+  teacherId: null,
   ...extra,
 });
 
@@ -86,13 +88,24 @@ function answer(placements: ReturnType<typeof stored>[], verdicts?: unknown[]) {
   });
 }
 
-function renderDialog(requirement: TeachingRequirement = post(), shared = false) {
+/** The page's list of people, as it names a teacher. */
+const NAMES: Record<string, string> = { t1: "Anna Ek", t2: "Bo Alm", t3: "Cilla Öst" };
+const teacherName = (id: string) => NAMES[id] ?? null;
+
+function renderDialog(requirement: TeachingRequirement = post(), shares?: readonly LessonShare[]) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const invalidate = vi.spyOn(client, "invalidateQueries");
   const onOpenChange = vi.fn();
   render(
     <QueryClientProvider client={client}>
-      <PlacementDialog open onOpenChange={onOpenChange} requirement={requirement} name="7A · Slöjd" shared={shared} />
+      <PlacementDialog
+        open
+        onOpenChange={onOpenChange}
+        requirement={requirement}
+        name="7A · Slöjd"
+        shares={shares}
+        teacherName={teacherName}
+      />
     </QueryClientProvider>,
   );
   return { invalidate, onOpenChange, user: userEvent.setup() };
@@ -569,12 +582,337 @@ describe("a post that cannot be placed", () => {
     expect(screen.queryByRole("button", { name: "save" })).toBeNull();
   });
 
-  it("that shares its lessons between teachers says so", async () => {
-    renderDialog(post(), true);
+  it("that shares its lessons between teachers can be placed: it reads its rows and offers a save", async () => {
+    await opened(post(), [{ teacherId: "t2", lessons: 1, minutes: 60 }]);
 
-    expect(await screen.findByText("problem.SHARES")).toBeInTheDocument();
-    expect(state.get).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "save" })).toBeNull();
+    expect(state.get).toHaveBeenCalledWith("/api/v1/teaching-requirements/r-sl/placements");
+    expect(screen.queryByText("problem.SHARES")).toBeNull();
+    expect(saveButton()).toBeEnabled();
+  });
+});
+
+describe("a post that shares nothing", () => {
+  it("has no teacher field and no count per teacher, and sends its rows without a teacher", async () => {
+    answer([stored()]);
+    const { user } = await opened();
+
+    expect(within(rowNamed(1)).queryByLabelText("teacher")).toBeNull();
+    expect(screen.queryByText(/^perTeacher/)).toBeNull();
+    await user.click(saveButton());
+
+    await waitFor(() => expect(state.put).toHaveBeenCalled());
+    expect(state.put.mock.calls[0]![1].placements[0]).not.toHaveProperty("teacherId");
+  });
+
+  it("is the same when its shares are an empty list", async () => {
+    answer([stored()]);
+    await opened(post(), []);
+
+    expect(within(rowNamed(1)).queryByLabelText("teacher")).toBeNull();
+  });
+});
+
+describe("a post that shares its lessons between teachers", () => {
+  /** Anna (the post's teacher) has two of its three lessons, Bo one. */
+  const three = post({ lessonsPerWeek: 3 });
+  const boOne: LessonShare[] = [{ teacherId: "t2", lessons: 1, minutes: 60 }];
+  const optionsOf = (select: HTMLSelectElement) => [...select.options].map((option) => option.textContent);
+
+  it("asks whose lesson each row is, among the teachers that have a part, by name", async () => {
+    answer([stored({ teacherId: "t1" }), stored({ id: "p2", dayOfWeek: 4, teacherId: "t2" })]);
+    await opened(three, boOne);
+
+    const first = select(rowNamed(1), "teacher");
+    expect(first.value).toBe("t1");
+    expect(optionsOf(first)).toEqual(["teacherPlaceholder", "Anna Ek", "Bo Alm"]);
+    expect(select(rowNamed(2), "teacher").value).toBe("t2");
+    expect(first.labels?.[0]?.textContent).toBe("teacher");
+  });
+
+  it("counts each teacher's placed lessons against their part, in a line", async () => {
+    answer([stored({ teacherId: "t1" }), stored({ id: "p2", dayOfWeek: 4, teacherId: "t2" })]);
+    await opened(three, boOne);
+
+    expect(screen.getByText(/^perTeacher/)).toHaveTextContent(
+      "perTeacher(teacherCount(Anna Ek|1|2), teacherCount(Bo Alm|1|1))",
+    );
+  });
+
+  it("keeps the count as the rows change: another teacher for a row moves a lesson between them", async () => {
+    answer([stored({ teacherId: "t1" })]);
+    const { user } = await opened(three, boOne);
+
+    await user.selectOptions(select(rowNamed(1), "teacher"), "t2");
+
+    expect(screen.getByText(/^perTeacher/)).toHaveTextContent(
+      "perTeacher(teacherCount(Anna Ek|0|2), teacherCount(Bo Alm|1|1))",
+    );
+  });
+
+  it("sends whose lesson each row is", async () => {
+    answer([stored({ teacherId: "t1" }), stored({ id: "p2", dayOfWeek: 4, teacherId: "t1" })]);
+    const { user } = await opened(three, boOne);
+
+    await user.selectOptions(select(rowNamed(2), "teacher"), "t2");
+    await user.click(saveButton());
+
+    await waitFor(() => expect(state.put).toHaveBeenCalled());
+    const sent = state.put.mock.calls[0]![1].placements;
+    expect(sent.map((row: { teacherId: string }) => row.teacherId)).toEqual(["t1", "t2"]);
+  });
+
+  describe("adding a lesson", () => {
+    it("gives the new row to the first teacher with a lesson left", async () => {
+      answer([stored({ teacherId: "t1" }), stored({ id: "p2", teacherId: "t1" })]);
+      const { user } = await opened(three, boOne);
+
+      // Anna's two are placed; Bo's one is not.
+      await user.click(screen.getByRole("button", { name: "add" }));
+
+      expect(select(rowNamed(3), "teacher").value).toBe("t2");
+      expect(field(rowNamed(3), "day")).toHaveFocus();
+    });
+
+    it("starts with the huvudlärare when nothing is placed", async () => {
+      const { user } = await opened(three, boOne);
+
+      await user.click(screen.getByRole("button", { name: "add" }));
+
+      expect(select(rowNamed(1), "teacher").value).toBe("t1");
+    });
+
+    it("stops when every lesson that has a teacher is placed, and says so", async () => {
+      answer([
+        stored({ teacherId: "t1" }),
+        stored({ id: "p2", teacherId: "t1" }),
+        stored({ id: "p3", teacherId: "t2" }),
+      ]);
+      await opened(three, boOne);
+
+      const add = screen.getByRole("button", { name: "add" });
+      expect(add).toBeDisabled();
+      expect(add.getAttribute("aria-describedby")).toBe(screen.getByText("addFullShared").id);
+    });
+
+    it("counts a pair of odd and even weeks as one lesson of one teacher, and adds the other half of a lone one", async () => {
+      // Anna and Bo have one lesson each. Anna's is placed on odd weeks, Bo's on even: two halves
+      // of two different lessons, and neither is a pair.
+      const two = post({ lessonsPerWeek: 2 });
+      answer([
+        stored({ teacherId: "t1", recurrence: "ODD_WEEKS" }),
+        stored({ id: "p2", dayOfWeek: 4, teacherId: "t2", recurrence: "EVEN_WEEKS" }),
+      ]);
+      const { user } = await opened(two, boOne);
+
+      expect(screen.getByText(/^perTeacher/)).toHaveTextContent(
+        "perTeacher(teacherCount(Anna Ek|1|1), teacherCount(Bo Alm|1|1))",
+      );
+      const add = screen.getByRole("button", { name: "add" });
+      expect(add).toBeEnabled();
+      await user.click(add);
+
+      // The missing half is the first lone row's, Anna's, on the weeks she lacks.
+      expect(select(rowNamed(3), "teacher").value).toBe("t1");
+      expect(field(rowNamed(3), "weeks").value).toBe("EVEN_WEEKS");
+      expect(screen.getByText("pairsHintShared")).toBeInTheDocument();
+      expect(screen.queryByText("pairsHint")).toBeNull();
+    });
+  });
+
+  describe("on a post of two lengths", () => {
+    // Anna has 1 × 80 and 1 × 40, Bo 1 × 40.
+    const mixed = post({ lessonsPerWeek: 3, minutesPerLesson: 80, lessonLengths: [80, 40, 40] });
+    const boFortyShare: LessonShare[] = [{ teacherId: "t2", lessons: 1, minutes: 40 }];
+    const lengths = (row: HTMLElement) => [...select(row, "length").options].map((option) => option.value);
+
+    it("offers the chosen teacher's lengths only", async () => {
+      answer([
+        stored({ teacherId: "t1", minutes: 80, endTime: "11:20" }),
+        stored({ id: "p2", teacherId: "t2", minutes: 40, endTime: "10:40" }),
+      ]);
+      await opened(mixed, boFortyShare);
+
+      expect(lengths(rowNamed(1))).toEqual(["80", "40"]);
+      expect(lengths(rowNamed(2))).toEqual(["40"]);
+    });
+
+    it("keeps the row's length for a teacher who has it, and takes the teacher's first when they do not", async () => {
+      answer([
+        stored({ teacherId: "t1", minutes: 40, endTime: "10:40" }),
+        stored({ id: "p2", teacherId: "t1", minutes: 80, endTime: "11:20" }),
+      ]);
+      const { user } = await opened(mixed, boFortyShare);
+
+      await user.selectOptions(select(rowNamed(1), "teacher"), "t2");
+      await user.selectOptions(select(rowNamed(2), "teacher"), "t2");
+
+      expect(select(rowNamed(1), "length").value).toBe("40");
+      expect(select(rowNamed(2), "length").value).toBe("40");
+    });
+
+    it("counts a teacher's lessons of each length: another of one length is not open when its own are placed", async () => {
+      // Bo's one lesson of 40 is placed; Anna has 80 and 40 to place.
+      answer([stored({ teacherId: "t2", minutes: 40, endTime: "10:40" })]);
+      const { user } = await opened(mixed, boFortyShare);
+
+      await user.click(screen.getByRole("button", { name: "add" }));
+
+      expect(select(rowNamed(2), "teacher").value).toBe("t1");
+      expect(select(rowNamed(2), "length").value).toBe("80");
+    });
+  });
+
+  describe("a part nobody teaches", () => {
+    // The post has no huvudlärare: one of its two lessons has no teacher; Bo has the other.
+    const unstaffed = post({ teacherId: null, lessonsPerWeek: 2 });
+
+    it("is said to need a teacher first, and is not offered", async () => {
+      await opened(unstaffed, boOne);
+
+      expect(screen.getByText("noTeacher(1)")).toBeInTheDocument();
+      expect(screen.getByText(/^perTeacher/)).toHaveTextContent("perTeacher(teacherCount(Bo Alm|0|1))");
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "add" }));
+      expect(optionsOf(select(rowNamed(1), "teacher"))).toEqual(["teacherPlaceholder", "Bo Alm"]);
+      expect(select(rowNamed(1), "teacher").value).toBe("t2");
+    });
+
+    it("leaves the add button closed once the lessons that have a teacher are placed", async () => {
+      answer([stored({ teacherId: "t2" })]);
+      await opened(unstaffed, boOne);
+
+      expect(screen.getByRole("button", { name: "add" })).toBeDisabled();
+      expect(screen.getByText("noTeacher(1)")).toBeInTheDocument();
+    });
+
+    it("says nothing of a missing teacher when every part has one", async () => {
+      await opened(three, boOne);
+
+      expect(screen.queryByText(/^noTeacher/)).toBeNull();
+    });
+
+    it("counts a share whose teacher was deleted with the lessons nobody teaches", async () => {
+      await opened(three, [{ teacherId: null, lessons: 2, minutes: 60 }]);
+
+      expect(screen.getByText("noTeacher(2)")).toBeInTheDocument();
+      expect(screen.getByText(/^perTeacher/)).toHaveTextContent("perTeacher(teacherCount(Anna Ek|0|1))");
+    });
+  });
+
+  describe("a stored row whose teacher was deleted", () => {
+    it("shows the field empty with the reason, and will not save until a teacher is chosen", async () => {
+      answer([stored({ teacherId: null })]);
+      const { user } = await opened(three, boOne);
+
+      const row = rowNamed(1);
+      const teacher = select(row, "teacher");
+      expect(teacher.value).toBe("");
+      expect(within(row).getByText("problem.NO_TEACHER")).toBeInTheDocument();
+      expect(teacher).toBeInvalid();
+
+      await user.click(saveButton());
+
+      expect(state.put).not.toHaveBeenCalled();
+      expect(within(row).getByText("problemTeacher")).toBeInTheDocument();
+      expect(teacher).toHaveFocus();
+
+      await user.selectOptions(teacher, "t1");
+      expect(within(row).queryByText("problemTeacher")).toBeNull();
+      expect(within(row).queryByText("problem.NO_TEACHER")).toBeNull();
+      await user.click(saveButton());
+      await waitFor(() => expect(state.put).toHaveBeenCalled());
+    });
+  });
+
+  it("keeps a teacher the post no longer gives a lesson, as stored, for the gateway to say what is wrong", async () => {
+    answer([stored({ teacherId: "t3" })]);
+    await opened(three, boOne);
+
+    const teacher = select(rowNamed(1), "teacher");
+    expect(teacher.value).toBe("t3");
+    expect(optionsOf(teacher)).toContain("Cilla Öst");
+  });
+
+  it("names a teacher the page does not know without a name", async () => {
+    answer([stored({ teacherId: "t-gone" })]);
+    await opened(three, boOne);
+
+    expect(optionsOf(select(rowNamed(1), "teacher"))).toContain("teacherUnnamed");
+  });
+
+  describe("a refused save", () => {
+    it("says a per-teacher rule at the row the gateway names, and moves to its teacher field", async () => {
+      answer([stored({ teacherId: "t1" }), stored({ id: "p2", dayOfWeek: 4, teacherId: "t2" })]);
+      state.put.mockRejectedValue(
+        new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { reason: "TEACHER_COUNT", index: 1 }),
+      );
+      const { user } = await opened(three, boOne);
+
+      await user.click(saveButton());
+
+      const second = rowNamed(2);
+      const reason = await within(second).findByText("problem.TEACHER_COUNT");
+      expect(reason).toHaveClass("text-destructive");
+      expect(second.getAttribute("aria-describedby")).toBe(reason.id);
+      expect(select(second, "teacher").getAttribute("aria-describedby")).toContain(reason.id);
+      expect(select(second, "teacher")).toHaveFocus();
+      expect(within(rowNamed(1)).queryByText(/^problem\./)).toBeNull();
+    });
+
+    it("moves to the day, not the teacher, for a rule that is not about the teacher", async () => {
+      answer([stored({ teacherId: "t1" })]);
+      state.put.mockRejectedValue(new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { reason: "WEEKS", index: 0 }));
+      const { user } = await opened(three, boOne);
+
+      await user.click(saveButton());
+
+      await within(rowNamed(1)).findByText("problem.WEEKS");
+      expect(field(rowNamed(1), "day")).toHaveFocus();
+    });
+
+    it("says it at the top, and moves there, when the rule names no row", async () => {
+      answer([stored({ teacherId: "t1" })]);
+      state.put.mockRejectedValue(new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { reason: "TEACHER_PAIRS" }));
+      const { user } = await opened(three, boOne);
+
+      await user.click(saveButton());
+
+      const top = (await screen.findByText("problem.TEACHER_PAIRS")).closest("[tabindex='-1']") as HTMLElement;
+      expect(top).toHaveFocus();
+      expect(within(top).getByText("notSaved")).toBeInTheDocument();
+    });
+
+    it("says it at the top for a row index the list does not have", async () => {
+      answer([stored({ teacherId: "t1" })]);
+      state.put.mockRejectedValue(new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { reason: "TEACHER", index: 7 }));
+      const { user } = await opened(three, boOne);
+
+      await user.click(saveButton());
+
+      expect(await screen.findByText("problem.TEACHER")).toBeInTheDocument();
+      expect(within(rowNamed(1)).queryByText("problem.TEACHER")).toBeNull();
+    });
+  });
+
+  it("is for a reader a list with every field disabled", async () => {
+    state.readOnly = true;
+    answer([stored({ teacherId: "t1" })]);
+    renderDialog(three, boOne);
+    await screen.findByLabelText("teacher");
+
+    expect(select(rowNamed(1), "teacher")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "add" })).toBeNull();
+  });
+
+  it("gives the teacher field a label of its own on every row", async () => {
+    answer([stored({ teacherId: "t1" }), stored({ id: "p2", dayOfWeek: 4, teacherId: "t2" })]);
+    await opened(three, boOne);
+
+    for (const n of [1, 2]) {
+      const control = field(rowNamed(n), "teacher");
+      expect(control.labels?.[0]?.textContent).toBe("teacher");
+      expect(document.querySelectorAll(`[id="${control.id}"]`)).toHaveLength(1);
+    }
   });
 });
 

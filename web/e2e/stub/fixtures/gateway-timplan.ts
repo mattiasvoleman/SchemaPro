@@ -1,8 +1,9 @@
 import { Reply, route, type GatewayRoute } from "../gateway-routes";
 import { plannedClassPupils, plannedCoverage, teachingTimeCard } from "./timplan-coverage";
+import { placedInYear, placedOf, placementsStored, SHARED_PLACEMENTS_SCENARIO, SHARED_POST_SHARES } from "./timplan-placements";
 import { NATIONAL_TIMPLANS } from "./timplan-national";
 import { CHECKS, CREDITS, PLAN_LIST, PLANS, YEAR_TIMPLANS } from "./timplan-plans";
-import { GUARDIAN_LINKS, NEXT_YEAR, YEAR } from "./world";
+import { GUARDIAN_LINKS, NEXT_YEAR, REQUIREMENTS, YEAR } from "./world";
 
 /**
  * The timplan area: the national timplan, the school's lokala timplaner and
@@ -45,21 +46,38 @@ export const timplanRoutes: GatewayRoute[] = [
   }),
 
   // Delade lektioner: the world shares no post, so every year answers none
-  // (an admin's read; the gateway refuses any other role the route).
-  route("GET", "/api/v1/teaching-requirements/shares", ({ person, query }) => {
+  // (an admin's read; the gateway refuses any other role the route), except in
+  // the scenario that shares one (timplan-placements.ts).
+  route("GET", "/api/v1/teaching-requirements/shares", ({ person, query, scenario }) => {
     if (!person) return new Reply(401, { message: "Inte inloggad." });
     if (person.role !== "SCHOOL_ADMIN") return new Reply(403, { message: "Åtkomst nekad." });
     if (!KNOWN_YEARS.has(query.get("academicYearId") ?? "")) return new Reply(400, { message: "academicYearId" });
-    return [];
+    return scenario === SHARED_PLACEMENTS_SCENARIO && query.get("academicYearId") === YEAR.id ? SHARED_POST_SHARES : [];
   }),
 
   // Förlagda poster: the world places no lesson on a post, so every year answers
-  // none (an admin's read, as the shares above).
-  route("GET", "/api/v1/teaching-requirements/placements", ({ person, query }) => {
+  // none (an admin's read, as the shares above), except in the same scenario.
+  route("GET", "/api/v1/teaching-requirements/placements", ({ person, query, scenario }) => {
     if (!person) return new Reply(401, { message: "Inte inloggad." });
     if (person.role !== "SCHOOL_ADMIN") return new Reply(403, { message: "Åtkomst nekad." });
     if (!KNOWN_YEARS.has(query.get("academicYearId") ?? "")) return new Reply(400, { message: "academicYearId" });
-    return [];
+    return query.get("academicYearId") === YEAR.id ? placedInYear(scenario) : [];
+  }),
+
+  // One post's rows and their verdicts (the dialog Förlägg opens on), and the
+  // write that replaces them: stored as sent, every verdict holding. The
+  // stub keeps nothing between requests, as it keeps no other write.
+  route("GET", "/api/v1/teaching-requirements/:id/placements", ({ person, params, scenario }) => {
+    if (!person) return new Reply(401, { message: "Inte inloggad." });
+    if (person.role !== "SCHOOL_ADMIN") return new Reply(403, { message: "Åtkomst nekad." });
+    if (!REQUIREMENTS.some((row) => row.id === params.id)) return notFound("Posten");
+    return placedOf(params.id!, scenario);
+  }),
+  route("PUT", "/api/v1/teaching-requirements/:id/placements", ({ person, params, body }) => {
+    if (!person) return new Reply(401, { message: "Inte inloggad." });
+    if (person.role !== "SCHOOL_ADMIN") return new Reply(403, { message: "Åtkomst nekad." });
+    if (!REQUIREMENTS.some((row) => row.id === params.id)) return notFound("Posten");
+    return placementsStored(params.id!, body);
   }),
 
   route("GET", "/api/v1/timplan-credits", ({ query }) =>
