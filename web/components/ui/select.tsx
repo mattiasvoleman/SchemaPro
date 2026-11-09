@@ -9,6 +9,27 @@ const Select = SelectPrimitive.Root;
 const SelectGroup = SelectPrimitive.Group;
 const SelectValue = SelectPrimitive.Value;
 
+/*
+ * The trigger's height is a minimum, not a size. Radix mirrors the chosen
+ * option into it, and an option can be more than a line of text: the timplan's
+ * teacher pickers show the name, a behörighet badge and the minutes left
+ * (candidateLine), which wrap to two or three rows in a narrow column. In a
+ * fixed h-9 box that value was centred and spilled out above and below, over
+ * the field's label and the button under it; line-clamp-1 cannot cut it,
+ * since a wrapped inline-flex is one line box however tall. With min-h-9 the
+ * box grows to hold it.
+ *
+ * It grows for a second row, never for one: 36 px is 1 px of border, 5 px of
+ * padding, a 24 px content area (h-6, one row) and 5 + 1 again. A row of up
+ * to 24 px leaves the box at 36 and is centred where the fixed box centred
+ * it (text 20 px, a badge row 22, Dela i halvklass' line cut to max-h-6: 24).
+ * py-1.5 left 22 px, and that 24 px line grew its picker to 38 beside a
+ * neighbour of 36; the old py-2 left 18, and taller rows spilled into the
+ * padding unseen.
+ *
+ * text-left because a button centres its text, and a value that wraps reads
+ * as a field's does, from the left.
+ */
 const SelectTrigger = React.forwardRef<
   React.ComponentRef<typeof SelectPrimitive.Trigger>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>
@@ -16,14 +37,15 @@ const SelectTrigger = React.forwardRef<
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      "flex h-9 w-full items-center justify-between whitespace-nowrap rounded-md border border-input-strong bg-transparent px-3 py-2 text-sm shadow-sm ring-offset-background data-[placeholder]:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
+      "flex min-h-9 w-full items-center justify-between whitespace-nowrap rounded-md border border-input-strong bg-transparent px-3 py-[5px] text-left text-sm shadow-sm ring-offset-background data-[placeholder]:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
       className,
     )}
     {...props}
   >
     {children}
     <SelectPrimitive.Icon asChild>
-      <ChevronDown className="size-4 opacity-50" />
+      {/* shrink-0: a value wider than the box is cut or wrapped, never the chevron squeezed beside it. */}
+      <ChevronDown className="size-4 shrink-0 opacity-50" />
     </SelectPrimitive.Icon>
   </SelectPrimitive.Trigger>
 ));

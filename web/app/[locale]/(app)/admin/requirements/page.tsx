@@ -1259,15 +1259,22 @@ export default function RequirementsPage() {
    * report's co-teacher rule). Inside SelectItemText, so the trigger repeats
    * it for the chosen teacher and the option's accessible name carries the
    * words — nothing is said by colour alone.
+   *
+   * Where the trigger is narrow (Delade lektioner, any picker on a phone) the
+   * line wraps inside it, and the trigger grows to hold it (ui/select.tsx):
+   * the name, the word and the minutes each move down whole (`contents`, as
+   * in term-halves-dialog.tsx), and a name longer than the box breaks rather
+   * than running past its edge. The trigger's nowrap is lifted for that.
    */
   const candidateLine = (teacher: { id: string; firstName: string; lastName: string }) => {
     if (!cell || !yearBounds) return `${teacher.firstName} ${teacher.lastName}`;
     return (
-      <span className="inline-flex flex-wrap items-center gap-2">
-        <span>
+      <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 whitespace-normal">
+        <span className="[overflow-wrap:anywhere]">
           {teacher.firstName} {teacher.lastName}
         </span>
         <CandidateBadge
+          className="contents"
           qualification={candidateQualification(
             qualifications ?? [],
             teacher.id,

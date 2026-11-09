@@ -161,8 +161,13 @@ export function LessonSharesFields({
         {t("hint")}
       </p>
       {value.map((draft, index) => (
-        <div key={index} className="grid grid-cols-[minmax(0,1fr)_5rem_auto] items-end gap-2 sm:grid-cols-[minmax(0,1fr)_5rem_6rem_auto]">
-          <div className="space-y-1.5">
+        // One row per teacher. The teacher's picker grows to hold the chosen
+        // line (name, badge, minutes; ui/select.tsx), so the fields line up
+        // at the top, labels on one line, rather than at the bottom. On a
+        // phone the picker has the whole width and the numbers go under it:
+        // beside them it had a third of the row, too little for the name.
+        <div key={index} className="flex flex-wrap items-start gap-x-2 gap-y-3">
+          <div className="min-w-0 basis-full space-y-1.5 sm:flex-1">
             <Label htmlFor={`${idPrefix}-teacher-${index}`}>{t("teacher")}</Label>
             <Select value={draft.teacherId} onValueChange={(next) => update(index, { teacherId: next })}>
               <SelectTrigger id={`${idPrefix}-teacher-${index}`}>
@@ -187,7 +192,7 @@ export function LessonSharesFields({
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5">
+          <div className="w-20 space-y-1.5">
             <Label htmlFor={`${idPrefix}-lessons-${index}`}>{t("lessons")}</Label>
             <Input
               id={`${idPrefix}-lessons-${index}`}
@@ -200,7 +205,7 @@ export function LessonSharesFields({
             />
           </div>
           {mixed ? (
-            <div className="space-y-1.5">
+            <div className="w-24 space-y-1.5">
               <Label htmlFor={`${idPrefix}-minutes-${index}`}>{t("length")}</Label>
               <Select value={draft.minutes} onValueChange={(next) => update(index, { minutes: next })}>
                 <SelectTrigger id={`${idPrefix}-minutes-${index}`}>
@@ -216,19 +221,31 @@ export function LessonSharesFields({
               </Select>
             </div>
           ) : null}
-          <Button
-            data-writes="PLANERING"
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label={t("remove", { teacher: nameOf(shares[index]!.teacherId) })}
-            onClick={() => {
-              onChange(value.filter((_, i) => i !== index));
-              setFocusAdd(true);
-            }}
-          >
-            <X className="size-4" aria-hidden />
-          </Button>
+          <div className="space-y-1.5">
+            {/*
+              An empty label line, so the button sits beside the fields and
+              not their labels. A Label rather than a fixed height: the label
+              is inline, so its line is as tall as the text around it makes it.
+            */}
+            <Label aria-hidden className="invisible">
+              {"\u00a0"}
+            </Label>
+            {/* flex, not the button's inline-flex: on a line of its own under the label line, like the fields' controls. */}
+            <Button
+              data-writes="PLANERING"
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="flex"
+              aria-label={t("remove", { teacher: nameOf(shares[index]!.teacherId) })}
+              onClick={() => {
+                onChange(value.filter((_, i) => i !== index));
+                setFocusAdd(true);
+              }}
+            >
+              <X className="size-4" aria-hidden />
+            </Button>
+          </div>
         </div>
       ))}
       <Button
