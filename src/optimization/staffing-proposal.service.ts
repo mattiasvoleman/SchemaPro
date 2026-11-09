@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { requirementSharesConflict } from '../common/utils/prisma-errors';
+import { requirementSharesConflict, rethrowPrismaError } from '../common/utils/prisma-errors';
 import {
   BadRequestException,
   ConflictException,
@@ -63,6 +63,7 @@ import {
 import { OptimizationProxyService, requirementName, type AnonMaps } from './optimization-proxy.service';
 import { lockApplyYearKey } from './regeneration-lock';
 import { canonicalShares } from '../common/lesson-shares';
+import { carryPlacementTeachers } from '../requirement-placements/placement-teachers';
 
 /** The engine's route; see optimization-engine/app/api/v1/staffing.py. */
 export const STAFF_PATH = '/api/v1/staff';
@@ -655,6 +656,31 @@ export class StaffingProposalService {
         });
         if (count !== pair.ids.length) throw stale();
       }
+      // Förlagda poster on a shared post (placement-teachers.ts): only the lead
+      // changes, so the new lead's lessons are the old lead's exactly and the
+      // old lead's förläggningar follow; an undo that puts back "nobody" is
+      // refused by naming the förläggning to change first.
+      await carryPlacementTeachers(
+        tx,
+        dto.changes.map((change) => {
+          const row = rows.get(change.requirementId)!;
+          const post = {
+            lessonsPerWeek: row.lessonsPerWeek,
+            minutesPerLesson: row.minutesPerLesson,
+            lessonLengths: row.lessonLengths,
+            // Read from a NOT NULL column; the load input's type leaves it optional.
+            recurrence: row.recurrence ?? 'ALL_WEEKS',
+            // Not read by followPlacements: a post in a block has no förläggning (BLOCK).
+            blockId: null,
+            shares: row.shares ?? [],
+          };
+          return {
+            requirementId: change.requirementId,
+            before: { ...post, teacherId: change.fromTeacherId },
+            after: { ...post, teacherId: change.toTeacherId },
+          };
+        }),
+      );
 
       // The basis of what is now stored: what was read with the changes laid
       // over it. Only teacherId was written and the year's lock keeps every
@@ -700,7 +726,10 @@ export class StaffingProposalService {
       });
 
       return { updated: dto.changes.length, basisSha256: basisAfter, warnings, logId: log.id };
-    });
+    })
+      // A refusal the database makes that the checks above did not foresee (a förläggning written on one of the
+      // posts at once, FP409; a deadlock) is the 409 a PATCH would answer, never a 500 (review of #298, LÅG-3).
+      .catch((error: unknown) => rethrowPrismaError(error));
 
     this.logger.log(
       `Staffing applied [academicYearId=${dto.academicYearId}, updated=${result.updated}, undo=${dto.undo === true}, ` +

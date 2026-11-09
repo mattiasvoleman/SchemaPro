@@ -35,6 +35,7 @@ const row = (extra: Partial<RequirementPlacement> = {}): RequirementPlacement =>
   roomId: "room-1",
   roomName: "Simhallen",
   recurrence: "ALL_WEEKS",
+  teacherId: null,
   ...extra,
 });
 
@@ -85,7 +86,28 @@ describe("the posts' placed lessons", () => {
 describe("a refused write", () => {
   it("is a post the rows do not fit, with the rule", () => {
     const error = new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { reason: "PAIRS" });
-    expect(placementsRefusal(error)).toEqual({ kind: "FIT", reason: "PAIRS" });
+    expect(placementsRefusal(error)).toEqual({ kind: "FIT", reason: "PAIRS", params: { reason: "PAIRS" } });
+  });
+
+  it("is a post the rows do not fit, with the row a per-teacher rule names when the rows were sent", () => {
+    const error = new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { reason: "TEACHER_COUNT", index: 2 });
+    expect(placementsRefusal(error)).toEqual({
+      kind: "FIT",
+      reason: "TEACHER_COUNT",
+      params: { reason: "TEACHER_COUNT", index: 2 },
+    });
+  });
+
+  it("is a post whose change of teacher the placed lessons do not follow, with the placement to change first", () => {
+    const params = { reason: "TEACHER", day: 2, start: "10:00", end: "11:00", weeks: "ODD_WEEKS" };
+    const error = new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", params);
+    expect(placementsRefusal(error)).toEqual({ kind: "FIT", reason: "TEACHER", params });
+  });
+
+  it("reads a placement nobody teaches (its teacher removed) as UNSTAFFED, which can only be removed", () => {
+    const params = { reason: "TEACHER_COUNT", day: 2, start: "10:00", end: "11:00", weeks: "ALL_WEEKS", unstaffed: 1 };
+    const error = new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", params);
+    expect(placementsRefusal(error)).toEqual({ kind: "FIT", reason: "UNSTAFFED", params });
   });
 
   it("is the first row the judge refuses, with its place in the list and what the sentence needs", () => {

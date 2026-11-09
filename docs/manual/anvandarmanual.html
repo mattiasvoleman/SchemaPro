@@ -2528,9 +2528,10 @@
       då vilka två poster det gäller. En post i ett block som ligger på ett
       annat blocks tider (halvklass, nedan) kan inte delas alls.
       Genereringen säger även då vilken post det gäller.</li>
-    <li>En post med förlagda lektioner (nedan) kan inte delas mellan lärare,
-      eftersom det inte är bestämt vilken lärares lektion en förläggning vore.
-      Ta bort förläggningarna först.</li>
+    <li>En delad post kan ha förlagda lektioner (nedan): varje förlagd lektion
+      har då sin lärare. Byter du lärare eller ändrar delningen följer
+      förläggningarna med när det är entydigt, och annars sparas ändringen inte
+      och meddelandet säger vilken förläggning som måste ändras först.</li>
     <li>En delad post kan inte delas i halvklass (nedan), eftersom
       halvornas poster bemannas per ämne. Ta bort delningen först och välj
       sedan lärare för varje ämne i halvklassdialogen.</li>
@@ -2998,15 +2999,17 @@
     Öppna posten och tryck <span class="ui">Förlägg …</span>. Dialogen heter
     efter posten och har en rad för varje förlagd lektion; <span class="ui">Lägg
     till lektion</span> ger en ny, och krysset på raden tar bort den. Varje rad
-    har fem fält:
+    har fem fält, och en rad på en delad post (nedan) har ett sjätte:
   </p>
   <ul>
     <li><span class="ui">Dag</span>: måndag till fredag.</li>
     <li><span class="ui">Starttid</span>, i femminutersteg. Lektionen ska ligga
       mellan 08:00 och 18:00, och under fältet står när den slutar.</li>
+    <li><span class="ui">Lärare</span>, bara på en post som delar sina
+      lektioner mellan lärare: vems lektion raden är.</li>
     <li><span class="ui">Längd</span>, bara när posten har lektioner av olika
       längd, till exempel 80 + 40 minuter. Har posten en enda längd är det
-      postens.</li>
+      postens. På en delad post erbjuds bara den valda lärarens längder.</li>
     <li><span class="ui">Sal</span>: en av skolans salar, i bokstavsordning.</li>
     <li><span class="ui">Veckor</span>: se nedan.</li>
   </ul>
@@ -3014,8 +3017,36 @@
     Du kan förlägga högst så många lektioner som posten har, och ett par
     (nedan) räknas som en. <span class="ui">Spara</span> ersätter postens alla
     förläggningar med raderna i dialogen. Sparar du utan några rader tas
-    förläggningarna bort. Läraren, klassen och ämnet är postens, och läses
-    vid varje Generera: du anger dem inte på raden.
+    förläggningarna bort. Klassen och ämnet är postens, och läraren är det
+    också på en post som inte delas: de läses vid varje Generera, och du
+    anger dem inte på raden.
+  </p>
+  <p>
+    <strong>Delade lektioner.</strong> En post som delar sina lektioner mellan
+    lärare (se Dela lektionerna mellan lärare ovan) förläggs lektion för
+    lektion, var och en med sin lärare. Du kan förlägga en, några eller alla
+    av postens lektioner. Fältet <span class="ui">Lärare</span> på varje rad
+    listar de lärare som har en del av posten: huvudläraren och varje lärare
+    som tar lektioner av den. Väljer du en annan lärare på en rad behåller
+    raden sin längd om den nya läraren har en lektion av den längden, och får
+    annars hens första längd. Ovanför raderna står en rad som räknar varje
+    lärares förlagda lektioner mot hens del, till exempel <em>Förlagda
+    lektioner per lärare: Anna Svensson 1 av 2, Bo Lind 1 av 1.</em> Ett par
+    (nedan) är en lektion och därför en lärares: båda halvorna ska ha samma
+    lärare. <span class="ui">Lägg till lektion</span> ger den nya raden åt den
+    första läraren som har en lektion kvar, och är stängd när varje lektion
+    som har en lärare är förlagd. Krocken med en annan lektion prövas mot
+    förläggningens egen lärare.
+  </p>
+  <p>
+    En del utan lärare kan inte förläggas. Det gäller lektioner som står som
+    <em>Ej tilldelad</em>, till exempel sedan en lärare tagits bort ur skolan,
+    och lektioner på en delad post utan huvudlärare. Dialogen säger hur många
+    lektioner som behöver en lärare innan de kan förläggas, och de erbjuds inte
+    i fältet. Ge dem en lärare på posten eller i tjänstefördelningen (4.3)
+    först. En förläggning vars lärare har tagits bort efter att den sparades
+    står kvar utan lärare: fältet är tomt och raden är röd, och du väljer en
+    lärare innan du kan spara.
   </p>
   <p>
     <strong>Veckor och par.</strong> En post som går varje vecka kan förläggas
@@ -3075,10 +3106,12 @@
     Raderna ska också passa posten. En rad med en längd som posten inte har,
     fler lektioner av en längd än posten har, andra veckor än postens, och
     udda veckor utan jämna (eller tvärtom) på en post som går varje vecka
-    nekas med regeln som bröts. En post som ligger i ett parallellt block eller delar
-    sina lektioner mellan lärare kan inte förläggas alls: blocket läggs som en
-    helhet, och det är inte bestämt vilken lärares lektion en förläggning vore.
-    Ta bort blocktillhörigheten eller delningen först.
+    nekas med regeln som bröts. På en delad post prövas också lärarna, vid raden
+    det gäller: en lektion utan lärare, en lärare som inte har någon lektion på
+    posten eller ingen av den längden, ett par vars halvor har olika lärare och
+    fler lektioner av en längd hos en lärare än hens del har nekas på samma
+    sätt. En post som ligger i ett parallellt block kan inte förläggas alls:
+    blocket läggs som en helhet. Ta bort blocktillhörigheten först.
   </p>
   <h4>Grundschemat</h4>
   <p>
@@ -3114,15 +3147,35 @@
   </ul>
   <h4>Det som ändras efteråt</h4>
   <ul>
-    <li>Byts läraren på posten följer förläggningen med: tid och sal står kvar,
-      och läraren är den nya. Bytet vägras inte, eftersom bemanningen byter
-      lärare i mängd. Är den nya läraren upptagen då vägrar nästa Generera
-      med förläggningen namngiven, och dialogen visar redan när du öppnar den
-      en röd rad vid varje förläggning som inte längre håller, med skälet.</li>
-    <li>Ändras postens längder, antal lektioner eller veckor, läggs den i ett
-      block eller delas den mellan lärare, och förläggningarna inte längre
-      passar, sparas ändringen inte. Meddelandet säger vilken regel. Ändra
-      eller ta bort förläggningen först.</li>
+    <li>Byts läraren på en post som inte delas följer förläggningen med: tid
+      och sal står kvar, och läraren är den nya. Bytet vägras inte, eftersom
+      bemanningen byter lärare i mängd. Är den nya läraren upptagen då vägrar
+      nästa Generera med förläggningen namngiven, och dialogen visar redan när
+      du öppnar den en röd rad vid varje förläggning som inte längre håller,
+      med skälet.</li>
+    <li>På en delad post har varje förläggning sin lärare, och ett lärarbyte
+      följer med när det är entydigt: går en lärare ut och en annan in med
+      samma lektioner (samma längder och lika många av varje) tar den nya över
+      den förras förläggningar. Det gäller också en del som saknade lärare och
+      nu får en. Varje lärare som är kvar behåller sina. Är bytet inte entydigt,
+      till exempel när en lärares lektioner delas mellan två eller en lärare
+      får färre lektioner än hen har förlagda, sparas det inte. Meddelandet
+      namnger förläggningen som måste ändras eller tas bort först, med dag, tid
+      och veckor, till exempel <em>Förläggningen tisdag 10:00–11:00 (udda
+      veckor) måste ändras eller tas bort först</em>, och säger varför. Det
+      gäller i postens dialog, när du byter lärare eller tilldelar en obemannad
+      rad i tjänstefördelningen (4.3), när du tillämpar eller ångrar ett
+      förslag och när en importerad fil byter lärare på posten (där blir det ett
+      fel på filens rad). Ingen person namnges i meddelandet.</li>
+    <li>Slutar en post dela sina lektioner står huvudlärarens förläggningar
+      kvar med tid och sal, och läraren är åter postens. En förläggning av en
+      annan lärares lektion måste ändras eller tas bort först. Börjar en post
+      dela dem får huvudläraren de förläggningar posten redan har, så länge hen
+      har lektioner nog kvar för dem.</li>
+    <li>Ändras postens längder, antal lektioner eller veckor, eller läggs den i
+      ett block, och förläggningarna inte längre passar, sparas ändringen inte.
+      Meddelandet säger vilken regel. Ändra eller ta bort förläggningen
+      först.</li>
     <li>En sal som har en förläggning kan inte tas bort. Meddelandet nämner
       posten.</li>
     <li>Förläggningarna följer <strong>inte</strong> med vid läsårsrullningen

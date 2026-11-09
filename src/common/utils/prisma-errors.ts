@@ -59,11 +59,13 @@ import { TIOARIG_TOO_EARLY } from '../grade-numbering';
  * (sharesProblem) and names the one broken; this is what any other path meets.
  * See requirementSharesRefusal.
  *
- * Förlagda poster's triggers (migration 20270207090000) answer SQLSTATE FP409
- * when a timplanspost's förläggningar would not fit the post (or the post would
- * no longer fit them), and that is the 409 REQUIREMENT_PLACEMENTS_DO_NOT_FIT
- * with the rule broken, whichever writer met it: the förläggningar's PUT, the
- * requirements PATCH, the shares, the block's members. See
+ * Förlagda poster's triggers (migrations 20270207090000 and 20270208090000)
+ * answer SQLSTATE FP409 when a timplanspost's förläggningar would not fit the
+ * post (or the post, or its shares, would no longer fit them), and that is the
+ * 409 REQUIREMENT_PLACEMENTS_DO_NOT_FIT with the rule broken, whichever writer
+ * met it: the förläggningar's PUT, the requirements PATCH, the shares, the
+ * block's members. The rules per teacher are a deferred trigger's, so their
+ * refusal may arrive as a failed COMMIT, which is read the same way. See
  * requirementPlacementsRefusal.
  *
  * The Halvklasser triggers (migration 20261113090000) answer SQLSTATE HC409
@@ -102,7 +104,11 @@ export function rethrowPrismaError(error: unknown): never {
   }
   const placements = requirementPlacementsRefusal(error);
   if (placements) {
-    throw requirementPlacementsConflict(placements.reason);
+    // The post the trigger names (DETAIL requirementId=…), so that a write of many posts says which (review of #298, LÅG-8).
+    throw requirementPlacementsConflict(
+      placements.reason,
+      placements.requirementId !== null ? { requirementId: placements.requirementId } : {},
+    );
   }
   const half = classHalfRefusal(error);
   if (half) {
@@ -290,13 +296,38 @@ export function requirementSharesConflict(reason: SharesRule | null): ConflictEx
 export const REQUIREMENT_PLACEMENTS_DO_NOT_FIT = 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT';
 
 /**
- * The rule a write broke: placementFitOf's six (src/requirement-placements/
- * placement-fit.ts), and POST, which only the trigger can say: the post's
- * group or subject was changed under rows that name them.
+ * The rule a write broke: placementFitOf's (src/requirement-placements/
+ * placement-fit.ts) — the post's own five and the five of delade lektioner,
+ * one per teacher — and POST, which only the trigger can say: the post's
+ * group or subject was changed under rows that name them. SHARES, the refusal
+ * of any förläggning on a shared post, went with 20270208090000.
  */
-export type PlacementsRule = 'LENGTH' | 'COUNT' | 'WEEKS' | 'PAIRS' | 'BLOCK' | 'SHARES' | 'POST';
+export type PlacementsRule =
+  | 'LENGTH'
+  | 'COUNT'
+  | 'WEEKS'
+  | 'PAIRS'
+  | 'BLOCK'
+  | 'POST'
+  | 'NO_TEACHER'
+  | 'TEACHER'
+  | 'TEACHER_LENGTH'
+  | 'TEACHER_PAIRS'
+  | 'TEACHER_COUNT';
 
-const PLACEMENT_RULES: readonly PlacementsRule[] = ['LENGTH', 'COUNT', 'WEEKS', 'PAIRS', 'BLOCK', 'SHARES', 'POST'];
+const PLACEMENT_RULES: readonly PlacementsRule[] = [
+  'LENGTH',
+  'COUNT',
+  'WEEKS',
+  'PAIRS',
+  'BLOCK',
+  'POST',
+  'NO_TEACHER',
+  'TEACHER',
+  'TEACHER_LENGTH',
+  'TEACHER_PAIRS',
+  'TEACHER_COUNT',
+];
 
 /**
  * Recognises Förlagda poster's trigger refusal and reads which rule, as
@@ -307,20 +338,31 @@ const PLACEMENT_RULES: readonly PlacementsRule[] = ['LENGTH', 'COUNT', 'WEEKS', 
  * message's first word and DETAIL `requirementId=<uuid> reason=<RULE>` — ids
  * and the rule, never a person. A reason the gateway has no sentence for
  * (ISOLATION) is still this refusal, with `reason` null.
+ *
+ * The rules per teacher (20270208090000) are judged by a DEFERRED trigger: a
+ * writer that did not ask for them at its last statement meets them at its
+ * COMMIT, which Prisma 7.10 rejects with a raw DriverAdapterError carrying the
+ * driver's fields under `cause` (driverAdapterCode). That is the same refusal.
  */
 export function requirementPlacementsRefusal(
   error: unknown,
 ): { requirementId: string | null; reason: PlacementsRule | null } | null {
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
-  const cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)
-    ?.driverAdapterError?.cause;
-  const byMeta = cause?.originalCode === 'FP409';
-  const byMessage = error.code === 'P2039' && error.message.includes('Code: `FP409`');
-  if (!byMeta && !byMessage) return null;
+  let cause: DriverCause | undefined;
+  let rendered = '';
+  if (driverAdapterCode(error) === 'FP409') {
+    cause = (error as { cause?: DriverCause }).cause;
+  } else {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
+    cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)?.driverAdapterError?.cause;
+    const byMeta = cause?.originalCode === 'FP409';
+    const byMessage = error.code === 'P2039' && error.message.includes('Code: `FP409`');
+    if (!byMeta && !byMessage) return null;
+    rendered = error.message;
+  }
   const text =
     typeof cause?.originalMessage === 'string'
       ? cause.originalMessage
-      : (/Message: `([\s\S]*)`/.exec(error.message)?.[1] ?? error.message);
+      : (/Message: `([\s\S]*)`/.exec(rendered)?.[1] ?? rendered);
   const detail = typeof cause?.detail === 'string' ? cause.detail : '';
   const token = /reason=([A-Z_]+)/.exec(detail)?.[1] ?? /^([A-Z_]+):/.exec(text)?.[1] ?? null;
   return {
@@ -342,28 +384,91 @@ const PLACEMENT_SENTENCES: Record<PlacementsRule, string> = {
   BLOCK:
     'Posten ligger i ett parallellt block, som läggs på samma tider för alla poster. En enskild post i ett block kan inte förläggas. ' +
     'Ta bort förläggningarna, eller ta posten ur blocket.',
-  SHARES:
-    'Posten har delade lektioner, och vilken lärares lektion en förläggning vore har ingen avgjort. ' +
-    'Ta bort förläggningarna först, eller ta bort lärarandelarna.',
   POST: 'Posten kan inte ändras så här medan den har förläggningar. Ta bort förläggningarna först.',
+  NO_TEACHER:
+    'Posten har delade lektioner, och en förlagd lektion anger ingen lärare. En lektion som ingen undervisar kan inte förläggas: ' +
+    'välj lärare för förläggningen, eller ge först delen en lärare.',
+  TEACHER:
+    'En förlagd lektion anger en lärare som inte har någon av postens lektioner. Välj en av postens lärare för förläggningen, ' +
+    'eller ta bort den.',
+  TEACHER_LENGTH:
+    'En förlagd lektions lärare har ingen lektion av den längden på posten. Välj en av lärarens längder, eller en annan lärare.',
+  TEACHER_PAIRS:
+    'Udda och jämna veckor av samma längd är en lektion och förläggs i par med samma lärare. Ge båda raderna samma lärare, ' +
+    'eller lägg till raden som saknas.',
+  TEACHER_COUNT:
+    'Fler av en lärares lektioner av en längd är förlagda än lärarens del av posten har. Ta bort en förläggning, ' +
+    'eller välj en annan lärare för den.',
 };
+
+/**
+ * A change of the post refused for a förläggning that names nobody, because
+ * its teacher was removed: no teacher can be chosen for it until the change
+ * is saved, and the change waits for it, so the one way on is to remove it.
+ */
+const UNSTAFFED_SENTENCE =
+  'Förläggningen har ingen lärare sedan dess lärare togs bort, och ändringen lämnar ingen lektion utan lärare för den. ' +
+  'Ta bort förläggningen först, och förlägg lektionen igen när posten har sina lärare.';
+
+/** Where a förläggning stands, for a refusal that has to say which one is to be changed first. */
+export interface NamedPlacement {
+  dayOfWeek: number;
+  /** HH:MM. */
+  start: string;
+  /** HH:MM. */
+  end: string;
+  recurrence: string;
+}
 
 /**
  * The 409 for förläggningar that do not fit their post: the rule in a
  * sentence that says what to change, and the rule as `reason` in `params`,
- * which the exception filter forwards (it drops every other key), so the web
- * renders it in the reader's language.
+ * which the exception filter forwards (it drops every other key and anything
+ * not flat), so the web renders it in the reader's language. `index` is the
+ * row's place in a PUT's list; `placement` the stored förläggning a change of
+ * the post has to wait for, by weekday, clock and weeks (`day`, `start`,
+ * `end`, `weeks`) and never by person; `requirementId` the post it is on, so
+ * that a write of many posts (the staffing proposal) can say which; and
+ * `unstaffed` that the förläggning names nobody (its teacher was removed),
+ * for which the one way on is to remove it (`unstaffed: 1`).
  */
-export function requirementPlacementsConflict(reason: PlacementsRule | null): ConflictException {
+export function requirementPlacementsConflict(
+  reason: PlacementsRule | null,
+  at: { index?: number; placement?: NamedPlacement; requirementId?: string; unstaffed?: boolean } = {},
+): ConflictException {
+  const named = at.placement
+    ? {
+        day: at.placement.dayOfWeek,
+        start: at.placement.start,
+        end: at.placement.end,
+        weeks: at.placement.recurrence,
+      }
+    : {};
+  const where = at.placement
+    ? `Förläggningen ${WEEKDAY_NAMES[at.placement.dayOfWeek] ?? at.placement.dayOfWeek} ${at.placement.start}–${at.placement.end} måste ändras först. `
+    : '';
   return new ConflictException({
     message:
       reason === null
         ? 'Förläggningarna passar inte timplansposten. Ändra förläggningarna eller posten.'
-        : PLACEMENT_SENTENCES[reason],
+        : where + (at.unstaffed ? UNSTAFFED_SENTENCE : PLACEMENT_SENTENCES[reason]),
     code: REQUIREMENT_PLACEMENTS_DO_NOT_FIT,
-    ...(reason !== null ? { reason, params: { reason } } : {}),
+    ...(reason !== null
+      ? {
+          reason,
+          params: {
+            reason,
+            ...(at.index !== undefined ? { index: at.index } : {}),
+            ...named,
+            ...(at.requirementId !== undefined ? { requirementId: at.requirementId } : {}),
+            ...(at.unstaffed ? { unstaffed: 1 } : {}),
+          },
+        }
+      : {}),
   });
 }
+
+const WEEKDAY_NAMES: Readonly<Record<number, string>> = { 1: 'måndag', 2: 'tisdag', 3: 'onsdag', 4: 'torsdag', 5: 'fredag' };
 
 /** The problem `code` every refusal to touch a decided timplan carries. */
 export const TIMPLAN_IS_DECIDED = 'TIMPLAN_IS_DECIDED';

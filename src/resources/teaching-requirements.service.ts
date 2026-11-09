@@ -16,6 +16,7 @@ import type { StaffingWarning } from '../staffing/staffing-checks';
 import { readsHr } from '../staffing/hr-visibility';
 import { isMixed } from '../common/lesson-lengths';
 import { sharesProblem, type LessonShare, type SharedRow } from '../common/lesson-shares';
+import { carryPlacementTeachers, type PostTeachersChange } from '../requirement-placements/placement-teachers';
 import {
   SHARE_SELECT,
   clearShares,
@@ -297,6 +298,10 @@ export class TeachingRequirementsService {
         let sharesWrite: LessonShare[] | null = null;
         // The stored ones, when the staffing read below has them in hand.
         let storedShares: LessonShare[] | null = null;
+        // Förlagda poster on a shared post: the post's teachers as stored and as
+        // this PATCH leaves them, which its förläggningar follow or refuse
+        // (placement-teachers.ts). Null when the PATCH touches no staffing field.
+        let teachersChange: PostTeachersChange | null = null;
         let lengthWrite: Record<string, unknown> = {
           ...(dto.lessonsPerWeek !== undefined ? { lessonsPerWeek: dto.lessonsPerWeek } : {}),
           ...(dto.minutesPerLesson !== undefined ? { minutesPerLesson: dto.minutesPerLesson } : {}),
@@ -313,6 +318,8 @@ export class TeachingRequirementsService {
               lessonsPerWeek: true,
               minutesPerLesson: true,
               lessonLengths: true,
+              recurrence: true,
+              blockId: true,
               shares: SHARE_SELECT,
             },
           });
@@ -353,6 +360,24 @@ export class TeachingRequirementsService {
               const problem = sharesProblem(rowAfter, stored.shares);
               if (problem !== null) throw sharesRefusal(problem);
             }
+            teachersChange = {
+              requirementId: id,
+              before: {
+                teacherId: stored.teacherId,
+                lessonsPerWeek: stored.lessonsPerWeek,
+                minutesPerLesson: stored.minutesPerLesson,
+                lessonLengths: stored.lessonLengths,
+                recurrence: stored.recurrence,
+                blockId: stored.blockId,
+                shares: stored.shares ?? [],
+              },
+              after: {
+                ...rowAfter,
+                recurrence: dto.recurrence ?? stored.recurrence,
+                blockId: stored.blockId,
+                shares: sharesWrite ?? stored.shares ?? [],
+              },
+            };
             // As the row will end up: a PATCH naming only the co-teacher is
             // measured against the lead already on the row.
             if (
@@ -452,6 +477,10 @@ export class TeachingRequirementsService {
           },
         });
         if (sharesWrite !== null) await insertShares(tx, updated.schoolId, id, sharesWrite);
+        // Förlagda poster on a shared post: after the post and its shares, so
+        // the database judges the förläggningar on the post as this PATCH
+        // leaves it. Nothing is read for a post that shares nothing.
+        if (teachersChange !== null) await carryPlacementTeachers(tx, [teachersChange]);
         // The shares in hand: the ones written, else the ones the staffing
         // read found. A PATCH that touches no staffing field reads none, and
         // answers without the key rather than with a statement of its own

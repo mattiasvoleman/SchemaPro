@@ -733,6 +733,56 @@ describe("StaffingProposalDialog", () => {
       expect(toast.error).not.toHaveBeenCalled();
     });
 
+    /**
+     * The body the gateway answers when an undo would leave a placed lesson nobody's: params exactly as the API's
+     * e2e asserts them through the real exception filter (test/planning.e2e-spec.ts, "an undo that would leave a
+     * förläggning nobody’s"), with this file's post id.
+     */
+    const placementRefused = () =>
+      new ApiError(409, "Förläggningen tisdag 10:00–11:00 måste ändras först. …", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", {
+        reason: "NO_TEACHER",
+        day: 2,
+        start: "10:00",
+        end: "11:00",
+        weeks: "ODD_WEEKS",
+        requirementId: "r-mu-8b",
+      });
+
+    it("names the post and the placement to change first when an apply would leave a placed lesson without its teacher, and says no post was 'not saved'", async () => {
+      const user = userEvent.setup();
+      post.mockImplementation(async (path: string) => {
+        if (path === PROPOSE) return proposal();
+        throw placementRefused();
+      });
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(
+        "Musik för 8B: Förläggningen tisdag 10:00–11:00 (udda veckor) måste ändras eller tas bort först. ",
+      );
+      expect(alert).not.toHaveTextContent("sparades inte");
+      expect(screen.getByText("Förslag per post")).toBeInTheDocument();
+    });
+
+    it("names the post and the placement when an undo is refused for a placed lesson", async () => {
+      const user = userEvent.setup();
+      post.mockImplementation(async (path: string, body: { undo?: boolean }) => {
+        if (path === PROPOSE) return proposal();
+        if (body.undo) throw placementRefused();
+        return applied();
+      });
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await waitFor(() => expect(toast.success).toHaveBeenCalled());
+      await pressUndo();
+      const said = (toast.error as Mock).mock.calls.at(-1)![0] as string;
+      expect(said).toMatch(/^Kunde inte ångra: Musik för 8B: Förläggningen tisdag 10:00–11:00 \(udda veckor\) måste ändras eller tas bort först\. /);
+      expect(said).not.toContain("sparades inte");
+    });
+
     it("says an undo the staffing has moved past, and an undo the policy refuses", async () => {
       const user = userEvent.setup();
       let undoError: ApiError = new ApiError(409, "stale", "STAFF_PROPOSAL_STALE");

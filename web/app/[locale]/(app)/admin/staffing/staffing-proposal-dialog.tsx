@@ -7,6 +7,7 @@ import { Loader2 } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import { warningText } from "@/lib/staffing-warnings";
+import { placementChangeSentence } from "@/lib/requirement-placement-text";
 import { DEFAULT_LOAD_POLICY } from "@/lib/teacher-load";
 import type { StaffingPolicy } from "@/lib/types";
 import { StatusBadge } from "@/components/staffing/staffing-matrix";
@@ -129,6 +130,7 @@ export function StaffingProposalDialog({
   const t = useTranslations("staffing.proposal");
   const tCommon = useTranslations("common");
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
+  const tPlaced = useTranslations("requirements.placements") as unknown as MessageLookup;
   const locale = useLocale();
   const propose = useStaffingProposal();
   const apply = useApplyStaffing();
@@ -263,6 +265,14 @@ export function StaffingProposalDialog({
       const sentence = engineMessage(tEngine, { code: error.code, message: error.message, params });
       const where = row ? rowName(row.subjectId, row.studentGroupId) : null;
       return [who, where].filter(Boolean).join(", ") + (who || where ? ": " : "") + sentence;
+    }
+    // Förlagda poster: a change of lead the placed lessons do not follow says
+    // which placement has to be changed first, on which post (params.requirementId),
+    // and never that a post was "not saved": nothing of the batch was applied.
+    const placed = placementChangeSentence(tPlaced, error, true);
+    if (placed) {
+      const where = row ? rowName(row.subjectId, row.studentGroupId) : null;
+      return [who, where].filter(Boolean).join(", ") + (who || where ? ": " : "") + placed;
     }
     // The gateway's Swedish already starts with the row's name.
     return who ? `${who}: ${error.message}` : error.message;

@@ -1,6 +1,7 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 import { ApiError } from "@/lib/api";
 import type { TeacherCandidate, TeacherSuggestions as Suggestions } from "@/lib/types";
 import { TeacherSuggestions, remainingOf } from "./teacher-suggestions";
@@ -24,8 +25,10 @@ vi.mock("next-intl", () => ({
       `${namespace === "engineMessages" ? "engine:" : ""}${key}${
         values ? `(${Object.values(values).join("|")})` : ""
       }`;
-    // The engine catalogue knows the two staffing codes and nothing else.
-    t.has = (key: string) => key.startsWith("STAFF_");
+    // The engine catalogue knows the two staffing codes and nothing else; Förlagda poster's
+    // catalogue its rules (problem.*).
+    t.has = (key: string) =>
+      namespace === "requirements.placements" ? key.startsWith("problem.") : key.startsWith("STAFF_");
     return t;
   },
 }));
@@ -157,6 +160,29 @@ describe("TeacherSuggestions", () => {
     expect(alert).not.toHaveTextContent("Cilla");
     expect(onAssigned).not.toHaveBeenCalled();
     expect(screen.getByRole("list", { name: "suggestListLabel" })).toBeInTheDocument();
+  });
+
+  it("names the placement to change first when a change of teacher would leave placed lessons without theirs", async () => {
+    const user = userEvent.setup();
+    assign.mockRejectedValue(
+      new ApiError(409, "Förläggningen tisdag 10:00–11:00 måste ändras först.", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", {
+        reason: "TEACHER",
+        day: 2,
+        start: "10:00",
+        end: "11:00",
+        weeks: "ODD_WEEKS",
+      }),
+    );
+    const { onAssigned } = renderList();
+
+    await user.click(screen.getByRole("button", { name: "suggestAssignNamed(Bo Alm)" }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("changeFirst(problem.TEACHER|2|10:00|11:00|ODD_WEEKS)"),
+    );
+    expect(onAssigned).not.toHaveBeenCalled();
+    // A refusal of the policy is the list's own, so this one is a toast and not that notice.
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("marks the current lead instead of offering them, and can take the row off them", async () => {

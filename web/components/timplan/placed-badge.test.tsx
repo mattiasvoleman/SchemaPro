@@ -21,6 +21,7 @@ const row = (extra: Partial<RequirementPlacement> = {}): RequirementPlacement =>
   roomId: "room-1",
   roomName: "Simhallen",
   recurrence: "ODD_WEEKS",
+  teacherId: null,
   ...extra,
 });
 

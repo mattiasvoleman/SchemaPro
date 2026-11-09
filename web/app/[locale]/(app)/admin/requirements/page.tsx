@@ -1191,10 +1191,12 @@ export default function RequirementsPage() {
         return;
       }
       // Förlagda poster: the post has lessons placed that the change no longer
-      // fits (a length, the count, the weeks, a block, a share).
+      // fits (a length, the count, the weeks, a block, or a teacher's lessons),
+      // and, for a change of teacher, which placement has to be changed first.
       const placed = placementsRefusal(error);
       if (placed?.kind === "FIT" && t.has(`placements.problem.${placed.reason}`)) {
-        toast.error(t("placements.editRefused", { reason: t(`placements.problem.${placed.reason}`) }));
+        const reason = t(`placements.problem.${placed.reason}`);
+        toast.error(t(placed.params.end ? "placements.changeFirst" : "placements.editRefused", { ...placed.params, reason }));
         return;
       }
       toast.error(error instanceof Error ? error.message : tCommon("error"));
@@ -2454,7 +2456,8 @@ export default function RequirementsPage() {
             }}
             requirement={placing?.post ?? null}
             name={placing?.name ?? null}
-            shared={placing ? sharesOf.has(placing.post.id) : false}
+            shares={placing ? sharesOf.get(placing.post.id) : undefined}
+            teacherName={personName}
           />
         </Suspense>
       ) : null}

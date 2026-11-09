@@ -1,5 +1,7 @@
 import type { LessonRecurrence } from '@prisma/client';
-import { placedLessonsOf } from '../requirement-placements/placement-fit';
+import type { LessonShare } from '../common/lesson-shares';
+import { placedLessonsOf, placedTaughtOf } from '../requirement-placements/placement-fit';
+import type { TaughtLesson } from './locked-coverage';
 import type { PlacementVerdict } from '../requirement-placements/placement-judge';
 import type {
   AiEngineConflictAnalysis,
@@ -31,6 +33,13 @@ import type {
  *     It is kept apart from `preservedRows`, which the candidate basis and an
  *     apply compare with the preserved masters in the database, and it is
  *     written by writeRegeneration beside the engine's lessons.
+ *
+ * DELADE LEKTIONER (20270208090000). On a post that shares its lessons a
+ * förläggning names its own teacher, and the lock is THAT teacher's: the
+ * fixed lesson the engine plans around, the judge's clash, the lesson
+ * written. It is taken off that teacher's part of the post (placedTaughtOf,
+ * withoutPlacedShared), never another's. The post's medlärare is in the room
+ * for every lesson, a placed one too, as before.
  */
 
 /** A förläggning as the fetch reads it. */
@@ -43,6 +52,8 @@ export interface PlacementRead {
   minutes: number;
   roomId: string;
   recurrence: LessonRecurrence;
+  /** As stored: the lesson's teacher on a post that shares its lessons, null on one that shares nothing. */
+  teacherId: string | null;
 }
 
 /** The post's fields a placed lesson takes: who sits it, who teaches it, its window. */
@@ -55,6 +66,8 @@ export interface PlacedPost {
   recurrence: LessonRecurrence;
   startDate: Date | null;
   endDate: Date | null;
+  /** Delade lektioner: present and not empty on a post that shares its lessons. */
+  shares?: readonly LessonShare[] | null;
 }
 
 /**
@@ -69,6 +82,7 @@ export interface PlacedLessonRow {
   requirementId: string;
   subjectId: string;
   studentGroupId: string;
+  /** Who teaches it: the förläggning's own teacher on a shared post, else the post's. */
   teacherId: string | null;
   coTeacherId: string | null;
   roomId: string;
@@ -81,6 +95,14 @@ export interface PlacedLessonRow {
   minutes: number;
   extraGroups: { studentGroupId: string }[];
   participants: { studentId: string }[];
+  /**
+   * Delade lektioner: the post shares its lessons, so `teacherId` is the
+   * förläggning's own and the write keeps it; otherwise the write takes the
+   * post's teacher as it reads it then, as it always did.
+   */
+  ownTeacher: boolean;
+  /** The förläggning's own column, as stored (null on a post that shares nothing): what the staleness key compares. */
+  placementTeacherId: string | null;
 }
 
 /**
@@ -97,13 +119,14 @@ export function placedLessonRowsOf(
     .flatMap((row): PlacedLessonRow[] => {
       const post = posts.get(row.requirementId);
       if (!post) return [];
+      const ownTeacher = (post.shares ?? []).length > 0;
       return [
         {
           id: row.id,
           requirementId: row.requirementId,
           subjectId: post.subjectId,
           studentGroupId: post.studentGroupId,
-          teacherId: post.teacherId,
+          teacherId: ownTeacher ? row.teacherId : post.teacherId,
           coTeacherId: post.coTeacherId,
           roomId: row.roomId,
           dayOfWeek: row.dayOfWeek,
@@ -115,6 +138,8 @@ export function placedLessonRowsOf(
           minutes: row.minutes,
           extraGroups: [],
           participants: [],
+          ownTeacher,
+          placementTeacherId: row.teacherId,
         },
       ];
     })
@@ -146,6 +171,45 @@ export function placedMinutesOf(
     if (post) placed.set(postId, placedLessonsOf(post, list));
   }
   return placed;
+}
+
+/**
+ * Delade lektioner: each shared post's lessons its förläggningar place, each
+ * with its teacher (placedTaughtOf). Only posts that share their lessons.
+ */
+export function placedTaughtByPost(
+  rows: readonly PlacedLessonRow[],
+  posts: ReadonlyMap<string, PlacedPost>,
+): Map<string, TaughtLesson[]> {
+  const byPost = new Map<string, PlacedLessonRow[]>();
+  for (const row of rows) {
+    if (!row.ownTeacher) continue;
+    const list = byPost.get(row.requirementId);
+    if (list) list.push(row);
+    else byPost.set(row.requirementId, [row]);
+  }
+  const placed = new Map<string, TaughtLesson[]>();
+  for (const [postId, list] of byPost) {
+    const post = posts.get(postId);
+    if (post) placed.set(postId, placedTaughtOf(post, list));
+  }
+  return placed;
+}
+
+/**
+ * withoutPlaced on a shared post: the lessons left once its förläggningar are
+ * taken off, each the exact length AND teacher it places, in the post's order
+ * (the engine's lessonTeacherIds). A placed lesson with none of its own left
+ * takes nothing (the judge refused it by name before, OVER_DEMAND): Bo's
+ * förläggning never takes Anna's lesson.
+ */
+export function withoutPlacedShared(remaining: readonly TaughtLesson[], placed: readonly TaughtLesson[]): TaughtLesson[] {
+  const left = [...remaining];
+  for (const lesson of placed) {
+    const at = left.findIndex((one) => one.minutes === lesson.minutes && one.teacherId === lesson.teacherId);
+    if (at >= 0) left.splice(at, 1);
+  }
+  return left;
 }
 
 /**
@@ -252,8 +316,11 @@ export const PLACEMENT_CANNOT_STAND = 'PLACEMENT_CANNOT_STAND';
  *
  * WHO TEACHES IT AND ITS WINDOW ARE THE POST'S AS THE WRITE READS IT, the way
  * the engine's lessons of the same post are stamped (writeRegeneration): a
- * teacher changed while the solver ran reaches both alike. A förläggning whose
- * post the write no longer finds is null, and the caller refuses the write.
+ * teacher changed while the solver ran reaches both alike. On a shared post the
+ * teacher is the förläggning's own, which a change of the post's teachers
+ * moves (placement-teachers.ts) and the staleness key then sees. A
+ * förläggning whose post the write no longer finds is null, and the caller
+ * refuses the write.
  */
 export function placedLessonWritesOf(
   rows: readonly PlacedLessonRow[],
@@ -269,7 +336,8 @@ export function placedLessonWritesOf(
       academicYearId: ids.academicYearId,
       subjectId: row.subjectId,
       studentGroupId: row.studentGroupId,
-      teacherId: post.teacherId ?? null,
+      // Delade lektioner: a shared post's förläggning is its own teacher's.
+      teacherId: row.ownTeacher ? row.teacherId : (post.teacherId ?? null),
       coTeacherId: post.coTeacherId ?? null,
       roomId: row.roomId,
       dayOfWeek: row.dayOfWeek,
@@ -295,12 +363,30 @@ export function placedLessonWritesOf(
  * week it was handed was laid around the old ones.
  */
 export function placementsKeyOf(
-  rows: readonly Pick<PlacementRead, 'id' | 'requirementId' | 'dayOfWeek' | 'startTime' | 'minutes' | 'roomId' | 'recurrence'>[],
+  rows: readonly Pick<
+    PlacementRead,
+    'id' | 'requirementId' | 'dayOfWeek' | 'startTime' | 'minutes' | 'roomId' | 'recurrence' | 'teacherId'
+  >[],
 ): string {
   return rows
     .map((row) =>
-      [row.id, row.requirementId, row.dayOfWeek, row.startTime.toISOString(), row.minutes, row.roomId, row.recurrence].join('|'),
+      [
+        row.id,
+        row.requirementId,
+        row.dayOfWeek,
+        row.startTime.toISOString(),
+        row.minutes,
+        row.roomId,
+        row.recurrence,
+        // Delade lektioner: a förläggning handed to another teacher is a week for another timplan.
+        row.teacherId ?? '',
+      ].join('|'),
     )
     .sort()
     .join('\n');
+}
+
+/** The förläggningar a run was handed, as the staleness key reads the stored rows: their own teacher column. */
+export function storedPlacementsOf(rows: readonly PlacedLessonRow[]) {
+  return rows.map((row) => ({ ...row, teacherId: row.placementTeacherId }));
 }

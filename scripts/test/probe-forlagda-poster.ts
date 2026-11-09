@@ -54,6 +54,30 @@
  *         verdicts or at Generera, and Generera lays the lunch anew; a sitting
  *         the school placed refuses it with LUNCH in all three.
  *
+ * DELADE LEKTIONER (20270208090000), on a post of three lessons of 40 whose
+ * huvudlärare has two and a share's teacher one:
+ *
+ *   fp-i  the share teacher's lesson saves with its teacher (Thursday 10:00),
+ *         and a row naming nobody is refused NO_TEACHER at its index;
+ *   fp-j  Generera sends the post with the huvudlärare's two lessons left and
+ *         no lessonTeacherIds, the förläggning as the SHARE TEACHER's fixed
+ *         lesson, and `placements` with all three, each its teacher; the
+ *         grundschema has the placed lesson the share teacher's;
+ *   fp-k  the share given to another teacher through the requirements PATCH
+ *         (one out, one in, the same lessons) carries the förläggning along,
+ *         and the transaction commits (the deferred trigger agrees);
+ *   fp-l  the share removed through the PATCH is refused 409
+ *         REQUIREMENT_PLACEMENTS_DO_NOT_FIT TEACHER naming the förläggning by
+ *         day and clock, and nothing is written;
+ *   fp-m  another writer, as the owner: the share's teacher changed without
+ *         the förläggning is refused at COMMIT (FP409 TEACHER, the deferred
+ *         trigger), and with the förläggning moved in the same transaction it
+ *         commits — both outcomes of a teacher swap on real Postgres;
+ *   fp-n  that teacher removed: the share and the förläggning are nobody's,
+ *         the removal commits, the dialog's row names nobody and its save is
+ *         refused NO_TEACHER, and a share given a teacher again through the
+ *         PATCH hands the förläggning to them.
+ *
  * A step that fails prints its FAIL line and the run goes on; the steps share
  * the world, so a failure early on may take later ones with it. The exit code
  * is 1 for any FAIL.
@@ -84,6 +108,8 @@ interface WireRequirement {
   teacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /** Delade lektioner: one teacher per lesson, when the lessons left have two or more. */
+  lessonTeacherIds?: (string | null)[];
 }
 
 interface WireFixedLesson {
@@ -121,7 +147,7 @@ const clockOf = (minutes: number): string =>
  * the stub's own, clear of the förläggning (Tuesday 10:00).
  */
 function answerOf(body: WireBody) {
-  const lessons: Array<{ requirementId: string; roomId: string | null; dayOfWeek: number; startTime: string; endTime: string }> = [];
+  const lessons: Array<{ requirementId: string; roomId: string | null; dayOfWeek: number; startTime: string; endTime: string; teacherId?: string | null }> = [];
   let n = 0;
   for (const requirement of body.requirements) {
     for (let k = 0; k < requirement.lessonsPerWeek; k++, n++) {
@@ -132,6 +158,8 @@ function answerOf(body: WireBody) {
         dayOfWeek: (n % 5) + 1,
         startTime: clockOf(start),
         endTime: clockOf(start + requirement.minutesPerLesson),
+        // The engine answers each lesson of a shared post with the teacher it was sent.
+        ...(requirement.lessonTeacherIds ? { teacherId: requirement.lessonTeacherIds[k] } : {}),
       });
     }
   }
@@ -283,10 +311,12 @@ async function run(owner: Client, engine: EngineStub, app: INestApplicationConte
   const { MasterLessonsService } = await import('../../src/calendar/master-lessons.service');
   const { OptimizationProxyService } = await import('../../src/optimization/optimization-proxy.service');
   const { RequirementPlacementsService } = await import('../../src/requirement-placements/requirement-placements.service');
+  const { TeachingRequirementsService } = await import('../../src/resources/teaching-requirements.service');
   const resolve = <T>(token: abstract new (...args: never[]) => T): T => app.get<T>(token as never, { strict: false });
   const masters = resolve(MasterLessonsService);
   const proxy = resolve(OptimizationProxyService);
   const placements = resolve(RequirementPlacementsService);
+  const requirements = resolve(TeachingRequirementsService);
 
   const one = async <T extends object>(sql: string, params: unknown[] = []): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
   const all = async <T extends object>(sql: string, params: unknown[] = []): Promise<T[]> => (await owner.query<T>(sql, params)).rows;
@@ -325,6 +355,12 @@ async function run(owner: Client, engine: EngineStub, app: INestApplicationConte
   const adminRow = await person('admin', 'SCHOOL_ADMIN', { adminProfile: 'FULL' });
   const t1 = await person('t1', 'TEACHER');
   const t2 = await person('t2', 'TEACHER');
+  // Delade lektioner: the shared post's huvudlärare, its share's teacher, the one who takes the share over, and
+  // the one who takes it after that teacher is removed.
+  const t3 = await person('t3', 'TEACHER');
+  const t4 = await person('t4', 'TEACHER');
+  const t5 = await person('t5', 'TEACHER');
+  const t6 = await person('t6', 'TEACHER');
   await person('p1', 'STUDENT', { groupId: g7a });
   await person('p2', 'STUDENT', { groupId: g7a });
   await person('p3', 'STUDENT', { groupId: g7b });
@@ -360,7 +396,14 @@ async function run(owner: Client, engine: EngineStub, app: INestApplicationConte
   const idrottPost = await post(g7a, idrott, t1.id, 2, 60);
   await post(g7a, matte, t2.id, 2, 45);
   await post(g7b, svenska, t2.id, 3, 50);
-  const demandLessons = 2 + 2 + 3;
+  // Delade lektioner: 7B biologi, three lessons of 40, t3's two and t4's one.
+  const biologi = await subject('FP Biologi');
+  const sharedPost = await post(g7b, biologi, t3.id, 3, 40);
+  await owner.query(
+    `INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES ($1, $2, $3, 1, 40, now())`,
+    [s, sharedPost, t4.id],
+  );
+  const demandLessons = 2 + 2 + 3 + 3;
 
   // -------------------------------------------------------------------------
   // What the checks read and do
@@ -595,6 +638,118 @@ async function run(owner: Client, engine: EngineStub, app: INestApplicationConte
     } finally {
       await owner.query(`DELETE FROM "LunchSittings" WHERE "academicYearId" = $1 AND "studentGroupId" = $2 AND "dayOfWeek" = 2`, [year, g7a]);
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // Delade lektioner
+  // -------------------------------------------------------------------------
+  const sharedPlacement = { dayOfWeek: 4, startTime: '10:00', minutes: 40, roomId: sal32, recurrence: 'ALL_WEEKS' as const };
+  const storedTeacher = async (): Promise<(string | null)[]> =>
+    (await all<{ teacherId: string | null }>(`SELECT "teacherId" FROM "TeachingRequirementPlacements" WHERE "requirementId" = $1 ORDER BY id`, [sharedPost])).map(
+      (row) => row.teacherId,
+    );
+  const shareTeachers = async (): Promise<(string | null)[]> =>
+    (await all<{ teacherId: string | null }>(`SELECT "teacherId" FROM "TeachingRequirementShares" WHERE "requirementId" = $1 ORDER BY id`, [sharedPost])).map(
+      (row) => row.teacherId,
+    );
+  const fp409 = async (statements: string[], params: unknown[][]): Promise<string> => {
+    await owner.query('BEGIN');
+    try {
+      for (const [i, sql] of statements.entries()) await owner.query(sql, params[i] ?? []);
+      await owner.query('COMMIT');
+      return 'ok';
+    } catch (error) {
+      await owner.query('ROLLBACK').catch(() => undefined);
+      const pg = error as { code?: string; detail?: string };
+      return pg.code === 'FP409' ? `FP409 ${/reason=([A-Z_]+)/.exec(pg.detail ?? '')?.[1] ?? '?'}` : `${pg.code ?? 'error'} ${summarise(error)}`;
+    }
+  };
+
+  await check('fp-i: the share teacher\'s lesson saves with its teacher, and a row naming nobody is refused NO_TEACHER at its index', async () => {
+    const refused = await refusalOf(
+      placements.replace(sharedPost, { placements: [{ ...sharedPlacement, teacherId: t4.id }, { ...sharedPlacement, dayOfWeek: 5 }] } as never, admin),
+    );
+    assert.equal(refused.getStatus(), 409);
+    assert.deepEqual((refused.getResponse() as { params?: unknown }).params, { reason: 'NO_TEACHER', index: 1 });
+    assert.deepEqual(await storedTeacher(), [], 'the refused save wrote');
+
+    const saved = await placements.replace(sharedPost, { placements: [{ ...sharedPlacement, teacherId: t4.id }] } as never, admin);
+    assert.deepEqual(saved.verdicts, [{ index: 0, ok: true }]);
+    assert.equal(saved.placements[0]!.teacherId, t4.id);
+    assert.deepEqual(await storedTeacher(), [t4.id]);
+  });
+
+  await check('fp-j: Generera locks the share teacher\'s lesson as theirs, takes it off their part, and writes it as theirs', async () => {
+    const mark = engine.calls.length;
+    const result = await generate();
+    assert.ok(result.status === 'OPTIMAL' || result.status === 'FEASIBLE', `Generera answered ${result.status} ${JSON.stringify(result.conflicts?.conflicts?.[0]?.params ?? null)}`);
+    const body = callsSince(mark)[0]!.body;
+    const post = requirementOfMinutes(body, 40);
+    assert.equal(post.lessonsPerWeek, 2, 'the post does not ask for the huvudlärare\'s two alone');
+    assert.ok(!('lessonTeacherIds' in post), 'the lessons left are one teacher\'s, yet a list was sent');
+    const fixed = body.fixedLessons.filter((lesson) => lesson.dayOfWeek === 4 && lesson.startTime === '10:00:00');
+    assert.equal(fixed.length, 1, `${fixed.length} fixed lessons on Thursday 10:00`);
+    assert.notEqual(fixed[0]!.teacherId, post.teacherId, 'the fixed lesson is the huvudlärare\'s, not the share teacher\'s');
+    const whole = body.placements!.requirements.find((requirement) => requirement.id === post.id)!;
+    assert.equal(whole.lessonsPerWeek, 3);
+    assert.deepEqual(whole.lessonTeacherIds, [post.teacherId, post.teacherId, fixed[0]!.teacherId]);
+    const placed = (await placedOf()).filter((row) => row.groupId === g7b);
+    assert.equal(placed.length, 1, `${placed.length} placed lessons of 7B`);
+    assert.deepEqual([placed[0]!.teacherId, placed[0]!.day, placed[0]!.start, placed[0]!.end, placed[0]!.roomId], [t4.id, 4, '10:00', '10:40', sal32]);
+    const ofPost = (await masterRows()).filter((row) => row.groupId === g7b && !row.fromPlacement && row.teacherId === t3.id);
+    assert.equal(ofPost.length, 2, `${ofPost.length} of the huvudlärare\'s lessons written`);
+  });
+
+  await check('fp-k: the share given to another teacher (one out, one in, the same lessons) carries the förläggning along, and commits', async () => {
+    await requirements.update(sharedPost, { shares: [{ teacherId: t5.id, lessons: 1, minutes: 40 }] } as never, admin);
+    assert.deepEqual(await shareTeachers(), [t5.id]);
+    assert.deepEqual(await storedTeacher(), [t5.id], 'the förläggning stayed with the teacher who left');
+  });
+
+  await check('fp-l: the share removed under its förläggning is refused by naming it, and nothing is written', async () => {
+    const refused = await refusalOf(requirements.update(sharedPost, { shares: [] } as never, admin));
+    assert.equal(refused.getStatus(), 409);
+    const body = refused.getResponse() as { code?: string; params?: Record<string, unknown> };
+    assert.equal(body.code, 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT');
+    // The post too (review of #298, MEDEL-1): a write of many posts says which one stopped.
+    assert.deepEqual(body.params, { reason: 'TEACHER', day: 4, start: '10:00', end: '10:40', weeks: 'ALL_WEEKS', requirementId: sharedPost });
+    assert.deepEqual(await shareTeachers(), [t5.id], 'the share was removed after all');
+    assert.deepEqual(await storedTeacher(), [t5.id]);
+  });
+
+  await check('fp-m: another writer\'s swap is refused at COMMIT without the förläggning (FP409 TEACHER) and commits with it', async () => {
+    const swap = `UPDATE "TeachingRequirementShares" SET "teacherId" = $1, "updatedAt" = now() WHERE "requirementId" = $2`;
+    const follow = `UPDATE "TeachingRequirementPlacements" SET "teacherId" = $1, "updatedAt" = now() WHERE "requirementId" = $2`;
+    assert.equal(await fp409([swap], [[t6.id, sharedPost]]), 'FP409 TEACHER');
+    assert.deepEqual(await shareTeachers(), [t5.id], 'the refused swap stayed');
+    // A delete and an insert, as every writer of shares replaces them, then the förläggning: one transaction.
+    assert.equal(
+      await fp409(
+        [
+          `DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = $1`,
+          `INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES ($1, $2, $3, 1, 40, now())`,
+          follow,
+        ],
+        [[sharedPost], [s, sharedPost, t6.id], [t6.id, sharedPost]],
+      ),
+      'ok',
+    );
+    assert.deepEqual(await shareTeachers(), [t6.id]);
+    assert.deepEqual(await storedTeacher(), [t6.id]);
+  });
+
+  await check('fp-n: the teacher removed leaves the lesson nobody\'s, which is not saved so, and a teacher given to the share takes it', async () => {
+    await owner.query(`DELETE FROM "Users" WHERE id = $1`, [t6.id]);
+    assert.deepEqual(await shareTeachers(), [null]);
+    assert.deepEqual(await storedTeacher(), [null], 'the förläggning did not lose its removed teacher');
+
+    const shown = await placements.listOfPost(sharedPost, admin);
+    assert.equal(shown.placements[0]!.teacherId, null);
+    const refused = await refusalOf(placements.replace(sharedPost, { placements: [sharedPlacement] } as never, admin));
+    assert.deepEqual((refused.getResponse() as { params?: unknown }).params, { reason: 'NO_TEACHER', index: 0 });
+
+    await requirements.update(sharedPost, { shares: [{ teacherId: t5.id, lessons: 1, minutes: 40 }] } as never, admin);
+    assert.deepEqual(await storedTeacher(), [t5.id], 'the share nobody taught was given a teacher, and the förläggning stayed nobody\'s');
   });
 }
 

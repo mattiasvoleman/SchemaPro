@@ -26,7 +26,22 @@ const REASONS = [
   "SCHOOL_DAY",
   "OVER_DEMAND",
 ] as const;
-const FIT_REASONS = ["LENGTH", "COUNT", "WEEKS", "PAIRS", "BLOCK", "SHARES", "POST"] as const;
+const FIT_REASONS = [
+  "LENGTH",
+  "COUNT",
+  "WEEKS",
+  "PAIRS",
+  "BLOCK",
+  "POST",
+  // Delade lektioner: the rules per teacher.
+  "NO_TEACHER",
+  "TEACHER",
+  "TEACHER_LENGTH",
+  "TEACHER_PAIRS",
+  "TEACHER_COUNT",
+  // A change of the post refused for a placement nobody teaches (its teacher removed): only removal helps.
+  "UNSTAFFED",
+] as const;
 
 const svT = createTranslator({ locale: "sv", messages: sv, namespace: "requirements.placements" });
 const enT = createTranslator({ locale: "en", messages: en, namespace: "requirements.placements" });
@@ -137,10 +152,97 @@ describe("why the rows do not fit the post", () => {
     expect(en.scheduleCandidates.refusal.PLACEMENTS_REFUSED_SUMMARY).toMatch(/placed lesson/);
   });
 
+  it("says a placement nobody teaches can only be removed, and never to choose another teacher (review of #298, LÅG-6)", () => {
+    expect(svT("problem.UNSTAFFED")).toMatch(/Ta bort förläggningen först/);
+    expect(svT("problem.UNSTAFFED")).not.toMatch(/välj/i);
+    expect(enT("problem.UNSTAFFED")).toMatch(/Remove the placed lesson first/);
+    expect(enT("problem.UNSTAFFED")).not.toMatch(/choose/i);
+  });
+
+  it("names the placement without saying a post was not saved, for a batch that applied nothing", () => {
+    const params = { day: 4, start: "13:00", end: "14:00", weeks: "EVEN_WEEKS", reason: svT("problem.NO_TEACHER") };
+    expect(svT("placementFirst", params)).toBe(`Förläggningen torsdag 13:00–14:00 (jämna veckor) måste ändras eller tas bort först. ${svT("problem.NO_TEACHER")}`);
+    expect(enT("placementFirst", { ...params, reason: "x" })).toBe("The placed lesson on Thursday 13:00–14:00 (even weeks) has to be changed or removed first. x");
+    expect(svT("placementFirst", params)).not.toMatch(/sparades inte/);
+  });
+
   it("is the reason a refused change of the post gives", () => {
     expect(svT("editRefused", { reason: svT("problem.COUNT") })).toBe(
       "Posten sparades inte: den har förlagda lektioner som ändringen inte passar. Fler lektioner av en längd är förlagda än posten har. Ta bort en förläggning.",
     );
+  });
+
+  it("no longer has the sentence that a post sharing its lessons cannot be placed", () => {
+    expect(Object.keys(sv.requirements.placements.problem).sort()).toEqual([...FIT_REASONS, "UNKNOWN"].sort());
+    expect(Object.keys(en.requirements.placements.problem).sort()).toEqual([...FIT_REASONS, "UNKNOWN"].sort());
+  });
+
+  it("says what to do about a lesson that has no teacher, and about each per-teacher rule", () => {
+    expect(svT("problem.NO_TEACHER")).toMatch(/kan inte förläggas.*välj en lärare/);
+    expect(enT("problem.NO_TEACHER")).toMatch(/cannot be placed.*choose a teacher/);
+    expect(svT("problem.TEACHER")).toMatch(/ingen lektion på posten/);
+    expect(svT("problem.TEACHER_LENGTH")).toMatch(/ingen lektion av den längden/);
+    expect(svT("problem.TEACHER_PAIRS")).toMatch(/samma lärare för båda halvorna/);
+    expect(svT("problem.TEACHER_COUNT")).toMatch(/Fler av en lärares lektioner/);
+    expect(enT("problem.TEACHER_LENGTH")).toMatch(/no lesson of that length/);
+    expect(enT("problem.TEACHER_PAIRS")).toMatch(/same teacher for both halves/);
+  });
+});
+
+describe("a change of a post's teacher that its placed lessons do not follow", () => {
+  const where = { day: 2, start: "10:00", end: "11:00", weeks: "ODD_WEEKS" };
+
+  it("names the placement by its weekday and time, with the weeks when they are not every week, and then says why", () => {
+    expect(svT("changeFirst", { ...where, reason: svT("problem.TEACHER") })).toBe(
+      "Posten sparades inte. Förläggningen tisdag 10:00–11:00 (udda veckor) måste ändras eller tas bort först. Förläggningens lärare har ingen lektion på posten. Välj en av postens lärare för förläggningen, eller ta bort den.",
+    );
+    expect(enT("changeFirst", { ...where, weeks: "EVEN_WEEKS", reason: enT("problem.TEACHER_COUNT") })).toBe(
+      "The entry was not saved. The placed lesson on Tuesday 10:00–11:00 (even weeks) has to be changed or removed first. More of a teacher's lessons of one length are placed than the teacher's part has. Remove a placement, or choose another teacher for it.",
+    );
+  });
+
+  it("says nothing of the weeks for a lesson that runs every week, and every weekday in both languages", () => {
+    expect(svT("changeFirst", { ...where, weeks: "ALL_WEEKS", day: 5, reason: "x" })).toBe(
+      "Posten sparades inte. Förläggningen fredag 10:00–11:00 måste ändras eller tas bort först. x",
+    );
+    const weekdays = {
+      sv: ["måndag", "tisdag", "onsdag", "torsdag", "fredag"],
+      en: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+    };
+    [1, 2, 3, 4, 5].forEach((day, index) => {
+      expect(svT("changeFirst", { ...where, day, reason: "x" })).toContain(`Förläggningen ${weekdays.sv[index]} 10:00`);
+      expect(enT("changeFirst", { ...where, day, reason: "x" })).toContain(`lesson on ${weekdays.en[index]} 10:00`);
+    });
+  });
+});
+
+describe("the dialog's words for a post that shares its lessons", () => {
+  it("counts each teacher's placed lessons against their part, in a line", () => {
+    const counts = [svT("teacherCount", { name: "Anna Ek", placed: 1, of: 2 }), svT("teacherCount", { name: "Bo Alm", placed: 1, of: 1 })].join(", ");
+    expect(svT("perTeacher", { counts })).toBe("Förlagda lektioner per lärare: Anna Ek 1 av 2, Bo Alm 1 av 1.");
+    expect(enT("teacherCount", { name: "Anna Ek", placed: 1, of: 2 })).toBe("Anna Ek 1 of 2");
+  });
+
+  it("says that a lesson without a teacher needs one before it can be placed, in the singular and the plural", () => {
+    expect(svT("noTeacher", { count: 1 })).toMatch(/^1 lektion utan lärare behöver en lärare innan den kan förläggas/);
+    expect(svT("noTeacher", { count: 2 })).toMatch(/^2 lektioner utan lärare behöver en lärare innan de kan förläggas/);
+    expect(enT("noTeacher", { count: 1 })).toMatch(/^1 lesson without a teacher needs a teacher before it can be placed/);
+    expect(enT("noTeacher", { count: 3 })).toMatch(/^3 lessons without a teacher need a teacher before they can be placed/);
+  });
+
+  it("labels the teacher field and asks for one", () => {
+    expect(svT("teacher")).toBe("Lärare");
+    expect(svT("teacherPlaceholder")).toBe("Välj lärare");
+    expect(svT("problemTeacher")).toBe("Välj en lärare.");
+    expect(enT("teacherPlaceholder")).toBe("Choose a teacher");
+    expect(enT("problemTeacher")).toBe("Choose a teacher.");
+  });
+
+  it("says that a pair is one teacher's, and that all the lessons with a teacher are placed", () => {
+    expect(svT("pairsHintShared")).toMatch(/samma lärare/);
+    expect(enT("pairsHintShared")).toMatch(/same teacher/);
+    expect(svT("addFullShared")).toBe("Alla lektioner som har en lärare är förlagda.");
+    expect(enT("addFullShared")).toBe("All the lessons that have a teacher are placed.");
   });
 });
 

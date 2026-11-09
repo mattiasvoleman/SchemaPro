@@ -427,6 +427,7 @@ model User {
   coTeachingRequirements  TeachingRequirement[]    @relation("RequirementCoTeacher")
   /// Delade lektioner: the lessons of other teachers' posts this user takes.
   requirementShares       TeachingRequirementShare[] @relation("RequirementShareTeacher")
+  requirementPlacements   TeachingRequirementPlacement[] @relation("RequirementPlacementTeacher")
   masterLessons           MasterLesson[]           @relation("MasterLessonTeacher")
   coMasterLessons         MasterLesson[]           @relation("MasterLessonCoTeacher")
   calendarLessonTeachers  CalendarLessonTeacher[]  @relation("AssignedTeacher")
@@ -2462,16 +2463,25 @@ model TeachingRequirementPlacement {
   /// engine would leave roomless. NO ACTION on delete (see Room).
   roomId        String           @db.Uuid
   recurrence    LessonRecurrence @default(ALL_WEEKS)
+  /// Delade lektioner (20270208090000): whose lesson it is, on a post that
+  /// shares its lessons between teachers — its huvudlärare or a share's
+  /// teacher, with a lesson of this length (by deferred trigger, FP409).
+  /// Null on a post that shares nothing, whose teacher is the lesson's, and
+  /// on a shared post once the teacher is removed (ON DELETE SET NULL
+  /// ("teacherId"): the lesson stays, unstaffed, as the share's does).
+  teacherId     String?          @db.Uuid
   createdAt     DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime         @updatedAt @db.Timestamptz(6)
 
   school        School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   requirement   TeachingRequirement @relation(fields: [requirementId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
   room          Room                @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: NoAction, onUpdate: NoAction)
+  teacher       User?               @relation("RequirementPlacementTeacher", fields: [teacherId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
 
   @@unique([id, schoolId])
   @@index([requirementId])
   @@index([roomId, schoolId])
+  @@index([teacherId, schoolId])
   @@index([schoolId])
   @@map("TeachingRequirementPlacements")
 }

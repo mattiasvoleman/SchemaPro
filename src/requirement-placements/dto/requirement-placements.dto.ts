@@ -1,6 +1,6 @@
 import { LessonRecurrence } from '@prisma/client';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsEnum, IsInt, IsUUID, Matches, Max, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsEnum, IsInt, IsOptional, IsUUID, Matches, Max, Min, ValidateNested } from 'class-validator';
 
 /** The most förläggningar one post can hold: its lessons a week, odd and even in pairs, with room to spare. */
 export const MAX_PLACEMENTS_PER_POST = 80;
@@ -32,6 +32,16 @@ export class PlacementInputDto {
 
   @IsEnum(LessonRecurrence, { message: 'placements: veckor är ALL_WEEKS, ODD_WEEKS eller EVEN_WEEKS.' })
   recurrence!: LessonRecurrence;
+
+  /**
+   * Delade lektioner: whose lesson it is, on a post that shares its lessons
+   * between teachers — its huvudlärare or a share's teacher. Required there
+   * (NO_TEACHER otherwise); left out, or null, on a post that shares nothing,
+   * whose teacher is every lesson's (TEACHER otherwise).
+   */
+  @IsOptional()
+  @IsUUID('4', { message: 'placements: läraren anges med sitt id.' })
+  teacherId?: string | null;
 }
 
 /** The whole list of a post's förläggningar, which replaces the stored one; empty removes them all. */

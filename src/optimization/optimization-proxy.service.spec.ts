@@ -5701,6 +5701,110 @@ describe('OptimizationProxyService', () => {
         expect(params['room']).toBe('Sporthallen');
       });
 
+      describe('on a post with delade lektioner (the lead two of 60, Bo one)', () => {
+        const BO = '99999999-aaaa-4aaa-8aaa-999999999999';
+        const shared = () => requirement({ shares: [{ teacherId: BO, lessons: 1, minutes: 60 }] });
+
+        it('locks Bo’s förläggning as Bo’s lesson and takes it off Bo’s part, not the lead’s', async () => {
+          arrange({ requirements: [shared()] });
+          placed([placement({ teacherId: BO })]);
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          const payload = postedPayload();
+          const post = payload.requirements[0]!;
+          // The lessons left are the lead's two: one teacher, so no list, the lead as the post's teacher.
+          expect(post.lessonsPerWeek).toBe(2);
+          expect(post).not.toHaveProperty('lessonTeacherIds');
+          const lock = payload.fixedLessons[0]!;
+          expect(lock.teacherId).not.toBe(post.teacherId);
+          // The released post has all three, each with its teacher: the lead's two, then Bo's.
+          const released = payload.placements!.requirements[0]!;
+          expect(released.lessonsPerWeek).toBe(3);
+          expect(released.lessonTeacherIds).toEqual([post.teacherId, post.teacherId, lock.teacherId]);
+          // Judged against Bo's week, not the lead's.
+          expect((masters.findConflicts.mock.calls[0]![3] as { teacherId: string }).teacherId).toBe(BO);
+          // And written as Bo's.
+          expect(written().filter((row) => row['fromPlacement'] === true)).toEqual([
+            expect.objectContaining({ teacherId: BO, isLocked: true }),
+          ]);
+        });
+
+        it('takes the lead’s förläggning off the lead’s part, so the lessons left are the lead’s one and Bo’s', async () => {
+          arrange({ requirements: [shared()] });
+          placed([placement({ teacherId: TEACHER_ID })]);
+          // An engine that answers each lesson with the teacher it was sent (lessonTeacherIds), as the real one does.
+          http.post.mockImplementation((_url: string, payload: any) =>
+            of({
+              data: {
+                requestId: payload.requestId,
+                status: 'OPTIMAL',
+                lessons: payload.requirements.flatMap((r: any) =>
+                  Array.from({ length: r.lessonsPerWeek }, (_, k) => ({
+                    requirementId: r.id,
+                    roomId: payload.rooms[0]?.id ?? null,
+                    dayOfWeek: 1,
+                    startTime: `${String(8 + k).padStart(2, '0')}:00:00`,
+                    endTime: `${String(9 + k).padStart(2, '0')}:00:00`,
+                    ...(r.lessonTeacherIds ? { teacherId: r.lessonTeacherIds[k] } : {}),
+                  })),
+                ),
+                conflicts: null,
+              },
+            }),
+          );
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          const payload = postedPayload();
+          const post = payload.requirements[0]!;
+          expect(post.lessonsPerWeek).toBe(2);
+          expect(post.lessonTeacherIds).toHaveLength(2);
+          expect(post.lessonTeacherIds![0]).toBe(post.teacherId);
+          expect(post.lessonTeacherIds![1]).not.toBe(post.teacherId);
+          expect(payload.fixedLessons[0]!.teacherId).toBe(post.teacherId);
+          // The week is written with Bo's lesson Bo's and the placed one the lead's.
+          expect(written().map((row) => [row['fromPlacement'] === true, row['teacherId']]).sort()).toEqual(
+            [
+              [false, TEACHER_ID],
+              [false, BO],
+              [true, TEACHER_ID],
+            ].sort(),
+          );
+        });
+
+        it('refuses the run as OVER_DEMAND when Bo’s own lock already answers Bo’s lesson', async () => {
+          arrange({
+            requirements: [shared()],
+            lockedLessons: [lockedLesson({ id: 'bo-lock', teacherId: BO })],
+          });
+          placed([placement({ teacherId: BO })]);
+          echoEngine();
+
+          const answer = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(http.post).not.toHaveBeenCalled();
+          expect(answer.conflicts).toMatchObject({
+            summaryCode: 'PLACEMENTS_REFUSED_SUMMARY',
+            conflicts: [expect.objectContaining({ params: expect.objectContaining({ reason: 'OVER_DEMAND' }) })],
+          });
+        });
+
+        it('refuses the write (GENERATE_STALE) when the förläggning was handed to another teacher while the solver ran', async () => {
+          arrange({ requirements: [shared()] });
+          tx.teachingRequirementPlacement.findMany
+            .mockResolvedValueOnce([placement({ teacherId: BO })])
+            .mockResolvedValueOnce([placement({ teacherId: TEACHER_ID })]);
+          echoEngine();
+
+          await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+            response: expect.objectContaining({ code: 'GENERATE_STALE' }),
+          });
+          expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+        });
+      });
+
       it('refuses the write (GENERATE_STALE) when a förläggning moved while the solver ran', async () => {
         arrange();
         tx.teachingRequirementPlacement.findMany

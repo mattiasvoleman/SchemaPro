@@ -57215,7 +57215,8 @@ ROLLBACK;
 -- schools' own administrators (the API's role, as the gateway writes them) and leaves nothing behind.
 --
 --   465  the catalogue: columns, keys with their actions, indexes, CHECKs, row security, arms, privileges, the
---        function and the three triggers, and MasterLessons.fromPlacement (a flag, and no key to the row)
+--        function and its triggers (three as 20270207090000 wrote them, two since 20270208090000), and MasterLessons.fromPlacement
+--        (a flag, and no key to the row)
 --   466  who reads and who writes, and the school boundary: two schools, every principal of the matrix school
 --   467  the CHECKs, one by one, at their edges, and the same by UPDATE
 --   468  the trigger (FP409): every reason, a pair in one statement and in two, a post's own change, a share, a
@@ -57262,7 +57263,8 @@ BEGIN
     GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL, con = CONSTRAINT_NAME;
   END;
   IF st = 'FP409' THEN
-    reason := substring(det FROM 'reason=([A-Z]+)');
+    -- [A-Z_]: 20270208090000's reasons have underscores (NO_TEACHER, TEACHER_LENGTH).
+    reason := substring(det FROM 'reason=([A-Z_]+)');
     RETURN 'FP409 ' || coalesce(reason, '?') || CASE WHEN msg LIKE reason || ': %' THEN '' ELSE ' (the message does not start with the reason)' END;
   ELSIF st = '42501' AND msg LIKE '%row-level security%' THEN
     RETURN '42501 rls';
@@ -57357,7 +57359,9 @@ BEGIN
 END $f$;
 
 -- ---------------------------------------------------------------------------
--- Section 465: the catalogue as the migration wrote it (20270207090000).
+-- Section 465: the catalogue as the migration wrote it (20270207090000), and as 20270208090000 left it: the "teacherId" column
+-- (the fourth key, the sixth index, the placements' trigger on teacherId, the shares' trigger gone). The new column, key,
+-- functions and constraint triggers are section 470's.
 --
 -- Nothing here plants a row. What a name, a type, an action or a privilege is, as the catalogue holds it: a change
 -- made after the migration (a key re-made with another action, an arm moved to PUBLIC, a grant to anon, MAINTAIN
@@ -57375,7 +57379,8 @@ DECLARE
   r text;
   priv text;
 BEGIN
-  -- Columns, in order: name, type, nullability and default.
+  -- Columns, in order: name, type, nullability and default. 20270208090000 added "teacherId" (last: ADD COLUMN),
+  -- nullable and with no default; section 470 asks its key, index and comment.
   SELECT string_agg(format('%s %s %s %s', a.attname, format_type(a.atttypid, a.atttypmod), CASE WHEN a.attnotnull THEN 'NN' ELSE 'N' END,
                            coalesce(pg_get_expr(d.adbin, d.adrelid), '-')), E'\n' ORDER BY a.attnum) INTO got
     FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
@@ -57383,17 +57388,20 @@ BEGIN
   want := E'id uuid NN gen_random_uuid()\nschoolId uuid NN -\nrequirementId uuid NN -\ndayOfWeek integer NN -\n'
        || E'startTime time(0) without time zone NN -\nminutes integer NN -\nroomId uuid NN -\n'
        || E'recurrence "LessonRecurrence" NN ''ALL_WEEKS''::"LessonRecurrence"\n'
-       || E'createdAt timestamp(6) with time zone NN CURRENT_TIMESTAMP\nupdatedAt timestamp(6) with time zone NN -';
+       || E'createdAt timestamp(6) with time zone NN CURRENT_TIMESTAMP\nupdatedAt timestamp(6) with time zone NN -\n'
+       || E'teacherId uuid N -';
   PERFORM pg_temp.fl_expect('465 columns', got, want);
   PERFORM pg_temp.fl_true('465 the table and its columns are commented', coalesce(obj_description(tbl, 'pg_class'), '') <> ''
     AND coalesce(col_description('"MasterLessons"'::regclass, (SELECT attnum FROM pg_attribute WHERE attrelid = '"MasterLessons"'::regclass AND attname = 'fromPlacement')), '') <> '');
 
-  -- The three keys: the table they name, their columns, and what happens on delete and on update. confdeltype and
-  -- confupdtype: a = NO ACTION, c = CASCADE. pg_get_constraintdef leaves NO ACTION out, so the letters are read.
+  -- The four keys (the fourth, "teacherId", is 20270208090000's): the table they name, their columns, and what happens
+  -- on delete and on update. confdeltype and confupdtype: a = NO ACTION, c = CASCADE, n = SET NULL. pg_get_constraintdef
+  -- leaves NO ACTION out, so the letters are read. Section 470 reads the teacher key's SET NULL column list.
   FOR k IN SELECT * FROM (VALUES
       ('TeachingRequirementPlacements_schoolId_fkey',              'Schools',              'schoolId',              'id',            'c', 'c'),
       ('TeachingRequirementPlacements_requirementId_schoolId_fkey', 'TeachingRequirements', 'requirementId,schoolId', 'id,schoolId',   'c', 'a'),
-      ('TeachingRequirementPlacements_roomId_schoolId_fkey',        'Rooms',                'roomId,schoolId',        'id,schoolId',   'a', 'a')
+      ('TeachingRequirementPlacements_roomId_schoolId_fkey',        'Rooms',                'roomId,schoolId',        'id,schoolId',   'a', 'a'),
+      ('TeachingRequirementPlacements_teacherId_schoolId_fkey',     'Users',                'teacherId,schoolId',     'id,schoolId',   'n', 'a')
     ) v(name, ref, cols, refcols, del, upd) LOOP
     SELECT format('%s>%s(%s) del %s upd %s %s', (SELECT string_agg(a.attname, ',' ORDER BY x.ord) FROM unnest(c.conkey) WITH ORDINALITY x(attnum, ord)
                                                   JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = x.attnum),
@@ -57404,18 +57412,19 @@ BEGIN
     PERFORM pg_temp.fl_expect('465 key ' || k.name, got,
       format('%s>"%s"(%s) del %s upd %s validated', k.cols, k.ref, k.refcols, k.del, k.upd));
   END LOOP;
-  PERFORM pg_temp.fl_expect('465 the table has those three keys and no other', (SELECT count(*) FROM pg_constraint WHERE conrelid = tbl AND contype = 'f')::text, '3');
+  PERFORM pg_temp.fl_expect('465 the table has those four keys and no other', (SELECT count(*) FROM pg_constraint WHERE conrelid = tbl AND contype = 'f')::text, '4');
   -- Nothing points at a placement: the lessons carry a flag, not a key.
   PERFORM pg_temp.fl_expect('465 no key names the table', (SELECT count(*) FROM pg_constraint WHERE confrelid = tbl)::text, '0');
   PERFORM pg_temp.fl_expect('465 MasterLessons has no placementId', (SELECT count(*) FROM pg_attribute WHERE attrelid = '"MasterLessons"'::regclass AND attname = 'placementId' AND NOT attisdropped)::text, '0');
 
-  -- Indexes: the five, valid, with their columns and uniqueness.
+  -- Indexes: the six (the sixth is 20270208090000's), valid, with their columns and uniqueness.
   FOR k IN SELECT * FROM (VALUES
       ('TeachingRequirementPlacements_pkey',                   'id',                true),
       ('TeachingRequirementPlacements_id_schoolId_key',        'id,schoolId',       true),
       ('TeachingRequirementPlacements_requirementId_idx',      'requirementId',     false),
       ('TeachingRequirementPlacements_roomId_schoolId_idx',    'roomId,schoolId',   false),
-      ('TeachingRequirementPlacements_schoolId_idx',           'schoolId',          false)
+      ('TeachingRequirementPlacements_schoolId_idx',           'schoolId',          false),
+      ('TeachingRequirementPlacements_teacherId_schoolId_idx', 'teacherId,schoolId', false)
     ) v(name, cols, uniq) LOOP
     SELECT format('%s %s %s %s', (SELECT string_agg(a.attname, ',' ORDER BY x.ord) FROM unnest(i.indkey::int2[]) WITH ORDINALITY x(attnum, ord)
                                   JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = x.attnum),
@@ -57424,7 +57433,7 @@ BEGIN
       INTO got FROM pg_index i WHERE i.indexrelid = to_regclass(format('public.%I', k.name)) AND i.indrelid = tbl;
     PERFORM pg_temp.fl_expect('465 index ' || k.name, got, format('%s %s valid whole', k.cols, CASE WHEN k.uniq THEN 'unique' ELSE 'plain' END));
   END LOOP;
-  PERFORM pg_temp.fl_expect('465 the table has those five indexes and no other', (SELECT count(*) FROM pg_index WHERE indrelid = tbl)::text, '5');
+  PERFORM pg_temp.fl_expect('465 the table has those six indexes and no other', (SELECT count(*) FROM pg_index WHERE indrelid = tbl)::text, '6');
 
   -- The four CHECKs, by name, validated, and each saying what its name says (the deparsed text differs a little from one
   -- Postgres to the next, so it is the parts that are asked for, not the whole).
@@ -57490,7 +57499,7 @@ BEGIN
   END LOOP;
   PERFORM pg_temp.fl_expect('465 no column of the table has a grant of its own', (SELECT count(*) FROM pg_attribute WHERE attrelid = tbl AND attacl IS NOT NULL)::text, '0');
 
-  -- The function and the three triggers.
+  -- The function and its two triggers (the third, on the shares, was dropped by 20270208090000).
   PERFORM pg_temp.fl_true('465 the function is a definer of the table''s owner with a pinned search path',
     (SELECT p.prosecdef AND p.proowner = (SELECT relowner FROM pg_class WHERE oid = tbl)
             AND EXISTS (SELECT 1 FROM unnest(p.proconfig) c WHERE c = 'search_path=public, pg_temp')
@@ -57499,11 +57508,13 @@ BEGIN
     (SELECT count(*) FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
       WHERE p.oid = 'app.teaching_requirement_placements_fit()'::regprocedure AND a.grantee <> p.proowner)::text, '0');
   PERFORM pg_temp.fl_true('465 the function is commented', coalesce(obj_description('app.teaching_requirement_placements_fit()'::regprocedure, 'pg_proc'), '') <> '');
-  -- AFTER, per row, enabled, not deferred: insert 4 + delete 8 + update 16 + row 1 (placements 29, the post 17, a share 21).
+  -- AFTER, per row, enabled, not deferred: insert 4 + delete 8 + update 16 + row 1 (placements 29, the post 17).
+  -- 20270208090000 changed this: "teacherId" joined the placements' UPDATE OF columns (NO_TEACHER), and the trigger on the
+  -- shares (a share's INSERT or move answered SHARES, 21) is gone: a share's writes are judged by the DEFERRED function's
+  -- constraint triggers instead (section 470 reads them, and that the shares trigger is absent).
   FOR k IN SELECT * FROM (VALUES
-      ('TeachingRequirementPlacements_fit',        '"TeachingRequirementPlacements"', 29, 'minutes,recurrence,requirementId', false),
-      ('TeachingRequirements_placements_fit',      '"TeachingRequirements"',          17, 'blockId,lessonLengths,lessonsPerWeek,minutesPerLesson,recurrence,studentGroupId,subjectId', true),
-      ('TeachingRequirementShares_placements_fit', '"TeachingRequirementShares"',     21, 'requirementId', false)
+      ('TeachingRequirementPlacements_fit',        '"TeachingRequirementPlacements"', 29, 'minutes,recurrence,requirementId,teacherId', false),
+      ('TeachingRequirements_placements_fit',      '"TeachingRequirements"',          17, 'blockId,lessonLengths,lessonsPerWeek,minutesPerLesson,recurrence,studentGroupId,subjectId', true)
     ) v(name, rel, tgtype, cols, has_when) LOOP
     SELECT format('%s %s %s %s %s %s', t.tgtype, t.tgenabled, t.tgdeferrable::text, (t.tgfoid = 'app.teaching_requirement_placements_fit()'::regprocedure)::text,
                   (SELECT string_agg(a.attname, ',' ORDER BY a.attname COLLATE "C") FROM unnest(t.tgattr::int2[]) x(attnum) JOIN pg_attribute a ON a.attrelid = t.tgrelid AND a.attnum = x.attnum),
@@ -57512,8 +57523,8 @@ BEGIN
     PERFORM pg_temp.fl_expect('465 trigger ' || k.name, got,
       format('%s O false true %s %s', k.tgtype, k.cols, k.has_when::text));
   END LOOP;
-  PERFORM pg_temp.fl_expect('465 the function is fired by those three triggers and no other',
-    (SELECT count(*) FROM pg_trigger WHERE tgfoid = 'app.teaching_requirement_placements_fit()'::regprocedure AND NOT tgisinternal)::text, '3');
+  PERFORM pg_temp.fl_expect('465 the function is fired by those two triggers and no other (it was three before 20270208090000)',
+    (SELECT count(*) FROM pg_trigger WHERE tgfoid = 'app.teaching_requirement_placements_fit()'::regprocedure AND NOT tgisinternal)::text, '2');
 
   -- MasterLessons.fromPlacement: a flag, not null, false unless written, and held by the table's grants as isGenerated is.
   SELECT format('%s %s %s', format_type(a.atttypid, a.atttypmod), CASE WHEN a.attnotnull THEN 'NN' ELSE 'N' END, pg_get_expr(d.adbin, d.adrelid))
@@ -57821,14 +57832,17 @@ ROLLBACK;
 -- and in DETAIL. Posts of every shape in two schools, each case run in both so that the definer function is the
 -- same for every school's administrator.
 --
---   * LENGTH, COUNT, WEEKS, PAIRS, BLOCK, SHARES, POST, each by the write that raises it, and each with its control;
+--   * LENGTH, COUNT, WEEKS, PAIRS, BLOCK, NO_TEACHER, POST, each by the write that raises it, and each with its control
+--     (20270208090000 replaced SHARES, which refused every row on a shared post and every share on a post with rows, with
+--     NO_TEACHER: a row written on a shared post names its teacher; the rules per teacher are section 471-472's);
 --   * the order the reasons are judged in (LENGTH before PAIRS, ...);
 --   * a pair is ONE lesson at two places and is written in ONE statement: odd and even of one length together pass,
 --     the same two rows in two statements do not (the first would be a lone odd row), and a replace (a delete, then
 --     the new set in one INSERT) passes at every step;
 --   * the post's own change: lessons, length, weeks, block, class and subject, each against rows it no longer fits,
 --     and the same change on a post without rows, which nobody judges;
---   * a share written for, or moved to, a post that has rows;
+--   * a share written for, or moved to, a post that has rows: no statement refuses it any more (the shares' trigger is
+--     gone; the deferred rules per teacher judge it at COMMIT, sections 471-472);
 --   * a delete judges PAIRS and nothing else; a row moved to another post judges both posts;
 --   * REPEATABLE READ is refused, SERIALIZABLE is judged like READ COMMITTED.
 -- ---------------------------------------------------------------------------
@@ -57942,7 +57956,8 @@ BEGIN
 
     -- BLOCK and SHARES: a post that is in a block, and a post that shares its lessons.
     PERFORM pg_temp.fl_case(l || 'a row on a post in a block', pg_temp.fl_ins(s, p_block, r1, r2, '1|08:00|60|1|ALL_WEEKS'), 'FP409 BLOCK');
-    PERFORM pg_temp.fl_case(l || 'a row on a post with a share', pg_temp.fl_ins(s, p_share, r1, r2, '1|08:00|60|1|ALL_WEEKS'), 'FP409 SHARES');
+    -- 20270208090000: a post with a share takes rows that name their teacher (section 471), and refuses one that names nobody.
+    PERFORM pg_temp.fl_case(l || 'a row naming nobody on a post with a share', pg_temp.fl_ins(s, p_share, r1, r2, '1|08:00|60|1|ALL_WEEKS'), 'FP409 NO_TEACHER');
     PERFORM pg_temp.fl_expect(l || 'neither left a row', pg_temp.fl_n(p_block) || pg_temp.fl_n(p_share), '00');
     PERFORM pg_temp.fl_case(l || 'control: the spare post takes its row', pg_temp.fl_ins(s, p_spare, r1, r2, '1|08:00|60|1|ALL_WEEKS'), 'ok');
     PERFORM pg_temp.fl_case(l || 'the spare post cannot join the block', format($q$UPDATE "TeachingRequirements" SET "blockId" = %L WHERE id = %L$q$, blk, p_spare), 'FP409 BLOCK');
@@ -57950,16 +57965,21 @@ BEGIN
     PERFORM pg_temp.fl_case(l || 'without its row it can', format($q$UPDATE "TeachingRequirements" SET "blockId" = %L WHERE id = %L$q$, blk, p_spare), 'ok');
     PERFORM pg_temp.fl_case(l || 'and then takes no row', pg_temp.fl_ins(s, p_spare, r1, r2, '1|08:00|60|1|ALL_WEEKS'), 'FP409 BLOCK');
     PERFORM pg_temp.fl_case(l || 'and leaves the block', format($q$UPDATE "TeachingRequirements" SET "blockId" = NULL WHERE id = %L$q$, p_spare), 'ok');
-    -- A share for a post that has a row (the post of three lessons has one; the share takes one).
+    -- A share for a post that has a row (the post of three lessons has one; the share takes one). Since 20270208090000 no
+    -- statement refuses it: the shares' trigger (SHARES) is gone, and the rules per teacher are judged by deferred
+    -- constraint triggers, at COMMIT, which a section that rolls back never reaches (sections 471 and 472 ask for them
+    -- with SET CONSTRAINTS ... IMMEDIATE). The post's own rules here read no share, so none can be broken by one.
     PERFORM pg_temp.fl_case(l || 'a row on the post of three', pg_temp.fl_ins(s, p_all, r1, r2, '1|08:00|60|1|ALL_WEEKS'), 'ok');
-    PERFORM pg_temp.fl_case(l || 'a share for a post with a row', format($q$INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
-                                                                          VALUES (%L, %L, %L, 1, 60, now())$q$, s, p_all, teacher), 'FP409 SHARES');
-    PERFORM pg_temp.fl_case(l || 'a share moved to a post with a row', format($q$UPDATE "TeachingRequirementShares" SET "requirementId" = %L WHERE "requirementId" = %L$q$, p_all, p_share), 'FP409 SHARES');
+    PERFORM pg_temp.fl_case(l || 'a share for a post with a row is no statement''s refusal', format($q$INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+                                                                          VALUES (%L, %L, %L, 1, 60, now())$q$, s, p_all, teacher), 'ok');
+    DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = p_all;
+    PERFORM pg_temp.fl_case(l || 'a share moved to a post with a row is none either', format($q$UPDATE "TeachingRequirementShares" SET "requirementId" = %L WHERE "requirementId" = %L$q$, p_all, p_share), 'ok');
+    UPDATE "TeachingRequirementShares" SET "requirementId" = p_share WHERE "requirementId" = p_all;
     PERFORM pg_temp.fl_case(l || 'a share changed in lessons only is nobody''s concern here', format($q$UPDATE "TeachingRequirementShares" SET lessons = 1 WHERE "requirementId" = %L$q$, p_share), 'ok');
     PERFORM pg_temp.fl_clear(p_all);
     PERFORM pg_temp.fl_case(l || 'a share for the post once its rows are gone', format($q$INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
                                                                           VALUES (%L, %L, %L, 1, 60, now())$q$, s, p_all, teacher), 'ok');
-    PERFORM pg_temp.fl_case(l || 'and now the post takes no row', pg_temp.fl_ins(s, p_all, r1, r2, '1|08:00|60|1|ALL_WEEKS'), 'FP409 SHARES');
+    PERFORM pg_temp.fl_case(l || 'and now the post takes no row that names nobody (it shares: NO_TEACHER, not SHARES)', pg_temp.fl_ins(s, p_all, r1, r2, '1|08:00|60|1|ALL_WEEKS'), 'FP409 NO_TEACHER');
     DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = p_all;
 
     -- POST: the class or the subject changed under a row.
@@ -58173,5 +58193,854 @@ BEGIN
     PERFORM pg_temp.fl_case(l || 'and the room is free', format($q$DELETE FROM "Rooms" WHERE id = %L$q$, r2), 'ok');
   END LOOP;
   RAISE NOTICE 'fl 469: % checks', current_setting('fl.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Förlägg delade lektioner (20270208090000), sections 470-474: a timplanspost that shares its lessons between teachers
+-- can have förlagda lektioner, each one a teacher's ("teacherId"). Helpers are pg_temp functions with the prefix fd_,
+-- made outside any transaction (like fl_'s) so they outlive the sections' BEGIN ... ROLLBACK. Every section plants its
+-- own rows in two schools through the schools' own administrators, teachers included, and leaves nothing behind.
+--
+--   470  the catalogue: the column, its key (SET NULL of "teacherId" alone, ON UPDATE NO ACTION), its index, the two
+--        functions, the three DEFERRED constraint triggers, and the trigger on the shares that is gone
+--   471  the rules per teacher (NO_TEACHER at once; TEACHER, TEACHER_LENGTH, TEACHER_PAIRS, TEACHER_COUNT when the rules
+--        are asked for) on a shared post, on one with a huvudlärare who teaches only some lessons of two lengths, on one
+--        with no huvudlärare, and on a post that shares nothing (which behaves as before)
+--   472  a change of teacher, both outcomes: the placement moved with the share (ok) and not moved (refused), a share
+--        removed, a huvudlärare changed, lessons lowered, a share's teacher changed in place, a share or a row moved to
+--        another post
+--   473  a person removed: the key's SET NULL leaves the lesson standing, nobody's, and the deferred check passes;
+--        what a writer may then do with the row, and what it may not
+--   474  isolation: REPEATABLE READ refuses a share's DELETE at the deferred check, SERIALIZABLE judges it. (The row lock
+--        the two functions take is proved in rls-owner-checks.sql, section 474: it needs the owner's replica role.)
+--
+-- DEFERRED TRIGGERS IN A SECTION THAT ROLLS BACK. A constraint trigger fires at COMMIT, which a section never reaches,
+-- so a case asks for the rules itself: fd_try runs the statements and then SET CONSTRAINTS "<the three names>" IMMEDIATE,
+-- inside one subtransaction, and puts them DEFERRED again (the gateway does the same at the end of its write, and
+-- never ALL: SS12000's flush is deferred too). What is refused at once (NO_TEACHER, and the post's own rules) is asked
+-- of the statement alone, with fd_probe (fd_nowcase): the statements are run and taken back whatever the answer, so that
+-- what they queued is not met by the next case, and 'ok' shows that a statement the deferred rules would refuse is not refused
+-- by itself. A case that is refused takes itself back, and one that passes has asked for the rules, so nothing is ever left queued.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.fd_tick() RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('fd.checks', (coalesce(nullif(current_setting('fd.checks', true), ''), '0')::integer + 1)::text, true);
+$f$;
+CREATE FUNCTION pg_temp.fd_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.fd_tick();
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'fd %: got\n%\nwanted\n%', p_label, p_got, p_want USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+CREATE FUNCTION pg_temp.fd_true(p_label text, p_cond boolean) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.fd_tick();
+  IF p_cond IS NOT TRUE THEN
+    RAISE EXCEPTION 'fd %: not true', p_label USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+CREATE FUNCTION pg_temp.fd_as(p_sub text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', p_sub)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+-- What became of an error, in one word: the reason of an FP409 (read from DETAIL, and the message must START with it),
+-- a row-security refusal, or the SQLSTATE with the constraint's name.
+CREATE FUNCTION pg_temp.fd_said(p_st text, p_msg text, p_det text, p_con text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  reason text;
+BEGIN
+  IF p_st = 'FP409' THEN
+    reason := substring(p_det FROM 'reason=([A-Z_]+)');
+    RETURN 'FP409 ' || coalesce(reason, '?') || CASE WHEN p_msg LIKE reason || ': %' THEN '' ELSE ' (the message does not start with the reason)' END;
+  ELSIF p_st = '42501' AND p_msg LIKE '%row-level security%' THEN
+    RETURN '42501 rls';
+  ELSIF coalesce(p_con, '') <> '' AND p_st <> '23502' THEN
+    RETURN p_st || ' ' || p_con;
+  END IF;
+  RETURN p_st;
+END $f$;
+-- The statements in order, then the rules per teacher asked for (and put off again). A refusal takes the whole case back.
+CREATE FUNCTION pg_temp.fd_try(VARIADIC p_stmts text[] DEFAULT '{}') RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  st text; msg text; det text; con text; s text;
+BEGIN
+  BEGIN
+    FOREACH s IN ARRAY p_stmts LOOP EXECUTE s; END LOOP;
+    SET CONSTRAINTS "TeachingRequirementPlacements_teachers_fit", "TeachingRequirementShares_placement_teachers_fit", "TeachingRequirements_placement_teachers_fit" IMMEDIATE;
+    SET CONSTRAINTS "TeachingRequirementPlacements_teachers_fit", "TeachingRequirementShares_placement_teachers_fit", "TeachingRequirements_placement_teachers_fit" DEFERRED;
+    RETURN 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL, con = CONSTRAINT_NAME;
+  END;
+  RETURN pg_temp.fd_said(st, msg, det, con);
+END $f$;
+-- The statements alone, with nothing asked for, taken back whatever the answer (and the rules they queued with them, which
+-- the next case would otherwise meet and be refused for): what the database refuses at once. 'ok' says only that no statement
+-- was refused by itself.
+CREATE FUNCTION pg_temp.fd_probe(VARIADIC p_stmts text[] DEFAULT '{}') RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  st text; msg text; det text; con text; s text;
+BEGIN
+  BEGIN
+    FOREACH s IN ARRAY p_stmts LOOP EXECUTE s; END LOOP;
+    RAISE EXCEPTION 'taken back' USING ERRCODE = 'FD999';
+  EXCEPTION
+    WHEN SQLSTATE 'FD999' THEN RETURN 'ok';
+    WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL, con = CONSTRAINT_NAME;
+  END;
+  RETURN pg_temp.fd_said(st, msg, det, con);
+END $f$;
+CREATE FUNCTION pg_temp.fd_case(p_label text, p_want text, VARIADIC p_stmts text[] DEFAULT '{}') RETURNS void LANGUAGE sql AS $f$
+  SELECT pg_temp.fd_expect(p_label, pg_temp.fd_try(VARIADIC p_stmts), p_want);
+$f$;
+CREATE FUNCTION pg_temp.fd_nowcase(p_label text, p_want text, VARIADIC p_stmts text[] DEFAULT '{}') RETURNS void LANGUAGE sql AS $f$
+  SELECT pg_temp.fd_expect(p_label, pg_temp.fd_probe(VARIADIC p_stmts), p_want);
+$f$;
+CREATE FUNCTION pg_temp.fd_probecase(p_label text, p_want text, VARIADIC p_stmts text[] DEFAULT '{}') RETURNS void LANGUAGE sql AS $f$
+  SELECT pg_temp.fd_expect(p_label, pg_temp.fd_probe(VARIADIC p_stmts), p_want);
+$f$;
+-- A teacher by letter (A B C D, or X for the one who is never on a post), from what fd_plant answered.
+CREATE FUNCTION pg_temp.fd_t(p jsonb, p_letter text) RETURNS uuid LANGUAGE plpgsql AS $f$
+DECLARE
+  u uuid := (p #>> ARRAY['teachers', p_letter])::uuid;
+BEGIN
+  IF u IS NULL THEN RAISE EXCEPTION 'fd: no teacher % in the plant', p_letter; END IF;
+  RETURN u;
+END $f$;
+-- A teacher's id as a SQL literal, or NULL for '-'.
+CREATE FUNCTION pg_temp.fd_lit(p jsonb, p_letter text) RETURNS text LANGUAGE sql AS $f$
+  SELECT CASE WHEN p_letter = '-' THEN 'NULL' ELSE quote_literal(pg_temp.fd_t(p, p_letter)) || '::uuid' END
+$f$;
+-- INSERT of placements: each row 'day|HH:MM|minutes|teacher letter or -|weeks', all in the plant's first room.
+CREATE FUNCTION pg_temp.fd_ins(p jsonb, p_post uuid, VARIADIC p_rows text[]) RETURNS text LANGUAGE sql AS $f$
+  SELECT 'INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "teacherId", "updatedAt") VALUES '
+         || string_agg(format('(%L, %L, %s, %L, %s, %L, %L, %s, now())', p ->> 'school', p_post, split_part(r, '|', 1), split_part(r, '|', 2),
+                              split_part(r, '|', 3), p ->> 'room1', split_part(r, '|', 5), pg_temp.fd_lit(p, split_part(r, '|', 4))), ', ')
+    FROM unnest(p_rows) r
+$f$;
+-- A share, as the gateway writes it.
+CREATE FUNCTION pg_temp.fd_share(p jsonb, p_post uuid, p_letter text, p_lessons integer, p_minutes integer) RETURNS text LANGUAGE sql AS $f$
+  SELECT format('INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES (%L, %L, %s, %s, %s, now())',
+                p ->> 'school', p_post, pg_temp.fd_lit(p, p_letter), p_lessons, p_minutes)
+$f$;
+-- Every share of the post removed, which is how a writer replaces them (a DELETE, then an INSERT).
+CREATE FUNCTION pg_temp.fd_unshare(p_post uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT format('DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = %L', p_post)
+$f$;
+-- The rows of one teacher given to another ('-' for nobody).
+CREATE FUNCTION pg_temp.fd_hand(p jsonb, p_post uuid, p_from text, p_to text) RETURNS text LANGUAGE sql AS $f$
+  SELECT format('UPDATE "TeachingRequirementPlacements" SET "teacherId" = %s WHERE "requirementId" = %L AND "teacherId" IS NOT DISTINCT FROM %s',
+                pg_temp.fd_lit(p, p_to), p_post, pg_temp.fd_lit(p, p_from))
+$f$;
+CREATE FUNCTION pg_temp.fd_clear(p_post uuid) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = p_post;
+  -- the removal's queued rules are judged now (a post with no row is always fit), not by the next case
+  SET CONSTRAINTS "TeachingRequirementPlacements_teachers_fit", "TeachingRequirementShares_placement_teachers_fit", "TeachingRequirements_placement_teachers_fit" IMMEDIATE;
+  SET CONSTRAINTS "TeachingRequirementPlacements_teachers_fit", "TeachingRequirementShares_placement_teachers_fit", "TeachingRequirements_placement_teachers_fit" DEFERRED;
+END $f$;
+CREATE FUNCTION pg_temp.fd_clear_stmt(p_post uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT format('DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = %L', p_post)
+$f$;
+-- The post's rows by teacher, as 'A2 B1 -1' (the letter and how many rows, '-' for nobody), in letter order.
+CREATE FUNCTION pg_temp.fd_who(p jsonb, p_post uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT coalesce(string_agg(x.k || x.n, ' ' ORDER BY x.k), 'none')
+    FROM (SELECT coalesce((SELECT t.key FROM jsonb_each_text(p -> 'teachers') t WHERE t.value::uuid = r."teacherId"), '-') AS k, count(*) AS n
+            FROM "TeachingRequirementPlacements" r WHERE r."requirementId" = p_post GROUP BY 1) x
+$f$;
+-- The post's shares by teacher, as 'B1x60' (letter, lessons x minutes), '-' for a share nobody has.
+CREATE FUNCTION pg_temp.fd_shares(p jsonb, p_post uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT coalesce(string_agg(x.k || x.l || 'x' || x.m, ' ' ORDER BY x.k, x.m), 'none')
+    FROM (SELECT coalesce((SELECT t.key FROM jsonb_each_text(p -> 'teachers') t WHERE t.value::uuid = s."teacherId"), '-') AS k, s.lessons AS l, s.minutes AS m
+            FROM "TeachingRequirementShares" s WHERE s."requirementId" = p_post) x
+$f$;
+-- A post of the plant's: the teacher's letter ('-' for none), lessons, and the length (or lengths) of a lesson.
+CREATE FUNCTION pg_temp.fd_post(p jsonb, p_teacher text, p_lessons integer, p_minutes integer DEFAULT 60, p_lengths integer[] DEFAULT '{}', p_weeks text DEFAULT 'ALL_WEEKS') RETURNS uuid LANGUAGE plpgsql AS $f$
+DECLARE
+  subj uuid;
+  post uuid;
+BEGIN
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt")
+  VALUES ((p ->> 'school')::uuid, 'fd ämne', 'FD' || substr(md5(random()::text || clock_timestamp()::text), 1, 12), now()) RETURNING id INTO subj;
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "lessonsPerWeek", "minutesPerLesson",
+                                      "lessonLengths", recurrence, "updatedAt")
+  VALUES ((p ->> 'school')::uuid, (p ->> 'year')::uuid, subj, (p ->> 'group')::uuid,
+          CASE WHEN p_teacher = '-' THEN NULL ELSE pg_temp.fd_t(p, p_teacher) END, p_lessons, p_minutes, p_lengths, p_weeks::"LessonRecurrence", now())
+  RETURNING id INTO post;
+  RETURN post;
+END $f$;
+-- One school's rows, planted as its own administrator: four teachers (A B C D, new people of the school, so that a
+-- section may remove them), a room, and what a post needs. Answers the ids.
+CREATE FUNCTION pg_temp.fd_plant(p_sub text, p_side text) RETURNS jsonb LANGUAGE plpgsql AS $f$
+DECLARE
+  school uuid;
+  y uuid;
+  grp uuid;
+  r1 uuid;
+  letter text;
+  u uuid;
+  teachers jsonb := '{}';
+BEGIN
+  PERFORM pg_temp.fd_as(p_sub);
+  school := app.current_school_id();
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_may('PLANERING', true) OR NOT app.current_user_may('PERSONAL', true) THEN
+    RAISE EXCEPTION 'fd: % is not an administrator who writes PLANERING and PERSONAL', p_sub;
+  END IF;
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, "startDate" LIMIT 1;
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = school AND "academicYearId" = y ORDER BY id LIMIT 1;
+  IF y IS NULL OR grp IS NULL THEN
+    RAISE EXCEPTION 'fd: school % lacks a year or a class to plant on; fixtures did not run', p_side;
+  END IF;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'fd sal ' || p_side, now()) RETURNING id INTO r1;
+  FOREACH letter IN ARRAY ARRAY['A', 'B', 'C', 'D', 'X'] LOOP
+    INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+    VALUES (school, 'fd-' || p_side || '-' || lower(letter) || '@example.invalid', 'FD' || letter, 'Lärare ' || p_side, 'TEACHER', gen_random_uuid(), true, now())
+    RETURNING id INTO u;
+    teachers := teachers || jsonb_build_object(letter, u);
+  END LOOP;
+  RETURN jsonb_build_object('school', school, 'year', y, 'group', grp, 'room1', r1, 'teachers', teachers, 'admin', p_sub, 'side', p_side);
+END $f$;
+
+-- ---------------------------------------------------------------------------
+-- Section 470: the catalogue as 20270208090000 wrote it.
+--
+-- Nothing here plants a row. The column, its key, its index, the two functions and the three constraint triggers, as the
+-- catalogue holds them: a key re-made with another action (CASCADE would delete the school's decision without a word;
+-- SET NULL of both columns would take "schoolId" from a row that is the school's), a trigger made immediate (a share's
+-- replacement is a DELETE and an INSERT, and the placement follows in a third statement), a trigger left on the
+-- shares that answers SHARES, an EXECUTE granted to the API's role, are each named here.
+--
+-- Recorded when the migration was written, and not asserted (a later rewrite of a function must not trip a catalogue
+-- check): md5(prosrc) of app.teaching_requirement_placements_fit() was 0e2d7c14cfb98768edc236328ba703bf before the
+-- migration and 86f24518e98f29caa02bdd8f30971202 after it; of app.teaching_requirement_placement_teachers_fit(),
+-- new, 58875bc882854c6cd4ac496d545e1823 (migration sha256 14b0650d8c3e9f90d00e32d094119c2f442b340514e57cf1536de9a3746f7339).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  tbl constant regclass := '"TeachingRequirementPlacements"'::regclass;
+  got text;
+  want text;
+  k record;
+  r text;
+  f text;
+BEGIN
+  -- The column: a uuid, nullable, no default, commented (a comment that says what NULL means).
+  SELECT format('%s %s %s', format_type(a.atttypid, a.atttypmod), CASE WHEN a.attnotnull THEN 'NN' ELSE 'N' END, coalesce(pg_get_expr(d.adbin, d.adrelid), '-'))
+    INTO got FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = tbl AND a.attname = 'teacherId' AND NOT a.attisdropped;
+  PERFORM pg_temp.fd_expect('470 the column', got, 'uuid N -');
+  PERFORM pg_temp.fd_true('470 the column is commented, and says what NULL is',
+    coalesce(col_description(tbl, (SELECT attnum FROM pg_attribute WHERE attrelid = tbl AND attname = 'teacherId')), '') LIKE '%NULL%');
+  PERFORM pg_temp.fd_true('470 the table''s comment names the teacher', coalesce(obj_description(tbl, 'pg_class'), '') LIKE '%teacherId%');
+  PERFORM pg_temp.fd_expect('470 no grant of its own on the column', (SELECT attacl IS NULL FROM pg_attribute WHERE attrelid = tbl AND attname = 'teacherId')::text, 'true');
+
+  -- The key: to Users on (id, schoolId), as every key between two tables of a school (section 330); SET NULL of
+  -- "teacherId" ALONE (confdelsetcols: the row stays the school's, so "schoolId" is not cleared, and it is NOT NULL, which
+  -- is what would refuse a SET NULL of the whole key); ON UPDATE NO ACTION (section 388); MATCH SIMPLE (a NULL
+  -- "teacherId" is not checked at all); immediate; validated.
+  SELECT format('%s>%s(%s) del %s upd %s match %s setnull %s %s %s',
+                (SELECT string_agg(a.attname, ',' ORDER BY x.ord) FROM unnest(c.conkey) WITH ORDINALITY x(attnum, ord) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = x.attnum),
+                c.confrelid::regclass::text,
+                (SELECT string_agg(a.attname, ',' ORDER BY x.ord) FROM unnest(c.confkey) WITH ORDINALITY x(attnum, ord) JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = x.attnum),
+                c.confdeltype, c.confupdtype, c.confmatchtype,
+                coalesce((SELECT string_agg(a.attname, ',') FROM unnest(c.confdelsetcols) x(attnum) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = x.attnum), '-'),
+                CASE WHEN c.condeferrable THEN 'deferrable' ELSE 'immediate' END, CASE WHEN c.convalidated THEN 'validated' ELSE 'NOT VALID' END)
+    INTO got FROM pg_constraint c WHERE c.conrelid = tbl AND c.conname = 'TeachingRequirementPlacements_teacherId_schoolId_fkey' AND c.contype = 'f';
+  PERFORM pg_temp.fd_expect('470 the key', got, 'teacherId,schoolId>"Users"(id,schoolId) del n upd a match s setnull teacherId immediate validated');
+  -- The two keys beside it that matter for a person's removal say the same of their column: the post's and the share's.
+  FOR k IN SELECT * FROM (VALUES ('TeachingRequirements_teacherId_schoolId_fkey', '"TeachingRequirements"'::regclass),
+                                 ('TeachingRequirementShares_teacherId_schoolId_fkey', '"TeachingRequirementShares"'::regclass)) v(name, rel) LOOP
+    SELECT c.confdeltype::text INTO got FROM pg_constraint c WHERE c.conrelid = k.rel AND c.conname = k.name;
+    PERFORM pg_temp.fd_expect('470 ' || k.name || ' is SET NULL too: the three keys agree when a person is removed', got, 'n');
+  END LOOP;
+
+  -- The index: valid, whole, non-unique, its columns the key's (the leading ones, which is what the key's SET NULL scans).
+  SELECT format('%s %s %s %s', (SELECT string_agg(a.attname, ',' ORDER BY x.ord) FROM unnest(i.indkey::int2[]) WITH ORDINALITY x(attnum, ord) JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = x.attnum),
+                CASE WHEN i.indisunique THEN 'unique' ELSE 'plain' END, CASE WHEN i.indisvalid AND i.indisready THEN 'valid' ELSE 'INVALID' END, CASE WHEN i.indpred IS NULL THEN 'whole' ELSE 'partial' END)
+    INTO got FROM pg_index i WHERE i.indexrelid = to_regclass('public."TeachingRequirementPlacements_teacherId_schoolId_idx"') AND i.indrelid = tbl;
+  PERFORM pg_temp.fd_expect('470 the index', got, 'teacherId,schoolId plain valid whole');
+  PERFORM pg_temp.fd_true('470 the index is the key''s: a leading-column match',
+    EXISTS (SELECT 1 FROM pg_index i, pg_constraint c
+             WHERE c.conname = 'TeachingRequirementPlacements_teacherId_schoolId_fkey' AND c.conrelid = tbl AND i.indrelid = tbl
+               AND (SELECT array_agg(u.x ORDER BY u.ord) FROM unnest(i.indkey::int2[]) WITH ORDINALITY u(x, ord) WHERE u.ord <= cardinality(c.conkey)) = c.conkey));
+
+  -- The two functions: triggers, definers of the table's owner with a pinned search path, commented, and nobody runs
+  -- them but their triggers (the owner aside: PUBLIC and the API's roles hold no EXECUTE).
+  FOREACH f IN ARRAY ARRAY['app.teaching_requirement_placements_fit()', 'app.teaching_requirement_placement_teachers_fit()'] LOOP
+    PERFORM pg_temp.fd_true('470 ' || f || ' is a plpgsql trigger function, a definer of the table''s owner with a pinned search path',
+      (SELECT p.prosecdef AND p.proowner = (SELECT relowner FROM pg_class WHERE oid = tbl) AND p.prorettype = 'trigger'::regtype
+              AND (SELECT l.lanname FROM pg_language l WHERE l.oid = p.prolang) = 'plpgsql'
+              AND EXISTS (SELECT 1 FROM unnest(p.proconfig) c WHERE c = 'search_path=public, pg_temp')
+         FROM pg_proc p WHERE p.oid = f::regprocedure));
+    PERFORM pg_temp.fd_true('470 ' || f || ' is commented and says FP409', coalesce(obj_description(f::regprocedure, 'pg_proc'), '') LIKE '%FP409%');
+    PERFORM pg_temp.fd_expect('470 nobody but the owner runs ' || f,
+      (SELECT count(*) FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a WHERE p.oid = f::regprocedure AND a.grantee <> p.proowner)::text, '0');
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      PERFORM pg_temp.fd_true(format('470 %s may not run %s', r, f), NOT has_function_privilege(r, f::regprocedure, 'EXECUTE'));
+    END LOOP;
+  END LOOP;
+
+  -- The three constraint triggers on the deferred function: AFTER, per row, enabled, tied to a constraint of their own,
+  -- DEFERRABLE INITIALLY DEFERRED, on the events and columns the rules read. tgtype: row 1 + insert 4 + delete 8 + update 16
+  -- (the placements and the shares 29, the post 17); only the post's has a WHEN (the five columns, when one changed).
+  FOR k IN SELECT * FROM (VALUES
+      ('TeachingRequirementPlacements_teachers_fit',       '"TeachingRequirementPlacements"', 29, 'minutes,recurrence,requirementId,teacherId', false),
+      ('TeachingRequirementShares_placement_teachers_fit', '"TeachingRequirementShares"',     29, 'lessons,minutes,requirementId,teacherId', false),
+      ('TeachingRequirements_placement_teachers_fit',      '"TeachingRequirements"',          17, 'lessonLengths,lessonsPerWeek,minutesPerLesson,recurrence,teacherId', true)
+    ) v(name, rel, tgtype, cols, has_when) LOOP
+    SELECT format('%s %s deferrable %s initially deferred %s fn %s cols %s when %s constraint %s',
+                  t.tgtype, t.tgenabled, t.tgdeferrable::text, t.tginitdeferred::text, (t.tgfoid = 'app.teaching_requirement_placement_teachers_fit()'::regprocedure)::text,
+                  (SELECT string_agg(a.attname, ',' ORDER BY a.attname COLLATE "C") FROM unnest(t.tgattr::int2[]) x(attnum) JOIN pg_attribute a ON a.attrelid = t.tgrelid AND a.attnum = x.attnum),
+                  (t.tgqual IS NOT NULL)::text,
+                  coalesce((SELECT format('%s %s deferrable %s deferred %s', c.contype, (c.conrelid = t.tgrelid)::text, c.condeferrable::text, c.condeferred::text) FROM pg_constraint c WHERE c.oid = t.tgconstraint), 'none'))
+      INTO got FROM pg_trigger t WHERE t.tgname = k.name AND t.tgrelid = k.rel::regclass AND NOT t.tgisinternal;
+    PERFORM pg_temp.fd_expect('470 trigger ' || k.name, got,
+      format('%s O deferrable true initially deferred true fn true cols %s when %s constraint t true deferrable true deferred true', k.tgtype, k.cols, k.has_when::text));
+    -- SET CONSTRAINTS names a trigger, and every constraint of that name in the search path answers: it is one.
+    PERFORM pg_temp.fd_expect('470 the name ' || k.name || ' is a constraint nothing else has', (SELECT count(*) FROM pg_constraint WHERE conname = k.name)::text, '1');
+  END LOOP;
+  PERFORM pg_temp.fd_expect('470 the deferred function is fired by those three triggers and no other',
+    (SELECT count(*) FROM pg_trigger WHERE tgfoid = 'app.teaching_requirement_placement_teachers_fit()'::regprocedure AND NOT tgisinternal)::text, '3');
+
+  -- What the first function is fired by now (the placements' own, with "teacherId", and the post's), and what is gone: the trigger
+  -- on the shares whose only answer was SHARES.
+  PERFORM pg_temp.fd_expect('470 the trigger #293 put on the shares is gone', (SELECT count(*) FROM pg_trigger WHERE tgname = 'TeachingRequirementShares_placements_fit')::text, '0');
+  PERFORM pg_temp.fd_expect('470 nothing on the shares fires the immediate function',
+    (SELECT count(*) FROM pg_trigger WHERE tgrelid = '"TeachingRequirementShares"'::regclass AND tgfoid = 'app.teaching_requirement_placements_fit()'::regprocedure AND NOT tgisinternal)::text, '0');
+  PERFORM pg_temp.fd_expect('470 the shares keep their own rule (TS409), beside the deferred one',
+    (SELECT string_agg(t.tgname, ',' ORDER BY t.tgname COLLATE "C") FROM pg_trigger t
+      WHERE t.tgrelid = '"TeachingRequirementShares"'::regclass AND t.tgfoid::regproc::text LIKE 'app.teaching_requirement%' AND NOT t.tgisinternal),
+    'TeachingRequirementShares_fit,TeachingRequirementShares_placement_teachers_fit');
+  PERFORM pg_temp.fd_expect('470 the immediate function is not deferred anywhere',
+    (SELECT count(*) FROM pg_trigger WHERE tgfoid = 'app.teaching_requirement_placements_fit()'::regprocedure AND NOT tgisinternal AND (tgdeferrable OR tginitdeferred OR tgconstraint <> 0))::text, '0');
+  RAISE NOTICE 'fd 470: % checks', current_setting('fd.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 471: the rules per teacher.
+--
+-- A shared post is the huvudlärare's lessons plus each share's, and a förläggning is one of a teacher's lessons. Two
+-- schools, each with four teachers of its own (A B C D, and X who is never on a post). Posts:
+--   shared   ALL_WEEKS, 3 × 60, huvudlärare A, B's share 1 × 60:      A has 2 × 60, B has 1 × 60
+--   mixed    ALL_WEEKS, 80 + 40, huvudlärare A, B's share 1 × 40:     A has the 80, B the 40
+--   odd      ODD_WEEKS, 2 × 60, huvudlärare A, B's share 1 × 60:      A has one, B has one
+--   nobody   ALL_WEEKS, 3 × 60, no huvudlärare, B's share 1 × 60:     nobody teaches 2 × 60, B has 1 × 60
+--   plain    ALL_WEEKS, 3 × 60, huvudlärare A, no share:              a post that shares nothing
+-- Every case that is judged when the rules are asked for goes through fd_try; what is refused by the statement itself goes
+-- through fd_now. The post's own rules (LENGTH, WEEKS, PAIRS, COUNT) are the immediate function's, judged at once and
+-- before these, and are shown here only where they decide which of the two answers.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_fd_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  side text;
+  sub text;
+  p jsonb;
+  l text;
+  sh uuid;
+  mx uuid;
+  od uuid;
+  nb uuid;
+  pl uuid;
+  det text;
+  msg text;
+BEGIN
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    sub := CASE side WHEN 'a' THEN current_setting('app.test_fd_admin_a') ELSE '00000000-0000-4000-8000-000000000006' END;
+    p := pg_temp.fd_plant(sub, side);
+    l := '471 ' || side || ' ';
+    sh := pg_temp.fd_post(p, 'A', 3);
+    PERFORM pg_temp.fd_case(l || 'B''s share on the shared post', 'ok', pg_temp.fd_share(p, sh, 'B', 1, 60));
+    mx := pg_temp.fd_post(p, 'A', 2, 80, '{80,40}');
+    PERFORM pg_temp.fd_case(l || 'B''s share of the 40 on the mixed post', 'ok', pg_temp.fd_share(p, mx, 'B', 1, 40));
+    od := pg_temp.fd_post(p, 'A', 2, 60, '{}', 'ODD_WEEKS');
+    PERFORM pg_temp.fd_case(l || 'B''s share on the odd post', 'ok', pg_temp.fd_share(p, od, 'B', 1, 60));
+    nb := pg_temp.fd_post(p, '-', 3);
+    PERFORM pg_temp.fd_case(l || 'B''s share on the post nobody leads', 'ok', pg_temp.fd_share(p, nb, 'B', 1, 60));
+    pl := pg_temp.fd_post(p, 'A', 3);
+    PERFORM pg_temp.fd_case(l || 'the plants themselves are judged and pass (no post has a row yet)', 'ok');
+
+    -- A row for the huvudlärare, for the share's teacher, and for somebody who has no lesson of the post.
+    PERFORM pg_temp.fd_case(l || 'a row for A, who teaches two of the three', 'ok', pg_temp.fd_ins(p, sh, '1|08:00|60|A|ALL_WEEKS'));
+    PERFORM pg_temp.fd_clear(sh);
+    PERFORM pg_temp.fd_case(l || 'a row for B, who teaches one', 'ok', pg_temp.fd_ins(p, sh, '1|08:00|60|B|ALL_WEEKS'));
+    PERFORM pg_temp.fd_clear(sh);
+    PERFORM pg_temp.fd_case(l || 'a row for C, who teaches none of the post', 'FP409 TEACHER', pg_temp.fd_ins(p, sh, '1|08:00|60|C|ALL_WEEKS'));
+    PERFORM pg_temp.fd_expect(l || 'and leaves nothing', pg_temp.fd_who(p, sh), 'none');
+    PERFORM pg_temp.fd_case(l || 'a row for X, who is on no post', 'FP409 TEACHER', pg_temp.fd_ins(p, sh, '1|08:00|60|X|ALL_WEEKS'));
+    -- Judged when the rules are asked for, not by the statement: the statement alone is let through.
+    PERFORM pg_temp.fd_probecase(l || 'the row for C is not refused by its own statement (the rules are deferred)', 'ok', pg_temp.fd_ins(p, sh, '1|08:00|60|C|ALL_WEEKS'));
+    -- The post's whole set: A's two and B's one are the three lessons.
+    PERFORM pg_temp.fd_case(l || 'A twice and B once place the whole post', 'ok', pg_temp.fd_ins(p, sh, '1|08:00|60|A|ALL_WEEKS', '2|08:00|60|A|ALL_WEEKS', '3|08:00|60|B|ALL_WEEKS'));
+    PERFORM pg_temp.fd_expect(l || 'as three rows', pg_temp.fd_who(p, sh), 'A2 B1');
+    PERFORM pg_temp.fd_clear(sh);
+
+    -- TEACHER_COUNT: a teacher's lessons of a length, by their part.
+    PERFORM pg_temp.fd_case(l || 'two rows for B, who has one lesson', 'FP409 TEACHER_COUNT', pg_temp.fd_ins(p, sh, '1|08:00|60|B|ALL_WEEKS', '2|08:00|60|B|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'three rows for A, who has two', 'FP409 TEACHER_COUNT', pg_temp.fd_ins(p, sh, '1|08:00|60|A|ALL_WEEKS', '2|08:00|60|A|ALL_WEEKS', '3|08:00|60|A|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'two for B in two statements are one too many at the second',
+      'FP409 TEACHER_COUNT', pg_temp.fd_ins(p, sh, '1|08:00|60|B|ALL_WEEKS'), pg_temp.fd_ins(p, sh, '2|08:00|60|B|ALL_WEEKS'));
+    PERFORM pg_temp.fd_expect(l || 'and nothing was kept', pg_temp.fd_who(p, sh), 'none');
+    -- The post's own COUNT is judged first, at once: a fourth lesson is the post's reason, not a teacher's.
+    PERFORM pg_temp.fd_nowcase(l || 'a fourth row is the post''s COUNT, at once', 'FP409 COUNT',
+      pg_temp.fd_ins(p, sh, '1|08:00|60|A|ALL_WEEKS', '2|08:00|60|A|ALL_WEEKS', '3|08:00|60|B|ALL_WEEKS', '4|08:00|60|B|ALL_WEEKS'));
+
+    -- TEACHER_PAIRS: a pair is ONE lesson in two places, one teacher's. The post's PAIRS counts across teachers, so an odd
+    -- row of A and an even row of B pass it and are refused here.
+    PERFORM pg_temp.fd_case(l || 'A odd and B even: one odd and one even, but not one teacher''s', 'FP409 TEACHER_PAIRS',
+      pg_temp.fd_ins(p, sh, '1|08:00|60|A|ODD_WEEKS', '2|08:00|60|B|EVEN_WEEKS'));
+    PERFORM pg_temp.fd_nowcase(l || 'which the post''s own PAIRS lets through', 'ok', pg_temp.fd_ins(p, sh, '1|08:00|60|A|ODD_WEEKS', '2|08:00|60|B|EVEN_WEEKS'));
+    PERFORM pg_temp.fd_clear(sh);
+    PERFORM pg_temp.fd_case(l || 'A odd and A even is a pair of A''s', 'ok', pg_temp.fd_ins(p, sh, '1|08:00|60|A|ODD_WEEKS', '2|10:00|60|A|EVEN_WEEKS'));
+    PERFORM pg_temp.fd_clear(sh);
+    PERFORM pg_temp.fd_case(l || 'B odd and B even is B''s one lesson', 'ok', pg_temp.fd_ins(p, sh, '1|08:00|60|B|ODD_WEEKS', '2|10:00|60|B|EVEN_WEEKS'));
+    PERFORM pg_temp.fd_clear(sh);
+    PERFORM pg_temp.fd_case(l || 'a pair of A''s and a row for A beside it are A''s two lessons', 'ok', pg_temp.fd_ins(p, sh, '3|08:00|60|A|ODD_WEEKS', '3|10:00|60|A|EVEN_WEEKS', '4|08:00|60|A|ALL_WEEKS'));
+    PERFORM pg_temp.fd_clear(sh);
+    PERFORM pg_temp.fd_case(l || 'two pairs of B''s are two lessons, and B has one (the post has room, B has not)', 'FP409 TEACHER_COUNT',
+      pg_temp.fd_ins(p, sh, '1|08:00|60|B|ODD_WEEKS', '2|10:00|60|B|EVEN_WEEKS', '3|08:00|60|B|ODD_WEEKS', '4|10:00|60|B|EVEN_WEEKS'));
+    PERFORM pg_temp.fd_nowcase(l || 'a pair of A''s, one of B''s and one more of A''s are four lessons: the post''s COUNT, at once', 'FP409 COUNT',
+      pg_temp.fd_ins(p, sh, '1|08:00|60|A|ODD_WEEKS', '2|10:00|60|A|EVEN_WEEKS', '3|08:00|60|B|ODD_WEEKS', '4|10:00|60|B|EVEN_WEEKS', '5|08:00|60|A|ALL_WEEKS', '5|10:00|60|A|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'two odd rows of A and two even rows of B: the post''s odd and even are equal, A''s and B''s are not', 'FP409 TEACHER_PAIRS',
+      pg_temp.fd_ins(p, sh, '1|08:00|60|A|ODD_WEEKS', '2|08:00|60|A|ODD_WEEKS', '3|08:00|60|B|EVEN_WEEKS', '4|08:00|60|B|EVEN_WEEKS'));
+    -- A removal is judged for its teacher's pairs of its length, and for nothing else: A's odd row and B's even row removed together leave
+    -- the post's odd and even rows equal (the immediate function sees nothing wrong) and each teacher's not.
+    PERFORM pg_temp.fd_case(l || 'a pair of A''s and a pair of B''s', 'ok',
+      pg_temp.fd_ins(p, sh, '1|08:00|60|A|ODD_WEEKS', '1|10:00|60|A|EVEN_WEEKS', '2|08:00|60|B|ODD_WEEKS', '2|10:00|60|B|EVEN_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'A''s odd row and B''s even row removed together: each of them is left with half a pair', 'FP409 TEACHER_PAIRS',
+      format($q$DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = %L AND (("teacherId" = %L AND recurrence = 'ODD_WEEKS') OR ("teacherId" = %L AND recurrence = 'EVEN_WEEKS'))$q$,
+             sh, pg_temp.fd_t(p, 'A'), pg_temp.fd_t(p, 'B')));
+    PERFORM pg_temp.fd_case(l || 'A''s whole pair removed: nothing is left unpaired', 'ok',
+      format($q$DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = %L AND "teacherId" = %L$q$, sh, pg_temp.fd_t(p, 'A')));
+    PERFORM pg_temp.fd_expect(l || 'B''s pair is left', pg_temp.fd_who(p, sh), 'B2');
+    PERFORM pg_temp.fd_clear(sh);
+    -- The order the reasons are judged in: a row of nobody on the post is TEACHER before a count that is too high.
+    PERFORM pg_temp.fd_case(l || 'C''s row and two of B''s: TEACHER, not TEACHER_COUNT', 'FP409 TEACHER',
+      pg_temp.fd_ins(p, sh, '1|08:00|60|C|ALL_WEEKS', '2|08:00|60|B|ALL_WEEKS', '3|08:00|60|B|ALL_WEEKS'));
+
+    -- The weeks of an odd post: its rows are all odd, each one a lesson, and no pair is asked of them.
+    PERFORM pg_temp.fd_case(l || 'an odd post: A''s one row and B''s one', 'ok', pg_temp.fd_ins(p, od, '1|08:00|60|A|ODD_WEEKS', '2|08:00|60|B|ODD_WEEKS'));
+    PERFORM pg_temp.fd_clear(od);
+    PERFORM pg_temp.fd_case(l || 'an odd post: two odd rows for A are not a pair, they are one lesson too many', 'FP409 TEACHER_COUNT',
+      pg_temp.fd_ins(p, od, '1|08:00|60|A|ODD_WEEKS', '2|08:00|60|A|ODD_WEEKS'));
+
+    -- Two lengths: A has the 80 and B the 40.
+    PERFORM pg_temp.fd_case(l || 'mixed: A''s 80 and B''s 40', 'ok', pg_temp.fd_ins(p, mx, '1|08:00|80|A|ALL_WEEKS', '2|08:00|40|B|ALL_WEEKS'));
+    PERFORM pg_temp.fd_clear(mx);
+    PERFORM pg_temp.fd_case(l || 'mixed: A''s 40: A has lessons of the post, none of that length', 'FP409 TEACHER_LENGTH', pg_temp.fd_ins(p, mx, '1|08:00|40|A|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'mixed: B''s 80: B has a lesson of the post, not of 80', 'FP409 TEACHER_LENGTH', pg_temp.fd_ins(p, mx, '1|08:00|80|B|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'mixed: C''s 80 is TEACHER, not a length', 'FP409 TEACHER', pg_temp.fd_ins(p, mx, '1|08:00|80|C|ALL_WEEKS'));
+    PERFORM pg_temp.fd_nowcase(l || 'mixed: a second 80 is the post''s COUNT, at once', 'FP409 COUNT', pg_temp.fd_ins(p, mx, '1|08:00|80|A|ALL_WEEKS', '2|08:00|80|A|ALL_WEEKS'));
+    PERFORM pg_temp.fd_nowcase(l || 'mixed: a 60 is the post''s LENGTH, at once', 'FP409 LENGTH', pg_temp.fd_ins(p, mx, '1|08:00|60|A|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'mixed: B''s 40 as a pair is B''s one lesson', 'ok', pg_temp.fd_ins(p, mx, '1|08:00|40|B|ODD_WEEKS', '2|08:00|40|B|EVEN_WEEKS'));
+    PERFORM pg_temp.fd_clear(mx);
+
+    -- NO_TEACHER: a row WRITTEN on a shared post names its teacher, judged by the statement itself.
+    PERFORM pg_temp.fd_nowcase(l || 'an INSERT naming nobody on a shared post, with nothing asked for', 'FP409 NO_TEACHER', pg_temp.fd_ins(p, sh, '1|08:00|60|-|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'and asked for as well', 'FP409 NO_TEACHER', pg_temp.fd_ins(p, sh, '1|08:00|60|-|ALL_WEEKS'));
+    PERFORM pg_temp.fd_nowcase(l || 'one row naming nobody among rows that name their teacher', 'FP409 NO_TEACHER',
+      pg_temp.fd_ins(p, sh, '1|08:00|60|A|ALL_WEEKS', '2|08:00|60|-|ALL_WEEKS'));
+    PERFORM pg_temp.fd_nowcase(l || 'on the mixed post too', 'FP409 NO_TEACHER', pg_temp.fd_ins(p, mx, '1|08:00|80|-|ALL_WEEKS'));
+    PERFORM pg_temp.fd_nowcase(l || 'on the odd post too', 'FP409 NO_TEACHER', pg_temp.fd_ins(p, od, '1|08:00|60|-|ODD_WEEKS'));
+    PERFORM pg_temp.fd_expect(l || 'and none of them left a row', pg_temp.fd_who(p, sh) || ' ' || pg_temp.fd_who(p, mx) || ' ' || pg_temp.fd_who(p, od), 'none none none');
+    -- The post's own rules come first: a row of a length the post does not have, naming nobody, is LENGTH.
+    PERFORM pg_temp.fd_nowcase(l || 'the post''s own LENGTH is judged before NO_TEACHER', 'FP409 LENGTH', pg_temp.fd_ins(p, sh, '1|08:00|45|-|ALL_WEEKS'));
+    -- An UPDATE of a teacher to nobody, while the teacher is still a person of the school.
+    PERFORM pg_temp.fd_case(l || 'a row for A', 'ok', pg_temp.fd_ins(p, sh, '1|08:00|60|A|ALL_WEEKS'));
+    PERFORM pg_temp.fd_nowcase(l || 'made nobody''s by an UPDATE (A is still a person of the school)', 'FP409 NO_TEACHER', pg_temp.fd_hand(p, sh, 'A', '-'));
+    PERFORM pg_temp.fd_expect(l || 'it is still A''s', pg_temp.fd_who(p, sh), 'A1');
+    PERFORM pg_temp.fd_nowcase(l || 'its day moved is nobody''s concern here', 'ok',
+      format($q$UPDATE "TeachingRequirementPlacements" SET "dayOfWeek" = 4 WHERE "requirementId" = %L$q$, sh));
+    PERFORM pg_temp.fd_clear(sh);
+
+    -- A post with no huvudlärare: the lessons the share leaves are nobody's, and a row is never written for them.
+    PERFORM pg_temp.fd_nowcase(l || 'nobody: a row naming nobody', 'FP409 NO_TEACHER', pg_temp.fd_ins(p, nb, '1|08:00|60|-|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'nobody: B''s row', 'ok', pg_temp.fd_ins(p, nb, '1|08:00|60|B|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'nobody: A is not on the post', 'FP409 TEACHER', pg_temp.fd_ins(p, nb, '2|08:00|60|A|ALL_WEEKS'));
+    PERFORM pg_temp.fd_clear(nb);
+
+    -- A post that shares nothing behaves exactly as section 468 has it: a row names nobody, and a row that names anybody is
+    -- a share's förläggning left behind.
+    PERFORM pg_temp.fd_case(l || 'plain: three rows naming nobody', 'ok', pg_temp.fd_ins(p, pl, '1|08:00|60|-|ALL_WEEKS', '2|08:00|60|-|ALL_WEEKS', '3|08:00|60|-|ALL_WEEKS'));
+    PERFORM pg_temp.fd_nowcase(l || 'plain: a fourth is the post''s COUNT', 'FP409 COUNT', pg_temp.fd_ins(p, pl, '4|08:00|60|-|ALL_WEEKS'));
+    PERFORM pg_temp.fd_clear(pl);
+    PERFORM pg_temp.fd_nowcase(l || 'plain: a lone odd row is the post''s PAIRS', 'FP409 PAIRS', pg_temp.fd_ins(p, pl, '1|08:00|60|-|ODD_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'plain: a pair is one lesson', 'ok', pg_temp.fd_ins(p, pl, '1|08:00|60|-|ODD_WEEKS', '2|08:00|60|-|EVEN_WEEKS'));
+    PERFORM pg_temp.fd_clear(pl);
+    PERFORM pg_temp.fd_case(l || 'plain: a row that names the post''s own teacher', 'FP409 TEACHER', pg_temp.fd_ins(p, pl, '1|08:00|60|A|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'plain: a row that names anybody else', 'FP409 TEACHER', pg_temp.fd_ins(p, pl, '1|08:00|60|B|ALL_WEEKS'));
+    PERFORM pg_temp.fd_probecase(l || 'plain: and the statement alone is let through (the rules are deferred)', 'ok', pg_temp.fd_ins(p, pl, '1|08:00|60|B|ALL_WEEKS'));
+    PERFORM pg_temp.fd_expect(l || 'plain: nothing left', pg_temp.fd_who(p, pl), 'none');
+    PERFORM pg_temp.fd_case(l || 'plain: the rows of a post with one row named and two not', 'FP409 TEACHER', pg_temp.fd_ins(p, pl, '1|08:00|60|-|ALL_WEEKS', '2|08:00|60|A|ALL_WEEKS'));
+
+    -- What the refusal says: the reason first in the message, DETAIL the post and the reason, never a person.
+    BEGIN
+      EXECUTE pg_temp.fd_ins(p, sh, '1|08:00|60|C|ALL_WEEKS');
+      SET CONSTRAINTS "TeachingRequirementPlacements_teachers_fit" IMMEDIATE;
+    EXCEPTION WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL;
+    END;
+    PERFORM pg_temp.fd_true(l || 'the message starts with the reason', msg LIKE 'TEACHER: %');
+    PERFORM pg_temp.fd_expect(l || 'DETAIL is the post and the reason', det, format('requirementId=%s reason=TEACHER', sh));
+    PERFORM pg_temp.fd_true(l || 'and names nobody', msg NOT LIKE '%' || (p #>> '{teachers,C}') || '%' AND det NOT LIKE '%' || (p #>> '{teachers,C}') || '%');
+    -- The names asked for are the placements' trigger alone here, and it judges the post whole: the rows of the share's side too.
+    SET CONSTRAINTS "TeachingRequirementPlacements_teachers_fit", "TeachingRequirementShares_placement_teachers_fit", "TeachingRequirements_placement_teachers_fit" DEFERRED;
+  END LOOP;
+  RAISE NOTICE 'fd 471: % checks', current_setting('fd.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 472: a change of teacher, both outcomes.
+--
+-- The user's decision (2026-11-09): a change of teacher on a post carries the förläggningar along when the change says
+-- where to, and is stopped otherwise. In the database that is one rule, asked at the end of the transaction: the post
+-- as the transaction leaves it has each förläggning on a lesson of its teacher. A share's teacher is replaced by a
+-- DELETE and an INSERT (the gateway's order, so that the shares' own rule TS409 meets a consistent pair at each
+-- statement) and the förläggning follows in a third statement, so judged after the first two it would be refused, and
+-- judged after the third it is right. Each case is one transaction's statements, then the rules asked for:
+--   * moved with the share: ok; not moved: FP409 TEACHER;
+--   * the share removed, so that the post shares nothing: the row that names B is TEACHER, and ok once it names nobody;
+--   * the huvudlärare changed: A's rows are TEACHER until they are D's;
+--   * the lessons lowered under a teacher's rows: TEACHER_COUNT;
+--   * a share's teacher changed in place (an UPDATE): the same two outcomes;
+--   * a share, and a row, moved to another post: both posts are judged.
+-- The post: ALL_WEEKS, 3 × 60, huvudlärare A, B's share 1 × 60 (A has two lessons, B one), with a row each for A and B.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_fd_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  side text;
+  sub text;
+  p jsonb;
+  l text;
+  s uuid;
+  t uuid;
+  u uuid;
+BEGIN
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    sub := CASE side WHEN 'a' THEN current_setting('app.test_fd_admin_a') ELSE '00000000-0000-4000-8000-000000000006' END;
+    p := pg_temp.fd_plant(sub, side);
+    l := '472 ' || side || ' ';
+
+    -- B's share replaced by C's, in the gateway's order, with B's förläggning following in a third statement.
+    s := pg_temp.fd_post(p, 'A', 3);
+    PERFORM pg_temp.fd_case(l || 'the post, B''s share, a row each for A and B', 'ok',
+      pg_temp.fd_share(p, s, 'B', 1, 60), pg_temp.fd_ins(p, s, '1|08:00|60|A|ALL_WEEKS', '2|08:00|60|B|ALL_WEEKS'));
+    PERFORM pg_temp.fd_expect(l || 'rows A1 B1, share B1x60', pg_temp.fd_who(p, s) || ' / ' || pg_temp.fd_shares(p, s), 'A1 B1 / B1x60');
+    PERFORM pg_temp.fd_case(l || 'B''s share given to C, and B''s row with it', 'ok',
+      pg_temp.fd_unshare(s), pg_temp.fd_share(p, s, 'C', 1, 60), pg_temp.fd_hand(p, s, 'B', 'C'));
+    PERFORM pg_temp.fd_expect(l || 'is C''s now: rows A1 C1, share C1x60', pg_temp.fd_who(p, s) || ' / ' || pg_temp.fd_shares(p, s), 'A1 C1 / C1x60');
+    -- After the rules were asked for and put off again, a statement is again not judged by itself.
+    PERFORM pg_temp.fd_probecase(l || 'the rules are deferred again after they were asked for: a row for D is not refused by its statement', 'ok',
+      pg_temp.fd_ins(p, s, '3|08:00|60|D|ALL_WEEKS'));
+    -- The same without moving the row: C's row is on a post whose lesson C no longer has.
+    PERFORM pg_temp.fd_case(l || 'C''s share given to D and C''s row left where it is', 'FP409 TEACHER',
+      pg_temp.fd_unshare(s), pg_temp.fd_share(p, s, 'D', 1, 60));
+    PERFORM pg_temp.fd_expect(l || 'and nothing of it was kept', pg_temp.fd_who(p, s) || ' / ' || pg_temp.fd_shares(p, s), 'A1 C1 / C1x60');
+    -- Each statement of a replacement is let through by itself: only the post as the transaction leaves it is judged.
+    PERFORM pg_temp.fd_probecase(l || 'the replacement alone, statement by statement', 'ok', pg_temp.fd_unshare(s), pg_temp.fd_share(p, s, 'D', 1, 60));
+    PERFORM pg_temp.fd_case(l || 'and back to B''s share with the row to B', 'ok',
+      pg_temp.fd_unshare(s), pg_temp.fd_share(p, s, 'B', 1, 60), pg_temp.fd_hand(p, s, 'C', 'B'));
+    PERFORM pg_temp.fd_expect(l || 'rows A1 B1 again', pg_temp.fd_who(p, s) || ' / ' || pg_temp.fd_shares(p, s), 'A1 B1 / B1x60');
+
+    -- A share removed: the post shares nothing, and a row that names anybody is a share's förläggning left behind.
+    PERFORM pg_temp.fd_case(l || 'B''s share removed, the rows left', 'FP409 TEACHER', pg_temp.fd_unshare(s));
+    PERFORM pg_temp.fd_case(l || 'B''s share removed, and every row now naming nobody', 'ok',
+      pg_temp.fd_unshare(s), pg_temp.fd_hand(p, s, 'A', '-'), pg_temp.fd_hand(p, s, 'B', '-'));
+    PERFORM pg_temp.fd_expect(l || 'the post shares nothing and its rows name nobody', pg_temp.fd_who(p, s) || ' / ' || pg_temp.fd_shares(p, s), '-2 / none');
+    -- And it starts to share: the rows that named nobody are the huvudlärare's, and are given to them.
+    PERFORM pg_temp.fd_case(l || 'a share for B, the rows still naming nobody: nobody teaches a lesson of the post that has no teacher', 'FP409 TEACHER',
+      pg_temp.fd_share(p, s, 'B', 1, 60));
+    PERFORM pg_temp.fd_case(l || 'a share for B, and the rows given to A, the huvudlärare', 'ok',
+      pg_temp.fd_share(p, s, 'B', 1, 60), pg_temp.fd_hand(p, s, '-', 'A'));
+    PERFORM pg_temp.fd_expect(l || 'rows A2, share B1x60', pg_temp.fd_who(p, s) || ' / ' || pg_temp.fd_shares(p, s), 'A2 / B1x60');
+
+    -- The huvudlärare changed: A to D. A's two rows have to become D's.
+    PERFORM pg_temp.fd_case(l || 'B''s row beside A''s two', 'ok', pg_temp.fd_ins(p, s, '3|08:00|60|B|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'the huvudlärare changed A to D, A''s rows left', 'FP409 TEACHER',
+      format($q$UPDATE "TeachingRequirements" SET "teacherId" = %L WHERE id = %L$q$, pg_temp.fd_t(p, 'D'), s));
+    PERFORM pg_temp.fd_case(l || 'the huvudlärare changed A to D, A''s rows D''s', 'ok',
+      format($q$UPDATE "TeachingRequirements" SET "teacherId" = %L WHERE id = %L$q$, pg_temp.fd_t(p, 'D'), s), pg_temp.fd_hand(p, s, 'A', 'D'));
+    PERFORM pg_temp.fd_expect(l || 'D''s now: rows B1 D2', pg_temp.fd_who(p, s), 'B1 D2');
+    PERFORM pg_temp.fd_case(l || 'the huvudlärare taken away, D''s rows left', 'FP409 TEACHER',
+      format($q$UPDATE "TeachingRequirements" SET "teacherId" = NULL WHERE id = %L$q$, s));
+    -- A lesson that was somebody's is never made nobody's by a writer (NO_TEACHER, at once): only a person's removal does that.
+    PERFORM pg_temp.fd_nowcase(l || 'the huvudlärare taken away and D''s rows made nobody''s: refused at once, D is a person of the school', 'FP409 NO_TEACHER',
+      format($q$UPDATE "TeachingRequirements" SET "teacherId" = NULL WHERE id = %L$q$, s), pg_temp.fd_hand(p, s, 'D', '-'));
+    PERFORM pg_temp.fd_case(l || 'D removed: the post''s teacher and D''s rows are nobody''s, which the rules accept (section 473)', 'ok',
+      format($q$DELETE FROM "Users" WHERE id = %L$q$, pg_temp.fd_t(p, 'D')));
+    PERFORM pg_temp.fd_expect(l || 'so: B1 and two nobody''s', pg_temp.fd_who(p, s), '-2 B1');
+    -- Nobody to somebody: C leads the post, and the two rows that were nobody's become C's.
+    PERFORM pg_temp.fd_case(l || 'C made huvudlärare, the nobody''s rows left', 'FP409 TEACHER',
+      format($q$UPDATE "TeachingRequirements" SET "teacherId" = %L WHERE id = %L$q$, pg_temp.fd_t(p, 'C'), s));
+    PERFORM pg_temp.fd_case(l || 'C made huvudlärare, the nobody''s rows C''s', 'ok',
+      format($q$UPDATE "TeachingRequirements" SET "teacherId" = %L WHERE id = %L$q$, pg_temp.fd_t(p, 'C'), s), pg_temp.fd_hand(p, s, '-', 'C'));
+    PERFORM pg_temp.fd_expect(l || 'so: B1 C2', pg_temp.fd_who(p, s), 'B1 C2');
+
+    -- The lessons lowered, and a share raised, under a teacher's rows.
+    s := pg_temp.fd_post(p, 'A', 3);
+    PERFORM pg_temp.fd_case(l || 'A two rows, B one', 'ok', pg_temp.fd_share(p, s, 'B', 1, 60),
+      pg_temp.fd_ins(p, s, '1|08:00|60|A|ALL_WEEKS', '2|08:00|60|A|ALL_WEEKS', '3|08:00|60|B|ALL_WEEKS'));
+    PERFORM pg_temp.fd_nowcase(l || 'the post lowered to two lessons: the post''s own COUNT (three rows), at once', 'FP409 COUNT',
+      format($q$UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 2 WHERE id = %L$q$, s));
+    PERFORM pg_temp.fd_clear(s);
+    PERFORM pg_temp.fd_case(l || 'two rows for A, none for B', 'ok', pg_temp.fd_ins(p, s, '1|08:00|60|A|ALL_WEEKS', '2|08:00|60|A|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'the post lowered to two lessons: A has one left and two rows (the post itself still fits two)', 'FP409 TEACHER_COUNT',
+      format($q$UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 2 WHERE id = %L$q$, s));
+    PERFORM pg_temp.fd_case(l || 'the same with one of A''s rows taken away in the same transaction', 'ok',
+      format($q$UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 2 WHERE id = %L$q$, s),
+      format($q$DELETE FROM "TeachingRequirementPlacements" WHERE id = (SELECT id FROM "TeachingRequirementPlacements" WHERE "requirementId" = %L ORDER BY "dayOfWeek" LIMIT 1)$q$, s));
+    PERFORM pg_temp.fd_expect(l || 'one row of A''s is left', pg_temp.fd_who(p, s), 'A1');
+    PERFORM pg_temp.fd_case(l || 'B''s share raised to two of the three while A has one row: A has two left', 'ok',
+      format($q$UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 3 WHERE id = %L$q$, s), pg_temp.fd_unshare(s), pg_temp.fd_share(p, s, 'B', 1, 60));
+    PERFORM pg_temp.fd_case(l || 'A''s second row and B''s share raised to two: A has one left and two rows', 'FP409 TEACHER_COUNT',
+      pg_temp.fd_ins(p, s, '2|08:00|60|A|ALL_WEEKS'), pg_temp.fd_unshare(s), pg_temp.fd_share(p, s, 'B', 2, 60));
+    PERFORM pg_temp.fd_case(l || 'the same with the second row for B, who has two lessons now', 'ok',
+      pg_temp.fd_ins(p, s, '2|08:00|60|B|ALL_WEEKS'), pg_temp.fd_unshare(s), pg_temp.fd_share(p, s, 'B', 2, 60));
+    PERFORM pg_temp.fd_expect(l || 'rows A1 B1, share B2x60', pg_temp.fd_who(p, s) || ' / ' || pg_temp.fd_shares(p, s), 'A1 B1 / B2x60');
+
+    -- A share's teacher changed in place, as an UPDATE.
+    s := pg_temp.fd_post(p, 'A', 3);
+    PERFORM pg_temp.fd_case(l || 'A''s two rows and B''s', 'ok', pg_temp.fd_share(p, s, 'B', 1, 60),
+      pg_temp.fd_ins(p, s, '1|08:00|60|A|ALL_WEEKS', '2|08:00|60|A|ALL_WEEKS', '3|08:00|60|B|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'the share''s teacher B to C in place, B''s row to C in the same transaction', 'ok',
+      format($q$UPDATE "TeachingRequirementShares" SET "teacherId" = %L WHERE "requirementId" = %L$q$, pg_temp.fd_t(p, 'C'), s), pg_temp.fd_hand(p, s, 'B', 'C'));
+    PERFORM pg_temp.fd_expect(l || 'rows A2 C1, share C1x60', pg_temp.fd_who(p, s) || ' / ' || pg_temp.fd_shares(p, s), 'A2 C1 / C1x60');
+    PERFORM pg_temp.fd_case(l || 'the share''s teacher C to X in place, the row left', 'FP409 TEACHER',
+      format($q$UPDATE "TeachingRequirementShares" SET "teacherId" = %L WHERE "requirementId" = %L$q$, pg_temp.fd_t(p, 'X'), s));
+    PERFORM pg_temp.fd_case(l || 'the share''s teacher taken away in place (nobody''s lesson), the row left', 'FP409 TEACHER',
+      format($q$UPDATE "TeachingRequirementShares" SET "teacherId" = NULL WHERE "requirementId" = %L$q$, s));
+    PERFORM pg_temp.fd_nowcase(l || 'the share''s teacher taken away in place and the row made nobody''s: refused at once, C is a person of the school', 'FP409 NO_TEACHER',
+      format($q$UPDATE "TeachingRequirementShares" SET "teacherId" = NULL WHERE "requirementId" = %L$q$, s), pg_temp.fd_hand(p, s, 'C', '-'));
+    PERFORM pg_temp.fd_case(l || 'the share''s length changed under the row: not a length of the post, which the shares'' own rule refuses first', 'TS409',
+      format($q$UPDATE "TeachingRequirementShares" SET minutes = 45 WHERE "requirementId" = %L$q$, s));
+
+    -- A share's lessons raised in place (an UPDATE of "lessons"): A has one lesson left of the three, and two rows.
+    s := pg_temp.fd_post(p, 'A', 3);
+    PERFORM pg_temp.fd_case(l || 'A''s two rows, B''s share of one', 'ok', pg_temp.fd_share(p, s, 'B', 1, 60),
+      pg_temp.fd_ins(p, s, '1|08:00|60|A|ALL_WEEKS', '2|08:00|60|A|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'B''s share raised to two lessons in place: A has one left and two rows', 'FP409 TEACHER_COUNT',
+      format($q$UPDATE "TeachingRequirementShares" SET lessons = 2 WHERE "requirementId" = %L$q$, s));
+    PERFORM pg_temp.fd_case(l || 'the same with one of A''s rows taken away in the same transaction', 'ok',
+      format($q$UPDATE "TeachingRequirementShares" SET lessons = 2 WHERE "requirementId" = %L$q$, s),
+      format($q$DELETE FROM "TeachingRequirementPlacements" WHERE id = (SELECT id FROM "TeachingRequirementPlacements" WHERE "requirementId" = %L ORDER BY "dayOfWeek" LIMIT 1)$q$, s));
+
+    -- A share moved to another post, and a row moved to another post: the post it left is judged, and the post it comes to.
+    s := pg_temp.fd_post(p, 'A', 3);
+    t := pg_temp.fd_post(p, 'A', 3);
+    u := pg_temp.fd_post(p, 'X', 3);
+    PERFORM pg_temp.fd_case(l || 'two posts shared with B, the third with C; rows on the first', 'ok',
+      pg_temp.fd_share(p, s, 'B', 1, 60), pg_temp.fd_share(p, t, 'B', 1, 60), pg_temp.fd_share(p, u, 'C', 1, 60),
+      pg_temp.fd_ins(p, s, '1|08:00|60|A|ALL_WEEKS', '2|08:00|60|B|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'B''s row moved to the second post, where B has a lesson too', 'ok',
+      format($q$UPDATE "TeachingRequirementPlacements" SET "requirementId" = %L WHERE "requirementId" = %L AND "teacherId" = %L$q$, t, s, pg_temp.fd_t(p, 'B')));
+    PERFORM pg_temp.fd_expect(l || 'one row on each', pg_temp.fd_who(p, s) || ' / ' || pg_temp.fd_who(p, t), 'A1 / B1');
+    PERFORM pg_temp.fd_case(l || 'B''s row moved on to the third post, where B has none', 'FP409 TEACHER',
+      format($q$UPDATE "TeachingRequirementPlacements" SET "requirementId" = %L WHERE "requirementId" = %L$q$, u, t));
+    PERFORM pg_temp.fd_case(l || 'B''s share moved to the third post: the post it left has B''s row and no share of B''s', 'FP409 TEACHER',
+      format($q$UPDATE "TeachingRequirementShares" SET "requirementId" = %L WHERE "requirementId" = %L AND "teacherId" = %L$q$, u, t, pg_temp.fd_t(p, 'B')));
+    PERFORM pg_temp.fd_case(l || 'B''s share moved to the third post, B''s row made nobody''s on the post it left (which shares nothing)', 'ok',
+      format($q$UPDATE "TeachingRequirementShares" SET "requirementId" = %L WHERE "requirementId" = %L AND "teacherId" = %L$q$, u, t, pg_temp.fd_t(p, 'B')),
+      pg_temp.fd_hand(p, t, 'B', '-'));
+  END LOOP;
+  RAISE NOTICE 'fd 472: % checks', current_setting('fd.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 473: a person removed.
+--
+-- The key from a förläggning to its teacher is ON DELETE SET NULL ("teacherId"), as the post's own teacher key and the
+-- share's: a teacher removed leaves the lesson standing, nobody's, at the day, time and room the school chose. The
+-- removal sets three keys to NULL in one statement (the post's, the share's, the förläggning's), in whatever order the
+-- catalogue fires them, and is judged once all three have run: the NULL row is held to the lessons nobody teaches, and
+-- there are exactly as many. It is the administrator's own DELETE of a Users row, as users.service.ts remove() writes it.
+-- Then what a writer may do with such a row, and what it may not:
+--   * give it a teacher (an UPDATE): only one with a lesson of its length and room for it (TEACHER, TEACHER_COUNT);
+--   * write a new row for nobody (an INSERT): NO_TEACHER, at once, the post still shares;
+--   * make a row nobody's while its teacher is a person of the school (an UPDATE): NO_TEACHER, at once (section 471).
+-- The post: ALL_WEEKS, 3 × 60, huvudlärare A, B's share 1 × 60, with a row each for A, A and B.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_fd_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  side text;
+  sub text;
+  p jsonb;
+  l text;
+  s uuid;
+  s2 uuid;
+  rows_before text;
+BEGIN
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    sub := CASE side WHEN 'a' THEN current_setting('app.test_fd_admin_a') ELSE '00000000-0000-4000-8000-000000000006' END;
+    p := pg_temp.fd_plant(sub, side);
+    l := '473 ' || side || ' ';
+
+    -- The share's teacher removed.
+    s := pg_temp.fd_post(p, 'A', 3);
+    PERFORM pg_temp.fd_case(l || 'the post: a row for A and one for B', 'ok', pg_temp.fd_share(p, s, 'B', 1, 60),
+      pg_temp.fd_ins(p, s, '1|08:00|60|A|ALL_WEEKS', '3|08:00|60|B|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'B removed: the delete goes through, and the rules asked for at the end accept what it left', 'ok',
+      format($q$DELETE FROM "Users" WHERE id = %L$q$, pg_temp.fd_t(p, 'B')));
+    PERFORM pg_temp.fd_expect(l || 'B is gone', (SELECT count(*) FROM "Users" WHERE id = pg_temp.fd_t(p, 'B'))::text, '0');
+    PERFORM pg_temp.fd_expect(l || 'the share is nobody''s and the lesson stands: a share of one lesson of 60', pg_temp.fd_shares(p, s), '-1x60');
+    PERFORM pg_temp.fd_expect(l || 'B''s row is nobody''s and stands, A''s is A''s', pg_temp.fd_who(p, s), '-1 A1');
+    PERFORM pg_temp.fd_expect(l || 'the row is still the school''s: only "teacherId" was cleared, not "schoolId"',
+      (SELECT count(*) FROM "TeachingRequirementPlacements" WHERE "requirementId" = s AND "schoolId" = (p ->> 'school')::uuid)::text, '2');
+    PERFORM pg_temp.fd_expect(l || 'and keeps its day, time and room',
+      (SELECT format('%s %s %s', "dayOfWeek", "startTime", ("roomId" = (p ->> 'room1')::uuid)::text) FROM "TeachingRequirementPlacements" WHERE "requirementId" = s AND "teacherId" IS NULL), '3 08:00:00 true');
+    PERFORM pg_temp.fd_expect(l || 'the post''s teacher is untouched', (SELECT "teacherId"::text FROM "TeachingRequirements" WHERE id = s), pg_temp.fd_t(p, 'A')::text);
+
+    -- What a writer may do with the row that is nobody's.
+    PERFORM pg_temp.fd_nowcase(l || 'a new row for nobody on the post, which still shares: NO_TEACHER, at once', 'FP409 NO_TEACHER', pg_temp.fd_ins(p, s, '4|08:00|60|-|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'its day moved is let through (it names nobody and is held to the lessons nobody teaches)', 'ok',
+      format($q$UPDATE "TeachingRequirementPlacements" SET "dayOfWeek" = 4, minutes = 60, recurrence = 'ALL_WEEKS' WHERE "requirementId" = %L AND "teacherId" IS NULL$q$, s));
+    PERFORM pg_temp.fd_case(l || 'the row given to C, who has no lesson of the post: TEACHER', 'FP409 TEACHER', pg_temp.fd_hand(p, s, '-', 'C'));
+    PERFORM pg_temp.fd_case(l || 'a second row for A, and the nobody''s row given to A, who has two lessons: TEACHER_COUNT', 'FP409 TEACHER_COUNT',
+      pg_temp.fd_ins(p, s, '2|08:00|60|A|ALL_WEEKS'), pg_temp.fd_hand(p, s, '-', 'A'));
+    PERFORM pg_temp.fd_case(l || 'the nobody''s row given to A, who has room for it', 'ok', pg_temp.fd_hand(p, s, '-', 'A'));
+    PERFORM pg_temp.fd_expect(l || 'A has two rows, and the share is still nobody''s', pg_temp.fd_who(p, s) || ' / ' || pg_temp.fd_shares(p, s), 'A2 / -1x60');
+    -- The share nobody has is given a teacher again (an UPDATE): rows are nobody's again only when a person is removed.
+    PERFORM pg_temp.fd_case(l || 'the share nobody has given to C, with no row of C''s: nothing placed on it, nothing to refuse', 'ok',
+      format($q$UPDATE "TeachingRequirementShares" SET "teacherId" = %L WHERE "requirementId" = %L$q$, pg_temp.fd_t(p, 'C'), s));
+
+    -- The huvudlärare removed: the post's teacher and A's rows are nobody's, and the rules accept it.
+    s := pg_temp.fd_post(p, 'A', 3);
+    PERFORM pg_temp.fd_case(l || 'a post of A''s with D''s share: a row for A and one for D', 'ok', pg_temp.fd_share(p, s, 'D', 1, 60),
+      pg_temp.fd_ins(p, s, '1|08:00|60|A|ALL_WEEKS', '3|08:00|60|D|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'A removed', 'ok', format($q$DELETE FROM "Users" WHERE id = %L$q$, pg_temp.fd_t(p, 'A')));
+    PERFORM pg_temp.fd_expect(l || 'the post has no teacher', (SELECT coalesce("teacherId"::text, 'nobody') FROM "TeachingRequirements" WHERE id = s), 'nobody');
+    PERFORM pg_temp.fd_expect(l || 'A''s row is nobody''s, D''s is D''s, D''s share is D''s', pg_temp.fd_who(p, s) || ' / ' || pg_temp.fd_shares(p, s), '-1 D1 / D1x60');
+    PERFORM pg_temp.fd_nowcase(l || 'a new row for nobody on the post: NO_TEACHER', 'FP409 NO_TEACHER', pg_temp.fd_ins(p, s, '4|08:00|60|-|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'the nobody''s row given to D, who has one lesson and one row: TEACHER_COUNT', 'FP409 TEACHER_COUNT',
+      format($q$UPDATE "TeachingRequirementPlacements" SET "teacherId" = %L WHERE id = (SELECT id FROM "TeachingRequirementPlacements" WHERE "requirementId" = %L AND "teacherId" IS NULL LIMIT 1)$q$, pg_temp.fd_t(p, 'D'), s));
+    PERFORM pg_temp.fd_case(l || 'C made the huvudlärare and the nobody''s row given to C', 'ok',
+      format($q$UPDATE "TeachingRequirements" SET "teacherId" = %L WHERE id = %L$q$, pg_temp.fd_t(p, 'C'), s), pg_temp.fd_hand(p, s, '-', 'C'));
+    PERFORM pg_temp.fd_expect(l || 'so: C1 D1', pg_temp.fd_who(p, s), 'C1 D1');
+
+    -- Both removed in one statement: every lesson of the post is nobody's, and the rows are exactly as many.
+    s := pg_temp.fd_post(p, 'C', 3);
+    PERFORM pg_temp.fd_case(l || 'a post of C''s with D''s share: C''s two rows and D''s', 'ok', pg_temp.fd_share(p, s, 'D', 1, 60),
+      pg_temp.fd_ins(p, s, '1|08:00|60|C|ALL_WEEKS', '2|08:00|60|C|ALL_WEEKS', '3|08:00|60|D|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'C and D removed in one statement', 'ok',
+      format($q$DELETE FROM "Users" WHERE id IN (%L, %L)$q$, pg_temp.fd_t(p, 'C'), pg_temp.fd_t(p, 'D')));
+    PERFORM pg_temp.fd_expect(l || 'three rows nobody''s, the share nobody''s, no teacher on the post',
+      pg_temp.fd_who(p, s) || ' / ' || pg_temp.fd_shares(p, s) || ' / ' || (SELECT coalesce("teacherId"::text, 'nobody') FROM "TeachingRequirements" WHERE id = s), '-3 / -1x60 / nobody');
+
+    -- A person who is on no post is removed: nothing of a post moves. And a post that shares nothing.
+    s := pg_temp.fd_post(p, 'X', 3);
+    s2 := pg_temp.fd_post(p, 'X', 3);
+    PERFORM pg_temp.fd_case(l || 'a post of X''s that shares nothing, three rows naming nobody', 'ok', pg_temp.fd_ins(p, s, '1|08:00|60|-|ALL_WEEKS', '2|08:00|60|-|ALL_WEEKS', '3|08:00|60|-|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'X removed: the post has no teacher, and its rows are as they were', 'ok', format($q$DELETE FROM "Users" WHERE id = %L$q$, pg_temp.fd_t(p, 'X')));
+    PERFORM pg_temp.fd_expect(l || 'the rows name nobody, the post names nobody', pg_temp.fd_who(p, s) || ' / ' || (SELECT coalesce("teacherId"::text, 'nobody') FROM "TeachingRequirements" WHERE id = s), '-3 / nobody');
+    PERFORM pg_temp.fd_case(l || 'and the post still takes its rows as before (a pair is one lesson)', 'ok', pg_temp.fd_clear_stmt(s), pg_temp.fd_ins(p, s, '1|08:00|60|-|ODD_WEEKS', '2|08:00|60|-|EVEN_WEEKS'));
+  END LOOP;
+  RAISE NOTICE 'fd 473: % checks', current_setting('fd.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 474: the isolation levels.
+--
+-- ONE WRITER OF A POST AT A TIME, as the two functions before it: the post's row FOR NO KEY UPDATE first, then the reads
+-- (in READ COMMITTED a new snapshot after the lock). REPEATABLE READ cannot be made safe by a lock (the read after it
+-- sees the transaction's first snapshot), so a write the rules judge is refused outright (ISOLATION) rather than
+-- judged on a snapshot that may be missing a concurrent row; SERIALIZABLE aborts one side of the same cycle by itself
+-- (40001), so it is judged like READ COMMITTED. A share's DELETE is the one write only the deferred function sees (the
+-- shares' own rule, TS409, and the immediate function judge inserts and updates, and refuse REPEATABLE READ themselves):
+-- no trigger fires at its statement, and the refusal comes when the rules are asked for.
+--   * REPEATABLE READ: the matrix school's committed share (planted by the fixtures, so the snapshot has it) deleted: the
+--     statement alone is let through, the rules asked for refuse ISOLATION, naming the post and never a person; the
+--     same delete in READ COMMITTED is judged and passes; with nothing queued the rules asked for have nothing to refuse;
+--   * SERIALIZABLE: a swap with the row moved passes, and without it is refused TEACHER, as in READ COMMITTED.
+-- The row lock itself, which a section that rolls back cannot show to a second connection, is proved in
+-- rls-owner-checks.sql, section 474o: the owner plants the rows with the keys off and reads xmax.
+-- ---------------------------------------------------------------------------
+
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+DO $$
+DECLARE
+  roller uuid;
+  post uuid;
+  det text;
+  msg text;
+BEGIN
+  PERFORM pg_temp.fd_as('00000000-0000-4000-8000-000000000105');
+  roller := app.current_school_id();
+  SELECT "requirementId" INTO post FROM "TeachingRequirementShares" WHERE "schoolId" = roller ORDER BY "createdAt" LIMIT 1;
+  IF post IS NULL THEN RAISE EXCEPTION 'fd 474: the matrix school has no share; fixtures did not run'; END IF;
+  PERFORM pg_temp.fd_expect('474 the level', current_setting('transaction_isolation'), 'repeatable read');
+  PERFORM pg_temp.fd_expect('474 RR: nothing queued, nothing to refuse', pg_temp.fd_try(), 'ok');
+  PERFORM pg_temp.fd_probecase('474 RR: the share''s DELETE is not refused by its own statement (no trigger fires at once)', 'ok',
+    format($q$DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = %L$q$, post));
+  PERFORM pg_temp.fd_case('474 RR: and is refused when the rules are asked for: ISOLATION', 'FP409 ISOLATION',
+    format($q$DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = %L$q$, post));
+  PERFORM pg_temp.fd_expect('474 RR: the refusal took the delete back', (SELECT count(*) FROM "TeachingRequirementShares" WHERE "requirementId" = post)::text, '1');
+  BEGIN
+    DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = post;
+    SET CONSTRAINTS "TeachingRequirementShares_placement_teachers_fit" IMMEDIATE;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL;
+  END;
+  PERFORM pg_temp.fd_true('474 RR: the message starts with the reason', msg LIKE 'ISOLATION: %');
+  PERFORM pg_temp.fd_expect('474 RR: DETAIL is the post and the reason', det, format('requirementId=%s reason=ISOLATION', post));
+  SET CONSTRAINTS "TeachingRequirementPlacements_teachers_fit", "TeachingRequirementShares_placement_teachers_fit", "TeachingRequirements_placement_teachers_fit" DEFERRED;
+  -- The share's other write is refused earlier, by the rule that judges it at once.
+  PERFORM pg_temp.fd_nowcase('474 RR: a share''s UPDATE is refused at once by the shares'' own rule', 'TS409',
+    format($q$UPDATE "TeachingRequirementShares" SET lessons = lessons WHERE "requirementId" = %L$q$, post));
+  RAISE NOTICE 'fd 474 RR: % checks', current_setting('fd.checks');
+END $$;
+ROLLBACK;
+
+-- READ COMMITTED, the control: the same delete is judged and passes (the post has no förläggning to leave on a lesson).
+BEGIN;
+DO $$
+DECLARE
+  roller uuid;
+  post uuid;
+BEGIN
+  PERFORM pg_temp.fd_as('00000000-0000-4000-8000-000000000105');
+  roller := app.current_school_id();
+  SELECT "requirementId" INTO post FROM "TeachingRequirementShares" WHERE "schoolId" = roller ORDER BY "createdAt" LIMIT 1;
+  PERFORM pg_temp.fd_expect('474 the level', current_setting('transaction_isolation'), 'read committed');
+  PERFORM pg_temp.fd_case('474 RC: the same DELETE is judged and passes', 'ok',
+    format($q$DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = %L$q$, post));
+  PERFORM pg_temp.fd_expect('474 RC: it went through', (SELECT count(*) FROM "TeachingRequirementShares" WHERE "requirementId" = post)::text, '0');
+END $$;
+ROLLBACK;
+
+BEGIN ISOLATION LEVEL SERIALIZABLE;
+SELECT set_config('app.test_fd_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  p jsonb;
+  s uuid;
+BEGIN
+  p := pg_temp.fd_plant(current_setting('app.test_fd_admin_a'), 'a');
+  PERFORM pg_temp.fd_expect('474 the level', current_setting('transaction_isolation'), 'serializable');
+  s := pg_temp.fd_post(p, 'A', 3);
+  PERFORM pg_temp.fd_case('474 SERIALIZABLE: a share and a row each for A and B are judged and pass', 'ok', pg_temp.fd_share(p, s, 'B', 1, 60),
+    pg_temp.fd_ins(p, s, '1|08:00|60|A|ALL_WEEKS', '2|08:00|60|B|ALL_WEEKS'));
+  PERFORM pg_temp.fd_case('474 SERIALIZABLE: B''s share given to C with the row moved', 'ok',
+    pg_temp.fd_unshare(s), pg_temp.fd_share(p, s, 'C', 1, 60), pg_temp.fd_hand(p, s, 'B', 'C'));
+  PERFORM pg_temp.fd_case('474 SERIALIZABLE: and without it, refused as in READ COMMITTED', 'FP409 TEACHER', pg_temp.fd_unshare(s), pg_temp.fd_share(p, s, 'D', 1, 60));
+  PERFORM pg_temp.fd_case('474 SERIALIZABLE: a row for B, who has no lesson of the post', 'FP409 TEACHER', pg_temp.fd_ins(p, s, '3|08:00|60|B|ALL_WEEKS'));
+  PERFORM pg_temp.fd_case('474 SERIALIZABLE: two rows for C, who has one lesson', 'FP409 TEACHER_COUNT', pg_temp.fd_ins(p, s, '3|08:00|60|C|ALL_WEEKS'));
+  RAISE NOTICE 'fd 474 SER: % checks', current_setting('fd.checks');
 END $$;
 ROLLBACK;

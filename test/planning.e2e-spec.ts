@@ -1243,6 +1243,101 @@ describe('Planning surface (e2e)', () => {
       expect(harness.tx['teachingRequirement']!['update']).not.toHaveBeenCalled();
     });
 
+    it('delade lektioner: a share removed under its förläggning is a 409 that names the förläggning flat in params, and no person', async () => {
+      const BO = '55555555-5555-4555-8555-555555555555';
+      // The post's row lock before its shares are replaced (lockPostForShares).
+      givenStaffingWorld(harness.tx, world({ policy: { qualificationMode: 'OFF', overAllocationMode: 'OFF' } }), () =>
+        Promise.resolve([{ id: REQUIREMENT_ID }]),
+      );
+      harness.tx['teachingRequirement']!['findUnique']!.mockResolvedValue({
+        academicYearId: YEAR_ID,
+        subjectId: SUBJECT_ID,
+        studentGroupId: GROUP_ID,
+        teacherId: KARIN,
+        coTeacherId: null,
+        lessonsPerWeek: 3,
+        minutesPerLesson: 60,
+        lessonLengths: [],
+        recurrence: 'ALL_WEEKS',
+        blockId: null,
+        shares: [{ teacherId: BO, lessons: 1, minutes: 60 }],
+      });
+      harness.tx['teachingRequirement']!['update']!.mockResolvedValue({ id: REQUIREMENT_ID, schoolId: SCHOOL_ID, teacherId: KARIN });
+      harness.tx['teachingRequirementPlacement']!['findMany']!.mockResolvedValue([
+        {
+          id: 'p-1',
+          requirementId: REQUIREMENT_ID,
+          teacherId: BO,
+          dayOfWeek: 2,
+          startTime: new Date('1970-01-01T10:00:00.000Z'),
+          minutes: 60,
+          recurrence: 'ODD_WEEKS',
+        },
+        {
+          id: 'p-2',
+          requirementId: REQUIREMENT_ID,
+          teacherId: BO,
+          dayOfWeek: 4,
+          startTime: new Date('1970-01-01T10:00:00.000Z'),
+          minutes: 60,
+          recurrence: 'EVEN_WEEKS',
+        },
+      ]);
+
+      const response = await request(http())
+        .patch(`/api/v1/teaching-requirements/${REQUIREMENT_ID}`)
+        .set('x-test-user', admin())
+        .send({ shares: [] })
+        .expect(409);
+
+      expect(response.body).toMatchObject({
+        code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT',
+        params: { reason: 'TEACHER', day: 2, start: '10:00', end: '11:00', weeks: 'ODD_WEEKS' },
+      });
+      expect(response.body.detail).toMatch(/^Förläggningen tisdag 10:00–11:00 måste ändras först\./);
+      expect(JSON.stringify(response.body)).not.toContain(BO);
+      expect(harness.tx['teachingRequirementPlacement']!['updateMany']).not.toHaveBeenCalled();
+    });
+
+    it('delade lektioner: a post that starts to share and leaves its lead fewer lessons than are placed is TEACHER_COUNT, not unstaffed (review of #298, MEDEL-3)', async () => {
+      const BO = '55555555-5555-4555-8555-555555555555';
+      givenStaffingWorld(harness.tx, world({ policy: { qualificationMode: 'OFF', overAllocationMode: 'OFF' } }), () =>
+        Promise.resolve([{ id: REQUIREMENT_ID }]),
+      );
+      harness.tx['teachingRequirement']!['findUnique']!.mockResolvedValue({
+        academicYearId: YEAR_ID,
+        subjectId: SUBJECT_ID,
+        studentGroupId: GROUP_ID,
+        teacherId: KARIN,
+        coTeacherId: null,
+        lessonsPerWeek: 3,
+        minutesPerLesson: 60,
+        lessonLengths: [],
+        recurrence: 'ALL_WEEKS',
+        blockId: null,
+        shares: [],
+      });
+      harness.tx['teachingRequirement']!['update']!.mockResolvedValue({ id: REQUIREMENT_ID, schoolId: SCHOOL_ID, teacherId: KARIN });
+      // Karin's two placed lessons on a post that shares nothing: the rows name nobody, the post's teacher is theirs.
+      harness.tx['teachingRequirementPlacement']!['findMany']!.mockResolvedValue([
+        { id: 'p-1', requirementId: REQUIREMENT_ID, teacherId: null, dayOfWeek: 2, startTime: new Date('1970-01-01T10:00:00.000Z'), minutes: 60, recurrence: 'ALL_WEEKS' },
+        { id: 'p-2', requirementId: REQUIREMENT_ID, teacherId: null, dayOfWeek: 4, startTime: new Date('1970-01-01T10:00:00.000Z'), minutes: 60, recurrence: 'ALL_WEEKS' },
+      ]);
+
+      // Bo is given two of the three: Karin keeps one for her two placed.
+      const response = await request(http())
+        .patch(`/api/v1/teaching-requirements/${REQUIREMENT_ID}`)
+        .set('x-test-user', admin())
+        .send({ shares: [{ teacherId: BO, lessons: 2, minutes: 60 }] })
+        .expect(409);
+
+      expect(response.body.code).toBe('REQUIREMENT_PLACEMENTS_DO_NOT_FIT');
+      expect(response.body.params).toEqual({ reason: 'TEACHER_COUNT', day: 4, start: '10:00', end: '11:00', weeks: 'ALL_WEEKS', requirementId: REQUIREMENT_ID });
+      expect(response.body.detail).toContain('välj en annan lärare');
+      expect(response.body.detail).not.toContain('togs bort');
+      expect(harness.tx['teachingRequirementPlacement']!['updateMany']).not.toHaveBeenCalled();
+    });
+
     it('OFF: 201 with no warnings, and no post locked', async () => {
       const handle = givenStaffingWorld(
         harness.tx,
@@ -6838,6 +6933,65 @@ describe('Planning surface (e2e)', () => {
       expect([lead(world, r(2)), lead(world, r(6))]).toEqual([IDS.bo, null]);
       expect(undone.body.basisSha256).toBe(proposal.body.basisSha256);
       expect(world.rows['scheduleChangeLog']).toHaveLength(2);
+    });
+
+    it('delade lektioner: an undo that would leave a förläggning nobody’s is a 409 naming the post and the förläggning, flat, and no person', async () => {
+      const world = givenStaff();
+      // r(6) shares one of its two lessons with Bo; its lead is nobody until the proposal gives it Cecilia.
+      const post = world.rows['teachingRequirement']!.find((row) => row['id'] === r(6))!;
+      Object.assign(post, {
+        lessonsPerWeek: 2,
+        minutesPerLesson: 60,
+        lessonLengths: [],
+        recurrence: 'ALL_WEEKS',
+        shares: [{ teacherId: IDS.bo, lessons: 1, minutes: 60 }],
+      });
+      const proposal = await propose().expect(200);
+      const changes = proposal.body.assignments.map((a: Record<string, unknown>) => ({
+        requirementId: a['requirementId'],
+        fromTeacherId: a['fromTeacherId'],
+        toTeacherId: a['toTeacherId'],
+      }));
+      expect(changes).toContainEqual({ requirementId: r(6), fromTeacherId: null, toTeacherId: IDS.cecilia });
+      const applied = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({ academicYearId: IDS.yearA, basisSha256: proposal.body.basisSha256, changes })
+        .expect(200);
+      // Somebody places Cecilia's lesson of r(6) before the undo.
+      world.rows['teachingRequirementPlacement'] = [
+        {
+          id: 'pl-cecilia',
+          schoolId: IDS.school,
+          requirementId: r(6),
+          teacherId: IDS.cecilia,
+          dayOfWeek: 2,
+          startTime: new Date('1970-01-01T10:00:00.000Z'),
+          minutes: 60,
+          recurrence: 'ODD_WEEKS',
+        },
+      ];
+
+      const refused = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({
+          academicYearId: IDS.yearA,
+          basisSha256: applied.body.basisSha256,
+          undo: true,
+          changes: changes.map((c: Record<string, unknown>) => ({ requirementId: c['requirementId'], fromTeacherId: c['toTeacherId'], toTeacherId: c['fromTeacherId'] })),
+        })
+        .expect(409);
+
+      // The body the web's proposal dialog reads (staffing-proposal-dialog.test.tsx copies it): flat params, the post by id.
+      expect(refused.body).toMatchObject({
+        code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT',
+        params: { reason: 'NO_TEACHER', day: 2, start: '10:00', end: '11:00', weeks: 'ODD_WEEKS', requirementId: r(6) },
+      });
+      expect(Object.keys(refused.body.params).sort()).toEqual(['day', 'end', 'reason', 'requirementId', 'start', 'weeks']);
+      expect(refused.body.detail).toMatch(/^Förläggningen tisdag 10:00–11:00 måste ändras först\./);
+      for (const person of [IDS.cecilia, IDS.bo]) expect(JSON.stringify(refused.body)).not.toContain(person);
+      expect(world.rows['teachingRequirementPlacement']![0]!['teacherId']).toBe(IDS.cecilia);
     });
 
     it('409s STAFF_PROPOSAL_STALE after a PATCH changed the timplan, writing nothing', async () => {

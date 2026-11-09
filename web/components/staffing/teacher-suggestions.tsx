@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { useAssignShare, useAssignTeacher, useSuggestTeachers } from "@/lib/staffing-queries";
 import type { LessonShare } from "@/lib/lesson-shares";
 import { sharesRefusal } from "@/lib/requirement-shares";
+import { placementChangeSentence } from "@/lib/requirement-placement-text";
 import type { MessageLookup } from "@/lib/engine-message";
 import {
   refusalText,
@@ -97,6 +98,7 @@ export function TeacherSuggestions({
   const tCommon = useTranslations("common");
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
   const tShares = useTranslations("requirements.shares");
+  const tPlaced = useTranslations("requirements.placements") as unknown as MessageLookup;
   const { data, isLoading, isError } = useSuggestTeachers(requirementId, share?.minutes ?? null);
   const assign = useAssignTeacher();
   const assignShare = useAssignShare();
@@ -115,10 +117,14 @@ export function TeacherSuggestions({
     } catch (error) {
       const refused = staffingRefusal(error);
       const shares = sharesRefusal(error);
+      // A change of teacher that lessons placed on the post (Förlagda poster)
+      // do not follow: which placement has to be changed first, and why.
+      const placed = placementChangeSentence(tPlaced, error);
       if (refused) setRefusal(refused);
       // A share's write refused by its rules (the post changed since the
       // panel read it), in the reader's language.
       else if (shares && tShares.has(`problem.${shares.rule}`)) toast.error(tShares(`problem.${shares.rule}`));
+      else if (placed) toast.error(placed);
       else toast.error(error instanceof Error ? error.message : tCommon("error"));
     } finally {
       setPendingId(undefined);

@@ -2773,6 +2773,57 @@ describe('ImportService', () => {
         expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
       });
 
+      describe('delade lektioner with förlagda lektioner (placement-teachers.ts)', () => {
+        const SHARER = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+        const placement = (id: string, teacherId: string, dayOfWeek: number) => ({
+          id,
+          requirementId: 'req-1',
+          teacherId,
+          dayOfWeek,
+          startTime: new Date('1970-01-01T10:00:00.000Z'),
+          minutes: 60,
+          recurrence: 'ALL_WEEKS',
+        });
+        const sharedPost = () =>
+          stored({ teacherId: CO_TEACHER_ID, shares: [{ teacherId: SHARER, lessons: 1, minutes: 60 }] });
+
+        it('hands the old lead’s förläggning to the lead the file names, after the row, and has the database judge it', async () => {
+          arrangeRows(tx.teachingRequirement.findMany, [sharedPost()]);
+          tx.teachingRequirementPlacement.findMany.mockResolvedValue([placement('p-1', CO_TEACHER_ID, 2), placement('p-2', SHARER, 4)]);
+          tx.teachingRequirementPlacement.updateMany.mockResolvedValue({ count: 1 });
+
+          const report = await run(row({ teacherEmail: 'karin@example.com' }));
+
+          expect(report).toMatchObject({ updated: 1, errors: [] });
+          expect(tx.teachingRequirementPlacement.updateMany).toHaveBeenCalledWith({
+            where: { id: { in: ['p-1'] } },
+            data: { teacherId: TEACHER_ID },
+          });
+          const update = tx.teachingRequirement.update.mock.invocationCallOrder[0]!;
+          const moved = tx.teachingRequirementPlacement.updateMany.mock.invocationCallOrder[0]!;
+          expect(moved).toBeGreaterThan(update);
+          const statements = tx.$executeRaw.mock.calls.map((call: unknown[]) => (call[0] as TemplateStringsArray).join('?'));
+          expect(statements.some((sql: string) => sql.startsWith('SET CONSTRAINTS') && sql.endsWith('IMMEDIATE'))).toBe(true);
+        });
+
+        it('is a row error naming the förläggning when the row leaves the lead fewer lessons than are placed, and writes nothing', async () => {
+          arrangeRows(tx.teachingRequirement.findMany, [sharedPost()]);
+          tx.teachingRequirementPlacement.findMany.mockResolvedValue([placement('p-1', CO_TEACHER_ID, 2), placement('p-2', CO_TEACHER_ID, 3)]);
+
+          const report = await run(row({ teacherEmail: 'bo@example.com', lessonsPerWeek: 2 }));
+
+          expect(report.errors).toEqual([{ row: 1, message: expect.stringMatching(/^Förläggningen onsdag 10:00–11:00 måste ändras först\./) }]);
+          expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+          expect(tx.teachingRequirementPlacement.updateMany).not.toHaveBeenCalled();
+        });
+
+        it('reads no förläggning for a year whose posts share nothing', async () => {
+          arrangeRows(tx.teachingRequirement.findMany, [stored({ teacherId: CO_TEACHER_ID })]);
+          await run(row({ teacherEmail: 'karin@example.com' }));
+          expect(tx.teachingRequirementPlacement.findMany).not.toHaveBeenCalled();
+        });
+      });
+
       it('an unknown CO-teacher email is a row error that says which column it was', async () => {
         const report = await run(
           row({ teacherEmail: 'karin@example.com', coTeacherEmail: 'ghost@example.com' }),

@@ -262,6 +262,9 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('AttendanceSharingDecisions', ['decidedById', 'schoolId'], 'SET NULL', kept),
   key('LessonLogs', ['writtenById', 'schoolId'], 'SET NULL', kept),
   key('TeachingRequirementShares', ['teacherId', 'schoolId'], 'SET NULL', kept),
+  // Förlägg delade lektioner (20270208090000): the lesson a school placed on a post that shares its lessons is its teacher's, and
+  // stays, unstaffed, when the person goes (the post's and the share's own keys do the same): the row keeps its day, time and room.
+  key('TeachingRequirementPlacements', ['teacherId', 'schoolId'], 'SET NULL', kept),
   key('SupervisionCovers', ['decidedByUserId', 'schoolId'], 'SET NULL', kept),
   key('AckRequests', ['authorId', 'schoolId'], 'SET NULL', kept),
   // Klasslärarens schema (20270128090000): who appointed, who wrote a draft and who published it; the rows stay without them.

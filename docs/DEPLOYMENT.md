@@ -2800,7 +2800,7 @@ Walk the full product loop once, in order:
   the columns `MasterLessons."fromPlacement"` and `PublishedLessons."fromPlacement"` (boolean, NOT NULL DEFAULT
   false: constant defaults, so neither table is rewritten; the second is what a discarded draft writes back), the function `app.teaching_requirement_placements_fit` (SECURITY DEFINER, pinned `search_path`,
   EXECUTE to nobody) behind three row triggers (SQLSTATE FP409, `REQUIREMENT_PLACEMENTS_DO_NOT_FIT`: the rows of a
-  post fit its lengths, lessons, weeks, and it is in no block and shares no lessons), and four policies for the API
+  post fit its lengths, lessons, weeks, and it is in no block and, until 20270208090000 below, shares no lessons), and four policies for the API
   role (read for administrators, write under Planering). No existing row is touched. It takes `Schools`,
   `TeachingRequirements`, `TeachingRequirementShares` and `Rooms` in SHARE ROW EXCLUSIVE and `MasterLessons` and
   `PublishedLessons` in ACCESS EXCLUSIVE (the columns; 29 ms of statements on 300 000 lessons), NOWAIT, together in a
@@ -2817,6 +2817,35 @@ Walk the full product loop once, in order:
   those lessons stay where they stand, locked, until someone unlocks them. The checks before and after are
   `forlagd-post-data/prod-fore.sql` and `prod-efter.sql` in the round's notes (one SELECT per check, `public`
   only); E20 ("the migration wrote no rows") holds only right after the migration, before anyone places a lesson.
+- **Förlägg delade lektioner** (a förläggning on a timplanspost that shares its lessons between teachers, each one
+  a teacher's): 20270208090000 adds `TeachingRequirementPlacements."teacherId"` (nullable; key
+  `(teacherId, schoolId)` to Users ON DELETE SET NULL ("teacherId") ON UPDATE NO ACTION, indexed), rewrites
+  `app.teaching_requirement_placements_fit` (SHARES gone; NO_TEACHER for a row written naming nobody on a shared
+  post; it is now behind two row triggers, the shares' one dropped) and adds
+  `app.teaching_requirement_placement_teachers_fit` behind three constraint triggers, DEFERRABLE INITIALLY
+  DEFERRED, on the placements, the shares and the post (FP409 TEACHER, TEACHER_LENGTH, TEACHER_PAIRS,
+  TEACHER_COUNT: each förläggning on a shared post is a lesson of its teacher's part). Deferred because a writer
+  of shares replaces them by a delete and an insert and the förläggning follows in a third statement; the API
+  asks for the check at the end of its own write (`SET CONSTRAINTS` by the three names, never ALL), any other
+  writer meets it at COMMIT. The migration first refuses, with nothing changed, if any post has both
+  förläggningar and shares (20270207090000 kept that invariant). It takes `TeachingRequirementPlacements` and
+  `TeachingRequirementShares` in ACCESS EXCLUSIVE and `TeachingRequirements` and `Users` in SHARE ROW EXCLUSIVE,
+  NOWAIT, together, with the same 30 s loop: `prisma migrate resolve --rolled-back
+  20270208090000_forlagg_delade_lektioner`, then deploy again. No existing row is touched (every stored row is
+  NULL on a post that shares nothing, which the new rules accept). **The order is the migration, then the
+  merge.** The API before the release writes no `teacherId`; its write of shares on a post with förläggningar,
+  which the dropped trigger refused at the INSERT, is refused at its COMMIT instead (an error, not its 409) until
+  the new API serves. The engine is unchanged. **Rolling back:** the column and the triggers can stay; an API
+  rolled back meets the deferred check at COMMIT when it writes shares on a post with förläggningar, and its own
+  placement-fit still refuses to place a shared post. But it does not read the column, and its Generera takes no
+  förläggning off a shared post's demand at all (its shares branch never reaches the förläggningar): it locks
+  each one as the post's huvudlärare's lesson and still asks the engine for every lesson of the post, so a
+  shared post gets one lesson too many for each förlagd lesson, and a share's teacher's förlagd lesson is
+  written as the huvudlärare's. **Before rolling the API back, remove the förläggningar on
+  shared posts** (`SELECT count(*) FROM "TeachingRequirementPlacements" p WHERE EXISTS (SELECT 1 FROM
+  "TeachingRequirementShares" s WHERE s."requirementId" = p."requirementId")` says how many; the post's Förlägg
+  dialog removes them), and place them again after the next release. The checks before and after are
+  `forlagg-delade-data/prod-fore.sql` and `prod-efter.sql` in the round's notes.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
   `GET /health/ready` adds three counts, never names: how many jobs this

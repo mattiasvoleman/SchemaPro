@@ -1,4 +1,5 @@
 import type { MessageLookup } from "@/lib/engine-message";
+import { placementsRefusal } from "@/lib/requirement-placements";
 
 /*
  * The sentences of Förlägg, apart from requirement-placements.ts: the timplan
@@ -54,10 +55,35 @@ export function verdictSentence(
 
 /**
  * Why a set of rows does not fit the post (LENGTH, COUNT, WEEKS, PAIRS, BLOCK,
- * SHARES), or why a change of the post was refused because its rows no longer
- * do (and POST, a change of group or subject).
+ * and Delade lektioner's per-teacher rules: NO_TEACHER, TEACHER,
+ * TEACHER_LENGTH, TEACHER_PAIRS, TEACHER_COUNT), or why a change of the post
+ * was refused because its rows no longer do (and POST, a change of group or
+ * subject).
  */
 export function fitSentence(t: MessageLookup, reason: string): string {
   const key = `problem.${reason}`;
   return t.has(key) ? t(key) : t("problem.UNKNOWN");
+}
+
+/**
+ * What a refused CHANGE OF A POST'S TEACHER says, when the change was refused
+ * because lessons are placed on the post (Förlagda poster): which placement
+ * has to be changed or removed first, by its weekday and time, and why. The
+ * gateway names the placement and never a person (day, start, end and weeks
+ * come with the refusal). Null for any other error, which the caller shows as
+ * it shows every other failure. `t` is the requirements.placements translator.
+ *
+ * The change is the post's teacher or shares written from the timplan page
+ * (which words it inline: its bundle has no room for this module), the
+ * Tjänstefördelning's panel, suggestions and drawer, and a staffing proposal.
+ * A refusal without a placement named (an older gateway) says only that the
+ * placed lessons do not fit, with the reason.
+ */
+export function placementChangeSentence(t: MessageLookup, error: unknown, nothingApplied = false): string | null {
+  const refusal = placementsRefusal(error);
+  if (refusal?.kind !== "FIT") return null;
+  const reason = fitSentence(t, refusal.reason);
+  // A batch that applied nothing (the staffing proposal) is no post "not saved": only the placement and why.
+  if (nothingApplied) return refusal.params.end ? t("placementFirst", { ...refusal.params, reason }) : reason;
+  return refusal.params.end ? t("changeFirst", { ...refusal.params, reason }) : t("editRefused", { reason });
 }
