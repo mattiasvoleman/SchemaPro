@@ -45,7 +45,7 @@ const POST = {
   blockId: null,
   startDate: null,
   endDate: null,
-  _count: { shares: 0 },
+  shares: [] as { teacherId: string | null; lessons: number; minutes: number }[],
   academicYear: { isActive: true, predecessorId: null, gradeNumbering: 'NIOARIG' },
 };
 
@@ -57,6 +57,7 @@ const stored = (over: Record<string, unknown> = {}) => ({
   minutes: 60,
   roomId: ROOM_1,
   recurrence: 'ALL_WEEKS',
+  teacherId: null as string | null,
   room: { name: 'Simhallen' },
   ...over,
 });
@@ -153,6 +154,7 @@ describe('RequirementPlacementsService', () => {
           roomId: ROOM_1,
           roomName: 'Simhallen',
           recurrence: 'ALL_WEEKS',
+          teacherId: null,
         },
       ]);
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
@@ -185,7 +187,16 @@ describe('RequirementPlacementsService', () => {
           minutes: 60,
           roomId: ROOM_2,
           recurrence: 'ALL_WEEKS',
-          requirement: { studentGroupId: 'g-7b', subjectId: 'sub-ma', teacherId: 'T-9', coTeacherId: null, startDate: null, endDate: null },
+          teacherId: null,
+          requirement: {
+            studentGroupId: 'g-7b',
+            subjectId: 'sub-ma',
+            teacherId: 'T-9',
+            coTeacherId: null,
+            startDate: null,
+            endDate: null,
+            _count: { shares: 0 },
+          },
         },
       ];
       const { masters, service } = setup({ rows: [stored(), stored({ id: 'p-2', dayOfWeek: 4 })], beside });
@@ -237,8 +248,8 @@ describe('RequirementPlacementsService', () => {
       // schoolId is the post's, not the caller's; startTime is the @db.Time the table stores.
       expect(tx['teachingRequirementPlacement']!['createMany']).toHaveBeenCalledWith({
         data: [
-          { schoolId: SCHOOL, requirementId: REQ, dayOfWeek: 2, startTime: time('10:00'), minutes: 60, roomId: ROOM_1, recurrence: 'ALL_WEEKS' },
-          { schoolId: SCHOOL, requirementId: REQ, dayOfWeek: 4, startTime: time('13:30'), minutes: 60, roomId: ROOM_2, recurrence: 'ALL_WEEKS' },
+          { schoolId: SCHOOL, requirementId: REQ, dayOfWeek: 2, startTime: time('10:00'), minutes: 60, roomId: ROOM_1, recurrence: 'ALL_WEEKS', teacherId: null },
+          { schoolId: SCHOOL, requirementId: REQ, dayOfWeek: 4, startTime: time('13:30'), minutes: 60, roomId: ROOM_2, recurrence: 'ALL_WEEKS', teacherId: null },
         ],
       });
       expect(result.placements.map((row) => row.id)).toEqual(['n-1', 'n-2']);
@@ -299,7 +310,8 @@ describe('RequirementPlacementsService', () => {
         ['PAIRS', {}, [input({ recurrence: 'ODD_WEEKS' })]],
         ['WEEKS', { recurrence: 'EVEN_WEEKS' }, [input({ recurrence: 'ODD_WEEKS' })]],
         ['BLOCK', { blockId: 'b-1' }, [input()]],
-        ['SHARES', { _count: { shares: 1 } }, [input()]],
+        // A post that shares nothing names no teacher on a row (the post's teacher is the lesson's).
+        ['TEACHER', {}, [input({ teacherId: TEACHER })]],
       ])('%s', async (reason, postOver, placements) => {
         const { tx, masters, service } = setup({ post: { ...POST, ...postOver } as typeof POST });
         const refused = service.replace(REQ, { placements }, user);
@@ -438,6 +450,115 @@ describe('RequirementPlacementsService', () => {
       await expect(service.replace(REQ, { placements: [input()] }, user)).rejects.toMatchObject({
         status: 409,
         response: { code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'PAIRS' } },
+      });
+    });
+
+    it('asks the database for the rules per teacher at its last write, and answers its refusal as the 409', async () => {
+      const { tx, service } = setup();
+      await service.replace(REQ, { placements: [input()] }, user);
+      const insert = tx['teachingRequirementPlacement']!['createMany']!.mock.invocationCallOrder[0]!;
+      const judged = tx['$executeRaw'].mock.invocationCallOrder;
+      expect(judged).toHaveLength(2);
+      expect(judged[0]).toBeGreaterThan(insert);
+      const statements = tx['$executeRaw'].mock.calls.map((call) => (call[0] as TemplateStringsArray).join('?'));
+      expect(statements[0]).toBe(
+          'SET CONSTRAINTS "TeachingRequirementPlacements_teachers_fit", "TeachingRequirementShares_placement_teachers_fit", "TeachingRequirements_placement_teachers_fit" IMMEDIATE',
+      );
+      expect(statements[1]).toMatch(/ DEFERRED$/);
+
+      const second = setup();
+      second.tx['$executeRaw'].mockRejectedValueOnce(fkError('TEACHER_COUNT'));
+      await expect(second.service.replace(REQ, { placements: [input()] }, user)).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'TEACHER_COUNT' } },
+      });
+    });
+
+    describe('on a post with delade lektioner (Anna two of 60, Bo one)', () => {
+      const BO = '55555555-5555-4555-8555-555555555555';
+      const SHARED = { ...POST, lessonsPerWeek: 3, shares: [{ teacherId: BO, lessons: 1, minutes: 60 }] };
+
+      it('writes each row with its teacher, and judges it against that teacher’s week', async () => {
+        const { tx, masters, service } = setup({ post: SHARED });
+        await service.replace(
+          REQ,
+          { placements: [input({ teacherId: BO }), input({ dayOfWeek: 4, teacherId: TEACHER })] },
+          user,
+        );
+        const data = (tx['teachingRequirementPlacement']!['createMany']!.mock.calls[0]![0] as { data: Array<{ teacherId: string }> }).data;
+        expect(data.map((row) => row.teacherId)).toEqual([BO, TEACHER]);
+        expect(masters.findConflicts.mock.calls.map((call) => (call[3] as { teacherId: string }).teacherId)).toEqual([BO, TEACHER]);
+      });
+
+      it.each([
+        ['NO_TEACHER', [input({ teacherId: BO }), input({ dayOfWeek: 4 })], 1],
+        ['TEACHER', [input({ teacherId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' })], 0],
+        ['TEACHER_COUNT', [input({ teacherId: BO }), input({ dayOfWeek: 3, teacherId: TEACHER }), input({ dayOfWeek: 4, teacherId: BO })], 2],
+        ['TEACHER_PAIRS', [input({ recurrence: 'ODD_WEEKS', teacherId: BO }), input({ dayOfWeek: 4, recurrence: 'EVEN_WEEKS', teacherId: TEACHER })], 0],
+      ])('refuses %s with the row it is said of, before the week is asked', async (reason, placements, index) => {
+        const { tx, masters, service } = setup({ post: SHARED });
+        await expect(service.replace(REQ, { placements }, user)).rejects.toMatchObject({
+          status: 409,
+          response: { code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason, index } },
+        });
+        expect(masters.findConflicts).not.toHaveBeenCalled();
+        expect(tx['teachingRequirementPlacement']!['createMany']).not.toHaveBeenCalled();
+      });
+
+      it('lets Bo’s own lock answer Bo’s lesson: his förläggning is over the demand, Anna’s is not', async () => {
+        const lock = {
+          id: 'k-1',
+          dayOfWeek: 1,
+          teacherId: BO,
+          coTeacherId: null,
+          roomId: null,
+          studentGroupId: GROUP,
+          subjectId: SUBJECT,
+          startTime: time('08:00'),
+          endTime: time('09:00'),
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+          subject: { name: 'Idrott och hälsa' },
+          studentGroup: { name: '7A' },
+          extraGroups: [],
+          participants: [],
+        };
+        const bo = setup({ post: SHARED, kept: [lock] });
+        await expect(bo.service.replace(REQ, { placements: [input({ teacherId: BO })] }, user)).rejects.toMatchObject({
+          response: { code: 'REQUIREMENT_PLACEMENT_REFUSED', params: { index: 0, reason: 'OVER_DEMAND' } },
+        });
+        const anna = setup({ post: SHARED, kept: [lock] });
+        await anna.service.replace(REQ, { placements: [input({ teacherId: TEACHER })] }, user);
+        expect(anna.tx['teachingRequirementPlacement']!['createMany']).toHaveBeenCalledTimes(1);
+      });
+
+      it('judges another post’s förläggning beside it with that row’s own teacher when that post shares', async () => {
+        const beside = [
+          {
+            id: 'p-9',
+            requirementId: OTHER_REQ,
+            dayOfWeek: 2,
+            startTime: time('10:00'),
+            minutes: 60,
+            roomId: ROOM_2,
+            recurrence: 'ALL_WEEKS',
+            teacherId: BO,
+            requirement: {
+              studentGroupId: 'g-7b',
+              subjectId: 'sub-ma',
+              teacherId: 'T-9',
+              coTeacherId: null,
+              startDate: null,
+              endDate: null,
+              _count: { shares: 1 },
+            },
+          },
+        ];
+        const { masters, service } = setup({ post: SHARED, beside });
+        await service.replace(REQ, { placements: [input({ teacherId: TEACHER })] }, user);
+        const options = masters.findConflicts.mock.calls[0]![4] as { against: Array<{ id: string; teacherId: string }> };
+        expect(options.against.map((lesson) => [lesson.id, lesson.teacherId])).toEqual([['placement:p-9', BO]]);
       });
     });
   });

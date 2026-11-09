@@ -1,6 +1,7 @@
 import type { LessonRecurrence } from '@prisma/client';
 import { LESSON_GRID_MINUTES, lengthPartsOf, lessonMinutesOf, type LessonShape } from '../common/lesson-lengths';
-import { coverLockedLessons } from '../optimization/locked-coverage';
+import { hasShares, lessonTeachersOf, type LessonShare } from '../common/lesson-shares';
+import { coverLockedLessons, coverLockedSharedLessons, type TaughtLesson } from '../optimization/locked-coverage';
 
 /*
  * FÖRLAGDA POSTER: WHICH OF A POST'S LESSONS ITS FÖRLÄGGNINGAR PLACE, AND
@@ -25,15 +26,44 @@ import { coverLockedLessons } from '../optimization/locked-coverage';
  *   - A post in a parallel block is placed with its block, at one start for
  *     every member (parallel-blocks.ts), and a förläggning of one member would
  *     be a partly locked block, which Generera refuses. Not supported.
- *   - A post with delade lektioner names a teacher per lesson, and which of
- *     them a förläggning would be is a choice nobody has made. Not supported
- *     either, until it is asked for.
  *
- * THE SAME RULES THREE TIMES, ON PURPOSE. The trigger on the table
- * (migration 20270207090000, SQLSTATE FP409) refuses a row, and a change of
- * the post, that breaks them, whoever writes; this copy says which rule before
- * the write so the 409 can name it; Generera reads the lessons placed from
- * `placedLessonsOf` and takes them off the post's demand.
+ * DELADE LEKTIONER (migration 20270208090000). A post that shares its lessons
+ * between teachers (TeachingRequirementShares) has a teacher per lesson, so a
+ * förläggning there names whose lesson it is: `teacherId`, the huvudlärare or
+ * a share's teacher, and its length is one of THAT teacher's. It is tied to
+ * the teacher and the length and never to a share row, because every writer
+ * of shares replaces the rows whole (deleteMany + createMany, new ids) — the
+ * reason MasterLessons.fromPlacement is a flag and not a key. The rules above
+ * then hold per teacher as well (teacherFitOf):
+ *
+ *   - NO_TEACHER      a förläggning written on a shared post names nobody:
+ *                     a lesson nobody teaches is not placed (the school
+ *                     chooses its teacher first). Only of a row being
+ *                     written: a teacher removed later leaves the row on
+ *                     the unstaffed lesson it is (ON DELETE SET NULL).
+ *   - TEACHER         the row names somebody with no lesson of the post, or
+ *                     anybody at all on a post that shares nothing;
+ *   - TEACHER_LENGTH  the teacher has lessons of the post, none of that length;
+ *   - TEACHER_PAIRS   one teacher's odd and even rows of a length do not pair:
+ *                     a pair is ONE lesson in two places, so it is one
+ *                     teacher's;
+ *   - TEACHER_COUNT   more of a teacher's lessons of a length are placed than
+ *                     their part of the post has.
+ *
+ * On a post that shares nothing every row names nobody (`teacherId` null), and
+ * the post's teacher is the lesson's, as it always was: such a post fits
+ * exactly as before this file knew of shares.
+ *
+ * THE SAME RULES THREE TIMES, ON PURPOSE. The triggers on the tables
+ * (migrations 20270207090000 and 20270208090000, SQLSTATE FP409) refuse a
+ * row, and a change of the post or its shares, that breaks them, whoever
+ * writes; this copy says which rule before the write so the 409 can name it;
+ * Generera reads the lessons placed from `placedLessonsOf` and
+ * `placedTaughtOf` and takes them off the post's demand. The per-teacher
+ * rules are judged by a DEFERRED trigger in the database (a share's teacher is
+ * replaced by a delete and an insert, and the förläggning follows in a third
+ * statement), and the gateway asks for them at the end of its own write
+ * (placement-teachers.ts) so that a refusal is a statement, not a commit.
  */
 
 export type PlacementFitReason =
@@ -47,21 +77,30 @@ export type PlacementFitReason =
   | 'PAIRS'
   /** The post is in a parallel block. */
   | 'BLOCK'
-  /** The post shares its lessons between teachers. */
-  | 'SHARES';
+  | TeacherFitReason;
 
-/** What the fit reads of a post. */
+/** The rules a shared post's rows are held to per teacher (see the file's first paragraphs). */
+export type TeacherFitReason = 'NO_TEACHER' | 'TEACHER' | 'TEACHER_LENGTH' | 'TEACHER_PAIRS' | 'TEACHER_COUNT';
+
+/** What the fit reads of a post: its shape and weeks, its block, and who teaches which of its lessons. */
 export interface PlacementPost extends LessonShape {
   recurrence: LessonRecurrence;
   blockId: string | null;
-  /** How many share rows the post has (TeachingRequirementShares). */
-  shareCount: number;
+  /** The huvudlärare, who takes every lesson no share takes; null when nobody does. */
+  teacherId: string | null;
+  /** The post's shares (TeachingRequirementShares); empty or absent on a post that shares nothing. */
+  shares?: readonly LessonShare[] | null;
 }
 
 /** What the fit reads of a row. */
 export interface PlacementShape {
   minutes: number;
   recurrence: LessonRecurrence;
+  /**
+   * Whose lesson it is, on a shared post; always null on a post that shares
+   * nothing (the post's teacher is the lesson's). Absent reads as null.
+   */
+  teacherId?: string | null;
 }
 
 /**
@@ -71,7 +110,15 @@ export interface PlacementShape {
 export function placementFitOf(post: PlacementPost, rows: readonly PlacementShape[]): PlacementFitReason | null {
   if (rows.length === 0) return null;
   if (post.blockId !== null) return 'BLOCK';
-  if (post.shareCount > 0) return 'SHARES';
+  const shape = postShapeFitOf(post, rows);
+  if (shape !== null) return shape;
+  // Delade lektioner: a row written on a shared post names its teacher.
+  if (hasShares(post) && rows.some((row) => (row.teacherId ?? null) === null)) return 'NO_TEACHER';
+  return teacherFitOf(post, rows);
+}
+
+/** The post's own rules, which a post that shares nothing is held to alone: lengths, weeks, pairs, count. */
+function postShapeFitOf(post: PlacementPost, rows: readonly PlacementShape[]): PlacementFitReason | null {
   const lengths = new Set(lessonMinutesOf(post));
   if (rows.some((row) => !lengths.has(row.minutes))) return 'LENGTH';
   if (post.recurrence !== 'ALL_WEEKS') {
@@ -88,6 +135,116 @@ export function placementFitOf(post: PlacementPost, rows: readonly PlacementShap
     if (placed.filter((minutes) => minutes === part.minutes).length > part.count) return 'COUNT';
   }
   return null;
+}
+
+/** A teacher's own lessons of a post, by length: who (null for the lessons nobody teaches) and how many. */
+export type TeacherParts = Map<string | null, Map<number, number>>;
+
+/**
+ * Who teaches which of the post's lessons, by length: lessonTeachersOf
+ * counted per (teacher, length). The huvudlärare's part is every lesson no
+ * share takes; a deleted teacher's share and a post with no huvudlärare are
+ * one part with no teacher (null), as the readers of shares sum them. A post
+ * that shares nothing is one part: its teacher's, every lesson.
+ */
+export function teacherPartsOf(post: LessonShape & { teacherId: string | null; shares?: readonly LessonShare[] | null }): TeacherParts {
+  const parts: TeacherParts = new Map();
+  for (const lesson of lessonTeachersOf(post)) {
+    const byLength = parts.get(lesson.teacherId) ?? new Map<number, number>();
+    byLength.set(lesson.minutes, (byLength.get(lesson.minutes) ?? 0) + 1);
+    parts.set(lesson.teacherId, byLength);
+  }
+  return parts;
+}
+
+/** The teacher a row's lesson is: its own on a shared post, else the post's. */
+export function teacherOfRow(post: { teacherId: string | null; shares?: readonly LessonShare[] | null }, row: PlacementShape): string | null {
+  return (post.shares ?? []).length > 0 ? (row.teacherId ?? null) : post.teacherId;
+}
+
+/**
+ * The per-teacher rules alone (TEACHER, TEACHER_LENGTH, TEACHER_PAIRS,
+ * TEACHER_COUNT) on a post's whole set of rows: the database's deferred
+ * trigger, rule for rule, and what a change of the post or its shares must
+ * leave its förläggningar fitting (placement-teachers.ts). A row naming
+ * nobody on a shared post is held to the lessons nobody teaches, which a
+ * deleted teacher leaves; NO_TEACHER, a question about a row being written,
+ * is placementFitOf's. Null when they fit.
+ */
+export function teacherFitOf(post: PlacementPost, rows: readonly PlacementShape[]): TeacherFitReason | null {
+  return teacherMisfitOf(post, rows)?.reason ?? null;
+}
+
+/** teacherFitOf's rule, and the row it is said of: the first of its kind in `rows`' order (the last of a count). */
+export function teacherMisfitOf(
+  post: PlacementPost,
+  rows: readonly PlacementShape[],
+): { reason: TeacherFitReason; index: number } | null {
+  if (rows.length === 0) return null;
+  if (!hasShares(post)) {
+    const index = rows.findIndex((row) => (row.teacherId ?? null) !== null);
+    return index >= 0 ? { reason: 'TEACHER', index } : null;
+  }
+  const parts = teacherPartsOf(post);
+  const who = (row: PlacementShape): string | null => row.teacherId ?? null;
+  let index = rows.findIndex((row) => !parts.has(who(row)));
+  if (index >= 0) return { reason: 'TEACHER', index };
+  index = rows.findIndex((row) => !parts.get(who(row))!.has(row.minutes));
+  if (index >= 0) return { reason: 'TEACHER_LENGTH', index };
+  // The rows of one teacher and one length, in `rows`' order.
+  const groups = new Map<string, number[]>();
+  rows.forEach((row, at) => {
+    const key = `${who(row) ?? ''}:${row.minutes}`;
+    const list = groups.get(key);
+    if (list) list.push(at);
+    else groups.set(key, [at]);
+  });
+  if (post.recurrence === 'ALL_WEEKS') {
+    for (const list of groups.values()) {
+      const odd = list.filter((at) => rows[at]!.recurrence === 'ODD_WEEKS');
+      const even = list.filter((at) => rows[at]!.recurrence === 'EVEN_WEEKS');
+      if (odd.length !== even.length) {
+        const longer = odd.length > even.length ? odd : even;
+        return { reason: 'TEACHER_PAIRS', index: longer[longer.length - 1]! };
+      }
+    }
+  }
+  for (const list of groups.values()) {
+    const first = rows[list[0]!]!;
+    const placed = placedLessonsOf(post, list.map((at) => rows[at]!)).length;
+    if (placed > parts.get(who(first))!.get(first.minutes)!) {
+      return { reason: 'TEACHER_COUNT', index: list[list.length - 1]! };
+    }
+  }
+  return null;
+}
+
+/**
+ * The post's lessons the rows place, each with its teacher: placedLessonsOf
+ * per teacher, so a pair is one lesson of the teacher both rows name. Longest
+ * first, and within a length by teacher (null last). On a post that shares
+ * nothing every lesson is the post's teacher's.
+ */
+export function placedTaughtOf(
+  post: Pick<PlacementPost, 'recurrence' | 'teacherId' | 'shares'>,
+  rows: readonly PlacementShape[],
+): TaughtLesson[] {
+  const byTeacher = new Map<string | null, PlacementShape[]>();
+  for (const row of rows) {
+    const teacher = teacherOfRow(post, row);
+    const list = byTeacher.get(teacher);
+    if (list) list.push(row);
+    else byTeacher.set(teacher, [row]);
+  }
+  const taught: TaughtLesson[] = [];
+  for (const [teacherId, list] of byTeacher) {
+    for (const minutes of placedLessonsOf(post, list)) taught.push({ minutes, teacherId });
+  }
+  return taught.sort(
+    (a, b) =>
+      b.minutes - a.minutes ||
+      (a.teacherId === b.teacherId ? 0 : a.teacherId === null ? 1 : b.teacherId === null ? -1 : a.teacherId < b.teacherId ? -1 : 1),
+  );
 }
 
 /**
@@ -141,6 +298,28 @@ export function placementsFitBesideLocks(
   return true;
 }
 
+/**
+ * placementsFitBesideLocks on a SHARED post: the post's lessons with their
+ * teachers less the ones its covering locks cancel (coverLockedSharedLessons,
+ * Generera's own rule: a lock of Bo's answers Bo's lesson first), and then
+ * each placed lesson must take one still left of its own teacher and length.
+ * Bo's lock of 60 on a post where Bo has one 60 leaves Bo's förläggning none:
+ * OVER_DEMAND, as on a post that shares nothing.
+ */
+export function sharedPlacementsFitBesideLocks(
+  post: LessonShape & { teacherId: string | null; shares?: readonly LessonShare[] | null },
+  locked: readonly TaughtLesson[],
+  placed: readonly TaughtLesson[],
+): boolean {
+  const remaining = coverLockedSharedLessons(lessonTeachersOf(post), locked);
+  for (const lesson of placed) {
+    const at = remaining.findIndex((left) => left.minutes === lesson.minutes && left.teacherId === lesson.teacherId);
+    if (at < 0) return false;
+    remaining.splice(at, 1);
+  }
+  return true;
+}
+
 /** The engine's day and week (src/common/solver-grid.ts, config.py SCHEDULE_DAYS). */
 export const PLACEMENT_DAYS = [1, 2, 3, 4, 5] as const;
 export const PLACEMENT_DAY_START = 8 * 60;
@@ -160,4 +339,94 @@ export function insideSchoolDay(row: { dayOfWeek: number; startMinutes: number; 
     row.startMinutes >= PLACEMENT_DAY_START &&
     row.startMinutes + row.minutes <= PLACEMENT_DAY_END
   );
+}
+
+/** A stored förläggning as a change of its post's teachers reads it. */
+export interface FollowedRow extends PlacementShape {
+  id: string;
+  /** As stored: the lesson's teacher on a shared post, null on one that shares nothing. */
+  teacherId: string | null;
+}
+
+/** What a change of a post's teachers does to its förläggningar (followPlacements). */
+export type PlacementsFollow =
+  | {
+      ok: true;
+      /** The rows whose stored teacher changes, and to whom (null on a post that no longer shares). */
+      moves: { id: string; teacherId: string | null }[];
+    }
+  | {
+      ok: false;
+      reason: TeacherFitReason;
+      /** The förläggning that has to be changed (or removed) before the post can be. */
+      row: FollowedRow;
+    };
+
+const sameParts = (a: ReadonlyMap<number, number>, b: ReadonlyMap<number, number>): boolean =>
+  a.size === b.size && [...a].every(([minutes, count]) => b.get(minutes) === count);
+
+/**
+ * THE TEACHER OF A FÖRLÄGGNING FOLLOWS A CHANGE WHEN THE CHANGE SAYS WHERE TO,
+ * AND STOPS IT OTHERWISE (the user's choice, 2026-11-09).
+ *
+ * `before` and `after` are the post as stored and as the write leaves it:
+ * its huvudlärare, its shares and its lessons. Each teacher who stays keeps
+ * their förläggningar. When exactly one teacher leaves and exactly one comes
+ * in with the same lessons — the same lengths, as many of each — that is a
+ * change of teacher and nothing else, and the leaving teacher's förläggningar
+ * become the new one's: the way a förläggning on a post that shares nothing
+ * follows the post's teacher, and the way a share nobody teaches (a deleted
+ * teacher's) is given one. Anything else that leaves a förläggning with a
+ * teacher who no longer has a lesson of its length is not for this function
+ * to settle; it answers which förläggning, and why, and the write is refused
+ * with it:
+ *
+ *   TEACHER         its teacher teaches none of the post's lessons any more
+ *                   (a share removed, or two teachers changed at once);
+ *   NO_TEACHER      its lesson would be nobody's (a share's teacher taken
+ *                   away, the huvudlärare cleared);
+ *   TEACHER_LENGTH  its teacher stays, without a lesson of that length;
+ *   TEACHER_COUNT   its teacher stays, with fewer lessons of that length than
+ *                   are placed.
+ *
+ * A post that shares nothing before and after is not this function's: its
+ * rows name nobody and its teacher is the post's, so nothing moves and
+ * nothing is refused (the post's own rules are the trigger's, as before).
+ * Rows on a post that stops sharing name nobody again; rows on a post that
+ * starts sharing name its huvudlärare, whose lessons they were. A row that
+ * names nobody on a shared post stays on the lessons nobody teaches while
+ * there are any.
+ */
+export function followPlacements(
+  before: PlacementPost,
+  after: PlacementPost,
+  rows: readonly FollowedRow[],
+): PlacementsFollow {
+  if (rows.length === 0 || (!hasShares(before) && !hasShares(after))) return { ok: true, moves: [] };
+  const was = teacherPartsOf(before);
+  const now = teacherPartsOf(after);
+  const to = new Map<string | null, string | null>();
+  for (const teacher of was.keys()) if (now.has(teacher)) to.set(teacher, teacher);
+  const left = [...was.keys()].filter((teacher) => !now.has(teacher));
+  const came = [...now.keys()].filter((teacher) => !was.has(teacher));
+  if (left.length === 1 && came.length === 1 && sameParts(was.get(left[0]!)!, now.get(came[0]!)!)) {
+    to.set(left[0]!, came[0]!);
+  }
+
+  const shared = hasShares(after);
+  const placed: FollowedRow[] = [];
+  for (const row of rows) {
+    const from = teacherOfRow(before, row);
+    if (!to.has(from)) return { ok: false, reason: 'TEACHER', row };
+    const teacher = to.get(from)!;
+    // A lesson that was somebody's is never made nobody's by a change of the post.
+    if (shared && teacher === null && from !== null) return { ok: false, reason: 'NO_TEACHER', row };
+    placed.push({ ...row, teacherId: shared ? teacher : null });
+  }
+  const misfit = teacherMisfitOf(after, placed);
+  if (misfit !== null) return { ok: false, reason: misfit.reason, row: rows[misfit.index]! };
+  return {
+    ok: true,
+    moves: placed.flatMap((row, at) => (row.teacherId !== rows[at]!.teacherId ? [{ id: row.id, teacherId: row.teacherId }] : [])),
+  };
 }

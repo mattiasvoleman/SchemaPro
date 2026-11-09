@@ -1513,16 +1513,115 @@ describe('TeachingRequirementsService', () => {
       });
     });
 
-    it('answers the same trigger on the shares\' own write (a post with förläggningar gets a share) as the 409 SHARES', async () => {
-      givenStored({ ...STORED, shares: [] });
-      tx.teachingRequirement.update.mockResolvedValue(ROW);
-      tx.teachingRequirementShare.createMany.mockRejectedValue(placementsRefusal('SHARES'));
+    describe('förlagda lektioner on the post (placement-teachers.ts)', () => {
+      const CARL = '77777777-7777-4777-8777-777777777777';
+      const SHAPED = { ...STORED, recurrence: 'ALL_WEEKS', blockId: null };
+      const placement = (id: string, teacherId: string | null, dayOfWeek = 2) => ({
+        id,
+        requirementId: REQUIREMENT_ID,
+        teacherId,
+        dayOfWeek,
+        startTime: new Date('1970-01-01T10:00:00.000Z'),
+        minutes: 60,
+        recurrence: 'ALL_WEEKS',
+      });
+      const SET_IMMEDIATE =
+        'SET CONSTRAINTS "TeachingRequirementPlacements_teachers_fit", "TeachingRequirementShares_placement_teachers_fit", "TeachingRequirements_placement_teachers_fit" IMMEDIATE';
+      const executed = (): string[] => tx.$executeRaw.mock.calls.map((call: unknown[]) => (call[0] as TemplateStringsArray).join('?'));
 
-      await expect(
-        service.update(REQUIREMENT_ID, { shares: [{ teacherId: BO, lessons: 1, minutes: 60 }] }, testUser()),
-      ).rejects.toMatchObject({
-        status: 409,
-        response: { code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'SHARES' } },
+      it('hands Bo’s förläggning to Carl when Carl takes Bo’s lessons, after the shares, and has the database judge it', async () => {
+        givenStored(SHAPED);
+        tx.teachingRequirement.update.mockResolvedValue(ROW);
+        tx.teachingRequirementPlacement.findMany.mockResolvedValue([placement('p-1', BO), placement('p-2', TEACHER_ID, 4)]);
+        tx.teachingRequirementPlacement.updateMany.mockResolvedValue({ count: 1 });
+
+        await service.update(REQUIREMENT_ID, { shares: [{ teacherId: CARL, lessons: 1, minutes: 60 }] }, testUser());
+
+        expect(tx.teachingRequirementPlacement.updateMany).toHaveBeenCalledTimes(1);
+        expect(tx.teachingRequirementPlacement.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['p-1'] } }, data: { teacherId: CARL } });
+        expect(order(tx.teachingRequirementShare.createMany)).toBeLessThan(order(tx.teachingRequirementPlacement.updateMany));
+        expect(order(tx.teachingRequirementPlacement.updateMany)).toBeLessThan(order(tx.$executeRaw));
+        expect(executed()[0]).toBe(SET_IMMEDIATE);
+      });
+
+      it('names the huvudlärare on the förläggningar of a post that starts to share', async () => {
+        givenStored({ ...SHAPED, shares: [] });
+        tx.teachingRequirement.update.mockResolvedValue(ROW);
+        tx.teachingRequirementPlacement.findMany.mockResolvedValue([placement('p-1', null)]);
+        tx.teachingRequirementPlacement.updateMany.mockResolvedValue({ count: 1 });
+
+        await service.update(REQUIREMENT_ID, { shares: [{ teacherId: BO, lessons: 1, minutes: 60 }] }, testUser());
+
+        expect(tx.teachingRequirementPlacement.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['p-1'] } }, data: { teacherId: TEACHER_ID } });
+      });
+
+      it('hands the huvudlärare’s förläggningar to a new huvudlärare (Byt lärare, the tillsättning)', async () => {
+        givenStored(SHAPED);
+        tx.teachingRequirement.update.mockResolvedValue({ ...ROW, teacherId: CARL });
+        tx.teachingRequirementPlacement.findMany.mockResolvedValue([placement('p-1', TEACHER_ID), placement('p-2', BO, 4)]);
+        tx.teachingRequirementPlacement.updateMany.mockResolvedValue({ count: 1 });
+
+        await service.update(REQUIREMENT_ID, { teacherId: CARL }, testUser());
+
+        expect(tx.teachingRequirementPlacement.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['p-1'] } }, data: { teacherId: CARL } });
+      });
+
+      it('stops a share removed under its förläggning with a 409 naming it, and moves nothing', async () => {
+        givenStored(SHAPED);
+        tx.teachingRequirement.update.mockResolvedValue(ROW);
+        tx.teachingRequirementPlacement.findMany.mockResolvedValue([placement('p-1', BO, 3)]);
+
+        await expect(service.update(REQUIREMENT_ID, { shares: [] }, testUser())).rejects.toMatchObject({
+          status: 409,
+          response: {
+            code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT',
+            params: { reason: 'TEACHER', day: 3, start: '10:00', end: '11:00', weeks: 'ALL_WEEKS' },
+          },
+        });
+        expect(tx.teachingRequirementPlacement.updateMany).not.toHaveBeenCalled();
+        expect(tx.$executeRaw).not.toHaveBeenCalled();
+      });
+
+      it('stops a share’s teacher taken away under its förläggning (NO_TEACHER): a lesson that was somebody’s is never made nobody’s', async () => {
+        givenStored(SHAPED);
+        tx.teachingRequirement.update.mockResolvedValue(ROW);
+        tx.teachingRequirementPlacement.findMany.mockResolvedValue([placement('p-1', BO)]);
+
+        await expect(
+          service.update(REQUIREMENT_ID, { shares: [{ teacherId: null, lessons: 1, minutes: 60 }] }, testUser()),
+        ).rejects.toMatchObject({ status: 409, response: { params: { reason: 'NO_TEACHER', day: 2 } } });
+      });
+
+      it('answers the database’s own refusal at the judgement as the 409, not a 500', async () => {
+        givenStored(SHAPED);
+        tx.teachingRequirement.update.mockResolvedValue(ROW);
+        tx.teachingRequirementPlacement.findMany.mockResolvedValue([placement('p-1', BO)]);
+        tx.$executeRaw.mockRejectedValueOnce(placementsRefusal('TEACHER_COUNT'));
+
+        await expect(
+          service.update(REQUIREMENT_ID, { shares: [{ teacherId: CARL, lessons: 1, minutes: 60 }] }, testUser()),
+        ).rejects.toMatchObject({ status: 409, response: { code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'TEACHER_COUNT' } } });
+      });
+
+      it('reads no förläggning for a post that shares nothing, before or after: it behaves as it did', async () => {
+        givenStored({ ...SHAPED, shares: [] });
+        tx.teachingRequirement.update.mockResolvedValue({ ...ROW, teacherId: CARL });
+
+        await service.update(REQUIREMENT_ID, { teacherId: CARL }, testUser());
+
+        expect(tx.teachingRequirementPlacement.findMany).not.toHaveBeenCalled();
+        expect(tx.$executeRaw).not.toHaveBeenCalled();
+      });
+
+      it('judges nothing when a shared post has no förläggning', async () => {
+        givenStored(SHAPED);
+        tx.teachingRequirement.update.mockResolvedValue(ROW);
+
+        await service.update(REQUIREMENT_ID, { shares: [{ teacherId: CARL, lessons: 1, minutes: 60 }] }, testUser());
+
+        expect(tx.teachingRequirementPlacement.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.teachingRequirementPlacement.updateMany).not.toHaveBeenCalled();
+        expect(tx.$executeRaw).not.toHaveBeenCalled();
       });
     });
 

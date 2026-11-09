@@ -1441,6 +1441,36 @@ describe('StaffingProposalService.apply', () => {
     expect(fresh.basisSha256).toBe(result.basisSha256);
   });
 
+  it('delade lektioner: hands the old lead’s förläggning on a shared post to the new lead, and has the database judge it', async () => {
+    const rows = schoolRows();
+    const sv7 = rows['teachingRequirement']!.find((row) => row['id'] === R_SV7)!;
+    const minutes = sv7['minutesPerLesson'] as number;
+    Object.assign(sv7, { lessonsPerWeek: 3, lessonLengths: [], shares: [{ teacherId: CY, lessons: 1, minutes }] });
+    rows['teachingRequirementPlacement'] = [
+      { id: 'pl-eva', schoolId: SCHOOL, requirementId: R_SV7, teacherId: EVA, dayOfWeek: 2, startTime: new Date('1970-01-01T10:00:00.000Z'), minutes, recurrence: 'ALL_WEEKS' },
+      { id: 'pl-cy', schoolId: SCHOOL, requirementId: R_SV7, teacherId: CY, dayOfWeek: 4, startTime: new Date('1970-01-01T10:00:00.000Z'), minutes, recurrence: 'ALL_WEEKS' },
+    ];
+    const { service, world, proposal } = await proposeThenApply(rows);
+    const changes = changesOf(proposal);
+    expect(changes.find((change) => change.requirementId === R_SV7)).toMatchObject({ fromTeacherId: EVA, toTeacherId: ANNA });
+    const start = world.calls.length;
+
+    await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes }, admin());
+
+    const placements = world.rows['teachingRequirementPlacement']!;
+    expect(placements.map((row) => [row['id'], row['teacherId']])).toEqual([
+      ['pl-eva', ANNA],
+      ['pl-cy', CY],
+    ]);
+    const calls = world.calls.slice(start);
+    const leads = calls.findIndex((call) => call.model === 'teachingRequirement' && call.method === 'updateMany');
+    const moved = calls.findIndex((call) => call.model === 'teachingRequirementPlacement' && call.method === 'updateMany');
+    const judged = calls.findIndex((call) => call.sql?.startsWith('SET CONSTRAINTS') && call.sql.endsWith('IMMEDIATE'));
+    expect(leads).toBeGreaterThanOrEqual(0);
+    expect(moved).toBeGreaterThan(leads);
+    expect(judged).toBeGreaterThan(moved);
+  });
+
   it('undoes an apply with the changes swapped and the returned basis — putting back a lead who has left, and nobody', async () => {
     const { service, world, proposal } = await proposeThenApply();
     const applied = await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: changesOf(proposal) }, admin());

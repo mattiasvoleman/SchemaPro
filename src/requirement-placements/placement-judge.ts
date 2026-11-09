@@ -3,11 +3,13 @@ import { ConflictReads } from '../calendar/conflict-reads';
 import type { DayLesson, MasterLessonConflict, MasterLessonsService } from '../calendar/master-lessons.service';
 import type { GradeNumbering } from '../common/grade-numbering';
 import type { LessonShape } from '../common/lesson-lengths';
+import type { LessonShare } from '../common/lesson-shares';
+import type { TaughtLesson } from '../optimization/locked-coverage';
 import { PRESERVED_FROM_REGENERATION } from '../optimization/preserved-lessons';
 import { readOtherSchoolHolds, type OtherSchoolHold } from '../optimization/other-school-holds';
 import { boardCodeOf, readBoardFacts, type BoardFacts } from '../swaps/board-rules';
 import type { RosterBasis } from '../year-rollover/projected-rosters';
-import { insideSchoolDay, placementsFitBesideLocks } from './placement-fit';
+import { insideSchoolDay, placementsFitBesideLocks, sharedPlacementsFitBesideLocks } from './placement-fit';
 
 /*
  * FÖRLAGDA POSTER: DOES A FÖRLÄGGNING STAND WHERE THE SCHOOL PUT IT?
@@ -75,6 +77,11 @@ export interface JudgedPlacement {
   requirementId: string;
   studentGroupId: string;
   subjectId: string;
+  /**
+   * Who teaches the lesson: the post's teacher, or on a post with delade
+   * lektioner the förläggning's own (teacherOfRow). The clash rule and the
+   * other schools' holds are asked about THIS teacher's week.
+   */
   teacherId: string | null;
   coTeacherId: string | null;
   dayOfWeek: number;
@@ -108,7 +115,20 @@ export interface JudgePlacementsInput {
    * place, for OVER_DEMAND. A post that is absent here is not asked; the call
    * without the map skips the question.
    */
-  demand?: ReadonlyMap<string /* requirementId */, { post: LessonShape; lockedMinutes: number[]; placed: number[] }>;
+  demand?: ReadonlyMap<string /* requirementId */, PlacementDemand>;
+}
+
+/** What OVER_DEMAND reads of one post. */
+export interface PlacementDemand {
+  post: LessonShape & { teacherId?: string | null; shares?: readonly LessonShare[] | null };
+  lockedMinutes: number[];
+  placed: number[];
+  /**
+   * Delade lektioner: the covering locks and the placed lessons with their
+   * teachers, on a post that shares its lessons. Present, it is what is
+   * asked (sharedPlacementsFitBesideLocks: Bo's lock answers Bo's lesson).
+   */
+  taught?: { locked: TaughtLesson[]; placed: TaughtLesson[] };
 }
 
 /** The sentences findConflicts gives an AVAILABILITY hit, one per resource it names. */
@@ -201,7 +221,14 @@ export async function judgePlacements(
   // 1. The school day, and 2. the post's demand: questions about the row alone.
   const overDemand = new Set<string>();
   for (const [requirementId, post] of input.demand ?? []) {
-    if (!placementsFitBesideLocks(post.post, post.lockedMinutes, post.placed)) overDemand.add(requirementId);
+    const fits = post.taught
+      ? sharedPlacementsFitBesideLocks(
+          { ...post.post, teacherId: post.post.teacherId ?? null },
+          post.taught.locked,
+          post.taught.placed,
+        )
+      : placementsFitBesideLocks(post.post, post.lockedMinutes, post.placed);
+    if (!fits) overDemand.add(requirementId);
   }
   const open: number[] = [];
   rows.forEach((row, index) => {

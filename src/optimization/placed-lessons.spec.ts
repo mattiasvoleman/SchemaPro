@@ -4,9 +4,12 @@ import {
   placedLessonRowsOf,
   placedLessonWritesOf,
   placedMinutesOf,
+  placedTaughtByPost,
   placementsKeyOf,
   placementsRefusalOf,
+  storedPlacementsOf,
   withoutPlaced,
+  withoutPlacedShared,
   type PlacedPost,
   type PlacementRead,
 } from './placed-lessons';
@@ -33,8 +36,17 @@ const read = (overrides: Partial<PlacementRead> = {}): PlacementRead => ({
   minutes: 60,
   roomId: 'hall',
   recurrence: 'ALL_WEEKS',
+  teacherId: null,
   ...overrides,
 });
+/** 7A's matematik: Ulf's two lessons of 60, Bo's one. */
+const SHARED: PlacedPost = {
+  ...POST,
+  id: 'post-7a-ma',
+  subjectId: 'ma',
+  shares: [{ teacherId: 'bo', lessons: 1, minutes: 60 }],
+};
+const sharedPosts = new Map([[SHARED.id, SHARED]]);
 
 describe('placedLessonRowsOf', () => {
   it('turns a förläggning into its post’s lesson at the row’s day, clock and room, with the post’s window', () => {
@@ -56,8 +68,19 @@ describe('placedLessonRowsOf', () => {
         minutes: 60,
         extraGroups: [],
         participants: [],
+        ownTeacher: false,
+        placementTeacherId: null,
       },
     ]);
+  });
+
+  it('makes a shared post’s förläggning its own teacher’s lesson, with the post’s medlärare as before', () => {
+    const coTaught = new Map([[SHARED.id, { ...SHARED, coTeacherId: 'kim' }]]);
+    const [row] = placedLessonRowsOf([read({ requirementId: SHARED.id, teacherId: 'bo' })], coTaught);
+    expect(row).toMatchObject({ teacherId: 'bo', coTeacherId: 'kim', ownTeacher: true, placementTeacherId: 'bo' });
+    // A removed teacher's lesson stands, nobody's.
+    const [nobody] = placedLessonRowsOf([read({ requirementId: SHARED.id, teacherId: null })], sharedPosts);
+    expect(nobody).toMatchObject({ teacherId: null, ownTeacher: true });
   });
 
   it('leaves out a row whose post was not read, and orders the rest by post, day, clock and id', () => {
@@ -92,6 +115,34 @@ describe('placedMinutesOf and withoutPlaced', () => {
   it('takes each placed length off exactly, and nothing for a length that is not left', () => {
     expect(withoutPlaced([80, 40, 40], [40])).toEqual([80, 40]);
     expect(withoutPlaced([80], [40])).toEqual([80]);
+  });
+});
+
+describe('placedTaughtByPost and withoutPlacedShared (delade lektioner)', () => {
+  it('reads each shared post’s förläggningar as its teachers’ lessons, a pair once, and no post that shares nothing', () => {
+    const rows = placedLessonRowsOf(
+      [
+        read({ id: 'odd', requirementId: SHARED.id, recurrence: 'ODD_WEEKS', teacherId: 'bo' }),
+        read({ id: 'even', requirementId: SHARED.id, dayOfWeek: 4, recurrence: 'EVEN_WEEKS', teacherId: 'bo' }),
+        read({ id: 'plain' }),
+      ],
+      new Map([...posts, ...sharedPosts]),
+    );
+    expect(placedTaughtByPost(rows, new Map([...posts, ...sharedPosts]))).toEqual(
+      new Map([[SHARED.id, [{ minutes: 60, teacherId: 'bo' }]]]),
+    );
+  });
+
+  it('takes Bo’s förläggning off Bo’s lesson and never off Ulf’s, in the post’s order', () => {
+    const lessons = [
+      { minutes: 60, teacherId: 'ulf' },
+      { minutes: 60, teacherId: 'ulf' },
+      { minutes: 60, teacherId: 'bo' },
+    ];
+    expect(withoutPlacedShared(lessons, [{ minutes: 60, teacherId: 'bo' }])).toEqual(lessons.slice(0, 2));
+    expect(withoutPlacedShared(lessons, [{ minutes: 60, teacherId: 'ulf' }])).toEqual([lessons[1], lessons[2]]);
+    // Nothing of its own left: nothing is taken (the judge refused it as OVER_DEMAND before).
+    expect(withoutPlacedShared(lessons.slice(0, 2), [{ minutes: 60, teacherId: 'bo' }])).toEqual(lessons.slice(0, 2));
   });
 });
 
@@ -187,6 +238,14 @@ describe('placedLessonWritesOf', () => {
     ]);
   });
 
+  it('writes a shared post’s förläggning with its own teacher, whoever the post’s lead is at the write', () => {
+    const shared = placedLessonRowsOf([read({ requirementId: SHARED.id, teacherId: 'bo' })], sharedPosts);
+    const now = { teacherId: 'vera', coTeacherId: 'kim', startDate: null, endDate: null };
+    expect(placedLessonWritesOf(shared, new Map([[SHARED.id, now]]), ids)).toEqual([
+      expect.objectContaining({ teacherId: 'bo', coTeacherId: 'kim', fromPlacement: true }),
+    ]);
+  });
+
   it('is null when a förläggning’s post is gone', () => {
     expect(placedLessonWritesOf(rows, new Map(), ids)).toBeNull();
   });
@@ -203,6 +262,15 @@ describe('placementsKeyOf', () => {
     expect(placementsKeyOf([a, b])).not.toBe(placementsKeyOf([a, { ...b, roomId: 'pool' }]));
     expect(placementsKeyOf([a, b])).not.toBe(placementsKeyOf([a, { ...b, recurrence: 'ODD_WEEKS' }]));
     expect(placementsKeyOf([a, b])).not.toBe(placementsKeyOf([a, { ...b, minutes: 40 }]));
+    // Delade lektioner: a förläggning handed to another teacher while the solver ran.
+    expect(placementsKeyOf([a, b])).not.toBe(placementsKeyOf([a, { ...b, teacherId: 'bo' }]));
     expect(placementsKeyOf([])).toBe('');
+  });
+
+  it('compares a run’s rows by the stored column, not by the teacher a post that shares nothing lends them', () => {
+    const stored = [read({ id: 'a' }), read({ id: 's', requirementId: SHARED.id, teacherId: 'bo' })];
+    const rows = placedLessonRowsOf(stored, new Map([...posts, ...sharedPosts]));
+    expect(rows.find((row) => row.id === 'a')!.teacherId).toBe('ulf');
+    expect(placementsKeyOf(storedPlacementsOf(rows))).toBe(placementsKeyOf(stored));
   });
 });

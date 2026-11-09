@@ -837,8 +837,27 @@ const placementRefusal = (
 };
 
 describe('requirementPlacementsRefusal', () => {
-  it.each(['LENGTH', 'COUNT', 'WEEKS', 'PAIRS', 'BLOCK', 'SHARES', 'POST'])('reads %s and the post off the driver cause', (reason) => {
+  it.each(['LENGTH', 'COUNT', 'WEEKS', 'PAIRS', 'BLOCK', 'POST', 'NO_TEACHER', 'TEACHER', 'TEACHER_LENGTH', 'TEACHER_PAIRS', 'TEACHER_COUNT'])('reads %s and the post off the driver cause', (reason) => {
     expect(requirementPlacementsRefusal(placementRefusal(reason))).toEqual({ requirementId: REQUIREMENT_ID, reason });
+  });
+
+  it('knows SHARES no more: 20270208090000 took it away, and a stray one is this refusal without a rule', () => {
+    expect(requirementPlacementsRefusal(placementRefusal('SHARES'))).toEqual({ requirementId: REQUIREMENT_ID, reason: null });
+  });
+
+  it('reads the rules per teacher off a failed COMMIT too (the deferred trigger), the raw adapter error Prisma 7.10 throws', () => {
+    const atCommit = Object.assign(new Error('TEACHER: en förlagd lektion anger en lärare'), {
+      name: 'DriverAdapterError',
+      cause: {
+        originalCode: 'FP409',
+        originalMessage: 'TEACHER: en förlagd lektion anger en lärare som inte har någon av postens lektioner',
+        kind: 'postgres',
+        detail: `requirementId=${REQUIREMENT_ID} reason=TEACHER`,
+      },
+    });
+    expect(requirementPlacementsRefusal(atCommit)).toEqual({ requirementId: REQUIREMENT_ID, reason: 'TEACHER' });
+    const another = Object.assign(new Error('x'), { name: 'DriverAdapterError', cause: { originalCode: '40P01' } });
+    expect(requirementPlacementsRefusal(another)).toBeNull();
   });
 
   it('still recognises the refusal from the rendered message when the meta is gone, with the rule from its first word', () => {
@@ -867,7 +886,7 @@ describe('requirementPlacementsRefusal', () => {
 });
 
 describe('requirementPlacementsConflict', () => {
-  it.each(['LENGTH', 'COUNT', 'WEEKS', 'PAIRS', 'BLOCK', 'SHARES', 'POST'] as const)(
+  it.each(['LENGTH', 'COUNT', 'WEEKS', 'PAIRS', 'BLOCK', 'POST', 'NO_TEACHER', 'TEACHER', 'TEACHER_LENGTH', 'TEACHER_PAIRS', 'TEACHER_COUNT'] as const)(
     'says %s in a sentence and puts the rule in params, where the filter forwards it',
     (reason) => {
       const conflict = requirementPlacementsConflict(reason);
@@ -879,6 +898,16 @@ describe('requirementPlacementsConflict', () => {
       expect(body.message.length).toBeGreaterThan(20);
     },
   );
+
+  it('names the förläggning a change has to wait for by weekday, clock and weeks, and the row of a PUT by its index', () => {
+    const named = requirementPlacementsConflict('TEACHER', {
+      placement: { dayOfWeek: 2, start: '10:00', end: '11:00', recurrence: 'ODD_WEEKS' },
+    }).getResponse() as { message: string; params: unknown };
+    expect(named.params).toEqual({ reason: 'TEACHER', day: 2, start: '10:00', end: '11:00', weeks: 'ODD_WEEKS' });
+    expect(named.message).toMatch(/^Förläggningen tisdag 10:00–11:00 måste ändras först\. /);
+    const indexed = requirementPlacementsConflict('NO_TEACHER', { index: 3 }).getResponse() as { params: unknown };
+    expect(indexed.params).toEqual({ reason: 'NO_TEACHER', index: 3 });
+  });
 
   it('answers an unnamed rule with the code and a general sentence, no params', () => {
     const body = requirementPlacementsConflict(null).getResponse() as Record<string, unknown>;
@@ -898,9 +927,9 @@ describe('rethrowPrismaError and Förlagda poster', () => {
   };
 
   it('turns the trigger\'s refusal into the 409 naming the rule, from whichever writer met it', () => {
-    const conflict = thrown(placementRefusal('SHARES')) as ConflictException;
+    const conflict = thrown(placementRefusal('TEACHER_LENGTH')) as ConflictException;
     expect(conflict).toBeInstanceOf(ConflictException);
-    expect(conflict.getResponse()).toMatchObject({ code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'SHARES' } });
+    expect(conflict.getResponse()).toMatchObject({ code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'TEACHER_LENGTH' } });
   });
 
   it('keeps the decided plan\'s TP409 a decided plan', () => {

@@ -1243,6 +1243,62 @@ describe('Planning surface (e2e)', () => {
       expect(harness.tx['teachingRequirement']!['update']).not.toHaveBeenCalled();
     });
 
+    it('delade lektioner: a share removed under its förläggning is a 409 that names the förläggning flat in params, and no person', async () => {
+      const BO = '55555555-5555-4555-8555-555555555555';
+      // The post's row lock before its shares are replaced (lockPostForShares).
+      givenStaffingWorld(harness.tx, world({ policy: { qualificationMode: 'OFF', overAllocationMode: 'OFF' } }), () =>
+        Promise.resolve([{ id: REQUIREMENT_ID }]),
+      );
+      harness.tx['teachingRequirement']!['findUnique']!.mockResolvedValue({
+        academicYearId: YEAR_ID,
+        subjectId: SUBJECT_ID,
+        studentGroupId: GROUP_ID,
+        teacherId: KARIN,
+        coTeacherId: null,
+        lessonsPerWeek: 3,
+        minutesPerLesson: 60,
+        lessonLengths: [],
+        recurrence: 'ALL_WEEKS',
+        blockId: null,
+        shares: [{ teacherId: BO, lessons: 1, minutes: 60 }],
+      });
+      harness.tx['teachingRequirement']!['update']!.mockResolvedValue({ id: REQUIREMENT_ID, schoolId: SCHOOL_ID, teacherId: KARIN });
+      harness.tx['teachingRequirementPlacement']!['findMany']!.mockResolvedValue([
+        {
+          id: 'p-1',
+          requirementId: REQUIREMENT_ID,
+          teacherId: BO,
+          dayOfWeek: 2,
+          startTime: new Date('1970-01-01T10:00:00.000Z'),
+          minutes: 60,
+          recurrence: 'ODD_WEEKS',
+        },
+        {
+          id: 'p-2',
+          requirementId: REQUIREMENT_ID,
+          teacherId: BO,
+          dayOfWeek: 4,
+          startTime: new Date('1970-01-01T10:00:00.000Z'),
+          minutes: 60,
+          recurrence: 'EVEN_WEEKS',
+        },
+      ]);
+
+      const response = await request(http())
+        .patch(`/api/v1/teaching-requirements/${REQUIREMENT_ID}`)
+        .set('x-test-user', admin())
+        .send({ shares: [] })
+        .expect(409);
+
+      expect(response.body).toMatchObject({
+        code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT',
+        params: { reason: 'TEACHER', day: 2, start: '10:00', end: '11:00', weeks: 'ODD_WEEKS' },
+      });
+      expect(response.body.detail).toMatch(/^Förläggningen tisdag 10:00–11:00 måste ändras först\./);
+      expect(JSON.stringify(response.body)).not.toContain(BO);
+      expect(harness.tx['teachingRequirementPlacement']!['updateMany']).not.toHaveBeenCalled();
+    });
+
     it('OFF: 201 with no warnings, and no post locked', async () => {
       const handle = givenStaffingWorld(
         harness.tx,

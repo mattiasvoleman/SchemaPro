@@ -46,6 +46,13 @@ import {
   sameTeacherTwice,
 } from '../staffing/staffing-enforcement';
 import { staffingSentence } from '../staffing/staffing-checks';
+import {
+  followOfChanges,
+  judgePlacementTeachersNow,
+  moveTeachers,
+  placementFollowSentence,
+  placementsOfPosts,
+} from '../requirement-placements/placement-teachers';
 import type {
   ImportGroupsDto,
   ImportGuardiansDto,
@@ -1918,6 +1925,14 @@ export class ImportService {
       const existingByKey = new Map(
         existing.map((row) => [`${row.studentGroupId}:${row.subjectId}`, row]),
       );
+      // Förlagda poster on a shared post (placement-teachers.ts): a row that
+      // changes who teaches it must leave each förläggning a teacher. Read once
+      // for the file; a year whose posts share nothing reads none.
+      const placementsOf = await placementsOfPosts(
+        tx,
+        existing.filter((row) => (row.shares ?? []).length > 0).map((row) => row.id),
+      );
+      let placementsMoved = false;
 
       /*
        * The staffing policy's two questions, per row (staffing-enforcement.ts).
@@ -2185,6 +2200,42 @@ export class ImportService {
             continue;
           }
         }
+        // Förlagda poster on a shared post: its förläggningar follow a change
+        // of teacher that says where to (one out, one in, the same lessons);
+        // anything else is this row's error, naming the förläggning, and the
+        // rest of the file proceeds.
+        let placementMoves: { id: string; teacherId: string | null }[] = [];
+        if (current && placementsOf.has(current.id)) {
+          const follow = followOfChanges(
+            [
+              {
+                requirementId: current.id,
+                before: {
+                  teacherId: current.teacherId,
+                  lessonsPerWeek: current.lessonsPerWeek,
+                  minutesPerLesson: current.minutesPerLesson,
+                  lessonLengths: current.lessonLengths,
+                  recurrence: current.recurrence,
+                  blockId: current.blockId,
+                  shares: current.shares ?? [],
+                },
+                after: {
+                  teacherId: 'teacherId' in values ? (values.teacherId ?? null) : current.teacherId,
+                  ...shape,
+                  recurrence: values.recurrence ?? current.recurrence,
+                  blockId: current.blockId,
+                  shares: current.shares ?? [],
+                },
+              },
+            ],
+            placementsOf,
+          );
+          if ('refused' in follow) {
+            report.errors.push({ row: rowNumber, message: placementFollowSentence(follow.refused) });
+            continue;
+          }
+          placementMoves = follow.moves;
+        }
         // An untouched row adds no teacher and no minute: nothing to ask.
         const unchanged = current ? this.requirementIsUnchanged(current, values) : false;
         const judged =
@@ -2279,6 +2330,10 @@ export class ImportService {
           where: { id: current.id },
           data: values,
         });
+        if (placementMoves.length > 0) {
+          await moveTeachers(tx, placementMoves);
+          placementsMoved = true;
+        }
         if (judged) checks?.apply(judged.after);
         report.updated += 1;
       }
@@ -2286,6 +2341,8 @@ export class ImportService {
       if (heldForBlock.size > 0) {
         await writeHeldBlocks(tx, report, existing, heldForBlock, dto.academicYearId, line);
       }
+      // The database's rules per teacher on the posts as the file leaves them, as a statement (not the COMMIT).
+      if (placementsMoved) await judgePlacementTeachersNow(tx);
 
       return report;
     });

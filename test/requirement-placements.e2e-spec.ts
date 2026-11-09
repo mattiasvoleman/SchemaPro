@@ -35,7 +35,7 @@ const POST = {
   blockId: null,
   startDate: null,
   endDate: null,
-  _count: { shares: 0 },
+  shares: [],
   academicYear: { isActive: true, predecessorId: null, gradeNumbering: 'NIOARIG' },
 };
 
@@ -47,6 +47,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   minutes: 60,
   roomId: ROOM_ID,
   recurrence: 'ALL_WEEKS',
+  teacherId: null,
   room: { name: 'Simhallen' },
   ...over,
 });
@@ -112,6 +113,7 @@ describe('Förlagda poster (e2e)', () => {
           roomId: ROOM_ID,
           roomName: 'Simhallen',
           recurrence: 'ALL_WEEKS',
+          teacherId: null,
         },
       ]);
     });
@@ -232,6 +234,40 @@ describe('Förlagda poster (e2e)', () => {
       const response = await put({ placements: [body()] }).expect(409);
       expect(response.body.code).toBe('REQUIREMENT_PLACEMENTS_DO_NOT_FIT');
       expect(response.body.params).toEqual({ reason: 'COUNT' });
+    });
+
+    describe('on a post with delade lektioner', () => {
+      const BO = '55555555-5555-4555-8555-555555555555';
+      beforeEach(() => {
+        harness.tx['teachingRequirement']!['findUnique']!.mockResolvedValue({
+          ...POST,
+          lessonsPerWeek: 3,
+          shares: [{ teacherId: BO, lessons: 1, minutes: 60 }],
+        });
+      });
+
+      it('saves a row with its teacher', async () => {
+        await put({ placements: [body({ teacherId: BO })] }).expect(200);
+        const data = (placements()['createMany']!.mock.calls[0]![0] as { data: Array<{ teacherId: string }> }).data;
+        expect(data[0]!.teacherId).toBe(BO);
+      });
+
+      it('answers a row that names nobody with NO_TEACHER and the row’s index, flat in params, and writes nothing', async () => {
+        const response = await put({ placements: [body({ teacherId: BO }), body({ dayOfWeek: 4 })] }).expect(409);
+        expect(response.body.code).toBe('REQUIREMENT_PLACEMENTS_DO_NOT_FIT');
+        expect(response.body.params).toEqual({ reason: 'NO_TEACHER', index: 1 });
+        expect(placements()['deleteMany']).not.toHaveBeenCalled();
+      });
+
+      it('answers more of Bo’s lessons than Bo has with TEACHER_COUNT at the row, and names no person', async () => {
+        const response = await put({ placements: [body({ teacherId: BO }), body({ dayOfWeek: 4, teacherId: BO })] }).expect(409);
+        expect(response.body.params).toEqual({ reason: 'TEACHER_COUNT', index: 1 });
+        expect(JSON.stringify(response.body)).not.toContain(BO);
+      });
+
+      it('refuses a teacher that is no uuid', async () => {
+        await put({ placements: [body({ teacherId: 'bo' })] }).expect(400);
+      });
     });
 
     it('is Planering\'s write: not a teacher\'s, not a reader\'s', async () => {
