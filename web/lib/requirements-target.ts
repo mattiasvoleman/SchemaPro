@@ -25,6 +25,7 @@
 
 import {
   computePlannedCoverage,
+  nationalTopOf,
   type PlannedCell,
   type PlannedCoverage,
   type PlannedCoverageInput,
@@ -251,8 +252,9 @@ export interface SubjectFigures {
   /**
    * A class's figures in the subject, for the total column: its own cell (the
    * figures the cell beside it reads), or for a part of a national line the
-   * line's (`line` set: Biologi alone has no target where the plan names NO).
-   * Undefined where the class has no cell in the subject.
+   * line's (`line` set: Biologi alone has no target where the plan names NO),
+   * also in a class with the line's target and no post on it. Undefined where
+   * the class has no cell in the subject and no such line.
    */
   row(groupId: string): TargetTotal | undefined;
   /**
@@ -306,8 +308,17 @@ const tenth = (value: number): number => Math.round(value * 10) / 10;
 export function buildTargetView(
   coverage: PlannedCoverage,
   plans: PlannedPlan[],
-  /** The input's subjects, for subjectOwn: which exist, and which are teaching time. */
-  subjects: readonly { id: string; countsTowardTimplan: boolean }[] = [],
+  /**
+   * The input's subjects, for subjectOwn: which exist, which are teaching
+   * time, and the national line a child of an ämnesgrupp falls to (NO for
+   * Biologi) in a class whose plan does not name it.
+   */
+  subjects: readonly {
+    id: string;
+    countsTowardTimplan: boolean;
+    nationalCode?: string | null;
+    parentCode?: string | null;
+  }[] = [],
 ): TargetView {
   const lineByCell = new Map<string, PlannedLine>();
   const summaries = new Map<string, PlannedGroupSummary>();
@@ -397,6 +408,20 @@ export function buildTargetView(
   }
 
   const counts = new Map(subjects.map((subject) => [subject.id, subject.countsTowardTimplan]));
+  const topOf = new Map(
+    subjects.map((subject) => [
+      subject.id,
+      nationalTopOf({ nationalCode: subject.nationalCode ?? null, parentCode: subject.parentCode }),
+    ]),
+  );
+  /** A class's national line as a total-column figure, named by its code. */
+  const lineRow = (line: PlannedLine, code: string): TargetTotal => ({
+    planned: line.plannedMinutesPerWeek,
+    target: line.targetMinutesPerWeek,
+    plannedHours: line.plannedHours,
+    targetHours: line.targetHours,
+    line: code,
+  });
   const owned = new Map<string, SubjectFigures | null>();
   const subjectFigures = (subjectId: string): SubjectFigures | null => {
     const counted = counts.get(subjectId);
@@ -414,13 +439,7 @@ export function buildTargetView(
       if (line.targetMinutesPerWeek !== null) targeted.add(cell.studentGroupId);
       const row: TargetTotal =
         cell.nationalCode !== undefined
-          ? {
-              planned: line.plannedMinutesPerWeek,
-              target: line.targetMinutesPerWeek,
-              plannedHours: line.plannedHours,
-              targetHours: line.targetHours,
-              line: cell.nationalCode,
-            }
+          ? lineRow(line, cell.nationalCode)
           : {
               planned: cell.plannedMinutesPerWeek,
               target: cell.targetMinutesPerWeek,
@@ -431,6 +450,23 @@ export function buildTargetView(
       if (row.line === undefined) continue;
       lineCodes.add(row.line);
       for (const id of line.subjectIds) if (id !== subjectId) partners.add(id);
+    }
+    // A child of an ämnesgrupp (Biologi) in a class whose plan names the group
+    // (NO) and that has no post in it: the child is not on the class's NO line,
+    // so it has no cell, but the line's target reaches it all the same. The
+    // class is a row of the line's figures, and in the sum (second review of
+    // #297, MEDEL-3: Biologi read 120 of 135 beside a school at 120 of 540).
+    const top = topOf.get(subjectId) ?? null;
+    if (top !== null) {
+      for (const summary of coverage.groups) {
+        if (rows.has(summary.studentGroupId)) continue;
+        const line = summary.lines.find((entry) => entry.nationalCode === top && entry.targetMinutesPerWeek !== null);
+        if (!line) continue;
+        targeted.add(summary.studentGroupId);
+        rows.set(summary.studentGroupId, lineRow(line, top));
+        lineCodes.add(top);
+        for (const id of line.subjectIds) partners.add(id);
+      }
     }
     // A part of a national line in any class: the lines, added over the classes
     // (each class's own figures where its plan has the subject on a line of its own).

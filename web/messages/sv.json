@@ -803,6 +803,7 @@
       "totalNotCounted": "Räknas inte som undervisningstid.",
       "totalHeader": "Planerat / mål",
       "totalHeaderSubject": "Planerat / mål i ämnet",
+      "totalHeaderLine": "Planerat / mål i {line}",
       "totalsRow": "Summa klasser",
       "totalCountedWith": "Räknas tillsammans med alternativet i kolumnen för dess första ämne.",
       "pillLabel": "Täckning för {group}: {covered} av {total} ämnen når målet för alla elever. Öppna täckningen.",

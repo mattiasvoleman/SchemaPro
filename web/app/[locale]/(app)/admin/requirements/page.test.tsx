@@ -2707,6 +2707,47 @@ describe("Timplansposter in Mål mode", () => {
       expect(within(totals).getByText("90 / 90")).toBeInTheDocument();
     });
 
+    // Second review of #297, MEDEL-3: a class whose NO line has its target and
+    // no post in any of NO's subjects has no Biologi cell, and was neither a
+    // row under Biologi nor in its sum ("90 av 90" beside a school at 90 of 180).
+    it("under Ämne shows a class with the line's target and no post on it, and sums the line over both classes", async () => {
+      state.national = loaded(national);
+      state.groups = loaded([
+        ...groups,
+        { id: "g-7b", academicYearId: "y1", name: "7B", kind: "CLASS", gradeLevel: 7 },
+        // Åk 9 follows no plan: its NO line, from a Fysik post alone, has no target.
+        { id: "g-9a", academicYearId: "y1", name: "9A", kind: "CLASS", gradeLevel: 9 },
+      ]);
+      state.requirements = loaded([
+        ...(state.requirements.data ?? []),
+        { ...requirements[0]!, id: "r-fys9", studentGroupId: "g-9a", subjectId: "s-fys", lessonsPerWeek: 1, minutesPerLesson: 45, recurrence: "ALL_WEEKS" },
+      ]);
+      const user = userEvent.setup();
+      render(<RequirementsPage />);
+      await enterTargetMode();
+      await waitFor(() => expect(cellOf("Biologi")).toHaveAttribute("aria-label", expect.stringContaining("target.cellMet")));
+      await user.click(screen.getByRole("combobox", { name: "subjectFilter.label" }));
+      await user.click(screen.getByRole("option", { name: "Biologi" }));
+
+      // 7B: NO's 90 and nothing planned, shown with its empty cell and the line's figures.
+      const seven = screen.getByText("7B").closest("tr")!;
+      expect(within(seven).getByText("0 / 90")).toBeInTheDocument();
+      expect(within(seven).getByText("target.totalLine(NO)")).toBeInTheDocument();
+      // 9A's NO line has no target and it has no Biologi post: not a row, and not in the sum.
+      expect(screen.queryByText("9A")).toBeNull();
+      expect(screen.getByText("classesSection (sectionShown(2|3))")).toBeInTheDocument();
+      // 90 of 90 in 7A and 0 of 90 in 7B: the rows add up to the classes' row and the sentence.
+      const totals = within(matrix()).getByRole("rowheader", { name: "target.totalsRow" }).closest("tr")!;
+      expect(within(totals).getByText("90 / 180")).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "target.subjectLine(Biologi|Fysik, Naturorienterande ämnen|NO) target.lineFigures(90|180|64,5 h|129 h)",
+        ),
+      ).toBeInTheDocument();
+      // Second review, LÅG-1: the column's figures are the line's, and its header says which.
+      expect(within(matrix()).getByRole("columnheader", { name: "target.totalHeaderLine(NO)" })).toBeInTheDocument();
+    });
+
     it("still reads each as a line of its own while the national list has no group for them", async () => {
       render(<RequirementsPage />);
       await enterTargetMode();

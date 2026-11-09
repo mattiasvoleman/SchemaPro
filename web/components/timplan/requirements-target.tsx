@@ -432,6 +432,17 @@ export function GroupTotalCell({
   );
 }
 
+/**
+ * The total column's header: the plan against the class's whole week, the
+ * subject's under Ämne, or the line's when the subject's figures are its
+ * national line's ("i NO" over Biologi's column, second review of #297).
+ */
+export function TotalHeader({ figures }: { figures: SubjectFigures | null }) {
+  const t = useTranslations("requirements");
+  if (figures?.total.line !== undefined) return <>{t("target.totalHeaderLine", { line: figures.total.line })}</>;
+  return <>{t(figures ? "target.totalHeaderSubject" : "target.totalHeader")}</>;
+}
+
 /** One column's total over the classes, as the totals row prints it. */
 export function SubjectTotalCell({ total }: { total: TargetTotal | undefined }) {
   const t = useTranslations("requirements");

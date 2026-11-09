@@ -803,6 +803,7 @@
       "totalNotCounted": "Not counted as teaching time.",
       "totalHeader": "Planned / target",
       "totalHeaderSubject": "Planned / target in the subject",
+      "totalHeaderLine": "Planned / target in {line}",
       "totalCountedWith": "Counted together with its alternative, in the column of the line's first subject.",
       "totalsRow": "All classes",
       "pillLabel": "Coverage for {group}: {covered} of {total} subjects reach the target for every pupil. Open coverage.",

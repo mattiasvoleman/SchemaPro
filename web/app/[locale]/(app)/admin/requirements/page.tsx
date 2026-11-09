@@ -1670,7 +1670,7 @@ export default function RequirementsPage() {
                       scope="col"
                       className="sticky top-0 z-20 border-l bg-card px-3 py-2.5 text-right font-medium text-foreground"
                     >
-                      {t(ownTarget ? "target.totalHeaderSubject" : "target.totalHeader")}
+                      <target.module.TotalHeader figures={ownTarget} />
                     </th>
                   ) : null}
                   <th
