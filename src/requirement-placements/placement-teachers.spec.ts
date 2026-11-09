@@ -58,7 +58,7 @@ describe('moveTeachers', () => {
 
 describe('placementFollowRefusal', () => {
   it('names the förläggning and its post flat in params, and no person', () => {
-    const body = placementFollowRefusal({ ok: false, reason: 'TEACHER', row: stored('p1', BO, 2, 'ODD_WEEKS') }, 'post-1').getResponse() as {
+    const body = placementFollowRefusal({ ok: false, reason: 'TEACHER', row: stored('p1', BO, 2, 'ODD_WEEKS'), unstaffed: false }, 'post-1').getResponse() as {
       message: string;
       params: Record<string, unknown>;
     };
@@ -67,15 +67,13 @@ describe('placementFollowRefusal', () => {
     expect(JSON.stringify(body)).not.toContain(BO);
   });
 
-  it('says a förläggning nobody teaches (its teacher removed) can only be removed, and marks it unstaffed', () => {
-    const body = placementFollowRefusal({ ok: false, reason: 'TEACHER_COUNT', row: stored('p1', null) }, 'post-1').getResponse() as {
-      message: string;
-      params: Record<string, unknown>;
-    };
+  it('carries the flag followPlacements gives, and the sentence follows it', () => {
+    const nobody = placementFollowRefusal({ ok: false, reason: 'TEACHER_COUNT', row: stored('p1', null), unstaffed: true }, 'post-1');
+    const body = nobody.getResponse() as { message: string; params: Record<string, unknown> };
     expect(body.params).toMatchObject({ reason: 'TEACHER_COUNT', unstaffed: 1 });
     expect(body.message).toContain('Ta bort förläggningen först');
     expect(body.message).not.toContain('välj en annan lärare');
-    expect(placementFollowSentence({ ok: false, reason: 'TEACHER_COUNT', row: stored('p1', null) }, 'post-1')).toBe(body.message);
+    expect(placementFollowSentence({ ok: false, reason: 'TEACHER_COUNT', row: stored('p1', null), unstaffed: true }, 'post-1')).toBe(body.message);
   });
 });
 
@@ -122,6 +120,38 @@ describe('carryPlacementTeachers', () => {
     ).rejects.toMatchObject({ status: 409, response: { params: { reason: 'TEACHER', requirementId: 'post-2' } } });
     expect(tx['teachingRequirementPlacement']!['updateMany']).not.toHaveBeenCalled();
     expect(tx['$executeRaw']).not.toHaveBeenCalled();
+  });
+});
+
+describe('carryPlacementTeachers and a förläggning that names nobody (review of #298, MEDEL-3)', () => {
+  const refusalOf = async (change: Parameters<typeof carryPlacementTeachers>[1][number], rows: StoredPlacement[]) => {
+    const tx = createTxMock();
+    tx['teachingRequirementPlacement']!['findMany']!.mockResolvedValue(rows);
+    try {
+      await carryPlacementTeachers(client(tx), [change]);
+    } catch (error) {
+      return (error as { getResponse(): { message: string; params: Record<string, unknown> } }).getResponse();
+    }
+    throw new Error('not refused');
+  };
+
+  it('is not unstaffed on a post that starts to share and leaves its lead fewer lessons than are placed: TEACHER_COUNT, choose another teacher', async () => {
+    const body = await refusalOf(
+      { requirementId: 'post-1', before: post({ shares: [] }), after: post({ shares: [{ teacherId: BO, lessons: 2, minutes: 60 }] }) },
+      [stored('p1', null), stored('p2', null, 4)],
+    );
+    expect(body.params).toEqual({ reason: 'TEACHER_COUNT', day: 4, start: '10:00', end: '11:00', weeks: 'ALL_WEEKS', requirementId: 'post-1' });
+    expect(body.message).toContain('välj en annan lärare');
+  });
+
+  it('is unstaffed on a shared post whose share’s teacher was removed, when the change leaves no lesson nobody teaches', async () => {
+    const removed = post({ shares: [{ teacherId: null, lessons: 1, minutes: 60 }] });
+    const body = await refusalOf(
+      { requirementId: 'post-1', before: removed, after: post({ teacherId: 'xena', shares: [{ teacherId: 'dan', lessons: 1, minutes: 60 }] }) },
+      [stored('p1', null)],
+    );
+    expect(body.params).toMatchObject({ reason: 'TEACHER', unstaffed: 1, requirementId: 'post-1' });
+    expect(body.message).toContain('Ta bort förläggningen först');
   });
 });
 

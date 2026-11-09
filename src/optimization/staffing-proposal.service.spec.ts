@@ -1491,7 +1491,11 @@ describe('StaffingProposalService.apply', () => {
     try {
       await expect(
         service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: changesOf(proposal) }, admin()),
-      ).rejects.toMatchObject({ status: 409, response: { code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'TEACHER' } } });
+      ).rejects.toMatchObject({
+        status: 409,
+        // The post the trigger's DETAIL names, which the proposal dialog names the row by (review of #298, LÅG-8).
+        response: { code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'TEACHER', requirementId: R_SV7 } },
+      });
     } finally {
       carry.mockRestore();
     }

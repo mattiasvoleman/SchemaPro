@@ -233,7 +233,8 @@ describe('Förlagda poster (e2e)', () => {
       );
       const response = await put({ placements: [body()] }).expect(409);
       expect(response.body.code).toBe('REQUIREMENT_PLACEMENTS_DO_NOT_FIT');
-      expect(response.body.params).toEqual({ reason: 'COUNT' });
+      // The post the trigger's DETAIL names, flat (review of #298, LÅG-8).
+      expect(response.body.params).toEqual({ reason: 'COUNT', requirementId: POST_ID });
     });
 
     describe('on a post with delade lektioner', () => {

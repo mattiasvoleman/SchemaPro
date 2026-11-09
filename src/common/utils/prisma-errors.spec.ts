@@ -929,7 +929,9 @@ describe('rethrowPrismaError and Förlagda poster', () => {
   it('turns the trigger\'s refusal into the 409 naming the rule, from whichever writer met it', () => {
     const conflict = thrown(placementRefusal('TEACHER_LENGTH')) as ConflictException;
     expect(conflict).toBeInstanceOf(ConflictException);
-    expect(conflict.getResponse()).toMatchObject({ code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'TEACHER_LENGTH' } });
+    // With the post DETAIL names, flat in params (review of #298, LÅG-8).
+    expect((conflict.getResponse() as { params: unknown }).params).toEqual({ reason: 'TEACHER_LENGTH', requirementId: REQUIREMENT_ID });
+    expect(conflict.getResponse()).toMatchObject({ code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT' });
   });
 
   it('keeps the decided plan\'s TP409 a decided plan', () => {

@@ -1299,6 +1299,45 @@ describe('Planning surface (e2e)', () => {
       expect(harness.tx['teachingRequirementPlacement']!['updateMany']).not.toHaveBeenCalled();
     });
 
+    it('delade lektioner: a post that starts to share and leaves its lead fewer lessons than are placed is TEACHER_COUNT, not unstaffed (review of #298, MEDEL-3)', async () => {
+      const BO = '55555555-5555-4555-8555-555555555555';
+      givenStaffingWorld(harness.tx, world({ policy: { qualificationMode: 'OFF', overAllocationMode: 'OFF' } }), () =>
+        Promise.resolve([{ id: REQUIREMENT_ID }]),
+      );
+      harness.tx['teachingRequirement']!['findUnique']!.mockResolvedValue({
+        academicYearId: YEAR_ID,
+        subjectId: SUBJECT_ID,
+        studentGroupId: GROUP_ID,
+        teacherId: KARIN,
+        coTeacherId: null,
+        lessonsPerWeek: 3,
+        minutesPerLesson: 60,
+        lessonLengths: [],
+        recurrence: 'ALL_WEEKS',
+        blockId: null,
+        shares: [],
+      });
+      harness.tx['teachingRequirement']!['update']!.mockResolvedValue({ id: REQUIREMENT_ID, schoolId: SCHOOL_ID, teacherId: KARIN });
+      // Karin's two placed lessons on a post that shares nothing: the rows name nobody, the post's teacher is theirs.
+      harness.tx['teachingRequirementPlacement']!['findMany']!.mockResolvedValue([
+        { id: 'p-1', requirementId: REQUIREMENT_ID, teacherId: null, dayOfWeek: 2, startTime: new Date('1970-01-01T10:00:00.000Z'), minutes: 60, recurrence: 'ALL_WEEKS' },
+        { id: 'p-2', requirementId: REQUIREMENT_ID, teacherId: null, dayOfWeek: 4, startTime: new Date('1970-01-01T10:00:00.000Z'), minutes: 60, recurrence: 'ALL_WEEKS' },
+      ]);
+
+      // Bo is given two of the three: Karin keeps one for her two placed.
+      const response = await request(http())
+        .patch(`/api/v1/teaching-requirements/${REQUIREMENT_ID}`)
+        .set('x-test-user', admin())
+        .send({ shares: [{ teacherId: BO, lessons: 2, minutes: 60 }] })
+        .expect(409);
+
+      expect(response.body.code).toBe('REQUIREMENT_PLACEMENTS_DO_NOT_FIT');
+      expect(response.body.params).toEqual({ reason: 'TEACHER_COUNT', day: 4, start: '10:00', end: '11:00', weeks: 'ALL_WEEKS', requirementId: REQUIREMENT_ID });
+      expect(response.body.detail).toContain('välj en annan lärare');
+      expect(response.body.detail).not.toContain('togs bort');
+      expect(harness.tx['teachingRequirementPlacement']!['updateMany']).not.toHaveBeenCalled();
+    });
+
     it('OFF: 201 with no warnings, and no post locked', async () => {
       const handle = givenStaffingWorld(
         harness.tx,

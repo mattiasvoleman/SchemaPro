@@ -75,8 +75,9 @@ export async function placementsOfPosts(
 /**
  * The 409 that names the förläggning a change has to wait for
  * (followPlacements' refusal), and its post: a write of many posts at once
- * (the staffing proposal) says which. A förläggning that names nobody (its
- * teacher was removed) can only be removed, and the sentence says so.
+ * (the staffing proposal) says which. A förläggning that names nobody on a
+ * shared post (its teacher was removed; followPlacements says it) can only be
+ * removed, and the sentence says so.
  */
 export function placementFollowRefusal(refusal: Extract<PlacementsFollow, { ok: false }>, requirementId: string) {
   const row = refusal.row as StoredPlacement;
@@ -89,7 +90,7 @@ export function placementFollowRefusal(refusal: Extract<PlacementsFollow, { ok: 
       recurrence: row.recurrence as LessonRecurrence,
     },
     requirementId,
-    unstaffed: row.teacherId === null,
+    unstaffed: refusal.unstaffed,
   });
 }
 

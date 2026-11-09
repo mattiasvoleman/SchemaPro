@@ -309,15 +309,15 @@ describe('followPlacements: a change of teacher carries the förläggningar when
       ],
     });
     const row = stored('p1', 'bo');
-    expect(followPlacements(before, after, [stored('p0', 'anna'), row])).toEqual({ ok: false, reason: 'TEACHER', row });
+    expect(followPlacements(before, after, [stored('p0', 'anna'), row])).toEqual({ ok: false, reason: 'TEACHER', row, unstaffed: false });
   });
 
   it('stops a share removed under its förläggning, and a share whose new teacher has other lessons', () => {
     const row = stored('p1', 'bo');
-    expect(followPlacements(shared(), post(), [row])).toEqual({ ok: false, reason: 'TEACHER', row });
+    expect(followPlacements(shared(), post(), [row])).toEqual({ ok: false, reason: 'TEACHER', row, unstaffed: false });
     // Bo's one 60 becomes Carl's two: not the same lessons, so not a change of teacher alone.
     const after = post({ lessonsPerWeek: 4, shares: [{ teacherId: 'carl', lessons: 2, minutes: 60 }] });
-    expect(followPlacements(shared({ lessonsPerWeek: 4 }), after, [row])).toEqual({ ok: false, reason: 'TEACHER', row });
+    expect(followPlacements(shared({ lessonsPerWeek: 4 }), after, [row])).toEqual({ ok: false, reason: 'TEACHER', row, unstaffed: false });
   });
 
   it('never makes a lesson nobody’s: a share’s teacher taken away, or the huvudlärare cleared', () => {
@@ -326,9 +326,10 @@ describe('followPlacements: a change of teacher carries the förläggningar when
       ok: false,
       reason: 'NO_TEACHER',
       row,
+      unstaffed: false,
     });
     const lead = stored('p2', 'anna');
-    expect(followPlacements(shared(), shared({ teacherId: null }), [lead])).toEqual({ ok: false, reason: 'NO_TEACHER', row: lead });
+    expect(followPlacements(shared(), shared({ teacherId: null }), [lead])).toEqual({ ok: false, reason: 'NO_TEACHER', row: lead, unstaffed: false });
   });
 
   it('keeps a lesson that was nobody’s where it is while nobody’s lessons are left', () => {
@@ -343,12 +344,13 @@ describe('followPlacements: a change of teacher carries the förläggningar when
       ok: false,
       reason: 'TEACHER_COUNT',
       row: two[1],
+      unstaffed: false,
     });
     // Bo's 40 becomes an 80 on a post of 80 + 80 + 40 where Anna keeps the 40 and an 80.
     const before = post({ lessonsPerWeek: 3, minutesPerLesson: 80, lessonLengths: [80, 80, 40], shares: [{ teacherId: 'bo', lessons: 1, minutes: 40 }] });
     const after = { ...before, shares: [{ teacherId: 'bo', lessons: 1, minutes: 80 }] };
     const row = stored('p1', 'bo', 40);
-    expect(followPlacements(before, after, [row])).toEqual({ ok: false, reason: 'TEACHER_LENGTH', row });
+    expect(followPlacements(before, after, [row])).toEqual({ ok: false, reason: 'TEACHER_LENGTH', row, unstaffed: false });
   });
 
   it('keeps two teachers who swap their parts as they are, by person', () => {
@@ -360,7 +362,57 @@ describe('followPlacements: a change of teacher carries the förläggningar when
       ok: false,
       reason: 'TEACHER_COUNT',
       row: stored('p3', 'anna'),
+      unstaffed: false,
     });
+  });
+
+  // Review of #298, MEDEL-3: "nobody's because the teacher was removed" is only a row naming nobody on a post that shared already.
+  it('calls a refused row unstaffed only when it names nobody on a post that shared its lessons before the change', () => {
+    // Anna's three on a post that shares nothing, two placed (NULL, the post's teacher's); Bo is given two: Anna keeps one.
+    const starts = followPlacements(post(), post({ shares: [{ teacherId: 'bo', lessons: 2, minutes: 60 }] }), [stored('p1', null), stored('p2', null)]);
+    expect(starts).toMatchObject({ ok: false, reason: 'TEACHER_COUNT', unstaffed: false });
+    // The same, with a new lead in the same change: nobody of before is left (TEACHER), and still nobody was removed.
+    const swaps = followPlacements(post(), shared({ teacherId: 'xena', shares: [{ teacherId: 'bo', lessons: 2, minutes: 60 }] }), [stored('p1', null)]);
+    expect(swaps).toMatchObject({ ok: false, reason: 'TEACHER', unstaffed: false });
+    // A post with no lead that shares nothing: its rows are nobody's, and not because anybody was removed.
+    const noLead = followPlacements(post({ teacherId: null }), post({ teacherId: null, shares: [{ teacherId: 'bo', lessons: 2, minutes: 60 }] }), [stored('p1', null), stored('p2', null)]);
+    expect(noLead).toMatchObject({ ok: false, reason: 'TEACHER_COUNT', unstaffed: false });
+    // A shared post whose share's teacher was removed (the row is NULL): the change leaves no lesson nobody teaches.
+    const removed = shared({ shares: [{ teacherId: null, lessons: 1, minutes: 60 }] });
+    const gone = followPlacements(removed, shared({ shares: [{ teacherId: 'dan', lessons: 1, minutes: 60 }], teacherId: 'xena' }), [stored('p1', null)]);
+    expect(gone).toMatchObject({ ok: false, reason: 'TEACHER', unstaffed: true });
+    const fewer = followPlacements(removed, { ...removed, lessonsPerWeek: 2, shares: [{ teacherId: null, lessons: 1, minutes: 60 }] }, [stored('p1', null), stored('p2', null)]);
+    expect(fewer).toMatchObject({ ok: false, reason: 'TEACHER_COUNT', unstaffed: true });
+  });
+
+  it('flags exactly the rows naming nobody on a post that shared before, over many random changes', () => {
+    let seed = 298;
+    const next = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+    const pick = <T,>(items: readonly T[]): T => items[Math.floor(next() * items.length)]!;
+    let refused = 0;
+    let wrong = 0;
+    for (let i = 0; i < 3000; i += 1) {
+      const lessons = 2 + Math.floor(next() * 3);
+      const wasShared = next() < 0.5;
+      const lead = pick(['anna', null] as const);
+      const shares = wasShared ? [{ teacherId: pick(['bo', null] as const), lessons: 1, minutes: 60 }] : [];
+      const before = post({ lessonsPerWeek: lessons, teacherId: lead, shares });
+      const placed = Math.max(1, Math.floor(next() * lessons));
+      const rows = Array.from({ length: placed }, (_, k) =>
+        stored(`p${k}`, wasShared ? (k === 0 && shares[0] ? shares[0].teacherId : lead) : null),
+      );
+      const after = post({
+        lessonsPerWeek: pick([lessons, Math.max(2, lessons - 1)]),
+        teacherId: pick([lead, 'xena', null] as const),
+        shares: next() < 0.7 ? [{ teacherId: pick(['bo', 'carl', null] as const), lessons: pick([1, 2]), minutes: 60 }] : [],
+      });
+      const follow = followPlacements(before, after, rows);
+      if (follow.ok) continue;
+      refused += 1;
+      if (follow.unstaffed !== (wasShared && follow.row.teacherId === null)) wrong += 1;
+    }
+    expect(refused).toBeGreaterThan(100);
+    expect(wrong).toBe(0);
   });
 
   it('answers no rows with nothing to do', () => {

@@ -360,6 +360,14 @@ export type PlacementsFollow =
       reason: TeacherFitReason;
       /** The förläggning that has to be changed (or removed) before the post can be. */
       row: FollowedRow;
+      /**
+       * The förläggning names nobody on a post that shares its lessons: its
+       * teacher was removed, so no teacher can be chosen for it while the
+       * change waits for it, and it can only be removed. Never on a post that
+       * shares nothing, whose rows all name nobody because the post's teacher
+       * is theirs (review of #298, MEDEL-3).
+       */
+      unstaffed: boolean;
     };
 
 const sameParts = (a: ReadonlyMap<number, number>, b: ReadonlyMap<number, number>): boolean =>
@@ -414,17 +422,22 @@ export function followPlacements(
   }
 
   const shared = hasShares(after);
+  // A row is nobody's because its teacher was removed only on a post that shared its lessons already.
+  const unstaffed = (row: FollowedRow): boolean => hasShares(before) && (row.teacherId ?? null) === null;
   const placed: FollowedRow[] = [];
   for (const row of rows) {
     const from = teacherOfRow(before, row);
-    if (!to.has(from)) return { ok: false, reason: 'TEACHER', row };
+    if (!to.has(from)) return { ok: false, reason: 'TEACHER', row, unstaffed: unstaffed(row) };
     const teacher = to.get(from)!;
     // A lesson that was somebody's is never made nobody's by a change of the post.
-    if (shared && teacher === null && from !== null) return { ok: false, reason: 'NO_TEACHER', row };
+    if (shared && teacher === null && from !== null) return { ok: false, reason: 'NO_TEACHER', row, unstaffed: false };
     placed.push({ ...row, teacherId: shared ? teacher : null });
   }
   const misfit = teacherMisfitOf(after, placed);
-  if (misfit !== null) return { ok: false, reason: misfit.reason, row: rows[misfit.index]! };
+  if (misfit !== null) {
+    const row = rows[misfit.index]!;
+    return { ok: false, reason: misfit.reason, row, unstaffed: unstaffed(row) };
+  }
   return {
     ok: true,
     moves: placed.flatMap((row, at) => (row.teacherId !== rows[at]!.teacherId ? [{ id: row.id, teacherId: row.teacherId }] : [])),

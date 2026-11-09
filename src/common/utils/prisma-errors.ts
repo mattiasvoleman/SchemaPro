@@ -104,7 +104,11 @@ export function rethrowPrismaError(error: unknown): never {
   }
   const placements = requirementPlacementsRefusal(error);
   if (placements) {
-    throw requirementPlacementsConflict(placements.reason);
+    // The post the trigger names (DETAIL requirementId=…), so that a write of many posts says which (review of #298, LÅG-8).
+    throw requirementPlacementsConflict(
+      placements.reason,
+      placements.requirementId !== null ? { requirementId: placements.requirementId } : {},
+    );
   }
   const half = classHalfRefusal(error);
   if (half) {
