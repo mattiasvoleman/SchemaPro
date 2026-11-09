@@ -2837,7 +2837,12 @@ Walk the full product loop once, in order:
   which the dropped trigger refused at the INSERT, is refused at its COMMIT instead (an error, not its 409) until
   the new API serves. The engine is unchanged. **Rolling back:** the column and the triggers can stay; an API
   rolled back meets the deferred check at COMMIT when it writes shares on a post with förläggningar, and its own
-  placement-fit still refuses to place a shared post. The checks before and after are
+  placement-fit still refuses to place a shared post. But it does not read the column: its Generera locks every
+  förläggning with the post's huvudlärare and takes it off the huvudlärare's part, so a förlagd lesson of a
+  share's teacher is written as the huvudlärare's. **Before rolling the API back, remove the förläggningar on
+  shared posts** (`SELECT count(*) FROM "TeachingRequirementPlacements" p WHERE EXISTS (SELECT 1 FROM
+  "TeachingRequirementShares" s WHERE s."requirementId" = p."requirementId")` says how many; the post's Förlägg
+  dialog removes them), and place them again after the next release. The checks before and after are
   `forlagg-delade-data/prod-fore.sql` and `prod-efter.sql` in the round's notes.
 - **Background jobs**: the SS12000 sync, the webhook notices, the push
   receipts and the gallring run on one in-process runner (`src/jobs`).
