@@ -29,7 +29,14 @@ const VIEWPORTS = [
   { name: "375×812", width: 375, height: 812 },
 ];
 
-async function openShares(page: Page, baseURL: string, size: { width: number; height: number }, post: string) {
+/** A dialog once it has zoomed in: a box measured mid-animation is 95 % of itself. */
+async function settled(dialog: Locator) {
+  await expect(dialog).toBeVisible();
+  await dialog.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
+  return dialog;
+}
+
+async function openPost(page: Page, baseURL: string, size: { width: number; height: number }, post: string) {
   await signIn(page.context(), "admin", baseURL);
   await freezeClock(page);
   const misses = watchStubMisses(page);
@@ -37,10 +44,12 @@ async function openShares(page: Page, baseURL: string, size: { width: number; he
   await page.goto(REQUIREMENTS);
   await settle(page);
   await page.getByRole("button", { name: post }).click();
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toBeVisible();
-  // The dialog zooms in; a box measured mid-animation is 95 % of itself.
-  await dialog.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
+  const dialog = await settled(page.getByRole("dialog"));
+  return { dialog, misses };
+}
+
+async function openShares(page: Page, baseURL: string, size: { width: number; height: number }, post: string) {
+  const { dialog, misses } = await openPost(page, baseURL, size, post);
   await dialog.getByRole("button", { name: "Dela lektionerna mellan lärare" }).click();
   const shares = dialog.getByRole("group", { name: "Delade lektioner" });
   await expect(shares).toBeVisible();
@@ -196,4 +205,43 @@ for (const size of VIEWPORTS) {
 
     expect(misses, MISSES).toEqual([]);
   });
+
+  test(`Dela i halvklass at ${size.name}: a chosen teacher's line kept to one row leaves the picker 36 px`, async ({ page, baseURL }) => {
+    // The other dialog that shows candidateLine. Its pickers sit side by side
+    // and cut the line to one row (max-h-6, 24 px), so a growing picker there
+    // would stand taller than its neighbour. The picker's content area is one
+    // row, 24 px (ui/select.tsx): a value of one row never makes it grow.
+    const { dialog, misses } = await openPost(page, baseURL!, size, "Biologi för 7A: 2 lektioner à 60 minuter");
+    if (size.width >= 1280) {
+      // On the desktop the post dialog's lead teacher is one row too.
+      const post = await heights(dialog);
+      expect(post, "the post dialog's pickers, each one row, are 36 px").toEqual(
+        Object.fromEntries(Object.keys(post).map((id) => [id, 36])),
+      );
+    }
+    await dialog.getByRole("button", { name: "Dela i halvklass …" }).click();
+    const halves = await settled(page.getByRole("dialog", { name: /i halvklass/ }));
+    const picker = halves.getByRole("combobox", { name: "Lärare i Biologi (valfritt)", exact: true });
+    await choose(page, picker, /^Bo Ek/);
+    await expect(picker, "the fixture still makes this a line that wraps").toContainText(/Saknar behörighet.*över mål/);
+    const sizes = await heights(halves);
+    expect(Object.keys(sizes).length, "the halves dialog's pickers").toBeGreaterThan(2);
+    expect(sizes, "every picker in the halves dialog is 36 px, the chosen teacher's too").toEqual(
+      Object.fromEntries(Object.keys(sizes).map((id) => [id, 36])),
+    );
+
+    expect(misses, MISSES).toEqual([]);
+  });
+}
+
+/** Each picker's height in a dialog, by its id, to the half pixel. */
+function heights(dialog: Locator) {
+  return dialog.evaluate((element) =>
+    Object.fromEntries(
+      [...element.querySelectorAll("button[role=combobox]")].map((picker) => [
+        picker.id,
+        Math.round(picker.getBoundingClientRect().height * 2) / 2,
+      ]),
+    ),
+  );
 }

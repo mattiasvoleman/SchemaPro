@@ -17,8 +17,16 @@ const SelectValue = SelectPrimitive.Value;
  * fixed h-9 box that value was centred and spilled out above and below, over
  * the field's label and the button under it; line-clamp-1 cannot cut it,
  * since a wrapped inline-flex is one line box however tall. With min-h-9 the
- * box grows to hold it. One line of text still gets exactly 36 px, at the
- * same place: 20 px of text in a 24 px content box is centred where it was.
+ * box grows to hold it.
+ *
+ * It grows for a second row, never for one: 36 px is 1 px of border, 5 px of
+ * padding, a 24 px content area (h-6, one row) and 5 + 1 again. A row of up
+ * to 24 px leaves the box at 36 and is centred where the fixed box centred
+ * it (text 20 px, a badge row 22, Dela i halvklass' line cut to max-h-6: 24).
+ * py-1.5 left 22 px, and that 24 px line grew its picker to 38 beside a
+ * neighbour of 36; the old py-2 left 18, and taller rows spilled into the
+ * padding unseen.
+ *
  * text-left because a button centres its text, and a value that wraps reads
  * as a field's does, from the left.
  */
@@ -29,7 +37,7 @@ const SelectTrigger = React.forwardRef<
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      "flex min-h-9 w-full items-center justify-between whitespace-nowrap rounded-md border border-input-strong bg-transparent px-3 py-1.5 text-left text-sm shadow-sm ring-offset-background data-[placeholder]:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
+      "flex min-h-9 w-full items-center justify-between whitespace-nowrap rounded-md border border-input-strong bg-transparent px-3 py-[5px] text-left text-sm shadow-sm ring-offset-background data-[placeholder]:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
       className,
     )}
     {...props}
