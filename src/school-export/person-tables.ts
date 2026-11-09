@@ -156,6 +156,8 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   CalendarLessonTeachers: dump(['teacherId']),
   TeachingRequirements: dump(['teacherId', 'coTeacherId']),
   TeachingRequirementShares: dump(['teacherId']),
+  // Förlägg delade lektioner (20270208090000): the lessons placed as the teacher's, at the day, time and room the school chose.
+  TeachingRequirementPlacements: dump(['teacherId']),
   MasterLessons: dump(['teacherId', 'coTeacherId']),
   Ss12000DutyLinks: dump(['userId']),
   SupervisionShifts: away(['userId']),

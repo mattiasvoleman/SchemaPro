@@ -5421,3 +5421,146 @@ BEGIN
   IF NOT app.leave_consent_met_raw(b, school) THEN RAISE EXCEPTION 'ledighetspolicy 449o: a request nobody is left to answer has no consent'; END IF;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 474o: the row lock the two functions take on the post (20270208090000, the owner's side of section 474).
+--
+-- ONE WRITER OF A POST AT A TIME: the immediate function and the deferred function each take the post's row FOR NO KEY
+-- UPDATE (not FOR UPDATE: the placement's own key holds KEY SHARE on the same row and the two do not conflict) before
+-- they read the rows, and the deferred one before it asks whether the post has any förläggning at all, because a share's
+-- DELETE holds no lock on its post and a förläggning another transaction committed meanwhile would be missing from an
+-- unlocked read. A section that rolls back has no second connection to wait for the lock, so it is read where it lands:
+-- xmax of the post's row, which is this transaction's id once the transaction has locked the row and zero while nothing has.
+-- That reading is only clean if nothing else in the transaction locked the row, and the foreign keys do (a KEY SHARE on
+-- the post for every row that names it), so the owner plants the rows with session_replication_role = replica (no
+-- key checks, no triggers: the rows are as a writer's COMMIT left them) and sets it back to origin before the statement
+-- under test. Owner-only, as every block of this file (the role is a superuser in the suite's database). The lock's mode
+-- is read with pgrowlocks where the database has it (the extension is created inside the transaction and goes with it):
+-- "For No Key Update", never "For Update", which the placement's key would wait for.
+--   post P1  two rows (nobody's, the post shares nothing): one row DELETEd, which only the immediate function sees;
+--   post P2  a share and a row: the share DELETEd, which only the deferred function sees, when the rules are asked for;
+--   post P3  a share and no row at all: the deferred function takes the lock before it finds that there is nothing to fit.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  school constant uuid := gen_random_uuid();
+  room constant uuid := gen_random_uuid();
+  teacher constant uuid := gen_random_uuid();
+  other constant uuid := gen_random_uuid();
+  p1 constant uuid := gen_random_uuid();
+  p2 constant uuid := gen_random_uuid();
+  p3 constant uuid := gen_random_uuid();
+  mine constant xid := pg_current_xact_id()::xid;
+  modes text;
+  have_rowlocks boolean := EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pgrowlocks');
+BEGIN
+  IF have_rowlocks THEN
+    EXECUTE 'CREATE EXTENSION IF NOT EXISTS pgrowlocks';
+  END IF;
+  PERFORM set_config('session_replication_role', 'replica', true);
+  INSERT INTO "TeachingRequirements" (id, "schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "lessonsPerWeek", "minutesPerLesson", "updatedAt")
+  SELECT x, school, gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), teacher, 3, 60, now() FROM unnest(ARRAY[p1, p2, p3]) x;
+  INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+  SELECT school, x, other, 1, 60, now() FROM unnest(ARRAY[p2, p3]) x;
+  INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "teacherId", "updatedAt")
+  VALUES (school, p1, 1, '08:00', 60, room, 'ALL_WEEKS', NULL, now()), (school, p1, 2, '08:00', 60, room, 'ALL_WEEKS', NULL, now()),
+         (school, p2, 1, '08:00', 60, room, 'ALL_WEEKS', NULL, now());
+  PERFORM set_config('session_replication_role', 'origin', true);
+  IF current_setting('session_replication_role') <> 'origin' THEN RAISE EXCEPTION 'delade 474o: the role did not go back to origin'; END IF;
+
+  -- Nothing has locked any of the three yet.
+  IF (SELECT count(*) FROM "TeachingRequirements" WHERE id IN (p1, p2, p3) AND xmax::text = '0') <> 3 THEN
+    RAISE EXCEPTION 'delade 474o: planting with the keys off left a lock on a post (the reading below would prove nothing)';
+  END IF;
+
+  -- The immediate function: a row of P1 removed, and only P1 is locked.
+  DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = p1 AND "dayOfWeek" = 2;
+  IF (SELECT xmax FROM "TeachingRequirements" WHERE id = p1) IS DISTINCT FROM mine THEN
+    RAISE EXCEPTION 'delade 474o: the immediate function did not lock the post it judged (xmax %, this transaction %)', (SELECT xmax FROM "TeachingRequirements" WHERE id = p1), mine;
+  END IF;
+  IF (SELECT count(*) FROM "TeachingRequirements" WHERE id IN (p2, p3) AND xmax::text = '0') <> 2 THEN
+    RAISE EXCEPTION 'delade 474o: the immediate function locked a post it was not asked about';
+  END IF;
+
+  -- The deferred function: a share's DELETE holds no lock on its post by itself, and the rules asked for take it.
+  DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = p2;
+  IF (SELECT xmax::text FROM "TeachingRequirements" WHERE id = p2) <> '0' THEN
+    RAISE EXCEPTION 'delade 474o: a share''s DELETE locked its post by itself, before the rules were asked for';
+  END IF;
+  SET CONSTRAINTS "TeachingRequirementShares_placement_teachers_fit" IMMEDIATE;
+  IF (SELECT xmax FROM "TeachingRequirements" WHERE id = p2) IS DISTINCT FROM mine THEN
+    RAISE EXCEPTION 'delade 474o: the deferred function did not lock the post it judged (xmax %, this transaction %)', (SELECT xmax FROM "TeachingRequirements" WHERE id = p2), mine;
+  END IF;
+  -- A post with no förläggning at all: the lock comes before the question of whether there is anything to fit.
+  IF (SELECT xmax::text FROM "TeachingRequirements" WHERE id = p3) <> '0' THEN
+    RAISE EXCEPTION 'delade 474o: P3 was locked before its share was removed';
+  END IF;
+  SET CONSTRAINTS "TeachingRequirementShares_placement_teachers_fit" DEFERRED;
+  DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = p3;
+  SET CONSTRAINTS "TeachingRequirementShares_placement_teachers_fit" IMMEDIATE;
+  IF (SELECT xmax FROM "TeachingRequirements" WHERE id = p3) IS DISTINCT FROM mine THEN
+    RAISE EXCEPTION 'delade 474o: the deferred function did not lock a post with no förläggning before finding that there is nothing to fit';
+  END IF;
+
+  -- The mode, where pgrowlocks is available: FOR NO KEY UPDATE on all three.
+  IF have_rowlocks THEN
+    SELECT string_agg(DISTINCT m, ',') INTO modes
+      FROM pgrowlocks('"TeachingRequirements"') r, unnest(r.modes) m WHERE r.locker = mine::text::xid;
+    IF modes IS DISTINCT FROM 'For No Key Update' THEN
+      RAISE EXCEPTION 'delade 474o: the post rows are locked in mode "%", not "For No Key Update" (FOR UPDATE would wait for the placements'' own key)', modes;
+    END IF;
+  END IF;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 474o (second part): a removal is judged for its teacher's pairs of its length, and for nothing else.
+--
+-- A row removed can break nothing but the pairing of its own teacher's rows of its own length, and must not be refused for another
+-- row that did not fit before it (a state the owner can leave, or an older writer: the rows below are planted with the keys and
+-- triggers off, as a COMMIT left them). A section that goes through the API's role cannot show it: every state it makes is judged
+-- as a whole by the events of the statements that made it. Three posts, each with a row that does not fit and one that is removed:
+--   P4  a post that shares nothing, a row naming a teacher (TEACHER) and a row naming nobody, which is removed;
+--   P5  a post of A's lessons of 60 and 40 and Z's of 60, A's lone odd row of 60 (not a pair) and A's row of 40, which is removed.
+-- Each removal passes the rules asked for. (The immediate function judges a removal for the pairs of the removed row's length across
+-- the whole post, as 20270207090000 does, so a row of the same length that does not pair is its refusal and not this one's; the
+-- removal the deferred function alone refuses, A's odd row and B's even row together, is section 471's.)
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  school constant uuid := gen_random_uuid();
+  room constant uuid := gen_random_uuid();
+  a constant uuid := gen_random_uuid();
+  z constant uuid := gen_random_uuid();
+  p4 constant uuid := gen_random_uuid();
+  p5 constant uuid := gen_random_uuid();
+BEGIN
+  PERFORM set_config('session_replication_role', 'replica', true);
+  INSERT INTO "TeachingRequirements" (id, "schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "lessonsPerWeek", "minutesPerLesson", "lessonLengths", "updatedAt") VALUES
+    (p4, school, gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), a, 3, 60, '{}', now()),
+    (p5, school, gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), a, 3, 60, '{60,60,40}', now());
+  INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES (school, p5, z, 1, 60, now());
+  INSERT INTO "TeachingRequirementPlacements" (id, "schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "teacherId", "updatedAt") VALUES
+    ('00000000-0000-4000-8000-0000000d4041', school, p4, 1, '08:00', 60, room, 'ALL_WEEKS', z, now()),
+    ('00000000-0000-4000-8000-0000000d4042', school, p4, 2, '08:00', 60, room, 'ALL_WEEKS', NULL, now()),
+    ('00000000-0000-4000-8000-0000000d4051', school, p5, 1, '08:00', 60, room, 'ODD_WEEKS', a, now()),
+    ('00000000-0000-4000-8000-0000000d4052', school, p5, 2, '08:00', 40, room, 'ALL_WEEKS', a, now());
+  PERFORM set_config('session_replication_role', 'origin', true);
+
+  -- The rows that do not fit are judged when a row of theirs is written; a removal of another row is not refused for them.
+  -- P4's removed row names nobody and P5's is a row of 40: neither is a half of anything.
+  DELETE FROM "TeachingRequirementPlacements" WHERE id = '00000000-0000-4000-8000-0000000d4042';
+  SET CONSTRAINTS "TeachingRequirementPlacements_teachers_fit" IMMEDIATE;
+  SET CONSTRAINTS "TeachingRequirementPlacements_teachers_fit" DEFERRED;
+  DELETE FROM "TeachingRequirementPlacements" WHERE id = '00000000-0000-4000-8000-0000000d4052';
+  SET CONSTRAINTS "TeachingRequirementPlacements_teachers_fit" IMMEDIATE;
+  SET CONSTRAINTS "TeachingRequirementPlacements_teachers_fit" DEFERRED;
+  IF (SELECT count(*) FROM "TeachingRequirementPlacements" WHERE "requirementId" IN (p4, p5)) <> 2 THEN
+    RAISE EXCEPTION 'delade 474o: the removals did not leave the two rows that do not fit';
+  END IF;
+END $$;
+ROLLBACK;
