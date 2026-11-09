@@ -711,7 +711,8 @@ async function run(owner: Client, engine: EngineStub, app: INestApplicationConte
     assert.equal(refused.getStatus(), 409);
     const body = refused.getResponse() as { code?: string; params?: Record<string, unknown> };
     assert.equal(body.code, 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT');
-    assert.deepEqual(body.params, { reason: 'TEACHER', day: 4, start: '10:00', end: '10:40', weeks: 'ALL_WEEKS' });
+    // The post too (review of #298, MEDEL-1): a write of many posts says which one stopped.
+    assert.deepEqual(body.params, { reason: 'TEACHER', day: 4, start: '10:00', end: '10:40', weeks: 'ALL_WEEKS', requirementId: sharedPost });
     assert.deepEqual(await shareTeachers(), [t5.id], 'the share was removed after all');
     assert.deepEqual(await storedTeacher(), [t5.id]);
   });

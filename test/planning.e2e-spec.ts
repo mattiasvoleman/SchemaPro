@@ -6896,6 +6896,65 @@ describe('Planning surface (e2e)', () => {
       expect(world.rows['scheduleChangeLog']).toHaveLength(2);
     });
 
+    it('delade lektioner: an undo that would leave a förläggning nobody’s is a 409 naming the post and the förläggning, flat, and no person', async () => {
+      const world = givenStaff();
+      // r(6) shares one of its two lessons with Bo; its lead is nobody until the proposal gives it Cecilia.
+      const post = world.rows['teachingRequirement']!.find((row) => row['id'] === r(6))!;
+      Object.assign(post, {
+        lessonsPerWeek: 2,
+        minutesPerLesson: 60,
+        lessonLengths: [],
+        recurrence: 'ALL_WEEKS',
+        shares: [{ teacherId: IDS.bo, lessons: 1, minutes: 60 }],
+      });
+      const proposal = await propose().expect(200);
+      const changes = proposal.body.assignments.map((a: Record<string, unknown>) => ({
+        requirementId: a['requirementId'],
+        fromTeacherId: a['fromTeacherId'],
+        toTeacherId: a['toTeacherId'],
+      }));
+      expect(changes).toContainEqual({ requirementId: r(6), fromTeacherId: null, toTeacherId: IDS.cecilia });
+      const applied = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({ academicYearId: IDS.yearA, basisSha256: proposal.body.basisSha256, changes })
+        .expect(200);
+      // Somebody places Cecilia's lesson of r(6) before the undo.
+      world.rows['teachingRequirementPlacement'] = [
+        {
+          id: 'pl-cecilia',
+          schoolId: IDS.school,
+          requirementId: r(6),
+          teacherId: IDS.cecilia,
+          dayOfWeek: 2,
+          startTime: new Date('1970-01-01T10:00:00.000Z'),
+          minutes: 60,
+          recurrence: 'ODD_WEEKS',
+        },
+      ];
+
+      const refused = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({
+          academicYearId: IDS.yearA,
+          basisSha256: applied.body.basisSha256,
+          undo: true,
+          changes: changes.map((c: Record<string, unknown>) => ({ requirementId: c['requirementId'], fromTeacherId: c['toTeacherId'], toTeacherId: c['fromTeacherId'] })),
+        })
+        .expect(409);
+
+      // The body the web's proposal dialog reads (staffing-proposal-dialog.test.tsx copies it): flat params, the post by id.
+      expect(refused.body).toMatchObject({
+        code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT',
+        params: { reason: 'NO_TEACHER', day: 2, start: '10:00', end: '11:00', weeks: 'ODD_WEEKS', requirementId: r(6) },
+      });
+      expect(Object.keys(refused.body.params).sort()).toEqual(['day', 'end', 'reason', 'requirementId', 'start', 'weeks']);
+      expect(refused.body.detail).toMatch(/^Förläggningen tisdag 10:00–11:00 måste ändras först\./);
+      for (const person of [IDS.cecilia, IDS.bo]) expect(JSON.stringify(refused.body)).not.toContain(person);
+      expect(world.rows['teachingRequirementPlacement']![0]!['teacherId']).toBe(IDS.cecilia);
+    });
+
     it('409s STAFF_PROPOSAL_STALE after a PATCH changed the timplan, writing nothing', async () => {
       const world = givenStaff();
       const proposal = await propose().expect(200);

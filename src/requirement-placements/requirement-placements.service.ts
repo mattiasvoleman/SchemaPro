@@ -22,6 +22,7 @@ import {
   type PlacementPost,
 } from './placement-fit';
 import { judgePlacementTeachersNow } from './placement-teachers';
+import { lockPostForShares } from '../resources/requirement-shares';
 import {
   clockText,
   judgePlacements,
@@ -229,6 +230,11 @@ export class RequirementPlacementsService {
         const refused = verdicts.find((verdict) => !verdict.ok);
         if (refused) throw placementRefusedConflict(refused);
 
+        // The post's row first, as every other writer of its förläggningar takes it (the PATCH, the staffing
+        // proposal and the import hold it and then move the rows): DELETE first locks the rows and the trigger
+        // then waits for the post, which a writer holding the post and waiting for the rows closes into a
+        // deadlock (review of #298, LÅG-1).
+        await lockPostForShares(tx, id);
         // The post's rows are replaced as one list: the old ones go and the new ones are one INSERT, so the
         // trigger, which judges the post's rows when each statement is done, sees the whole set (a pair is two
         // rows). Flat createMany, never a nested create (it drops schoolId at runtime).

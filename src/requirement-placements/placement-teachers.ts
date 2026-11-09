@@ -72,8 +72,13 @@ export async function placementsOfPosts(
   return byPost;
 }
 
-/** The 409 that names the förläggning a change has to wait for (followPlacements' refusal). */
-export function placementFollowRefusal(refusal: Extract<PlacementsFollow, { ok: false }>) {
+/**
+ * The 409 that names the förläggning a change has to wait for
+ * (followPlacements' refusal), and its post: a write of many posts at once
+ * (the staffing proposal) says which. A förläggning that names nobody (its
+ * teacher was removed) can only be removed, and the sentence says so.
+ */
+export function placementFollowRefusal(refusal: Extract<PlacementsFollow, { ok: false }>, requirementId: string) {
   const row = refusal.row as StoredPlacement;
   const start = minutesOfClock(row.startTime);
   return requirementPlacementsConflict(refusal.reason, {
@@ -83,12 +88,14 @@ export function placementFollowRefusal(refusal: Extract<PlacementsFollow, { ok: 
       end: clockText(start + row.minutes),
       recurrence: row.recurrence as LessonRecurrence,
     },
+    requirementId,
+    unstaffed: row.teacherId === null,
   });
 }
 
 /** The refusal's Swedish sentence, for a writer that reports it in a sentence of its own (the import's row). */
-export function placementFollowSentence(refusal: Extract<PlacementsFollow, { ok: false }>): string {
-  const body = placementFollowRefusal(refusal).getResponse() as { message: string };
+export function placementFollowSentence(refusal: Extract<PlacementsFollow, { ok: false }>, requirementId: string): string {
+  const body = placementFollowRefusal(refusal, requirementId).getResponse() as { message: string };
   return body.message;
 }
 
@@ -155,7 +162,7 @@ export async function carryPlacementTeachers(tx: PrismaClient, changes: readonly
   );
   if (placements.size === 0) return;
   const follow = followOfChanges(relevant, placements);
-  if ('refused' in follow) throw placementFollowRefusal(follow.refused);
+  if ('refused' in follow) throw placementFollowRefusal(follow.refused, follow.requirementId);
   await moveTeachers(tx, follow.moves);
   await judgePlacementTeachersNow(tx);
 }

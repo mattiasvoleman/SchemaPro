@@ -144,6 +144,18 @@ describe('placedTaughtByPost and withoutPlacedShared (delade lektioner)', () => 
     // Nothing of its own left: nothing is taken (the judge refused it as OVER_DEMAND before).
     expect(withoutPlacedShared(lessons.slice(0, 2), [{ minutes: 60, teacherId: 'bo' }])).toEqual(lessons.slice(0, 2));
   });
+
+  // Review of #298, MEDEL-2 (mutant PL5: the length left out of the match).
+  it('takes the exact length too: a placed 40 of Bo’s leaves Bo’s 60 and Ulf’s lessons, a placed 60 of Bo’s leaves his 40', () => {
+    const lessons = [
+      { minutes: 80, teacherId: 'ulf' },
+      { minutes: 60, teacherId: 'ulf' },
+      { minutes: 60, teacherId: 'bo' },
+      { minutes: 40, teacherId: 'bo' },
+    ];
+    expect(withoutPlacedShared(lessons, [{ minutes: 40, teacherId: 'bo' }])).toEqual(lessons.slice(0, 3));
+    expect(withoutPlacedShared(lessons, [{ minutes: 60, teacherId: 'bo' }])).toEqual([lessons[0], lessons[1], lessons[3]]);
+  });
 });
 
 describe('placementsRefusalOf', () => {

@@ -244,6 +244,13 @@ describe('RequirementPlacementsService', () => {
       const insert = tx['teachingRequirementPlacement']!['createMany']!.mock.invocationCallOrder[0]!;
       expect(lock).toBeLessThan(remove);
       expect(remove).toBeLessThan(insert);
+      // The post's row before the rows, as every other writer of its förläggningar takes them (review of #298, LÅG-1).
+      const postLock = tx['$queryRaw'].mock.calls.findIndex((call) =>
+        /SELECT "id" FROM "TeachingRequirements" WHERE "id" = \?::uuid FOR NO KEY UPDATE/.test((call[0] as TemplateStringsArray).join('?')),
+      );
+      expect(postLock).toBeGreaterThanOrEqual(0);
+      expect(tx['$queryRaw'].mock.calls[postLock]![1]).toBe(REQ);
+      expect(tx['$queryRaw'].mock.invocationCallOrder[postLock]!).toBeLessThan(remove);
       expect(tx['teachingRequirementPlacement']!['deleteMany']).toHaveBeenCalledWith({ where: { requirementId: REQ } });
       // schoolId is the post's, not the caller's; startTime is the @db.Time the table stores.
       expect(tx['teachingRequirementPlacement']!['createMany']).toHaveBeenCalledWith({

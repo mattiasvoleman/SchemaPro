@@ -397,6 +397,15 @@ const PLACEMENT_SENTENCES: Record<PlacementsRule, string> = {
     'eller välj en annan lärare för den.',
 };
 
+/**
+ * A change of the post refused for a förläggning that names nobody, because
+ * its teacher was removed: no teacher can be chosen for it until the change
+ * is saved, and the change waits for it, so the one way on is to remove it.
+ */
+const UNSTAFFED_SENTENCE =
+  'Förläggningen har ingen lärare sedan dess lärare togs bort, och ändringen lämnar ingen lektion utan lärare för den. ' +
+  'Ta bort förläggningen först, och förlägg lektionen igen när posten har sina lärare.';
+
 /** Where a förläggning stands, for a refusal that has to say which one is to be changed first. */
 export interface NamedPlacement {
   dayOfWeek: number;
@@ -410,15 +419,18 @@ export interface NamedPlacement {
 /**
  * The 409 for förläggningar that do not fit their post: the rule in a
  * sentence that says what to change, and the rule as `reason` in `params`,
- * which the exception filter forwards (it drops every other key), so the web
- * renders it in the reader's language. `index` is the row's place in a PUT's
- * list; `placement` the stored förläggning a change of the post has to wait
- * for, by weekday, clock and weeks (`day`, `start`, `end`, `weeks`) and never
- * by person.
+ * which the exception filter forwards (it drops every other key and anything
+ * not flat), so the web renders it in the reader's language. `index` is the
+ * row's place in a PUT's list; `placement` the stored förläggning a change of
+ * the post has to wait for, by weekday, clock and weeks (`day`, `start`,
+ * `end`, `weeks`) and never by person; `requirementId` the post it is on, so
+ * that a write of many posts (the staffing proposal) can say which; and
+ * `unstaffed` that the förläggning names nobody (its teacher was removed),
+ * for which the one way on is to remove it (`unstaffed: 1`).
  */
 export function requirementPlacementsConflict(
   reason: PlacementsRule | null,
-  at: { index?: number; placement?: NamedPlacement } = {},
+  at: { index?: number; placement?: NamedPlacement; requirementId?: string; unstaffed?: boolean } = {},
 ): ConflictException {
   const named = at.placement
     ? {
@@ -435,10 +447,19 @@ export function requirementPlacementsConflict(
     message:
       reason === null
         ? 'Förläggningarna passar inte timplansposten. Ändra förläggningarna eller posten.'
-        : where + PLACEMENT_SENTENCES[reason],
+        : where + (at.unstaffed ? UNSTAFFED_SENTENCE : PLACEMENT_SENTENCES[reason]),
     code: REQUIREMENT_PLACEMENTS_DO_NOT_FIT,
     ...(reason !== null
-      ? { reason, params: { reason, ...(at.index !== undefined ? { index: at.index } : {}), ...named } }
+      ? {
+          reason,
+          params: {
+            reason,
+            ...(at.index !== undefined ? { index: at.index } : {}),
+            ...named,
+            ...(at.requirementId !== undefined ? { requirementId: at.requirementId } : {}),
+            ...(at.unstaffed ? { unstaffed: 1 } : {}),
+          },
+        }
       : {}),
   });
 }

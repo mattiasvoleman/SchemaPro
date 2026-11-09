@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { requirementSharesConflict } from '../common/utils/prisma-errors';
+import { requirementSharesConflict, rethrowPrismaError } from '../common/utils/prisma-errors';
 import {
   BadRequestException,
   ConflictException,
@@ -726,7 +726,10 @@ export class StaffingProposalService {
       });
 
       return { updated: dto.changes.length, basisSha256: basisAfter, warnings, logId: log.id };
-    });
+    })
+      // A refusal the database makes that the checks above did not foresee (a förläggning written on one of the
+      // posts at once, FP409; a deadlock) is the 409 a PATCH would answer, never a 500 (review of #298, LÅG-3).
+      .catch((error: unknown) => rethrowPrismaError(error));
 
     this.logger.log(
       `Staffing applied [academicYearId=${dto.academicYearId}, updated=${result.updated}, undo=${dto.undo === true}, ` +

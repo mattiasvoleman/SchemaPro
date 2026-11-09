@@ -9,6 +9,7 @@ import { strongestCoveringQualification, loadStatus } from '../staffing/teacher-
 import type { StaffingProposalDto } from './dto/staffing-proposal.dto';
 import type { StaffRequest, StaffResponse, StaffTerms } from './interfaces/staffing.interface';
 import { OptimizationProxyService } from './optimization-proxy.service';
+import * as placementTeachers from '../requirement-placements/placement-teachers';
 import {
   MAX_STAFF_BODY_BYTES,
   STAFF_ENGINE_UNAVAILABLE,
@@ -1469,6 +1470,57 @@ describe('StaffingProposalService.apply', () => {
     expect(leads).toBeGreaterThanOrEqual(0);
     expect(moved).toBeGreaterThan(leads);
     expect(judged).toBeGreaterThan(moved);
+  });
+
+  it('answers a refusal of the database the checks did not foresee (FP409 at the judgement) as the 409 a PATCH gives, not a 500', async () => {
+    const { service, proposal } = await proposeThenApply();
+    const refusal = new Prisma.PrismaClientKnownRequestError('Database error', {
+      code: 'P2010',
+      clientVersion: Prisma.prismaVersion.client,
+      meta: {
+        driverAdapterError: {
+          cause: {
+            originalCode: 'FP409',
+            originalMessage: 'TEACHER: en förlagd lektion anger en lärare som inte har någon av postens lektioner',
+            detail: `requirementId=${R_SV7} reason=TEACHER`,
+          },
+        },
+      },
+    });
+    const carry = jest.spyOn(placementTeachers, 'carryPlacementTeachers').mockRejectedValueOnce(refusal);
+    try {
+      await expect(
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: changesOf(proposal) }, admin()),
+      ).rejects.toMatchObject({ status: 409, response: { code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'TEACHER' } } });
+    } finally {
+      carry.mockRestore();
+    }
+  });
+
+  it('delade lektioner: an undo that would leave a förläggning nobody’s is refused naming the post and the förläggning', async () => {
+    const rows = schoolRows();
+    const ma8 = rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!;
+    const minutes = ma8['minutesPerLesson'] as number;
+    Object.assign(ma8, { lessonsPerWeek: 3, lessonLengths: [], shares: [{ teacherId: CY, lessons: 1, minutes }] });
+    const { service, world, proposal } = await proposeThenApply(rows);
+    const applied = await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: changesOf(proposal) }, admin());
+    const given = changesOf(proposal).find((change) => change.requirementId === R_MA8)!;
+    expect(given.fromTeacherId).toBeNull();
+    world.rows['teachingRequirementPlacement'] = [
+      { id: 'pl-1', schoolId: SCHOOL, requirementId: R_MA8, teacherId: given.toTeacherId, dayOfWeek: 3, startTime: new Date('1970-01-01T09:00:00.000Z'), minutes, recurrence: 'ALL_WEEKS' },
+    ];
+    const undo = changesOf(proposal).map((c) => ({ requirementId: c.requirementId, fromTeacherId: c.toTeacherId, toTeacherId: c.fromTeacherId }));
+
+    const refused = service.apply({ academicYearId: YEAR, basisSha256: applied.basisSha256, undo: true, changes: undo }, admin());
+
+    await expect(refused).rejects.toMatchObject({
+      status: 409,
+      response: {
+        code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT',
+        params: { reason: 'NO_TEACHER', requirementId: R_MA8, day: 3, start: '09:00', weeks: 'ALL_WEEKS' },
+      },
+    });
+    expect(world.rows['teachingRequirementPlacement']![0]!['teacherId']).toBe(given.toTeacherId);
   });
 
   it('undoes an apply with the changes swapped and the returned basis — putting back a lead who has left, and nobody', async () => {

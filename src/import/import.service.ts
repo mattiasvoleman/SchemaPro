@@ -2231,7 +2231,7 @@ export class ImportService {
             placementsOf,
           );
           if ('refused' in follow) {
-            report.errors.push({ row: rowNumber, message: placementFollowSentence(follow.refused) });
+            report.errors.push({ row: rowNumber, message: placementFollowSentence(follow.refused, follow.requirementId) });
             continue;
           }
           placementMoves = follow.moves;
