@@ -9,6 +9,19 @@ const Select = SelectPrimitive.Root;
 const SelectGroup = SelectPrimitive.Group;
 const SelectValue = SelectPrimitive.Value;
 
+/*
+ * The trigger's height is a minimum, not a size. Radix mirrors the chosen
+ * option into it, and an option can be more than a line of text: the timplan's
+ * teacher pickers show the name, a behörighet badge and the minutes left
+ * (candidateLine), which wrap to two or three rows in a narrow column. In a
+ * fixed h-9 box that value was centred and spilled out above and below, over
+ * the field's label and the button under it; line-clamp-1 cannot cut it,
+ * since a wrapped inline-flex is one line box however tall. With min-h-9 the
+ * box grows to hold it. One line of text still gets exactly 36 px, at the
+ * same place: 20 px of text in a 24 px content box is centred where it was.
+ * text-left because a button centres its text, and a value that wraps reads
+ * as a field's does, from the left.
+ */
 const SelectTrigger = React.forwardRef<
   React.ComponentRef<typeof SelectPrimitive.Trigger>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>
@@ -16,14 +29,15 @@ const SelectTrigger = React.forwardRef<
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      "flex h-9 w-full items-center justify-between whitespace-nowrap rounded-md border border-input-strong bg-transparent px-3 py-2 text-sm shadow-sm ring-offset-background data-[placeholder]:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
+      "flex min-h-9 w-full items-center justify-between whitespace-nowrap rounded-md border border-input-strong bg-transparent px-3 py-1.5 text-left text-sm shadow-sm ring-offset-background data-[placeholder]:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
       className,
     )}
     {...props}
   >
     {children}
     <SelectPrimitive.Icon asChild>
-      <ChevronDown className="size-4 opacity-50" />
+      {/* shrink-0: a value wider than the box is cut or wrapped, never the chevron squeezed beside it. */}
+      <ChevronDown className="size-4 shrink-0 opacity-50" />
     </SelectPrimitive.Icon>
   </SelectPrimitive.Trigger>
 ));
