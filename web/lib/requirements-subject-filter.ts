@@ -31,6 +31,12 @@ export interface SubjectView<S> {
  * the same rule; its class's post does not bring it along. `withoutPosts`
  * ("Visa grupper utan post") shows the year's other groups too, so a post can
  * be added for a new class. The sums count the subject's posts only.
+ *
+ * `targeted` is Mål mode's: the classes whose plan sets a target for the
+ * subject or its line (SubjectFigures.targeted). They are groups in the
+ * subject there though they have no post, shown with their empty cell, so the
+ * post that is missing shows and the rows add up to the classes' row. Without
+ * Mål mode the rule is as above (the coordinator's decision on review #297).
  */
 export function subjectView<S extends { id: string }>(
   subjectId: string | null,
@@ -38,6 +44,7 @@ export function subjectView<S extends { id: string }>(
   columns: S[],
   sections: GroupSection[],
   posts: TeachingRequirement[],
+  targeted?: ReadonlySet<string>,
 ): SubjectView<S> {
   const subject = columns.find((column) => column.id === subjectId) ?? null;
   if (!subject) {
@@ -55,7 +62,9 @@ export function subjectView<S extends { id: string }>(
         total: section.groups.length,
         groups: withoutPosts
           ? section.groups
-          : section.groups.filter((group) => posted.has(group.id) || group.replacesSubjectId === subject.id),
+          : section.groups.filter(
+              (group) => posted.has(group.id) || targeted?.has(group.id) || group.replacesSubjectId === subject.id,
+            ),
       }))
       .filter((section) => section.groups.length > 0),
   };

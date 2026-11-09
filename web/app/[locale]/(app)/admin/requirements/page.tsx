@@ -63,10 +63,12 @@
 //
 // ÄMNE narrows the matrix to one subject (lib/requirements-subject-filter.ts):
 // its column, the groups with a post in it and the teaching groups replacing
-// it, and every sum counted on its posts alone, each heading saying so. The
-// choice is `?subject=`, read and written without useSearchParams for the
-// reason `?year=` is, and it outlives a change of läsår: subjects are the
-// school's. The CSV export is not filtered; it holds every subject.
+// it, and every sum counted on its posts alone, each heading saying so. In
+// Mål mode a class with a target in the subject is in it too, with its empty
+// cell. The choice is `?subject=`, read from window.location as `?year=` is
+// and written with history.replaceState, and it outlives a change of läsår:
+// subjects are the school's. The CSV export is not filtered; it holds every
+// subject.
 //
 // CONTRAST, MEASURED. Computed from the HSL tokens in app/globals.css, rounded
 // to 8-bit the way a browser paints them, and blended where a token is painted
@@ -427,8 +429,10 @@ export default function RequirementsPage() {
     isError: yearsFailed,
   } = useAcademicYears();
   const [selectedYearId, setSelectedYearId] = useState<string | null>(null);
-  // ?year= from Skapa timplansposter's result link, read once after mount
-  // (not useSearchParams, which would opt the route out of static rendering).
+  // ?year= from Skapa timplansposter's result link, read once after mount from
+  // window.location. The route is rendered per request (ƒ in the build's route
+  // table, before Ämne and after); this comment used to say the read kept the
+  // route static, and the route table says it is not.
   const [linkedYearId, setLinkedYearId] = useState<string | null>(null);
   /** Ämne: the subject the matrix shows alone (null: all), and "Visa grupper utan post". */
   const [subjectId, setSubjectId] = useState<string | null>(null);
@@ -821,13 +825,25 @@ export default function RequirementsPage() {
     [subjects],
   );
 
+  const target =
+    targetMode && targetModule && targetState?.status === "ready"
+      ? { module: targetModule, ...targetState }
+      : null;
+  /**
+   * Under Ämne in Mål mode, the subject's figures (the total column, the
+   * classes' row) and the classes its target reaches. Null for an id that is no
+   * subject; the same object for the same id and view, so `view` keeps.
+   */
+  const ownTarget = target && subjectId ? target.view.subjectOwn(subjectId) : null;
+
   /**
    * What the matrix draws under Ämne: the columns, the sections and the posts
-   * every sum below is counted on — the chosen subject's alone, or all.
+   * every sum below is counted on — the chosen subject's alone, or all. In Mål
+   * mode a class with a target in the subject is in it too, post or not.
    */
   const view = useMemo(
-    () => subjectView(subjectId, withoutPosts, columns, sections, requirements ?? []),
-    [subjectId, withoutPosts, columns, sections, requirements],
+    () => subjectView(subjectId, withoutPosts, columns, sections, requirements ?? [], ownTarget?.targeted),
+    [subjectId, withoutPosts, columns, sections, requirements, ownTarget],
   );
 
   const requirementIndex = useMemo(() => {
@@ -986,12 +1002,6 @@ export default function RequirementsPage() {
         : null,
     [yearBounds, breaks, timplanSubjects, yearGroups, requirements, people, memberships],
   );
-  const target =
-    targetMode && targetModule && targetState?.status === "ready"
-      ? { module: targetModule, ...targetState }
-      : null;
-  /** Under Ämne, the total column and the classes' row hold the subject's figures alone. */
-  const ownTarget = target && view.subject ? target.view.subjectOwn(view.subject.id) : null;
 
   /** Anybody's full name, active or not: a share may name a teacher who has since left. */
   const personName = (id: string) => {
@@ -1660,7 +1670,7 @@ export default function RequirementsPage() {
                       scope="col"
                       className="sticky top-0 z-20 border-l bg-card px-3 py-2.5 text-right font-medium text-foreground"
                     >
-                      {t("target.totalHeader")}
+                      {t(ownTarget ? "target.totalHeaderSubject" : "target.totalHeader")}
                     </th>
                   ) : null}
                   <th
@@ -1678,7 +1688,11 @@ export default function RequirementsPage() {
                 </tr>
               </thead>
               <tbody>
-                {/* Under Ämne, no group in it and none asked for: the way on is the checkbox's. */}
+                {/*
+                  Under Ämne, no group in it and none asked for. The way on is
+                  the checkbox beside the picker, the next stop after it; a
+                  button here that took itself away left focus on the body.
+                */}
                 {view.sections.length === 0 ? (
                   <tr>
                     <td colSpan={view.columns.length + (target ? 4 : 3)} className="p-3">
@@ -1687,11 +1701,6 @@ export default function RequirementsPage() {
                         title={t("subjectFilter.emptyTitle", { subject: view.subject?.name ?? "" })}
                         description={t("subjectFilter.empty")}
                         headingLevel={2}
-                        action={
-                          <Button variant="outline" onClick={() => setWithoutPosts(true)}>
-                            {t("subjectFilter.withoutPosts")}
-                          </Button>
-                        }
                       />
                     </td>
                   </tr>
@@ -1737,7 +1746,8 @@ export default function RequirementsPage() {
                       className="sticky left-0 z-10 bg-card px-3 py-2 text-left font-medium"
                     >
                       <span>{group.name}</span>
-                      {target && section.kind === "CLASS" && target.view.summary(group.id) ? (
+                      {/* The class's whole coverage: not shown under Ämne, where the row is one subject's. */}
+                      {target && !ownTarget && section.kind === "CLASS" && target.view.summary(group.id) ? (
                         <target.module.CoveragePill
                           summary={target.view.summary(group.id)!}
                           academicYearId={activeYearId}
@@ -1899,7 +1909,7 @@ export default function RequirementsPage() {
                       <td className="border-l bg-card px-3 py-2 text-right font-medium tabular-nums text-foreground">
                         <target.module.GroupTotalCell
                           summary={ownTarget ? null : target.view.summary(group.id)}
-                          total={ownTarget?.byGroup.get(group.id)}
+                          total={ownTarget?.row(group.id)}
                         />
                       </td>
                     ) : null}

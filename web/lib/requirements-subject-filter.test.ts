@@ -107,6 +107,22 @@ describe("subjectView", () => {
     expect(names(subjectView("s-gone", true, columns, sections, posts))).toEqual(names(view));
   });
 
+  // Review #297, LÅG-1, and the coordinator's decision: in Mål mode a class
+  // with a target in the subject is in it, post or not, so the rows add up.
+  it("shows the classes Mål mode says have a target in the subject, without a post", () => {
+    const targeted = new Set([g7C.id]);
+    expect(names(subjectView(sv.id, false, columns, sections, posts, targeted))).toEqual([
+      "CLASS 3/3: 7A 7B 7C",
+      "TEACHING_GROUP 1/4: SvA7",
+    ]);
+    // The posts the sums count are still the subject's alone.
+    expect(subjectView(sv.id, false, columns, sections, posts, targeted).posts.map((row) => row.id)).toEqual(["r1", "r2"]);
+    // Without a subject the set means nothing.
+    expect(names(subjectView(null, false, columns, sections, posts, targeted))).toEqual(
+      names(subjectView(null, false, columns, sections, posts)),
+    );
+  });
+
   it("drops every section when no group is in the subject, so the page can say so", () => {
     const empty = { id: "s-bl", name: "Bild" };
     const view = subjectView(empty.id, false, [...columns, empty], sections, posts);

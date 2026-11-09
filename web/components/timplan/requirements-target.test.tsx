@@ -81,7 +81,7 @@ const sourcesWith = (requirements: TargetSources["requirements"]): TargetSources
 });
 const viewOf = (requirements: TargetSources["requirements"]) => {
   const input = targetInput(sourcesWith(requirements));
-  return { input, view: buildTargetView(computePlannedCoverage(input), plans) };
+  return { input, view: buildTargetView(computePlannedCoverage(input), plans, input.subjects) };
 };
 const fields = (overrides: Partial<DraftFields> = {}): DraftFields => ({
   lessonsPerWeek: "1",
@@ -194,7 +194,7 @@ describe("one subject in Mål mode", () => {
       "target.totalSubjectCountedWith(Svenska som andraspråk|Svenska)",
     );
     // The total column of the classes' row says the same in a dash, as SvA's column total does.
-    const { container } = render(<GroupTotalCell summary={null} total={view.subjectOwn("s-sva").total} />);
+    const { container } = render(<GroupTotalCell summary={null} total={view.subjectOwn("s-sva")!.total} />);
     expect(container).toHaveTextContent("—target.totalCountedWith");
     expect(container).not.toHaveTextContent("0 /");
   });
@@ -202,5 +202,57 @@ describe("one subject in Mål mode", () => {
   it("keeps the whole classes' line without a subject", () => {
     render(<TargetHost academicYearId="y1" sources={svenska} onState={() => {}} />);
     expect(screen.getByRole("status")).toHaveTextContent(/^target\.total\(/);
+  });
+});
+
+// Review #297, MEDEL-1: what the total column and the classes' line say of a
+// subject that is not teaching time, and of a part of a national line.
+describe("a subject Mål mode has no figures of its own for", () => {
+  it("says a subject that is not teaching time has none, behind a dash", () => {
+    const { container } = render(
+      <GroupTotalCell summary={null} total={{ planned: 0, target: null, plannedHours: 0, targetHours: null, notCounted: true }} />,
+    );
+    expect(container).toHaveTextContent("—target.totalNotCounted");
+    expect(container).not.toHaveTextContent("0 /");
+  });
+
+  it("names the line under a part's figures, which are the line's", () => {
+    // Textilslöjd 1 × 40 of the 65 on Slöjd, over 43 weeks.
+    const { view } = viewOf([row("r-tx", "s-tx", 1, 40)]);
+    const textil = view.subjectOwn("s-tx")!;
+    const { container } = render(<GroupTotalCell summary={null} total={textil.row("g-7a")} />);
+    expect(container).toHaveTextContent("40 / 6528,7 h / 46,6 htarget.totalLine(SL)");
+  });
+
+  it("says in the classes' line which line a part is counted on, and with which subjects", () => {
+    render(
+      <TargetHost
+        academicYearId="y1"
+        sources={sourcesWith([row("r-tx", "s-tx", 1, 40)])}
+        onState={() => {}}
+        subject={{ id: "s-tx", name: "Textilslöjd" }}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "target.subjectLine(Textilslöjd|Slöjd|SL) target.lineFigures(40|65|28,7 h|46,6 h)",
+    );
+  });
+
+  it("says a line no class has a target for has none, naming the line", () => {
+    // The plan's entries are for åk 7; a class in åk 8 has the parts and no target.
+    const sources = { ...sourcesWith([row("r-tx", "s-tx", 1, 40)]), groups: [{ id: "g-7a", name: "8A", kind: "CLASS" as const, gradeLevel: 8 }] };
+    render(<TargetHost academicYearId="y1" sources={sources} onState={() => {}} subject={{ id: "s-tx", name: "Textilslöjd" }} />);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "target.subjectLineAlone(Textilslöjd|SL) target.lineFiguresNoTarget(40|28,7 h)",
+    );
+  });
+
+  it("says Mentorstid and the like are not teaching time", () => {
+    const sources = {
+      ...sourcesWith([row("r-mt", "s-mt", 1, 30)]),
+      subjects: [...subjects, { id: "s-mt", name: "Mentorstid", nationalCode: null, countsTowardTimplan: false }],
+    };
+    render(<TargetHost academicYearId="y1" sources={sources} onState={() => {}} subject={{ id: "s-mt", name: "Mentorstid" }} />);
+    expect(screen.getByRole("status")).toHaveTextContent("target.totalSubjectNotCounted(Mentorstid)");
   });
 });

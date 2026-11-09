@@ -237,7 +237,45 @@ export interface TargetTotal {
    * Null for a column that carries its own figures. Absent on `total`.
    */
   countedWith?: string | null;
+  /**
+   * Under Ämne, a part of a national line (Biologi where the plan names NO):
+   * the figures are the line's, and this is its code, which the cell says.
+   */
+  line?: string;
+  /** Under Ämne, a subject that is not teaching time (Mentorstid): no figures at all. */
+  notCounted?: true;
 }
+
+/** One subject's figures while Ämne shows it alone (TargetView.subjectOwn). */
+export interface SubjectFigures {
+  /**
+   * A class's figures in the subject, for the total column: its own cell (the
+   * figures the cell beside it reads), or for a part of a national line the
+   * line's (`line` set: Biologi alone has no target where the plan names NO).
+   * Undefined where the class has no cell in the subject.
+   */
+  row(groupId: string): TargetTotal | undefined;
+  /**
+   * Over the classes, for the classes' row and the line above the matrix: the
+   * column's total in `subjectTotals`, so the filter changes no figure and an
+   * alternative is totalled as it always was, once in its first subject (SvA
+   * reads "counted with" Svenska rather than 0 of a target the classes meet
+   * through Svenska); for a part of a national line, the lines' figures added
+   * over the classes. A subject no class has a cell in totals 0 with no target.
+   */
+  total: TargetTotal;
+  /**
+   * The classes whose plan sets a target for the subject or its line. Mål mode
+   * under Ämne shows them though they have no post, with their empty cell, so
+   * the post that is missing shows and the rows add up to the classes' row.
+   */
+  targeted: Set<string>;
+  /** For a part of a national line: the line's other subjects, for the sentence. */
+  partnerSubjectIds: string[];
+}
+
+/** Every figure of a subject that is not teaching time: there is none to give. */
+const NOT_COUNTED: TargetTotal = { planned: 0, target: null, plannedHours: 0, targetHours: null, notCounted: true };
 
 export interface TargetView {
   coverage: PlannedCoverage;
@@ -248,17 +286,12 @@ export interface TargetView {
   /** Every class together, alternatives counted once (the summaries' rule). */
   total: TargetTotal;
   /**
-   * One subject's figures while Ämne shows it alone: per class its own cell
-   * (its minutes and its entry, the figures the cell beside it reads), for the
-   * total column, and over the classes its column's total in `subjectTotals`,
-   * for the classes' row and the line above the matrix. So the filter changes
-   * no figure, it only hides the others; and an alternative is totalled as it
-   * always was, once in its first subject (SvA beside Svenska reads "counted
-   * with" rather than 0 of a target the classes meet through Svenska). A class
-   * with no cell in the subject has no entry; a subject no class has a cell
-   * in totals 0 with no target.
+   * One subject's figures while Ämne shows it alone (SubjectFigures), or null
+   * for an id that is none of the subjects. A subject that is not teaching
+   * time has `notCounted` on every figure. The same object for the same id, so
+   * the page can memoise on it.
    */
-  subjectOwn(subjectId: string): { byGroup: Map<string, TargetTotal>; total: TargetTotal };
+  subjectOwn(subjectId: string): SubjectFigures | null;
   /** Årskurser with classes and no plan attached this year. */
   unattachedGrades: number[];
   /** Attached plans that are DRAFTs, with the grades that follow them. */
@@ -270,7 +303,12 @@ export interface TargetView {
 /** Hours arrive to the tenth already; a sum of them is rounded the same way. */
 const tenth = (value: number): number => Math.round(value * 10) / 10;
 
-export function buildTargetView(coverage: PlannedCoverage, plans: PlannedPlan[]): TargetView {
+export function buildTargetView(
+  coverage: PlannedCoverage,
+  plans: PlannedPlan[],
+  /** The input's subjects, for subjectOwn: which exist, and which are teaching time. */
+  subjects: readonly { id: string; countsTowardTimplan: boolean }[] = [],
+): TargetView {
   const lineByCell = new Map<string, PlannedLine>();
   const summaries = new Map<string, PlannedGroupSummary>();
   for (const summary of coverage.groups) {
@@ -358,6 +396,66 @@ export function buildTargetView(coverage: PlannedCoverage, plans: PlannedPlan[])
     }
   }
 
+  const counts = new Map(subjects.map((subject) => [subject.id, subject.countsTowardTimplan]));
+  const owned = new Map<string, SubjectFigures | null>();
+  const subjectFigures = (subjectId: string): SubjectFigures | null => {
+    const counted = counts.get(subjectId);
+    if (counted === undefined) return null;
+    const targeted = new Set<string>();
+    if (!counted) return { row: () => NOT_COUNTED, total: NOT_COUNTED, targeted, partnerSubjectIds: [] };
+    const rows = new Map<string, TargetTotal>();
+    const partners = new Set<string>();
+    const lineCodes = new Set<string>();
+    const lines: TargetTotal = { planned: 0, target: null, plannedHours: 0, targetHours: null };
+    for (const cell of cells.values()) {
+      if (cell.subjectId !== subjectId) continue;
+      const line = lineByCell.get(`${cell.studentGroupId}:${subjectId}`)!;
+      // A target on the subject, or on the line it is part of or an alternative on.
+      if (line.targetMinutesPerWeek !== null) targeted.add(cell.studentGroupId);
+      const row: TargetTotal =
+        cell.nationalCode !== undefined
+          ? {
+              planned: line.plannedMinutesPerWeek,
+              target: line.targetMinutesPerWeek,
+              plannedHours: line.plannedHours,
+              targetHours: line.targetHours,
+              line: cell.nationalCode,
+            }
+          : {
+              planned: cell.plannedMinutesPerWeek,
+              target: cell.targetMinutesPerWeek,
+              plannedHours: cell.plannedHours,
+              targetHours: cell.targetHours,
+            };
+      rows.set(cell.studentGroupId, row);
+      if (row.line === undefined) continue;
+      lineCodes.add(row.line);
+      for (const id of line.subjectIds) if (id !== subjectId) partners.add(id);
+    }
+    // A part of a national line in any class: the lines, added over the classes
+    // (each class's own figures where its plan has the subject on a line of its own).
+    if (lineCodes.size > 0) {
+      for (const row of rows.values()) {
+        lines.planned += row.planned;
+        lines.plannedHours = tenth(lines.plannedHours + row.plannedHours);
+        if (row.target !== null) {
+          lines.target = (lines.target ?? 0) + row.target;
+          lines.targetHours = tenth((lines.targetHours ?? 0) + (row.targetHours ?? 0));
+        }
+      }
+      lines.line = [...lineCodes].join(", ");
+    }
+    return {
+      row: (groupId) => rows.get(groupId),
+      total:
+        lineCodes.size > 0
+          ? lines
+          : (subjectTotals.get(subjectId) ?? { planned: 0, target: null, plannedHours: 0, targetHours: null, countedWith: null }),
+      targeted,
+      partnerSubjectIds: [...partners],
+    };
+  };
+
   return {
     coverage,
     cell(groupId, subjectId) {
@@ -380,18 +478,8 @@ export function buildTargetView(coverage: PlannedCoverage, plans: PlannedPlan[])
     summary: (groupId) => summaries.get(groupId) ?? null,
     subjectTotals,
     subjectOwn(subjectId) {
-      const byGroup = new Map<string, TargetTotal>();
-      for (const cell of cells.values()) {
-        if (cell.subjectId !== subjectId) continue;
-        byGroup.set(cell.studentGroupId, {
-          planned: cell.plannedMinutesPerWeek,
-          target: cell.targetMinutesPerWeek,
-          plannedHours: cell.plannedHours,
-          targetHours: cell.targetHours,
-        });
-      }
-      const total = subjectTotals.get(subjectId) ?? { planned: 0, target: null, plannedHours: 0, targetHours: null, countedWith: null };
-      return { byGroup, total };
+      if (!owned.has(subjectId)) owned.set(subjectId, subjectFigures(subjectId));
+      return owned.get(subjectId)!;
     },
     total: {
       planned,

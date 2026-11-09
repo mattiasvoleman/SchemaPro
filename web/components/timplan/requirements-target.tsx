@@ -55,6 +55,7 @@ import {
   plannedPlansOf,
   targetInput,
   type DraftFields,
+  type SubjectFigures,
   type TargetCellView,
   type TargetSources,
   type TargetTone,
@@ -98,8 +99,8 @@ export interface TargetHostProps {
   onState: (state: TargetState) => void;
   /**
    * The subject Ämne shows alone, or null: the classes' line is then that
-   * subject's column total and names it, as the classes' row does
-   * (TargetView.subjectOwn).
+   * subject's total and names it, as the classes' row does
+   * (TargetView.subjectOwn), or says why it has none.
    */
   subject?: { id: string; name: string } | null;
 }
@@ -128,7 +129,7 @@ export function TargetHost({ academicYearId, sources, onState, subject = null }:
     // Each plan read in its lydelse's numbering (the year's rows say which).
     const planned = plannedPlansOf(attachments.data, plans.data);
     const input = targetInput({ ...sources, attachments: attachments.data, plans: planned });
-    const view = buildTargetView(computePlannedCoverage(input), planned);
+    const view = buildTargetView(computePlannedCoverage(input), planned, input.subjects);
     return { status: "ready", view, input };
     // Not keyed on the translator: the state is figures, and the words are
     // put on them where they are painted (cellSentence, the components below).
@@ -149,11 +150,8 @@ export function TargetHost({ academicYearId, sources, onState, subject = null }:
     );
   }
   const { view } = state;
-  const total = subject ? view.subjectOwn(subject.id).total : view.total;
-  // SvA under Ämne: its line is totalled with Svenska's, which the sentence names.
-  const countedWith = total.countedWith
-    ? (sources?.subjects.find((entry) => entry.id === total.countedWith)?.name ?? null)
-    : null;
+  const figures = subject ? view.subjectOwn(subject.id) : null;
+  const nameOf = (id: string) => sources?.subjects.find((entry) => entry.id === id)?.name ?? "";
   const choosePlan = (
     <Link href="/admin/timplan" className="underline underline-offset-4">
       {t("target.choosePlan")}
@@ -180,33 +178,18 @@ export function TargetHost({ academicYearId, sources, onState, subject = null }:
         </Notice>
       ))}
       <p role="status" aria-live="polite" aria-atomic="true" className="font-medium">
-        {/* Under Ämne, the subject's: "Ingen årskurs följer en timplan" would not be the reason for no target. */}
-        {subject && countedWith
-          ? t("target.totalSubjectCountedWith", { subject: subject.name, first: countedWith })
-          : subject
-          ? total.target === null
-            ? t("target.totalSubjectNoTarget", {
-                subject: subject.name,
-                planned: total.planned,
-                plannedHours: h(total.plannedHours),
-              })
-            : t("target.totalSubject", {
-                subject: subject.name,
-                planned: total.planned,
-                target: total.target,
-                plannedHours: h(total.plannedHours),
-                targetHours: h(total.targetHours ?? 0),
-              })
-          : total.target === null
+        {subject && figures
+          ? subjectSentence(t, subject.name, figures, nameOf)
+          : view.total.target === null
             ? t("target.totalNoTarget", {
-                planned: total.planned,
-                plannedHours: h(total.plannedHours),
+                planned: view.total.planned,
+                plannedHours: h(view.total.plannedHours),
               })
             : t("target.total", {
-                planned: total.planned,
-                target: total.target,
-                plannedHours: h(total.plannedHours),
-                targetHours: h(total.targetHours ?? 0),
+                planned: view.total.planned,
+                target: view.total.target,
+                plannedHours: h(view.total.plannedHours),
+                targetHours: h(view.total.targetHours ?? 0),
               })}
       </p>
     </div>
@@ -215,6 +198,45 @@ export function TargetHost({ academicYearId, sources, onState, subject = null }:
 
 /** A translator for the `requirements` namespace, as the page holds one. */
 type Translate = (key: string, values?: Record<string, string | number>) => string;
+
+/**
+ * The classes' line under Ämne, which says what the subject's figures are:
+ * none for a subject that is not teaching time (Mentorstid), SvA's counted
+ * with Svenska, a part's the national line's with the other parts named
+ * (Biologi with Fysik on NO, where Biologi alone has no target), or the
+ * subject's own. "Ingen årskurs följer en timplan" is never the reason here.
+ */
+function subjectSentence(t: Translate, subject: string, figures: SubjectFigures, nameOf: (id: string) => string): string {
+  const { total } = figures;
+  if (total.notCounted) return t("target.totalSubjectNotCounted", { subject });
+  if (total.countedWith) return t("target.totalSubjectCountedWith", { subject, first: nameOf(total.countedWith) });
+  if (total.line !== undefined) {
+    // Which line, with the other parts when the class has any (a part alone on its line names none).
+    const lead =
+      figures.partnerSubjectIds.length > 0
+        ? t("target.subjectLine", { subject, partners: figures.partnerSubjectIds.map(nameOf).join(", "), line: total.line })
+        : t("target.subjectLineAlone", { subject, line: total.line });
+    const sums =
+      total.target === null
+        ? t("target.lineFiguresNoTarget", { planned: total.planned, plannedHours: h(total.plannedHours) })
+        : t("target.lineFigures", {
+            planned: total.planned,
+            target: total.target,
+            plannedHours: h(total.plannedHours),
+            targetHours: h(total.targetHours ?? 0),
+          });
+    return `${lead} ${sums}`;
+  }
+  return total.target === null
+    ? t("target.totalSubjectNoTarget", { subject, planned: total.planned, plannedHours: h(total.plannedHours) })
+    : t("target.totalSubject", {
+        subject,
+        planned: total.planned,
+        target: total.target,
+        plannedHours: h(total.plannedHours),
+        targetHours: h(total.targetHours ?? 0),
+      });
+}
 
 /**
  * The sentence a cell's accessible name gains in Mål mode, after the one
@@ -362,9 +384,10 @@ export function CoveragePill({
 /**
  * The group-total column: a class's whole week and year against its plan, or
  * — in the totals row — every class together (`total`). A teaching group has
- * neither and prints a dash. Under Ämne `total` is the subject's, and an
+ * neither and prints a dash. Under Ämne `total` is the subject's: an
  * alternative's partner says it is counted with its first subject, as its
- * column's total does.
+ * column's total does; a subject that is not teaching time says so behind a
+ * dash; and a part of a national line names the line its figures are.
  */
 export function GroupTotalCell({
   summary,
@@ -373,7 +396,16 @@ export function GroupTotalCell({
   summary: PlannedGroupSummary | null;
   total?: TargetTotal;
 }) {
+  const t = useTranslations("requirements");
   if (total?.countedWith) return <SubjectTotalCell total={total} />;
+  if (total?.notCounted) {
+    return (
+      <span>
+        <span aria-hidden="true">—</span>
+        <span className="sr-only">{t("target.totalNotCounted")}</span>
+      </span>
+    );
+  }
   const figures: TargetTotal | null = total
     ? total
     : summary
@@ -393,6 +425,9 @@ export function GroupTotalCell({
       <span className="text-xs font-normal">
         {h(figures.plannedHours)} / {figures.targetHours === null ? "—" : h(figures.targetHours)}
       </span>
+      {figures.line !== undefined ? (
+        <span className="text-[10px] font-normal leading-tight">{t("target.totalLine", { line: figures.line })}</span>
+      ) : null}
     </span>
   );
 }
