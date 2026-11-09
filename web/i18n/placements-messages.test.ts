@@ -39,6 +39,8 @@ const FIT_REASONS = [
   "TEACHER_LENGTH",
   "TEACHER_PAIRS",
   "TEACHER_COUNT",
+  // A change of the post refused for a placement nobody teaches (its teacher removed): only removal helps.
+  "UNSTAFFED",
 ] as const;
 
 const svT = createTranslator({ locale: "sv", messages: sv, namespace: "requirements.placements" });
@@ -148,6 +150,20 @@ describe("why the rows do not fit the post", () => {
     expect(enT("blockRefused")).toMatch(/placed lessons.*cannot be in a block/);
     expect(sv.scheduleCandidates.refusal.PLACEMENTS_REFUSED_SUMMARY).toMatch(/förlagd lektion/);
     expect(en.scheduleCandidates.refusal.PLACEMENTS_REFUSED_SUMMARY).toMatch(/placed lesson/);
+  });
+
+  it("says a placement nobody teaches can only be removed, and never to choose another teacher (review of #298, LÅG-6)", () => {
+    expect(svT("problem.UNSTAFFED")).toMatch(/Ta bort förläggningen först/);
+    expect(svT("problem.UNSTAFFED")).not.toMatch(/välj/i);
+    expect(enT("problem.UNSTAFFED")).toMatch(/Remove the placed lesson first/);
+    expect(enT("problem.UNSTAFFED")).not.toMatch(/choose/i);
+  });
+
+  it("names the placement without saying a post was not saved, for a batch that applied nothing", () => {
+    const params = { day: 4, start: "13:00", end: "14:00", weeks: "EVEN_WEEKS", reason: svT("problem.NO_TEACHER") };
+    expect(svT("placementFirst", params)).toBe(`Förläggningen torsdag 13:00–14:00 (jämna veckor) måste ändras eller tas bort först. ${svT("problem.NO_TEACHER")}`);
+    expect(enT("placementFirst", { ...params, reason: "x" })).toBe("The placed lesson on Thursday 13:00–14:00 (even weeks) has to be changed or removed first. x");
+    expect(svT("placementFirst", params)).not.toMatch(/sparades inte/);
   });
 
   it("is the reason a refused change of the post gives", () => {

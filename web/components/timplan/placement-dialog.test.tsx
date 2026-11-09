@@ -760,6 +760,18 @@ describe("a post that shares its lessons between teachers", () => {
       expect(select(rowNamed(2), "teacher").value).toBe("t1");
       expect(select(rowNamed(2), "length").value).toBe("80");
     });
+
+    // Review of #298, MEDEL-2 (mutant D17: a new row takes the first slot's length, not the open one's).
+    it("gives a new row the open lesson's length, not the first slot's: Anna's 80 and 40 are placed, so Bo's 40 is the one left", async () => {
+      answer([
+        stored({ teacherId: "t1", minutes: 80, endTime: "11:20" }),
+        stored({ id: "p2", teacherId: "t1", minutes: 40, endTime: "10:40", dayOfWeek: 4 }),
+      ]);
+      const { user } = await opened(mixed, boFortyShare);
+      await user.click(screen.getByRole("button", { name: "add" }));
+      expect(select(rowNamed(3), "teacher").value).toBe("t2");
+      expect(select(rowNamed(3), "length").value).toBe("40");
+    });
   });
 
   describe("a part nobody teaches", () => {

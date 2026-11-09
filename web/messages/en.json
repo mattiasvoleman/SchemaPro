@@ -1086,6 +1086,7 @@
       "busy": "The base timetable is being rewritten right now. Try again in a moment.",
       "editRefused": "The entry was not saved: it has placed lessons that the change does not fit. {reason}",
       "changeFirst": "The entry was not saved. The placed lesson on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}} {start}–{end}{weeks, select, ODD_WEEKS { (odd weeks)} EVEN_WEEKS { (even weeks)} other {}} has to be changed or removed first. {reason}",
+      "placementFirst": "The placed lesson on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}} {start}–{end}{weeks, select, ODD_WEEKS { (odd weeks)} EVEN_WEEKS { (even weeks)} other {}} has to be changed or removed first. {reason}",
       "blockRefused": "The block was not saved: one of the entries has placed lessons, and an entry with placed lessons cannot be in a block. Remove the placements on the entry first (Place lessons …).",
       "problem": {
         "LENGTH": "A placed lesson has a length the entry does not have. Change the placement or remove it.",
@@ -1099,6 +1100,7 @@
         "TEACHER_LENGTH": "The placement's teacher has no lesson of that length on the entry. Choose another length or another teacher.",
         "TEACHER_PAIRS": "One teacher's odd and even weeks of the same length go in pairs, and a pair is one lesson and so one teacher's. Choose the same teacher for both halves, or choose every week.",
         "TEACHER_COUNT": "More of a teacher's lessons of one length are placed than the teacher's part has. Remove a placement, or choose another teacher for it.",
+        "UNSTAFFED": "The placed lesson has no teacher since its teacher was removed, and the change leaves no lesson without a teacher for it. Remove the placed lesson first, and place the lesson again once the entry has its teachers.",
         "UNKNOWN": "The placed lessons do not fit the entry."
       },
       "verdict": {

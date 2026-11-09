@@ -267,8 +267,9 @@ export function StaffingProposalDialog({
       return [who, where].filter(Boolean).join(", ") + (who || where ? ": " : "") + sentence;
     }
     // Förlagda poster: a change of lead the placed lessons do not follow says
-    // which placement has to be changed first (the gateway names no person).
-    const placed = placementChangeSentence(tPlaced, error);
+    // which placement has to be changed first, on which post (params.requirementId),
+    // and never that a post was "not saved": nothing of the batch was applied.
+    const placed = placementChangeSentence(tPlaced, error, true);
     if (placed) {
       const where = row ? rowName(row.subjectId, row.studentGroupId) : null;
       return [who, where].filter(Boolean).join(", ") + (who || where ? ": " : "") + placed;

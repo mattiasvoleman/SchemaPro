@@ -74,7 +74,7 @@ describe("why the rows do not fit the post", () => {
 });
 
 describe("a refused change of a post's teacher", () => {
-  const t = lookup(["problem.TEACHER", "problem.NO_TEACHER", "problem.UNKNOWN", "changeFirst", "editRefused"]);
+  const t = lookup(["problem.TEACHER", "problem.NO_TEACHER", "problem.UNSTAFFED", "problem.UNKNOWN", "changeFirst", "editRefused", "placementFirst"]);
   const named = { reason: "TEACHER", day: 2, start: "10:00", end: "11:00", weeks: "ODD_WEEKS" };
 
   it("names the placement to change first, by its day, its time and its weeks, and says why", () => {
@@ -87,6 +87,20 @@ describe("a refused change of a post's teacher", () => {
   it("says in general words which of the post's lessons are placed, when no placement is named", () => {
     const error = new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { reason: "NO_TEACHER" });
     expect(placementChangeSentence(t, error)).toBe("editRefused(reason=problem.NO_TEACHER())");
+  });
+
+  it("says no post was 'not saved' for a batch that applied nothing (the staffing proposal), only the placement and why", () => {
+    const error = new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { ...named, requirementId: "r-1" });
+    expect(placementChangeSentence(t, error, true)).toBe(
+      "placementFirst(reason=problem.TEACHER(),day=2,start=10:00,end=11:00,weeks=ODD_WEEKS,requirementId=r-1)",
+    );
+    const unnamed = new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { reason: "TEACHER" });
+    expect(placementChangeSentence(t, unnamed, true)).toBe("problem.TEACHER()");
+  });
+
+  it("says a placement nobody teaches can only be removed (unstaffed), whatever rule refused it", () => {
+    const error = new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { ...named, reason: "TEACHER_COUNT", unstaffed: 1 });
+    expect(placementChangeSentence(t, error)).toContain("reason=problem.UNSTAFFED()");
   });
 
   it("is a general sentence for a reason this build does not know", () => {

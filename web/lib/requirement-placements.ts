@@ -119,7 +119,9 @@ export function placementsByRequirement(
  *     it: from the PUT a per-teacher reason may carry `index`, the row's place
  *     in the list that was sent; from a change of the post's teacher or
  *     shares it carries `day`, `start`, `end` and `weeks`, which name the
- *     placement that has to be changed (or removed) first.
+ *     placement that has to be changed (or removed) first, and `requirementId`
+ *     its post. A placement that names nobody because its teacher was removed
+ *     (`unstaffed`) can only be removed: its reason reads UNSTAFFED.
  *   - ROW: the first row the judge refuses (REQUIREMENT_PLACEMENT_REFUSED).
  *     `index` is its place in the list that was sent, `reason` the judge's and
  *     `params` the rest of what the sentence is written from.
@@ -135,7 +137,9 @@ export function placementsRefusal(error: unknown): PlacementsRefusal | null {
   if (!(error instanceof ApiError) || error.status !== 409) return null;
   const params = error.params;
   if (error.code === "REQUIREMENT_PLACEMENTS_DO_NOT_FIT") {
-    return typeof params?.reason === "string" ? { kind: "FIT", reason: params.reason, params } : null;
+    // A placement nobody teaches (its teacher removed) is one the change waits for that can only be removed.
+    if (typeof params?.reason !== "string") return null;
+    return { kind: "FIT", reason: params.unstaffed ? "UNSTAFFED" : params.reason, params };
   }
   if (error.code === "REQUIREMENT_PLACEMENT_REFUSED") {
     if (typeof params?.reason !== "string" || typeof params.index !== "number") return null;

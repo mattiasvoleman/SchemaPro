@@ -79,9 +79,11 @@ export function fitSentence(t: MessageLookup, reason: string): string {
  * A refusal without a placement named (an older gateway) says only that the
  * placed lessons do not fit, with the reason.
  */
-export function placementChangeSentence(t: MessageLookup, error: unknown): string | null {
+export function placementChangeSentence(t: MessageLookup, error: unknown, nothingApplied = false): string | null {
   const refusal = placementsRefusal(error);
   if (refusal?.kind !== "FIT") return null;
   const reason = fitSentence(t, refusal.reason);
+  // A batch that applied nothing (the staffing proposal) is no post "not saved": only the placement and why.
+  if (nothingApplied) return refusal.params.end ? t("placementFirst", { ...refusal.params, reason }) : reason;
   return refusal.params.end ? t("changeFirst", { ...refusal.params, reason }) : t("editRefused", { reason });
 }

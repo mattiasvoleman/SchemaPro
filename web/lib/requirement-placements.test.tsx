@@ -104,6 +104,12 @@ describe("a refused write", () => {
     expect(placementsRefusal(error)).toEqual({ kind: "FIT", reason: "TEACHER", params });
   });
 
+  it("reads a placement nobody teaches (its teacher removed) as UNSTAFFED, which can only be removed", () => {
+    const params = { reason: "TEACHER_COUNT", day: 2, start: "10:00", end: "11:00", weeks: "ALL_WEEKS", unstaffed: 1 };
+    const error = new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", params);
+    expect(placementsRefusal(error)).toEqual({ kind: "FIT", reason: "UNSTAFFED", params });
+  });
+
   it("is the first row the judge refuses, with its place in the list and what the sentence needs", () => {
     const error = new ApiError(409, "x", "REQUIREMENT_PLACEMENT_REFUSED", {
       index: 1,

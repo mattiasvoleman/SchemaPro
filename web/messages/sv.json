@@ -1086,6 +1086,7 @@
       "busy": "Grundschemat skrivs om just nu. Försök igen om en stund.",
       "editRefused": "Posten sparades inte: den har förlagda lektioner som ändringen inte passar. {reason}",
       "changeFirst": "Posten sparades inte. Förläggningen {day, select, 1 {måndag} 2 {tisdag} 3 {onsdag} 4 {torsdag} 5 {fredag} other {dag {day}}} {start}–{end}{weeks, select, ODD_WEEKS { (udda veckor)} EVEN_WEEKS { (jämna veckor)} other {}} måste ändras eller tas bort först. {reason}",
+      "placementFirst": "Förläggningen {day, select, 1 {måndag} 2 {tisdag} 3 {onsdag} 4 {torsdag} 5 {fredag} other {dag {day}}} {start}–{end}{weeks, select, ODD_WEEKS { (udda veckor)} EVEN_WEEKS { (jämna veckor)} other {}} måste ändras eller tas bort först. {reason}",
       "blockRefused": "Blocket sparades inte: en av posterna har förlagda lektioner, och en post med förlagda lektioner kan inte ligga i ett block. Ta bort förläggningarna på posten först (Förlägg …).",
       "problem": {
         "LENGTH": "En förlagd lektion har en längd som posten inte har. Ändra förläggningen eller ta bort den.",
@@ -1099,6 +1100,7 @@
         "TEACHER_LENGTH": "Förläggningens lärare har ingen lektion av den längden på posten. Välj en annan längd eller en annan lärare.",
         "TEACHER_PAIRS": "En lärares udda och jämna veckor av samma längd går i par, och ett par är en lektion och därför en lärares. Välj samma lärare för båda halvorna, eller välj varje vecka.",
         "TEACHER_COUNT": "Fler av en lärares lektioner av en längd är förlagda än lärarens del har. Ta bort en förläggning, eller välj en annan lärare för den.",
+        "UNSTAFFED": "Förläggningen har ingen lärare sedan dess lärare togs bort, och ändringen lämnar ingen lektion utan lärare för den. Ta bort förläggningen först, och förlägg lektionen igen när posten har sina lärare.",
         "UNKNOWN": "Förläggningarna passar inte posten."
       },
       "verdict": {
