@@ -163,10 +163,16 @@ const PAGES: Measured[] = [
  * own array, so that the two lines above, which the phases that add rows to
  * the administrator's and the teacher's menus edit, are not also the lines of
  * these.
+ *
+ * Set on main 5e68a7c3 (macOS, production build): 8 952 and 8 729 B. On
+ * b1c2f587, before the wave, they were 8 447 and 8 211: 505 and 518 B more with
+ * no row added to either menu, which is the wave's shared code and messages
+ * (the catalog grew by 35 343 B gzipped, 193 184 B now) moving the document
+ * beside the catalog.
  */
 const SMALL_MENUS: Measured[] = [
-  { name: "guardian", persona: "guardian", url: "/sv/notifications", row: "/sv/guardian/absence-watch", measured: 8_447 },
-  { name: "student", persona: "student", url: "/sv/notifications", row: "/sv/student/attendance", measured: 8_211 },
+  { name: "guardian", persona: "guardian", url: "/sv/notifications", row: "/sv/guardian/absence-watch", measured: 8_952 },
+  { name: "student", persona: "student", url: "/sv/notifications", row: "/sv/student/attendance", measured: 8_729 },
 ];
 
 const catalog = JSON.stringify(JSON.parse(readFileSync(join(__dirname, "..", "messages", "sv.json"), "utf8")));
