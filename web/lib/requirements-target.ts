@@ -247,6 +247,18 @@ export interface TargetView {
   subjectTotals: Map<string, TargetTotal>;
   /** Every class together, alternatives counted once (the summaries' rule). */
   total: TargetTotal;
+  /**
+   * One subject's figures while Ämne shows it alone: per class its own cell
+   * (its minutes and its entry, the figures the cell beside it reads), for the
+   * total column, and over the classes its column's total in `subjectTotals`,
+   * for the classes' row and the line above the matrix. So the filter changes
+   * no figure, it only hides the others; and an alternative is totalled as it
+   * always was, once in its first subject (SvA beside Svenska reads "counted
+   * with" rather than 0 of a target the classes meet through Svenska). A class
+   * with no cell in the subject has no entry; a subject no class has a cell
+   * in totals 0 with no target.
+   */
+  subjectOwn(subjectId: string): { byGroup: Map<string, TargetTotal>; total: TargetTotal };
   /** Årskurser with classes and no plan attached this year. */
   unattachedGrades: number[];
   /** Attached plans that are DRAFTs, with the grades that follow them. */
@@ -367,6 +379,20 @@ export function buildTargetView(coverage: PlannedCoverage, plans: PlannedPlan[])
     },
     summary: (groupId) => summaries.get(groupId) ?? null,
     subjectTotals,
+    subjectOwn(subjectId) {
+      const byGroup = new Map<string, TargetTotal>();
+      for (const cell of cells.values()) {
+        if (cell.subjectId !== subjectId) continue;
+        byGroup.set(cell.studentGroupId, {
+          planned: cell.plannedMinutesPerWeek,
+          target: cell.targetMinutesPerWeek,
+          plannedHours: cell.plannedHours,
+          targetHours: cell.targetHours,
+        });
+      }
+      const total = subjectTotals.get(subjectId) ?? { planned: 0, target: null, plannedHours: 0, targetHours: null, countedWith: null };
+      return { byGroup, total };
+    },
     total: {
       planned,
       target: anyTarget ? target : null,

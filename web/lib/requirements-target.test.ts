@@ -271,6 +271,32 @@ describe("buildTargetView", () => {
     });
   });
 
+  // Ämne on the matrix: one subject's figures, per class and for the classes' row.
+  it("reads one subject per class from its own cell, and over the classes from its column's total", () => {
+    const ma = view.subjectOwn("s-ma");
+    // 3 × 60 = 180 of 175 for 7A and 4 × 60 = 240 of the draft's 180 for 8A; 43 weeks each.
+    expect(ma.byGroup.get("g-7a")).toEqual({ planned: 180, target: 175, plannedHours: 129, targetHours: 125.4 });
+    expect(ma.byGroup.get("g-8a")).toEqual({ planned: 240, target: 180, plannedHours: 172, targetHours: 129 });
+    // 9A follows no plan: no cell, so no entry, and its total column prints a dash.
+    expect(ma.byGroup.has("g-9a")).toBe(false);
+    expect(ma.total).toBe(view.subjectTotals.get("s-ma"));
+  });
+
+  it("totals an alternative under Ämne as its column always was: SvA counted with Svenska, not 0 of 180", () => {
+    const sva = view.subjectOwn("s-sva");
+    // The cell reads its own 0 / 180, as the matrix cell beside it does.
+    expect(sva.byGroup.get("g-7a")).toMatchObject({ planned: 0, target: 180 });
+    expect(sva.total).toMatchObject({ planned: 0, target: null, countedWith: "s-sv" });
+    expect(view.subjectOwn("s-sv").total).toMatchObject({ planned: 180, target: 180, countedWith: null });
+  });
+
+  it("gives a subject no class has a cell in no rows and a total of nothing, with no target", () => {
+    expect(view.subjectOwn("s-mt")).toEqual({
+      byGroup: new Map(),
+      total: { planned: 0, target: null, plannedHours: 0, targetHours: null, countedWith: null },
+    });
+  });
+
   it("names the årskurser without a plan and the plans that are drafts", () => {
     expect(view.unattachedGrades).toEqual([9]);
     expect(view.draftPlans).toEqual([{ id: "p-draft", name: "Utkast 2027", gradeLevels: [8] }]);

@@ -2396,6 +2396,8 @@ describe("Timplansposter in Mål mode", () => {
     state.requirements = loaded(targetRequirements);
     attach("DECIDED");
   });
+  // Ämne writes ?subject=, which the next render would read.
+  afterEach(() => window.history.replaceState(null, "", "/"));
 
   it("is off until pressed, and says so through aria-pressed", async () => {
     render(<RequirementsPage />);
@@ -2468,6 +2470,40 @@ describe("Timplansposter in Mål mode", () => {
     expect(within(totals).getByText("180 / 180")).toBeInTheDocument();
     expect(within(totals).getByText("0 / 60")).toBeInTheDocument();
     expect(screen.getByText("target.total(220|300|157,7 h|215 h)")).toBeInTheDocument();
+  });
+
+  it("under Ämne counts the total column, the classes' row and the line above on the subject's own cells", async () => {
+    const user = userEvent.setup();
+    render(<RequirementsPage />);
+    await enterTargetMode();
+    await user.click(screen.getByRole("combobox", { name: "subjectFilter.label" }));
+    await user.click(screen.getByRole("option", { name: "Slöjd" }));
+
+    const row = screen.getByText("7A").closest("tr")!;
+    // Slöjd's 1 × 40 against its 60, not 7A's 220 / 300: in the cell and in the total beside it.
+    expect(within(row).getAllByText("40 / 60")).toHaveLength(2);
+    // 40 min × 43 weeks = 28,7 h of 60 × 43 = 43 h.
+    expect(within(row).getByText("28,7 h / 43 h")).toBeInTheDocument();
+    expect(within(row).queryByText("220 / 300")).toBeNull();
+    expect(hoursFor("7A")).toBe("28,7 h");
+
+    const totals = within(matrix()).getByRole("rowheader", { name: "target.totalsRow" }).closest("tr")!;
+    expect(within(totals).getAllByText("40 / 60")).toHaveLength(2);
+    expect(screen.getByText("target.totalSubject(Slöjd|40|60|28,7 h|43 h)")).toBeInTheDocument();
+    expect(screen.queryByText(/^target\.total\(/)).toBeNull();
+  });
+
+  it("under Ämne says a subject the plan gives no minutes has no target, not that no årskurs follows a plan", async () => {
+    const user = userEvent.setup();
+    render(<RequirementsPage />);
+    await enterTargetMode();
+    await user.click(screen.getByRole("combobox", { name: "subjectFilter.label" }));
+    await user.click(screen.getByRole("option", { name: "Övrigt" }));
+
+    expect(screen.getByText("target.totalSubjectNoTarget(Övrigt|0|0 h)")).toBeInTheDocument();
+    // 7A has no Övrigt post and no cell at all: its total is a dash, as a teaching group's always was.
+    await user.click(screen.getByRole("checkbox", { name: "subjectFilter.withoutPosts" }));
+    expect(within(screen.getByText("7A").closest("tr")!).getByText("—")).toBeInTheDocument();
   });
 
   it("gives a class a Täckning pill linking to its coverage, and a teaching group none", async () => {
@@ -3452,6 +3488,188 @@ describe("Förlagda poster on the timplan", () => {
       expect(source).not.toMatch(/requirement-placements-api/);
       // The mark is the page's: a pin and a word.
       expect(source).toMatch(/from "@\/components\/timplan\/placed-badge"/);
+    });
+  });
+});
+
+// Ämne: the matrix narrowed to one subject (lib/requirements-subject-filter.ts
+// has the rule's own tests). Here: the page draws what the rule says, the sums
+// follow it, the choice lives in the address, and the export does not follow.
+describe("Ämne on Timplansposter", () => {
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  const pick = async (user: ReturnType<typeof userEvent.setup>, name: string) => {
+    await user.click(screen.getByRole("combobox", { name: "subjectFilter.label" }));
+    await user.click(screen.getByRole("option", { name }));
+  };
+  const subjectHeaders = () =>
+    within(matrix())
+      .getAllByRole("columnheader")
+      .slice(1, -2)
+      .map((cell) => cell.textContent?.trim());
+  const sectionHeadings = () =>
+    within(matrix())
+      .getAllByRole("cell")
+      .filter((cell) => cell.className.includes("uppercase"))
+      .map((cell) => cell.textContent?.trim());
+  const withoutPosts = () => screen.queryByRole("checkbox", { name: "subjectFilter.withoutPosts" });
+
+  it("is Alla ämnen until a subject is chosen, and the page is as it was", () => {
+    render(<RequirementsPage />);
+    expect(screen.getByRole("combobox", { name: "subjectFilter.label" })).toHaveTextContent("subjectFilter.all");
+    expect(subjectHeaders()).toEqual(["BI", "SL", "SO", "ÖV"]);
+    expect(sectionHeadings()).toEqual(["classesSection (1)", "teachingGroupsSection (1)"]);
+    expect(withoutPosts()).toBeNull();
+    expect(screen.getByRole("columnheader", { name: "hoursHeader" })).toBeInTheDocument();
+    expect(screen.getByRole("status").textContent).toBe(`summary(${PEAK_LESSONS}|${SCHOOL_HOURS})`);
+  });
+
+  it("draws the subject's column alone and the groups with a post in it, and says how many of the year's", async () => {
+    const user = userEvent.setup();
+    render(<RequirementsPage />);
+    await pick(user, "Slöjd");
+
+    expect(subjectHeaders()).toEqual(["SL"]);
+    // Ma71 has no Slöjd post: its section goes, as an empty one always did.
+    expect(sectionHeadings()).toEqual(["classesSection (sectionShown(1|1))"]);
+    expect(screen.queryByText("Ma71")).toBeNull();
+    expect(screen.getByRole("combobox", { name: "subjectFilter.label" })).toHaveTextContent("Slöjd");
+    expect(matrix().querySelector("caption")?.textContent).toContain("tableCaptionSubject(Slöjd)");
+  });
+
+  it("counts the row's sums and the school's on the subject's posts alone, and says so", async () => {
+    const user = userEvent.setup();
+    render(<RequirementsPage />);
+    await pick(user, "Slöjd");
+
+    // Slöjd alone: even weeks, 21 × 2 × 60 = 2520 min = 42 h; 7A's 86 h was SO's 44 h with it.
+    expect(hoursFor("7A")).toBe("42 h");
+    expect(peakFor("7A")).toBe("2");
+    expect(screen.getByRole("status").textContent).toBe("summarySubject(Slöjd|2|42 h)");
+    expect(screen.getByRole("columnheader", { name: "peakHeaderSubject" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "hoursHeaderSubject" })).toBeInTheDocument();
+    // The footnote on lov and studiedagar still qualifies the figure.
+    expect(screen.getByRole("status")).toHaveAttribute("aria-describedby", "requirements-hours-caveat");
+    expect(document.getElementById("requirements-hours-caveat")).not.toBeNull();
+  });
+
+  it("shows the year's other groups with Visa grupper utan post, which only a chosen subject offers", async () => {
+    const user = userEvent.setup();
+    render(<RequirementsPage />);
+    await pick(user, "Slöjd");
+    expect(withoutPosts()).not.toBeChecked();
+
+    await user.click(withoutPosts()!);
+    expect(sectionHeadings()).toEqual(["classesSection (sectionShown(1|1))", "teachingGroupsSection (sectionShown(1|1))"]);
+    // A row to add Slöjd on, counted in Slöjd: nothing yet.
+    expect(hoursFor("Ma71")).toBe("0 h");
+    expect(screen.getByLabelText("cellLabel(Ma71|Slöjd)")).toBeInTheDocument();
+
+    await pick(user, "subjectFilter.all");
+    expect(withoutPosts()).toBeNull();
+  });
+
+  it("shows a teaching group that replaces the subject, and a half by its own post only", async () => {
+    state.groups = loaded([
+      ...groups,
+      { id: "g-sva", academicYearId: "y1", name: "SvA7", kind: "TEACHING_GROUP", gradeLevel: null, replacesSubjectId: "s-so" },
+      { id: "g-7a1", academicYearId: "y1", name: "7A:1", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g-7a" },
+      { id: "g-7a2", academicYearId: "y1", name: "7A:2", kind: "TEACHING_GROUP", gradeLevel: 7, halfOfId: "g-7a" },
+    ]);
+    state.requirements = loaded([
+      ...requirements,
+      { ...requirements[1]!, id: "r-sl-half", studentGroupId: "g-7a1", recurrence: "ALL_WEEKS" },
+    ]);
+    const user = userEvent.setup();
+    render(<RequirementsPage />);
+
+    await pick(user, "Samhällsorientering");
+    expect(screen.getByText("SvA7")).toBeInTheDocument();
+    expect(screen.queryByText("7A:1")).toBeNull();
+    // SvA7's lessons are not SO's: it is a row here, and counts nothing.
+    expect(hoursFor("SvA7")).toBe("0 h");
+
+    await pick(user, "Slöjd");
+    expect(screen.queryByText("SvA7")).toBeNull();
+    expect(screen.getByText("7A:1")).toBeInTheDocument();
+    expect(screen.queryByText("7A:2")).toBeNull();
+    expect(sectionHeadings()).toEqual(["classesSection (sectionShown(1|1))", "teachingGroupsSection (sectionShown(1|4))"]);
+  });
+
+  it("opens the dialog of the cell pressed, by its row and its column", async () => {
+    const user = userEvent.setup();
+    render(<RequirementsPage />);
+    await pick(user, "Samhällsorientering");
+    await user.click(screen.getByLabelText("cellLabelPeriod(7A|Samhällsorientering|2|60|badgeOdd)"));
+    expect(screen.getByRole("dialog")).toHaveTextContent("7A · Samhällsorientering");
+    // Dela i halvklass is offered on the post as before.
+    expect(screen.getByRole("button", { name: "termHalves.action" })).toBeInTheDocument();
+  });
+
+  it("says plainly when no group is in the subject, and offers the groups without a post", async () => {
+    const user = userEvent.setup();
+    render(<RequirementsPage />);
+    await pick(user, "Bild");
+
+    expect(screen.getByRole("heading", { name: "subjectFilter.emptyTitle(Bild)" })).toBeInTheDocument();
+    expect(screen.queryByText("7A")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "subjectFilter.withoutPosts" }));
+    expect(screen.getByText("7A")).toBeInTheDocument();
+    expect(screen.getByText("Ma71")).toBeInTheDocument();
+    expect(withoutPosts()).toBeChecked();
+  });
+
+  it("exports every subject whatever the matrix shows", async () => {
+    const user = userEvent.setup();
+    render(<RequirementsPage />);
+    await pick(user, "Slöjd");
+    await user.click(exportButton());
+
+    await waitFor(() => expect(mockDownloadCsv).toHaveBeenCalledTimes(1));
+    const [, file] = mockDownloadCsv.mock.calls[0] as [string, string];
+    expect(file).toContain("7A;SO;2;60;0;0;;;udda;;");
+    expect(file).toContain("7A;SL;2;60;0;0;;;jamna;;");
+  });
+
+  describe("in the address", () => {
+    it("reads ?subject= as the year is read", async () => {
+      window.history.replaceState(null, "", "/?subject=s-sl");
+      render(<RequirementsPage />);
+      await waitFor(() => expect(subjectHeaders()).toEqual(["SL"]));
+    });
+
+    it("reads an id that is no subject of the school as Alla ämnen", async () => {
+      window.history.replaceState(null, "", "/?subject=s-gone");
+      render(<RequirementsPage />);
+      await waitFor(() => expect(screen.getByRole("combobox", { name: "subjectFilter.label" })).toHaveTextContent("subjectFilter.all"));
+      expect(subjectHeaders()).toEqual(["BI", "SL", "SO", "ÖV"]);
+    });
+
+    it("writes the choice beside ?year=, and takes it out for Alla ämnen", async () => {
+      twoYears();
+      window.history.replaceState(null, "", "/?year=y1");
+      const user = userEvent.setup();
+      render(<RequirementsPage />);
+
+      await pick(user, "Bild");
+      expect(window.location.search).toBe("?year=y1&subject=s-bi");
+      await pick(user, "subjectFilter.all");
+      expect(window.location.search).toBe("?year=y1");
+    });
+
+    it("keeps the subject when the läsår changes, the subjects being the school's", async () => {
+      twoYears();
+      const user = userEvent.setup();
+      render(<RequirementsPage />);
+      await pick(user, "Bild");
+      expect(screen.getByRole("heading", { name: "subjectFilter.emptyTitle(Bild)" })).toBeInTheDocument();
+
+      await user.click(screen.getByRole("combobox", { name: "yearLabel" }));
+      await user.click(screen.getByRole("option", { name: "2027/2028" }));
+      // Next year's 8B reads Bild: 1 × 60 all year, 43 weeks = 43 h.
+      expect(subjectHeaders()).toEqual(["BI"]);
+      expect(hoursFor("8B")).toBe("43 h");
+      expect(window.location.search).toBe("?subject=s-bi");
     });
   });
 });

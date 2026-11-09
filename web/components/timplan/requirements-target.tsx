@@ -96,6 +96,12 @@ export interface TargetHostProps {
    */
   sources: Omit<TargetSources, "attachments" | "plans"> | null;
   onState: (state: TargetState) => void;
+  /**
+   * The subject Ämne shows alone, or null: the classes' line is then that
+   * subject's column total and names it, as the classes' row does
+   * (TargetView.subjectOwn).
+   */
+  subject?: { id: string; name: string } | null;
 }
 
 /**
@@ -104,7 +110,7 @@ export interface TargetHostProps {
  * a cell's two numbers are, which årskurser follow no plan, which follow a
  * draft, and the classes' total.
  */
-export function TargetHost({ academicYearId, sources, onState }: TargetHostProps) {
+export function TargetHost({ academicYearId, sources, onState, subject = null }: TargetHostProps) {
   const t = useTranslations("requirements");
   const attachments = useYearTimplans(academicYearId);
   const planIds = useMemo(
@@ -143,6 +149,11 @@ export function TargetHost({ academicYearId, sources, onState }: TargetHostProps
     );
   }
   const { view } = state;
+  const total = subject ? view.subjectOwn(subject.id).total : view.total;
+  // SvA under Ämne: its line is totalled with Svenska's, which the sentence names.
+  const countedWith = total.countedWith
+    ? (sources?.subjects.find((entry) => entry.id === total.countedWith)?.name ?? null)
+    : null;
   const choosePlan = (
     <Link href="/admin/timplan" className="underline underline-offset-4">
       {t("target.choosePlan")}
@@ -169,17 +180,34 @@ export function TargetHost({ academicYearId, sources, onState }: TargetHostProps
         </Notice>
       ))}
       <p role="status" aria-live="polite" aria-atomic="true" className="font-medium">
-        {view.total.target === null
-          ? t("target.totalNoTarget", {
-              planned: view.total.planned,
-              plannedHours: h(view.total.plannedHours),
-            })
-          : t("target.total", {
-              planned: view.total.planned,
-              target: view.total.target,
-              plannedHours: h(view.total.plannedHours),
-              targetHours: h(view.total.targetHours ?? 0),
-            })}
+        {/* Under Ämne, the subject's: "Ingen årskurs följer en timplan" would not be the reason for no target. */}
+        {subject && countedWith
+          ? t("target.totalSubjectCountedWith", { subject: subject.name, first: countedWith })
+          : subject
+          ? total.target === null
+            ? t("target.totalSubjectNoTarget", {
+                subject: subject.name,
+                planned: total.planned,
+                plannedHours: h(total.plannedHours),
+              })
+            : t("target.totalSubject", {
+                subject: subject.name,
+                planned: total.planned,
+                target: total.target,
+                plannedHours: h(total.plannedHours),
+                targetHours: h(total.targetHours ?? 0),
+              })
+          : total.target === null
+            ? t("target.totalNoTarget", {
+                planned: total.planned,
+                plannedHours: h(total.plannedHours),
+              })
+            : t("target.total", {
+                planned: total.planned,
+                target: total.target,
+                plannedHours: h(total.plannedHours),
+                targetHours: h(total.targetHours ?? 0),
+              })}
       </p>
     </div>
   );
@@ -334,7 +362,9 @@ export function CoveragePill({
 /**
  * The group-total column: a class's whole week and year against its plan, or
  * — in the totals row — every class together (`total`). A teaching group has
- * neither and prints a dash.
+ * neither and prints a dash. Under Ämne `total` is the subject's, and an
+ * alternative's partner says it is counted with its first subject, as its
+ * column's total does.
  */
 export function GroupTotalCell({
   summary,
@@ -343,6 +373,7 @@ export function GroupTotalCell({
   summary: PlannedGroupSummary | null;
   total?: TargetTotal;
 }) {
+  if (total?.countedWith) return <SubjectTotalCell total={total} />;
   const figures: TargetTotal | null = total
     ? total
     : summary

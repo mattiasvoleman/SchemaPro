@@ -1,6 +1,12 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { cellSentence, TargetCellBody, TargetHint } from "@/components/timplan/requirements-target";
+import {
+  cellSentence,
+  GroupTotalCell,
+  TargetCellBody,
+  TargetHint,
+  TargetHost,
+} from "@/components/timplan/requirements-target";
 import {
   buildTargetView,
   targetInput,
@@ -15,6 +21,14 @@ vi.mock("next-intl", () => ({
 }));
 vi.mock("@/i18n/navigation", () => ({
   Link: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
+}));
+// TargetHost's two reads: the year follows this file's one plan.
+vi.mock("@/lib/year-timplan-queries", () => ({
+  useYearTimplans: () => ({
+    data: [{ gradeLevel: 7, localTimplanId: "p", planName: "Grundskola 2026", planStatus: "DECIDED" }],
+    isError: false,
+  }),
+  useLocalTimplanDetails: () => ({ data: plans, isError: false }),
 }));
 
 /**
@@ -153,5 +167,40 @@ describe("a part of a national line in Mål mode", () => {
     );
     expect(screen.getByRole("status")).toHaveTextContent("target.hintTogether(Svenska)");
     expect(screen.getByRole("status")).not.toHaveTextContent("target.hintParts");
+  });
+});
+
+// Ämne on the matrix: the classes' line and the total column hold one subject.
+describe("one subject in Mål mode", () => {
+  // Svenska 4 × 50 meets the 200 SvA shares, over 43 weeks: 143,3 h.
+  const svenska = sourcesWith([row("r-sv", "s-sv", 4, 50)]);
+  const { view } = viewOf([row("r-sv", "s-sv", 4, 50)]);
+
+  it("states the subject's total over the classes and names it", () => {
+    render(<TargetHost academicYearId="y1" sources={svenska} onState={() => {}} subject={{ id: "s-sv", name: "Svenska" }} />);
+    expect(screen.getByRole("status")).toHaveTextContent("target.totalSubject(Svenska|200|200|143,3 h|143,3 h)");
+  });
+
+  it("says SvA is counted with Svenska rather than 0 of a target the class meets through Svenska", () => {
+    render(
+      <TargetHost
+        academicYearId="y1"
+        sources={svenska}
+        onState={() => {}}
+        subject={{ id: "s-sva", name: "Svenska som andraspråk" }}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "target.totalSubjectCountedWith(Svenska som andraspråk|Svenska)",
+    );
+    // The total column of the classes' row says the same in a dash, as SvA's column total does.
+    const { container } = render(<GroupTotalCell summary={null} total={view.subjectOwn("s-sva").total} />);
+    expect(container).toHaveTextContent("—target.totalCountedWith");
+    expect(container).not.toHaveTextContent("0 /");
+  });
+
+  it("keeps the whole classes' line without a subject", () => {
+    render(<TargetHost academicYearId="y1" sources={svenska} onState={() => {}} />);
+    expect(screen.getByRole("status")).toHaveTextContent(/^target\.total\(/);
   });
 });

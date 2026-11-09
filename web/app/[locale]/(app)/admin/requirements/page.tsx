@@ -61,6 +61,13 @@
 // What each TEACHER carries per subject is not here: the tjänstefördelning
 // (/admin/staffing, /teacher/tjanst) already states it.
 //
+// ÄMNE narrows the matrix to one subject (lib/requirements-subject-filter.ts):
+// its column, the groups with a post in it and the teaching groups replacing
+// it, and every sum counted on its posts alone, each heading saying so. The
+// choice is `?subject=`, read and written without useSearchParams for the
+// reason `?year=` is, and it outlives a change of läsår: subjects are the
+// school's. The CSV export is not filtered; it holds every subject.
+//
 // CONTRAST, MEASURED. Computed from the HSL tokens in app/globals.css, rounded
 // to 8-bit the way a browser paints them, and blended where a token is painted
 // through an alpha. Light theme first, then dark:
@@ -136,6 +143,7 @@
 
 import { Fragment, Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { splitGroupsByKind } from "@/lib/group-sections";
+import { subjectView } from "@/lib/requirements-subject-filter";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Grid3x3, Plus, Upload } from "lucide-react";
@@ -238,6 +246,8 @@ import {
 } from "@/components/ui/select";
 
 const NO_TEACHER = "__none__";
+/** Ämne's "Alla ämnen": no subject id is this. */
+const ALL_SUBJECTS = "__all__";
 
 /*
  * Fetched with the cell dialog, the only place the fields are drawn — as the
@@ -420,7 +430,23 @@ export default function RequirementsPage() {
   // ?year= from Skapa timplansposter's result link, read once after mount
   // (not useSearchParams, which would opt the route out of static rendering).
   const [linkedYearId, setLinkedYearId] = useState<string | null>(null);
-  useEffect(() => setLinkedYearId(new URLSearchParams(window.location.search).get("year")), []);
+  /** Ämne: the subject the matrix shows alone (null: all), and "Visa grupper utan post". */
+  const [subjectId, setSubjectId] = useState<string | null>(null);
+  const [withoutPosts, setWithoutPosts] = useState(false);
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    setLinkedYearId(query.get("year"));
+    setSubjectId(query.get("subject"));
+  }, []);
+  /** The choice in the address, beside ?year=, so a reload or a shared link keeps it. */
+  const pickSubject = (value: string) => {
+    const query = new URLSearchParams(window.location.search);
+    if (value === ALL_SUBJECTS) query.delete("subject");
+    else query.set("subject", value);
+    setSubjectId(value === ALL_SUBJECTS ? null : value);
+    const search = String(query);
+    window.history.replaceState(null, "", search ? `?${search}` : window.location.pathname);
+  };
   const activeYearId =
     selectedYearId ??
     years?.find((year) => year.id === linkedYearId)?.id ??
@@ -776,6 +802,34 @@ export default function RequirementsPage() {
     [yearGroups, memberships],
   );
 
+  /**
+   * The columns, in the order of the label they actually carry.
+   *
+   * `useSubjects` sorts by name, which is right for every dropdown — those show
+   * names. This header shows the CODE, and sorting one string while displaying
+   * another reads as no order at all: the school's own list came out
+   * "EN IDH MA MU NO SO SL SV", because Slöjd sorts after SO by name while the
+   * eye is reading SL against SO.
+   *
+   * Sorted here rather than in the hook, because the hook feeds both views and
+   * each is alphabetical in what it shows. The cells below iterate this same
+   * array — a header ordered one way and cells another would silently file
+   * every lesson under the wrong subject.
+   */
+  const columns = useMemo(
+    () => sortByName(subjects ?? [], (subject) => subject.code ?? subject.name),
+    [subjects],
+  );
+
+  /**
+   * What the matrix draws under Ämne: the columns, the sections and the posts
+   * every sum below is counted on — the chosen subject's alone, or all.
+   */
+  const view = useMemo(
+    () => subjectView(subjectId, withoutPosts, columns, sections, requirements ?? []),
+    [subjectId, withoutPosts, columns, sections, requirements],
+  );
+
   const requirementIndex = useMemo(() => {
     const map = new Map<string, TeachingRequirement>();
     for (const requirement of requirements ?? []) {
@@ -829,7 +883,8 @@ export default function RequirementsPage() {
   const annualMinutesByGroup = useMemo(() => {
     const totals = new Map<string, number>();
     if (!yearBounds) return totals;
-    for (const requirement of requirements ?? []) {
+    // Under Ämne, the subject's posts: a row's hours IN that subject.
+    for (const requirement of view.posts) {
       totals.set(
         requirement.studentGroupId,
         (totals.get(requirement.studentGroupId) ?? 0) +
@@ -842,7 +897,7 @@ export default function RequirementsPage() {
       );
     }
     return totals;
-  }, [requirements, yearBounds, breaks, gradeLevelByGroup]);
+  }, [view.posts, yearBounds, breaks, gradeLevelByGroup]);
 
   /**
    * Group id -> lessons in that group's own heaviest week.
@@ -860,12 +915,12 @@ export default function RequirementsPage() {
     () =>
       yearBounds
         ? peakLessonsPerWeekByKey(
-            requirements ?? [],
+            view.posts,
             yearBounds,
             (requirement) => requirement.studentGroupId,
           )
         : new Map<string, number>(),
-    [requirements, yearBounds],
+    [view.posts, yearBounds],
   );
 
   /**
@@ -878,7 +933,8 @@ export default function RequirementsPage() {
    * the timplan fits into a week at all — and `annualTotal` is the teaching all
    * of it adds up to.
    *
-   * Both are school-wide, the same scope the old total had. The figure to check
+   * Both are school-wide, the same scope the old total had (under Ämne, the
+   * school's in that subject, and the line says so). The figure to check
    * a single class's week against is per group, and it lives in the table with
    * the other per-group figure — a third number on this line would make the
    * sentence a table, and the table is right there.
@@ -889,8 +945,8 @@ export default function RequirementsPage() {
    * weeks it does not have to fit in. The hours are the figure lov belong to.
    */
   const peakWeekly = useMemo(
-    () => (yearBounds ? peakLessonsPerWeek(requirements ?? [], yearBounds) : 0),
-    [requirements, yearBounds],
+    () => (yearBounds ? peakLessonsPerWeek(view.posts, yearBounds) : 0),
+    [view.posts, yearBounds],
   );
 
   const annualTotal = useMemo(() => {
@@ -934,6 +990,8 @@ export default function RequirementsPage() {
     targetMode && targetModule && targetState?.status === "ready"
       ? { module: targetModule, ...targetState }
       : null;
+  /** Under Ämne, the total column and the classes' row hold the subject's figures alone. */
+  const ownTarget = target && view.subject ? target.view.subjectOwn(view.subject.id) : null;
 
   /** Anybody's full name, active or not: a share may name a teacher who has since left. */
   const personName = (id: string) => {
@@ -1148,25 +1206,6 @@ export default function RequirementsPage() {
     }
   };
 
-  /**
-   * The columns, in the order of the label they actually carry.
-   *
-   * `useSubjects` sorts by name, which is right for every dropdown — those show
-   * names. This header shows the CODE, and sorting one string while displaying
-   * another reads as no order at all: the school's own list came out
-   * "EN IDH MA MU NO SO SL SV", because Slöjd sorts after SO by name while the
-   * eye is reading SL against SO.
-   *
-   * Sorted here rather than in the hook, because the hook feeds both views and
-   * each is alphabetical in what it shows. The cells below iterate this same
-   * array — a header ordered one way and cells another would silently file
-   * every lesson under the wrong subject.
-   */
-  const columns = useMemo(
-    () => sortByName(subjects ?? [], (subject) => subject.code ?? subject.name),
-    [subjects],
-  );
-
   const subjectOf = (id: string) => subjects?.find((subject) => subject.id === id);
   const groupOf = (id: string) => yearGroups.find((group) => group.id === id);
 
@@ -1307,6 +1346,34 @@ export default function RequirementsPage() {
               onValueChange={(value) => setSelectedYearId(value)}
             />
             {/*
+              Ämne, named like the year picker. The list by name, as every
+              dropdown is; the columns stay by code.
+            */}
+            <Select value={view.subject?.id ?? ALL_SUBJECTS} onValueChange={pickSubject}>
+              <SelectTrigger className="w-44" aria-label={t("subjectFilter.label")}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_SUBJECTS}>{t("subjectFilter.all")}</SelectItem>
+                {(subjects ?? []).map((subject) => (
+                  <SelectItem key={subject.id} value={subject.id}>
+                    {subject.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {view.subject ? (
+              <label className="flex min-h-9 items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-primary"
+                  checked={withoutPosts}
+                  onChange={(event) => setWithoutPosts(event.target.checked)}
+                />
+                {t("subjectFilter.withoutPosts")}
+              </label>
+            ) : null}
+            {/*
               A toggle, so `aria-pressed` says which mode the matrix is in; the
               label stays "Mål" in both states, as a toggle's name must.
             */}
@@ -1426,10 +1493,16 @@ export default function RequirementsPage() {
               aria-describedby="requirements-hours-caveat"
               className="text-sm font-medium text-foreground"
             >
-              {t("summary", {
-                lessons: peakWeekly,
-                hours: formatHours(annualTotal),
-              })}
+              {view.subject
+                ? t("summarySubject", {
+                    subject: view.subject.name,
+                    lessons: peakWeekly,
+                    hours: formatHours(annualTotal),
+                  })
+                : t("summary", {
+                    lessons: peakWeekly,
+                    hours: formatHours(annualTotal),
+                  })}
             </p>
             {/*
               Which footnote is true depends on whether the school has entered any
@@ -1479,6 +1552,7 @@ export default function RequirementsPage() {
               academicYearId={activeYearId}
               sources={targetSources}
               onState={setTargetState}
+              subject={view.subject}
             />
           ) : targetMode ? (
             <p role="status" className="text-sm text-foreground">
@@ -1516,7 +1590,10 @@ export default function RequirementsPage() {
                 reader who lands on the hours column by table navigation never
                 passes the paragraph above that explains it.
               */}
-              <caption className="sr-only">{t("tableCaption")}</caption>
+              <caption className="sr-only">
+                {t("tableCaption")}
+                {view.subject ? ` ${t("tableCaptionSubject", { subject: view.subject.name })}` : null}
+              </caption>
               <thead>
                 <tr className="border-b">
                   <th
@@ -1525,7 +1602,7 @@ export default function RequirementsPage() {
                   >
                     {tCommon("group")}
                   </th>
-                  {columns.map((subject) => (
+                  {view.columns.map((subject) => (
                     <th
                       key={subject.id}
                       scope="col"
@@ -1590,25 +1667,43 @@ export default function RequirementsPage() {
                     scope="col"
                     className="sticky right-24 top-0 z-30 border-l bg-card px-3 py-2.5 text-right font-medium text-foreground"
                   >
-                    {t("peakHeader")}
+                    {t(view.subject ? "peakHeaderSubject" : "peakHeader")}
                   </th>
                   <th
                     scope="col"
                     className="sticky right-0 top-0 z-30 min-w-24 max-w-24 border-l bg-card px-3 py-2.5 text-right font-medium text-foreground"
                   >
-                    {t("hoursHeader")}
+                    {t(view.subject ? "hoursHeaderSubject" : "hoursHeader")}
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {sections.map((section) => (
+                {/* Under Ämne, no group in it and none asked for: the way on is the checkbox's. */}
+                {view.sections.length === 0 ? (
+                  <tr>
+                    <td colSpan={view.columns.length + (target ? 4 : 3)} className="p-3">
+                      <EmptyState
+                        icon={Grid3x3}
+                        title={t("subjectFilter.emptyTitle", { subject: view.subject?.name ?? "" })}
+                        description={t("subjectFilter.empty")}
+                        headingLevel={2}
+                        action={
+                          <Button variant="outline" onClick={() => setWithoutPosts(true)}>
+                            {t("subjectFilter.withoutPosts")}
+                          </Button>
+                        }
+                      />
+                    </td>
+                  </tr>
+                ) : null}
+                {view.sections.map((section) => (
                   <Fragment key={section.kind}>
                     <tr className="border-b bg-muted/40">
                       <td
                         // group column + every subject + peak + hours. A
                         // colSpan short of the row leaves the section label
                         // ending mid-table with a gap where the totals are.
-                        colSpan={columns.length + (target ? 4 : 3)}
+                        colSpan={view.columns.length + (target ? 4 : 3)}
                         className="bg-muted px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
                       >
                         {/*
@@ -1621,7 +1716,9 @@ export default function RequirementsPage() {
                           {section.kind === "CLASS"
                             ? t("classesSection")
                             : t("teachingGroupsSection")}{" "}
-                          ({section.groups.length})
+                          ({view.subject
+                            ? t("sectionShown", { shown: section.groups.length, total: section.total })
+                            : section.groups.length})
                         </span>
                       </td>
                     </tr>
@@ -1659,7 +1756,7 @@ export default function RequirementsPage() {
                         </span>
                       ) : null}
                     </th>
-                    {columns.map((subject) => {
+                    {view.columns.map((subject) => {
                       const requirement = requirementIndex.get(`${group.id}:${subject.id}`);
                       // The same badge the master timetable prints on a lesson,
                       // from the same function — "udda" here and "udda" there
@@ -1800,7 +1897,10 @@ export default function RequirementsPage() {
                     })}
                     {target ? (
                       <td className="border-l bg-card px-3 py-2 text-right font-medium tabular-nums text-foreground">
-                        <target.module.GroupTotalCell summary={target.view.summary(group.id)} />
+                        <target.module.GroupTotalCell
+                          summary={ownTarget ? null : target.view.summary(group.id)}
+                          total={ownTarget?.byGroup.get(group.id)}
+                        />
                       </td>
                     ) : null}
                     <td className="sticky right-24 z-10 border-l bg-card px-3 py-2 text-right font-medium tabular-nums text-foreground">
@@ -1825,7 +1925,7 @@ export default function RequirementsPage() {
                         >
                           {t("target.totalsRow")}
                         </th>
-                        {columns.map((subject) => (
+                        {view.columns.map((subject) => (
                           <td key={subject.id} className="border-l px-1 py-2 text-center text-foreground">
                             <target.module.SubjectTotalCell
                               total={target.view.subjectTotals.get(subject.id)}
@@ -1833,7 +1933,7 @@ export default function RequirementsPage() {
                           </td>
                         ))}
                         <td className="border-l px-3 py-2 text-right font-medium tabular-nums text-foreground">
-                          <target.module.GroupTotalCell summary={null} total={target.view.total} />
+                          <target.module.GroupTotalCell summary={null} total={ownTarget?.total ?? target.view.total} />
                         </td>
                         <td className="sticky right-24 z-10 border-l bg-muted" />
                         <td className="sticky right-0 z-10 min-w-24 max-w-24 border-l bg-muted" />
