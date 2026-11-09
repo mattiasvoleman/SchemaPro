@@ -200,7 +200,7 @@ describe("lektionslängder in Mål mode", () => {
 
 describe("buildTargetView", () => {
   const input = targetInput(sources);
-  const view = buildTargetView(computePlannedCoverage(input), plans);
+  const view = buildTargetView(computePlannedCoverage(input), plans, input.subjects);
 
   it("reads each cell at its own coordinates, judged on its line", () => {
     expect(view.cell("g-7a", "s-ma")).toEqual({
@@ -269,6 +269,57 @@ describe("buildTargetView", () => {
       plannedHours: 458.7,
       targetHours: 426.4,
     });
+  });
+
+  // Ämne on the matrix: one subject's figures, per class and for the classes' row.
+  it("reads one subject per class from its own cell, and over the classes from its column's total", () => {
+    const ma = view.subjectOwn("s-ma")!;
+    // 3 × 60 = 180 of 175 for 7A and 4 × 60 = 240 of the draft's 180 for 8A; 43 weeks each.
+    expect(ma.row("g-7a")).toEqual({ planned: 180, target: 175, plannedHours: 129, targetHours: 125.4 });
+    expect(ma.row("g-8a")).toEqual({ planned: 240, target: 180, plannedHours: 172, targetHours: 129 });
+    // 9A follows no plan: no cell, so no entry, and its total column prints a dash.
+    expect(ma.row("g-9a")).toBeUndefined();
+    expect(ma.total).toBe(view.subjectTotals.get("s-ma"));
+    // The classes whose plan sets Matematik a target, which Mål mode shows post or not.
+    expect([...ma.targeted].sort()).toEqual(["g-7a", "g-8a"]);
+    expect(ma.partnerSubjectIds).toEqual([]);
+    // The same object again, so the page's memo on it keeps.
+    expect(view.subjectOwn("s-ma")).toBe(ma);
+  });
+
+  it("totals an alternative under Ämne as its column always was: SvA counted with Svenska, not 0 of 180", () => {
+    const sva = view.subjectOwn("s-sva")!;
+    // The cell reads its own 0 / 180, as the matrix cell beside it does.
+    expect(sva.row("g-7a")).toMatchObject({ planned: 0, target: 180 });
+    expect(sva.total).toMatchObject({ planned: 0, target: null, countedWith: "s-sv" });
+    expect(view.subjectOwn("s-sv")!.total).toMatchObject({ planned: 180, target: 180, countedWith: null });
+    // The shared target reaches 7A under SvA too.
+    expect([...sva.targeted]).toEqual(["g-7a"]);
+  });
+
+  it("gives a subject that counts and that no class has a cell in no rows and a total of nothing", () => {
+    const bi = buildTargetView(
+      computePlannedCoverage(input),
+      plans,
+      [...input.subjects, { id: "s-tk", countsTowardTimplan: true }],
+    ).subjectOwn("s-tk")!;
+    expect(bi.row("g-7a")).toBeUndefined();
+    expect(bi.total).toEqual({ planned: 0, target: null, plannedHours: 0, targetHours: null, countedWith: null });
+    expect(bi.targeted.size).toBe(0);
+  });
+
+  // Review #297, MEDEL-1: Mentorstid read "0 min/vecka planerat … Ingen klass har ett mål".
+  it("says a subject that is not teaching time has no figures at all, on every row and in the total", () => {
+    const mt = view.subjectOwn("s-mt")!;
+    expect(mt.total).toMatchObject({ notCounted: true });
+    expect(mt.row("g-7a")).toMatchObject({ notCounted: true });
+    expect(mt.targeted.size).toBe(0);
+  });
+
+  it("knows no subject it was not given", () => {
+    expect(view.subjectOwn("s-gone")).toBeNull();
+    // Nor any without the subjects: the page then has no subject figures to draw.
+    expect(buildTargetView(computePlannedCoverage(input), plans).subjectOwn("s-ma")).toBeNull();
   });
 
   it("names the årskurser without a plan and the plans that are drafts", () => {
@@ -495,7 +546,20 @@ describe("the parts of a national subject", () => {
       { studentId: "u-2", studentGroupId: "g-7a2" },
     ],
   };
-  const view = buildTargetView(computePlannedCoverage(targetInput(parts)), parts.plans);
+  const partsInput = targetInput(parts);
+  const view = buildTargetView(computePlannedCoverage(partsInput), parts.plans, partsInput.subjects);
+
+  // Review #297, MEDEL-1: Biologi under NO read "Ingen klass har ett mål" beside a cell meeting its line.
+  it("gives a part under Ämne its line's figures, named by the line, with the other parts", () => {
+    const textil = view.subjectOwn("s-tx")!;
+    // 7A's textil 40 against the Slöjd entry's 65, over 43 weeks: the line, not textil's own "40 / —".
+    expect(textil.row("g-7a")).toEqual({ planned: 40, target: 65, plannedHours: 28.7, targetHours: 46.6, line: "SL" });
+    expect(textil.total).toEqual({ planned: 40, target: 65, plannedHours: 28.7, targetHours: 46.6, line: "SL" });
+    expect(textil.partnerSubjectIds).toEqual(["s-sl"]);
+    expect([...textil.targeted]).toEqual(["g-7a"]);
+    // The subject the plan names is on the same line and reads the same figures.
+    expect(view.subjectOwn("s-sl")!.row("g-7a")).toEqual(textil.row("g-7a"));
+  });
 
   it("reads a cell of any part on the line, with the line's delta and its other parts named", () => {
     // 7A's own rows: textil 40 of the 65, the halves carry the rest for both pupils.
