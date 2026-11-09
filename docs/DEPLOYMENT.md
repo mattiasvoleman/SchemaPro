@@ -2837,9 +2837,11 @@ Walk the full product loop once, in order:
   which the dropped trigger refused at the INSERT, is refused at its COMMIT instead (an error, not its 409) until
   the new API serves. The engine is unchanged. **Rolling back:** the column and the triggers can stay; an API
   rolled back meets the deferred check at COMMIT when it writes shares on a post with förläggningar, and its own
-  placement-fit still refuses to place a shared post. But it does not read the column: its Generera locks every
-  förläggning with the post's huvudlärare and takes it off the huvudlärare's part, so a förlagd lesson of a
-  share's teacher is written as the huvudlärare's. **Before rolling the API back, remove the förläggningar on
+  placement-fit still refuses to place a shared post. But it does not read the column, and its Generera takes no
+  förläggning off a shared post's demand at all (its shares branch never reaches the förläggningar): it locks
+  each one as the post's huvudlärare's lesson and still asks the engine for every lesson of the post, so a
+  shared post gets one lesson too many for each förlagd lesson, and a share's teacher's förlagd lesson is
+  written as the huvudlärare's. **Before rolling the API back, remove the förläggningar on
   shared posts** (`SELECT count(*) FROM "TeachingRequirementPlacements" p WHERE EXISTS (SELECT 1 FROM
   "TeachingRequirementShares" s WHERE s."requirementId" = p."requirementId")` says how many; the post's Förlägg
   dialog removes them), and place them again after the next release. The checks before and after are
