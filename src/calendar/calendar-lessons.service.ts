@@ -37,6 +37,7 @@ import { readSiteMap, travelBreaches } from '../common/site-travel';
 import { coverEmail, coverMeta, withdrawnEmail, withdrawnMeta, type NoticeLesson } from '../cover/cover-notices';
 import { substituteNotedLessons } from '../lesson-log/substitute-noted';
 import { scopeOf } from './lesson-roster';
+import { sharedRoomTakes } from './shared-room-day';
 import { lessonEmail, type LessonNoticeType } from './lesson-notices';
 import type {
   AssignSubstituteDto,
@@ -133,6 +134,8 @@ export interface LessonForAction {
   /** The lesson's attendance beyond its class, for the grade span a vikarie is asked about. */
   extraGroups: { studentGroupId: string }[];
   participants: { studentId: string }[];
+  /** The pupils moved off the lesson for the day (Elevens lektion för dagen): not told what happens to it. */
+  movesFrom?: { studentId: string }[];
 }
 
 /** The cover board's day of a lesson, for its realtime notice. */
@@ -751,7 +754,13 @@ export class CalendarLessonsService {
           },
           select: { id: true },
         });
-        if (clash) {
+        // A lesson already there is no clash when the room is a shared one
+        // (Delade salar) that holds both classes' pupils; asked only now that
+        // one was found, so a free room costs nothing more.
+        if (
+          clash &&
+          !(await sharedRoomTakes(tx, lesson.schoolId, id, dto.roomId, lesson.startsAt, lesson.endsAt))
+        ) {
           throw new ConflictException(
             'That room is already booked by another lesson at this time.',
           );
@@ -1034,6 +1043,7 @@ export class CalendarLessonsService {
         teachers: { select: { teacherId: true, role: true } },
         extraGroups: { select: { studentGroupId: true } },
         participants: { select: { studentId: true } },
+        movesFrom: { select: { studentId: true } },
       },
     });
     if (!lesson) {
@@ -1068,7 +1078,7 @@ export class CalendarLessonsService {
     tx: PrismaClient,
     lesson: Pick<
       LessonForAction,
-      'schoolId' | 'subjectId' | 'studentGroupId' | 'startsAt' | 'subject' | 'extraGroups' | 'participants'
+      'schoolId' | 'subjectId' | 'studentGroupId' | 'startsAt' | 'subject' | 'extraGroups' | 'participants' | 'movesFrom'
     >,
     options: {
       type: LessonNoticeType;
@@ -1079,7 +1089,9 @@ export class CalendarLessonsService {
       timezone?: string;
     },
   ): Promise<void> {
-    const pupilsAndGuardians = await this.notifications.recipientsForLessons(tx, [scopeOf(lesson)]);
+    // (A pupil moved off the lesson for the day is not told what becomes of it; one moved onto it is a named
+    // pupil, read before the change, so a cancellation still reaches the pupil who was to be there.)
+    const pupilsAndGuardians = await this.notifications.recipientsForLessons(tx, [scopeOf({ ...lesson, movedOff: lesson.movesFrom })]);
     const recipients = [...new Set([...pupilsAndGuardians, ...options.teacherIds])];
     if (recipients.length === 0) return;
     const timezone = options.timezone ?? (await schoolTimezone(tx, lesson.schoolId));

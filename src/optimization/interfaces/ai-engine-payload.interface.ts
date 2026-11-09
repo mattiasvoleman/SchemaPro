@@ -265,6 +265,23 @@ export interface AnonymousRoom {
    * one it was.
    */
   siteId?: string;
+  /**
+   * Placeringsregler, regel 2: the building the room stands in, an OPAQUE
+   * TOKEN coined per request (the school's own words for its buildings never
+   * leave the gateway), as the room optimisation sends its buildings. Sent
+   * only by a school that limits the buildings a day holds (a class's or a teacher's)
+   * and only on a room that has a building: no building is itself a value, the
+   * main house, and is told by the key's absence.
+   */
+  building?: string;
+  /**
+   * Placeringsregler, regel 3: the room may hold several lessons at the same
+   * time as long as their pupils fit its capacity together. Sent only as
+   * `true`, only by a school whose rule is not off, and only on a room that is
+   * marked (Room.canBeShared) and has a capacity: any other room is exclusive,
+   * as every room was.
+   */
+  shareable?: true;
 }
 
 /**
@@ -509,6 +526,13 @@ export interface AnonymousFixedLesson {
   startTime: string;
   /** HH:MM:SS */
   endTime: string;
+  /**
+   * Placeringsregler, regel 3: how many pupils sit the lesson, distinct, all
+   * its groups and the pupils it names counted once. Sent only on a lock in a
+   * room the payload marks `shareable`, the one place a lock takes seats
+   * rather than the whole room.
+   */
+  studentCount?: number;
 }
 
 /**
@@ -549,6 +573,19 @@ export interface SearchOptions {
   probes?: boolean;
   /** CP-SAT's num_workers, 1..16. Absent is every core. */
   workers?: number;
+}
+
+/**
+ * Bästa möjliga schema: place the week even when the school's own shaping
+ * rules cannot all hold. The engine's Relaxation (schemas/schedule.py). Sent
+ * ONLY by a schemaförslag run the school asked the mode for, and never by
+ * Generera: absent is today's request byte for byte, and an engine older than
+ * the field answers 422 to it (its models forbid extras), which the proxy
+ * says as ENGINE_LACKS_BEST_EFFORT. Which rules may give way is the engine's
+ * one list (relaxation.RELAXABLE_RULES), not a field of the request.
+ */
+export interface RelaxationOptions {
+  mode: 'BEST_EFFORT';
 }
 
 /** Optional hard scheduling rules forwarded to the engine. */
@@ -629,11 +666,45 @@ export interface AiEngineScheduleRequest {
    * it always built.
    */
   pupilGaps?: AnonymousPupilGaps;
+  /**
+   * Placeringsregler: the rules the school has turned on, each of the three
+   * left out while it is off. The KEY is sent only when at least one of them
+   * is on and has something to apply to, so every other school sends the
+   * payload it always sent, and the engine builds the model it always built.
+   */
+  placementRules?: AnonymousPlacementRules;
   weights?: ObjectiveWeights | null;
   rules?: ScheduleRules | null;
   roomPreferences: AnonymousRoomPreference[];
   /** A schemaförslag's search settings; see SearchOptions. Never sent by Generera. */
   search?: SearchOptions;
+  /** Bästa möjliga schema; see RelaxationOptions. Never sent by Generera. */
+  relaxation?: RelaxationOptions;
+  /**
+   * Förlagda poster: which of the fixed lessons are förläggningar, and their
+   * posts with nothing förlagt. See AnonymousPlacements. The KEY is sent only
+   * when a post of the week has one, so every other school sends the payload
+   * it always sent.
+   */
+  placements?: AnonymousPlacements;
+}
+
+/**
+ * Förlagda poster: the engine's Placements (schemas/schedule.py).
+ *
+ * A förläggning is sent as what it is to the week, a fixed lesson, and its
+ * post with that lesson taken off its demand; this says which fixed lessons
+ * they are and what their posts would be WITHOUT them — every lesson to place,
+ * the school's own grundschema locks still counted. The engine reads it only
+ * to explain a refused week (it solves the week once more with the
+ * förläggningar released, and names each when that lays it): the model it
+ * builds is the same with the key and without. An engine older than the key
+ * answers 422 to it, and the proxy then sends the same request without it —
+ * the förläggningar are laid either way, only not named.
+ */
+export interface AnonymousPlacements {
+  lessons: { fixedLessonId: string; requirementId: string }[];
+  requirements: AnonymousRequirement[];
 }
 
 /**
@@ -663,6 +734,39 @@ export interface AnonymousPupilGaps {
   fixedMargins?: AnonymousFixedLessonMargin[];
 }
 
+/** How a placement rule is held in the payload: OFF is not sent. */
+export type PlacementMode = 'SOFT' | 'HARD';
+
+/** Regel 1: a subject not first / not last in a class's day. The id is the subject's anonymous one. */
+export interface AnonymousSubjectEdge {
+  subjectId: string;
+  notFirst: boolean;
+  notLast: boolean;
+}
+
+export interface AnonymousPlacementRules {
+  subjectEdges?: {
+    mode: PlacementMode;
+    /** SOFT only: 1..1000, the school's. */
+    weight?: number;
+    subjects: AnonymousSubjectEdge[];
+  };
+  /** Regel 2: only the limits the school set are present. */
+  places?: {
+    mode: PlacementMode;
+    weight?: number;
+    maxClassRooms?: number;
+    maxTeacherRooms?: number;
+    maxClassBuildings?: number;
+    maxTeacherBuildings?: number;
+  };
+  /** Regel 3: applies to the rooms sent `shareable`. */
+  sharedRooms?: {
+    mode: PlacementMode;
+    weight?: number;
+  };
+}
+
 export type ConflictCategory =
   | 'REQUIREMENT_DEMAND'
   | 'TEACHER_OVERLAP'
@@ -682,7 +786,21 @@ export type ConflictCategory =
   // A parallel block (språkval, elevens val) cannot have its lessons at the
   // same times, or is refused before the model: members that differ, share a
   // teacher or pupils, or are partly locked.
-  | 'TEACHING_BLOCK';
+  | 'TEACHING_BLOCK'
+  // Bästa möjliga schema: a rule that gave way in a timetable that was placed.
+  // A measured breach listed under `deviations`, never under `conflicts`.
+  | 'DEVIATION'
+  // Placeringsregler: a school's own HARD placement rule, named when the week
+  // cannot keep it. One category per rule, because the fix is a different
+  // setting on the same card: the subject's edge rule, the limit on places,
+  // or the shared room.
+  | 'PLACEMENT_EDGE'
+  | 'PLACEMENT_PLACES'
+  | 'SHARED_ROOM'
+  // Förlagda poster: a lesson the school placed on a timplanspost before
+  // Generera, named when the week cannot be laid around it (the engine's
+  // probe) or when it can no longer stand where it is (the pre-flight).
+  | 'PLACEMENT';
 
 export interface AiEngineConflictDetail {
   category: ConflictCategory;
@@ -721,9 +839,10 @@ export interface AiEngineConflictDetail {
    * whose free-day wish a note says was not kept (free-day-wishes.ts), whom
    * the job view names for every reader; and the teachers on the walk's line
    * (TEACHER_TRAVEL_CANNOT_BE_KEPT, stored-conflicts.ts), named the same way,
-   * in the job view and the candidates'. No answer of the API carries it:
-   * the job view is a whitelist, and the synchronous trigger answers with a
-   * status.
+   * in the job view and the candidates'. And the teacher a cap that gave way
+   * is about (DEVIATION_TEACHER_DAILY_CAP), named the same way. No answer of
+   * the API carries it: the job view is a whitelist, and the synchronous
+   * trigger answers with a status.
    */
   subjectIds?: string[];
 }
@@ -760,6 +879,15 @@ export interface AiEngineScheduleResponse {
    */
   lunches?: AiEngineLunch[];
   conflicts?: AiEngineConflictAnalysis | null;
+  /**
+   * Bästa möjliga schema: what gave way in the timetable returned, one line per
+   * rule and place (category DEVIATION; deviations.ts). PRESENT, EVEN EMPTY,
+   * ONLY on the answer to a request that carried `relaxation` (an empty list
+   * says the mode ran and nothing gave way); omitted on every other answer,
+   * and on a refusal, which names the hard rule that stopped the week under
+   * `conflicts` as it always did.
+   */
+  deviations?: AiEngineConflictDetail[];
   /**
    * Elevernas håltimmar in the timetable returned, locked lessons included:
    * idle pupil-minutes in an ordinary week, counted as the håltimmesrapport

@@ -314,7 +314,10 @@ export const ABSENCE_REPORTS: AbsenceReport[] = [
   },
 ];
 
-export const LEAVE_REQUESTS: LeaveRequest[] = [
+/** A leave request as the stub keeps it: the flat row, before the gateway adds what Ledighetspolicy puts on it (gateway-leave.ts). */
+export type StoredLeaveRequest = Omit<LeaveRequest, "shortNotice" | "contact" | "consent">;
+
+export const LEAVE_REQUESTS: StoredLeaveRequest[] = [
   {
     id: uid(KIND.misc, 1501),
     studentId: STUDENTS.ella.id,

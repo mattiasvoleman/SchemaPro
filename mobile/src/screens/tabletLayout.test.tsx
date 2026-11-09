@@ -152,7 +152,23 @@ jest.mock('../services/absenceReports', () => ({
 }));
 jest.mock('../services/leaveRequests', () => ({
   ...jest.requireActual('../services/leaveRequests'),
-  fetchLeaveRequests: jest.fn(async () => []),
+  // Ledighetspolicy, every part of it on and every kind of row drawn: the consent question a guardian answers, and an ended
+  // request with its contact and its flag, so the new lines and buttons are laid out and coloured in both appearances.
+  fetchLeaveRequests: jest.fn(async () => {
+    const row = {
+      // Not one of the chips' children, so a name in a row is never taken for the chip that shares it.
+      studentId: 'c-other', startDate: '2026-11-02', endDate: '2026-11-06', reason: 'Familjeresa', decisionNote: null, decidedAs: null,
+      createdAt: '2026-10-13T08:00:00.000Z',
+    };
+    return [
+      { ...row, id: 'l1', status: 'PENDING', consent: { required: true, state: 'WAITING', mine: 'WAITING', asked: null, given: null, waiting: null } },
+      {
+        ...row, id: 'l2', status: 'GUARDIAN_DECLINED', shortNotice: true, contact: { name: 'Anna Lind', phone: '070-123 45 67', relation: 'Faster' },
+        consent: { required: true, state: 'REFUSED', mine: 'NOT_ASKED', asked: null, given: null, waiting: null },
+      },
+    ];
+  }),
+  fetchLeavePolicy: jest.fn(async () => ({ requireAllGuardians: true, minDaysAhead: 7, shortNotice: 'FLAG', contact: 'OPTIONAL' })),
   requestLeave: jest.fn(),
 }));
 // The teacher's cover requests (Vikariefrågan): one question to answer, one that
@@ -734,7 +750,20 @@ describe('what a screen reader and a locked switch are told', () => {
   it.each([
     ['login', LoginScreen, 'TEACHER', [t('login.email'), t('login.password')]],
     ['guardian home', GuardianHomeScreen, 'GUARDIAN', [t('guardian.dateLabel')]],
-    ['leave requests', LeaveRequestsScreen, 'GUARDIAN', [t('leave.from'), t('leave.to'), t('leave.reason')]],
+    [
+      'leave requests',
+      LeaveRequestsScreen,
+      'GUARDIAN',
+      [
+        t('leave.from'),
+        t('leave.to'),
+        t('leave.reason'),
+        // The policy of the data above asks for an optional contact.
+        t('leave.fieldOptional', { label: t('leave.contactName') }),
+        t('leave.fieldOptional', { label: t('leave.contactPhone') }),
+        t('leave.fieldOptional', { label: t('leave.contactRelation') }),
+      ],
+    ],
   ] as const)('%s names every field it draws', async (_name, Screen, role, labels) => {
     mockRole = role;
     const tree = await renderAt(...PHONE, Screen);

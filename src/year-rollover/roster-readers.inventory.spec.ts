@@ -79,6 +79,14 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     why: 'who attends a lesson, for every caller: the attendance check and the register’s list (real people at dated lessons, it writes rows), every lesson notice and avbokning digest, and the teacher app’s broadcast (nobody is told about next year’s class before the activation)',
   },
   'src/integration/ss12000.service.ts': { basis: 'CURRENT', why: 'an external export, of the active year by design' },
+  'src/checklists/consent.service.ts': {
+    basis: 'CURRENT',
+    why: 'Checklistor: a consent list is about its class as the class is placed now (the pupils of the home class today, and the pupils who have an answer on the list, who keep it when they move); no lesson’s roster and no history of the class',
+  },
+  'src/checklists/instruction.service.ts': {
+    basis: 'CURRENT',
+    why: 'Checklistor: a group’s pupils to tick an instruction for, as they are placed now; the proof itself belongs to the pupil and follows them through every change of class and every rollover, so it reads no class history',
+  },
   'src/ack/ack.service.ts': {
     basis: 'CURRENT',
     why: 'Kvittens: the pupils a request can be about, every active pupil of the school or a mentor’s mentees today, with their home class as it is; no lesson’s roster',
@@ -450,14 +458,51 @@ describe('the roster-reader inventory', () => {
       // years for the frames, the raster and the lunch. The export reads the
       // lessons only and so asks for no basis.
       //
+      // Byten och flyttar (G1): the suggestion reads the year's pupils through
+      // its basis for the clash rule, the pupils' håltimmar and the frames'
+      // grade spans, and the apply asks the clash rule again under its row
+      // locks, so a year two steps ahead is refused there as a hand edit is.
+      //
+      // Klasslärarens schema holds a draft to the clash rule of a hand edit
+      // (MasterLessonsService.findConflicts) whenever the page asks for its
+      // verdict, and the editor's own services carry it out: the teacher's
+      // check, preview and publish and the administrators' list of drafts and
+      // publish of a class read pupils through the year's basis, so a year two
+      // steps ahead answers R6's 409 there as the hand edit does.
+      //
       // Schemaförslag reaches a basis where Generera does: its start asks
       // rostersOfYear as POST jobs does, and its check and apply rebuild
       // Generera's fetch (prepareSchedule), so a year two steps ahead answers
       // R6's 409 there too.
+      //
+      // Analys och planering (20270130090000) reads the year's rosters the way
+      // the load report does: the key figures and the cost basis count pupils
+      // per teacher and per grade, the payroll basis and its file read the
+      // load input beside the delivered lessons. All four are the school's
+      // economy, and a year two steps ahead, or a rolled one in a school with
+      // no active year, has no pupils to divide a teacher's time by, so they
+      // answer the 409 StaffingLoadController.load answers for the same year.
+      //
+      // Förlagda poster holds each förläggning to the clash rule of a hand
+      // edit (judgePlacements, MasterLessonsService.findConflicts), which
+      // reads pupils through the year's basis: the dialog's view of a post's
+      // rows (listOfPost) judges them, and the save (replace) judges the list
+      // before it writes, so a year two steps ahead answers R6's 409 there as
+      // the hand edit does. The year's list for the timplan's märke reads rows
+      // only and asks for no basis.
       expect(reached.map((entry) => entry.route).sort()).toEqual([
+        'AnalysisController.costBasis',
+        'AnalysisController.keyFigures',
+        'AnalysisController.payrollBasis',
+        'AnalysisController.payrollFile',
         'CalendarController.publish',
         'CalendarLessonsController.assignSubstitute',
         'CalendarLessonsController.suggestSubstitutes',
+        'ClassTeacherAdminController.drafts',
+        'ClassTeacherAdminController.publish',
+        'ClassTeacherController.check',
+        'ClassTeacherController.preview',
+        'ClassTeacherController.publish',
         'CoverController.apply',
         'CoverController.bulk',
         'CoverController.candidates',
@@ -480,6 +525,8 @@ describe('the roster-reader inventory', () => {
         'OptimizationController.trigger',
         'PublicationsController.preview',
         'PublicationsController.publish',
+        'RequirementPlacementsController.listOfPost',
+        'RequirementPlacementsController.replace',
         'ScbFileController.file',
         'ScheduleExchangeController.apply',
         'ScheduleExchangeController.preview',
@@ -487,6 +534,8 @@ describe('the roster-reader inventory', () => {
         'StaffingLoadController.load',
         'StaffingLoadController.suggestTeachers',
         'StaffingLoadController.unstaffed',
+        'SwapsController.apply',
+        'SwapsController.suggest',
         'TeachingBlocksController.update',
         'TeachingRequirementsController.create',
         'TeachingRequirementsController.splitByTerm',

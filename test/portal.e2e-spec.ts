@@ -238,6 +238,150 @@ describe('Portal and platform surfaces (e2e)', () => {
       expect(harness.tx['leaveDelegationDecision']!['create']).toHaveBeenCalledTimes(3);
     });
 
+    it('lets a guardian answer a request for consent, and nobody else, with a boolean and nothing else', async () => {
+      const pupil = asUser({ role: 'STUDENT' as never, userId: STUDENT_ID, schoolId: SCHOOL_ID });
+      Object.assign(harness.tx, { $queryRaw: jest.fn().mockResolvedValue([]) });
+      const answered = await request(http())
+        .post(`/api/v1/leave-requests/${RECORD_ID}/consent`)
+        .set('x-test-user', guardian())
+        .send({ consent: false })
+        .expect(201);
+      expect(answered.body).toEqual({ id: RECORD_ID, answer: 'REFUSED', state: 'REFUSED' });
+      for (const principal of [teacher(), admin(), pupil]) {
+        await request(http()).post(`/api/v1/leave-requests/${RECORD_ID}/consent`).set('x-test-user', principal).send({ consent: true }).expect(403);
+      }
+      for (const body of [{}, { consent: 'yes' }, { consent: 1 }, { consent: null }]) {
+        await request(http()).post(`/api/v1/leave-requests/${RECORD_ID}/consent`).set('x-test-user', guardian()).send(body).expect(400);
+      }
+      await request(http()).post('/api/v1/leave-requests/not-a-uuid/consent').set('x-test-user', guardian()).send({ consent: true }).expect(400);
+    });
+
+    it('answers the database’s refusals of an answer as their codes', async () => {
+      const refusal = (state: string) =>
+        jest.fn().mockRejectedValue(Object.assign(new Error('database'), { meta: { driverAdapterError: { cause: { originalCode: state } } } }));
+      for (const [state, status, code] of [
+        ['LV404', 404, 'LEAVE_CONSENT_NOT_FOUND'],
+        ['LV409', 409, 'LEAVE_CONSENT_REQUEST_ENDED'],
+        ['LV410', 409, 'LEAVE_CONSENT_CUSTODY_ENDED'],
+        ['LV411', 409, 'LEAVE_CONSENT_ANSWERED'],
+      ] as const) {
+        Object.assign(harness.tx, { $queryRaw: refusal(state) });
+        const refused = await request(http())
+          .post(`/api/v1/leave-requests/${RECORD_ID}/consent`)
+          .set('x-test-user', guardian())
+          .send({ consent: true })
+          .expect(status);
+        expect(refused.body).toMatchObject({ code });
+      }
+    });
+
+    it('answers a decision before the consent as 409 with its code, and a late filing as 400', async () => {
+      harness.tx['leaveRequest']!['findUnique']!.mockResolvedValue({
+        id: RECORD_ID, schoolId: SCHOOL_ID, studentId: STUDENT_ID, requestedById: GUARDIAN_ID, status: 'PENDING', consentRequired: true,
+        startDate: new Date('2027-03-01T00:00:00Z'), endDate: new Date('2027-03-02T00:00:00Z'), student: { firstName: 'E', lastName: 'E' },
+      });
+      Object.assign(harness.tx, { $queryRaw: jest.fn().mockResolvedValue([{ met: false }]) });
+      const held = await request(http())
+        .patch(`/api/v1/leave-requests/${RECORD_ID}/decide`)
+        .set('x-test-user', admin())
+        .send({ status: 'APPROVED' })
+        .expect(409);
+      expect(held.body).toMatchObject({ code: 'LEAVE_AWAITING_CONSENT' });
+      expect(harness.tx['leaveRequest']!['updateMany']).not.toHaveBeenCalled();
+
+      harness.tx['guardianStudent']!['findFirst']!.mockResolvedValue({ id: RECORD_ID, studentId: STUDENT_ID });
+      harness.tx['user']!['findUnique']!.mockResolvedValue({ schoolId: SCHOOL_ID });
+      Object.assign(harness.tx, { $queryRaw: jest.fn().mockResolvedValue([{ code: 'LEAVE_REQUEST_TOO_LATE', days: 7 }]) });
+      const late = await request(http())
+        .post('/api/v1/leave-requests')
+        .set('x-test-user', guardian())
+        .send({ studentId: STUDENT_ID, startDate: dateOnly(2), endDate: dateOnly(3), reason: 'Familjeresa' })
+        .expect(400);
+      expect(late.body).toMatchObject({ code: 'LEAVE_REQUEST_TOO_LATE', params: { days: 7 } });
+      expect(harness.tx['leaveRequest']!['create']).not.toHaveBeenCalled();
+    });
+
+    it('validates the contact of a leave request before any transaction: a telephone of digits, a name of 100, a relation of 60', async () => {
+      // The test before this one leaves $queryRaw answering LEAVE_REQUEST_TOO_LATE (clearAllMocks clears the calls, not the answers), which
+      // is a 400 too: without this, every refusal below would pass with the DTO's rule swapped for /^.*$/ (the review of #292, round two).
+      const asked = jest.fn().mockResolvedValue([]);
+      Object.assign(harness.tx, { $queryRaw: asked });
+      const filed = (extra: Record<string, unknown>) =>
+        request(http())
+          .post('/api/v1/leave-requests')
+          .set('x-test-user', guardian())
+          .send({ studentId: STUDENT_ID, startDate: dateOnly(60), endDate: dateOnly(61), reason: 'Familjeresa', ...extra });
+      await filed({ contactPhone: 'ring mig' }).expect(400);
+      await filed({ contactPhone: '123' }).expect(400);
+      // Counted as the database counts it, after the trim: blanks round two digits are not a telephone number (a 500 from
+      // the table's CHECK before the review of #292, LÅG-2), and neither is a string with no digit.
+      await filed({ contactName: 'Gun', contactPhone: '  12  ', contactRelation: 'Farmor' }).expect(400);
+      await filed({ contactName: 'Gun', contactPhone: '+++++', contactRelation: 'Farmor' }).expect(400);
+      await filed({ contactName: 'Gun', contactPhone: '(-) (-)', contactRelation: 'Farmor' }).expect(400);
+      await filed({ contactName: 'n'.repeat(101), contactPhone: '070-1234567', contactRelation: 'Farmor' }).expect(400);
+      await filed({ contactName: 'Gun', contactPhone: '070-1234567', contactRelation: 'r'.repeat(61) }).expect(400);
+      await filed({ contactName: 5 }).expect(400);
+      expect(harness.tx['leaveRequest']!['create']).not.toHaveBeenCalled();
+      // Refused by the DTO, so the filing check was never asked: no 400 here came from the database's function.
+      expect(asked).not.toHaveBeenCalled();
+      // An empty string is none, as a form sends it.
+      harness.tx['guardianStudent']!['findFirst']!.mockResolvedValue({ id: RECORD_ID, studentId: STUDENT_ID });
+      harness.tx['user']!['findUnique']!.mockResolvedValue({ schoolId: SCHOOL_ID });
+      harness.tx['leaveRequest']!['create']!.mockResolvedValue({ id: RECORD_ID });
+      Object.assign(harness.tx, { $queryRaw: jest.fn().mockResolvedValue([]) });
+      await filed({ contactName: '', contactPhone: '', contactRelation: '' }).expect(201);
+      await filed({ contactName: 'Farmor Gun', contactPhone: '+46 70 123 45 67', contactRelation: 'Farmor' }).expect(201);
+      // ... and blanks round a good value are the form's, not the database's: the service is given the trimmed text.
+      await filed({ contactName: '  Farmor Gun ', contactPhone: '  070-1234567  ', contactRelation: ' Farmor ' }).expect(201);
+      expect(harness.tx['leaveRequest']!['create']).toHaveBeenLastCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ contactName: 'Farmor Gun', contactPhone: '070-1234567', contactRelation: 'Farmor' }) }),
+      );
+    });
+
+    it('shows the leave policy to every role and lets only an administrator who decides record it, all of it', async () => {
+      const pupil = asUser({ role: 'STUDENT' as never, userId: STUDENT_ID, schoolId: SCHOOL_ID });
+      const policy = { requireAllGuardians: true, minDaysAhead: 7, shortNotice: 'FLAG', contact: 'OPTIONAL' };
+      Object.assign(harness.tx, { $queryRaw: jest.fn().mockResolvedValue([policy]) });
+      for (const principal of [guardian(), pupil, teacher(), admin()]) {
+        await request(http()).get('/api/v1/leave-policy').set('x-test-user', principal).expect(200, policy);
+      }
+      harness.tx['leavePolicy']!['upsert']!.mockResolvedValue({});
+      for (const body of [policy, { ...policy, minDaysAhead: null }, { requireAllGuardians: false, minDaysAhead: 90, shortNotice: 'REFUSE', contact: 'REQUIRED' }]) {
+        await request(http()).put('/api/v1/leave-policy').set('x-test-user', admin()).send(body).expect(200);
+      }
+      expect(harness.tx['leavePolicy']!['upsert']).toHaveBeenCalledTimes(3);
+      for (const principal of [guardian(), pupil, teacher()]) {
+        await request(http()).put('/api/v1/leave-policy').set('x-test-user', principal).send(policy).expect(403);
+      }
+      // A decision is rektor's and a full administrator's: the planner, the expedition and the reader write nothing,
+      // though every administrator reads the policy.
+      for (const profile of ['SCHEMALAGGARE', 'EXPEDITION', 'LASARE']) {
+        const refused = await request(http())
+          .put('/api/v1/leave-policy')
+          .set('x-test-user', asUser({ adminProfile: profile } as never))
+          .send(policy)
+          .expect(403);
+        expect(refused.body).toMatchObject({ code: 'DECISION_NOT_YOURS' });
+        await request(http()).get('/api/v1/leave-policy').set('x-test-user', asUser({ adminProfile: profile } as never)).expect(200, policy);
+      }
+      const { requireAllGuardians: _drop, ...partial } = policy;
+      for (const body of [
+        {},
+        partial,
+        { ...policy, minDaysAhead: 0 },
+        { ...policy, minDaysAhead: 91 },
+        { ...policy, minDaysAhead: 2.5 },
+        { ...policy, minDaysAhead: '7' },
+        { ...policy, minDaysAhead: undefined },
+        { ...policy, shortNotice: 'MAYBE' },
+        { ...policy, contact: 'ALWAYS' },
+        { ...policy, requireAllGuardians: 'yes' },
+      ]) {
+        await request(http()).put('/api/v1/leave-policy').set('x-test-user', admin()).send(body).expect(400);
+      }
+      expect(harness.tx['leavePolicy']!['upsert']).toHaveBeenCalledTimes(3);
+    });
+
     it('keeps guardian links an admin-only operation', async () => {
       for (const principal of [guardian(), teacher()]) {
         await request(http())

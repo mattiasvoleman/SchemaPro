@@ -2,6 +2,7 @@ import "server-only";
 import {
   BarChart3,
   BookOpen,
+  Boxes,
   CalendarClock,
   CalendarDays,
   CalendarOff,
@@ -9,6 +10,7 @@ import {
   CalendarSearch,
   ClipboardCheck,
   Coffee,
+  DoorOpen,
   GraduationCap,
   Grid3x3,
   KeyRound,
@@ -103,6 +105,10 @@ export const ADMIN_NAV: NavGroup[] = [
       // card itself stays on tillgänglighet — the hall's size and the break's
       // length, one row for the school, where this is the flow through the day.
       { labelKey: "lunchServings", href: "/admin/lunch-servings", icon: UtensilsCrossed },
+      // Resurser: what the school lends out that is not a lokal, and its kinds. Last in the phase:
+      // the rooms are Grunddata, and these are the things a booking is made of beside them.
+      // The boxes say a stock of things; a teacher books them on the teacher's Boka resurs.
+      { labelKey: "resources", href: "/admin/resources", icon: Boxes },
     ],
   },
   {
@@ -110,6 +116,9 @@ export const ADMIN_NAV: NavGroup[] = [
     items: [
       { labelKey: "generate", href: "/admin/generate", icon: Sparkles },
       { labelKey: "timetable", href: "/admin/timetable", icon: CalendarDays },
+      // Klasslärarens schema (G5): who is klasslärare of which class, the hours open to them and the
+      // drafts that wait. Beside the grid whose lessons they change. The groups' icon (Personer).
+      { labelKey: "classTeachers", href: "/admin/class-teachers", icon: Users },
       // Next to the grid it is used against: finslipning starts once a base
       // schedule exists, and every answer there is read off this one.
       { labelKey: "gaps", href: "/admin/gaps", icon: CalendarSearch },
@@ -155,6 +164,13 @@ export const ADMIN_NAV: NavGroup[] = [
       { labelKey: "activities", href: "/admin/activities", icon: CalendarRange },
       { labelKey: "leaveRequests", href: "/admin/leave", icon: ClipboardCheck },
       { labelKey: "roomBookings", href: "/admin/room-bookings", icon: MapPin },
+      // Externa bokningar: a room or a resource let to an association or a company for a series of
+      // days, registered by the expedition. Beside the bookings it adds days to. An open door: the
+      // room is let to somebody from outside.
+      { labelKey: "externalBookings", href: "/admin/external-bookings", icon: DoorOpen },
+      // Utnyttjande: how much of each room and resource is booked, for a period. Beside the bookings
+      // it counts, and before the other reports. The reports' icon, already in the shell.
+      { labelKey: "utilisation", href: "/admin/utilisation", icon: BarChart3 },
       { labelKey: "reports", href: "/admin/reports", icon: BarChart3 },
       // Frånvarobevakning: the limits for absence and the pupils who passed
       // one, counted from the attendance Rapporter reads. The reports' icon:
@@ -164,10 +180,21 @@ export const ADMIN_NAV: NavGroup[] = [
       // register is saved, beside Frånvarobevakning, which counts the same
       // registers from the pupils' side. The reports' icon again.
       { labelKey: "reportingRate", href: "/admin/reporting-rate", icon: BarChart3 },
+      // Analys och planering: nyckeltal per lärare och skola, kostnad per elev and the
+      // löneunderlag, counted from the same tjänstefördelning and registers. The reports'
+      // icon again, already in the shell.
+      { labelKey: "analysis", href: "/admin/analysis", icon: BarChart3 },
       // Kvittens: staff ask guardians to confirm a message, and see who has.
       // The attendance icon (Ledighetsansökningar): a
       // confirmation is a tick against a name, like the register's.
       { labelKey: "acknowledgements", href: "/admin/acknowledgements", icon: ClipboardCheck },
+      // Måltidskollen: the portions of each lunch sitting, for the kitchen. The lunch services' icon
+      // (Lunchsittningar): the same meal, counted instead of placed, and an icon the menu already
+      // names, so the row costs the document its label and path and no drawing of its own.
+      { labelKey: "meals", href: "/admin/meals", icon: UtensilsCrossed },
+      // Checklistor: the instruction proofs and the classes' consent lists. Beside Kvittens, which
+      // asks the guardians the consent lists ask. The attendance icon again: a tick against a name.
+      { labelKey: "checklists", href: "/admin/checklists", icon: ClipboardCheck },
       // Lektionslogg's klassbok: a class's lessons over a period, printed. The subjects' book.
       { labelKey: "classBook", href: "/admin/klassbok", icon: BookOpen },
     ],

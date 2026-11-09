@@ -195,12 +195,13 @@ export interface AckUsageLine {
 }
 
 /**
- * Kvittens' use of the day (GET /usage): the school's (an administrator only), the reader's own share, and the
- * senders who have used most (an administrator only). A row is one guardian asked about one pupil.
+ * Kvittens' use of the day (GET /usage): the school's (an administrator only), the reader's own share (null for a
+ * login with no person, the huvudman's reader, who cannot send), and the senders who have used most (an administrator
+ * only). A row is one guardian asked about one pupil.
  */
 export interface AckUsage {
   school: AckUsageLine | null;
-  mine: AckUsageLine;
+  mine: AckUsageLine | null;
   senders: Array<AckUsageLine & { name: string }> | null;
 }
 

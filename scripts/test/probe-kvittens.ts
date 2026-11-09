@@ -587,11 +587,18 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     let wanted = 19999;
     while (wanted > 0) {
       const bulk = await seed('Dygnets underlag', 'ANY', [], loner);
+      // The day's receipts are a count and nothing more, so they are written for pairs nobody is linked in: ki's four hundred
+      // guardians and every pupil, in the order of their ids. Never for g1–g4: a LIMIT over a cross join, with no order, gave
+      // them receipts for whichever pupils the heap happened to hold first, and when the pupil was not their child the request
+      // was theirs by receipt and not theirs by row security (km failed on that in CI, 42512566829, and once on a reused
+      // database). With an ORDER BY the pairs are the same on every database, and the four guardians stay out of the count.
       const written = await owner.query(
         `INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
          SELECT $1, $2, p.id, g.id
-           FROM (SELECT id FROM "Users" WHERE "schoolId" = $2 AND role = 'STUDENT') p CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = $2 AND role = 'GUARDIAN') g LIMIT $3`,
-        [bulk, s, wanted]);
+           FROM (SELECT id FROM "Users" WHERE "schoolId" = $2 AND role = 'STUDENT') p
+           CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = $2 AND role = 'GUARDIAN' AND id <> ALL ($4::uuid[])) g
+          ORDER BY p.id, g.id LIMIT $3`,
+        [bulk, s, wanted, [g1.id, g2.id, g3.id, g4.id]]);
       wanted -= written.rowCount ?? 0;
     }
     const requestsBefore = await count(`SELECT count(*) AS n FROM "AckRequests" WHERE "schoolId" = $1`, [s]);
@@ -610,7 +617,7 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     // Paging: every request once, newest first, the last page says so.
     const page = async <T extends { id: string }>(read: (query: { after?: string; limit: number }) => Promise<{ items: T[]; next: string | null }>, limit: number): Promise<string[]> => {
       const seen: string[] = [];
-      for (let after: string | undefined, rounds = 0; rounds < 100; rounds++) {
+      for (let after: string | undefined, rounds = 0; rounds < 400; rounds++) {
         const got = await read({ limit, ...(after ? { after } : {}) });
         assert.ok(got.items.length <= limit);
         seen.push(...got.items.map((item) => item.id));
@@ -624,16 +631,59 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
       const id = await seed(`Sida ${i}`, 'ANY', [p3.id], mentor2);
       await owner.query(`UPDATE "AckRequests" SET "createdAt" = now() - make_interval(hours => $2) WHERE id = $1`, [id, 100 + i]);
     }
-    const mineAll = (await owner.query<{ id: string }>(`SELECT DISTINCT "requestId" AS id FROM "AckReceipts" WHERE "guardianId" = $1`, [g3.id])).rows.map((r) => r.id);
-    const mine = await page((query) => service.mine(asG(g3), query), 3);
-    assert.equal(new Set(mine).size, mine.length, 'a request on two pages');
-    assert.deepEqual([...mine].sort(), [...mineAll].sort(), 'the pages are not the guardian’s requests');
-    assert.deepEqual(mine, (await service.mine(asG(g3), { limit: 100 })).items.map((x) => x.id), 'the order depends on the size of the page');
-    const everything = (await owner.query<{ id: string }>(`SELECT id FROM "AckRequests" WHERE "schoolId" = $1`, [s])).rows.map((r) => r.id);
-    const listed = await page((query) => service.list(asAdmin, query), 7);
-    assert.equal(new Set(listed).size, listed.length);
-    assert.deepEqual([...listed].sort(), [...everything].sort());
-    assert.equal((await service.mine(asG(g3), { limit: 1 })).next, mine[0]);
+    // Requests of one and the same moment, to the microsecond, in two moments: the order of ties is the id's, and a page break
+    // may fall between two of them. (The service writes the time in milliseconds, so two requests of one moment are not far
+    // off: two gateways, one millisecond.) Thirty days back, so that they are the oldest the guardian and the school have.
+    const tiedA: string[] = [];
+    const tiedB: string[] = [];
+    for (let i = 0; i < 5; i++) tiedA.push(await seed(`Samtidig A${i}`, 'ANY', [p3.id]));
+    for (let i = 0; i < 4; i++) tiedB.push(await seed(`Samtidig B${i}`, 'ANY', [p3.id]));
+    await owner.query(
+      `UPDATE "AckRequests" q SET "createdAt" = CASE WHEN q.id = ANY ($1::uuid[]) THEN t.at ELSE t.at - interval '1 second' END
+         FROM (SELECT now() - interval '30 days' AS at) t WHERE q.id = ANY ($1::uuid[]) OR q.id = ANY ($2::uuid[])`,
+      [tiedA, tiedB]);
+    // (All three are the seeder's, whose requests nobody's hourly limit counts: ko writes as the colleague straight after.)
+    // A receipt for a child the guardian is not linked to opens nothing: the request is in her receipts and not in her list.
+    // (The comparison of this check used to be "every request she has a receipt in", which the owner's bulk receipts of kl
+    // made untrue whenever the pupil of such a receipt was not her child.)
+    const orphan = await seed('Ett annat barn', 'ANY', []);
+    await owner.query(
+      `INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId") VALUES ($1, $2, $3, $4)`,
+      [orphan, s, p5.id, g3.id]);
+    assert.equal(await count(`SELECT count(*) AS n FROM "GuardianStudents" WHERE "guardianId" = $1 AND "studentId" = $2`, [g3.id, p5.id]), 0);
+
+    // What the database says is the guardian's, newest first and the id last, and the school's: the pages are read against
+    // these, and against nothing the service says.
+    const ordered = async (sql: string, params: unknown[]): Promise<string[]> => (await owner.query<{ id: string }>(sql, params)).rows.map((r) => r.id);
+    const mineAll = await ordered(
+      `SELECT q.id FROM "AckRequests" q
+        WHERE q."schoolId" = $1 AND EXISTS (SELECT 1 FROM "AckReceipts" r
+                                              JOIN "GuardianStudents" gs ON gs."guardianId" = r."guardianId" AND gs."studentId" = r."studentId"
+                                              JOIN "Users" u ON u.id = r."studentId" AND u.role = 'STUDENT' AND u."isActive"
+                                             WHERE r."requestId" = q.id AND r."guardianId" = $2)
+        ORDER BY q."createdAt" DESC, q.id DESC`,
+      [s, g3.id]);
+    const unfiltered = await ordered(`SELECT DISTINCT "requestId" AS id FROM "AckReceipts" WHERE "guardianId" = $1`, [g3.id]);
+    assert.ok(unfiltered.includes(orphan) && !mineAll.includes(orphan), 'the orphan receipt is the case the old comparison could not tell');
+    const tail = [...[...tiedA].sort().reverse(), ...[...tiedB].sort().reverse()];
+    assert.deepEqual(mineAll.slice(-tail.length), tail, 'the ties are not the oldest, or not in the order of their ids');
+    for (const limit of [1, 2, 3, 4, 7]) {
+      const mine = await page((query) => service.mine(asG(g3), query), limit);
+      assert.equal(new Set(mine).size, mine.length, `a request on two pages at ${limit} a page`);
+      assert.deepEqual(mine, mineAll, `the pages of ${limit} are not the guardian’s requests in the database’s order`);
+    }
+    assert.ok(!(await page((query) => service.mine(asG(g3), query), 5)).includes(orphan), 'a receipt for a child who is not hers made the request hers');
+    assert.deepEqual(
+      (await service.mine(asG(g3), { limit: 100 })).items.map((x) => x.id),
+      mineAll,
+      'the order depends on the size of the page');
+    const everything = await ordered(`SELECT id FROM "AckRequests" WHERE "schoolId" = $1 ORDER BY "createdAt" DESC, id DESC`, [s]);
+    for (const limit of [1, 7, 50]) {
+      const listed = await page((query) => service.list(asAdmin, query), limit);
+      assert.equal(new Set(listed).size, listed.length, `a request on two pages at ${limit} a page`);
+      assert.deepEqual(listed, everything, `the school’s pages of ${limit} are not its requests in the database’s order`);
+    }
+    assert.equal((await service.mine(asG(g3), { limit: 1 })).next, mineAll[0]);
     const nothing = await service.mine(asG(g3), { after: randomUUID(), limit: 5 });
     assert.deepEqual([nothing.items, nothing.next], [[], null], 'a cursor that is no request of theirs gave something');
 
@@ -738,7 +788,7 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
   await check('ko: a sender’s share of the day is a 429 of its own through the adapter, and the usage page reads the numbers', async () => {
     await service.updateSettings({ enabled: true }, asAdmin);
     const share = 2000;
-    const before = (await service.usage(asMentor1)).mine;
+    const before = (await service.usage(asMentor1)).mine!;
     assert.equal(before.limit, share, 'a teacher’s share is 2 000');
     // The owner (no login: not counted against) brings her to three short of her share, five hours ago, so the hour's limit is not in play.
     const bulk = await one<{ id: string }>(
@@ -748,7 +798,7 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
       `INSERT INTO "AckReceipts" ("requestId", "schoolId", "studentId", "guardianId")
        SELECT $1, $2, p.id, g.id FROM (SELECT id FROM "Users" WHERE "schoolId" = $2 AND role = 'STUDENT') p CROSS JOIN (SELECT id FROM "Users" WHERE "schoolId" = $2 AND role = 'GUARDIAN') g LIMIT $3`,
       [bulk.id, s, share - 3 - before.used]);
-    assert.equal((await service.usage(asMentor1)).mine.used, share - 3);
+    assert.equal((await service.usage(asMentor1)).mine!.used, share - 3);
 
     // P1 and P2 have three guardians between them (G1 and G2 for P1, G1 for P2): the 2 000th receipt is allowed, the next is not.
     const body = { body: 'B', rule: 'ANY' as const, studentIds: [p1.id, p2.id] };
@@ -773,10 +823,10 @@ export async function kvittensChecks(owner: Client, api: PrismaService, marker: 
     const admins = await service.usage(asAdmin);
     assert.equal(admins.school!.limit, 20000);
     assert.ok(admins.school!.used >= share, 'the school’s day is less than one teacher’s');
-    assert.equal(admins.mine.limit, 8000);
+    assert.equal(admins.mine!.limit, 8000);
     assert.deepEqual(admins.senders!.find((x) => x.name.startsWith('mentor1')), { name: 'mentor1 Probe', used: share, limit: share });
     assert.ok(admins.senders!.length <= 5);
-    assert.deepEqual((await service.usage(asLasare)).mine.limit, 8000, 'an administrator who only reads Drift reads the usage');
+    assert.deepEqual((await service.usage(asLasare)).mine!.limit, 8000, 'an administrator who only reads Drift reads the usage');
     await assert.rejects(() => service.usage(asG(g1)), ForbiddenException);
   });
 

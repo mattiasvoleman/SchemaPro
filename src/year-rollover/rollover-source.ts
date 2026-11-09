@@ -575,6 +575,7 @@ export async function readSourceStaffing(tx: PrismaClient, yearId: string): Prom
       maxTeachingDaysPerWeek: true,
       maxConsecutiveTeachingMinutes: true,
       consecutiveBreakMinutes: true,
+      payrollNumber: true,
     },
     orderBy: { id: 'asc' },
   });
@@ -645,6 +646,8 @@ export async function readSourceStaffing(tx: PrismaClient, yearId: string): Prom
       maxTeachingDaysPerWeek: row.maxTeachingDaysPerWeek,
       maxConsecutiveTeachingMinutes: row.maxConsecutiveTeachingMinutes,
       consecutiveBreakMinutes: row.consecutiveBreakMinutes,
+      // Löne-id (20270206090000), the post's own like the signature.
+      payrollNumber: row.payrollNumber,
       periods: periodRows
         .filter((period) => period.employmentId === row.id)
         .map((period) => ({

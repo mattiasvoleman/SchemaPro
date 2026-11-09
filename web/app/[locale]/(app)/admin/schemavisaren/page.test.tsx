@@ -76,6 +76,7 @@ const SETTINGS: PublicationSettings = {
   gateDayOpsLost: "WARN",
   gateEmptyHalf: "WARN",
   gateOtherSchool: "WARN",
+  gateDeviations: "WARN",
   viewerAudience: "STAFF",
   viewerClassMode: "OFF",
   viewerGroupMode: "OFF",

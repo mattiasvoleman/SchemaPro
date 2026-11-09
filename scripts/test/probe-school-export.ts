@@ -45,7 +45,10 @@
  *   (k-m)  a teacher who decided a pupil's leave gets the decision, not the pupil's id, address
  *          or reason, nor the guardian's; a guardian alone, the same for the child; a teacher who
  *          marked pupils found in a drill gets the act in the crisis tables and not the pupils, nor
- *          a note that names one, and no file of the extract holds any pupil or guardian;
+ *          a note that names one, a teacher who ticked a pupil's instruction and a mentor who wrote
+ *          down what a guardian decided get the act in the Checklistor tables and not the pupil, the
+ *          note, the answer or the guardian's name, and no file of the extract holds any pupil or
+ *          guardian (the pupil's own extract holds both whole);
  *   (k-n)  free text that names a protected person, by id or full name, is empty in the
  *          school's file and in another person's extract, and counted;
  *   (k-o)  the history that keeps a person without a key to Users (a guardian link that was
@@ -575,7 +578,7 @@ async function main(): Promise<void> {
       owner.leaveRequest.create({
         data: { schoolId: a.schoolId, startDate: new Date('2026-11-09'), endDate: new Date('2026-11-10'), status: 'APPROVED', decidedAt: time('2026-10-21', '09:00'), ...data } as never,
       });
-    await leave({ studentId: pupilE.id, requestedById: guardianE.id, decidedById: a.teacher, decidedAs: 'MENTOR', reason: 'Känsligt läkarbesök E4', decisionNote: 'Tala med mamma E4' });
+    await leave({ studentId: pupilE.id, requestedById: guardianE.id, decidedById: a.teacher, decidedAs: 'MENTOR', reason: 'Känsligt läkarbesök E4', decisionNote: 'Tala med mamma E4', contactName: 'Kontakt Farmor E4', contactPhone: '070-5550404', contactRelation: 'Farmor E4' });
     await leave({ studentId: pupilF.id, requestedById: guardianF.id, decidedById: protectedTeacher.id, decidedAs: 'MENTOR', reason: 'Orsak E5' });
     await leave({ studentId: protectedPupil.id, requestedById: a.guardians[1]!.id, decidedById: a.admins.FULL.userId!, decidedAs: 'ADMIN', reason: 'Orsak skyddad' });
     // The history of a cut guardian link is written by the database, when the link is deleted.
@@ -601,6 +604,27 @@ async function main(): Promise<void> {
       });
     }
     await owner.crisisAlarm.update({ where: { id: alarm.id }, data: { endedAt: new Date(), endedByUserId: a.teacher, endNote: 'Övning klar, Elev5 EfternamnA kom sist' } });
+
+    // Checklistor: the teacher ticked a pupil's instruction (and voided a tick), and as the pupil's mentor wrote down what the guardian decided and who
+    // said it. Planted as the owner, which the stamps leave as given.
+    const template = await owner.instructionTemplate.create({ data: { schoolId: a.schoolId, title: 'Cirkelsågen (probe)' } });
+    await owner.instructionProof.create({
+      data: { schoolId: a.schoolId, templateId: template.id, studentId: pupilE.id, instructedOn: new Date('2026-10-20'), instructorId: a.teacher, recordedById: a.teacher, note: 'Eleven var orolig och behövde extra stöd' },
+    });
+    // A proof is born unvoided whoever writes it (the stamp), so the void is a second step, as app.checklist_void_proof makes it.
+    const voided = await owner.instructionProof.create({
+      data: { schoolId: a.schoolId, templateId: template.id, studentId: pupilE.id, instructedOn: new Date('2026-10-21'), instructorId: a.teacher, recordedById: a.teacher },
+    });
+    await owner.instructionProof.update({
+      where: { id: voided.id },
+      data: { voidedAt: new Date('2026-10-22T08:00:00Z'), voidedById: a.teacher, voidReason: 'Fel elev, rättad av läraren' },
+    });
+    const consentList = await owner.consentList.create({ data: { schoolId: a.schoolId, studentGroupId: crisisGroup.id, title: 'Fotografering (probe)', body: 'Jag samtycker.', createdById: a.teacher } });
+    await owner.consentEntry.create({
+      data: {
+        schoolId: a.schoolId, listId: consentList.id, studentId: pupilE.id, kind: 'DECLINED', givenOn: new Date('2026-10-23'), givenBy: 'pappa Bertil', note: 'Vill inte ha bild på nätet', recordedById: a.teacher,
+      },
+    });
 
     await check("(k-l) a protected person's extract names nobody else: not the guardian, the teacher, the reader or the decider", async () => {
       for (const withRelated of [true, false]) {
@@ -634,7 +658,7 @@ async function main(): Promise<void> {
       assert.ok(teacher.emptied('data/ledigheter.csv') >= 4);
       for (const [name, content] of teacher.files) {
         const text = content.toString('utf8');
-        for (const secret of [pupilE.id, pupilE.email, guardianE.id, guardianE.email, 'Känsligt läkarbesök E4', 'Tala med mamma E4']) assert.ok(!text.includes(secret), `${name} holds ${secret} in the teacher's extract`);
+        for (const secret of [pupilE.id, pupilE.email, guardianE.id, guardianE.email, 'Känsligt läkarbesök E4', 'Tala med mamma E4', 'Kontakt Farmor E4', '070-5550404']) assert.ok(!text.includes(secret), `${name} holds ${secret} in the teacher's extract`);
       }
       // The drill: the teacher's act is there, the pupils and their state are not, and neither is a note that names a pupil.
       const marked = teacher.files.get('data/person/crisispupils.csv');
@@ -652,6 +676,37 @@ async function main(): Promise<void> {
       assert.ok(teacher.emptied('data/person/crisispupils.csv') >= 4 && teacher.emptied('data/person/crisisreports.csv') >= 4, 'counted');
       const alarmFile = teacher.files.get('data/person/crisisalarms.csv')!.toString('utf8');
       assert.ok(alarmFile.includes(a.teacher) && !alarmFile.includes('Övning klar'), 'the teacher started the drill, and the note that names a pupil is empty');
+      // Checklistor: the teacher's act is there (who ticked, which template, which day, who voided), the pupil, the note and the reason are not; the same for
+      // the mentor's answer (the list and the day it was written stay; the pupil, what the guardian decided, who said it and the note do not).
+      const cells = (files: Map<string, Buffer>, name: string) => {
+        const [header, ...rows] = csvLines(files.get(name)).map((line) => line.split(';'));
+        return rows.map((row) => Object.fromEntries(header!.map((column, index) => [column, row[index] ?? ''])));
+      };
+      const proofRows = cells(teacher.files, 'data/person/instructionproofs.csv');
+      assert.equal(proofRows.length, 2, "both ticks are the teacher's act");
+      for (const row of proofRows) {
+        assert.equal(row.studentId, '', 'the pupil of the tick is empty');
+        assert.equal(row.note, '', "the tick's note is empty");
+        assert.equal(row.voidReason, '', "the voided tick's reason is empty");
+        assert.ok(row.instructorId === a.teacher && row.recordedById === a.teacher && row.templateId === template.id && row.instructedOn !== '', "the act stays: who ticked, which template, which day");
+      }
+      assert.ok(proofRows.some((row) => row.voidedById === a.teacher), 'and who voided');
+      const answerRows = cells(teacher.files, 'data/person/consententries.csv');
+      assert.equal(answerRows.length, 1);
+      assert.deepEqual([answerRows[0]!.studentId, answerRows[0]!.kind, answerRows[0]!.givenOn, answerRows[0]!.givenBy, answerRows[0]!.note], ['', '', '', '', ''], "the pupil, the guardian's decision, the day, who said it and the note are empty");
+      assert.ok(answerRows[0]!.recordedById === a.teacher && answerRows[0]!.listId === consentList.id && answerRows[0]!.source === 'REGISTERED', 'the act stays: who wrote, on which list');
+      assert.ok(teacher.emptied('data/person/instructionproofs.csv') >= 4 && teacher.emptied('data/person/consententries.csv') >= 5, 'counted: two pupils and the note and the reason; the pupil, the decision, the day, the guardian and the note');
+      for (const [name, content] of teacher.files) {
+        const text = content.toString('utf8');
+        for (const secret of ['Eleven var orolig', 'Fel elev, rättad', 'pappa Bertil', 'Vill inte ha bild']) assert.ok(!text.includes(secret), `${name} holds '${secret}' in the teacher's extract`);
+      }
+      // The pupil's own extract holds both whole, and is recorded as a read about the pupil.
+      const own = await extractZip(a.admins.FULL, pupilE.id, false);
+      const ownProofs = cells(own.files, 'data/person/instructionproofs.csv');
+      assert.ok(ownProofs.length === 2 && ownProofs.every((row) => row.studentId === pupilE.id), "the pupil's ticks are theirs, whole");
+      assert.ok(ownProofs.some((row) => row.note === 'Eleven var orolig och behövde extra stöd') && ownProofs.some((row) => row.voidReason === 'Fel elev, rättad av läraren'));
+      const ownAnswer = cells(own.files, 'data/person/consententries.csv')[0]!;
+      assert.deepEqual([ownAnswer.studentId, ownAnswer.kind, ownAnswer.givenBy, ownAnswer.note], [pupilE.id, 'DECLINED', 'pappa Bertil', 'Vill inte ha bild på nätet'], "the pupil's own answer is whole");
       // No file of the teacher's extract holds any pupil or guardian of the school: id, address or full name (R4-L1).
       const strangers = await owner.user.findMany({ where: { schoolId: a.schoolId, role: { in: ['STUDENT', 'GUARDIAN'] } }, select: { id: true, email: true, firstName: true, lastName: true } });
       assert.ok(strangers.length > 10);
@@ -665,7 +720,7 @@ async function main(): Promise<void> {
       const alone = await extractZip(a.admins.FULL, guardianE.id, false);
       for (const [name, content] of alone.files) {
         const text = content.toString('utf8');
-        for (const secret of [a.teacher, 'Känsligt läkarbesök E4', 'Tala med mamma E4', 'Sjuk A4']) assert.ok(!text.includes(secret), `${name} holds ${secret} in the guardian's extract`);
+        for (const secret of [a.teacher, 'Känsligt läkarbesök E4', 'Tala med mamma E4', 'Sjuk A4', 'Kontakt Farmor E4', '070-5550404']) assert.ok(!text.includes(secret), `${name} holds ${secret} in the guardian's extract`);
         // Whose guardian she is stays in the link; nothing else of the child's.
         if (name !== 'data/kopplingar.csv') for (const secret of [pupilE.id, pupilE.email]) assert.ok(!text.includes(secret), `${name} holds ${secret} in the guardian's extract`);
       }
@@ -674,7 +729,7 @@ async function main(): Promise<void> {
       // With the child asked for, the rows are about the child and whole.
       const both = await extractZip(a.admins.FULL, guardianE.id, true);
       const whole = lineWith(both.files, 'data/ledigheter.csv', pupilE.id)!;
-      assert.ok(whole && whole.includes('Känsligt läkarbesök E4') && whole.includes('Tala med mamma E4'), 'the child\'s own leave is whole in the child\'s extract');
+      assert.ok(whole && whole.includes('Känsligt läkarbesök E4') && whole.includes('Tala med mamma E4') && whole.includes('Kontakt Farmor E4') && whole.includes('070-5550404'), 'the child\'s own leave is whole in the child\'s extract, contact included');
     });
 
     await check('(k-n) free text that names a protected person is empty, in the school\'s file and in another person\'s extract, and counted', async () => {
@@ -778,6 +833,74 @@ async function main(): Promise<void> {
       assert.ok(readme.includes('Delar som saknas') && readme.includes(note), 'the README says it first');
       const row = await owner.schoolExport.findUniqueOrThrow({ where: { id: order.id } });
       assert.ok(((row.heldOut as { notes?: string[] }).notes ?? []).some((line) => line.includes(note)), "and the order's row, which the card shows");
+    });
+
+    await check('(k-q) a guardian\'s answer to a request for consent is in the school\'s file and in the guardian\'s own extract, in nobody else\'s, and a protected person\'s is in neither', async () => {
+      // Ledighetspolicy (the review of #292, MEDEL-3): no role reads LeaveConsents, so the file asks app.leave_consents_export.
+      const asked = a.guardians[5]!; // F: asked about pupil E's leave, answered yes
+      const waiting = a.guardians[2]!; // asked, has not answered
+      const markedAsked = a.guardians[3]!; // marked in (k-i): asked, answered no
+      const leaveE = await owner.leaveRequest.findFirstOrThrow({ where: { schoolId: a.schoolId, studentId: pupilE.id } });
+      const leaveProtected = await owner.leaveRequest.findFirstOrThrow({ where: { schoolId: a.schoolId, studentId: protectedPupil.id } });
+      const row = (leaveId: string, guardianId: string, consented: boolean | null) =>
+        owner.$executeRaw`INSERT INTO "LeaveConsents" ("leaveRequestId", "schoolId", "guardianId", "consented", "answeredAt", "remindedAt")
+          VALUES (${leaveId}::uuid, ${a.schoolId}::uuid, ${guardianId}::uuid, ${consented}, ${consented === null ? null : new Date('2026-10-22T08:00:00Z')}::timestamptz, ${consented === null ? new Date('2026-10-23T08:00:00Z') : null}::timestamptz)`;
+      await row(leaveE.id, asked.id, true);
+      await row(leaveE.id, waiting.id, null);
+      await row(leaveE.id, markedAsked.id, false);
+      await row(leaveProtected.id, asked.id, true);
+      cleanup.push(async () => void (await owner.$executeRaw`DELETE FROM "LeaveConsents" WHERE "schoolId" = ${a.schoolId}::uuid`));
+
+      const own = await extractZip(a.admins.FULL, asked.id, false);
+      const ownLines = csvLines(own.files.get('data/samtycken.csv'));
+      assert.equal(ownLines.length - 1, 1, "the guardian's own extract holds exactly their answer about the pupil that is not protected");
+      const cells = ownLines[1]!.split(';');
+      assert.equal(cells[0], leaveE.id);
+      assert.equal(cells[1], asked.id);
+      assert.equal(cells[4], 'true');
+      assert.ok(cells[5]!.startsWith('2026-10-22'), 'when they answered');
+      // The child is an id in the request and nothing else: the pupil\'s id is empty in the guardian\'s extract.
+      assert.ok(!ownLines.join('\n').includes(pupilE.id), "the child is not named in the guardian's own answers");
+      assert.ok(!ownLines.join('\n').includes(protectedPupil.id));
+      // Nobody else\'s answer, in the guardian\'s extract or the teacher\'s or the pupil\'s.
+      for (const files of [own.files, (await extractZip(a.admins.FULL, a.teacher, false)).files, (await extractZip(a.admins.FULL, pupilE.id, false)).files]) {
+        const text = files.get('data/samtycken.csv')!.toString('utf8');
+        assert.ok(!text.includes(waiting.id) && !text.includes(markedAsked.id), 'the answer of another guardian is in an extract that is not theirs');
+      }
+      assert.equal(csvLines((await extractZip(a.admins.FULL, a.teacher, false)).files.get('data/samtycken.csv')).length, 1, "a teacher's extract has the header and no answer");
+
+      // The school\'s file: every answer but the one about the protected pupil, the marked guardian\'s id and address blanked and counted.
+      await owner.schoolExport.deleteMany({ where: { schoolId: a.schoolId, id: { not: first.id } } });
+      const order = await service.order(a.admins.FULL);
+      await runJobUntilIdle(job);
+      const school = unzip(await fetchFile(service, order.id, a.admins.FULL));
+      cleanup.push(async () => rmSync(school.dir, { recursive: true, force: true }));
+      const text = school.files.get('data/samtycken.csv')!.toString('utf8');
+      const lines = csvLines(school.files.get('data/samtycken.csv'));
+      assert.equal(lines.length - 1, 3, 'the three answers about pupils that are not protected');
+      assert.ok(text.includes(asked.id) && text.includes(waiting.id), 'the answers of unprotected guardians are there');
+      assert.ok(!text.includes(markedAsked.id) && !text.includes(markedAsked.email), 'a protected guardian\'s id and address are not');
+      assert.ok(!text.includes(protectedPupil.id), 'nor the request about a protected pupil');
+      const manifest = JSON.parse(school.files.get('manifest.json')!.toString('utf8')) as { files: Array<{ path: string; tommaCeller?: number }> };
+      assert.ok((manifest.files.find((file) => file.path === 'data/samtycken.csv')?.tommaCeller ?? 0) >= 1, 'the blanked cell is counted');
+      // The other school\'s administrator, or one who does not decide, is given nothing by the function.
+      const none = await api.withRls(b.admins.FULL, (tx) => tx.$queryRaw<Array<{ n: number }>>`SELECT count(*)::int AS n FROM app.leave_consents_export(NULL, NULL, 100, NULL, NULL, NULL)`);
+      assert.equal(none[0]!.n, 0, "another school's administrator reads none of A's answers");
+      const planner = await api.withRls(a.admins.SCHEMALAGGARE, (tx) => tx.$queryRaw<Array<{ n: number }>>`SELECT count(*)::int AS n FROM app.leave_consents_export(NULL, NULL, 100, NULL, NULL, NULL)`);
+      assert.equal(planner[0]!.n, 0, 'an administrator who does not decide reads none');
+
+      // The review of #292 round two, LÅG-1: the persons who come along with an extract do not bring their answers. Pupil E's own guardian
+      // (E4) has said no to the pupil's leave; a no that one guardian gave is not for the other, who might be in the same archive.
+      await row(leaveE.id, guardianE.id, false);
+      const withGuardians = await extractZip(a.admins.FULL, pupilE.id, true);
+      assert.ok(csvLines(withGuardians.files.get('data/personer.csv')).join('\n').includes(guardianE.id), "the pupil's guardian comes with the pupil's extract");
+      assert.equal(csvLines(withGuardians.files.get('data/samtycken.csv')).length, 1, "the pupil's extract with the guardians has the header and none of the guardians' answers");
+      assert.ok(!withGuardians.files.get('data/samtycken.csv')!.toString('utf8').includes(guardianE.id), "the guardian's id is not in the pupil's samtycken.csv");
+      // The guardian's own extract, with the child along, holds their answer and not the child's id.
+      const guardianWithChild = await extractZip(a.admins.FULL, guardianE.id, true);
+      const guardianLines = csvLines(guardianWithChild.files.get('data/samtycken.csv'));
+      assert.equal(guardianLines.length - 1, 1, "the guardian's extract with the child holds the guardian's one answer");
+      assert.equal(guardianLines[1]!.split(';')[4], 'false');
     });
 
     await check('(k-j) only those who decide ask for one, and only about their own school', async () => {

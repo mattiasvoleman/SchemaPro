@@ -308,6 +308,84 @@ describe('RoomsService', () => {
       expect(tx.room.delete).toHaveBeenCalledWith({ where: { id: ROOM_ID } });
     });
 
+    describe('a room a förläggning names', () => {
+      const placed = (...posts: Array<[string, string]>) =>
+        tx.teachingRequirementPlacement.findMany.mockResolvedValue(
+          posts.map(([subject, group]) => ({ requirement: { subject: { name: subject }, studentGroup: { name: group } } })),
+        );
+
+      it('is refused by the post\'s name, and nothing is deleted', async () => {
+        placed(['Idrott och hälsa', '7A']);
+
+        await expect(service.remove(ROOM_ID, testUser())).rejects.toThrow(
+          new BadRequestException('Salen är förlagd för Idrott och hälsa 7A. Ta bort förläggningen först.'),
+        );
+        expect(tx.teachingRequirementPlacement.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { roomId: ROOM_ID } }),
+        );
+        expect(tx.room.delete).not.toHaveBeenCalled();
+      });
+
+      it('names each post once, however many of its lessons stand in the room, and the first five', async () => {
+        placed(
+          ['Idrott och hälsa', '7A'],
+          ['Idrott och hälsa', '7A'],
+          ['Idrott och hälsa', '7B'],
+          ['Idrott och hälsa', '8A'],
+          ['Idrott och hälsa', '8B'],
+          ['Idrott och hälsa', '9A'],
+          ['Idrott och hälsa', '9B'],
+        );
+
+        await expect(service.remove(ROOM_ID, testUser())).rejects.toThrow(
+          new BadRequestException(
+            'Salen är förlagd för Idrott och hälsa 7A, Idrott och hälsa 7B, Idrott och hälsa 8A, Idrott och hälsa 8B, Idrott och hälsa 9A och 1 till. Ta bort förläggningarna först.',
+          ),
+        );
+      });
+
+      it('is said before the room lock\'s refusal, which is not asked', async () => {
+        placed(['Idrott och hälsa', '7A']);
+        givenRules([{ kind: 'LOCK', subject: 'Matematik', roomIds: [ROOM_ID] }]);
+
+        await expect(service.remove(ROOM_ID, testUser())).rejects.toThrow(/förlagd/);
+        expect(tx.roomPreference.findMany).not.toHaveBeenCalled();
+      });
+
+      it('deletes a room no förläggning names', async () => {
+        tx.teachingRequirementPlacement.findMany.mockResolvedValue([]);
+        tx.room.delete.mockResolvedValue({ id: ROOM_ID });
+
+        await expect(service.remove(ROOM_ID, testUser())).resolves.toBeUndefined();
+      });
+    });
+
+    describe('a room that is let out (Lokal)', () => {
+      it('is refused, saying in how many series, before the locks are even asked about', async () => {
+        tx.externalBooking.count.mockResolvedValue(3);
+
+        const error = await service.remove(ROOM_ID, testUser()).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toMatchObject({
+          code: 'ROOM_IS_LET_OUT',
+          message: 'Salen hyrs ut i 3 serie(r) av externa bokningar. Ta bort dem under Externa bokningar först.',
+        });
+        expect(tx.externalBooking.count).toHaveBeenCalledWith({ where: { roomId: ROOM_ID } });
+        expect(tx.roomPreference.findMany).not.toHaveBeenCalled();
+        expect(tx.room.delete).not.toHaveBeenCalled();
+      });
+
+      it('is deleted when no series is kept in it', async () => {
+        tx.externalBooking.count.mockResolvedValue(0);
+        tx.room.delete.mockResolvedValue({ id: ROOM_ID });
+
+        await expect(service.remove(ROOM_ID, testUser())).resolves.toBeUndefined();
+
+        expect(tx.room.delete).toHaveBeenCalledWith({ where: { id: ROOM_ID } });
+      });
+    });
+
     it('refuses to delete the last room a lock names', async () => {
       /*
        * RoomPreferenceRooms cascades, so the rule would survive with an empty
@@ -560,4 +638,42 @@ describe('RoomsService', () => {
     });
   });
 
+  describe('canBeShared (Placeringsregler, regel 3)', () => {
+    it('creates a room exclusive unless the school said otherwise: the key is not written, the column’s default applies', async () => {
+      tx.room.create.mockResolvedValue({ id: ROOM_ID, canBeShared: false });
+
+      await service.create(dto(), testUser());
+
+      const data = (tx.room.create.mock.calls[0]?.[0] as { data: Record<string, unknown> }).data;
+      expect(data).not.toHaveProperty('canBeShared');
+    });
+
+    it('writes the mark a room is created with, and answers with the stored row', async () => {
+      const row = { id: ROOM_ID, capacity: 120, canBeShared: true };
+      tx.room.create.mockResolvedValue(row);
+
+      await expect(service.create(dto({ capacity: 120, canBeShared: true }), testUser())).resolves.toBe(row);
+
+      expect(tx.room.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ capacity: 120, canBeShared: true }),
+      });
+    });
+
+    it.each([true, false])('writes %s on an update, falsy included, and nothing else', async (mark) => {
+      tx.room.update.mockResolvedValue({ id: ROOM_ID });
+
+      await service.update(ROOM_ID, { canBeShared: mark }, testUser());
+
+      expect(tx.room.update).toHaveBeenCalledWith({ where: { id: ROOM_ID }, data: { canBeShared: mark } });
+    });
+
+    it('leaves the mark alone on an update that does not name it', async () => {
+      tx.room.update.mockResolvedValue({ id: ROOM_ID });
+
+      await service.update(ROOM_ID, { capacity: 30 }, testUser());
+
+      expect((tx.room.update.mock.calls[0]?.[0] as { data: Record<string, unknown> }).data).not.toHaveProperty('canBeShared');
+    });
+  });
 });
+

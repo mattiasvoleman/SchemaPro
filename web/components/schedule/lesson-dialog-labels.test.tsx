@@ -85,6 +85,7 @@ const renderEdit = () =>
       deletePending={false}
       onDuplicate={vi.fn()}
       onPark={vi.fn()}
+      onSuggestSwaps={vi.fn()}
       onCancel={vi.fn()}
       onSave={vi.fn()}
       savePending={false}

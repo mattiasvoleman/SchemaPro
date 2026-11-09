@@ -322,6 +322,11 @@ const freshState = () => ({
   masterLessons: loaded([] as Record<string, unknown>[]),
   /** Delade lektioner: the year's shares, from the gateway beside the rows. */
   shares: loaded([] as { requirementId: string; teacherId: string | null; lessons: number; minutes: number }[]),
+  /** Förlagda poster: the year's placed lessons, from the gateway beside the rows, and the years asked for. */
+  placements: loaded([] as PlacementFixture[]),
+  placementsAskedFor: [] as (string | null)[],
+  /** The keys the page hands the post mutations to read again after a write. */
+  mutationKeys: [] as unknown[],
   /** The year's blocks, and the years the page asked for them (null: not asked). */
   blocks: loaded([] as { id: string; academicYearId: string; name: string; sameTimesAsBlockId: string | null }[]),
   blocksAskedFor: [] as (string | null)[],
@@ -335,6 +340,19 @@ const freshState = () => ({
     subjects: [] as { code: string; name: string; parentCode: string | null; isGroup: boolean }[],
   }),
 });
+
+/** One placed lesson as the gateway answers it (lib/requirement-placements.ts). */
+interface PlacementFixture {
+  id: string;
+  requirementId: string;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  minutes: number;
+  roomId: string;
+  roomName: string;
+  recurrence: "ALL_WEEKS" | "ODD_WEEKS" | "EVEN_WEEKS";
+}
 
 interface YearTimplanFixture {
   gradeLevel: number;
@@ -390,11 +408,14 @@ vi.mock("@/lib/queries", async (importOriginal) => ({
       : state.requirements,
   useSchoolBreaks: () => state.breaks,
   useMasterLessons: () => state.masterLessons,
-  useCrudMutations: () => ({
-    create: { mutateAsync: createMock, isPending: false },
-    update: { mutateAsync: updateMock, isPending: false },
-    remove: { mutateAsync: removeMock, isPending: false },
-  }),
+  useCrudMutations: (_path: string, keys: unknown[]) => {
+    state.mutationKeys = keys;
+    return {
+      create: { mutateAsync: createMock, isPending: false },
+      update: { mutateAsync: updateMock, isPending: false },
+      remove: { mutateAsync: removeMock, isPending: false },
+    };
+  },
   // The dialog's own mutation, which needs a QueryClientProvider this page
   // test does not set up. What it POSTs is csv-import-dialog.test.tsx's
   // subject; here the dialog only has to open.
@@ -429,6 +450,43 @@ vi.mock("@/lib/requirement-shares", async (importOriginal) => ({
     isSuccess: !state.shares.isLoading && !state.shares.isError,
     refetch: refetchSharesMock,
   }),
+}));
+
+// Förlagda poster: the year's read, from its own module; the grouping and the
+// refusal reading are the real ones. Recorded, so a test can say which year.
+vi.mock("@/lib/requirement-placements", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/requirement-placements")>()),
+  useRequirementPlacements: (yearId: string | null) => {
+    state.placementsAskedFor.push(yearId);
+    return state.placements;
+  },
+}));
+
+// Förlägg: the lazily loaded dialog, replaced by a stand-in saying what the
+// page handed it. Its own behaviour is placement-dialog.test.tsx's.
+vi.mock("@/components/timplan/placement-dialog", () => ({
+  PlacementDialog: ({
+    open,
+    onOpenChange,
+    requirement,
+    name,
+    shared,
+  }: {
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+    requirement: { id: string } | null;
+    name: string | null;
+    shared: boolean;
+  }) =>
+    open ? (
+      // Outside the post's dialog, so outside the pointer-events its modal leaves alone.
+      <section aria-label="placement-dialog" style={{ pointerEvents: "auto" }}>
+        {`${requirement?.id}: ${name}${shared ? " (shared)" : ""}`}
+        <button type="button" onClick={() => onOpenChange(false)}>
+          close-placement
+        </button>
+      </section>
+    ) : null,
 }));
 
 // Mål mode's reads, from the hooks file the lazily loaded module imports.
@@ -3170,5 +3228,230 @@ describe("Delade lektioner in the cell dialog", () => {
     await user.click(await screen.findByRole("button", { name: "remove(Bo Lind)" }));
     await user.click(saveButton());
     expect((updateMock.mock.calls[0][0] as Record<string, unknown>).shares).toEqual([]);
+  });
+});
+
+/**
+ * Förlagda poster on the timplan: the mark on a post that has lessons placed,
+ * and the way to place them. The dialog is placement-dialog.test.tsx's, and
+ * what the gateway judges is its own; here the page is held to what it marks,
+ * what it asks, what it hands the dialog, and what it leaves out of its own
+ * code (the page is within a few KB of its bundle budget).
+ */
+describe("Förlagda poster on the timplan", () => {
+  const SO_CELL = /^cellLabelPeriod\(7A\|Samhällsorientering/;
+  /** The placed lesson of the odd-weeks post: Tuesday 10:00–11:00 in the pool. */
+  const placed = (extra: Partial<PlacementFixture> = {}): PlacementFixture => ({
+    id: "pl-1",
+    requirementId: "r-so",
+    dayOfWeek: 2,
+    startTime: "10:00",
+    endTime: "11:00",
+    minutes: 60,
+    roomId: "room-sim",
+    roomName: "Simhallen",
+    recurrence: "ODD_WEEKS",
+    ...extra,
+  });
+  // The mocked translator echoes: the common key for Tuesday, then the row's values.
+  const TUESDAY_ROW = "placements.row(tuesday|10:00|11:00|Simhallen|ODD_WEEKS)";
+  const soCell = () => screen.getByRole("button", { name: SO_CELL });
+
+  it("asks for the placed lessons of the year the picker shows", () => {
+    render(<RequirementsPage />);
+
+    expect(state.placementsAskedFor).toContain("y1");
+    expect(state.placementsAskedFor).not.toContain(null);
+  });
+
+  it("marks a post that has a lesson placed, with the row in the tooltip", () => {
+    state.placements = loaded([placed()]);
+    render(<RequirementsPage />);
+
+    const badge = within(soCell()).getByText("placements.badge").closest("span[title]")!;
+    expect(badge).toHaveAttribute("title", TUESDAY_ROW);
+    // The post that has none carries no mark.
+    expect(within(screen.getByRole("button", { name: /^cellLabelPeriod\(7A\|Slöjd/ })).queryByText("placements.badge")).toBeNull();
+  });
+
+  it("says the placement in the cell's name too, because a label replaces what is inside the cell", () => {
+    state.placements = loaded([placed()]);
+    render(<RequirementsPage />);
+
+    expect(soCell()).toHaveAttribute(
+      "aria-label",
+      `cellLabelPeriod(7A|Samhällsorientering|2|60|badgeOdd). placements.badgeNote(${TUESDAY_ROW})`,
+    );
+  });
+
+  it("says every row of a post in the order the week reads them, one after another", () => {
+    state.placements = loaded([
+      placed({ id: "pl-2", dayOfWeek: 4, startTime: "13:00", endTime: "14:00", roomName: "Aulan" }),
+      placed(),
+    ]);
+    render(<RequirementsPage />);
+
+    const badge = within(soCell()).getByText("placements.badge").closest("span[title]")!;
+    expect(badge).toHaveAttribute(
+      "title",
+      `${TUESDAY_ROW}; placements.row(thursday|13:00|14:00|Aulan|ODD_WEEKS)`,
+    );
+  });
+
+  it("marks a post's cell in Mål mode as well", async () => {
+    state.requirements = loaded([{ ...requirements[0]!, recurrence: "ALL_WEEKS" }, requirements[1]!]);
+    state.yearTimplans = loaded([{ gradeLevel: 7, localTimplanId: "p-7", planName: "Grundskola 2026", planStatus: "DECIDED" }]);
+    state.planDetails = {
+      data: [
+        {
+          id: "p-7",
+          name: "Grundskola 2026",
+          status: "DECIDED",
+          entries: [{ id: "e-so", subjectId: "s-so", gradeLevel: 7, minutesPerWeek: 120, note: null }],
+        },
+      ],
+      isError: false,
+    };
+    state.placements = loaded([placed({ recurrence: "ALL_WEEKS" })]);
+    render(<RequirementsPage />);
+
+    await userEvent.click(screen.getByRole("button", { name: "target.toggle" }));
+    await screen.findByText("target.legend");
+
+    // A post that runs every week is named by its set label.
+    const cell = screen.getByRole("button", { name: /^cellLabelSet\(7A\|Samhällsorientering/ });
+    expect(within(cell).getByText("120 / 120")).toBeInTheDocument();
+    expect(within(cell).getByText("placements.badge")).toBeInTheDocument();
+  });
+
+  it("reads again after a post is changed or removed, because the marks go with it", () => {
+    render(<RequirementsPage />);
+
+    expect(state.mutationKeys).toContainEqual(["requirementPlacements", "y1"]);
+  });
+
+  describe("in the post's dialog", () => {
+    it("lists where the post's lessons are placed", async () => {
+      state.placements = loaded([placed()]);
+      render(<RequirementsPage />);
+      await userEvent.click(soCell());
+
+      const dialog = within(screen.getByRole("dialog"));
+      expect(dialog.getByText("placements.badge")).toBeInTheDocument();
+      expect(dialog.getByText(TUESDAY_ROW)).toBeInTheDocument();
+    });
+
+    it("offers Förlägg to a writer of planering, and fetches nothing until it is pressed", async () => {
+      render(<RequirementsPage />);
+      const user = userEvent.setup();
+      await user.click(soCell());
+
+      const action = screen.getByRole("button", { name: "placements.action" });
+      // It writes: hidden from a profile that does not write planering.
+      expect(action).toHaveAttribute("data-writes", "PLANERING");
+      expect(screen.queryByRole("region", { name: "placement-dialog" })).toBeNull();
+
+      await user.click(action);
+      expect(await screen.findByRole("region", { name: "placement-dialog" })).toHaveTextContent(
+        "r-so: 7A · Samhällsorientering",
+      );
+    });
+
+    it("opens over the post's dialog and not in place of it, and closes on its own say", async () => {
+      render(<RequirementsPage />);
+      const user = userEvent.setup();
+      await user.click(soCell());
+      await user.click(screen.getByRole("button", { name: "placements.action" }));
+      await screen.findByRole("region", { name: "placement-dialog" });
+
+      // What was typed in the post's dialog is still there to come back to.
+      expect(screen.getByLabelText("lessonsPerWeek")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "close-placement" }));
+      expect(screen.queryByRole("region", { name: "placement-dialog" })).toBeNull();
+    });
+
+    it("tells the dialog when the post shares its lessons, which cannot be placed", async () => {
+      state.shares = loaded([{ requirementId: "r-so", teacherId: "t-bo", lessons: 1, minutes: 60 }]);
+      render(<RequirementsPage />);
+      const user = userEvent.setup();
+      await user.click(soCell());
+      await user.click(screen.getByRole("button", { name: "placements.action" }));
+
+      expect(await screen.findByRole("region", { name: "placement-dialog" })).toHaveTextContent("(shared)");
+    });
+
+    it("offers nothing to place on a cell with no post", async () => {
+      render(<RequirementsPage />);
+      await userEvent.click(screen.getByLabelText("cellLabel(7A|Bild)"));
+
+      expect(screen.queryByRole("button", { name: "placements.action" })).toBeNull();
+    });
+  });
+
+  describe("under Läsbehörighet", () => {
+    it("shows the mark and the rows, and no way to place", async () => {
+      state.placements = loaded([placed()]);
+      render(
+        <ProfileProvider profile={{} as Profile} school={null} readOnly>
+          <RequirementsPage />
+        </ProfileProvider>,
+      );
+
+      expect(within(soCell()).getByText("placements.badge")).toBeInTheDocument();
+      await userEvent.click(soCell());
+      const dialog = within(screen.getByRole("dialog"));
+      expect(dialog.getByText(TUESDAY_ROW)).toBeInTheDocument();
+      expect(dialog.queryByRole("button", { name: "placements.action" })).toBeNull();
+    });
+  });
+
+  describe("when a change of the post is refused", () => {
+    const edit = async () => {
+      render(<RequirementsPage />);
+      const user = userEvent.setup();
+      await user.click(soCell());
+      await user.click(screen.getByRole("button", { name: "save" }));
+    };
+
+    it("says why in the reader's language, with the rule", async () => {
+      updateMock.mockRejectedValue(
+        new ApiError(409, "Förläggningarna passar inte.", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { reason: "COUNT" }),
+      );
+      await edit();
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith("placements.editRefused(placements.problem.COUNT)"),
+      );
+    });
+
+    it("says what the gateway said of a 409 it has no sentence for here", async () => {
+      updateMock.mockRejectedValue(new ApiError(409, "Något annat.", "SOMETHING_ELSE"));
+      await edit();
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Något annat."));
+    });
+  });
+
+  describe("in the page's own code", () => {
+    // The route is within a few KB of its 190 KB budget (scripts/bench/bundle-size.mjs, the
+    // Web job's bundle gate), and the gate runs only in CI. The dialog, its sentences and its
+    // room list reach the page through lazy() and nothing else; next/dynamic would add its own
+    // loader (1.4 KB gzipped).
+    const source = Object.values(
+      import.meta.glob("./page.tsx", { query: "?raw", import: "default", eager: true }) as Record<string, string>,
+    )[0]!;
+
+    it("fetches the dialog on the first press of Förlägg, with React's lazy()", () => {
+      expect(source).toMatch(/lazy\(\(\) =>\s*import\("@\/components\/timplan\/placement-dialog"\)/);
+      expect(source).not.toMatch(/^import .*placement-dialog/m);
+      expect(source).not.toMatch(/from "next\/dynamic"/);
+    });
+
+    it("keeps the dialog's sentences, reads and write out of its chunk: they are needed only once the dialog is open", () => {
+      expect(source).not.toMatch(/requirement-placement-text/);
+      expect(source).not.toMatch(/requirement-placements-api/);
+      // The mark is the page's: a pin and a word.
+      expect(source).toMatch(/from "@\/components\/timplan\/placed-badge"/);
+    });
   });
 });

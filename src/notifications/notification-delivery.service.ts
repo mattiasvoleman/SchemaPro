@@ -21,6 +21,16 @@ export const URGENT_PUSH_TTL_SECONDS = 600;
 export const URGENT_PUSH_CHANNEL = 'crisis';
 const URGENT_PUSH_TYPES: ReadonlySet<string> = new Set(['CRISIS_ALARM', 'CRISIS_ENDED']);
 
+/**
+ * The ticket errors that say the channel itself did not take the request, so that a reminder is not told "taken":
+ * the client's own answer for a chunk it could not get through or got no answer for (RequestFailed), and the two
+ * refusals of our credentials, which are the same for every device (InvalidCredentials, MismatchSenderId: Expo does
+ * not accept the project's push credentials, or the sender they name is not the one the tokens belong to). The rest
+ * are one device's or one message's: DeviceNotRegistered (the device is gone, and revoked), MessageTooBig and
+ * MessageRateExceeded. The channel took those requests, and a retry would not change them.
+ */
+const CHANNEL_ERRORS: ReadonlySet<string> = new Set(['RequestFailed', 'InvalidCredentials', 'MismatchSenderId']);
+
 interface PushTarget {
   token_id: string;
   user_id: string;
@@ -261,7 +271,10 @@ export class NotificationDeliveryService {
     return delivered;
   }
 
-  /** Whether Expo took every request (a device it says is gone, or a refusal for one device, is not the channel failing). */
+  /**
+   * Whether Expo took every request. A device it says is gone, and a refusal for one device or one message, is not the
+   * channel failing; a refusal of our credentials, or a request the client could not get through, is (CHANNEL_ERRORS).
+   */
   private async push(batch: OutboxBatch): Promise<boolean> {
     let taken = true;
     const notices = new Map<string, PushNotice>();
@@ -363,8 +376,7 @@ export class NotificationDeliveryService {
         const code = ticket.details?.error ?? 'Unknown';
         errors.set(code, (errors.get(code) ?? 0) + 1);
         if (code === 'DeviceNotRegistered') dead.add(tokenId);
-        // The client answers a chunk it could not get through, or got no answer for, with this code.
-        if (code === 'RequestFailed') taken = false;
+        if (CHANNEL_ERRORS.has(code)) taken = false;
       });
       if (errors.size > 0) {
         this.logger.warn(
@@ -465,5 +477,25 @@ export class NotificationDeliveryService {
       }
     }
     return taken;
+  }
+
+  /**
+   * A letter to one address that is no user (Måltidskollen's kitchen): no inbox row, no push and no opt-out to
+   * honour, because the address is the school's and there is no person behind it to choose. It takes its turn at
+   * the mail pace like every other mail (mailTurn), so the providers' rate holds for it too, and a mail that
+   * Resend refuses is logged and not sent again. It does not wait in the lanes: it is one mail, once a day.
+   *
+   * Answers false when the mail was not taken: Resend is not set up here, or Resend refused it, did not answer
+   * or the mail never got its turn (sendEmails says so), so the caller can leave its claim open and try again
+   * inside its window. True otherwise. Never throws, and never sends a letter twice by itself.
+   */
+  async sendLetter(address: string, subject: string, body: string): Promise<boolean> {
+    if (!this.emailConfigured()) return false;
+    try {
+      return await this.sendEmails([address], subject, body);
+    } catch (error) {
+      this.logger.warn(`Letter dispatch failed [${error instanceof Error ? error.name : 'unknown'}]`);
+      return false;
+    }
   }
 }

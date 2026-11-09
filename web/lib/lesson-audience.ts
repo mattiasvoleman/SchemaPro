@@ -186,7 +186,7 @@ export function audienceFor(
  * asked of lessonPupils, which SS12000, the class book and the register ask
  * too.
  */
-function attendeesOf(
+export function attendeesOf(
   lesson: LessonAudienceInput,
   index: RosterIndex,
 ): Set<string> {

@@ -87,9 +87,11 @@ export type GroupKeyKind =
   | 'homePupils'
   | 'successors'
   | 'mentorDuties'
-  | 'enrolments';
+  | 'consentLists'
+  | 'enrolments'
+  | 'classTeacher';
 
-/** Every key to StudentGroups. Each is counted: an administrator reads them all. */
+/** Every key to StudentGroups. Each is counted, but the class's monthly sums, which no administrator reads row by row. */
 export const GROUP_KEYS: readonly InventoryKey<GroupKeyKind>[] = [
   key('StudentGroups', ['halfOfId', 'schoolId'], 'CASCADE', { counted: 'halves' }),
   key('TeachingRequirements', ['studentGroupId', 'schoolId'], 'CASCADE', { counted: 'requirements' }),
@@ -107,9 +109,21 @@ export const GROUP_KEYS: readonly InventoryKey<GroupKeyKind>[] = [
   // Counted with the group's links: both are the viewer's rows about the group (a mark that hides it from Schemavisaren, 20270118090000).
   key('PublicTimetableHidden', ['targetGroupId', 'schoolId'], 'CASCADE', { counted: 'publicLinks' }),
   key('Users', ['studentGroupId'], 'SET NULL', { counted: 'homePupils' }),
+  // The class's monthly sums (20270121090000): written by the nightly count and read through the statistics' doors only, with no policy
+  // for an administrator to count them by, and no pupil in a row. They go with the class.
+  key('AbsenceStatsMonths', ['studentGroupId', 'schoolId'], 'CASCADE', {
+    uncounted: 'the sums of a class’s months, with no pupil in a row, read only through the statistics’ doors (RLS 390): they go with the class',
+  }),
   key('StudentGroups', ['predecessorId', 'schoolId'], 'SET NULL', { counted: 'successors' }),
   key('TeacherDuties', ['studentGroupId', 'schoolId'], 'SET NULL', { counted: 'mentorDuties' }),
+  // A consent list belongs to a class (Checklistor, 20270129091000). The list and its answers are kept when the class
+  // goes, as the record of who consented to what: the list only loses the class it was made for.
+  key('ConsentLists', ['studentGroupId', 'schoolId'], 'SET NULL', { counted: 'consentLists' }),
   key('StudentEnrollments', ['studentGroupId', 'academicYearId', 'schoolId'], 'SET NULL', { counted: 'enrolments' }),
+  // Klasslärarens schema (20270128090000): the class's klasslärare, the hours open to them and their drafts go with the class.
+  key('ClassTeacherAppointments', ['studentGroupId', 'academicYearId', 'schoolId'], 'CASCADE', { counted: 'classTeacher' }),
+  key('ClassTeacherOpenTimes', ['studentGroupId', 'academicYearId', 'schoolId'], 'CASCADE', { counted: 'classTeacher' }),
+  key('ClassTeacherChanges', ['studentGroupId', 'academicYearId', 'schoolId'], 'CASCADE', { counted: 'classTeacher' }),
 ];
 
 /** The consequences a pupil delete counts by key (StudentRemovalConsequences adds the rest). */
@@ -143,6 +157,10 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('AbsenceWatchFindings', ['studentId', 'schoolId'], 'CASCADE', others),
   key('MasterLessonStudents', ['studentId', 'schoolId'], 'CASCADE', { counted: 'lessonParticipations' }),
   key('CalendarLessonStudents', ['studentId', 'schoolId'], 'CASCADE', { counted: 'lessonParticipations' }),
+  // Elevens lektion för dagen (20270122091000): the days a pupil was moved to a parallel lesson go with the pupil
+  // (their arrival is a CalendarLessonStudents row above); a member of staff who moved a pupil is kept without them.
+  key('LessonPupilMoves', ['studentId', 'schoolId'], 'CASCADE', others),
+  key('LessonPupilMoves', ['movedById', 'schoolId'], 'SET NULL', kept),
   key('GuardianStudents', ['studentId', 'schoolId'], 'CASCADE', { counted: 'guardianLinks' }),
   key('GuardianStudents', ['guardianId', 'schoolId'], 'CASCADE', others),
   key('AbsenceReports', ['studentId', 'schoolId'], 'CASCADE', { counted: 'absenceReports' }),
@@ -171,6 +189,8 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('Ss12000DutyLinks', ['userId', 'schoolId'], 'CASCADE', others),
   key('SupervisionShifts', ['userId', 'schoolId'], 'CASCADE', others),
   key('ScheduleActivityTeachers', ['teacherId', 'schoolId'], 'CASCADE', others),
+  // Provplanering (20270127090000): the watch a teacher keeps at an exam goes with the person; the exam stays.
+  key('ExamInvigilators', ['teacherId', 'schoolId'], 'CASCADE', others),
   key('SupervisionCovers', ['substituteId', 'schoolId'], 'CASCADE', others),
   // Vikariefrågan (20270102091000): a question they were asked and a pass they confirmed.
   key('CoverRequestRecipients', ['userId', 'schoolId'], 'CASCADE', others),
@@ -180,9 +200,18 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   // Kvittens (20270117091000): the requests a guardian was asked, and the ones asked about a pupil, go with the person.
   key('AckReceipts', ['guardianId', 'schoolId'], 'CASCADE', others),
   key('AckReceipts', ['studentId', 'schoolId'], 'CASCADE', others),
+  // Lokal (20270204091000): a booking of a resource is its booker's, as a room booking is.
+  key('ResourceBookings', ['bookedById', 'schoolId'], 'CASCADE', others),
+  // Checklistor (20270129091000): a pupil's instruction proofs and answers on consent lists go with the pupil.
+  key('InstructionProofs', ['studentId', 'schoolId'], 'CASCADE', others),
+  key('ConsentEntries', ['studentId', 'schoolId'], 'CASCADE', others),
   key('SharedTeacherMarks', ['teacherId', 'schoolId'], 'CASCADE', others),
+  // Klasslärarens schema (20270128090000): a teacher's appointment goes with them.
+  key('ClassTeacherAppointments', ['userId', 'schoolId'], 'CASCADE', others),
   // Skyddad identitet (20270107090000): the mark goes with the person, counted like any other row.
   key('PersonProtections', ['userId', 'schoolId'], 'CASCADE', others),
+  // Skyddad identitet i löneunderlaget (20270206091000): the marked person's code goes with them, as their mark does.
+  key('PayrollPseudonyms', ['userId', 'schoolId'], 'CASCADE', others),
   // Rapporteringsgrad (20270112090100): a teacher's held and reported lessons per day, counted like any
   // other row a person holds. The ledger of the lessons they were reminded of is read by no role at all
   // (only app.reporting_remind touches it, and the API role holds no grant on it), so a dry run under an
@@ -195,6 +224,11 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('NotificationOptOuts', ['userId', 'schoolId'], 'CASCADE', account('noticeSettings')),
   key('DevicePushTokens', ['userId', 'schoolId'], 'CASCADE', account('pushDevices')),
   key('LeaveRequestNotices', ['userId', 'schoolId'], 'CASCADE', account('notices')),
+  // Ledighetspolicy (20270205091000): the answers of the guardians a school asked to consent to a leave request. No role
+  // reads the table (RLS 449), so a dry run under an administrator's RLS cannot count it; the rows go with the person.
+  key('LeaveConsents', ['guardianId', 'schoolId'], 'CASCADE', {
+    uncounted: 'the answers of the guardians a school asked to consent to a leave request, read by no role (RLS 449): the rows go with the person',
+  }),
   key('CalendarFeeds', ['studentId', 'schoolId'], 'CASCADE', account('calendarFeeds')),
   key('CalendarFeeds', ['userId', 'schoolId'], 'CASCADE', account('calendarFeeds')),
   key('TeachingRequirements', ['coTeacherId', 'schoolId'], 'SET NULL', kept),
@@ -205,12 +239,18 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('LeaveRequests', ['decidedById', 'schoolId'], 'SET NULL', kept),
   key('LeaveRequests', ['referredById', 'schoolId'], 'SET NULL', kept),
   key('RoomBookings', ['decidedById', 'schoolId'], 'SET NULL', kept),
+  // Lokal (20270204091000): the decider of a booking of a resource, and the one who registered a series of
+  // external bookings, are unlinked; the series stays (its hirer is not the person). A person with a running
+  // series is refused first (UsersService.remove), for the days they booked go with them.
+  key('ResourceBookings', ['decidedById', 'schoolId'], 'SET NULL', kept),
+  key('ExternalBookings', ['registeredById', 'schoolId'], 'SET NULL', kept),
   key('TimplanStatementPublications', ['publishedByUserId', 'schoolId'], 'SET NULL', kept),
   key('TimetablePublications', ['publishedByUserId', 'schoolId'], 'SET NULL', kept),
   key('CancellationBatches', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
   key('CancellationBatches', ['reversedByUserId', 'schoolId'], 'SET NULL', kept),
   key('ScheduleActivities', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
   key('ScheduleActivities', ['removedByUserId', 'schoolId'], 'SET NULL', kept),
+  key('Exams', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
   key('PublicTimetableLinks', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
   key('TeacherAbsences', ['createdByUserId', 'schoolId'], 'SET NULL', kept),
   key('TeacherAbsences', ['withdrawnByUserId', 'schoolId'], 'SET NULL', kept),
@@ -224,6 +264,16 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('TeachingRequirementShares', ['teacherId', 'schoolId'], 'SET NULL', kept),
   key('SupervisionCovers', ['decidedByUserId', 'schoolId'], 'SET NULL', kept),
   key('AckRequests', ['authorId', 'schoolId'], 'SET NULL', kept),
+  // Klasslärarens schema (20270128090000): who appointed, who wrote a draft and who published it; the rows stay without them.
+  key('ClassTeacherAppointments', ['appointedByUserId', 'schoolId'], 'SET NULL', kept),
+  key('ClassTeacherChanges', ['authorId', 'schoolId'], 'SET NULL', kept),
+  key('ClassTeacherChanges', ['publishedByUserId', 'schoolId'], 'SET NULL', kept),
+  // Checklistor: what a member of staff wrote or gave stays without them (the tick, the answer, the list).
+  key('InstructionProofs', ['instructorId', 'schoolId'], 'SET NULL', kept),
+  key('InstructionProofs', ['recordedById', 'schoolId'], 'SET NULL', kept),
+  key('InstructionProofs', ['voidedById', 'schoolId'], 'SET NULL', kept),
+  key('ConsentEntries', ['recordedById', 'schoolId'], 'SET NULL', kept),
+  key('ConsentLists', ['createdById', 'schoolId'], 'SET NULL', kept),
   key('CoverRequests', ['requestedByUserId', 'schoolId'], 'SET NULL', kept),
   key('CoverRequests', ['acceptedByUserId', 'schoolId'], 'SET NULL', kept),
   key('CrisisAlarms', ['startedByUserId', 'schoolId'], 'SET NULL', kept),
@@ -276,7 +326,7 @@ const below = <Kind extends string>(
 ): BelowKey<Kind> => ({ parent, table, columns, onDelete, tell });
 
 /** The kinds a group delete counts a level down (GroupRemovalConsequences). */
-export type GroupBelowKind = 'attendanceMarks' | 'lessonLogs';
+export type GroupBelowKind = 'attendanceMarks' | 'lessonLogs' | 'lessonMoves';
 
 /**
  * The line of a group's dialog that names what hangs on its lessons and its
@@ -292,6 +342,12 @@ export const GROUP_BELOW: readonly BelowKey<GroupBelowKind>[] = [
   below('CalendarLessons', 'LessonLogs', ['calendarLessonId', 'schoolId'], 'CASCADE', { counted: 'lessonLogs' }),
   below('CalendarLessons', 'CalendarLessonGroups', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
   below('CalendarLessons', 'CalendarLessonStudents', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
+  // Elevens lektion för dagen: a lesson takes the moves off it and onto it.
+  // (counted once, by the table: a move reached through both of its lessons is one move)
+  below('CalendarLessons', 'LessonPupilMoves', ['fromLessonId', 'schoolId'], 'CASCADE', { counted: 'lessonMoves' }),
+  below('CalendarLessons', 'LessonPupilMoves', ['toLessonId', 'schoolId'], 'CASCADE', { counted: 'lessonMoves' }),
+  // ... and a move takes its arrival with it, told with the move.
+  below('LessonPupilMoves', 'CalendarLessonStudents', ['moveId', 'schoolId'], 'CASCADE', { counted: 'lessonMoves' }),
   below('CalendarLessons', 'CalendarLessonTeachers', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
   below('CalendarLessons', 'CancellationBatchLessons', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
   below('CalendarLessons', 'ScheduleActivityLessons', ['calendarLessonId', 'schoolId'], 'CASCADE', onTheLessons),
@@ -303,12 +359,21 @@ export const GROUP_BELOW: readonly BelowKey<GroupBelowKind>[] = [
   below('CalendarLessons', 'CrisisCalls', ['calendarLessonId', 'schoolId'], 'SET NULL', {
     unlinked: 'a group on the list of an alarm that was going keeps its names and loses its lesson (Krisläge)',
   }),
+  // Klasslärarens schema (20270128090000): a draft that names a lesson of the group keeps its words without it; the draft is counted by its own key to the group.
+  below('CalendarLessons', 'ClassTeacherChanges', ['calendarLessonId', 'schoolId'], 'SET NULL', {
+    unlinked: 'a klasslärare’s draft for a date keeps its words without the lesson, and goes by its own key to the class (classTeacher)',
+  }),
+  below('MasterLessons', 'ClassTeacherChanges', ['masterLessonId', 'schoolId'], 'SET NULL', {
+    unlinked: 'a klasslärare’s draft for a template lesson keeps its words without the lesson, and goes by its own key to the class (classTeacher)',
+  }),
   below('MasterLessons', 'MasterLessonGroups', ['masterLessonId', 'schoolId'], 'CASCADE', onTheLessons),
   below('MasterLessons', 'MasterLessonStudents', ['masterLessonId', 'schoolId'], 'CASCADE', onTheLessons),
   below('MasterLessons', 'CalendarLessons', ['masterLessonId', 'schoolId'], 'SET NULL', {
     unlinked: 'a calendar lesson made from the grundschema is the group’s own, and goes by its own key (calendarLessons)',
   }),
   below('TeachingRequirements', 'TeachingRequirementShares', ['requirementId', 'schoolId'], 'CASCADE', onTheLessons),
+  // Förlagda poster (20270207090000): the day, time and room given to a post's lessons go with the post.
+  below('TeachingRequirements', 'TeachingRequirementPlacements', ['requirementId', 'schoolId'], 'CASCADE', onTheLessons),
   below('TimplanCredits', 'CancellationBatchCredits', ['creditId', 'schoolId'], 'CASCADE', onTheLessons),
   below('AvailabilityConstraints', 'TeacherDutySlots', ['availabilityConstraintId', 'schoolId'], 'CASCADE', onTheLessons),
 ];
@@ -331,6 +396,8 @@ export const GROUP_BELOW_PARENTS = [
  */
 export const STUDENT_BELOW: readonly BelowKey<never>[] = [
   below('LeaveRequests', 'LeaveRequestNotices', ['leaveRequestId', 'schoolId'], 'CASCADE', { with: 'leaveRequests' }),
+  // The guardians asked to consent to a request go with the request (a request deleted takes the answers; the contact is a column of it).
+  below('LeaveRequests', 'LeaveConsents', ['leaveRequestId', 'schoolId'], 'CASCADE', { with: 'leaveRequests' }),
   below('DevicePushTokens', 'PushTickets', ['tokenId', 'schoolId'], 'CASCADE', { with: 'accounts' }),
   below('AvailabilityConstraints', 'TeacherDutySlots', ['availabilityConstraintId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
   below('TeacherDuties', 'TeacherDutySlots', ['teacherDutyId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
@@ -341,6 +408,12 @@ export const STUDENT_BELOW: readonly BelowKey<never>[] = [
   below('TeacherAbsences', 'CoverRequestLessons', ['absenceId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
   below('TeacherAbsences', 'CoverConfirmations', ['absenceId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
   below('CrisisPupils', 'CrisisReports', ['callId', 'studentId'], 'CASCADE', { with: 'otherRows' }),
+  // Elevens lektion för dagen: a pupil's move takes the pupil's arrival with it (the pupil's own arrival row is
+  // counted above, by the pupil's key; this is the same row reached through the move).
+  below('LessonPupilMoves', 'CalendarLessonStudents', ['moveId', 'schoolId'], 'CASCADE', { with: 'otherRows' }),
+  // Provplanering (20270127090000): a booking made by a person who goes is cancelled with them, and the sitting of an exam
+  // that booking held stays with its room and its writers, without the booking (its key is SET NULL); counted with the other rows.
+  below('RoomBookings', 'ExamSittings', ['bookingId', 'schoolId'], 'SET NULL', { with: 'otherRows' }),
   below('TeacherEmployments', 'TeacherEmploymentPeriods', ['employmentId', 'schoolId', 'userId', 'academicYearId'], 'CASCADE', {
     with: 'otherRows',
   }),

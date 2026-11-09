@@ -59,6 +59,21 @@ ConflictCategory = Literal[
     # (språkval, elevens val). A category of its own because the fix is the
     # block on the timplan page, not any one of its rows.
     "TEACHING_BLOCK",
+    # Bästa möjliga schema: a rule that gave way in the timetable that came
+    # back. Not a refusal and not a proof: a measured breach, listed under
+    # `deviations` and never under `conflicts`. See app/solver/relaxation.py.
+    "DEVIATION",
+    # Placeringsregler (G3): a school's own hard placement rule, named when the
+    # week cannot keep it. One category per rule, because the fix is a
+    # different setting on the same card: the subject's edge rule, the limit
+    # on places a day, or the shared room.
+    "PLACEMENT_EDGE",
+    "PLACEMENT_PLACES",
+    "SHARED_ROOM",
+    # Förlagda poster: a lesson the school placed on a timplanspost before
+    # Generera, named when the week cannot be laid around it. A category of
+    # its own because the fix is that post's förläggning on the timplan page.
+    "PLACEMENT",
 ]
 
 
@@ -435,6 +450,22 @@ class AnonymousRoom(CamelModel):
     #: an unknown walk is never charged (src/common/site-travel.ts). See
     #: app/solver/travel.py.
     site_id: UUID4 | None = Field(default=None, alias="siteId")
+    #: Placeringsregler, regel 2: the building the room stands in, an opaque
+    #: token the gateway coins per request (the school's own words for its
+    #: buildings never leave it), sent only by a school that limits building
+    #: changes and only on a room that has a building. NONE IS ITSELF A VALUE,
+    #: as it is in the room optimisation (app/solver/room_walks.py): every room
+    #: without one stands in the same unnamed building, so a school that names
+    #: only its annex has the annex a walk from all the rest. Absent on every
+    #: other payload, which is therefore byte for byte what it was.
+    building: str | None = Field(default=None, min_length=1, max_length=200)
+    #: Placeringsregler, regel 3: the room may hold several lessons at the same
+    #: time as long as their pupils fit its capacity together. Sent only as
+    #: `true`, and only by a school that has turned the rule on, so a payload
+    #: without it keeps every room exclusive, as it always was. A room without
+    #: a capacity has no limit to share under and stays exclusive whatever this
+    #: says (app/solver/placement.py).
+    shareable: bool = Field(default=False)
 
 
 class SiteTravelTime(CamelModel):
@@ -957,6 +988,13 @@ class FixedLesson(CamelModel):
     #: still every week here — the engine plans one year-long week of each
     #: parity and no terms (AnonymousRequirement.recurrence).
     recurrence: WeekParity | None = Field(default=None)
+    #: Placeringsregler, regel 3: how many pupils sit the lesson, distinct, all
+    #: its groups and named pupils counted once. Sent only on a lock in a room
+    #: a school has marked shareable (AnonymousRoom.shareable), because that is
+    #: the one place a lock takes seats rather than the room: its pupils are
+    #: then taken off the room's capacity for the lock's window. Absent is a
+    #: lock that takes the whole room, which every lock does today.
+    student_count: int | None = Field(default=None, alias="studentCount", ge=1, le=1000)
 
 
 class PreviousLesson(CamelModel):
@@ -1118,6 +1156,217 @@ class PupilGaps(CamelModel):
     )
 
 
+class Relaxation(CamelModel):
+    """Bästa möjliga schema: place the week even when its rules cannot all hold.
+
+    ABSENT IS TODAY'S SOLVE, BYTE FOR BYTE. A request without this field is
+    answered as it always was: every rule hard, a week that cannot hold them
+    refused by name with nothing placed. The gateway sends it only for a
+    school that turned the mode on and only for a run that asked for it, so an
+    engine that does not know the field is never sent it by a school that did
+    not choose it (extra="forbid" would answer 422, which is the right answer
+    from an engine too old for the mode).
+
+    WHAT MAY GIVE WAY IS NOT THE REQUEST'S TO CHOOSE. It is the one list in
+    app/solver/relaxation.py (RELAXABLE_RULES); there is no `rules` field here
+    on purpose, because a per-request list would be a second place to read
+    "what is hard", and a reader who changed it would change what a school may
+    be handed. The only field is the mode, which leaves room for a second one.
+    """
+
+    mode: Literal["BEST_EFFORT"]
+
+
+PlacementMode = Literal["SOFT", "HARD"]
+
+
+class SubjectEdge(CamelModel):
+    """One subject that must not open or close a class's day."""
+
+    subject_id: UUID4 = Field(alias="subjectId")
+    not_first: bool = Field(default=False, alias="notFirst")
+    not_last: bool = Field(default=False, alias="notLast")
+
+    @model_validator(mode="after")
+    def validate_something_asked(self) -> SubjectEdge:
+        """A row that forbids neither end is a rule nothing can break."""
+        if not self.not_first and not self.not_last:
+            msg = "A subject edge rule needs notFirst or notLast."
+            raise ValueError(msg)
+        return self
+
+
+class SubjectEdges(CamelModel):
+    """Placeringsregler, regel 1: not first and not last in the class's day.
+
+    Per SUBJECT (idrott inte först och inte sist), read on the day of every
+    class whose pupils sit the lesson (app/solver/placement.py says whose day
+    that is). SOFT pays `weight` per lesson at an end it should not be at, in
+    the full model only; HARD forbids it in both phases, under named
+    assumptions, and a week that cannot keep it is refused by name.
+    """
+
+    mode: PlacementMode
+    #: SOFT only. None is the engine's own weight_subject_edge. The same scale
+    #: as the other objective weights (spread 3, room wish 5, free day 40,
+    #: consecutive teaching 250).
+    weight: int | None = Field(default=None, ge=1, le=1000)
+    subjects: list[SubjectEdge] = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_one_row_per_subject(self) -> SubjectEdges:
+        """A subject once: two rows for one subject is a gateway that joined twice."""
+        ids = [row.subject_id for row in self.subjects]
+        if len(set(ids)) != len(ids):
+            msg = "subjectEdges names one subject twice."
+            raise ValueError(msg)
+        return self
+
+
+class PlaceLimits(CamelModel):
+    """Placeringsregler, regel 2: at most N different room groups and M different buildings a day.
+
+    Four limits, each optional, because a school limits a class without
+    limiting its teachers' day: a teacher walks between rooms by trade. A limit
+    is counted on one day of one real week, over the places a party's lessons
+    stand in: at most this many DIFFERENT room groups (the engine's
+    interchangeability classes: two equal classrooms are one) or different
+    buildings (AnonymousRoom.building, none being a building of its own).
+    1 is "one and the same all day"; 20 is the most the database lets a school
+    write down.
+
+    DIFFERENT PLACES AND NOT CHANGES BETWEEN NEIGHBOURS, and the difference is
+    measured (benchmarks/placement_rules.py): a day that goes A, B, A is two
+    places and two changes, but A, B, A, B is two places and three, and a
+    count of changes needs the order of the lessons, which costs five times
+    the model. A school that writes "at most 2 buildings" gets exactly that.
+    """
+
+    mode: PlacementMode
+    weight: int | None = Field(default=None, ge=1, le=1000)
+    max_class_rooms: int | None = Field(
+        default=None, alias="maxClassRooms", ge=1, le=20,
+    )
+    max_teacher_rooms: int | None = Field(
+        default=None, alias="maxTeacherRooms", ge=1, le=20,
+    )
+    max_class_buildings: int | None = Field(
+        default=None, alias="maxClassBuildings", ge=1, le=20,
+    )
+    max_teacher_buildings: int | None = Field(
+        default=None, alias="maxTeacherBuildings", ge=1, le=20,
+    )
+
+    @model_validator(mode="after")
+    def validate_something_limited(self) -> PlaceLimits:
+        """A block that limits nothing is a gateway that lost its numbers."""
+        limits = (
+            self.max_class_rooms,
+            self.max_teacher_rooms,
+            self.max_class_buildings,
+            self.max_teacher_buildings,
+        )
+        if all(limit is None for limit in limits):
+            msg = "places needs at least one limit."
+            raise ValueError(msg)
+        return self
+
+
+class SharedRooms(CamelModel):
+    """Placeringsregler, regel 3: pupils together fit the capacity of a shared room.
+
+    Applies to the rooms marked `shareable` and to no other. HARD: the pupils
+    of every lesson in the room at one time sum to at most its capacity. SOFT:
+    the capacity may be exceeded, and `weight` is paid per pupil over it at
+    the room's worst moment of the week.
+    """
+
+    mode: PlacementMode
+    weight: int | None = Field(default=None, ge=1, le=1000)
+
+
+class PlacementRules(CamelModel):
+    """Placeringsregler: sent only by a school that has turned a rule on.
+
+    ABSENT IS EVERY OTHER SCHOOL, BYTE FOR BYTE. The gateway sends the key
+    only when at least one of the three is not off, and a rule that is off is
+    left out of it, so a payload without it builds exactly the model it built
+    before and is answered with the bytes it was answered with.
+    """
+
+    subject_edges: SubjectEdges | None = Field(default=None, alias="subjectEdges")
+    places: PlaceLimits | None = None
+    shared_rooms: SharedRooms | None = Field(default=None, alias="sharedRooms")
+
+    @model_validator(mode="after")
+    def validate_some_rule(self) -> PlacementRules:
+        if self.subject_edges is None and self.places is None and self.shared_rooms is None:
+            msg = "placementRules needs at least one rule."
+            raise ValueError(msg)
+        return self
+
+
+class PlacementLock(CamelModel):
+    """One locked lesson that is a timplanspost's förlagd lesson, and its post."""
+
+    fixed_lesson_id: UUID4 = Field(alias="fixedLessonId")
+    requirement_id: UUID4 = Field(alias="requirementId")
+
+
+class Placements(CamelModel):
+    """Förlagda poster: which locked lessons the school placed on a timplanspost.
+
+    ABSENT IS EVERY OTHER SCHOOL, BYTE FOR BYTE, AND PRESENT IT BUILDS THE SAME
+    MODEL. A förläggning reaches this engine as what it is to the week, a
+    FixedLesson the generated lessons steer around, and its post as a
+    requirement with that lesson taken off its demand — exactly what a lesson
+    the school locked in the grundschema has always been. Nothing here is read
+    by a model builder. What a FixedLesson cannot do is be NAMED: its windows
+    are posted bare (_add_fixed_lesson_constraints, guard=None), so an
+    INFEASIBLE core never holds one, and a week the school's förläggningar make
+    impossible was refused with a sentence about something else, or about
+    "the locked lessons".
+
+    So this says which locks are förlagda and what their posts would be
+    without them. `requirements` are those posts with EVERY lesson to place —
+    the lessons the förläggningar take off put back, the locks the school made
+    in the grundschema still counted — each replacing the requirement of its id
+    in the request, or added when every lesson of it was förlagd. A refused
+    week is then solved once more with the förläggningar released
+    (release_placements, scheduler_solver._placements_verdict): a timetable
+    found means the förläggningar are what makes the week impossible, and each
+    is named. The release is a RELAXATION — the same week with lessons free to
+    move that were pinned — so a week it refuses is refused with the
+    förläggningar too, and the refusal stands as it was.
+
+    The gateway sends the key only when a post of the week has a förläggning
+    (src/optimization), so an engine that predates it is never sent it by a
+    school without one, and the gateway sends the same request without it to
+    an engine that answers 422 to it: the förläggningar are laid either way,
+    only not named.
+    """
+
+    lessons: list[PlacementLock] = Field(min_length=1, max_length=2000)
+    requirements: list[AnonymousRequirement] = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_posts(self) -> Placements:
+        """Every placed lesson names a post given here, and a post is given once."""
+        ids = [requirement.id for requirement in self.requirements]
+        if len(set(ids)) != len(ids):
+            msg = "placements.requirements ids must be unique."
+            raise ValueError(msg)
+        known = set(ids)
+        if any(lesson.requirement_id not in known for lesson in self.lessons):
+            msg = "placements.lessons names a requirement placements.requirements does not carry."
+            raise ValueError(msg)
+        fixed = [lesson.fixed_lesson_id for lesson in self.lessons]
+        if len(set(fixed)) != len(fixed):
+            msg = "placements.lessons names one fixed lesson twice."
+            raise ValueError(msg)
+        return self
+
+
 class OptimizeScheduleRequest(CamelModel):
     request_id: UUID4 = Field(alias="requestId")
     academic_year_id: UUID4 = Field(alias="academicYearId")
@@ -1219,9 +1468,18 @@ class OptimizeScheduleRequest(CamelModel):
     #: Elevernas håltimmar, present only when the school turned it on. See
     #: PupilGaps.
     pupil_gaps: PupilGaps | None = Field(default=None, alias="pupilGaps")
+    #: Placeringsregler (G3), present only when the school turned a rule on.
+    #: See PlacementRules.
+    placement_rules: PlacementRules | None = Field(default=None, alias="placementRules")
     # Optional, and absent on every request but a schemaförslag candidate's;
     # absent is today's solve byte for byte. See SearchOptions.
     search: SearchOptions | None = None
+    # Optional, and absent on every request but a best-effort run's; absent is
+    # today's solve byte for byte. See Relaxation.
+    relaxation: Relaxation | None = None
+    #: Förlagda poster, present only when a post of the week has one. Read by
+    #: the explanation alone, never by a model builder. See Placements.
+    placements: Placements | None = None
 
     @field_validator("group_conflicts")
     @classmethod
@@ -1268,6 +1526,21 @@ class OptimizeScheduleRequest(CamelModel):
         teachers = [limit.teacher_id for limit in self.teacher_day_limits]
         if len(set(teachers)) != len(teachers):
             msg = "teacherDayLimits names one teacher twice."
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_placements(self) -> OptimizeScheduleRequest:
+        """A placed lesson is one of the request's locked lessons.
+
+        A SHAPE, refused as the day limits are: a placement that names no lock
+        is a gateway that lost a row, and released it would release nothing.
+        """
+        if self.placements is None:
+            return self
+        locks = {fixed.id for fixed in self.fixed_lessons}
+        if any(lesson.fixed_lesson_id not in locks for lesson in self.placements.lessons):
+            msg = "placements.lessons names a fixed lesson the request does not carry."
             raise ValueError(msg)
         return self
 
@@ -1530,4 +1803,14 @@ class OptimizeScheduleResponse(CamelModel):
     pupil_idle_minutes: float | None = Field(
         default=None, alias="pupilIdleMinutes", ge=0,
         exclude_if=lambda value: value is None,
+    )
+    #: Bästa möjliga schema: what gave way in the timetable returned, one line
+    #: per rule and place (category DEVIATION; see relaxation.deviations_of).
+    #: PRESENT, EVEN EMPTY, ONLY ON THE ANSWER TO A REQUEST THAT CARRIED
+    #: `relaxation`, where an empty list says "the mode ran and nothing gave
+    #: way"; OMITTED on every other response, so a strict answer is byte for
+    #: byte what it was. A refusal never carries it: it names the HARD rule
+    #: that stopped the week, under `conflicts`, as it always did.
+    deviations: list[ConflictDetail] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
     )

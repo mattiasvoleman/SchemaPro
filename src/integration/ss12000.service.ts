@@ -68,6 +68,15 @@ export class Ss12000Service {
       : this.prisma.withServicePrincipal(schoolId, fn, { keyId });
   }
 
+  /**
+   * limit and offset, for the lists a municipality's system reads a page after a page. THE ORDER OF EVERY LIST PAGED BY THIS
+   * ENDS IN THE ROW'S ID, whatever it is sorted on first: rows that tie on a surname, a weekday and a start time or a start
+   * time come back in the order the plan gives them, and the plan is not the same for LIMIT 7 OFFSET 0 and LIMIT 7 OFFSET 7
+   * (a top-N sort keeps offset + limit rows, and what it does with equal keys depends on how many), so a row that ties falls
+   * between two pages or is on both. Read against a database in scripts/test/probe-paging-order.ts (sp-a to sp-c): sixty
+   * people of one surname, seven at a time, came back as 57 different ones. groups is sorted on a name that is the school's own
+   * in its year, and duties on the id.
+   */
   private page(limit?: string, offset?: string): { take: number; skip: number } {
     const take = Math.min(Math.max(Number(limit) || 100, 1), 500);
     const skip = Math.max(Number(offset) || 0, 0);
@@ -100,7 +109,8 @@ export class Ss12000Service {
         tx.user.count({ where }),
         tx.user.findMany({
           where,
-          orderBy: { lastName: 'asc' },
+          // The id last (see page()): a surname is shared by many.
+          orderBy: [{ lastName: 'asc' }, { id: 'asc' }],
           take,
           skip,
           select: {
@@ -352,7 +362,7 @@ export class Ss12000Service {
         tx.masterLesson.count({ where }),
         tx.masterLesson.findMany({
           where,
-          orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+          orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
           take,
           skip,
           select: {
@@ -504,7 +514,7 @@ export class Ss12000Service {
         tx.calendarLesson.count({ where }),
         tx.calendarLesson.findMany({
           where,
-          orderBy: { startsAt: 'asc' },
+          orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
           take,
           skip,
           select: {
@@ -547,6 +557,19 @@ export class Ss12000Service {
           named: lesson.participants.map((entry) => entry.studentId),
         })),
       );
+      // Elevens lektion för dagen: the pupils moved off a lesson for the day are excluded from its event, a
+      // named one included (the move is the later word), and a pupil moved onto it is a named pupil already.
+      // Read under the service principal, which holds an arm on the moves of its school.
+      const moved =
+        lessons.length === 0
+          ? []
+          : await tx.lessonPupilMove.findMany({
+              where: { fromLessonId: { in: lessons.map((lesson) => lesson.id) } },
+              select: { fromLessonId: true, studentId: true },
+            });
+      const movedOff = new Map<string, Set<string>>();
+      for (const row of moved) movedOff.set(row.fromLessonId, (movedOff.get(row.fromLessonId) ?? new Set()).add(row.studentId));
+      for (const [lessonId, pupils] of movedOff) excluded.set(lessonId, [...new Set([...(excluded.get(lessonId) ?? []), ...pupils])].sort());
       await recordRead(tx, 'ROSTER', [
         ...lessons.flatMap((lesson) => lesson.participants.map((entry) => entry.studentId)),
         ...[...excluded.values()].flat(),
@@ -570,7 +593,7 @@ export class Ss12000Service {
             personId: assignment.teacherId,
             role: assignment.role,
           })),
-          studentIds: lesson.participants.map((entry) => entry.studentId),
+          studentIds: lesson.participants.map((entry) => entry.studentId).filter((studentId) => !movedOff.get(lesson.id)?.has(studentId)),
           ...excludedField(excluded.get(lesson.id)),
           room: lesson.room
             ? { id: lesson.room.id, displayName: lesson.room.name }

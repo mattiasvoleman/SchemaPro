@@ -11,6 +11,7 @@ import type { CandidatesOverview } from "@/lib/candidates/types";
 import type { AcademicYear } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { LoadError } from "@/components/ui/load-error";
 import { NativeSelect } from "@/components/ui/native-select";
 import { SectionCard } from "@/components/ui/section-card";
@@ -28,13 +29,21 @@ export function candidatesHref(year: AcademicYear | null): string {
 export interface CandidatesSectionProps {
   year: AcademicYear | null;
   /** useScheduleCandidates(year), read by the page: the Generera button waits on it too. */
-  overview: { data?: CandidatesOverview; isLoading: boolean; isError: boolean };
+  overview: {
+    data?: CandidatesOverview;
+    isLoading: boolean;
+    isError: boolean;
+    /** Reads the runs again: the mode's button asks before it decides whether there is a set to replace. */
+    refetch?: () => Promise<{ data?: CandidatesOverview } | undefined>;
+  };
   /** The checklist above is met and answered: what Generera itself needs. */
   canStart: boolean;
   /** A Generera job of the year is running; the gateway refuses a start meanwhile (GENERATE_RUNNING). */
   generating: boolean;
   /** The page's optimisation profile: the first candidate is Generera's own request. */
   weights: Record<string, number>;
+  /** The school has Bästa möjliga schema on (Skolregler): the section offers "Ta fram bästa möjliga". */
+  bestEffort?: boolean;
 }
 
 /**
@@ -43,7 +52,14 @@ export interface CandidatesSectionProps {
  * comparison, its håltimmar and its week view are the compare page's, which
  * has a budget of its own.
  */
-export function CandidatesSection({ year, overview, canStart, generating, weights }: CandidatesSectionProps) {
+export function CandidatesSection({
+  year,
+  overview,
+  canStart,
+  generating,
+  weights,
+  bestEffort = false,
+}: CandidatesSectionProps) {
   const t = useTranslations("scheduleCandidates");
   const tEngine = useTranslations("engineMessages");
   const locale = useLocale();
@@ -52,6 +68,11 @@ export function CandidatesSection({ year, overview, canStart, generating, weight
   const countId = useId();
   const reasonId = useId();
   const statusId = useId();
+  const bestEffortHintId = useId();
+  const [confirmingReplace, setConfirmingReplace] = useState(false);
+  /** How many proposals the question names: the count at the moment it was asked, not whatever the cache says later. */
+  const [replaceCount, setReplaceCount] = useState(0);
+  const [checking, setChecking] = useState(false);
 
   const runDate = useMemo(
     () =>
@@ -62,6 +83,16 @@ export function CandidatesSection({ year, overview, canStart, generating, weight
   const latest = overview.data?.latest ?? null;
   const active = isActiveRun(latest?.run.status);
   const hasBatch = Boolean(overview.data?.batch ?? latest);
+  /**
+   * The proposals a run of the mode would replace: the newest finished run's,
+   * the ones the page counts as ready. A run that succeeds deletes the year's
+   * other finished runs with their proposals (the gateway's removeFinished),
+   * and a candidate of the mode is ONE, so an admin who had compared two to
+   * four would lose them to a button that says nothing of it. A run that
+   * fails leaves them.
+   */
+  const readyIn = (data: CandidatesOverview | undefined) => data?.batch?.candidates.filter(isApplicable).length ?? 0;
+  const savedProposals = readyIn(overview.data);
 
   const run = async () => {
     if (!year) return;
@@ -72,6 +103,55 @@ export function CandidatesSection({ year, overview, canStart, generating, weight
       toast.error(t(requestErrorKey(error instanceof ApiError ? error : null, "start")));
     }
   };
+
+  /*
+   * Bästa möjliga schema: ONE candidate, so no count; the page's profile is the
+   * run's base as for the first of a batch. It needs no earlier schema (the
+   * week Generera refused is the one it is for), which is why nothing here
+   * waits for a draft.
+   */
+  const runBestEffort = async () => {
+    if (!year) return;
+    try {
+      await start.mutateAsync({ academicYearId: year.id, mode: "BEST_EFFORT", weights });
+      toast.success(t("section.startedBestEffort"));
+    } catch (error) {
+      toast.error(t(requestErrorKey(error instanceof ApiError ? error : null, "start")));
+    }
+  };
+  const startingBestEffort = start.isPending && start.variables?.mode === "BEST_EFFORT";
+  /**
+   * The mode's button: asks first when there are saved proposals to replace,
+   * starts at once when there are none. The runs are read AGAIN before it
+   * decides: the picture on screen can be older than the click (the query is
+   * fresh for 30 s, does not refetch on focus and polls only while a run is
+   * active), and another tab or administrator may have finished a run since,
+   * whose set this start would delete without a word (review of #285, round 2).
+   * A read that fails leaves the picture there is.
+   */
+  const askBestEffort = async () => {
+    setChecking(true);
+    try {
+      let saved = savedProposals;
+      if (overview.refetch) {
+        try {
+          const fresh = await overview.refetch();
+          if (fresh?.data) saved = readyIn(fresh.data);
+        } catch {
+          // The cached picture is the best there is.
+        }
+      }
+      if (saved > 0) {
+        setReplaceCount(saved);
+        setConfirmingReplace(true);
+      } else {
+        await runBestEffort();
+      }
+    } finally {
+      setChecking(false);
+    }
+  };
+  const startDisabled = !year || !canStart || generating || active || start.isPending;
 
   /*
    * One reason beside the button, the first that holds: a greyed button
@@ -156,13 +236,28 @@ export function CandidatesSection({ year, overview, canStart, generating, weight
             data-writes="SCHEMALAGGNING"
             variant="outline"
             className="w-full sm:w-auto"
-            disabled={!year || !canStart || generating || active || start.isPending}
+            disabled={startDisabled}
             onClick={run}
             aria-describedby={reason ? reasonId : active ? statusId : undefined}
           >
-            {start.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
-            {start.isPending ? t("section.starting") : t("section.start")}
+            {start.isPending && !startingBestEffort ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
+            {start.isPending && !startingBestEffort ? t("section.starting") : t("section.start")}
           </Button>
+          {bestEffort ? (
+            <Button
+              data-writes="SCHEMALAGGNING"
+              variant="outline"
+              className="w-full sm:w-auto"
+              disabled={startDisabled || checking}
+              onClick={askBestEffort}
+              aria-describedby={[reason ? reasonId : active ? statusId : null, bestEffortHintId]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              {startingBestEffort ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
+              {startingBestEffort ? t("section.starting") : t("section.startBestEffort")}
+            </Button>
+          ) : null}
         </div>
       }
     >
@@ -189,6 +284,29 @@ export function CandidatesSection({ year, overview, canStart, generating, weight
           ) : null}
         </div>
       )}
+      {bestEffort ? (
+        // The button's description, and not part of the card's lead: the lead
+        // is for the ordinary proposals, and this is read by those who turned
+        // the mode on and want to know what pressing it does. Same writes as
+        // the button: a reader who has none is not told about a button they
+        // are not given.
+        <p id={bestEffortHintId} data-writes="SCHEMALAGGNING" className="max-w-prose text-sm text-muted-foreground">
+          {t("section.bestEffortHint")}
+        </p>
+      ) : null}
+      {/* The mode's button asks before it replaces the saved proposals; a portal, so it sits wherever. */}
+      <ConfirmDialog
+        open={confirmingReplace}
+        onOpenChange={setConfirmingReplace}
+        title={t("section.replaceBestEffortTitle")}
+        description={t("section.replaceBestEffortBody", { count: replaceCount })}
+        confirmLabel={t("section.replaceBestEffortConfirm")}
+        loading={startingBestEffort}
+        onConfirm={async () => {
+          await runBestEffort();
+          setConfirmingReplace(false);
+        }}
+      />
     </SectionCard>
   );
 }

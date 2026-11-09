@@ -16,6 +16,7 @@
  * Plain data with type-only imports: no runtime cost beyond the maps a page reads.
  */
 
+import type { ConsentState } from "@/lib/checklists";
 import type { AbsencePhase } from "@/lib/cover-types";
 import type { StatusKey as CoverStatusKey } from "@/lib/cover-view";
 import type { PassStatusKey } from "@/lib/pass-view";
@@ -145,11 +146,12 @@ export const BOOKING_STATUS_VARIANT = {
   CANCELLED: "outline",
 } as const satisfies Record<RoomBookingStatus, StatusVariant>;
 
-/** A leave request. */
+/** A leave request. A guardian's no ends it for everybody: finished, not refused by the school. */
 export const LEAVE_STATUS_VARIANT = {
   PENDING: "warning",
   APPROVED: "success",
   REJECTED: "destructive",
+  GUARDIAN_DECLINED: "outline",
 } as const satisfies Record<LeaveRequestStatus, StatusVariant>;
 
 /** An attendance mark. EXCUSED is information, not an alarm; UNKNOWN is not yet taken. */
@@ -172,3 +174,28 @@ export function attendanceRateVariant(rate: number | null): StatusVariant {
   if (rate >= 0.75) return "warning";
   return "destructive";
 }
+
+/**
+ * A pupil's consent on a list (Samtycken). Only a granted consent is success; a no and a consent taken back both
+ * mean "do not", so both are destructive, and the text and the icon beside them (components/checklists) say which:
+ * colour is never the only carrier. A pupil with no answer needs a decision (warning); one being asked in the app is
+ * waiting for someone else (secondary).
+ */
+export const CONSENT_STATE_VARIANT = {
+  GRANTED: "success",
+  DECLINED: "destructive",
+  WITHDRAWN: "destructive",
+  ASKED: "secondary",
+  MISSING: "warning",
+} as const satisfies Record<ConsentState, StatusVariant>;
+
+/**
+ * The other states Checklistor shows as a badge: a pupil with no tick on a roster needs one (warning); a template that
+ * is retired, a list that is ended and a tick that is voided are finished, not failed (outline), and the words say which.
+ */
+export const CHECKLIST_STATE_VARIANT = {
+  PROOF_MISSING: "warning",
+  TEMPLATE_RETIRED: "outline",
+  LIST_CLOSED: "outline",
+  PROOF_VOIDED: "outline",
+} as const satisfies Record<string, StatusVariant>;

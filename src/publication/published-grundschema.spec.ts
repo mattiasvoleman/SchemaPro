@@ -80,6 +80,18 @@ describe('the published grundschema', () => {
     ]);
   });
 
+  it('reads back whether Generera wrote the lesson from a förläggning, which a discarded draft writes back (MEDEL-2 of #293)', async () => {
+    tx.publishedLesson.findMany.mockResolvedValue([
+      published({ isGenerated: true, fromPlacement: true }),
+      published({ id: 'pl2', masterLessonId: 'm2', fromPlacement: false }),
+    ]);
+    const rows = await readPublishedMasters(tx as unknown as PrismaClient, 'pub');
+    expect(rows.map((row) => [row.id, row.fromPlacement])).toEqual([
+      ['m1', true],
+      ['m2', false],
+    ]);
+  });
+
   it('gives the admin the masters, the draft, and asks nothing more', async () => {
     const live = jest.fn().mockResolvedValue([{ id: 'draft' }]);
     const read = await readGrundschema(tx as unknown as PrismaClient, { role: Role.SCHOOL_ADMIN, schoolId: SCHOOL }, YEAR, live);

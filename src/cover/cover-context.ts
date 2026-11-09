@@ -308,7 +308,8 @@ export async function readPersonDays(tx: PrismaClient, options: DayReadOptions):
 
   const bookings =
     (await tx.roomBooking.findMany({
-      where: { bookedById: people, status: { in: ['PENDING', 'APPROVED'] }, startsAt: { lt: today.end }, endsAt: { gt: today.start } },
+      // externalBookingId: null — a day of an external hire holds a room, not the administrator who registered it (Lokal).
+      where: { bookedById: people, externalBookingId: null, status: { in: ['PENDING', 'APPROVED'] }, startsAt: { lt: today.end }, endsAt: { gt: today.start } },
       select: { bookedById: true, startsAt: true, endsAt: true },
     })) ?? [];
   for (const booking of bookings) {

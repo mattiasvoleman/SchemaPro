@@ -205,10 +205,10 @@ jobs:
 
       # The menus are server data and not in the bundle the bundle budget
       # counts; they are in every full page load's document instead. This
-      # holds the gzipped HTML of one page, /sv/notifications, as an
-      # administrator and as a teacher gets it (against the e2e stub, less the
-      # message catalog) under a ceiling, and prints the figures: with the list
-      # reporter, because the github one prints nothing of a passing test.
+      # holds the gzipped HTML of one page, /sv/notifications, as each of the
+      # four roles gets it (against the e2e stub, less the message catalog)
+      # under a ceiling, and prints the figures: with the list reporter,
+      # because the github one prints nothing of a passing test.
       # Last of the browser suites, so that a menu that has grown past its
       # ceiling does not hide the visual regression result of the same run:
       # a step that fails stops the ones after it. Needs CI mode (the
@@ -366,6 +366,47 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-schedule-exchange.ts
 
+      # Byten och flyttar (round 9, G1): a small högstadium with parallel
+      # blocks cut across its classes, laid by the fixture, asked for swaps and
+      # chains as a scheduler under row security. Every proposal is checked by
+      # a rule of the probe's own over the stored rows, inside the frame and
+      # outside the closed hours; a block card goes whole; an applied proposal
+      # takes a version, logs each lesson and is undone; a stale, parted or
+      # locked proposal and a teacher's principal write nothing. It drops its
+      # school.
+      - name: Swaps probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-swaps.ts
+
+      # Förlagda poster (20270207090000, review of #293, HÖG-1): Generera of a school with a
+      # förläggning, through the application Nest builds. The proxy's specs build the service by
+      # hand and the e2e specs mock Prisma, so neither saw that an import cycle left the proxy's
+      # fourth constructor parameter `undefined` (and @Optional() let Nest pass it on), which made
+      # every Generera of such a school a 500. This reads AppModule first, as main.ts does, boots
+      # NestFactory.createApplicationContext against this database as the API role, and has the
+      # engine on a node:http stub of its own (AI_ENGINE_URL is that stub, set by the probe before
+      # the application is read): the proxy holds the context's MasterLessonsService; a
+      # förläggning (Tuesday 10:00, one hour, a room) saves on a post of two lessons; Generera
+      # sends the post with one lesson left, the förläggning as a fixed lesson and `placements`
+      # with the whole demand; the grundschema holds the placed lesson locked, generated and
+      # fromPlacement, written again by the next Generera; an engine older than `placements` (422)
+      # is sent the request again without it; a handmade lock with the same teacher refuses
+      # Generera by name before the engine is woken and writes nothing; and a lunch Generera laid
+      # does not refuse the förläggning while one the school placed does. The environment is the
+      # e2e suite's (test/setup-env.ts). It drops the school it made.
+      - name: Förlagda poster probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+          NODE_ENV: test
+          JWT_SECRET: test-secret-not-used-by-the-fake-guard
+          JWT_ISSUER: https://test.invalid/auth/v1
+          AI_ENGINE_API_KEY: test-key
+          AI_ENGINE_TIMEOUT_MS: '15000'
+        run: npx ts-node --transpile-only scripts/test/probe-forlagda-poster.ts
+
       # Hela skolans data (K5, 20270114090000): two schools, each with people,
       # lessons, attendance, absence, leave and notices, and an export ordered
       # at one of them, built by the job as the ordering administrator, stored
@@ -380,6 +421,52 @@ jobs:
           DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-school-export.ts
+
+      # Måltidskollen (D8, 20270123090000): the portions of each lunch sitting
+      # through the real MealCountsService, MealLetterJob and JobRunner on the
+      # API's role: the counts of a school with sittings, absence before and
+      # after the cut-off, an activity over lunch and a pedagogisk lunch; the
+      # settings (Drift writes, the läsare does not, a letter without its
+      # address is refused by name); the file as Excel reads it; and the
+      # daily letter: not a second before the cut-off, once a day, the same
+      # figures however late, left open when the mail is not taken and tried
+      # again inside the three hours, none for a day without a sitting, one
+      # from two passes at once. It removes the school it made.
+      - name: Meal counts probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=2
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-maltidskollen.ts
+
+      # Analys och planering (K1, 20270130090000): the löneunderlag of a
+      # person who has left, through the real AnalysisService, statement E and
+      # the vikarie export on the API's role. A teacher deactivated mid-period
+      # is booked on the lessons over by the stamp (D6's rule) and on the
+      # uppdrag to the day before, not on the ten days the lessons still
+      # carrying her would give; a period wholly after gives no line and no
+      # file row, and a notice; a lesson later the same day is not hers; a
+      # vikarie's cover after the stamp is not his; a person made active again
+      # is booked as if they had never left. It removes the school it made.
+      - name: Analysis and planning probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=2
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-analysis.ts
+
+      # Lokal (K3, 20270204091000): resources that are not rooms and the associations that hire a
+      # room after school, through the real services on the API's role. A resource booked past
+      # its quantity answers 409 by name (the trigger's refusal as the adapter delivers it), a
+      # series is previewed against lessons, bookings, the ramtid and a closure and registered
+      # with or without the days that clash, its days are bookings of the room a teacher cannot
+      # book over, two registrations at once end in one 409, a lesson that lands in a booked room
+      # is listed and told to the expedition and not to the läsare, the report and its CSV, and
+      # forty rooms with a term of Tuesdays each against 24 000 lessons registered in under 2 s
+      # (or, on a slower runner, eighty empty transactions a series, measured first on the same connection). It removes its school.
+      - name: Lokal probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-lokal.ts
 
       # Huvudman (20261212090000): every GET a school administrator reaches,
       # through the real gateway and this database, as the roller school's

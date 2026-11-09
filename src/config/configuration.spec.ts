@@ -80,10 +80,15 @@ describe('loadConfiguration', () => {
       crisis: { background: true },
       // Unset: the nightly absence watch ticks (and watches no school until its administrator turns it on).
       absenceWatch: { background: true },
+      // Unset: the kitchen letter ticks (and sends only for a school that turned it on).
+      mealLetter: { background: true },
       // Unset: the nightly reporting rate ticks (it counts every school; only the reminders and the weekly notice are switches).
       reportingRate: { background: true },
+      absenceStats: { background: true },
       // Unset: the reminder pass of Kvittens ticks.
       ack: { background: true },
+      // Unset: the pass over the leave requests that wait for consent ticks.
+      leaveConsent: { background: true },
       // Unset: 30 s a candidate, two runs at once, four workers, the sweep on.
       candidates: { maxSeconds: 30, runsMax: 2, solverWorkers: 4, background: true },
     });
@@ -127,10 +132,28 @@ describe('loadConfiguration', () => {
     expect(loadConfiguration(env({})).absenceWatch.background).toBe(true);
   });
 
+  it('turns the kitchen letter tick off only for MEAL_LETTER_BACKGROUND=off', () => {
+    expect(loadConfiguration(env({ MEAL_LETTER_BACKGROUND: 'off' })).mealLetter.background).toBe(false);
+    expect(loadConfiguration(env({ MEAL_LETTER_BACKGROUND: 'on' })).mealLetter.background).toBe(true);
+    expect(loadConfiguration(env({})).mealLetter.background).toBe(true);
+  });
+
+  it('turns the leave consent pass off only for LEAVE_CONSENT_BACKGROUND=off', () => {
+    expect(loadConfiguration(env({ LEAVE_CONSENT_BACKGROUND: 'off' })).leaveConsent.background).toBe(false);
+    expect(loadConfiguration(env({ LEAVE_CONSENT_BACKGROUND: 'on' })).leaveConsent.background).toBe(true);
+    expect(loadConfiguration(env({})).leaveConsent.background).toBe(true);
+  });
+
   it('turns the kvittens reminder pass off only for ACK_BACKGROUND=off', () => {
     expect(loadConfiguration(env({ ACK_BACKGROUND: 'off' })).ack.background).toBe(false);
     expect(loadConfiguration(env({ ACK_BACKGROUND: 'on' })).ack.background).toBe(true);
     expect(loadConfiguration(env({})).ack.background).toBe(true);
+  });
+
+  it('turns the absence stats tick off only for ABSENCE_STATS_BACKGROUND=off', () => {
+    expect(loadConfiguration(env({ ABSENCE_STATS_BACKGROUND: 'off' })).absenceStats.background).toBe(false);
+    expect(loadConfiguration(env({ ABSENCE_STATS_BACKGROUND: 'on' })).absenceStats.background).toBe(true);
+    expect(loadConfiguration(env({})).absenceStats.background).toBe(true);
   });
 
   it('turns the reporting rate tick off only for REPORTING_RATE_BACKGROUND=off', () => {

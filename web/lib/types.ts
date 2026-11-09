@@ -4,7 +4,8 @@ import type { GradeNumbering } from "@/lib/grade-numbering";
 
 export type UserRole = "STUDENT" | "TEACHER" | "SCHOOL_ADMIN" | "GUARDIAN";
 export type AbsenceReportType = "SICK" | "APPOINTMENT" | "OTHER";
-export type LeaveRequestStatus = "PENDING" | "APPROVED" | "REJECTED";
+/** GUARDIAN_DECLINED: a guardian did not consent (Ledighetspolicy), so nobody decides it. */
+export type LeaveRequestStatus = "PENDING" | "APPROVED" | "REJECTED" | "GUARDIAN_DECLINED";
 /** A room type the school owns and names itself. */
 export interface RoomType {
   id: string;
@@ -133,6 +134,14 @@ export interface Subject {
    */
   maxLessonsPerDay?: number | null;
   minDaysBetween?: number | null;
+  /**
+   * Placeringsregler, regel 1: the subject may not be a class's first / last
+   * lesson of the day. A marking only; it does nothing until the school turns
+   * the rule on (LunchSettings.placementEdgeMode). Optional because only
+   * useSubjects names the columns, and an API from before the rule sends none.
+   */
+  notFirstInDay?: boolean;
+  notLastInDay?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +229,13 @@ export interface Room {
    * travel is counted to or from the room.
    */
   siteId: string | null;
+  /**
+   * Placeringsregler, regel 3: the room may hold several groups at once, as
+   * long as their pupils together fit its capacity. A marking only; it does
+   * nothing until the school turns the rule on
+   * (LunchSettings.placementSharedMode). Optional for a row read before it.
+   */
+  canBeShared?: boolean;
 }
 
 export type RoomBookingStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
@@ -585,7 +601,42 @@ export interface LunchSettings {
    * Vikarietavlan keep the limit whatever this says.
    */
   generatorKeepsConsecutiveTeaching?: boolean;
+  /**
+   * Bästa möjliga schema: Schemaförslag may lay a week with some of the
+   * school's own rules broken when no week keeps them all, and says which gave
+   * way (a candidate's `deviations`). The list that may give way is short
+   * (a teacher's daily cap and days, the subject distribution, a room lock);
+   * a double booking, the frame times and the walk between sites never do
+   * (optimization-engine/app/solver/relaxation.py). Off by default; optional
+   * for an API from before the switch, read as off.
+   */
+  generatorBestEffort?: boolean;
+  /**
+   * Placeringsregler. Three rules, each Av / Mjuk / Hård (OFF is the default
+   * and sends the generator nothing). A weight, 1..1000, counts only while the
+   * rule is SOFT; it is kept while the rule is off so a school does not lose
+   * it by switching. All optional: an API from before the rules sends none,
+   * which reads as the rule it then is, off.
+   */
+  placementEdgeMode?: PlacementRuleMode;
+  placementEdgeWeight?: number;
+  placementPlacesMode?: PlacementRuleMode;
+  placementPlacesWeight?: number;
+  placementSharedMode?: PlacementRuleMode;
+  placementSharedWeight?: number;
+  /**
+   * Regel 2, the most DIFFERENT rooms and the most different buildings a day
+   * for a class and for a teacher: 1..20, 1 meaning a single one all day, null
+   * no limit. How many are visited, not in what order: A–B–A is two.
+   */
+  maxClassRoomsPerDay?: number | null;
+  maxTeacherRoomsPerDay?: number | null;
+  maxClassBuildingsPerDay?: number | null;
+  maxTeacherBuildingsPerDay?: number | null;
 }
+
+/** Av, Mjuk (a wish with a weight) or Hård (a requirement). */
+export type PlacementRuleMode = "OFF" | "SOFT" | "HARD";
 
 export type LessonRecurrence = "ALL_WEEKS" | "ODD_WEEKS" | "EVEN_WEEKS";
 
@@ -675,6 +726,42 @@ export interface LeaveRequest {
   /** MENTOR or ADMIN once decided (20261023091000); null before, and for older decisions. */
   decidedAs: "MENTOR" | "ADMIN" | null;
   createdAt: string;
+  /** Filed closer to its first day than the school's minimum, and let in (Ledighetspolicy). */
+  shortNotice: boolean;
+  /** The temporary contact during the leave, for the family that wrote it, rektor and the deciding mentor. */
+  contact: LeaveContact | null;
+  consent: LeaveConsent;
+}
+
+/** What the school asks of a leave request (GET /api/v1/leave-policy, Ledighetspolicy). Off as delivered. */
+export interface LeavePolicy {
+  requireAllGuardians: boolean;
+  /** 1..90 calendar days before the first day; null is no minimum. */
+  minDaysAhead: number | null;
+  /** What a later request meets: refused by the form, or flagged for whoever decides. */
+  shortNotice: "REFUSE" | "FLAG";
+  contact: "OFF" | "OPTIONAL" | "REQUIRED";
+}
+
+/** A third party's details, written by the family: name, phone and relation to the child. */
+export interface LeaveContact {
+  name: string;
+  phone: string;
+  relation: string;
+}
+
+/** Where a request stands with the guardians' consent, as the reader may know it. */
+export interface LeaveConsent {
+  /** The school asked every guardian when the request was filed. */
+  required: boolean;
+  /** WAITING: somebody who can still answer has not. */
+  state: "NOT_REQUIRED" | "WAITING" | "GIVEN" | "REFUSED";
+  /** The signed-in guardian's own part; NOT_ASKED for anybody else and for the guardian who applied. */
+  mine: "NOT_ASKED" | "WAITING" | "GIVEN" | "REFUSED" | "ENDED";
+  /** How many were asked, have consented and still wait: staff only, never who. Null for a family. */
+  asked: number | null;
+  given: number | null;
+  waiting: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -751,6 +838,13 @@ export interface TeacherEmployment {
   /** Lärarsignatur, 1..8 characters, unique per school and year where set. */
   signature: string | null;
   note: string | null;
+  /**
+   * Löne-id (20270206090000): the payroll system's own number for the
+   * anställning, which the löneunderlag's Löne-id column carries. HR data:
+   * null, with hrHidden, for a reader without HR-läs. Absent from a gateway
+   * before it.
+   */
+  payrollNumber?: string | null;
   /** True when the gateway left tjänst % and nedsättning out for this reader. */
   hrHidden?: true;
   /**

@@ -222,6 +222,8 @@ describe("AppShell navigation", () => {
     // Lektionslogg's klassbok, every teacher's.
     expect(link("nav.classBook")).toHaveAttribute("href", "/teacher/klassbok");
     expect(link("nav.roomBooking")).toHaveAttribute("href", "/teacher/rooms");
+    // Boka resurs: tablets, a minibus, the hall, in the menu always.
+    expect(link("nav.myResources")).toHaveAttribute("href", "/teacher/resources");
     expect(link("nav.myStaffing")).toHaveAttribute("href", "/teacher/tjanst");
     expect(link("nav.myCover")).toHaveAttribute("href", "/teacher/franvaro");
     // Larm (Krisläge): the groups to tick off when the school starts an alarm.
@@ -236,6 +238,8 @@ describe("AppShell navigation", () => {
     expect(link("nav.schoolDay")).toHaveAttribute("href", "/teacher/school-day");
     // Kvittens: ask the guardians of the mentees to confirm a message, in the menu always.
     expect(link("nav.acknowledgements")).toHaveAttribute("href", "/teacher/acknowledgements");
+    // Checklistor: instruction proofs and consent lists, in the menu always.
+    expect(link("nav.checklists")).toHaveAttribute("href", "/teacher/checklists");
     expect(link("nav.calendarFeed")).toHaveAttribute("href", "/calendar-feed");
 
     expect(screen.queryByRole("link", { name: "nav.subjects" })).not.toBeInTheDocument();
@@ -296,10 +300,14 @@ describe("AppShell navigation", () => {
       "nav.rasts",
       "nav.supervision",
       "nav.lunchServings",
+      // Resurser: the kinds and the resources, Planering's.
+      "nav.resources",
     ]);
     expect(group("nav.scheduling")).toEqual([
       "nav.generate",
       "nav.timetable",
+      // Klasslärarens schema: beside the grid whose lessons they change.
+      "nav.classTeachers",
       "nav.gaps",
       "nav.publishing",
       "nav.schemavisaren",
@@ -316,10 +324,16 @@ describe("AppShell navigation", () => {
       "nav.activities",
       "nav.leaveRequests",
       "nav.roomBookings",
+      // Externa bokningar and Utnyttjande: beside the bookings they add days to and count.
+      "nav.externalBookings",
+      "nav.utilisation",
       "nav.reports",
       "nav.absenceWatch",
       "nav.reportingRate",
+      "nav.analysis",
       "nav.acknowledgements",
+      "nav.meals",
+      "nav.checklists",
       "nav.classBook",
     ]);
 
@@ -615,7 +629,10 @@ describe("AppShell navigation by administrator profile", () => {
     // A group with nothing left in it goes with its pages (both hidden by
     // the layout's style rule, so out of the accessibility tree too).
     for (const group of screen.getAllByText("nav.planning")) expect(group).not.toBeVisible();
-    for (const group of screen.getAllByText("nav.scheduling")) expect(group).not.toBeVisible();
+    // Scheduling keeps one page, Klasslärare, which every administrator opens (PAGE_GATES: null) and which offers each
+    // control to the profile that writes its area; the expedition reads who is klasslärare of which class there.
+    expect(hrefs()).toContain("/admin/class-teachers");
+    expect(screen.getAllByText("nav.scheduling")[0]).toBeVisible();
     expect(screen.getAllByText("nav.operations")[0]).toBeVisible();
   });
 

@@ -22,7 +22,7 @@
  */
 
 import { useTranslations } from "next-intl";
-import { Copy, Loader2, Lock, ParkingSquare, Trash2 } from "lucide-react";
+import { ArrowLeftRight, Copy, Loader2, Lock, ParkingSquare, Trash2 } from "lucide-react";
 import type { LessonRecurrence, Person, Room } from "@/lib/types";
 import { RecurrenceFields } from "@/components/schedule/recurrence-fields";
 import { Button } from "@/components/ui/button";
@@ -75,6 +75,8 @@ export interface LessonEditDialogProps {
   deletePending: boolean;
   onDuplicate: () => void;
   onPark: () => void;
+  /** Opens Byten och flyttar for this lesson (swap-dialog.tsx, fetched on the first press). */
+  onSuggestSwaps: () => void;
   onCancel: () => void;
   onSave: () => void;
   savePending: boolean;
@@ -94,6 +96,7 @@ export function LessonEditDialog({
   deletePending,
   onDuplicate,
   onPark,
+  onSuggestSwaps,
   onCancel,
   onSave,
   savePending,
@@ -102,6 +105,7 @@ export function LessonEditDialog({
   const t = useTranslations("timetable");
   const tCommon = useTranslations("common");
   const tDays = useTranslations("days");
+  const tSwaps = useTranslations("swaps");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -244,6 +248,10 @@ export function LessonEditDialog({
             <Button variant="outline" size="sm" onClick={onPark}>
               <ParkingSquare />
               {t("park")}
+            </Button>
+            <Button variant="outline" size="sm" onClick={onSuggestSwaps}>
+              <ArrowLeftRight />
+              {tSwaps("openButton")}
             </Button>
           </div>
           <div className="flex flex-wrap gap-2">

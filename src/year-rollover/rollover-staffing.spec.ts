@@ -160,6 +160,16 @@ describe('planStaffingCarry — the rollover (nothing in the target yet)', () =>
     expect(staffNamedBy(plan.preview)).toContain(T1);
   });
 
+  it('carries Löne-id with the post, and names it on no post that has none (20270206090000)', () => {
+    const plan = planStaffingCarry(input([post(T1, { payrollNumber: '4711-01' }), post(T2, { payrollNumber: null })], []));
+    const written = (userId: string) => plan.writes.employments.find((row) => row.userId === userId)!;
+    expect(written(T1)).toMatchObject({ payrollNumber: '4711-01' });
+    // COPY_UNLESS_DEFAULT: a post without one names no column, so its plan hash does not move.
+    expect(Object.keys(written(T2))).not.toContain('payrollNumber');
+    // Not a per-year term: the preview names no one for it, and no problem is said.
+    expect(plan.problems).toEqual([]);
+  });
+
   it('carries neither column of a source that somehow held half a pair, so the new year’s table never meets one', () => {
     // The table's pair CHECK keeps the source from it; the plan does not rely on that.
     const plan = planStaffingCarry(

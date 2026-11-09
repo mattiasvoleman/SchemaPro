@@ -50,6 +50,25 @@ export const CANDIDATE_VARIANTS: readonly CandidateVariant[] = [
   { ordinal: 4, code: 'FREE', label: 'Friare placering', overrides: { disruption: 0 }, seed: 3 },
 ];
 
+/**
+ * BÄSTA MÖJLIGA SCHEMA: the one candidate of a run that asked for the mode
+ * (StartCandidatesDto.mode). Not a row of the table above, and kept out of it
+ * on purpose: variantsFor deals the table out by count for an ordinary run,
+ * and the mode is a different question — not "which emphasis" but "may the
+ * school's own shaping rules give way" — asked of one candidate that keeps the
+ * school's weights as they are, with no override and no seed, so the engine
+ * decides how far each rule gives way and nothing in the objective is tuned to
+ * make it look better. Ordinal 1, as the run's only candidate; the code is an
+ * open name in the database (ScheduleCandidates_variant_is_a_name).
+ */
+export const BEST_EFFORT_VARIANT: CandidateVariant = {
+  ordinal: 1,
+  code: 'BEST_EFFORT',
+  label: 'Bästa möjliga',
+  overrides: {},
+  seed: null,
+};
+
 /** How many candidates a new run asks for when the request names no count. */
 export const DEFAULT_CANDIDATE_COUNT = 3;
 export const MIN_CANDIDATE_COUNT = 2;
@@ -79,7 +98,12 @@ export function variantsFor(count: number): CandidateVariant[] {
 }
 
 export function variantOf(code: string): CandidateVariant | undefined {
-  return CANDIDATE_VARIANTS.find((variant) => variant.code === code);
+  return CANDIDATE_VARIANTS.find((variant) => variant.code === code) ?? (code === BEST_EFFORT_VARIANT.code ? BEST_EFFORT_VARIANT : undefined);
+}
+
+/** Whether a candidate came from the mode that lets the school's shaping rules give way. */
+export function isBestEffort(code: string): boolean {
+  return code === BEST_EFFORT_VARIANT.code;
 }
 
 /** Whether this variant asks what Generera asks: the school's weights, no seed. */

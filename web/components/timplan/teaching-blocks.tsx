@@ -52,6 +52,7 @@ import type { MessageLookup } from "@/lib/engine-message";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { refusalText, staffingRefusal, warningText } from "@/lib/staffing-warnings";
 import { sharesRefusal } from "@/lib/requirement-shares";
+import { placementsRefusal } from "@/lib/requirement-placements";
 import type { StaffingWarning, TeachingBlock, TeachingRequirement } from "@/lib/types";
 import { LessonLengthsFields } from "@/components/timplan/lesson-lengths-fields";
 import { EXTRA_ROW_GRID } from "@/components/timplan/lesson-lengths-grid";
@@ -247,6 +248,13 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
       toast.success(t("saved", { name: trimmed }));
       setDraft(null);
     } catch (error) {
+      // Förlagda poster: a post with lessons placed cannot be in a block, which
+      // is placed as one; said in the reader's language, not the gateway's.
+      const placed = placementsRefusal(error);
+      if (placed?.kind === "FIT" && placed.reason === "BLOCK") {
+        toast.error(tRequirements("placements.blockRefused"));
+        return;
+      }
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
   };

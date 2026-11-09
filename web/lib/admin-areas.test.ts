@@ -46,6 +46,24 @@ describe("admin areas (Roller i skolan)", () => {
     expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/reporting-rate")?.areas).toEqual(["DRIFT"]);
   });
 
+  it("opens Analys och planering to every administrator: it reads only, the gateway gives each profile what it may have, and the settings ask the profile themselves", () => {
+    expect(PAGE_GATES["/admin/analysis"]).toBeNull();
+    expect(gateOfPath("/sv/admin/analysis")).toBeNull();
+    for (const profile of ["FULL", "REKTOR", "SCHEMALAGGARE", "EXPEDITION", "LASARE"] as const) {
+      expect(closedPages(profile).map((page) => page.path)).not.toContain("/admin/analysis");
+      expect(readOnlyPages(profile).map((page) => page.path)).not.toContain("/admin/analysis");
+    }
+  });
+
+  it("gates Måltidskollen by Drift: every administrator reads the portions, those who write Drift change the cut-off and the letter", () => {
+    expect(PAGE_GATES["/admin/meals"]).toBe("DRIFT");
+    expect(gateOfPath("/sv/admin/meals")).toBe("DRIFT");
+    expect(profileOpens("EXPEDITION", "DRIFT")).toBe(true);
+    expect(profileOpens("SCHEMALAGGARE", "DRIFT")).toBe(true);
+    expect(closedPages("LASARE").map((page) => page.path)).not.toContain("/admin/meals");
+    expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/meals")?.areas).toEqual(["DRIFT"]);
+  });
+
   it("opens Skolans dag to every administrator: it reads only, so the läsare has it whole, and no area gates it", () => {
     expect(PAGE_GATES["/admin/school-day"]).toBeNull();
     expect(gateOfPath("/sv/admin/school-day")).toBeNull();
@@ -63,6 +81,43 @@ describe("admin areas (Roller i skolan)", () => {
     expect(profileOpens("LASARE", "DRIFT")).toBe(false);
     expect(closedPages("LASARE").map((page) => page.path)).not.toContain("/admin/acknowledgements");
     expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/acknowledgements")?.areas).toEqual(["DRIFT"]);
+  });
+
+  it("gates Checklistor by Drift, as the pupils' day it records: the läsare reads the templates, the ticks and the lists and writes none, every other profile writes", () => {
+    expect(PAGE_GATES["/admin/checklists"]).toBe("DRIFT");
+    expect(gateOfPath("/sv/admin/checklists")).toBe("DRIFT");
+    expect(profileOpens("EXPEDITION", "DRIFT")).toBe(true);
+    expect(profileOpens("LASARE", "DRIFT")).toBe(false);
+    expect(closedPages("LASARE").map((page) => page.path)).not.toContain("/admin/checklists");
+    expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/checklists")?.areas).toEqual(["DRIFT"]);
+  });
+
+  it("gates Resurser by Planering, as the lokaler it sits beside: a planner writes the kinds and the resources, the läsare reads both, the expedition has no page", () => {
+    expect(PAGE_GATES["/admin/resources"]).toBe("PLANERING");
+    expect(gateOfPath("/sv/admin/resources")).toBe("PLANERING");
+    expect(profileOpens("SCHEMALAGGARE", "PLANERING")).toBe(true);
+    expect(closedPages("EXPEDITION").map((page) => page.path)).toContain("/admin/resources");
+    expect(closedPages("LASARE").map((page) => page.path)).not.toContain("/admin/resources");
+    expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/resources")?.areas).toEqual(["PLANERING"]);
+  });
+
+  it("gates Externa bokningar by Drift, as the lokalbokningar its days stand among: the expedition registers, the läsare reads the series and registers none", () => {
+    expect(PAGE_GATES["/admin/external-bookings"]).toBe("DRIFT");
+    expect(gateOfPath("/en/admin/external-bookings")).toBe("DRIFT");
+    expect(profileOpens("EXPEDITION", "DRIFT")).toBe(true);
+    expect(profileOpens("SCHEMALAGGARE", "DRIFT")).toBe(true);
+    expect(closedPages("EXPEDITION").map((page) => page.path)).not.toContain("/admin/external-bookings");
+    expect(closedPages("LASARE").map((page) => page.path)).not.toContain("/admin/external-bookings");
+    expect(readOnlyPages("LASARE").find((page) => page.path === "/admin/external-bookings")?.areas).toEqual(["DRIFT"]);
+  });
+
+  it("opens Utnyttjande to every administrator: it reads only and names no person, so no area gates it and nobody has it read-only", () => {
+    expect(PAGE_GATES["/admin/utilisation"]).toBeNull();
+    expect(gateOfPath("/sv/admin/utilisation")).toBeNull();
+    for (const profile of ["FULL", "REKTOR", "SCHEMALAGGARE", "EXPEDITION", "LASARE"] as const) {
+      expect(closedPages(profile).map((page) => page.path)).not.toContain("/admin/utilisation");
+      expect(readOnlyPages(profile).map((page) => page.path)).not.toContain("/admin/utilisation");
+    }
   });
 
   it("gates Schemavisaren by Publicering, as the publication it shows: a planner writes it, the läsare reads it, the expedition has no page", () => {
@@ -118,12 +173,14 @@ describe("the läsare (Läsbehörighet)", () => {
   it("opens every other admin page read-only, each named by its area, Personer by the register and planering", () => {
     const pages = readOnlyPages("LASARE");
     const expected = Object.entries(PAGE_GATES)
-      .filter(([path, gate]) => gate !== "DECIDES" && (gate !== null || path === "/admin/people"))
+      .filter(([path, gate]) => gate !== "DECIDES" && (gate !== null || path === "/admin/people" || path === "/admin/class-teachers"))
       .map(([path]) => path)
       .sort();
     expect(pages.map((page) => page.path).sort()).toEqual(expected);
     // Personer: the register, and each teacher's arbetstid, behörigheter and uppdrag.
     expect(pages.find((page) => page.path === "/admin/people")?.areas).toEqual(["PERSONAL", "PLANERING"]);
+    // Klasslärare: the appointments and open hours are Schemaläggning's, the option and the publishing Publicering's.
+    expect(pages.find((page) => page.path === "/admin/class-teachers")?.areas).toEqual(["SCHEMALAGGNING", "PUBLICERING"]);
     expect(pages.find((page) => page.path === "/admin/timetable")?.areas).toEqual(["SCHEMALAGGNING"]);
     expect(pages.find((page) => page.path === "/admin/calendar-feeds")?.areas).toEqual(["PUBLICERING"]);
     expect(pages.find((page) => page.path === "/admin/schemavisaren")?.areas).toEqual(["PUBLICERING"]);

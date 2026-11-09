@@ -52,6 +52,26 @@ const YEARS: LockedTable = {
 const YEAR_READ =
   /SELECT "startDate", "endDate"\s+FROM "AcademicYears"\s+WHERE "id" = \?::uuid\s+FOR SHARE/;
 
+/**
+ * Förlagda poster's trigger as the adapter hands it over (SQLSTATE FP409, the
+ * rule as the message's first word and in DETAIL): the 409 naming the rule,
+ * whichever write met it, never a 500.
+ */
+const placementsRefusal = (reason: string): Prisma.PrismaClientKnownRequestError =>
+  new Prisma.PrismaClientKnownRequestError('Database error', {
+    code: 'P2039',
+    clientVersion: Prisma.prismaVersion.client,
+    meta: {
+      driverAdapterError: {
+        cause: {
+          originalCode: 'FP409',
+          originalMessage: `${reason}: en förlagd lektion har en längd som posten inte har`,
+          detail: `requirementId=cccccccc-cccc-4ccc-8ccc-cccccccccccc reason=${reason}`,
+        },
+      },
+    },
+  });
+
 const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
   new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, {
     code,
@@ -1483,6 +1503,29 @@ describe('TeachingRequirementsService', () => {
       });
     });
 
+    it('answers the förläggningar\' trigger (FP409) on a PATCH of the post as the 409 naming the rule', async () => {
+      givenStored({ ...STORED, shares: [] });
+      tx.teachingRequirement.update.mockRejectedValue(placementsRefusal('LENGTH'));
+
+      await expect(service.update(REQUIREMENT_ID, { minutesPerLesson: 45 }, testUser())).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'LENGTH' } },
+      });
+    });
+
+    it('answers the same trigger on the shares\' own write (a post with förläggningar gets a share) as the 409 SHARES', async () => {
+      givenStored({ ...STORED, shares: [] });
+      tx.teachingRequirement.update.mockResolvedValue(ROW);
+      tx.teachingRequirementShare.createMany.mockRejectedValue(placementsRefusal('SHARES'));
+
+      await expect(
+        service.update(REQUIREMENT_ID, { shares: [{ teacherId: BO, lessons: 1, minutes: 60 }] }, testUser()),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'SHARES' } },
+      });
+    });
+
     it('lists the year’s shares through the caller’s RLS, by post', async () => {
       tx.teachingRequirementShare.findMany.mockResolvedValue([
         { requirementId: REQUIREMENT_ID, teacherId: BO, lessons: 1, minutes: 60 },
@@ -1511,6 +1554,15 @@ describe('TeachingRequirementsService', () => {
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
       expect(tx.teachingRequirement.delete).toHaveBeenCalledWith({
         where: { id: REQUIREMENT_ID },
+      });
+    });
+
+    it('answers the förläggningar\' trigger (FP409) as the 409 naming the rule, not a 500', async () => {
+      tx.teachingRequirement.delete.mockRejectedValue(placementsRefusal('POST'));
+
+      await expect(service.remove(REQUIREMENT_ID, testUser())).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'POST' } },
       });
     });
 

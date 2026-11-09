@@ -100,10 +100,11 @@ export class SchoolDayService {
   async updateSettings(dto: SchoolDaySettingsDto, user: AuthenticatedUser): Promise<SchoolDaySettingsView> {
     const schoolId = requireSchoolId(user);
     return this.prisma.withRls(user, async (tx) => {
+      const notice = dto.guardianNoticeOnMove === undefined ? {} : { guardianNoticeOnMove: dto.guardianNoticeOnMove };
       await tx.schoolDaySettings.upsert({
         where: { schoolId },
-        create: { schoolId, teacherView: dto.teacherView },
-        update: { teacherView: dto.teacherView },
+        create: { schoolId, teacherView: dto.teacherView, ...notice },
+        update: { teacherView: dto.teacherView, ...notice },
       });
       return this.readSettings(tx, schoolId);
     });
@@ -316,8 +317,8 @@ export class SchoolDayService {
   }
 
   private async readSettings(tx: PrismaClient, schoolId: string): Promise<SchoolDaySettingsView> {
-    const row = await tx.schoolDaySettings.findUnique({ where: { schoolId }, select: { teacherView: true } });
-    return { teacherView: row?.teacherView ?? 'NONE' };
+    const row = await tx.schoolDaySettings.findUnique({ where: { schoolId }, select: { teacherView: true, guardianNoticeOnMove: true } });
+    return { teacherView: row?.teacherView ?? 'NONE', guardianNoticeOnMove: row?.guardianNoticeOnMove ?? false };
   }
 
   /** What the caller may have. A teacher whose school chose NONE has neither the grids nor the search. */
@@ -378,7 +379,7 @@ export class SchoolDayService {
   private bookingRows(tx: PrismaClient, start: Date, end: Date) {
     return tx.roomBooking.findMany({
       where: { status: { in: ['PENDING', 'APPROVED'] }, startsAt: { lt: end }, endsAt: { gt: start } },
-      select: { roomId: true, bookedById: true, title: true, startsAt: true, endsAt: true },
+      select: { roomId: true, bookedById: true, externalBookingId: true, title: true, startsAt: true, endsAt: true },
     });
   }
 
@@ -400,7 +401,8 @@ export class SchoolDayService {
         if (!clipped) continue;
         out.push({ resource: 'ROOM', resourceId: row.roomId, date, ...clipped, kind: 'BOOKING', label: row.title });
         // A marked person is on no row, so their id is on no block either; the room still shows that it is held.
-        if (access.grids && !held.has(row.bookedById)) {
+        // A day of an external booking holds the room and nobody's day: the administrator who registered it is not away for it (Lokal).
+        if (access.grids && !held.has(row.bookedById) && !row.externalBookingId) {
           out.push({ resource: 'TEACHER', resourceId: row.bookedById, date, ...clipped, kind: 'BOOKING', label: row.title });
         }
       }

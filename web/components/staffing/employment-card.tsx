@@ -12,6 +12,7 @@ import {
   EMPLOYMENT_FORMS,
   EMPTY_EMPLOYMENT_DRAFT,
   NOTE_MAX,
+  PAYROLL_NUMBER_MAX,
   SIGNATURE_MAX,
   TARGET_MINUTES_MAX,
   TEACHING_DAYS_MAX,
@@ -285,6 +286,9 @@ export function EmploymentCard({
             {visible.signature ? (
               <li>{t("employmentSummarySignature", { signature: visible.signature })}</li>
             ) : null}
+            {visible.payrollNumber ? (
+              <li>{t("employmentSummaryPayrollNumber", { number: visible.payrollNumber })}</li>
+            ) : null}
             {visible.employmentForm ? <li>{t(`employmentSummaryForm${visible.employmentForm}`)}</li> : null}
             {visible.firstTeacherPercent ? (
               <li>{t("employmentSummaryFirstTeacher", { percent: visible.firstTeacherPercent })}</li>
@@ -389,6 +393,17 @@ export function EmploymentCard({
                 onChange={(event) => patch({ signature: event.target.value })}
               />
               <p className="text-xs text-muted-foreground">{t("signatureHint")}</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor={`emp-payroll-${teacher.id}`}>{t("payrollNumber")}</Label>
+              <Input
+                id={`emp-payroll-${teacher.id}`}
+                maxLength={PAYROLL_NUMBER_MAX}
+                autoComplete="off"
+                value={draft.payrollNumber}
+                onChange={(event) => patch({ payrollNumber: event.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">{t("payrollNumberHint")}</p>
             </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-3">

@@ -104,6 +104,18 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
     'Matematik (Tue 13 Oct 08:00) has moved to another room.',
   ],
   [
+    'LESSON_PUPIL_MOVED, the two subjects and the time, never the pupil or who moved them',
+    row('LESSON_PUPIL_MOVED', { fromSubjectName: 'Svenska', toSubjectName: 'Engelska', startsAt: at, studentName: 'Alva Andersson', movedByName: 'Rektor Rask' }),
+    'En elev byter lektion (tis 13 okt 08:00): Engelska i stället för Svenska.',
+    'A pupil changes lesson (Tue 13 Oct 08:00): Engelska instead of Svenska.',
+  ],
+  [
+    'LESSON_PUPIL_MOVED, undone',
+    row('LESSON_PUPIL_MOVED', { fromSubjectName: 'Svenska', toSubjectName: 'Engelska', startsAt: at, undone: true }),
+    'Bytet av lektion (tis 13 okt 08:00) är ångrat: det är Svenska som gäller.',
+    'The change of lesson (Tue 13 Oct 08:00) is undone: Svenska stands.',
+  ],
+  [
     'SCHEDULE_CHANGED',
     row('SCHEDULE_CHANGED', { subjectName: 'Matematik' }),
     'Veckoschemat för Matematik har ändrats.',
@@ -360,6 +372,12 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
     "Reporting rate 2 Nov – 8 Nov: the week's summary for the school is in Rastra timetable on the web.",
   ],
   [
+    'EXTERNAL_BOOKING_CLASH, that days clash and nothing of the hirer or the room',
+    row('EXTERNAL_BOOKING_CLASH', { days: 3 }),
+    'Externa bokningar krockar med lektioner. Se Externa bokningar i Rastra Schema på webben.',
+    'External bookings clash with lessons. See External bookings in Rastra timetable on the web.',
+  ],
+  [
     'ACK_REQUESTED, the title of the message (behind the login), not the text, the sender or the child',
     row('ACK_REQUESTED', { requestId: 'r-1', title: 'Utflykten är på torsdag' }),
     'Skolan ber dig bekräfta: Utflykten är på torsdag',
@@ -371,6 +389,24 @@ const CASES: Array<[string, NotificationRow, string, string]> = [
     'Påminnelse: skolan väntar på din bekräftelse av Utflykten är på torsdag',
     'Reminder: the school is waiting for your confirmation of Utflykten är på torsdag',
   ],
+  [
+    'LEAVE_CONSENT_REQUESTED, the child and the days, never who applied',
+    row('LEAVE_CONSENT_REQUESTED', { leaveRequestId: 'l-1', studentName: 'Alva Elev', startDate: '2026-11-02', endDate: '2026-11-06' }),
+    'Ledighetsansökan för Alva Elev (2026-11-02 – 2026-11-06) väntar på ditt samtycke.',
+    'A leave request for Alva Elev (2026-11-02 – 2026-11-06) is waiting for your consent.',
+  ],
+  [
+    'LEAVE_CONSENT_REMINDER, once, with the same child and days',
+    row('LEAVE_CONSENT_REMINDER', { leaveRequestId: 'l-1', studentName: 'Alva Elev', startDate: '2026-11-02', endDate: '2026-11-06' }),
+    'Påminnelse: ledighetsansökan för Alva Elev (2026-11-02 – 2026-11-06) väntar fortfarande på ditt samtycke.',
+    'Reminder: a leave request for Alva Elev (2026-11-02 – 2026-11-06) is still waiting for your consent.',
+  ],
+  [
+    'LEAVE_CONSENT_REFUSED, to whoever applied: that a guardian did not consent, never which',
+    row('LEAVE_CONSENT_REFUSED', { leaveRequestId: 'l-1', studentName: 'Alva Elev', startDate: '2026-11-02', endDate: '2026-11-06' }),
+    'Ledighetsansökan för Alva Elev (2026-11-02 – 2026-11-06) har avslutats, eftersom en vårdnadshavare inte samtyckte.',
+    'The leave request for Alva Elev (2026-11-02 – 2026-11-06) has ended, because a guardian did not consent.',
+  ],
 ];
 
 describe('notificationText', () => {
@@ -379,9 +415,56 @@ describe('notificationText', () => {
     expect(notificationText(entry, translatorFor('en'), 'en')).toBe(enText);
   });
 
-  it('covers all twenty-six types the gateway writes', () => {
+  it('covers all thirty-one types the gateway writes', () => {
     const types = new Set(CASES.map(([, entry]) => entry.type));
-    expect(types.size).toBe(26);
+    expect(types.size).toBe(31);
+  });
+
+  describe('the three notices of Ledighetspolicy', () => {
+    const TYPES = ['LEAVE_CONSENT_REQUESTED', 'LEAVE_CONSENT_REMINDER', 'LEAVE_CONSENT_REFUSED'] as const;
+    const WORDS = ['ansökan', 'request'];
+
+    it.each(TYPES)('%s says nothing the meta carries beyond the child and the days', (type) => {
+      // Whatever a gateway put in the meta, the sentence is the child and the days: not who applied, who refused or why.
+      const meta = {
+        leaveRequestId: 'l-1',
+        studentName: 'Alva Elev',
+        startDate: '2026-11-02',
+        endDate: '2026-11-06',
+        requestedByName: 'Anna Lind',
+        refusedByName: 'Bertil Lind',
+        guardianName: 'Cecilia Lind',
+        reason: 'Hemlig anledning',
+        contact: { name: 'Doris Lind', phone: '070-123 45 67' },
+      };
+      for (const [locale, say] of [['sv', translatorFor('sv')], ['en', translatorFor('en')]] as const) {
+        const text = notificationText(row(type, meta), say, locale);
+        for (const secret of ['Anna', 'Bertil', 'Cecilia', 'Doris', 'Hemlig', '070-123']) expect(text).not.toContain(secret);
+        expect(text).toContain('Alva Elev');
+        expect(text).toContain('2026-11-02 – 2026-11-06');
+        expect(WORDS.some((word) => text.toLowerCase().includes(word))).toBe(true);
+      }
+    });
+
+    it.each(TYPES)('words %s without a name as “your child”, and without days leaves the brackets out', (type) => {
+      for (const meta of [null, {}, { studentName: '   ' }, { studentName: null }]) {
+        const sv = notificationText(row(type, meta), translatorFor('sv'), 'sv');
+        const en = notificationText(row(type, meta), translatorFor('en'), 'en');
+        expect(sv).toContain('ditt barn');
+        expect(en).toContain('your child');
+        for (const text of [sv, en]) {
+          expect(text).not.toContain('( – )');
+          expect(text).not.toContain('()');
+          expect(text).not.toContain('{');
+          expect(text).not.toContain('undefined');
+        }
+      }
+    });
+
+    it('leaves the days out when only one of them came', () => {
+      const text = notificationText(row('LEAVE_CONSENT_REQUESTED', { studentName: 'Alva Elev', startDate: '2026-11-02' }), translatorFor('sv'), 'sv');
+      expect(text).toBe('Ledighetsansökan för Alva Elev väntar på ditt samtycke.');
+    });
   });
 
   it.each([

@@ -1,4 +1,5 @@
 import { TeacherContractKind, TeacherEmploymentForm } from '@prisma/client';
+import { Transform } from 'class-transformer';
 import {
   IsDivisibleBy,
   IsEnum,
@@ -24,6 +25,16 @@ import {
 } from '../../common/stretch';
 import { MAX_TEACHING_DAYS_PER_WEEK_MAX, MAX_TEACHING_DAYS_PER_WEEK_MIN } from '../../common/teacher-day';
 
+/** Löne-id's bound, the table's CHECK TeacherEmployments_payrollNumber_check (20270206090000). */
+export const PAYROLL_NUMBER_MAX = 30;
+
+/** Trimmed, and an empty value is no value: the table holds NULL, never ''. Anything not a string is the validators'. */
+const trimmedOrNull = ({ value }: { value: unknown }) => {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+};
+
 /**
  * En lärares tjänst för ett läsår: tjänstgöringsgrad, nedsättning, avtal.
  *
@@ -47,7 +58,8 @@ import { MAX_TEACHING_DAYS_PER_WEEK_MAX, MAX_TEACHING_DAYS_PER_WEEK_MIN } from '
  * (maxTeachingDaysPerWeek, 20261123090000) came later still, and is read the
  * same way for the same reason; so is the limit on teaching in a row
  * (maxConsecutiveTeachingMinutes and consecutiveBreakMinutes, 20261218090000),
- * which is sent as a pair or not at all (see the field).
+ * which is sent as a pair or not at all (see the field). Löne-id
+ * (payrollNumber, 20270206090000) is the newest, and the same.
  *
  * THREE DECIMALS on the two percentages, because SCB and IST report a share of
  * a post "upp till tre decimaler" and 66,667 is how a two-thirds post is
@@ -110,6 +122,20 @@ export class UpsertTeacherEmploymentDto {
   @IsString({ message: 'Anteckningen anges som text.' })
   @MaxLength(500, { message: 'Anteckningen kan vara högst 500 tecken.' })
   note?: string | null;
+
+  /**
+   * Löne-id: the payroll system's own number for the anställning, which the
+   * löneunderlag's Löne-id column carries (20270206090000). Trimmed, and blank
+   * is null; 1..30 characters and no line break or other control character, as
+   * the table's CHECK says. HR data. Absent: as stored (see the class comment).
+   */
+  @IsOptional()
+  @Transform(trimmedOrNull)
+  @IsString({ message: 'Löne-id anges som text.' })
+  @MaxLength(PAYROLL_NUMBER_MAX, { message: `Löne-id kan vara högst ${PAYROLL_NUMBER_MAX} tecken.` })
+  // The control characters spelled out, not \p{Cc}: the pattern is also the OpenAPI document's, read without flags.
+  @Matches(/^[^\u0000-\u001f\u007f-\u009f]*$/, { message: 'Löne-id kan inte innehålla radbrytningar eller andra styrtecken.' })
+  payrollNumber?: string | null;
 
   /**
    * Anställningsform, as SCB's Pedagogisk personal asks it: tillsvidare or

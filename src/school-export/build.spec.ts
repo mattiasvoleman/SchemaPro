@@ -269,6 +269,51 @@ describe('buildArchive for a protected person', () => {
   });
 });
 
+describe('buildArchive for a member of staff who registered external bookings (Lokal)', () => {
+  const REGISTRAR = '22222222-2222-4222-8222-222222222222';
+  const SERIES = '55555555-5555-4555-8555-555555555555';
+
+  it('writes the series with the hirer as (dold) where the cell has something, and keeps the act: who registered it, when, which room', async () => {
+    const series = tableFiles().find((file) => file.table === 'ExternalBookings')!;
+    const row = (patch: Record<string, unknown> = {}) => ({
+      id: SERIES,
+      roomId: '66666666-6666-4666-8666-666666666666',
+      organisation: 'Idrottsföreningen Lejonen',
+      contactName: 'Kim Kontakt',
+      contactPhone: null,
+      contactEmail: 'kim@lejonen.example',
+      purpose: 'Träning',
+      note: null,
+      weekdays: [2],
+      registeredById: REGISTRAR,
+      createdAt: '2027-01-19T12:00:00Z',
+      ...patch,
+    });
+    const tx = {
+      $queryRaw: jest.fn(async (sql: { strings?: string[] } | TemplateStringsArray) => {
+        const text = Array.isArray(sql) ? (sql as TemplateStringsArray).join('?') : ((sql as { strings: string[] }).strings ?? []).join('?');
+        if (text.includes('FROM "Users"')) return [{ id: REGISTRAR, first: 'Eva', last: 'Expedition', email: 'eva@x.example', role: 'SCHOOL_ADMIN' }];
+        return [row(), row({ id: 'second', contactEmail: null, contactPhone: '070-1234567', purpose: null, note: 'Nyckel hos vaktmästaren' })].map((item) => ({ j: JSON.stringify(item) }));
+      }),
+    };
+
+    const { files, result } = await build({
+      kind: 'person', exempt: [REGISTRAR], scope: { ids: [REGISTRAR] }, dataFiles: [], tables: [series], read: (fn) => fn(tx as never),
+    });
+
+    const text = files.get(series.path)!.toString('utf8');
+    expect(text).toBe(
+      '﻿id;roomId;organisation;contactName;contactPhone;contactEmail;purpose;note;weekdays;registeredById;createdAt\r\n' +
+        `${SERIES};66666666-6666-4666-8666-666666666666;(dold);(dold);;(dold);(dold);;[2];${REGISTRAR};2027-01-19T12:00:00Z\r\n` +
+        `second;66666666-6666-4666-8666-666666666666;(dold);(dold);(dold);;;(dold);[2];${REGISTRAR};2027-01-19T12:00:00Z\r\n`,
+    );
+    for (const secret of ['Lejonen', 'Kim', 'kim@lejonen.example', '070-1234567', 'Träning', 'Nyckel hos vaktmästaren']) expect(text).not.toContain(secret);
+    // A cell that is hidden for somebody else's sake is not a cell held back for a protected identity: it is not counted as one.
+    expect(result.files.find((file) => file.path === series.path)).toMatchObject({ rows: 2 });
+    expect(result.files.find((file) => file.path === series.path)?.blankedCells).toBeUndefined();
+  });
+});
+
 describe('buildArchive for someone who is not protected, whose table rows are about a pupil', () => {
   const TEACHER = '22222222-2222-4222-8222-222222222222';
   const PUPIL = '55555555-5555-4555-8555-555555555555';
@@ -308,6 +353,30 @@ describe('buildArchive for someone who is not protected, whose table rows are ab
         `p2;${OWN_PUPIL};MISSING;;2026-11-05T09:01:00Z;${TEACHER}\r\n`,
     );
     expect(result.files.find((file) => file.path === pupils.path)?.blankedCells).toBe(3);
+  });
+
+  it("leaves a teacher's extract of the moves they made without the pupil, the lessons and the colleague's note about the child, and gives the pupil's own all of it", async () => {
+    const moves = tableFiles().find((file) => file.table === 'LessonPupilMoves')!;
+    const NOTE = 'Anmäld av mamma: kontroll på BUP';
+    const OTHER_TEACHER = '77777777-7777-4777-8777-777777777777';
+    const row = {
+      id: 'm1',
+      studentId: PUPIL,
+      fromLessonId: '88888888-8888-4888-8888-888888888881',
+      toLessonId: '88888888-8888-4888-8888-888888888882',
+      movedById: TEACHER,
+      displacedMark: { status: 'EXCUSED', note: NOTE, recordedAt: '2026-11-05T08:00:00Z', recordedById: OTHER_TEACHER },
+      createdAt: '2026-11-05T09:00:00Z',
+    };
+    const tx = databaseOf({ LessonPupilMoves: [row] });
+    const teachers = await build({ kind: 'person', exempt: [TEACHER], scope: { ids: [TEACHER] }, dataFiles: [], tables: [moves], read: (fn) => fn(tx as never) });
+    const theirs = teachers.files.get(moves.path)!.toString('utf8');
+    expect(theirs).toBe(`﻿id;studentId;fromLessonId;toLessonId;movedById;displacedMark;createdAt\r\nm1;;;;${TEACHER};;2026-11-05T09:00:00Z\r\n`);
+    for (const secret of [PUPIL, NOTE, 'BUP', OTHER_TEACHER, row.fromLessonId, row.toLessonId]) expect(theirs).not.toContain(secret);
+
+    const pupils = await build({ kind: 'person', exempt: [PUPIL], scope: { ids: [PUPIL] }, dataFiles: [], tables: [moves], read: (fn) => fn(tx as never) });
+    const own = pupils.files.get(moves.path)!.toString('utf8');
+    for (const kept of [PUPIL, NOTE, row.fromLessonId, row.toLessonId, TEACHER]) expect(own).toContain(kept);
   });
 
   it("empties free text that names another pupil or guardian in full, not a colleague and not a first name, and counts it", async () => {

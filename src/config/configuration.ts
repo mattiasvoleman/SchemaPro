@@ -88,13 +88,28 @@ export interface AbsenceWatchConfig {
   background: boolean;
 }
 
+export interface MealLetterConfig {
+  /** The daily letter to the kitchen (MEAL_LETTER_BACKGROUND, default on). */
+  background: boolean;
+}
+
 export interface ReportingRateConfig {
   /** The nightly reporting rate (REPORTING_RATE_BACKGROUND, default on). */
   background: boolean;
 }
 
+export interface AbsenceStatsConfig {
+  /** The nightly months' sums of Frånvarostatistik (ABSENCE_STATS_BACKGROUND, default on). */
+  background: boolean;
+}
+
 export interface AckConfig {
   /** The reminder pass of Kvittens (ACK_BACKGROUND, default on). */
+  background: boolean;
+}
+
+export interface LeaveConsentConfig {
+  /** The pass over the leave requests that wait for every guardian's consent (LEAVE_CONSENT_BACKGROUND, default on). */
   background: boolean;
 }
 
@@ -136,8 +151,11 @@ export interface Configuration {
   coverRequests: CoverRequestsConfig;
   crisis: CrisisConfig;
   absenceWatch: AbsenceWatchConfig;
+  mealLetter: MealLetterConfig;
   reportingRate: ReportingRateConfig;
+  absenceStats: AbsenceStatsConfig;
   ack: AckConfig;
+  leaveConsent: LeaveConsentConfig;
   candidates: CandidatesConfig;
 }
 
@@ -213,11 +231,20 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     absenceWatch: {
       background: env.ABSENCE_WATCH_BACKGROUND !== 'off',
     },
+    mealLetter: {
+      background: env.MEAL_LETTER_BACKGROUND !== 'off',
+    },
     reportingRate: {
       background: env.REPORTING_RATE_BACKGROUND !== 'off',
     },
+    absenceStats: {
+      background: env.ABSENCE_STATS_BACKGROUND !== 'off',
+    },
     ack: {
       background: env.ACK_BACKGROUND !== 'off',
+    },
+    leaveConsent: {
+      background: env.LEAVE_CONSENT_BACKGROUND !== 'off',
     },
     candidates: {
       maxSeconds: env.CANDIDATE_MAX_SECONDS ?? DEFAULT_CANDIDATES_CONFIG.maxSeconds,

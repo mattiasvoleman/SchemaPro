@@ -527,7 +527,7 @@ describe("a new request", () => {
     ["ACK_NO_GUARDIANS", 422, "Ingen av eleverna har en vårdnadshavare att fråga."],
     ["ACK_UNKNOWN_PUPIL", 422, "En av eleverna finns inte längre på skolan. Elevlistan är uppdaterad: kontrollera dina val och försök igen."],
     ["ACK_TOO_MANY_REQUESTS", 429, "Du har skickat så många förfrågningar den senaste timmen att fler inte får skickas just nu. Inget har skickats. Försök igen om en stund."],
-    ["ACK_SENDER_DAY_LIMIT", 429, "Du har bett om så många kvittenser det senaste dygnet att den här förfrågan skulle gå över din andel av dagen. Inget har skickats. Välj färre elever eller försök igen senare: din andel räknas över de senaste 24 timmarna."],
+    ["ACK_SENDER_DAY_LIMIT", 429, "Du har bett om så många kvittenser det senaste dygnet att den här förfrågan skulle gå över din andel av dagen. Inget har skickats. Välj färre elever eller försök igen senare: din andel räknas över de senaste 24 timmarna. Måste förfrågan gå ut nu kan en annan administratör skicka den, eftersom var och en har en egen andel."],
     ["ACK_TOO_MANY_RECIPIENTS", 429, "Skolan har skickat så många kvittenser i dag att den här förfrågan skulle gå över dagens gräns. Inget har skickats. Välj färre elever eller försök igen i morgon."],
   ])("says a refusal (%s) in the form, in Swedish, with everything typed and chosen still there", async (code, status, sentence) => {
     const user = userEvent.setup();
@@ -1011,7 +1011,7 @@ describe("English", () => {
     await user.paste("På torsdag");
     await user.click(screen.getByRole("button", { name: "Send request" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "You have asked for so many acknowledgements in the last 24 hours that this request would go over your share of the day. Nothing has been sent.",
+      "You have asked for so many acknowledgements in the last 24 hours that this request would go over your share of the day. Nothing has been sent. Choose fewer pupils or try again later: your share is counted over the last 24 hours. If the request has to go out now, another administrator can send it, since each administrator has a share of their own.",
     );
   });
 });

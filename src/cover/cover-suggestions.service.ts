@@ -597,7 +597,8 @@ export async function basisOf(tx: PrismaClient, date: string, timezone: string):
     })) ?? [];
   const bookings =
     (await tx.roomBooking.findMany({
-      where: { status: { in: ['PENDING', 'APPROVED'] }, startsAt: { lt: bounds.end }, endsAt: { gt: bounds.start } },
+      // externalBookingId: null — the basis counts the people a booking makes busy, and a day of an external hire makes nobody busy (Lokal).
+      where: { status: { in: ['PENDING', 'APPROVED'] }, externalBookingId: null, startsAt: { lt: bounds.end }, endsAt: { gt: bounds.start } },
       select: { id: true, bookedById: true, startsAt: true, endsAt: true, status: true },
       orderBy: { id: 'asc' },
     })) ?? [];

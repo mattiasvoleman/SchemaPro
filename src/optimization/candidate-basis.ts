@@ -42,8 +42,11 @@ import type {
  * needs the engine actually read are the right granularity.
  *
  * Left out: requestId (fresh per request), weights and search (they differ
- * between the candidates of one run by design), and a caller's body rules
- * (a candidate run has none; the school's stored rules are in `rules`).
+ * between the candidates of one run by design), `relaxation` (Bästa möjliga
+ * schema: the run's own question of the same week, not a fact about it; a
+ * candidate that asked it carries its answer in its own `deviations`), and a
+ * caller's body rules (a candidate run has none; the school's stored rules
+ * are in `rules`).
  */
 
 /** Bumped when what a part covers changes, so an old run reads as stale rather than equal. */
@@ -68,6 +71,8 @@ export const BASIS_PAYLOAD_FIELDS = [
   'groups',
   'lunchPlacements',
   'lunchServings',
+  'placementRules',
+  'placements',
   'previousLessons',
   'pupilGaps',
   'rasts',
@@ -85,7 +90,7 @@ export const BASIS_PAYLOAD_FIELDS = [
  * sends the school's stored rules, which the basis reads), the weights and
  * the search, which differ between the candidates of one run by design.
  */
-export const BASIS_EXCLUDED_FIELDS = ['academicYearId', 'requestId', 'rules', 'search', 'weights'] as const;
+export const BASIS_EXCLUDED_FIELDS = ['academicYearId', 'relaxation', 'requestId', 'rules', 'search', 'weights'] as const;
 export type BasisPart = (typeof BASIS_PARTS)[number];
 export type BasisParts = Record<BasisPart, string>;
 
@@ -144,6 +149,8 @@ export type BasisPayload = Pick<
   | 'groupConflicts'
   | 'siteTravelTimes'
   | 'pupilGaps'
+  | 'placementRules'
+  | 'placements'
 >;
 
 /**
@@ -279,6 +286,41 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
   const realOrNull = (anonId: string | null | undefined): string | null =>
     anonId === null || anonId === undefined ? null : realOf(anonId);
   const { payload } = source;
+  const requirementContent = (requirement: AiEngineScheduleRequest['requirements'][number]) => ({
+    ...requirement,
+    id: realOf(requirement.id),
+    subjectId: realOf(requirement.subjectId),
+    studentGroupId: realOf(requirement.studentGroupId),
+    // Ersättande grupper: the derived key, in real ids ("7A~SvA7"). Only
+    // on a requirement sent with one, so every other part hashes as before.
+    ...(requirement.pupilGroupId !== undefined ? { pupilGroupId: realOf(requirement.pupilGroupId) } : {}),
+    teacherId: realOrNull(requirement.teacherId),
+    coTeacherId: realOrNull(requirement.coTeacherId),
+    requiredRoomType: realOrNull(requirement.requiredRoomType),
+    ...(requirement.blockId !== undefined ? { blockId: realOf(requirement.blockId) } : {}),
+    // Delade lektioner: each lesson's teacher, so shares changed since the
+    // run make it stale. As [length, teacher] pairs, because the digest
+    // sorts every array (canonicalJson) and a list of teachers sorted
+    // apart from its lengths could not tell Bo's 40 from Bo's 80. Only on
+    // a post sent with the list.
+    ...(requirement.lessonTeacherIds !== undefined
+      ? {
+          lessonTeacherIds: requirement.lessonTeacherIds.map((anon, index) => [
+            requirement.lessonLengths?.[index] ?? requirement.minutesPerLesson,
+            realOrNull(anon),
+          ]),
+        }
+      : {}),
+  });
+  /*
+   * Förlagda poster: the fixed lessons that are förläggningar. They are the
+   * timplan's (a row on a post), not the grundschema's preserved lessons, so
+   * they enter the requirements' part — "Lärare eller timplan" — and stay out
+   * of the preserved part, which an apply compares with the preserved masters
+   * in the database (preservedPartOf), where a förläggning is no row.
+   */
+  const placedFixed = new Set((payload.placements?.lessons ?? []).map((lesson) => lesson.fixedLessonId));
+  const fixedById = new Map(payload.fixedLessons.map((lesson) => [lesson.id, lesson]));
 
   return {
     // As sent, every field, so a field the engine is sent later is covered the
@@ -289,35 +331,26 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
     // stale. Only when there are any, so the part of a school without a
     // block on another's times hashes what it always did.
     requirements: [
-      ...payload.requirements.map((requirement) => ({
-        ...requirement,
-        id: realOf(requirement.id),
-        subjectId: realOf(requirement.subjectId),
-        studentGroupId: realOf(requirement.studentGroupId),
-        // Ersättande grupper: the derived key, in real ids ("7A~SvA7"). Only
-        // on a requirement sent with one, so every other part hashes as before.
-        ...(requirement.pupilGroupId !== undefined ? { pupilGroupId: realOf(requirement.pupilGroupId) } : {}),
-        teacherId: realOrNull(requirement.teacherId),
-        coTeacherId: realOrNull(requirement.coTeacherId),
-        requiredRoomType: realOrNull(requirement.requiredRoomType),
-        ...(requirement.blockId !== undefined ? { blockId: realOf(requirement.blockId) } : {}),
-        // Delade lektioner: each lesson's teacher, so shares changed since the
-        // run make it stale. As [length, teacher] pairs, because the digest
-        // sorts every array (canonicalJson) and a list of teachers sorted
-        // apart from its lengths could not tell Bo's 40 from Bo's 80. Only on
-        // a post sent with the list.
-        ...(requirement.lessonTeacherIds !== undefined
-          ? {
-              lessonTeacherIds: requirement.lessonTeacherIds.map((anon, index) => [
-                requirement.lessonLengths?.[index] ?? requirement.minutesPerLesson,
-                realOrNull(anon),
-              ]),
-            }
-          : {}),
-      })),
+      ...payload.requirements.map(requirementContent),
       ...(source.mirrors ?? []).map((row) => ({ ...row })),
+      // Only when a post has one, so every other school's part hashes as
+      // before: each förläggning by its content and post, and the posts as
+      // they would be with none.
+      ...(payload.placements !== undefined
+        ? [
+            {
+              placements: payload.placements.lessons.map((lesson) => ({
+                ...fixedLessonContent(fixedById.get(lesson.fixedLessonId)!, realOf),
+                requirementId: realOf(lesson.requirementId),
+              })),
+              released: payload.placements.requirements.map(requirementContent),
+            },
+          ]
+        : []),
     ],
-    preserved: payload.fixedLessons.map((lesson) => fixedLessonContent(lesson, realOf)),
+    preserved: payload.fixedLessons
+      .filter((lesson) => !placedFixed.has(lesson.id))
+      .map((lesson) => fixedLessonContent(lesson, realOf)),
     draft: {
       previousLessons: payload.previousLessons.map((lesson) => ({
         ...lesson,
@@ -331,6 +364,10 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
         id: realOf(room.id),
         type: realOrNull(room.type),
         ...(room.siteId !== undefined ? { siteId: realOf(room.siteId) } : {}),
+        // Placeringsregler: the building is a token minted per request and
+        // mapped back (buildingAnonMap), so two reads of an unchanged school
+        // agree. Only on a room sent with one; `shareable` rides the spread.
+        ...(room.building !== undefined ? { building: realOf(room.building) } : {}),
       })),
       // Restid i generatorn: the walks, with the rooms' sites above, in the
       // rooms' part. The key is sent only when the school turned the walk on
@@ -393,6 +430,29 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
       // Elevernas håltimmar: the switch, as the walk's is, present only when
       // the cohorts were sent. Their content is the rosters' part's.
       ...(payload.pupilGaps !== undefined ? { keepsPupilGapsDown: true } : {}),
+      // Placeringsregler: the rules the school turned on, the subjects of rule
+      // 1 in real ids. A rule turned on, off or changed after a run makes that
+      // run stale, which is the truth: it was solved under other rules. Present
+      // only when the key was sent, so every other school's part hashes as
+      // before and its batches stay fresh across the release that added it.
+      ...(payload.placementRules !== undefined
+        ? {
+            placementRules: {
+              ...payload.placementRules,
+              ...(payload.placementRules.subjectEdges !== undefined
+                ? {
+                    subjectEdges: {
+                      ...payload.placementRules.subjectEdges,
+                      subjects: payload.placementRules.subjectEdges.subjects.map((row) => ({
+                        ...row,
+                        subjectId: realOf(row.subjectId),
+                      })),
+                    },
+                  }
+                : {}),
+            },
+          }
+        : {}),
       storedRules: source.storedRules,
     },
     rosters: {
@@ -408,6 +468,16 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
             lockedPupils: payload.fixedLessons
               .filter((lesson) => lesson.pupilGroupIds !== undefined)
               .map((lesson) => ({ ...fixedLessonContent(lesson, realOf), pupilGroupIds: lesson.pupilGroupIds!.map(realOf) })),
+          }
+        : {}),
+      // Placeringsregler: how many pupils sit a lock in a shared room, which
+      // the room's capacity is held against. Beside the lock it is of; only
+      // when a lock carries one, so every other school's part hashes as before.
+      ...(payload.fixedLessons.some((lesson) => lesson.studentCount !== undefined)
+        ? {
+            lockedStudentCounts: payload.fixedLessons
+              .filter((lesson) => lesson.studentCount !== undefined)
+              .map((lesson) => ({ ...fixedLessonContent(lesson, realOf), studentCount: lesson.studentCount })),
           }
         : {}),
       // Elevernas håltimmar: the pupils' cohorts, in real ids (a lock by its

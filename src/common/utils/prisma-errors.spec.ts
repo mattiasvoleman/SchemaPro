@@ -21,6 +21,8 @@ import {
   enrolmentClassKeyRefusal,
   isTimplanInUseRefusal,
   listNames,
+  requirementPlacementsConflict,
+  requirementPlacementsRefusal,
   rethrowPrismaError,
   rolloverLinkRefusal,
   teacherDutyBlockRefusal,
@@ -794,5 +796,115 @@ describe('areaRefusal', () => {
     expect(areaRefusal(driverError('SS403', 'SS12000_SECRET_REFUSED: bara skolans administratör'))).toBeNull();
     expect(areaRefusal(knownError('P2039'))).toBeNull();
     expect(areaRefusal(Object.assign(new Error('Code: `AR403`'), { code: 'P2039' }))).toBeNull();
+  });
+});
+
+/**
+ * Förlagda poster's triggers as @prisma/adapter-pg hands them over: SQLSTATE
+ * FP409 (a class PostgreSQL does not define, so P2039 with the driver's
+ * fields under the cause), the rule as the message's first word, DETAIL
+ * `requirementId=<uuid> reason=<RULE>`.
+ */
+const REQUIREMENT_ID = '5b0c1f4e-9f3a-4c21-8a53-0d7a8b7d1c11';
+const placementRefusal = (
+  reason: string,
+  options: { meta?: boolean; code?: string } = {},
+): Prisma.PrismaClientKnownRequestError => {
+  const code = options.code ?? 'FP409';
+  const message = `${reason}: udda och jämna veckor av samma längd måste förläggas i par`;
+  return new Prisma.PrismaClientKnownRequestError(
+    `\nInvalid \`tx.teachingRequirementPlacement.createMany()\` invocation:\n\nDatabase error. Code: \`${code}\`. Message: \`${message}\``,
+    {
+      code: 'P2039',
+      clientVersion: Prisma.prismaVersion.client,
+      meta:
+        options.meta === false
+          ? { modelName: 'TeachingRequirementPlacement' }
+          : {
+              modelName: 'TeachingRequirementPlacement',
+              driverAdapterError: {
+                name: 'DriverAdapterError',
+                cause: {
+                  originalCode: code,
+                  originalMessage: message,
+                  kind: 'postgres',
+                  detail: `requirementId=${REQUIREMENT_ID} reason=${reason}`,
+                },
+              },
+            },
+    },
+  );
+};
+
+describe('requirementPlacementsRefusal', () => {
+  it.each(['LENGTH', 'COUNT', 'WEEKS', 'PAIRS', 'BLOCK', 'SHARES', 'POST'])('reads %s and the post off the driver cause', (reason) => {
+    expect(requirementPlacementsRefusal(placementRefusal(reason))).toEqual({ requirementId: REQUIREMENT_ID, reason });
+  });
+
+  it('still recognises the refusal from the rendered message when the meta is gone, with the rule from its first word', () => {
+    expect(requirementPlacementsRefusal(placementRefusal('PAIRS', { meta: false }))).toEqual({
+      requirementId: null,
+      reason: 'PAIRS',
+    });
+  });
+
+  it('knows a refusal whose rule the gateway has no sentence for (ISOLATION) as this refusal, with no reason', () => {
+    expect(requirementPlacementsRefusal(placementRefusal('ISOLATION'))).toEqual({ requirementId: REQUIREMENT_ID, reason: null });
+  });
+
+  it('is not fooled by the decided-plan trigger\'s TP409, another database error or a lookalike', () => {
+    expect(requirementPlacementsRefusal(triggerRefusal())).toBeNull();
+    expect(requirementPlacementsRefusal(placementRefusal('PAIRS', { code: 'TP409' }))).toBeNull();
+    expect(requirementPlacementsRefusal(knownError('P2039'))).toBeNull();
+    expect(requirementPlacementsRefusal(Object.assign(new Error('Code: `FP409`'), { code: 'P2039' }))).toBeNull();
+    expect(requirementPlacementsRefusal(undefined)).toBeNull();
+  });
+
+  it('is left alone by the decided-plan reader, as that one is by this', () => {
+    expect(decidedTimplanRefusal(placementRefusal('PAIRS'))).toBeNull();
+    expect(requirementPlacementsRefusal(triggerRefusal())).toBeNull();
+  });
+});
+
+describe('requirementPlacementsConflict', () => {
+  it.each(['LENGTH', 'COUNT', 'WEEKS', 'PAIRS', 'BLOCK', 'SHARES', 'POST'] as const)(
+    'says %s in a sentence and puts the rule in params, where the filter forwards it',
+    (reason) => {
+      const conflict = requirementPlacementsConflict(reason);
+      expect(conflict.getStatus()).toBe(409);
+      const body = conflict.getResponse() as { message: string; code: string; params: unknown; reason: string };
+      expect(body.code).toBe('REQUIREMENT_PLACEMENTS_DO_NOT_FIT');
+      expect(body.params).toEqual({ reason });
+      expect(body.reason).toBe(reason);
+      expect(body.message.length).toBeGreaterThan(20);
+    },
+  );
+
+  it('answers an unnamed rule with the code and a general sentence, no params', () => {
+    const body = requirementPlacementsConflict(null).getResponse() as Record<string, unknown>;
+    expect(body['code']).toBe('REQUIREMENT_PLACEMENTS_DO_NOT_FIT');
+    expect(body['params']).toBeUndefined();
+  });
+});
+
+describe('rethrowPrismaError and Förlagda poster', () => {
+  const thrown = (error: unknown): unknown => {
+    try {
+      rethrowPrismaError(error);
+    } catch (caught) {
+      return caught;
+    }
+    return undefined;
+  };
+
+  it('turns the trigger\'s refusal into the 409 naming the rule, from whichever writer met it', () => {
+    const conflict = thrown(placementRefusal('SHARES')) as ConflictException;
+    expect(conflict).toBeInstanceOf(ConflictException);
+    expect(conflict.getResponse()).toMatchObject({ code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'SHARES' } });
+  });
+
+  it('keeps the decided plan\'s TP409 a decided plan', () => {
+    const conflict = thrown(triggerRefusal('Grundskolan 2024')) as ConflictException;
+    expect(conflict.getResponse()).toMatchObject({ code: TIMPLAN_IS_DECIDED });
   });
 });

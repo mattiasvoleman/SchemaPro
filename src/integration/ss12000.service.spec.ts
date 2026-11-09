@@ -297,7 +297,7 @@ describe('Ss12000Service', () => {
       await service.persons(SCHOOL_ID);
 
       expect(tx.user.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ orderBy: { lastName: 'asc' } }),
+        expect.objectContaining({ orderBy: [{ lastName: 'asc' }, { id: 'asc' }] }),
       );
     });
   });
@@ -562,7 +562,7 @@ describe('Ss12000Service', () => {
 
       expect(tx.masterLesson.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+          orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
         }),
       );
     });
@@ -656,7 +656,7 @@ describe('Ss12000Service', () => {
               lte: new Date('2026-08-31T00:00:00.000Z'),
             },
           },
-          orderBy: { startsAt: 'asc' },
+          orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
         }),
       );
     });
@@ -746,6 +746,14 @@ describe('Ss12000Service', () => {
             .map((pupil) => ({ id: pupil.id, studentGroupId: pupil.homeGroupId })),
         ),
       );
+      // Elevens lektion för dagen: the fixture's lessons with pupils moved off them for the day. An event reads
+      // the moves of its lesson (under the service principal); an activity is the template and reads none.
+      const moves = PUPIL_LIST.lessons.flatMap((lesson) =>
+        ((lesson as { movedOff?: string[] }).movedOff ?? []).map((studentId) => ({ fromLessonId: lesson.id, studentId })),
+      );
+      tx.lessonPupilMove.findMany.mockImplementation(({ where }: { where: { fromLessonId?: { in: string[] } } }) =>
+        Promise.resolve(moves.filter((move) => inList(where.fromLessonId, move.fromLessonId))),
+      );
       const shape = (lesson: (typeof PUPIL_LIST.lessons)[number]) => ({
         id: lesson.id,
         subject: { id: lesson.subjectId, name: subject(lesson.subjectId).name },
@@ -781,23 +789,28 @@ describe('Ss12000Service', () => {
       );
     };
 
-    const excludedBy = (data: Array<{ id: string; excludedStudentIds?: string[] }>) =>
-      Object.fromEntries(PUPIL_LIST.lessons.map((lesson) => [lesson.name, data.find((row) => row.id === lesson.id)!.excludedStudentIds ?? null]));
-    const expectedBy = (school: PupilListSchool) =>
-      Object.fromEntries(PUPIL_LIST.lessons.map((lesson) => [lesson.name, school.expected[lesson.id]!.off.length > 0 ? school.expected[lesson.id]!.off : null]));
+    // The lessons an activity can be: those with nobody moved off them, since a move is dated and belongs to events.
+    const templates = PUPIL_LIST.lessons.filter((lesson) => ((lesson as { movedOff?: string[] }).movedOff ?? []).length === 0);
+    const excludedBy = (data: Array<{ id: string; excludedStudentIds?: string[] }>, lessons: readonly (typeof PUPIL_LIST.lessons)[number][] = PUPIL_LIST.lessons) =>
+      Object.fromEntries(lessons.map((lesson) => [lesson.name, data.find((row) => row.id === lesson.id)!.excludedStudentIds ?? null]));
+    const expectedBy = (school: PupilListSchool, lessons: readonly (typeof PUPIL_LIST.lessons)[number][] = PUPIL_LIST.lessons) =>
+      Object.fromEntries(lessons.map((lesson) => [lesson.name, school.expected[lesson.id]!.off.length > 0 ? school.expected[lesson.id]!.off : null]));
 
     it.each([WITH_SVA, WITHOUT].map((school) => [school.name, school] as const))('%s: activities and events leave out exactly the pupils THE RULE takes off', async (_name, school) => {
       arrangeSchool(school);
       const events = await service.calendarEvents(SCHOOL_ID, '2026-10-19', '2026-10-19');
       expect(excludedBy(events.data)).toEqual(expectedBy(school));
       const activities = await service.activities(SCHOOL_ID);
-      expect(excludedBy(activities.data)).toEqual(expectedBy(school));
+      expect(excludedBy(activities.data, templates)).toEqual(expectedBy(school, templates));
     });
 
     it('a school with no replacing group sends the very payload it sent before: no excludedStudentIds key, nothing more read', async () => {
       arrangeSchool(WITHOUT);
       const events = await service.calendarEvents(SCHOOL_ID, '2026-10-19', '2026-10-19');
-      expect(events.data.every((event) => !('excludedStudentIds' in event))).toBe(true);
+      // (A pupil moved off a lesson for the day is excluded from its event whether or not the school has a replacing
+      // group: the lessons with nobody moved off them are the ones whose payload is main's.)
+      const templateIds = new Set(templates.map((lesson) => lesson.id));
+      expect(events.data.filter((event) => templateIds.has(event.id)).every((event) => !('excludedStudentIds' in event))).toBe(true);
       const activities = await service.activities(SCHOOL_ID);
       expect(activities.data.every((activity) => !('excludedStudentIds' in activity))).toBe(true);
       // Only the list of replacing groups was asked: no membership, no pupil.

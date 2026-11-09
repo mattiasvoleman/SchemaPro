@@ -1,5 +1,5 @@
 import "server-only";
-import { BarChart3, BookOpen, CalendarDays, CalendarRange, ClipboardCheck, MapPin, Scale, UserX } from "lucide-react";
+import { BarChart3, BookOpen, Boxes, CalendarDays, CalendarRange, ClipboardCheck, MapPin, Scale, UserX } from "lucide-react";
 import type { NavGroup } from "./role-nav";
 
 /* The teacher's menu (see role-nav.tsx for how it reaches the shell). */
@@ -8,6 +8,10 @@ export const TEACHER_NAV: NavGroup[] = [
     labelKey: null,
     items: [
       { labelKey: "mySchedule", href: "/teacher", icon: CalendarDays },
+      // Klasslärarens schema (G5): the class's week and template, changed inside what the
+      // schemaläggare has opened. Always in the menu, as Frånvarobevakning is: a teacher who is
+      // nobody's klasslärare gets the page's own explanation. The week's icon.
+      { labelKey: "classSchedule", href: "/teacher/klass-schema", icon: CalendarDays },
       // Larm (Krisläge): the pupils of the teacher's groups to tick off when
       // the school starts an alarm. Second, so that it is in reach on a phone
       // without scrolling the menu. The attendance icon.
@@ -17,6 +21,9 @@ export const TEACHER_NAV: NavGroup[] = [
       // homework. The admin menu's subjects icon.
       { labelKey: "classBook", href: "/teacher/klassbok", icon: BookOpen },
       { labelKey: "roomBooking", href: "/teacher/rooms", icon: MapPin },
+      // Boka resurs: tablets, a minibus, the hall, for a time; beside the lokal booking it is made like.
+      // The admin menu's Resurser icon.
+      { labelKey: "myResources", href: "/teacher/resources", icon: Boxes },
       // Skolans dag: the school's day and week, in the form the school has
       // decided teachers get (the page says so when it has decided none). The
       // week's icon.
@@ -41,6 +48,10 @@ export const TEACHER_NAV: NavGroup[] = [
       // Kvittens: ask the guardians of the teacher's mentees to confirm a message. Always in
       // the menu: the page says so when the school has not turned it on. The attendance icon.
       { labelKey: "acknowledgements", href: "/teacher/acknowledgements", icon: ClipboardCheck },
+      // Checklistor: tick off the pupils of one's groups who have had an instruction, and keep a mentor
+      // class's consent list. Always in the menu: a teacher who teaches nobody gets an empty list, said
+      // kindly. The attendance icon.
+      { labelKey: "checklists", href: "/teacher/checklists", icon: ClipboardCheck },
       { labelKey: "calendarFeed", href: "/calendar-feed", icon: CalendarRange },
     ],
   },

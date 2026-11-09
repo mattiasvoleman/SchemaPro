@@ -577,6 +577,8 @@ describe('YearRolloverService — rollover execute', () => {
         // The limit on teaching in a row (20261218090000), a pair.
         maxConsecutiveTeachingMinutes: 180,
         consecutiveBreakMinutes: 30,
+        // Löne-id (20270206090000): the anställning's, so it goes on with the post.
+        payrollNumber: '4711-01',
       });
     }
     const { world, service } = setup(rows);
@@ -849,9 +851,10 @@ describe('YearRolloverService — rollover execute', () => {
             annasPost['lecturerPercent'],
             annasPost['maxConsecutiveTeachingMinutes'],
             annasPost['consecutiveBreakMinutes'],
+            annasPost['payrollNumber'],
           ]
         : null,
-    ).toEqual(carryStaffing ? [4, 'VISSTID', 20, 10, 180, 30] : null);
+    ).toEqual(carryStaffing ? [4, 'VISSTID', 20, 10, 180, 30, '4711-01'] : null);
     // The block was carried and its rows joined it.
     expect([...new Set(blockRules)].sort()).toEqual(['MAP_BLOCK', 'PROMOTE_BLOCK_NAME']);
     // Both ways a timplan row is written were audited.

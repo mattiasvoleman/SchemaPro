@@ -121,6 +121,7 @@ describe('hr-visibility', () => {
       'maxTeachingDaysPerWeek',
       'maxConsecutiveTeachingMinutes',
       'consecutiveBreakMinutes',
+      'payrollNumber',
     ]);
     const row = Object.fromEntries(EMPLOYMENT_HR_FIELDS.map((field) => [field, 1]));
     const hidden = hideHr({ userId: 'u', employmentPercent: 80, reductionPercent: 0, ...row }) as Record<string, unknown>;
@@ -212,11 +213,13 @@ describe('hr-visibility', () => {
     ];
     // Said to have changed, not to what: every post has a value.
     const SAID = ['employmentPercent', 'reductionPercent', 'employmentForm', 'firstTeacherPercent', 'lecturerPercent'];
-    // Left out whole: null on most posts (the days, the limit's pair), or what the post withholds (the note).
+    // Left out whole: null on most posts (the days, the limit's pair, Löne-id until the school writes one), or what
+    // the post withholds (the note).
     const LEFT_OUT = [
       'maxTeachingDaysPerWeek',
       'maxConsecutiveTeachingMinutes',
       'consecutiveBreakMinutes',
+      'payrollNumber',
       'noteChanged',
     ];
     const PLACED = [...SHOWN.map(([field]) => field), ...SAID, ...LEFT_OUT];
@@ -435,6 +438,7 @@ describe('hr-visibility', () => {
       consecutiveBreakMinutes: 30,
       signature: 'ANN',
       note: 'Föräldraledig 20 %',
+      payrollNumber: '4711-01',
       createdAt: new Date('2026-09-01T00:00:00.000Z'),
       updatedAt: new Date('2026-09-02T00:00:00.000Z'),
       periods: [{ validFrom: '2026-11-01', validTo: null, employmentPercent: 50, reductionPercent: 0 }],
@@ -483,6 +487,7 @@ describe('hr-visibility', () => {
         consecutiveBreakMinutes: null,
         signature: 'ANN',
         note: null,
+        payrollNumber: null,
         createdAt: new Date('2026-09-01T00:00:00.000Z'),
         updatedAt: new Date('2026-09-02T00:00:00.000Z'),
         periods: [],

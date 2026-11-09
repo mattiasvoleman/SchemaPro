@@ -24,7 +24,20 @@ import { schoolTimezone } from '../cover/cover-context';
 import { gradeSpanOf, loadRosters, roomNeedsOf, type RoomNeeds } from './room-eligibility';
 import { fromNioarig, toNioarig, toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { dayNumberingOf, yearNumberingOf } from '../common/year-numbering';
-import { coverLockedLessons, coverLockedSharedLessons } from './locked-coverage';
+import { coverLockedLessons, coverLockedSharedLessons, lockCoversDemand } from './locked-coverage';
+import { PRESERVED_FROM_REGENERATION } from './preserved-lessons';
+import { requirementName } from '../common/requirement-name';
+import {
+  placedLessonRowsOf,
+  placedLessonWritesOf,
+  placedMinutesOf,
+  placementsKeyOf,
+  placementsRefusalOf,
+  withoutPlaced,
+  type PlacedLessonRow,
+} from './placed-lessons';
+import { judgePlacements } from '../requirement-placements/placement-judge';
+import { MasterLessonsService } from '../calendar/master-lessons.service';
 import { judgeBlocks, partlyLockedRefusal } from './parallel-blocks';
 import {
   BLOCK_MEMBERS_SHARE_TEACHER,
@@ -91,7 +104,8 @@ import { readUnstaffedRequirements } from '../staffing/unstaffed-requirements';
 import { enterGrundschemaWrite, isLockTimeout, type PublishMode } from '../publication/publish-mode';
 import { STAFF_UNSTAFFED_REQUIREMENTS } from '../staffing/staffing-checks';
 import { recordRead, type AccessChannel } from '../access-log/access-log';
-import { WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal, isDaysBearing, withoutDays } from './work-days';
+import { DEVIATION_WORK_DAYS_HIDDEN_MESSAGE, WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal, isDaysBearing, withoutDays } from './work-days';
+import { DEVIATION_TEACHER_DAILY_CAP } from './deviations';
 import {
   dateColumnDay,
   timeColumnMinutes,
@@ -103,8 +117,17 @@ import { unkeptConsecutiveWishes, type ConsecutiveWish } from './consecutive-wis
 import { TRAVEL_TEACHERS_CODE } from './stored-conflicts';
 import { holdMessage, readOtherSchoolHolds, HOLD_CODES, type OtherSchoolHold } from './other-school-holds';
 import { pupilGapsOf } from './pupil-cohorts';
+import {
+  MAX_EDGE_SUBJECTS,
+  PLACEMENT_SETTINGS_SELECT,
+  limitsBuildings,
+  placementModesOf,
+  placementRulesOf,
+  roomPlacementOf,
+} from './placement-rules';
 import type {
   AiEngineConflictAnalysis,
+  AiEngineConflictDetail,
   AiEngineLesson,
   AiEngineScheduleRequest,
   AiEngineScheduleResponse,
@@ -125,6 +148,8 @@ import type {
   AnonymousSiteTravelTime,
   AnonymousTeacherWorkRule,
   AnonymousPupilGaps,
+  AnonymousPlacementRules,
+  AnonymousPlacements,
   ConstraintKind,
   DayOfWeek,
   ObjectiveWeights,
@@ -151,38 +176,7 @@ import { rostersOfYear, type RosterBasis } from '../year-rollover/projected-rost
  * 5. Map the AI engine's anonymous response back to real DB ids using the
  *    retained anon→real id map before persisting master lessons.
  */
-/**
- * Master lessons a regeneration leaves alone, expressed once.
- *
- * The first shape is the whole rule: `isGenerated` is false on everything the
- * optimizer did not produce, and nothing else in the timetable is the
- * machine's to replace. The other three are what a human has since done to a
- * lesson the machine did produce — locked it into place, opened it to a second
- * class, filled it with named students — each an intent the solver cannot
- * express and therefore could never put back.
- *
- * Ownership used to be inferred from the row looking untouched: default
- * recurrence and no dates, so nobody has been here, so it is ours. That held
- * only while nothing but a human ever set those columns. A generated lesson
- * now inherits its requirement's window, so "kemi bara på vårterminen"
- * describes the optimizer's own output exactly as well as a handmade lesson —
- * and read as handmade it was preserved, its requirement still counted as
- * unmet, and the next run stacked a second copy on top of it. Every press of
- * generate added another layer. The three window conditions are gone from this
- * list for that reason, and a handmade lesson carrying a window is caught by
- * `isGenerated: false` like every other handmade lesson.
- *
- * Referenced from the two places that must agree exactly: the fetch that
- * forwards these to the engine as immovable placements, and the delete that
- * clears the machine-owned remainder. One constant, because a lesson that is
- * in one list and not the other is either sent twice or thrown away.
- */
-const PRESERVED_FROM_REGENERATION = [
-  { isGenerated: false },
-  { isLocked: true },
-  { extraGroups: { some: {} } },
-  { participants: { some: {} } },
-];
+// PRESERVED_FROM_REGENERATION: see preserved-lessons.ts, where the rule and its reasons are.
 
 /** The maps an engine refusal can name something through. */
 export interface AnonMaps {
@@ -247,6 +241,15 @@ export interface AnonMaps {
    */
   dayLimitTeacherIds?: Map<string, string>;
   /**
+   * The work rule's real id -> its teacher's Users id, for the rules that set a
+   * cap on a day's teaching. Never reversed into text and never sent: it is how
+   * a deviation of the cap (DEVIATION_TEACHER_DAILY_CAP, deviations.ts) says
+   * WHOSE cap gave way, as a server-only `subjectIds` the page names when it
+   * reads, where a refusal about the same rule can only name the rule. Optional
+   * like `blockAnonMap`: a route that sends no work rules has none to name.
+   */
+  workRuleTeacherIds?: Map<string, string>;
+  /**
    * Restid i generatorn: a teacher's anonymous id -> their Users id, for the
    * one sentence that names teachers (TEACHER_TRAVEL_CANNOT_BE_KEPT). Turned
    * into the sentence's server-only `subjectIds` and never into text: the
@@ -272,15 +275,9 @@ export interface AnonMaps {
   lessonAnonMap?: Map<string, string>;
 }
 
-/**
- * A timplanspost by the name the Timplan page gives its cell
- * (`requirements.cellLabel`, "{subject} för {group}"), or the subject alone
- * when the group has none. One function for every refusal that names a row,
- * the engine's and the staffing pre-flight's alike.
- */
-export function requirementName(subject: string, group: string | undefined | null): string {
-  return group ? `${subject} för ${group}` : subject;
-}
+// requirementName lives in common/requirement-name.ts (see there why), and is
+// re-exported for the callers that have always imported it from here.
+export { requirementName };
 
 /*
  * ---------------------------------------------------------------------------
@@ -439,7 +436,7 @@ export interface DraftLesson extends DraftContent {
 }
 
 /** The payload a fetch builds, before a request adds its weights, rules and search. */
-export type PreparedPayload = Omit<AiEngineScheduleRequest, 'weights' | 'rules' | 'search'>;
+export type PreparedPayload = Omit<AiEngineScheduleRequest, 'weights' | 'rules' | 'search' | 'relaxation'>;
 
 /**
  * What computeScheduledCoverage needs to say what a timetable leaves
@@ -532,8 +529,14 @@ export interface PreparedSchedule {
   basisParts: BasisParts;
   /** The non-preserved masters' ids, sorted: exactly what a regeneration deletes. */
   draftIds: string[];
-  /** The same masters by content. */
+  /**
+   * The same masters by content, less the lessons a run wrote from a
+   * förläggning (fromPlacement): those are written again from the
+   * förläggningar (placedRows) by every candidate, so they are kept, not moved.
+   */
   draftLessons: DraftLesson[];
+  /** Förlagda poster: the förläggningar as this fetch read them, which every write writes again. */
+  placedRows: PlacedLessonRow[];
   /** Only when asked for ({ coverage: true }): it costs six more reads. */
   coverage: CoverageBase | null;
 }
@@ -551,6 +554,12 @@ export interface SolveCandidateOptions {
   previousLessons?: readonly AnonymousPreviousLesson[];
   /** This call's whole wait for the engine, overriding AI_ENGINE_TIMEOUT_MS. */
   timeoutMs: number;
+  /**
+   * Bästa möjliga schema: ask the engine to place the week with the school's
+   * five shaping rules priced instead of hard (`relaxation`), and bring back
+   * what gave way. Absent: the request is today's byte for byte.
+   */
+  bestEffort?: boolean;
 }
 
 export interface CandidateSolution {
@@ -562,6 +571,14 @@ export interface CandidateSolution {
   conflicts: AiEngineConflictAnalysis | null;
   /** The answer did not carry exactly the demand sent: the guard persist applies refused it. */
   rejected?: true;
+  /**
+   * Bästa möjliga schema: what gave way, realised (ids turned back into names,
+   * a cap's teacher in `subjectIds`). A list, EMPTY WHEN NOTHING GAVE WAY, only
+   * on a timetable the mode placed; null for a call that did not ask for the
+   * mode and for an answer with no timetable (a refusal names a hard rule
+   * under `conflicts`). Absent reads as null.
+   */
+  deviations?: AiEngineConflictDetail[] | null;
 }
 
 export interface CandidateApplyInput {
@@ -639,7 +656,7 @@ export function engineMayStillBeSolving(error: unknown): boolean {
   if (status !== HttpStatus.SERVICE_UNAVAILABLE && status !== HttpStatus.GATEWAY_TIMEOUT) return false;
   const body = error.getResponse();
   const shape = typeof body === 'object' && body !== null ? (body as { message?: unknown; code?: unknown }) : { message: body };
-  if (shape.code === ENGINE_LACKS_CANDIDATES) return false;
+  if (shape.code === ENGINE_LACKS_CANDIDATES || shape.code === ENGINE_LACKS_BEST_EFFORT) return false;
   return shape.message !== ENGINE_UNREACHABLE && shape.message !== ENGINE_UNAVAILABLE;
 }
 
@@ -998,10 +1015,11 @@ function isForeignKeyViolation(error: unknown): boolean {
 }
 
 /**
- * The engine's validation refusal of exactly `search` as an unknown field:
- * {details: {errors: [{type: 'extra_forbidden', loc: ['body', 'search']}]}}.
+ * The engine's validation refusal of exactly one top-level field as an
+ * unknown one: {details: {errors: [{type: 'extra_forbidden', loc: ['body',
+ * <field>]}]}}. `search` and `relaxation` are the two an older engine meets.
  */
-function refusesSearch(body: { details?: { errors?: unknown } | null } | null): boolean {
+function refusesField(body: { details?: { errors?: unknown } | null } | null, field: string): boolean {
   const errors = body?.details?.errors;
   return (
     Array.isArray(errors) &&
@@ -1012,7 +1030,7 @@ function refusesSearch(body: { details?: { errors?: unknown } | null } | null): 
         Array.isArray(loc) &&
         loc.length === 2 &&
         loc[0] === 'body' &&
-        loc[1] === 'search'
+        loc[1] === field
       );
     })
   );
@@ -1029,6 +1047,35 @@ function sortedIds(ids: readonly string[]): string[] {
 
 /** The engine refuses a request carrying `search` — it is older than the field. */
 export const ENGINE_LACKS_CANDIDATES = 'ENGINE_LACKS_CANDIDATES';
+
+/**
+ * The engine refuses a request carrying `relaxation` — it is older than Bästa
+ * möjliga schema, which the engine and the API reach production together but
+ * not in the same second. Said as what it is, so a run asked for the mode
+ * fails with a sentence a school can wait out, and never as a refusal of the
+ * week: nothing was placed or proven.
+ */
+export const ENGINE_LACKS_BEST_EFFORT = 'ENGINE_LACKS_BEST_EFFORT';
+
+/**
+ * The engine refused `placements` as a field it does not know: it is older
+ * than Förlagda poster. Never a refusal the school sees. The field only names
+ * the förläggningar in a refusal — they are fixed lessons the engine has always
+ * known — so callAiEngine sends the same request without it, and the week is
+ * laid as it would have been; only a refusal of it cannot name them.
+ */
+class EngineLacksPlacements extends Error {}
+
+function engineLacksBestEffort(): HttpException {
+  return new HttpException(
+    {
+      message:
+        'Schemamotorn är äldre än API:t och kan inte ta fram bästa möjliga schema ännu. Försök igen om några minuter.',
+      code: ENGINE_LACKS_BEST_EFFORT,
+    },
+    HttpStatus.SERVICE_UNAVAILABLE,
+  );
+}
 
 /**
  * The most groupConflicts pairs the engine takes in one request
@@ -1103,6 +1150,20 @@ export class OptimizationProxyService {
     private readonly prisma: PrismaService,
     private readonly http: HttpService,
     private readonly configService: ConfigService,
+    /**
+     * Förlagda poster: the hand edit's clash rule, which a förläggning is
+     * judged by at every Generera (placement-judge.ts). REQUIRED of Nest, so
+     * no @Optional(): a graph that cannot give it fails at boot, where a
+     * missing one used to be injected as nothing and failed the first Generera
+     * of a school with a förläggning with a 500 (review of #293, HÖG-1, an
+     * import cycle that decorated this parameter with `undefined`; see
+     * common/requirement-name.ts and optimization-module.di.spec.ts). Optional
+     * in the signature only for the callers that build this service by hand
+     * for a route that never meets a förläggning (the room and staffing
+     * proposals, the specs, the probes); a fetch that finds one without it is
+     * refused loudly rather than sent unjudged.
+     */
+    private readonly masters?: MasterLessonsService,
   ) {
     this.aiConfig = this.configService.getOrThrow<AiEngineConfig>('aiEngine');
   }
@@ -1195,6 +1256,7 @@ export class OptimizationProxyService {
         prepared.headcountByGroup,
         prepared.draftIds,
         prepared.splitLessons,
+        prepared.placedRows,
       ),
     );
 
@@ -1279,6 +1341,7 @@ export class OptimizationProxyService {
       blockAnonMap: data.blockAnonMap,
       dayLimitAnonMap: data.dayLimitAnonMap,
       dayLimitTeacherIds: data.dayLimitTeacherIds,
+      workRuleTeacherIds: data.workRuleTeacherIds,
       // Only when the walk was sent: no other sentence names a teacher.
       travelTeacherIds:
         data.siteTravelTimes.length > 0 ? reversed(data.teacherAnonMap) : new Map<string, string>(),
@@ -1302,6 +1365,23 @@ export class OptimizationProxyService {
           conflicts: this.realiseConflicts(data.blockRefusal, anonMaps),
         },
         refusalCode: data.blockRefusal.summaryCode,
+      };
+    }
+    // A förläggning that can no longer stand where it is placed: refused here
+    // by name, as a partly locked block is, nothing sent or written.
+    if (data.placementsRefusal) {
+      return {
+        ready: false,
+        requestId,
+        academicYearId,
+        refusal: {
+          requestId,
+          status: 'INFEASIBLE',
+          lessons: [],
+          lunches: [],
+          conflicts: this.realiseConflicts(data.placementsRefusal, anonMaps),
+        },
+        refusalCode: data.placementsRefusal.summaryCode,
       };
     }
     // More pairs than the engine takes: refused here by name, as above, so a
@@ -1370,9 +1450,13 @@ export class OptimizationProxyService {
         startDate: true,
         endDate: true,
         isParked: true,
+        fromPlacement: true,
       },
     });
-    const draftLessons: DraftLesson[] = draftRows.map((row) => ({
+    // Förlagda poster: a lesson a run wrote from a förläggning is the draft's
+    // (it goes with it), but not the draft's CONTENT: every write puts it back
+    // from the förläggning, so "moved" and the draft's coverage do not count it.
+    const draftLessons: DraftLesson[] = draftRows.filter((row) => !row.fromPlacement).map((row) => ({
       id: row.id,
       subjectId: row.subjectId,
       studentGroupId: row.studentGroupId,
@@ -1411,6 +1495,13 @@ export class OptimizationProxyService {
       ...(data.siteTravelTimes.length > 0 ? { siteTravelTimes: data.siteTravelTimes } : {}),
       // Elevernas håltimmar: only when the school turned it on and has pupils.
       ...(data.pupilGaps ? { pupilGaps: data.pupilGaps } : {}),
+      // Placeringsregler: only when the school turned a rule on and it has
+      // something to apply to; the rooms and locks then carry their part.
+      ...(data.placementRules ? { placementRules: data.placementRules } : {}),
+      // Förlagda poster: only when a post of the week has one. See
+      // AnonymousPlacements; callAiEngine sends the request without it to an
+      // engine that predates it.
+      ...(data.placements ? { placements: data.placements } : {}),
     };
 
     // Over the payload turned back to real ids — the teacher's and the
@@ -1431,6 +1522,7 @@ export class OptimizationProxyService {
           data.blockAnonMap,
           data.dayLimitAnonMap,
           data.siteAnonMap,
+          data.buildingAnonMap,
           data.fixedIdByLesson,
         ],
         storedRules: data.storedRules,
@@ -1451,7 +1543,8 @@ export class OptimizationProxyService {
       anonMaps,
       freeDayWishes: data.freeDayWishes,
       consecutiveWishes: data.consecutiveWishes,
-      keptTimetable: data.preservedRows.map(
+      // The förläggningar too: every candidate writes them where they stand.
+      keptTimetable: [...data.preservedRows, ...data.placedRows].map(
         (row): TimedLesson => ({
           id: row.id,
           teacherId: row.teacherId,
@@ -1471,10 +1564,13 @@ export class OptimizationProxyService {
       splitLessons,
       basis: basisOf(basisParts),
       basisParts,
-      draftIds: sortedIds(draftLessons.map((lesson) => lesson.id)),
+      // Every machine-owned master, the ones written from a förläggning
+      // included: the write deletes them all and writes the förläggningar again.
+      draftIds: sortedIds(draftRows.map((row) => row.id)),
       draftLessons,
+      placedRows: data.placedRows,
       coverage: options.coverage
-        ? await this.readCoverageBase(tx, academicYearId, data.preservedRows, draftLessons)
+        ? await this.readCoverageBase(tx, academicYearId, [...data.preservedRows, ...data.placedRows], draftLessons)
         : null,
     };
   }
@@ -1562,11 +1658,21 @@ export class OptimizationProxyService {
       ...(options.weights ? { weights: options.weights } : {}),
       ...(storedRules ? { rules: storedRules } : {}),
       ...(options.search ? { search: options.search } : {}),
+      // Only when the school asked for the mode: every other call is the
+      // request it always was, and an older engine is never sent the field.
+      ...(options.bestEffort ? { relaxation: { mode: 'BEST_EFFORT' as const } } : {}),
     };
     // Nothing left to place: the same shortcut Generera takes, and the same
     // answer — no lessons, and no sittings to replace the stored ones with.
+    // The mode ran, trivially, and nothing gave way.
     if (payload.requirements.length === 0) {
-      return { status: 'FEASIBLE', lessons: [], lunches: null, conflicts: null };
+      return {
+        status: 'FEASIBLE',
+        lessons: [],
+        lunches: null,
+        conflicts: null,
+        ...(options.bestEffort ? { deviations: [] } : {}),
+      };
     }
 
     const response = await this.callAiEngine<AiEngineScheduleResponse>(
@@ -1578,6 +1684,15 @@ export class OptimizationProxyService {
     const conflicts = this.realiseConflicts(response.conflicts, anonMaps);
     if (response.status === 'INFEASIBLE' || response.status === 'TIMEOUT') {
       return { status: response.status, lessons: [], lunches: null, conflicts };
+    }
+    // A timetable the mode placed ALWAYS carries its list, empty when nothing
+    // gave way. An answer to a request for the mode without one cannot say
+    // that nothing gave way, and storing it as a clean timetable would let a
+    // candidate that broke a rule be applied without the school accepting it:
+    // it is an engine that does not do what was asked, said as the older one.
+    if (options.bestEffort && !Array.isArray(response.deviations)) {
+      this.logger.error(`AI engine answered a best-effort request without a list of deviations [academicYearId=${prepared.academicYearId}].`);
+      throw engineLacksBestEffort();
     }
 
     const resolved = mirrorLessons(
@@ -1609,6 +1724,7 @@ export class OptimizationProxyService {
       })),
       lunches: this.realiseLunches(response, anonMaps.groupAnonMap),
       conflicts,
+      ...(options.bestEffort ? { deviations: this.realiseDeviations(response.deviations ?? [], anonMaps) } : {}),
     };
   }
 
@@ -1658,6 +1774,7 @@ export class OptimizationProxyService {
         lunches: input.lunches,
         headcountByGroup: prepared.headcountByGroup,
         scope: { kind: 'IDS', ids: prepared.draftIds },
+        placed: prepared.placedRows,
         after: { ...input.after, safetyVersionId: version.id },
         // A basis that matched cannot meet either; if one is met anyway, the
         // draft is not what the basis says it is.
@@ -1701,27 +1818,15 @@ export class OptimizationProxyService {
   }
 
   /**
-   * The engine's refusal with its ids turned back and its classes named.
+   * Every anonymous id of the payload, back to the real one.
    *
-   * Ids inside the text go back to real ones through deanonymise, and a
-   * group's real id goes one step further, to the name the school gave it:
-   * "student group 4A", not a uuid in either id space. The ids in
-   * resourceIds are mapped back the same way and, for groups, ALSO returned
-   * as resourceNames. The lunch stage's lines say "the classes named here"
-   * and carry the classes only in that field — which, until this, no layer
-   * mapped back and no screen showed, so a school read "0 class(es)" one
-   * week and "the classes named here" with nobody named the next.
+   * EVERY id space, not only the groups'. `resourceIds` is mixed: the lunch
+   * lines put classes in it, and the reservation line puts whatever the
+   * reservation is about — a teacher, a room or a class. Reversing the
+   * group map alone left a teacher's anonymous uuid in the response and
+   * silently gave that detail fewer names than ids.
    */
-  private realiseConflicts(
-    conflicts: AiEngineConflictAnalysis | null | undefined,
-    maps: AnonMaps,
-  ): AiEngineConflictAnalysis | null {
-    if (!conflicts) return null;
-    // EVERY id space, not only the groups'. `resourceIds` is mixed: the lunch
-    // lines put classes in it, and the reservation line puts whatever the
-    // reservation is about — a teacher, a room or a class. Reversing the
-    // group map alone left a teacher's anonymous uuid in the response and
-    // silently gave that detail fewer names than ids.
+  private realIdsByAnon(maps: AnonMaps): Map<string, string> {
     const realByAnon = new Map<string, string>();
     for (const map of [
       maps.groupAnonMap,
@@ -1743,6 +1848,86 @@ export class OptimizationProxyService {
     ]) {
       for (const [realId, anonId] of map) realByAnon.set(anonId, realId);
     }
+    return realByAnon;
+  }
+
+  /**
+   * Bästa möjliga schema: the engine's `deviations` with their ids turned back
+   * and their names put beside them, ready for deviations.ts to store.
+   *
+   * A deviation is a conflict in shape, and is realised as the refusals are —
+   * `{requirement}` becomes the name the Timplan page gives the cell, a room
+   * the school's name for it, `rule` and `limit` the real id of the row —
+   * with two differences. A cap that gave way names its teacher in
+   * `subjectIds` (the work rule's Users id, from workRuleTeacherIds), for the
+   * page to name when it reads, and no person's name is written here. And a
+   * sentence about a part-timer's days (isDaysBearing) leaves in its hidden
+   * form WHOLE: the refusals strip `days` only, but a deviation's `taught`
+   * and `over` say the limit too, so nothing of it is kept, not even the
+   * post.
+   */
+  private realiseDeviations(details: readonly AiEngineConflictDetail[], maps: AnonMaps): AiEngineConflictDetail[] {
+    const realByAnon = this.realIdsByAnon(maps);
+    const real = (anonId: string): string => realByAnon.get(anonId) ?? anonId;
+    return details.map((detail): AiEngineConflictDetail => {
+      if (isDaysBearing(detail.code)) {
+        return {
+          ...detail,
+          params: {},
+          message: DEVIATION_WORK_DAYS_HIDDEN_MESSAGE,
+          requirementIds: [],
+          roomIds: [],
+          constraintIds: [],
+          resourceIds: [],
+          resourceNames: [],
+          subjectIds: [],
+        };
+      }
+      const resourceIds = detail.resourceIds.map(real);
+      const roomIds = detail.roomIds.map(real);
+      const teachers =
+        detail.code === DEVIATION_TEACHER_DAILY_CAP
+          ? resourceIds.flatMap((id) => {
+              const teacher = maps.workRuleTeacherIds?.get(id);
+              return teacher === undefined ? [] : [teacher];
+            })
+          : [];
+      return {
+        ...detail,
+        message: this.named(detail.message, maps),
+        params: this.namedParams(detail.params ?? {}, maps),
+        requirementIds: detail.requirementIds.map(real),
+        roomIds,
+        constraintIds: [],
+        resourceIds,
+        // The rooms the lessons ended up in, by the school's name for each.
+        resourceNames: roomIds.flatMap((id) => {
+          const name = maps.nameById.get(id);
+          return name === undefined ? [] : [name];
+        }),
+        subjectIds: teachers,
+      };
+    });
+  }
+
+  /**
+   * The engine's refusal with its ids turned back and its classes named.
+   *
+   * Ids inside the text go back to real ones through deanonymise, and a
+   * group's real id goes one step further, to the name the school gave it:
+   * "student group 4A", not a uuid in either id space. The ids in
+   * resourceIds are mapped back the same way and, for groups, ALSO returned
+   * as resourceNames. The lunch stage's lines say "the classes named here"
+   * and carry the classes only in that field — which, until this, no layer
+   * mapped back and no screen showed, so a school read "0 class(es)" one
+   * week and "the classes named here" with nobody named the next.
+   */
+  private realiseConflicts(
+    conflicts: AiEngineConflictAnalysis | null | undefined,
+    maps: AnonMaps,
+  ): AiEngineConflictAnalysis | null {
+    if (!conflicts) return null;
+    const realByAnon = this.realIdsByAnon(maps);
     const teacherOfPost = maps.dayLimitTeacherIds ?? new Map<string, string>();
     // A summary that echoes a year does so in the läsår's own numbering too,
     // like the lines under it (yearGrades).
@@ -2042,6 +2227,16 @@ export class OptimizationProxyService {
     siteTravelTimes: AnonymousSiteTravelTime[];
     /** Elevernas håltimmar: the pupils' cohorts, null unless the school turned it on. */
     pupilGaps: AnonymousPupilGaps | null;
+    /** Placeringsregler: the rules the school turned on, undefined while none is on or has anything to apply to. */
+    placementRules: AnonymousPlacementRules | undefined;
+    /** Förlagda poster: which fixed lessons are förläggningar, and their posts released; undefined with none. */
+    placements: AnonymousPlacements | undefined;
+    /** PLACEMENTS_REFUSED_SUMMARY, in anonymous ids, or null to go on. */
+    placementsRefusal: AiEngineConflictAnalysis | null;
+    /** The förläggningar as locks, for the write (placed-lessons.ts). */
+    placedRows: PlacedLessonRow[];
+    /** The buildings the rooms name, real name -> token; empty unless a building limit was sent. Nothing in an answer names one. */
+    buildingAnonMap: Map<string, string>;
     /** A lock's payload id by its own: the cohorts name locks by it. */
     fixedIdByLesson: Map<string, string>;
     /** The sites the walks and the rooms name. Nothing in an answer names one. */
@@ -2068,6 +2263,8 @@ export class OptimizationProxyService {
     dayLimitAnonMap: Map<string, string>;
     /** The post → its teacher, for whom a days sentence is about. Never sent. */
     dayLimitTeacherIds: Map<string, string>;
+    /** The work rule that caps a day → its teacher, for whom a deviation of the cap is about. Never sent. */
+    workRuleTeacherIds: Map<string, string>;
     /** Real group id → the school's name for it, for realiseConflicts. */
     nameById: Map<string, string>;
     /** Parallella block: the block a refusal names, back to the real one. */
@@ -2139,6 +2336,8 @@ export class OptimizationProxyService {
     // reason, and a second one beside it for whose post it is: see the read.
     const dayLimitAnonMap = new Map<string, string>();
     const dayLimitTeacherIds = new Map<string, string>();
+    // Bästa möjliga schema: whose cap a deviation of it is about (kept, never sent).
+    const workRuleTeacherIds = new Map<string, string>();
     const soleTeachers = new Map<string, string | null>();
 
     const anonId = (map: Map<string, string>, realId: string): string => {
@@ -2215,7 +2414,7 @@ export class OptimizationProxyService {
     // not touch and must plan around. Those that cover a requirement's whole
     // period are subtracted from its weekly demand, so the solver re-places
     // only the machine-owned remainder.
-    const preservedLessons = await tx.masterLesson.findMany({
+    const keptLessons = await tx.masterLesson.findMany({
       // A parked lesson is preserved like any hand-made one — regeneration
       // does not own it — but it is NOT sent as a fixed placement: it occupies
       // nothing, and blocking the engine out of a slot nobody is in would be
@@ -2249,6 +2448,26 @@ export class OptimizationProxyService {
         participants: { select: { studentId: true } },
       },
     });
+    /*
+     * FÖRLAGDA POSTER (placed-lessons.ts): each förläggning as the lock it is
+     * to the week, read beside the preserved masters and by every reader of
+     * them below — the fixed lessons, the groups at school, the pupils'
+     * cohorts and buffers, a shared room's seats, a post's locked days, a
+     * teacher's weekdays — with no second path. Two things set them apart and
+     * are said where they matter: what they take off a post (placedMinutes,
+     * never as a covering lock), and that they are no preserved row (the
+     * basis, an apply's check and the write keep them apart). A school with
+     * none reads one empty answer and sends the payload it always sent.
+     */
+    const placementReads = await tx.teachingRequirementPlacement.findMany({
+      where: { requirement: { academicYearId } },
+      select: { id: true, requirementId: true, dayOfWeek: true, startTime: true, minutes: true, roomId: true, recurrence: true },
+    });
+    const postById = new Map(rawRequirements.map((r) => [r.id, r]));
+    const placedRows = placementReads.length === 0 ? [] : placedLessonRowsOf(placementReads, postById);
+    const placedIds = new Set(placedRows.map((row) => row.id));
+    const placedMinutes = placedMinutesOf(placedRows, postById);
+    const preservedLessons = [...keptLessons, ...placedRows];
     const participantIds = new Set(
       preservedLessons.flatMap((lesson) =>
         (lesson.participants ?? []).map((entry) => entry.studentId),
@@ -2518,66 +2737,9 @@ export class OptimizationProxyService {
       }
     }
 
-    /*
-     * How much of the weekly demand is already placed by hand.
-     *
-     * Only a lesson that is there for every week the requirement is can cancel
-     * one of its lessons a week. The engine has no concept of weeks at all, so
-     * whatever is subtracted here is subtracted from all of them alike — there
-     * is no way to say "one lesson, but only on odd ones". That leaves only the
-     * choice of which way to be wrong, and the two directions are not
-     * symmetric.
-     *
-     * Counting a lesson that is absent for part of the requirement
-     * under-delivers, invisibly: lessonsPerWeek 2 with one locked odd-week
-     * lesson sends 1 to the solver, and the class quietly gets one lesson on
-     * even weeks for the rest of the year while the timplan says two. Nothing
-     * on any screen says so. Not counting it over-delivers: an extra lesson on
-     * odd weeks, sitting on the timetable in front of the administrator, who
-     * can unlock or remove it. That costs packing room and not correctness —
-     * the preserved lesson is forwarded as a fixed placement either way, so its
-     * slot stays blocked in every week, and what the engine adds carries the
-     * requirement's own window.
-     *
-     * So the test below is a covering test, and everything it cannot be sure of
-     * falls on the visible side: equal recurrence, and a date window enclosing
-     * the requirement's. Equal rather than covering recurrences on purpose —
-     * an ALL_WEEKS lesson does cover an ODD_WEEKS requirement, and counting it
-     * would buy one lesson of packing room in exchange for a second comparison
-     * that has to stay right forever. Equality also keeps a recurrence added to
-     * the enum later on the safe side without this line being touched: two
-     * lessons with the same recurrence run the same weeks whatever it is, and
-     * anything unequal is simply not counted. calendar/lesson-recurrence.ts
-     * reads a missing recurrence as ALL_WEEKS because there the wrong guess
-     * would drop half a school's lessons; here the wrong guess would hide them,
-     * so an absent column on either side counts for nothing.
-     */
-    const coversDemand = (
-      lesson: RecurrenceWindow,
-      requirement: RecurrenceWindow,
-    ): boolean => {
-      if (!lesson.recurrence || !requirement.recurrence) return false;
-      if (lesson.recurrence !== requirement.recurrence) return false;
-
-      // Both columns are `@db.Date`, so both sides arrive at midnight UTC and
-      // compare as plain instants. A null bound is the open one — "from the
-      // start of the year", "until it ends" — so it encloses whatever the
-      // requirement asks for, while a bound on the lesson and none on the
-      // requirement encloses nothing: the requirement outlives the lesson.
-      if (
-        lesson.startDate &&
-        (!requirement.startDate || lesson.startDate > requirement.startDate)
-      ) {
-        return false;
-      }
-      if (
-        lesson.endDate &&
-        (!requirement.endDate || lesson.endDate < requirement.endDate)
-      ) {
-        return false;
-      }
-      return true;
-    };
+    // How much of the weekly demand is already placed by hand: lockCoversDemand
+    // (locked-coverage.ts), where the rule and both directions of its error are.
+    const coversDemand = lockCoversDemand;
 
     // Keyed on the demand a lesson answers, which one requirement per (year,
     // group, subject) — TeachingRequirement's own unique key — makes
@@ -2586,7 +2748,7 @@ export class OptimizationProxyService {
     // period and cannot be answered until the requirement is in hand.
     const preservedByDemand = new Map<
       string,
-      (RecurrenceWindow & { dayOfWeek: number; startTime: Date; endTime: Date; teacherId: string | null })[]
+      (RecurrenceWindow & { id: string; dayOfWeek: number; startTime: Date; endTime: Date; teacherId: string | null })[]
     >();
     for (const lesson of preservedLessons) {
       const key = `${lesson.studentGroupId}:${lesson.subjectId}`;
@@ -2604,10 +2766,17 @@ export class OptimizationProxyService {
     // Delade lektioner: on a shared row, the teacher of each lesson left, in
     // remainingOf's order (coverLockedSharedLessons); absent on every other.
     const teachersLeftOf = new Map<string, (string | null)[]>();
+    // Förlagda poster: the locks of each post with förläggningar, by minutes,
+    // for the judge's OVER_DEMAND, and its lessons with nothing förlagt, for
+    // the engine's released week (AnonymousPlacements).
+    const lockedMinutesOf = new Map<string, number[]>();
+    const releasedOf = new Map<string, number[]>();
     for (const r of rawRequirements) {
+      // A förläggning never covers as a lock does: a pair of odd and even
+      // rows is one lesson between them (placedMinutes, below).
       const covering = (
         preservedByDemand.get(`${r.studentGroupId}:${r.subjectId}`) ?? []
-      ).filter((lesson) => coversDemand(lesson, r));
+      ).filter((lesson) => !placedIds.has(lesson.id) && coversDemand(lesson, r));
       const shares = r.shares ?? [];
       if (hasShares({ ...r, shares })) {
         const left = coverLockedSharedLessons(
@@ -2621,13 +2790,16 @@ export class OptimizationProxyService {
         teachersLeftOf.set(r.id, left.map((lesson) => lesson.teacherId));
         continue;
       }
-      remainingOf.set(
-        r.id,
-        coverLockedLessons(
-          lessonMinutesOf(r),
-          covering.map((lesson) => lessonMinutes(lesson.startTime, lesson.endTime)),
-        ),
-      );
+      const locked = covering.map((lesson) => lessonMinutes(lesson.startTime, lesson.endTime));
+      const afterLocks = coverLockedLessons(lessonMinutesOf(r), locked);
+      // Then the post's förläggningar, each the exact length it places, after
+      // the locks: the order the judge holds them to (placementsFitBesideLocks).
+      const placed = placedMinutes.get(r.id);
+      remainingOf.set(r.id, placed ? withoutPlaced(afterLocks, placed) : afterLocks);
+      if (placed) {
+        lockedMinutesOf.set(r.id, locked);
+        releasedOf.set(r.id, afterLocks);
+      }
     }
     const demandOf = new Map(rawRequirements.map((r) => [r.id, `${r.studentGroupId}:${r.subjectId}`]));
     const blocks = judgeBlocks(
@@ -2718,10 +2890,22 @@ export class OptimizationProxyService {
     // The pupil keys the requirements below are sent with, for the pupils'
     // cohorts (pupilGapsOf): a derived key's pupils sit its lessons.
     const sentPupilKeys = new Set<string>();
-    const requirements: AnonymousRequirement[] = rawRequirements.flatMap((r) => {
+    /*
+     * One post's entry: the lessons left to place, and the locks whose
+     * weekdays the post's rule counts. `sent` is the entry the engine places;
+     * the other is a förlagd post's released form (AnonymousPlacements), the
+     * same entry with the förläggningar's lessons back and their weekdays out,
+     * which the engine places only to explain a refusal — so it records
+     * nothing the sent payload's readers (the cohorts, the sole teachers) use.
+     */
+    const entryOf = (
+      r: (typeof rawRequirements)[number],
+      remainingLengths: readonly number[],
+      locks: readonly { dayOfWeek: number }[],
+      sent: boolean,
+    ): AnonymousRequirement[] => {
       // A mirrored post is written at its leader post's times, never sent.
       if (mirroredIds.has(r.id)) return [];
-      const remainingLengths = remainingOf.get(r.id) ?? [];
       const remaining = remainingLengths.length;
       if (remaining <= 0) return [];
       // A uniform remainder is today's entry exactly — no list, and the one
@@ -2743,7 +2927,7 @@ export class OptimizationProxyService {
       // well. That costs the week room, never puts a pupil in two places.
       const heldClass = plan?.holdsClass.get(r.id);
       const pupilKey = heldClass ?? pupilKeyByRequirement.get(r.id);
-      if (pupilKey !== undefined) sentPupilKeys.add(pupilKey);
+      if (pupilKey !== undefined && sent) sentPupilKeys.add(pupilKey);
       const adults = plan?.adults.get(r.id) ?? { teacherId: r.teacherId, coTeacherId: r.coTeacherId };
       // Delade lektioner: each lesson left with its own teacher. Two or more
       // teachers send the list, and the scalar is its first; one sends that
@@ -2757,7 +2941,7 @@ export class OptimizationProxyService {
           ? teachersLeft.map((id) => (id === null ? null : anonId(teacherAnonMap, id)))
           : null;
       const leadTeacher = teachersLeft ? teachersLeft[0]! : adults.teacherId;
-      if (teachersLeft && !lessonTeacherIds) soleTeachers.set(anonId(requirementAnonMap, r.id), leadTeacher);
+      if (teachersLeft && !lessonTeacherIds && sent) soleTeachers.set(anonId(requirementAnonMap, r.id), leadTeacher);
       const needs = widerNeeds(
         roomNeedsOf(rosters, { groupIds: [r.studentGroupId] }, r.subject, numbering),
         bySubject ? roomNeedsOf(rosters, { groupIds: [bySubject.studentGroupId] }, bySubject.subject, numbering) : null,
@@ -2774,9 +2958,7 @@ export class OptimizationProxyService {
         bySubject ? effectiveDistribution(bySubject, bySubject.subject) : null,
       );
       const lockedDays = hasDistributionRule(rule)
-        ? (preservedByDemand.get(`${r.studentGroupId}:${r.subjectId}`) ?? [])
-            .map((lesson) => lesson.dayOfWeek as DayOfWeek)
-            .sort((a, b) => a - b)
+        ? locks.map((lesson) => lesson.dayOfWeek as DayOfWeek).sort((a, b) => a - b)
         : [];
       return [
         {
@@ -2821,6 +3003,19 @@ export class OptimizationProxyService {
           ...(lessonTeacherIds ? { lessonTeacherIds } : {}),
         },
       ];
+    };
+    const requirements: AnonymousRequirement[] = rawRequirements.flatMap((r) =>
+      entryOf(r, remainingOf.get(r.id) ?? [], preservedByDemand.get(`${r.studentGroupId}:${r.subjectId}`) ?? [], true),
+    );
+    // Förlagda poster: each post with förläggningar as it would be with none —
+    // its locks counted, its förläggningar's lessons back, their weekdays out.
+    const releasedRequirements: AnonymousRequirement[] = rawRequirements.flatMap((r) => {
+      const released = releasedOf.get(r.id);
+      if (!released) return [];
+      const locks = (preservedByDemand.get(`${r.studentGroupId}:${r.subjectId}`) ?? []).filter(
+        (lesson) => !placedIds.has(lesson.id),
+      );
+      return entryOf(r, released, locks, false);
     });
 
     // Previous (unlocked) placements → minimal-disruption re-optimization.
@@ -2968,6 +3163,11 @@ export class OptimizationProxyService {
         maxGradeLevel: true,
         // Restid i generatorn: sent only when the walk is on, below.
         siteId: true,
+        // Placeringsregler: the building (a token, only when a school limits
+        // buildings a day holds) and the shared mark (only while rule 3 is on),
+        // both below.
+        building: true,
+        canBeShared: true,
         // Same reason as the subject's name above: for the way back, never
         // for the engine.
         name: true,
@@ -3002,6 +3202,7 @@ export class OptimizationProxyService {
         generatorKeepsTravelTime: true,
         generatorKeepsPupilGapsDown: true,
         generatorKeepsConsecutiveTeaching: true,
+        ...PLACEMENT_SETTINGS_SELECT,
       },
     });
     const storedRules: ScheduleRules | null = !lunchSettings
@@ -3068,6 +3269,18 @@ export class OptimizationProxyService {
     }));
 
 
+    /*
+     * Placeringsregler: which rules are on, and what each room says of them.
+     * The building of a room is an opaque token (one per distinct name, per
+     * request; the school's own words never leave) and is sent only by a
+     * school that limits the buildings a day holds, and only on a room that has one:
+     * no building is itself a value, the main house, told by the key's
+     * absence. A room is `shareable` only while rule 3 is on, when the room is
+     * marked and has a capacity. All off, nothing is added to any room.
+     */
+    const placementModes = placementModesOf(lunchSettings);
+    const buildingAnonMap = new Map<string, string>();
+    const roomsOn = { buildings: limitsBuildings(lunchSettings), shared: placementModes.shared !== null };
     const rooms: AnonymousRoom[] = rawRooms.map((r) => ({
       id: anonId(roomAnonMap, r.id),
       capacity: r.capacity,
@@ -3077,7 +3290,13 @@ export class OptimizationProxyService {
       ...(siteTravelTimes.length > 0 && r.siteId !== null
         ? { siteId: anonId(siteAnonMap, r.siteId) }
         : {}),
+      ...roomPlacementOf(r, roomsOn, (building) => anonId(buildingAnonMap, building)),
     }));
+    const shareableRoomIds = new Set(
+      rawRooms
+        .filter((r) => roomPlacementOf(r, { buildings: false, shared: roomsOn.shared }, () => '').shareable === true)
+        .map((r) => r.id),
+    );
 
     const roomPreferences: AnonymousRoomPreference[] = rawPreferences.map((p) => {
       // Only rooms the payload actually carries: one no longer scheduled points
@@ -3377,6 +3596,8 @@ export class OptimizationProxyService {
           );
           return [];
         }
+        // A rule that caps a day: the teacher a deviation of the cap is about.
+        if (rule.maxTeachingMinutesPerDay !== null) workRuleTeacherIds.set(rule.id, rule.userId);
         return [
           {
             id: anonId(workRuleAnonMap, rule.id),
@@ -3606,6 +3827,113 @@ export class OptimizationProxyService {
         })
       : null;
 
+    /*
+     * Placeringsregler. Rule 1 names the subjects the school marked, by the
+     * payload's own subject ids: a subject no sent requirement carries is no
+     * rule (the engine would meet an id it has no lesson for), so only marks
+     * on subjects of the week are read, and only while rule 1 is on. Rule 3
+     * reads the locks too: a lock in a shareable room takes SEATS and not the
+     * room, so it says how many pupils sit it, each counted once whatever
+     * groups and named pupils it holds (roomNeedsOf, the count the room
+     * eligibility uses for a requirement). Rule 2 reads nothing more.
+     */
+    const subjectsSent = new Set(requirements.map((requirement) => requirement.subjectId));
+    const markedSubjects =
+      placementModes.edge !== null
+        ? await tx.subject.findMany({
+            where: { schoolId, OR: [{ notFirstInDay: true }, { notLastInDay: true }] },
+            select: { id: true, notFirstInDay: true, notLastInDay: true },
+            orderBy: { id: 'asc' },
+          })
+        : [];
+    const placementRules = placementRulesOf({
+      settings: lunchSettings,
+      markedSubjects,
+      subjectId: (realId) => {
+        const id = subjectAnonMap.get(realId);
+        return id !== undefined && subjectsSent.has(id) ? id : undefined;
+      },
+      anyShareableRoom: shareableRoomIds.size > 0,
+    });
+    if (markedSubjects.length > MAX_EDGE_SUBJECTS) {
+      this.logger.warn(
+        `${markedSubjects.length} subjects are marked for the first/last-lesson rule; the engine takes ${MAX_EDGE_SUBJECTS}, the rest are left out [academicYearId=${academicYearId}].`,
+      );
+    }
+    const fixedLessonsSent: AnonymousFixedLesson[] =
+      placementRules?.sharedRooms !== undefined
+        ? fixedLessons.map((fixed, index) => {
+            const lesson = preservedLessons[index]!;
+            if (lesson.roomId === null || !shareableRoomIds.has(lesson.roomId)) return fixed;
+            const { studentGroupSize } = roomNeedsOf(
+              rosters,
+              {
+                groupIds: [lesson.studentGroupId, ...lesson.extraGroups.map((entry) => entry.studentGroupId)],
+                studentIds: (lesson.participants ?? []).map((entry) => entry.studentId),
+              },
+              { requiredRoomTypeId: null },
+              numbering,
+            );
+            return { ...fixed, studentCount: Math.min(1000, studentGroupSize) };
+          })
+        : fixedLessons;
+
+    /*
+     * Förlagda poster: which fixed lessons are förläggningar, and their posts
+     * released (AnonymousPlacements) — read by the engine only to name them in
+     * a refusal. And the pre-flight: every förläggning judged again with the
+     * hand edit's rules (placement-judge.ts), against the lessons this run
+     * keeps and against each other, since the week moves under a row after it
+     * was saved. One that cannot stand refuses the run by name, before the
+     * engine is woken, as a partly locked block does.
+     */
+    const placements: AnonymousPlacements | undefined =
+      placedRows.length === 0
+        ? undefined
+        : {
+            lessons: placedRows.map((row) => ({
+              fixedLessonId: fixedIdByLesson.get(row.id)!,
+              requirementId: anonId(requirementAnonMap, row.requirementId),
+            })),
+            requirements: releasedRequirements,
+          };
+    let placementsRefusal: AiEngineConflictAnalysis | null = null;
+    if (placedRows.length > 0) {
+      if (!this.masters) throw new Error('Förlagda poster need MasterLessonsService to be judged.');
+      const verdicts = await judgePlacements(tx, this.masters, {
+        academicYearId,
+        schoolId,
+        gradeNumbering: numbering,
+        basis,
+        rows: placedRows.map((row) => ({
+          id: row.id,
+          requirementId: row.requirementId,
+          studentGroupId: row.studentGroupId,
+          subjectId: row.subjectId,
+          teacherId: row.teacherId,
+          coTeacherId: row.coTeacherId,
+          dayOfWeek: row.dayOfWeek,
+          startMinutes: clockMinutes(row.startTime),
+          minutes: row.minutes,
+          roomId: row.roomId,
+          recurrence: row.recurrence,
+          startDate: row.startDate,
+          endDate: row.endDate,
+        })),
+        beside: [],
+        demand: new Map(
+          [...placedMinutes].flatMap(([postId, placed]) => {
+            const post = postById.get(postId);
+            return post ? [[postId, { post, lockedMinutes: lockedMinutesOf.get(postId) ?? [], placed }] as const] : [];
+          }),
+        ),
+      });
+      placementsRefusal = placementsRefusalOf(placedRows, verdicts, {
+        requirement: (realId) => anonId(requirementAnonMap, realId),
+        room: (realId) => anonId(roomAnonMap, realId),
+      });
+    }
+
     // Anonymize the conflict pairs with the same group map the requirements
     // used, so the engine sees a consistent id space. Pairs whose groups never
     // reached the payload (no requirement and no fixed lesson references them)
@@ -3651,12 +3979,17 @@ export class OptimizationProxyService {
       roomPreferences,
       teacherWorkRules,
       teacherDayLimits,
-      fixedLessons,
+      fixedLessons: fixedLessonsSent,
       groups,
       previousLessons,
       groupConflicts,
       siteTravelTimes,
       pupilGaps,
+      placementRules,
+      placements,
+      placementsRefusal,
+      placedRows,
+      buildingAnonMap,
       fixedIdByLesson,
       siteAnonMap,
       roomAnonMap,
@@ -3668,6 +4001,7 @@ export class OptimizationProxyService {
       workRuleAnonMap,
       dayLimitAnonMap,
       dayLimitTeacherIds,
+      workRuleTeacherIds,
       otherSchoolHolds,
       nameById,
       blockAnonMap,
@@ -3718,8 +4052,9 @@ export class OptimizationProxyService {
         // Only when there are any: a row nobody shares is the object it always was.
         ...((r.shares ?? []).length > 0 ? { shares: r.shares } : {}),
       })),
-      // Named field by field: the participants' pupil ids stay in here.
-      preservedRows: preservedLessons.map((lesson) => ({
+      // Named field by field: the participants' pupil ids stay in here. The
+      // preserved masters only: a förläggning is no preserved row (placedRows).
+      preservedRows: keptLessons.map((lesson) => ({
         id: lesson.id,
         subjectId: lesson.subjectId,
         studentGroupId: lesson.studentGroupId,
@@ -3800,6 +4135,8 @@ export class OptimizationProxyService {
   ): Promise<TResponse> {
     const url = `${this.aiConfig.baseUrl}${path}`;
     const carriesSearch = (payload as { search?: unknown }).search !== undefined;
+    const carriesRelaxation = (payload as { relaxation?: unknown }).relaxation !== undefined;
+    const carriesPlacements = (payload as { placements?: unknown }).placements !== undefined;
 
     try {
       const response = await firstValueFrom(
@@ -3900,7 +4237,7 @@ export class OptimizationProxyService {
                  * carried `search`, and only that exact refusal: any other
                  * 422 is this gateway's mistake and keeps its own sentence.
                  */
-                if (error.response.status === 422 && carriesSearch && refusesSearch(body)) {
+                if (error.response.status === 422 && carriesSearch && refusesField(body, 'search')) {
                   throw new HttpException(
                     {
                       message:
@@ -3909,6 +4246,19 @@ export class OptimizationProxyService {
                     },
                     HttpStatus.SERVICE_UNAVAILABLE,
                   );
+                }
+                /*
+                 * The same for an engine older than `relaxation` (Bästa möjliga
+                 * schema). A request that carries it carries `search` too, so an
+                 * engine that predates only the newer field is told apart by the
+                 * field the 422 names.
+                 */
+                if (error.response.status === 422 && carriesRelaxation && refusesField(body, 'relaxation')) {
+                  throw engineLacksBestEffort();
+                }
+                // And older than `placements`: sent again without it, below.
+                if (error.response.status === 422 && carriesPlacements && refusesField(body, 'placements')) {
+                  throw new EngineLacksPlacements();
                 }
                 const readable =
                   error.response.status < 500 && typeof body?.message === 'string';
@@ -3955,6 +4305,11 @@ export class OptimizationProxyService {
 
       return response.data;
     } catch (error) {
+      if (error instanceof EngineLacksPlacements) {
+        this.logger.warn(`AI engine at ${this.aiConfig.baseUrl} predates placements; sent again without them.`);
+        const { placements: _placements, ...without } = payload as { placements?: unknown };
+        return this.callAiEngine<TResponse>(path, without, maps, options);
+      }
       if (error instanceof HttpException) throw error;
       throw new ServiceUnavailableException(ENGINE_UNAVAILABLE);
     }
@@ -3990,6 +4345,8 @@ export class OptimizationProxyService {
     draftIds: readonly string[],
     /** Delade lektioner: the posts sent with their lessons' teachers. */
     splitLessons: SplitLessons = NO_SPLIT,
+    /** Förlagda poster: the förläggningar as the fetch read them, written beside the answer. */
+    placedRows: readonly PlacedLessonRow[] = [],
   ): Promise<TimedLesson[] | null> {
     // First, before anything is read: the publication lock and the mode
     // (publish-mode.ts). In DRAFT the regenerated grundschema is a draft.
@@ -4027,6 +4384,18 @@ export class OptimizationProxyService {
       if (!sameIds(sortedIds(now.map((row) => row.id)), sortedIds(draftIds))) {
         this.logger.warn(
           `Generated timetable not written: the draft changed while the solver ran [academicYearId=${academicYearId}].`,
+        );
+        throw generateStale();
+      }
+      // And the förläggningar, which the answer was laid around: one moved,
+      // added or removed while the solver ran is a week for another timplan.
+      const placementsNow = await tx.teachingRequirementPlacement.findMany({
+        where: { requirement: { academicYearId } },
+        select: { id: true, requirementId: true, dayOfWeek: true, startTime: true, minutes: true, roomId: true, recurrence: true },
+      });
+      if (placementsKeyOf(placementsNow) !== placementsKeyOf(placedRows)) {
+        this.logger.warn(
+          `Generated timetable not written: a förläggning changed while the solver ran [academicYearId=${academicYearId}].`,
         );
         throw generateStale();
       }
@@ -4074,6 +4443,7 @@ export class OptimizationProxyService {
         lunches,
         headcountByGroup,
         scope: { kind: 'NOT_PRESERVED' },
+        placed: placedRows,
       });
       return written.timetable;
     } catch (error) {
@@ -4121,6 +4491,12 @@ export class OptimizationProxyService {
       refusals?: { mismatch?: () => Error; scopeChanged?: () => Error };
       /** Run after the writes and before the change log; throw to roll back. */
       verify?: (lessonsCreated: number) => Promise<void>;
+      /**
+       * Förlagda poster: the förläggningar, written as locked lessons marked
+       * as the run's own beside the answer's (placedLessonWritesOf). Absent
+       * or empty for a school with none.
+       */
+      placed?: readonly PlacedLessonRow[];
     },
   ): Promise<RegenerationWritten> {
     const { schoolId, academicYearId, mode, scope } = input;
@@ -4211,6 +4587,19 @@ export class OptimizationProxyService {
       };
     });
 
+    // Förlagda poster: each förläggning as its post's lesson, locked and the
+    // run's own, stamped from the rows this write reads like the answer's
+    // lessons above. A förläggning whose post is gone is a request that no
+    // longer stands, refused as a moved draft is.
+    const placedCreates = placedLessonWritesOf(input.placed ?? [], rowById, { schoolId, academicYearId });
+    if (placedCreates === null) {
+      this.logger.warn(
+        `Generated timetable not written: a förlagd timplanspost is gone [academicYearId=${academicYearId}].`,
+      );
+      throw input.refusals?.mismatch?.() ?? generateStale();
+    }
+    const written = [...creates, ...placedCreates];
+
     // Non-destructive regeneration: handmade lessons, locked lessons AND
     // participant lessons (manual multi-class / individual-student constructs)
     // are preserved verbatim; only lessons this optimizer wrote are replaced by
@@ -4294,8 +4683,8 @@ export class OptimizationProxyService {
     const lockedPreserved = preserved.length;
 
     // One INSERT for the lot: no create carries a nested write.
-    if (creates.length > 0) {
-      await tx.masterLesson.createMany({ data: creates });
+    if (written.length > 0) {
+      await tx.masterLesson.createMany({ data: written });
     }
 
     /*
@@ -4315,11 +4704,11 @@ export class OptimizationProxyService {
       await this.replaceSittings(tx, schoolId, academicYearId, input.lunches, input.headcountByGroup, sweepFrom);
     }
 
-    await input.verify?.(creates.length);
+    await input.verify?.(written.length);
 
     // Append a REGENERATE entry to the schedule audit trail.
     const counts: RegenerationCounts = {
-      lessonsCreated: creates.length,
+      lessonsCreated: written.length,
       unlockedReplaced: removedUnlocked,
       lockedPreserved,
       calendarLessonsRemoved: removedCalendarLessons,
@@ -4342,7 +4731,7 @@ export class OptimizationProxyService {
       ...counts,
       timetable: [
         ...preserved.filter((lesson) => !lesson.isParked),
-        ...creates.map((lesson, index) => ({ ...lesson, id: `written:${index}` })),
+        ...written.map((lesson, index) => ({ ...lesson, id: `written:${index}` })),
       ].map(
         (lesson): TimedLesson => ({
           id: lesson.id,

@@ -16,6 +16,8 @@ import {
 // The two free-time searches moved to their own module (see its header); the
 // tests below still exercise them against the same placements.
 import { findOpenSlots, openSlotsFor, suggestPlacements } from "./placement-search";
+import { buildRosterIndex } from "./lesson-audience";
+import { withSharedRooms } from "./shared-rooms-board";
 
 // ---------------------------------------------------------------------------
 // Factories. Placements default to the SAME slot (Monday 09:00–10:00) so that
@@ -294,6 +296,150 @@ describe("validatePlacement room conflicts", () => {
     const candidate = makePlacement({ roomId: "r1" });
     const other = makePlacement({ id: "other", roomId: "r2" });
     expect(validatePlacement(candidate, [other], [])).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validatePlacement — shared rooms (Placeringsregel 3, Delade salar)
+// ---------------------------------------------------------------------------
+
+describe("validatePlacement shared rooms (Delade salar)", () => {
+  // Twenty pupils in each of 7A, 7B and 7C. The hall holds forty unless a test
+  // says otherwise; the rule is HARD unless a test says otherwise.
+  const pupilsOf = (group: string) => Array.from({ length: 20 }, (_, index) => `${group}-${index + 1}`);
+  const home = new Map<string, string | null>(
+    ["7A", "7B", "7C"].flatMap((group) => pupilsOf(group).map((pupil) => [pupil, group] as const)),
+  );
+  const noRelation = () => buildGroupConflictMap(home, []);
+  const hall = (overrides: Partial<{ id: string; canBeShared: boolean; capacity: number | null }> = {}) => ({
+    id: "hall",
+    canBeShared: true,
+    capacity: 40,
+    ...overrides,
+  });
+  /** The relation the page builds once the check has arrived (lib/shared-rooms-board.ts). */
+  const relationWith = (
+    rooms: Array<ReturnType<typeof hall>>,
+    mode: "OFF" | "SOFT" | "HARD" | null = "HARD",
+    index = buildRosterIndex(home, []),
+  ) => withSharedRooms(noRelation(), rooms, mode, index);
+  const inHall = (id: string | null, group: string, overrides: Partial<Placement> = {}) =>
+    makePlacement({ id, roomId: "hall", studentGroupId: group, ...overrides });
+  const ask = (candidate: Placement, others: Placement[], relation = noRelation()) =>
+    validatePlacement(candidate, others, [], home, relation);
+
+  it("shared hall, pupils fit: no clash", () => {
+    expect(ask(inHall(null, "7A"), [inHall("b", "7B")], relationWith([hall()]))).toEqual([]);
+  });
+
+  it("shared hall, pupils do not fit: a clash with that lesson", () => {
+    expect(ask(inHall(null, "7A"), [inHall("b", "7B")], relationWith([hall({ capacity: 39 })]))).toEqual([
+      { kind: "ROOM", otherLessonId: "b" },
+    ]);
+  });
+
+  it("soft is held to the same capacity as hard", () => {
+    expect(ask(inHall(null, "7A"), [inHall("b", "7B")], relationWith([hall()], "SOFT"))).toEqual([]);
+    expect(ask(inHall(null, "7A"), [inHall("b", "7B")], relationWith([hall({ capacity: 39 })], "SOFT"))).toEqual([
+      { kind: "ROOM", otherLessonId: "b" },
+    ]);
+  });
+
+  it("a room that is not shared clashes as before", () => {
+    const clash = [{ kind: "ROOM", otherLessonId: "b" }];
+    expect(ask(inHall(null, "7A"), [inHall("b", "7B")])).toEqual(clash);
+    expect(ask(inHall(null, "7A"), [inHall("b", "7B")], relationWith([hall({ canBeShared: false })]))).toEqual(clash);
+    // Another room is the shared one.
+    expect(ask(inHall(null, "7A"), [inHall("b", "7B")], relationWith([hall({ id: "gym" })]))).toEqual(clash);
+  });
+
+  it("the rule off or never written: clash as before, and the relation comes back as it was", () => {
+    for (const mode of ["OFF", null] as const) {
+      const base = noRelation();
+      expect(withSharedRooms(base, [hall()], mode, buildRosterIndex(home, []))).toBe(base);
+      expect(ask(inHall(null, "7A"), [inHall("b", "7B")], relationWith([hall()], mode))).toEqual([
+        { kind: "ROOM", otherLessonId: "b" },
+      ]);
+    }
+  });
+
+  it("a room without a capacity is exclusive: there is no limit to share under", () => {
+    expect(ask(inHall(null, "7A"), [inHall("b", "7B")], relationWith([hall({ capacity: null })]))).toEqual([
+      { kind: "ROOM", otherLessonId: "b" },
+    ]);
+  });
+
+  it("three lessons whose pairs fit but not all three: a clash with both", () => {
+    const relation = relationWith([hall()]);
+    const b = inHall("b", "7B");
+    const c = inHall("c", "7C");
+    expect(ask(inHall(null, "7A"), [b], relation)).toEqual([]);
+    expect(ask(inHall(null, "7A"), [c], relation)).toEqual([]);
+    expect(ask(inHall(null, "7A"), [b, c], relation)).toEqual([
+      { kind: "ROOM", otherLessonId: "b" },
+      { kind: "ROOM", otherLessonId: "c" },
+    ]);
+  });
+
+  it("odd and even weeks share the hall as they always did, and are not counted together", () => {
+    const relation = relationWith([hall({ capacity: 20 })]);
+    const odd = inHall(null, "7A", { recurrence: "ODD_WEEKS" });
+    const even = inHall("b", "7B", { recurrence: "EVEN_WEEKS" });
+    expect(ask(odd, [even])).toEqual([]);
+    expect(ask(odd, [even], relation)).toEqual([]);
+    // An every-week lesson beside the odd-week one still has to fit it.
+    const every = inHall("c", "7C", { recurrence: "ALL_WEEKS" });
+    expect(ask(odd, [every, even], relation)).toEqual([{ kind: "ROOM", otherLessonId: "c" }]);
+  });
+
+  it("counts a pupil named on a lesson, and an extra group, once", () => {
+    const relation = relationWith([hall({ capacity: 41 })]);
+    // 7A's twenty, 7B's twenty and 7C-1 named on the candidate: forty-one fit forty-one.
+    expect(ask(inHall(null, "7A", { studentIds: ["7C-1"] }), [inHall("b", "7B")], relation)).toEqual([]);
+    expect(ask(inHall(null, "7A", { studentIds: ["7C-1", "7C-2"] }), [inHall("b", "7B")], relation)).toEqual([
+      { kind: "ROOM", otherLessonId: "b" },
+    ]);
+  });
+
+  it("a lesson whose pupils are unknown keeps the hall exclusive, loading class lists included", () => {
+    const relation = relationWith([hall({ capacity: 1000 })]);
+    expect(ask(inHall(null, "7A"), [inHall("b", "7X")], relation)).toEqual([{ kind: "ROOM", otherLessonId: "b" }]);
+    const loading = relationWith([hall({ capacity: 1000 })], "HARD", buildRosterIndex(undefined, undefined));
+    expect(ask(inHall(null, "7A"), [inHall("b", "7B")], loading)).toEqual([{ kind: "ROOM", otherLessonId: "b" }]);
+  });
+
+  it("leaves the teacher and the class alone: they still clash in a shared hall", () => {
+    const relation = relationWith([hall({ capacity: 1000 })]);
+    expect(
+      ask(inHall(null, "7A", { teacherId: "t1" }), [inHall("b", "7B", { teacherId: "t1" })], relation),
+    ).toEqual([{ kind: "TEACHER", otherLessonId: "b" }]);
+    expect(ask(inHall(null, "7A"), [inHall("b", "7A")], relation).map((hit) => hit.kind)).toEqual(["GROUP"]);
+  });
+
+  it("keeps the replacing groups of the relation it is laid on", () => {
+    const base = noRelation();
+    const replacing = { replaced: new Map(), bySubject: new Map(), groupsOfStudent: new Map(), yearOf: new Map(), kept: new Set<string>() };
+    base.replacing = replacing;
+    const laid = withSharedRooms(base, [hall()], "HARD", buildRosterIndex(home, []));
+    expect(laid).not.toBe(base);
+    expect(laid.replacing).toBe(replacing);
+    expect(laid.get("7A")).toBe(base.get("7A"));
+  });
+
+  it("detectConflicts paints a timetable only where the hall is over its seats", () => {
+    const long = makeLesson({ id: "long", roomId: "hall", studentGroupId: "7A", startTime: "08:00", endTime: "10:00" });
+    const first = makeLesson({ id: "first", roomId: "hall", studentGroupId: "7B", startTime: "08:00", endTime: "09:00" });
+    const second = makeLesson({ id: "second", roomId: "hall", studentGroupId: "7C", startTime: "09:00", endTime: "10:00" });
+    const paint = (lessons: MasterLesson[], relation = noRelation()) =>
+      detectConflicts(lessons, [], home, relation);
+    const relation = relationWith([hall()]);
+    // Never more than forty at once: the generator's own week, and no clash.
+    expect(paint([long, first, second], relation).size).toBe(0);
+    // Without the rule the same week is three double bookings.
+    expect([...paint([long, first, second]).keys()].sort()).toEqual(["first", "long", "second"]);
+    // A third lesson at 08:30-09:30 puts sixty in the hall at 08:30-09:00.
+    const third = makeLesson({ id: "third", roomId: "hall", studentGroupId: "7C", startTime: "08:30", endTime: "09:30" });
+    expect([...paint([long, first, third], relation).keys()].sort()).toEqual(["first", "long", "third"]);
   });
 });
 

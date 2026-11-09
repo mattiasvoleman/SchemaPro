@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import type { Room } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
@@ -32,6 +32,8 @@ export class RoomsService {
             ...(dto.requiresApproval !== undefined
               ? { requiresApproval: dto.requiresApproval }
               : {}),
+            // Placeringsregler, regel 3: exclusive unless the school said otherwise.
+            ...(dto.canBeShared !== undefined ? { canBeShared: dto.canBeShared } : {}),
           },
         });
       });
@@ -66,6 +68,7 @@ export class RoomsService {
             ...(dto.requiresApproval !== undefined
               ? { requiresApproval: dto.requiresApproval }
               : {}),
+            ...(dto.canBeShared !== undefined ? { canBeShared: dto.canBeShared } : {}),
           },
         });
       });
@@ -89,6 +92,33 @@ export class RoomsService {
   async remove(id: string, user: AuthenticatedUser): Promise<void> {
     try {
       await this.prisma.withRls(user, async (tx) => {
+        // Lokal: a room that is let out is not deleted from under its tenant (the key from the series is
+        // RESTRICT); asked first, so the answer says why and what to do.
+        const series = await tx.externalBooking.count({ where: { roomId: id } });
+        if (series > 0) {
+          throw new ConflictException({
+            message: `Salen hyrs ut i ${series} serie(r) av externa bokningar. Ta bort dem under Externa bokningar först.`,
+            code: 'ROOM_IS_LET_OUT',
+          });
+        }
+        // A room a förläggning names is the post's place, and the key to it is
+        // NO ACTION: said by name here, before the room lock's refusal, so the
+        // school knows which post to open rather than meeting a bare 409.
+        const placed = await tx.teachingRequirementPlacement.findMany({
+          where: { roomId: id },
+          select: { requirement: { select: { subject: { select: { name: true } }, studentGroup: { select: { name: true } } } } },
+          orderBy: { requirementId: 'asc' },
+        });
+        if (placed.length > 0) {
+          const posts = [
+            ...new Set(placed.map((row) => `${row.requirement.subject.name} ${row.requirement.studentGroup.name}`)),
+          ];
+          const shown = posts.slice(0, 5).join(', ');
+          throw new BadRequestException(
+            `Salen är förlagd för ${shown}${posts.length > 5 ? ` och ${posts.length - 5} till` : ''}. ` +
+              `Ta bort ${posts.length === 1 ? 'förläggningen' : 'förläggningarna'} först.`,
+          );
+        }
         const orphaned = await tx.roomPreference.findMany({
           where: { kind: 'LOCK', rooms: { some: { roomId: id } } },
           select: { subject: { select: { name: true } }, rooms: { select: { roomId: true } } },

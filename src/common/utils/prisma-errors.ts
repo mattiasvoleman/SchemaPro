@@ -59,6 +59,13 @@ import { TIOARIG_TOO_EARLY } from '../grade-numbering';
  * (sharesProblem) and names the one broken; this is what any other path meets.
  * See requirementSharesRefusal.
  *
+ * Förlagda poster's triggers (migration 20270207090000) answer SQLSTATE FP409
+ * when a timplanspost's förläggningar would not fit the post (or the post would
+ * no longer fit them), and that is the 409 REQUIREMENT_PLACEMENTS_DO_NOT_FIT
+ * with the rule broken, whichever writer met it: the förläggningar's PUT, the
+ * requirements PATCH, the shares, the block's members. See
+ * requirementPlacementsRefusal.
+ *
  * The Halvklasser triggers (migration 20261113090000) answer SQLSTATE HC409
  * with a reason token, each a 409 of the same name, and a pupil placed in
  * both halves of one class meets the unique index
@@ -92,6 +99,10 @@ export function rethrowPrismaError(error: unknown): never {
   const shares = requirementSharesRefusal(error);
   if (shares) {
     throw requirementSharesConflict(shares.reason);
+  }
+  const placements = requirementPlacementsRefusal(error);
+  if (placements) {
+    throw requirementPlacementsConflict(placements.reason);
   }
   const half = classHalfRefusal(error);
   if (half) {
@@ -271,6 +282,85 @@ export function requirementSharesConflict(reason: SharesRule | null): ConflictEx
     code: REQUIREMENT_SHARES_DO_NOT_FIT,
     // `params` too, which the exception filter forwards (it drops other
     // keys), so the web renders the rule in the reader's language.
+    ...(reason !== null ? { reason, params: { reason } } : {}),
+  });
+}
+
+/** The problem `code` of a timplanspost whose förläggningar do not fit it. */
+export const REQUIREMENT_PLACEMENTS_DO_NOT_FIT = 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT';
+
+/**
+ * The rule a write broke: placementFitOf's six (src/requirement-placements/
+ * placement-fit.ts), and POST, which only the trigger can say: the post's
+ * group or subject was changed under rows that name them.
+ */
+export type PlacementsRule = 'LENGTH' | 'COUNT' | 'WEEKS' | 'PAIRS' | 'BLOCK' | 'SHARES' | 'POST';
+
+const PLACEMENT_RULES: readonly PlacementsRule[] = ['LENGTH', 'COUNT', 'WEEKS', 'PAIRS', 'BLOCK', 'SHARES', 'POST'];
+
+/**
+ * Recognises Förlagda poster's trigger refusal and reads which rule, as
+ * requirementSharesRefusal does TS409: the driver's cause when the adapter
+ * carries it, the rendered message otherwise. The triggers raise SQLSTATE
+ * FP409 (not TP409, which the decided-plan triggers own and which
+ * decidedTimplanRefusal answers for every message), with the rule as the
+ * message's first word and DETAIL `requirementId=<uuid> reason=<RULE>` — ids
+ * and the rule, never a person. A reason the gateway has no sentence for
+ * (ISOLATION) is still this refusal, with `reason` null.
+ */
+export function requirementPlacementsRefusal(
+  error: unknown,
+): { requirementId: string | null; reason: PlacementsRule | null } | null {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
+  const cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)
+    ?.driverAdapterError?.cause;
+  const byMeta = cause?.originalCode === 'FP409';
+  const byMessage = error.code === 'P2039' && error.message.includes('Code: `FP409`');
+  if (!byMeta && !byMessage) return null;
+  const text =
+    typeof cause?.originalMessage === 'string'
+      ? cause.originalMessage
+      : (/Message: `([\s\S]*)`/.exec(error.message)?.[1] ?? error.message);
+  const detail = typeof cause?.detail === 'string' ? cause.detail : '';
+  const token = /reason=([A-Z_]+)/.exec(detail)?.[1] ?? /^([A-Z_]+):/.exec(text)?.[1] ?? null;
+  return {
+    requirementId: /requirementId=([0-9a-f-]{36})/i.exec(detail)?.[1] ?? null,
+    reason: PLACEMENT_RULES.includes(token as PlacementsRule) ? (token as PlacementsRule) : null,
+  };
+}
+
+const PLACEMENT_SENTENCES: Record<PlacementsRule, string> = {
+  LENGTH:
+    'En förlagd lektion har en längd som posten inte har. Ange en av postens lektionslängder, eller ta bort förläggningen.',
+  COUNT:
+    'Fler lektioner av en längd är förlagda än posten har. Ta bort en förläggning, eller ge posten fler lektioner.',
+  WEEKS:
+    'En förläggning går andra veckor än postens. På en post med udda eller jämna veckor går varje förläggning postens veckor.',
+  PAIRS:
+    'På en post som går varje vecka är en förläggning varje vecka, eller så förläggs udda och jämna veckor i par av samma längd. ' +
+    'Lägg till raden som saknas, eller ta bort den som står ensam.',
+  BLOCK:
+    'Posten ligger i ett parallellt block, som läggs på samma tider för alla poster. En enskild post i ett block kan inte förläggas. ' +
+    'Ta bort förläggningarna, eller ta posten ur blocket.',
+  SHARES:
+    'Posten har delade lektioner, och vilken lärares lektion en förläggning vore har ingen avgjort. ' +
+    'Ta bort förläggningarna först, eller ta bort lärarandelarna.',
+  POST: 'Posten kan inte ändras så här medan den har förläggningar. Ta bort förläggningarna först.',
+};
+
+/**
+ * The 409 for förläggningar that do not fit their post: the rule in a
+ * sentence that says what to change, and the rule as `reason` in `params`,
+ * which the exception filter forwards (it drops every other key), so the web
+ * renders it in the reader's language.
+ */
+export function requirementPlacementsConflict(reason: PlacementsRule | null): ConflictException {
+  return new ConflictException({
+    message:
+      reason === null
+        ? 'Förläggningarna passar inte timplansposten. Ändra förläggningarna eller posten.'
+        : PLACEMENT_SENTENCES[reason],
+    code: REQUIREMENT_PLACEMENTS_DO_NOT_FIT,
     ...(reason !== null ? { reason, params: { reason } } : {}),
   });
 }
@@ -506,6 +596,9 @@ const NAMED_CHECKS: Record<string, string> = {
     'consecutiveBreakMinutes: pausen som avslutar en följd är 5 till 120 minuter, i femminuterssteg.',
   TeacherEmployments_consecutive_is_a_pair_check:
     'maxConsecutiveTeachingMinutes: gränsen för undervisning i följd och pausen anges tillsammans, eller ingen av dem.',
+  // Löne-id (20270206090000): the DTO trims and makes blank null; this is a writer that went around it.
+  TeacherEmployments_payrollNumber_check:
+    'payrollNumber: Löne-id är 1 till 30 tecken, utan mellanslag först eller sist och utan radbrytningar.',
   TeacherWorkRules_maxTeachingMinutesPerDay_check:
     'maxTeachingMinutesPerDay: dagstaket är 30 till 720 minuter, i femminuterssteg.',
   TeacherWorkRules_preferredFreeDayOfWeek_check:

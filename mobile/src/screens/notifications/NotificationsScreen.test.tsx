@@ -59,6 +59,10 @@ const row = (id: string, type: NotificationType, meta: Record<string, unknown> |
 
 const ASKED = row('n1', 'ACK_REQUESTED', { requestId: 'r-1', title: 'Utflykten är på torsdag' });
 const REMINDED = row('n2', 'ACK_REMINDER', { requestId: 'r-1', title: 'Utflykten är på torsdag' });
+const CONSENT_META = { leaveRequestId: 'l-1', studentName: 'Alva Elev', startDate: '2026-11-02', endDate: '2026-11-06' };
+const CONSENT_ASKED = row('n4', 'LEAVE_CONSENT_REQUESTED', CONSENT_META);
+const CONSENT_REMINDED = row('n5', 'LEAVE_CONSENT_REMINDER', CONSENT_META);
+const CONSENT_REFUSED = row('n6', 'LEAVE_CONSENT_REFUSED', CONSENT_META);
 const LEAVE = row('n3', 'LEAVE_DECIDED', { studentName: 'Alva Elev', startDate: '2026-11-02', endDate: '2026-11-06', status: 'APPROVED' });
 
 const isHostOf = (node: Instance, name: string): boolean => (node.type as unknown) === name;
@@ -183,6 +187,50 @@ describe('NotificationsScreen', () => {
       expect(pressableAt(tree, 'Ledighet för Alva Elev (2026-11-02 – 2026-11-06) beviljades.')).toBeNull();
       expect(pressableAt(tree, 'Skolan ber dig bekräfta: Utflykten är på torsdag')).not.toBeNull();
       expect(mockPush).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a guardian’s rows about consent to a leave request (Ledighetspolicy)', () => {
+    it.each([
+      ['LEAVE_CONSENT_REQUESTED', CONSENT_ASKED, 'Ledighetsansökan för Alva Elev (2026-11-02 – 2026-11-06) väntar på ditt samtycke.'],
+      ['LEAVE_CONSENT_REMINDER', CONSENT_REMINDED, 'Påminnelse: ledighetsansökan för Alva Elev (2026-11-02 – 2026-11-06) väntar fortfarande på ditt samtycke.'],
+      ['LEAVE_CONSENT_REFUSED', CONSENT_REFUSED, 'Ledighetsansökan för Alva Elev (2026-11-02 – 2026-11-06) har avslutats, eftersom en vårdnadshavare inte samtyckte.'],
+    ])('open the Ledighet tab when %s is tapped', async (_type, entry, words) => {
+      read([entry]);
+      tree = await render();
+      const button = pressableAt(tree, words)!;
+      expect(button).not.toBeNull();
+      expect(button.props.accessibilityRole).toBe('button');
+      expect(button.props.accessibilityHint).toBe(t('leave.openHint'));
+      expect(button.props.accessibilityHint).toBe('Öppnar Ledighet');
+      await act(async () => {
+        button.props.onPress();
+      });
+      expect(mockPush).toHaveBeenCalledTimes(1);
+      expect(mockPush).toHaveBeenCalledWith('/(guardian)/leave');
+    });
+
+    it('leave a Kvittens row going to Meddelanden, and the decision of a request plain text', async () => {
+      read([ASKED, CONSENT_ASKED, LEAVE]);
+      tree = await render();
+      const ack = pressableAt(tree, 'Skolan ber dig bekräfta: Utflykten är på torsdag')!;
+      expect(ack.props.accessibilityHint).toBe(t('acks.openHint'));
+      await act(async () => {
+        ack.props.onPress();
+      });
+      expect(mockPush).toHaveBeenLastCalledWith('/(guardian)/acknowledgements');
+      expect(pressableAt(tree, 'Ledighet för Alva Elev (2026-11-02 – 2026-11-06) beviljades.')).toBeNull();
+    });
+
+    it.each(['TEACHER', 'SCHOOL_ADMIN', 'STUDENT', null])('are plain text for %s, who has no Ledighet tab to answer in', async (role) => {
+      mockRole = role;
+      read([CONSENT_ASKED, CONSENT_REMINDED, CONSENT_REFUSED]);
+      tree = await render();
+      for (const entry of [CONSENT_ASKED, CONSENT_REMINDED, CONSENT_REFUSED]) {
+        const words = texts(tree).find((text) => text.includes('Alva Elev') && text.includes(entry.type === 'LEAVE_CONSENT_REFUSED' ? 'avslutats' : 'samtycke'))!;
+        expect(words).toBeDefined();
+        expect(pressableAt(tree, words)).toBeNull();
+      }
     });
   });
 

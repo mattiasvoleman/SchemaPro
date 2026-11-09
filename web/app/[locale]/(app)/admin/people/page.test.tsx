@@ -954,6 +954,7 @@ describe("People page", () => {
           ...employment,
           reductionPercent: 20,
           note: "Mentor 7B",
+          payrollNumber: "4711-01",
           employmentForm: "VISSTID",
           firstTeacherPercent: 10,
           maxTeachingDaysPerWeek: 4,
@@ -971,9 +972,9 @@ describe("People page", () => {
       await user.type(percent, "100");
       await user.click(screen.getByRole("button", { name: "save" }));
 
-      // The nedsättning, the note, SCB's fields, the undervisningsdagar and the
-      // limit on teaching in a row (Sammanhängande undervisning) set on the card
-      // survive a change made here: PUT replaces the row whole.
+      // The nedsättning, the note, Löne-id, SCB's fields, the undervisningsdagar
+      // and the limit on teaching in a row (Sammanhängande undervisning) set on
+      // the card survive a change made here: PUT replaces the row whole.
       expect(saveEmployment).toHaveBeenCalledWith({
         userId: "t-1",
         academicYearId: "year-1",
@@ -983,6 +984,7 @@ describe("People page", () => {
         teachingTargetMinutesPerWeek: null,
         signature: "KEK",
         note: "Mentor 7B",
+        payrollNumber: "4711-01",
         employmentForm: "VISSTID",
         firstTeacherPercent: 10,
         lecturerPercent: null,
@@ -1040,6 +1042,7 @@ describe("People page", () => {
         teachingTargetMinutesPerWeek: null,
         signature: "NYL",
         note: null,
+        payrollNumber: null,
         employmentForm: null,
         firstTeacherPercent: null,
         lecturerPercent: null,

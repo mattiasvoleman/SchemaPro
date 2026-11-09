@@ -1,9 +1,10 @@
 "use client";
 
+import { useEffect, useId, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Loader2 } from "lucide-react";
 import { Link } from "@/i18n/navigation";
-import type { CandidateCheck, CandidateView } from "@/lib/candidates/types";
+import type { CandidateCheck, CandidateConflict, CandidateView } from "@/lib/candidates/types";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Notice } from "@/components/ui/notice";
+import { DeviationList } from "./deviation-list";
 
 export interface ApplyDialogProps {
   /** The candidate being applied; the dialog is open while there is one. */
@@ -30,6 +32,13 @@ export interface ApplyDialogProps {
    */
   checkFailed: boolean;
   onRetryCheck: () => void;
+  /**
+   * Bästa möjliga schema: the rules the candidate's timetable breaks. With at
+   * least one the confirm waits for an explicit tick, because the gateway
+   * applies such a candidate only against the digest of exactly these
+   * (the page sends it); with none there is no tick and no digest.
+   */
+  deviations: readonly CandidateConflict[];
   /** Where focus goes on close when the opener can no longer take it. */
   onCloseAutoFocus?: (event: Event) => void;
   pending: boolean;
@@ -51,7 +60,14 @@ export interface ApplyDialogProps {
  * counts, so it blocks too, with a retry — and a batch it finds stale or
  * refused cannot be confirmed at all (the apply would answer 409 anyway).
  *
- * Focus is the shared DialogContent's: the first control on open, back to
+ * A candidate with avsteg (Bästa möjliga schema) lists them first and asks for
+ * a tick, "Jag godtar de här avstegen", before either confirm can be pressed.
+ * The tick is per opening: it is cleared when the dialog closes, so a second
+ * candidate, or the same one reopened, is never accepted on the strength of a
+ * tick given to something else.
+ *
+ * Focus is the shared DialogContent's: the first control on open (the tick,
+ * when there is one, since the list above it has nothing to press), back to
  * the button that opened it on close, and nothing can close the dialog while
  * the write is in flight.
  */
@@ -62,6 +78,7 @@ export function ApplyDialog({
   checking,
   checkFailed,
   onRetryCheck,
+  deviations,
   onCloseAutoFocus,
   pending,
   onOpenChange,
@@ -73,7 +90,17 @@ export function ApplyDialog({
   const ordinal = candidate?.ordinal ?? 0;
   const failed = !checking && checkFailed;
   const noLonger = !checking && !failed && check !== null && (check.stale || check.refusalCode !== null);
-  const blocked = pending || checking || failed || noLonger || check === null;
+  const needsAcceptance = deviations.length > 0;
+  const [accepted, setAccepted] = useState(false);
+  const acceptId = useId();
+  const deviationsId = useId();
+  // Cleared with the candidate: it goes to null when the dialog closes.
+  const candidateId = candidate?.id ?? null;
+  useEffect(() => {
+    setAccepted(false);
+  }, [candidateId]);
+  const blocked =
+    pending || checking || failed || noLonger || check === null || (needsAcceptance && !accepted);
 
   return (
     <Dialog open={candidate !== null} onOpenChange={(open) => (pending ? undefined : onOpenChange(open))}>
@@ -96,6 +123,28 @@ export function ApplyDialog({
             {direct ? t("apply.bodyDirect") : t("apply.bodyDraft")}
           </DialogDescription>
         </DialogHeader>
+
+        {needsAcceptance ? (
+          <section aria-labelledby={deviationsId} className="space-y-2">
+            <h3 id={deviationsId} className="text-sm font-semibold">
+              {t("apply.deviationsTitle", { count: deviations.length })}
+            </h3>
+            <p className="text-sm text-foreground">{t("apply.deviationsIntro")}</p>
+            <DeviationList deviations={deviations} aria-labelledby={deviationsId} />
+            <div className="flex items-start gap-2 rounded-md border p-3 text-sm">
+              <input
+                id={acceptId}
+                type="checkbox"
+                className="mt-0.5 size-4 accent-primary"
+                checked={accepted}
+                onChange={(event) => setAccepted(event.target.checked)}
+                disabled={pending}
+                aria-describedby={deviationsId}
+              />
+              <label htmlFor={acceptId}>{t("apply.acceptDeviations")}</label>
+            </div>
+          </section>
+        ) : null}
 
         {checking ? (
           <p role="status" aria-busy="true" className="text-sm text-foreground">

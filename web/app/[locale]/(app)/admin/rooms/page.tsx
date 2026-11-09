@@ -59,6 +59,8 @@ interface RoomForm {
   floor: string;
   /** NO_SITE or a site's id. */
   siteId: string;
+  /** Placeringsregler, Delade salar: the room may hold several groups at once. */
+  canBeShared: boolean;
 }
 
 const NO_LIMIT = "none";
@@ -77,6 +79,7 @@ const EMPTY_FORM: RoomForm = {
   building: "",
   floor: "",
   siteId: NO_SITE,
+  canBeShared: false,
 };
 
 /** The range the database accepts, so the form refuses what the API would. */
@@ -148,6 +151,7 @@ function placeLabel(room: Room, floorLabel: (floor: number) => string, siteName:
 
 export default function RoomsPage() {
   const t = useTranslations("rooms");
+  const tPlacement = useTranslations("placementRules");
   const tCsvImport = useTranslations("csvImport");
   const tCommon = useTranslations("common");
   const { data: roomTypes, isError: roomTypesFailed } = useRoomTypes();
@@ -167,6 +171,7 @@ export default function RoomsPage() {
     building?: string | null;
     floor?: number | null;
     siteId?: string | null;
+    canBeShared?: boolean;
     // A room's site moves the sites' room counts and the load's restid.
   }>("/api/v1/rooms", [["rooms"], SITES_KEY, [...STAFFING_KEYS.load]]);
 
@@ -199,11 +204,13 @@ export default function RoomsPage() {
       building: room.building ?? "",
       floor: room.floor !== null ? String(room.floor) : "",
       siteId: room.siteId ?? NO_SITE,
+      canBeShared: room.canBeShared ?? false,
     });
     setDialogOpen(true);
   };
 
   const floor = floorFromForm(form);
+  const noCapacityForShared = form.canBeShared && !(Number(form.capacity) > 0);
 
   const submit = async () => {
     if (floor === undefined) return;
@@ -222,6 +229,10 @@ export default function RoomsPage() {
       // Only once the school has a site to choose: a school without one
       // writes the rooms it always did.
       ...(siteName.size > 0 ? { siteId: form.siteId === NO_SITE ? null : form.siteId } : {}),
+      // Placeringsregler: sent only when it differs from what is stored (a new
+      // room stores false), so a save that leaves the box alone reaches an API
+      // from before the rule without a key it refuses.
+      ...(form.canBeShared !== (editing?.canBeShared ?? false) ? { canBeShared: form.canBeShared } : {}),
     };
     try {
       if (editing) {
@@ -546,6 +557,33 @@ export default function RoomsPage() {
                   setForm({ ...form, requiresApproval: checked })
                 }
               />
+            </div>
+
+            {/* Placeringsregler, Delade salar: the marking lives on the room;
+                the rule itself is switched on under Skolregler. A shared room
+                needs a capacity to be shared within, said but not enforced
+                here. */}
+            <div className="space-y-1.5 rounded-md border p-3">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  className="size-4"
+                  checked={form.canBeShared}
+                  aria-describedby={
+                    noCapacityForShared ? "room-shared-hint room-shared-capacity" : "room-shared-hint"
+                  }
+                  onChange={(e) => setForm({ ...form, canBeShared: e.target.checked })}
+                />
+                {tPlacement("room.canBeShared")}
+              </label>
+              <p id="room-shared-hint" className="text-xs text-muted-foreground">
+                {tPlacement("room.hint")}
+              </p>
+              {noCapacityForShared ? (
+                <p id="room-shared-capacity" className="text-xs text-destructive">
+                  {tPlacement("room.needsCapacity")}
+                </p>
+              ) : null}
             </div>
           </div>
           <DialogFooter>

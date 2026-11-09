@@ -3,6 +3,8 @@ import {
   ABSENCE_PHASE_VARIANT,
   ATTENDANCE_STATUS_VARIANT,
   BOOKING_STATUS_VARIANT,
+  CHECKLIST_STATE_VARIANT,
+  CONSENT_STATE_VARIANT,
   COVER_STATUS_VARIANT,
   KEY_STATE_VARIANT,
   LEAVE_STATUS_VARIANT,
@@ -26,6 +28,8 @@ describe("status variants", () => {
       ABSENCE_PHASE_VARIANT,
       ATTENDANCE_STATUS_VARIANT,
       BOOKING_STATUS_VARIANT,
+      CHECKLIST_STATE_VARIANT,
+      CONSENT_STATE_VARIANT,
       COVER_STATUS_VARIANT,
       KEY_STATE_VARIANT,
       LEAVE_STATUS_VARIANT,
@@ -67,6 +71,26 @@ describe("status variants", () => {
     expect(BOOKING_STATUS_VARIANT.PENDING).toBe("warning");
     expect(LEAVE_STATUS_VARIANT.PENDING).toBe("warning");
     expect(LEAVE_STATUS_VARIANT.REJECTED).toBe("destructive");
+  });
+
+  it("reads a leave request ended by a guardian's no as finished, not as the school's refusal", () => {
+    expect(LEAVE_STATUS_VARIANT.GUARDIAN_DECLINED).toBe("outline");
+  });
+
+  it("tells a consent taken back from a consent given, and from one nobody has answered", () => {
+    expect(CONSENT_STATE_VARIANT.GRANTED).toBe("success");
+    // "Do not" is destructive twice over; the badge's text and icon tell a no from a withdrawal.
+    expect(CONSENT_STATE_VARIANT.DECLINED).toBe("destructive");
+    expect(CONSENT_STATE_VARIANT.WITHDRAWN).toBe("destructive");
+    expect(CONSENT_STATE_VARIANT.MISSING).toBe("warning");
+    expect(CONSENT_STATE_VARIANT.ASKED).toBe("secondary");
+  });
+
+  it("asks for a tick where a pupil has none, and calls what is retired, ended or voided finished", () => {
+    expect(CHECKLIST_STATE_VARIANT.PROOF_MISSING).toBe("warning");
+    expect(CHECKLIST_STATE_VARIANT.TEMPLATE_RETIRED).toBe("outline");
+    expect(CHECKLIST_STATE_VARIANT.LIST_CLOSED).toBe("outline");
+    expect(CHECKLIST_STATE_VARIANT.PROOF_VOIDED).toBe("outline");
   });
 
   it("calls an excused absence information", () => {

@@ -38,7 +38,7 @@ import {
   type PreparedSchedule,
 } from './optimization-proxy.service';
 import * as eligibility from './room-eligibility';
-import { WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal } from './work-days';
+import { DEVIATION_WORK_DAYS_HIDDEN_MESSAGE, WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal } from './work-days';
 import { recordedReads } from '../../test/utils/recorded-reads';
 import * as candidateBasis from './candidate-basis';
 import { toNioarig, type GradeNumbering } from '../common/grade-numbering';
@@ -91,7 +91,7 @@ const bodyOf = (error: unknown): Record<string, unknown> =>
 const PRESERVED = {
   OR: [
     { isGenerated: false },
-    { isLocked: true },
+    { isLocked: true, fromPlacement: false },
     { extraGroups: { some: {} } },
     { participants: { some: {} } },
   ],
@@ -155,6 +155,9 @@ const matchesWhere = (row: Row, where: Row = {}): boolean =>
       case 'isGenerated':
       case 'kind':
         return row[key] === filter;
+      // Förlagda poster: the judge reads the groups and subjects its rows name.
+      case 'id':
+        return typeof filter === 'string' ? row['id'] === filter : within(row['id'], filter);
       case 'maxTeachingDaysPerWeek':
       case 'maxConsecutiveTeachingMinutes': {
         // `{ not: null }`, the one shape the posts are read by: a post that
@@ -206,6 +209,8 @@ describe('engineMayStillBeSolving (a schemaförslag run keeps its call\'s deadli
     expect(engineMayStillBeSolving(new ServiceUnavailableException('The AI engine could not be reached.'))).toBe(false);
     expect(engineMayStillBeSolving(new ServiceUnavailableException('AI engine unavailable.'))).toBe(false);
     expect(engineMayStillBeSolving(new HttpException({ message: 'older', code: 'ENGINE_LACKS_CANDIDATES' }, 503))).toBe(false);
+    // The engine refused the field at once: nothing was started.
+    expect(engineMayStillBeSolving(new HttpException({ message: 'older', code: 'ENGINE_LACKS_BEST_EFFORT' }, 503))).toBe(false);
     expect(engineMayStillBeSolving(new HttpException('The AI engine returned an error.', 500))).toBe(false);
     expect(engineMayStillBeSolving(new HttpException({ message: 'Lunch has no room.', code: 'LUNCH_WINDOW_EMPTY' }, 400))).toBe(false);
     expect(engineMayStillBeSolving(new Error('boom'))).toBe(false);
@@ -990,7 +995,7 @@ describe('OptimizationProxyService', () => {
         OR: [
           // Everything the optimizer did not write, whatever it looks like.
           { isGenerated: false },
-          { isLocked: true },
+          { isLocked: true, fromPlacement: false },
           { extraGroups: { some: {} } },
           { participants: { some: {} } },
         ],
@@ -1047,7 +1052,7 @@ describe('OptimizationProxyService', () => {
               NOT: {
                 OR: [
                   { isGenerated: false },
-                  { isLocked: true },
+                  { isLocked: true, fromPlacement: false },
                   { extraGroups: { some: {} } },
                   { participants: { some: {} } },
                 ],
@@ -1992,6 +1997,59 @@ describe('OptimizationProxyService', () => {
       const error = await callWith({ search: { seed: 1 } }).catch((thrown: unknown) => thrown);
 
       expect((error as HttpException).getStatus()).toBe(422);
+    });
+
+    it('says an engine older than `relaxation` is one, when the request carried it — and `search` with it, which that engine knows', async () => {
+      http.post.mockReturnValue(throwError(() => extraForbidden(['body', 'relaxation'])));
+
+      const error = await callWith({ search: { seed: 1 }, relaxation: { mode: 'BEST_EFFORT' } }).catch((thrown: unknown) => thrown);
+
+      expect((error as HttpException).getStatus()).toBe(503);
+      expect(bodyOf(error)).toEqual({ message: expect.any(String), code: 'ENGINE_LACKS_BEST_EFFORT' });
+      expect(engineMayStillBeSolving(error)).toBe(false);
+    });
+
+    it('sends a request again without `placements` to an engine older than Förlagda poster', async () => {
+      // The förläggningar are fixed lessons every engine knows; the field only
+      // names them in a refusal, so the week is laid without it.
+      http.post
+        .mockReturnValueOnce(throwError(() => extraForbidden(['body', 'placements'])))
+        .mockReturnValueOnce(of({ data: { status: 'OPTIMAL', lessons: [] } }));
+
+      await expect(
+        callWith({ fixedLessons: [{ id: 'f' }], placements: { lessons: [], requirements: [] } }),
+      ).resolves.toEqual({ status: 'OPTIMAL', lessons: [] });
+
+      expect(http.post).toHaveBeenCalledTimes(2);
+      expect(http.post.mock.calls[0][1]).toHaveProperty('placements');
+      expect(http.post.mock.calls[1][1]).toEqual({ fixedLessons: [{ id: 'f' }] });
+    });
+
+    it('leaves a refusal of `placements` on a request without it the validation error it is', async () => {
+      http.post.mockReturnValue(throwError(() => extraForbidden(['body', 'placements'])));
+
+      const error = await callWith({}).catch((thrown: unknown) => thrown);
+
+      expect((error as HttpException).getStatus()).toBe(422);
+      expect(http.post).toHaveBeenCalledTimes(1);
+    });
+
+    it('tells the two missing fields apart by the field the 422 names', async () => {
+      // An engine older than both refuses `search` first, as before.
+      http.post.mockReturnValue(throwError(() => extraForbidden(['body', 'search'])));
+      const error = await callWith({ search: { seed: 1 }, relaxation: { mode: 'BEST_EFFORT' } }).catch((thrown: unknown) => thrown);
+      expect(bodyOf(error)).toHaveProperty('code', 'ENGINE_LACKS_CANDIDATES');
+    });
+
+    it('leaves a refusal of `relaxation` by a request that did not carry it, or inside it, the validation error it is', async () => {
+      http.post.mockReturnValue(throwError(() => extraForbidden(['body', 'relaxation'])));
+      const without = await callWith({ search: { seed: 1 } }).catch((thrown: unknown) => thrown);
+      expect((without as HttpException).getStatus()).toBe(422);
+      expect(bodyOf(without)).not.toHaveProperty('code', 'ENGINE_LACKS_BEST_EFFORT');
+
+      http.post.mockReturnValue(throwError(() => extraForbidden(['body', 'relaxation', 'rules'])));
+      const inside = await callWith({ relaxation: { mode: 'BEST_EFFORT' } }).catch((thrown: unknown) => thrown);
+      expect((inside as HttpException).getStatus()).toBe(422);
     });
 
     it('never leaks the API key in the thrown error', async () => {
@@ -5451,6 +5509,259 @@ describe('OptimizationProxyService', () => {
       });
     });
 
+    describe('förlagda poster', () => {
+      // The engine's _field_names(Placements) and (PlacedLesson).
+      const PLACEMENTS_FIELDS = ['lessons', 'requirements'];
+      const PLACED_LESSON_FIELDS = ['fixedLessonId', 'requirementId'];
+      // A förläggning on the default post (7A, three lessons): Wednesday
+      // 10:00, an hour, in the default room.
+      const PLACED = '77777777-aaaa-4aaa-8aaa-777777777777';
+      const tenAm = new Date('1970-01-01T10:00:00.000Z');
+      const placement = (overrides: Record<string, unknown> = {}) => ({
+        id: PLACED,
+        requirementId: REQ_ID,
+        dayOfWeek: 3,
+        startTime: tenAm,
+        minutes: 60,
+        roomId: ROOM_ID,
+        recurrence: 'ALL_WEEKS',
+        ...overrides,
+      });
+      let masters: { findConflicts: jest.Mock };
+
+      beforeEach(() => {
+        masters = { findConflicts: jest.fn().mockResolvedValue([]) };
+        service = new OptimizationProxyService(
+          prisma as unknown as PrismaService,
+          http as unknown as HttpService,
+          makeConfigService(),
+          masters as never,
+        );
+      });
+
+      const placed = (rows: unknown[]) => tx.teachingRequirementPlacement.findMany.mockResolvedValue(rows);
+      const written = () =>
+        ((tx.masterLesson.createMany.mock.calls[0]?.[0] as { data: Record<string, unknown>[] } | undefined)?.data ?? []);
+
+      it('sends a school without one the payload it always sent: no key, no lock, the demand whole', async () => {
+        arrange();
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const payload = postedPayload();
+        expect(payload).not.toHaveProperty('placements');
+        expect(payload.fixedLessons).toEqual([]);
+        expect(payload.requirements[0]).toMatchObject({ lessonsPerWeek: 3 });
+        expect(masters.findConflicts).not.toHaveBeenCalled();
+      });
+
+      it('sends a förläggning as a lock, takes its lesson off the post, and says which lock it is', async () => {
+        arrange();
+        placed([placement()]);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const payload = postedPayload();
+        const post = payload.requirements[0]!;
+        expect(post.lessonsPerWeek).toBe(2);
+        expect(payload.fixedLessons).toHaveLength(1);
+        const lock = payload.fixedLessons[0]!;
+        expect(lock).toMatchObject({
+          dayOfWeek: 3,
+          startTime: '10:00:00',
+          endTime: '11:00:00',
+          roomId: payload.rooms[0]!.id,
+          studentGroupId: post.studentGroupId,
+          teacherId: post.teacherId,
+        });
+        expect(lock).not.toHaveProperty('recurrence');
+        // The engine is told which lock it is, and the post with nothing förlagt.
+        expect(payload.placements).toEqual({
+          lessons: [{ fixedLessonId: lock.id, requirementId: post.id }],
+          requirements: [{ ...post, lessonsPerWeek: 3 }],
+        });
+        expect(Object.keys(payload.placements!).sort()).toEqual(PLACEMENTS_FIELDS);
+        expect(Object.keys(payload.placements!.lessons[0]!).sort()).toEqual(PLACED_LESSON_FIELDS);
+        // Judged with the hand edit's rule before it was sent.
+        expect(masters.findConflicts).toHaveBeenCalledTimes(1);
+      });
+
+      it('takes one lesson off the post for an odd and an even row of one length, each held in its weeks', async () => {
+        arrange();
+        placed([
+          placement({ id: 'odd-row', recurrence: 'ODD_WEEKS' }),
+          placement({ id: 'even-row', dayOfWeek: 4, recurrence: 'EVEN_WEEKS' }),
+        ]);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const payload = postedPayload();
+        expect(payload.requirements[0]!.lessonsPerWeek).toBe(2);
+        expect(payload.fixedLessons.map((lock) => [lock.dayOfWeek, lock.recurrence])).toEqual([
+          [3, 'ODD_WEEKS'],
+          [4, 'EVEN_WEEKS'],
+        ]);
+        expect(payload.placements!.requirements[0]!.lessonsPerWeek).toBe(3);
+      });
+
+      it('counts the förläggning among the post’s locked days, and not in its released form', async () => {
+        arrange({ requirements: [requirement({ subject: { requiredRoomTypeId: null, maxLessonsPerDay: 1 } })] });
+        placed([placement()]);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const payload = postedPayload();
+        expect(payload.requirements[0]).toMatchObject({ lessonsPerWeek: 2, maxLessonsPerDay: 1, lockedDays: [3] });
+        expect(payload.placements!.requirements[0]).toMatchObject({ lessonsPerWeek: 3, maxLessonsPerDay: 1 });
+        expect(payload.placements!.requirements[0]).not.toHaveProperty('lockedDays');
+      });
+
+      it('writes the förläggning beside the answer as a locked lesson the next run replaces', async () => {
+        arrange();
+        placed([placement()]);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const rows = written();
+        expect(rows).toHaveLength(3);
+        expect(rows.filter((row) => row['fromPlacement'] === true)).toEqual([
+          expect.objectContaining({
+            subjectId: SUBJECT_ID,
+            studentGroupId: GROUP_ID,
+            teacherId: TEACHER_ID,
+            roomId: ROOM_ID,
+            dayOfWeek: 3,
+            startTime: tenAm,
+            endTime: new Date('1970-01-01T11:00:00.000Z'),
+            recurrence: 'ALL_WEEKS',
+            isLocked: true,
+            isGenerated: true,
+            fromPlacement: true,
+          }),
+        ]);
+        // The engine's lessons are the ones they always were.
+        expect(rows.filter((row) => row['fromPlacement'] === undefined)).toHaveLength(2);
+      });
+
+      it('a post every lesson of which is förlagd wakes no engine, and its lesson is written all the same', async () => {
+        arrange({ requirements: [requirement({ lessonsPerWeek: 1 })] });
+        placed([placement()]);
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(http.post).not.toHaveBeenCalled();
+        expect(written()).toEqual([expect.objectContaining({ dayOfWeek: 3, isLocked: true, fromPlacement: true })]);
+      });
+
+      it('refuses the run by name, before the engine, when a förläggning can no longer stand', async () => {
+        arrange({
+          requirements: [requirement({ subject: { requiredRoomTypeId: null, name: 'Idrott och hälsa' } })],
+          groups: [{ id: GROUP_ID, gradeLevel: null, kind: 'CLASS', name: '7A' }],
+          rooms: [{ id: ROOM_ID, capacity: 30, type: 'CLASSROOM', name: 'Sporthallen' }],
+          lockedLessons: [
+            {
+              ...lockedLesson({ id: 'other-lock', dayOfWeek: 3, startTime: tenAm, endTime: new Date('1970-01-01T11:00:00.000Z'), studentGroupId: EXTRA_GROUP_ID }),
+              studentGroup: { name: '8B' },
+              subject: { name: 'Matematik' },
+              participants: [],
+            },
+          ],
+        });
+        placed([placement()]);
+        masters.findConflicts.mockResolvedValue([
+          { kind: 'TEACHER', message: 'Teacher already teaches Matematik in this slot.', masterLessonId: 'other-lock' },
+        ]);
+        echoEngine();
+
+        const answer = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(http.post).not.toHaveBeenCalled();
+        expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+        expect(answer.status).toBe('INFEASIBLE');
+        expect(answer.conflicts).toMatchObject({
+          summaryCode: 'PLACEMENTS_REFUSED_SUMMARY',
+          summaryParams: { count: 1 },
+          conflicts: [
+            {
+              category: 'PLACEMENT',
+              code: 'PLACEMENT_CANNOT_STAND',
+              params: expect.objectContaining({ reason: 'TEACHER', day: 3, start: '10:00', end: '11:00', other: '8B Matematik' }),
+            },
+          ],
+        });
+        // The ids are named back, as every engine sentence's are: the post
+        // and the room by the school's own names, never a uuid.
+        const params = answer.conflicts!.conflicts[0]!.params!;
+        expect(params['requirement']).toMatch(/Idrott och hälsa/);
+        expect(params['room']).toBe('Sporthallen');
+      });
+
+      it('refuses the write (GENERATE_STALE) when a förläggning moved while the solver ran', async () => {
+        arrange();
+        tx.teachingRequirementPlacement.findMany
+          .mockResolvedValueOnce([placement()])
+          .mockResolvedValueOnce([placement({ dayOfWeek: 4 })]);
+        echoEngine();
+
+        await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+          response: expect.objectContaining({ code: 'GENERATE_STALE' }),
+        });
+        expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+      });
+
+      it('deletes a lesson Generera wrote from a förläggning with the draft, but counts it as no content of it', async () => {
+        const draftRow = (id: string, fromPlacement: boolean) => ({
+          id,
+          subjectId: SUBJECT_ID,
+          studentGroupId: GROUP_ID,
+          teacherId: TEACHER_ID,
+          coTeacherId: null,
+          roomId: ROOM_ID,
+          dayOfWeek: 3,
+          startTime: tenAm,
+          endTime: new Date('1970-01-01T11:00:00.000Z'),
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+          isParked: false,
+          fromPlacement,
+        });
+        arrange({ draftLessons: [draftRow('placed-master', true), draftRow('engine-master', false)] });
+        placed([placement()]);
+
+        const prepared = await prisma.withRls(testUser(), (client: never) =>
+          service.prepareSchedule(client, ACADEMIC_YEAR, testUser()),
+        );
+
+        if (!prepared.ready) throw new Error('expected the fetch to be ready');
+        // The write deletes both (and writes the förläggning again)…
+        expect(prepared.draftIds).toEqual(['engine-master', 'placed-master']);
+        // …but "moved" and the draft's coverage read only the engine's.
+        expect(prepared.draftLessons.map((lesson: { id: string }) => lesson.id)).toEqual(['engine-master']);
+      });
+
+      it('keeps the förläggning out of the basis part an apply compares with the preserved masters', async () => {
+        arrange();
+        type Prepared = Awaited<ReturnType<OptimizationProxyService['prepareSchedule']>>;
+        const prepare = (): Promise<Prepared> =>
+          prisma.withRls(testUser(), (client: never) => service.prepareSchedule(client, ACADEMIC_YEAR, testUser()));
+        const withNone = await prepare();
+        placed([placement()]);
+        const withOne = await prepare();
+
+        if (!withNone.ready || !withOne.ready) throw new Error('expected both fetches to be ready');
+        expect(withOne.basisParts.preserved).toBe(withNone.basisParts.preserved);
+        expect(withOne.basisParts.requirements).not.toBe(withNone.basisParts.requirements);
+        expect(withOne.placedRows.map((row) => row.id)).toEqual([PLACED]);
+        expect(withOne.keptTimetable.map((lesson) => lesson.id)).toEqual([PLACED]);
+      });
+    });
+
     describe('lärarnas arbetstid', () => {
       /*
        * The teacher's own lunch and rest, which nothing in this payload could
@@ -7331,6 +7642,250 @@ describe('OptimizationProxyService', () => {
             Array.from({ length: 3 }, () => ({ requirementId: anonymous, dayOfWeek: 1, startTime: '08:00:00' })),
           );
           expect(postedPayload().previousLessons).toEqual(hints);
+        });
+      });
+
+      describe('Bästa möjliga schema: solveCandidate in the mode', () => {
+        const WORK_RULE_ID = '77777777-cccc-4ccc-8ccc-777777777777';
+        const POST_ID = '99999999-cccc-4ccc-8ccc-999999999999';
+        const options = {
+          weights: null,
+          search: { maxSeconds: 30, probes: true, workers: 4 },
+          timeoutMs: 95_000,
+        };
+        const best = { ...options, bestEffort: true };
+
+        const workRule = (overrides: Record<string, unknown> = {}) => ({
+          id: WORK_RULE_ID,
+          userId: TEACHER_ID,
+          lunchMinutes: null,
+          lunchStartTime: null,
+          lunchEndTime: null,
+          minDailyRestMinutes: null,
+          maxTeachingMinutesPerDay: 360,
+          preferredFreeDayOfWeek: null,
+          ...overrides,
+        });
+        const post = (overrides: Record<string, unknown> = {}) => ({
+          id: POST_ID,
+          userId: TEACHER_ID,
+          maxTeachingDaysPerWeek: 3,
+          maxConsecutiveTeachingMinutes: null,
+          consecutiveBreakMinutes: null,
+          ...overrides,
+        });
+        /** A world with a named requirement, class and room, a cap and a part-timer's days. */
+        const world = () =>
+          arrange({
+            requirements: [requirement({ subject: { name: 'Matematik', requiredRoomTypeId: null } })],
+            groups: [{ id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', name: '7A' }],
+            rooms: [{ id: ROOM_ID, capacity: 30, type: 'CLASSROOM', name: 'Sal 12' }],
+            workRules: [workRule()],
+            posts: [post()],
+          });
+
+        /** The engine places the week as the echo does, and adds what the test says. */
+        const answerPlaced = (extra: (payload: any) => Record<string, unknown>, status = 'OPTIMAL') =>
+          http.post.mockImplementation((_url: string, payload: any) =>
+            of({
+              data: {
+                requestId: payload.requestId,
+                status,
+                lessons: payload.requirements.flatMap((r: any) =>
+                  Array.from({ length: r.lessonsPerWeek }, () => ({
+                    requirementId: r.id,
+                    roomId: payload.rooms[0]?.id ?? null,
+                    dayOfWeek: 1,
+                    startTime: '08:00:00',
+                    endTime: '09:15:00',
+                  })),
+                ),
+                conflicts: null,
+                ...extra(payload),
+              },
+            }),
+          );
+
+        const line = (payload: any, code: string, params: Record<string, string | number>, rest: Record<string, unknown> = {}) => ({
+          category: 'DEVIATION',
+          code,
+          params,
+          message: `English for ${code}`,
+          requirementIds: [],
+          roomIds: [],
+          constraintIds: [],
+          resourceIds: [],
+          ...rest,
+        });
+
+        it('sends `relaxation` and nothing else added when asked, and nothing at all when not', async () => {
+          arrange();
+          answerPlaced(() => ({ deviations: [] }));
+
+          await service.solveCandidate(await ready(), best);
+          const asked = postedPayload() as unknown as Record<string, unknown>;
+          expect(asked['relaxation']).toEqual({ mode: 'BEST_EFFORT' });
+          expect(asked['search']).toEqual(options.search);
+
+          http.post.mockClear();
+          arrange();
+          answerPlaced(() => ({}));
+          await service.solveCandidate(await ready(), options);
+          // Byte for byte as before: not a key, not an undefined one.
+          expect(Object.keys(postedPayload())).not.toContain('relaxation');
+        });
+
+        it('brings back an empty list when nothing gave way — which is not the same as no list', async () => {
+          arrange();
+          answerPlaced(() => ({ deviations: [] }));
+
+          const solution = await service.solveCandidate(await ready(), best);
+
+          expect(solution.deviations).toEqual([]);
+          expect(solution.status).toBe('OPTIMAL');
+          expect(solution.lessons).toHaveLength(3);
+        });
+
+        it('turns a deviation’s ids back: a requirement and a room by the school’s names, a cap’s rule by its row, its teacher kept for the server', async () => {
+          world();
+          const prepared = await ready();
+          answerPlaced((payload) => {
+            const requirementId = payload.requirements[0].id;
+            const rule = payload.teacherWorkRules[0].id;
+            return {
+              deviations: [
+                line(payload, 'DEVIATION_SUBJECT_PER_DAY', { requirement: requirementId, day: 2, maxPerDay: 1, count: 2, over: 1, needed: 2 }, {
+                  message: `${requirementId} has 2 lessons on Tuesday.`,
+                  requirementIds: [requirementId],
+                }),
+                line(payload, 'DEVIATION_ROOM_LOCK', { requirement: requirementId, lessons: 1, of: 3 }, {
+                  requirementIds: [requirementId],
+                  roomIds: [payload.rooms[0].id],
+                }),
+                line(payload, 'DEVIATION_TEACHER_DAILY_CAP', { rule, day: 1, minutes: 360, taught: 375, over: 15, needed: 375 }, {
+                  message: `The cap that the working-time rule ${rule} sets gave way.`,
+                  requirementIds: [requirementId],
+                  resourceIds: [rule],
+                }),
+              ],
+            };
+          });
+
+          const { deviations } = await service.solveCandidate(prepared, best);
+          const [perDay, roomLock, dailyCap] = deviations!;
+
+          expect(perDay).toMatchObject({
+            category: 'DEVIATION',
+            code: 'DEVIATION_SUBJECT_PER_DAY',
+            params: { requirement: 'Matematik för 7A', day: 2, maxPerDay: 1, count: 2, over: 1, needed: 2 },
+            message: 'Matematik för 7A has 2 lessons on Tuesday.',
+            requirementIds: [REQ_ID],
+            subjectIds: [],
+          });
+          // The room the lessons ended up in, by the school's name for it.
+          expect(roomLock).toMatchObject({ params: { requirement: 'Matematik för 7A' }, roomIds: [ROOM_ID], resourceNames: ['Sal 12'] });
+          // The cap: the rule's real row, its teacher as a Users id and as nothing else.
+          expect(dailyCap).toMatchObject({
+            params: { rule: WORK_RULE_ID, day: 1, minutes: 360 },
+            resourceIds: [WORK_RULE_ID],
+            subjectIds: [TEACHER_ID],
+          });
+          expect(dailyCap!.message).toContain(WORK_RULE_ID);
+          expect(dailyCap!.resourceNames).toEqual([]);
+          // No anonymous id is left in any of them, and no name of a person is made up.
+          const sent = JSON.stringify(postedPayload());
+          for (const anonymous of [
+            ...(prepared.payload.requirements.map((r) => r.id)),
+            ...(prepared.payload.rooms.map((r) => r.id)),
+            ...(prepared.payload.teacherWorkRules.map((r) => r.id)),
+          ]) {
+            expect(JSON.stringify(deviations)).not.toContain(anonymous);
+          }
+          expect(sent).not.toContain(TEACHER_ID);
+        });
+
+        it('hands a part-timer’s days over in the hidden form whole: no figure, no post, no teacher', async () => {
+          world();
+          answerPlaced((payload) => ({
+            deviations: [
+              line(payload, 'DEVIATION_TEACHER_WORK_DAYS', { limit: payload.teacherDayLimits[0].id, days: 3, taught: 4, over: 1, needed: 4 }, {
+                message: `The teacher's post ${payload.teacherDayLimits[0].id} allows 3 days a week and this timetable has the teacher on 4.`,
+                requirementIds: [payload.requirements[0].id],
+                resourceIds: [payload.teacherDayLimits[0].id],
+              }),
+            ],
+          }));
+
+          const { deviations } = await service.solveCandidate(await ready(), best);
+
+          expect(deviations).toHaveLength(1);
+          expect(deviations![0]).toMatchObject({
+            category: 'DEVIATION',
+            code: 'DEVIATION_TEACHER_WORK_DAYS',
+            params: {},
+            message: DEVIATION_WORK_DAYS_HIDDEN_MESSAGE,
+            requirementIds: [],
+            resourceIds: [],
+            resourceNames: [],
+            subjectIds: [],
+          });
+          const text = JSON.stringify(deviations);
+          expect(text).not.toContain(POST_ID);
+          expect(text).not.toContain(TEACHER_ID);
+          expect(text).not.toMatch(/"(days|taught|over|needed|limit)"|3 days|on 4/);
+        });
+
+        it('stops an answer to the mode that carries no list: it could not say that nothing gave way', async () => {
+          arrange();
+          answerPlaced(() => ({}));
+          const error = await service.solveCandidate(await ready(), best).catch((thrown: unknown) => thrown);
+          expect((error as HttpException).getStatus()).toBe(503);
+          expect(bodyOf(error)).toHaveProperty('code', 'ENGINE_LACKS_BEST_EFFORT');
+          // An engine that answered a null list says the same as one that said nothing.
+          answerPlaced(() => ({ deviations: null }));
+          const nulled = await service.solveCandidate(await ready(), best).catch((thrown: unknown) => thrown);
+          expect(bodyOf(nulled)).toHaveProperty('code', 'ENGINE_LACKS_BEST_EFFORT');
+        });
+
+        it('reads no list into a call that did not ask for the mode', async () => {
+          arrange();
+          answerPlaced(() => ({ deviations: [line({}, 'DEVIATION_ROOM_LOCK', { requirement: 'x', lessons: 1, of: 1 })] }));
+          const solution = await service.solveCandidate(await ready(), options);
+          expect(solution).not.toHaveProperty('deviations');
+        });
+
+        it('brings a refusal back with the hard rule it names under conflicts and no deviations, in the mode as out of it', async () => {
+          arrange();
+          answerWithConflicts((payload) => ({
+            summary: `Requirement ${payload.requirements[0].id} has nowhere to go.`,
+            summaryCode: 'X',
+            summaryParams: {},
+            conflicts: [],
+          }));
+
+          const solution = await service.solveCandidate(await ready(), best);
+
+          expect(solution).toMatchObject({ status: 'INFEASIBLE', lessons: [], lunches: null });
+          expect(solution.conflicts?.summary).toContain(REQ_ID);
+          expect(solution).not.toHaveProperty('deviations');
+        });
+
+        it('keeps no list for an answer the demand guard rejects', async () => {
+          arrange();
+          http.post.mockImplementation((_url: string, payload: any) =>
+            of({ data: { requestId: payload.requestId, status: 'OPTIMAL', lessons: [placement(payload.requirements[0].id)], deviations: [] } }),
+          );
+          warnings();
+          const solution = await service.solveCandidate(await ready(), best);
+          expect(solution).toMatchObject({ rejected: true, lessons: [] });
+          expect(solution).not.toHaveProperty('deviations');
+        });
+
+        it('asks no engine when locks already place everything, and says that nothing gave way — in the mode only', async () => {
+          arrange({ requirements: [requirement({ lessonsPerWeek: 1 })], lockedLessons: [lockedLesson()] });
+          const solution = await service.solveCandidate(await ready(), best);
+          expect(http.post).not.toHaveBeenCalled();
+          expect(solution).toEqual({ status: 'FEASIBLE', lessons: [], lunches: null, conflicts: null, deviations: [] });
         });
       });
 

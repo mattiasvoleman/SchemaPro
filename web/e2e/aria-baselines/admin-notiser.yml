@@ -59,6 +59,9 @@
       - listitem:
         - link "Lunchsittningar":
           - /url: /sv/admin/lunch-servings
+      - listitem:
+        - link "Resurser":
+          - /url: /sv/admin/resources
     - text: Schemaläggning
     - list "Schemaläggning":
       - listitem:
@@ -67,6 +70,9 @@
       - listitem:
         - link "Grundschema":
           - /url: /sv/admin/timetable
+      - listitem:
+        - link "Klasslärare":
+          - /url: /sv/admin/class-teachers
       - listitem:
         - link "Luckor och håltimmar":
           - /url: /sv/admin/gaps
@@ -112,6 +118,12 @@
         - link "Lokalbokningar":
           - /url: /sv/admin/room-bookings
       - listitem:
+        - link "Externa bokningar":
+          - /url: /sv/admin/external-bookings
+      - listitem:
+        - link "Utnyttjande":
+          - /url: /sv/admin/utilisation
+      - listitem:
         - link "Rapporter":
           - /url: /sv/admin/reports
       - listitem:
@@ -121,8 +133,17 @@
         - link "Rapporteringsgrad":
           - /url: /sv/admin/reporting-rate
       - listitem:
+        - link "Analys och planering":
+          - /url: /sv/admin/analysis
+      - listitem:
         - link "Kvittens":
           - /url: /sv/admin/acknowledgements
+      - listitem:
+        - link "Måltidskollen":
+          - /url: /sv/admin/meals
+      - listitem:
+        - link "Checklistor":
+          - /url: /sv/admin/checklists
       - listitem:
         - link "Klassbok":
           - /url: /sv/admin/klassbok
@@ -179,5 +200,8 @@
       - listitem:
         - text: Veckobesked om rapporteringsgrad
         - switch "Veckobesked om rapporteringsgrad" [checked]
+      - listitem:
+        - text: Externa bokningar som krockar med en lektion
+        - switch "Externa bokningar som krockar med en lektion" [checked]
 - region "Meddelanden alt+T"
 - alert

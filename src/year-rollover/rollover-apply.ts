@@ -353,6 +353,7 @@ export async function applyStaffingWrites(
         // holds for what is written here.
         ...(row.maxConsecutiveTeachingMinutes ? { maxConsecutiveTeachingMinutes: row.maxConsecutiveTeachingMinutes } : {}),
         ...(row.consecutiveBreakMinutes ? { consecutiveBreakMinutes: row.consecutiveBreakMinutes } : {}),
+        ...(row.payrollNumber ? { payrollNumber: row.payrollNumber } : {}),
       })),
     });
     counts.employments = count;

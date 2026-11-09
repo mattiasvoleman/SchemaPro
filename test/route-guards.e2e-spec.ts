@@ -178,6 +178,27 @@ describe('Route guard coverage (e2e)', () => {
     expect(of('AckController', 'updateSettings')).toEqual({ kind: 'area', areas: ['DRIFT'] });
     expect(of('AckController', 'create')).toEqual({ kind: 'area', areas: ['DRIFT'] });
     expect(of('AckController', 'stopReminder')).toEqual({ kind: 'area', areas: ['DRIFT'] });
+    // Checklistor: the templates, the ticks, the lists and their answers are Drift's; a teacher ticks and writes too.
+    for (const method of ['createTemplate', 'updateTemplate', 'tick', 'voidProof', 'createList', 'record', 'ask', 'close']) {
+      expect(of('ChecklistsController', method)).toEqual({ kind: 'area', areas: ['DRIFT'] });
+    }
+    // Lokal: the kinds of resource and the resources are Planering's (as the rooms are); a teacher reads them and books.
+    for (const method of ['create', 'update', 'remove']) {
+      expect(of('ResourceTypesController', method)).toEqual({ kind: 'area', areas: ['PLANERING'] });
+      expect(of('ResourcesController', method)).toEqual({ kind: 'area', areas: ['PLANERING'] });
+    }
+    // Lokal: a booking of a resource is decided and cancelled under Drift, as a room booking is; so is every write of a series
+    // of external bookings (preview included: it is a POST, and a reader who cannot register has no use for it).
+    for (const method of ['create', 'cancel', 'decide']) {
+      expect(of('ResourceBookingsController', method)).toEqual({ kind: 'area', areas: ['DRIFT'] });
+    }
+    for (const method of ['preview', 'create', 'update', 'cancel', 'remove', 'cancelDay']) {
+      expect(of('ExternalBookingsController', method)).toEqual({ kind: 'area', areas: ['DRIFT'] });
+    }
+    // Lokal: the utilisation report writes nothing and names no person: every administrator reads it, whatever the profile.
+    for (const method of ['report', 'csv']) {
+      expect(of('UtilisationController', method)).toMatchObject({ kind: 'any' });
+    }
     // Rapporteringsgrad: the switches and the limit are Drift's; a teacher reads their own page.
     expect(of('ReportingRateController', 'updateSettings')).toEqual({ kind: 'area', areas: ['DRIFT'] });
     expect(of('PublicationsController', 'publish')).toEqual({ kind: 'area', areas: ['PUBLICERING', 'DRIFT'] });
@@ -198,6 +219,29 @@ describe('Route guard coverage (e2e)', () => {
     expect(rolesOf('settings')).toEqual(['SCHOOL_ADMIN']);
     expect(rolesOf('updateSettings')).toEqual(['SCHOOL_ADMIN']);
     expect(rolesOf('mine')).toEqual(['TEACHER']);
+  });
+
+  // Checklistor: the school's templates are the administrators' to write; everything else on the controller is a
+  // teacher's as well as an administrator's, and nobody else has a route (a guardian confirms a consent through
+  // Kvittens, a pupil sees nothing).
+  it('keeps the writing of Checklistor’s templates to the administrators and every other route (the sheets for paper included) to staff', () => {
+    const checklists = routes.filter((r) => r.controller === 'ChecklistsController');
+    expect(checklists.length).toBe(18);
+    // The two sheets for paper are the screen's routes with a pupil held out, for a teacher too (a teacher can not read the marks).
+    const sheets = checklists.filter((route) => route.method === 'rosterForPaper' || route.method === 'detailForPaper');
+    expect(sheets.map((route) => `${route.verb} ${route.full}`).sort()).toEqual([
+      'GET /api/v1/checklists/consent-lists/:id/print',
+      'GET /api/v1/checklists/templates/:id/roster/print',
+    ]);
+    for (const route of sheets) expect(route.roles).toEqual(['SCHOOL_ADMIN', 'TEACHER']);
+    for (const route of checklists) {
+      const writesTemplates = route.method === 'createTemplate' || route.method === 'updateTemplate';
+      expect([route.method, route.roles]).toEqual([route.method, writesTemplates ? ['SCHOOL_ADMIN'] : ['SCHOOL_ADMIN', 'TEACHER']]);
+      expect(route.isPublic).toBe(false);
+      expect(route.path).toBe('api/v1/checklists');
+    }
+    // Not a file or a feed of people: the list is printed from the screen, which holds out the protected identities.
+    expect(checklists.some((route) => route.writesAFile)).toBe(false);
   });
 
   it('keeps the public surface to the health probes, the public viewer and SS12000', () => {

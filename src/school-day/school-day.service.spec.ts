@@ -108,17 +108,34 @@ describe('datesOf', () => {
 describe('SchoolDayService', () => {
   describe('settings', () => {
     it('answers NONE for a school that has not decided, and what it decided otherwise', async () => {
-      expect(await setup({ view: null }).service.settings(admin)).toEqual({ teacherView: 'NONE' });
-      expect(await setup({ view: 'ROOMS' }).service.settings(teacher)).toEqual({ teacherView: 'ROOMS' });
+      expect(await setup({ view: null }).service.settings(admin)).toEqual({ teacherView: 'NONE', guardianNoticeOnMove: false });
+      expect(await setup({ view: 'ROOMS' }).service.settings(teacher)).toEqual({ teacherView: 'ROOMS', guardianNoticeOnMove: false });
+    });
+
+    it('answers the school’s choice about telling a guardian of a move, off until it says so (Elevens lektion för dagen)', async () => {
+      const on = setup({ view: 'ROOMS' });
+      model(on.tx, 'schoolDaySettings', 'findUnique').mockResolvedValue({ teacherView: 'ROOMS', guardianNoticeOnMove: true });
+      expect(await on.service.settings(admin)).toEqual({ teacherView: 'ROOMS', guardianNoticeOnMove: true });
     });
 
     it('saves the decision as one row per school', async () => {
       const { service, tx } = setup({ view: 'ALL' });
-      expect(await service.updateSettings({ teacherView: 'ALL' }, admin)).toEqual({ teacherView: 'ALL' });
+      expect(await service.updateSettings({ teacherView: 'ALL' }, admin)).toEqual({ teacherView: 'ALL', guardianNoticeOnMove: false });
+      // A choice that is not sent is left as it is: the upsert does not carry it.
       expect(model(tx, 'schoolDaySettings', 'upsert')).toHaveBeenCalledWith({
         where: { schoolId: 'school-1' },
         create: { schoolId: 'school-1', teacherView: 'ALL' },
         update: { teacherView: 'ALL' },
+      });
+    });
+
+    it('saves the school’s choice about telling a guardian of a move beside the view, when it is sent', async () => {
+      const { service, tx } = setup({ view: 'ALL' });
+      await service.updateSettings({ teacherView: 'ALL', guardianNoticeOnMove: true }, admin);
+      expect(model(tx, 'schoolDaySettings', 'upsert')).toHaveBeenCalledWith({
+        where: { schoolId: 'school-1' },
+        create: { schoolId: 'school-1', teacherView: 'ALL', guardianNoticeOnMove: true },
+        update: { teacherView: 'ALL', guardianNoticeOnMove: true },
       });
     });
   });
@@ -230,6 +247,20 @@ describe('SchoolDayService', () => {
         [WINTER, 23 * 60, 1440, 'Föräldramöte'],
         ['2027-03-23', 0, 9 * 60 + 30, 'Föräldramöte'],
       ]);
+    });
+
+    it('draws a day of an external hire on the room and on nobody: the administrator who registered it is not busy for it (Lokal)', async () => {
+      const { service } = setup({
+        ...world,
+        bookings: [
+          { roomId: 'r2', bookedById: 't1', externalBookingId: 'x1', title: 'Extern bokning', startsAt: instant(`${WINTER}T17:00:00Z`), endsAt: instant(`${WINTER}T19:00:00Z`) },
+          { roomId: 'r2', bookedById: 't2', externalBookingId: null, title: 'Möte', startsAt: instant(`${WINTER}T09:00:00Z`), endsAt: instant(`${WINTER}T10:00:00Z`) },
+        ],
+      });
+      const view = await service.grid({ from: WINTER }, admin);
+      const booking = view.blocks.filter((block) => block.kind === 'BOOKING');
+      expect(booking.filter((block) => block.resource === 'ROOM').map((block) => block.label)).toEqual(['Extern bokning', 'Möte']);
+      expect(booking.filter((block) => block.resource === 'TEACHER').map((block) => [block.resourceId, block.label])).toEqual([['t2', 'Möte']]);
     });
 
     it('closes a room on its dated day and on its weekday, and on no other', async () => {

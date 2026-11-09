@@ -56,6 +56,12 @@ import { idForms, SPACING_SQL } from './free-text';
 export interface DataScope {
   /** The persons the file is about, or null for the whole school. */
   ids: readonly string[] | null;
+  /**
+   * The person a registerutdrag is about, the first of `ids` (the others are the persons that come with it). The one file
+   * that holds data about a related person which the person asked for must not be handed: the guardians' answers of
+   * samtycken.csv are the guardian's own, so they follow the subject and not the people who come along.
+   */
+  subject?: string;
 }
 
 export interface DataEnv {
@@ -522,6 +528,11 @@ interface LeaveRow {
   referrer: string | null;
   referredAt: string | null;
   created: string;
+  consentRequired: boolean;
+  shortNotice: boolean;
+  contactName: string | null;
+  contactPhone: string | null;
+  contactRelation: string | null;
   at: string;
   hid: number;
 }
@@ -539,7 +550,7 @@ export const LEDIGHETER: DataFile = {
     { name: 'fran', doc: 'Första dagen (ÅÅÅÅ-MM-DD).' },
     { name: 'till', doc: 'Sista dagen (ÅÅÅÅ-MM-DD).' },
     { name: 'skal', doc: 'Skälet som ansökan gavs. Tomt om det nämner en person med skyddad identitet, och i ett registerutdrag om ansökan inte gäller personen utdraget är om.' },
-    { name: 'status', doc: 'PENDING (väntar), APPROVED (beviljad) eller REJECTED (avslagen).' },
+    { name: 'status', doc: 'PENDING (väntar), APPROVED (beviljad), REJECTED (avslagen) eller GUARDIAN_DECLINED (en vårdnadshavare som skolan bad om samtycke sa nej, och ansökan avslutades; ingen beslutsfattare).' },
     { name: 'beslut_av_id', doc: 'Id på den som beslutade. Tomt om personen är borttagen eller har skyddad identitet.' },
     { name: 'beslut_av_epost', doc: 'E-postadress till den som beslutade.' },
     { name: 'beslut_tid', doc: 'När beslutet fattades (UTC).' },
@@ -548,6 +559,11 @@ export const LEDIGHETER: DataFile = {
     { name: 'hanvisad_av_id', doc: 'Id på mentorn som lämnade vidare till rektor. Tomt om ingen, eller skyddad identitet.' },
     { name: 'hanvisad_tid', doc: 'När ansökan lämnades vidare (UTC).' },
     { name: 'skapad', doc: 'När ansökan gjordes (UTC).' },
+    { name: 'samtycke_kravdes', doc: 'true om skolan bad om varje vårdnadshavares samtycke när ansökan gjordes (skolans val Ledighetspolicy). Vem som samtyckt lagras som en egen uppgift per vårdnadshavare som ingen roll läser; här står bara att samtycke krävdes och, i status, om en vårdnadshavare sa nej.' },
+    { name: 'kort_varsel', doc: 'true om ansökan kom närmare första dagen än skolans minsta antal dagar i förväg (skolans val Ledighetspolicy).' },
+    { name: 'kontakt_namn', doc: 'Namn på den tillfälliga kontakten under ledigheten, en tredje parts uppgift som den som ansökte gav. Tomt om ingen gavs. Tomt också i ett registerutdrag om ansökan inte gäller personen utdraget är om, och om namnet är en person med skyddad identitet.' },
+    { name: 'kontakt_telefon', doc: 'Kontaktens telefonnummer. Tomt på samma villkor som namnet.' },
+    { name: 'kontakt_relation', doc: 'Kontaktens relation till eleven. Tomt på samma villkor som namnet.' },
   ],
   async *rows(env) {
     const markedOut = [...env.markedOut];
@@ -558,6 +574,8 @@ export const LEDIGHETER: DataFile = {
     const referrerHidden = hides(env, Prisma.sql`l."referredById"`, about);
     const reasonHidden = textHides(env, Prisma.sql`l."reason"`, about);
     const noteHidden = textHides(env, Prisma.sql`l."decisionNote"`, about);
+    // The contact is a third party's: the name decides for all three, since a telephone number names its owner as well.
+    const contactHidden = textHides(env, Prisma.sql`l."contactName"`, about);
     let after: { at: string; id: string } | null = null;
     for (;;) {
       const batch: LeaveRow[] = await env.read((tx) =>
@@ -571,9 +589,14 @@ export const LEDIGHETER: DataFile = {
                  ${ISO(Prisma.sql`l."decidedAt"`)} AS "decidedAt", ${shown(noteHidden, Prisma.sql`l."decisionNote"`)} AS "decisionNote", l."decidedAs"::text AS "decidedAs",
                  ${shown(referrerHidden, Prisma.sql`l."referredById"`)}::text AS referrer,
                  ${ISO(Prisma.sql`l."referredAt"`)} AS "referredAt", ${ISO(Prisma.sql`l."createdAt"`)} AS created,
+                 l."consentRequired" AS "consentRequired", l."shortNotice" AS "shortNotice",
+                 ${shown(contactHidden, Prisma.sql`l."contactName"`)} AS "contactName",
+                 ${shown(contactHidden, Prisma.sql`l."contactPhone"`)} AS "contactPhone",
+                 ${shown(contactHidden, Prisma.sql`l."contactRelation"`)} AS "contactRelation",
                  to_char(l."createdAt", 'YYYY-MM-DD HH24:MI:SS.US+00') AS at,
                  (${cut(studentHidden, about)} + ${cut(requesterHidden, Prisma.sql`l."requestedById"`)} + ${cut(deciderHidden, Prisma.sql`l."decidedById"`)}
-                  + ${cut(referrerHidden, Prisma.sql`l."referredById"`)} + ${cut(reasonHidden, Prisma.sql`l."reason"`)} + ${cut(noteHidden, Prisma.sql`l."decisionNote"`)}) AS hid
+                  + ${cut(referrerHidden, Prisma.sql`l."referredById"`)} + ${cut(reasonHidden, Prisma.sql`l."reason"`)} + ${cut(noteHidden, Prisma.sql`l."decisionNote"`)}
+                  + ${cut(contactHidden, Prisma.sql`l."contactName"`)} + ${cut(contactHidden, Prisma.sql`l."contactPhone"`)} + ${cut(contactHidden, Prisma.sql`l."contactRelation"`)}) AS hid
             FROM "LeaveRequests" l JOIN "Users" st ON st."id" = l."studentId" JOIN "Users" rq ON rq."id" = l."requestedById"
             LEFT JOIN "Users" dc ON dc."id" = l."decidedById"
            WHERE l."schoolId" = ${env.schoolId}::uuid
@@ -591,6 +614,7 @@ export const LEDIGHETER: DataFile = {
           row.id, text(row.student), text(row.studentEmail), text(row.requester), text(row.requesterEmail), row.start, row.end, text(row.reason),
           row.status, text(row.decider), text(row.deciderEmail), text(row.decidedAt), text(row.decisionNote), text(row.decidedAs),
           text(row.referrer), text(row.referredAt), row.created,
+          String(row.consentRequired), String(row.shortNotice), text(row.contactName), text(row.contactPhone), text(row.contactRelation),
         ];
       }
       emptied(env, LEDIGHETER.path, batch);
@@ -607,6 +631,88 @@ export const LEDIGHETER: DataFile = {
              ${env.scope.ids === null ? Prisma.empty : Prisma.sql`AND (l."studentId" = ANY(${[...env.scope.ids]}::uuid[]) OR l."requestedById" = ANY(${[...env.scope.ids]}::uuid[]) OR l."decidedById" = ANY(${[...env.scope.ids]}::uuid[]) OR l."referredById" = ANY(${[...env.scope.ids]}::uuid[]))`}`),
       );
       env.held(LEDIGHETER.path, 'rows', counted?.held ?? 0);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// samtycken.csv
+// ---------------------------------------------------------------------------
+
+interface ConsentRow {
+  request: string;
+  guardian: string | null;
+  guardianEmail: string | null;
+  student: string | null;
+  consented: boolean | null;
+  answeredAt: string | null;
+  remindedAt: string | null;
+  created: string;
+  /** The page's key, which the file never shows: the guardian's own id, also where the file blanks it. */
+  guardianKey: string;
+  at: string;
+  hid: number;
+}
+
+/**
+ * The guardians a school asked to consent to a leave request, and what they answered (Ledighetspolicy, 20270205091000). A
+ * guardian's answer, and when, is data about the guardian: it is in their registerutdrag and in the school's file. No role
+ * reads the table, so the rows come from app.leave_consents_export, which gives an administrator who decides the school's own
+ * rows, limited to the persons the scope names (the guardians), and without the requests about a marked pupil. The pupil is
+ * named only where the scope is about the pupil; in the guardian's own extract the request is an id and nothing else of the
+ * child's. The answer of one guardian is never in another's: the file gives the rows of the person the extract is about and of
+ * nobody who comes along with it, so a pupil's extract with their guardians holds none of the guardians' answers (a no that
+ * one guardian gave is not for the other, who is in the same archive) and a guardian's with their children holds their own.
+ */
+export const SAMTYCKEN: DataFile = {
+  path: 'data/samtycken.csv',
+  title: 'Vårdnadshavarnas svar på förfrågan om samtycke till ledighet',
+  source: 'LeaveConsents',
+  columns: [
+    { name: 'ansokan_id', doc: 'Ansökans id (ledigheter.csv).' },
+    { name: 'vardnadshavare_id', doc: 'Id på vårdnadshavaren som frågades (personer.csv). Tomt om personen har skyddad identitet. I ett registerutdrag står bara svaren från personen utdraget gäller, också när närstående följer med.' },
+    { name: 'vardnadshavare_epost', doc: 'Vårdnadshavarens e-postadress.' },
+    { name: 'elev_id', doc: 'Id på eleven ansökan gäller. Tomt i ett registerutdrag om ansökan inte gäller personen utdraget är om. En ansökan om en elev med skyddad identitet finns inte i filen.' },
+    { name: 'svar', doc: 'true om vårdnadshavaren samtyckte, false om hen inte gjorde det (och ansökan avslutades), tomt om hen inte har svarat.' },
+    { name: 'svarade', doc: 'När vårdnadshavaren svarade (UTC), tomt om hen inte har svarat.' },
+    { name: 'paminnd', doc: 'När den enda påminnelsen skrevs (UTC), tomt om ingen skrevs.' },
+    { name: 'fragad', doc: 'När vårdnadshavaren frågades, det vill säga när ansökan gjordes (UTC).' },
+  ],
+  async *rows(env) {
+    const markedOut = [...env.markedOut];
+    const subject = env.scope.ids === null ? undefined : (env.scope.subject ?? env.scope.ids[0]);
+    const guardians = env.scope.ids === null ? null : subject === undefined ? [] : [subject];
+    const about = Prisma.sql`c."studentId"`;
+    const guardianHidden = hides(env, Prisma.sql`c."guardianId"`);
+    const studentHidden = hides(env, about, about);
+    let after: { at: string; request: string; guardian: string } | null = null;
+    for (;;) {
+      const batch: ConsentRow[] = await env.read((tx) =>
+        tx.$queryRaw<ConsentRow[]>(Prisma.sql`
+          SELECT c."leaveRequestId"::text AS request, ${shown(guardianHidden, Prisma.sql`c."guardianId"`)}::text AS guardian,
+                 ${shown(guardianHidden, Prisma.sql`c."guardianEmail"`)} AS "guardianEmail",
+                 ${shown(studentHidden, about)}::text AS student, c."consented" AS consented,
+                 ${ISO(Prisma.sql`c."answeredAt"`)} AS "answeredAt", ${ISO(Prisma.sql`c."remindedAt"`)} AS "remindedAt", ${ISO(Prisma.sql`c."createdAt"`)} AS created,
+                 c."guardianId"::text AS "guardianKey", to_char(c."createdAt", 'YYYY-MM-DD HH24:MI:SS.US+00') AS at,
+                 (${cut(guardianHidden, Prisma.sql`c."guardianId"`)} + ${cut(studentHidden, about)}) AS hid
+            FROM app.leave_consents_export(
+                   ${guardians}::uuid[], ${markedOut}::uuid[], ${BATCH}::integer,
+                   ${after === null ? null : after.at}::timestamptz, ${after === null ? null : after.request}::uuid, ${after === null ? null : after.guardian}::uuid) c`),
+      );
+      if (batch.length === 0) break;
+      env.named('GUARDIANS', batch.map((row) => row.guardian));
+      env.named('LEAVE_REQUESTS', batch.map((row) => row.student));
+      for (const row of batch) {
+        yield [
+          row.request, text(row.guardian), text(row.guardianEmail), text(row.student), row.consented === null ? '' : String(row.consented),
+          text(row.answeredAt), text(row.remindedAt), row.created,
+        ];
+      }
+      emptied(env, SAMTYCKEN.path, batch);
+      const last = batch[batch.length - 1]!;
+      after = { at: last.at, request: last.request, guardian: last.guardianKey };
+      await env.checkpoint();
+      if (batch.length < BATCH) break;
     }
   },
 };
@@ -791,4 +897,4 @@ export const LASLOGG: DataFile = {
 };
 
 /** The data files, in the order the zip holds them. */
-export const DATA_FILES: readonly DataFile[] = [PERSONER, KOPPLINGAR, NARVARO, FRANVARO, LEDIGHETER, NOTISER, LASLOGG];
+export const DATA_FILES: readonly DataFile[] = [PERSONER, KOPPLINGAR, NARVARO, FRANVARO, LEDIGHETER, SAMTYCKEN, NOTISER, LASLOGG];

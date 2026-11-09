@@ -34,6 +34,13 @@ export interface PublishedMaster {
   isParked: boolean;
   isLocked: boolean;
   isGenerated: boolean;
+  /**
+   * Förlagda poster: Generera wrote it from a förläggning (MasterLesson.
+   * fromPlacement). Carried through the snapshot so a discarded draft puts a
+   * placed lesson back as the placed lesson it was, not as an ordinary lock
+   * beside its förläggning (review of #293, MEDEL-2). Absent reads false.
+   */
+  fromPlacement?: boolean;
   extraGroups: { studentGroupId: string }[];
   participants: { studentId: string }[];
   subject: { id: string; name: string };
@@ -139,6 +146,7 @@ export async function readPublishedMasters(tx: PrismaClient, publicationId: stri
       isParked: row.isParked,
       isLocked: row.isLocked,
       isGenerated: row.isGenerated,
+      fromPlacement: row.fromPlacement,
       extraGroups: row.extraGroupIds.filter((id) => groups.has(id)).sort().map((studentGroupId) => ({ studentGroupId })),
       participants: row.studentIds.filter((id) => people.has(id)).sort().map((studentId) => ({ studentId })),
       subject: { id: subject.id, name: subject.name },
@@ -261,6 +269,7 @@ export function readDraftMasters(tx: PrismaClient, academicYearId: string): Prom
       isParked: true,
       isLocked: true,
       isGenerated: true,
+      fromPlacement: true,
       extraGroups: { select: { studentGroupId: true }, orderBy: { studentGroupId: 'asc' } },
       participants: { select: { studentId: true }, orderBy: { studentId: 'asc' } },
       subject: { select: { id: true, name: true } },
@@ -292,6 +301,7 @@ export async function snapshotMasters(
     endTime: master.endTime,
     isLocked: master.isLocked,
     isGenerated: master.isGenerated,
+    fromPlacement: master.fromPlacement ?? false,
     isParked: master.isParked,
     recurrence: master.recurrence,
     startDate: master.startDate,

@@ -79,27 +79,38 @@ const SKIPPED = "the document is measured in the production build, and this run 
 
 /**
  * Room above the measured figure. What it has to be larger than, and what it
- * is for (measured 2026-11-07 against the e2e stub, in the production build,
- * on macOS; CI's Linux figures are 7 to 17 B lower):
+ * is for (rows added to a copy of the menus 2026-11-07, against the e2e stub,
+ * in the production build, on macOS; CI's Linux figures are 7 to 17 B lower):
  *
  *   - Noise: two fetches of one build agree to the byte, two builds of one
  *     source to 2 or 3 B, a Mac and CI's Linux to 13 to 17 B.
- *   - A catalog that grows (see above): +130 to +220 B over twelve phases.
- *   - A row whose icon the menu already has: 36 to 45 B (teacher 4 rows +146,
- *     8 rows +287; pupil 4 rows +152).
+ *   - A catalog that grows (see above): +130 to +220 B over twelve phases was
+ *     the estimate, and a phase's own messages have moved `rest` by more than
+ *     that on their own: Klasslärarens schema's figures were 184 and 181 B over
+ *     what its one row per menu explains (39 and 31 B), the other 145 and 150 B
+ *     being its messages' effect on the gzip of the document beside the
+ *     catalog's.
+ *   - A row whose icon the menu already has: 36 to 45 B in the copy (teacher 4
+ *     rows +146, 8 rows +287; pupil 4 rows +152), and in the phases that have
+ *     added one, measured in CI 2026-11-08: Måltidskollen's, with Lunchsittningar's
+ *     icon, 92 B on top of 12 946; Checklistor's, with Kvittens' icon, 145 B for
+ *     the administrator and 109 B for the teacher on top of 13 457 and 9 836;
+ *     Lokal's three admin rows, one teacher row and the notice text of the
+ *     clash, 594 B and 687 B on top of 13 666 and 9 938.
  *   - A row with an icon no other row of the menu has: 140 to 300 B, and more
  *     per row the more rows (administrator 4 rows +953, 8 rows +2 136;
  *     guardian 2 rows +341, 4 rows +1 200; the second review of #275 had 1 row
- *     +140, 4 rows +716 and 8 rows +1 666, with other icons). Seven times a
+ *     +140, 4 rows +716 and 8 rows +1 666, with other icons). Several times a
  *     borrowed icon's row, which is why the icons are what the room is spent on.
  *
- * So 1 536 B is some thirty rows that borrow an icon, or about seven that
- * bring one (four fitted with 598 B to spare, eight did not): more than the one or two rows a phase brings, less than a wave of
- * twelve with an icon each. A phase does not see its own cost, since it is
- * inside the room, and two phases that are green on their own can cross it
- * together on main; that is what WARN is for, and why the room is not made
- * smaller: a smaller one is crossed by more phases, each of which then sets
- * `measured` on the same two lines.
+ * So 1 536 B is ten to fifty rows that borrow an icon, or about seven that
+ * bring one (four fitted with 598 B to spare, eight did not): more than the
+ * one or two rows a phase brings, less than a wave of twelve with an icon each.
+ * A phase does not see its own cost, since it is inside the room, and two
+ * phases that are green on their own can cross it together on main; that is
+ * what WARN is for, and why the room is not made smaller: a smaller one is
+ * crossed by more phases, each of which then sets `measured` on the same two
+ * lines.
  */
 const MARGIN = 1_536;
 
@@ -131,9 +142,18 @@ interface Measured {
   measured: number;
 }
 
+/*
+ * How the figures were last set (Klasslärarens schema, which added one row to each menu): main's own
+ * (admin 13 038, teacher 9 452, after Måltidskollen) plus what the row costs, 39 B in the administrator's
+ * menu and 31 B in the teacher's (AppShell rendered with the real menu and the real catalog, gzipped with
+ * and without the row), which is 13 077 and 9 483. The build then showed 13 261 and 9 664: 184 and 181 B
+ * over, of which the rows are 39 and 31 and the rest the phase's own messages, which move the gzip of the
+ * document beside the catalog's. The ceiling is not raised for that rest, so the room is 1 352 and 1 355 B
+ * where it was 1 536: a phase pays the room its text uses, and the next one finds what is left.
+ */
 const PAGES: Measured[] = [
-  { name: "admin", persona: "admin", url: "/sv/notifications", row: "/sv/admin/setup", measured: 12_946 },
-  { name: "teacher", persona: "teacher", url: "/sv/notifications", row: "/sv/teacher/attendance", measured: 9_452 },
+  { name: "admin", persona: "admin", url: "/sv/notifications", row: "/sv/admin/setup", measured: 14_260 },
+  { name: "teacher", persona: "teacher", url: "/sv/notifications", row: "/sv/teacher/attendance", measured: 10_625 },
 ];
 
 /**

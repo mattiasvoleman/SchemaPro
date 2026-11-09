@@ -90,6 +90,13 @@
       <li><span>6.14 Krisläge: larm vid utrymning och inrymning</span><span class="dots"></span><span class="pg" data-pg="s614"></span></li>
       <li><span>6.15 Skolans dag i ett svep</span><span class="dots"></span><span class="pg" data-pg="s615"></span></li>
       <li><span>6.16 Kvittens: be en vårdnadshavare bekräfta ett meddelande</span><span class="dots"></span><span class="pg" data-pg="s616"></span></li>
+      <li><span>6.17 Frånvarostatistik över tid</span><span class="dots"></span><span class="pg" data-pg="s617"></span></li>
+      <li><span>6.18 Måltidskollen: portioner för köket</span><span class="dots"></span><span class="pg" data-pg="s618"></span></li>
+      <li><span>6.19 Klasslärarens schema</span><span class="dots"></span><span class="pg" data-pg="s619"></span></li>
+      <li><span>6.20 Checklistor: instruktionsbevis och samtyckeslistor</span><span class="dots"></span><span class="pg" data-pg="s620"></span></li>
+      <li><span>6.21 Analys och planering</span><span class="dots"></span><span class="pg" data-pg="s621"></span></li>
+      <li><span>6.22 Lokal: resurser, externa och utnyttjande</span><span class="dots"></span><span class="pg" data-pg="s622"></span></li>
+      <li><span>6.23 Ledighetspolicy: samtycke, tid i förväg och kontakt</span><span class="dots"></span><span class="pg" data-pg="s623"></span></li>
     </ol>
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
     <ol>
@@ -2488,6 +2495,9 @@
       då vilka två poster det gäller. En post i ett block som ligger på ett
       annat blocks tider (halvklass, nedan) kan inte delas alls.
       Genereringen säger även då vilken post det gäller.</li>
+    <li>En post med förlagda lektioner (nedan) kan inte delas mellan lärare,
+      eftersom det inte är bestämt vilken lärares lektion en förläggning vore.
+      Ta bort förläggningarna först.</li>
     <li>En delad post kan inte delas i halvklass (nedan), eftersom
       halvornas poster bemannas per ämne. Ta bort delningen först och välj
       sedan lärare för varje ämne i halvklassdialogen.</li>
@@ -2525,7 +2535,9 @@
     genom att ta posterna ur blocket, ändra dem och lägga tillbaka dem. En posts
     dialog säger när posten ligger i ett block. En timplansfil som ändrar alla
     ett blocks rader likadant sparas; ändrar den bara några av dem får de raderna
-    ett fel som namnger blocket.
+    ett fel som namnger blocket. En post med förlagda lektioner (se
+    <em>Förlagda poster</em> nedan) kan inte läggas i ett block, eftersom blocket
+    läggs som en helhet.
   </p>
   <div class="note">
     <span class="label">Vad ett block inte kan</span>
@@ -2934,6 +2946,194 @@
     </p>
   </div>
 
+  <h4 id="forlagda-poster">Förlagda poster: en lektion som redan har en plats</h4>
+  <p>
+    Ibland vet du på förhand var en lektion ska ligga och att den inte går att
+    lägga någon annanstans: simhallen är bokad tisdag kl. 10 och bara då, eller
+    slöjdsalen delas med åk 8 ett bestämt pass. Då <strong>förlägger</strong>
+    du lektionen: du anger dag, tid och sal på posten innan du genererar.
+    Generera lägger lektionen där du sagt, och resten av veckan runt den.
+  </p>
+  <p>
+    Använd det för lektioner som verkligen är bundna. En förlagd lektion ger
+    aldrig vika (se nedan), så varje förläggning tar bort valfrihet från
+    motorn, och för många av dem kan göra veckan omöjlig. En lektion som bara
+    brukar ligga på en viss tid behöver du inte förlägga: lägg den med
+    Generera och lås den i grundschemat (5.3) om den hamnar rätt.
+  </p>
+  <p>
+    Öppna posten och tryck <span class="ui">Förlägg …</span>. Dialogen heter
+    efter posten och har en rad för varje förlagd lektion; <span class="ui">Lägg
+    till lektion</span> ger en ny, och krysset på raden tar bort den. Varje rad
+    har fem fält:
+  </p>
+  <ul>
+    <li><span class="ui">Dag</span>: måndag till fredag.</li>
+    <li><span class="ui">Starttid</span>, i femminutersteg. Lektionen ska ligga
+      mellan 08:00 och 18:00, och under fältet står när den slutar.</li>
+    <li><span class="ui">Längd</span>, bara när posten har lektioner av olika
+      längd, till exempel 80 + 40 minuter. Har posten en enda längd är det
+      postens.</li>
+    <li><span class="ui">Sal</span>: en av skolans salar, i bokstavsordning.</li>
+    <li><span class="ui">Veckor</span>: se nedan.</li>
+  </ul>
+  <p>
+    Du kan förlägga högst så många lektioner som posten har, och ett par
+    (nedan) räknas som en. <span class="ui">Spara</span> ersätter postens alla
+    förläggningar med raderna i dialogen. Sparar du utan några rader tas
+    förläggningarna bort. Läraren, klassen och ämnet är postens, och läses
+    vid varje Generera: du anger dem inte på raden.
+  </p>
+  <p>
+    <strong>Veckor och par.</strong> En post som går varje vecka kan förläggas
+    varje vecka, udda veckor eller jämna veckor. En post med udda eller jämna
+    veckor förläggs bara de veckorna: dialogen ställer in dem och låser fältet.
+    På en post som går varje vecka går udda och jämna veckor av samma längd i
+    <strong>par</strong>. Ett par är en lektion på två ställen: tisdag i
+    simhallen udda veckor och torsdag i aulan jämna veckor är tillsammans en
+    lektion i veckan. En ensam rad med udda veckor sparas inte, eftersom
+    motorn inte kan lägga en halv lektion; <span class="ui">Lägg till
+    lektion</span> lägger då till den andra halvan av paret åt dig, med samma
+    längd, dag och sal, så att du bara ändrar det som ska skilja sig.
+  </p>
+  <p>
+    Posten får märket <span class="ui">Förlagd</span> i matrisen, med dag, tid
+    och sal i en ledtext. Postens dialog listar raderna. Med
+    Läsbehörighet syns märket och raderna men inte <span class="ui">Förlägg
+    …</span>.
+  </p>
+  <h4>Det bedöms när du sparar och vid varje Generera</h4>
+  <p>
+    Varje förläggning prövas med samma regler som när du flyttar en lektion för
+    hand: läraren och medläraren, klassen och eleverna i delade grupper
+    (halvklasser, ersättande grupper och språkval), salen och en delad sal,
+    elevernas ombyte och dusch, tider då läraren, salen eller gruppen är
+    markerad som inte tillgänglig (4.4), skolans ramtider, klassens lunch och
+    årskursens regler, en lärare som delas med en annan skola och en utlånad
+    sal (2.5), skoldagen (måndag till fredag 08:00–18:00) och att postens
+    låsta lektioner inte redan tar lektionen. Förläggningen prövas mot de
+    lektioner som Generera behåller, alltså låsta och för hand lagda, och mot
+    de andra förläggningarna. Den prövas inte mot lektioner som Generera lagt
+    själv, eftersom de skrivs om. Klassens lunch är på samma sätt bara de
+    sittningar skolan lagt för hand: en lunch som Generera lagt läggs om runt
+    förläggningen, och lämnar förläggningarna ingen lunch kvar säger Generera
+    det, med förläggningarna namngivna.
+  </p>
+  <p>
+    Håller en rad inte sparas ingenting, och dialogen säger vid vilken rad och
+    varför, till exempel <em>Läraren har redan en lektion som Generera behåller:
+    Matematik med 7B, tisdag 10:00–11:00.</em> Den andra lektionen anges med klass och ämne.
+    Läraren namnges aldrig, inte heller när hen är skälet.
+  </p>
+  <table>
+    <thead><tr><th style="width:34%">Skäl</th><th>Vad det betyder</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Läraren har redan …</td><td>Läraren eller medläraren har en annan lektion då: en låst eller för hand lagd lektion, eller en annan förläggning.</td></tr>
+      <tr><td class="k">Salen är upptagen av …</td><td>Samma sak för salen. En delad sal räknas också när den redan är full.</td></tr>
+      <tr><td class="k">Klassen eller gruppen har redan …<br>Elever i gruppen är också med i …</td><td>Klassen, eller elever som också går i en annan grupp, har en annan lektion då.</td></tr>
+      <tr><td class="k">… är markerad som inte tillgänglig</td><td>Läraren, salen eller gruppen har en tid markerad som stängd (4.4).</td></tr>
+      <tr><td class="k">Tiden ligger utanför ramtiden, på klassens lunch eller är stängd för årskursen</td><td>Skolans ramtider, klassens lunch eller en regel för årskursen tillåter inte lektionen då.</td></tr>
+      <tr><td class="k">Tiden är upptagen av en annan skola</td><td>En lärare som delas med en annan skola är där, eller salen är utlånad dit (2.5). Skolan namnges.</td></tr>
+      <tr><td class="k">Lektionen ligger utanför skoldagen</td><td>Måndag till fredag 08:00–18:00, på femminutersrutnätet.</td></tr>
+      <tr><td class="k">Posten har ingen lektion av den längden kvar</td><td>Postens låsta lektioner täcker redan lektionen, så förläggningen skulle lägga den två gånger.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Raderna ska också passa posten. En rad med en längd som posten inte har,
+    fler lektioner av en längd än posten har, andra veckor än postens, och
+    udda veckor utan jämna (eller tvärtom) på en post som går varje vecka
+    nekas med regeln som bröts. En post som ligger i ett parallellt block eller delar
+    sina lektioner mellan lärare kan inte förläggas alls: blocket läggs som en
+    helhet, och det är inte bestämt vilken lärares lektion en förläggning vore.
+    Ta bort blocktillhörigheten eller delningen först.
+  </p>
+  <h4>Grundschemat</h4>
+  <p>
+    Att spara en förläggning ändrar inte grundschemat. Ändringen gäller vid
+    nästa Generera, och dialogen säger det. Generera skriver varje förläggning
+    som en <strong>låst lektion</strong> i grundschemat och märker den som sin
+    egen. Därför gäller:
+  </p>
+  <ul>
+    <li>Låst: byten och bytkedjor, Salsoptimering, klasslärarens schema och dra
+      och släpp lämnar den.</li>
+    <li>Ändrar du en förläggning flyttar nästa Generera lektionen dit raden
+      säger.</li>
+    <li>Tar du bort en förläggning lägger nästa Generera lektionen fritt, som
+      en vanlig lektion av posten. Fram till dess står den kvar låst där den
+      är.</li>
+    <li>En förlagd lektion går inte att ändra i grundschemat: att flytta den,
+      ge den en annan sal, lärare eller andra veckor, eller lägga till en klass
+      eller elever nekas med <em>Lektionen är förlagd på timplanen</em>, i
+      lektionens dialog, i byten och bytkedjor och i klasslärarens schema.
+      Ändra förläggningen på posten i stället. Att låsa upp, låsa eller
+      parkera den går, och nästa Generera skriver den igen där förläggningen
+      säger.</li>
+    <li>En version som återställs, och ett utkast som kasseras, lägger
+      tillbaka den förlagda lektionen som förlagd, så nästa Generera skriver
+      om den som vanligt.</li>
+    <li>Tas posten bort tas dess förläggningar bort med den. Lektionen i
+      grundschemat står kvar låst där den är till nästa Generera, som ersätter
+      den på samma sätt som postens andra genererade lektioner.</li>
+    <li>Schemaförslag (5.9) lägger också runt förläggningarna, och varje
+      förslag behåller dem. En ändrad förläggning gör sparade förslag
+      föråldrade.</li>
+  </ul>
+  <h4>Det som ändras efteråt</h4>
+  <ul>
+    <li>Byts läraren på posten följer förläggningen med: tid och sal står kvar,
+      och läraren är den nya. Bytet vägras inte, eftersom bemanningen byter
+      lärare i mängd. Är den nya läraren upptagen då vägrar nästa Generera
+      med förläggningen namngiven, och dialogen visar redan när du öppnar den
+      en röd rad vid varje förläggning som inte längre håller, med skälet.</li>
+    <li>Ändras postens längder, antal lektioner eller veckor, läggs den i ett
+      block eller delas den mellan lärare, och förläggningarna inte längre
+      passar, sparas ändringen inte. Meddelandet säger vilken regel. Ändra
+      eller ta bort förläggningen först.</li>
+    <li>En sal som har en förläggning kan inte tas bort. Meddelandet nämner
+      posten.</li>
+    <li>Förläggningarna följer <strong>inte</strong> med vid läsårsrullningen
+      (8.1), eftersom nästa läsår har andra ramtider, sittningar och klasser.
+      Förlägg om i nästa läsårs poster.</li>
+  </ul>
+  <div class="warn">
+    <span class="label">En förlagd lektion ger aldrig vika</span>
+    <p>
+      Inte i Generera schema och inte heller i Bästa möjliga schema (5.1, 5.9):
+      där finns förläggningen inte bland de regler som får brytas. Går veckan
+      inte att lägga med förläggningarna vägrar Generera och säger vilka. Det
+      är en hård gräns, med flit: har du förlagt en lektion har du sagt att den
+      inte kan ligga någon annanstans.
+    </p>
+  </div>
+  <h4>Hur en vägran läses</h4>
+  <p>
+    Förläggningar kan stoppa en körning på två sätt. Båda står på
+    genereringssidan under <span class="ui">Upptäckta konflikter</span>, i
+    kategorin <span class="ui">Förlagda poster</span>.
+  </p>
+  <ul>
+    <li><strong>Före motorn.</strong> Generera bedömer varje förläggning på nytt
+      innan motorn väcks. Håller någon inte längre skickas ingen vecka, och
+      sidan säger <em>N förlagda lektioner på timplanen kan inte längre ligga
+      där de är förlagda, så veckan skickades inte</em>, följt av en rad för
+      varje, till exempel <em>Slöjd för 7A, förlagd tisdag 10:00–11:00 i
+      Slöjdsalen: läraren har redan 7B Matematik då.</em> Skälen är samma som i
+      tabellen ovan. Rätta eller ta bort förläggningen på posten och generera
+      igen.</li>
+    <li><strong>I motorn.</strong> Går veckan inte att lägga prövar motorn den
+      en gång till, med förläggningarna släppta. Går den då att lägga säger
+      vägran det, med tiden det tog, och listar varje förläggning med posten,
+      dagen, tiden och salen. Det betyder att veckan går utan förläggningarna,
+      inte att en viss förläggning ensam är felet: motorn rapporterar en
+      tillräcklig mängd, inte den minsta. Flytta eller ta bort en eller flera,
+      och generera igen. Samma prov körs när en körning får slut på tid, och
+      resultatet står bland proverna som <em>Med de förlagda lektionerna
+      släppta … hittades ett schema på N s</em>.</li>
+    <li>Går veckan inte att lägga ens utan förläggningarna är orsaken en annan,
+      och förläggningarna nämns inte. Läs då listan som vanligt (kapitel 9).</li>
+  </ul>
+
   <h3 id="s43"><span class="num">4.3</span>Tjänstefördelning</h3>
   <p>
     <span class="path">Planering › Tjänstefördelning</span> är timplansposterna
@@ -2975,6 +3175,22 @@
     <em>dolt</em>), varje ändring syns i <span class="ui">Historik</span>,
     och de följer med tjänsten när läsåret rullas vidare. De lämnas aldrig
     ut via SS12000.
+  </p>
+
+  <h4>Löne-id</h4>
+  <p>
+    <span class="ui">Löne-id</span> under <span class="ui">Anställning</span>
+    är anställningsnumret i lönesystemet, högst 30 tecken. Det står sist på
+    varje rad i löneunderlaget (6.21), och det är vad lönekontoret bokar en
+    person med skyddad identitet på, eftersom filen inte har personens namn.
+    Fyll i det för varje lärare som skolan betalar lön till. Det hör till
+    tjänsten och skyddas som den: bara rektor, en fullständig administratör och
+    den som har HR-läs ser det, bara den som beslutar ändrar det, en ändring
+    syns i <span class="ui">Historik</span> för den som läser HR-uppgifter, och
+    det följer med tjänsten när läsåret rullas vidare. Det lämnas aldrig ut via
+    SS12000 och står inte i <em>larare.csv</em>. En vikarie i poolen har ingen
+    tjänst och därför inget löne-id; i löneunderlaget står en sådan vikarie med
+    namn, eller med en kod om hen har skyddad identitet.
   </p>
 
   <h4>En tjänst som ändras under läsåret</h4>
@@ -4254,6 +4470,53 @@
     <span class="ui">Generatorn håller nere elevernas håltimmar</span> på
     samtidigt blir gränserna ofta inte hållna på standardtiden (4.4).
   </p>
+  <p id="basta-mojliga-schema">
+    <strong>Bästa möjliga schema.</strong> Går skolans egna regler inte ihop
+    vägrar Generera schema, och inget schema läggs. Slå på
+    <span class="ui">Bästa möjliga schema</span> bland skolreglerna och spara,
+    så får du under <span class="ui">Schemaförslag</span> (5.9) knappen
+    <span class="ui">Ta fram bästa möjliga</span>. Den lägger ett schema ändå,
+    så att så få regler som möjligt bryts, och listar varje regel som gav vika.
+    Det är avstängt tills skolan slår på det, och Generera schema och de vanliga
+    förslagen körs som förut.
+  </p>
+  <p>
+    Bara fem regler kan ge vika, de skolan själv har skrivit och som en
+    schemaläggare redan bryter för hand med en varning: lärarens tak för
+    undervisning per dag (arbetstidsregeln), hur många dagar i veckan en lärare
+    undervisar enligt tjänsten, ämnets fördelning över veckan (högst så många
+    lektioner per dag, och så många dagar emellan) och rumslås. De ger vika i
+    en bestämd ordning, lindrigast först: ämnets dagar emellan, ämnets tak per
+    dag, rumslås, lärarens tak för undervisning per dag och sist hur många dagar
+    tjänsten har. De ger vika bara när inget schema finns utan att bryta dem.
+    Allt annat gäller alltid, också i det här läget:
+  </p>
+  <ul>
+    <li>en lärare, klass, elev eller sal bokad två gånger,</li>
+    <li>lektioner utanför skolans ramtider,</li>
+    <li>restiden mellan skolor och platser,</li>
+    <li>lärarens lunch och nattvila, och en lärare som är markerad som inte tillgänglig,</li>
+    <li>lunch, matsal och raster,</li>
+    <li>rummets typ, antal platser och årskurser som en timplanspost kräver,</li>
+    <li>lektionernas längd och antalet lektioner per vecka,</li>
+    <li>elevantalet i en delad sal mot salens kapacitet, när regeln
+      <span class="ui">Delade salar</span> är satt till Hård (5.1),</li>
+    <li>parallella blocks gemensamma start, och gruppens eget tak per dag,</li>
+    <li>en förlagd posts dag, tid och sal (Förlagda poster, 4.2).</li>
+  </ul>
+  <p>
+    De andra två placeringsreglerna (5.1) kan bara vara Av eller Mjuka, och en
+    mjuk placeringsregel är ett önskemål som betalas som förut också i det här
+    läget: den räknas inte som ett avsteg och står inte i listan.
+  </p>
+  <div class="note">
+    <span class="label">Tjänstens dagar är en HR-uppgift</span>
+    <p>
+      Läsare utan HR-läs ser inte vilken lärares dagar i tjänsten som gav
+      vika, eller hur många dagar det gäller. De ser en mening om att någon
+      lärares gräns för dagar gav vika, utan lärare och utan siffror.
+    </p>
+  </div>
   <div class="note">
     <span class="label">Där generatorn räknar grövre än sidan</span>
     <p>
@@ -4275,6 +4538,104 @@
       från sidans. Siffran på sidan räknas alltid efter sidans regler.
     </p>
   </div>
+  <p>
+    <strong>Placeringsregler.</strong> Tre regler om var lektionerna hamnar på
+    dagen och i vilka salar sätts under <span class="ui">Placeringsregler</span>
+    bland skolreglerna. Varje regel är <span class="ui">Av</span> tills skolan
+    slår på den, och en skola som låter alla tre vara av får precis samma
+    schema som förut. Varje regel kan vara <span class="ui">Mjuk</span>, och
+    <em>Delade salar</em> kan också vara <span class="ui">Hård</span>;
+    <em>Inte först eller sist på dagen</em> och <em>Salar och byggnader per
+    dag</em> är bara <span class="ui">Av</span> eller
+    <span class="ui">Mjuk</span> (se nedan). En mjuk regel är ett önskemål med
+    en vikt (1–1000, förval 250) som genereringen väger mot allt annat: den
+    försöker hålla regeln men vägrar aldrig för att den inte gick, och sätter du
+    vikten lågt vinner de andra önskemålen. En hård regel är ett krav: går den
+    inte att hålla tillsammans med resten av reglerna går veckan inte att
+    lägga, och genereringen vägrar och skriver ut vilken regel det är. Räknar
+    genereringen ut i förväg att regeln inte kan hållas, till exempel att en
+    låst lektion har fler elever än salen den är låst i rymmer, vägrar den
+    direkt och säger det.
+  </p>
+  <p>
+    <em>Inte först eller sist på dagen.</em> Markera under
+    <span class="ui">Ämnen</span> vilka ämnen som inte ska vara klassens första
+    lektion på dagen, inte den sista, eller varken eller: idrott är det vanliga
+    exemplet. Klassens dag är alla lektioner som klassens elever sitter, alltså
+    klassens egna, undervisningsgruppernas och halvornas, och de lektioner ni
+    har låst. En lektion ligger först när ingen sådan lektion börjar tidigare
+    samma dag och sist när ingen slutar senare; en lektion som börjar samtidigt
+    med en annan är först bredvid den. Går ett ämne udda eller jämna veckor
+    gäller regeln i varje vecka lektionen går. En grupp som bara några av
+    klassens elever sitter räknas som en lektion före eller efter, så för de
+    övriga eleverna kan ämnet ändå komma först; när en språkvalsgrupp täcker
+    hela årskursen blir det rätt.
+  </p>
+  <p>
+    Den här regeln kan ännu inte vara <span class="ui">Hård</span>: valet finns
+    inte bland skolreglerna. Mätningen på högstadiets testskola visade att en
+    hård regel gör att genereringen behöver flera gånger så lång tid för sitt
+    första schema (4,5 gånger med åtta arbetare), och en generering som tar så
+    mycket längre tid riskerar att inte bli klar inom tidsgränsen. Välj
+    <span class="ui">Mjuk</span> med en hög vikt om ämnet verkligen ska hållas;
+    regeln är då ett önskemål som genereringen försöker hålla, och som den
+    aldrig vägrar schemat för. Hård erbjuds först när den är mätt på en stor
+    skola. Samma sak gäller <em>Salar och byggnader per dag</em> nedan.
+  </p>
+  <p>
+    <em>Salar och byggnader per dag.</em> Högst så många <em>olika</em>
+    salsgrupper och byggnader per dag, för en klass och för en lärare var för
+    sig. Lämnar du en gräns tom gäller ingen gräns, och 1 betyder en enda hela
+    dagen. Byggnad är salens uppgift <span class="ui">Byggnad</span> under
+    <span class="ui">Salar</span>; salar utan byggnad räknas som samma byggnad.
+    Skolområdet och dess restid är en egen regel. Lika salar av samma typ,
+    storlek och årskurser räknas som en sal, och genereringen låter en klass
+    eller lärare behålla sin sal i gruppen när den är ledig. Vill du jämna ut
+    resten kör du <span class="ui">Salsoptimering</span> efteråt (5.4). Klassen
+    räknas på den grupps egna lektioner, inte på undervisningsgrupperna eleverna
+    också går i.
+  </p>
+  <p>
+    Den här regeln kan inte heller vara <span class="ui">Hård</span> ännu.
+    Mätningen på högstadiets testskola visade att en hård regel behöver 2,8 till
+    3,6 gånger så lång tid för det första schemat med åtta arbetare (9 gånger
+    med en), att tiden för att därefter förbättra schemat med en hård regel inte
+    är mätt, och att den mjuka regeln höll alla gränser i mätningen (0 dagar
+    över) inom den tidsgräns som genereringen har att hålla. En hård gräns
+    skulle alltså ge en garanti och ett vägrat schema med namn, men inget
+    bättre schema. Välj
+    <span class="ui">Mjuk</span> och en gräns; ange alltid minst en gräns, annars
+    har regeln inget att hålla. Hård erbjuds först när den är mätt på en stor
+    skola.
+  </p>
+  <p>
+    Regeln räknar hur många olika platser en klass eller lärare är på under
+    dagen, inte byten mellan två grannlektioner. En dag som går A–B–A är två
+    byggnader, och A–B–A–B är det också, fast det är tre byten. Det är en
+    medveten avgränsning: att räkna byten kräver lektionernas ordning och gör
+    modellen flera gånger större. Mätningen på högstadiets testskola visar
+    skillnaden, och 1 är den gräns som inte kan bytas ut mot något annat.
+  </p>
+  <p>
+    <em>Delade salar.</em> En sal som ni markerar <span class="ui">Kan delas av
+    flera grupper samtidigt</span> under <span class="ui">Salar</span> får ha
+    flera lektioner samtidigt, så länge elevernas antal tillsammans ryms i salens
+    kapacitet. Salen måste ha en kapacitet. Hård: antalet i salen överstiger
+    aldrig kapaciteten. Mjuk: kapaciteten får överskridas, och vikten betalas per
+    elev över kapaciteten vid salens värsta ögonblick under veckan. Låsta
+    lektioner i en delad sal tar sina elevers platser, inte hela salen, och
+    en låst lektion som är större än salen vägras vid hård regel. Kontrollerna
+    bredvid genereringen räknar likadant: två lektioner i samma sal samtidigt är
+    ingen salkrock när deras elever tillsammans ryms i salens kapacitet. Det
+    gäller handredigeringen och importen, kontrollen före publicering, de röda
+    markeringarna på schemat och de dagsvisa ändringarna av sal. Mjuk och hård
+    regel läses likadant där, eftersom en kapacitet ni skrivit in är en gräns ni
+    vill få veta när den överskrids. Är elevantalet i en av lektionerna okänt,
+    till exempel för att klassen ännu inte har någon klasslista, är det kvar som
+    en krock, och en rumsbokning håller alltid hela salen. Lärare, klass och
+    delade elever krockar som förut. Alla andra salar, och alla salar när regeln
+    är <span class="ui">Av</span>, har en lektion åt gången, som förut.
+  </p>
   <p>
     <strong>Optimeringsprofilen</strong> är mjuka önskemål. De kan väga mot
     varandra: ju högre värde, desto viktigare. Motorn hittar den bästa
@@ -4388,6 +4749,19 @@
       med siffrorna, och skärmen sätter orden. Ser du en mening på engelska är
       det en mening som är ny i motorn och ännu inte översatt — innehållet
       stämmer, och den är värd att rapportera.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">Förlagda lektioner i en vägran</span>
+    <p>
+      Har du förlagt lektioner på posterna (4.2) bedömer Generera varje
+      förläggning på nytt innan motorn startar, och vägrar med den förläggning
+      som inte längre håller, dess skäl och kategorin <span class="ui">Förlagda
+      poster</span>. Går veckan inte att lägga prövar motorn den också med
+      förläggningarna släppta, och nämner dem när det är de som gör veckan
+      omöjlig. En förlagd lektion ger aldrig vika, så knappen
+      <span class="ui">Ta fram bästa möjliga</span> (5.9) lägger den också där
+      den står. Hur raderna läses står i 4.2, under <em>Hur en vägran läses</em>.
     </p>
   </div>
   <table>
@@ -4617,6 +4991,108 @@
     halvas lektion är ett eget kort.
   </p>
 
+  <p>
+    En lektion som Generera lagt åt dig för att posten har en förläggning (4.2)
+    är redan låst, och den är Genereras egen: nästa generering skriver den
+    igen från förläggningen som den står då. Flyttar du den för hand håller det
+    därför bara till nästa Generera. Ändra förläggningen på posten i stället.
+  </p>
+
+  <h4>Byten och bytkedjor</h4>
+  <p>
+    Vill du flytta en lektion men tiden är upptagen? Öppna lektionen med
+    <span class="ui">Justera lektion</span> och tryck
+    <span class="ui">Föreslå byten</span>. Du får lektioner som kan byta tid med
+    den, och <em>kedjor om tre</em> där den tar nästa lektions tid, nästa tar
+    en tredjes och den tredje tar din. Sökningen tar någon sekund.
+  </p>
+  <p>
+    Varje förslag har prövats mot samma regler som en flytt för hand — ingen
+    lärare, sal eller elev dubbelbokad, inga stängda tider — och dessutom mot
+    ramtiderna, klassernas lunch, veckoregler för årskurser och de andra
+    skolornas hållpunkter: en lärare som delas med en annan skola flyttas aldrig
+    in på en tid hon är där, och en utlånad sal flyttas inte in på lånetiden. Är
+    en regel inte uppfylld syns förslaget inte. Står det inget förslag har inget
+    byte funnits som håller alla reglerna; lås upp en lektion eller frigör en
+    tid och sök igen.
+  </p>
+  <p>
+    <strong>Lektioner som ligger parallellt följer alltid med.</strong>
+    Är lektionen medlem i ett parallellt block (4.2), ena halvan av en
+    klass som delats i halvklasser, eller en ersättande grupp (tillsammans med
+    klassens lektion i ämnet den ersätter) flyttas de lektioner som ligger
+    bredvid den på samma tid tillsammans med den, och förslaget namnger varje
+    lektion som följer med och varför. Ingenting delas upp i det tysta. En
+    låst lektion flyttas inte som någon annans partner; den du valde själv får
+    vara låst, och det står i förslaget.
+  </p>
+  <p>
+    Under varje förslag ser du vad det kostar i de mjuka reglerna, före och
+    efter: elevernas håltimmar (räknade som i rapporten Håltimmar), lärarnas
+    håltimmar, ämnesfördelningens brott och lärarens dag (längd, antal dagar
+    och sammanhängande undervisning). För lärarens dag visas bara antal brott,
+    aldrig gränserna, eftersom de hör till tjänsten. Bäst först: förslagen
+    ordnas efter vad de förbättrar och hur få lektioner de flyttar.
+  </p>
+  <p>
+    <strong>Tillämpa</strong> flyttar alla lektionerna i förslaget som ett enda
+    drag. Innan något flyttas sparas schemat som versionen <em>Före byte</em>,
+    kommande publicerade lektioner i kalendern följer med (utom där närvaro
+    redan registrerats), varje flyttad lektion får en rad i ändringsloggen och
+    berörda klasser får samma avisering som vid en flytt för hand. I
+    utkastläge (5.7) är bytet ett utkast tills du publicerar, och
+    publiceringens kontroller gäller som vanligt. Meddelandet efter
+    <span class="ui">Tillämpa</span> har en <span class="ui">Ångra</span>-knapp
+    i femton sekunder; därefter återställer du versionen <em>Före byte</em>
+    under <span class="ui">Versioner</span> (5.5). Grundschemats egen
+    ångra-historik töms vid ett byte, som vid en återställd version.
+  </p>
+  <div class="note">
+    <span class="label">Kalenderlektioner som bytet tar bort — och vad Ångra ger tillbaka</span>
+    <p>
+      Ett byte flyttar alltid minst en lektion till en tidigare veckodag. En
+      publicerad lektion i kalendern som flytten skulle lägga på en tid som
+      redan varit (eller utanför lektionens veckor) flyttas inte utan
+      <em>tas bort</em>, med vikarie, lektionslogg och läxa. Vilka förslag som
+      gör det står före <span class="ui">Tillämpa</span>: ett förslag som
+      tar bort kalenderlektioner har en gul ruta, <em>Tar bort N publicerade
+      lektioner ur kalendern</em>. Meddelandet efter Tillämpa säger hur många
+      som följde med och hur många som togs bort.
+    </p>
+    <p>
+      <span class="ui">Ångra</span> sätter tillbaka <em>lektionerna i
+      grundschemat</em> på sina gamla tider och flyttar tillbaka de publicerade
+      lektioner som följde med. Det lägger inte tillbaka kalenderlektioner som
+      redan tagits bort, och inte heller vikarien, lektionsloggen eller läxan på
+      dem; meddelandet efter Ångra räknar dem. <span class="ui">Publicera</span>
+      igen skapar nya kalenderlektioner på de gamla tiderna, men utan det som
+      hängde på de borttagna. Ångra sparar också en säkerhetsversion, <em>Före
+      ångra</em>, bredvid <em>Före byte</em>. I utkastläge (5.7) rörs kalendern
+      inte förrän du publicerar, så där tas ingenting bort av ett byte.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">Vad förslagen inte prövar</span>
+    <p>
+      Korridortiden i ramtiderna och restiden mellan skolområden prövas inte
+      (en flytt för hand varnar för restid, ett byte gör det inte). På ett
+      rutnät som inte är hela timmar kan enstaka kedjor där en tredje lektion
+      frigör en delvis överlappande tid saknas bland förslagen; de som visas är
+      alltid prövade. Lektionerna som byter tid är kvar som genererade, så
+      nästa <span class="ui">Generera</span> kan flytta dem igen: lås dem om de
+      ska ligga kvar.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">När schemat hunnit ändras</span>
+    <p>
+      Har någon flyttat en av lektionerna sedan förslagen räknades fram, eller
+      skulle bytet nu dela upp parallella lektioner eller flytta en låst
+      lektion, nekas <span class="ui">Tillämpa</span> med ett meddelande som
+      säger vilket och förslagen hämtas på nytt. Inget har då ändrats.
+    </p>
+  </div>
+
   <h3 id="s54"><span class="num">5.4</span>Salsoptimering</h3>
   <p>
     Genereringen väljer för varje lektion en <em>sort</em> av sal — ett
@@ -4768,7 +5244,9 @@
       giltighet som delar period med ett annat publicerat schema, skoldagar utan
       publicerat schema, en giltighet som börjar före i dag eller mitt i en
       vecka, lunch som inte är inställd, dagsändringar som försvinner,
-      halvklasser som har lektioner men inga placerade elever (3.4), och krockar
+      halvklasser som har lektioner men inga placerade elever (3.4), avsteg från
+      skolans regler i det senast tillämpade schemaförslaget när du godtagit
+      dem och inget publicerats sedan (5.9), och krockar
       med huvudmannens andra skolor: delade lärare och lånade eller utlånade
       salar (2.5). Varje
       kontroll visar upp till 20 av de lektioner eller dagar den gäller.
@@ -5013,6 +5491,51 @@
     knappen. Är nästa läsår rullat men inte aktiverat väljer du läsår överst
     på sidan, som när du genererar (8.2).
   </p>
+  <h4>Bästa möjliga schema</h4>
+  <p>
+    Har skolan slagit på <span class="ui">Bästa möjliga schema</span> bland
+    skolreglerna (5.1) finns en knapp till under rubriken
+    <span class="ui">Schemaförslag</span>: <span class="ui">Ta fram bästa
+    möjliga</span>. Den är till för veckan där Generera schema vägrade. Den tar
+    fram ett enda förslag, <em>Bästa möjliga</em>, med optimeringsprofilen på
+    sidan, och behöver inget tidigare genererat schema. Efter en vägran på
+    Generera schema pekar sidan på knappen, utom när vägran gäller
+    timplansposter utan lärare eller ett delvis låst parallellt block: de reglerna
+    ger aldrig vika, så knappen skulle få samma nej. Efter en körning som fick
+    slut på tid, utan att ha bevisat att reglerna inte går ihop, pekar sidan
+    också på knappen, men säger att ett schema med avsteg kan komma tillbaka
+    där en längre körning av Generera hade sluppit dem.
+  </p>
+  <p>
+    Har du redan en sparad omgång förslag frågar sidan innan körningen startar:
+    <span class="ui">Ersätta de sparade förslagen?</span>. Bästa möjliga är ett
+    enda förslag, och så snart det är klart ersätter det hela omgången; de
+    förslag du har nu går inte att få tillbaka. Frågan säger hur många förslag
+    med schema omgången har. Misslyckas körningen står omgången kvar. Finns ingen
+    sparad omgång med något förslag som har ett schema startar körningen direkt.
+    <span class="ui">Ta fram förslag</span> frågar inte, och ersätter omgången på
+    samma sätt som förut (se nedan).
+  </p>
+  <p>
+    Ett förslag där någon regel gav vika är märkt <span class="ui">Med avsteg</span>
+    med antalet, i tabellens kolumnrubrik, och tabellen har en rad
+    <span class="ui">Avsteg från reglerna</span>. Under
+    <span class="ui">Granska ett förslag</span> står varje avsteg som en mening
+    i en lista: vilken regel, vilken dag eller vilket ämne, hur mycket den
+    bröts, och vad regeln skulle behöva vara satt till, eller vilka lektioner
+    som skulle behöva flyttas, för att just det här schemat ska hålla den.
+    Siffran är inget löfte om att inget annat schema håller regeln. Gav inget
+    vika står det så, och förslaget märks inte som ett med avsteg.
+  </p>
+  <p>
+    <span class="ui">Tillämpa</span> på ett förslag med avsteg visar avstegen
+    igen i dialogen, och knapparna går inte att trycka förrän du kryssat i
+    <span class="ui">Jag godtar de här avstegen</span>. Ikryssningen gäller en
+    öppning av dialogen: stänger du den och öppnar den igen är rutan tom. Att du
+    godtagit avstegen sparas tillsammans med tillämpningen, och publiceringen
+    varnar för dem (5.6) tills schemat har publicerats. Ett förslag utan avsteg
+    tillämpas som förut, utan ikryssning.
+  </p>
   <h4>Jämförelsen</h4>
   <p>
     Sidan <span class="ui">Schemaförslag</span> visar en tabell. Första
@@ -5140,6 +5663,42 @@
     ordinarie lärare för just den lektionen och kan registrera närvaro. Alla som
     går på lektionen, deras vårdnadshavare och lektionens lärare får en notis,
     också när en inställd lektion återinsätts (6.10).
+  </p>
+  <h4 id="flytta-elev">Flytta en elev till en parallell lektion för en dag</h4>
+  <p>
+    Varje lektion i dagsplaneringen har en knapp <span class="ui">Flytta elev</span>.
+    Välj eleven på lektionen och sedan en lektion som överlappar den i tid
+    (en <em>parallell</em> lektion). Eleven går då på den lektionen den dagen
+    och inte på sin vanliga. Flytten gäller bara det datumet: grundschemat,
+    lektionsmallen och resten av veckan rörs inte, och flytten går att
+    <span class="ui">ångra</span> så länge eleven inte fått någon närvaromarkering
+    på den nya lektionen.
+  </p>
+  <ul>
+    <li>Bara parallella lektioner är valbara, så eleven blir aldrig dubbelbokad. Lektioner som inte går att flytta till står kvar i listan med skälet: de överlappar inte, de är inställda, de är ersatta av en schemabrytande aktivitet (6.5), eller eleven har en annan lektion då.</li>
+    <li>Blir salen överfull får du en varning, men flytten görs. Det är lärarens bedömning om det ryms.</li>
+    <li>När en lektion är slut flyttas ingen elev ur den, inte ens samma dag: lektionens närvaro är dess lärares. En flytt som redan gjorts går att <span class="ui">ångra</span> efter lektionens slut, samma dag, av en administratör med Drift eller av en lärare på lektionen eleven flyttades från (hens egen markering kommer tillbaka med hens namn och tid), och att flytta vidare av en administratör med Drift eller en lärare på den lektion eleven står på. Den som bara undervisar den nya lektionen eller är mentor får ett svar som säger det; be då en av dem. Har eleven fått en markering på den nya lektionen går flytten inte att ångra eller flytta tillbaka eller vidare (ingen flytt tar bort en markering), och dagen efter går den inte att ångra alls.</li>
+    <li>Flyttar du eleven vidare från den nya lektionen är det fortfarande den första lektionen som eleven flyttats från. Flyttar du tillbaka till den första lektionen försvinner flytten.</li>
+    <li>Ställs en av lektionerna in, eller flyttas den så att de inte längre överlappar, faller flytten och eleven är åter på sin vanliga lektion.</li>
+    <li>Det får en administratör med Drift göra, en lärare som undervisar någon av de två lektionerna, och elevens mentor. Läsare kan se men inte flytta.</li>
+  </ul>
+  <p>
+    <strong>Närvaro och statistik.</strong> Eleven står på listan i den nya
+    lektionens register och är inte frånvarande från den gamla: lärarna ser
+    eleven som <em>flyttad</em> i ett eget avsnitt på registret. En markering som
+    redan fanns på den gamla lektionen läggs åt sidan (den räknas inte som frånvaro
+    eller närvaro) och kommer tillbaka om flytten ångras. Frånvarobevakningen,
+    närvarostatistiken, rapporteringsgraden, den levererade tiden och
+    SS12000-exporten räknar eleven på lektionen hen gick på.
+  </p>
+  <p>
+    <strong>Familjen.</strong> Elevens och barnets schema i webben och i appen,
+    kalenderflödet och Schemavisarens sida för eleven visar den nya lektionen.
+    Lärarna på de två lektionerna får en notis. Vårdnadshavaren får en notis bara
+    om skolan slagit på det under <span class="path">Drift › Skolans dag</span>
+    (<span class="ui">Berätta för vårdnadshavaren när ett barn byter lektion för en dag</span>,
+    avstängt från början). Notisen säger att ett barns lektion ändrats och när,
+    aldrig vem som flyttade eleven.
   </p>
   <p>Använd dagsplaneringen för enstaka händelser under dagen. Vill du i stället se hela skolans dag eller vecka på en skärm, eller veta vilka lärare och salar som är lediga, finns Skolans dag (6.15).</p>
 
@@ -5700,6 +6259,78 @@
     sägs att något ersätter dem: ingen ersättningslektion finns för dem.
   </p>
 
+  <h4>Prov och skrivsalar</h4>
+  <p>
+    Ett prov som skolan lägger blir en aktivitet. Proven läggs in på sidan
+    <span class="path">Prov och skrivsalar</span>, som du når med länken överst
+    på <span class="path">Drift › Aktiviteter</span>. Sidan har fyra delar, i den
+    ordning du använder dem.
+  </p>
+  <ul>
+    <li><strong>Inställningar.</strong> <span class="ui">Provplanering på</span>
+      är <strong>avslaget från början</strong>. Är det avslaget kan skolan ändå
+      lägga in prov och märka skrivsalar, men <span class="ui">Planera</span>
+      nekas, och sidan säger det. Här anger du också hur många prov en klass
+      högst får ha per dag och per vecka, hur många skrivande en vakt tar
+      (en sal får en vakt per så många, avrundat uppåt, och minst en),
+      omställningen i minuter som en sal och en vakt behöver mellan två prov,
+      och <strong>ämnet för ersättningslektionerna</strong>. Det ska vara ett
+      ämne som inte räknas mot timplanen, till exempel <em>Prov</em>; ett som
+      räknas vägras, eftersom provets minuter då skulle räknas två gånger.</li>
+    <li><strong>Skrivsalar.</strong> Markera de salar som får användas till prov
+      och ange hur många som kan skriva i dem. Antalet kan inte vara större än
+      salens kapacitet, och är oftast mindre eftersom ett prov kräver mer plats än
+      en lektion.
+      <span class="ui">Ta bort</span> tar bort markeringen. Sidan räknar bara med
+      salar som är markerade.</li>
+    <li><strong>Prov.</strong> Ange provets namn, ämne (ett som räknas mot
+      timplanen), klasser eller grupper, längd, antal skrivande och önskad tid.
+      Tiden är antingen ett <em>önskat fönster</em>, upp till 31 dagar, med en
+      tidigaste start och ett senaste slut som du kan lämna tomma, eller en
+      <em>fast tid</em>, ett datum och en starttid, till exempel ett nationellt
+      prov. Ett prov som är <strong>lagt</strong> kan varken ändras eller tas
+      bort: välj <span class="ui">Ta bort planeringen</span> först, så sätts
+      lektionerna tillbaka, i sina salar, och provet blir olagt. Har en annan
+      lektion eller bokning hunnit ta salen säger sidan hur många lektioner som
+      inte kunde sättas tillbaka; de står kvar som inställda.</li>
+    <li><strong>Planera.</strong> <span class="ui">Planera de olagda proven</span>
+      ber planeraren om ett förslag. Markerar du några prov i listan planeras
+      bara de. Det kan ta upp till en minut, och <strong>förslaget lägger
+      ingenting</strong>: du läser det först.</li>
+  </ul>
+  <p>
+    Förslaget visas som en tabell för varje dag: prov, tid, salarna med klassernas
+    namn och antal skrivande, vakterna i namn och hur många minuters undervisning
+    provet stör. Alla förslag är förvalda; ta bort bocken på dem du inte vill ha.
+    Under tabellerna står de prov som <strong>inte gick att lägga</strong>, var och ett
+    med sitt skäl i klartext, till exempel att salarna inte rymmer så många skrivande,
+    att ingen lärare är ledig, eller att klassen redan har sitt tak för dagen.
+    Åtgärda det som står, till exempel genom att markera fler salar eller vidga
+    fönstret, och planera om. Provet står kvar som <em>Ej lagt</em> i listan med det
+    senaste skälet.
+  </p>
+  <p>
+    <strong>Taken och vakterna.</strong> Planeraren håller taken per klass och
+    dag och per vecka, ger aldrig en klass två prov samtidigt, och tar bara
+    lärare som är lediga den tiden. Vakterna fördelas så att det blir jämnt över
+    läsåret: <strong>vakträknaren</strong> visar hur många vaktpass och minuter
+    varje lärare redan har i år, vad förslaget lägger till och vad det blir efteråt,
+    med den som vakar mest överst. En lärare med skyddad identitet tas inte som
+    vakt och står inte på någon lista.
+  </p>
+  <p>
+    <strong>Använd valda.</strong> Provet läggs som en aktivitet med en
+    ersättningslektion per klass. Den bär närvaron, ligger i den sal där flest ur
+    klassen skriver, och vakterna i salen är de ansvariga lärarna. Lärare och elever
+    ser den i kalendern med sal och vakter. Provets minuter räknas som
+    undervisningstid i provets ämne, och salarna bokas. Du väljer själv om eleverna,
+    vårdnadshavarna och lärarna ska få en notis; den är förvald. Systemet
+    kontrollerar allt på nytt för varje prov, så ett prov som ändrats sedan
+    förslaget, eller en sal eller lärare som blivit upptagen, läggs inte. Det
+    provet nämns i resultatet med skälet, och de andra läggs ändå. Planera sedan
+    om det som blev kvar.
+  </p>
+
   <h3 id="s66"><span class="num">6.6</span>Närvaro</h3>
   <p>
     Läraren registrerar närvaro under <span class="path">Närvaro</span>, som
@@ -5812,7 +6443,8 @@
     under <span class="path">Drift › Lokalbokningar</span>. Bokningar tar hänsyn
     till schemat, så en sal som redan har lektion går inte att boka. En sal
     som skolan lånar ut till en annan skola går inte att boka under lånets
-    tider, och en lånad sal går bara att boka under dem (2.5).
+    tider, och en lånad sal går bara att boka under dem (2.5). Resurser som inte
+    är salar, och föreningar som hyr en sal, finns i 6.22.
   </p>
 
   <h3 id="s69"><span class="num">6.9</span>Rapporter</h3>
@@ -6747,7 +7379,10 @@
       vårdnadshavare, alltså fem förfrågningar till alla vårdnadshavare på en skola med 2 000 elever).
       Var och en har dessutom en egen andel av dygnet, så att ingen ensam kan använda upp skolans: en
       administratör 8 000 kvittenser och en lärare 2 000. Andelen räknas över de senaste 24 timmarna;
-      går du över den eller skolans gräns får du besked och ingenting skickas.</li>
+      går du över den eller skolans gräns får du besked och ingenting skickas. Räcker din andel inte
+      kan en annan administratör skicka förfrågan i stället: var och en har en egen andel. Taket är
+      satt för en förfrågan till hela skolan, men en rättelse av en sådan, skickad inom ett dygn,
+      ryms i en stor skola inte i en och samma administratörs andel.</li>
     <li><strong>Dygnets förbrukning.</strong> På sidan <span class="ui">Kvittens</span> ser en
       administratör hur många kvittenser skolan har bett om de senaste 24 timmarna av 20 000, hur
       mycket av sin egen andel hen har använt, och de fem som har använt mest, var och en mot sin andel.
@@ -6778,7 +7413,8 @@
       tiden kom). Gick en förfrågan ut med fel text kan den som skrev den, eller en administratör som
       skriver Drift, öppna den och välja <span class="ui">Stoppa påminnelsen</span>, så att ingen
       påminns om det felaktiga. Det som redan gått ut går inte att dra tillbaka, och att dra tillbaka
-      en hel förfrågan finns inte: skicka en ny med rätt text.</li>
+      en hel förfrågan finns inte: skicka en ny med rätt text. Blir det nekat för att din andel av
+      dygnet är använd, be en annan administratör skicka den nya: var och en har en egen andel.</li>
   </ul>
   <div class="note">
     <span class="label">Det här sparas, och det här sparas inte</span>
@@ -6800,6 +7436,578 @@
     bekräfta.
   </p>
 
+  <h3 id="s617"><span class="num">6.17</span>Frånvarostatistik över tid</h3>
+  <p>
+    Frånvarostatistiken visar hur frånvaron utvecklas, månad för månad över de
+    tre senaste läsåren, för hela skolan, för varje klass och för varje elev,
+    med rapporteringsgraden (6.13) bredvid så att en låg frånvaro går att läsa mot
+    hur mycket av närvaron som faktiskt registrerats. Den finns som en egen flik,
+    <span class="path">Rapporter › Frånvarostatistik</span>, och den behöver
+    ingen inställning: den räknas varje natt för alla skolor och går inte att
+    slå av.
+  </p>
+
+  <h4>Vad du ser</h4>
+  <ul>
+    <li><strong>Skolans månader.</strong> För varje månad: registrerade minuter, giltig och ogiltig frånvaro i minuter och i procent, antalet sena ankomster, och rapporteringsgraden (hur stor del av de hållna lektionerna som har ett sparat register). Under varje månad står <em>samma månad året före</em>, så att en höst går att jämföra med förra höstens. Månaden som pågår märks <em>hittills</em> och räknas till och med i går.</li>
+    <li><strong>Klasserna.</strong> En tabell över skolans klasser för ett läsår eller en period, och för en vald klass dess månader och dess <strong>mönster</strong>: veckodag, pass (lektionens starttid) och ämne, så att det syns om frånvaron samlas på måndagar, på första lektionen eller i ett ämne. En klass månader är kullens: förra årets klass (7A) och årets (8A) läses som en följd.</li>
+    <li><strong>Eleverna.</strong> För en klass: varje elev med sin frånvaro under perioden. För en enskild elev ett kort inför utvecklingssamtalet: elevens tre läsår månad för månad, klassens månader bredvid, mönstren och en knapp <span class="ui">Skriv ut</span> som ger en A4 per elev.</li>
+  </ul>
+
+  <h4>Så räknas det</h4>
+  <p>
+    Minuterna räknas som i närvarorapporten (6.9) och frånvarobevakningen (6.12):
+    <em>Närvarande</em> är närvaro, <em>Giltig</em> är giltig frånvaro, <em>Ogiltig</em>
+    är ogiltig frånvaro och <em>Sen</em> är 15 minuter ogiltig frånvaro (högst
+    lektionens längd) och dessutom en sen ankomst som räknas för sig. <em>Okänd</em>
+    räknas ingenstans, och en inställd lektion är aldrig frånvaro. Andelen är
+    frånvaron av de registrerade minuterna, och en månad utan registrerade minuter
+    visas som <em>ingen registrering</em>, aldrig som noll procents frånvaro.
+    En elev räknas till den klass hen gick i <em>den dag lektionen hölls</em>, inte
+    den klass hen går i idag; därför står förra årets klasser kvar med sin
+    historik när läsårsaktiveringen har flyttat eleverna och tömt dem. Det gäller
+    också klassens elevlista. Den har <em>klassens egna elever</em>: de som var inskrivna i
+    klassen någon dag i perioden, inte elever som bara gick i förra årets klass och sedan
+    bytte till en annan klass eller lämnade skolan (deras mentor är en annan). Varje elevs
+    summa är för <em>dagarna hen gick i klassen</em> eller i förra årets klass (som en
+    följd). För en period inom klassen blir eleverna därmed klassens summa; en elev som
+    bytte klass mitt i en månad räknas i den gamla klassen fram till bytet och i den nya
+    efter det. Når perioden in i förra årets klass är summan av listan mindre än kullens
+    summa i diagrammet, med de elever som inte följde med utanför. Elevens eget kort visar
+    alla hens markeringar, i vilken klass hen än var.
+  </p>
+  <p>
+    <strong>Antalet hållna lektioner</strong> och rapporteringsgraden är rapporteringsgradens
+    (6.13), men räknade för den tid då lektionerna hölls: en lektion som en lärare höll
+    räknas också om läraren har slutat sedan, så att en månad för två år sedan inte
+    blir tommare av att personalen byts. (Rapporteringsgraden på sin egen sida frågar vilka
+    lektioner en lärare som arbetar idag ska rapportera, och räknar därför inte lektioner
+    vars lärare har slutat.) En lektion efter att läraren slutat räknas inte, för då finns
+    ingen som rapporterar den.
+  </p>
+
+  <h4>Vem ser vad</h4>
+  <ul>
+    <li><strong>Administratören</strong> ser hela skolan, varje klass och varje elev, med vilken administratörsprofil som helst, som i närvarorapporten.</li>
+    <li><strong>Mentorn</strong> ser sina egna mentorselever och de klasser hen är mentor för (samma mentorsdefinition som frånvarobevakningen, idag), på sidan <span class="path">Frånvarostatistik</span> som nås från Frånvarobevakning. Inga andra lärare ser något.</li>
+    <li><strong>Huvudmannens läsare</strong> ser skolans och klassernas summor och aldrig en enskild elev.</li>
+    <li>Elever och vårdnadshavare ser ingenting här.</li>
+    <li>Att öppna en enskild elevs statistik, eller en klass elevlista, skrivs i skolans läslogg (7.4) som en läsning av närvaro och namn. Summor över en klass eller skolan nämner ingen och skrivs inte.</li>
+  </ul>
+
+  <h4>Skyddad identitet</h4>
+  <p>
+    En elev som skolan markerat med skyddad identitet (7.4) finns inte i någon
+    elevlista, i ingen utskrift och inte på mentorns sida. I administratörens
+    klasslista står en tom rad i elevens ställe och hur många som utelämnats; en
+    mentor får ingen sådan rad, för ett tal skulle peka ut eleven. Eleven räknas
+    med i klassens och skolans summor, som inte nämner någon. Administratören kan öppna
+    elevens kort från elevregistret och får veta att eleven är markerad; kortet
+    skrivs inte ut.
+  </p>
+
+  <h4>Gallring och den minsta gruppen</h4>
+  <div class="warn">
+    <span class="label">Läs det här innan ni bestämmer hur länge närvaron sparas</span>
+    <p>
+      Närvaron gallras efter skolans beslut (7.4), och en enskild elevs statistik
+      räknas bara av de markeringar som finns kvar: det som gallrats syns inte, och
+      kortet säger från vilken dag markeringar finns. Ingenting om en enskild elev
+      sparas för sig. För att tre läsår ska gå att visa även när närvaron sparas
+      kortare sparar Rastra <strong>summor per klass och månad, och för hela skolan</strong>,
+      utan en enda elev i sig. Summorna <strong>gallras inte med närvaron</strong>: de tas bort
+      när månaden ligger före det tredje läsårets början, eller med klassen eller skolan.
+      Det gäller också skolor som beslutat gallra närvaron efter en månad.
+    </p>
+    <p>
+      En siffra bygger alltid på minst <strong>fem elever</strong>. En klass med färre
+      än fem elever får ingen månad sparad och inget mönster (dess minuter ingår bara
+      i skolans summa), och en månad där färre än fem elever har en registrering visar
+      lektionerna och rapporteringsgraden men inga minuter. Siffran är densamma i
+      databasen, i API:et och i den här texten.
+    </p>
+  </div>
+  <p>
+    Summorna för en månad räknas om för de senaste 62 dagarna (ett register kan
+    sparas dagar efter lektionen) och fylls på bakåt, tre månader per natt, så att
+    en skolas tre läsår är på plats efter ungefär en vecka. Har skolan någon gång
+    beslutat gallra närvaron räknas inte månader före den kortaste gallringstid
+    skolan någonsin valt om, så att en månad vars markeringar gallrats inte skrivs
+    över med en tom.
+  </p>
+
+  <h4>Utskriften per elev</h4>
+  <p>
+    <span class="ui">Skriv ut</span> på elevens kort ger en A4 med månaderna, klassen
+    bredvid, rapporteringsgraden och mönstren, för utvecklingssamtalet. En utskrift
+    lämnar systemet: knappen läser skyddad identitet när du trycker och skriver
+    ingenting för en markerad elev. Webbläsarens egen utskrift (Ctrl+P) går inte
+    genom knappen, så använd knappen för papper som ska lämna rummet. Inget kön
+    redovisas: Rastra har inget könsfält och statistiken skapar inget.
+  </p>
+  <h3 id="s618"><span class="num">6.18</span>Måltidskollen: portioner för köket</h3>
+  <p>
+    <strong>Måltidskollen</strong> ger köket antalet portioner för varje lunchsittning,
+    räknat från det <em>publicerade</em> schemat. Sidan finns under
+    <span class="path">Drift › Måltidskollen</span> och visar <span class="ui">Dagen</span>
+    med sina sittningar och <span class="ui">Veckan framåt</span> med en rad för varje dag.
+    Båda går att skriva ut, och båda går att hämta som en fil för Excel. Alla administratörer
+    ser antalen; brytpunkten och brevet ändras av den som skriver Drift (rektor, fullständig
+    administratör, schemaläggare och expedition), och en läsare ser dem utan att kunna ändra.
+  </p>
+
+  <h4>Vad en portion är</h4>
+  <p>
+    Antalet för en sittning och en dag är eleverna i klasserna som äter i sittningen, minus
+    <strong>anmäld frånvaro (6.7) som kommit före brytpunkten</strong>, plus
+    <strong>personal som äter med</strong>. Sittningarna kommer från lunchmåltiderna som
+    publiceras med schemat (5.6), så en helg, ett lov och en dag som schemat inte är
+    publicerat för har ingen sittning. Antalen gäller från och med i dag, upp till 14 dagar
+    framåt, eftersom klasslistorna är dagens.
+  </p>
+  <ul>
+    <li><strong>Eleverna</strong> är de aktiva eleverna i klassen. En elev som har slutat räknas inte.</li>
+    <li><strong>Frånvaron</strong> dras bara av när anmälan täcker <em>hela</em> sittningen: en elev som är borta en del av den äter. Hel dag, beviljad ledighet och en tid som omfattar sittningen räknas; ett läkarbesök som slutar före sittningens slut gör det inte.</li>
+    <li><strong>Brytpunkten</strong> är en tid på dagen som skolan väljer, den tid köket lägger sin beställning. Frånvaro som anmälts före den dagen klockan brytpunkten är avdragen. Frånvaro som anmäls <em>senare</em> dras aldrig av: den visas för sig som <span class="ui">Anmäld efter brytpunkten</span>, så att köket ser vad som ändrats sedan beställningen utan att siffran det beställde efter ändras. Utan brytpunkt dras ingen frånvaro av, och sidan säger det.</li>
+    <li><strong>Personal</strong> räknas bara när skolan har lagt en <em>pedagogisk lunch</em> med fast tid under Tjänstefördelning (4.3). Läraren hör till den sittning vars tid den fasta tiden överlappar mest, en gång per dag. En frånvarande lärare dras inte av, eftersom en vikarie ofta tar platsen. Har skolan inte lagt någon pedagogisk lunch står personalen utanför, och sidan, filen och brevet säger det.</li>
+    <li><strong>En schemabrytande aktivitet</strong> (6.5) säger inte om klassen äter i skolan, så den dras inte av. En klass med en ersättningslektion över sittningen märks <span class="ui">aktivitet</span> och räknas med, eftersom ett kök som beställer för få portioner är värre än ett som beställer för många. Vet du att klassen äter någon annanstans: räkna av den själv.</li>
+  </ul>
+  <div class="warn">
+    <span class="label">Allergier och kostval ingår inte</span>
+    <p>
+      Allergier och kostval är hälsouppgifter, och de lagras inte i Rastra. Sidan, filen och
+      brevet har varken en kolumn eller ett ord för dem. Köket får dem på samma sätt som
+      förut.
+    </p>
+  </div>
+
+  <h4>Skriv ut och Excel</h4>
+  <p>
+    <span class="ui">Skriv ut</span> skriver ut det som visas, dagen eller veckan, med
+    kontrollerna utelämnade. <span class="ui">Hämta fil för Excel</span> hämtar samma dagar
+    som en fil med en rad per dag och sittning: klasserna med sina portioner, eleverna,
+    avdragen frånvaro, personalen, portionerna och frånvaro som anmälts efter brytpunkten.
+    Filen är i det format svenska Excel öppnar utan omvägar, teckenkodning Windows-1252 med
+    semikolon mellan kolumnerna, så å, ä och ö blir rätt. Den innehåller bara antal och
+    klassernas namn, aldrig en elevs namn.
+  </p>
+
+  <h4>Brevet till köket</h4>
+  <p>
+    Under <span class="ui">Brytpunkt och brev till köket</span> anger du brytpunkten och en
+    <strong>köksadress</strong>, och slår på brevet. Det är <strong>avstängt</strong> för
+    varje skola tills du gör det. Brevet går sedan varje dag som har en sittning, vid
+    brytpunkten, till köksadressen. Det är skolans adress, till exempel en gemensam
+    funktionsbrevlåda, och ingen användare: den som äger adressen behöver inget konto i Rastra.
+    Brevet säger portionerna per sittning och klasserna med sina antal, och att allt som
+    anmäls efter brytpunkten inte är avdraget. Det innehåller aldrig ett namn.
+  </p>
+  <ul>
+    <li>Brevet gäller <strong>samma dag</strong>. Det går inom tre timmar efter brytpunkten: ett brev efter lunchen är inget brev, så ett brev som inte gått då går inte alls.</li>
+    <li>Siffrorna i brevet är de som gällde vid brytpunkten, även om brevet går en stund senare. Det som kommit in sedan står som <em>anmäld efter</em>.</li>
+    <li>Ett brev som inte kunde skickas, till exempel för att e-post inte är inställt, provas igen inom samma tre timmar. Sidan visar <span class="ui">Senaste brev</span> med dagen det senast gick.</li>
+    <li>Brevet skickas med Rastras vanliga e-post, i samma takt som alla andra utskick.</li>
+  </ul>
+
+  <h3 id="s619"><span class="num">6.19</span>Klasslärarens schema</h3>
+  <p>
+    En <strong>klasslärare</strong> är en lärare som du som schemaläggare har utsett att ändra
+    <em>en</em> klass schema, inom en ram du bestämmer. Det är tänkt för låg- och mellanstadiet,
+    där klassläraren känner sin klass dag och vill flytta en lektion, ställa in en eller byta sal
+    utan att be om hjälp varje gång. Det är en utnämning för en klass och ett läsår, och den är
+    <strong>inte</strong> detsamma som att vara mentor: ingen får rätten förrän du har gjort den.
+    Sidan finns under <span class="path">Klasslärare</span>. Alla administratörer läser den;
+    utnämningar och öppna tider skriver den som skriver Schemaläggning, och valet om att klassläraren
+    får publicera själv och publiceringen av utkast skriver den som skriver Publicering.
+  </p>
+  <ul>
+    <li><strong>Utnämning.</strong> Välj klass och lärare under <span class="ui">Utse en klasslärare</span> och tryck <span class="ui">Utse</span>.
+      Läraren måste vara aktiv och klassen en vanlig klass, inte en undervisningsgrupp eller halva
+      klassen. Det kan finnas flera klasslärare för en klass. Utnämningen gäller i <em>ditt</em> namn:
+      klasslärarens kontroller och publiceringar körs som du, så länge du är kvar som administratör
+      och skriver Schemaläggning, Drift och Publicering. Försvinner du eller byter profil står
+      utnämningen kvar men <em>gäller inte längre</em>; då utser en annan administratör läraren på
+      nytt (samma knapp), och utnämningen går över till hen. Utnämningar följer inte med till
+      nästa läsår, eftersom nästa läsår har nya klasser: utse på nytt.</li>
+    <li><strong>Öppna tider.</strong> En klasslärare får bara ändra lektioner som ligger inom en tid du
+      har öppnat, och bara flytta dem till en öppen tid. Du anger veckodag och från och till, för alla
+      klasser eller för en klass. Tider som ligger intill varandra slås ihop. <em>Har du inte öppnat
+      någon tid kan ingen klasslärare ändra något.</em></li>
+    <li><strong>Det som alltid är ditt.</strong> Klassläraren får inte röra en lektion med en annan
+      lärare, en lektion som delas med andra klasser eller elever, ett block som läggs parallellt, en
+      lektion för en halvklass (eller i ett ämne där klassen har halvklasser), ett ämne där elever går
+      till en ersättande grupp, en timplanspost som delas mellan lärare, en lärare som delas med en
+      annan skola, eller en sal som är utlånad till eller från en annan skola. Inte heller en lektion
+      som redan varit, har en vikarie, är inställd eller har närvaro registrerad. Försöker klassläraren
+      ändå får hen ett besked som säger vilket av skälen det är. När läsåret är slut ändras inget i dess
+      klasser längre (klassläraren får inte klassen i sin lista, och databasen nekar ändringen), och en
+      ny tid för ett datum måste ligga i klassens läsår och inte ha börjat.</li>
+    <li><strong>Ändringarna är utkast.</strong> Det klassläraren gör ändrar inte schemat. Det
+      hamnar som ett <em>utkast</em> för klassen, och först när det publiceras går det till schemat:
+      en ställd-in lektion ställs in och klassen får besked, en flyttad lektion flyttas med en notis, en
+      ändring av mallen går genom samma redigerare som du själv använder (och i en skola som publicerar
+      via utkast hamnar den i skolans utkast till nästa vanliga publicering). Under
+      <span class="ui">Utkast att granska</span> ser du varje utkast med vem som skrev det, vad det gäller och om
+      det går att publicera just nu. <span class="ui">Publicera klassens utkast</span> går igenom dem,
+      äldsta först, och säger för varje om det publicerades eller varför inte. Ett utkast som inte går
+      stannar kvar. Du kan också slänga ett utkast.</li>
+    <li><strong>Samma kontroll som din.</strong> Klassläraren ser krockar medan hen ändrar: lärare,
+      sal och klass som redan är upptagna (också elever som går i en annan grupp, och ombyte och dusch
+      före och efter en lektion), en otillgänglig tid, en sal som är bokad, och lov. Det är samma
+      kontroll som i schemaredigeraren, för mallen och för ett datum, och dessutom de hårda regler
+      som Byten och flyttar håller: stadiets ramtid, klassens lunch och en stängd årskurs. Krockarna
+      namnges med klass, ämne och tid, aldrig med en lärares namn. Lärare som är markerade med skyddad
+      identitet nämns alltså aldrig. I en skola som publicerar via utkast ser klassläraren inte heller
+      vilken lektion i skolans utkast en krock är med, bara att salen eller klassen är upptagen.
+      <em>Tar en ändring av mallen bort kommande lektioner ur kalendern</em> (de skulle hamna på en tid
+      som redan har börjat eller efter mallens slut) står det med antal innan den publiceras, och
+      därtill om någon skrivit lektionslogg eller läxa på dem. En lektion som redan flyttats för ett
+      datum, eller fått en annan sal för det, stoppar en ändring av mallen tills datumet har passerat
+      eller lektionen är tillbakaflyttad, annars skulle den hamna på en tredje dag eller i mallens sal
+      igen.</li>
+    <li><strong>Flera på en gång.</strong> Ett utkast bygger på lektionen som den såg ut när klassläraren
+      läste den. Har du eller någon annan ändrat lektionen sedan dess får klassläraren
+      <em>Lektionen har ändrats sedan du läste den</em> och ser vad som ändrats, och utkastet publiceras
+      inte. Två som ändrar samma utkast skriver aldrig över varandra: den som kommer sist får veta att
+      utkastet ändrats och hur det ser ut nu. Det finns högst ett utkast per lektion och lager (ett för
+      mallen och ett för ett datum); en lektion med ett utkast i det ena lagret kan inte få ett i det
+      andra förrän det första publicerats eller slängts. Publicerar två samma utkast samtidigt
+      (klassläraren och du, eller två flikar) går det igenom en gång; den andra får veta att utkastet
+      inte längre väntar.</li>
+    <li><strong>Klassläraren publicerar själv?</strong> Reglaget <span class="ui">Klasslärare publicerar sin klass utkast
+      själva</span> under <span class="ui">Publicering</span> är avstängt tills du slår på det. Då publicerar klassläraren sina
+      egna utkast, och de går igenom samma kontroll och samma ram som när du publicerar. Stäng av det
+      igen och utkasten väntar på dig.</li>
+  </ul>
+  <div class="note">
+    <span class="label">Det här ändrar inte</span>
+    <p>
+      En klasslärare får inte rätt att läsa mer än andra lärare: de ser klassens lektioner och den
+      egna utnämningen, men inte andra klassers utkast. I en skola som publicerar via utkast är
+      grundschemat dolt för lärare; klassläraren läser sin egen klass mall och inget annat av utkastet.
+    </p>
+  </div>
+
+  <h3 id="s620"><span class="num">6.20</span>Checklistor: instruktionsbevis och samtyckeslistor</h3>
+  <p>
+    <strong>Checklistor</strong> ersätter pappren och kalkylbladen som lärare och mentorer för över
+    två saker: vilka elever som har fått <strong>instruktion</strong> i något som kräver det
+    (maskinerna i slöjden, laborationssäkerhet i NO, idrottens moment) och vilka vårdnadshavare som
+    har <strong>samtyckt</strong> till något för en klass (fotografering, publicering, en utflykt).
+    Båda finns under <span class="path">Checklistor</span>. Den som skriver Drift gör mallar och listor
+    och bockar för vilken elev som helst; en läsare ser allt och ändrar ingenting.
+  </p>
+  <ul>
+    <li><strong>Mallar.</strong> En mall är ett moment, med ett namn (högst 120 tecken), ett ämne om det hör
+      till ett, och en beskrivning av vad instruktionen innehåller (högst 2 000), så att alla bockar av
+      samma sak. Ett moment finns bara en gång i varje ämne. <strong>En mall tas aldrig bort</strong>:
+      bockarna ska finnas kvar. Är den inte längre aktuell väljer du <span class="ui">Avveckla</span>;
+      då går det inte att bocka av i den, och <span class="ui">Ta fram igen</span> ångrar det.</li>
+    <li><strong>Bocka av.</strong> Välj en mall och en grupp (en klass eller en undervisningsgrupp), välj eleverna
+      som har fått instruktionen (<span class="ui">Välj alla som saknas</span> hjälper) och tryck
+      <span class="ui">Bocka av valda</span>. Du anger dagen instruktionen gavs (inte en dag som inte har
+      kommit) och, om det inte var du, vem som gav den: personalen väljs ur skolans lista. Samma elev, mall och
+      dag blir en bock, hur många gånger du än trycker. En ny instruktion en annan dag är en ny bock,
+      och i listan står den senaste med <em>+2 tidigare</em> om det finns fler.</li>
+    <li><strong>Ett bevis gäller eleven, inte klassen.</strong> Bocken sitter på eleven. Byter eleven klass,
+      eller läsåret rullas över, finns den kvar och syns i den nya klassens lista. Den som har slutat på skolan
+      behåller sina bevis (hur länge: se Dataskydd nedan). Ett elevkort, som du öppnar genom att klicka på
+      elevens namn, visar alla bockar och var eleven står på samtyckeslistorna.</li>
+    <li><strong>Upphäv en bock som blivit fel.</strong> Den som gjorde bocken, eller en administratör, väljer
+      <span class="ui">Upphäv</span> och skriver varför (högst 300 tecken). Bocken tas inte bort: den står kvar på
+      elevkortet, markerad som upphävd, med vem som upphävde den, när och varför, och räknas inte längre som instruktion.
+      Det finns inget sätt att ändra eller ta bort en bock, eftersom den kan behövas som bevis.</li>
+    <li><strong>Samtyckeslistor.</strong> <span class="ui">Ny samtyckeslista</span>: välj klass, skriv en rubrik och
+      texten vårdnadshavarna ska samtycka till, med de ord de kommer att se (högst 1 700 tecken). Det kan finnas en
+      öppen lista med samma namn per klass. Listan visar varje elev i klassen och var eleven står:
+      <em>Samtycke</em>, <em>Har tackat nej</em>, <em>Återkallat</em>, <em>Frågad i appen</em> (och hur många
+      vårdnadshavare som väntar) eller <em>Saknas</em>. Ikon och text bär betydelsen, inte bara färgen.</li>
+    <li><strong>Skriv in ett svar från papper.</strong> Markera eleverna och välj
+      <span class="ui">Registrera samtycke</span>, <span class="ui">Registrera nej</span> eller
+      <span class="ui">Återkalla samtycke</span>. Du anger dagen på pappret, vem som lämnade det (fritt, till exempel
+      <em>mamma Anna</em>) och en anteckning. Vem som skrev in det och när bestämmer Rastra, inte du. Svaren läggs
+      bara till: ett samtycke som tas tillbaka är ett nytt svar, och <em>Återkallat</em> syns i listan direkt. Historiken
+      per elev visar alla svar, det senaste först, och det senaste avgör.</li>
+    <li><strong>Fråga vårdnadshavarna i appen.</strong> Är <a href="#s616">Kvittens</a> påslaget kan du fråga genom den:
+      <span class="ui">Fråga vårdnadshavarna i appen</span> för de markerade eleverna, eller
+      <span class="ui">Fråga alla som saknar svar</span>. Det går ut som en kvittensförfrågan med regeln <em>Alla
+      vårdnadshavare ska bekräfta</em>, med listans text och meningen att en bekräftelse är samtycket och att det går att ta
+      tillbaka genom att kontakta skolan. Det finns inget annat bekräftelseflöde: vårdnadshavaren bekräftar under
+      Meddelanden, och <strong>när den sista vårdnadshavaren som fick frågan har bekräftat</strong> skriver Rastra in
+      samtycket själv, med dagen. Bekräftar bara en av två står eleven kvar som <em>Frågad i appen</em>. Har någon skrivit in <em>Återkallat</em> eller
+      <em>Har tackat nej</em> efter att förfrågan gick ut räknas inte en sen bekräftelse av just den förfrågan: eleven står kvar
+      som återkallad. Vill du ha samtycket igen, fråga om med en ny förfrågan. En vårdnadshavare
+      vars vårdnad har upphört håller inte upp svaret, men ett samtycke skrivs aldrig in bara för att den andra
+      försvann: ingen har då sagt ja.</li>
+    <li><strong>Avsluta listan</strong> när den inte ska användas längre (den som gjorde listan, eller en administratör).
+      Inget kan skrivas till en avslutad lista, det som skrivits finns kvar, och klassen kan få en ny lista med samma namn.</li>
+    <li><strong>Skriv ut.</strong> <span class="ui">Skriv ut</span> ger listan eller bocklistan på papper. Skyddad identitet:
+      på skärmen står varje elev du får se vid namn, som i registret, men <strong>en elev som skolan har markerat som
+      skyddad finns inte med på pappret</strong>, och pappret säger hur många som är utelämnade. Det finns ingen fil att hämta.</li>
+  </ul>
+  <h4>Vem får göra vad</h4>
+  <p>
+    En <strong>lärare</strong> bockar av elever i sina egna grupper och lektioner i det aktiva läsåret (de lektioner där hen
+    är lärare eller medlärare, med lektionens klasser, undervisningsgrupper och namngivna elever; en parkerad lektion räknas
+    inte), och ser också sina mentorselevers bevis. Samtyckeslistor gör och skriver en lärare för klasser hen är mentor för
+    (samma mentorsbegrepp som i Kvittens och frånvarobevakningen), och ser svaren för elever hen undervisar eller är mentor för.
+    Vårdnadshavare och elever ser ingenting här: vårdnadshavaren bekräftar i appen eller på webben under Meddelanden.
+    Att du öppnar en lista, en bocklista eller ett elevkort skrivs i läsloggen.
+  </p>
+  <h4>Dataskydd</h4>
+  <p>
+    Bevisen och samtyckena har en <strong>gallringstyp för sig</strong> under <span class="path">Dataskydd</span>:
+    <em>Checklistor</em>. De sparas så länge eleven går på skolan och därefter så länge ni bestämmer. <strong>Förvalet är
+    <em>Ej beslutat</em>, och då gallras ingenting.</strong> En elev som går kvar på skolan har aldrig något som gallras,
+    hur lång tid ni än väljer. Ett instruktionsbevis kan behövas för arbetsmiljöansvaret långt efter att eleven har slutat,
+    och det är därför det inte gallras av sig självt. Välj en period för <em>Slutade personer</em> som är minst lika lång som
+    för <em>Checklistor</em>: sedan en elev har pseudonymiserats finns beviset kvar, men inte längre med ett namn.
+    Pseudonymiseringen tar elevens namn men inte det som personalen har skrivit fritt: namnet på den som lämnade ett svar
+    (till exempel en vårdnadshavares) och anteckningarna på bevis och svar står kvar tills raderna gallras, alltså efter
+    tiden för <em>Checklistor</em>. Skriv inte mer i dem än det behövs.
+    Förfrågningarna i appen gallras med skolans val för <em>Notiser</em>, men samtycket de gav finns kvar på listan.
+  </p>
+
+  <h3 id="s621"><span class="num">6.21</span>Analys och planering</h3>
+  <p>
+    <span class="path">Drift › Analys och planering</span> samlar tre underlag som skolan annars
+    räknar för hand: <strong>nyckeltal</strong> per lärare och skola, <strong>kostnad per elev</strong>
+    och <strong>löneunderlag</strong> med konton. Inget av dem lagras. Varje gång du öppnar en flik
+    räknas siffrorna fram ur tjänstefördelningen (4.3), rostern, timplanen och de lektioner som hållits,
+    med samma tid och belastning som Tjänstefördelning redan visar, så att en siffra här aldrig
+    avviker från den där. Läsåret väljer du överst.
+  </p>
+  <ul>
+    <li><strong>Nyckeltal.</strong> För skolan: antalet elever, <em>lärartätheten</em> (heltidstjänster
+      undervisning per 100 elever, där undervisningen delas med skolans riktmärke; saknas riktmärket står det,
+      och antalet lärare per 100 elever visas ändå), <em>behöriga lärares andel av undervisningen</em> (av
+      klocktimmarna, och bara om skolan har registrerat behörigheter) och undervisningens timmar. För varje
+      lärare: undervisning i timmar per vecka enligt tjänstefördelningen och, om ett schema är lagt, enligt
+      schemat; hur stor del av målet det är; antalet elever läraren undervisar; andelen av tiden som en
+      behörighet täcker; och <em>tjänstgöringsgrad</em>. Tabellen går att sortera på varje kolumn.
+      <em>Elever per lärare</em> är de olika elever som läraren har på sina poster, en elev som finns på två
+      poster räknad en gång; en elev som en ersättande grupp (till exempel SvA) tagit av klassens lektion
+      räknas inte på klassens post.</li>
+    <li><strong>Tjänstgöringsgraden</strong> är HR-uppgift (2.2). Utan HR-läs är kolumnen borta, och så
+      är lärartätheten efter tjänstgöringsgrad. Lärartätheten ovan räknas av undervisningen och finns
+      för alla.</li>
+    <li><strong>Kostnad per elev.</strong> Varje posts timmar delas lika på postens elever, var och en i sin
+      årskurs, och gångras med skolans <em>timkostnad</em> för kategorin. Tabellen visar per skoldel och
+      årskurs eleverna, timmarna per kategori, lärartiden per elev, kostnaden och kostnaden per elev,
+      och hela skolan sist. Vikariernas hållna pass räknas från läsårets start till i går, i klocktimmar. Uppdrag och rastvakt ingår inte: de har ingen elev att delas på
+      och finns i löneunderlaget. <span class="ui">Ladda ner CSV</span> ger tabellen som fil; den nämner
+      ingen person.</li>
+    <li><strong>Okänd kostnad är inte noll.</strong> Har en kategori timmar men skolan ingen timkostnad för
+      den står kostnaden som <em>Okänd</em> med skälet, och en notis säger vilken sats som saknas. Ett
+      belopp som tyst lämnade vikarien utanför skulle se billigare ut än det var.</li>
+    <li><strong>Löneunderlag.</strong> Välj en period (lönemånaden, högst 93 dagar, inom läsåret) och
+      <span class="ui">Visa underlag</span>. Underlaget räknas först då. Det ger för varje person och skoldel
+      <em>undervisning</em> (hållna lektioner i klocktimmar), <em>vikariepass</em> (timexportens egna rader,
+      samma som under Rapporter, 6.9) och <em>uppdrag</em> (uppdragen i tjänstefördelningen, dag för dag över
+      periodens undervisningsdagar; en lov som stänger hela skolan räknas bort). Ett uppdrag hör inte till
+      någon årskurs och delas därför mellan personens skoldelar efter deras övriga tid. Har en person varken
+      undervisning eller vikariepass i perioden ligger uppdragen på en rad utan skoldel och konto, som skolan
+      bokar för hand, och en notis säger hur många det gäller.</li>
+    <li><strong>Den som har slutat.</strong> En person räknas till och med den dag hen avaktiverades och inte
+      längre. Hållna lektioner räknas om de var slut när hen avaktiverades (en lektion klockan 14 samma dag som
+      hen avaktiverades klockan 12 räknas inte), vikariepass på samma sätt, och uppdrag, mentorskap och
+      rastvakt räknas till dagen före. En person som slutade före perioden finns inte med, och en notis säger
+      hur många som har slutat. Dagen är den då avaktiveringen gjordes i Rastra, inte den då personen slutade:
+      avaktivera i tid. Aktiveras personen igen räknas hen som om hen aldrig slutat, också för tiden
+      däremellan; Rastra minns bara den senaste avaktiveringen. Lektioner som ligger kvar på den som slutat
+      efter sin sista dag ska flyttas till den som tar dem.</li>
+    <li><strong>Filen.</strong> <span class="ui">CSV för Excel</span> är Excels svenska format:
+      windows-1252, semikolon, decimalkomma och radslut CRLF, utan BOM. <span class="ui">Excel</span> är en
+      .xlsx där minuter och timmar är tal, så att de går att summera. Båda har samma kolumner: signatur,
+      efternamn, förnamn, e-post, typ (personal eller vikariepool), tjänstgöringsgrad (den som gäller
+      periodens sista dag, så en tjänst som ändras från den 1 november är den nya i en novemberfil),
+      skoldel, konto,
+      minuter för undervisning, uppdrag och vikariepass, totalt i timmar, periodens båda dagar och sist
+      löne-id, anställningsnumret i lönesystemet som skolan skriver på tjänsten (4.3). Löne-id är tomt för den
+      som inte har något. Kolumnen står sist så att en import som ställts in på den första versionen av
+      filen hittar varje kolumn där den var. Tecken som
+      windows-1252 inte rymmer (ett polskt ł) skrivs som närmaste bokstav i CSV-filen och räknas i en notis;
+      Excel-filen behåller dem.</li>
+    <li><strong>Vem ser vad.</strong> Nyckeltalen läser alla administratörer, utan tjänstgöringsgrad om du inte
+      läser HR-uppgifter. Kostnadsunderlaget är skolans ekonomi och hämtas av rektor, fullständig
+      administratör, den som har HR-läs och huvudmannens läsare. Löneunderlaget är HR-uppgifter och hämtas av
+      rektor, fullständig administratör och den som har HR-läs, aldrig av huvudmannens läsare. Huvudmannens
+      läsare får skolans nyckeltal och kostnadsunderlaget som summor, men ingen lärares rad. En lärare har ingen
+      av dem: lärarens egen belastning står där den alltid stått, under Min tjänst. Att du läser en lärares tid
+      och tjänst, och att du hämtar en fil som nämner personer, skrivs i läsloggen.</li>
+    <li><strong>Skyddad identitet.</strong> Löneunderlaget ska betala alla, så en person med skyddad
+      identitet finns med i filen och i vyn, och en notis säger hur många. Personen står där med sin signatur
+      (tjänstens för läsåret) och sitt löne-id, aldrig med namn eller e-post, och de raderna står sist.
+      Saknar personen löne-id står i stället en kod i den kolumnen, <em>SKYDDAD</em> och ett nummer, till
+      exempel SKYDDAD-3. Koden ges när personen markeras och är densamma i varje fil så länge markeringen
+      finns; den säger inget om namnet. En varning säger hur många som står med en kod. Vem en kod gäller
+      ser du under <span class="ui">Vem koderna gäller</span> under tabellen, och bara där: den står aldrig i
+      filen, eftersom filen ofta skickas med e-post eller läggs i en delad mapp. Säg det till lönekontoret, och
+      fyll i löne-id på lärarens tjänst (4.3) så behövs ingen kod nästa gång. En vikarie i poolen har ingen
+      tjänst och står alltid med sin kod. Skulle en markerad person sakna både löne-id och kod säger en egen
+      varning det: fyll i löne-id, eller ta bort markeringen och sätt den igen så får personen en kod. När du
+      hämtar filen säger meddelandet hur många personer med skyddad identitet den har och hur många av dem
+      som står med en kod. Tänk på att signaturen ofta är personens
+      initialer och står i schemats filer; den som känner personalen kan alltså känna igen den. Nyckeltalen och
+      kostnaden nämner bara lärare vid id och namn som registret redan visar för dig, och kostnadsfilen nämner
+      ingen.</li>
+  </ul>
+  <p>
+    Under fliken <span class="path">Skoldelar och satser</span> anger skolan det som inte går att räkna fram.
+    Bara rektor och fullständig administratör ändrar; alla andra administratörer läser.
+  </p>
+  <ul>
+    <li><strong>Skoldelar.</strong> En skoldel är ett kostnadsställe med ett namn, ett <em>konto</em> och de
+      årskurser den rymmer (F–3, 4–6, 7–9 …). Två skoldelar delar aldrig årskurs, så en klass hör till
+      högst en; försöker du ger Rastra besked om vilken skoldel som redan har årskursen. Årskurserna anges
+      som i den nioåriga skolan, också för ett läsår med tioårig numrering, där åk 8 räknas som 7. Har skolan
+      inga skoldelar visas underlaget per årskurs, och en årskurs ingen skoldel rymmer visas på en egen rad.
+      En undervisningsgrupp med elever från flera årskurser räknas till den skoldel som flest av dess elever
+      hör till.</li>
+    <li><strong>Timkostnad per personalkategori.</strong> Kostnaden för en timme, i kronor, för
+      <em>behörig lärare</em> (och alla lärare om skolan inte registrerat några behörigheter),
+      <em>lärare utan behörighet</em> (en post där ingen registrerad behörighet täcker läraren) och
+      <em>vikarie</em>. Det är skolans egen siffra för kategorin. Inga individuella löner lagras någonstans i
+      Rastra, och kategorin sparas inte på någon person: den räknas fram när underlaget görs.</li>
+  </ul>
+  <div class="note">
+    <span class="label">Det här är ett underlag, inte en lönekörning</span>
+    <p>
+      Siffrorna är timmar och en timkostnad skolan själv angett. De ersätter inte lönesystemets egen
+      beräkning av lön, semester eller sjukavdrag. Kontrollera fördelningen på skoldelar och uppdrag mot
+      skolans egna avtal innan filen läses in, och kom ihåg att en lektion som lästs in som hållen först då
+      räknas som undervisning: för en period som pågår är underlaget så färskt som lektionsloggen.
+    </p>
+  </div>
+
+  <h3 id="s622"><span class="num">6.22</span>Lokal: resurser, externa och utnyttjande</h3>
+  <p>
+    Skolan lånar ut mer än salar, och en förening kan hyra idrottshallen efter skoltid. Det här avsnittet har
+    tre delar: <strong>resurser</strong> som går att boka (surfplattor, minibussen, aulan), <strong>externa
+    bokningar</strong> för den som inte är användare, och <strong>utnyttjanderapporten</strong> som visar hur
+    mycket en sal eller resurs används.
+  </p>
+  <h4>Resurser</h4>
+  <p>
+    Under <span class="path">Planering › Resurser</span> skapar du skolans egna <em>slag</em> (Surfplattor,
+    Minibuss, Aulan) och sedan resurserna: ett namn, ett slag, <em>antal</em> (30 surfplattor är en resurs med
+    antal 30), en plats (ett skolområde, 3.3, och en rad text som &quot;Skåp 3 i B-huset&quot;) och om en bokning
+    ska vänta på ditt beslut. Lärare bokar under <span class="path">Boka resurs</span> och väljer hur många de
+    vill ha; Rastra håller ihop räkningen, så att ingen kan boka fler än det finns vid samma minut.
+    En bokning som väntar räknas som hållen. Beslutet fattas där lokalbokningarna avgörs
+    (<span class="path">Drift › Lokalbokningar</span>, växeln <span class="ui">Resurser</span>) och den som bokade får besked.
+    Ett slag som används, och en resurs som hyrs ut, tas inte bort.
+  </p>
+  <h4>Externa bokare</h4>
+  <p>
+    <span class="path">Drift › Externa bokningar</span> är för föreningen som hyr idrottshallen varje tisdag 18–20 en
+    termin. Den som hyr loggar inte in; expeditionen eller en administratör registrerar bokningen med
+    <strong>organisation, kontaktperson, telefon och e-post</strong> (minst en av de två sista). Välj sal eller
+    resurs, veckodagar (och om det är varannan vecka), första och sista datum och klockslag. Knappen
+    <span class="ui">Förhandsgranska</span> visar varje dag i serien och vad som står i vägen:
+  </p>
+  <ul>
+    <li><strong>Lektion</strong>: en lektion som håller sin tid använder salen. En inställd lektion gör det inte.</li>
+    <li><strong>Bokning</strong>: en annan bokning håller salen, eller (för en resurs) antalet är slut.</li>
+    <li><strong>Ramtid</strong>: dagen ligger i skolans ramtid för de årskurser salen får användas av. En lov för hela
+      skolan tar bort ramtiden den dagen; en studiedag gör det inte.</li>
+    <li><strong>Stängd</strong>: salen har en stängning den tiden. <strong>Lån</strong>: salen är utlånad till en annan skola
+      (eller lånad och lånet gäller inte hela tiden).</li>
+    <li><strong>Aktivitet</strong> (varning): en schemabrytande aktivitet har en lektion då. Ersättningslektionerna anger ingen sal,
+      så aktiviteten kan använda salen utan att Rastra vet det; titta efter.</li>
+  </ul>
+  <p>
+    Står något i vägen för en dag vägras serien i sin helhet, så att ingen får en halv termin av misstag. Kryssa i
+    <span class="ui">Hoppa över dagar som krockar</span> för att boka de lediga dagarna; de dagar som lämnades ute står på
+    serien. Varje dag blir en vanlig bokning av salen, med rubriken &quot;Extern bokning&quot; och inget om den som hyr, så
+    lärarnas sök efter ledig sal, vikarietavlan och Skolans dag ser salen som upptagen. Schemavisaren visar inte
+    externa bokningar. En serie ändras inte; vill ni något annat avbokar ni den och registrerar en ny.
+    Kontaktuppgifterna går att ändra.
+  </p>
+  <div class="note">
+    <span class="label">En lektion som kommer efter bokningen</span>
+    <p>
+      En publicering lägger en termins lektioner utan att fråga bokningarna. Hamnar en lektion i en sal som en förening
+      har, får administratörer under Drift en notis med antalet dagar, och sidan visar dem under
+      <em>Krockar</em> med lektionen och dagen. Rastra flyttar ingenting: ni avgör vilken som viker.
+    </p>
+  </div>
+  <p>
+    Den som hyr är personuppgifter om någon utan inloggning. Uppgifterna syns bara för administratörer, i detaljvyn för en serie,
+    och står inte i någon notis. De gallras med bokningen: på <span class="path">Dataskydd</span> (7.4) finns typen
+    <em>Externa bokningar</em>, som tas bort när serien har slutat eller avbokats för längre sedan än ni valt. Ett
+    pågående avtal gallras aldrig. En serie som är avslutad eller avbokad kan tas bort för hand
+    (<span class="ui">Ta bort serien</span>) om den hyrande ber att bli glömd. Den som har registrerat en pågående serie kan inte
+    tas bort som person förrän serien är avbokad, eftersom salen annars skulle bli ledig utan att någon sagt det.
+    I registerutdraget för den som registrerat står serien, men den hyrandes namn och kontakt är dolda.
+  </p>
+  <h4>Utnyttjande</h4>
+  <p>
+    <span class="path">Drift › Utnyttjande</span> visar för varje sal och resurs hur stor del av <em>skoltiden</em> som är
+    bokad och hur stor del av <em>kvällar och helger</em> (öppettiderna, 07–22 om ni inte ändrar dem, utanför skoltiden).
+    Välj en termin (hösttermin är 1 augusti–31 december, vårtermin 1 januari–31 juli) eller egna datum, högst 400 dagar.
+    Skoltiden är skolans ramtider för salens årskurser på de dagar skolan har lektioner; en lov för hela skolan räknas
+    som öppettid, inte skoltid. &quot;Bokad&quot; är en lektion som håller sin tid och en godkänd bokning (en som väntar är inte
+    använd än), och tid som hålls av både en lektion och en bokning räknas en gång. För en resurs med fler än en räknas
+    enhetsminuter. Varje rad har en rad per vecka. <span class="ui">Skriv ut</span> ger rapporten på papper och
+    <span class="ui">Ladda ned CSV</span> en fil i skolans CSV-format. Saknar skolan ramtider finns ingen skoltid att dela med, och sidan säger det.
+    Alla administratörer läser rapporten; den nämner ingen person.
+  </p>
+  <div class="check">
+    <span class="label">Lägg in ramtiderna först</span>
+    <p>
+      Förhandsgranskningens &quot;Ramtid&quot; och rapportens andel av skoltiden bygger på ramtiderna under Planering. Utan dem
+      kan en förening hyra en sal mitt på dagen, bara lektionerna står i vägen.
+    </p>
+  </div>
+
+  <h3 id="s623"><span class="num">6.23</span>Ledighetspolicy: samtycke, tid i förväg och kontakt</h3>
+  <p>
+    Under <span class="path">Ledighetsansökningar</span> väljer skolan hur den tar emot en ledighetsansökan från
+    en familj. Det finns tre val, och <strong>alla tre är avstängda tills en administratör som beslutar slår på dem</strong>:
+    en skola som inte väljer något ser exakt det flöde den haft. Alla administratörer läser valen; bara den som
+    beslutar sparar dem. Ett val gäller ansökningar som lämnas in från och med att det sparats, och flyttar ingen
+    ansökan som redan ligger hos skolan.
+  </p>
+  <ul>
+    <li><strong>Varje vårdnadshavares samtycke.</strong> Ansökan går till beslut först när alla vårdnadshavare med aktiv
+      vårdnad har samtyckt. Den som ansöker räknas som att ha samtyckt; övriga vårdnadshavare får en notis och svarar
+      <em>Samtycker</em> eller <em>Samtycker inte</em> i appen eller på webben. En vårdnadshavare vars vårdnad har
+      upphört (kopplingen är borttagen, eller hen eller eleven är inaktiv) håller inte upp ansökan, på samma sätt som
+      i Kvittens (6.16). Ett <em>nej</em> avslutar ansökan: den får statusen
+      <em>Avslutad av vårdnadshavare</em>, ingen beslutar den, och den som ansökte får en notis som inte säger vem.
+      Svaret kan inte ändras.</li>
+    <li><strong>Minsta antal dagar i förväg</strong> (1–90 kalenderdagar, räknade från skolans dag till första dagen).
+      Skolan väljer vad en senare ansökan möter: formuläret <em>nekar</em> den med ett tydligt besked, eller släpper in
+      den och <em>flaggar</em> den (<em>Kom sent</em>) för den som beslutar. Du som administratör kan fortfarande
+      registrera en ansökan åt en familj som ringt; den flaggas om den är sen.</li>
+    <li><strong>En tillfällig kontakt under ledigheten</strong>: namn, telefon och relation, <em>Av</em>,
+      <em>Frivillig</em> eller <em>Obligatorisk</em>. Det är en tredje parts uppgifter. De syns för familjen som skrev
+      dem, för dig som administratör och för mentorn som beslutar ansökan, men aldrig för andra lärare, och aldrig i
+      en notis, ett e-brev eller en push. De gallras med ansökan, står i ledigheter.csv och i registerutdraget på
+      anledningens villkor, och räknas med ansökan när en person tas bort. Vårdnadshavarnas svar på samtyckesfrågan
+      (om de samtyckte och när, aldrig vad en annan svarade) står i samtycken.csv i skolans export och i
+      vårdnadshavarens eget registerutdrag. Slår skolan av kontakten tas en kontakt
+      som en äldre ansökningsblankett skickar bort.</li>
+  </ul>
+  <p>
+    I listan över ansökningar står vid varje ansökan som väntar på samtycke <em>Väntar på vårdnadshavarnas
+    samtycke</em> med antal (<em>2 av 3 vårdnadshavare har samtyckt</em>), aldrig namn. Du kan inte bevilja den förrän
+    samtycket är klart. Mentorn ser den inte heller, och får sin notis först när den är klar. Du kan däremot
+    <strong>avslå</strong> en ansökan som väntar: det beviljar ingenting, och då kan en vårdnadshavare som aldrig svarar
+    inte hålla kvar ansökan för alltid (skriv gärna en kommentar till familjen). Har vårdnaden verkligen upphört tar du
+    bort kopplingen (3.5, <em>Personer och inbjudningar</em>), och ansökan går då vidare utan den vårdnadshavaren.
+    En vårdnadshavare som inte svarat efter två dygn får en enda påminnelse. Familjen kan inte själv dra tillbaka en
+    ansökan som väntar; be skolan avslå den.
+  </p>
+  <div class="note">
+    <span class="label">Skyddad identitet</span>
+    <p>
+      Notiserna om samtycke nämner barnet och datumen för vårdnadshavaren, som alla andra notiser till en
+      vårdnadshavare, men aldrig vem som ansökte eller vem som sa nej: vårdnadshavare som lever åtskilda kan hålla sig
+      dolda för varandra. Antalen du ser säger inte vem.
+    </p>
+  </div>
 </section>
 
 <!-- ============================ 7 ============================ -->
@@ -7515,7 +8723,8 @@
       <tr><td class="k">Vikarieförfrågningar</td><td>Avslutade förfrågningar om vikarie som avslutades före gränsdagen, med vilka lektioner de gällde och vem som tillfrågades och svarade, och vikariernas bekräftelser av pass från före gränsdagen. En fråga som fortfarande står öppen gallras aldrig.</td><td>Vikariebesluten och vikariepassen, så att vikarietimmar och lön stämmer. Rättvisan visar bara de förfrågningar som finns kvar.</td></tr>
       <tr><td class="k">Krisläge: övningar</td><td>Övningar som avslutades före gränsdagen, med grupperna, lärarna, eleverna och varje markering.</td><td>—</td></tr>
       <tr><td class="k">Krisläge: skarpa larm</td><td>Skarpa larm som avslutades före gränsdagen, med allt som hör till dem. Ett larm som pågår gallras aldrig.</td><td>—</td></tr>
-      <tr><td class="k">Slutade personer</td><td>För den som avaktiverades före gränsdagen ersätts namn, e-post, telefon och SS12000-id: personen pseudonymiseras, och namnet blir <em>Pseudonym</em> och sex tecken. Inloggningen tas bort, utom när en annan skola fortfarande använder den (2.3); då är det bara den här skolans uppgift om personen som pseudonymiseras. Kopplingar mellan personen och vårdnadshavare eller elever, personens enheter för push, val av e-post och push och alla egna notiser tas också bort, de egna notiserna oavsett beslutet för Notiser. Signatur och anteckning tas bort från personens tjänster.</td><td>Personen som rad, med närvaro, beslut och klasshistorik. Tjänsterna, utan signatur och anteckning; tidigare versioner av dem behåller signaturen tills Ändringsloggar gallrar läsåret. Notiser till andra som nämner personen, till exempel en vårdnadshavares notis om en elev, följer beslutet för Notiser.</td></tr>
+      <tr><td class="k">Checklistor</td><td>Instruktionsbevis och svar på samtyckeslistor för elever som avaktiverades före gränsdagen, och samtyckeslistor som är äldre än gränsdagen och tomma. En elev som går kvar på skolan har aldrig något som gallras.</td><td>Mallarna. Bevisen kan behövas för arbetsmiljöansvaret efter att eleven slutat: välj minst lika lång tid som för Slutade personer, annars finns beviset kvar men utan namn.</td></tr>
+      <tr><td class="k">Slutade personer</td><td>För den som avaktiverades före gränsdagen ersätts namn, e-post, telefon och SS12000-id: personen pseudonymiseras, och namnet blir <em>Pseudonym</em> och sex tecken. Inloggningen tas bort, utom när en annan skola fortfarande använder den (2.3); då är det bara den här skolans uppgift om personen som pseudonymiseras. Kopplingar mellan personen och vårdnadshavare eller elever, personens enheter för push, val av e-post och push och alla egna notiser tas också bort, de egna notiserna oavsett beslutet för Notiser. Signatur, anteckning och löne-id tas bort från personens tjänster, och löne-id också ur tjänsternas tidigare versioner. En markering om skyddad identitet tas bort, och med den personens kod i löneunderlaget.</td><td>Personen som rad, med närvaro, beslut och klasshistorik. Tjänsterna, utan signatur, anteckning och löne-id; tidigare versioner av dem behåller signaturen tills Ändringsloggar gallrar läsåret. Notiser till andra som nämner personen, till exempel en vårdnadshavares notis om en elev, följer beslutet för Notiser.</td></tr>
     </tbody>
   </table>
 
@@ -8273,7 +9482,10 @@
   <p>
     Följer <strong>inte</strong> med: grundschemat (nästa läsårs schema
     genereras för de nya klasserna, redan före aktiveringen, se 8.2),
-    lunchsittningarna, samt det gamla läsårets historik.
+    lunchsittningarna, förläggningarna av lektioner på timplansposterna (4.2),
+    samt det gamla läsårets historik. Förläggningarna följer inte med eftersom
+    nästa läsår har andra ramtider, sittningar och klasser; förlägg om på
+    nästa läsårs poster.
     Ramtider, raster, lunchflöden, lunchinställningen, regler per årskurs,
     lärarnas arbetstidsregler och salspreferenser hör inte till något läsår;
     de gäller båda läsåren, och en ändring slår igenom i båda direkt.
@@ -8440,6 +9652,11 @@
   <table>
     <thead><tr><th style="width:27%">Symtom</th><th style="width:33%">Trolig orsak</th><th>Åtgärd</th></tr></thead>
     <tbody>
+      <tr>
+        <td class="k">Generera säger att förlagda lektioner inte kan ligga där de är förlagda</td>
+        <td>En förläggning (4.2) håller inte längre: läraren har bytts och är upptagen då, en lektion har låsts bredvid, salen har lånats ut eller en tid har stängts.</td>
+        <td>Öppna postens <span class="ui">Förlägg …</span>: raden som inte håller är röd och säger varför. Ändra dag, tid eller sal, eller ta bort raden, och generera igen. Står det att veckan går utan förläggningarna, flytta eller ta bort en eller flera av dem.</td>
+      </tr>
       <tr>
         <td class="k">Publiceringen nämner <em>Halvklasser utan elever</em></td>
         <td>En halva har lektioner i grundschemat men ingen elev är placerad i den, så lektionerna når ingen.</td>

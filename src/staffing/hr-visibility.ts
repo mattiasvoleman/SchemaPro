@@ -29,7 +29,10 @@ import type { LogChange, LogEntity } from './employment-log-diff';
  * 20261218090000): a limit like "at most three hours, then half an hour free"
  * may be an arbetsanpassning after sick leave, so it is kept from a reader
  * without HR-läs as the days are, and the three places that judge with it
- * word their answer for the reader (src/common/stretch.ts).
+ * word their answer for the reader (src/common/stretch.ts). And Löne-id
+ * (payrollNumber, 20270206090000), the payroll system's number for the
+ * anställning: an identifier of the person in the payroll, which a
+ * schemaläggare's work never needs.
  *
  * A teacher reads their own post and nobody else's, which the services
  * already filter; this answers only for administrators.
@@ -47,8 +50,9 @@ export function readsHr(user: AuthenticatedUser): boolean {
  * (maxConsecutiveTeachingMinutes and consecutiveBreakMinutes, 20261218090000):
  * the most minutes in a row and the free time that ends a stretch, the days'
  * sibling in the same part of the week, moved here from the work rule that
- * every colleague reads. The HR columns the post as it is read (hideHr) hands
- * over as null, beside the two percentages and the note.
+ * every colleague reads. And Löne-id (payrollNumber, 20270206090000), the
+ * payroll system's number for the anställning. The HR columns the post as it
+ * is read (hideHr) hands over as null, beside the two percentages and the note.
  */
 export const EMPLOYMENT_HR_FIELDS = [
   'employmentForm',
@@ -57,6 +61,7 @@ export const EMPLOYMENT_HR_FIELDS = [
   'maxTeachingDaysPerWeek',
   'maxConsecutiveTeachingMinutes',
   'consecutiveBreakMinutes',
+  'payrollNumber',
 ] as const;
 
 /**
@@ -100,8 +105,10 @@ export const NOT_HR_IN_A_POST: ReadonlySet<string> = new Set([
  * if that is not to be said, take them out of this list, and a version that
  * moved only them is then left out.
  *
- * Not here, and so left out of the version whole: the days and the limit on
- * teaching in a row, which are null on most posts (a version that names one
+ * Not here, and so left out of the version whole: the days, the limit on
+ * teaching in a row and Löne-id (20270206090000; null on a post until the
+ * school writes one, so a version that names it says whose was written), the
+ * first two null on most posts (a version that names one
  * says that the teacher has, or had, a limit, which is what a reader without
  * HR-läs is not to learn; both columns of the limit go, so a version that
  * moved the pair says nothing of either). Nor the note (noteChanged): hideHr

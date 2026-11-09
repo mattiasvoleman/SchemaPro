@@ -740,6 +740,78 @@ describe('StaffingLoadService', () => {
     });
   });
 
+  describe('readReports (Analys och planering: both reports from one read)', () => {
+    const master = (overrides: Record<string, unknown> = {}) => ({
+      id: 'm-1',
+      subjectId: MA,
+      studentGroupId: GROUP_7A,
+      teacherId: ME,
+      coTeacherId: null,
+      dayOfWeek: 1,
+      startTime: new Date('1970-01-01T08:00:00.000Z'),
+      endTime: new Date('1970-01-01T09:00:00.000Z'),
+      recurrence: 'ALL_WEEKS',
+      startDate: null,
+      endDate: null,
+      isParked: false,
+      subject: { name: 'Matematik' },
+      studentGroup: { name: '7A' },
+      extraGroups: [],
+      ...overrides,
+    });
+
+    it('builds the planned report and the report over the laid grundschema from the one read, a parked lesson out', async () => {
+      tx.masterLesson.findMany.mockResolvedValue([
+        ...Array.from({ length: 4 }, (_, i) => master({ id: `m-${i}` })),
+        master({ id: 'm-parked', isParked: true }),
+      ]);
+      const { read, planned, scheduled } = await service.readReports(tx as unknown as PrismaClient, testUser(), YEAR_ID);
+
+      expect(read.year).toEqual({ startDate: '2026-08-17', endDate: '2027-06-11' });
+      expect(planned.teachers[0]!.assignedMinutesPerWeek).toBe(600);
+      // Four 60-minute lessons, the parked one not counted.
+      expect(scheduled?.teachers[0]!.assignedMinutesPerWeek).toBe(240);
+      expect(scheduled?.totals.lessonMinutesPerWeek).toBe(240);
+      // One read of the rows: the posts are read once for both reports.
+      expect(tx.teacherEmployment.findMany).toHaveBeenCalledTimes(1);
+      expect(tx.masterLesson.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('has no scheduled report when no lesson is laid, or only parked ones', async () => {
+      tx.masterLesson.findMany.mockResolvedValue([]);
+      expect((await service.readReports(tx as unknown as PrismaClient, testUser(), YEAR_ID)).scheduled).toBeNull();
+      tx.masterLesson.findMany.mockResolvedValue([master({ isParked: true })]);
+      expect((await service.readReports(tx as unknown as PrismaClient, testUser(), YEAR_ID)).scheduled).toBeNull();
+    });
+
+    it('reads no master lesson at all when only the planned report is asked for', async () => {
+      const { planned, scheduled } = await service.readReports(tx as unknown as PrismaClient, testUser(), YEAR_ID, { scheduled: false });
+      expect(scheduled).toBeNull();
+      expect(planned.teachers).toHaveLength(1);
+      expect(tx.masterLesson.findMany).not.toHaveBeenCalled();
+    });
+
+    it('charges the Faktor model’s weight in the scheduled report as the planned one does', async () => {
+      tx.staffingPolicy.findUnique.mockResolvedValue({
+        fullTimeTeachingMinutesPerWeek: 1080,
+        overAllocationTolerancePercent: 10,
+        fullTimeRegulatedHoursPerYear: 1360,
+        workDaysPerYear: 194,
+        qualificationMode: 'WARN',
+        loadModel: 'FACTOR',
+      });
+      tx.subject.findMany.mockResolvedValue([{ id: MA, loadFactor: new Prisma.Decimal('2.000') }]);
+      tx.masterLesson.findMany.mockResolvedValue([master()]);
+      const { scheduled } = await service.readReports(tx as unknown as PrismaClient, testUser(), YEAR_ID);
+      expect(scheduled?.teachers[0]!.assignedMinutesPerWeek).toBe(120);
+    });
+
+    it('answers 404 for a year row security hides', async () => {
+      tx.academicYear.findUnique.mockResolvedValue(null);
+      await expect(service.readReports(tx as unknown as PrismaClient, testUser(), YEAR_ID)).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
   describe('delivered (the reconciliation over a range)', () => {
     const query = (overrides: Record<string, string> = {}) => ({ academicYearId: YEAR_ID, ...overrides });
     let queryRaw: jest.Mock;

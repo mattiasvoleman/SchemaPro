@@ -105,6 +105,10 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   // each control offered to the profile that writes it.
   "/admin/people": null,
   "/admin/timplan": "PLANERING",
+  // Klasslärarens schema: the appointments and the open hours are Schemaläggning's, the option and
+  // the publishing of a class's drafts Publicering's. Open to every administrator, and each control
+  // offered to the profile that writes its area, as on /admin/people.
+  "/admin/class-teachers": null,
   "/admin/requirements": "PLANERING",
   "/admin/staffing": "PLANERING",
   "/admin/constraints": "PLANERING",
@@ -114,6 +118,8 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   // Rastvaktsschema: the areas and the passes, planering's as the uppdrag are.
   "/admin/supervision": "PLANERING",
   "/admin/lunch-servings": "PLANERING",
+  // Resurser: the kinds and the resources are written by Planering, as the lokaler are; the läsare reads both.
+  "/admin/resources": "PLANERING",
   "/admin/generate": "SCHEMALAGGNING",
   "/admin/timetable": "SCHEMALAGGNING",
   "/admin/gaps": "SCHEMALAGGNING",
@@ -128,6 +134,9 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   // Skolans dag: reads only. The one write, what a teacher has of it, is a decision the card asks of the
   // profile itself (profileDecides), so no area gates the page and the läsare opens it like any other.
   "/admin/school-day": null,
+  // Analys och planering: reads only. The skoldelar and the rates are decisions the card asks of the profile
+  // itself (profileDecides), and what each tab shows is what the gateway gives that profile, so no area gates the page.
+  "/admin/analysis": null,
   "/admin/lessons": "DRIFT",
   "/admin/teacher-absence": "DRIFT",
   "/admin/cover": "DRIFT",
@@ -138,8 +147,15 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/cancellations": "DRIFT",
   // Schemabrytande aktivitet: an avbokning it owns, so Drift's as that is.
   "/admin/activities": "DRIFT",
+  // Provplanering: an exam becomes an activity, so Drift's as that is. The settings, the skrivsalar,
+  // the exams and the planner are one page; the planner is off until the school turns it on.
+  "/admin/activities/exams": "DRIFT",
   "/admin/leave": "DRIFT",
   "/admin/room-bookings": "DRIFT",
+  // Externa bokningar: registering and cancelling a series are Drift's, as the lokalbokningar its days stand among; the läsare reads.
+  "/admin/external-bookings": "DRIFT",
+  // Utnyttjande: reads only, and names no person, so no area gates it and every administrator opens it whole.
+  "/admin/utilisation": null,
   "/admin/reports": "DRIFT",
   // Frånvarobevakning: the switch and the limits are Drift's, as the attendance they count.
   "/admin/absence-watch": "DRIFT",
@@ -147,6 +163,11 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/reporting-rate": "DRIFT",
   // Kvittens: the switch and the reminder are Drift's, as the notices they send to guardians; a request is written by Drift too.
   "/admin/acknowledgements": "DRIFT",
+  // Måltidskollen: the cut-off, the kitchen's address and the letter's switch are Drift's, as the attendance the counts
+  // rest on; the counts themselves are read by every administrator.
+  "/admin/meals": "DRIFT",
+  // Checklistor: the templates, the ticks and the consent lists are written by Drift, as the pupils' day they record; the läsare reads them and writes none.
+  "/admin/checklists": "DRIFT",
   // Lektionslogg: the klassbok reads for everyone; removing a log is drift's.
   "/admin/klassbok": "DRIFT",
   "/admin/dataskydd": "DECIDES",
@@ -206,7 +227,10 @@ export interface ReadOnlyPage {
  * and uppdrag, planering's: a läsare reads both, so its notice names who
  * changes each.
  */
-const NOTICE_AREAS: Readonly<Record<string, readonly AdminArea[]>> = { "/admin/people": ["PERSONAL", "PLANERING"] };
+const NOTICE_AREAS: Readonly<Record<string, readonly AdminArea[]>> = {
+  "/admin/people": ["PERSONAL", "PLANERING"],
+  "/admin/class-teachers": ["SCHEMALAGGNING", "PUBLICERING"],
+};
 
 /**
  * The admin pages a profile opens read-only (Läsbehörighet): every page a
