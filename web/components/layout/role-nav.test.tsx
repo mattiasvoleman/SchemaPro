@@ -94,7 +94,7 @@ describe("the menus stay out of the bundle", () => {
     // by any road. What the scan reads is a static `import ... from` or
     // `export ... from` whose specifier ends in a menu file's name, and these
     // slip past it (the build catches each):
-    //   - a dynamic `import("./admin-nav")`;
+    //   - a dynamic `import("./admin-nav")`, or a CommonJS `require("./admin-nav")`;
     //   - an import without names or `from`, `import "./guardian-nav"`;
     //   - an indirect one: a client module that imports a helper which
     //     re-exports a menu;
@@ -113,9 +113,7 @@ describe("the menus stay out of the bundle", () => {
       const source = readFileSync(file, "utf8");
       if (!clientModule.test(source)) continue;
       clientModules.push(file);
-      for (const specifier of runtimeImportsOf(source)) {
-        if (menus.has(specifier.split("/").pop()!)) offenders.push(`${file} imports ${specifier}`);
-      }
+      for (const specifier of menuImportsOf(source, menus)) offenders.push(`${file} imports ${specifier}`);
     }
     // The scan has to see the shell, or it proves nothing.
     expect(clientModules).toContain(join(here, "app-shell.tsx"));
@@ -140,7 +138,28 @@ describe("the menus stay out of the bundle", () => {
     expect(seen('import { type NavGroup, type NavEntry as Entry } from "./role-nav";')).toEqual([]);
     expect(seen('export type { NavGroup } from "./role-nav";')).toEqual([]);
   });
+
+  it("names a specifier that ends in a menu file, and no other", () => {
+    // The step that compares with the menu files has its own test: the one
+    // above passes for as long as no client module imports a menu, and so
+    // also when this comparison is broken.
+    const menus = new Set(["admin-nav", "teacher-nav"]);
+    const named = (source: string) => menuImportsOf(source, menus);
+    expect(named('import { ADMIN_NAV } from "./admin-nav";')).toEqual(["./admin-nav"]);
+    expect(named('import { TEACHER_NAV } from "@/components/layout/teacher-nav";')).toEqual(["@/components/layout/teacher-nav"]);
+    expect(named('import { A } from "../layout/admin-nav";\nimport { B } from "./other";')).toEqual(["../layout/admin-nav"]);
+    expect(named('import { A } from "./other";\nimport { B } from "./admin-navigation";')).toEqual([]);
+    expect(named('import type { NavGroup } from "./admin-nav";')).toEqual([]);
+  });
 });
+
+/**
+ * The specifiers of a module's static imports that name one of the menu files
+ * (the last segment of the path, without an extension, is a menu's name).
+ */
+function menuImportsOf(source: string, menus: ReadonlySet<string>): string[] {
+  return runtimeImportsOf(source).filter((specifier) => menus.has(specifier.split("/").pop()!));
+}
 
 /**
  * The specifiers of a module's static imports and re-exports that the compiler

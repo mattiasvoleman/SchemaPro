@@ -24,13 +24,14 @@ import type { Persona } from "./stub/sessions";
  * so that it is the same whatever the server's own compression settings.
  * Against the e2e stub's school, in the production build this project's
  * webServer makes. Two fetches of one build agree to the byte, and two builds
- * to within a byte or so.
+ * of one source to a few bytes (MARGIN has the figures).
  *
  * Less the message catalog. The document carries the whole catalog of the
  * active language (messages/sv.json: the (app) layout's NextIntlClientProvider
- * is given no `messages`), which is 157 KB of the ~170 KB gzipped, and it grew
- * 0.1 to 4.6 KB gzipped, 1.8 KB on average, in each of the last fourteen
- * commits that touched it. A ceiling on the whole document would be crossed by
+ * is given no `messages`), which is most of the document (193 184 B of the
+ * 207 616 B gzipped on 2026-11-09; the log line says what it is now), and it
+ * grew from 157 841 to 193 184 B gzipped across the wave (#278 to #294), some
+ * 2 KB for each phase. A ceiling on the whole document would be crossed by
  * the next phase's messages whatever its menu did, and would be raised each
  * time without anyone looking at the menu. So the catalog's own gzip (the same
  * JSON, gzipped by itself) is taken off, and what is held against the ceiling
@@ -47,18 +48,22 @@ import type { Persona } from "./stub/sessions";
  * and +100 B for the teacher). It does not hold for strings that do not
  * compress, ids, hex colours, URLs: 60 random strings of 147 characters,
  * +8 081 B gzipped in the catalog, moved `rest` by -537 B and -380 B, 5 % of
- * the addition, downwards (both measured in the second review of #275). Twelve
- * phases of ordinary messages drift `rest` by +130 to +220 B, inside MARGIN, and
- * a catalog of nothing but such strings would take that much room away from
- * the ceiling instead of using it. `rest` falling is therefore not a menu that
- * shrank: DROP says when it has fallen too far to be that.
+ * the addition, downwards (both measured in the second review of #275). And the
+ * wave showed that the real thing moves it up by more than prose alone: the
+ * guardian's and the pupil's `rest` rose 505 and 518 B with no row added to
+ * either menu, 1.4 % of the catalog's growth (see SMALL_MENUS), and one
+ * phase's messages moved the administrator's and the teacher's by 145 and
+ * 150 B (see MARGIN). So `rest` moving, up or down, with no row added is not
+ * by itself a fault in the menu, and the drift is not a number of tens of
+ * bytes a phase: DROP says when `rest` has fallen too far to be drift.
  *
  * To re-measure after a change that is meant to move it: run this project in
  * CI mode, read `rest` in the log, and set `measured` to it. The commit says
  * what moved it. CI mode is the production build; without it Playwright starts
  * `next dev`, whose document is larger by 1.6 to 1.7 KB with the same menu
  * (14 649 B and 11 025 B for the administrator's and the teacher's `rest`
- * against ceilings of 14 482 B and 10 988 B, measured 2026-11-07), so this
+ * against ceilings of 14 482 B and 10 988 B, measured 2026-11-07, before the
+ * wave), so this
  * project skips itself there and says so, and does not fail a menu that did
  * not change with a text that blames the menu.
  *
@@ -80,32 +85,36 @@ const SKIPPED = "the document is measured in the production build, and this run 
 /**
  * Room above the measured figure. What it has to be larger than, and what it
  * is for (rows added to a copy of the menus 2026-11-07, against the e2e stub,
- * in the production build, on macOS; CI's Linux figures are 7 to 17 B lower):
+ * in the production build, on macOS; CI's Linux figures differ from a Mac's by
+ * 5 to 17 B):
  *
  *   - Noise: two fetches of one build agree to the byte, two builds of one
- *     source to 2 or 3 B, a Mac and CI's Linux to 13 to 17 B.
- *   - A catalog that grows (see above): +130 to +220 B over twelve phases was
- *     the estimate, and a phase's own messages have moved `rest` by more than
- *     that on their own: Klasslärarens schema's figures were 184 and 181 B over
- *     what its one row per menu explains (39 and 31 B), the other 145 and 150 B
+ *     source to 2 to 4 B, a Mac and CI's Linux to 5 to 17 B.
+ *   - A catalog that grows (see above): one phase's messages have moved `rest`
+ *     by 145 and 150 B on their own. Klasslärarens schema's figures were 184
+ *     and 181 B over what its one row per menu explains (39 and 31 B), the rest
  *     being its messages' effect on the gzip of the document beside the
- *     catalog's.
- *   - A row whose icon the menu already has: 36 to 45 B in the copy (teacher 4
- *     rows +146, 8 rows +287; pupil 4 rows +152), and in the phases that have
- *     added one, measured in CI 2026-11-08: Måltidskollen's, with Lunchsittningar's
- *     icon, 92 B on top of 12 946; Checklistor's, with Kvittens' icon, 145 B for
- *     the administrator and 109 B for the teacher on top of 13 457 and 9 836;
- *     Lokal's three admin rows, one teacher row and the notice text of the
- *     clash, 594 B and 687 B on top of 13 666 and 9 938.
+ *     catalog's; and the wave as a whole moved the guardian's and the pupil's,
+ *     with no row added, by 505 and 518 B.
+ *   - A row whose icon the menu already has: 31 to 45 B for the row itself
+ *     (teacher 4 rows +146, 8 rows +287, pupil 4 rows +152 in the copy;
+ *     Klasslärarens schema's row 39 and 31 B). What a phase that added one has
+ *     paid with its text is 90 to 190 B, measured in CI 2026-11-08:
+ *     Måltidskollen's, with Lunchsittningar's icon, 92 B on top of 12 946;
+ *     Checklistor's, with Kvittens' icon, 145 B for the administrator and 109 B
+ *     for the teacher on top of 13 457 and 9 836; Klasslärarens schema 184 and
+ *     181 B. Lokal, with three admin rows, one teacher row and the notice text
+ *     of the clash, paid 594 B and 687 B on top of 13 666 and 9 938.
  *   - A row with an icon no other row of the menu has: 140 to 300 B, and more
  *     per row the more rows (administrator 4 rows +953, 8 rows +2 136;
  *     guardian 2 rows +341, 4 rows +1 200; the second review of #275 had 1 row
  *     +140, 4 rows +716 and 8 rows +1 666, with other icons). Several times a
  *     borrowed icon's row, which is why the icons are what the room is spent on.
  *
- * So 1 536 B is ten to fifty rows that borrow an icon, or about seven that
- * bring one (four fitted with 598 B to spare, eight did not): more than the
- * one or two rows a phase brings, less than a wave of twelve with an icon each.
+ * So 1 536 B is some forty rows that borrow an icon, eight to seventeen phases
+ * that each add one with their text, or about seven rows that bring an icon of
+ * their own (four fitted with 598 B to spare, eight did not): more than the one
+ * or two rows a phase brings, less than a wave of twelve with an icon each.
  * A phase does not see its own cost, since it is inside the room, and two
  * phases that are green on their own can cross it together on main; that is
  * what WARN is for, and why the room is not made smaller: a smaller one is
@@ -115,9 +124,10 @@ const SKIPPED = "the document is measured in the production build, and this run 
 const MARGIN = 1_536;
 
 /**
- * Under this much room the log line is also a GitHub annotation, so that the
- * cost of the rows added so far shows on the run and not only in a log line
- * nobody opens, a phase or two before the ceiling.
+ * Under this much room the log line is also a GitHub annotation, so that what
+ * has been added since the last measurement (rows, messages, shell code) shows
+ * on the run and not only in a log line nobody opens, a phase or two before the
+ * ceiling.
  */
 const WARN = MARGIN / 2;
 
@@ -189,18 +199,23 @@ const catalogGzipped = gzipSync(catalog, { level: 9 }).length;
  */
 function floorMessage(name: string, rest: number, measured: number): string {
   const under = `${name}: rest is ${rest} B, ${measured - rest} B under the ${measured} B measured (allowed: ${DROP} B). `;
-  const catalogLeft =
-    `The message catalog is no longer all in the document, and this test still takes ${catalogGzipped} B ` +
-    "(the gzip of messages/sv.json) off it. Do NOT set `measured` to this figure. Change what is taken off in " +
-    "e2e/document-size.spec.ts (drop `catalogGzipped` from `rest`, or take off what the document now holds of the " +
-    "catalog), measure again in CI mode, set `measured` to that, and say in the commit that the catalog left the document.";
+  const catalogFix =
+    `this test takes ${catalogGzipped} B (the gzip of messages/sv.json) off a document that then no longer carries it. ` +
+    "Change what is taken off in e2e/document-size.spec.ts (drop `catalogGzipped` from `rest`, or take off what the " +
+    "document now holds of the catalog), measure again in CI mode, set `measured` to that, and say in the commit " +
+    "that the catalog left the document.";
   if (rest < 0) {
     // A size cannot be negative: the document is smaller than the catalog it is said to hold.
-    return `${under}A negative figure means the document is smaller than the catalog this test takes off it. ${catalogLeft}`;
+    return (
+      `${under}A negative figure means the document is smaller than the catalog this test takes off it, so the ` +
+      `catalog is no longer all in the document. Do NOT set \`measured\` to this figure: ${catalogFix}`
+    );
   }
   return (
-    `${under}Either the shell or the menu got smaller on purpose: then set \`measured\` to the figure, so that the ` +
-    `ceiling follows and there is no room that nobody counted. Or part of the catalog left the document. ${catalogLeft}`
+    `${under}What to do depends on why.\n` +
+    "  If the shell or the menu got smaller on purpose: set `measured` to the figure, so that the ceiling follows " +
+    "and there is no room that nobody counted.\n" +
+    `  If part of the catalog left the document: do NOT set \`measured\` to the figure; ${catalogFix}`
   );
 }
 
@@ -231,8 +246,8 @@ for (const page of [...PAGES, ...SMALL_MENUS]) {
       // A workflow command: GitHub shows it as an annotation on the run. Anywhere else it is a line in the log.
       console.log(
         `::warning title=Document size::${page.name} ${page.url}: ${ceiling - rest} B of ${MARGIN} B room left under the ceiling ` +
-          `(rest ${rest} B, measured ${page.measured} B). Rows added since the last measurement are what used it; ` +
-          "the change that crosses it sets `measured` in e2e/document-size.spec.ts and says what raised it.",
+          `(rest ${rest} B, measured ${page.measured} B). The document has grown since it was last measured, by rows, ` +
+          "messages or shell code; the change that crosses the ceiling sets `measured` in e2e/document-size.spec.ts and says what raised it.",
       );
     }
     expect(
