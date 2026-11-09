@@ -23,9 +23,14 @@ import { TEACHER_NAV } from "./teacher-nav";
  * cached bundle the document is fetched again on each full load. A row with an
  * icon of its own costs no route a byte of JS, but its label and path (and a
  * new icon's drawing, a few hundred bytes) are in that document. The gate for
- * it is e2e/document-size.spec.ts: the gzipped document of an administrator
- * and of a teacher, less the message catalog, against a ceiling, so that the
- * next phases' rows show before anything is close.
+ * it is e2e/document-size.spec.ts: the gzipped document of each of the four
+ * roles, less the message catalog, against a ceiling 1.5 KB above what was
+ * last measured, with an annotation on the run once half of that is used. A
+ * row that borrows an icon costs about 40 B there for the row itself (a phase
+ * that added one has paid 90 to 190 B with its text) and one that brings its
+ * own 140 to 300 B, so a phase's one or two rows are inside the ceiling and
+ * show as the room left in the log, not as a failure; the phase that crosses
+ * it sets `measured` and says what raised it.
  *
  * Which rows a role has is decided here, by role alone (navForRole takes the
  * role and nothing else). A row that depends on more, the school's switches or
