@@ -2,6 +2,8 @@ import { HttpException, Logger, ServiceUnavailableException } from '@nestjs/comm
 import { HttpService } from '@nestjs/axios';
 import type { ConfigService } from '@nestjs/config';
 import { AxiosError } from 'axios';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createServer, type Server } from 'http';
 import type { AddressInfo } from 'net';
 import { of, throwError, timer } from 'rxjs';
@@ -4870,11 +4872,19 @@ describe('OptimizationProxyService', () => {
           arrangeLink(leader, follower);
           const refused = await refusedWith();
           expect(refused.refusalCode).toBe('BLOCK_SAME_TIMES_SPLIT_LESSONS');
-          expect(bodyOf(refused.error)).toMatchObject({
+          const body = bodyOf(refused.error) as { message: string; params: Record<string, string> };
+          expect(body).toMatchObject({
             code: 'BLOCK_SAME_TIMES_SPLIT_LESSONS',
             params: { block: 'Hemkunskap 7A VT', other: 'Hemkunskap 7A HT', requirement: 'Hemkunskap för 7A:2' },
             message: expect.stringMatching(/has more than one teacher who is not on the same lesson in Hemkunskap 7A HT/),
           });
+          // The gateway's sentence is the catalogue's, character for character (the fixture the engine generates).
+          const catalogue = JSON.parse(
+            readFileSync(join(__dirname, '..', '..', 'web/i18n/__fixtures__/engine-messages.json'), 'utf8'),
+          ) as Record<string, string>;
+          expect(body.message).toBe(
+            catalogue['BLOCK_SAME_TIMES_SPLIT_LESSONS']!.replace(/\{(\w+)\}/g, (_, key: string) => body.params[key]!),
+          );
           expect(http.post).not.toHaveBeenCalled();
         };
 

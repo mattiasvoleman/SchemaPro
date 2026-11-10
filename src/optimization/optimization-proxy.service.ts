@@ -5058,10 +5058,11 @@ function sameTimesRefusalOf(
           `the lessons of ${other}. Each lesson is written on a lesson of ${other} of the same length, and its ` +
           `teacher is held there when that teacher has the same lesson in ${other}. One more teacher can be ` +
           `held, at all of the lessons of ${other}, if the co-teacher place of the entry there is empty and the ` +
-          `teacher leads none of its lessons. This needs more: ${block} has more than one teacher who is not on ` +
-          `the same lesson in ${other}, or the lessons are not the same lengths. Give the lessons of ` +
-          `${params.requirement} the same teachers as ${other} has on lessons of the same length, except for ` +
-          `one teacher, or delete ${block} to place its lessons at times of their own.`,
+          `teacher leads none of its lessons. That does not hold here: ${block} has more than one teacher who is ` +
+          `not on the same lesson in ${other}, or its one other teacher has no place there (the co-teacher place ` +
+          `is taken, or the teacher leads another lesson of ${other}), or the lessons are not the same lengths. ` +
+          `Give the lessons of ${params.requirement} the same teachers as ${other} has on lessons of the same ` +
+          `length, except for one teacher, or delete ${block} to place its lessons at times of their own.`,
         code: judgement.code,
         params,
       },
