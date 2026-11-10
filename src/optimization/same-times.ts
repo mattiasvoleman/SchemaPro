@@ -325,12 +325,18 @@ export function planMirror(
     if (needed.size === 0) continue;
     const [extra] = needed;
     if (needed.size > 1 || onTheBlock.has(extra!) || !seat(leader.id, extra!)) return split(follower);
-    present.add(extra!);
   }
   for (const { leader, follower } of pairs) {
     if (hasShares(leader) || hasShares(follower)) continue;
     for (const teacherId of adultsOf(follower)) {
       if (present.has(teacherId)) continue;
+      // A teacher who leads a lesson of a shared post in the leader block, and
+      // so is on it at that slot only: seated on another post of the block, the
+      // teacher would be on two members of it, which the engine refuses in
+      // terms that name the leader's posts. Said here, by the follower. With no
+      // shared post in the block every teacher on it is present, so this never
+      // reaches a link without delade lektioner.
+      if (onTheBlock.has(teacherId)) return split(follower);
       present.add(teacherId);
       if (seat(leader.id, teacherId)) continue;
       if (!lead.some((other) => other.id !== leader.id && seat(other.id, teacherId))) {

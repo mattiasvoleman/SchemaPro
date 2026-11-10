@@ -407,6 +407,26 @@ describe('planMirror, delade lektioner', () => {
       expect(refusal(leaders, followers)).toMatchObject({ code: BLOCK_SAME_TIMES_SPLIT_LESSONS });
     });
 
+    it('refuses a follower’s co-teacher who leads only one lesson of the leader: the co-teacher is on every lesson of the follower, and held at one of the leader’s', () => {
+      // Bo leads the leader's 40 and is the follower's co-teacher, so he is on its 90 as well, where the leader does not hold him.
+      expect(
+        refusal([leaderOf(BO_40, { coTeacherId: 'maria' })], [followerOf([], { teacherId: 'maria', coTeacherId: 'bo' })]),
+      ).toEqual({ ok: false, code: BLOCK_SAME_TIMES_SPLIT_LESSONS, requirementId: 'vt' });
+    });
+
+    it('refuses an unshared follower’s teacher who leads a lesson of a shared sibling in the leader block: seated beside another post of it, the engine would refuse the block by the leader’s names', () => {
+      // Hemkunskap is shared in the autumn (Erik has the 40) and slöjd is Johan's. The spring's slöjd is Erik's.
+      const slojd = (id: string, term: 'HT' | 'VT', group: string, lead: string): SameTimesRow =>
+        hk(id, group, term, lead, [], { subjectId: 'sl' });
+      const leaders = [hk('ht-hk', '7.1:1', 'HT', 'anna', [{ teacherId: 'erik', lessons: 1, minutes: 40 }]), slojd('ht-sl', 'HT', '7.1:2', 'johan')];
+      const followers = [
+        hk('vt-hk', '7.1:2', 'VT', 'anna', [{ teacherId: 'maria', lessons: 1, minutes: 40 }]),
+        slojd('vt-sl', 'VT', '7.1:1', 'erik'),
+      ];
+      // Said by the follower post that has Erik, before the engine, and not as a refusal about two of the leader's posts.
+      expect(refusal(leaders, followers)).toEqual({ ok: false, code: BLOCK_SAME_TIMES_SPLIT_LESSONS, requirementId: 'vt-sl' });
+    });
+
     it('refuses lessons that cannot be paired by length, by the follower post, when either post is shared', () => {
       expect(refusal([leaderOf()], [followerOf(BO_40, { lessonLengths: [90, 45] })])).toEqual({
         ok: false,
@@ -555,6 +575,35 @@ describe('mirrorLessons, delade lektioner', () => {
       expect(copies.find((l) => l.dayOfWeek === 1)!.teacherId).toBe('anna');
       expect(copies.find((l) => l.dayOfWeek === 2)!.teacherId).toBe('cecilia');
     }
+  });
+
+  it('writes a lesson on the follower’s teacher of the pairing entry with the leader’s own teacher, though another lead’s lesson of that length comes first in the week', () => {
+    // Anna and Erik each lead a 60 of the leader, and the same in the follower. The engine puts Erik's on
+    // Monday and Anna's on Tuesday, so Erik's comes first in the week, as the second of the pairing's entries.
+    const shares = [{ teacherId: 'erik', lessons: 1, minutes: 60 }];
+    const row = (id: string, group: string, term: 'HT' | 'VT'): SameTimesRow => ({
+      id,
+      subjectId: 'hk',
+      studentGroupId: group,
+      teacherId: 'anna',
+      coTeacherId: null,
+      lessonsPerWeek: 2,
+      minutesPerLesson: 60,
+      lessonLengths: [],
+      recurrence: 'ALL_WEEKS',
+      startDate: term === 'HT' ? null : new Date('2027-01-11T00:00:00Z'),
+      endDate: term === 'HT' ? new Date('2026-12-18T00:00:00Z') : null,
+      halfOfId: '7.1',
+      shares,
+    });
+    const judged = planMirror([row('ht', '7.1:1', 'HT')], [row('vt', '7.1:2', 'VT')]);
+    if (!judged.ok) throw new Error('refused');
+    const answer = [
+      lesson('ht', 2, '08:00', '09:00', 'anna'),
+      lesson('ht', 1, '08:00', '09:00', 'erik'),
+    ];
+    const written = mirrorLessons(answer, judged.plan.mirrors).filter((l) => l.requirementId === 'vt');
+    expect(written.map((l) => [l.dayOfWeek, l.teacherId]).sort()).toEqual([[1, 'erik'], [2, 'anna']]);
   });
 
   it('matches a leader lesson to the pairing entry of its own length: Anna’s 40 on Monday is not taken for her 90 on Tuesday', () => {
