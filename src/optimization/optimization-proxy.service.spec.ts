@@ -4740,6 +4740,131 @@ describe('OptimizationProxyService', () => {
         });
       });
 
+      describe('in a schemaförslag candidate', () => {
+        it('stores each spring lesson with its own teacher, the extra one included, and applies them', async () => {
+          arrangeLink({}, { shares: share(CECILIA) });
+          engine();
+          const prepared = await ready();
+
+          const solution = await service.solveCandidate(prepared, { timeoutMs: 1000 });
+
+          expect(solution.rejected).toBeUndefined();
+          const spring = solution.lessons.filter((lesson) => lesson.requirementId === FOLLOWER);
+          expect(spring.map((lesson) => [lesson.dayOfWeek, lesson.startTime, lesson.endTime, lesson.teacherId])).toEqual([
+            [1, '09:00', '10:30', ANNA],
+            [3, '10:00', '10:40', CECILIA],
+          ]);
+
+          tx.masterLesson.deleteMany.mockResolvedValue({ count: 0 });
+          tx.masterLesson.count.mockImplementation(async ({ where }: Query = {}) => (where?.['NOT'] ? 4 : 0));
+          const input: CandidateApplyInput = {
+            user: testUser({ schoolId: THIS_SCHOOL, userId: 'admin-1' }),
+            prepared,
+            mode: 'DIRECT',
+            lessons: solution.lessons,
+            lunches: null,
+            solverStatus: 'OPTIMAL',
+            snapshot: { versions: { snapshotInTransaction: jest.fn().mockResolvedValue({ id: 'version-1' }) }, name: 'Före schemaförslag 1' },
+            after: { source: 'CANDIDATE', runId: 'run-1', ordinal: 1 },
+          };
+
+          await service.applyCandidateWrite(tx as unknown as PrismaClient, input);
+
+          expect(rowsWritten().filter((row) => row[0] === H2)).toEqual([
+            [H2, ANNA, null, 1, '09:00', '10:30', springStart, null],
+            [H2, CECILIA, null, 3, '10:00', '10:40', springStart, null],
+          ]);
+        });
+      });
+
+      describe('beside what else the week holds', () => {
+        it('refuses a leader whose Bo-lesson is locked while the spring has all its lessons to place, as an unshared pair is', async () => {
+          arrangeLink({}, {}, {
+            lockedLessons: [lockedLesson({ id: 'bo-locked', subjectId: HK, studentGroupId: H1, teacherId: BO, dayOfWeek: 3, endDate: autumnEnd })],
+          });
+
+          const refused = await refusedWith();
+
+          expect(refused.refusalCode).toBe('BLOCK_PARTLY_LOCKED_SUMMARY');
+          expect(refused.refusal.conflicts?.conflicts[0]).toMatchObject({ code: 'BLOCK_PARTLY_LOCKED' });
+          expect(http.post).not.toHaveBeenCalled();
+        });
+
+        it('refuses a förläggning on a post of the link too, as placed by hand while the rest is to be placed: a post in a block is not förlagd', async () => {
+          // The rule BLOCK (placement-fit.ts) stops one being saved; a post put in a block afterwards would meet this.
+          service = new OptimizationProxyService(
+            prisma as unknown as PrismaService,
+            http as unknown as HttpService,
+            makeConfigService(),
+            { findConflicts: jest.fn().mockResolvedValue([]) } as never,
+          );
+          arrangeLink();
+          tx.teachingRequirementPlacement.findMany.mockResolvedValue([
+            {
+              id: '77777777-aaaa-4aaa-8aaa-777777777771',
+              requirementId: LEADER,
+              dayOfWeek: 3,
+              startTime: new Date('1970-01-01T10:00:00.000Z'),
+              minutes: 40,
+              roomId: hemkunskapssal.id,
+              recurrence: 'ALL_WEEKS',
+              teacherId: BO,
+            },
+          ]);
+
+          const refused = await refusedWith();
+
+          expect(refused.refusalCode).toBe('BLOCK_PARTLY_LOCKED_SUMMARY');
+          expect(http.post).not.toHaveBeenCalled();
+        });
+
+        it('forwards a parity every post of the link has, as an unshared link does, and writes each lesson in its own weeks', async () => {
+          // Odd weeks in the autumn and odd weeks in the spring: the leader is held in odd weeks only.
+          arrangeLink({ recurrence: 'ODD_WEEKS' }, { recurrence: 'ODD_WEEKS' });
+          engine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          const [sent] = postedPayload().requirements;
+          expect(sent!.recurrence).toBe('ODD_WEEKS');
+          expect(sent!.lessonTeacherIds).toHaveLength(2);
+          expect(written().map((row) => [row.studentGroupId, row.teacherId, row.recurrence, row.dayOfWeek])).toEqual([
+            [H1, ANNA, 'ODD_WEEKS', 1],
+            [H1, BO, 'ODD_WEEKS', 3],
+            [H2, ANNA, 'ODD_WEEKS', 1],
+            [H2, BO, 'ODD_WEEKS', 3],
+          ]);
+        });
+
+        it('holds every week when the posts of the link run in different parities: the engine has no weeks, so no leader is told one', async () => {
+          // The autumn post odd weeks and the spring post even weeks, both all year: their weeks never meet.
+          arrangeLink(
+            { recurrence: 'ODD_WEEKS', startDate: null, endDate: null },
+            { recurrence: 'EVEN_WEEKS', startDate: null, endDate: null },
+          );
+          engine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          const [sent] = postedPayload().requirements;
+          expect(sent).not.toHaveProperty('recurrence');
+          expect(written().map((row) => [row.studentGroupId, row.teacherId, row.recurrence])).toEqual([
+            [H1, ANNA, 'ODD_WEEKS'],
+            [H1, BO, 'ODD_WEEKS'],
+            [H2, ANNA, 'EVEN_WEEKS'],
+            [H2, BO, 'EVEN_WEEKS'],
+          ]);
+        });
+
+        it('refuses weeks that meet, as ever: a follower on odd weeks while the leader runs every week', async () => {
+          arrangeLink({ startDate: null, endDate: null }, { recurrence: 'ODD_WEEKS', startDate: null, endDate: null });
+
+          const refused = await refusedWith();
+
+          expect(refused.refusalCode).toBe('BLOCK_SAME_TIMES_DIFFER');
+        });
+      });
+
       describe('everything else is refused by name, before the engine', () => {
         const refusedCase = async (leader: Row, follower: Row) => {
           arrangeLink(leader, follower);
