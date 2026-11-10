@@ -714,6 +714,28 @@ describe('the candidate basis', () => {
     expect(changedParts(mirrored, otherTeacher)).toEqual(['requirements']);
   });
 
+  it('reads a mirrored post’s shares too: who has which of its lessons is written with it, and a change makes the run stale', () => {
+    const source = anonymised(school());
+    const spring = {
+      id: 'spring-post',
+      mirrorOf: 'autumn-post',
+      subjectId: 'hemkunskap',
+      studentGroupId: '7A:2',
+      teacherId: 'anna',
+      coTeacherId: null,
+    };
+    const unshared = basisPartsOf(basisInputsOf({ ...source, mirrors: [spring] }));
+    const shared = basisPartsOf(
+      basisInputsOf({ ...source, mirrors: [{ ...spring, shares: [{ teacherId: 'bo', lessons: 1, minutes: 40 }] }] }),
+    );
+    expect(changedParts(unshared, shared)).toEqual(['requirements']);
+    // Handed to another teacher, or another length: not the same week written.
+    const other = (share: { teacherId: string | null; lessons: number; minutes: number }) =>
+      basisPartsOf(basisInputsOf({ ...source, mirrors: [{ ...spring, shares: [share] }] }));
+    expect(changedParts(shared, other({ teacherId: 'cecilia', lessons: 1, minutes: 40 }))).toEqual(['requirements']);
+    expect(changedParts(shared, other({ teacherId: 'bo', lessons: 1, minutes: 60 }))).toEqual(['requirements']);
+  });
+
   it('names every part changed against a stored value that is not a parts object', () => {
     const current = partsOf(school());
     expect(changedParts(null, current)).toEqual([...BASIS_PARTS]);

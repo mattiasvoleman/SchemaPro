@@ -927,7 +927,26 @@ function demandOf(
   const byId = new Map(demand.map((entry) => [entry.requirementId, entry]));
   for (const mirror of mirrors) {
     const leader = byId.get(mirror.leaderId);
-    if (leader) demand.push({ ...leader, requirementId: mirror.followerId });
+    if (!leader) continue;
+    if (!mirror.lessons) {
+      demand.push({ ...leader, requirementId: mirror.followerId });
+      continue;
+    }
+    // Delade lektioner: a pair with a pairing (same-times.ts). The follower is
+    // written on the leader's times, so it has the leader's count and lengths,
+    // but its own teachers and its own shares: the leader's list is the
+    // leader's, and its shareKey is compared with the leader's row.
+    const followerLeads = mirror.lessons.flatMap((lesson) =>
+      lesson.followerTeacherId !== undefined ? [lesson.followerTeacherId] : [],
+    );
+    const followerShares = sharesOf.get(mirror.followerId);
+    demand.push({
+      requirementId: mirror.followerId,
+      lessonsPerWeek: leader.lessonsPerWeek,
+      ...(leader.lessonLengths ? { lessonLengths: leader.lessonLengths } : {}),
+      ...(new Set(followerLeads).size > 1 ? { lessonTeachers: followerLeads } : {}),
+      ...(followerShares ? { shareKey: shareKeyOf(followerShares) } : {}),
+    });
   }
   return demand;
 }
@@ -953,6 +972,10 @@ function mirroredRowsOf(
             studentGroupId: row.studentGroupId,
             teacherId: row.teacherId,
             coTeacherId: row.coTeacherId,
+            // Delade lektioner: who has which of its lessons, written with it.
+            ...((row.shares ?? []).length > 0
+              ? { shares: canonicalShares(row.shares!).map(({ teacherId, lessons, minutes }) => ({ teacherId, lessons, minutes })) }
+              : {}),
           },
         ]
       : [];
@@ -2962,8 +2985,9 @@ export class OptimizationProxyService {
       // teachers send the list, and the scalar is its first; one sends that
       // teacher alone — a share's, when the lead's lessons are all locked —
       // and no list, the entry a post with one teacher always had. A shared
-      // post is never in a mirrored pair (BLOCK_SAME_TIMES_SPLIT_LESSONS), so
-      // `adults` is its own here.
+      // post in a mirrored pair keeps its list, and its co-teacher place holds
+      // at most the one extra teacher the follower needs (same-times.ts); its
+      // teacher place is the list, which `adults` never fills.
       const teachersLeft = teachersOf ?? teachersLeftOf.get(r.id);
       const lessonTeacherIds =
         teachersLeft && new Set(teachersLeft).size > 1
@@ -5004,7 +5028,7 @@ function sameTimesRowOf(
     recurrence: row.recurrence,
     startDate: row.startDate ?? null,
     endDate: row.endDate ?? null,
-    ...((row.shares ?? []).length > 0 ? { shared: true } : {}),
+    ...((row.shares ?? []).length > 0 ? { shares: row.shares } : {}),
     ...(halfOfId !== null ? { halfOfId } : {}),
   };
 }
@@ -5030,10 +5054,15 @@ function sameTimesRefusalOf(
     return new HttpException(
       {
         message:
-          `${block} takes the times of ${other}, and ${params.requirement} has its lessons split between ` +
-          'teachers. A block on another block\'s times holds one teacher per entry for all its lessons, so give ' +
-          'the entry one teacher again, or delete ' +
-          `${block} to place its lessons at times of their own.`,
+          `${block} takes the times of ${other}, but the lessons of ${params.requirement} cannot be placed on ` +
+          `the lessons of ${other}. Each lesson is written on a lesson of ${other} of the same length, and its ` +
+          `teacher is held there when that teacher has the same lesson in ${other}. One more teacher can be ` +
+          `held, at all of the lessons of ${other}, if the co-teacher place of the entry there is empty and the ` +
+          `teacher leads none of its lessons. That does not hold here: ${block} has more than one teacher who is ` +
+          `not on the same lesson in ${other}, or its one other teacher has no place there (the co-teacher place ` +
+          `is taken, or the teacher leads another lesson of ${other}), or the lessons are not the same lengths. ` +
+          `Give the lessons of ${params.requirement} the same teachers as ${other} has on lessons of the same ` +
+          `length, except for one teacher, or delete ${block} to place its lessons at times of their own.`,
         code: judgement.code,
         params,
       },
