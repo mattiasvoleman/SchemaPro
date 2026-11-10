@@ -949,15 +949,24 @@ MESSAGES: dict[str, str] = {
         "the lessons of a block are placed together one by one. Give one of them one teacher "
         "again, or take it out of the block."
     ),
-    # Refused by the gateway too (same-times.ts, delade lektioner): an entry of
-    # either block whose lessons are split between teachers. A leader entry
-    # holds one teacher for all its lessons, and the follower's lessons each
-    # have their own. `requirement` is the entry's name.
+    # Refused by the gateway too (same-times.ts, delade lektioner): a pair of posts either
+    # of which has its lessons split between teachers, when the follower's lessons cannot be
+    # paired with the leader's. A lesson of the follower is written on a lesson of the leader
+    # of the same length; its teacher is held there when the leader has the same teacher on
+    # that lesson, and ONE more teacher is held on all the leader's lessons, in the empty
+    # co-teacher place. More than that, a teacher the leader already leads a lesson with, or
+    # lessons that are not the same lengths, is this refusal. `requirement` is the
+    # follower entry's name.
     "BLOCK_SAME_TIMES_SPLIT_LESSONS": (
-        "{block} takes the times of {other}, and {requirement} has its lessons split between "
-        "teachers. A block on another block's times holds one teacher per entry for all its "
-        "lessons, so give the entry one teacher again, or delete {block} to place its lessons at "
-        "times of their own."
+        "{block} takes the times of {other}, but the lessons of {requirement} cannot be placed on "
+        "the lessons of {other}. Each lesson is written on a lesson of {other} of the same length, "
+        "and its teacher is held there when that teacher has the same lesson in {other}. One more "
+        "teacher can be held, at all of the lessons of {other}, if the co-teacher place of the "
+        "entry there is empty and the teacher leads none of its lessons. This needs more: {block} "
+        "has more than one teacher who is not on the same lesson in {other}, or the lessons are "
+        "not the same lengths. Give the lessons of {requirement} the same teachers as {other} has "
+        "on lessons of the same length, except for one teacher, or delete {block} to place its "
+        "lessons at times of their own."
     ),
     # Sent by the GATEWAY beside a hand edit that moved one member of a block
     # away from the others (master-lessons.service.ts, block-lessons.ts): a

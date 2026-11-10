@@ -4126,8 +4126,28 @@ describe('OptimizationProxyService', () => {
         });
       });
 
-      it('delade lektioner: refuses a spring post split between teachers, by the post, before the engine', async () => {
+      it('delade lektioner: holds the one teacher a split spring post adds beside the autumn post, and writes each lesson with its own', async () => {
+        // 7A:1's spring trä is Tor's one lesson and Tea's the other, on the autumn trä post, which is Tor's both.
         arrangeTerms({ s1: { lessonsPerWeek: 2, shares: [{ teacherId: TEA, lessons: 1, minutes: 60 }] } });
+        engineByDay();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        // Tea is the autumn trä post's co-teacher: held at its times, all year.
+        expect(postedPayload().requirements[1]!.coTeacherId).toEqual(expect.any(String));
+        expect(JSON.stringify(postedPayload())).not.toContain(TEA);
+        expect(
+          written()
+            .filter((row) => row.studentGroupId === H1 && row.subjectId === TR && row.startDate !== null)
+            .map((row) => row.teacherId),
+        ).toEqual([TOR, TEA]);
+      });
+
+      it('delade lektioner: refuses a spring post split between teachers when its extra teacher has no place beside the autumn post, by the post, before the engine', async () => {
+        arrangeTerms({
+          a2: { coTeacherId: 'dddddddd-0004-4000-8000-000000000004' },
+          s1: { lessonsPerWeek: 2, shares: [{ teacherId: TEA, lessons: 1, minutes: 60 }] },
+        });
 
         const refused = await refusedWith();
 
@@ -4135,6 +4155,7 @@ describe('OptimizationProxyService', () => {
         expect(bodyOf(refused.error)).toMatchObject({
           code: 'BLOCK_SAME_TIMES_SPLIT_LESSONS',
           params: { block: 'Slöjd 7A VT', other: 'Slöjd 7A HT', requirement: 'Trä- och metallslöjd för 7A:1' },
+          message: expect.stringMatching(/has more than one teacher who is not on the same lesson in Slöjd 7A HT/),
         });
         expect(http.post).not.toHaveBeenCalled();
       });
@@ -4432,6 +4453,318 @@ describe('OptimizationProxyService', () => {
         expect(result.refusal.conflicts).toMatchObject({
           summaryParams: { block: 'Hemkunskap 7A period 2', other: 'Hemkunskap 7A period 1' },
         });
+      });
+    });
+
+    describe('delade lektioner on posts in a link: hemkunskap read by the halves in turn, HT and VT (same-times.ts)', () => {
+      // Hemkunskap 7A, 7A:1 in the autumn block and 7A:2 in the spring block,
+      // on the autumn's times: each 1 × 90 with Anna and 1 × 40 with Bo.
+      const H1 = '7a000001-0000-4000-8000-000000000001';
+      const H2 = '7a000002-0000-4000-8000-000000000002';
+      const HK = 'cccccccc-0003-4000-8000-000000000003';
+      const ANNA = 'dddddddd-0010-4000-8000-000000000010';
+      const BO = 'dddddddd-0011-4000-8000-000000000011';
+      const CECILIA = 'dddddddd-0012-4000-8000-000000000012';
+      const DAN = 'dddddddd-0013-4000-8000-000000000013';
+      const HT = 'bbbbbbbb-0010-4000-8000-000000000010';
+      const VT = 'bbbbbbbb-0011-4000-8000-000000000011';
+      const LEADER = 'eeeeeeee-0010-4000-8000-000000000010';
+      const FOLLOWER = 'eeeeeeee-0011-4000-8000-000000000011';
+      const autumnEnd = new Date('2027-01-10T00:00:00.000Z');
+      const springStart = new Date('2027-01-11T00:00:00.000Z');
+      const pupil = (n: number) => `aaaaaaa${n}-0000-4000-8000-00000000000${n}`;
+      const share = (teacherId: string) => [{ teacherId, lessons: 1, minutes: 40 }];
+      const post = (id: string, group: string, blockId: string, term: 'HT' | 'VT', overrides: Row = {}) =>
+        requirement({
+          id,
+          subjectId: HK,
+          studentGroupId: group,
+          teacherId: ANNA,
+          lessonsPerWeek: 2,
+          minutesPerLesson: 90,
+          lessonLengths: [90, 40],
+          shares: share(BO),
+          blockId,
+          startDate: term === 'HT' ? null : springStart,
+          endDate: term === 'HT' ? autumnEnd : null,
+          subject: { requiredRoomTypeId: 'room-type-hk', name: 'Hemkunskap' },
+          ...overrides,
+        });
+      const hemkunskapssal = { id: '55555555-0004-4000-8000-000000000004', capacity: 16, roomTypeId: 'room-type-hk' };
+      const arrangeLink = (leader: Row = {}, follower: Row = {}, overrides: Arrangement = {}) => {
+        arrange({
+          requirements: [post(LEADER, H1, HT, 'HT', leader), post(FOLLOWER, H2, VT, 'VT', follower)],
+          groups: [
+            { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', halfOfId: null, name: '7A' },
+            { id: H1, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID, name: '7A:1' },
+            { id: H2, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID, name: '7A:2' },
+          ],
+          homeMembers: [1, 2, 3, 4, 5].map((n) => ({ id: pupil(n), studentGroupId: GROUP_ID })),
+          teachingMembers: [
+            ...[1, 2].map((n) => ({ studentId: pupil(n), studentGroupId: H1 })),
+            ...[3, 4, 5].map((n) => ({ studentId: pupil(n), studentGroupId: H2 })),
+          ],
+          rooms: [hemkunskapssal],
+          ...overrides,
+        });
+        tx.teachingBlock.findMany.mockResolvedValue([
+          { id: HT, name: 'Hemkunskap 7A HT', sameTimesAsBlockId: null },
+          { id: VT, name: 'Hemkunskap 7A VT', sameTimesAsBlockId: HT },
+        ]);
+      };
+      const prepare = () => service.prepareSchedule(tx as unknown as PrismaClient, ACADEMIC_YEAR, testUser());
+      const ready = async (): Promise<PreparedSchedule> => {
+        const result = await prepare();
+        if (!result.ready) throw new Error(`refused: ${result.refusalCode}`);
+        return result;
+      };
+      /**
+       * An engine as the real one answers a split post: each lesson on its
+       * own day, in the post's order (the 90 on Monday, the 40 on Wednesday),
+       * with the teacher it was sent for that lesson.
+       */
+      const engine = () =>
+        http.post.mockImplementation((_url: string, payload: any) =>
+          of({
+            data: {
+              requestId: payload.requestId,
+              status: 'OPTIMAL',
+              lessons: payload.requirements.flatMap((r: any) => {
+                const lengths: number[] = r.lessonLengths ?? Array(r.lessonsPerWeek).fill(r.minutesPerLesson);
+                return lengths.map((minutes, k) => ({
+                  requirementId: r.id,
+                  roomId: payload.rooms[0]?.id ?? null,
+                  dayOfWeek: k === 0 ? 1 : 3,
+                  startTime: k === 0 ? '09:00:00' : '10:00:00',
+                  endTime: k === 0 ? '10:30:00' : '10:40:00',
+                  ...(r.lessonTeacherIds ? { teacherId: r.lessonTeacherIds[k] } : {}),
+                  ...(minutes === 0 ? { never: true } : {}),
+                }));
+              }),
+              conflicts: null,
+            },
+          }),
+        );
+      const rowsWritten = () =>
+        written().map((row) => [
+          row.studentGroupId,
+          row.teacherId,
+          row.coTeacherId,
+          row.dayOfWeek,
+          (row.startTime as Date).toISOString().slice(11, 16),
+          (row.endTime as Date).toISOString().slice(11, 16),
+          row.startDate,
+          row.endDate,
+        ]);
+      const refusedWith = async () => {
+        const result = await prepare();
+        if (result.ready) throw new Error('not refused');
+        return result;
+      };
+
+      describe('the same teacher on the same lesson in both terms', () => {
+        it('sends the autumn post alone with its lessons’ teachers, and asks for the spring with its own teachers and shares', async () => {
+          arrangeLink();
+
+          const prepared = await ready();
+
+          const real = new Map([...prepared.anonMaps.requirementAnonMap].map(([realId, anonId]) => [anonId, realId]));
+          // The teachers a list names, anonymous → real: the only part of the teacher map an answer is turned back through.
+          const realTeacher = prepared.splitLessons.realTeacher;
+          const [sent, ...rest] = prepared.payload.requirements;
+          expect(rest).toEqual([]);
+          expect(real.get(sent!.id)).toBe(LEADER);
+          // The leader as it would be sent alone: two lessons, 90 and 40, Anna's and Bo's, nobody held beside them.
+          expect(sent!.lessonLengths).toEqual([90, 40]);
+          expect(sent!.lessonTeacherIds!.map((id) => realTeacher.get(id!))).toEqual([ANNA, BO]);
+          expect(sent!.teacherId).toBe(sent!.lessonTeacherIds![0]);
+          expect(sent!.coTeacherId ?? null).toBeNull();
+          expect(sent!.pupilGroupId).toBe(prepared.anonMaps.groupAnonMap.get(GROUP_ID));
+          expect(prepared.mirrors).toEqual([
+            {
+              leaderId: LEADER,
+              followerId: FOLLOWER,
+              lessons: [
+                { minutes: 90, leaderTeacherId: ANNA, followerTeacherId: ANNA },
+                { minutes: 40, leaderTeacherId: BO, followerTeacherId: BO },
+              ],
+            },
+          ]);
+          // The spring's demand is its own: its teachers and its shares, not the leader's copied.
+          expect(prepared.demand).toEqual([
+            { requirementId: LEADER, lessonsPerWeek: 2, lessonLengths: [90, 40], lessonTeachers: [ANNA, BO], shareKey: `${BO}:1x40` },
+            { requirementId: FOLLOWER, lessonsPerWeek: 2, lessonLengths: [90, 40], lessonTeachers: [ANNA, BO], shareKey: `${BO}:1x40` },
+          ]);
+        });
+
+        it('writes the week: the spring’s 90 and 40 on the autumn’s times, each with its own teacher, in its own weeks', async () => {
+          arrangeLink();
+          engine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(rowsWritten()).toEqual([
+            [H1, ANNA, null, 1, '09:00', '10:30', null, autumnEnd],
+            [H1, BO, null, 3, '10:00', '10:40', null, autumnEnd],
+            [H2, ANNA, null, 1, '09:00', '10:30', springStart, null],
+            [H2, BO, null, 3, '10:00', '10:40', springStart, null],
+          ]);
+        });
+
+        it('pairs by length and teacher in general: the 40 of Bo’s beside the 40 of Bo’s although the lead has a 40 too', async () => {
+          const shape = { lessonsPerWeek: 3, lessonLengths: [90, 40, 40] };
+          arrangeLink(shape, shape);
+          engine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          const springRows = rowsWritten().filter((row) => row[0] === H2);
+          const autumnRows = rowsWritten().filter((row) => row[0] === H1);
+          // Each spring lesson on an autumn lesson of its length with the same teacher.
+          expect(springRows.map((row) => [row[1], row[3], row[4], row[5]])).toEqual(
+            autumnRows.map((row) => [row[1], row[3], row[4], row[5]]),
+          );
+        });
+
+        it('refuses the write (GENERATE_STALE) when the spring’s shares changed while the solver ran, though the leader’s did not', async () => {
+          arrangeLink();
+          engine();
+          const fetchRead = tx.teachingRequirement.findMany.getMockImplementation()!;
+          tx.teachingRequirement.findMany.mockImplementation((query: Query) =>
+            // The write reads again, with no lesson length in its select: by then Cecilia has Bo's 40 of the spring.
+            query.select && !('lessonsPerWeek' in query.select)
+              ? Promise.resolve([
+                  { id: LEADER, subjectId: HK, studentGroupId: H1, teacherId: ANNA, coTeacherId: null, recurrence: 'ALL_WEEKS', startDate: null, endDate: autumnEnd, shares: share(BO) },
+                  { id: FOLLOWER, subjectId: HK, studentGroupId: H2, teacherId: ANNA, coTeacherId: null, recurrence: 'ALL_WEEKS', startDate: springStart, endDate: null, shares: share(CECILIA) },
+                ])
+              : fetchRead(query),
+          );
+
+          await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+            response: expect.objectContaining({ code: 'GENERATE_STALE' }),
+          });
+          expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+        });
+
+        it('refuses the write when the engine answers the leader’s 40 with another teacher than it was sent', async () => {
+          arrangeLink();
+          http.post.mockImplementation((_url: string, payload: any) =>
+            of({
+              data: {
+                requestId: payload.requestId,
+                status: 'OPTIMAL',
+                lessons: payload.requirements.flatMap((r: any) => [
+                  { requirementId: r.id, roomId: null, dayOfWeek: 1, startTime: '09:00:00', endTime: '10:30:00', teacherId: r.lessonTeacherIds[0] },
+                  // Anna again, where Bo was sent.
+                  { requirementId: r.id, roomId: null, dayOfWeek: 3, startTime: '10:00:00', endTime: '10:40:00', teacherId: r.lessonTeacherIds[0] },
+                ]),
+                conflicts: null,
+              },
+            }),
+          );
+
+          await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({ status: 502 });
+          expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+        });
+      });
+
+      describe('at most one extra teacher', () => {
+        it('holds the spring’s 40 teacher in the leader’s co-teacher place and writes her on the spring’s 40 only', async () => {
+          arrangeLink({}, { shares: share(CECILIA) });
+          engine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          const payload = postedPayload();
+          const [sent] = payload.requirements;
+          expect(payload.requirements).toHaveLength(1);
+          // The leader keeps its list; Cecilia is on every lesson of it, in the other place.
+          expect(sent!.lessonTeacherIds).toHaveLength(2);
+          expect(sent!.coTeacherId).toEqual(expect.any(String));
+          expect(sent!.lessonTeacherIds).not.toContain(sent!.coTeacherId);
+          expect(JSON.stringify(payload)).not.toContain(CECILIA);
+          expect(rowsWritten()).toEqual([
+            [H1, ANNA, null, 1, '09:00', '10:30', null, autumnEnd],
+            [H1, BO, null, 3, '10:00', '10:40', null, autumnEnd],
+            [H2, ANNA, null, 1, '09:00', '10:30', springStart, null],
+            [H2, CECILIA, null, 3, '10:00', '10:40', springStart, null],
+          ]);
+        });
+
+        it('holds an extra teacher beside an unshared leader as it always did, and writes the spring’s shared lessons with theirs', async () => {
+          // The leader shares nothing (Anna has both lessons); the spring has Bo on its 40.
+          arrangeLink({ shares: [] }, {});
+          engine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          const [sent] = postedPayload().requirements;
+          expect(sent).not.toHaveProperty('lessonTeacherIds');
+          // Bo, the spring's 40, is the leader's co-teacher: held on both its lessons.
+          expect(sent!.coTeacherId).toEqual(expect.any(String));
+          expect(rowsWritten().filter((row) => row[0] === H2)).toEqual([
+            [H2, ANNA, null, 1, '09:00', '10:30', springStart, null],
+            [H2, BO, null, 3, '10:00', '10:40', springStart, null],
+          ]);
+        });
+
+        it('writes an unshared spring post with its own teacher on every lesson, though the leader’s lessons are two teachers’', async () => {
+          arrangeLink({}, { shares: [], teacherId: ANNA });
+          // The spring's Anna is on the leader's 90 only: she needs a seat on the 40 and cannot have it.
+          const refused = await refusedWith();
+          expect(refused.refusalCode).toBe('BLOCK_SAME_TIMES_SPLIT_LESSONS');
+
+          arrangeLink({}, { shares: [], teacherId: CECILIA });
+          engine();
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+          const springRows = rowsWritten().filter((row) => row[0] === H2);
+          expect(springRows.map((row) => [row[1], row[3], row[4]])).toEqual([
+            [CECILIA, 1, '09:00'],
+            [CECILIA, 3, '10:00'],
+          ]);
+        });
+
+        it('counts the spring’s shares in the basis: a candidate is stale when they change, though the payload does not', async () => {
+          // The leader is Anna's with Bo beside her on every lesson (its co-teacher): the spring's Bo on the 40, or
+          // Anna on both, asks nothing more of it, so the engine is sent the same week either way.
+          arrangeLink({ shares: [], coTeacherId: BO }, {});
+          const shared = await ready();
+          arrangeLink({ shares: [], coTeacherId: BO }, { shares: [] });
+          const unshared = await ready();
+
+          expect(shared.payload).toEqual(expect.objectContaining({ requirements: expect.any(Array) }));
+          expect(unshared.basisParts.requirements).not.toEqual(shared.basisParts.requirements);
+          // Only the mirrored row moved: the sent requirement part of the payload is the same size and shape.
+          expect(unshared.payload.requirements).toHaveLength(shared.payload.requirements.length);
+          expect(unshared.payload.requirements[0]!.coTeacherId).not.toBeNull();
+        });
+      });
+
+      describe('everything else is refused by name, before the engine', () => {
+        const refusedCase = async (leader: Row, follower: Row) => {
+          arrangeLink(leader, follower);
+          const refused = await refusedWith();
+          expect(refused.refusalCode).toBe('BLOCK_SAME_TIMES_SPLIT_LESSONS');
+          expect(bodyOf(refused.error)).toMatchObject({
+            code: 'BLOCK_SAME_TIMES_SPLIT_LESSONS',
+            params: { block: 'Hemkunskap 7A VT', other: 'Hemkunskap 7A HT', requirement: 'Hemkunskap för 7A:2' },
+            message: expect.stringMatching(/has more than one teacher who is not on the same lesson in Hemkunskap 7A HT/),
+          });
+          expect(http.post).not.toHaveBeenCalled();
+        };
+
+        it('refuses two extra teachers: one on the 90 and one on the 40', () => refusedCase({}, { teacherId: DAN, shares: share(CECILIA) }));
+
+        it('refuses lessons that are not the same lengths', () => refusedCase({}, { lessonLengths: [90, 45], shares: [{ teacherId: BO, lessons: 1, minutes: 45 }] }));
+
+        it('refuses a spring whose teachers have swapped lessons with the autumn’s', () =>
+          refusedCase({}, { teacherId: BO, shares: share(ANNA) }));
+
+        it('refuses a spring teacher the leader already has on another lesson: the engine would refuse the co-teacher in the list', () =>
+          refusedCase({}, { shares: [], teacherId: ANNA }));
+
+        it('refuses an extra teacher when the leader’s co-teacher place is taken', () =>
+          refusedCase({ coTeacherId: DAN }, { shares: share(CECILIA) }));
       });
     });
 

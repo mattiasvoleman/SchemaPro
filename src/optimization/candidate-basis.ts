@@ -165,6 +165,11 @@ export interface MirroredRow {
   studentGroupId: string;
   teacherId: string | null;
   coTeacherId: string | null;
+  /**
+   * Delade lektioner: the lessons other teachers take, only on a post that has
+   * shares, so every other school's mirrored rows hash as they did.
+   */
+  shares?: readonly { teacherId: string | null; lessons: number; minutes: number }[];
 }
 
 export interface BasisSource {
