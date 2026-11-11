@@ -117,10 +117,29 @@ parts (``week_parts``) rather than off "does it alternate":
   its own colouring. This is the case above with nothing but alternating
   lessons, and it is also a pool of every-week lessons with a few of the
   autumn only: one part, the autumn's, which holds them all;
-- anything else is MIXED and names its rooms.
+- anything else is MIXED. A small mixed class names its rooms, which is exact.
+  A LARGE one — more than ``NAMED_LIMIT`` literals to name, a school's ordinary
+  classrooms with a handful of dated lessons that fit them — SPLITS ITS ROOMS
+  BY DAY instead. Each day some of the class's rooms are the dated lessons'
+  (``term rooms``, a variable per day) and the rest the others': one
+  cumulative over the lessons in several parts against the rest, and one per
+  part over that part's own lessons against the term rooms. No literal per
+  lesson and room, and the same post-pass, a sweep per day and side.
+
+  THE SPLIT IS SOUND AND NOT EXACT. Lessons of different terms share the term
+  rooms, as they should, and a room is the term's or the others' for a whole
+  day — so a dated lesson at 08:00 and an all-year one at 13:00 are not given
+  the same room on a Tuesday, though a caretaker could. It asks for a room
+  more on such a day where the pool is full to the last room, and never
+  admits a timetable no assignment keeps. Naming says exactly what the rooms
+  can hold and costs a literal per lesson and room: 23,040 for the benchmark
+  school's eight laboratories and the 2,880 lessons that fit one, where the
+  split costs five variables. A day is the grain because no lesson crosses
+  one: a split that changed inside a day would be the per-week cumulatives
+  again, and as unsound.
 
 A pool with no period in it keeps the test it had (``mixes``), so its rows
-are the ones it had.
+are the ones it had: it names its rooms whatever its size.
 """
 
 from __future__ import annotations
@@ -137,6 +156,13 @@ from app.solver.weeks import Weeks, week_parts, weeks_of
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.schemas.schedule import AnonymousConstraint, AnonymousRoom, FixedLesson
     from app.solver.placement import SharedRoom
+
+
+#: The most literals a mixed class with periods names its rooms with (its rooms
+#: times the lessons that may take one); past it the class splits its rooms by
+#: day (the module docstring). Two workshops and the 288 lessons of a
+#: högstadium that fit them are 576, and named.
+NAMED_LIMIT = 2_000
 
 
 class RoomAllocationError(RuntimeError):
@@ -213,6 +239,11 @@ class RoomPlan:
     #: as it does the class literals. Empty without a mixed class.
     named: set[int] = field(default_factory=set)
     rooms_of: dict[str, dict[int, cp_model.IntVar]] = field(default_factory=dict)
+    #: Terminer: the large mixed classes that split their rooms by day (the
+    #: module docstring), by class index: how many of the class's rooms are
+    #: the dated lessons' on each day of the grid, and the slots of a day.
+    #: A lesson of such a class that is in one part only is in `part_of`.
+    split: dict[int, tuple[list[cp_model.IntVar], int]] = field(default_factory=dict)
 
     def class_of(self, key: str, solver: cp_model.CpSolver) -> int:
         forced = self.forced_class.get(key)
@@ -259,6 +290,26 @@ class RoomPlan:
                 # of opposite weeks at one hour are both in it.
                 for _start, _duration, key, _preferred in entries:
                     assignment[key] = room_indices[0]
+                continue
+            if class_index in self.split:
+                # A day at a time: the lessons in several parts in the rooms
+                # the day leaves them, each part's own in the term rooms.
+                term_rooms, day_slots = self.split[class_index]
+                by_day: dict[int, list[tuple[int, int, str, int]]] = defaultdict(list)
+                for entry in entries:
+                    by_day[entry[0] // day_slots].append(entry)
+                for day, held in sorted(by_day.items()):
+                    others = len(room_indices) - solver.Value(term_rooms[day])
+                    own = {entry[2]: self.part_of.get((class_index, entry[2])) for entry in held}
+                    self._sweep(
+                        class_index, room_indices[:others],
+                        [entry for entry in held if own[entry[2]] is None], assignment,
+                    )
+                    for week in sorted({week for week in own.values() if week is not None}):
+                        self._sweep(
+                            class_index, room_indices[others:],
+                            [entry for entry in held if own[entry[2]] == week], assignment,
+                        )
                 continue
             if class_index in self.by_week:
                 # Every lesson in one part: each part is its own colouring,
@@ -426,6 +477,8 @@ def add_room_allocation(
     building_key: Callable[[AnonymousRoom], Hashable] | None = None,
     shared_rooms: dict[UUID, SharedRoom] | None = None,
     assume_shared: Callable[[UUID], cp_model.IntVar] | None = None,
+    day_slots: int | None = None,
+    days: int = 0,
 ) -> RoomPlan:
     """Enforce room capacity without naming rooms. Replaces per-room NoOverlap.
 
@@ -433,6 +486,10 @@ def add_room_allocation(
     shareable: each is its own class and its row is a cumulative over the
     pupils of its lessons instead of a no-overlap. Absent, every room is
     exclusive and nothing below changes.
+
+    `day_slots` and `days` are the grid's day, for a large mixed class that
+    splits its rooms by day (the module docstring). Without them such a class
+    names its rooms, as a small one does.
     """
     shared_rooms = shared_rooms or {}
     if shared_rooms:
@@ -564,6 +621,9 @@ def add_room_allocation(
                 model.AddCumulative(
                     [interval for interval, _ in part], [1] * len(part), room_class.capacity,
                 )
+        elif splits([plan.parity.get(key) for _, key in entries], room_class.capacity, day_slots):
+            assert day_slots is not None
+            _split_the_rooms(model, plan, room_class, parts, day_slots, days)
         else:
             _name_the_rooms(model, plan, room_class, chosen_by[room_class.index])
             # Implied by the named rooms, and posted for what a cumulative
@@ -594,6 +654,72 @@ def mixes(weeks: Sequence[Weeks | None]) -> bool:
         return any(runs is None for runs in weeks)
     parts = week_parts(range(len(weeks)), weeks.__getitem__)
     return sum(len(part) for _, part in parts) != len(weeks)
+
+
+def splits(weeks: Sequence[Weeks | None], capacity: int, day_slots: int | None) -> bool:
+    """Whether a mixed pool on `capacity` rooms splits them by day rather than naming them.
+
+    When naming would cost more than NAMED_LIMIT literals, the pool has a
+    period in it — one without keeps its rows (`mixes`) — and the caller gave
+    the grid's day.
+    """
+    return (
+        day_slots is not None
+        and capacity * len(weeks) > NAMED_LIMIT
+        and any(runs is not None and runs.periods > 1 for runs in weeks)
+    )
+
+
+def _split_the_rooms(
+    model: cp_model.CpModel,
+    plan: RoomPlan,
+    room_class: RoomClass,
+    parts: list[tuple[Weeks | None, list[tuple[cp_model.IntervalVar, str]]]],
+    day_slots: int,
+    days: int,
+) -> None:
+    """A large mixed class's rooms, split by day between the dated lessons and the rest.
+
+    `term rooms` of each day are the lessons' that are in ONE part only; the
+    class's other rooms that day are the lessons' in several parts, the
+    every-week ones among them. A day-long interval per day carries the split
+    into each cumulative as a demand: the term rooms against the lessons in
+    several parts, the others against each part's own. So at every instant of
+    a day the lessons in several parts are at most the rooms the day leaves
+    them, and each part's own at most the term rooms — and lessons of two
+    parts never meet, so the term rooms are every part's at once.
+    """
+    capacity = room_class.capacity
+    parts_of: dict[str, int] = defaultdict(int)
+    for _, part in parts:
+        for _, key in part:
+            parts_of[key] += 1
+    term_rooms = [
+        model.NewIntVar(0, capacity, f"termrooms_{room_class.index}_{day}") for day in range(days)
+    ]
+    whole_days = [
+        model.NewFixedSizeIntervalVar(day * day_slots, day_slots, f"termday_{room_class.index}_{day}")
+        for day in range(days)
+    ]
+    several: dict[str, cp_model.IntervalVar] = {}
+    for week, part in parts:
+        own = [(interval, key) for interval, key in part if parts_of[key] == 1]
+        for interval, key in part:
+            if parts_of[key] > 1:
+                several[key] = interval
+        if not own:
+            continue
+        for _, key in own:
+            plan.part_of[(room_class.index, key)] = week  # type: ignore[assignment]
+        model.AddCumulative(
+            [interval for interval, _ in own] + whole_days,
+            [1] * len(own) + [capacity - rooms for rooms in term_rooms],
+            capacity,
+        )
+    model.AddCumulative(
+        list(several.values()) + whole_days, [1] * len(several) + term_rooms, capacity,
+    )
+    plan.split[room_class.index] = (term_rooms, day_slots)
 
 
 def _name_the_rooms(

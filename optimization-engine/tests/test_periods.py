@@ -19,14 +19,22 @@ room, the pupils and the hour, and no count adds one term to the other
 from __future__ import annotations
 
 import copy
+import functools
+import inspect
 import sys
 from pathlib import Path
+from types import ModuleType
 from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
 
 import test_ab_weeks as ab
+import test_best_effort_report
+import test_consecutive
+import test_placement
+import test_pupil_gaps
+import test_week_load
 from app.config import Settings
 from app.exceptions import InvalidScheduleInputError
 from app.schemas.schedule import MAX_PERIODS, OptimizeScheduleRequest, ScheduledLesson
@@ -238,25 +246,31 @@ MIRRORED = sorted(
 )
 
 
-class _AsPeriods:
-    """OptimizeScheduleRequest for test_ab_weeks.py, reading each parity as periods."""
+class _IsARequest(type):
+    def __instancecheck__(cls, instance: object) -> bool:
+        return isinstance(instance, OptimizeScheduleRequest)
 
-    def __init__(self, weeks: dict[str, dict[str, object]]) -> None:
-        self._weeks = weeks
 
-    def _row(self, row: dict[str, object]) -> dict[str, object]:
+def _AsPeriods(weeks: dict[str, dict[str, object]]) -> type:  # noqa: N802 - stands in for a class
+    """OptimizeScheduleRequest for a module of week tests, reading each parity as periods."""
+
+    def row_of(row: dict[str, object]) -> dict[str, object]:
         parity = row.get("recurrence")
         if parity is None:
             return row
         rest = {key: value for key, value in row.items() if key != "recurrence"}
-        return {**rest, **self._weeks[str(parity)]}
+        return {**rest, **weeks[str(parity)]}
 
-    def model_validate(self, payload: dict[str, object]) -> OptimizeScheduleRequest:
-        mirrored = copy.deepcopy(payload)
-        for key in ("requirements", "fixedLessons"):
-            if key in mirrored:
-                mirrored[key] = [self._row(row) for row in mirrored[key]]  # type: ignore[union-attr]
-        return OptimizeScheduleRequest.model_validate(mirrored)
+    class Mirrored(metaclass=_IsARequest):
+        @staticmethod
+        def model_validate(payload: dict[str, object]) -> OptimizeScheduleRequest:
+            mirrored = copy.deepcopy(payload)
+            for key in ("requirements", "fixedLessons"):
+                if key in mirrored:
+                    mirrored[key] = [row_of(row) for row in mirrored[key]]  # type: ignore[union-attr]
+            return OptimizeScheduleRequest.model_validate(mirrored)
+
+    return Mirrored
 
 
 def test_the_mirror_reaches_every_week_test_of_the_two_weeks() -> None:
@@ -277,6 +291,64 @@ def test_a_period_is_held_as_a_parity_is(
     """Every week the two-week tests solve or refuse, with the two weeks as periods."""
     monkeypatch.setattr(ab, "OptimizeScheduleRequest", _AsPeriods(AS_PERIODS[weeks]))
     getattr(ab, name)()
+
+
+#: The other modules that test a rule in odd and even weeks: placeringsregler,
+#: elevernas håltimmar, sammanhängande undervisning, Bästa möjliga schema's
+#: report and the year's load. Their week tests are run with the two weeks as
+#: two terms, which weigh as the two parities do (one week of two each), so a
+#: test that reads a price or a count reads the same one.
+ELSEWHERE: tuple[ModuleType, ...] = (
+    test_placement, test_pupil_gaps, test_consecutive, test_best_effort_report, test_week_load,
+)
+#: Tests there that read the parity itself rather than a week held by it.
+NOT_MIRRORED_ELSEWHERE: dict[str, str] = {}
+
+
+def _week_tests(module: ModuleType) -> list[tuple[str, object]]:
+    """Every test of `module` that writes a parity and takes nothing from pytest."""
+    found: list[tuple[str, object]] = []
+    for name, value in vars(module).items():
+        if name.startswith("test_") and inspect.isfunction(value):
+            found.append((name, value))
+        elif name.startswith("Test") and inspect.isclass(value):
+            found.extend(
+                (f"{name}.{method}", functools.partial(function, value()))
+                for method, function in vars(value).items()
+                if method.startswith("test_") and inspect.isfunction(function)
+            )
+    kept = []
+    for name, test in found:
+        function = test.func if isinstance(test, functools.partial) else test
+        source = inspect.getsource(function)
+        takes = [p for p in inspect.signature(function).parameters if p != "self"]
+        if not takes and ("recurrence" in source or "_WEEKS" in source):
+            kept.append((f"{module.__name__}.{name}", test))
+    return kept
+
+
+MIRRORED_ELSEWHERE = {
+    name: (module, test)
+    for module in ELSEWHERE
+    for name, test in _week_tests(module)
+    if name not in NOT_MIRRORED_ELSEWHERE
+}
+
+
+def test_the_mirror_reaches_the_week_tests_of_the_other_rules() -> None:
+    by_module = {module.__name__: 0 for module in ELSEWHERE}
+    for name in MIRRORED_ELSEWHERE:
+        by_module[name.split(".")[0]] += 1
+    assert all(count > 0 for count in by_module.values()), by_module
+
+
+@pytest.mark.parametrize("name", sorted(MIRRORED_ELSEWHERE))
+def test_a_term_is_held_as_a_parity_is_by_every_other_rule(
+    name: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module, test = MIRRORED_ELSEWHERE[name]
+    monkeypatch.setattr(module, "OptimizeScheduleRequest", _AsPeriods(AS_PERIODS["two terms"]))
+    test()  # type: ignore[operator]
 
 
 # ---------------------------------------------------------------------------
@@ -656,9 +728,19 @@ def test_only_so_many_weeks_are_solved_before_the_model_and_all_are_counted() ->
     lightest = min(sum(r.lessons_per_week for r in week.requirements) for _, week in solved)
     left_out = [week for item in weeks if item not in solved for week in [item[1]]]
     assert all(sum(r.lessons_per_week for r in week.requirements) <= lightest for week in left_out)
-    # A term the arithmetic refuses is refused wherever it stands: the twelfth has five hours of four.
-    terms[11]["lessonsPerWeek"] = 5
-    response = solver.solve(OptimizeScheduleRequest.model_validate(_payload(terms)))
+    # A term the arithmetic refuses is refused wherever it stands, and named.
+    # Eleven terms with six lessons between two classes, and a twelfth with
+    # five hours of one class's four-hour day: the lightest week of the
+    # twelve, which the solving verdicts leave out, and the counting ones do not.
+    other = str(uuid4())
+    heavy = [
+        _requirement(group if half else other, 3, periods=[p == q for q in range(12)])
+        for p in range(11) for half in (True, False)
+    ]
+    overfull = _requirement(str(uuid4()), 5, periods=[q == 11 for q in range(12)])
+    request = OptimizeScheduleRequest.model_validate(_payload([*heavy, overfull]))
+    assert all(week.period() != 11 for week, _ in solver._solved_weeks(_weeks_and_requests(request)))
+    response = solver.solve(request)
     assert response.status == "INFEASIBLE"
     assert response.conflicts is not None and response.conflicts.summary_params["period"] == 11
 
@@ -784,11 +866,12 @@ def test_a_block_may_hold_the_autumns_member_and_the_springs_of_one_teacher() ->
 # ---------------------------------------------------------------------------
 
 
-def _allocator_alone(model, lessons, rooms):  # type: ignore[no-untyped-def]
+def _allocator_alone(model, lessons, rooms, **grid):  # type: ignore[no-untyped-def]
     """Room allocation alone, over lessons at fixed times.
 
     `lessons` maps a name to (start, end, weeks, room type), `weeks` being the
     requirement's own fields for them ({"periods": …, "recurrence": …} or {}).
+    `grid` is the day (day_slots, days) for a class that splits its rooms by it.
     Returns the decisions by name and the RoomPlan.
     """
     from app.schemas.schedule import AnonymousRequirement
@@ -813,6 +896,7 @@ def _allocator_alone(model, lessons, rooms):  # type: ignore[no-untyped-def]
         model, list(decisions.values()), rooms, distinguished_room_ids=set(),
         room_allowed=lambda room, requirement: requirement.required_room_type in (None, room.type),
         profile_key=lambda requirement: (requirement.required_room_type,),
+        **grid,
     )
     return decisions, plan
 
@@ -1050,3 +1134,413 @@ def test_no_walk_from_a_lock_of_the_autumn_to_a_lesson_of_the_spring(
     # In the same term the thirty minutes are owed, and the hour has none.
     payload["requirements"][0]["periods"] = AUTUMN  # type: ignore[index]
     assert _solve(payload, settings).status == "INFEASIBLE"
+
+
+# ---------------------------------------------------------------------------
+# Locks of a term beside lessons of every week
+# ---------------------------------------------------------------------------
+
+
+def test_a_lock_of_the_autumn_answers_the_autumns_rast_and_not_the_springs() -> None:
+    """The class's own lessons run all year; what differs between the terms is a lock.
+
+    One day, 08:00-11:20, a rast at 09:00 that asks for a lesson before it.
+    7A is locked 08:00-09:00 in the autumn and has two lessons of every week.
+    The autumn's rast is answered by the lock, so both lessons may come after
+    it; the spring's needs one of them at 08:00 — where the autumn has the
+    lock. No timetable keeps both terms. Read with the lock in every week it
+    would be solved, and the spring left at its break untaught.
+    """
+    group = str(uuid4())
+    years = {"minGradeLevel": 7, "maxGradeLevel": 7}
+    lock = {"id": str(uuid4()), "teacherId": str(uuid4()), "studentGroupId": group, "dayOfWeek": 1,
+            "startTime": "08:00:00", "endTime": "09:00:00", "periods": AUTUMN}
+    payload = _payload(
+        [_requirement(group, 2, **years)], fixedLessons=[lock],
+        rasts=[{"minGradeLevel": 7, "maxGradeLevel": 7, "startTime": "09:00:00",
+                "endTime": "09:20:00", "requiresLessonBefore": True}],
+    )
+    settings = Settings(  # type: ignore[call-arg]
+        SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1", SCHEDULE_DAY_END_MINUTES=680,
+    )
+    assert _solve(payload, settings).status == "INFEASIBLE"
+    # The lock all year answers every week's rast.
+    assert _solve(_all_year(payload), settings).status in SOLVED
+    # And with a third hour after the break the spring can open at 08:00... in the
+    # autumn too, were the lock not there: still no timetable, for the same reason.
+    payload["requirements"][0]["lessonsPerWeek"] = 1  # type: ignore[index]
+    assert _solve(payload, settings).status == "INFEASIBLE"
+
+
+def test_a_teachers_cap_reads_the_locks_of_each_term_beside_lessons_of_every_week() -> None:
+    """A cap of 120 minutes a day; a lock of an hour in each term, and one lesson all year.
+
+    Each term has the lesson and its own lock: 120 minutes. All three in one
+    week would be 180, and the lesson's every-week row is what would count
+    them so.
+    """
+    teacher = str(uuid4())
+
+    def lock(start: str, end: str, periods: list[bool]) -> dict[str, object]:
+        return {"id": str(uuid4()), "teacherId": teacher, "studentGroupId": str(uuid4()),
+                "dayOfWeek": 1, "startTime": start, "endTime": end, "periods": periods}
+
+    payload = _payload(
+        [_requirement(str(uuid4()), 1, teacher=teacher)],
+        fixedLessons=[lock("08:00:00", "09:00:00", AUTUMN), lock("09:00:00", "10:00:00", SPRING)],
+        teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, "maxTeachingMinutesPerDay": 120}],
+    )
+    response = _solve(payload)
+    assert response.status in SOLVED
+    assert _validate(payload, response.lessons) == []
+    # Both locks all year leave the lesson no minute of the cap.
+    with pytest.raises(InvalidScheduleInputError):
+        _solve(_all_year(payload))
+
+
+def test_a_teachers_rest_reads_the_locks_of_each_term_beside_lessons_of_every_week() -> None:
+    """An autumn lock Monday 19-20, a spring lock Tuesday 08-09, a rest of 13 hours, a lesson all year.
+
+    No week has both locks, so no night is twelve hours. The lesson is on
+    Monday at noon in both terms, which is what makes Monday a day the rest
+    rule reads.
+    """
+    teacher, group = str(uuid4()), str(uuid4())
+
+    def lock(day: int, start: str, end: str, periods: list[bool]) -> dict[str, object]:
+        return {"id": str(uuid4()), "teacherId": teacher, "studentGroupId": str(uuid4()),
+                "dayOfWeek": day, "startTime": start, "endTime": end, "periods": periods}
+
+    payload = _payload(
+        [_requirement(group, 1, teacher=teacher)],
+        constraints=[ab._closed("STUDENT_GROUP", group, 1, "00:00:00", "12:00:00"),
+                     ab._closed("STUDENT_GROUP", group, 1, "13:00:00", "23:59:00"),
+                     ab._closed("STUDENT_GROUP", group, 2, "00:00:00", "23:59:00")],
+        teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, "minDailyRestMinutes": 780}],
+        fixedLessons=[lock(1, "19:00:00", "20:00:00", AUTUMN), lock(2, "08:00:00", "09:00:00", SPRING)],
+    )
+    settings = _settings(hours=12, days="1,2")
+    response = _solve(payload, settings)
+    assert response.status in SOLVED
+    assert _solve(_all_year(payload), settings).status == "INFEASIBLE"
+
+
+def test_a_subject_of_the_autumn_is_held_to_its_edge_in_the_autumn_only() -> None:
+    """Idrott in the autumn, not first: its row is the autumn's, and the spring has none for it.
+
+    The autumn has svenska before idrott. The spring's only lesson can only
+    come after the hour idrott has — were idrott's row posted in the spring
+    as well, nothing would stand before it there, and the week would be
+    refused for a lesson the spring does not have.
+    """
+    idrott, group = str(uuid4()), str(uuid4())
+    teacher, late = str(uuid4()), str(uuid4())
+    requirements = [
+        test_placement._requirement(idrott, group, teacher=teacher, periods=AUTUMN),
+        test_placement._requirement(str(uuid4()), group, periods=AUTUMN),
+        test_placement._requirement(str(uuid4()), group, teacher=late, periods=SPRING),
+    ]
+    payload = test_placement._payload(
+        requirements,
+        constraints=[
+            # Idrott at 09:00 and nowhere else; the spring's lesson only from 10:00.
+            ab._closed("TEACHER", teacher, 1, "00:00:00", "09:00:00"),
+            ab._closed("TEACHER", teacher, 1, "10:00:00", "23:59:00"),
+            ab._closed("TEACHER", late, 1, "00:00:00", "10:00:00"),
+        ],
+        placementRules=test_placement._edges("HARD", (idrott, True, False)),
+    )
+    settings = test_placement._settings(day_end=660)
+    response = _solve(payload, settings)
+    assert response.status in SOLVED
+    starts = {str(lesson.requirement_id): lesson.start_time for lesson in response.lessons}
+    assert starts[str(requirements[0]["id"])] == "09:00:00"
+    assert starts[str(requirements[1]["id"])] == "08:00:00"
+    # Idrott all year has a spring too, and nothing before it there.
+    del requirements[0]["periods"]
+    refused = _solve(payload, settings)
+    assert refused.status == "INFEASIBLE"
+    assert refused.conflicts is not None
+    assert "SUBJECT_EDGE_CANNOT_BE_KEPT" in {line.code for line in refused.conflicts.conflicts}
+
+
+def test_a_class_is_in_one_kind_of_room_a_day_in_each_term() -> None:
+    """At most one room group a day: the autumn's lesson in the gym, the spring's in the art room."""
+    group = str(uuid4())
+    rooms = [{"id": str(uuid4()), "capacity": 30, "type": "GYM"}, {"id": str(uuid4()), "capacity": 30, "type": "ART"}]
+    requirements = [
+        test_placement._requirement(str(uuid4()), group, requiredRoomType="GYM", periods=AUTUMN),
+        test_placement._requirement(str(uuid4()), group, requiredRoomType="ART", periods=SPRING),
+    ]
+    payload = {
+        **test_placement._payload(requirements), "rooms": rooms,
+        "placementRules": {"places": {"mode": "HARD", "maxClassRooms": 1}},
+    }
+    settings = test_placement._settings(day_end=660)
+    response = _solve(payload, settings)
+    assert response.status in SOLVED
+    assert _validate(payload, response.lessons, settings) == []
+    # Both all year are two kinds of room on the week's one day.
+    with pytest.raises(InvalidScheduleInputError):
+        _solve(_all_year(payload), settings)
+
+
+def test_the_pupils_idle_time_is_priced_by_each_terms_share_of_the_year() -> None:
+    """The objective's own figures: a period of ten weeks and one of thirty, for twenty pupils."""
+    group = str(uuid4())
+    payload = _payload(
+        [_requirement(group, 2), _requirement(group, 1, periods=AUTUMN), _requirement(group, 1, periods=SPRING)],
+        periodWeeks=[10, 30],
+        pupilGaps={"cohorts": [{"groupIds": [group], "pupils": 20, "homeGroupId": group}]},
+    )
+    request = OptimizeScheduleRequest.model_validate(payload)
+    solver = SchedulerSolver(_settings(hours=6))
+    model, *_ = solver._build_model(request, use_assumptions=False, include_objective=True)
+    proto = model.Proto()
+    priced = {
+        proto.variables[index].name: coefficient
+        for index, coefficient in zip(proto.objective.vars, proto.objective.coeffs)
+        if proto.variables[index].name.endswith("_idle")
+    }
+    autumn = [coefficient for name, coefficient in priced.items() if "_p0_" in name]
+    spring = [coefficient for name, coefficient in priced.items() if "_p1_" in name]
+    assert autumn and spring
+    # One part of four and three parts of four, the same pupils in both.
+    assert {3 * coefficient for coefficient in autumn} == set(spring)
+
+
+def test_a_week_more_is_a_week_more_in_the_size_estimate() -> None:
+    """What the estimate adds for the weeks grows with them, and bounds the model at every count."""
+    teacher, group = str(uuid4()), str(uuid4())
+    solver = SchedulerSolver(_settings(hours=6, days="1,2,3"))
+    added = []
+    for periods in (2, 3, 4, 6):
+        terms = [
+            _requirement(group, 1, teacher=teacher, periods=[p == q for q in range(periods)])
+            for p in range(periods)
+        ]
+        payload = _payload(
+            [_requirement(group, 2, teacher=teacher), *terms],
+            rules={"maxLessonsPerDayPerGroup": 2},
+            teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher,
+                               "maxTeachingMinutesPerDay": 180, "minDailyRestMinutes": 600}],
+            teacherDayLimits=[{"id": str(uuid4()), "teacherId": teacher,
+                               "maxTeachingDaysPerWeek": 2, "lockedWeekdays": [[]]}],
+            rasts=[{"minGradeLevel": 7, "maxGradeLevel": 7, "startTime": "10:00:00",
+                    "endTime": "10:20:00", "requiresLessonBefore": True}],
+        )
+        request = OptimizeScheduleRequest.model_validate(payload)
+        for include_objective in (False, True):
+            model, *_ = solver._build_model(
+                request, use_assumptions=False, include_objective=include_objective,
+            )
+            assert solver._estimate_model_size(request) >= len(model.Proto().variables)
+        lessons = {UUID(teacher): 2 + periods, UUID(group): 2 + periods}
+        # Less the rooms the pool names, which grow with its lessons and not with its weeks.
+        added.append(solver._week_vars(request, lessons, lessons) - solver._named_room_vars(request))
+    # The same teacher and class at every count: each week past the first adds the same again.
+    per_week = added[0]
+    assert per_week > 0
+    assert added == [per_week * more for more in (1, 2, 3, 5)]
+
+
+def test_a_teachers_stretch_is_measured_in_each_term_under_its_own_name() -> None:
+    teacher = str(uuid4())
+    payload = _payload(
+        [_requirement(str(uuid4()), 2, teacher=teacher),
+         _requirement(str(uuid4()), 1, teacher=teacher, periods=AUTUMN),
+         _requirement(str(uuid4()), 1, teacher=teacher, periods=SPRING)],
+        teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher,
+                           "maxConsecutiveTeachingMinutes": 120, "consecutiveBreakMinutes": 30}],
+    )
+    request = OptimizeScheduleRequest.model_validate(payload)
+    solver = SchedulerSolver(_settings(hours=6))
+    model, *_ = solver._build_model(request, use_assumptions=False, include_objective=True)
+    names = {variable.name for variable in model.Proto().variables}
+    assert any(name.startswith(f"stretchs_{teacher}_p0_") for name in names)
+    assert any(name.startswith(f"stretchs_{teacher}_p1_") for name in names)
+    assert not any(name.startswith(f"stretchs_{teacher}_0") for name in names)
+
+
+def test_a_pool_names_its_rooms_only_where_a_lesson_is_in_two_parts() -> None:
+    from app.solver.room_allocator import mixes
+    from app.solver.weeks import EVEN_WEEKS, ODD_WEEKS
+
+    autumn, spring = Weeks(0b0011, 2), Weeks(0b1100, 2)
+    assert not mixes([None, None])
+    # Every lesson in one part: every-week lessons beside the autumn's, or two terms alone.
+    assert not mixes([None, autumn, autumn])
+    assert not mixes([autumn, spring, spring])
+    # Every-week lessons beside two terms' are in both parts.
+    assert mixes([None, autumn, spring])
+    # A POOL WITHOUT PERIODS KEEPS THE READING IT HAD: every-week beside odd
+    # ones names its rooms, as it always did, though they too are one part.
+    assert mixes([None, ODD_WEEKS])
+    assert mixes([None, ODD_WEEKS, EVEN_WEEKS])
+    assert not mixes([ODD_WEEKS, EVEN_WEEKS])
+    # A parity beside a period is read with the periods.
+    assert not mixes([None, Weeks(0b0001, 2)])
+    assert mixes([None, Weeks(0b0001, 2), Weeks(0b0010, 2)])
+
+
+def test_only_a_large_mixed_class_with_periods_splits_its_rooms() -> None:
+    from app.solver.room_allocator import NAMED_LIMIT, splits
+    from app.solver.weeks import EVEN_WEEKS, ODD_WEEKS
+
+    autumn, spring = Weeks(0b0011, 2), Weeks(0b1100, 2)
+    pool = [None] * 400 + [autumn, spring]
+    # Thirty classrooms and four hundred lessons that fit them: far past the limit.
+    assert 30 * len(pool) > NAMED_LIMIT and splits(pool, 30, 96)
+    # Two workshops and the same lessons are named, exactly.
+    assert 2 * len(pool) <= NAMED_LIMIT and not splits(pool, 2, 96)
+    assert splits(pool, 5, 96) and not splits(pool, 4, 96)
+    # Without the grid's day there is nothing to split by.
+    assert not splits(pool, 30, None)
+    # A POOL WITHOUT PERIODS KEEPS ITS NAMED ROOMS WHATEVER ITS SIZE: its model is the one it was.
+    assert not splits([None] * 400 + [ODD_WEEKS, EVEN_WEEKS], 30, 96)
+
+
+# ---------------------------------------------------------------------------
+# A large mixed class splits its rooms by day
+# ---------------------------------------------------------------------------
+
+
+def test_a_large_mixed_class_splits_its_rooms_by_day_and_names_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three classrooms; lessons all year beside two terms' in them, through solve().
+
+    Made large by lowering the limit, so the classrooms split: no literal per
+    lesson and room, a variable a day, and a timetable every real week keeps.
+    """
+    from app.solver import room_allocator
+
+    rooms = [{"id": str(uuid4()), "capacity": 30} for _ in range(3)]
+    requirements = [
+        *[_requirement(str(uuid4()), 2) for _ in range(4)],
+        *[_requirement(str(uuid4()), 2, periods=AUTUMN) for _ in range(2)],
+        *[_requirement(str(uuid4()), 2, periods=SPRING) for _ in range(2)],
+    ]
+    payload = _payload(requirements, rooms=rooms)
+    settings = _settings(hours=4, days="1,2")
+    request = OptimizeScheduleRequest.model_validate(payload)
+    solver = SchedulerSolver(settings)
+
+    _, _, _, named, _ = solver._build_model(request, use_assumptions=False, include_objective=False)
+    assert len(named.named) == 1 and named.split == {}
+    literals = sum(len(rooms_of) for rooms_of in named.rooms_of.values())
+    assert literals == 3 * 16
+
+    monkeypatch.setattr(room_allocator, "NAMED_LIMIT", literals - 1)
+    model, _, _, plan, _ = solver._build_model(request, use_assumptions=False, include_objective=False)
+    assert plan.named == set() and plan.rooms_of == {}
+    (term_rooms, day_slots), = plan.split.values()
+    assert len(term_rooms) == 2 and day_slots == solver._grid.slots_per_day
+    # Each term's lessons are in their part, the all-year ones in neither.
+    assert sorted(str(week) for week in plan.part_of.values()) == ["p0"] * 4 + ["p1"] * 4
+    assert solver._estimate_model_size(request) >= len(model.Proto().variables)
+    response = solver.solve(request)
+    assert response.status in SOLVED
+    assert len(response.lessons) == 16
+    assert _validate(payload, response.lessons, settings) == []
+    # Twenty-four room-hours a week. The all-year lessons take eight and each
+    # term four: sixteen even with both terms in every week.
+    assert _solve(_all_year(payload), settings).status in SOLVED
+    # Fourteen hours more in the autumn are twenty-six there: no room for them.
+    requirements.extend(_requirement(str(uuid4()), 2, periods=AUTUMN) for _ in range(7))
+    assert _solve(_payload(requirements, rooms=rooms), settings).status == "INFEASIBLE"
+
+
+def test_the_split_gives_a_room_to_the_term_or_to_the_others_for_a_whole_day() -> None:
+    """What the split costs, on the allocator alone: two rooms, both needed by the all-year lessons at 0-2.
+
+    A lesson of the autumn at 3-4 has a room in fact — both are free by then.
+    Named, the class says so. Split, a room would have to be the term's for
+    the day, and the all-year lessons need both that morning: refused. Sound
+    and not exact, which is why only a class too large to name is split.
+    """
+    from ortools.sat.python import cp_model
+
+    from app.schemas.schedule import AnonymousRoom
+    from app.solver import room_allocator
+
+    rooms = [AnonymousRoom(id=uuid4(), capacity=30), AnonymousRoom(id=uuid4(), capacity=30)]
+    lessons = {
+        "a1": (0, 2, {}, None), "a2": (0, 2, {}, None),
+        "d1": (3, 4, {"periods": AUTUMN}, None), "d2": (3, 4, {"periods": SPRING}, None),
+    }
+    assert _every_assignment(lessons, rooms, 2)
+
+    def status(limit: int) -> str:
+        model = cp_model.CpModel()
+        saved, room_allocator.NAMED_LIMIT = room_allocator.NAMED_LIMIT, limit
+        try:
+            _, plan = _allocator_alone(model, lessons, rooms, day_slots=8, days=1)
+        finally:
+            room_allocator.NAMED_LIMIT = saved
+        assert bool(plan.split) is (limit == 0) and bool(plan.named) is (limit != 0)
+        return cp_model.CpSolver().StatusName(cp_model.CpSolver().Solve(model))
+
+    assert status(room_allocator.NAMED_LIMIT) in SOLVED
+    assert status(0) == "INFEASIBLE"
+    # With the all-year lessons one after the other, one room is theirs and one the terms'.
+    lessons["a2"] = (2, 4, {}, None)
+    assert status(0) in SOLVED
+
+
+def test_a_split_class_never_admits_a_pool_without_a_room_assignment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Random pools over two days, every mixed class split: sound against every assignment there is.
+
+    Whatever the split admits has an assignment that keeps every real week
+    apart, and the rooms the post-pass hands out are one. It refuses some
+    pools that have one — the day's grain — and those are counted, not hidden.
+    """
+    import random
+
+    from ortools.sat.python import cp_model
+
+    from app.schemas.schedule import AnonymousRoom
+    from app.solver import room_allocator
+
+    monkeypatch.setattr(room_allocator, "NAMED_LIMIT", 0)
+    rng = random.Random(1111)
+    seen = {"split": 0, "solved": 0, "refused though one exists": 0, "refused, none exists": 0}
+    for _ in range(500):
+        periods = rng.choice((2, 3))
+        rooms = [AnonymousRoom(id=uuid4(), capacity=30) for _ in range(rng.choice((2, 3)))]
+        lessons = {}
+        for index in range(rng.randint(4, 7)):
+            fields: dict[str, object] = {}
+            if rng.random() < 0.6:
+                while True:
+                    mask = [rng.random() < 0.5 for _ in range(periods)]
+                    if any(mask) and not all(mask):
+                        fields["periods"] = mask
+                        break
+            if rng.random() < 0.2:
+                fields["recurrence"] = rng.choice((ODD, EVEN))
+            start = 8 * rng.randint(0, 1) + rng.randint(0, 4)
+            lessons[f"l{index}"] = (start, start + rng.randint(1, 3), fields, None)
+        model = cp_model.CpModel()
+        decisions, plan = _allocator_alone(model, lessons, rooms, day_slots=8, days=2)
+        if not plan.split:
+            # No mixed class, or one of parities alone, which keeps its named rooms.
+            continue
+        seen["split"] += 1
+        solver = cp_model.CpSolver()
+        status = solver.StatusName(solver.Solve(model))
+        exists = _every_assignment(lessons, rooms, periods)
+        if status in SOLVED:
+            assert exists, (lessons, len(rooms))
+            by_key = plan.assign_rooms(solver)
+            room = {name: by_key[d.lesson.key()] for name, d in decisions.items()}
+            assert _clashes(lessons, room, periods) == [], (lessons, room)
+            seen["solved"] += 1
+        else:
+            seen["refused though one exists" if exists else "refused, none exists"] += 1
+    assert seen["split"] > 200 and seen["solved"] > 100 and seen["refused, none exists"] > 20, seen
+    # The cost of the day's grain on pools this tight (four to seven lessons on
+    # two or three rooms): a minority, and never the other way round.
+    assert 0 < seen["refused though one exists"] < seen["solved"], seen

@@ -11,7 +11,8 @@ byte (benchmarks/model_identity.py).
     python benchmarks/periods.py --school bench --students 2000
     python benchmarks/periods.py --general                    # a classroom subject is dated too
     python benchmarks/periods.py --solve --budget 60          # the whole of solve(), validated
-    python benchmarks/periods.py --periods 2 --swap           # högstadium: slöjd and hemkunskap by term
+    python benchmarks/periods.py --swap                       # högstadium: slöjd and hemkunskap by term
+    python benchmarks/periods.py --swap --stagger             # the same, the years changing term in different weeks
 
 HOW A WEEK IS CUT, so that it stays the week it was:
 
@@ -26,6 +27,12 @@ HOW A WEEK IS CUT, so that it stays the week it was:
             2 × 90 in the first term and hemkunskap 2 × 60 in the second, the
             other half the other way round, as --ab-weeks does it with odd and
             even weeks. Every real week holds the loads the weekly week held.
+            With --stagger the years do not change term in the same week:
+            years 7 and 8 read the first subject until mid-January and year 9
+            only until December, starting its second a week before the others
+            do. Four periods — the autumn, the weeks between, the week both
+            terms have, the spring — and still two sets of lessons: the year a
+            school with terms has, where the periods outnumber the terms.
 
 WHICH REQUIREMENTS: the subjects with a room of their own that a school reads
 by term — bild, musik, slöjd and hemkunskap in the högstadium, the laboratory
@@ -123,7 +130,7 @@ def clone(payload: dict[str, object], chosen: set[str], periods: int) -> dict[st
     return {**payload, "requirements": requirements}
 
 
-def swap(payload: dict[str, object]) -> dict[str, object]:
+def swap(payload: dict[str, object], *, stagger: bool = False) -> dict[str, object]:
     """Högstadium: slöjd and hemkunskap by term, twice the lessons in half the year."""
     import hogstadium
 
@@ -134,12 +141,19 @@ def swap(payload: dict[str, object]) -> dict[str, object]:
         if row["subjectId"] in (slojd, hemkunskap):
             index = order.setdefault(row["studentGroupId"], len(order))
             first = (row["subjectId"] == slojd) == (index % 6 < 3)
-            row = {
-                **row, "lessonsPerWeek": 2 * row["lessonsPerWeek"],
-                "periods": [first, not first],
-            }
+            if not stagger:
+                periods = [first, not first]
+            elif row.get("minGradeLevel") == 9:
+                # Year 9: the autumn alone, then from the week both terms have.
+                periods = [first, False, not first, not first]
+            else:
+                periods = [first, first, first, not first]
+            row = {**row, "lessonsPerWeek": 2 * row["lessonsPerWeek"], "periods": periods}
         requirements.append(row)
-    return {**payload, "requirements": requirements}
+    return {
+        **payload, "requirements": requirements,
+        **({"periodWeeks": [19, 2, 1, 21]} if stagger else {}),
+    }
 
 
 def measure(payload: dict[str, object], *, budget: float, workers: int, solve: bool) -> dict[str, object]:
@@ -198,6 +212,7 @@ def main() -> int:
     parser.add_argument("--periods", type=int, nargs="+", default=[2, 4, 8])
     parser.add_argument("--general", action="store_true", help="date a classroom subject too")
     parser.add_argument("--swap", action="store_true", help="högstadium, two periods: slöjd/hemkunskap by term")
+    parser.add_argument("--stagger", action="store_true", help="with --swap: four periods, the years changing term apart")
     parser.add_argument("--solve", action="store_true", help="run solve() too, and validate its timetable")
     parser.add_argument("--budget", type=float, default=60.0)
     parser.add_argument("--workers", type=int, default=8)
@@ -208,12 +223,12 @@ def main() -> int:
     if args.one is not None:
         payload, chosen = _school(args)
         if args.one:
-            payload = swap(payload) if args.swap else clone(payload, chosen, args.one)
+            payload = swap(payload, stagger=args.stagger) if args.swap else clone(payload, chosen, args.one)
         print(json.dumps(measure(payload, budget=args.budget, workers=args.workers, solve=args.solve)))
         return 0
 
     # One process per variant, all at once: the same machine, the same minutes.
-    variants = [0, *([2] if args.swap else args.periods)]
+    variants = [0, *([4 if args.stagger else 2] if args.swap else args.periods)]
     own = [name for name in sys.argv[1:]]
     running = {
         periods: subprocess.Popen(

@@ -94,6 +94,7 @@ from app.solver.room_allocator import (
     build_room_classes,
     collect_distinguished_room_ids,
     mixes,
+    splits,
 )
 from app.solver.time_grid import TimeGrid
 from app.solver.week_load import (
@@ -6492,11 +6493,18 @@ class SchedulerSolver:
         named = 0
         for room_class in classes:
             pool = pools.get(room_class.index, [])
-            if room_class.capacity > 1 and mixes([
+            weeks = [
                 weeks_of(requirement) for requirement in pool
                 for _ in range(requirement.lessons_per_week)
-            ]):
-                named += room_class.capacity * sum(r.lessons_per_week for r in pool)
+            ]
+            if room_class.capacity > 1 and mixes(weeks):
+                # A large mixed class with periods splits its rooms by day, a
+                # variable a day, where a small one names them (room_allocator).
+                named += (
+                    len(self._grid.schedule_days)
+                    if splits(weeks, room_class.capacity, self._grid.slots_per_day)
+                    else room_class.capacity * len(weeks)
+                )
         return named
 
     def _validate_request(self, request: OptimizeScheduleRequest) -> None:
@@ -11208,6 +11216,8 @@ class SchedulerSolver:
             building_key=building_key,
             shared_rooms=shared_rooms,
             assume_shared=assume_shared,
+            day_slots=self._grid.slots_per_day,
+            days=len(self._grid.schedule_days),
         )
 
     def _travel_rows(
