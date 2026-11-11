@@ -818,11 +818,10 @@ Walk the full product loop once, in order:
   places (the generator gets it as an UNAVAILABLE reservation, and the hand-edit
   warning, the notes after a run and the Vikarietavla read this school's own
   lessons only), so 08–10 here, 10–11 there and 11–12 here is no stretch over
-  180 minutes; the limit is on this school's post. The engine has no
-  terms: a teacher with an autumn post and a spring post that never meet is
-  read as one week, so the engine may pay for a stretch the gateway, which
-  reads real weeks, does not see (it errs toward the stricter reading, never
-  the looser). The engine clips a locked window to the school day, so a lock
+  180 minutes; the limit is on this school's post. Since Terminer (section
+  19) the engine reads a stretch in each part of the läsår on its own, so
+  an autumn post and a spring post that never meet are never one stretch.
+  The engine clips a locked window to the school day, so a lock
   07:30–08:30 counts 08:00–08:30 there and 07:30–08:30 in the gateway.
   **Do not roll the API back past this release once a limit is set.** The old
   API's history lists every key of the post's logged JSON that it does not know,
@@ -4791,3 +4790,97 @@ them under `/admin/leave` (Ledighetsansökningar; no row in `LeavePolicies` is a
 - Release note (in these words or others): *A school can now choose how it receives a leave request: that every guardian
   must consent before it goes to a decision, the fewest days ahead, and a temporary contact during the leave. All three are
   off until the school's administrator turns them on under Ledighetsansökningar.*
+
+## 19. Terms in the generator ("Terminer i motorn")
+
+The generator plans every week the school teaches. A timplanspost that runs
+until December and one that runs from January never share a week, so they may
+share an hour, a teacher, a room and the pupils, and no pre-flight count adds
+one term to the other. Before this, a dated post was held all year, and a
+teacher with 1,370 minutes of hemkunskap in each term was refused for 2,560
+against 2,250.
+
+Two changes, in two releases. No migration in either.
+
+1. **The engine** takes three optional fields: `periods` on
+   `AnonymousRequirement` and on `FixedLesson` (a mask over the periods of the
+   läsår the entry runs in) and `periodWeeks` on the request (how many real
+   weeks each period is; weights for what the engine measures, never a rule).
+   Absent, every entry runs every week, as before. A payload without them
+   builds the model it built, byte for byte (`benchmarks/model_identity.py`),
+   so this release changes nothing in production on its own.
+2. **The gateway** reads the posts' and the preserved lessons' dates against
+   the läsår, week by week (`src/optimization/year-periods.ts`), and sends the
+   fields for a school that dates something. A refusal counted in one period
+   carries `period` (an index) from the engine; the gateway adds
+   `periodFrom`, `periodTo` and `periodStretches`, and the web shows them
+   under the refusal.
+
+### 19.1 Deploy order
+
+**The engine first.** Its request models forbid unknown fields
+(`extra="forbid"`), so an engine without `periods` answers 422 to every run
+that carries one. The API and the engine deploy from `main` within about two
+minutes of each other and not atomically, which is why the engine's change is
+its own release, merged and verified before the gateway's.
+
+1. Merge the engine's release. Verify that
+   `https://<solver-host>/openapi.json` names `periods` under
+   `AnonymousRequirement` and `FixedLesson`, and `periodWeeks` under
+   `OptimizeScheduleRequest`.
+2. Merge the gateway's release. No migration, no setting to turn on: a school
+   with a dated post or a dated preserved lesson is sent periods from its next
+   Generera, and every other school sends the payload it always sent.
+3. Verify with a school that has dated posts: Generera's refusal, if it has
+   one, now says the weeks it was counted for; a school with posts by term
+   that was refused for a teacher's hours is laid.
+
+### 19.2 Rolling back
+
+- **The gateway alone.** Safe at any time. The older gateway sends no
+  periods, and the engine reads every entry every week again: the reading
+  before this release, stricter and never looser. A school with posts by
+  term may again be refused for hours counted across the terms. Timetables
+  already written stay as they are; they keep every rule in every real week.
+- **The engine alone, past its release, with the gateway's release still
+  out.** Every Generera and every schemaförslag run of a school that dates a
+  post or a preserved lesson fails with the engine's 422 (`extra_forbidden`
+  at `periods`), and only those: every other school's payload is byte for
+  byte what it was. Redeploy the engine, or roll the gateway back with it.
+  The gateway does not retry without the fields, on purpose: a timetable laid
+  without them would be the old, stricter one, and a school would not be told.
+- **Which schools are affected** (as the owner): a school with a dated post
+  or a dated lesson in an active year,
+  `SELECT DISTINCT "schoolId" FROM "TeachingRequirements" WHERE "startDate" IS NOT NULL OR "endDate" IS NOT NULL;`
+
+### 19.3 What is still read more strictly
+
+Never more leniently than a lesson placed by hand
+(`weeksCanOverlap`, `src/calendar/lesson-recurrence.ts`), and in these places
+more strictly than the real weeks:
+
+- A week is Monday to Sunday. Two posts whose windows share a week without
+  sharing a date (one ends on a Tuesday, the other starts on the Wednesday)
+  are held apart.
+- Reservations — availability rules, uppdrag with dates, another school's
+  lessons, room loans — are every week's.
+- A post's days (`lockedWeekdays`) and a subject's distribution
+  (`lockedDays`) carry no weeks, and are held in every part of the läsår.
+- A leader post of two blocks on the same times is held in its follower's
+  weeks too.
+- A large pool of interchangeable rooms that holds lessons of every week
+  beside lessons of a term gives a room to one or the other for a whole day
+  (`NAMED_LIMIT`, `optimization-engine/app/solver/room_allocator.py`); a
+  small pool names its rooms and is exact.
+- A row over a school's lessons at once is cut into at most eight parts
+  (`PART_LIMIT`, `ROW_LIMIT`, `optimization-engine/app/solver/weeks.py`). A
+  teacher's or a class's own rows are always cut exactly.
+
+### 19.4 Operations
+
+- The engine's pre-flights run once per period (and per parity inside it).
+  The ones that solve something — the lunch stage, the year's load — run on
+  at most eight of them, the heaviest; the others are left to the model.
+- A läsår longer than 53 weeks is sent without periods (the engine reads at
+  most 53), and is planned as before.
+

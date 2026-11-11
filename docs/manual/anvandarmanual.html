@@ -539,9 +539,10 @@
   <p>
     Salsoptimeringen (5.4) flyttar inte heller någon lektion dit. Den andra
     skolans lektioner läses ur dess grundschema. Det som den skolan
-    schemalägger först håller alltså den som genererar efter. Genereringen
-    räknar inte med veckor: en lektion på den andra skolan som bara går udda
-    veckor, eller bara en termin, håller läraren varje vecka. Lektioner på
+    schemalägger först håller alltså den som genererar efter. En lektion på
+    den andra skolan håller läraren varje vecka i genereringen, också när den
+    bara går udda veckor eller bara en termin: den läses som en spärr, och en
+    spärr har inga veckor. Lektioner på
     lördagar och söndagar räknas inte, eftersom genereringen bara lägger
     måndag till fredag. Går veckan inte att lägga för att den andra skolan
     håller en lärare eller en sal, säger genereringen det med skolans namn.
@@ -2369,9 +2370,61 @@
     </p>
     <p>
       En lektion där du själv ändrat veckorna behålls vid omgenerering, som
-      andra lektioner du ändrat för hand. Genereringen räknar inte terminer:
-      en post med datum planeras som om den gick hela läsåret.
+      andra lektioner du ändrat för hand.
     </p>
+    <p>
+      <strong>Poster med datum planeras de veckor de går.</strong> En
+      timplanspost med <span class="ui">Från och med</span> eller
+      <span class="ui">Till och med</span> får sina lektioner bara i sin del
+      av läsåret, och två poster som aldrig går samma vecka räknas aldrig
+      ihop. Hemkunskap för halva årskursen på hösten och för den andra halvan
+      på våren kan alltså ligga på samma tid, med samma lärare och i samma
+      sal, och läraren räknas med höstens lektioner på hösten och vårens på
+      våren. Du behöver inte länka posterna eller lägga dem i block för det.
+      Genereringen läser läsåret vecka för vecka, måndag till söndag, och
+      ser vilka poster och bevarade lektioner som går i varje vecka. Veckor
+      med samma poster är en period, och allt som gäller en dag eller en
+      vecka räknas för varje period för sig, på samma sätt som för udda och
+      jämna veckor ovan.
+    </p>
+    <ul>
+      <li>Slutar en post en tisdag och börjar en annan på onsdagen samma
+        vecka går båda den veckan, och hålls isär.</li>
+      <li>Börjar vårens poster för några grupper veckan innan höstens slutar
+        för andra, finns en vecka där båda går. Där hålls de isär, och
+        läraren måste ha tid för båda den veckan.</li>
+      <li>Säger genereringen att något inte går i en viss del av läsåret
+        står veckorna under meddelandet: <em>Räknat för veckorna 11 januari
+        2027 – 17 januari 2027</em>. Det är då posterna i meddelandet går
+        samtidigt.</li>
+      <li>Ändrar du en posts veckor eller datum medan genereringen pågår
+        skrivs inget schema. Kör den igen.</li>
+    </ul>
+    <p>
+      Några saker läser genereringen fortfarande strängare än de verkliga
+      veckorna, aldrig lösare:
+    </p>
+    <ul>
+      <li><strong>Spärrar och uppdrag med datum</strong> (4.3), lektioner på
+        en annan skola (2.5) och lånade lokaler håller sina tider hela
+        läsåret.</li>
+      <li><strong>Deltid i dagar</strong> (4.4): de veckodagar lärarens
+        bevarade lektioner håller räknas mot varje del av läsåret, också den
+        del där lektionen inte går.</li>
+      <li><strong>Ämnesfördelningen</strong>: en bevarad lektions veckodag
+        räknas alla veckor.</li>
+      <li><strong>Block på samma tider</strong> (nedan): höstens post håller
+        sina tider också under vårens veckor, eftersom vårens lektioner
+        skrivs där.</li>
+      <li><strong>Stora salsgrupper</strong>: när terminslektioner och
+        helårslektioner delar en stor grupp likvärdiga salar, till exempel
+        vanliga klassrum, har en sal antingen terminslektioner eller
+        helårslektioner en och samma dag. Det märks bara en dag då varje sal
+        i gruppen behövs. I en liten salsgrupp, som två slöjdsalar, räknas
+        varje sal för sig.</li>
+      <li><strong>Byten och bytkedjor</strong> (5.3) räknar en lektion med
+        datum som varje vecka när luckor räknas.</li>
+    </ul>
     <p>
       Salar delas på samma sätt: en udda- och en jämnlektion kan ha samma sal
       på samma tid, och en lektion som går varje vecka behåller sin sal båda
@@ -2895,9 +2948,10 @@
       textilslöjd där på måndag kl. 9 på våren. Klassen har alltså slöjd på
       samma tider hela året, och ingen tid står tom någon termin. Är läraren i
       ett ämne en annan på våren än på hösten hålls också vårens lärare ledig
-      på de tiderna, och det hela året, eftersom genereringen planerar en
-      vecka. Lärarens dag (taket för undervisning per dag, deltid i dagar och
-      en önskad ledig dag) räknar då de lektionerna också på hösten. För en
+      på de tiderna under båda terminerna, eftersom höstens post håller
+      tiderna för hela länken. Lärarens dag (taket för undervisning per dag,
+      deltid i dagar och en önskad ledig dag) räknar då de lektionerna också
+      på hösten. För en
       lärare på deltid kan det göra veckan svårare att lägga, eller omöjlig.
       Det gäller även schemaförslag (5.9).
     </p>
@@ -2920,8 +2974,8 @@
         den lektionen, hålls hen på medlärarplatsen i höstens post, alltså på
         alla höstpostens lektioner. Kostnaden är densamma som för en lärare
         som är en annan på våren än på hösten (ovan): hen hålls ledig på de
-        tiderna hela året, och Lärarens dag räknar lektionerna också på
-        hösten. Medlärarplatsen i höstens post måste vara tom.</li>
+        tiderna under båda terminerna, och Lärarens dag räknar lektionerna
+        också på hösten. Medlärarplatsen i höstens post måste vara tom.</li>
     </ul>
     <p>
       Varje vårlektion skrivs med vårens lärare för just den lektionen, och
@@ -2972,8 +3026,8 @@
       annat där. Den andra halvans post skrivs sedan på samma tider och i
       samma sal under sin period. Har 6A:1 hemkunskap på tisdag kl. 13 under
       första halvan av hösten, har 6A:2 hemkunskap där på tisdag kl. 13 under
-      andra halvan. Genereringen planerar en vecka, så tiderna hålls lediga
-      för klassen hela läsåret, också när ingen av halvorna läser ämnet.
+      andra halvan. Tiderna hålls lediga för hela klassen under båda
+      halvornas perioder, men inte resten av läsåret.
       Halvan som inte läser ämnet har då en lucka på de tiderna, om du inte
       lägger något i den för hand.
     </p>
@@ -4055,10 +4109,9 @@
       om för lektionerna på den andra skolan.
     </p>
     <p>
-      Generatorn har inga terminer: en lärare med en höstpost och en vårpost
-      som aldrig möts räknas som en och samma vecka, så den kan betala för en
-      följd som varningen vid handredigering, som läser verkliga veckor med
-      datum, inte ser. Det gör generatorn strängare än varningen, aldrig lösare. Ett
+      Generatorn räknar en följd för sig i varje del av läsåret (4.2): en
+      höstpost och en vårpost som aldrig möts räknas aldrig i samma följd.
+      Ett
       låst fönster som börjar före skoldagen räknas i generatorn från
       skoldagens början, men i varningen från sin egen början.
     </p>
@@ -4651,14 +4704,16 @@
     </p>
     <p>
       Udda och jämna veckor räknar generatorn som sidan, var för sig, och en
-      vanlig vecka är hälften av varje. Datum har generatorn däremot inte. En
-      lektion som med <span class="ui">Från och med</span> och
-      <span class="ui">Till och med</span> bara går en del av läsåret räknas
-      därför varje vecka. En halvklass terminsvis eller på halva terminer
-      (4.2) räknas som en lektion för hela klassen hela läsåret, medan sidan
-      ser en lucka för den halva som inte läser ämnet i perioden. I de här
-      fallen skiljer sig också siffran som genereringen räknar för sitt schema
-      från sidans. Siffran på sidan räknas alltid efter sidans regler.
+      vanlig vecka är hälften av varje. En lektion som med
+      <span class="ui">Från och med</span> och
+      <span class="ui">Till och med</span> bara går en del av läsåret räknar
+      generatorn i den delen (4.2), och en vanlig vecka är då varje del efter
+      hur många veckor den är. En halvklass terminsvis eller på halva terminer
+      i block på samma tider (4.2) räknas däremot som en lektion för hela
+      klassen under båda perioderna, medan sidan ser en lucka för den halva
+      som inte läser ämnet i perioden. I det fallet skiljer sig också siffran
+      som genereringen räknar för sitt schema från sidans. Siffran på sidan
+      räknas alltid efter sidans regler.
     </p>
   </div>
   <p>
