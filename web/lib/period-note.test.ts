@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { periodDatesOf } from "@/lib/period-note";
+import { periodDatesOf, periodDay } from "@/lib/period-note";
 
 describe("periodDatesOf", () => {
   it("reads the stretch of the läsår a refusal was counted in", () => {
@@ -31,5 +31,15 @@ describe("periodDatesOf", () => {
   it("is nothing for days it cannot read", () => {
     expect(periodDatesOf({ periodFrom: "11 januari", periodTo: "2027-01-17" })).toBeNull();
     expect(periodDatesOf({ periodFrom: 20270111, periodTo: 20270117 })).toBeNull();
+  });
+});
+
+describe("periodDay", () => {
+  it("writes a day of the läsår out in the reader's language, as the day it was written", () => {
+    expect(periodDay("2027-01-11", "sv")).toBe("11 januari 2027");
+    expect(periodDay("2027-01-11", "en")).toBe("11 January 2027");
+    // The first and the last day of a year stay in it, whatever the reader's clock.
+    expect(periodDay("2026-12-31", "sv")).toBe("31 december 2026");
+    expect(periodDay("2027-01-01", "en")).toBe("1 January 2027");
   });
 });

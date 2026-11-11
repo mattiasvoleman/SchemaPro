@@ -1,7 +1,7 @@
 "use client";
 
-import { useFormatter, useTranslations } from "next-intl";
-import { periodDatesOf } from "@/lib/period-note";
+import { useLocale, useTranslations } from "next-intl";
+import { periodDatesOf, periodDay } from "@/lib/period-note";
 
 /**
  * Terminer: the line under a refusal that was counted in one part of the
@@ -10,21 +10,14 @@ import { periodDatesOf } from "@/lib/period-note";
  */
 export function PeriodNote({ params }: { params: Record<string, string | number> | null | undefined }) {
   const t = useTranslations("generate");
-  const format = useFormatter();
+  const locale = useLocale();
   const dates = periodDatesOf(params);
   if (!dates) return null;
-  const day = (value: string) =>
-    format.dateTime(new Date(`${value}T00:00:00.000Z`), {
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-      timeZone: "UTC",
-    });
   return (
     <p className="text-sm text-muted-foreground">
       {t("countedInPeriod", {
-        from: day(dates.from),
-        to: day(dates.to),
+        from: periodDay(dates.from, locale),
+        to: periodDay(dates.to, locale),
         more: dates.more ? "yes" : "no",
         parity: dates.parity,
       })}

@@ -33,3 +33,16 @@ export function periodDatesOf(params: Record<string, string | number> | null | u
     parity: parity === "ODD_WEEKS" || parity === "EVEN_WEEKS" ? parity : "ALL",
   };
 }
+
+/**
+ * A day of the läsår as a school reads it: "11 januari 2027", "11 January
+ * 2027". Read in UTC, as the day was written: a date has no hour to shift.
+ */
+export function periodDay(value: string, locale: string): string {
+  return new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "sv-SE", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${value}T00:00:00.000Z`));
+}

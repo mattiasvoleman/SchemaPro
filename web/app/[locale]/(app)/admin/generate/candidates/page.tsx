@@ -568,7 +568,11 @@ export default function CandidatesPage() {
               {summary !== "" ? <p>{summary}</p> : null}
               {/* Terminer: where in the läsår the week was counted, once, from whichever sentence says it. */}
               <PeriodNote
-                params={first?.errorParams ?? conflicts.find((conflict) => periodDatesOf(conflict.params))?.params}
+                params={
+                  periodDatesOf(first?.errorParams)
+                    ? first?.errorParams
+                    : conflicts.find((conflict) => periodDatesOf(conflict.params))?.params
+                }
               />
               {conflicts.length > 0 ? (
                 <ul className="space-y-2">

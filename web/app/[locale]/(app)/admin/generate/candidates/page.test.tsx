@@ -811,6 +811,49 @@ describe("a run that is not a batch", () => {
     expect(within(causes).getByText("conflictCategories.INSUFFICIENT_RESOURCES")).toBeInTheDocument();
   });
 
+  it("terminer: says which weeks the first candidate's refusal was counted for, once, and nothing for one that names none", () => {
+    const refused = (errorParams: Record<string, string | number>, lineParams?: Record<string, string | number>) => ({
+      latest: latest({ status: "FAILED", errorCode: "CANDIDATES_FIRST_FAILED" }, [
+        candidate(1, "KEEP", {
+          solverStatus: "INFEASIBLE",
+          errorCode: "DEMAND_TEACHER_HOURS_SHORT",
+          errorParams,
+          metrics: null,
+          conflicts: [
+            {
+              category: "REQUIREMENT_DEMAND",
+              message: "One teacher gives the lessons of 14 requirements.",
+              resourceNames: ["Hemkunskap 7A"],
+              ...(lineParams ? { params: lineParams } : {}),
+            },
+          ],
+        }),
+      ]),
+      batch: null,
+      unplaced: null,
+    });
+    const period = { period: 2, periodFrom: "2027-01-11", periodTo: "2027-01-17", periodStretches: 1 };
+    state.overview = refused({ teachers: 1, ...period }, { requirements: 14, ...period });
+    const first = render(<CandidatesPage />);
+
+    let causes = screen.getByRole("heading", { name: "scheduleCandidates.failed.conflicts" }).closest("section")!;
+    // Once, from the summary, though the line under it names the same weeks.
+    expect(within(causes).getAllByText("generate.countedInPeriod(11 januari 2027|17 januari 2027|no|ALL)")).toHaveLength(1);
+    first.unmount();
+
+    // A summary that names no weeks beside a line that does: the line's weeks are said.
+    state.overview = refused({ teachers: 1 }, { requirements: 14, ...period, periodStretches: 2 });
+    const second = render(<CandidatesPage />);
+    causes = screen.getByRole("heading", { name: "scheduleCandidates.failed.conflicts" }).closest("section")!;
+    expect(within(causes).getAllByText("generate.countedInPeriod(11 januari 2027|17 januari 2027|yes|ALL)")).toHaveLength(1);
+    second.unmount();
+
+    state.overview = refused({ teachers: 1 });
+    render(<CandidatesPage />);
+    causes = screen.getByRole("heading", { name: "scheduleCandidates.failed.conflicts" }).closest("section")!;
+    expect(within(causes).queryByText(/generate\.countedInPeriod/)).toBeNull();
+  });
+
   it("says a first candidate that ran out of time in its own words, with what the probe found", () => {
     // Candidate 1 TIMEOUT, no relaxation helped: the engine's summary and
     // no conflicts. "What stopped it is below" over nothing was the bug.
