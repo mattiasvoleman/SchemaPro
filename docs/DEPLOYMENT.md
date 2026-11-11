@@ -4883,4 +4883,10 @@ more strictly than the real weeks:
   at most eight of them, the heaviest; the others are left to the model.
 - A läsår longer than 53 weeks is sent without periods (the engine reads at
   most 53), and is planned as before.
+- Schemaförslag computed before the gateway's release go stale ("inaktuellt")
+  once, for a school with a dated post or a dated preserved lesson: the
+  candidate basis (`src/optimization/candidate-basis.ts`) now reads the
+  periods and the locks' own dates, so its digest is another. Those candidates
+  were computed under the stricter reading; the school runs the proposals
+  again. Every other school's basis is the digest it was.
 
