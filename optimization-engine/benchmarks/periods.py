@@ -56,18 +56,24 @@ WHAT IS MEASURED, per variant:
                  and what validate_schedule.py finds in the timetable
 
 The variants are measured AT THE SAME TIME, one process each, so a loaded
-machine slows them alike and their ratios still mean something.
+machine slows them alike and their ratios still mean something. The processes
+are this module's own workers (a spawned pool, one worker per variant): each
+is handed the parsed arguments and its number of periods, builds its own
+payload and measures it, so nothing from the command line is passed on to a
+command.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import multiprocessing
 import os
-import subprocess
 import sys
 import time
 import uuid
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -209,6 +215,19 @@ def measure(
     return out
 
 
+def variant(args: argparse.Namespace, periods: int) -> dict[str, object]:
+    """One variant, measured in the process it is called in: the uncut week for 0 periods."""
+    # Whatever the school's builders or the solver print belongs to the log,
+    # not to this script's own table or JSON.
+    with contextlib.redirect_stdout(sys.stderr):
+        payload, chosen = _school(args)
+        if periods:
+            payload = swap(payload, stagger=args.stagger) if args.swap else clone(payload, chosen, periods)
+        return measure(
+            payload, budget=args.budget, workers=args.workers, solve=args.solve, first=not args.skip_first,
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument("--school", choices=("hogstadium", "bench"), default="hogstadium")
@@ -226,35 +245,15 @@ def main() -> int:
     parser.add_argument("--budget", type=float, default=60.0)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--json", action="store_true")
-    parser.add_argument("--one", type=int, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
-
-    if args.one is not None:
-        payload, chosen = _school(args)
-        if args.one:
-            payload = swap(payload, stagger=args.stagger) if args.swap else clone(payload, chosen, args.one)
-        print(json.dumps(measure(
-            payload, budget=args.budget, workers=args.workers, solve=args.solve, first=not args.skip_first,
-        )))
-        return 0
 
     # One process per variant, all at once: the same machine, the same minutes.
     variants = [0, *([4 if args.stagger else 2] if args.swap else args.periods)]
-    own = [name for name in sys.argv[1:]]
-    running = {
-        periods: subprocess.Popen(
-            [sys.executable, __file__, *own, "--one", str(periods)],
-            stdout=subprocess.PIPE, text=True,
-        )
-        for periods in variants
-    }
-    results: dict[int, dict[str, object]] = {}
-    for periods, process in running.items():
-        stdout, _ = process.communicate()
-        if process.returncode != 0:
-            print(f"periods={periods}: exit {process.returncode}", file=sys.stderr)
-            return 1
-        results[periods] = json.loads(stdout.strip().splitlines()[-1])
+    with ProcessPoolExecutor(
+        max_workers=len(variants), mp_context=multiprocessing.get_context("spawn"),
+    ) as pool:
+        running = {periods: pool.submit(variant, args, periods) for periods in variants}
+        results: dict[int, dict[str, object]] = {periods: job.result() for periods, job in running.items()}
     if args.json:
         print(json.dumps({str(periods): row for periods, row in results.items()}, indent=1))
         return 0
