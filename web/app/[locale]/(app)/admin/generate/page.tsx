@@ -168,10 +168,10 @@ export default function GeneratePage() {
 
   /**
    * Uppdrag with Från or Till and fixed times (migration 20261017090000).
-   * The master is one week, so the engine holds such a time free in every
-   * week of the year, as it holds a dated requirement's lessons: the
-   * vikarietavla and the load count only the uppdrag's dates, the weekly
-   * timetable cannot. Said here, before the run, because a teacher missing
+   * Its times reach the engine as reservations, which carry no weeks, so the
+   * engine holds such a time free in every week of the year — unlike a dated
+   * requirement, which it plans only in the weeks it runs (terminer). The
+   * vikarietavla and the load count only the uppdrag's dates. Said here, before the run, because a teacher missing
    * from Tuesday 15:00 in September for an APT that starts in January is
    * otherwise a mystery in the grid. keepsTimesAllYear is the rule, the one
    * the duties card says the same sentence by: dates on the läsår's own

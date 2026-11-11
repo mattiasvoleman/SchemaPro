@@ -42,8 +42,10 @@ export function dutySlotsLine(
 /**
  * Whether the generator keeps an uppdrag's fixed times free in weeks the
  * uppdrag does not run: it has times, and its Från or Till shortens it inside
- * the läsår. The weekly master is one week and the engine has no dated weeks
- * (src/staffing/duty-slot-year.ts), so such a time is held free all läsår,
+ * the läsår. An uppdrag's times reach the engine as reservations, and a
+ * reservation carries no weeks (src/staffing/duty-slot-year.ts; terminer gave
+ * periods to posts and locks, not to reservations), so such a time is held
+ * free all läsår,
  * while the load and the vikarietavla count only the uppdrag's dates. Dates
  * on the läsår's own bounds shorten nothing. Without the year's bounds, any
  * date counts: the sentence is then said once too often, never once too few.
