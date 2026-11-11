@@ -48,7 +48,9 @@ WHAT IS MEASURED, per variant:
                  of the satisfaction model (phase 1a) and of the full model
     named        room classes that name their rooms, and the literals that costs
     build        seconds to build the satisfaction model
-    first        seconds to a first timetable in it, on --workers workers
+    first        seconds to a first timetable in it, on --workers workers: the
+                 bare satisfaction model handed to CP-SAT, with none of what
+                 solve() does around it (--skip-first leaves it out)
     solve        with --solve: status and seconds of solve() under --budget
                  (on the engine's own worker count, as a deployment runs it),
                  and what validate_schedule.py finds in the timetable
@@ -156,7 +158,9 @@ def swap(payload: dict[str, object], *, stagger: bool = False) -> dict[str, obje
     }
 
 
-def measure(payload: dict[str, object], *, budget: float, workers: int, solve: bool) -> dict[str, object]:
+def measure(
+    payload: dict[str, object], *, budget: float, workers: int, solve: bool, first: bool = True,
+) -> dict[str, object]:
     request = OptimizeScheduleRequest.model_validate(payload)
     solver = SchedulerSolver(Settings(SOLVER_MAX_TIME_SECONDS=budget))  # type: ignore[call-arg]
     out: dict[str, object] = {
@@ -181,12 +185,13 @@ def measure(payload: dict[str, object], *, budget: float, workers: int, solve: b
     out["namedClasses"] = len(plan.named)
     out["namedLiterals"] = sum(len(rooms) for rooms in plan.rooms_of.values())
     out["classesPerPart"] = len(plan.by_week)
-    cp = cp_model.CpSolver()
-    cp.parameters.max_time_in_seconds = budget
-    cp.parameters.num_workers = workers
-    cp.parameters.stop_after_first_solution = True
-    out["firstStatus"] = cp.StatusName(cp.Solve(model))
-    out["firstSeconds"] = round(cp.WallTime(), 2)
+    if first:
+        cp = cp_model.CpSolver()
+        cp.parameters.max_time_in_seconds = budget
+        cp.parameters.num_workers = workers
+        cp.parameters.stop_after_first_solution = True
+        out["firstStatus"] = cp.StatusName(cp.Solve(model))
+        out["firstSeconds"] = round(cp.WallTime(), 2)
     if solve:
         from validate_schedule import validate
 
@@ -214,6 +219,10 @@ def main() -> int:
     parser.add_argument("--swap", action="store_true", help="högstadium, two periods: slöjd/hemkunskap by term")
     parser.add_argument("--stagger", action="store_true", help="with --swap: four periods, the years changing term apart")
     parser.add_argument("--solve", action="store_true", help="run solve() too, and validate its timetable")
+    parser.add_argument(
+        "--skip-first", action="store_true",
+        help="leave out the bare search for a first timetable (with --solve, on a school it does not finish)",
+    )
     parser.add_argument("--budget", type=float, default=60.0)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--json", action="store_true")
@@ -224,7 +233,9 @@ def main() -> int:
         payload, chosen = _school(args)
         if args.one:
             payload = swap(payload, stagger=args.stagger) if args.swap else clone(payload, chosen, args.one)
-        print(json.dumps(measure(payload, budget=args.budget, workers=args.workers, solve=args.solve)))
+        print(json.dumps(measure(
+            payload, budget=args.budget, workers=args.workers, solve=args.solve, first=not args.skip_first,
+        )))
         return 0
 
     # One process per variant, all at once: the same machine, the same minutes.
