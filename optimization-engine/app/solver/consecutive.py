@@ -122,18 +122,21 @@ from typing import TYPE_CHECKING
 
 from ortools.sat.python import cp_model
 
+from app.solver.weeks import tag as week_tag
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from uuid import UUID
 
-    from app.schemas.schedule import AnonymousTeacherWorkRule, WeekParity
+    from app.schemas.schedule import AnonymousTeacherWorkRule
+    from app.solver.weeks import Weeks
     from app.solver.scheduler_solver import LessonDecision
     from app.solver.time_grid import TimeGrid
 
 #: One week of a teacher as the builder reads it: the week (None for every
 #: week), the generated lessons in it, and the windows the teacher's locked
 #: lessons take in it, absolute slots, outward-rounded and clipped to the day.
-StretchWeek = tuple["WeekParity | None", "list[LessonDecision]", "list[tuple[int, int]]"]
+StretchWeek = tuple["Weeks | None", "list[LessonDecision]", "list[tuple[int, int]]"]
 
 
 def stretch_slots(rule: AnonymousTeacherWorkRule, slot_minutes: int) -> tuple[int, int]:
@@ -228,9 +231,7 @@ def add_stretch_wish(
             if on_step and all(low % step == 0 and high % step == 0 for low, high in chains)
             else None
         )
-        tag = str(rule.teacher_id)
-        if week is not None:
-            tag += "_odd" if week == "ODD_WEEKS" else "_even"
+        tag = week_tag(str(rule.teacher_id), week)
 
         # The solver's lessons on the shifted clock, and the locks beside them.
         base: list[cp_model.IntervalVar] = []

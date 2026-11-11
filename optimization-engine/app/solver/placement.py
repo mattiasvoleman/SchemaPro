@@ -44,8 +44,7 @@ from uuid import UUID
 
 from ortools.sat.python import cp_model
 
-from app.schemas.schedule import WeekParity
-from app.solver.weeks import meet, weeks_of
+from app.solver.weeks import Weeks, each_week, meet
 
 
 @dataclass(frozen=True)
@@ -60,7 +59,7 @@ class EdgeLesson:
     subject_id: UUID
     #: The key of the lesson's pupils (scheduler_solver.pupil_key_of).
     pupil_key: UUID
-    parity: WeekParity | None
+    parity: Weeks | None
 
 
 @dataclass(frozen=True)
@@ -71,7 +70,7 @@ class EdgeLock:
     start: int
     end: int
     pupil_keys: tuple[UUID, ...]
-    parity: WeekParity | None
+    parity: Weeks | None
 
 
 def classes_of(
@@ -130,6 +129,11 @@ def add_subject_edges(
     is two rows, odd and even) and each week's row reads the lessons that meet
     that week, so slöjd udda veckor does not open the day for a class whose
     even week has nothing before idrotten.
+
+    TERMINER, for the same reason: one row per week the lesson runs in that
+    the class's lessons and locks tell apart, each reading that week's own.
+    NOT IMPLIED (app/solver/weeks.py) — the autumn's slöjd does not open the
+    day in the spring — so every such week has its row and no two are joined.
 
     HARD (`assume` given) posts the OR under the assumption of the lesson's
     requirement and edge, in both model phases; a lesson with no possible
@@ -193,12 +197,14 @@ def add_subject_edges(
             for class_id in classes_of(lesson.pupil_key, classes, partners):
                 others = [other for other in members[class_id] if other is not lesson]
                 class_locks = member_locks.get(class_id, [])
-                alternating = (
-                    lesson.parity is not None
-                    or any(other.parity is not None for other in others)
-                    or any(lock.parity is not None for lock in class_locks)
-                )
-                for week in weeks_of(lesson.parity) if alternating else (None,):
+                # The weeks the class's day differs in, and of them the ones
+                # this lesson runs in: (None,) for a class of every week.
+                weeks = each_week([
+                    lesson.parity,
+                    *(other.parity for other in others),
+                    *(lock.parity for lock in class_locks),
+                ])
+                for week in (week for week in weeks if meet(lesson.parity, week)):
                     options: list[cp_model.IntVar] = []
                     for other in others:
                         if week is not None and not meet(other.parity, week):
@@ -236,7 +242,7 @@ class PlaceLesson:
 
     key: str
     decision: Any
-    parity: WeekParity | None
+    parity: Weeks | None
     pupil_key: UUID
     teachers: tuple[UUID, ...]
     #: Where the lesson can stand, by kind ("room", "building"): each place
@@ -250,7 +256,7 @@ class PlaceLock:
     """A locked lesson in a room, as the place limits see it."""
 
     day: int
-    parity: WeekParity | None
+    parity: Weeks | None
     pupil_keys: tuple[UUID, ...]
     teachers: tuple[UUID, ...]
     #: The place the lock stands in, by kind. A lock in no room stands nowhere:
@@ -365,11 +371,12 @@ def _bound_places(
     if len(every_place) <= allowed:
         return []
 
-    alternating = any(lesson.parity is not None for lesson in lessons) or any(
-        lock.parity is not None for lock in locks
-    )
     penalties: list[cp_model.LinearExpr] = []
-    for week in WEEK_PARTS if alternating else (None,):
+    # Implied (app/solver/weeks.py): a lesson fewer is no place more. One
+    # class's or teacher's lessons, so every week they tell apart has its row.
+    for week in each_week(
+        [*(lesson.parity for lesson in lessons), *(lock.parity for lock in locks)],
+    ):
         in_week = [
             lesson for lesson in lessons if week is None or meet(lesson.parity, week)
         ]
@@ -377,7 +384,7 @@ def _bound_places(
         used: dict[tuple[int, Hashable], cp_model.IntVar] = {}
 
         def place_used(day: int, place: Hashable, *, owner: UUID = owner,
-                       week: WeekParity | None = week,
+                       week: Weeks | None = week,
                        used: dict[tuple[int, Hashable], cp_model.IntVar] = used) -> cp_model.IntVar:
             literal = used.get((day, place))
             if literal is None:
@@ -413,7 +420,6 @@ def _bound_places(
     return penalties
 
 
-WEEK_PARTS: tuple[WeekParity, ...] = ("ODD_WEEKS", "EVEN_WEEKS")
 
 
 @dataclass(frozen=True)
@@ -425,7 +431,7 @@ class SharedLock:
     end: int
     #: Distinct pupils on the lock (FixedLesson.student_count).
     count: int
-    parity: WeekParity | None
+    parity: Weeks | None
 
 
 @dataclass(frozen=True)
@@ -442,7 +448,7 @@ class SharedRoom:
 def add_shared_capacity(
     model: cp_model.CpModel,
     *,
-    entries: list[tuple[cp_model.IntervalVar, int, WeekParity | None]],
+    entries: list[tuple[cp_model.IntervalVar, int, Weeks | None]],
     shared: SharedRoom,
     assume: Callable[[UUID], cp_model.IntVar] | None,
     name: str,
@@ -476,10 +482,11 @@ def add_shared_capacity(
             model.Add(capacity == shared.capacity).OnlyEnforceIf(assume(room_id))
         else:
             model.Add(capacity == shared.capacity)
-    alternating = any(parity is not None for _, _, parity in entries) or any(
-        lock.parity is not None for lock in shared.locks
-    )
-    for week in WEEK_PARTS if alternating else (None,):
+    # Implied (app/solver/weeks.py): a lesson fewer is fewer pupils in the room.
+    # One room's lessons, so every week they tell apart has its row.
+    for week in each_week(
+        [*(parity for _, _, parity in entries), *(lock.parity for lock in shared.locks)],
+    ):
         intervals: list[cp_model.IntervalVar] = []
         demands: list[int] = []
         for interval, demand, parity in entries:

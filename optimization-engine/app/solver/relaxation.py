@@ -103,12 +103,12 @@ from app.schemas.schedule import (
     OptimizeScheduleRequest,
     ScheduledLesson,
 )
-from app.solver.weeks import WEEKS, meet
+from app.solver.weeks import Weeks, each_week, meet, named, weeks_of
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from app.schemas.schedule import AnonymousRoom, WeekParity
+    from app.schemas.schedule import AnonymousRoom
 
 
 @dataclass(frozen=True)
@@ -356,9 +356,17 @@ def _teachers_on(
 
 
 def _week_lessons(
-    requirement: AnonymousRequirement | None, week: WeekParity,
+    requirement: AnonymousRequirement | None, week: Weeks | None,
 ) -> bool:
-    return requirement is not None and meet(requirement.recurrence, week)
+    return requirement is not None and meet(weeks_of(requirement), week)
+
+
+def _weeks_of(request: OptimizeScheduleRequest) -> tuple[Weeks | None, ...]:
+    """The weeks the request's lessons and locks tell apart: one, every week, for a school with none."""
+    return each_week([
+        *(weeks_of(requirement) for requirement in request.requirements),
+        *(weeks_of(fixed) for fixed in request.fixed_lessons),
+    ])
 
 
 def deviations_of(
@@ -410,8 +418,8 @@ def _cap_deviations(
     if not capped:
         return []
     found: list[ConflictDetail] = []
-    for week in WEEKS:
-        locked = flatten([fixed for fixed in request.fixed_lessons if meet(fixed.recurrence, week)])
+    for week in _weeks_of(request):
+        locked = flatten([fixed for fixed in request.fixed_lessons if meet(weeks_of(fixed), week)])
         taught: dict[tuple[UUID, int], int] = defaultdict(int)
         on_day: dict[tuple[UUID, int], list[UUID]] = defaultdict(list)
         for lesson in lessons:
@@ -443,6 +451,7 @@ def _cap_deviations(
                         "taught": generated + locked_minutes,
                         "over": over,
                         "needed": generated + locked_minutes,
+                        **named(week),
                     },
                     requirement_ids=list(dict.fromkeys(on_day[(teacher, day)])),
                     resource_ids=[rule.id],
@@ -468,7 +477,7 @@ def _work_day_deviations(
     if not request.teacher_day_limits:
         return []
     found: list[ConflictDetail] = []
-    for week in WEEKS:
+    for week in _weeks_of(request):
         days: dict[UUID, Counter[int]] = defaultdict(Counter)
         requirements_of: dict[tuple[UUID, int], list[UUID]] = defaultdict(list)
         for lesson in lessons:
@@ -506,6 +515,7 @@ def _work_day_deviations(
                     "taught": len(set(generated) | held),
                     "over": over,
                     "needed": len(set(generated) | held),
+                    **named(week),
                 },
                 requirement_ids=list(dict.fromkeys(
                     requirement
@@ -629,8 +639,9 @@ def _worst_week(
 ) -> list[ConflictDetail]:
     """One line per rule (and day), the week that breaks it by most.
 
-    A school without alternating lessons has the same week twice; one with
-    them has two, and a reader is told about the worse and not about both.
+    A school without alternating lessons has one week; one with them has
+    two, or one per period, and a reader is told about the worst and not
+    about each.
     """
     best: dict[tuple, ConflictDetail] = {}
     for detail in found:

@@ -102,18 +102,37 @@ a room type that fits there:
   sound but refused real weeks: two slöjdsalar with odd and even slöjd, and
   one ordinary lesson that fits a slöjdsal, made the slöjdsalar mixed —
   review of #221, M1.)
+
+Terminer: a period is a week too
+--------------------------------
+A lesson that runs in some periods of the year only (AnonymousRequirement.
+periods) shares a room with one of another period exactly as an odd lesson
+does with an even one, and the three cases above are read off the pool's
+parts (``week_parts``) rather than off "does it alternate":
+
+- one room is one NoOverlap per part, as before;
+- several rooms, **every lesson of the pool in exactly one part**: one
+  cumulative and one sweep per part. Two lessons in different parts never
+  meet — a week holding both would be a part holding both — so each part is
+  its own colouring. This is the case above with nothing but alternating
+  lessons, and it is also a pool of every-week lessons with a few of the
+  autumn only: one part, the autumn's, which holds them all;
+- anything else is MIXED and names its rooms.
+
+A pool with no period in it keeps the test it had (``mixes``), so its rows
+are the ones it had.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Hashable, Iterable
+from typing import TYPE_CHECKING, Callable, Hashable, Iterable, Sequence
 from uuid import UUID
 
 from ortools.sat.python import cp_model
 
-from app.solver.weeks import week_parts
+from app.solver.weeks import Weeks, week_parts, weeks_of
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.schemas.schedule import AnonymousConstraint, AnonymousRoom, FixedLesson
@@ -178,12 +197,14 @@ class RoomPlan:
     placements: list[tuple[str, cp_model.IntVar, int, cp_model.IntVar]] = field(
         default_factory=list,
     )
-    #: A/B-veckor: the classes whose pool holds alternating lessons and no
-    #: every-week one, on several rooms — one cumulative per week, so one
-    #: sweep per week — and the week of each alternating lesson, by key.
-    #: Empty for a payload without alternating lessons.
+    #: A/B-veckor and terminer: the classes of several rooms whose pool is
+    #: held one cumulative per part, so one sweep per part (the module
+    #: docstring), with the part each of their lessons is in, by class and
+    #: key; and the weeks of every lesson that does not run in all of them,
+    #: by key. Empty for a payload whose lessons all run every week.
     by_week: set[int] = field(default_factory=set)
-    parity: dict[str, str] = field(default_factory=dict)
+    part_of: dict[tuple[int, str], Weeks] = field(default_factory=dict)
+    parity: dict[str, Weeks] = field(default_factory=dict)
     #: A/B-veckor: the mixed classes (the module docstring), and the literal
     #: per lesson and room of one saying the lesson is in it, by lesson key —
     #: every mixed class's rooms the lesson may take, since a lesson without a
@@ -240,13 +261,14 @@ class RoomPlan:
                     assignment[key] = room_indices[0]
                 continue
             if class_index in self.by_week:
-                # No every-week lesson: each week is its own colouring, swept
-                # on its own against the week's own cumulative.
-                for week in sorted({self.parity[entry[2]] for entry in entries}):
+                # Every lesson in one part: each part is its own colouring,
+                # swept on its own against the part's own cumulative.
+                part_of = {entry[2]: self.part_of[(class_index, entry[2])] for entry in entries}
+                for week in sorted(set(part_of.values())):
                     self._sweep(
                         class_index,
                         room_indices,
-                        [entry for entry in entries if self.parity[entry[2]] == week],
+                        [entry for entry in entries if part_of[entry[2]] == week],
                         assignment,
                     )
                 continue
@@ -463,7 +485,7 @@ def add_room_allocation(
         plan.placements.append(
             (key, decision.start, decision.duration, decision.room_index),
         )
-        parity = getattr(requirement, "recurrence", None)
+        parity = weeks_of(requirement)
         if parity is not None:
             plan.parity[key] = parity
 
@@ -533,10 +555,12 @@ def add_room_allocation(
         elif parts[0][0] is None:
             # Every lesson every week: the cumulative it always was.
             model.AddCumulative(pool, [1] * len(pool), room_class.capacity)
-        elif all(entry[1] in plan.parity for entry in entries):
-            # Alternating lessons only: one colouring per week.
+        elif not mixes([plan.parity.get(key) for _, key in entries]):
+            # Every lesson in one part: one colouring per part.
             plan.by_week.add(room_class.index)
-            for _, part in parts:
+            for week, part in parts:
+                for _, key in part:
+                    plan.part_of[(room_class.index, key)] = week  # type: ignore[assignment]
                 model.AddCumulative(
                     [interval for interval, _ in part], [1] * len(part), room_class.capacity,
                 )
@@ -550,6 +574,26 @@ def add_room_allocation(
                 )
 
     return plan
+
+
+def mixes(weeks: Sequence[Weeks | None]) -> bool:
+    """Whether a pool of lessons running in these weeks, on several rooms, must name them.
+
+    Not when they all run every week (one cumulative), and not when every
+    lesson is in exactly one part of the pool (one cumulative per part): see
+    the module docstring. A POOL WITHOUT PERIODS IS READ AS IT ALWAYS WAS —
+    mixed as soon as an every-week lesson stands beside an alternating one —
+    although the wider test is exact for it too and would name fewer rooms
+    (every-week lessons beside odd ones only are one part). That keeps the
+    model of a school with odd and even weeks and no periods the one it was,
+    byte for byte; naming a room is exact either way.
+    """
+    if all(runs is None for runs in weeks):
+        return False
+    if all(runs is None or runs.periods == 1 for runs in weeks):
+        return any(runs is None for runs in weeks)
+    parts = week_parts(range(len(weeks)), weeks.__getitem__)
+    return sum(len(part) for _, part in parts) != len(weeks)
 
 
 def _name_the_rooms(

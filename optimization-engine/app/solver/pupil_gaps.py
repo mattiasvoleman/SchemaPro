@@ -92,7 +92,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from app.solver.weeks import WEEKS, alternates, meet
+from app.solver.weeks import Weeks, alternates, each_week, half_weeks, meet, share, weeks_of, year_of
 from app.solver.weeks import tag as week_tag
 
 if TYPE_CHECKING:
@@ -108,7 +108,6 @@ if TYPE_CHECKING:
         OptimizeScheduleRequest,
         PupilGapCohort,
         ScheduledLesson,
-        WeekParity,
     )
 
 #: A hole shorter than this is the changeover between two lessons, a rast and
@@ -306,7 +305,7 @@ class CohortWeek:
     """One cohort's lessons by weekday, in minutes, margins included, each with its weeks."""
 
     cohort: PupilGapCohort
-    by_day: dict[int, list[tuple[int, int, WeekParity | None]]] = field(
+    by_day: dict[int, list[tuple[int, int, Weeks | None]]] = field(
         default_factory=lambda: defaultdict(list),
     )
 
@@ -329,7 +328,7 @@ def cohort_weeks(
         for margin in gaps.fixed_margins
     }
     fixed_by_id = {fixed.id: fixed for fixed in request.fixed_lessons}
-    placed_by_key: dict[UUID, list[tuple[int, int, int, WeekParity | None]]] = defaultdict(list)
+    placed_by_key: dict[UUID, list[tuple[int, int, int, Weeks | None]]] = defaultdict(list)
     for lesson in lessons:
         requirement = by_requirement.get(lesson.requirement_id)
         if requirement is None:
@@ -339,7 +338,7 @@ def cohort_weeks(
             lesson.day_of_week,
             _minutes(lesson.start_time) - requirement.minutes_before,
             _minutes(lesson.end_time) + requirement.minutes_after,
-            requirement.recurrence,
+            weeks_of(requirement),
         ))
     weeks: list[CohortWeek] = []
     for cohort in gaps.cohorts:
@@ -355,7 +354,7 @@ def cohort_weeks(
             week.by_day[fixed.day_of_week].append((
                 _minutes(fixed.start_time) - margin.before,
                 _minutes(fixed.end_time) + margin.after,
-                fixed.recurrence,
+                weeks_of(fixed),
             ))
         weeks.append(week)
     return weeks
@@ -374,26 +373,32 @@ def pupil_idle_minutes(
     halves here and exact. None when the request carried no pupilGaps — the
     school has not turned the rule on, and its response says nothing it did
     not say before.
+
+    TERMINER: a cohort with a dated lesson or lock has a week per period it
+    tells apart, and an ordinary week is each of them by its share of the
+    year (weeks.share over the request's periodWeeks) — a hole that exists in
+    the autumn only is the autumn's part of a hole.
     """
     if request.pupil_gaps is None:
         return None
     spans = group_spans(request)
     lunch = lunch_window(request)
+    year = year_of(request)
     halves = 0
     for week in cohort_weeks(request, lessons):
-        both = alternates(
-            parity for intervals in week.by_day.values() for _, _, parity in intervals
+        parts = each_week(
+            runs for intervals in week.by_day.values() for _, _, runs in intervals
         )
         for day, intervals in week.by_day.items():
             closures = closed_minutes(request, week.cohort.group_ids, day, spans)
-            for parity in WEEKS if both else (None,):
+            for part in parts:
                 idle = day_idle_minutes(
-                    [(start, end) for start, end, runs in intervals if meet(runs, parity)],
+                    [(start, end) for start, end, runs in intervals if meet(runs, part)],
                     closures,
                     lunch,
                 )
-                halves += week.cohort.pupils * idle * (1 if both else 2)
-    return halves / 2
+                halves += week.cohort.pupils * idle * share(part, year)
+    return halves / share(None, year)
 
 
 # ---------------------------------------------------------------------------
@@ -498,9 +503,9 @@ def _common(first: list[tuple[int, int]], second: list[tuple[int, int]]) -> list
     ]
 
 
-def _runs(decision: object) -> WeekParity | None:
-    """A/B-veckor: the weeks a lesson runs in, None for every week (scheduler_solver._parity)."""
-    return decision.lesson.requirement.recurrence  # type: ignore[attr-defined]
+def _runs(decision: object) -> Weeks | None:
+    """The weeks a lesson runs in, None for every week (scheduler_solver._parity)."""
+    return weeks_of(decision.lesson.requirement)  # type: ignore[attr-defined]
 
 
 def _key_day(
@@ -508,7 +513,7 @@ def _key_day(
     by_key: dict[UUID, list[object]],
     key: UUID,
     day: int,
-    week: WeekParity | None = None,
+    week: Weeks | None = None,
 ) -> _KeyDay | None:
     """A pupil key's day in one week, built once and shared by every cohort sitting it.
 
@@ -670,6 +675,12 @@ def build_pupil_gap_objective(
     twice as far (week_factor), so every term weighs an ordinary week — half
     of each — in integers. A school without alternating lessons builds
     exactly what it built before.
+
+    TERMINER. A cohort with a dated lesson or lock has a week per period it
+    tells apart, at most weeks.PART_LIMIT of them (past that two are measured
+    as one: a coarser measure, and this is no rule). Each week's term weighs
+    its share of the year, and every other part of the objective the whole of
+    it (week_factor), so every term still weighs an ordinary week.
     """
     gaps = request.pupil_gaps
     if gaps is None or built.weight <= 0:
@@ -683,6 +694,7 @@ def build_pupil_gap_objective(
     fixed_by_id = {fixed.id: fixed for fixed in request.fixed_lessons}
     spans = group_spans(request)
     every_week = week_factor(request)
+    year, unit = year_of(request), half_weeks(request)
 
     terms: list[cp_model.LinearExpr] = []
     for index, cohort in enumerate(gaps.cohorts):
@@ -697,23 +709,27 @@ def build_pupil_gap_objective(
             if frozenset((keys[i], keys[j])) not in paired
         ]
         locks: dict[
-            int, list[tuple[tuple[int, int], frozenset[UUID], WeekParity | None]]
+            int, list[tuple[tuple[int, int], frozenset[UUID], Weeks | None]]
         ] = defaultdict(list)
         for fixed_id in dict.fromkeys(cohort.fixed_lesson_ids):
             fixed = fixed_by_id.get(fixed_id)
             window = built.fixed_window(fixed) if fixed is not None else None
             if window is not None and fixed is not None:
                 locks[window[0] // spd].append(
-                    (window, _held_off(keys, built.lock_keys(fixed), paired), fixed.recurrence),
+                    (window, _held_off(keys, built.lock_keys(fixed), paired), weeks_of(fixed)),
                 )
-        weekly = alternates(
-            _runs(decision) for key in keys for decision in by_key[key]
-        ) or alternates(runs for rows in locks.values() for _, _, runs in rows)
+        cohort_weeks_ = each_week(
+            [
+                *(_runs(decision) for key in keys for decision in by_key[key]),
+                *(runs for rows in locks.values() for _, _, runs in rows),
+            ],
+            capped=True,
+        )
 
         for day, week in (
             (day, week)
             for day in range(len(built.weekdays))
-            for week in (WEEKS if weekly else (None,))
+            for week in cohort_weeks_
         ):
             members = (
                 by_key if week is None
@@ -776,8 +792,9 @@ def build_pupil_gap_objective(
             idle = model.NewIntVar(0, spd * (1 + len(met)), f"{tag}_idle")
             model.Add(idle >= last - first - sum(busy) - sum(credit))
             # One week of two is half an ordinary week; a day of every week,
-            # in a school whose weeks differ, is both.
-            weeks = every_week if week is None else 1
+            # in a school whose weeks differ, is both. A period's week is its
+            # share of the year.
+            weeks = every_week if week is None else share(week, year) // unit
             terms.append(built.weight * cohort.pupils * weeks * idle)
     return terms
 
@@ -787,10 +804,12 @@ def week_factor(request: OptimizeScheduleRequest) -> int:
 
     The term counts such a school's alternating days once per week, so every
     other part of the objective counts twice to weigh the same ordinary week.
+
+    TERMINER: the whole year in the unit a week's share is counted in
+    (weeks.share, weeks.half_weeks) — the sum of periodWeeks, twice that where
+    a parity is sent beside the periods.
     """
-    return 2 if alternates(
-        requirement.recurrence for requirement in request.requirements
-    ) or alternates(fixed.recurrence for fixed in request.fixed_lessons) else 1
+    return share(None, year_of(request)) // half_weeks(request)
 
 
 def pupil_gap_scale(request: OptimizeScheduleRequest) -> int:
@@ -980,7 +999,13 @@ def estimate_variables(
     paired = {frozenset(pair) for pair in request.group_conflicts}
     fixed_by_id = {fixed.id: fixed for fixed in request.fixed_lessons}
     days = len(grid.weekdays)
-    weeks = WEEKS if week_factor(request) == 2 else (None,)
+    weeks = each_week(
+        [
+            *(weeks_of(requirement) for requirement in request.requirements),
+            *(weeks_of(fixed) for fixed in request.fixed_lessons),
+        ],
+        capped=True,
+    )
 
     loose_pairs: set[frozenset[UUID]] = set()
     key_windows: set[tuple[UUID, int, int]] = set()
@@ -995,12 +1020,12 @@ def estimate_variables(
             if (pair := frozenset((keys[i], keys[j]))) not in paired
         ]
         loose_pairs.update(pairs)
-        locks: dict[int, list[tuple[tuple[int, int], WeekParity | None]]] = defaultdict(list)
+        locks: dict[int, list[tuple[tuple[int, int], Weeks | None]]] = defaultdict(list)
         for fixed_id in dict.fromkeys(cohort.fixed_lesson_ids):
             fixed = fixed_by_id.get(fixed_id)
             window = fixed_window(fixed) if fixed is not None else None
             if window is not None and fixed is not None:
-                locks[window[0] // grid.slots_per_day].append((window, fixed.recurrence))
+                locks[window[0] // grid.slots_per_day].append((window, weeks_of(fixed)))
         for day, week in ((day, week) for day in range(days) for week in weeks):
             locked = [window for window, runs in locks.get(day, ()) if meet(runs, week)]
             for window in _merged(locked + _closure_slots(grid, request, cohort, day, spans)):

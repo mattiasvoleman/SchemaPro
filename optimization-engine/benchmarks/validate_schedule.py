@@ -73,6 +73,13 @@ Checks, all derived from the request:
                       and a problem says the week it was found in. Slöjd
                       udda veckor and hemkunskap jämna veckor in one hour of
                       one class, teacher or room are no clash. See _weeks
+    periods           Terminer: the same for a request whose requirements or
+                      locks name the periods of the year they run in
+                      (`periods`) — once per period, and per parity within it
+                      where the request has one, with what runs there. The
+                      autumn's hemkunskap and the spring's in one hour of one
+                      teacher and one room are no clash, and each period's
+                      lessons are held to every rule on their own
 
 Use as a library::
 
@@ -666,27 +673,49 @@ def _weeks(request):
     shares no code with: a requirement or a lock with `recurrence` ODD_WEEKS
     runs in the odd week, EVEN_WEEKS in the even one, and one without it in
     both. Each week's request holds what runs in it, made every-week.
+
+    Terminer: an entry with `periods` runs in the periods its mask marks and
+    one without in every one, so a request with masks is one week per period
+    — and per parity inside it, where the request has a parity. A period
+    holding exactly the entries of an earlier one is the same week and is
+    checked once.
     """
-    alternating = any(r.recurrence for r in request.requirements) or any(
-        fixed.recurrence for fixed in request.fixed_lessons
-    )
-    if not alternating:
+    entries = [*request.requirements, *request.fixed_lessons]
+    alternating = any(entry.recurrence for entry in entries)
+    masks = [entry.periods for entry in entries if entry.periods is not None]
+    if not alternating and not masks:
         return None
+    parities = (
+        (("ODD_WEEKS", "udda veckor"), ("EVEN_WEEKS", "jämna veckor"))
+        if alternating
+        else ((None, ""),)
+    )
+    periods = range(len(masks[0])) if masks else (None,)
     weeks = []
-    for week, label in (("ODD_WEEKS", "udda veckor"), ("EVEN_WEEKS", "jämna veckor")):
-        requirements = [
-            r.model_copy(update={"recurrence": None})
-            for r in request.requirements
-            if r.recurrence in (None, week)
-        ]
-        fixed_lessons = [
-            fixed.model_copy(update={"recurrence": None})
-            for fixed in request.fixed_lessons
-            if fixed.recurrence in (None, week)
-        ]
-        weeks.append((label, request.model_copy(update={
-            "requirements": requirements, "fixed_lessons": fixed_lessons,
-        })))
+    seen = set()
+    for period in periods:
+        for week, parity_label in parities:
+            def runs(entry, period=period, week=week) -> bool:
+                if week is not None and entry.recurrence not in (None, week):
+                    return False
+                return period is None or entry.periods is None or entry.periods[period]
+
+            every_week = {"recurrence": None, "periods": None}
+            requirements = [r.model_copy(update=every_week) for r in request.requirements if runs(r)]
+            fixed_lessons = [f.model_copy(update=every_week) for f in request.fixed_lessons if runs(f)]
+            key = (tuple(r.id for r in requirements), tuple(f.id for f in fixed_lessons))
+            if period is not None and key in seen:
+                continue
+            seen.add(key)
+            label = ", ".join(
+                part for part in (
+                    f"period {period + 1}" if period is not None else "", parity_label,
+                ) if part
+            )
+            weeks.append((label, request.model_copy(update={
+                "requirements": requirements, "fixed_lessons": fixed_lessons,
+                "period_weeks": None,
+            })))
     return weeks
 
 

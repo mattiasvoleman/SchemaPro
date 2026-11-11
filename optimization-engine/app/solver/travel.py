@@ -390,19 +390,18 @@ def _by_week(family: Family) -> list[Family]:
     whose lessons all run in the other week as well says nothing that week's
     rows do not. A part with nobody leaving or nobody arriving walks nowhere.
     """
-    from app.solver.weeks import WEEKS, meet
+    from app.solver.weeks import meet, week_parts, weeks_of
 
-    parities = {
-        decision.lesson.requirement.recurrence
-        for decision in (*family.leaving, *family.arriving)
-    }
-    weeks = [week for week in WEEKS if week in parities]
-    if not weeks:
+    def runs(decision: LessonDecision) -> object:
+        return weeks_of(decision.lesson.requirement)
+
+    weeks = [week for week, _ in week_parts((*family.leaving, *family.arriving), runs)]
+    if weeks[0] is None:
         return [family]
     parts = []
     for week in weeks:
-        leaving = tuple(d for d in family.leaving if meet(d.lesson.requirement.recurrence, week))
-        arriving = tuple(d for d in family.arriving if meet(d.lesson.requirement.recurrence, week))
+        leaving = tuple(d for d in family.leaving if meet(runs(d), week))
+        arriving = tuple(d for d in family.arriving if meet(runs(d), week))
         if leaving and arriving:
             parts.append(Family(family.party, family.resource_ids, leaving, arriving))
     return parts
