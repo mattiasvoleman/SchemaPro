@@ -1662,6 +1662,7 @@
     "statusTIMEOUT": "The solver ran out of time",
     "lessonsGenerated": "{count} master lessons generated",
     "infeasibleHint": "The constraints cannot all be met at once. The summary and the conflicts below say what needs to change.",
+    "countedInPeriod": "Counted for the weeks from {from} to {to}{more, select, yes { and the other weeks with the same entries} other {}}{parity, select, ODD_WEEKS { (odd weeks)} EVEN_WEEKS { (even weeks)} other {}}, which is when these run together.",
     "timeoutHint": "The solver did not find a schedule within its time budget. This does not mean your requirements are impossible — try running it again, or ask your administrator to raise the solver time limit. Relaxing tight availability windows also makes a schedule easier to find.",
     "bestEffortOffer": "The school has Best possible timetable on. Under Timetable proposals you can lay a timetable that breaks as few of the school's own rules as possible and see which gave way.",
     "bestEffortOfferLink": "Compute the best possible",

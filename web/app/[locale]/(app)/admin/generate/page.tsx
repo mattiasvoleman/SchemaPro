@@ -53,6 +53,7 @@ import {
   PlanningYearPicker,
   ProjectedRostersBanner,
 } from "@/components/schedule/planning-year";
+import { PeriodNote } from "@/components/schedule/period-note";
 import { CandidatesSection, candidatesHref } from "./candidates-section";
 import { useScheduleCandidates } from "./use-schedule-candidates";
 
@@ -956,6 +957,8 @@ export default function GeneratePage() {
                             params: job.errorParams,
                           })}
                         </p>
+                        {/* Terminer: where in the läsår a week was counted, when it was one part of it. */}
+                        <PeriodNote params={job.errorParams} />
                         {errorNames.length > 0 ? <p className="font-medium">{errorNames.join(", ")}</p> : null}
                       </>
                     )
@@ -1031,6 +1034,7 @@ export default function GeneratePage() {
                       params: job.conflictSummaryParams,
                     })}
                   </p>
+                  <PeriodNote params={job.conflictSummaryParams} />
                   {summaryNames.length > 0 ? <p className="text-sm font-medium">{summaryNames.join(", ")}</p> : null}
                 </>
               ) : null}

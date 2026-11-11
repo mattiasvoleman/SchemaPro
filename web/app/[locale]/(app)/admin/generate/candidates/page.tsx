@@ -58,6 +58,8 @@ import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useScheduleCandidates, useStartCandidates } from "../use-schedule-candidates";
 import { ApplyDialog } from "./apply-dialog";
+import { PeriodNote } from "@/components/schedule/period-note";
+import { periodDatesOf } from "@/lib/period-note";
 import { ComparisonTable, type IdleState } from "./comparison-table";
 import { DeviationList } from "./deviation-list";
 import { MovedLessons } from "./moved-lessons";
@@ -564,6 +566,10 @@ export default function CandidatesPage() {
                 {first?.variant === BEST_EFFORT_VARIANT ? t("failed.conflictsBestEffort") : t("failed.conflicts")}
               </h2>
               {summary !== "" ? <p>{summary}</p> : null}
+              {/* Terminer: where in the läsår the week was counted, once, from whichever sentence says it. */}
+              <PeriodNote
+                params={first?.errorParams ?? conflicts.find((conflict) => periodDatesOf(conflict.params))?.params}
+              />
               {conflicts.length > 0 ? (
                 <ul className="space-y-2">
                   {conflicts.map((conflict, index) => (
