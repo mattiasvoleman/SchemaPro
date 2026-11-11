@@ -8,9 +8,11 @@ import { hasShares, lessonTeachersOf, teacherIdsOf, type LessonShare } from '../
  *
  * "Dela terminsvis i halvklass" makes two blocks of a class's slöjd: the
  * autumn's (7A:1 textilslöjd beside 7A:2 trä- och metallslöjd) and the
- * spring's (the swap), and names the autumn's on the spring's. The engine has
- * no weeks: sent both, it gave each its own times and held both all year, so
- * 7A had slöjd twice a week and one of the two stood empty each term.
+ * spring's (the swap), and names the autumn's on the spring's. Sent both, the
+ * engine gives each block times of its own: held all year before it knew
+ * terms, so that 7A had slöjd twice a week and one of the two stood empty
+ * each term, and each in its own term since (year-periods.ts) — two
+ * timetables where the school asked for one. The link is how it says so.
  *
  * SO THE ENGINE IS SENT ONLY THE NAMED BLOCK — the leader — and each post of
  * the other — the follower — is written at the times its leader post IN THE
@@ -45,11 +47,12 @@ import { hasShares, lessonTeachersOf, teacherIdsOf, type LessonShare } from '../
  *    More than the leader's posts have room for is refused
  *    (BLOCK_SAME_TIMES_TEACHERS); two of the follower's posts with one
  *    teacher are refused as the engine refuses a block's
- *    (BLOCK_MEMBERS_SHARE_TEACHER). THE COST, STATED: the engine has no
- *    weeks, so such a teacher is held at those times all year, and Lärarens
- *    dag (the daily cap, deltid in days, a free-day wish) counts the lessons
- *    in the autumn too. For a part-timer that can make the week harder to
- *    lay, or impossible; the manual says so (4.2).
+ *    (BLOCK_MEMBERS_SHARE_TEACHER). THE COST, STATED: a leader post is
+ *    held in every week of its link — its own term and the follower's
+ *    (year-periods.ts) — so such a teacher is held at those times in the
+ *    autumn too, and Lärarens dag (the daily cap, deltid in days, a free-day
+ *    wish) counts the lessons there. For a part-timer that can make the week
+ *    harder to lay, or impossible; the manual says so (4.2).
  *  - Its ROOM NEEDS, buffers and ämnesfördelning are folded into the leader
  *    post's by the proxy: the larger half, the longer buffer on each group, the
  *    stricter rule (see fetchAndAnonymize).

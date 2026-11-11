@@ -150,6 +150,7 @@ const PAYLOAD_FIELDS_ALL = [
   'pupilGaps',
   'placementRules',
   'placements',
+  'periodWeeks',
 ].sort();
 /** The generator's room: the engine's `_field_names(AnonymousRoom)` with the walk on. */
 const ROOM_FIELDS = ['capacity', 'id', 'maxGradeLevel', 'minGradeLevel', 'type'];
@@ -238,11 +239,24 @@ const REQUIREMENT_FIELDS_REPLACED = [...REQUIREMENT_FIELDS_SHARED, 'pupilGroupId
  */
 const REQUIREMENT_FIELDS_ALTERNATING = [...REQUIREMENT_FIELDS_REPLACED, 'recurrence'].sort();
 
+/**
+ * Terminer: a post that some period of the läsår leaves out carries the
+ * periods it runs in; one of every week of the year never does.
+ * optimization-engine/tests/test_optimize.py's
+ * `_field_names(AnonymousRequirement)` must equal THIS set, and its
+ * `_field_names(FixedLesson)` FIXED_LESSON_FIELDS_DATED below. THE ENGINE
+ * HAD THE FIELD FIRST: its models refuse a key they have not heard of, so it
+ * was deployed with `periods` before this side sent one.
+ */
+const REQUIREMENT_FIELDS_DATED = [...REQUIREMENT_FIELDS_ALTERNATING, 'periods'].sort();
+
 /** A locked lesson as the engine is told it; `pupilGroupIds` only beside a replacing group. */
 const FIXED_LESSON_FIELDS = ['coTeacherId', 'dayOfWeek', 'endTime', 'extraGroupIds', 'id', 'roomId', 'startTime', 'studentGroupId', 'teacherId'];
 const FIXED_LESSON_FIELDS_REPLACED = [...FIXED_LESSON_FIELDS, 'pupilGroupIds'].sort();
 /** A/B-veckor: `recurrence` only on a lock of odd or even weeks only. */
 const FIXED_LESSON_FIELDS_ALTERNATING = [...FIXED_LESSON_FIELDS_REPLACED, 'recurrence'].sort();
+/** Terminer: `periods` only on a lock that some period of the läsår leaves out. */
+const FIXED_LESSON_FIELDS_DATED = [...FIXED_LESSON_FIELDS_ALTERNATING, 'periods'].sort();
 /** Placeringsregler: `studentCount` only on a lock in a room sent shareable. */
 const FIXED_LESSON_FIELDS_COUNTED = [...FIXED_LESSON_FIELDS, 'studentCount'].sort();
 
@@ -1417,22 +1431,116 @@ describe('AI engine wire contract', () => {
     expect(Object.keys(requirements[0]!).sort()).toEqual(REQUIREMENT_FIELDS);
   });
 
-  it('names the engine’s whole requirement set, the shared post’s, the replaced lesson’s and the parity’s keys included', () => {
-    expect(REQUIREMENT_FIELDS_ALTERNATING).toEqual(
+  it('names the engine’s whole requirement set, the shared post’s, the replaced lesson’s, the parity’s and the periods’ keys included', () => {
+    expect(REQUIREMENT_FIELDS_DATED).toEqual(
       [
         'blockId', 'coTeacherId', 'id', 'lessonLengths', 'lessonTeacherIds', 'lessonsPerWeek', 'lockedDays',
         'maxGradeLevel', 'maxLessonsPerDay', 'minDaysBetween', 'minGradeLevel', 'minutesAfter', 'minutesBefore',
-        'minutesPerLesson', 'pupilGroupId', 'recurrence', 'requiredRoomType', 'studentGroupId', 'studentGroupSize',
-        'subjectId', 'teacherId',
+        'minutesPerLesson', 'periods', 'pupilGroupId', 'recurrence', 'requiredRoomType', 'studentGroupId',
+        'studentGroupSize', 'subjectId', 'teacherId',
       ],
     );
   });
 
-  it('names the engine’s whole locked-lesson set, the replaced lesson’s and the parity’s keys included', () => {
-    expect(FIXED_LESSON_FIELDS_ALTERNATING).toEqual([
-      'coTeacherId', 'dayOfWeek', 'endTime', 'extraGroupIds', 'id', 'pupilGroupIds', 'recurrence', 'roomId',
+  it('names the engine’s whole locked-lesson set, the replaced lesson’s, the parity’s and the periods’ keys included', () => {
+    // `studentCount` is the one key more, sent only in a shared room (FIXED_LESSON_FIELDS_COUNTED).
+    expect(FIXED_LESSON_FIELDS_DATED).toEqual([
+      'coTeacherId', 'dayOfWeek', 'endTime', 'extraGroupIds', 'id', 'periods', 'pupilGroupIds', 'recurrence', 'roomId',
       'startTime', 'studentGroupId', 'teacherId',
     ]);
+  });
+
+  describe('terminer: the periods of the läsår a post and a lock run in', () => {
+    const lock = (id: string, startDate: Date | null, endDate: Date | null) => ({
+      id,
+      subjectId: 's9',
+      studentGroupId: 'g1',
+      teacherId: 't1',
+      coTeacherId: null,
+      roomId: null,
+      dayOfWeek: 2,
+      startTime: new Date('1970-01-01T08:00:00.000Z'),
+      endTime: new Date('1970-01-01T09:00:00.000Z'),
+      recurrence: 'ALL_WEEKS',
+      startDate,
+      endDate,
+      extraGroups: [],
+      participants: [],
+    });
+    const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
+    const year = (tx: ReturnType<typeof createTxMock>) =>
+      tx['academicYear']!['findUnique']!.mockResolvedValue({
+        startDate: day('2026-08-17'),
+        endDate: day('2027-06-11'),
+      });
+
+    it('sends a dated post and a dated lock their periods, how long each is, and nothing more', async () => {
+      // The post until 18 December; one lock from 11 January, one all year.
+      const payload = await buildPayload(
+        { recurrence: 'ALL_WEEKS', startDate: null, endDate: day('2026-12-18') },
+        [lock('ml-spring', day('2027-01-11'), null), lock('ml-year', null, null)],
+        [],
+        year,
+      );
+      const reads = lastTx['academicYear']!['findUnique']!.mock.calls as [{ select?: Record<string, unknown> }][];
+      expect(reads.map(([read]) => Object.keys(read.select ?? {}).sort().join(','))).toContain('endDate,startDate');
+      expect(Object.keys(payload).sort()).toEqual([...PAYLOAD_FIELDS, 'periodWeeks'].sort());
+      // The autumn (18 weeks), the three weeks between the terms, the spring (22).
+      expect(payload['periodWeeks']).toEqual([18, 3, 22]);
+      const requirements = payload['requirements'] as Array<Record<string, unknown>>;
+      expect(Object.keys(requirements[0]!).sort()).toEqual([...REQUIREMENT_FIELDS, 'periods'].sort());
+      expect(requirements[0]!['periods']).toEqual([true, false, false]);
+      const fixed = payload['fixedLessons'] as Array<Record<string, unknown>>;
+      expect(fixed.map((lesson) => lesson['periods'])).toEqual([[false, false, true], undefined]);
+      expect(Object.keys(fixed[0]!).sort()).toEqual([...FIXED_LESSON_FIELDS, 'periods'].sort());
+      expect(Object.keys(fixed[1]!).sort()).toEqual(FIXED_LESSON_FIELDS);
+      // And the lessons the run writes are the post's own dates, as they always were.
+      const written = (
+        lastTx['masterLesson']!['createMany']!.mock.calls as [{ data: { startDate: Date | null; endDate: Date | null }[] }][]
+      ).flatMap(([call]) => call.data);
+      expect(written.map((lesson) => [lesson.startDate, lesson.endDate])).toEqual([[null, day('2026-12-18')]]);
+    });
+
+    it('sends a school that dates nothing the payload it always sent, and reads no läsår for it', async () => {
+      const payload = await buildPayload({ recurrence: 'ALL_WEEKS', startDate: null, endDate: null }, [
+        lock('ml-year', null, null),
+      ]);
+      expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS);
+      expect(Object.keys((payload['requirements'] as Array<Record<string, unknown>>)[0]!).sort()).toEqual(
+        REQUIREMENT_FIELDS,
+      );
+      expect(Object.keys((payload['fixedLessons'] as Array<Record<string, unknown>>)[0]!).sort()).toEqual(
+        FIXED_LESSON_FIELDS,
+      );
+      // The läsår is read for other things (its numbering, its school); never for its weeks.
+      const reads = lastTx['academicYear']!['findUnique']!.mock.calls as [{ select?: Record<string, unknown> }][];
+      expect(reads.map(([read]) => Object.keys(read.select ?? {}).sort().join(','))).not.toContain('endDate,startDate');
+    });
+
+    it('sends nothing for dates that cut no week of the läsår apart', async () => {
+      // The läsår's own first and last day, written out: every week all the same.
+      const payload = await buildPayload(
+        { recurrence: 'ALL_WEEKS', startDate: day('2026-08-17'), endDate: day('2027-06-11') },
+        [],
+        [],
+        year,
+      );
+      expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS);
+      expect((payload['requirements'] as Array<Record<string, unknown>>)[0]!['periods']).toBeUndefined();
+    });
+
+    it('keeps the parity beside the periods', async () => {
+      const payload = await buildPayload(
+        { recurrence: 'ODD_WEEKS', startDate: null, endDate: day('2026-12-18') },
+        [lock('ml-spring', day('2027-01-11'), null)],
+        [],
+        year,
+      );
+      const requirement = (payload['requirements'] as Array<Record<string, unknown>>)[0]!;
+      expect(Object.keys(requirement).sort()).toEqual([...REQUIREMENT_FIELDS, 'periods', 'recurrence'].sort());
+      expect(requirement['recurrence']).toBe('ODD_WEEKS');
+      expect(requirement['periods']).toEqual([true, false, false]);
+    });
   });
 
   it('A/B-veckor: sends a post’s and a lock’s parity, and nothing for every week', async () => {

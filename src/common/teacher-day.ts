@@ -48,10 +48,12 @@
  * week and another every even week on the same Monday hour are one Monday
  * hour in any week a school has; a Monday lesson that ends on a Tuesday and
  * a Friday lesson that starts on the Wednesday after are both taught in
- * that one week, on two days, though no date has both. The engine has no
- * weeks for the lessons it places and reads each as taught every week, the
- * stricter reading, which is the safe direction for a generator and the
- * noisy one for a warning; the lessons it plans around it is told week by
+ * that one week, on two days, though no date has both. The engine counts a
+ * lesson it places in the weeks it runs — its parity, and the periods its
+ * dates come to — and holds every such week against every set of locked
+ * weekdays it is sent, the stricter reading, which is the safe direction for
+ * a generator and the noisy one for a warning; the lessons it plans around
+ * it is told week by
  * week, as the weekdays they hold together (lockedWeekdaySets), because the
  * lenient reading of those — every weekday any of them holds taught in
  * every week — let it give a part-timer's odd weeks the even weeks' day.

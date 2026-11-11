@@ -2334,12 +2334,12 @@ model TeachingRequirement {
   /// actually runs, so 2 lessons a week over a spring-only window is two a week
   /// that spring — not two averaged across the year.
   ///
-  /// The engine has no concept of weeks (optimization-proxy.service.ts), so it
-  /// still packs a windowed requirement as if it ran all year: the window is
-  /// stamped on the resulting lessons afterwards. That over-provisions — two
-  /// half-year subjects get separate slots where they could have shared one —
-  /// which costs packing room and not correctness, and is visible on the
-  /// timetable rather than hidden.
+  /// The engine has no dates, so the gateway tells it what the window comes
+  /// to: the periods of the läsår the requirement runs in, beside its parity
+  /// (src/optimization/year-periods.ts). Two half-year subjects that never
+  /// share a week may then share a slot, a teacher and a room, and nothing
+  /// counts them in one week. The window is stamped on the resulting lessons
+  /// as it always was.
   recurrence LessonRecurrence @default(ALL_WEEKS)
   /// First date the requirement is read; null means "from the start of the
   /// year". With endDate this expresses a subject read for one term only.

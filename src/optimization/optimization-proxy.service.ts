@@ -70,6 +70,14 @@ import {
   replacingGroupsOfNamed,
 } from '../common/replacing-groups';
 import { lockedWeekdaySets, type YearSpan } from '../common/teacher-day';
+import {
+  periodSentence,
+  withPeriodDates,
+  yearPeriodsOf,
+  type HeldWindow,
+  type PeriodStretch,
+  type YearPeriods,
+} from './year-periods';
 import { computeScheduledCoverage, type ScheduledLessonInput } from '../common/timplan-scheduled';
 import type { PlannedGroup, PlannedRequirement, PlannedSubject } from '../common/timplan-planned';
 import type { ClosedRange, YearBounds } from '../staffing/teaching-weeks';
@@ -271,6 +279,14 @@ export interface AnonMaps {
   /** Real group id -> the school's own name, the last step out of id space. */
   nameById: Map<string, string>;
   /**
+   * Terminer: each period of the läsår the payload was cut into, as stretches
+   * of days (year-periods.ts). A refusal counted in one period names it by
+   * its index, which is all the engine has; this is what turns the index into
+   * dates a school can read (withPeriodDates). Absent for a payload without
+   * periods, whose refusals name none.
+   */
+  periods?: PeriodStretch[][];
+  /**
    * Master lessons, for the room optimisation: its payload names placed
    * lessons rather than requirements, and a refusal that names one should come
    * back naming the row the school can find.
@@ -332,6 +348,16 @@ export interface RegenerationDemand {
    * solver ran — is answering another request.
    */
   shareKey?: string;
+  /**
+   * Terminer: the row's weeks as the fetch read them (weeksKeyOf) — its parity
+   * and its dates, which are what the engine was told it runs in (recurrence,
+   * periods) and what its lessons are stamped with when written. Present only
+   * on a row that does not run every week of the läsår. A write whose row
+   * says otherwise — a post moved to another term while the solver ran, or
+   * dated at all — would lay the spring's lessons on hours the answer held
+   * free in the autumn only, and is answering another request.
+   */
+  weeksKey?: string;
 }
 
 /** A placed lesson in real ids: what a candidate stores and an apply writes. */
@@ -413,6 +439,22 @@ export function shareKeyOf(shares: readonly LessonShare[] | undefined): string {
   return canonicalShares(shares ?? [])
     .map((share) => `${share.teacherId ?? '-'}:${share.lessons}x${share.minutes}`)
     .join(',');
+}
+
+/**
+ * A row's weeks as one string, its parity and its dates; '' for a row of
+ * every week of the läsår, as shareKeyOf is for a row nobody shares. What a
+ * write compares with its demand's.
+ */
+export function weeksKeyOf(row: {
+  recurrence?: LessonRecurrence | null;
+  startDate?: Date | null;
+  endDate?: Date | null;
+}): string {
+  const recurrence = row.recurrence ?? 'ALL_WEEKS';
+  const start = dayOf(row.startDate) ?? '';
+  const end = dayOf(row.endDate) ?? '';
+  return recurrence === 'ALL_WEEKS' && start === '' && end === '' ? '' : `${recurrence}|${start}|${end}`;
 }
 
 /** A preserved master as the fetch reads it, minus its named pupils. */
@@ -907,6 +949,10 @@ function demandOf(
   rows: readonly RegenerationRequirementRow[] = [],
 ): RegenerationDemand[] {
   const sharesOf = new Map(rows.flatMap((row) => (row.shares && row.shares.length > 0 ? [[row.id, row.shares] as const] : [])));
+  // Terminer: each row's weeks as read, the follower's own beside its leader's.
+  const weeksOf = new Map(rows.map((row) => [row.id, weeksKeyOf(row)] as const));
+  const weeks = (requirementId: string) =>
+    weeksOf.get(requirementId) ? { weeksKey: weeksOf.get(requirementId)! } : {};
   const demand: RegenerationDemand[] = sent.map((requirement) => {
     const requirementId = realRequirement.get(requirement.id) ?? `unsent:${requirement.id}`;
     const shares = sharesOf.get(requirementId);
@@ -922,6 +968,7 @@ function demandOf(
           }
         : {}),
       ...(shares ? { shareKey: shareKeyOf(shares) } : {}),
+      ...weeks(requirementId),
     };
   });
   const byId = new Map(demand.map((entry) => [entry.requirementId, entry]));
@@ -929,7 +976,8 @@ function demandOf(
     const leader = byId.get(mirror.leaderId);
     if (!leader) continue;
     if (!mirror.lessons) {
-      demand.push({ ...leader, requirementId: mirror.followerId });
+      const { weeksKey: _leaderWeeks, ...asLeader } = leader;
+      demand.push({ ...asLeader, requirementId: mirror.followerId, ...weeks(mirror.followerId) });
       continue;
     }
     // Delade lektioner: a pair with a pairing (same-times.ts). The follower is
@@ -946,6 +994,7 @@ function demandOf(
       ...(leader.lessonLengths ? { lessonLengths: leader.lessonLengths } : {}),
       ...(new Set(followerLeads).size > 1 ? { lessonTeachers: followerLeads } : {}),
       ...(followerShares ? { shareKey: shareKeyOf(followerShares) } : {}),
+      ...weeks(mirror.followerId),
     });
   }
   return demand;
@@ -1373,6 +1422,7 @@ export class OptimizationProxyService {
         data.siteTravelTimes.length > 0 ? reversed(data.teacherAnonMap) : new Map<string, string>(),
       otherSchoolHolds: data.otherSchoolHolds,
       nameById: data.nameById,
+      ...(data.yearPeriods ? { periods: data.yearPeriods.stretches } : {}),
     };
 
     // A block whose lessons are partly locked is refused here, by name, for
@@ -1528,6 +1578,9 @@ export class OptimizationProxyService {
       // AnonymousPlacements; callAiEngine sends the request without it to an
       // engine that predates it.
       ...(data.placements ? { placements: data.placements } : {}),
+      // Terminer: only when a post or a lock of the week is dated, the entries
+      // then carrying their periods. See AiEngineScheduleRequest.
+      ...(data.yearPeriods ? { periodWeeks: data.yearPeriods.weeks } : {}),
     };
 
     // Over the payload turned back to real ids — the teacher's and the
@@ -1554,6 +1607,16 @@ export class OptimizationProxyService {
         storedRules: data.storedRules,
         draftLessons,
         mirrors: mirroredRowsOf(data.mirrors, data.requirementRows),
+        // Terminer: each fixed lesson's own dates, by the id it was sent
+        // under: the kept masters' and the förläggningar's (their posts').
+        lockDates: new Map(
+          [...data.preservedRows, ...data.placedRows].flatMap((row) => {
+            const fixedId = data.fixedIdByLesson.get(row.id);
+            return fixedId === undefined
+              ? []
+              : [[fixedId, { startDate: dayOf(row.startDate), endDate: dayOf(row.endDate) }] as const];
+          }),
+        ),
       }),
     );
 
@@ -1826,6 +1889,9 @@ export class OptimizationProxyService {
               extraGroups: { select: { studentGroupId: true } },
               // A/B-veckor: the parity the payload sent (fixedLessonContent).
               recurrence: true,
+              // Terminer: and the dates its periods were read from.
+              startDate: true,
+              endDate: true,
             },
           });
           if (preservedPartOf(preserved) !== prepared.basisParts.preserved) {
@@ -1968,7 +2034,11 @@ export class OptimizationProxyService {
       // The summary never is one today — the engine's summaries count causes
       // and name none — and is held to the same rule all the same, since it
       // is stored and shown like every line under it.
-      summary: summaryBearsDays ? WORK_DAYS_HIDDEN_MESSAGE : this.named(conflicts.summary, maps),
+      // Terminer: and says where in the year it was counted, once, for a
+      // reader with no catalogue (the web renders the same from the params).
+      summary: summaryBearsDays
+        ? WORK_DAYS_HIDDEN_MESSAGE
+        : this.named(conflicts.summary, maps) + periodSentence(summaryParams),
       summaryCode: conflicts.summaryCode,
       summaryParams: summaryBearsDays ? withoutDays(summaryParams) : summaryParams,
       ...(summaryBearsDays ? { summarySubjectIds: this.limitSubjects(summaryParams, maps) } : {}),
@@ -2168,16 +2238,25 @@ export class OptimizationProxyService {
    * A param holding a group's id is an anonymous uuid, and the Swedish
    * sentence rendering it would otherwise name a row that exists in no table.
    * Numbers pass through untouched.
+   *
+   * TERMINER: a refusal counted in one period of the läsår names it by its
+   * index (`period`), and the days of that period are added here beside it
+   * (withPeriodDates) — on every route a sentence's params leave by, so the
+   * summary, each line under it and a refusal before the model all say the
+   * same stretch of the year.
    */
   private namedParams(
     params: Record<string, string | number>,
     maps: AnonMaps,
   ): Record<string, string | number> {
-    return Object.fromEntries(
-      Object.entries(params).map(([key, value]) => [
-        key,
-        typeof value === 'string' ? this.named(value, maps) : value,
-      ]),
+    return withPeriodDates(
+      Object.fromEntries(
+        Object.entries(params).map(([key, value]) => [
+          key,
+          typeof value === 'string' ? this.named(value, maps) : value,
+        ]),
+      ),
+      maps.periods,
     );
   }
 
@@ -2293,6 +2372,8 @@ export class OptimizationProxyService {
     workRuleTeacherIds: Map<string, string>;
     /** Real group id → the school's name for it, for realiseConflicts. */
     nameById: Map<string, string>;
+    /** Terminer: the periods the year was cut into, or null for a week nothing dates (year-periods.ts). */
+    yearPeriods: YearPeriods | null;
     /** Parallella block: the block a refusal names, back to the real one. */
     blockAnonMap: Map<string, string>;
     /** BLOCK_PARTLY_LOCKED, in anonymous ids, or null to go on. */
@@ -2412,11 +2493,13 @@ export class OptimizationProxyService {
           orderBy: [{ minutes: 'desc' }, { teacherId: 'asc' }],
         },
         // The parity is forwarded (A/B-veckor, alternatingWeeksOf): the engine
-        // plans an odd and an even week. The dates are not — it plans the
-        // year — and both are read here because the subtraction below
-        // compares a preserved lesson's weeks against these, and both are
-        // stamped on the lessons the run produces, so a spring-only
-        // requirement yields spring-only lessons.
+        // plans an odd and an even week. The dates are forwarded as what they
+        // amount to, the periods of the läsår the post runs in (terminer,
+        // year-periods.ts): the engine has no dates. Both are read here for
+        // that, because the subtraction below compares a preserved lesson's
+        // weeks against these, and because both are stamped on the lessons
+        // the run produces, so a spring-only requirement yields spring-only
+        // lessons.
         recurrence: true,
         startDate: true,
         endDate: true,
@@ -2457,8 +2540,10 @@ export class OptimizationProxyService {
         startTime: true,
         endTime: true,
         // The parity is forwarded (A/B-veckor): a lock of the odd weeks
-        // leaves its hour to the even ones. The dates are not — the engine
-        // plans the year. Both are read because the subtraction below has to
+        // leaves its hour to the even ones. The dates are forwarded as the
+        // periods the lock runs in (terminer, year-periods.ts): a lock of the
+        // autumn leaves its hour to the spring. Both are read for that, and
+        // because the subtraction below has to
         // know which weeks a preserved lesson is really there before it
         // cancels any of a requirement's demand, and because a post's day
         // limit is sent with the weekdays these lessons hold week by week
@@ -2941,6 +3026,20 @@ export class OptimizationProxyService {
     // cohorts (pupilGapsOf): a derived key's pupils sit its lessons.
     const sentPupilKeys = new Set<string>();
     /*
+     * Terminer: when each entry's times are held, by its anonymous id — its
+     * post's own dates, and for a leader post those of every post of its link
+     * too, for alternatingWeeksOf's reason: the engine holds a follower's
+     * teacher, group and room through DIFFERENT leader posts, so each of them
+     * is held wherever any post of the link runs. Left to its own dates, the
+     * autumn's leader post would hand its hour back in the spring while the
+     * follower sat there. Read into periods further down (yearPeriodsOf).
+     */
+    const heldWindowsOf = new Map<string, HeldWindow[]>();
+    const windowOf = (row: { startDate: Date | null; endDate: Date | null }): HeldWindow => ({
+      startDate: dayOf(row.startDate),
+      endDate: dayOf(row.endDate),
+    });
+    /*
      * One post's entry: the lessons left to place, and the locks whose
      * weekdays the post's rule counts. `sent` is the entry the engine places;
      * the other is a förlagd post's released form (AnonymousPlacements), the
@@ -3013,6 +3112,7 @@ export class OptimizationProxyService {
       const lockedDays = hasDistributionRule(rule)
         ? locks.map((lesson) => lesson.dayOfWeek as DayOfWeek).sort((a, b) => a - b)
         : [];
+      heldWindowsOf.set(anonId(requirementAnonMap, r.id), [r, ...(linkRowsOf.get(r.id) ?? [])].map(windowOf));
       return [
         {
           id: anonId(requirementAnonMap, r.id),
@@ -3127,7 +3227,8 @@ export class OptimizationProxyService {
         ? { pupilGroupIds: pupilKeysByLesson.get(lesson.id)!.map((key) => anonId(groupAnonMap, key)) }
         : {}),
       // A/B-veckor: a lock of odd or even weeks only holds its window then.
-      // Sent only on such a lock; a dated lock of every week is every week.
+      // Sent only on such a lock. A dated lock's periods are added further
+      // down, once the läsår is read (yearPeriodsOf).
       ...((weeks) => (weeks ? { recurrence: weeks } : {}))(alternatingWeeksOf(lesson)),
     }));
 
@@ -3761,8 +3862,19 @@ export class OptimizationProxyService {
       },
     });
     const rawDayLimits = rawPosts.filter((post) => post.maxTeachingDaysPerWeek !== null);
+    /*
+     * TERMINER read the läsår too: its weeks are what the entries' dates are
+     * read against (year-periods.ts). Only when some entry sent HAS a date —
+     * a post, a post it holds the times of, a lesson kept or förlagd — so a
+     * school that dates nothing reads what it read, one statement fewer than
+     * this when it sets no days either.
+     */
+    const lockWindows = preservedLessons.map((lesson) => [windowOf(lesson)]);
+    const someEntryIsDated = [...heldWindowsOf.values(), ...lockWindows].some((windows) =>
+      windows.some((window) => window.startDate !== null || window.endDate !== null),
+    );
     const yearRow =
-      rawDayLimits.length > 0
+      rawDayLimits.length > 0 || someEntryIsDated
         ? await tx.academicYear.findUnique({
             where: { id: academicYearId },
             select: { startDate: true, endDate: true },
@@ -3932,6 +4044,36 @@ export class OptimizationProxyService {
         : fixedLessons;
 
     /*
+     * TERMINER: the läsår cut into periods by what is sent, and each entry
+     * given the periods it runs in (year-periods.ts has the reading). Over
+     * exactly the entries of the payload, in its order — the posts to place,
+     * the lessons kept and förlagda, and the förlagda posts as they would be
+     * released — so no period is told apart by something the engine never
+     * sees. A förläggning carries its post's dates (placedLessonRowsOf), and
+     * so its post's periods.
+     *
+     * Null for a week nothing dates, and then every entry is the object it
+     * was: the payload of a school without dated posts is byte for byte what
+     * it always sent.
+     */
+    const yearPeriods =
+      yearSpan && someEntryIsDated
+        ? yearPeriodsOf(yearSpan, [
+            ...requirements.map((entry) => heldWindowsOf.get(entry.id)!),
+            ...lockWindows,
+            ...releasedRequirements.map((entry) => heldWindowsOf.get(entry.id)!),
+          ])
+        : null;
+    const inPeriods = <E extends object>(entries: readonly E[], offset: number): E[] =>
+      entries.map((entry, index) => {
+        const mask = yearPeriods?.masks[offset + index];
+        return mask ? { ...entry, periods: mask } : entry;
+      });
+    const requirementsInPeriods = inPeriods(requirements, 0);
+    const fixedLessonsInPeriods = inPeriods(fixedLessonsSent, requirements.length);
+    const releasedInPeriods = inPeriods(releasedRequirements, requirements.length + fixedLessonsSent.length);
+
+    /*
      * Förlagda poster: which fixed lessons are förläggningar, and their posts
      * released (AnonymousPlacements) — read by the engine only to name them in
      * a refusal. And the pre-flight: every förläggning judged again with the
@@ -3948,7 +4090,7 @@ export class OptimizationProxyService {
               fixedLessonId: fixedIdByLesson.get(row.id)!,
               requirementId: anonId(requirementAnonMap, row.requirementId),
             })),
-            requirements: releasedRequirements,
+            requirements: releasedInPeriods,
           };
     let placementsRefusal: AiEngineConflictAnalysis | null = null;
     if (placedRows.length > 0) {
@@ -4035,7 +4177,7 @@ export class OptimizationProxyService {
           ]);
 
     return {
-      requirements,
+      requirements: requirementsInPeriods,
       rooms,
       constraints,
       frameTimes,
@@ -4045,7 +4187,7 @@ export class OptimizationProxyService {
       roomPreferences,
       teacherWorkRules,
       teacherDayLimits,
-      fixedLessons: fixedLessonsSent,
+      fixedLessons: fixedLessonsInPeriods,
       groups,
       previousLessons,
       groupConflicts,
@@ -4070,6 +4212,7 @@ export class OptimizationProxyService {
       workRuleTeacherIds,
       otherSchoolHolds,
       nameById,
+      yearPeriods,
       blockAnonMap,
       blockRefusal,
       pairsRefusal: groupConflicts.length > ENGINE_GROUP_CONFLICTS_LIMIT ? groupConflictsRefusal(groupConflicts.length) : null,
@@ -4360,7 +4503,8 @@ export class OptimizationProxyService {
                   );
                 }
                 throw new HttpException(
-                  { message: detail, ...named },
+                  // Terminer: a count made in one period says which, as a refused 200's summary does.
+                  { message: detail + periodSentence(named.params ?? {}), ...named },
                   error.response.status,
                 );
               }
@@ -4604,6 +4748,23 @@ export class OptimizationProxyService {
       const row = rowById.get(entry.requirementId);
       return row !== undefined && (entry.shareKey ?? '') !== shareKeyOf(row.shares);
     });
+    // Terminer: and its weeks. The engine held each post's hours in the weeks
+    // the fetch read — its parity, and the periods its dates came to — and the
+    // lessons are stamped with the row's weeks as they stand NOW. A post moved
+    // from the autumn to the spring while the solver ran would be written on
+    // hours nothing kept free for it in the spring. Equal for every row nobody
+    // touched: '' and '' for every row of every week, so a school that dates
+    // nothing meets no new refusal here.
+    const weeksMoved = input.demand.some((entry) => {
+      const row = rowById.get(entry.requirementId);
+      return row !== undefined && (entry.weeksKey ?? '') !== weeksKeyOf(row);
+    });
+    if (weeksMoved) {
+      this.logger.warn(
+        `Generated timetable not written: a timplanspost's weeks or dates changed while the solver ran [academicYearId=${academicYearId}].`,
+      );
+      throw input.refusals?.mismatch?.() ?? generateStale();
+    }
     if (sharesMoved) {
       // Not the engine's fault, so no 502: the school changed a post's shares
       // while the solver ran, and the answer is to a request that no longer

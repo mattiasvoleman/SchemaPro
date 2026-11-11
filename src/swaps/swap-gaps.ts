@@ -182,7 +182,11 @@ export const alternates = (intervals: Iterable<Pick<WeekInterval, 'runs'>>): boo
   return false;
 };
 
-/** The recurrence a gap reads: a dated window counts as every week, as the engine reads it. */
+/**
+ * The recurrence a gap reads: a dated window counts as every week. The
+ * stricter reading — the generator reads a post's dates (year-periods.ts), a
+ * swap's count of gaps does not.
+ */
 export const parityOf = (recurrence: LessonRecurrence): WeekInterval['runs'] =>
   recurrence === 'ALL_WEEKS' ? null : recurrence;
 

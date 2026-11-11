@@ -15,9 +15,11 @@
  *             lesson and needs no loan; a loan for the spring alone opens
  *             nothing, and a room with no approved loan is closed all week.
  *
- * Both are the careful side: the engine has no weeks or dates, so a lesson
- * it places runs all year, and nothing it places can meet a loan the publish
- * check or a booking would refuse. The engine rounds a reservation's ends
+ * Both are the careful side: a reservation is every week's in the engine
+ * (only posts and locked lessons are told their weeks), so a room is open to
+ * what it places all year or not at all, and nothing it places can meet a
+ * loan the publish check or a booking would refuse. The engine rounds a
+ * reservation's ends
  * down to its grid (TimeGrid.clamp_to_grid), so the gateway rounds them
  * itself, each the way that keeps the lessons out.
  *

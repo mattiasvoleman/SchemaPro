@@ -321,9 +321,11 @@ async function readAdjustedPost(
  * accepts. With one subject each block holds the one post of its period;
  * the block is there for the link below.
  *
- * THE SECOND PERIOD ON THE FIRST'S TIMES. The generator plans one week and
- * has no terms, so two blocks would each get their own times, both held all
- * year, and one of them empty each period. The second period's block names
+ * THE SECOND PERIOD ON THE FIRST'S TIMES. Left to themselves the two blocks
+ * would each get times of their own — each in its own period, since the
+ * generator reads the posts' dates (src/optimization/year-periods.ts) — and
+ * a school that splits a subject by term wants one set of times for the
+ * year. The second period's block names
  * the first's (TeachingBlocks."sameTimesAsBlockId"): the generator places the
  * first period's block and writes each post of the second at the times of
  * the first period's post in its subject, which is its room's subject and,

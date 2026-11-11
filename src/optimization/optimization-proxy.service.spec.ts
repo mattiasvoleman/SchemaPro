@@ -247,7 +247,7 @@ describe('OptimizationProxyService', () => {
     {
       user = testUser(),
       /** The demand the engine was sent, which its answer must match. */
-      requirements = [] as { id: string; lessonsPerWeek: number; lessonLengths?: number[] }[],
+      requirements = [] as { id: string; lessonsPerWeek: number; lessonLengths?: number[]; weeksKey?: string }[],
       requirementAnonMap = new Map<string, string>(),
       /** The posts written at a sent post's times (same-times.ts), in real ids. */
       mirrors = [] as { leaderId: string; followerId: string }[],
@@ -290,6 +290,8 @@ describe('OptimizationProxyService', () => {
           requirementId: [...requirementAnonMap].find(([, anon]) => anon === requirement.id)?.[0] ?? `unsent:${requirement.id}`,
           lessonsPerWeek: requirement.lessonsPerWeek,
           ...(requirement.lessonLengths ? { lessonLengths: requirement.lessonLengths } : {}),
+          // Terminer: the post's weeks as the fetch read them, on a post that does not run every week.
+          ...(requirement.weeksKey ? { weeksKey: requirement.weeksKey } : {}),
         })),
         ...mirrors.flatMap((mirror) => {
           const leader = requirements.find((requirement) => requirementAnonMap.get(mirror.leaderId) === requirement.id);
@@ -389,7 +391,10 @@ describe('OptimizationProxyService', () => {
       await expect(
         persist(
           { status: 'OPTIMAL', lessons: [{ ...placement(), dayOfWeek: 3 }] },
-          { requirements: [{ id: ANON_REQ, lessonsPerWeek: 1 }], requirementAnonMap: new Map([[REAL_REQ, ANON_REQ]]) },
+          {
+            requirements: [{ id: ANON_REQ, lessonsPerWeek: 1, weeksKey: 'ODD_WEEKS|2026-08-17|' }],
+            requirementAnonMap: new Map([[REAL_REQ, ANON_REQ]]),
+          },
         ),
       ).resolves.toEqual([
         {
@@ -3969,11 +3974,14 @@ describe('OptimizationProxyService', () => {
           { leaderId: A2, followerId: S1 },
           { leaderId: A1, followerId: S2 },
         ]);
+        // Each with its own weeks as read (weeksKey): the spring's posts are
+        // written with the spring's dates, and a date moved while the solver
+        // ran refuses the write.
         expect(prepared.demand).toEqual([
-          { requirementId: A1, lessonsPerWeek: 2 },
-          { requirementId: A2, lessonsPerWeek: 2 },
-          { requirementId: S1, lessonsPerWeek: 2 },
-          { requirementId: S2, lessonsPerWeek: 2 },
+          { requirementId: A1, lessonsPerWeek: 2, weeksKey: 'ALL_WEEKS||2027-01-10' },
+          { requirementId: A2, lessonsPerWeek: 2, weeksKey: 'ALL_WEEKS||2027-01-10' },
+          { requirementId: S1, lessonsPerWeek: 2, weeksKey: 'ALL_WEEKS|2027-01-11|' },
+          { requirementId: S2, lessonsPerWeek: 2, weeksKey: 'ALL_WEEKS|2027-01-11|' },
         ]);
       });
 
@@ -4018,6 +4026,208 @@ describe('OptimizationProxyService', () => {
           expect(textil.coTeacherId).toEqual(expect.any(String));
           // … which is therefore held every week.
           expect(textil.recurrence).toBeUndefined();
+        });
+      });
+
+      describe('terminer: a leader post is held in every week of its link, and the year is cut by what is sent', () => {
+        const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
+        const year = () =>
+          tx.academicYear.findUnique.mockResolvedValue({ startDate: day('2026-08-17'), endDate: day('2027-06-11') } as never);
+        const sentPeriods = async () => {
+          const prepared = await ready();
+          const real = new Map([...prepared.anonMaps.requirementAnonMap].map(([realId, anonId]) => [anonId, realId]));
+          return { prepared, periods: new Map(prepared.payload.requirements.map((r) => [real.get(r.id), r.periods])) };
+        };
+        const OTHER = 'eeeeeeee-00aa-4000-8000-0000000000aa';
+        const OTHER_GROUP = 'bbbbbbbb-00aa-4000-8000-0000000000aa';
+        /** A post of another class, in no block: bild until the autumn break. */
+        const bild = (overrides: Row = {}) =>
+          requirement({
+            id: OTHER,
+            subjectId: 'cccccccc-00aa-4000-8000-0000000000aa',
+            studentGroupId: OTHER_GROUP,
+            teacherId: TEA,
+            lessonsPerWeek: 1,
+            startDate: null,
+            endDate: day('2026-10-25'),
+            ...overrides,
+          });
+
+        it('sends a link whose two terms hold the whole läsår between them no periods: the payload it always was', async () => {
+          // The autumn until Sunday 10 January, the spring from Monday the 11th.
+          arrangeTerms();
+          year();
+          const { prepared, periods } = await sentPeriods();
+          expect(periods).toEqual(new Map([[A1, undefined], [A2, undefined]]));
+          expect(prepared.payload.periodWeeks).toBeUndefined();
+          expect('periodWeeks' in prepared.payload).toBe(false);
+          expect(prepared.anonMaps.periods).toBeUndefined();
+        });
+
+        it('holds the autumn’s posts in the spring’s weeks too, and in no week between the terms', async () => {
+          // The spring starts on 1 February: three weeks are neither term's.
+          // Left to its own dates the autumn's post would hand its hour back
+          // from January, with the spring's lessons written on it.
+          const late = { startDate: day('2027-02-01') };
+          arrangeTerms({ s1: late, s2: late });
+          year();
+          const { prepared, periods } = await sentPeriods();
+          // Two periods, not three: the autumn's weeks and the spring's hold
+          // the same entries — the two leader posts — so they are one period,
+          // of two stretches; the weeks between hold neither.
+          expect(periods).toEqual(new Map([[A1, [true, false]], [A2, [true, false]]]));
+          expect(prepared.payload.periodWeeks).toEqual([40, 3]);
+          expect(prepared.anonMaps.periods).toEqual([
+            [{ from: '2026-08-17', to: '2027-01-10' }, { from: '2027-02-01', to: '2027-06-11' }],
+            [{ from: '2027-01-11', to: '2027-01-31' }],
+          ]);
+        });
+
+        it('gives a post outside the link its own periods beside the link’s', async () => {
+          const prepared = (async () => {
+            arrangeTerms({}, {
+              requirements: [
+                slojd(A1, TX, H1, 'HT', TOVE),
+                slojd(A2, TR, H2, 'HT', TOR),
+                slojd(S1, TR, H1, 'VT', TOR),
+                slojd(S2, TX, H2, 'VT', TOVE),
+                bild(),
+              ],
+              groups: [
+                { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', halfOfId: null, name: '7A' },
+                { id: H1, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID, name: '7A:1' },
+                { id: H2, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID, name: '7A:2' },
+                { id: OTHER_GROUP, gradeLevel: 8, kind: 'CLASS', halfOfId: null, name: '8A' },
+              ],
+            });
+            year();
+            return sentPeriods();
+          })();
+          const { periods, prepared: read } = await prepared;
+          // The link holds the whole year; bild runs the first ten weeks of it.
+          expect(periods).toEqual(new Map([[A1, undefined], [A2, undefined], [OTHER, [true, false]]]));
+          expect(read.payload.periodWeeks).toEqual([10, 33]);
+          // And the basis reads it: bild moved to the spring is another week.
+          const autumn = read.basisParts.requirements;
+          arrangeTerms({}, {
+            requirements: [
+              slojd(A1, TX, H1, 'HT', TOVE),
+              slojd(A2, TR, H2, 'HT', TOR),
+              slojd(S1, TR, H1, 'VT', TOR),
+              slojd(S2, TX, H2, 'VT', TOVE),
+              bild({ startDate: day('2027-04-05'), endDate: null }),
+            ],
+            groups: [
+              { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', halfOfId: null, name: '7A' },
+              { id: H1, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID, name: '7A:1' },
+              { id: H2, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID, name: '7A:2' },
+              { id: OTHER_GROUP, gradeLevel: 8, kind: 'CLASS', halfOfId: null, name: '8A' },
+            ],
+          });
+          year();
+          const moved = await sentPeriods();
+          // The same number of weeks and the same two periods the other way round:
+          // a sorted mask could not tell them apart (candidate-basis.ts).
+          expect(moved.periods.get(OTHER)).toEqual([false, true]);
+          expect(moved.prepared.payload.periodWeeks).toEqual([33, 10]);
+          expect(moved.prepared.basisParts.requirements).not.toBe(autumn);
+        });
+
+        it('refuses the write (GENERATE_STALE) when a post’s dates were moved while the solver ran', async () => {
+          const late = { startDate: day('2027-02-01') };
+          arrangeTerms({ s1: late, s2: late });
+          year();
+          engineByDay();
+          const fetchRead = tx.teachingRequirement.findMany.getMockImplementation()!;
+          const row = (id: string, subjectId: string, group: string, teacher: string, startDate: Date | null, endDate: Date | null) => ({
+            id, subjectId, studentGroupId: group, teacherId: teacher, coTeacherId: null, recurrence: 'ALL_WEEKS', startDate, endDate,
+          });
+          tx.teachingRequirement.findMany.mockImplementation((query: Query) =>
+            // The write reads again, with no lesson length in its select: by
+            // then the spring's trä starts on 11 January, in weeks the answer
+            // held its hour for nobody.
+            query.select && !('lessonsPerWeek' in query.select)
+              ? Promise.resolve([
+                  row(A1, TX, H1, TOVE, null, autumnEnd),
+                  row(A2, TR, H2, TOR, null, autumnEnd),
+                  row(S1, TR, H1, TOR, springStart, null),
+                  row(S2, TX, H2, TOVE, day('2027-02-01'), null),
+                ])
+              : fetchRead(query),
+          );
+
+          await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+            response: expect.objectContaining({ code: 'GENERATE_STALE' }),
+          });
+          expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+        });
+
+        it('says in dates where in the year a refusal was counted, on a 200 and on a 400', async () => {
+          const late = { startDate: day('2027-02-01') };
+          arrangeTerms({ s1: late, s2: late });
+          year();
+          // Counted in the first period, the two terms' weeks: the engine names it by its index.
+          http.post.mockImplementation((_url: string, payload: any) =>
+            of({
+              data: {
+                requestId: payload.requestId,
+                status: 'INFEASIBLE',
+                lessons: [],
+                conflicts: {
+                  summary: 'One teacher has more lessons than the week has room for.',
+                  summaryCode: 'DEMAND_TEACHER_HOURS_SHORT',
+                  summaryParams: { teachers: 1, period: 0 },
+                  conflicts: [
+                    {
+                      category: 'REQUIREMENT_DEMAND',
+                      code: 'DEMAND_TEACHER_LESSONS_EXCEED_ROOM',
+                      params: { requirements: 3, demandMinutes: 1500, capacityMinutes: 1350, period: 0 },
+                      message: 'One teacher gives the lessons of 3 requirements.',
+                      requirementIds: [],
+                      roomIds: [],
+                      constraintIds: [],
+                      resourceIds: [],
+                    },
+                  ],
+                },
+              },
+            }),
+          );
+          const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+          // The first stretch of the period, and that it has one more.
+          const dates = { period: 0, periodFrom: '2026-08-17', periodTo: '2027-01-10', periodStretches: 2 };
+          expect(result.conflicts!.summaryParams).toEqual({ teachers: 1, ...dates });
+          expect(result.conflicts!.summary).toBe(
+            'One teacher has more lessons than the week has room for.' +
+              ' Counted for the weeks from 2026-08-17 to 2027-01-10 (and the other weeks with the same entries),' +
+              ' which is when these run together.',
+          );
+          expect(result.conflicts!.conflicts[0]!.params).toEqual({
+            requirements: 3, demandMinutes: 1500, capacityMinutes: 1350, ...dates,
+          });
+          // The line's own English is the engine's: the summary above says the dates once.
+          expect(result.conflicts!.conflicts[0]!.message).toBe('One teacher gives the lessons of 3 requirements.');
+
+          const refused = new AxiosError('boom');
+          refused.response = {
+            status: 400,
+            data: {
+              code: 'INVALID_SCHEDULE_INPUT',
+              message: 'A teacher’s cap of 120 minutes a day is under what the week needs.',
+              details: { code: 'TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK', params: { minutes: 120, period: 1 } },
+            },
+          } as never;
+          http.post.mockReturnValue(throwError(() => refused));
+          await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+            status: 400,
+            response: {
+              code: 'TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK',
+              params: { minutes: 120, period: 1, periodFrom: '2027-01-11', periodTo: '2027-01-31', periodStretches: 1 },
+              message:
+                'A teacher’s cap of 120 minutes a day is under what the week needs.' +
+                ' Counted for the weeks from 2027-01-11 to 2027-01-31, which is when these run together.',
+            },
+          });
         });
       });
 
@@ -4364,8 +4574,8 @@ describe('OptimizationProxyService', () => {
         expect(prepared.mirrors).toEqual([{ leaderId: FIRST, followerId: SECOND }]);
         expect(prepared.demand).toEqual(
           expect.arrayContaining([
-            { requirementId: FIRST, lessonsPerWeek: 4 },
-            { requirementId: SECOND, lessonsPerWeek: 4 },
+            { requirementId: FIRST, lessonsPerWeek: 4, weeksKey: 'ALL_WEEKS||2026-10-30' },
+            { requirementId: SECOND, lessonsPerWeek: 4, weeksKey: 'ALL_WEEKS|2026-11-02|2027-01-10' },
           ]),
         );
       });
@@ -4594,8 +4804,8 @@ describe('OptimizationProxyService', () => {
           ]);
           // The spring's demand is its own: its teachers and its shares, not the leader's copied.
           expect(prepared.demand).toEqual([
-            { requirementId: LEADER, lessonsPerWeek: 2, lessonLengths: [90, 40], lessonTeachers: [ANNA, BO], shareKey: `${BO}:1x40` },
-            { requirementId: FOLLOWER, lessonsPerWeek: 2, lessonLengths: [90, 40], lessonTeachers: [ANNA, BO], shareKey: `${BO}:1x40` },
+            { requirementId: LEADER, lessonsPerWeek: 2, lessonLengths: [90, 40], lessonTeachers: [ANNA, BO], shareKey: `${BO}:1x40`, weeksKey: 'ALL_WEEKS||2027-01-10' },
+            { requirementId: FOLLOWER, lessonsPerWeek: 2, lessonLengths: [90, 40], lessonTeachers: [ANNA, BO], shareKey: `${BO}:1x40`, weeksKey: 'ALL_WEEKS|2027-01-11|' },
           ]);
         });
 

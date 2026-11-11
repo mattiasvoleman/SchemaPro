@@ -16,9 +16,11 @@
  * Only Monday to Friday, the days the engine plans: it refuses a
  * reservation on any other day as input.
  *
- * The engine has no weeks: a lesson elsewhere in odd weeks only, or for one
- * term, holds the teacher every week of the plan, as a locked lesson does
- * today (FixedLesson). Conservative on purpose: the publish check
+ * A reservation has no weeks in the engine: a lesson elsewhere in odd weeks
+ * only, or for one term, holds the teacher every week of the plan. (A locked
+ * lesson of this school is told its weeks — FixedLesson.recurrence and
+ * periods; a hold at another school is not.) Conservative on purpose: the
+ * publish check
  * (PUB_OTHER_SCHOOL) reads the weeks, and a block the engine keeps free is
  * never a clash.
  *

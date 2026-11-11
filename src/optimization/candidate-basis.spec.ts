@@ -365,6 +365,8 @@ const anonymised = (real: School, turn = 0): BasisSource => {
           },
         }
       : {}),
+    // Terminer: sent only when a post or a lock is dated.
+    ...(p.periodWeeks !== undefined ? { periodWeeks: p.periodWeeks } : {}),
     // Elevernas håltimmar: sent only when the school turned it on.
     ...(p.pupilGaps !== undefined
       ? {
@@ -685,6 +687,59 @@ describe('the candidate basis', () => {
     const odd = school();
     odd.payload.fixedLessons[0]!.recurrence = 'ODD_WEEKS';
     expect(preservedPartOf([{ ...row, recurrence: 'ODD_WEEKS' }])).toBe(partsOf(odd).preserved);
+  });
+
+  it('terminer: reads a post’s periods in their order and the year’s lengths, and a school without them as before', () => {
+    const plain = partsOf(school());
+    const cut = (periods: boolean[], periodWeeks: number[]): BasisParts => {
+      const real = school();
+      real.payload.requirements[0] = { ...real.payload.requirements[0]!, periods };
+      real.payload.periodWeeks = periodWeeks;
+      return partsOf(real);
+    };
+    const autumn = cut([true, false], [19, 21]);
+    // The autumn's post is not the spring's: a sorted mask would say it was.
+    expect(cut([false, true], [19, 21]).requirements).not.toBe(autumn.requirements);
+    // Nor is a year cut in another place the same year, mask for mask.
+    expect(cut([true, false], [21, 19]).requirements).not.toBe(autumn.requirements);
+    expect(cut([true, false], [19, 21])).toEqual(autumn);
+    // Only the requirements part reads them, and only when they are sent.
+    expect(autumn.requirements).not.toBe(plain.requirements);
+    expect({ ...autumn, requirements: plain.requirements }).toEqual(plain);
+  });
+
+  it('terminer: reads a lock’s own dates, the same from the database as from the fetch, and an undated lock as before', () => {
+    const plain = partsOf(school());
+    const dated = (dates: { startDate: string | null; endDate: string | null }): BasisParts => {
+      const source = anonymised(school());
+      return basisPartsOf(
+        basisInputsOf({ ...source, lockDates: new Map([[source.payload.fixedLessons[0]!.id, dates]]) }),
+      );
+    };
+    const row = {
+      studentGroupId: 'grp-7a',
+      teacherId: 't-anna',
+      coTeacherId: null,
+      roomId: 'room-a1',
+      dayOfWeek: 2,
+      startTime: new Date('1970-01-01T08:00:00.000Z'),
+      endTime: new Date('1970-01-01T09:00:00.000Z'),
+      extraGroups: [{ studentGroupId: 'grp-ma7' }, { studentGroupId: 'grp-7b' }],
+      recurrence: 'ALL_WEEKS' as const,
+    };
+    const autumn = dated({ startDate: null, endDate: '2026-12-18' });
+    // A lock that ends in December is not the lock that runs all year, and
+    // not the one that starts in January: a term moved makes the run stale.
+    expect(autumn.preserved).not.toBe(plain.preserved);
+    expect(dated({ startDate: '2027-01-11', endDate: null }).preserved).not.toBe(autumn.preserved);
+    expect(dated({ startDate: null, endDate: '2026-12-11' }).preserved).not.toBe(autumn.preserved);
+    // The apply's last check reads the row's dates and lands on the same digest.
+    expect(preservedPartOf([{ ...row, startDate: null, endDate: new Date('2026-12-18T00:00:00.000Z') }])).toBe(
+      autumn.preserved,
+    );
+    expect(preservedPartOf([{ ...row, startDate: null, endDate: null }])).toBe(plain.preserved);
+    // No dates read, no dates hashed: a caller without the map is as before.
+    expect(dated({ startDate: null, endDate: null })).toEqual(plain);
   });
 
   it('refuses an anonymous id no map knows, rather than hashing a random one', () => {

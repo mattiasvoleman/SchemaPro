@@ -9,9 +9,9 @@ import { coverLockedLessons, coverLockedSharedLessons, type TaughtLesson } from 
  *
  * A förläggning (TeachingRequirementPlacement) is one lesson of the post at a
  * day, a start, one of the post's lengths, a room and the weeks it runs. The
- * engine has no weeks of its own beyond one odd and one even
- * (AnonymousRequirement.recurrence), so what a row places is said in its
- * terms:
+ * engine has no weeks of its own beyond the ones it is told — a parity
+ * (AnonymousRequirement.recurrence) and, for a dated post, the periods of
+ * the läsår — so what a row places is said in its terms:
  *
  *   - On a post of odd weeks (or even), every row runs the post's weeks, and
  *     each row is one of its lessons.
