@@ -4815,7 +4815,11 @@ Two changes, in two releases. No migration in either.
    "Which schools are affected" under 19.2). A refusal counted in one period
    carries `period` (an index) from the engine; the gateway adds
    `periodFrom`, `periodTo` and `periodStretches`, and the web shows them
-   under the refusal.
+   under the refusal. A refusal that two or more weeks with posts share to
+   the figure carries none, and neither does one that reads no post (a
+   dining hall too small for the classes). A year whose posts all lie in one
+   part of the läsår has one week to count, and a refusal its posts make
+   says that part.
 
 A third release, on top of these, reads a post's days and a teacher's own
 lunch period by period: 19.5.
@@ -4859,12 +4863,15 @@ its own release, merged and verified before the gateway's.
   not retry without the fields, on purpose: a timetable laid without them
   would be the old, stricter one, and a school would not be told.
 - **Which schools are affected** (as the owner): a school with a dated post,
-  or with a dated lesson that a regeneration keeps (hand-made or locked;
-  `src/optimization/preserved-lessons.ts`),
-  `SELECT "schoolId" FROM "TeachingRequirements" WHERE "startDate" IS NOT NULL OR "endDate" IS NOT NULL UNION SELECT "schoolId" FROM "MasterLessons" WHERE ("startDate" IS NOT NULL OR "endDate" IS NOT NULL) AND (NOT "isGenerated" OR "isLocked");`
-  (A generated lesson with dates has them from its post, so the first half
-  finds its school.) That is the widest reading, and a few of the schools it
-  finds send no
+  or with a dated lesson that a regeneration keeps
+  (`src/optimization/preserved-lessons.ts`: hand-made, locked and not written
+  from a förläggning, opened to a second class, or given named pupils),
+  `SELECT "schoolId" FROM "TeachingRequirements" WHERE "startDate" IS NOT NULL OR "endDate" IS NOT NULL UNION SELECT l."schoolId" FROM "MasterLessons" l WHERE (l."startDate" IS NOT NULL OR l."endDate" IS NOT NULL) AND (NOT l."isGenerated" OR (l."isLocked" AND NOT l."fromPlacement") OR EXISTS (SELECT 1 FROM "MasterLessonGroups" g WHERE g."masterLessonId" = l."id") OR EXISTS (SELECT 1 FROM "MasterLessonStudents" s WHERE s."masterLessonId" = l."id"));`
+  The second half is that file's rule, arm for arm, and reads only. (A
+  generated lesson with dates that the rule does not keep has them from its
+  post, so the first half finds its school.) Every school that is sent
+  periods is in the list, whichever läsår the dates are in, and a few of the
+  schools it finds send no
   periods: dates that cut no week apart (a post dated to the whole läsår, or
   outside it) send none, and neither does a school whose only dated posts
   are the two terms of a block on another block's times WHEN THE TWO TERMS'
