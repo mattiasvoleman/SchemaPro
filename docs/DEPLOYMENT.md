@@ -4811,7 +4811,8 @@ Two changes, in two releases. No migration in either.
    so this release changes nothing in production on its own.
 2. **The gateway** reads the posts' and the preserved lessons' dates against
    the läsår, week by week (`src/optimization/year-periods.ts`), and sends the
-   fields for a school that dates something. A refusal counted in one period
+   fields for a school whose dates tell two weeks of the läsår apart (see
+   "Which schools are affected" under 19.2). A refusal counted in one period
    carries `period` (an index) from the engine; the gateway adds
    `periodFrom`, `periodTo` and `periodStretches`, and the web shows them
    under the refusal.
@@ -4829,8 +4830,9 @@ its own release, merged and verified before the gateway's.
    `AnonymousRequirement` and `FixedLesson`, and `periodWeeks` under
    `OptimizeScheduleRequest`.
 2. Merge the gateway's release. No migration, no setting to turn on: a school
-   with a dated post or a dated preserved lesson is sent periods from its next
-   Generera, and every other school sends the payload it always sent.
+   whose dated posts or dated preserved lessons tell two weeks apart is sent
+   periods from its next Generera, and every other school sends the payload
+   it always sent.
 3. Verify with a school that has dated posts: Generera's refusal, if it has
    one, now says the weeks it was counted for; a school with posts by term
    that was refused for a teacher's hours is laid.
@@ -4843,15 +4845,31 @@ its own release, merged and verified before the gateway's.
   term may again be refused for hours counted across the terms. Timetables
   already written stay as they are; they keep every rule in every real week.
 - **The engine alone, past its release, with the gateway's release still
-  out.** Every Generera and every schemaförslag run of a school that dates a
-  post or a preserved lesson fails with the engine's 422 (`extra_forbidden`
-  at `periods`), and only those: every other school's payload is byte for
-  byte what it was. Redeploy the engine, or roll the gateway back with it.
-  The gateway does not retry without the fields, on purpose: a timetable laid
-  without them would be the old, stricter one, and a school would not be told.
+  out.** Every Generera and every schemaförslag run of a school that is sent
+  periods fails, and only those: every other school's payload is byte for
+  byte what it was. The engine answers 422 (`extra_forbidden` at `periods`
+  and `periodWeeks`), and the gateway says it as 503 `ENGINE_LACKS_PERIODS`:
+  the run fails with "Schemamotorn är äldre än resten av tjänsten och kan
+  inte planera poster med datum ännu. Försök igen om några minuter." (in
+  English for an English reader), on Generera and among the schemaförslag.
+  Redeploy the engine, or roll the gateway back with it. The gateway does
+  not retry without the fields, on purpose: a timetable laid without them
+  would be the old, stricter one, and a school would not be told.
 - **Which schools are affected** (as the owner): a school with a dated post
   or a dated lesson in an active year,
   `SELECT DISTINCT "schoolId" FROM "TeachingRequirements" WHERE "startDate" IS NOT NULL OR "endDate" IS NOT NULL;`
+  That is the widest reading, and a few of the schools it finds send no
+  periods: dates that cut no week apart (a post dated to the whole läsår, or
+  outside it) send none, and neither does a school whose only dated posts
+  are the two terms of a block on another block's times WHEN THE TWO TERMS'
+  WINDOWS MEET, week by week (the autumn until a Sunday, the spring from the
+  Monday; or neighbouring weeks). The leader post holds the block's times in
+  every week of its link, so such a year has no week unlike another. A link
+  with a whole week between its terms that neither post covers (a jullov
+  outside both windows) does tell weeks apart: the leader post lets those
+  weeks go, and the school is sent periods like any other. "Dela terminsvis
+  i halvklass" writes windows that meet when only the spring's first day is
+  given; two periods of one's own, or dates edited by hand, can leave a gap.
 
 ### 19.3 What is still read more strictly
 
