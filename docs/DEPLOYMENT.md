@@ -5013,6 +5013,18 @@ post with a day limit when this was written. Afterwards
 `https://<solver-host>/openapi.json` names `lockedWeekdayPeriods` under
 `AnonymousTeacherDayLimit`.
 
+**Between periods is not between terms.** A läsår that starts in the middle
+of a week (2026-08-15 is a Saturday) has a first, incomplete week, and as
+soon as a dated post starts on the first Monday that week is a period of
+its own: one week, of one parity. A teacher whose preserved lessons run on
+one weekday in the odd weeks and on another in the even ones then holds
+one of the two sets in that period and both in the rest of the year, and
+the field is sent though no term differs from another
+(`periodWeeks: [1, 43]`, the odd weeks' set in both periods and the even
+weeks' in the second). The reading is right — the first week is held to
+what a week of its parity holds — and the school's schemaförslag go stale
+once, as for every school that is sent the field.
+
 **Rolling back** is 19.2's: the gateway alone is safe (the older gateway
 sends no `lockedWeekdayPeriods`, and the engine holds every set in every
 week again, the stricter reading); the engine alone, past this release,
