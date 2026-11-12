@@ -4918,11 +4918,15 @@ the same case: the week is refused with each förläggning named and this
 sentence beneath them.
 
 The refusal says what it is. When no one period's locks close the window
-alone, the engine names the periods whose locks take a start of it
-(`lockPeriods`, "0,2"), the gateway adds the days of the two earliest
-(`lockFrom`, `lockTo`, `otherLockFrom`, `otherLockTo`, and
-`lockWeeksElsewhere` for the stretches not written out), and the line under
-the sentence reads: "De låsta lektionerna som tillsammans stänger
+alone, the engine names the periods whose locks take a start of it, in
+parts (`lockPeriods`, "0,1,2,3;4,5": periods whose locks take the same
+starts have commas between them, the parts semicolons, and the first two
+parts are two that close the window between them). A läsår has more periods
+than terms, since every dated post cuts it, so the autumn's lock is in
+several. The gateway reads each part's periods as one run of weeks and adds
+the days of the first two parts (`lockFrom`, `lockTo`, `otherLockFrom`,
+`otherLockTo`, and `lockWeeksElsewhere` for the stretches not written out),
+and the line under the sentence reads: "De låsta lektionerna som tillsammans stänger
 lunchfönstret ligger i olika delar av läsåret: veckorna 17 augusti 2026 –
 20 december 2026 och veckorna 11 januari 2027 – 11 juni 2027. Klassens lunch
 är en och samma tid hela läsåret och måste därför gå fri från låsta
