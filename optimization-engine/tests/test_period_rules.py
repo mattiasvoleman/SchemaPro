@@ -579,26 +579,27 @@ def test_locks_of_two_terms_that_close_a_class_lunch_between_them_are_named_by_t
     term has a half hour, and no Monday the school looks at is without one.
     The refusal is the year's (review of #300, M2), unchanged in its code and
     its values, with the periods whose locks close the window between them
-    added as one flat value the gateway turns into dates.
+    added as one flat value the gateway turns into dates: the periods of one
+    lock with commas between them, the parts with semicolons.
     """
     every_year = _meal_refusal(_class_meal((*FIRST_HALF, {}), (*SECOND_HALF, {})))
     assert "lockPeriods" not in every_year.params
 
     between = _meal_refusal(_class_meal((*FIRST_HALF, {"periods": AUTUMN}), (*SECOND_HALF, {"periods": SPRING})))
-    assert between.params["lockPeriods"] == "0,1"
+    assert between.params["lockPeriods"] == "0;1"
     assert {key: value for key, value in between.params.items() if key not in ("lockPeriods", "group")} == {
         key: value for key, value in every_year.params.items() if key != "group"
     }
     assert "period" not in between.params and "periods" not in between.params
     # The order of the locks is not the order of the year.
     turned = _meal_refusal(_class_meal((*SECOND_HALF, {"periods": SPRING}), (*FIRST_HALF, {"periods": AUTUMN})))
-    assert turned.params["lockPeriods"] == "0,1"
+    assert turned.params["lockPeriods"] == "0;1"
     # Three periods, the locks in the first and the last: the middle one is not named.
     apart = _meal_refusal(_class_meal(
         (*FIRST_HALF, {"periods": [True, False, False]}), (*SECOND_HALF, {"periods": [False, False, True]}),
         masks=3,
     ))
-    assert apart.params["lockPeriods"] == "0,2"
+    assert apart.params["lockPeriods"] == "0;2"
     # A third period with a lock of its own in the window, which leaves that
     # period a gap: it takes a start too, and is named with the other two.
     three = _meal_refusal(_class_meal(
@@ -607,7 +608,67 @@ def test_locks_of_two_terms_that_close_a_class_lunch_between_them_are_named_by_t
         ("11:00:00", "11:15:00", {"periods": [False, False, True]}),
         masks=3,
     ))
-    assert three.params["lockPeriods"] == "0,1,2"
+    assert three.params["lockPeriods"] == "0;1;2"
+
+
+def test_the_periods_a_lock_runs_in_are_one_part_and_a_pair_that_closes_the_window_comes_first() -> None:
+    """A real year has more periods than terms: every dated post of the school cuts it.
+
+    Four periods, the autumn's lock in the first two and the spring's in the
+    last two: two parts, not four periods of which the two earliest are both
+    the autumn's (what a school of six periods was told on the first run
+    against a real database: two stretches of the autumn and never the
+    spring).
+    """
+    parts = _meal_refusal(_class_meal(
+        (*FIRST_HALF, {"periods": [True, True, False, False]}),
+        (*SECOND_HALF, {"periods": [False, False, True, True]}),
+        masks=4,
+    ))
+    assert parts.params["lockPeriods"] == "0,1;2,3"
+    # Periods that are not neighbours and hold the same lock are one part too.
+    apart = _meal_refusal(_class_meal(
+        (*FIRST_HALF, {"periods": [True, False, True, False]}),
+        (*SECOND_HALF, {"periods": [False, True, False, True]}),
+        masks=4,
+    ))
+    assert apart.params["lockPeriods"] == "0,2;1,3"
+    # The first two parts are two that close the window between them. A lock
+    # of a quarter of an hour in the first period and the first half hour in
+    # the second leave 11:30; the quarter and the second half hour leave
+    # nothing, and are named first, before the part between them.
+    pair = _meal_refusal(_class_meal(
+        ("11:00:00", "11:15:00", {"periods": [True, False, False]}),
+        (*FIRST_HALF, {"periods": [False, True, False]}),
+        (*SECOND_HALF, {"periods": [False, False, True]}),
+        masks=3,
+    ))
+    assert pair.params["lockPeriods"] == "0;2;1"
+    # Two pairs close it: the first half hour with either of two locks over
+    # the second. The earliest pair is the one named first, on every run.
+    either = _meal_refusal(_class_meal(
+        (*FIRST_HALF, {"periods": [True, False, False]}),
+        (*SECOND_HALF, {"periods": [False, True, False]}),
+        ("11:30:00", "12:30:00", {"periods": [False, False, True]}),
+        masks=3,
+    ))
+    assert either.params["lockPeriods"] == "0;1;2"
+    # No two parts do it alone: three thirds of an hour and a lunch of twenty
+    # minutes in a window of an hour. In the order of the year.
+    thirds = _payload_of_thirds()
+    assert _meal_refusal(thirds).params["lockPeriods"] == "0;1;2"
+
+
+def _payload_of_thirds() -> dict[str, object]:
+    """A lunch of 20 minutes in 11:00-12:00 and a lock of 20 minutes in each of three periods."""
+    payload = _class_meal(
+        ("11:00:00", "11:20:00", {"periods": [True, False, False]}),
+        ("11:20:00", "11:40:00", {"periods": [False, True, False]}),
+        ("11:40:00", "12:00:00", {"periods": [False, False, True]}),
+        masks=3,
+    )
+    payload["rules"] = {**MEAL, "lunchMinutes": 20}
+    return payload
 
 
 def test_locks_of_one_term_that_close_a_class_lunch_say_exactly_what_they_said() -> None:
@@ -649,13 +710,13 @@ def test_a_term_is_read_in_both_its_parities_and_through_the_groups_that_share_i
     even = _meal_refusal(_class_meal(
         (*FIRST_HALF, {"periods": AUTUMN}), (*SECOND_HALF, {"periods": SPRING, "recurrence": "EVEN_WEEKS"}),
     ))
-    assert even.params["lockPeriods"] == "0,1"
+    assert even.params["lockPeriods"] == "0;1"
     # The spring's lock is 7A:1's, a group that shares pupils with 7A (groupConflicts).
     payload = _class_meal((*FIRST_HALF, {"periods": AUTUMN}), (*SECOND_HALF, {"periods": SPRING}))
     klass, half = payload["fixedLessons"][0]["studentGroupId"], str(uuid4())  # type: ignore[index]
     payload["fixedLessons"][1]["studentGroupId"] = half  # type: ignore[index]
     payload["groupConflicts"] = [[klass, half]]
-    assert _meal_refusal(payload).params["lockPeriods"] == "0,1"
+    assert _meal_refusal(payload).params["lockPeriods"] == "0;1"
 
 
 def test_the_terms_named_are_those_of_the_weekday_refused() -> None:
@@ -673,7 +734,7 @@ def test_the_terms_named_are_those_of_the_weekday_refused() -> None:
     with pytest.raises(InvalidScheduleInputError) as refused:
         SchedulerSolver(_settings(5, "1,2"))._validate_request(OptimizeScheduleRequest.model_validate(payload))
     assert refused.value.code == "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK"
-    assert (refused.value.params["day"], refused.value.params["lockPeriods"]) == (2, "0,1")
+    assert (refused.value.params["day"], refused.value.params["lockPeriods"]) == (2, "0;1")
 
 
 def test_a_lock_of_another_class_or_outside_the_window_names_no_term() -> None:
@@ -692,7 +753,7 @@ def test_a_lock_of_another_class_or_outside_the_window_names_no_term() -> None:
         {**_lock(str(uuid4()), 1, "11:00:00", "12:00:00", str(uuid4())), **third},
         {**_lock(klass, 2, "11:00:00", "11:30:00", str(uuid4())), **third},
     ]
-    assert _meal_refusal(payload).params["lockPeriods"] == "0,1"
+    assert _meal_refusal(payload).params["lockPeriods"] == "0;1"
 
 
 def test_placed_posts_of_two_terms_in_a_class_lunch_window_are_named_with_their_terms() -> None:
@@ -726,12 +787,12 @@ def test_placed_posts_of_two_terms_in_a_class_lunch_window_are_named_with_their_
     assert response.status == "INFEASIBLE" and response.conflicts is not None
     cause = response.conflicts.conflicts[-1]
     assert (cause.category, cause.code) == ("PLACEMENT", "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK")
-    assert cause.params["lockPeriods"] == "0,1"
+    assert cause.params["lockPeriods"] == "0;1"
     # And without `placements` it is the refusal itself, with the same value.
     with pytest.raises(InvalidScheduleInputError) as refused:
         SchedulerSolver(case._settings()).solve(OptimizeScheduleRequest.model_validate(
             {key: value for key, value in payload.items() if key != "placements"}))
-    assert refused.value.params["lockPeriods"] == "0,1"
+    assert refused.value.params["lockPeriods"] == "0;1"
 
 
 # ---------------------------------------------------------------------------

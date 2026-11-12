@@ -6941,7 +6941,7 @@ class SchedulerSolver:
         day_index: int,
         rules: ScheduleRules,
     ) -> dict[str, str]:
-        """Which periods' locks close a class's lunch window BETWEEN them, when no one period's do.
+        """Which parts of the year's locks close a class's lunch window BETWEEN them, when no one period's do.
 
         A CLASS'S MEAL IS ONE HOUR ALL YEAR — one start a class and weekday in
         the model, one row in the answer (`lunches`), one sitting the school
@@ -6951,10 +6951,19 @@ class SchedulerSolver:
         window 11-12. The refusal is right for a meal that cannot move
         between terms, and it read as if one Monday had no gap, which no
         Monday the school can look at shows. So it says what it is:
-        `lockPeriods`, the periods whose locks take a start of the window that
-        day, their indices in order with commas between ("0,1") — a flat
-        value, which the gateway turns into dates beside a sentence saying
-        the meal is the year's.
+        `lockPeriods`, a flat value the gateway turns into dates beside a
+        sentence saying the meal is the year's.
+
+        THE PERIODS IN PARTS: "0,1,2,3;4,5". A real year is cut into more
+        periods than it has terms — every dated post of the school cuts it —
+        so the autumn's lock is in four periods and the spring's in two, and
+        the two earliest periods are both the autumn's. Periods whose locks
+        take the SAME starts of the window that day are one part, their
+        indices with commas between; the parts have semicolons between. The
+        first two parts are two that close the window between them, where two
+        do (the earliest such pair), so that what is named first is the
+        cause; the rest follow in the order of the year. A period whose locks
+        take no start of the window is in no part.
 
         ONLY THEN. Where the locks of ONE period close the window alone — and
         the locks of every week are every period's — the refusal is that
@@ -6972,7 +6981,13 @@ class SchedulerSolver:
         window_start, window_end, lunch_slots = self._lunch_window_slots(rules)
         day_offset = day_index * self._grid.slots_per_day
         sharing = _groups_sharing_students(request.group_conflicts)
-        taking: list[int] = []
+
+        def closed(forbidden: list[tuple[int, int]]) -> bool:
+            return self._admissible_lunch_starts(
+                day_offset, window_start, window_end, lunch_slots, forbidden,
+            ).is_empty()
+
+        parts: dict[tuple[tuple[int, int], ...], list[int]] = {}
         for period in range(periods):
             term = Weeks(0b11 << (2 * period), periods)
             forbidden = self._lunch_starts_blocked_by_fixed_lessons(
@@ -6985,14 +7000,29 @@ class SchedulerSolver:
             ).get((group_id, day_index), [])
             if not forbidden:
                 continue
-            if self._admissible_lunch_starts(
-                day_offset, window_start, window_end, lunch_slots, forbidden,
-            ).is_empty():
+            if closed(forbidden):
                 return {}
-            taking.append(period)
-        # At least two by now: the year's locks close the window, and no one
-        # period's did.
-        return {"lockPeriods": ",".join(str(period) for period in taking)}
+            parts.setdefault(tuple(sorted(forbidden)), []).append(period)
+        # At least two parts by now: the year's locks close the window, and no
+        # one period's did.
+        taken = list(parts)
+        pair = next(
+            (
+                (first, second)
+                for first in range(len(taken))
+                for second in range(first + 1, len(taken))
+                if closed([*taken[first], *taken[second]])
+            ),
+            None,
+        )
+        order = list(range(len(taken)))
+        if pair is not None:
+            order = [*pair, *(index for index in order if index not in pair)]
+        return {
+            "lockPeriods": ";".join(
+                ",".join(str(period) for period in parts[taken[index]]) for index in order
+            ),
+        }
 
     #: The refusals of _verify_week that SAY THEIR OWN WEEKS, whichever week's
     #: request they were raised from, and are never named by it. A teacher's
