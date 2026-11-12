@@ -4972,8 +4972,11 @@ term has a timetable (the reviews of #300):
   lesson of the year, is now one hour in each period, clear of that
   period's. Nothing new is sent: the locks and the posts already carry their
   periods. `TEACHER_LUNCH_LEAVES_NO_START` is read period by period and
-  names the period (`period`, and the gateway's dates) unless the locks of
-  every period refuse it, which is the year's refusal and names none.
+  names where in the year it is — every period in which the teacher has a
+  lesson to place and the same locked hours that weekday (`period`, and
+  `periods` where there are several, which the gateway reads as one run of
+  weeks: a läsår has more periods than terms) — unless the locks of every
+  period refuse it, which is the year's refusal and names none.
 
 **Deploy order.** The engine and the gateway are one release here. The
 engine's models forbid unknown fields, so in the minutes between the API's
