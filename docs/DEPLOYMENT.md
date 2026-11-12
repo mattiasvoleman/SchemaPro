@@ -4817,6 +4817,9 @@ Two changes, in two releases. No migration in either.
    `periodFrom`, `periodTo` and `periodStretches`, and the web shows them
    under the refusal.
 
+A third release, on top of these, reads a post's days and a teacher's own
+lunch period by period: 19.5.
+
 ### 19.1 Deploy order
 
 **The engine first.** Its request models forbid unknown fields
@@ -4885,8 +4888,12 @@ more strictly than the real weeks:
   are held apart.
 - Reservations — availability rules, uppdrag with dates, another school's
   lessons, room loans — are every week's.
-- A post's days (`lockedWeekdays`) and a subject's distribution
-  (`lockedDays`) carry no weeks, and are held in every part of the läsår.
+- A subject's distribution (`lockedDays`) carries no weeks, and is held in
+  every part of the läsår.
+- A post's days and a teacher's own lunch are read period by period (19.5),
+  and NOT by parity: the weekdays a teacher's preserved lessons hold in odd
+  weeks are held against the even weeks of the same period too, and the
+  lunch is one hour for both. That is the reading before periods, unchanged.
 - A leader post of two blocks on the same times is held in its follower's
   weeks too.
 - A large pool of interchangeable rooms that holds lessons of every week
@@ -4897,41 +4904,19 @@ more strictly than the real weeks:
   (`PART_LIMIT`, `ROW_LIMIT`, `optimization-engine/app/solver/weeks.py`). A
   teacher's or a class's own rows are always cut exactly.
 
-**Three of these refuse a timetable that exists, and are known limits** (the
-reviews of #300, 2026-11-12; each is the reading `main` already had, made
-more common by posts that run by term). None ever lays a timetable that
-breaks a rule: what is laid keeps every rule in every real week. What a
-school meets:
-
-- **Lärarens dag, the days of a post.** The weekdays a teacher's preserved
-  lessons hold are held against EVERY part of the läsår. A post of two days a
-  week, a lock on Mondays in the autumn only, and lessons that need Tuesday
-  and Wednesday in the spring: each term fits its two days, and Generera
-  answers INFEASIBLE with `TEACHER_WORK_DAYS_CANNOT_BE_KEPT` ("Tjänsten …
-  tillåter undervisning högst 2 dagar i veckan, och den gränsen är en av
-  reglerna som inte kan gälla samtidigt"; `TEACHER_WORK_DAYS_HIDDEN` for a
-  reader without HR-läs).
-- **A teacher's own lunch** (teacherWorkRules) is one hour all year, clear of
-  the teacher's locks in every part of it. A lock at 11:00 in the autumn and
-  one at 11:30 in the spring, in a window 11:00–12:00 for 30 minutes: each
-  term has a lunch, and Generera answers 400
-  `TEACHER_LUNCH_LEAVES_NO_START` ("Låsta lektioner lämnar arbetstidsregeln
-  … ingen lunch") or, from the model, `TEACHER_LUNCH_HAS_NOWHERE_TO_GO`.
-  Neither names a period: the refusal is the year's.
-- **A class's meal** is one start a day all year (`lunches` in the answer
-  has no period). A class lock 11:00–11:30 in the autumn and one 11:30–12:00
-  in the spring, in a window 11:00–12:00 for 30 minutes: each term has a
-  break, and Generera answers 400 `LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK`
-  ("Låsta lektioner lämnar klassen … ingen lunchlucka"), without a period.
-
-The way round each: move or unlock the lock the message points at, or widen
-the limit (the post's days, the lunch window) for the run. Production had no
-teacher with a day limit and no locked lesson when this was written
-(2026-11-12), so no school meets them yet. The two teacher rules are next to
-be read per period (the engine has what it needs: the locks carry their
-periods). A meal per period is another matter: `LunchSittings` holds one row
-per class and weekday of a läsår, so a class that eats at 11:30 in the autumn
-and 11:00 in the spring cannot be stored without a migration.
+**One of these refuses a timetable that exists, and is a known limit: a
+class's meal** (the review of #300, 2026-11-12; the reading `main` already
+had). It is one start a day all year: `lunches` in the answer has no period,
+and `LunchSittings` holds one row per class and weekday of a läsår. A class
+lock 11:00–11:30 in the autumn and one 11:30–12:00 in the spring, in a
+window 11:00–12:00 for 30 minutes: each term has a break, and Generera
+answers 400 `LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK` ("Låsta lektioner lämnar
+klassen … ingen lunchlucka"), without a period. It never lays a timetable
+that breaks a rule. The way round: move or unlock one of the two locks.
+Production had no locked lesson when this was written. A meal per period
+needs a migration (dates on `LunchSittings` and `PublishedLunchSittings`,
+an exclusion constraint in place of the unique key) and every reader of the
+table; it is not built.
 
 ### 19.4 Operations
 
@@ -4947,3 +4932,43 @@ and 11:00 in the spring cannot be stored without a migration.
   were computed under the stricter reading; the school runs the proposals
   again. Every other school's basis is the digest it was.
 
+### 19.5 A post's days and a teacher's own lunch, by period
+
+A third release on top of the two above; no migration. Until it, two of a
+teacher's rules were read for the whole läsår and refused years whose every
+term has a timetable (the reviews of #300):
+
+- **The days of a post.** The weekdays a teacher's preserved lessons hold
+  were held against every week the teacher has: a post of two days and a
+  lock on Mondays in the autumn only left the spring one day
+  (`TEACHER_WORK_DAYS_CANNOT_BE_KEPT`). The gateway now reads every week of
+  the läsår and sends each set of weekdays with the periods some week holds
+  it in — `lockedWeekdayPeriods` on a day limit, beside `lockedWeekdays`,
+  which stays — and the engine holds a week against the sets of its own
+  periods. Sent only for a teacher whose periods differ
+  (`lockedWeekdaySetsByPeriod`, `src/common/teacher-day.ts`).
+- **A teacher's own lunch.** One hour all year, clear of every lock and
+  lesson of the year, is now one hour in each period, clear of that
+  period's. Nothing new is sent: the locks and the posts already carry their
+  periods. `TEACHER_LUNCH_LEAVES_NO_START` is read period by period and
+  names the period (`period`, and the gateway's dates) unless the locks of
+  every period refuse it, which is the year's refusal and names none.
+
+**Deploy order.** The engine and the gateway are one release here. The
+engine's models forbid unknown fields, so in the minutes between the API's
+deploy and the engine's a run that carries `lockedWeekdayPeriods` is
+answered 422 by the older engine, and the gateway says it as 503
+`ENGINE_LACKS_PERIODS` ("försök igen om några minuter"), as for `periods`
+(19.2). Only a school with a post that limits days AND preserved lessons
+whose weekdays differ between periods sends the field; production had no
+post with a day limit when this was written. Afterwards
+`https://<solver-host>/openapi.json` names `lockedWeekdayPeriods` under
+`AnonymousTeacherDayLimit`.
+
+**Rolling back** is 19.2's: the gateway alone is safe (the older gateway
+sends no `lockedWeekdayPeriods`, and the engine holds every set in every
+week again, the stricter reading); the engine alone, past this release,
+fails the runs that carry the field with the same 503.
+
+Schemaförslag of a school that is sent the field go stale once, as in 19.4:
+the candidate basis reads it.
