@@ -2334,15 +2334,19 @@ def test_a_lunch_stage_refusal_the_years_posts_give_alone_names_no_period_in_the
     assert _summary_week(payload, test_optimize._settings()) == ("LUNCH_HALL_CANNOT_SEAT_CLASSES", {})
 
 
-def test_a_teacher_of_one_term_whose_lunch_the_other_terms_locks_close_is_told_no_period() -> None:
-    """C03: the teacher's lunch is the year's by name, not because every week happens to refuse it.
+def test_a_teacher_of_one_term_is_refused_nothing_for_the_other_terms_locks_in_her_lunch() -> None:
+    """C03 of #300's second review, as the lunch is read now: one in each period.
 
     Every post of the teacher's is the autumn's; two locks of the SPRING fill
-    her lunch window. Only the autumn's week reads her rule (the spring has
-    no lesson of hers), so "the same refusal in every week" does not hold,
-    and the refusal would be the autumn's — the term that has no lock at all
-    (review of #300, M1, in the one form its first test did not have: there
-    the teacher had a post of every week).
+    her lunch window. While the lunch was one hour all year this year was
+    refused, and the test held that the refusal named no period (left to the
+    week it was raised from it would have been the autumn's, the term with no
+    lock at all). Read period by period (test_period_rules.py) there is
+    nothing to refuse: the spring has no lesson of hers for a lunch to be
+    kept clear beside, and the autumn has no lock. The year is laid.
+
+    The same two locks in the AUTUMN, where her lessons are, are the
+    autumn's, and the refusal says so itself.
     """
     teacher = str(uuid4())
     payload = _payload(
@@ -2355,10 +2359,20 @@ def test_a_teacher_of_one_term_whose_lunch_the_other_terms_locks_close_is_told_n
             _lock(str(uuid4()), "11:30:00", "12:00:00", teacher=teacher, periods=SPRING),
         ],
     )
+    settings = _settings(hours=5)
+    SchedulerSolver(settings)._validate_request(OptimizeScheduleRequest.model_validate(payload))
+    response = _solve(payload, settings)
+    assert response.status in SOLVED
+    assert len(response.lessons) == 3
+    assert _validate(payload, response.lessons, settings) == []
+
+    for lock in payload["fixedLessons"]:  # type: ignore[union-attr]
+        lock["periods"] = AUTUMN
     with pytest.raises(InvalidScheduleInputError) as refused:
-        SchedulerSolver(_settings(hours=5))._validate_request(OptimizeScheduleRequest.model_validate(payload))
+        SchedulerSolver(settings)._validate_request(OptimizeScheduleRequest.model_validate(payload))
     assert refused.value.code == "TEACHER_LUNCH_LEAVES_NO_START"
-    assert not {"period", "periods", "parity"} & set(refused.value.params)
+    assert {name: refused.value.params[name] for name in ("period", "periods", "parity")
+            if name in refused.value.params} == {"period": 0}
 
 
 def _cap_breach(others: list[dict[str, object]], **extra: object):
