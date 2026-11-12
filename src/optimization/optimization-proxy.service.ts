@@ -582,6 +582,14 @@ export interface PreparedSchedule {
   draftLessons: DraftLesson[];
   /** Förlagda poster: the förläggningar as this fetch read them, which every write writes again. */
   placedRows: PlacedLessonRow[];
+  /**
+   * Terminer: each preserved master's weeks as this fetch read them, by its id
+   * (weeksKeyOf): its parity and its dates, which are what the engine was told
+   * the lock holds its hour in (recurrence, periods). Generera's write reads
+   * them again and refuses when one has moved (persistMasterLessons); an apply
+   * has the same from its basis, which hashes the locks' dates.
+   */
+  lockWeeks: Map<string, string>;
   /** Only when asked for ({ coverage: true }): it costs six more reads. */
   coverage: CoverageBase | null;
 }
@@ -1332,6 +1340,7 @@ export class OptimizationProxyService {
         prepared.draftIds,
         prepared.splitLessons,
         prepared.placedRows,
+        prepared.lockWeeks,
       ),
     );
 
@@ -1658,6 +1667,7 @@ export class OptimizationProxyService {
       draftIds: sortedIds(draftRows.map((row) => row.id)),
       draftLessons,
       placedRows: data.placedRows,
+      lockWeeks: new Map(data.preservedRows.map((row) => [row.id, weeksKeyOf(row)] as const)),
       coverage: options.coverage
         ? await this.readCoverageBase(tx, academicYearId, [...data.preservedRows, ...data.placedRows], draftLessons)
         : null,
@@ -4557,6 +4567,8 @@ export class OptimizationProxyService {
     splitLessons: SplitLessons = NO_SPLIT,
     /** Förlagda poster: the förläggningar as the fetch read them, written beside the answer. */
     placedRows: readonly PlacedLessonRow[] = [],
+    /** Terminer: the preserved masters' weeks as the fetch read them, by id (PreparedSchedule.lockWeeks). */
+    lockWeeks: ReadonlyMap<string, string> = new Map(),
   ): Promise<TimedLesson[] | null> {
     // First, before anything is read: the publication lock and the mode
     // (publish-mode.ts). In DRAFT the regenerated grundschema is a draft.
@@ -4619,6 +4631,27 @@ export class OptimizationProxyService {
         throw generateStale();
       }
 
+      // Terminer: and the preserved lessons' weeks. The engine held each
+      // lock's hour in the weeks the fetch read — its parity, and the periods
+      // its dates came to — and left the hour to others in the rest. A lock
+      // moved to another term while the solver ran, or widened to the whole
+      // läsår, now sits in weeks where the answer may have laid a lesson on
+      // its hour. Read only for a school that has preserved lessons. A lock
+      // removed since holds nobody's hour and refuses nothing, and one
+      // unlocked since has already changed the draft above.
+      if (lockWeeks.size > 0) {
+        const locksNow = await tx.masterLesson.findMany({
+          where: { academicYearId, id: { in: [...lockWeeks.keys()] } },
+          select: { id: true, recurrence: true, startDate: true, endDate: true },
+        });
+        if (locksNow.some((row) => weeksKeyOf(row) !== lockWeeks.get(row.id))) {
+          this.logger.warn(
+            `Generated timetable not written: a preserved lesson's weeks or dates changed while the solver ran [academicYearId=${academicYearId}].`,
+          );
+          throw generateStale();
+        }
+      }
+
       if (!user.schoolId) {
         throw new Error('Cannot persist master lessons: schoolId missing from JWT.');
       }
@@ -4647,6 +4680,27 @@ export class OptimizationProxyService {
           },
         })
       ).map(({ shares, ...row }) => ({ ...row, ...((shares ?? []).length > 0 ? { shares } : {}) }));
+
+      // Terminer: and a förlagd post's dates. Its förläggningar were held in
+      // the periods the post's dates came to at the fetch, and are written
+      // below with the dates the post has now. A post with lessons left to
+      // place is in the demand, and writeRegeneration compares its weeks; one
+      // whose förläggningar are all of it is in no demand, so it is compared
+      // here. The förläggning's own parity is in its key, above.
+      const postNow = new Map(requirementRows.map((row) => [row.id, row] as const));
+      const placedPostMoved = placedRows.some((placed) => {
+        const post = postNow.get(placed.requirementId);
+        return (
+          post !== undefined &&
+          (dayOf(post.startDate) !== dayOf(placed.startDate) || dayOf(post.endDate) !== dayOf(placed.endDate))
+        );
+      });
+      if (placedPostMoved) {
+        this.logger.warn(
+          `Generated timetable not written: a förlagd post's dates changed while the solver ran [academicYearId=${academicYearId}].`,
+        );
+        throw generateStale();
+      }
 
       // The answer in real ids, each mirrored post's lessons written beside
       // its leader post's, judged against the demand by the shared write.

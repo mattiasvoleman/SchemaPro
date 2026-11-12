@@ -4162,6 +4162,71 @@ describe('OptimizationProxyService', () => {
           expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
         });
 
+        it('refuses the write (GENERATE_STALE) when a post of every week was given dates while the solver ran', async () => {
+          // Bild for 8A, every week when the fetch read it: its row carries no
+          // weeks in the demand. By the write it ends at the autumn break, and
+          // its lessons would be stamped with dates the answer never knew of.
+          arrangeTerms({}, {
+            requirements: [
+              slojd(A1, TX, H1, 'HT', TOVE),
+              slojd(A2, TR, H2, 'HT', TOR),
+              slojd(S1, TR, H1, 'VT', TOR),
+              slojd(S2, TX, H2, 'VT', TOVE),
+              bild({ endDate: null }),
+            ],
+            groups: [
+              { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS', halfOfId: null, name: '7A' },
+              { id: H1, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID, name: '7A:1' },
+              { id: H2, gradeLevel: 7, kind: 'TEACHING_GROUP', halfOfId: GROUP_ID, name: '7A:2' },
+              { id: OTHER_GROUP, gradeLevel: 8, kind: 'CLASS', halfOfId: null, name: '8A' },
+            ],
+          });
+          year();
+          const read = await ready();
+          expect(read.demand.find((entry) => entry.requirementId === OTHER)).not.toHaveProperty('weeksKey');
+
+          engineByDay();
+          const fetchRead = tx.teachingRequirement.findMany.getMockImplementation()!;
+          const row = (id: string, subjectId: string, group: string, teacher: string, startDate: Date | null, endDate: Date | null) => ({
+            id, subjectId, studentGroupId: group, teacherId: teacher, coTeacherId: null, recurrence: 'ALL_WEEKS', startDate, endDate,
+          });
+          tx.teachingRequirement.findMany.mockImplementation((query: Query) =>
+            query.select && !('lessonsPerWeek' in query.select)
+              ? Promise.resolve([
+                  row(A1, TX, H1, TOVE, null, autumnEnd),
+                  row(A2, TR, H2, TOR, null, autumnEnd),
+                  row(S1, TR, H1, TOR, springStart, null),
+                  row(S2, TX, H2, TOVE, springStart, null),
+                  row(OTHER, 'cccccccc-00aa-4000-8000-0000000000aa', OTHER_GROUP, TEA, null, day('2026-10-25')),
+                ])
+              : fetchRead(query),
+          );
+
+          await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+            response: expect.objectContaining({ code: 'GENERATE_STALE' }),
+          });
+          expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+        });
+
+        it('holds a leader post in the weeks of the other posts of its own block too', async () => {
+          // The autumn block's two posts read in turn: textilslöjd until the
+          // autumn break and trä- och metallslöjd after it. The block is one
+          // set of times, so each post holds them in the other's weeks as it
+          // holds them in the spring's — and the weeks between the terms are
+          // still nobody's.
+          const late = { startDate: day('2027-02-01') };
+          arrangeTerms({
+            a1: { endDate: day('2026-10-25') },
+            a2: { startDate: day('2026-10-26') },
+            s1: late,
+            s2: late,
+          });
+          year();
+          const { prepared, periods } = await sentPeriods();
+          expect(periods).toEqual(new Map([[A1, [true, false]], [A2, [true, false]]]));
+          expect(prepared.payload.periodWeeks).toEqual([40, 3]);
+        });
+
         it('says in dates where in the year a refusal was counted, on a 200 and on a 400', async () => {
           const late = { startDate: day('2027-02-01') };
           arrangeTerms({ s1: late, s2: late });
@@ -6187,6 +6252,89 @@ describe('OptimizationProxyService', () => {
       });
     });
 
+    describe('terminer: a preserved lesson whose weeks moved while the solver ran', () => {
+      const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
+      const untilChristmas = { endDate: day('2026-12-18') };
+      const refusedAsStale = async () => {
+        await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+          response: expect.objectContaining({ code: 'GENERATE_STALE' }),
+        });
+        expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+      };
+
+      it('refuses the write (GENERATE_STALE) when a lock of the autumn was widened to the whole läsår', async () => {
+        // The engine held the lock's hour until December and left it to others
+        // after that. By the write the lock sits there all year, on an hour the
+        // answer may have given to somebody else in the spring.
+        arrange({
+          lockedLessons: [lockedLesson(untilChristmas)],
+          keptAfterSolve: [lockedLesson({ endDate: null })],
+        });
+        echoEngine();
+
+        await refusedAsStale();
+      });
+
+      it.each([
+        ['moved to the spring', { startDate: day('2027-01-11'), endDate: null }],
+        ['given a later last day', { endDate: day('2027-01-17') }],
+        ['given a first day', { startDate: day('2026-09-01'), endDate: day('2026-12-18') }],
+        ['put on the odd weeks', { endDate: day('2026-12-18'), recurrence: 'ODD_WEEKS' }],
+      ] as [string, Record<string, unknown>][])('refuses it for a lock %s', async (_name, now) => {
+        arrange({
+          lockedLessons: [lockedLesson(untilChristmas)],
+          keptAfterSolve: [lockedLesson(now)],
+        });
+        echoEngine();
+
+        await refusedAsStale();
+      });
+
+      it('refuses it for a lock of every week that was given dates', async () => {
+        // The other way round holds nothing more than the answer knew of, but
+        // it is another week than the one that was planned: the same rule as
+        // for a post (weeksKey), and no exception to remember.
+        arrange({ lockedLessons: [lockedLesson()], keptAfterSolve: [lockedLesson(untilChristmas)] });
+        echoEngine();
+
+        await refusedAsStale();
+      });
+
+      it('writes when the locks stand as the fetch read them, and when one has been removed since', async () => {
+        arrange({ lockedLessons: [lockedLesson(untilChristmas)] });
+        echoEngine();
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        expect(tx.masterLesson.createMany).toHaveBeenCalledTimes(1);
+
+        // A lock deleted while the solver ran holds nobody's hour any more.
+        tx.masterLesson.createMany.mockClear();
+        arrange({ lockedLessons: [lockedLesson(untilChristmas)], keptAfterSolve: [] });
+        echoEngine();
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        expect(tx.masterLesson.createMany).toHaveBeenCalledTimes(1);
+      });
+
+      it('reads the locks again only for a school that has any', async () => {
+        const byId = () =>
+          tx.masterLesson.findMany.mock.calls.filter(([query]) => (query as Query | undefined)?.where?.['id'] !== undefined);
+
+        arrange();
+        echoEngine();
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        expect(byId()).toHaveLength(0);
+
+        tx.masterLesson.findMany.mockClear();
+        arrange({ lockedLessons: [lockedLesson()] });
+        echoEngine();
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        expect(byId()).toHaveLength(1);
+        expect(byId()[0]![0]).toMatchObject({
+          where: { academicYearId: ACADEMIC_YEAR, id: { in: ['locked-1'] } },
+          select: { id: true, recurrence: true, startDate: true, endDate: true },
+        });
+      });
+    });
+
     describe('förlagda poster', () => {
       // The engine's _field_names(Placements) and (PlacedLesson).
       const PLACEMENTS_FIELDS = ['lessons', 'requirements'];
@@ -6494,6 +6642,77 @@ describe('OptimizationProxyService', () => {
           response: expect.objectContaining({ code: 'GENERATE_STALE' }),
         });
         expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+      });
+
+      it('refuses the write (GENERATE_STALE) when a förlagd post’s dates were moved while the solver ran', async () => {
+        // One lesson, and it is förlagd: nothing is left to place, so the post
+        // is in no demand, and its förläggning is written with the post's
+        // dates as they stand at the write. The fetch read it until December.
+        const post = requirement({ lessonsPerWeek: 1, endDate: new Date('2026-12-18T00:00:00.000Z') }) as Row;
+        arrange({ requirements: [post] });
+        placed([placement()]);
+        echoEngine();
+        const fetchRead = tx.teachingRequirement.findMany.getMockImplementation()!;
+        const postNow = (dates: { startDate: Date | null; endDate: Date | null }) =>
+          tx.teachingRequirement.findMany.mockImplementation((query: Query) =>
+            query.select && !('lessonsPerWeek' in query.select)
+              ? Promise.resolve([
+                  {
+                    id: post['id'], subjectId: post['subjectId'], studentGroupId: post['studentGroupId'],
+                    teacherId: post['teacherId'], coTeacherId: null, recurrence: 'ALL_WEEKS', ...dates,
+                  },
+                ])
+              : fetchRead(query),
+          );
+
+        // Still until December: written.
+        postNow({ startDate: null, endDate: new Date('2026-12-18T00:00:00.000Z') });
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        expect(written()).toHaveLength(1);
+
+        // The whole läsår by the write: the hour was held free in the spring for nobody.
+        tx.masterLesson.createMany.mockClear();
+        postNow({ startDate: null, endDate: null });
+        await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+          response: expect.objectContaining({ code: 'GENERATE_STALE' }),
+        });
+        expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+
+        // And a first day it did not have.
+        postNow({ startDate: new Date('2026-09-01T00:00:00.000Z'), endDate: new Date('2026-12-18T00:00:00.000Z') });
+        await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+          response: expect.objectContaining({ code: 'GENERATE_STALE' }),
+        });
+      });
+
+      it('terminer: gives a förlagd post with dates its periods on the post, on its förläggning and on the post as released', async () => {
+        // The post runs until 18 December. A lock of every week stands before
+        // the förläggning among the fixed lessons, so each mask is read at its
+        // own place in what the year was cut by: the posts, then the fixed
+        // lessons, then the posts as they would be released.
+        arrange({
+          requirements: [requirement({ endDate: new Date('2026-12-18T00:00:00.000Z') })],
+          // With the names the förläggning is judged against (placement-judge.ts).
+          lockedLessons: [{ ...lockedLesson(), studentGroup: { name: '7A' }, subject: { name: 'Matematik' }, participants: [] }],
+        });
+        tx.academicYear.findUnique.mockResolvedValue({
+          startDate: new Date('2026-08-17T00:00:00.000Z'),
+          endDate: new Date('2027-06-11T00:00:00.000Z'),
+        } as never);
+        placed([placement()]);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const payload = postedPayload();
+        expect(payload.periodWeeks).toEqual([18, 25]);
+        expect(payload.requirements.map((post) => post.periods)).toEqual([[true, false]]);
+        // The lock of every week carries no mask; the förläggning carries its post's.
+        expect(payload.fixedLessons.map((lock) => lock.periods)).toEqual([undefined, [true, false]]);
+        expect(payload.placements!.lessons).toEqual([
+          { fixedLessonId: payload.fixedLessons[1]!.id, requirementId: payload.requirements[0]!.id },
+        ]);
+        expect(payload.placements!.requirements.map((post) => post.periods)).toEqual([[true, false]]);
       });
 
       it('deletes a lesson Generera wrote from a förläggning with the draft, but counts it as no content of it', async () => {

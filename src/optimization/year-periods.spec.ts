@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { LessonRecurrence } from '@prisma/client';
 import { runsOn, weeksCanOverlap } from '../calendar/lesson-recurrence';
 import { MAX_PERIODS, periodSentence, withPeriodDates, yearPeriodsOf, type HeldWindow } from './year-periods';
@@ -34,6 +36,22 @@ function meetInEngine(
   if (!first.mask || !second.mask) return true;
   return first.mask.some((runs, period) => runs && second.mask![period]);
 }
+
+describe('MAX_PERIODS', () => {
+  it('is the engine’s own bound, a läsår’s 53 weeks, and not a number of this file’s', () => {
+    // The engine refuses a mask longer than its MAX_PERIODS (422), and the
+    // gateway sends none past its own: the two are one number in two
+    // languages, read here from the engine's schema itself.
+    const schema = readFileSync(
+      join(__dirname, '..', '..', 'optimization-engine/app/schemas/schedule.py'),
+      'utf8',
+    );
+    const engine = /^MAX_PERIODS = (\d+)$/m.exec(schema);
+    expect(engine).not.toBeNull();
+    expect(MAX_PERIODS).toBe(Number(engine![1]));
+    expect(MAX_PERIODS).toBe(53);
+  });
+});
 
 describe('yearPeriodsOf', () => {
   it('sends nothing for a school that dates no post', () => {

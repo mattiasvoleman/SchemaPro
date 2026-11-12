@@ -39,7 +39,8 @@
     "!mobile/src/services/notificationText.ts",
     "!mobile/src/types/index.ts",
     "!mobile/src/i18n/sv.ts",
-    "!mobile/src/i18n/en.ts"
+    "!mobile/src/i18n/en.ts",
+    "!optimization-engine/app/schemas/schedule.py"
   ],
   "mutate_comment": "Mutated is what a unit spec can observe, because unit specs are all Stryker runs (jest.mutation.config.js: src/**/*.spec.ts, never test/*.e2e-spec.ts). Left out on that principle, not by score. Bootstrap and wiring that only exists once Nest has built the application: main.ts, *.module.ts, and common/http-defaults.ts, which hands constant body-parser limits to the live Express instance and is proven by test/payload-limits.e2e-spec.ts. Controllers: their contract (route, guards, pipes, status code, throttling) lives in the request pipeline the e2e suite drives, so a unit spec calling a handler as a plain method skips exactly what makes it a controller; logic a controller grows belongs in a service, where it is mutated. auth/decorators: SetMetadata and createParamDecorator wrappers whose only output is metadata the guards read inside that pipeline. Anything that decides something stays in even while no spec reaches it: the guards, realtime/cors-io.adapter.ts (allowlist or no origin), config/configuration.ts (a pure function of the environment), the event names in realtime.types.ts, subjects.service.ts. The dto/, interfaces/ and enums/ exclusions predate this note and are not argued by it. Generated files (*.generated.ts) are left out too: src/integration/ss12000-v2/s1-provider.generated.ts is S1's OpenAPI schemas and parameter lists as a data module, 3,225 of the API's 73,861 mutants, and a mutant in it changes what the generator wrote, not anything a test of the gateway holds to account. Which of the rest is mutated on a given night is scripts/mutation-slice.mjs's business: it reads this list and deals the files into slices.",
   "mutate": [
