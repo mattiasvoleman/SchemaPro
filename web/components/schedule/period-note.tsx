@@ -4,11 +4,6 @@ import { useLocale, useTranslations } from "next-intl";
 import { lockPeriodDatesOf, periodDatesOf, periodDay } from "@/lib/period-note";
 
 /**
- * Terminer: the line under a refusal that was counted in one part of the
- * läsår, saying which. Nothing for a refusal that names no period, which is
- * every refusal of a school that dates no post (lib/period-note.ts).
- */
-/**
  * Klassens lunch: the line under "locked lessons leave the class no lunch
  * break" when the locks are in different parts of the läsår, saying which and
  * that the meal is one time all year. Nothing for a refusal one period's
@@ -32,6 +27,11 @@ export function LunchLocksNote({ params }: { params: Record<string, string | num
   );
 }
 
+/**
+ * Terminer: the line under a refusal that was counted in one part of the
+ * läsår, saying which. Nothing for a refusal that names no period, which is
+ * every refusal of a school that dates no post (lib/period-note.ts).
+ */
 export function PeriodNote({ params }: { params: Record<string, string | number> | null | undefined }) {
   const t = useTranslations("generate");
   const locale = useLocale();

@@ -32,6 +32,22 @@ describe("periodDatesOf", () => {
     expect(periodDatesOf({ periodFrom: "11 januari", periodTo: "2027-01-17" })).toBeNull();
     expect(periodDatesOf({ periodFrom: 20270111, periodTo: 20270117 })).toBeNull();
   });
+
+  it("is nothing for a day of the right shape that the calendar does not have", () => {
+    // Written out, month 13 throws (periodDay), and the page with it.
+    expect(periodDatesOf({ periodFrom: "2026-13-45", periodTo: "2027-01-17" })).toBeNull();
+    expect(periodDatesOf({ periodFrom: "2027-01-11", periodTo: "2026-13-45" })).toBeNull();
+    // 30 February is read by the browser as 2 March: a day nobody sent.
+    expect(periodDatesOf({ periodFrom: "2027-02-30", periodTo: "2027-03-07" })).toBeNull();
+    expect(periodDatesOf({ periodFrom: "2027-01-11", periodTo: "2027-04-31" })).toBeNull();
+    // The leap day is a day in the year that has it, and in no other.
+    expect(periodDatesOf({ periodFrom: "2028-02-29", periodTo: "2028-03-05" })?.from).toBe("2028-02-29");
+    expect(periodDatesOf({ periodFrom: "2027-02-29", periodTo: "2027-03-05" })).toBeNull();
+    // And nothing of another shape is a day, though the browser reads a date in it.
+    for (const other of ["2027-1-11", "+002027-01-11", "2027-01-11T00:00", " 2027-01-11", "20270111", ""]) {
+      expect(periodDatesOf({ periodFrom: other, periodTo: "2027-01-17" })).toBeNull();
+    }
+  });
 });
 
 describe("lockPeriodDatesOf", () => {
@@ -75,6 +91,9 @@ describe("lockPeriodDatesOf", () => {
     for (const key of ["lockFrom", "lockTo", "otherLockFrom", "otherLockTo"] as const) {
       expect(lockPeriodDatesOf({ ...dated, [key]: "11 januari" })).toBeNull();
       expect(lockPeriodDatesOf({ ...dated, [key]: 20270111 })).toBeNull();
+      // Of the right shape and on no calendar: month 13, 30 February.
+      expect(lockPeriodDatesOf({ ...dated, [key]: "2026-13-45" })).toBeNull();
+      expect(lockPeriodDatesOf({ ...dated, [key]: "2027-02-30" })).toBeNull();
       const { [key]: _gone, ...rest } = dated;
       expect(lockPeriodDatesOf(rest)).toBeNull();
     }

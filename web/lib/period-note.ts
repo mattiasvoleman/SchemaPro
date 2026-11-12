@@ -20,12 +20,24 @@ export interface PeriodDates {
   parity: "ODD_WEEKS" | "EVEN_WEEKS" | "ALL";
 }
 
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * A day the calendar has, written YYYY-MM-DD: one that reads as a date and
+ * is written back as itself, which nothing of another shape is. "2026-13-45"
+ * has the shape and is no day: written out (periodDay) it throws, and the
+ * page with it. And "2026-02-30" is read by the browser as 2 March, a day
+ * nobody sent. Neither is shown: the line is left out, as for a refusal that
+ * names no period.
+ */
+const isDay = (value: unknown): value is string => {
+  if (typeof value !== "string") return false;
+  const time = Date.parse(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(time) && new Date(time).toISOString().slice(0, 10) === value;
+};
 
 export function periodDatesOf(params: Record<string, string | number> | null | undefined): PeriodDates | null {
   if (!params) return null;
   const { periodFrom: from, periodTo: to, periodStretches: stretches, parity } = params;
-  if (typeof from !== "string" || typeof to !== "string" || !DAY.test(from) || !DAY.test(to)) return null;
+  if (!isDay(from) || !isDay(to)) return null;
   return {
     from,
     to,
@@ -62,7 +74,7 @@ export function lockPeriodDatesOf(
   if (!params) return null;
   const { lockFrom: from, lockTo: to, otherLockFrom: otherFrom, otherLockTo: otherTo, lockWeeksElsewhere: elsewhere } = params;
   const days = [from, to, otherFrom, otherTo];
-  if (!days.every((day): day is string => typeof day === "string" && DAY.test(day))) return null;
+  if (!days.every(isDay)) return null;
   return {
     from: days[0] as string,
     to: days[1] as string,
