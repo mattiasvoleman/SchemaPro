@@ -138,6 +138,16 @@ parts (``week_parts``) rather than off "does it alternate":
   one: a split that changed inside a day would be the per-week cumulatives
   again, and as unsound.
 
+"EXACT" ABOVE IS EXACT UP TO THE CAP ON A LARGE ROW. The rows of a pool are
+implied rows (weeks.py), and ``week_parts`` joins two parts of a row that has
+more than ``PART_LIMIT`` of them and more than ``ROW_LIMIT`` memberships in
+all: the union holds both weeks' lessons apart at once, which is stricter than
+either week and never looser. So a pool whose lessons carry more than eight
+different sets of weeks AND number in the thousands is held more tightly than
+its rooms need, in every case above, and may be refused a week an assignment
+keeps. No school of two to six periods is near it; below the cap each case
+is what it says.
+
 A pool with no period in it keeps the test it had (``mixes``), so its rows
 are the ones it had: it names its rooms whatever its size.
 """

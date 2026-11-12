@@ -679,6 +679,10 @@ def _weeks(request):
     — and per parity inside it, where the request has a parity. A period
     holding exactly the entries of an earlier one is the same week and is
     checked once.
+
+    A week is named as the engine's own answers name it: "period 0" is the
+    first, the index a refusal's `period` carries (weeks.named), so a line
+    here and a line of a response are about the same weeks.
     """
     entries = [*request.requirements, *request.fixed_lessons]
     alternating = any(entry.recurrence for entry in entries)
@@ -709,7 +713,7 @@ def _weeks(request):
             seen.add(key)
             label = ", ".join(
                 part for part in (
-                    f"period {period + 1}" if period is not None else "", parity_label,
+                    f"period {period}" if period is not None else "", parity_label,
                 ) if part
             )
             weeks.append((label, request.model_copy(update={
@@ -730,10 +734,14 @@ def validate(grid, request, lessons) -> list[str]:
     for lesson in lessons:
         if lesson.requirement_id not in known:
             problems.append(f"lesson names unknown requirement {lesson.requirement_id}")
+    # Whose day a lesson is part of is the year's question, not a week's: a
+    # class with no lesson of its own in one term is a class all the same.
+    classes = _classes_with_lessons(request)
     for label, week in weeks:
         ids = {r.id for r in week.requirements}
         for problem in _validate_week(
             grid, week, [lesson for lesson in lessons if lesson.requirement_id in ids],
+            classes=classes,
         ):
             if problem not in seen:
                 seen.add(problem)
@@ -753,7 +761,171 @@ def _shared_rooms_of(request) -> dict:
     }
 
 
-def _validate_week(grid, request, lessons) -> list[str]:
+def _classes_with_lessons(request) -> list:
+    """The classes that have a day: the request's groups some requirement is filed under."""
+    filed = {requirement.student_group_id for requirement in request.requirements}
+    return [group.id for group in getattr(request, "groups", None) or [] if group.id in filed]
+
+
+def _lock_window(grid, fixed):
+    """A locked lesson as (weekday index, first slot of the day, slot after its last).
+
+    By the clock: every slot the lock's minutes touch, whether or not it
+    starts and ends on the grid, and only the part of it inside the school
+    day. None for a lock on a weekday the school does not teach, or wholly
+    outside the day: it holds nothing a lesson could stand on.
+    """
+    try:
+        day_idx = grid.day_index(fixed.day_of_week)
+    except ValueError:
+        return None
+    start_minutes = _clock(fixed.start_time) - grid.day_start_minutes
+    end_minutes = _clock(fixed.end_time) - grid.day_start_minutes
+    start = max(0, start_minutes // grid.slot_minutes)
+    end = min(grid.slots_per_day, -(-end_minutes // grid.slot_minutes))
+    if end <= start:
+        return None
+    return day_idx, start, end
+
+
+def _lock_problems(grid, request, lessons) -> list[str]:
+    """A placed lesson against the locked lessons of the same week.
+
+    A lock is a lesson somebody placed by hand, and it holds its teacher, its
+    co-teacher, its pupils and its room as any lesson does. The engine was
+    told so (fixedLessons); this re-reads it. Only a GENERATED lesson against
+    a lock: two locks on one hour are the school's own doing and no answer of
+    the engine's. A room the school marked shareable is counted by its seats
+    below and not here.
+    """
+    problems: list[str] = []
+    spd = grid.slots_per_day
+    req_by_id = {r.id: r for r in request.requirements}
+    shared_rooms = _shared_rooms_of(request)
+    partners: dict = defaultdict(set)
+    for first_id, second_id in getattr(request, "group_conflicts", []) or []:
+        partners[first_id].add(second_id)
+        partners[second_id].add(first_id)
+    held = []
+    for fixed in request.fixed_lessons:
+        window = _lock_window(grid, fixed)
+        if window is None:
+            continue
+        day_idx, start, end = window
+        pupils = _lock_pupils(fixed)
+        held.append((
+            day_idx * spd + start,
+            day_idx * spd + end,
+            {fixed.teacher_id, getattr(fixed, "co_teacher_id", None)} - {None},
+            pupils | {partner for pupil in pupils for partner in partners.get(pupil, ())},
+            fixed.room_id if fixed.room_id not in shared_rooms else None,
+            fixed.id,
+        ))
+    if not held:
+        return problems
+    for lesson in lessons:
+        requirement = req_by_id.get(lesson.requirement_id)
+        if requirement is None:
+            continue
+        try:
+            duration = _lesson_slots(grid, requirement, lesson)
+            _, _, slots = _occupied(grid, lesson.day_of_week, lesson.start_time, duration)
+        except ValueError:
+            continue
+        if not slots:
+            continue
+        first, last = slots[0], slots[-1] + 1
+        for lock_start, lock_end, teachers, pupils, room_id, lock_id in held:
+            if not (first < lock_end and lock_start < last):
+                continue
+            for teacher in sorted(_lesson_teachers(requirement, lesson) & teachers, key=str):
+                problems.append(
+                    f"teacher {teacher} has lesson {lesson.requirement_id} on locked lesson "
+                    f"{lock_id} at absolute slots {max(first, lock_start)}-{min(last, lock_end)}")
+            if _pupils_of(requirement) in pupils:
+                problems.append(
+                    f"pupils of {_pupils_of(requirement)} have lesson {lesson.requirement_id} on "
+                    f"locked lesson {lock_id} at absolute slots "
+                    f"{max(first, lock_start)}-{min(last, lock_end)}")
+            if room_id is not None and lesson.room_id == room_id:
+                problems.append(
+                    f"room {room_id} has lesson {lesson.requirement_id} on locked lesson "
+                    f"{lock_id} at absolute slots {max(first, lock_start)}-{min(last, lock_end)}")
+    return problems
+
+
+def _edge_problems(grid, request, lessons, classes=None) -> list[str]:
+    """Placeringsregel 1 when it is HARD: a marked subject neither opens nor closes a class's day.
+
+    In this file's own reading of the rule's words. A CLASS'S DAY is every
+    lesson and every locked lesson its pupils sit that weekday: the class's
+    own, and those of any group that shares pupils with it (groupConflicts).
+    A group that is no class's and shares pupils with none is its own class.
+    NOT FIRST: something else of that day starts earlier. NOT LAST: something
+    else of it ends later. Asked of every class the lesson's pupils belong to,
+    in the week this request is.
+    """
+    rules = getattr(request, "placement_rules", None)
+    edges = getattr(rules, "subject_edges", None) if rules is not None else None
+    if edges is None or edges.mode != "HARD":
+        return []
+    marked = {row.subject_id: (row.not_first, row.not_last) for row in edges.subjects}
+    if classes is None:
+        classes = _classes_with_lessons(request)
+    partners: dict = defaultdict(set)
+    for first_id, second_id in getattr(request, "group_conflicts", []) or []:
+        partners[first_id].add(second_id)
+        partners[second_id].add(first_id)
+
+    def days_of(pupils) -> list:
+        owners = [c for c in classes if c == pupils or c in partners.get(pupils, ())]
+        return owners or [pupils]
+
+    spd = grid.slots_per_day
+    req_by_id = {r.id: r for r in request.requirements}
+    day: dict[tuple, list[tuple[int, int, object]]] = defaultdict(list)
+    placed = []
+    for index, lesson in enumerate(lessons):
+        requirement = req_by_id.get(lesson.requirement_id)
+        if requirement is None:
+            continue
+        try:
+            duration = _lesson_slots(grid, requirement, lesson)
+            day_idx, start, _ = _occupied(grid, lesson.day_of_week, lesson.start_time, duration)
+        except ValueError:
+            continue
+        owners = days_of(_pupils_of(requirement))
+        for class_id in owners:
+            day[(class_id, day_idx)].append((start, start + duration, ("lesson", index)))
+        placed.append((index, lesson, requirement, owners, day_idx, start, start + duration))
+    for fixed in request.fixed_lessons:
+        window = _lock_window(grid, fixed)
+        if window is None:
+            continue
+        day_idx, start, end = window
+        owners = {class_id for pupils in _lock_pupils(fixed) for class_id in days_of(pupils)}
+        for class_id in owners:
+            day[(class_id, day_idx)].append((start, end, ("lock", fixed.id)))
+
+    problems: list[str] = []
+    for index, lesson, requirement, owners, day_idx, start, end in placed:
+        wanted = marked.get(requirement.subject_id)
+        if wanted is None:
+            continue
+        for class_id in owners:
+            others = [(s, e) for s, e, tag in day[(class_id, day_idx)] if tag != ("lesson", index)]
+            if wanted[0] and not any(s < start for s, _ in others):
+                problems.append(
+                    f"lesson {lesson.requirement_id} of a subject that must not be first opens "
+                    f"the day of {class_id} (weekday index {day_idx}, slot {start} of {spd})")
+            if wanted[1] and not any(e > end for _, e in others):
+                problems.append(
+                    f"lesson {lesson.requirement_id} of a subject that must not be last closes "
+                    f"the day of {class_id} (weekday index {day_idx}, slot {end} of {spd})")
+    return problems
+
+
+def _validate_week(grid, request, lessons, classes=None) -> list[str]:
     """validate() on one week: every lesson of `request` runs in it."""
     problems: list[str] = []
     spd = grid.slots_per_day
@@ -884,6 +1056,13 @@ def _validate_week(grid, request, lessons) -> list[str]:
                 problems.append(
                     f"requirement {requirement.id}: (lead, minutes) "
                     f"{sorted(placed_leads.get(requirement.id, []))} placed, {requested} requested")
+
+    # A generated lesson never stands on a locked lesson of its teacher, its
+    # pupils or its room, in the week both run in.
+    problems.extend(_lock_problems(grid, request, lessons))
+
+    # Placeringsregel 1, when the school made it hard.
+    problems.extend(_edge_problems(grid, request, lessons, classes))
 
     # Group-conflict pairs (groups sharing students) must never overlap.
     lessons_by_group: dict = defaultdict(list)
