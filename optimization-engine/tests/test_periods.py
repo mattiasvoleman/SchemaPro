@@ -2226,3 +2226,295 @@ def test_a_hall_that_goes_exactly_even_feeds_the_school_and_one_pupil_more_does_
     refused = solver._dining_hall_verdict(OptimizeScheduleRequest.model_validate(payload))
     assert refused is not None
     assert (refused.summary_params["needed"], refused.summary_params["offered"]) == (2430, 2400)
+
+
+# ---------------------------------------------------------------------------
+# When a refusal says its period: the edges the second review found unpinned
+# ---------------------------------------------------------------------------
+#
+# Nine mutants of the rules above outlived every test (review of #300, round
+# 2, MEDEL-1). One test each, named by the mutant it is for.
+
+
+def _summary_week(payload: dict[str, object], settings: Settings) -> tuple[str, dict[str, object]]:
+    """A refused week's summary code and what it says of its week."""
+    refused, *_ = SchedulerSolver(settings)._prechecks(OptimizeScheduleRequest.model_validate(payload))
+    assert refused is not None and refused.conflicts is not None
+    said = refused.conflicts.summary_params
+    return refused.conflicts.summary_code, {
+        key: said[key] for key in ("period", "periods", "parity") if key in said
+    }
+
+
+def _with_a_post_of(payload: dict[str, object], periods: list[bool]) -> dict[str, object]:
+    """The same school with one post more: a new teacher's lesson for a new class, in `periods` only."""
+    more = copy.deepcopy(payload)
+    post = {
+        **copy.deepcopy(more["requirements"][0]),  # type: ignore[index]
+        "id": str(uuid4()), "teacherId": str(uuid4()), "studentGroupId": str(uuid4()),
+        "lessonsPerWeek": 1, "periods": periods,
+    }
+    for key in ("blockId", "lessonTeacherIds"):
+        post.pop(key, None)
+    more["requirements"].append(post)  # type: ignore[union-attr]
+    more["groups"] = [
+        *more["groups"],  # type: ignore[misc]
+        {"id": post["studentGroupId"], "lunchHeadcount": 20, "minGradeLevel": 1, "maxGradeLevel": 1},
+    ]
+    return more
+
+
+def test_two_terms_refused_for_other_teachers_with_the_same_figures_are_each_a_terms() -> None:
+    """A03: "every week gives the same verdict" is the verdict, not "every week refuses something".
+
+    Teacher A has five hours in a day of four in the autumn, teacher B the
+    same five in the spring. Both terms are refused, to the same figures —
+    for other teachers and other posts. The first is the autumn's and says
+    so; it is not the year's, though no week passes.
+    """
+    autumn, spring = str(uuid4()), str(uuid4())
+
+    def posts(teacher: str, periods: list[bool]) -> list[dict[str, object]]:
+        return [_requirement(str(uuid4()), 1, teacher=teacher, periods=periods) for _ in range(5)]
+
+    code, said = _summary_week(_payload(posts(autumn, AUTUMN) + posts(spring, SPRING)), _settings())
+    assert (code, said) == ("DEMAND_TEACHER_HOURS_SHORT", {"period": 0})
+
+
+def test_a_week_load_the_weeks_own_post_changes_is_the_weeks() -> None:
+    """B04: a solved refusal is the week's when the entries of every week give ANOTHER verdict.
+
+    test_week_load's year over its frame, refused on the posts of every week
+    alone. One post more in the autumn changes the autumn's figures: asked
+    again of what runs every week the count still refuses, with other
+    numbers, and the autumn's refusal is the autumn's. "Still refused" is
+    not "the same refusal".
+    """
+    year = test_week_load._year(class_lessons=29)
+    settings = test_week_load._settings()
+    assert _summary_week(year, settings) == ("DEMAND_YEAR_WEEK_SHORT", {})
+    assert _summary_week(_with_a_post_of(year, AUTUMN), settings) == ("DEMAND_YEAR_WEEK_SHORT", {"period": 0})
+
+
+def test_a_class_hours_refusal_the_years_posts_give_alone_names_no_period() -> None:
+    """B10: the class-hours verdict is asked again of the entries of every week.
+
+    test_optimize's class whose year is one lesson too many beside a
+    reservation and a lock. The autumn has a post of its own, elsewhere in the
+    school; the refusal is the one the year's posts give alone, and names no
+    period — in the FIRST week too, which is where the question has to be
+    put (the test beside this one dates a post of the spring, and the first
+    week then has nothing of its own to ask about).
+    """
+    klass, group, locked = str(uuid4()), str(uuid4()), str(uuid4())
+    week = test_optimize._week(
+        [test_optimize._lesson(klass, 9, minutes=45, years=2), test_optimize._lesson(group, 1, minutes=45, years=2)],
+        [{"id": klass, "lunchHeadcount": 20}],
+        groupConflicts=[[klass, group], [klass, locked]],
+        constraints=[test_optimize._reserved(klass, 2, "10:30", "11:15")],
+        fixedLessons=[{"id": str(uuid4()), "studentGroupId": locked, "dayOfWeek": 2,
+                       "startTime": "09:00:00", "endTime": "09:45:00"}],
+        frameTimes=[test_optimize._year_frame(2, None, "08:00", "12:00")],
+        rules={"lunchStartTime": "12:00:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30},
+    )
+    settings = test_optimize._settings(SCHEDULE_DAYS="1,2", SCHEDULE_DAY_END_MINUTES=960)
+    code, said = _summary_week(week, settings)
+    assert said == {}
+    assert _summary_week(_with_a_post_of(week, AUTUMN), settings) == (code, {})
+
+
+def test_a_lunch_stage_refusal_the_years_posts_give_alone_names_no_period_in_the_first_week() -> None:
+    """B11: the lunch stage's verdict is asked again of the entries of every week.
+
+    The hall of the middle years, refused on the posts of every week. A post
+    of the AUTUMN besides: the first week read has an entry of its own, so
+    whether the refusal is its own has to be asked — and it is not.
+    """
+    payload = _with_a_post_of(_hall_of_the_middle_years(), AUTUMN)
+    assert _summary_week(payload, test_optimize._settings()) == ("LUNCH_HALL_CANNOT_SEAT_CLASSES", {})
+
+
+def test_a_teacher_of_one_term_whose_lunch_the_other_terms_locks_close_is_told_no_period() -> None:
+    """C03: the teacher's lunch is the year's by name, not because every week happens to refuse it.
+
+    Every post of the teacher's is the autumn's; two locks of the SPRING fill
+    her lunch window. Only the autumn's week reads her rule (the spring has
+    no lesson of hers), so "the same refusal in every week" does not hold,
+    and the refusal would be the autumn's — the term that has no lock at all
+    (review of #300, M1, in the one form its first test did not have: there
+    the teacher had a post of every week).
+    """
+    teacher = str(uuid4())
+    payload = _payload(
+        [_requirement(str(uuid4()), 2, teacher=teacher, periods=AUTUMN),
+         _requirement(str(uuid4()), 1, periods=SPRING)],
+        teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, "lunchMinutes": 30,
+                           "lunchStartTime": "11:00:00", "lunchEndTime": "12:00:00"}],
+        fixedLessons=[
+            _lock(str(uuid4()), "11:00:00", "11:30:00", teacher=teacher, periods=SPRING),
+            _lock(str(uuid4()), "11:30:00", "12:00:00", teacher=teacher, periods=SPRING),
+        ],
+    )
+    with pytest.raises(InvalidScheduleInputError) as refused:
+        SchedulerSolver(_settings(hours=5))._validate_request(OptimizeScheduleRequest.model_validate(payload))
+    assert refused.value.code == "TEACHER_LUNCH_LEAVES_NO_START"
+    assert not {"period", "periods", "parity"} & set(refused.value.params)
+
+
+def _cap_breach(others: list[dict[str, object]], **extra: object):
+    """Bästa möjliga schema's line for a cap of 60 broken by a 120-minute lesson of every week.
+
+    `others` are one-hour lessons of other teachers and classes, there to cut
+    the year into weeks; each is laid at 08:00.
+    """
+    teacher = str(uuid4())
+    year = _requirement(str(uuid4()), 1, teacher=teacher, minutes=120)
+    rule = {"id": str(uuid4()), "teacherId": teacher, "maxTeachingMinutesPerDay": 60}
+    locks = [
+        {**lock, "teacherId": teacher} for lock in extra.pop("locks", [])  # type: ignore[union-attr]
+    ]
+    payload = _payload([year, *others], teacherWorkRules=[rule], fixedLessons=locks, **extra)
+    (line,) = _deviations(payload, [
+        _placed(year, "08:00:00", "10:00:00"),
+        *(_placed(other, "08:00:00", "09:00:00") for other in others),
+    ])
+    assert line.code == "DEVIATION_TEACHER_DAILY_CAP"
+    return line
+
+
+def test_a_breach_alike_in_weeks_of_several_periods_names_none_of_them() -> None:
+    """E01: `periods` is a word for a week too, and comes off with the others.
+
+    Three terms, and only the even weeks have lessons of their own: the odd
+    weeks of all three are one week to the engine, named for every period it
+    lies in. The breach is the every-week lesson's and the same in all four
+    weeks, so the line names none.
+    """
+    even = [
+        _requirement(str(uuid4()), 1, recurrence=EVEN, periods=[index == term for index in range(3)])
+        for term in range(3)
+    ]
+    line = _cap_breach(even)
+    assert line.params["over"] == 60
+    assert not {"period", "periods", "parity"} & set(line.params)
+
+
+def test_a_breach_alike_in_the_odd_and_even_weeks_of_each_term_names_no_parity() -> None:
+    """E02: `parity` is a word for a week too.
+
+    Two terms, each with a lesson of its odd weeks and one of its even weeks:
+    four weeks, told apart by period and by parity. The breach is the
+    every-week lesson's in each, and the line says neither.
+    """
+    line = _cap_breach([
+        _requirement(str(uuid4()), 1, periods=periods, recurrence=parity)
+        for periods in (AUTUMN, SPRING) for parity in (ODD, EVEN)
+    ])
+    assert line.params["over"] == 60
+    assert not {"period", "periods", "parity"} & set(line.params)
+
+
+def test_a_lock_of_the_spring_makes_the_same_lessons_breach_the_springs() -> None:
+    """E05: weeks are alike in their figures, not only in their lessons.
+
+    The same 120-minute lesson every week, over a cap of 60. A lock of an
+    hour in the spring takes the cap's whole hour there: 60 over in the
+    autumn, 120 over in the spring, for one and the same lesson. The worst
+    week is the spring's, and it is not every week's.
+    """
+    line = _cap_breach(
+        [_requirement(str(uuid4()), 1, periods=AUTUMN), _requirement(str(uuid4()), 1, periods=SPRING)],
+        locks=[_lock(str(uuid4()), "10:00:00", "11:00:00", periods=SPRING)],
+    )
+    assert (line.params["over"], line.params["period"]) == (120, 1)
+
+
+def test_every_word_for_the_week_comes_off_a_line_every_week_has_alike() -> None:
+    """E09: what is taken off is every word the week added, not `period` alone.
+
+    Three terms of which the first two hold the same lessons: they are one
+    week, and its line says `period` and `periods`. The third has a lesson of
+    its own. The breach is alike in both weeks, and the line that is left is
+    the one a year without periods gets, key for key.
+    """
+    plain = _cap_breach([_requirement(str(uuid4()), 1)])
+    line = _cap_breach([_requirement(str(uuid4()), 1, periods=[False, False, True])])
+    assert line.params.keys() == plain.params.keys()
+    assert line.params["over"] == plain.params["over"] == 60
+
+
+# The validator's two new readings at their edges (review of #300, round 2,
+# LÅG-1): each row is a timetable laid by hand and what it must say of it.
+
+
+def _on_the_teachers_lock(start: str, end: str, lesson: tuple[str, str], **lock: object):
+    teacher = str(uuid4())
+    requirement = _requirement(str(uuid4()), 1, teacher=teacher)
+    row = _lock(str(uuid4()), start, end, **{"teacher": teacher, **lock})  # type: ignore[arg-type]
+    return _payload([requirement], fixedLessons=[row]), [_placed(requirement, *lesson)]
+
+
+def _a_lock_that_ends_off_the_grid():
+    return _on_the_teachers_lock("08:00:00", "09:03:00", ("09:00:00", "10:00:00"))
+
+
+def _a_lock_that_starts_off_the_grid():
+    return _on_the_teachers_lock("08:57:00", "10:00:00", ("08:00:00", "09:00:00"))
+
+
+def _a_lock_over_the_lessons_last_slot():
+    return _on_the_teachers_lock("08:55:00", "10:00:00", ("08:00:00", "09:00:00"))
+
+
+def _a_lock_the_teacher_co_teaches():
+    teacher = str(uuid4())
+    requirement = _requirement(str(uuid4()), 1, teacher=teacher)
+    row = _lock(str(uuid4()), "08:00:00", "09:00:00", teacher=str(uuid4()), coTeacherId=teacher)
+    return _payload([requirement], fixedLessons=[row]), [_placed(requirement, "08:00:00", "09:00:00")]
+
+
+def _a_lock_of_a_half_of_the_class():
+    klass, half = str(uuid4()), str(uuid4())
+    requirement = _requirement(klass, 1)
+    payload = _payload(
+        [requirement], groupConflicts=[[klass, half]],
+        fixedLessons=[_lock(half, "08:00:00", "09:00:00", teacher=str(uuid4()))],
+    )
+    return payload, [_placed(requirement, "08:00:00", "09:00:00")]
+
+
+def _a_lock_on_a_day_the_school_does_not_teach():
+    return _on_the_teachers_lock("08:00:00", "09:00:00", ("08:00:00", "09:00:00"), day=6)
+
+
+def _a_half_class_lesson_after_the_class_s_own():
+    klass, half, subject = str(uuid4()), str(uuid4()), str(uuid4())
+    of_class = _requirement(klass, 1)
+    of_half = _requirement(half, 1, subjectId=subject, pupilGroupId=half)
+    payload = _payload(
+        [of_class, of_half], groupConflicts=[[klass, half]],
+        placementRules={"subjectEdges": {"mode": "HARD", "subjects": [{"subjectId": subject, "notFirst": True}]}},
+    )
+    return payload, [_placed(of_class, "08:00:00", "09:00:00"), _placed(of_half, "09:00:00", "10:00:00")]
+
+
+@pytest.mark.parametrize(("laid", "said"), [
+    # V03: a lock until 09:03 holds the slot it ends in.
+    (_a_lock_that_ends_off_the_grid, ["teacher"]),
+    # V04: a lock from 08:57 holds the slot it starts in.
+    (_a_lock_that_starts_off_the_grid, ["teacher"]),
+    # V06: one slot in common is a clash, the lesson's last as any other.
+    (_a_lock_over_the_lessons_last_slot, ["teacher"]),
+    # V07: the lock's second adult is held by it as its first is.
+    (_a_lock_the_teacher_co_teaches, ["teacher"]),
+    # V08: a lock of a half holds the class it shares pupils with.
+    (_a_lock_of_a_half_of_the_class, ["pupils"]),
+    # V23: a lock on a Saturday holds nothing a lesson could stand on, and raises nothing.
+    (_a_lock_on_a_day_the_school_does_not_teach, []),
+    # V17, V19: a half's lesson is in its class's day, so the class's own lesson before it is a lesson before it.
+    (_a_half_class_lesson_after_the_class_s_own, []),
+], ids=["V03", "V04", "V06", "V07", "V08", "V23", "V17-V19"])
+def test_the_validator_reads_a_lock_and_a_class_s_day_at_their_edges(laid, said: list[str]) -> None:  # type: ignore[no-untyped-def]
+    payload, lessons = laid()
+    problems = _validate(payload, lessons, _settings(hours=5, days="1,2,3,4,5"))
+    assert [problem.split(" ")[0] for problem in problems] == said
