@@ -4441,7 +4441,7 @@ describe('OptimizationProxyService', () => {
           const lunch = { group: 'g', minutes: 30, windowStart: '11:00', windowEnd: '12:00', day: 1 };
           // The first period has two stretches of weeks (one is written out), the second one.
           const dated = {
-            lockPeriods: '0,1',
+            lockPeriods: '0;1',
             lockFrom: '2026-08-17',
             lockTo: '2027-01-10',
             otherLockFrom: '2027-01-11',
@@ -4459,7 +4459,7 @@ describe('OptimizationProxyService', () => {
             data: {
               code: 'INVALID_SCHEDULE_INPUT',
               message: 'Locked lessons leave student group g no 30-minute lunch break inside 11:00-12:00 on Monday.',
-              details: { code: 'LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK', params: { ...lunch, lockPeriods: '0,1' } },
+              details: { code: 'LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK', params: { ...lunch, lockPeriods: '0;1' } },
             },
           } as never;
           http.post.mockReturnValue(throwError(() => refused));
@@ -4505,7 +4505,7 @@ describe('OptimizationProxyService', () => {
                     {
                       category: 'PLACEMENT',
                       code: 'LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK',
-                      params: { ...lunch, lockPeriods: '0,1' },
+                      params: { ...lunch, lockPeriods: '0;1' },
                       message: 'Locked lessons leave student group g no 30-minute lunch break inside 11:00-12:00 on Monday.',
                       requirementIds: [],
                       roomIds: [],

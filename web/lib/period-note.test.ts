@@ -38,7 +38,7 @@ describe("lockPeriodDatesOf", () => {
   const lunch = { group: "7A", minutes: 30, windowStart: "11:00", windowEnd: "12:00", day: 1 };
   const dated = {
     ...lunch,
-    lockPeriods: "0,2",
+    lockPeriods: "0;2",
     lockFrom: "2026-08-17",
     lockTo: "2026-12-20",
     otherLockFrom: "2027-01-11",
@@ -68,7 +68,7 @@ describe("lockPeriodDatesOf", () => {
     expect(lockPeriodDatesOf(undefined)).toBeNull();
     expect(lockPeriodDatesOf(lunch)).toBeNull();
     // The engine's periods alone, from an API that did not turn them into days.
-    expect(lockPeriodDatesOf({ ...lunch, lockPeriods: "0,2" })).toBeNull();
+    expect(lockPeriodDatesOf({ ...lunch, lockPeriods: "0;2" })).toBeNull();
   });
 
   it("is nothing unless every one of the four days can be read", () => {

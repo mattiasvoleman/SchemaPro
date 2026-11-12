@@ -648,7 +648,7 @@ describe("a days refusal, read with HR-läs", () => {
     const lunch = { group: "7A", minutes: 30, windowStart: "11:00", windowEnd: "12:00", day: 1 };
     const dated = {
       ...lunch,
-      lockPeriods: "0,2",
+      lockPeriods: "0;2",
       lockFrom: "2026-08-17",
       lockTo: "2026-12-20",
       otherLockFrom: "2027-01-11",

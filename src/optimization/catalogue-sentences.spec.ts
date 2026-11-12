@@ -131,7 +131,7 @@ describe('the generator gateway’s sentences are the catalogue’s', () => {
       }
     ).generate.lunchLocksInPeriods;
     const params = {
-      lockPeriods: '0,2',
+      lockPeriods: '0;2',
       lockFrom: '2026-08-17',
       lockTo: '2026-12-20',
       otherLockFrom: '2027-01-11',
