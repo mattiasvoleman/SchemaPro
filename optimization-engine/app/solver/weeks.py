@@ -130,6 +130,19 @@ class Weeks:
         """The first period these weeks lie in; None for a year without periods."""
         return None if self.periods == 1 else self._first()[0]
 
+    def held(self) -> tuple[int, ...]:
+        """Every period these weeks lie in, in order; none for a year without periods.
+
+        Usually one. Weeks of two periods are one part when a row's members do
+        not tell them apart — the odd weeks of the autumn and of the spring,
+        where only the even weeks have lessons of their own.
+        """
+        if self.periods == 1:
+            return ()
+        return tuple(
+            period for period in range(self.periods) if (self.bits >> (2 * period)) & 0b11
+        )
+
     def parity(self) -> str | None:
         """The gateway's name for the parity these weeks are of; None when they are of both."""
         odd = sum(1 << (2 * period) for period in range(self.periods))
@@ -149,7 +162,15 @@ class Weeks:
         return (self.periods, str(self), self.bits) < (other.periods, str(other), other.bits)
 
 
-@lru_cache(maxsize=None)
+#: How many distinct readings the two caches below keep. A school's masks are
+#: a handful, and a request reads each of them thousands of times, which is
+#: what the caches are for; but an engine process lives for many requests, and
+#: unbounded they would keep every mask any school ever sent. Past this the
+#: least recently read is forgotten and read again when next met.
+_CACHED_MASKS = 4096
+
+
+@lru_cache(maxsize=_CACHED_MASKS)
 def _lift(bits: int, held: int, periods: int) -> int:
     if held != 1:
         msg = f"Weeks of a year cut into {held} periods met weeks of one cut into {periods}."
@@ -172,7 +193,7 @@ def _weeks(value: Weeks | str | None) -> Weeks | None:
     return _BY_NAME[value]  # type: ignore[index]
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=_CACHED_MASKS)
 def _span(recurrence: str | None, periods: tuple[bool, ...]) -> Weeks:
     """The weeks of a mask in a parity: bit 2·p (odd) and 2·p + 1 (even) for each period p it names."""
     parity = 0b11 if recurrence is None else _BY_NAME[recurrence].bits
@@ -399,15 +420,22 @@ def tag(name: str, week: Weeks | str | None) -> str:
 def named(week: Weeks | str | None) -> dict[str, str | int]:
     """What a sentence counted in one week says of it: its period, and its parity if it has one.
 
-    `period` is the index of the first period the week lies in, which the
-    gateway turns into dates, and `parity` the gateway's own name. Nothing at
-    all for every week, and nothing for a week of a year without periods: a
-    school with odd and even weeks and no periods is told what it always was.
+    `period` is the index of the first period the week lies in, counted from
+    0, which the gateway turns into dates, and `parity` the gateway's own
+    name. A week that lies in several periods — weeks nothing counted tells
+    apart — says all of them as well, `periods`, their indices in order with
+    commas between ("0,2"): a flat value like every other, and only then, so a
+    count made in one period says exactly what it said. Nothing at all for
+    every week, and nothing for a week of a year without periods: a school
+    with odd and even weeks and no periods is told what it always was.
     """
     week = _weeks(week)
     if week is None or week.periods == 1:
         return {}
-    said: dict[str, str | int] = {"period": week.period()}  # type: ignore[dict-item]
+    held = week.held()
+    said: dict[str, str | int] = {"period": held[0]}
+    if len(held) > 1:
+        said["periods"] = ",".join(str(period) for period in held)
     parity = week.parity()
     if parity is not None:
         said["parity"] = parity

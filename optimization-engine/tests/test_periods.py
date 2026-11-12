@@ -32,14 +32,26 @@ from pydantic import ValidationError
 import test_ab_weeks as ab
 import test_best_effort_report
 import test_consecutive
+import test_optimize
 import test_placement
 import test_pupil_gaps
 import test_week_load
 from app.config import Settings
 from app.exceptions import InvalidScheduleInputError
-from app.schemas.schedule import MAX_PERIODS, OptimizeScheduleRequest, ScheduledLesson
+from app.schemas.schedule import (
+    MAX_PERIODS,
+    ConflictAnalysis,
+    OptimizeScheduleRequest,
+    ScheduledLesson,
+)
 from app.solver.pupil_gaps import pupil_idle_minutes, week_factor
-from app.solver.scheduler_solver import SchedulerSolver, _week_requests, _weeks_and_requests
+from app.solver.relaxation import deviations_of
+from app.solver.scheduler_solver import (
+    SchedulerSolver,
+    _teacher_locks,
+    _week_requests,
+    _weeks_and_requests,
+)
 from app.solver import weeks as weeks_module
 from app.solver.weeks import PART_LIMIT, Weeks
 
@@ -322,7 +334,9 @@ def _week_tests(module: ModuleType) -> list[tuple[str, object]]:
         function = test.func if isinstance(test, functools.partial) else test
         source = inspect.getsource(function)
         takes = [p for p in inspect.signature(function).parameters if p != "self"]
-        if not takes and ("recurrence" in source or "_WEEKS" in source):
+        # A parity written in the test itself, or taken from the module's own
+        # table of them (test_week_load.ALTERNATING).
+        if not takes and ("recurrence" in source or "_WEEKS" in source or "ALTERNATING" in source):
             kept.append((f"{module.__name__}.{name}", test))
     return kept
 
@@ -340,6 +354,12 @@ def test_the_mirror_reaches_the_week_tests_of_the_other_rules() -> None:
     for name in MIRRORED_ELSEWHERE:
         by_module[name.split(".")[0]] += 1
     assert all(count > 0 for count in by_module.values()), by_module
+    # And the two of the year's load that take their parities from a table:
+    # what a TIMEOUT's probe is offered is counted in each term, not in their sum.
+    assert {
+        "test_week_load.test_the_probe_is_not_offered_for_a_week_that_is_tight_only_when_odd_and_even_are_added",
+        "test_week_load.test_the_probe_for_alternating_weeks_takes_the_teachers_of_both_weeks",
+    } <= set(MIRRORED_ELSEWHERE)
 
 
 @pytest.mark.parametrize("name", sorted(MIRRORED_ELSEWHERE))
@@ -836,13 +856,15 @@ def test_the_validator_reads_each_period() -> None:
     clash = [lesson(autumn, "08:00:00", "09:00:00"), lesson(spring, "09:00:00", "10:00:00"),
              lesson(weekly, "08:30:00", "09:30:00")]
     problems = _validate(payload, clash)
+    # By the engine's own index, which a refusal's `period` carries: the first is 0.
+    assert any("(period 0)" in problem for problem in problems)
     assert any("(period 1)" in problem for problem in problems)
-    assert any("(period 2)" in problem for problem in problems)
+    assert not any("(period 2)" in problem for problem in problems)
     # With a parity beside the periods, each week says both.
     odd = _requirement(group, 1, periods=AUTUMN, recurrence=ODD)
     payload = _payload([odd, weekly])
     problems = _validate(payload, [lesson(odd, "08:00:00", "09:00:00"), lesson(weekly, "08:30:00", "09:30:00")])
-    assert problems and all("(period 1, udda veckor)" in problem for problem in problems)
+    assert problems and all("(period 0, udda veckor)" in problem for problem in problems)
 
 
 def test_a_block_may_hold_the_autumns_member_and_the_springs_of_one_teacher() -> None:
@@ -1544,3 +1566,634 @@ def test_a_split_class_never_admits_a_pool_without_a_room_assignment(
     # The cost of the day's grain on pools this tight (four to seven lessons on
     # two or three rooms): a minority, and never the other way round.
     assert 0 < seen["refused though one exists"] < seen["solved"], seen
+
+
+# ---------------------------------------------------------------------------
+# After the reviews of #300: rows no test held, and what a refusal says of its period
+# ---------------------------------------------------------------------------
+
+
+def _lock(
+    group: str, start: str, end: str, *,
+    teacher: str | None = None, periods: list[bool] | None = None, day: int = 1, **extra: object,
+) -> dict[str, object]:
+    row: dict[str, object] = {
+        "id": str(uuid4()), "studentGroupId": group, "dayOfWeek": day,
+        "startTime": start, "endTime": end, **extra,
+    }
+    if teacher is not None:
+        row["teacherId"] = teacher
+    if periods is not None:
+        row["periods"] = periods
+    return row
+
+
+def _away(teacher: str, start: str, end: str) -> dict[str, object]:
+    return {"id": str(uuid4()), "resourceKind": "TEACHER", "resourceId": teacher, "dayOfWeek": 1,
+            "startTime": start, "endTime": end, "kind": "UNAVAILABLE"}
+
+
+def _placed(requirement: dict[str, object], start: str, end: str) -> ScheduledLesson:
+    return ScheduledLesson.model_validate({
+        "requirementId": requirement["id"], "dayOfWeek": 1,
+        "startTime": start, "endTime": end, "roomId": None,
+    })
+
+
+def _quick(hours: int) -> Settings:
+    return _settings(hours=hours, SOLVER_PROBE_SECONDS=0)
+
+
+def test_a_class_and_its_half_are_held_apart_in_the_term_both_run() -> None:
+    """The row over a class and a group that shares its pupils is cut by term, and every part posted.
+
+    7A and its half 7A:1 (groupConflicts). Each has one lesson in the spring,
+    and each of the two teachers is there 08:00-09:00 only: the same pupils
+    twice in one hour, so the spring has no timetable. Posted for the first
+    part alone, the autumn's, the row would let it through (review of #300,
+    mutant S03). The half's lesson in the AUTUMN instead never meets the
+    class's of the spring, and both stand at 08:00.
+    """
+    klass, half = str(uuid4()), str(uuid4())
+    own, halves = str(uuid4()), str(uuid4())
+    years = {"minGradeLevel": 7, "maxGradeLevel": 7}
+
+    def payload(half_runs: list[bool]) -> dict[str, object]:
+        return _payload(
+            [
+                _requirement(klass, 1, periods=AUTUMN),
+                _requirement(klass, 1, periods=SPRING, teacher=own, **years),
+                _requirement(klass, 1, periods=half_runs, teacher=halves, pupilGroupId=half),
+            ],
+            groupConflicts=[[klass, half]],
+            constraints=[_away(own, "09:00:00", "23:59:00"), _away(halves, "09:00:00", "23:59:00")],
+        )
+
+    settings = _quick(hours=4)
+    assert _solve(payload(SPRING), settings).status == "INFEASIBLE"
+    apart = payload(AUTUMN)
+    response = _solve(apart, settings)
+    assert response.status in SOLVED
+    assert _validate(apart, response.lessons, settings) == []
+    spring_class, autumn_half = apart["requirements"][1], apart["requirements"][2]  # type: ignore[index]
+    assert _spans(response.lessons, spring_class) == _spans(response.lessons, autumn_half)
+
+
+def test_a_classes_lessons_a_day_are_capped_in_each_term() -> None:
+    """At most one lesson a day: the autumn's one and the spring's one are a day each, two of the spring are not.
+
+    One day of two hours. Counted in the first part alone the spring's second
+    lesson would be nobody's to refuse (review of #300, mutant S16); counted
+    as one week the two terms' single lessons would be two on one day.
+    """
+    group = str(uuid4())
+    rules = {"maxLessonsPerDayPerGroup": 1}
+    settings = _quick(hours=2)
+    over = _payload([_requirement(group, 1, periods=AUTUMN), _requirement(group, 2, periods=SPRING)], rules=rules)
+    assert _solve(over, settings).status == "INFEASIBLE"
+    each = _payload([_requirement(group, 1, periods=AUTUMN), _requirement(group, 1, periods=SPRING)], rules=rules)
+    response = _solve(each, settings)
+    assert response.status in SOLVED
+    assert _validate(each, response.lessons, settings) == []
+    # The same two lessons in one week are two on the one day.
+    assert _solve(_all_year(each), settings).status == "INFEASIBLE"
+
+
+def _edge_school(lock_runs: list[bool]) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    """7A's autumn: a marked subject at 09:00 and another lesson at 10:00, by their teachers' hours.
+
+    And a lock of the class at 08:00, in `lock_runs`.
+    """
+    group, subject = str(uuid4()), str(uuid4())
+    marked_teacher, other_teacher = str(uuid4()), str(uuid4())
+    years = {"minGradeLevel": 7, "maxGradeLevel": 7}
+    marked = _requirement(group, 1, periods=AUTUMN, teacher=marked_teacher, subjectId=subject, **years)
+    other = _requirement(group, 1, periods=AUTUMN, teacher=other_teacher, **years)
+    payload = _payload(
+        [marked, other],
+        fixedLessons=[_lock(group, "08:00:00", "09:00:00", teacher=str(uuid4()), periods=lock_runs)],
+        constraints=[
+            _away(marked_teacher, "08:00:00", "09:00:00"), _away(marked_teacher, "10:00:00", "23:59:00"),
+            _away(other_teacher, "08:00:00", "10:00:00"), _away(other_teacher, "11:00:00", "23:59:00"),
+        ],
+        placementRules={"subjectEdges": {"mode": "HARD", "subjects": [{"subjectId": subject, "notFirst": True}]}},
+    )
+    return payload, marked, other
+
+
+def test_a_lock_of_the_spring_does_not_open_the_autumns_day_for_a_marked_subject() -> None:
+    """Not first in the day, HARD: the lesson before it has to be one of the same week.
+
+    The autumn's marked lesson can only stand at 09:00 and the class's other
+    lesson only at 10:00, so it opens the day — unless the lock at 08:00 is
+    there. The lock runs in the SPRING. Read as a lesson before in every week
+    it would let the autumn through (review of #300, mutant S08).
+    """
+    settings = _quick(hours=4)
+    payload, _, _ = _edge_school(SPRING)
+    assert _solve(payload, settings).status == "INFEASIBLE"
+    # The same lock in the autumn is a lesson before it.
+    payload, marked, other = _edge_school(AUTUMN)
+    response = _solve(payload, settings)
+    assert response.status in SOLVED
+    assert _validate(payload, response.lessons, settings) == []
+    assert _spans(response.lessons, marked) < _spans(response.lessons, other)
+
+
+def test_the_validator_reads_the_subject_edges_and_the_locks_of_each_period() -> None:
+    """The oracle the measurements are read by sees what the two reviews found it blind to.
+
+    A marked subject that opens its class's day in a term whose lock is the
+    other term's (it said "no problems" of the timetable mutant S08 lays), and
+    a lesson standing on a lock of its own teacher, class or room.
+    """
+    settings = _quick(hours=4)
+    # The timetable the engine may not lay: the marked lesson first in the autumn.
+    payload, marked, other = _edge_school(SPRING)
+    laid = [_placed(marked, "09:00:00", "10:00:00"), _placed(other, "10:00:00", "11:00:00")]
+    problems = _validate(payload, laid, settings)
+    assert len(problems) == 1
+    assert "must not be first" in problems[0] and "(period 0)" in problems[0]
+    # With the lock in the autumn the same timetable keeps the rule.
+    payload, marked, other = _edge_school(AUTUMN)
+    laid = [_placed(marked, "09:00:00", "10:00:00"), _placed(other, "10:00:00", "11:00:00")]
+    assert _validate(payload, laid, settings) == []
+    # Not last, and a year without periods: the same reading.
+    group, subject = str(uuid4()), str(uuid4())
+    last = _requirement(group, 1, subjectId=subject)
+    before = _requirement(group, 1)
+    plain = _payload(
+        [last, before],
+        placementRules={"subjectEdges": {"mode": "HARD", "subjects": [{"subjectId": subject, "notLast": True}]}},
+    )
+    closes = [_placed(before, "08:00:00", "09:00:00"), _placed(last, "09:00:00", "10:00:00")]
+    assert any("must not be last" in problem for problem in _validate(plain, closes, settings))
+    opens = [_placed(last, "08:00:00", "09:00:00"), _placed(before, "09:00:00", "10:00:00")]
+    assert _validate(plain, opens, settings) == []
+    # SOFT is a price, not a rule: nothing to report.
+    plain["placementRules"]["subjectEdges"]["mode"] = "SOFT"  # type: ignore[index]
+    assert _validate(plain, closes, settings) == []
+
+    # A lesson on a lock: of its teacher, of its pupils, of its room.
+    teacher, klass, room = str(uuid4()), str(uuid4()), str(uuid4())
+    rooms = [{"id": room, "capacity": 30}]
+
+    def on_a_lock(lock: dict[str, object], requirement: dict[str, object]) -> list[str]:
+        payload = _payload([requirement], rooms=rooms, fixedLessons=[lock])
+        lesson = ScheduledLesson.model_validate({
+            "requirementId": requirement["id"], "dayOfWeek": 1,
+            "startTime": "08:30:00", "endTime": "09:30:00", "roomId": room,
+        })
+        return _validate(payload, [lesson], settings)
+
+    elsewhere = str(uuid4())
+    by_teacher = on_a_lock(
+        _lock(elsewhere, "08:00:00", "09:00:00", teacher=teacher), _requirement(klass, 1, teacher=teacher))
+    assert [problem.split(" ")[0] for problem in by_teacher] == ["teacher"]
+    by_pupils = on_a_lock(_lock(klass, "08:00:00", "09:00:00", teacher=str(uuid4())), _requirement(klass, 1))
+    assert [problem.split(" ")[0] for problem in by_pupils] == ["pupils"]
+    by_room = on_a_lock(
+        _lock(elsewhere, "08:00:00", "09:00:00", teacher=str(uuid4()), roomId=room), _requirement(klass, 1))
+    assert [problem.split(" ")[0] for problem in by_room] == ["room"]
+    # After the lock is no clash, and neither is a lock of the other term.
+    after = _payload([_requirement(klass, 1, teacher=teacher)], rooms=rooms,
+                     fixedLessons=[_lock(elsewhere, "08:00:00", "09:00:00", teacher=teacher)])
+    assert _validate(after, [_placed(after["requirements"][0], "09:00:00", "10:00:00")], settings) == []  # type: ignore[index]
+    other_term = on_a_lock(
+        _lock(klass, "08:00:00", "09:00:00", teacher=teacher, periods=SPRING),
+        _requirement(klass, 1, teacher=teacher, periods=AUTUMN),
+    )
+    assert other_term == []
+    same_term = on_a_lock(
+        _lock(klass, "08:00:00", "09:00:00", teacher=teacher, periods=AUTUMN),
+        _requirement(klass, 1, teacher=teacher, periods=AUTUMN),
+    )
+    assert same_term and all("(period 0)" in problem for problem in same_term)
+
+
+def test_a_co_teachers_cap_reads_the_locks_of_each_term_too() -> None:
+    """The cap of 120 minutes a day, for a teacher who is the SECOND adult on two locks.
+
+    A lock of an hour in each term, hers as co-teacher, and one lesson of her
+    own all year: 120 minutes in each term. Her weeks are cut by the locks she
+    co-teaches as by the ones she leads; left uncut, both locks would stand
+    beside the lesson in one week, 180 minutes (review of #300, mutant S19).
+    """
+    teacher = str(uuid4())
+
+    def lock(start: str, end: str, periods: list[bool]) -> dict[str, object]:
+        return _lock(str(uuid4()), start, end, teacher=str(uuid4()), periods=periods, coTeacherId=teacher)
+
+    payload = _payload(
+        [_requirement(str(uuid4()), 1, teacher=teacher)],
+        fixedLessons=[lock("08:00:00", "09:00:00", AUTUMN), lock("09:00:00", "10:00:00", SPRING)],
+        teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, "maxTeachingMinutesPerDay": 120}],
+    )
+    response = _solve(payload)
+    assert response.status in SOLVED
+    assert _validate(payload, response.lessons) == []
+    # Both locks all year leave the lesson no minute of the cap.
+    with pytest.raises(InvalidScheduleInputError):
+        _solve(_all_year(payload))
+
+
+def _hall_of_the_middle_years() -> dict[str, object]:
+    """test_optimize's school whose lunch stage refuses: 11 classes of years 4-6, a hall of 115."""
+    return copy.deepcopy(
+        test_optimize._frames_that_pack_the_middle_years(test_optimize._teaching_group_school(classes=20)),
+    )
+
+
+def test_a_refusal_the_lunch_stage_finds_in_the_spring_names_the_spring() -> None:
+    """The verdicts that SOLVE something say their period as the counted ones do.
+
+    Two of each class's eight teaching-group posts run in the spring only:
+    the autumn has 18 lessons a class and passes, the spring has all 24 and
+    the lunch stage refuses it (review of #300, mutant C10: nothing held the
+    label on the second loop of the pre-flights).
+    """
+    payload = _hall_of_the_middle_years()
+    for index, requirement in enumerate(payload["requirements"]):  # type: ignore[arg-type]
+        if index % 8 < 2:
+            requirement["periods"] = SPRING
+    solver = SchedulerSolver(test_optimize._settings())
+    refused, *_ = solver._prechecks(OptimizeScheduleRequest.model_validate(payload))
+    assert refused is not None and refused.conflicts is not None
+    assert refused.conflicts.summary_code == "LUNCH_HALL_CANNOT_SEAT_CLASSES"
+    assert refused.conflicts.summary_params["period"] == 1
+    assert refused.conflicts.conflicts
+    assert all(line.params["period"] == 1 for line in refused.conflicts.conflicts)
+
+
+def test_a_refusal_the_lunch_stage_finds_in_every_week_names_none() -> None:
+    """All 24 lessons a class every week, and one post of the spring besides.
+
+    The autumn's request is the entries of every week and nothing else, so
+    what refuses it refuses every week of the year: no period is said, and
+    the sentence is the one a year without periods is told.
+    """
+    payload = _hall_of_the_middle_years()
+    plain = SchedulerSolver(test_optimize._settings())._prechecks(
+        OptimizeScheduleRequest.model_validate(payload))[0]
+    payload["requirements"].append(  # type: ignore[union-attr]
+        _requirement(str(uuid4()), 1, periods=SPRING),
+    )
+    refused, *_ = SchedulerSolver(test_optimize._settings())._prechecks(
+        OptimizeScheduleRequest.model_validate(payload))
+    assert plain is not None and refused is not None
+    assert refused.conflicts is not None and plain.conflicts is not None
+    assert "period" not in refused.conflicts.summary_params
+    assert refused.conflicts.summary_params == plain.conflicts.summary_params
+    assert [line.params for line in refused.conflicts.conflicts] == [
+        line.params for line in plain.conflicts.conflicts
+    ]
+
+
+def test_a_solved_refusal_is_the_weeks_only_when_the_weeks_own_entries_made_it() -> None:
+    """_solved_in, asked directly: the same verdict from the entries of every week alone names no period."""
+    group = str(uuid4())
+    payload = _payload([_requirement(group, 1), _requirement(group, 1, periods=AUTUMN),
+                        _requirement(group, 1, periods=SPRING)])
+    request = OptimizeScheduleRequest.model_validate(payload)
+    solver = SchedulerSolver(_settings())
+    _, (spring_label, spring) = _weeks_and_requests(request)
+    # Any verdict will do: what is asked is where it is said to be from.
+    said = ConflictAnalysis(summary="x", summary_code="X", summary_params={"n": 1}, conflicts=[])
+    asked_of: list[int] = []
+
+    def the_same(asked: OptimizeScheduleRequest) -> ConflictAnalysis:
+        asked_of.append(len(asked.requirements))
+        return said
+
+    def nothing(asked: OptimizeScheduleRequest) -> None:
+        asked_of.append(len(asked.requirements))
+
+    # The entries of every week give it alone: nobody's period.
+    assert solver._solved_in(said, spring_label, spring, request, the_same) is said
+    assert asked_of == [1]
+    # They do not: the spring's.
+    named = solver._solved_in(said, spring_label, spring, request, nothing)
+    assert named.summary_params == {"n": 1, "period": 1}
+    # A year without periods is never asked twice, and says nothing.
+    plain = OptimizeScheduleRequest.model_validate(_all_year(payload))
+    asked_of.clear()
+    assert solver._solved_in(said, None, plain, plain, nothing) is said
+    assert asked_of == []
+    # No entry of every week at all: the week's own entries are all there is.
+    dated = OptimizeScheduleRequest.model_validate(
+        _payload([_requirement(group, 1, periods=AUTUMN), _requirement(group, 1, periods=SPRING)]))
+    (label, week), _ = _weeks_and_requests(dated)
+    assert solver._solved_in(said, label, week, dated, the_same).summary_params == {"n": 1, "period": 0}
+    # A LOCK is a week's own entry too. One post of every week, a lock of
+    # every week and a lock of the spring: the spring differs from the rest
+    # by its lock alone, and what is asked again is asked without it.
+    locked = OptimizeScheduleRequest.model_validate(_payload(
+        [_requirement(group, 1)],
+        fixedLessons=[
+            _lock(str(uuid4()), "08:00:00", "09:00:00", periods=SPRING),
+            _lock(str(uuid4()), "09:00:00", "10:00:00"),
+        ],
+    ))
+    _, (spring_label, spring) = _weeks_and_requests(locked)
+    locks_asked: list[int] = []
+
+    def without_the_springs_lock(asked: OptimizeScheduleRequest) -> None:
+        locks_asked.append(len(asked.fixed_lessons))
+
+    named = solver._solved_in(said, spring_label, spring, locked, without_the_springs_lock)
+    assert named.summary_params == {"n": 1, "period": 1}
+    assert locks_asked == [1]
+
+
+def test_the_teachers_lunch_is_refused_as_the_years_and_names_no_period() -> None:
+    """A teacher's own lunch is one hour all year, read against every lock of the year.
+
+    Lunch 11:00-12:00, half an hour. Two locks fill the window, both in the
+    SPRING; the teacher has a post all year and one of the autumn. The refusal
+    was raised while the autumn's request was being read and said `period: 0`
+    — the autumn, which has no lock at all (review of #300, M1). The gateway
+    turns the index into dates, so the school would have gone to the wrong
+    term. It is the year's refusal: it names no period, wherever the locks are.
+    """
+    teacher = str(uuid4())
+    rule = {"id": str(uuid4()), "teacherId": teacher, "lunchMinutes": 30,
+            "lunchStartTime": "11:00:00", "lunchEndTime": "12:00:00"}
+
+    def refusal(first: list[bool] | None, second: list[bool] | None) -> InvalidScheduleInputError:
+        payload = _payload(
+            [_requirement(str(uuid4()), 2, teacher=teacher),
+             _requirement(str(uuid4()), 1, teacher=teacher, periods=AUTUMN)],
+            teacherWorkRules=[rule],
+            fixedLessons=[
+                _lock(str(uuid4()), "11:00:00", "11:30:00", teacher=teacher, periods=first),
+                _lock(str(uuid4()), "11:30:00", "12:00:00", teacher=teacher, periods=second),
+            ],
+        )
+        with pytest.raises(InvalidScheduleInputError) as refused:
+            SchedulerSolver(_settings(hours=5))._validate_request(
+                OptimizeScheduleRequest.model_validate(payload))
+        return refused.value
+
+    every_year = refusal(None, None)
+    assert every_year.code == "TEACHER_LUNCH_LEAVES_NO_START"
+    for first, second in ((SPRING, SPRING), (AUTUMN, AUTUMN), (SPRING, AUTUMN), (None, SPRING)):
+        refused = refusal(first, second)
+        assert refused.code == "TEACHER_LUNCH_LEAVES_NO_START"
+        assert "period" not in refused.params and "periods" not in refused.params
+        assert refused.params.keys() == every_year.params.keys()
+
+
+def test_a_teachers_lunch_window_too_narrow_is_the_rules_own_and_names_no_period() -> None:
+    """A window of twenty minutes for a lunch of thirty, for a teacher who teaches in the spring only."""
+    teacher = str(uuid4())
+    payload = _payload(
+        [_requirement(str(uuid4()), 1), _requirement(str(uuid4()), 1, teacher=teacher, periods=SPRING)],
+        teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, "lunchMinutes": 30,
+                           "lunchStartTime": "11:00:00", "lunchEndTime": "11:20:00"}],
+    )
+    with pytest.raises(InvalidScheduleInputError) as refused:
+        SchedulerSolver(_settings(hours=5))._validate_request(OptimizeScheduleRequest.model_validate(payload))
+    assert refused.value.code == "TEACHER_LUNCH_WINDOW_TOO_NARROW"
+    assert "period" not in refused.value.params
+
+
+def test_a_refusal_every_week_shares_names_no_period_and_one_of_a_term_names_it() -> None:
+    """`period` is where the count was made, and only where that says something (review of #300, L1).
+
+    The dining hall seats 80 and the lunch is one sitting. Eight classes eat
+    there, 160 pupils: the same count in the autumn and in the spring, to the
+    figure, though a post of the spring makes them two weeks. It named the
+    first, the autumn. The hall is counted by the classes the school has,
+    whichever term their lessons are in, so it is never one term's.
+
+    A class's hours are: five lessons of every week on a day of four hours
+    are refused in each term alike and name none, and three of the spring
+    beside two of every week are the spring's.
+    """
+    rules = {"lunchStartTime": "11:00:00", "lunchEndTime": "11:30:00", "lunchMinutes": 30, "diningSeats": 80}
+    classes = [str(uuid4()) for _ in range(8)]
+
+    def refused(requirements: list[dict[str, object]], settings: Settings, **extra: object):  # type: ignore[no-untyped-def]
+        response, *_ = SchedulerSolver(settings)._prechecks(
+            OptimizeScheduleRequest.model_validate(_payload(requirements, **extra)))
+        assert response is not None and response.conflicts is not None
+        return response.conflicts
+
+    hall = _settings(hours=5)
+    all_year = refused([_requirement(group, 1) for group in classes], hall, rules=rules)
+    for dated in (
+        [_requirement(classes[0], 1, periods=SPRING)],
+        # Half the classes have lessons in the spring only: they eat all year.
+        [_requirement(group, 1, periods=SPRING) for group in classes[4:]],
+    ):
+        every_week = refused(
+            [_requirement(group, 1) for group in classes[: 8 if len(dated) == 1 else 4]] + dated,
+            hall, rules=rules,
+        )
+        assert every_week.summary_code == all_year.summary_code == "LUNCH_HALL_CANNOT_FEED_THE_SCHOOL"
+        assert "period" not in every_week.summary_params
+        assert every_week.summary_params == all_year.summary_params
+        assert all("period" not in line.params for line in every_week.conflicts)
+
+    group, other = str(uuid4()), str(uuid4())
+    day = _settings()
+    plain = refused([_requirement(group, 5)], day)
+    shared = refused([_requirement(group, 5), _requirement(other, 1, periods=SPRING)], day)
+    assert "period" not in shared.summary_params
+    assert shared.summary_params == plain.summary_params
+    assert [line.params for line in shared.conflicts] == [line.params for line in plain.conflicts]
+    springs = refused([_requirement(group, 2), _requirement(group, 3, periods=SPRING)], day)
+    assert springs.summary_params["period"] == 1
+    assert all(line.params["period"] == 1 for line in springs.conflicts)
+
+    # The same for a 400: a cap too small for a teacher whose posts all run every week.
+    teacher = str(uuid4())
+    cap = [{"id": str(uuid4()), "teacherId": teacher, "maxTeachingMinutesPerDay": 60}]
+    payload = _payload(
+        [_requirement(str(uuid4()), 2, teacher=teacher), _requirement(str(uuid4()), 1, periods=SPRING)],
+        teacherWorkRules=cap,
+    )
+    with pytest.raises(InvalidScheduleInputError) as told:
+        SchedulerSolver(_settings())._validate_request(OptimizeScheduleRequest.model_validate(payload))
+    assert told.value.code == "TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK"
+    assert "period" not in told.value.params
+
+
+def test_the_same_refusal_with_another_figure_in_each_term_is_the_terms() -> None:
+    """Every week refuses with one code, and each with its own figure: that is not one refusal.
+
+    A post of one day and days of four hours. The autumn has eight hours to
+    place and the spring twelve; each is too much for one day, by its own
+    count. The first is the autumn's, with the autumn's minutes, and says so
+    — only a refusal every week shares to the figure is nobody's.
+    """
+    teacher = str(uuid4())
+    payload = _payload(
+        [_requirement(str(uuid4()), 2, teacher=teacher, minutes=240, periods=AUTUMN),
+         _requirement(str(uuid4()), 3, teacher=teacher, minutes=240, periods=SPRING)],
+        teacherDayLimits=[{"id": str(uuid4()), "teacherId": teacher,
+                           "maxTeachingDaysPerWeek": 1, "lockedWeekdays": [[]]}],
+    )
+    with pytest.raises(InvalidScheduleInputError) as refused:
+        SchedulerSolver(_settings(hours=4, days="1,2,3,4"))._validate_request(
+            OptimizeScheduleRequest.model_validate(payload))
+    assert refused.value.code == "TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK"
+    assert (refused.value.params["weekMinutes"], refused.value.params["period"]) == (480, 0)
+    # The same eight hours in both terms: one refusal, and no period.
+    payload["requirements"][1]["lessonsPerWeek"] = 2  # type: ignore[index]
+    with pytest.raises(InvalidScheduleInputError) as refused:
+        SchedulerSolver(_settings(hours=4, days="1,2,3,4"))._validate_request(
+            OptimizeScheduleRequest.model_validate(payload))
+    assert refused.value.code == "TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK"
+    assert refused.value.params["weekMinutes"] == 480 and "period" not in refused.value.params
+
+
+def test_a_week_of_several_periods_says_all_of_them() -> None:
+    """Weeks nothing tells apart are one week, and a refusal counted in it names every period it is.
+
+    Five lessons of the odd weeks on a day of four hours, and a lesson of the
+    even weeks in each term. The odd weeks of the autumn and of the spring
+    hold the same lessons and are one week; the refusal is theirs, and says
+    so: the first period as before (`period`), all of them beside it
+    (`periods`), and the parity (review of #300, L2).
+    """
+    group = str(uuid4())
+    payload = _payload([
+        _requirement(group, 5, recurrence=ODD),
+        _requirement(group, 1, recurrence=EVEN, periods=AUTUMN),
+        _requirement(group, 1, recurrence=EVEN, periods=SPRING),
+    ])
+    refused, *_ = SchedulerSolver(_settings())._prechecks(OptimizeScheduleRequest.model_validate(payload))
+    assert refused is not None and refused.conflicts is not None
+    assert {key: refused.conflicts.summary_params[key] for key in ("period", "periods", "parity")} == {
+        "period": 0, "periods": "0,1", "parity": ODD,
+    }
+    assert all(line.params["periods"] == "0,1" for line in refused.conflicts.conflicts)
+    # A refusal of one period says the one, as it did.
+    one = _payload([_requirement(group, 2), _requirement(group, 3, periods=SPRING)])
+    refused, *_ = SchedulerSolver(_settings())._prechecks(OptimizeScheduleRequest.model_validate(one))
+    assert refused is not None and refused.conflicts is not None
+    assert refused.conflicts.summary_params["period"] == 1
+    assert "periods" not in refused.conflicts.summary_params
+
+
+def _deviations(payload: dict[str, object], lessons: list[ScheduledLesson]):
+    request = OptimizeScheduleRequest.model_validate(payload)
+    return deviations_of(
+        request, lessons, request.rooms, {}, (1, 2, 3, 4, 5),
+        flatten=lambda fixed: _teacher_locks(fixed)[0],
+    )
+
+
+def test_a_deviation_every_week_has_alike_names_no_period() -> None:
+    """Bästa möjliga schema: a breach is one term's only when that term made it.
+
+    A cap of 60 minutes a day. The teacher's lesson of every week is 120
+    minutes on the Monday: 60 over in the autumn and in the spring alike, and
+    the line says the Monday and no period — the gateway would turn a period
+    into the autumn's dates, and the autumn is not what to move (review of
+    #300, L1). A second lesson that runs in the spring only makes the breach
+    the spring's: 180 minutes there, and the line says so.
+    """
+    teacher, group = str(uuid4()), str(uuid4())
+    year = _requirement(group, 1, teacher=teacher, minutes=120)
+    spring = _requirement(group, 1, teacher=teacher, periods=SPRING)
+    elsewhere = _requirement(str(uuid4()), 1, periods=SPRING)
+    rule = {"id": str(uuid4()), "teacherId": teacher, "maxTeachingMinutesPerDay": 60}
+
+    alike = _payload([year, elsewhere], teacherWorkRules=[rule])
+    (line,) = _deviations(alike, [
+        _placed(year, "08:00:00", "10:00:00"), _placed(elsewhere, "08:00:00", "09:00:00"),
+    ])
+    assert line.code == "DEVIATION_TEACHER_DAILY_CAP"
+    assert (line.params["day"], line.params["over"]) == (1, 60)
+    assert not {"period", "periods", "parity"} & set(line.params)
+
+    own = _payload([year, spring], teacherWorkRules=[rule])
+    (line,) = _deviations(own, [
+        _placed(year, "08:00:00", "10:00:00"), _placed(spring, "10:00:00", "11:00:00"),
+    ])
+    assert (line.params["over"], line.params["period"]) == (120, 1)
+
+    # The same figure in each term from a lesson of its own: two breaches, and
+    # the line is the first term's with that term's lesson, not the year's.
+    first = _requirement(group, 1, teacher=teacher, minutes=120, periods=AUTUMN)
+    second = _requirement(group, 1, teacher=teacher, minutes=120, periods=SPRING)
+    each = _payload([first, second], teacherWorkRules=[rule])
+    (line,) = _deviations(each, [
+        _placed(first, "08:00:00", "10:00:00"), _placed(second, "08:00:00", "10:00:00"),
+    ])
+    assert (line.params["over"], line.params["period"]) == (60, 0)
+    assert [str(requirement) for requirement in line.requirement_ids] == [first["id"]]
+
+
+def test_the_days_over_a_post_every_week_has_alike_name_no_period() -> None:
+    """The same for the post's days: two days where the post allows one, every week of the year."""
+    teacher, group = str(uuid4()), str(uuid4())
+    monday = _requirement(group, 1, teacher=teacher)
+    tuesday = _requirement(group, 1, teacher=teacher)
+    spring = _requirement(group, 1, teacher=teacher, periods=SPRING)
+    elsewhere = _requirement(str(uuid4()), 1, periods=SPRING)
+    limit = {"id": str(uuid4()), "teacherId": teacher, "maxTeachingDaysPerWeek": 1, "lockedWeekdays": [[]]}
+
+    def on(requirement: dict[str, object], day: int) -> ScheduledLesson:
+        return _placed(requirement, "08:00:00", "09:00:00").model_copy(update={"day_of_week": day})
+
+    alike = _payload([monday, tuesday, elsewhere], teacherDayLimits=[limit])
+    (line,) = _deviations(alike, [on(monday, 1), on(tuesday, 2), on(elsewhere, 1)])
+    assert line.code == "DEVIATION_TEACHER_WORK_DAYS"
+    assert line.params["over"] == 1
+    assert not {"period", "periods", "parity"} & set(line.params)
+
+    own = _payload([monday, spring], teacherDayLimits=[limit])
+    (line,) = _deviations(own, [on(monday, 1), on(spring, 2)])
+    assert (line.params["over"], line.params["period"]) == (1, 1)
+
+
+# ---------------------------------------------------------------------------
+# The two counts the terms are counted by, at their thresholds
+# ---------------------------------------------------------------------------
+
+
+def test_a_teachers_term_exactly_full_passes_and_one_lesson_over_is_refused() -> None:
+    """A teacher's hours against a day of four: 240 minutes fit in 240, and 300 do not.
+
+    The count the terms were cut for (1,370 a term, never their sum) had no
+    test at its threshold: an hour over went through unrefused when the
+    comparison was moved by an hour (review of #300, L9, mutant C13). The
+    autumn is exactly full and passes; the spring is one lesson over, and the
+    refusal is the spring's.
+    """
+    teacher = str(uuid4())
+    payload = _payload([
+        _requirement(str(uuid4()), 4, teacher=teacher, periods=AUTUMN),
+        _requirement(str(uuid4()), 5, teacher=teacher, periods=SPRING),
+    ])
+    solver = SchedulerSolver(_settings(hours=4))
+    (_, autumn), (_, spring) = _weeks_and_requests(OptimizeScheduleRequest.model_validate(payload))
+    assert solver._teacher_hours_verdict(autumn) is None
+    over = solver._teacher_hours_verdict(spring)
+    assert over is not None
+    (line,) = over.conflicts
+    assert (line.params["demandMinutes"], line.params["capacityMinutes"]) == (300, 240)
+    refused, *_ = solver._prechecks(OptimizeScheduleRequest.model_validate(payload))
+    assert refused is not None and refused.conflicts is not None
+    assert refused.conflicts.summary_params["period"] == 1
+
+
+def test_a_hall_that_goes_exactly_even_feeds_the_school_and_one_pupil_more_does_not() -> None:
+    """80 pupils eating 30 minutes are 2,400 pupil-minutes, and 40 seats for an hour are 2,400.
+
+    The dining hall's count at its threshold (review of #300, L9, mutant
+    C14): even is enough, as the cumulative it stands for would find, and
+    one pupil more is not.
+    """
+    rules = {"lunchStartTime": "11:00:00", "lunchEndTime": "12:00:00", "lunchMinutes": 30, "diningSeats": 40}
+    classes = [str(uuid4()) for _ in range(4)]
+    payload = _payload([_requirement(group, 1) for group in classes], rules=rules)
+    solver = SchedulerSolver(_settings(hours=5))
+    assert solver._dining_hall_verdict(OptimizeScheduleRequest.model_validate(payload)) is None
+    payload["groups"][0]["lunchHeadcount"] = 21  # type: ignore[index]
+    refused = solver._dining_hall_verdict(OptimizeScheduleRequest.model_validate(payload))
+    assert refused is not None
+    assert (refused.summary_params["needed"], refused.summary_params["offered"]) == (2430, 2400)

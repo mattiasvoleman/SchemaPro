@@ -188,8 +188,31 @@ def test_what_a_refusal_says_of_its_week() -> None:
     assert named(Weeks(0b001100, 3)) == {"period": 1}
     assert named(Weeks(0b000100, 3)) == {"period": 1, "parity": ODD}
     assert named(Weeks(0b100000, 3)) == {"period": 2, "parity": EVEN}
-    # Joined periods are named by the first.
-    assert named(Weeks(0b111100, 3)) == {"period": 1}
+    # Weeks of several periods are named by the first, as they were, and say
+    # every one beside it: a flat value, in order, and only then.
+    assert named(Weeks(0b111100, 3)) == {"period": 1, "periods": "1,2"}
+    assert named(Weeks(0b110011, 3)) == {"period": 0, "periods": "0,2"}
+    assert named(Weeks(0b010001, 3)) == {"period": 0, "periods": "0,2", "parity": ODD}
+    assert named(Weeks(0b101010, 3)) == {"period": 0, "periods": "0,1,2", "parity": EVEN}
+    assert "periods" not in named(Weeks(0b000011, 3))
+    assert Weeks(0b110011, 3).held() == (0, 2)
+    assert Weeks(0b001000, 3).held() == (1,)
+    assert ODD_WEEKS.held() == ()
+
+
+def test_the_masks_read_are_remembered_up_to_a_bound() -> None:
+    """An engine process outlives its requests: what it remembers of their masks has a ceiling."""
+    from app.solver import weeks
+
+    assert weeks._span.cache_info().maxsize == weeks._lift.cache_info().maxsize == 4096
+    # Past the bound the oldest reading is forgotten and read again, the same.
+    autumn = weeks_of(_entry(periods=[True, False]))
+    for periods in range(2, 54):
+        for first in range(periods):
+            weeks_of(_entry(periods=[index == first for index in range(periods)]))
+            weeks_of(_entry(ODD, [index != first for index in range(periods)]) if periods > 2 else _entry(ODD))
+    assert weeks._span.cache_info().currsize <= 4096
+    assert weeks_of(_entry(periods=[True, False])) == autumn == Weeks(0b0011, 2)
 
 
 # ---------------------------------------------------------------------------
