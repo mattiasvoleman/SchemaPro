@@ -7043,12 +7043,11 @@ class SchedulerSolver:
         day_offset = day_index * self._grid.slots_per_day
         sharing = _groups_sharing_students(request.group_conflicts)
 
-        def closed(forbidden: list[tuple[int, int]]) -> bool:
-            return self._admissible_lunch_starts(
-                day_offset, window_start, window_end, lunch_slots, forbidden,
-            ).is_empty()
-
-        parts: dict[tuple[tuple[int, int], ...], list[int]] = {}
+        # A part is the STARTS its locks leave the meal — which says the starts
+        # they take, and is not the locks: one band per lock comes back, and
+        # two periods locked 10:30-11:30 leave the same starts though one of
+        # them has a second lock inside that hour.
+        parts: dict[tuple[int, ...], list[int]] = {}
         for period in range(periods):
             term = Weeks(0b11 << (2 * period), periods)
             forbidden = self._lunch_starts_blocked_by_fixed_lessons(
@@ -7061,27 +7060,32 @@ class SchedulerSolver:
             ).get((group_id, day_index), [])
             if not forbidden:
                 continue
-            if closed(forbidden):
+            free = self._admissible_lunch_starts(
+                day_offset, window_start, window_end, lunch_slots, forbidden,
+            )
+            if free.is_empty():
                 return {}
-            parts.setdefault(tuple(sorted(forbidden)), []).append(period)
+            parts.setdefault(tuple(free.FlattenedIntervals()), []).append(period)
         # At least two parts by now: the year's locks close the window, and no
-        # one period's did.
-        taken = list(parts)
+        # one period's did. Two close it between them when they leave no start
+        # in common.
+        left = [cp_model.Domain.FromFlatIntervals(list(free)) for free in parts]
         pair = next(
             (
                 (first, second)
-                for first in range(len(taken))
-                for second in range(first + 1, len(taken))
-                if closed([*taken[first], *taken[second]])
+                for first in range(len(left))
+                for second in range(first + 1, len(left))
+                if left[first].intersection_with(left[second]).is_empty()
             ),
             None,
         )
-        order = list(range(len(taken)))
+        order = list(range(len(left)))
         if pair is not None:
             order = [*pair, *(index for index in order if index not in pair)]
+        named = list(parts.values())
         return {
             "lockPeriods": ";".join(
-                ",".join(str(period) for period in parts[taken[index]]) for index in order
+                ",".join(str(period) for period in named[index]) for index in order
             ),
         }
 

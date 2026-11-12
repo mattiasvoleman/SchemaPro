@@ -40,7 +40,9 @@ from app.schemas.schedule import (
 )
 from app.solver.relaxation import deviations_of
 from app.solver.scheduler_solver import SchedulerSolver, _teacher_locks, _week_sets
-from app.solver.weeks import EVEN_WEEKS, ODD_WEEKS, Weeks, named, says_exactly, together, whole_periods
+from app.solver.weeks import (
+    EVEN_WEEKS, ODD_WEEKS, PART_LIMIT, Weeks, named, says_exactly, together, whole_periods,
+)
 
 AUTUMN, SPRING = periods.AUTUMN, periods.SPRING
 SOLVED = periods.SOLVED
@@ -676,19 +678,65 @@ def test_the_periods_a_lock_runs_in_are_one_part_and_a_pair_that_closes_the_wind
         masks=3,
     ))
     assert pair.params["lockPeriods"] == "0;2;1"
-    # Two pairs close it: the first half hour with either of two locks over
-    # the second. The earliest pair is the one named first, on every run.
+    # Two pairs close it: the first half hour with either of two locks in the
+    # second, the whole of it and its last quarter, which take different
+    # starts. The earliest pair is the one named first, on every run.
     either = _meal_refusal(_class_meal(
+        (*FIRST_HALF, {"periods": [True, False, False]}),
+        (*SECOND_HALF, {"periods": [False, True, False]}),
+        ("11:45:00", "12:00:00", {"periods": [False, False, True]}),
+        masks=3,
+    ))
+    assert either.params["lockPeriods"] == "0;1;2"
+    # A lock over the second half hour that runs on past the window takes the
+    # starts the half hour's own lock takes, and is one part with it.
+    past = _meal_refusal(_class_meal(
         (*FIRST_HALF, {"periods": [True, False, False]}),
         (*SECOND_HALF, {"periods": [False, True, False]}),
         ("11:30:00", "12:30:00", {"periods": [False, False, True]}),
         masks=3,
     ))
-    assert either.params["lockPeriods"] == "0;1;2"
+    assert past.params["lockPeriods"] == "0;1,2"
     # No two parts do it alone: three thirds of an hour and a lunch of twenty
     # minutes in a window of an hour. In the order of the year.
     thirds = _payload_of_thirds()
     assert _meal_refusal(thirds).params["lockPeriods"] == "0;1;2"
+
+
+def test_periods_whose_locks_take_the_same_starts_are_one_part_however_the_locks_lie() -> None:
+    """A part is the STARTS its locks take, not the locks (the review of #302, LÅG-1).
+
+    The meal is an hour in 10:30-12:30 on Monday, so it starts 10:30-11:30.
+    The first period is locked 12:00-13:00, which leaves the starts until
+    11:00; the second 10:30-11:30, which leaves 11:30 alone. The third has
+    the second's lock and one more inside it, 11:00-11:30, which takes no
+    start the other did not: the second and the third are one part. Keyed by
+    the locks they were two, "0;1;2", and a school was told of one stretch
+    "among others" that is the same hour.
+    """
+    klass = str(uuid4())
+
+    def refused(*third: tuple[str, str]) -> str:
+        locks = [(0, "12:00:00", "13:00:00"), (1, "10:30:00", "11:30:00"), *((2, *lock) for lock in third)]
+        payload = _payload(
+            [_requirement(klass, 2), _requirement(klass, 1, periods=[False, False, True])],
+            rules={"lunchStartTime": "10:30:00", "lunchEndTime": "12:30:00", "lunchMinutes": 60},
+            fixedLessons=[
+                {**_lock(klass, 1, start, end, str(uuid4())), "periods": [period == other for other in range(3)]}
+                for period, start, end in locks
+            ],
+        )
+        return str(_meal_refusal(payload).params["lockPeriods"])
+
+    assert refused(("10:30:00", "11:30:00"), ("11:00:00", "11:30:00")) == "0;1,2"
+    # In whichever order the two locks are sent,
+    assert refused(("11:00:00", "11:30:00"), ("10:30:00", "11:30:00")) == "0;1,2"
+    # and for one lock laid elsewhere that takes the same starts: from 10:00,
+    # where the starts before 10:30 were never the window's.
+    assert refused(("10:00:00", "11:30:00")) == "0;1,2"
+    # A lock that leaves the third period a start the second has not is a
+    # part of its own: until 11:15, the meal can start then.
+    assert refused(("10:30:00", "11:15:00")) == "0;1;2"
 
 
 def _payload_of_thirds() -> dict[str, object]:
@@ -908,6 +956,45 @@ def test_the_validator_holds_a_week_to_the_locked_weekdays_of_its_own_period() -
     assert "teaching on 3 days a week" in line and "(period 1)" in line
 
 
+def test_the_validator_owes_the_whole_lunch_to_the_minute() -> None:
+    """A gap of 25 minutes is no lunch of 30: the validator reads the rule's own figure, with no margin."""
+    settings = _settings(5, "1")
+    teacher = str(uuid4())
+    year = _requirement(str(uuid4()), 1, teacher=teacher)
+    rule = {"id": str(uuid4()), "teacherId": teacher, "lunchMinutes": 30,
+            "lunchStartTime": "11:00:00", "lunchEndTime": "12:00:00"}
+
+    def problems(locked_from: str) -> list[str]:
+        payload = _payload(
+            [year], teacherWorkRules=[rule],
+            fixedLessons=[_lock(str(uuid4()), 1, locked_from, "12:00:00", teacher)],
+        )
+        return _validate(payload, [_laid(year, 1, "10:00:00", "11:00:00")], settings)
+
+    (line,) = problems("11:25:00")
+    assert "no 30-minute lunch inside 11:00-12:00 on weekday 1 (longest gap 25 minutes)" in line
+    assert problems("11:30:00") == []
+
+
+def test_the_validator_reads_a_years_own_sets_when_the_year_has_no_periods() -> None:
+    """`lockedWeekdayPeriods` on a limit of a year that is not cut: the weeks are held to `lockedWeekdays`.
+
+    The engine takes such a request (the masks are the only ones, and are
+    their own cut), and reads the sets by period only where a week has one.
+    A year of odd and even weeks is read week by week here, with no period
+    to pick the sets of: the limit is the one sent, and its Monday is every
+    week's. Tuesday and Wednesday beside it are three days on a post of two.
+    """
+    settings = _settings(4, "1,2,3")
+    payload = _part_timer(None, None, BY_TERM)
+    first, second = payload["requirements"]  # type: ignore[misc]
+    first["recurrence"] = "ODD_WEEKS"
+    lessons = [_laid(first, 2, "08:00:00", "12:00:00"), _laid(second, 3, "08:00:00", "12:00:00")]
+    (line,) = _validate(payload, lessons, settings)
+    # The odd weeks hold all three; the even weeks the lock and Wednesday.
+    assert "teaching on 3 days a week" in line and line.endswith("(udda veckor)")
+
+
 def test_a_lunch_start_for_each_period_is_built_and_is_in_the_size_estimate() -> None:
     """A teacher locked at another hour in each period has a break of each period's, every day.
 
@@ -958,6 +1045,65 @@ def test_a_lunch_start_for_each_period_is_built_and_is_in_the_size_estimate() ->
     assert solver._week_vars(request(True, parities), lessons, lessons) == solver._week_vars(
         request(False, parities), lessons, lessons,
     )
+
+
+@pytest.mark.parametrize("row_limit", [None, 0])
+def test_a_teacher_of_nine_periods_has_a_lunch_of_each_and_none_over_two_periods_locks(
+    monkeypatch: pytest.MonkeyPatch, row_limit: int | None,
+) -> None:
+    """A teacher's breaks are never joined, however many periods the year has (the review of #302, MEDEL-1).
+
+    A real läsår reaches nine periods: every dated post cuts it. Here the
+    teacher has a lesson and a lock in each. The lock is 11-12 in every other
+    period and 12-13 in the rest, and the lunch an hour in 11-13, so each
+    period eats in the hour its lock leaves, and each period alone has a
+    lunch. Past PART_LIMIT parts a soft row is joined into unions; a break
+    over two periods' locks has no hour left, and joined the year was
+    INFEASIBLE, TEACHER_LUNCH_HAS_NOWHERE_TO_GO, with a lunch in every week
+    it has — past a pre-flight that reads each period on its own and found
+    nothing.
+
+    And whatever the size of the row: a large row is joined by its size
+    alone when nothing is said (weeks.ROW_LIMIT), which is read here as
+    nothing at all, so that leaving the word out is seen as well as turning
+    it.
+    """
+    if row_limit is not None:
+        monkeypatch.setattr(periods.weeks_module, "ROW_LIMIT", row_limit)
+    count = PART_LIMIT + 1
+    settings = _settings(7, "1")
+    teacher = str(uuid4())
+    rule = {"id": str(uuid4()), "teacherId": teacher, "lunchMinutes": 60,
+            "lunchStartTime": "11:00:00", "lunchEndTime": "13:00:00"}
+
+    def year(locked: list[tuple[int, str, str]]) -> dict[str, object]:
+        def only(period: int) -> list[bool]:
+            return [period == other for other in range(count)]
+
+        return _payload(
+            [_requirement(str(uuid4()), 1, teacher=teacher, periods=only(period)) for period in range(count)],
+            teacherWorkRules=[rule],
+            fixedLessons=[_lock(str(uuid4()), 1, start, end, teacher, only(period)) for period, start, end in locked],
+        )
+
+    locks = [
+        (period, *(("11:00:00", "12:00:00") if period % 2 == 0 else ("12:00:00", "13:00:00")))
+        for period in range(count)
+    ]
+    payload = year(locks)
+    response = _solve(payload, settings)
+    assert response.status == "OPTIMAL"
+    assert _codes(response) == []
+    assert len(response.lessons) == count
+    # No lesson in the window: each period's free hour is its lunch.
+    assert all(lesson.end_time <= "11:00:00" or lesson.start_time >= "13:00:00" for lesson in response.lessons)
+    assert _validate(payload, response.lessons, settings) == []
+    # The non-vacuous side: the last period given the other hour's lock too
+    # has no lunch, and is refused as that period's.
+    with pytest.raises(InvalidScheduleInputError) as refused:
+        _solve(year([*locks, (count - 1, "12:00:00", "13:00:00")]), settings)
+    assert refused.value.code == "TEACHER_LUNCH_LEAVES_NO_START"
+    assert refused.value.params["period"] == count - 1
 
 
 # ---------------------------------------------------------------------------
