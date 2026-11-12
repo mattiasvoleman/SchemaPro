@@ -4897,6 +4897,42 @@ more strictly than the real weeks:
   (`PART_LIMIT`, `ROW_LIMIT`, `optimization-engine/app/solver/weeks.py`). A
   teacher's or a class's own rows are always cut exactly.
 
+**Three of these refuse a timetable that exists, and are known limits** (the
+reviews of #300, 2026-11-12; each is the reading `main` already had, made
+more common by posts that run by term). None ever lays a timetable that
+breaks a rule: what is laid keeps every rule in every real week. What a
+school meets:
+
+- **Lärarens dag, the days of a post.** The weekdays a teacher's preserved
+  lessons hold are held against EVERY part of the läsår. A post of two days a
+  week, a lock on Mondays in the autumn only, and lessons that need Tuesday
+  and Wednesday in the spring: each term fits its two days, and Generera
+  answers INFEASIBLE with `TEACHER_WORK_DAYS_CANNOT_BE_KEPT` ("Tjänsten …
+  tillåter undervisning högst 2 dagar i veckan, och den gränsen är en av
+  reglerna som inte kan gälla samtidigt"; `TEACHER_WORK_DAYS_HIDDEN` for a
+  reader without HR-läs).
+- **A teacher's own lunch** (teacherWorkRules) is one hour all year, clear of
+  the teacher's locks in every part of it. A lock at 11:00 in the autumn and
+  one at 11:30 in the spring, in a window 11:00–12:00 for 30 minutes: each
+  term has a lunch, and Generera answers 400
+  `TEACHER_LUNCH_LEAVES_NO_START` ("Låsta lektioner lämnar arbetstidsregeln
+  … ingen lunch") or, from the model, `TEACHER_LUNCH_HAS_NOWHERE_TO_GO`.
+  Neither names a period: the refusal is the year's.
+- **A class's meal** is one start a day all year (`lunches` in the answer
+  has no period). A class lock 11:00–11:30 in the autumn and one 11:30–12:00
+  in the spring, in a window 11:00–12:00 for 30 minutes: each term has a
+  break, and Generera answers 400 `LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK`
+  ("Låsta lektioner lämnar klassen … ingen lunchlucka"), without a period.
+
+The way round each: move or unlock the lock the message points at, or widen
+the limit (the post's days, the lunch window) for the run. Production had no
+teacher with a day limit and no locked lesson when this was written
+(2026-11-12), so no school meets them yet. The two teacher rules are next to
+be read per period (the engine has what it needs: the locks carry their
+periods). A meal per period is another matter: `LunchSittings` holds one row
+per class and weekday of a läsår, so a class that eats at 11:30 in the autumn
+and 11:00 in the spring cannot be stored without a migration.
+
 ### 19.4 Operations
 
 - The engine's pre-flights run once per period (and per parity inside it).
