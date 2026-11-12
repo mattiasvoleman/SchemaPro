@@ -6934,6 +6934,66 @@ class SchedulerSolver:
             return
         self._verify_lunch(request, rules)
 
+    def _lunch_lock_periods(
+        self,
+        request: OptimizeScheduleRequest,
+        group_id: UUID,
+        day_index: int,
+        rules: ScheduleRules,
+    ) -> dict[str, str]:
+        """Which periods' locks close a class's lunch window BETWEEN them, when no one period's do.
+
+        A CLASS'S MEAL IS ONE HOUR ALL YEAR — one start a class and weekday in
+        the model, one row in the answer (`lunches`), one sitting the school
+        stores — so it keeps clear of every lock of the year, as it always
+        did. With terms that refuses a year whose every term has a gap: a lock
+        11:00-11:30 in the autumn and one 11:30-12:00 in the spring, in a
+        window 11-12. The refusal is right for a meal that cannot move
+        between terms, and it read as if one Monday had no gap, which no
+        Monday the school can look at shows. So it says what it is:
+        `lockPeriods`, the periods whose locks take a start of the window that
+        day, their indices in order with commas between ("0,1") — a flat
+        value, which the gateway turns into dates beside a sentence saying
+        the meal is the year's.
+
+        ONLY THEN. Where the locks of ONE period close the window alone — and
+        the locks of every week are every period's — the refusal is that
+        period's own shortage and says exactly what it said: nothing is added,
+        and nothing is added for a year without periods, whose odd and even
+        weeks share the meal as they did. A period is read in both parities,
+        as the meal is.
+        """
+        # One period for a year without them: every lock is then that one's,
+        # which closes the window alone, and nothing is added below.
+        periods = max(
+            (held.periods for held in map(weeks_of, request.fixed_lessons) if held is not None),
+            default=1,
+        )
+        window_start, window_end, lunch_slots = self._lunch_window_slots(rules)
+        day_offset = day_index * self._grid.slots_per_day
+        sharing = _groups_sharing_students(request.group_conflicts)
+        taking: list[int] = []
+        for period in range(periods):
+            term = Weeks(0b11 << (2 * period), periods)
+            forbidden = self._lunch_starts_blocked_by_fixed_lessons(
+                [fixed for fixed in request.fixed_lessons if meet(weeks_of(fixed), term)],
+                {group_id},
+                sharing,
+                window_start,
+                window_end - lunch_slots,
+                lunch_slots,
+            ).get((group_id, day_index), [])
+            if not forbidden:
+                continue
+            if self._admissible_lunch_starts(
+                day_offset, window_start, window_end, lunch_slots, forbidden,
+            ).is_empty():
+                return {}
+            taking.append(period)
+        # At least two by now: the year's locks close the window, and no one
+        # period's did.
+        return {"lockPeriods": ",".join(str(period) for period in taking)}
+
     #: The refusals of _verify_week that SAY THEIR OWN WEEKS, whichever week's
     #: request they were raised from, and are never named by it. A teacher's
     #: lunch window is read against the rule alone and is nobody's term. What
@@ -7168,6 +7228,7 @@ class SchedulerSolver:
                     "windowStart": rules.lunch_start_time[:5],
                     "windowEnd": rules.lunch_end_time[:5],
                     "day": self._grid.schedule_days[day_index],
+                    **self._lunch_lock_periods(request, group_id, day_index, rules),
                 })
 
         # The declarations, before either subtraction: a serving or a frame too

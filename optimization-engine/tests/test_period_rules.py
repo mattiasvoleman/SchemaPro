@@ -540,6 +540,201 @@ def test_a_week_that_lies_in_two_terms_is_read_one_term_at_a_time() -> None:
 
 
 # ---------------------------------------------------------------------------
+# A class's meal: still the year's, and the refusal says so
+# ---------------------------------------------------------------------------
+
+MEAL = {"lunchStartTime": "11:00:00", "lunchEndTime": "12:00:00", "lunchMinutes": 30}
+
+
+def _class_meal(*locks: tuple[str, str, dict[str, object]], masks: int = 2) -> dict[str, object]:
+    """7A eats 30 minutes in 11:00-12:00, and has locks in the window on Monday.
+
+    Each lock is (start, end, when it runs). A post of the last period beside
+    one of every week, so the year has `masks` periods whatever the locks say.
+    """
+    klass = str(uuid4())
+    last = [index == masks - 1 for index in range(masks)]
+    return _payload(
+        [_requirement(klass, 2), _requirement(klass, 1, periods=last)],
+        rules=MEAL,
+        fixedLessons=[
+            {**_lock(klass, 1, start, end, str(uuid4())), **when} for start, end, when in locks
+        ],
+    )
+
+
+def _meal_refusal(payload: dict[str, object]) -> InvalidScheduleInputError:
+    refused = _refusal(payload)
+    assert refused.code == "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK"
+    return refused
+
+
+FIRST_HALF, SECOND_HALF = ("11:00:00", "11:30:00"), ("11:30:00", "12:00:00")
+
+
+def test_locks_of_two_terms_that_close_a_class_lunch_between_them_are_named_by_their_terms() -> None:
+    """The meal is one hour all year, so it is still refused — and now says why.
+
+    A lock 11:00-11:30 in the autumn and one 11:30-12:00 in the spring: each
+    term has a half hour, and no Monday the school looks at is without one.
+    The refusal is the year's (review of #300, M2), unchanged in its code and
+    its values, with the periods whose locks close the window between them
+    added as one flat value the gateway turns into dates.
+    """
+    every_year = _meal_refusal(_class_meal((*FIRST_HALF, {}), (*SECOND_HALF, {})))
+    assert "lockPeriods" not in every_year.params
+
+    between = _meal_refusal(_class_meal((*FIRST_HALF, {"periods": AUTUMN}), (*SECOND_HALF, {"periods": SPRING})))
+    assert between.params["lockPeriods"] == "0,1"
+    assert {key: value for key, value in between.params.items() if key not in ("lockPeriods", "group")} == {
+        key: value for key, value in every_year.params.items() if key != "group"
+    }
+    assert "period" not in between.params and "periods" not in between.params
+    # The order of the locks is not the order of the year.
+    turned = _meal_refusal(_class_meal((*SECOND_HALF, {"periods": SPRING}), (*FIRST_HALF, {"periods": AUTUMN})))
+    assert turned.params["lockPeriods"] == "0,1"
+    # Three periods, the locks in the first and the last: the middle one is not named.
+    apart = _meal_refusal(_class_meal(
+        (*FIRST_HALF, {"periods": [True, False, False]}), (*SECOND_HALF, {"periods": [False, False, True]}),
+        masks=3,
+    ))
+    assert apart.params["lockPeriods"] == "0,2"
+    # A third period with a lock of its own in the window, which leaves that
+    # period a gap: it takes a start too, and is named with the other two.
+    three = _meal_refusal(_class_meal(
+        (*FIRST_HALF, {"periods": [True, False, False]}),
+        (*SECOND_HALF, {"periods": [False, True, False]}),
+        ("11:00:00", "11:15:00", {"periods": [False, False, True]}),
+        masks=3,
+    ))
+    assert three.params["lockPeriods"] == "0,1,2"
+
+
+def test_locks_of_one_term_that_close_a_class_lunch_say_exactly_what_they_said() -> None:
+    """One period's locks close the window alone: that term's own shortage, and the refusal as it always read."""
+    every_year = _meal_refusal(_class_meal((*FIRST_HALF, {}), (*SECOND_HALF, {})))
+    for first, second in (
+        ({"periods": SPRING}, {"periods": SPRING}),
+        ({"periods": AUTUMN}, {"periods": AUTUMN}),
+        # One of every week and one of the spring: the spring has both.
+        ({}, {"periods": SPRING}),
+        ({"periods": AUTUMN}, {}),
+        # The odd weeks' and the even weeks' of one term: the meal is one for the two.
+        ({"periods": SPRING, "recurrence": "ODD_WEEKS"}, {"periods": SPRING, "recurrence": "EVEN_WEEKS"}),
+    ):
+        refused = _meal_refusal(_class_meal((*FIRST_HALF, first), (*SECOND_HALF, second)))
+        assert refused.params.keys() == every_year.params.keys()
+        assert {**refused.params, "group": ""} == {**every_year.params, "group": ""}
+
+
+def test_a_year_of_odd_and_even_weeks_alone_is_told_what_it_always_was() -> None:
+    """No periods, no new value: the bytes a school of A/B weeks gets are main's."""
+    every_year = _meal_refusal(_class_meal((*FIRST_HALF, {}), (*SECOND_HALF, {})))
+    klass = str(uuid4())
+    payload = _payload(
+        [_requirement(klass, 2)],
+        rules=MEAL,
+        fixedLessons=[
+            {**_lock(klass, 1, *FIRST_HALF, str(uuid4())), "recurrence": "ODD_WEEKS"},
+            {**_lock(klass, 1, *SECOND_HALF, str(uuid4())), "recurrence": "EVEN_WEEKS"},
+        ],
+    )
+    refused = _meal_refusal(payload)
+    assert refused.params.keys() == every_year.params.keys()
+
+
+def test_a_term_is_read_in_both_its_parities_and_through_the_groups_that_share_its_pupils() -> None:
+    """The meal is one for a term's odd weeks and its even ones, and a half class's lock is the class's hour."""
+    # The spring's lock runs in its even weeks only: still the spring's.
+    even = _meal_refusal(_class_meal(
+        (*FIRST_HALF, {"periods": AUTUMN}), (*SECOND_HALF, {"periods": SPRING, "recurrence": "EVEN_WEEKS"}),
+    ))
+    assert even.params["lockPeriods"] == "0,1"
+    # The spring's lock is 7A:1's, a group that shares pupils with 7A (groupConflicts).
+    payload = _class_meal((*FIRST_HALF, {"periods": AUTUMN}), (*SECOND_HALF, {"periods": SPRING}))
+    klass, half = payload["fixedLessons"][0]["studentGroupId"], str(uuid4())  # type: ignore[index]
+    payload["fixedLessons"][1]["studentGroupId"] = half  # type: ignore[index]
+    payload["groupConflicts"] = [[klass, half]]
+    assert _meal_refusal(payload).params["lockPeriods"] == "0,1"
+
+
+def test_the_terms_named_are_those_of_the_weekday_refused() -> None:
+    """Tuesday's window is closed by a lock of each term; Monday has a lock of the autumn that closes nothing."""
+    klass = str(uuid4())
+    payload = _payload(
+        [_requirement(klass, 2), _requirement(klass, 1, periods=SPRING)],
+        rules=MEAL,
+        fixedLessons=[
+            {**_lock(klass, 1, "11:00:00", "11:15:00", str(uuid4())), "periods": AUTUMN},
+            {**_lock(klass, 2, *FIRST_HALF, str(uuid4())), "periods": AUTUMN},
+            {**_lock(klass, 2, *SECOND_HALF, str(uuid4())), "periods": SPRING},
+        ],
+    )
+    with pytest.raises(InvalidScheduleInputError) as refused:
+        SchedulerSolver(_settings(5, "1,2"))._validate_request(OptimizeScheduleRequest.model_validate(payload))
+    assert refused.value.code == "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK"
+    assert (refused.value.params["day"], refused.value.params["lockPeriods"]) == (2, "0,1")
+
+
+def test_a_lock_of_another_class_or_outside_the_window_names_no_term() -> None:
+    """Only the locks that take a start of THIS class's window that day are read."""
+    payload = _class_meal(
+        (*FIRST_HALF, {"periods": AUTUMN}), (*SECOND_HALF, {"periods": SPRING}), masks=3,
+    )
+    payload["requirements"][1]["periods"] = [False, False, True]  # type: ignore[index]
+    for lock in payload["fixedLessons"]:  # type: ignore[union-attr]
+        lock["periods"] = [*lock["periods"], False]
+    # In the third period: the class at 08:00, and another class in the window.
+    klass = payload["fixedLessons"][0]["studentGroupId"]  # type: ignore[index]
+    third = {"periods": [False, False, True]}
+    payload["fixedLessons"] += [  # type: ignore[operator]
+        {**_lock(klass, 1, "08:00:00", "09:00:00", str(uuid4())), **third},
+        {**_lock(str(uuid4()), 1, "11:00:00", "12:00:00", str(uuid4())), **third},
+        {**_lock(klass, 2, "11:00:00", "11:30:00", str(uuid4())), **third},
+    ]
+    assert _meal_refusal(payload).params["lockPeriods"] == "0,1"
+
+
+def test_placed_posts_of_two_terms_in_a_class_lunch_window_are_named_with_their_terms() -> None:
+    """Förlagda poster reach the engine as locks, and a school does place a post by term.
+
+    test_placements' own school (08:00-14:00, lunch 30 minutes in 11:00-13:00,
+    7A's idrott förlagd on Monday 11:00 and 12:00), with the first hour the
+    autumn's post and the second the spring's. Each term has an hour for
+    lunch; the meal is the year's, and the week is refused with each
+    förläggning named and the lunch sentence beneath them — which carries the
+    two terms.
+    """
+    import test_placements as placed
+
+    case = placed.TestTheRefusalBeforeTheModel()
+    payload = case._payload()
+    autumn_post, spring_post = str(uuid4()), str(uuid4())
+    first, second = payload["fixedLessons"]  # type: ignore[misc]
+    first["periods"], second["periods"] = AUTUMN, SPRING
+    payload["placements"] = {
+        "lessons": [
+            {"fixedLessonId": first["id"], "requirementId": autumn_post},
+            {"fixedLessonId": second["id"], "requirementId": spring_post},
+        ],
+        "requirements": [
+            placed._requirement(autumn_post, placed.ULF, 1, periods=AUTUMN),
+            placed._requirement(spring_post, placed.ULF, 1, periods=SPRING),
+        ],
+    }
+    response = SchedulerSolver(case._settings()).solve(OptimizeScheduleRequest.model_validate(payload))
+    assert response.status == "INFEASIBLE" and response.conflicts is not None
+    cause = response.conflicts.conflicts[-1]
+    assert (cause.category, cause.code) == ("PLACEMENT", "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK")
+    assert cause.params["lockPeriods"] == "0,1"
+    # And without `placements` it is the refusal itself, with the same value.
+    with pytest.raises(InvalidScheduleInputError) as refused:
+        SchedulerSolver(case._settings()).solve(OptimizeScheduleRequest.model_validate(
+            {key: value for key, value in payload.items() if key != "placements"}))
+    assert refused.value.params["lockPeriods"] == "0,1"
+
+
+# ---------------------------------------------------------------------------
 # The validator reads both, in its own words
 # ---------------------------------------------------------------------------
 
