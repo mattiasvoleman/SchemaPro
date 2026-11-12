@@ -4855,10 +4855,13 @@ its own release, merged and verified before the gateway's.
   Redeploy the engine, or roll the gateway back with it. The gateway does
   not retry without the fields, on purpose: a timetable laid without them
   would be the old, stricter one, and a school would not be told.
-- **Which schools are affected** (as the owner): a school with a dated post
-  or a dated lesson in an active year,
-  `SELECT DISTINCT "schoolId" FROM "TeachingRequirements" WHERE "startDate" IS NOT NULL OR "endDate" IS NOT NULL;`
-  That is the widest reading, and a few of the schools it finds send no
+- **Which schools are affected** (as the owner): a school with a dated post,
+  or with a dated lesson that a regeneration keeps (hand-made or locked;
+  `src/optimization/preserved-lessons.ts`),
+  `SELECT "schoolId" FROM "TeachingRequirements" WHERE "startDate" IS NOT NULL OR "endDate" IS NOT NULL UNION SELECT "schoolId" FROM "MasterLessons" WHERE ("startDate" IS NOT NULL OR "endDate" IS NOT NULL) AND (NOT "isGenerated" OR "isLocked");`
+  (A generated lesson with dates has them from its post, so the first half
+  finds its school.) That is the widest reading, and a few of the schools it
+  finds send no
   periods: dates that cut no week apart (a post dated to the whole läsår, or
   outside it) send none, and neither does a school whose only dated posts
   are the two terms of a block on another block's times WHEN THE TWO TERMS'
