@@ -1898,11 +1898,17 @@ def test_a_solved_refusal_is_the_weeks_only_when_the_weeks_own_entries_made_it()
     asked_of.clear()
     assert solver._solved_in(said, None, plain, plain, nothing) is said
     assert asked_of == []
-    # No entry of every week at all: the week's own entries are all there is.
+    # No entry of every week at all: asked of the year without a post, which
+    # still has its classes, its hall and its rules (review of #300, round
+    # two, LÅG-2). The same verdict there is nobody's period; another is the
+    # week's.
     dated = OptimizeScheduleRequest.model_validate(
         _payload([_requirement(group, 1, periods=AUTUMN), _requirement(group, 1, periods=SPRING)]))
     (label, week), _ = _weeks_and_requests(dated)
-    assert solver._solved_in(said, label, week, dated, the_same).summary_params == {"n": 1, "period": 0}
+    asked_of.clear()
+    assert solver._solved_in(said, label, week, dated, the_same) is said
+    assert asked_of == [0]
+    assert solver._solved_in(said, label, week, dated, nothing).summary_params == {"n": 1, "period": 0}
     # A LOCK is a week's own entry too. One post of every week, a lock of
     # every week and a lock of the spring: the spring differs from the rest
     # by its lock alone, and what is asked again is asked without it.

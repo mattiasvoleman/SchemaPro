@@ -1092,3 +1092,196 @@ def test_no_planted_year_is_refused_for_a_post_s_days_or_a_teachers_lunch() -> N
             refused_before += 1
     assert by_period >= 20
     assert refused_before >= 5
+
+
+# ---------------------------------------------------------------------------
+# A year with no post of every week (the second review of #300, LÅG-2, LÅG-3)
+# ---------------------------------------------------------------------------
+
+WEEK_WORDS = ("period", "periods", "parity")
+
+
+def _refused(payload: dict[str, object], settings: Settings) -> tuple[str, dict[str, object]]:
+    """What a year is refused with before the model, and what the refusal says of its week."""
+    request = OptimizeScheduleRequest.model_validate(payload)
+    try:
+        response, *_ = SchedulerSolver(settings)._prechecks(request)
+    except InvalidScheduleInputError as refusal:
+        return refusal.code, {name: refusal.params[name] for name in WEEK_WORDS if name in refusal.params}
+    assert response is not None and response.conflicts is not None
+    said = {name: value for name, value in response.conflicts.summary_params.items() if name in WEEK_WORDS}
+    # Every line says what the summary says, and no line something else.
+    for line in response.conflicts.conflicts:
+        assert {name: value for name, value in line.params.items() if name in WEEK_WORDS} == said
+    return response.conflicts.summary_code, said
+
+
+@pytest.mark.parametrize(("term", "other", "period"), [(AUTUMN, SPRING, 0), (SPRING, AUTUMN, 1)])
+def test_a_year_dated_to_one_term_is_refused_for_that_term(
+    term: list[bool], other: list[bool], period: int,
+) -> None:
+    """ONE WEEK WITH ANYTHING TO PLACE STILL SAYS WHICH (review of #300, round two, LÅG-3).
+
+    Five posts of one teacher, an hour each on a day of four, every one dated
+    to the same term. The other term has nothing to place, so the year has
+    one week's request, and "every week refuses alike" was true of it for
+    want of a second week: the refusal named no term, and the reader was not
+    told which weeks had been counted. It is the term's: without its posts
+    the teacher is over nothing.
+
+    The same for a 400, a cap of an hour a day against two hours of the
+    term, and the same again once the other term has a post of its own.
+    """
+    teacher = str(uuid4())
+    settings = periods._settings()
+    posts = [_requirement(str(uuid4()), 1, teacher=teacher, periods=term) for _ in range(5)]
+    assert _refused(_payload(posts), settings) == ("DEMAND_TEACHER_HOURS_SHORT", {"period": period})
+    beside = [*posts, _requirement(str(uuid4()), 1, periods=other)]
+    assert _refused(_payload(beside), settings) == ("DEMAND_TEACHER_HOURS_SHORT", {"period": period})
+
+    cap = [{"id": str(uuid4()), "teacherId": teacher, "maxTeachingMinutesPerDay": 60}]
+    capped = [_requirement(str(uuid4()), 2, teacher=teacher, periods=term)]
+    assert _refused(_payload(capped, teacherWorkRules=cap), settings) == (
+        "TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK", {"period": period},
+    )
+    assert _refused(
+        _payload([*capped, _requirement(str(uuid4()), 1, periods=other)], teacherWorkRules=cap), settings,
+    ) == ("TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK", {"period": period})
+
+
+def test_a_year_dated_to_two_of_three_periods_says_both() -> None:
+    """The one week with posts lies in two periods of three, and the refusal says the two."""
+    teacher = str(uuid4())
+    two_of_three = [True, True, False]
+    posts = [_requirement(str(uuid4()), 1, teacher=teacher, periods=two_of_three) for _ in range(5)]
+    assert _refused(_payload(posts), periods._settings()) == (
+        "DEMAND_TEACHER_HOURS_SHORT", {"period": 0, "periods": "0,1"},
+    )
+
+
+def test_a_refusal_that_reads_no_post_is_nobodys_term_in_a_year_dated_to_one() -> None:
+    """The other half of LÅG-3: one week to count is no reason to name it.
+
+    The dining hall seats 80 in one sitting and eight classes eat there, 160
+    pupils. The hall is counted by the classes the school has (`groups`),
+    whichever term their lessons are in, and it is as short with every post
+    in the autumn as with every post all year: no period, and the same
+    figures. Asked of the year without one post (_every_week_only), which
+    refuses the same.
+    """
+    rules = {"lunchStartTime": "11:00:00", "lunchEndTime": "11:30:00", "lunchMinutes": 30, "diningSeats": 80}
+    classes = [str(uuid4()) for _ in range(8)]
+    settings = periods._settings(hours=5)
+
+    def told(term: list[bool] | None):  # type: ignore[no-untyped-def]
+        response, *_ = SchedulerSolver(settings)._prechecks(OptimizeScheduleRequest.model_validate(
+            _payload([_requirement(group, 1, periods=term) for group in classes], rules=rules)))
+        assert response is not None and response.conflicts is not None
+        return response.conflicts
+
+    all_year = told(None)
+    assert all_year.summary_code == "LUNCH_HALL_CANNOT_FEED_THE_SCHOOL"
+    for term in (AUTUMN, SPRING):
+        dated = told(term)
+        assert dated.summary_code == all_year.summary_code
+        assert dated.summary_params == all_year.summary_params
+        assert [line.params for line in dated.conflicts] == [line.params for line in all_year.conflicts]
+
+
+def _posts_dated(payload: dict[str, object], deal: list[list[bool]]) -> dict[str, object]:
+    """The same school with every post dated: each to the next of `deal` in turn."""
+    dated = periods.copy.deepcopy(payload)
+    for index, requirement in enumerate(dated["requirements"]):  # type: ignore[arg-type]
+        requirement["periods"] = deal[index % len(deal)]
+    return dated
+
+
+def test_a_lunch_stage_refusal_that_reads_only_the_classes_names_no_period_when_every_post_is_dated() -> None:
+    """A SOLVED REFUSAL IS ASKED OF THE YEAR WITHOUT A POST TOO (review of #300, round two, LÅG-2).
+
+    test_optimize's register: two classes with lessons and twenty entered
+    with their pupils and none, a hall of 115. The lunch stage refuses the
+    hall, which cannot seat twenty-two classes in waves, and reads no lesson
+    to say so. With a post of every week the refusal named no period; with
+    every post dated — to the two terms in turn, or all to the autumn — no
+    request held "what every week has", the question was not asked, and the
+    refusal was the first week's. It is asked of the classes alone now.
+    """
+    settings = periods.test_optimize._settings()
+    register = periods.test_optimize._the_register(idle_classes=20, pupils=24)
+    plain = _refused(register, settings)
+    assert plain == ("LUNCH_HALL_CANNOT_SEAT_CLASSES", {})
+    assert _refused(_posts_dated(register, [AUTUMN, SPRING]), settings) == plain
+    assert _refused(_posts_dated(register, [AUTUMN]), settings) == plain
+    assert _refused(_posts_dated(register, [SPRING]), settings) == plain
+
+
+def test_a_lunch_stage_refusal_the_dated_posts_make_is_their_terms() -> None:
+    """And the other side: the same stage, refusing for what the posts pack, says their term.
+
+    test_optimize's middle years, whose frames and 24 lessons a class leave
+    the hall no waves: the classes alone are refused nothing. Every post in
+    the spring, and the refusal is the spring's.
+    """
+    settings = periods.test_optimize._settings()
+    packed = periods._hall_of_the_middle_years()
+    assert _refused(packed, settings) == ("LUNCH_HALL_CANNOT_SEAT_CLASSES", {})
+    assert _refused(_posts_dated(packed, [SPRING]), settings) == ("LUNCH_HALL_CANNOT_SEAT_CLASSES", {"period": 1})
+    assert _refused(_posts_dated(packed, [AUTUMN]), settings) == ("LUNCH_HALL_CANNOT_SEAT_CLASSES", {"period": 0})
+
+
+def test_a_400_the_locks_of_every_week_give_alone_is_nobodys_term_in_a_year_dated_to_one() -> None:
+    """The same for a 400 (_is_every_weeks): asked of the year without the dated posts.
+
+    A sports hall of 40 seats, shared, with a lesson of 45 pupils locked in
+    it. The one post there is to place is the autumn's. A lock of every week
+    is over the hall's seats in every week, post or no post: no period. The
+    same lock dated to the autumn is the autumn's, and is not there once the
+    autumn's entries are taken away.
+    """
+    placement = periods.test_placement
+    gym = placement._gym(capacity=40)
+    lock: dict[str, object] = {
+        "id": str(uuid4()), "teacherId": str(uuid4()), "studentGroupId": placement.CLASS_7B,
+        "roomId": gym["id"], "dayOfWeek": 1, "startTime": "08:00:00", "endTime": "09:00:00",
+        "studentCount": 45,
+    }
+    post = {
+        **placement._requirement(placement.IDROTT, placement.CLASS_7A, requiredRoomType="GYM", size=5),
+        "periods": AUTUMN,
+    }
+    payload = placement._payload([post], rooms=[gym], fixedLessons=[lock], placementRules=placement._shared("HARD"))
+
+    every_week = placement._refusal(payload)
+    assert every_week is not None and every_week.code == "SHARED_ROOM_LOCK_OVER_CAPACITY"
+    assert every_week.params == {"room": gym["id"], "pupils": 45, "capacity": 40}
+
+    lock["periods"] = AUTUMN
+    autumns = placement._refusal(payload)
+    assert autumns is not None and autumns.code == "SHARED_ROOM_LOCK_OVER_CAPACITY"
+    assert autumns.params == {"room": gym["id"], "pupils": 45, "capacity": 40, "period": 0}
+
+
+def test_two_weeks_with_posts_are_asked_of_each_other_and_not_of_the_year_without_posts() -> None:
+    """Where the one-week reading stops: two weeks that agree to the word name none.
+
+    Three periods. A teacher's five posts run in the first two, and another
+    class has a post of the first alone, which makes the two different
+    weeks; the third period has nothing. Both weeks refuse the teacher with
+    the same posts and the same figures, so the refusal is no more the
+    first's than the second's, and naming the first would send the reader to
+    half of the weeks it is true of. No period — the reading two weeks have
+    always had here, and not the one a single week has above.
+    """
+    teacher = str(uuid4())
+    settings = periods._settings()
+    first_two, first = [True, True, False], [True, False, False]
+    beside = _requirement(str(uuid4()), 1, periods=first)
+    posts = [_requirement(str(uuid4()), 1, teacher=teacher, periods=first_two) for _ in range(5)]
+    assert _refused(_payload([*posts, beside]), settings) == ("DEMAND_TEACHER_HOURS_SHORT", {})
+
+    cap = [{"id": str(uuid4()), "teacherId": teacher, "maxTeachingMinutesPerDay": 60}]
+    capped = _requirement(str(uuid4()), 2, teacher=teacher, periods=first_two)
+    assert _refused(_payload([capped, beside], teacherWorkRules=cap), settings) == (
+        "TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK", {},
+    )
