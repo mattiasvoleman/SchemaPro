@@ -7163,6 +7163,7 @@
     "jobErrors": {
       "GENERATE_STALE": "The base timetable changed while the run was in progress — a lesson was locked or deleted, or a timetable proposal was applied — so the run wrote nothing. Generate again.",
       "SCHEDULE_BUSY": "Someone else was writing the base timetable at the same time, so the run was not saved. Try again in a moment.",
+      "ENGINE_LACKS_PERIODS": "The timetable engine is older than the rest of the service and cannot plan curriculum entries with dates yet. Try again in a few minutes.",
       "CANDIDATES_RUNNING": "Timetable proposals are being computed for this school year. Generate can be started once they are done."
     },
     "page": {
@@ -7206,6 +7207,7 @@
       "CANDIDATE_ENGINE_FAILED": "The scheduling engine answered with an error. Try again in a moment.",
       "ENGINE_LACKS_CANDIDATES": "The timetable engine is older than the rest of the service and cannot compute proposals yet. Try again in a few minutes.",
       "ENGINE_LACKS_BEST_EFFORT": "The timetable engine is older than the rest of the service and cannot compute a best-possible timetable yet. Try again in a few minutes.",
+      "ENGINE_LACKS_PERIODS": "The timetable engine is older than the rest of the service and cannot plan curriculum entries with dates yet. Try again in a few minutes.",
       "CANDIDATES_FIRST_FAILED": "The first proposal got no timetable, and the others would have met the same obstacle. What stopped it is below.",
       "CANDIDATES_FIRST_FAILED_UNNAMED": "The first proposal got no timetable, and the others would have met the same obstacle.",
       "CANDIDATES_FIRST_TIMEOUT": "The first proposal could not be finished in time, so the others were not computed.",

@@ -486,14 +486,19 @@ export default function GeneratePage() {
   /**
    * The gateway's own reasons for a job it stopped before writing, which are
    * not the engine's and so not in its catalogue: the draft changed under
-   * the run (GENERATE_STALE), or another write held the year (SCHEDULE_BUSY).
+   * the run (GENERATE_STALE), another write held the year (SCHEDULE_BUSY), or
+   * the engine is older than the periods the run carried (ENGINE_LACKS_PERIODS).
    */
   const jobErrorText = (code: string | null): string | null =>
     code === "GENERATE_STALE"
       ? tCandidates("jobErrors.GENERATE_STALE")
       : code === "SCHEDULE_BUSY"
         ? tCandidates("jobErrors.SCHEDULE_BUSY")
-        : null;
+        : // Terminer: an engine older than the periods a school with dated
+          // posts is sent, in the minutes of a release or after a rollback.
+          code === "ENGINE_LACKS_PERIODS"
+          ? tCandidates("jobErrors.ENGINE_LACKS_PERIODS")
+          : null;
 
   const solverStatus = job?.status === "SUCCEEDED" ? job.solverStatus : null;
   // Both verdicts mean "no timetable came back", but only INFEASIBLE is a

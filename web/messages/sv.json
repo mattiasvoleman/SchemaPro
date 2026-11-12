@@ -7163,6 +7163,7 @@
     "jobErrors": {
       "GENERATE_STALE": "Grundschemat ändrades medan körningen pågick — en lektion låstes eller togs bort, eller ett schemaförslag tillämpades — så körningen skrev ingenting. Generera igen.",
       "SCHEDULE_BUSY": "Grundschemat skrevs av någon annan samtidigt, så körningen sparades inte. Försök igen om en stund.",
+      "ENGINE_LACKS_PERIODS": "Schemamotorn är äldre än resten av tjänsten och kan inte planera poster med datum ännu. Försök igen om några minuter.",
       "CANDIDATES_RUNNING": "Schemaförslag tas fram för läsåret just nu. Generera går att starta när de är klara."
     },
     "page": {
@@ -7206,6 +7207,7 @@
       "CANDIDATE_ENGINE_FAILED": "Schemamotorn svarade med ett fel. Försök igen om en stund.",
       "ENGINE_LACKS_CANDIDATES": "Schemamotorn är äldre än resten av tjänsten och kan inte ta fram förslag ännu. Försök igen om några minuter.",
       "ENGINE_LACKS_BEST_EFFORT": "Schemamotorn är äldre än resten av tjänsten och kan inte ta fram bästa möjliga schema ännu. Försök igen om några minuter.",
+      "ENGINE_LACKS_PERIODS": "Schemamotorn är äldre än resten av tjänsten och kan inte planera poster med datum ännu. Försök igen om några minuter.",
       "CANDIDATES_FIRST_FAILED": "Det första förslaget fick inget schema, och de andra hade mött samma hinder. Det som stoppade det står nedan.",
       "CANDIDATES_FIRST_FAILED_UNNAMED": "Det första förslaget fick inget schema, och de andra hade mött samma hinder.",
       "CANDIDATES_FIRST_TIMEOUT": "Det första förslaget hann inte bli klart inom tiden, så de andra togs inte fram.",

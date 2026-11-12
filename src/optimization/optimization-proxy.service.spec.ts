@@ -213,6 +213,7 @@ describe('engineMayStillBeSolving (a schemaförslag run keeps its call\'s deadli
     expect(engineMayStillBeSolving(new HttpException({ message: 'older', code: 'ENGINE_LACKS_CANDIDATES' }, 503))).toBe(false);
     // The engine refused the field at once: nothing was started.
     expect(engineMayStillBeSolving(new HttpException({ message: 'older', code: 'ENGINE_LACKS_BEST_EFFORT' }, 503))).toBe(false);
+    expect(engineMayStillBeSolving(new HttpException({ message: 'older', code: 'ENGINE_LACKS_PERIODS' }, 503))).toBe(false);
     expect(engineMayStillBeSolving(new HttpException('The AI engine returned an error.', 500))).toBe(false);
     expect(engineMayStillBeSolving(new HttpException({ message: 'Lunch has no room.', code: 'LUNCH_WINDOW_EMPTY' }, 400))).toBe(false);
     expect(engineMayStillBeSolving(new Error('boom'))).toBe(false);
@@ -2046,6 +2047,113 @@ describe('OptimizationProxyService', () => {
       http.post.mockReturnValue(throwError(() => extraForbidden(['body', 'search'])));
       const error = await callWith({ search: { seed: 1 }, relaxation: { mode: 'BEST_EFFORT' } }).catch((thrown: unknown) => thrown);
       expect(bodyOf(error)).toHaveProperty('code', 'ENGINE_LACKS_CANDIDATES');
+    });
+
+    describe('terminer: an engine older than `periods` and `periodWeeks`', () => {
+      /** An older engine names every field it does not know, each as its own error. */
+      const refusing = (...locs: (string | number)[][]) => {
+        const refused = new AxiosError('boom');
+        refused.response = {
+          status: 422,
+          data: {
+            code: 'VALIDATION_ERROR',
+            message: 'Request payload failed schema validation.',
+            details: { errors: locs.map((loc) => ({ type: 'extra_forbidden', loc, msg: 'Extra inputs are not permitted' })) },
+          },
+        } as never;
+        return refused;
+      };
+      const dated = { requirements: [{ id: 'r', periods: [true, false] }], periodWeeks: [19, 24] };
+
+      it('says it is one, in a sentence a school can wait out, and sends nothing again', async () => {
+        http.post.mockReturnValue(
+          throwError(() => refusing(['body', 'requirements', 0, 'periods'], ['body', 'periodWeeks'])),
+        );
+
+        const error = await callWith(dated).catch((thrown: unknown) => thrown);
+
+        expect((error as HttpException).getStatus()).toBe(503);
+        expect(bodyOf(error)).toEqual({
+          message:
+            'Schemamotorn är äldre än API:t och kan inte planera poster med datum ännu. Försök igen om några minuter.',
+          code: 'ENGINE_LACKS_PERIODS',
+        });
+        expect(engineMayStillBeSolving(error)).toBe(false);
+        // Never again without the fields: that week would be the stricter one, unsaid.
+        expect(http.post).toHaveBeenCalledTimes(1);
+      });
+
+      it.each([
+        ['the lengths alone', [['body', 'periodWeeks']]],
+        ['a post’s mask alone', [['body', 'requirements', 3, 'periods']]],
+        ['a lock’s mask alone', [['body', 'fixedLessons', 0, 'periods']]],
+        ['a released post’s mask alone', [['body', 'placements', 'requirements', 1, 'periods']]],
+      ] as [string, (string | number)[][]][])('reads %s as the same engine', async (_name, locs) => {
+        http.post.mockReturnValue(throwError(() => refusing(...locs)));
+        const error = await callWith(dated).catch((thrown: unknown) => thrown);
+        expect(bodyOf(error)).toHaveProperty('code', 'ENGINE_LACKS_PERIODS');
+      });
+
+      it('leaves the same refusal of a request without periods the validation error it is', async () => {
+        http.post.mockReturnValue(throwError(() => refusing(['body', 'periodWeeks'])));
+
+        const error = await callWith({ requirements: [{ id: 'r' }] }).catch((thrown: unknown) => thrown);
+
+        expect((error as HttpException).getStatus()).toBe(422);
+        expect(bodyOf(error)).not.toHaveProperty('code', 'ENGINE_LACKS_PERIODS');
+      });
+
+      it('reads only those two fields: another one refused, or something inside them, is this gateway’s mistake', async () => {
+        for (const loc of [
+          ['body', 'requirements', 0, 'colour'],
+          ['body', 'periodWeeks', 0],
+          ['body', 'periods'],
+          ['query', 'periodWeeks'],
+        ]) {
+          http.post.mockReturnValue(throwError(() => refusing(loc)));
+          const error = await callWith(dated).catch((thrown: unknown) => thrown);
+          expect((error as HttpException).getStatus()).toBe(422);
+          expect(bodyOf(error)).not.toHaveProperty('code', 'ENGINE_LACKS_PERIODS');
+        }
+      });
+
+      it('leaves a mask the engine knows and refuses the validation error it is: that engine is not older', async () => {
+        // The engine of today refusing a mask's value (all true, or of another
+        // length than the rest) names the same place with another kind of
+        // error. That is this gateway's mistake, and "try again in a few
+        // minutes" would be a lie about it.
+        for (const type of ['value_error', 'too_long', 'bool_parsing']) {
+          const refused = refusing(['body', 'requirements', 0, 'periods'], ['body', 'periodWeeks']);
+          for (const entry of (refused.response!.data as { details: { errors: { type: string }[] } }).details.errors) {
+            entry.type = type;
+          }
+          http.post.mockReturnValue(throwError(() => refused));
+          const error = await callWith(dated).catch((thrown: unknown) => thrown);
+          expect((error as HttpException).getStatus()).toBe(422);
+          expect(bodyOf(error)).not.toHaveProperty('code', 'ENGINE_LACKS_PERIODS');
+        }
+      });
+
+      it('is said at once to an engine older than `placements` too, rather than after a second try', async () => {
+        // That engine refuses both. Sent again without the förläggningar' names
+        // it would only refuse the periods a second time.
+        http.post.mockReturnValue(
+          throwError(() => refusing(['body', 'placements'], ['body', 'fixedLessons', 0, 'periods'], ['body', 'periodWeeks'])),
+        );
+
+        const error = await callWith({ ...dated, placements: { lessons: [], requirements: [] } }).catch(
+          (thrown: unknown) => thrown,
+        );
+
+        expect(bodyOf(error)).toHaveProperty('code', 'ENGINE_LACKS_PERIODS');
+        expect(http.post).toHaveBeenCalledTimes(1);
+      });
+
+      it('leaves an engine older than `search` its own name, whatever else it refuses', async () => {
+        http.post.mockReturnValue(throwError(() => refusing(['body', 'search'], ['body', 'periodWeeks'])));
+        const error = await callWith({ ...dated, search: { seed: 1 } }).catch((thrown: unknown) => thrown);
+        expect(bodyOf(error)).toHaveProperty('code', 'ENGINE_LACKS_CANDIDATES');
+      });
     });
 
     it('leaves a refusal of `relaxation` by a request that did not carry it, or inside it, the validation error it is', async () => {

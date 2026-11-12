@@ -92,6 +92,10 @@ describe("why a run ended without a batch", () => {
     expect(runErrorText(t, engine({}), run("ENGINE_LACKS_CANDIDATES"))).toBe("runErrors.ENGINE_LACKS_CANDIDATES");
     // An engine older than Bästa möjliga schema (503 from the gateway): its own sentence, not the generic one.
     expect(runErrorText(t, engine({}), run("ENGINE_LACKS_BEST_EFFORT"))).toBe("runErrors.ENGINE_LACKS_BEST_EFFORT");
+    // An engine older than terminer, met by a school with dated posts: the same, and never the gateway's own Swedish in an English school.
+    expect(
+      runErrorText(t, engine({}), run("ENGINE_LACKS_PERIODS", "Schemamotorn är äldre än API:t och kan inte planera poster med datum ännu.")),
+    ).toBe("runErrors.ENGINE_LACKS_PERIODS");
     // The engine's 5xx: without the key, the gateway's English reached a Swedish school.
     expect(runErrorText(t, engine({}), run("CANDIDATE_ENGINE_FAILED", "The AI engine returned an error."))).toBe(
       "runErrors.CANDIDATE_ENGINE_FAILED",

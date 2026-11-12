@@ -709,7 +709,13 @@ export function engineMayStillBeSolving(error: unknown): boolean {
   if (status !== HttpStatus.SERVICE_UNAVAILABLE && status !== HttpStatus.GATEWAY_TIMEOUT) return false;
   const body = error.getResponse();
   const shape = typeof body === 'object' && body !== null ? (body as { message?: unknown; code?: unknown }) : { message: body };
-  if (shape.code === ENGINE_LACKS_CANDIDATES || shape.code === ENGINE_LACKS_BEST_EFFORT) return false;
+  if (
+    shape.code === ENGINE_LACKS_CANDIDATES ||
+    shape.code === ENGINE_LACKS_BEST_EFFORT ||
+    shape.code === ENGINE_LACKS_PERIODS
+  ) {
+    return false;
+  }
   return shape.message !== ENGINE_UNREACHABLE && shape.message !== ENGINE_UNAVAILABLE;
 }
 
@@ -1139,6 +1145,47 @@ export const ENGINE_LACKS_CANDIDATES = 'ENGINE_LACKS_CANDIDATES';
  * week: nothing was placed or proven.
  */
 export const ENGINE_LACKS_BEST_EFFORT = 'ENGINE_LACKS_BEST_EFFORT';
+
+/**
+ * The engine refuses a request carrying `periods` and `periodWeeks` — it is
+ * older than terminer (year-periods.ts). The gateway's release must follow the
+ * engine's (docs/DEPLOYMENT.md, 19.1), so this is met only when that order is
+ * broken or the engine is rolled back alone: a Generera or a schemaförslag run
+ * of a school that dates a post or a preserved lesson then fails with a
+ * sentence it can wait out, not with "validation failed". Never sent again
+ * without the fields: a week laid without them would be the older, stricter
+ * one, and the school would not be told.
+ */
+export const ENGINE_LACKS_PERIODS = 'ENGINE_LACKS_PERIODS';
+
+/**
+ * The engine's refusal of terminer's fields as unknown ones: `periodWeeks` on
+ * the request, or `periods` wherever an entry carries it (a requirement, a
+ * fixed lesson, a released post under `placements`). An older engine names
+ * every one of them; any is enough.
+ */
+function refusesPeriods(body: { details?: { errors?: unknown } | null } | null): boolean {
+  const errors = body?.details?.errors;
+  return (
+    Array.isArray(errors) &&
+    errors.some((entry: unknown) => {
+      const { type, loc } = (entry ?? {}) as { type?: unknown; loc?: unknown };
+      if (type !== 'extra_forbidden' || !Array.isArray(loc) || loc[0] !== 'body') return false;
+      return (loc.length === 2 && loc[1] === 'periodWeeks') || (loc.length > 2 && loc[loc.length - 1] === 'periods');
+    })
+  );
+}
+
+function engineLacksPeriods(): HttpException {
+  return new HttpException(
+    {
+      message:
+        'Schemamotorn är äldre än API:t och kan inte planera poster med datum ännu. Försök igen om några minuter.',
+      code: ENGINE_LACKS_PERIODS,
+    },
+    HttpStatus.SERVICE_UNAVAILABLE,
+  );
+}
 
 /**
  * The engine refused `placements` as a field it does not know: it is older
@@ -4356,6 +4403,8 @@ export class OptimizationProxyService {
     const carriesSearch = (payload as { search?: unknown }).search !== undefined;
     const carriesRelaxation = (payload as { relaxation?: unknown }).relaxation !== undefined;
     const carriesPlacements = (payload as { placements?: unknown }).placements !== undefined;
+    // Terminer: a payload with a mask always carries the periods' lengths too.
+    const carriesPeriods = (payload as { periodWeeks?: unknown }).periodWeeks !== undefined;
 
     try {
       const response = await firstValueFrom(
@@ -4474,6 +4523,15 @@ export class OptimizationProxyService {
                  */
                 if (error.response.status === 422 && carriesRelaxation && refusesField(body, 'relaxation')) {
                   throw engineLacksBestEffort();
+                }
+                /*
+                 * And for an engine older than terminer (`periods`,
+                 * `periodWeeks`): before `placements`, because sending the
+                 * request again without the förläggningar' names would only
+                 * meet this refusal a second time.
+                 */
+                if (error.response.status === 422 && carriesPeriods && refusesPeriods(body)) {
+                  throw engineLacksPeriods();
                 }
                 // And older than `placements`: sent again without it, below.
                 if (error.response.status === 422 && carriesPlacements && refusesField(body, 'placements')) {
