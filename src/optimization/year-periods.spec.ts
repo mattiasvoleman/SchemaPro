@@ -346,6 +346,51 @@ describe('withPeriodDates', () => {
     });
   });
 
+  it('reads the stretches of every period a count names together, in the order of the year', () => {
+    // The autumn, the weeks between, the spring: three periods, each one stretch.
+    const year = [
+      [{ from: '2026-08-17', to: '2026-12-20' }],
+      [{ from: '2026-12-21', to: '2027-01-10' }],
+      [{ from: '2027-01-11', to: '2027-06-11' }],
+    ];
+    // The autumn and the spring: two stretches, and the sentence names the first.
+    expect(withPeriodDates({ period: 0, periods: '0,2', parity: 'ODD_WEEKS' }, year)).toEqual({
+      period: 0, periods: '0,2', parity: 'ODD_WEEKS',
+      periodFrom: '2026-08-17', periodTo: '2026-12-20', periodStretches: 2,
+    });
+    // The autumn and the weeks after it meet: one run of weeks, named whole.
+    expect(withPeriodDates({ period: 0, periods: '0,1' }, year)).toEqual({
+      period: 0, periods: '0,1', periodFrom: '2026-08-17', periodTo: '2027-01-10', periodStretches: 1,
+    });
+    expect(withPeriodDates({ period: 0, periods: '0,1,2' }, year)).toMatchObject({
+      periodFrom: '2026-08-17', periodTo: '2027-06-11', periodStretches: 1,
+    });
+    // In the order of the year, whatever order the indices came in.
+    expect(withPeriodDates({ period: 1, periods: '2,1' }, year)).toMatchObject({
+      periodFrom: '2026-12-21', periodTo: '2027-06-11', periodStretches: 1,
+    });
+    // A period of two stretches beside one that fills the gap between them.
+    const split = [
+      [{ from: '2026-08-17', to: '2026-12-20' }, { from: '2027-01-11', to: '2027-06-11' }],
+      [{ from: '2026-12-21', to: '2027-01-10' }],
+    ];
+    expect(withPeriodDates({ period: 0 }, split)).toMatchObject({ periodTo: '2026-12-20', periodStretches: 2 });
+    expect(withPeriodDates({ period: 0, periods: '0,1' }, split)).toMatchObject({
+      periodFrom: '2026-08-17', periodTo: '2027-06-11', periodStretches: 1,
+    });
+    // What cannot be read is left alone, and the first period's own stretches stand.
+    for (const periods of ['0,7', '2', '0;2', '', 'a,b', '0,2,']) {
+      expect(withPeriodDates({ period: 0, periods }, year)).toEqual({
+        period: 0, periods, periodFrom: '2026-08-17', periodTo: '2026-12-20', periodStretches: 1,
+      });
+    }
+    // And the sentence follows: the other weeks are said, with the parity.
+    expect(periodSentence(withPeriodDates({ period: 0, periods: '0,2', parity: 'ODD_WEEKS' }, year))).toBe(
+      ' Counted for the weeks from 2026-08-17 to 2026-12-20 and the other weeks with the same entries' +
+        ' (odd weeks), which is when these run together.',
+    );
+  });
+
   it('leaves alone what names no period, or one the read does not have', () => {
     const plain = { demandMinutes: 2560 };
     expect(withPeriodDates(plain, stretches)).toBe(plain);

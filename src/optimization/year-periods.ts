@@ -152,11 +152,22 @@ export function yearPeriodsOf(year: YearSpan, entries: readonly (readonly HeldWi
 /**
  * A refusal's params with its period turned into dates.
  *
- * The engine names a period by its index (`period`), which is all it has. The
- * stretch of days is added beside it — `periodFrom` and `periodTo`, the first
- * stretch of the period, and `periodStretches`, how many it has — for the
- * sentence that says where in the year the count was made. Params without a
- * period, or naming one the read does not have, are returned as they came.
+ * The engine names a period by its index (`period`, counted from 0), which is
+ * all it has. The stretch of days is added beside it — `periodFrom` and
+ * `periodTo`, the first stretch of the weeks, and `periodStretches`, how many
+ * stretches they are — for the sentence that says where in the year the count
+ * was made. Params without a period, or naming one the read does not have, are
+ * returned as they came.
+ *
+ * WEEKS OF SEVERAL PERIODS. A count the engine made in weeks that lie in more
+ * than one period — the odd weeks of the autumn and of the spring, where only
+ * the even weeks have posts of their own — says all of them, `periods`, their
+ * indices with commas between ("0,1"), beside the first (`period`). Their
+ * stretches are then read together: in the order of the year, and two that
+ * meet (the autumn ends on the Sunday the spring starts after) are one
+ * stretch, so the sentence names the whole run of weeks and not the half of
+ * it the first index stands for. A `periods` that cannot be read is left
+ * alone and the first period's stretches stand, as before.
  */
 export function withPeriodDates<P extends Record<string, string | number>>(
   params: P,
@@ -164,9 +175,27 @@ export function withPeriodDates<P extends Record<string, string | number>>(
 ): P | (P & { periodFrom: string; periodTo: string; periodStretches: number }) {
   const period = params.period;
   if (typeof period !== 'number' || !stretches) return params;
-  const held = stretches[period];
-  if (!held || held.length === 0) return params;
-  return { ...params, periodFrom: held[0]!.from, periodTo: held[0]!.to, periodStretches: held.length };
+  const own = stretches[period];
+  if (!own || own.length === 0) return params;
+  const listed =
+    typeof params.periods === 'string' && /^\d+(,\d+)*$/.test(params.periods)
+      ? params.periods.split(',').map(Number)
+      : [period];
+  const readable = listed.includes(period) && listed.every((index) => (stretches[index]?.length ?? 0) > 0);
+  const held = (readable ? listed : [period])
+    .flatMap((index) => stretches[index]!)
+    .slice()
+    .sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+  const joined: PeriodStretch[] = [];
+  for (const stretch of held) {
+    const last = joined[joined.length - 1];
+    if (last !== undefined && dayOf(addDays(parseDay(last.to), 1)) === stretch.from) {
+      joined[joined.length - 1] = { from: last.from, to: stretch.to };
+    } else {
+      joined.push({ from: stretch.from, to: stretch.to });
+    }
+  }
+  return { ...params, periodFrom: joined[0]!.from, periodTo: joined[0]!.to, periodStretches: joined.length };
 }
 
 /**
