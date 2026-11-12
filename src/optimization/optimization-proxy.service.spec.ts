@@ -4372,7 +4372,7 @@ describe('OptimizationProxyService', () => {
           expect(result.conflicts!.summaryParams).toEqual({ teachers: 1, ...dates });
           expect(result.conflicts!.summary).toBe(
             'One teacher has more lessons than the week has room for.' +
-              ' Counted for the weeks from 2026-08-17 to 2027-01-10 (and the other weeks with the same entries),' +
+              ' Counted for the weeks from 2026-08-17 to 2027-01-10 and the other weeks with the same entries,' +
               ' which is when these run together.',
           );
           expect(result.conflicts!.conflicts[0]!.params).toEqual({
@@ -4399,6 +4399,31 @@ describe('OptimizationProxyService', () => {
               message:
                 'A teacher’s cap of 120 minutes a day is under what the week needs.' +
                 ' Counted for the weeks from 2027-01-11 to 2027-01-31, which is when these run together.',
+            },
+          });
+
+          // Counted in the odd weeks of the period only: the engine says which
+          // (`parity`), and the sentence says it as the web's does.
+          const odd = new AxiosError('boom');
+          odd.response = {
+            status: 400,
+            data: {
+              code: 'INVALID_SCHEDULE_INPUT',
+              message: 'A teacher’s cap of 120 minutes a day is under what the week needs.',
+              details: {
+                code: 'TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK',
+                params: { minutes: 120, period: 0, parity: 'ODD_WEEKS' },
+              },
+            },
+          } as never;
+          http.post.mockReturnValue(throwError(() => odd));
+          await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+            response: {
+              params: { minutes: 120, period: 0, parity: 'ODD_WEEKS', periodFrom: '2026-08-17', periodTo: '2027-01-10', periodStretches: 2 },
+              message:
+                'A teacher’s cap of 120 minutes a day is under what the week needs.' +
+                ' Counted for the weeks from 2026-08-17 to 2027-01-10 and the other weeks with the same entries' +
+                ' (odd weeks), which is when these run together.',
             },
           });
         });

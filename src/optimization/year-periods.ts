@@ -169,12 +169,23 @@ export function withPeriodDates<P extends Record<string, string | number>>(
   return { ...params, periodFrom: held[0]!.from, periodTo: held[0]!.to, periodStretches: held.length };
 }
 
-/** The English for where a refusal was counted, for a reader with no catalogue: appended to the engine's own. */
+/**
+ * The English for where a refusal was counted, for a reader with no catalogue:
+ * appended to the engine's own.
+ *
+ * The web's sentence, word for word (generate.countedInPeriod in
+ * web/messages/en.json; catalogue-sentences.spec.ts holds the two together),
+ * with the days as the API writes them: the stretch, that the period has other
+ * weeks too, and — for a count made in the odd or the even weeks only, which
+ * the engine says as `parity` — which of them.
+ */
 export function periodSentence(params: Record<string, string | number>): string {
   if (typeof params.periodFrom !== 'string' || typeof params.periodTo !== 'string') return '';
   const more = typeof params.periodStretches === 'number' && params.periodStretches > 1;
+  const parity =
+    params.parity === 'ODD_WEEKS' ? ' (odd weeks)' : params.parity === 'EVEN_WEEKS' ? ' (even weeks)' : '';
   return (
     ` Counted for the weeks from ${params.periodFrom} to ${params.periodTo}` +
-    `${more ? ' (and the other weeks with the same entries)' : ''}, which is when these run together.`
+    `${more ? ' and the other weeks with the same entries' : ''}${parity}, which is when these run together.`
   );
 }

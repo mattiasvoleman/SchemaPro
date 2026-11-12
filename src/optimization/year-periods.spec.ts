@@ -364,12 +364,32 @@ describe('periodSentence', () => {
     expect(periodSentence({ periodFrom: '2027-01-11', periodTo: '2027-01-17', periodStretches: 1 })).toBe(
       ' Counted for the weeks from 2027-01-11 to 2027-01-17, which is when these run together.',
     );
-    expect(periodSentence({ periodFrom: '2026-12-28', periodTo: '2027-01-10', periodStretches: 2 })).toContain(
-      '(and the other weeks with the same entries)',
+    expect(periodSentence({ periodFrom: '2026-12-28', periodTo: '2027-01-10', periodStretches: 2 })).toBe(
+      ' Counted for the weeks from 2026-12-28 to 2027-01-10 and the other weeks with the same entries,' +
+        ' which is when these run together.',
     );
     expect(periodSentence({ period: 2 })).toBe('');
     // Half a stretch is no stretch: a sentence with one end would name no weeks.
     expect(periodSentence({ period: 2, periodFrom: '2027-01-11' })).toBe('');
     expect(periodSentence({ period: 2, periodTo: '2027-01-17' })).toBe('');
+  });
+
+  it('says which weeks of the period were counted, when the engine counted the odd or the even ones only', () => {
+    const week = { periodFrom: '2027-01-11', periodTo: '2027-01-17', periodStretches: 1 };
+    expect(periodSentence({ ...week, parity: 'ODD_WEEKS' })).toBe(
+      ' Counted for the weeks from 2027-01-11 to 2027-01-17 (odd weeks), which is when these run together.',
+    );
+    expect(periodSentence({ ...week, parity: 'EVEN_WEEKS' })).toBe(
+      ' Counted for the weeks from 2027-01-11 to 2027-01-17 (even weeks), which is when these run together.',
+    );
+    // After the other stretches, as the web writes it.
+    expect(periodSentence({ ...week, periodStretches: 3, parity: 'EVEN_WEEKS' })).toBe(
+      ' Counted for the weeks from 2027-01-11 to 2027-01-17 and the other weeks with the same entries' +
+        ' (even weeks), which is when these run together.',
+    );
+    // Anything else in the key is no parity: nothing is said of it.
+    expect(periodSentence({ ...week, parity: 'ALL_WEEKS' })).toBe(
+      ' Counted for the weeks from 2027-01-11 to 2027-01-17, which is when these run together.',
+    );
   });
 });

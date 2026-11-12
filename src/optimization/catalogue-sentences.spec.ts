@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { freeDayWishMessage, TEACHER_FREE_DAY_WISH_NOT_KEPT } from './free-day-wishes';
 import { DAYS_BEARING_CODES, TEACHER_WORK_DAYS_HIDDEN, WORK_DAYS_HIDDEN_MESSAGE } from './work-days';
 import { HOLD_CODES, holdMessage, type HoldKind } from './other-school-holds';
+import { periodSentence } from './year-periods';
 
 /**
  * The sentences the generator's gateway writes itself, held to the one
@@ -88,5 +89,34 @@ describe('the generator gateway’s sentences are the catalogue’s', () => {
       expect(fixture[HOLD_CODES[kind]]).toBeDefined();
       expect(holdMessage(kind, params)).toBe(render(fixture[HOLD_CODES[kind]]!, params));
     }
+  });
+
+  // Terminer: where a refusal was counted. This sentence is not the engine's
+  // (the engine has no dates) but the gateway's own, appended to the engine's
+  // English for a reader with no catalogue, and the web says the same under
+  // the refusal from the params (generate.countedInPeriod). One sentence in
+  // two places: the other stretches and the parity are said by both or by
+  // neither.
+  const counted: Array<[number, string]> = [1, 2, 5].flatMap((stretches) =>
+    ['ALL', 'ODD_WEEKS', 'EVEN_WEEKS'].map((parity): [number, string] => [stretches, parity]),
+  );
+  it.each(counted)('says where a refusal was counted (%i stretches, %s) as the web does', (periodStretches, parity) => {
+    const web = (
+      JSON.parse(readFileSync(join(__dirname, '..', '..', 'web/messages/en.json'), 'utf8')) as {
+        generate: { countedInPeriod: string };
+      }
+    ).generate.countedInPeriod;
+    const params = {
+      period: 2,
+      periodFrom: '2027-01-11',
+      periodTo: '2027-01-17',
+      periodStretches,
+      // The engine sends the key only for a count of one parity (weeks.named).
+      ...(parity === 'ALL' ? {} : { parity }),
+    };
+    expect(periodSentence(params)).toBe(
+      // The web writes the days out ("11 January 2027"); the API as it has them.
+      ` ${render(web, { from: params.periodFrom, to: params.periodTo, more: periodStretches > 1 ? 'yes' : 'no', parity })}`,
+    );
   });
 });
