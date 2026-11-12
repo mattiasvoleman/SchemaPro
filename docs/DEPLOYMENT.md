@@ -4815,11 +4815,28 @@ Two changes, in two releases. No migration in either.
    "Which schools are affected" under 19.2). A refusal counted in one period
    carries `period` (an index) from the engine; the gateway adds
    `periodFrom`, `periodTo` and `periodStretches`, and the web shows them
-   under the refusal. A refusal that two or more weeks with posts share to
-   the figure carries none, and neither does one that reads no post (a
-   dining hall too small for the classes). A year whose posts all lie in one
-   part of the läsår has one week to count, and a refusal its posts make
-   says that part.
+   under the refusal. A refusal every week with posts shares to the figure
+   carries none, and neither does one that reads no post (a dining hall too
+   small for the classes). A year whose posts all lie in one part of the
+   läsår has one week to count, and a refusal its posts make says that part.
+
+   A läsår is cut by every dated post, so a term is several periods (the
+   school this was built for has six, the first of them the two days before
+   the first Monday). A refusal some weeks share says each of them: `period`
+   is the first and `periods` all of them ("0,1,2,3"), the form a week that
+   lies in several periods already had, and the gateway reads their
+   stretches together, so a teacher over her hours all autumn is told the
+   autumn's weeks and not its first two days. "Share" is the same count with
+   the same posts and the same figures; for a 400, the same code and the
+   same figures. The lines of a best possible timetable say their weeks the
+   same way. Weeks that no words say exactly (the odd weeks of one term with
+   every week of the other) leave the week the refusal was found in.
+
+   Three verdicts solve a model instead of counting (the lunch stage, a
+   class's hours, the year's tightest week). They run on at most eight weeks
+   and stop at the first that refuses, and no more are solved to learn which
+   other weeks share the verdict: `period` there is the week it was found
+   in, and the handbook (4.2) says that it may hold in more.
 
 A third release, on top of these, reads a post's days and a teacher's own
 lunch period by period: 19.5.
