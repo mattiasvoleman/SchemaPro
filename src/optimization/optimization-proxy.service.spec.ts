@@ -4430,6 +4430,101 @@ describe('OptimizationProxyService', () => {
             },
           });
         });
+
+        it('says which parts of the year the locks of a class’s lunch refusal are in, on a 400 and on a line', async () => {
+          // Klassens lunch is one hour all year. Locked lessons of two periods
+          // that close its window between them are refused by the engine with
+          // the periods named (`lockPeriods`), and the dates are added here.
+          const late = { startDate: day('2027-02-01') };
+          arrangeTerms({ s1: late, s2: late });
+          year();
+          const lunch = { group: 'g', minutes: 30, windowStart: '11:00', windowEnd: '12:00', day: 1 };
+          // The first period has two stretches of weeks (one is written out), the second one.
+          const dated = {
+            lockPeriods: '0,1',
+            lockFrom: '2026-08-17',
+            lockTo: '2027-01-10',
+            otherLockFrom: '2027-01-11',
+            otherLockTo: '2027-01-31',
+            lockWeeksElsewhere: 1,
+          };
+          const said =
+            ' The locked lessons that close the lunch window between them run in different parts of the school year:' +
+            ' the weeks from 2026-08-17 to 2027-01-10 and the weeks from 2027-01-11 to 2027-01-31, among others.' +
+            " A class's lunch is one time all year, so it has to keep clear of locked lessons in every part of the year.";
+
+          const refused = new AxiosError('boom');
+          refused.response = {
+            status: 400,
+            data: {
+              code: 'INVALID_SCHEDULE_INPUT',
+              message: 'Locked lessons leave student group g no 30-minute lunch break inside 11:00-12:00 on Monday.',
+              details: { code: 'LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK', params: { ...lunch, lockPeriods: '0,1' } },
+            },
+          } as never;
+          http.post.mockReturnValue(throwError(() => refused));
+          await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+            status: 400,
+            response: {
+              code: 'LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK',
+              params: { ...lunch, ...dated },
+              message: `Locked lessons leave student group g no 30-minute lunch break inside 11:00-12:00 on Monday.${said}`,
+            },
+          });
+
+          // One period's locks alone: the engine names no periods, and nothing is added.
+          const alone = new AxiosError('boom');
+          alone.response = {
+            status: 400,
+            data: {
+              code: 'INVALID_SCHEDULE_INPUT',
+              message: 'Locked lessons leave student group g no 30-minute lunch break inside 11:00-12:00 on Monday.',
+              details: { code: 'LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK', params: lunch },
+            },
+          } as never;
+          http.post.mockReturnValue(throwError(() => alone));
+          await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+            response: {
+              params: lunch,
+              message: 'Locked lessons leave student group g no 30-minute lunch break inside 11:00-12:00 on Monday.',
+            },
+          });
+
+          // Förlagda poster: the same sentence as the line beneath them in a refused week.
+          http.post.mockImplementation((_url: string, payload: any) =>
+            of({
+              data: {
+                requestId: payload.requestId,
+                status: 'INFEASIBLE',
+                lessons: [],
+                conflicts: {
+                  summary: 'The placed lessons are why.',
+                  summaryCode: 'PLACEMENTS_PROBE_SUMMARY',
+                  summaryParams: { placed: 2 },
+                  conflicts: [
+                    {
+                      category: 'PLACEMENT',
+                      code: 'LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK',
+                      params: { ...lunch, lockPeriods: '0,1' },
+                      message: 'Locked lessons leave student group g no 30-minute lunch break inside 11:00-12:00 on Monday.',
+                      requirementIds: [],
+                      roomIds: [],
+                      constraintIds: [],
+                      resourceIds: [],
+                    },
+                  ],
+                },
+              },
+            }),
+          );
+          const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+          expect(result.conflicts!.conflicts[0]!.params).toEqual({ ...lunch, ...dated });
+          expect(result.conflicts!.conflicts[0]!.message).toBe(
+            `Locked lessons leave student group g no 30-minute lunch break inside 11:00-12:00 on Monday.${said}`,
+          );
+          // The summary names no period and gets no sentence of either kind.
+          expect(result.conflicts!.summary).toBe('The placed lessons are why.');
+        });
       });
 
       it('sends each autumn post with the longer buffers of its half and the stricter rule of its subject', async () => {

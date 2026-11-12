@@ -71,7 +71,9 @@ import {
 } from '../common/replacing-groups';
 import { lockedWeekdaySets, lockedWeekdaySetsByPeriod, type TeachingLesson, type YearSpan } from '../common/teacher-day';
 import {
+  lunchLocksSentence,
   periodSentence,
+  withLockPeriodDates,
   withPeriodDates,
   yearPeriodsOf,
   type HeldWindow,
@@ -2166,7 +2168,10 @@ export class OptimizationProxyService {
         const params = this.namedParams(detail.params ?? {}, maps);
         const realised = {
           ...detail,
-          message: this.named(detail.message, maps),
+          // Klassens lunch: the line that says locked lessons leave a class
+          // no lunch says which parts of the year they are in, where they are
+          // in several (the web renders the same from the params).
+          message: this.named(detail.message, maps) + lunchLocksSentence(params),
           params: yearGrades(detail.code, params, maps),
           resourceIds,
           // Only the ones there IS a name for. A teacher is deliberately
@@ -2307,17 +2312,24 @@ export class OptimizationProxyService {
    * (withPeriodDates) — on every route a sentence's params leave by, so the
    * summary, each line under it and a refusal before the model all say the
    * same stretch of the year.
+   *
+   * KLASSENS LUNCH: and a refusal about locked lessons of several periods
+   * that close a class's lunch window between them names those periods
+   * (`lockPeriods`); their days are added the same way (withLockPeriodDates).
    */
   private namedParams(
     params: Record<string, string | number>,
     maps: AnonMaps,
   ): Record<string, string | number> {
-    return withPeriodDates(
-      Object.fromEntries(
-        Object.entries(params).map(([key, value]) => [
-          key,
-          typeof value === 'string' ? this.named(value, maps) : value,
-        ]),
+    return withLockPeriodDates(
+      withPeriodDates(
+        Object.fromEntries(
+          Object.entries(params).map(([key, value]) => [
+            key,
+            typeof value === 'string' ? this.named(value, maps) : value,
+          ]),
+        ),
+        maps.periods,
       ),
       maps.periods,
     );
@@ -4603,7 +4615,11 @@ export class OptimizationProxyService {
                 }
                 throw new HttpException(
                   // Terminer: a count made in one period says which, as a refused 200's summary does.
-                  { message: detail + periodSentence(named.params ?? {}), ...named },
+                  // Klassens lunch: and locks of several periods say which parts of the year they are in.
+                  {
+                    message: detail + periodSentence(named.params ?? {}) + lunchLocksSentence(named.params ?? {}),
+                    ...named,
+                  },
                   error.response.status,
                 );
               }

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { freeDayWishMessage, TEACHER_FREE_DAY_WISH_NOT_KEPT } from './free-day-wishes';
 import { DAYS_BEARING_CODES, TEACHER_WORK_DAYS_HIDDEN, WORK_DAYS_HIDDEN_MESSAGE } from './work-days';
 import { HOLD_CODES, holdMessage, type HoldKind } from './other-school-holds';
-import { periodSentence } from './year-periods';
+import { lunchLocksSentence, periodSentence } from './year-periods';
 
 /**
  * The sentences the generator's gateway writes itself, held to the one
@@ -117,6 +117,35 @@ describe('the generator gateway’s sentences are the catalogue’s', () => {
     expect(periodSentence(params)).toBe(
       // The web writes the days out ("11 January 2027"); the API as it has them.
       ` ${render(web, { from: params.periodFrom, to: params.periodTo, more: periodStretches > 1 ? 'yes' : 'no', parity })}`,
+    );
+  });
+
+  // Klassens lunch: locked lessons of several periods that close a class's
+  // lunch window between them. The gateway's own sentence again, appended to
+  // the engine's English, and the web's under the refusal
+  // (generate.lunchLocksInPeriods): the same words, with or without the tail.
+  it.each([0, 1, 3])('says which parts of the year the locks are in (%i more stretches) as the web does', (lockWeeksElsewhere) => {
+    const web = (
+      JSON.parse(readFileSync(join(__dirname, '..', '..', 'web/messages/en.json'), 'utf8')) as {
+        generate: { lunchLocksInPeriods: string };
+      }
+    ).generate.lunchLocksInPeriods;
+    const params = {
+      lockPeriods: '0,2',
+      lockFrom: '2026-08-17',
+      lockTo: '2026-12-20',
+      otherLockFrom: '2027-01-11',
+      otherLockTo: '2027-06-11',
+      lockWeeksElsewhere,
+    };
+    expect(lunchLocksSentence(params)).toBe(
+      ` ${render(web, {
+        from: params.lockFrom,
+        to: params.lockTo,
+        otherFrom: params.otherLockFrom,
+        otherTo: params.otherLockTo,
+        more: lockWeeksElsewhere > 0 ? 'yes' : 'no',
+      })}`,
     );
   });
 });

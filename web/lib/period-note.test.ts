@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { periodDatesOf, periodDay } from "@/lib/period-note";
+import { lockPeriodDatesOf, periodDatesOf, periodDay } from "@/lib/period-note";
 
 describe("periodDatesOf", () => {
   it("reads the stretch of the läsår a refusal was counted in", () => {
@@ -31,6 +31,53 @@ describe("periodDatesOf", () => {
   it("is nothing for days it cannot read", () => {
     expect(periodDatesOf({ periodFrom: "11 januari", periodTo: "2027-01-17" })).toBeNull();
     expect(periodDatesOf({ periodFrom: 20270111, periodTo: 20270117 })).toBeNull();
+  });
+});
+
+describe("lockPeriodDatesOf", () => {
+  const lunch = { group: "7A", minutes: 30, windowStart: "11:00", windowEnd: "12:00", day: 1 };
+  const dated = {
+    ...lunch,
+    lockPeriods: "0,2",
+    lockFrom: "2026-08-17",
+    lockTo: "2026-12-20",
+    otherLockFrom: "2027-01-11",
+    otherLockTo: "2027-06-11",
+    lockWeeksElsewhere: 0,
+  };
+
+  it("reads the two parts of the läsår whose locked lessons close a class's lunch window between them", () => {
+    expect(lockPeriodDatesOf(dated)).toEqual({
+      from: "2026-08-17",
+      to: "2026-12-20",
+      otherFrom: "2027-01-11",
+      otherTo: "2027-06-11",
+      more: false,
+    });
+  });
+
+  it("says when the locks run in more weeks than the two stretches named", () => {
+    expect(lockPeriodDatesOf({ ...dated, lockWeeksElsewhere: 1 })?.more).toBe(true);
+    // No count at all is no more weeks, not an error.
+    const { lockWeeksElsewhere: _unsaid, ...without } = dated;
+    expect(lockPeriodDatesOf(without)?.more).toBe(false);
+  });
+
+  it("is nothing for a refusal one period's locks cause alone, which reads as it always did", () => {
+    expect(lockPeriodDatesOf(null)).toBeNull();
+    expect(lockPeriodDatesOf(undefined)).toBeNull();
+    expect(lockPeriodDatesOf(lunch)).toBeNull();
+    // The engine's periods alone, from an API that did not turn them into days.
+    expect(lockPeriodDatesOf({ ...lunch, lockPeriods: "0,2" })).toBeNull();
+  });
+
+  it("is nothing unless every one of the four days can be read", () => {
+    for (const key of ["lockFrom", "lockTo", "otherLockFrom", "otherLockTo"] as const) {
+      expect(lockPeriodDatesOf({ ...dated, [key]: "11 januari" })).toBeNull();
+      expect(lockPeriodDatesOf({ ...dated, [key]: 20270111 })).toBeNull();
+      const { [key]: _gone, ...rest } = dated;
+      expect(lockPeriodDatesOf(rest)).toBeNull();
+    }
   });
 });
 

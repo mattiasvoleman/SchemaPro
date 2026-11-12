@@ -53,7 +53,7 @@ import {
   PlanningYearPicker,
   ProjectedRostersBanner,
 } from "@/components/schedule/planning-year";
-import { PeriodNote } from "@/components/schedule/period-note";
+import { LunchLocksNote, PeriodNote } from "@/components/schedule/period-note";
 import { CandidatesSection, candidatesHref } from "./candidates-section";
 import { useScheduleCandidates } from "./use-schedule-candidates";
 
@@ -964,6 +964,8 @@ export default function GeneratePage() {
                         </p>
                         {/* Terminer: where in the läsår a week was counted, when it was one part of it. */}
                         <PeriodNote params={job.errorParams} />
+                        {/* Klassens lunch: which parts of the läsår the locks are in, when in several. */}
+                        <LunchLocksNote params={job.errorParams} />
                         {errorNames.length > 0 ? <p className="font-medium">{errorNames.join(", ")}</p> : null}
                       </>
                     )
@@ -1054,6 +1056,7 @@ export default function GeneratePage() {
                         {/* Foreground, not muted: muted text on the notice's
                             muted surface falls under 4.5:1. */}
                         <p>{engineText(conflict)}</p>
+                        <LunchLocksNote params={conflict.params} />
                         {conflict.resourceNames && conflict.resourceNames.length > 0 ? (
                           <p className="font-medium">{conflict.resourceNames.join(", ")}</p>
                         ) : null}

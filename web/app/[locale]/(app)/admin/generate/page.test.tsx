@@ -644,6 +644,74 @@ describe("a days refusal, read with HR-läs", () => {
     expect(screen.getByText("engineMessages.DEMAND_TEACHER_HOURS_SHORT(1)").nextElementSibling).toHaveTextContent(/^Eva Ek$/);
   });
 
+  it("klassens lunch: says which parts of the läsår the locks are in, under the sentence, on a refusal and on a line", () => {
+    const lunch = { group: "7A", minutes: 30, windowStart: "11:00", windowEnd: "12:00", day: 1 };
+    const dated = {
+      ...lunch,
+      lockPeriods: "0,2",
+      lockFrom: "2026-08-17",
+      lockTo: "2026-12-20",
+      otherLockFrom: "2027-01-11",
+      otherLockTo: "2027-06-11",
+      lockWeeksElsewhere: 0,
+    };
+    const NOTE = "generate.lunchLocksInPeriods(17 augusti 2026|20 december 2026|11 januari 2027|11 juni 2027|no)";
+    const refusedBefore = (errorParams: Record<string, string | number>) => ({
+      id: "job-l",
+      status: "FAILED",
+      solverStatus: null,
+      lessonsGenerated: 0,
+      conflictSummary: null,
+      conflicts: [],
+      error: "Locked lessons leave student group 7A no 30-minute lunch break inside 11:00-12:00 on Monday.",
+      errorCode: "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK",
+      errorParams,
+      createdAt: "2026-10-18T10:00:00.000Z",
+    });
+    state.job = refusedBefore(dated);
+    const first = render(<GeneratePage />);
+    const sentence = screen.getByText(/^engineMessages\.LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK\(/);
+    expect(sentence.nextElementSibling).toHaveTextContent(NOTE);
+    first.unmount();
+
+    // One period's locks alone: the sentence, and nothing under it.
+    state.job = refusedBefore(lunch);
+    const second = render(<GeneratePage />);
+    expect(screen.getByText(/^engineMessages\.LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK\(/)).toBeInTheDocument();
+    expect(screen.queryByText(/generate\.lunchLocksInPeriods/)).not.toBeInTheDocument();
+    second.unmount();
+
+    // Förlagda poster: the same sentence as a line of a refused week, more weeks than the two named.
+    state.job = {
+      id: "job-m",
+      status: "SUCCEEDED",
+      solverStatus: "INFEASIBLE",
+      conflictSummary: "The placed lessons are why.",
+      conflictSummaryCode: null,
+      conflictSummaryParams: null,
+      conflicts: [
+        {
+          category: "PLACEMENT",
+          code: "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK",
+          message: "Locked lessons leave student group 7A no lunch break.",
+          params: { ...dated, lockWeeksElsewhere: 2 },
+          resourceNames: ["7A"],
+        },
+        { category: "PLACEMENT", code: "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK", message: "x", params: lunch, resourceNames: [] },
+      ],
+      createdAt: "2026-10-18T10:00:00.000Z",
+    };
+    render(<GeneratePage />);
+    const lines = screen.getAllByText(/^engineMessages\.LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK\(/);
+    expect(lines).toHaveLength(2);
+    const note = lines[0]!.nextElementSibling!;
+    expect(note).toHaveTextContent(
+      "generate.lunchLocksInPeriods(17 augusti 2026|20 december 2026|11 januari 2027|11 juni 2027|yes)",
+    );
+    expect(note.nextElementSibling).toHaveTextContent(/^7A$/);
+    expect(screen.getAllByText(/generate\.lunchLocksInPeriods/)).toHaveLength(1);
+  });
+
   it("names nobody under a summary that came with an empty list, or with none", () => {
     const summary = (extra: Record<string, unknown>) => ({
       id: "job-s",

@@ -1663,6 +1663,7 @@
     "lessonsGenerated": "{count} grundschemapass genererade",
     "infeasibleHint": "Begränsningarna går inte att uppfylla samtidigt. Sammanfattningen och konflikterna nedan säger vad som behöver ändras.",
     "countedInPeriod": "Räknat för veckorna {from} – {to}{more, select, yes { och övriga veckor med samma poster} other {}}{parity, select, ODD_WEEKS { (udda veckor)} EVEN_WEEKS { (jämna veckor)} other {}}: det är då de här posterna går samtidigt.",
+    "lunchLocksInPeriods": "De låsta lektionerna som tillsammans stänger lunchfönstret ligger i olika delar av läsåret: veckorna {from} – {to} och veckorna {otherFrom} – {otherTo}{more, select, yes { med flera} other {}}. Klassens lunch är en och samma tid hela läsåret och måste därför gå fri från låsta lektioner i varje del av det.",
     "timeoutHint": "Lösaren hittade inget schema inom sin tidsbudget. Det betyder inte att dina krav är omöjliga — försök köra igen, eller be din administratör höja lösarens tidsgräns. Att lätta på snäva tillgänglighetsfönster gör också schemat lättare att hitta.",
     "bestEffortOffer": "Skolan har Bästa möjliga schema på. Under Schemaförslag kan du lägga ett schema som bryter så få av skolans egna regler som möjligt och se vilka som gav vika.",
     "bestEffortOfferLink": "Ta fram bästa möjliga",

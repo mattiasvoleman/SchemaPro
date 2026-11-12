@@ -227,3 +227,73 @@ export function periodSentence(params: Record<string, string | number>): string 
     `${more ? ' and the other weeks with the same entries' : ''}${parity}, which is when these run together.`
   );
 }
+
+/**
+ * KLASSENS LUNCH: a refusal's params with the periods its locks run in turned
+ * into dates.
+ *
+ * A class's meal is one hour all year, so locked lessons of two terms that
+ * close its lunch window between them refuse the year though each term has a
+ * gap. The engine says which periods' locks they are — `lockPeriods`, their
+ * indices with commas between ("0,2"), and only when no one period's locks
+ * close the window alone (scheduler_solver._lunch_lock_periods). Here the
+ * first stretch of the two earliest of them is added, flat like every value a
+ * sentence carries: `lockFrom` and `lockTo`, `otherLockFrom` and
+ * `otherLockTo`, and `lockWeeksElsewhere`, how many more stretches of weeks
+ * the named periods have than the two written out (a third period, or a
+ * period that comes back later in the year).
+ *
+ * In the order of the year, whatever order the indices came in. Params
+ * without the key, with fewer than two periods, or naming a period the read
+ * does not have, are returned as they came: the refusal then says what it
+ * always said.
+ */
+export function withLockPeriodDates<P extends Record<string, string | number>>(
+  params: P,
+  stretches: readonly (readonly PeriodStretch[])[] | undefined,
+):
+  | P
+  | (P & { lockFrom: string; lockTo: string; otherLockFrom: string; otherLockTo: string; lockWeeksElsewhere: number }) {
+  const listed = params.lockPeriods;
+  if (typeof listed !== 'string' || !/^\d+(,\d+)+$/.test(listed) || !stretches) return params;
+  const periods = [...new Set(listed.split(',').map(Number))];
+  if (periods.length < 2 || periods.some((index) => (stretches[index]?.length ?? 0) === 0)) return params;
+  const held = periods
+    .map((index) => stretches[index]!)
+    .sort((a, b) => (a[0]!.from < b[0]!.from ? -1 : a[0]!.from > b[0]!.from ? 1 : 0));
+  const [first, second] = [held[0]![0]!, held[1]![0]!];
+  return {
+    ...params,
+    lockFrom: first.from,
+    lockTo: first.to,
+    otherLockFrom: second.from,
+    otherLockTo: second.to,
+    lockWeeksElsewhere: held.reduce((count, period) => count + period.length, 0) - 2,
+  };
+}
+
+/**
+ * The English for it, for a reader with no catalogue: appended to the
+ * engine's own sentence. The web's, word for word (generate.lunchLocksInPeriods
+ * in web/messages/en.json; catalogue-sentences.spec.ts holds the two
+ * together), with the days as the API writes them. Nothing for params
+ * without the dates.
+ */
+export function lunchLocksSentence(params: Record<string, string | number>): string {
+  const { lockFrom, lockTo, otherLockFrom, otherLockTo } = params;
+  if (
+    typeof lockFrom !== 'string' ||
+    typeof lockTo !== 'string' ||
+    typeof otherLockFrom !== 'string' ||
+    typeof otherLockTo !== 'string'
+  ) {
+    return '';
+  }
+  const more = typeof params.lockWeeksElsewhere === 'number' && params.lockWeeksElsewhere > 0;
+  return (
+    ` The locked lessons that close the lunch window between them run in different parts of the school year:` +
+    ` the weeks from ${lockFrom} to ${lockTo} and the weeks from ${otherLockFrom} to ${otherLockTo}` +
+    `${more ? ', among others' : ''}.` +
+    ` A class's lunch is one time all year, so it has to keep clear of locked lessons in every part of the year.`
+  );
+}

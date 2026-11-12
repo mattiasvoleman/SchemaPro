@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { LessonRecurrence } from '@prisma/client';
 import { runsOn, weeksCanOverlap } from '../calendar/lesson-recurrence';
-import { MAX_PERIODS, periodSentence, withPeriodDates, yearPeriodsOf, type HeldWindow } from './year-periods';
+import { MAX_PERIODS, periodSentence, lunchLocksSentence, withLockPeriodDates, withPeriodDates, yearPeriodsOf, type HeldWindow } from './year-periods';
 
 const DAY_MS = 86_400_000;
 const day = (value: string): Date => new Date(`${value}T00:00:00.000Z`);
@@ -436,5 +436,78 @@ describe('periodSentence', () => {
     expect(periodSentence({ ...week, parity: 'ALL_WEEKS' })).toBe(
       ' Counted for the weeks from 2027-01-11 to 2027-01-17, which is when these run together.',
     );
+  });
+
+  describe('klassens lunch: locked lessons of several periods', () => {
+    // The autumn, the weeks between, the spring: three periods, each one stretch.
+    const year = [
+      [{ from: '2026-08-17', to: '2026-12-20' }],
+      [{ from: '2026-12-21', to: '2027-01-10' }],
+      [{ from: '2027-01-11', to: '2027-06-11' }],
+    ];
+    const refusal = { group: '7A', minutes: 30, windowStart: '11:00', windowEnd: '12:00', day: 1 };
+
+    it('adds the first stretch of the two earliest periods, in the order of the year', () => {
+      const dated = { lockFrom: '2026-08-17', lockTo: '2026-12-20', otherLockFrom: '2027-01-11', otherLockTo: '2027-06-11' };
+      expect(withLockPeriodDates({ ...refusal, lockPeriods: '0,2' }, year)).toEqual({
+        ...refusal, lockPeriods: '0,2', ...dated, lockWeeksElsewhere: 0,
+      });
+      // Whatever order the indices came in, and a period named twice is one.
+      expect(withLockPeriodDates({ lockPeriods: '2,0' }, year)).toEqual({ lockPeriods: '2,0', ...dated, lockWeeksElsewhere: 0 });
+      expect(withLockPeriodDates({ lockPeriods: '0,2,0' }, year)).toMatchObject({ ...dated, lockWeeksElsewhere: 0 });
+    });
+
+    it('counts the stretches it does not write out: a third period, or a period that comes back', () => {
+      expect(withLockPeriodDates({ lockPeriods: '0,1,2' }, year)).toMatchObject({
+        lockFrom: '2026-08-17', lockTo: '2026-12-20', otherLockFrom: '2026-12-21', otherLockTo: '2027-01-10',
+        lockWeeksElsewhere: 1,
+      });
+      const split = [
+        [{ from: '2026-08-17', to: '2026-10-25' }, { from: '2027-01-11', to: '2027-06-11' }],
+        [{ from: '2026-10-26', to: '2027-01-10' }],
+      ];
+      expect(withLockPeriodDates({ lockPeriods: '0,1' }, split)).toMatchObject({
+        lockFrom: '2026-08-17', lockTo: '2026-10-25', otherLockFrom: '2026-10-26', otherLockTo: '2027-01-10',
+        lockWeeksElsewhere: 1,
+      });
+    });
+
+    it('leaves alone what names no two periods the read has', () => {
+      for (const params of [
+        refusal,
+        { ...refusal, lockPeriods: '0' },
+        { ...refusal, lockPeriods: '1,1' },
+        { ...refusal, lockPeriods: '0,7' },
+        { ...refusal, lockPeriods: '0;2' },
+        { ...refusal, lockPeriods: '0,2,' },
+        { ...refusal, lockPeriods: 'a,b' },
+        { ...refusal, lockPeriods: '' },
+        { ...refusal, lockPeriods: 2 },
+      ]) {
+        expect(withLockPeriodDates(params, year)).toBe(params);
+      }
+      const named = { ...refusal, lockPeriods: '0,2' };
+      expect(withLockPeriodDates(named, undefined)).toBe(named);
+      expect(withLockPeriodDates(named, [year[0]!, [], year[2]!])).toMatchObject({ otherLockFrom: '2027-01-11' });
+      expect(withLockPeriodDates(named, [year[0]!, year[1]!, []])).toBe(named);
+    });
+
+    it('says the two parts of the year and that the meal is the year’s, and nothing without the dates', () => {
+      expect(lunchLocksSentence(withLockPeriodDates({ ...refusal, lockPeriods: '0,2' }, year))).toBe(
+        ' The locked lessons that close the lunch window between them run in different parts of the school year:' +
+          ' the weeks from 2026-08-17 to 2026-12-20 and the weeks from 2027-01-11 to 2027-06-11.' +
+          " A class's lunch is one time all year, so it has to keep clear of locked lessons in every part of the year.",
+      );
+      expect(lunchLocksSentence(withLockPeriodDates({ lockPeriods: '0,1,2' }, year))).toContain(
+        'the weeks from 2026-12-21 to 2027-01-10, among others. A class',
+      );
+      expect(lunchLocksSentence(refusal)).toBe('');
+      expect(lunchLocksSentence({ ...refusal, lockPeriods: '0,2' })).toBe('');
+      // Every one of the four days, or no sentence.
+      const dated = withLockPeriodDates({ lockPeriods: '0,2' }, year) as Record<string, string | number>;
+      for (const key of ['lockFrom', 'lockTo', 'otherLockFrom', 'otherLockTo']) {
+        expect(lunchLocksSentence({ ...dated, [key]: 20270111 })).toBe('');
+      }
+    });
   });
 });

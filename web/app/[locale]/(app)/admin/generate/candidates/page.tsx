@@ -58,7 +58,7 @@ import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useScheduleCandidates, useStartCandidates } from "../use-schedule-candidates";
 import { ApplyDialog } from "./apply-dialog";
-import { PeriodNote } from "@/components/schedule/period-note";
+import { LunchLocksNote, PeriodNote } from "@/components/schedule/period-note";
 import { periodDatesOf } from "@/lib/period-note";
 import { ComparisonTable, type IdleState } from "./comparison-table";
 import { DeviationList } from "./deviation-list";
@@ -566,6 +566,8 @@ export default function CandidatesPage() {
                 {first?.variant === BEST_EFFORT_VARIANT ? t("failed.conflictsBestEffort") : t("failed.conflicts")}
               </h2>
               {summary !== "" ? <p>{summary}</p> : null}
+              {/* Klassens lunch: which parts of the läsår the locks are in, when in several. */}
+              <LunchLocksNote params={first?.errorParams} />
               {/* Terminer: where in the läsår the week was counted, once, from whichever sentence says it. */}
               <PeriodNote
                 params={
@@ -580,6 +582,7 @@ export default function CandidatesPage() {
                     <li key={index} className="space-y-1">
                       <Badge variant="warning">{conflictLabel(conflict.category)}</Badge>
                       <p>{engineText(conflict)}</p>
+                      <LunchLocksNote params={conflict.params} />
                       {conflict.resourceNames && conflict.resourceNames.length > 0 ? (
                         <p className="font-medium">{conflict.resourceNames.join(", ")}</p>
                       ) : null}
