@@ -78,7 +78,6 @@ from app.schemas.schedule import (
     ScheduleRules,
     SearchOptions,
     SolverStatus,
-    WeekParity,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,6 +93,8 @@ from app.solver.room_allocator import (
     add_room_allocation,
     build_room_classes,
     collect_distinguished_room_ids,
+    mixes,
+    splits,
 )
 from app.solver.time_grid import TimeGrid
 from app.solver.week_load import (
@@ -103,7 +104,18 @@ from app.solver.week_load import (
     StageLoad,
     week_loads,
 )
-from app.solver.weeks import WEEKS, alternates, meet, tag as week_tag, week_parts
+from app.solver.weeks import (
+    Weeks,
+    alternates,
+    each_week,
+    meet,
+    named as week_named,
+    share as week_share,
+    tag as week_tag,
+    week_parts,
+    weeks_of,
+    year_of,
+)
 from app.solver.travel import (
     CATEGORIES as TRAVEL_CATEGORIES,
     CODES as TRAVEL_CODES,
@@ -332,9 +344,9 @@ def _by_pupils(decisions: list[LessonDecision]) -> list[list[LessonDecision]]:
     return list(parts.values())
 
 
-def _parity(decision: LessonDecision) -> WeekParity | None:
-    """A/B-veckor: the weeks a lesson runs in, None for every week (app/solver/weeks.py)."""
-    return decision.lesson.requirement.recurrence
+def _parity(decision: LessonDecision) -> Weeks | None:
+    """The weeks a lesson runs in — its parity, in its periods — None for every week (app/solver/weeks.py)."""
+    return weeks_of(decision.lesson.requirement)
 
 
 def _grade_span_text(low: int | None, high: int | None) -> str:
@@ -1158,40 +1170,39 @@ class _TeacherDayLiterals:
 class _TeacherWeekLocks:
     """A/B-veckor: each week's locked lessons, as the teacher rules read them.
 
-    `alternate(teacher)` is whether a lock the teacher leads or co-teaches
-    runs on alternate weeks only — which makes the teacher's two weeks
-    differ with every generated lesson the same, so their rules are held per
-    week (weeks.week_parts' `alternating`). `busy(week)` and `minutes(week)`
-    are _teacher_busy_from_locks and _teacher_locks over the locks that run
-    in `week`, built on first use: a school without an alternating lock never
-    builds either.
+    `weeks(teacher)` are the weeks of the locks the teacher leads or
+    co-teaches. One that runs in some weeks only — an alternating lock, or a
+    lock of one term — makes the teacher's weeks differ with every generated
+    lesson the same, so their rules are held per week (weeks.week_parts'
+    `others`). `busy(week)` and `minutes(week)` are _teacher_busy_from_locks
+    and _teacher_locks over the locks that run in `week`, built on first use:
+    a school whose locks all run every week never builds either.
     """
 
     def __init__(self, solver: SchedulerSolver, fixed_lessons: list[FixedLesson]) -> None:
         self._solver = solver
         self._fixed = fixed_lessons
-        self._alternating = {
-            teacher_id
-            for fixed in fixed_lessons
-            if fixed.recurrence is not None
-            for teacher_id in (fixed.teacher_id, fixed.co_teacher_id)
-            if teacher_id is not None
-        }
-        self._busy: dict[WeekParity, dict[tuple[UUID, int], list[tuple[int, int]]]] = {}
-        self._minutes: dict[WeekParity, dict[tuple[UUID, int], int]] = {}
+        self._weeks: dict[UUID, list[Weeks | None]] = defaultdict(list)
+        for fixed in fixed_lessons:
+            runs = weeks_of(fixed)
+            for teacher_id in (fixed.teacher_id, fixed.co_teacher_id):
+                if teacher_id is not None:
+                    self._weeks[teacher_id].append(runs)
+        self._busy: dict[Weeks, dict[tuple[UUID, int], list[tuple[int, int]]]] = {}
+        self._minutes: dict[Weeks, dict[tuple[UUID, int], int]] = {}
 
-    def alternate(self, teacher_id: UUID) -> bool:
-        return teacher_id in self._alternating
+    def weeks(self, teacher_id: UUID) -> list[Weeks | None]:
+        return self._weeks.get(teacher_id, [])
 
-    def locks(self, week: WeekParity) -> list[FixedLesson]:
-        return [fixed for fixed in self._fixed if meet(fixed.recurrence, week)]
+    def locks(self, week: Weeks) -> list[FixedLesson]:
+        return [fixed for fixed in self._fixed if meet(weeks_of(fixed), week)]
 
-    def busy(self, week: WeekParity) -> dict[tuple[UUID, int], list[tuple[int, int]]]:
+    def busy(self, week: Weeks) -> dict[tuple[UUID, int], list[tuple[int, int]]]:
         if week not in self._busy:
             self._busy[week] = self._solver._teacher_busy_from_locks(self.locks(week))
         return self._busy[week]
 
-    def minutes(self, week: WeekParity) -> dict[tuple[UUID, int], int]:
+    def minutes(self, week: Weeks) -> dict[tuple[UUID, int], int]:
         if week not in self._minutes:
             self._minutes[week] = _teacher_locks(self.locks(week))[0]
         return self._minutes[week]
@@ -1396,6 +1407,12 @@ class SchedulerSolver:
     # the 2,000-student benchmark that actually builds in 1.6s.
     MAX_LESSON_INSTANCES = 5_000
     MAX_MODEL_COMPLEXITY = 1_000_000
+    #: Terminer: the most weeks the verdicts that SOLVE something are run on
+    #: (the lunch stage, the year's load) — the weeks with most to place. A
+    #: verdict refuses only a week with no timetable, so one not run refuses
+    #: nothing and the model decides that week; the arithmetic verdicts are
+    #: run on every week. Two weeks, odd and even, are never over it.
+    MAX_SOLVED_WEEKS = 8
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -1583,7 +1600,7 @@ class SchedulerSolver:
                 *self._add_spread_objective(model, decisions, weights, day_vars),
                 *self._add_idle_time_objective(
                     model, decisions, request.constraints, weights, day_vars,
-                    teacher_days,
+                    teacher_days, year_of(request),
                 ),
                 *self._add_room_preference_objective(
                     model, decisions, rooms, room_plan, request.room_preferences, weights,
@@ -3103,7 +3120,7 @@ class SchedulerSolver:
                     leader = members[0]
                     if (
                         tuple(leader.lesson_minutes()) == tuple(requirement.lesson_minutes())
-                        and leader.recurrence == requirement.recurrence
+                        and weeks_of(leader) == weeks_of(requirement)
                         and all(
                             teachers_after(member).isdisjoint(teachers_after(requirement))
                             and pupil_key_of(member) != key
@@ -5012,49 +5029,64 @@ class SchedulerSolver:
         # refuses is a week the model refuses, and every row it names is a
         # row of that week. A school without alternating lessons has one
         # week, the request itself, and is judged exactly as before.
-        weeks = _week_requests(request)
+        #
+        # TERMINER: a week is a period too. The autumn's lessons and locks are
+        # one request and the spring's another, so nothing below adds a term
+        # to the other, and a week a verdict refuses is named in what it says
+        # (_in_week: `period`, which the gateway turns into dates).
+        weeks = _weeks_and_requests(request)
         lunch_hints: dict[tuple[UUID, int], int] = {}
         # The years found tight by the count below, heaviest first across
         # the weeks: carried to a TIMEOUT, which then says so.
         nearly_full: dict[int | None, StageLoad] = {}
-        for week in weeks:
+        counts = (
+            self._dining_hall_verdict,
+            self._clique_hours_verdict,
+            self._teacher_hours_verdict,
+            self._lesson_gaps_verdict,
+        )
+        for label, week in weeks:
             # Arithmetic first, models second: a hall the school cannot fit in
             # is decided here in microseconds and reported the way a solve
-            # would have.
-            verdict = (
-                self._dining_hall_verdict(week)
-                or self._clique_hours_verdict(week)
-                or self._teacher_hours_verdict(week)
-                or self._lesson_gaps_verdict(week)
-            )
-            if verdict is not None:
+            # would have. In this order within a week, the first that refuses.
+            for count in counts:
+                verdict = count(week)
+                if verdict is None:
+                    continue
                 return (
                     OptimizeScheduleResponse(
                         request_id=request.request_id,
                         status="INFEASIBLE",
                         lessons=[],
-                        conflicts=verdict,
+                        conflicts=self._counted_in(verdict, label, weeks, count),
                     ),
                     step, lunch_hints, nearly_full,
                 )
-        for week in weeks:
+        for label, week in self._solved_weeks(weeks):
             # Then the lunches alone: a small model that proves what the full
             # one could not in a minute, or hands it a warm start. See
             # _lunch_stage_one. Its starts are a warm start for the one week
             # it was asked about, so a school of two weeks takes none.
             verdict, week_hints = self._lunch_stage_one(week)
+            # Which of the three verdicts below refused, as something that can
+            # be asked again of another request (_solved_in).
+            asked: Callable[[OptimizeScheduleRequest], ConflictAnalysis | None] = (
+                lambda asked_of: self._lunch_stage_one(asked_of)[0]
+            )
             if week is request:
                 lunch_hints = week_hints
             # And the clique's hours once more, with every rule the model keeps
             # its classes by: after every verdict above, so a week one of them
             # decides keeps its answer. See _class_hours_verdict.
-            verdict = verdict or self._class_hours_verdict(week)
+            if verdict is None:
+                verdict, asked = self._class_hours_verdict(week), self._class_hours_verdict
             # And last, the year's least week with its TEACHERS in the count,
             # which the class counts leave out: after every verdict above, so
             # a week one of them decides keeps its answer. See week_load.
             if verdict is None:
                 loads = self._week_loads(week)
                 verdict = self._week_load_verdict(loads)
+                asked = lambda asked_of: self._week_load_verdict(self._week_loads(asked_of))  # noqa: E731
                 for load in loads:
                     held = nearly_full.get(load.year)
                     if held is None or load.load > held.load:
@@ -5065,11 +5097,89 @@ class SchedulerSolver:
                         request_id=request.request_id,
                         status="INFEASIBLE",
                         lessons=[],
-                        conflicts=verdict,
+                        conflicts=self._solved_in(verdict, label, week, request, asked),
                     ),
                     step, lunch_hints, nearly_full,
                 )
         return None, step, lunch_hints, nearly_full
+
+    def _counted_in(
+        self,
+        verdict: ConflictAnalysis,
+        label: Weeks | None,
+        weeks: list[tuple[Weeks | None, OptimizeScheduleRequest]],
+        count: Callable[[OptimizeScheduleRequest], ConflictAnalysis | None],
+    ) -> ConflictAnalysis:
+        """A counted refusal with the week it was counted in — unless it is every week's.
+
+        TERMINER: `period` IS WHERE THE COUNT WAS MADE, AND ONLY WHERE THAT SAYS
+        SOMETHING. A count that reads nothing the weeks differ in — the dining
+        hall's seats against the same classes all year, a teacher whose every
+        post runs every week — says the same in each of them, to the figure.
+        Named by the first week it would send a school to the autumn's dates
+        for a refusal that is as true of the spring (the gateway turns the
+        index into dates). So the same count is made in every week, and a
+        refusal they all share word for word names none.
+
+        Arithmetic, microseconds a week, and only on the way to a refusal. A
+        year without periods names no week whatever is counted (weeks.named),
+        so nothing is counted twice for it.
+        """
+        if not week_named(label):
+            return verdict
+        if all(count(other) == verdict for _, other in weeks):
+            return verdict
+        return _in_week(verdict, label)
+
+    def _solved_in(
+        self,
+        verdict: ConflictAnalysis,
+        label: Weeks | None,
+        week: OptimizeScheduleRequest,
+        whole: OptimizeScheduleRequest,
+        asked: Callable[[OptimizeScheduleRequest], ConflictAnalysis | None],
+    ) -> ConflictAnalysis:
+        """A solved refusal with the week it was found in — unless it is not that week's.
+
+        The verdicts that solve something (the lunch stage, the class hours,
+        the year's load) are not run on every week only to compare them, as
+        the counted ones are (_counted_in): each is a model. What is asked
+        instead is whether the week's own entries had anything to do with it.
+        The entries that run every week are in every week's request; the same
+        verdict on them alone, to the word, is a refusal no week added
+        anything to, and it names none. So does a refusal in a week that has
+        nothing but them. One more of the same verdict, on a smaller request,
+        and only on the way to a refusal of a year with periods.
+        """
+        if not week_named(label):
+            return verdict
+        every_week = _every_week_only(whole)
+        if every_week is None:
+            return _in_week(verdict, label)
+        has_its_own = (
+            len(week.requirements) != len(every_week.requirements)
+            or len(week.fixed_lessons) != len(every_week.fixed_lessons)
+        )
+        if has_its_own and asked(every_week) != verdict:
+            return _in_week(verdict, label)
+        return verdict
+
+    def _solved_weeks(
+        self, weeks: list[tuple[Weeks | None, OptimizeScheduleRequest]],
+    ) -> list[tuple[Weeks | None, OptimizeScheduleRequest]]:
+        """The weeks the solving verdicts are run on: all of them up to MAX_SOLVED_WEEKS.
+
+        Past that, the ones with most lessons to place, in the order they
+        came. Leaving a week out can only leave a refusal unsaid, never say
+        one a timetable contradicts.
+        """
+        if len(weeks) <= self.MAX_SOLVED_WEEKS:
+            return weeks
+        heaviest = sorted(
+            range(len(weeks)),
+            key=lambda index: -sum(r.lessons_per_week for r in weeks[index][1].requirements),
+        )[: self.MAX_SOLVED_WEEKS]
+        return [weeks[index] for index in sorted(heaviest)]
 
     def solve(self, request: OptimizeScheduleRequest) -> OptimizeScheduleResponse:
         """Two-phase solve: prove a timetable exists, then improve it.
@@ -6362,24 +6472,30 @@ class SchedulerSolver:
         here" — and never a term in the lessons.
         """
         requirements = request.requirements
-        if not alternates(r.recurrence for r in requirements) and not alternates(
-            f.recurrence for f in request.fixed_lessons
-        ):
+        weeks = each_week([
+            *(weeks_of(requirement) for requirement in requirements),
+            *(weeks_of(fixed) for fixed in request.fixed_lessons),
+        ])
+        if weeks == (None,):
             return 0
+        # TERMINER: every week past the first adds what the second did, to
+        # the teacher or the class whose rows these are (weeks.py: a small row
+        # is cut by every week its members tell apart).
+        more = len(weeks) - 1
         day_count = len(self._grid.schedule_days)
         teachers = {
             teacher_id
             for requirement in requirements
-            if requirement.recurrence is not None
+            if weeks_of(requirement) is not None
             for teacher_id in _teachers_of(requirement)
         } | {
             teacher_id
             for fixed in request.fixed_lessons
-            if fixed.recurrence is not None
+            if weeks_of(fixed) is not None
             for teacher_id in (fixed.teacher_id, fixed.co_teacher_id)
             if teacher_id is not None
         }
-        groups = {r.student_group_id for r in requirements if r.recurrence is not None}
+        groups = {r.student_group_id for r in requirements if weeks_of(r) is not None}
         extra = 0
         max_per_day = request.rules.max_lessons_per_day_per_group if request.rules else None
         if max_per_day is not None:
@@ -6404,7 +6520,7 @@ class SchedulerSolver:
         )
         asking_rasts = sum(1 for rast in request.rasts if rast.requires_lesson_before)
         extra += asking_rasts * day_count * len(request.groups)
-        return extra + self._named_room_vars(request)
+        return extra * more + self._named_room_vars(request)
 
     def _named_room_vars(self, request: OptimizeScheduleRequest) -> int:
         """A literal per lesson and room of every mixed room class (room_allocator).
@@ -6448,9 +6564,18 @@ class SchedulerSolver:
         named = 0
         for room_class in classes:
             pool = pools.get(room_class.index, [])
-            parities = {requirement.recurrence for requirement in pool}
-            if room_class.capacity > 1 and None in parities and len(parities) > 1:
-                named += room_class.capacity * sum(r.lessons_per_week for r in pool)
+            weeks = [
+                weeks_of(requirement) for requirement in pool
+                for _ in range(requirement.lessons_per_week)
+            ]
+            if room_class.capacity > 1 and mixes(weeks):
+                # A large mixed class with periods splits its rooms by day, a
+                # variable a day, where a small one names them (room_allocator).
+                named += (
+                    len(self._grid.schedule_days)
+                    if splits(weeks, room_class.capacity, self._grid.slots_per_day)
+                    else room_class.capacity * len(weeks)
+                )
         return named
 
     def _validate_request(self, request: OptimizeScheduleRequest) -> None:
@@ -6774,8 +6899,24 @@ class SchedulerSolver:
         # A/B-VECKOR: THE COUNTING BELOW IS A REAL WEEK'S, as the verdicts in
         # solve() are: each check runs on each week's request (_week_requests)
         # — the request itself for a school without alternating lessons.
-        for week in _week_requests(request):
-            self._verify_week(week, request)
+        #
+        # TERMINER: and a period's, counted on its own and named in what the
+        # count says (`period`, weeks.named).
+        #
+        # `period` IS WHERE THE COUNT WAS MADE, AND ONLY WHERE THAT SAYS
+        # SOMETHING (_is_every_weeks): a refusal that read the year and not
+        # the week names none, and neither does one every week shares.
+        weeks = _weeks_and_requests(request)
+        for label, week in weeks:
+            try:
+                self._verify_week(week, request)
+            except InvalidScheduleInputError as refusal:
+                said = week_named(label)
+                if not said or self._is_every_weeks(refusal, weeks, request):
+                    raise
+                raise InvalidScheduleInputError(
+                    str(refusal), code=refusal.code, params={**refusal.params, **said},
+                ) from refusal
 
         rules = request.rules
         if rules is None or not _lunch_window_is_set(rules):
@@ -6784,6 +6925,43 @@ class SchedulerSolver:
             # error and must not be told it has.
             return
         self._verify_lunch(request, rules)
+
+    #: The refusals of _verify_week that are THE YEAR'S, whichever week's
+    #: request they were raised from. A teacher's own lunch sits at one hour
+    #: all year (_add_teacher_lunch), so it is read against every lock and
+    #: reservation of the year (`whole`), and its window against the rule
+    #: alone. Raised while the autumn's request was being read, a refusal
+    #: about two locks of the spring is not the autumn's: named by that week it
+    #: would send the school to the wrong term's dates.
+    _WHOLE_YEAR_REFUSALS = frozenset({
+        "TEACHER_LUNCH_WINDOW_TOO_NARROW",
+        "TEACHER_LUNCH_LEAVES_NO_START",
+    })
+
+    def _is_every_weeks(
+        self,
+        refusal: InvalidScheduleInputError,
+        weeks: list[tuple[Weeks | None, OptimizeScheduleRequest]],
+        whole: OptimizeScheduleRequest,
+    ) -> bool:
+        """Whether a refusal raised from one week's request is not that week's.
+
+        Either it read the year (_WHOLE_YEAR_REFUSALS), or every week refuses
+        with the same code and the same figures: a rule too tight for a teacher
+        whose posts all run every week. Counted again in each week, arithmetic
+        on constants, and only on the way to a 400 of a year with periods.
+        """
+        if refusal.code in self._WHOLE_YEAR_REFUSALS:
+            return True
+        for _, other in weeks:
+            try:
+                self._verify_week(other, whole)
+            except InvalidScheduleInputError as same:
+                if (same.code, same.params) != (refusal.code, refusal.params):
+                    return False
+            else:
+                return False
+        return True
 
     def _verify_week(
         self, request: OptimizeScheduleRequest, whole: OptimizeScheduleRequest,
@@ -7205,7 +7383,7 @@ class SchedulerSolver:
                 for second in members[index + 1:]:
                     # A/B-veckor: two members whose weeks never meet share no
                     # hour, so they may share a teacher or pupils.
-                    if not meet(first.recurrence, second.recurrence):
+                    if not meet(weeks_of(first), weeks_of(second)):
                         continue
                     if set(_teachers_of(first)) & set(_teachers_of(second)):
                         raise InvalidScheduleInputError.of("BLOCK_MEMBERS_SHARE_TEACHER", {
@@ -7719,7 +7897,7 @@ class SchedulerSolver:
         opens: int,
         first: int,
         *,
-        week: WeekParity | None = None,
+        week: Weeks | None = None,
     ) -> bool:
         """Has a hand-placed lesson already taught this class in this stretch?
 
@@ -7743,7 +7921,7 @@ class SchedulerSolver:
         for fixed in request.fixed_lessons:
             if not ({fixed.student_group_id, *fixed.extra_group_ids} & members):
                 continue
-            if not meet(fixed.recurrence, week):
+            if not meet(weeks_of(fixed), week):
                 continue
             window = self._fixed_window(fixed)
             if window is None:
@@ -7759,7 +7937,7 @@ class SchedulerSolver:
         day_index: int,
         last: int,
         *,
-        week: WeekParity | None = None,
+        week: Weeks | None = None,
     ) -> bool:
         """Is the class hand-placed into a lesson AFTER the break?
 
@@ -7775,7 +7953,7 @@ class SchedulerSolver:
         for fixed in request.fixed_lessons:
             if not ({fixed.student_group_id, *fixed.extra_group_ids} & members):
                 continue
-            if not meet(fixed.recurrence, week):
+            if not meet(weeks_of(fixed), week):
                 continue
             window = self._fixed_window(fixed)
             if window is not None and window[0] >= base + last:
@@ -8609,14 +8787,18 @@ class SchedulerSolver:
             # (weeks.py): the other week's lesson is no lesson before this
             # week's break. One week, None, for a class with neither, which is
             # the rule as it always was.
-            locks_alternate = any(
-                fixed.recurrence is not None
-                and bool({fixed.student_group_id, *fixed.extra_group_ids} & members)
+            #
+            # TERMINER, for the same reason and in the same way: the autumn's
+            # lessons before the autumn's break. Every week the class's
+            # lessons and locks tell apart has its own row and no two are ever
+            # joined (weeks.py, NOT IMPLIED): joined, the autumn's lesson
+            # would answer for a spring morning that does not have it.
+            lock_weeks = [
+                weeks_of(fixed)
                 for fixed in request.fixed_lessons
-            )
-            weeks = week_parts(
-                lessons, _parity, implied=False, alternating=locks_alternate,
-            )
+                if {fixed.student_group_id, *fixed.extra_group_ids} & members
+            ]
+            weeks = week_parts(lessons, _parity, implied=False, others=lock_weeks)
             # Built lazily: a class no asking rast reaches adds no literal, and
             # a payload where nobody asked adds none at all.
             asks: cp_model.IntVar | None = None
@@ -8913,7 +9095,7 @@ class SchedulerSolver:
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             # A/B-veckor: a day of a real week, as the model counts it — the
             # odd week's lessons that day, then the even week's.
-            weeks = WEEKS if alternates(_parity(d) for d in decisions) else (None,)
+            weeks = each_week(_parity(d) for d in decisions)
             per_day = Counter(
                 (
                     decision.lesson.requirement.student_group_id,
@@ -9107,11 +9289,12 @@ class SchedulerSolver:
         # them, for a class with an alternating lesson or a school with an
         # alternating lock: that week's lessons, and the locks of that week.
         # One week, None, the rows as they were, for every other.
-        weeks: tuple[WeekParity | None, ...] = (
-            WEEKS
-            if alternates(_parity(d) for d in group)
-            or alternates(f.recurrence for f in request.fixed_lessons)
-            else (None,)
+        # Every lock of the school is read here, so the weeks are capped: past
+        # PART_LIMIT, two are held as one (these are no-overlaps, weeks.py),
+        # which can only leave a class unnamed that the maximum does hold back.
+        weeks = each_week(
+            [*(_parity(d) for d in group), *(weeks_of(f) for f in request.fixed_lessons)],
+            capped=True,
         )
         for week in weeks:
             here = [meet(_parity(decision), week) for decision in group]
@@ -9122,7 +9305,7 @@ class SchedulerSolver:
                 if runs:
                     parts[key].append(interval)
             for fixed in request.fixed_lessons:
-                if not meet(fixed.recurrence, week):
+                if not meet(weeks_of(fixed), week):
                     continue
                 window = self._fixed_window(fixed)
                 if window is None:
@@ -10249,7 +10432,7 @@ class SchedulerSolver:
         # weeks is listed once per week; the probe takes them together.
         nearly_full = [
             load
-            for week in _week_requests(request)
+            for _, week in self._solved_weeks(_weeks_and_requests(request))
             for load in self._week_loads(week)
         ]
         if any(load.shared for load in nearly_full):
@@ -11146,6 +11329,8 @@ class SchedulerSolver:
             building_key=building_key,
             shared_rooms=shared_rooms,
             assume_shared=assume_shared,
+            day_slots=self._grid.slots_per_day,
+            days=len(self._grid.schedule_days),
         )
 
     def _travel_rows(
@@ -11364,8 +11549,9 @@ class SchedulerSolver:
         always were; a derived key only changes which lessons meet which lock.
 
         A LOCK HOLDS ITS WINDOW ONLY IN THE WEEKS IT RUNS: a lesson of the
-        other parity never meets it (weeks.meet) and is not held apart from it
-        at all — not by the teacher, the pupils, the room or the walk.
+        other parity, or of a period the lock does not run in, never meets it
+        (weeks.meet) and is not held apart from it at all — not by the
+        teacher, the pupils, the room or the walk.
         """
         room_index_by_id = {room.id: idx for idx, room in enumerate(rooms)}
 
@@ -11374,6 +11560,10 @@ class SchedulerSolver:
         for first_id, second_id in group_conflicts or []:
             conflicts_with.setdefault(first_id, set()).add(second_id)
             conflicts_with.setdefault(second_id, set()).add(first_id)
+
+        # Each lesson's weeks, read once: the loop below meets every lock
+        # with every lesson.
+        lesson_weeks = [_parity(decision) for decision in decisions]
 
         for fixed in fixed_lessons:
             window = self._fixed_window(fixed)
@@ -11387,6 +11577,7 @@ class SchedulerSolver:
                     )
                 continue
             abs_start, abs_end = window
+            fixed_weeks = weeks_of(fixed)
 
             room_idx = (
                 room_index_by_id.get(fixed.room_id) if fixed.room_id is not None else None
@@ -11397,9 +11588,9 @@ class SchedulerSolver:
                 else None
             )
 
-            for decision in decisions:
+            for decision, runs in zip(decisions, lesson_weeks):
                 requirement = decision.lesson.requirement
-                if not meet(fixed.recurrence, requirement.recurrence):
+                if not meet(fixed_weeks, runs):
                     continue
                 fixed_teachers = {
                     tid for tid in (fixed.teacher_id, fixed.co_teacher_id) if tid
@@ -11508,7 +11699,7 @@ class SchedulerSolver:
             return
         day_start, lock = outside
         for decision in decisions:
-            if not meet(fixed.recurrence, decision.lesson.requirement.recurrence):
+            if not meet(weeks_of(fixed), _parity(decision)):
                 continue
             relations = [
                 relation
@@ -12267,6 +12458,7 @@ class SchedulerSolver:
         weights: ResolvedWeights,
         day_vars: dict[str, cp_model.IntVar],
         teacher_days: dict[tuple[UUID, int], _TeacherDay] | None = None,
+        year: Sequence[int] = (1,),
     ) -> list[cp_model.LinearExpr]:
         """Penalises a teacher's idle minutes, measured once per day.
 
@@ -12353,11 +12545,16 @@ class SchedulerSolver:
             # for the two weeks' mean, rounded up — what the håltimmar page
             # shows (a lesson every other week counts half). Not implied: the
             # other week's lesson does not close this week's hole.
-            parts = week_parts(group, _parity, implied=False)
+            #
+            # TERMINER: a teacher with a dated lesson is measured in each
+            # period their lessons tell apart, and pays for the weeks' mean by
+            # their share of the year (`year`, weeks.share). A measure and no
+            # rule, so past PART_LIMIT weeks two are measured as one.
+            parts = week_parts(group, _parity, implied=False, capped=True)
             if parts[0][0] is not None:
                 penalties.extend(self._idle_by_week(
                     model, teacher_id, group, parts, protected, weights, day_vars,
-                    teacher_days,
+                    teacher_days, year,
                 ))
                 continue
             days = [self._day_var(model, d, day_vars) for d in group]
@@ -12411,11 +12608,12 @@ class SchedulerSolver:
         model: cp_model.CpModel,
         teacher_id: UUID,
         group: list[LessonDecision],
-        parts: list[tuple[WeekParity | None, list[LessonDecision]]],
+        parts: list[tuple[Weeks | None, list[LessonDecision]]],
         protected: dict[tuple[UUID, int], tuple[tuple[int, int], ...]],
         weights: ResolvedWeights,
         day_vars: dict[str, cp_model.IntVar],
         teacher_days: dict[tuple[UUID, int], _TeacherDay] | None,
+        year: Sequence[int] = (1,),
     ) -> list[cp_model.LinearExpr]:
         """_add_idle_time_objective's day, for a teacher whose two weeks differ.
 
@@ -12427,6 +12625,11 @@ class SchedulerSolver:
         weeks. The day then pays for `idle` with `2·idle ≥ idle_odd +
         idle_even`: the mean of the two weeks, rounded up, a week without the
         teacher's lessons adding nothing to it.
+
+        With periods the mean is over the year: each week's idle time by its
+        share of it (weeks.share over `year`), `whole·idle ≥ Σ share·idle`,
+        divided through by what the shares have in common. For odd and even
+        weeks alone that is the line above, to the coefficient.
         """
         slots_per_day = self._grid.slots_per_day
         days = {decision.lesson.key(): self._day_var(model, decision, day_vars) for decision in group}
@@ -12435,7 +12638,7 @@ class SchedulerSolver:
             base = day_index * slots_per_day
             tag = f"idle_{teacher_id}_{day_index}"
             on_of: dict[str, cp_model.IntVar] = {}
-            per_week: list[cp_model.IntVar] = []
+            per_week: list[tuple[int, cp_model.IntVar]] = []
             for week, part in parts:
                 if len(part) < 2:
                     continue
@@ -12468,11 +12671,16 @@ class SchedulerSolver:
                 )
                 idle_week = model.NewIntVar(0, slots_per_day, f"idle_{week_tagged}")
                 model.Add(idle_week >= last - first - taught - credit)
-                per_week.append(idle_week)
+                per_week.append((week_share(week, year), idle_week))
             if not per_week:
                 continue
             idle = model.NewIntVar(0, slots_per_day, f"idle_{tag}")
-            model.Add(2 * idle >= sum(per_week))
+            whole = week_share(None, year)
+            common = math.gcd(whole, *(part for part, _ in per_week))
+            model.Add((whole // common) * idle >= sum(
+                measured if part == common else (part // common) * measured
+                for part, measured in per_week
+            ))
             penalties.append(idle * weights.teacher_gap)
         return penalties
 
@@ -13389,7 +13597,7 @@ class SchedulerSolver:
         day_vars: dict[str, cp_model.IntVar],
         cache: dict[tuple[UUID, int], _TeacherDay],
         *,
-        week: WeekParity | None = None,
+        week: Weeks | None = None,
     ) -> _TeacherDay:
         """The two ends of one teacher's day, built once and handed out.
 
@@ -13786,7 +13994,7 @@ class SchedulerSolver:
         weeks = week_parts(
             group,
             _parity,
-            alternating=week_locks is not None and week_locks.alternate(rule.teacher_id),
+            others=week_locks.weeks(rule.teacher_id) if week_locks is not None else (),
         )
         bounds_of = {
             week: [
@@ -13905,7 +14113,7 @@ class SchedulerSolver:
             if not group:
                 continue
             parts = week_parts(
-                group, _parity, alternating=week_locks.alternate(rule.teacher_id),
+                group, _parity, others=week_locks.weeks(rule.teacher_id),
             )
             terms.extend(
                 add_stretch_wish(
@@ -13977,7 +14185,7 @@ class SchedulerSolver:
                 window = self._fixed_window(fixed)
                 if window is None:
                     continue
-                locks.append(SharedLock(window[0], window[1], fixed.student_count, fixed.recurrence))
+                locks.append(SharedLock(window[0], window[1], fixed.student_count, weeks_of(fixed)))
             headroom = None
             if rules.mode == "SOFT":
                 headroom = max([room.capacity, *(lock.count for lock in locks)])
@@ -14305,7 +14513,7 @@ class SchedulerSolver:
             window = self._fixed_window(fixed)
             if window is not None:
                 locks.append(
-                    EdgeLock(window[0], window[1], tuple(pupil_keys_of(fixed)), fixed.recurrence),
+                    EdgeLock(window[0], window[1], tuple(pupil_keys_of(fixed)), weeks_of(fixed)),
                 )
         made: dict[tuple[UUID, str], cp_model.IntVar] = {}
 
@@ -14413,7 +14621,7 @@ class SchedulerSolver:
             locks.append(
                 PlaceLock(
                     day=window[0] // self._grid.slots_per_day,
-                    parity=fixed.recurrence,
+                    parity=weeks_of(fixed),
                     pupil_keys=tuple(pupil_keys_of(fixed)),
                     teachers=tuple(t for t in (fixed.teacher_id, fixed.co_teacher_id) if t),
                     places=where,
@@ -14554,9 +14762,10 @@ class SchedulerSolver:
         unclipped and their union once (_teacher_locks), and they are never
         refused here: what they already take is subtracted from the cap — the
         residual, floored at zero, which then closes the day to the solver's
-        own lessons under the literal and never bare. The cap counts every
-        lock on a weekday, an odd week's beside an even week's, which is the
-        strict reading and the safe one for a generator. A school that
+        own lessons under the literal and never bare. The cap counts the
+        locks of the week it is held in — an odd week's locks in the odd week,
+        the autumn's in the autumn (_TeacherWeekLocks.minutes) — beside that
+        week's lessons, as every row here is cut (weeks.py). A school that
         hand-placed a breach was warned beside that edit
         (master-lessons.service.ts), and refusing the week for it would turn
         the warning into a block one screen later.
@@ -14720,13 +14929,13 @@ class SchedulerSolver:
             # the day's minutes are per week, and each rule keeps its one
             # literal per day or per post. One week, the rows as they were,
             # for a teacher with neither.
-            parts = week_parts(group, _parity, alternating=week_locks.alternate(teacher_id))
+            parts = week_parts(group, _parity, others=week_locks.weeks(teacher_id))
             cap_literals: dict[tuple[UUID, int], cp_model.IntVar] = {}
 
             class _Week:
                 """One week's view of the teacher: what reaches each day, and its room."""
 
-                def __init__(self, week: WeekParity | None, members: list[LessonDecision]) -> None:
+                def __init__(self, week: Weeks | None, members: list[LessonDecision]) -> None:
                     self.week = week
                     self.members = members
                     self.reaching = {
@@ -14960,7 +15169,7 @@ class SchedulerSolver:
         teacher_days: dict[tuple[UUID, int], _TeacherDay],
         literals: _TeacherDayLiterals,
         *,
-        week: WeekParity | None = None,
+        week: Weeks | None = None,
     ) -> cp_model.IntVar:
         """True exactly when the teacher teaches on the day: implied by every
         lesson there, and at most their sum. The rest rule's own where it built
@@ -16002,7 +16211,7 @@ def _fixed_relations(
     """
     requirement = lesson.requirement
     relations: list[tuple[Party, tuple[UUID, ...]]] = []
-    if not meet(fixed.recurrence, requirement.recurrence):
+    if not meet(weeks_of(fixed), weeks_of(requirement)):
         return relations
     fixed_teachers = {tid for tid in (fixed.teacher_id, fixed.co_teacher_id) if tid}
     for teacher_id in dict.fromkeys(_lesson_teachers(lesson)):
@@ -16274,15 +16483,51 @@ def _common_domains(domains: list[dict[int, cp_model.Domain]]) -> dict[int, cp_m
     return common
 
 
-def _week_requests(request: OptimizeScheduleRequest) -> list[OptimizeScheduleRequest]:
-    """A/B-veckor: the request as each real week has it, for what counts a week.
+def _in_week(analysis: ConflictAnalysis, week: Weeks | None) -> ConflictAnalysis:
+    """A refusal counted in one week of a year with periods, saying which.
 
-    `[request]` itself when nothing alternates, so a school without
-    alternating lessons is counted exactly as before. Otherwise one request
-    per week (weeks.WEEKS): the requirements and the locks that run in it,
-    each made an every-week one — inside one week, every lesson of it runs —
-    and everything else as it was. A week with nothing left to place is left
-    out: what its locks alone break, the whole request's own checks refuse.
+    `period` (and `parity`, for a week of one) joins the summary's params and
+    every line's: additive, read by no sentence here, and turned into dates by
+    the gateway, which is the side that has them. The refusal itself for every
+    week, and for a week of a year without periods: nothing is added to what a
+    school with odd and even weeks has always been told.
+    """
+    said = week_named(week)
+    if not said:
+        return analysis
+    return analysis.model_copy(update={
+        "summary_params": {**analysis.summary_params, **said},
+        "conflicts": [
+            detail.model_copy(update={"params": {**detail.params, **said}})
+            for detail in analysis.conflicts
+        ],
+    })
+
+
+def _week_requests(request: OptimizeScheduleRequest) -> list[OptimizeScheduleRequest]:
+    """The request as each real week has it, for what counts a week (_weeks_and_requests)."""
+    return [week_request for _, week_request in _weeks_and_requests(request)]
+
+
+def _weeks_and_requests(
+    request: OptimizeScheduleRequest,
+) -> list[tuple[Weeks | None, OptimizeScheduleRequest]]:
+    """A/B-veckor and terminer: the request as each real week has it, and which week that is.
+
+    `[(None, request)]` — the request itself — when every lesson and lock
+    runs every week, so such a school is counted exactly as before. Otherwise
+    one request per week the entries tell apart (weeks.each_week: the odd
+    weeks and the even ones, each period on its own): the requirements and
+    the locks that run in it, each made an every-week one — inside one week,
+    every lesson of it runs — and everything else as it was. A week with
+    nothing left to place is left out: what its locks alone break, the whole
+    request's own checks refuse.
+
+    THIS IS WHAT KEEPS THE AUTUMN AND THE SPRING OUT OF ONE COUNT. A teacher
+    with 1,370 minutes of hemkunskap in each term is counted with 1,370 in
+    the autumn's request and 1,370 in the spring's, never with their sum,
+    and a count that refuses names the week it refused (`period`,
+    weeks.named).
 
     WHY A WEEK'S REQUEST MAY BE JUDGED FOR THE WHOLE. The model holds each of
     its rows in each week over that week's lessons, and a row it does not cut
@@ -16294,28 +16539,46 @@ def _week_requests(request: OptimizeScheduleRequest) -> list[OptimizeScheduleReq
     """
     requirements = request.requirements
     fixed_lessons = request.fixed_lessons
-    if not alternates(r.recurrence for r in requirements) and not alternates(
-        f.recurrence for f in fixed_lessons
-    ):
-        return [request]
-    weeks: list[OptimizeScheduleRequest] = []
-    for week in WEEKS:
+    runs = [weeks_of(requirement) for requirement in requirements]
+    locked = [weeks_of(fixed) for fixed in fixed_lessons]
+    if not alternates(runs) and not alternates(locked):
+        return [(None, request)]
+    every_week = {"recurrence": None, "periods": None}
+    weeks: list[tuple[Weeks | None, OptimizeScheduleRequest]] = []
+    for week in each_week([*runs, *locked]):
         placed = [
-            requirement.model_copy(update={"recurrence": None})
-            for requirement in requirements
-            if meet(requirement.recurrence, week)
+            requirement.model_copy(update=every_week)
+            for requirement, held in zip(requirements, runs)
+            if meet(held, week)
         ]
         if not placed:
             continue
-        weeks.append(request.model_copy(update={
+        weeks.append((week, request.model_copy(update={
             "requirements": placed,
             "fixed_lessons": [
-                fixed.model_copy(update={"recurrence": None})
-                for fixed in fixed_lessons
-                if meet(fixed.recurrence, week)
+                fixed.model_copy(update=every_week)
+                for fixed, held in zip(fixed_lessons, locked)
+                if meet(held, week)
             ],
-        }))
+            "period_weeks": None,
+        })))
     return weeks
+
+
+def _every_week_only(request: OptimizeScheduleRequest) -> OptimizeScheduleRequest | None:
+    """The request with only what runs every week: what each week's request has in common.
+
+    None when no requirement does. For asking whether a refusal found in one
+    week had anything to do with that week's own entries (_solved_in).
+    """
+    requirements = [r for r in request.requirements if weeks_of(r) is None]
+    if not requirements:
+        return None
+    return request.model_copy(update={
+        "requirements": requirements,
+        "fixed_lessons": [f for f in request.fixed_lessons if weeks_of(f) is None],
+        "period_weeks": None,
+    })
 
 
 def _derived_id(seed: UUID, label: str) -> UUID:

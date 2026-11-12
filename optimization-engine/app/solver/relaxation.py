@@ -103,12 +103,12 @@ from app.schemas.schedule import (
     OptimizeScheduleRequest,
     ScheduledLesson,
 )
-from app.solver.weeks import WEEKS, meet
+from app.solver.weeks import Weeks, each_week, meet, named, weeks_of
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from app.schemas.schedule import AnonymousRoom, WeekParity
+    from app.schemas.schedule import AnonymousRoom
 
 
 @dataclass(frozen=True)
@@ -356,9 +356,17 @@ def _teachers_on(
 
 
 def _week_lessons(
-    requirement: AnonymousRequirement | None, week: WeekParity,
+    requirement: AnonymousRequirement | None, week: Weeks | None,
 ) -> bool:
-    return requirement is not None and meet(requirement.recurrence, week)
+    return requirement is not None and meet(weeks_of(requirement), week)
+
+
+def _weeks_of(request: OptimizeScheduleRequest) -> tuple[Weeks | None, ...]:
+    """The weeks the request's lessons and locks tell apart: one, every week, for a school with none."""
+    return each_week([
+        *(weeks_of(requirement) for requirement in request.requirements),
+        *(weeks_of(fixed) for fixed in request.fixed_lessons),
+    ])
 
 
 def deviations_of(
@@ -410,8 +418,8 @@ def _cap_deviations(
     if not capped:
         return []
     found: list[ConflictDetail] = []
-    for week in WEEKS:
-        locked = flatten([fixed for fixed in request.fixed_lessons if meet(fixed.recurrence, week)])
+    for week in _weeks_of(request):
+        locked = flatten([fixed for fixed in request.fixed_lessons if meet(weeks_of(fixed), week)])
         taught: dict[tuple[UUID, int], int] = defaultdict(int)
         on_day: dict[tuple[UUID, int], list[UUID]] = defaultdict(list)
         for lesson in lessons:
@@ -443,11 +451,12 @@ def _cap_deviations(
                         "taught": generated + locked_minutes,
                         "over": over,
                         "needed": generated + locked_minutes,
+                        **named(week),
                     },
                     requirement_ids=list(dict.fromkeys(on_day[(teacher, day)])),
                     resource_ids=[rule.id],
                 ))
-    return _worst_week(found, ("rule", "day"))
+    return _worst_week(found, ("rule", "day"), _weeks_of(request))
 
 
 def _work_day_deviations(
@@ -468,7 +477,7 @@ def _work_day_deviations(
     if not request.teacher_day_limits:
         return []
     found: list[ConflictDetail] = []
-    for week in WEEKS:
+    for week in _weeks_of(request):
         days: dict[UUID, Counter[int]] = defaultdict(Counter)
         requirements_of: dict[tuple[UUID, int], list[UUID]] = defaultdict(list)
         for lesson in lessons:
@@ -506,6 +515,7 @@ def _work_day_deviations(
                     "taught": len(set(generated) | held),
                     "over": over,
                     "needed": len(set(generated) | held),
+                    **named(week),
                 },
                 requirement_ids=list(dict.fromkeys(
                     requirement
@@ -514,7 +524,7 @@ def _work_day_deviations(
                 )),
                 resource_ids=[limit.id],
             ))
-    return _worst_week(found, ("limit",))
+    return _worst_week(found, ("limit",), _weeks_of(request))
 
 
 def _distribution_deviations(
@@ -624,18 +634,45 @@ def _room_lock_deviations(
     return out
 
 
+#: What a line says of its week (weeks.named), and nothing else in its params.
+_WEEK_WORDS = ("period", "periods", "parity")
+
+
+def _unnamed(detail: ConflictDetail) -> tuple[dict[str, str | int], list[UUID]]:
+    """A line less its week: what two weeks' lines have alike when they are the same breach."""
+    params = {name: value for name, value in detail.params.items() if name not in _WEEK_WORDS}
+    return params, detail.requirement_ids
+
+
 def _worst_week(
-    found: list[ConflictDetail], key: tuple[str, ...],
+    found: list[ConflictDetail], key: tuple[str, ...], weeks: tuple[Weeks | None, ...],
 ) -> list[ConflictDetail]:
     """One line per rule (and day), the week that breaks it by most.
 
-    A school without alternating lessons has the same week twice; one with
-    them has two, and a reader is told about the worse and not about both.
+    A school without alternating lessons has one week; one with them has
+    two, or one per period, and a reader is told about the worst and not
+    about each.
+
+    A BREACH EVERY WEEK HAS ALIKE NAMES NO WEEK. The gateway turns `period`
+    into the dates of a term, and a reader told "in the autumn" moves the
+    autumn: so a teacher whose every-week lessons put Tuesday over the cap is
+    told about Tuesday, and only a breach some week has on its own — other
+    figures, or other lessons, than the rest — says which week that was. The
+    same line in every week the request has, figures and lessons both, is
+    that line once without its week.
     """
     best: dict[tuple, ConflictDetail] = {}
+    lines: dict[tuple, list[ConflictDetail]] = defaultdict(list)
     for detail in found:
         identity = tuple(detail.params[name] for name in key)
+        lines[identity].append(detail)
         held = best.get(identity)
         if held is None or int(detail.params["over"]) > int(held.params["over"]):
             best[identity] = detail
-    return list(best.values())
+    out: list[ConflictDetail] = []
+    for identity, detail in best.items():
+        alike = [other for other in lines[identity] if _unnamed(other) == _unnamed(detail)]
+        if len(alike) == len(weeks):
+            detail = detail.model_copy(update={"params": _unnamed(detail)[0]})
+        out.append(detail)
+    return out

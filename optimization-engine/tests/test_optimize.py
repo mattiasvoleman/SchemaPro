@@ -4868,6 +4868,14 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         # ['body', 'placements'], and the gateway then sends the same request
         # without it. See Placements and app/solver/placements.py.
         "placements",
+        # Terminer: how many real weeks each period of the year is, beside the
+        # `periods` masks on requirements and locks and never without one.
+        # THE ENGINE HAS THE FIELDS BEFORE ANY GATEWAY SENDS THEM, on purpose:
+        # an engine without them answers 422 to every run that carries one
+        # (extra="forbid"), so they are deployed here first and the gateway's
+        # half of this contract (ai-engine-contract.spec.ts) gains them with
+        # the change that starts sending.
+        "periodWeeks",
     }
     assert _field_names(Relaxation) == {"mode"}
     assert _field_names(Placements) == {"lessons", "requirements"}
@@ -5020,6 +5028,10 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         # A/B-veckor: sent only on a requirement that runs odd or even weeks
         # only, so every other payload is the bytes it was.
         "recurrence",
+        # Terminer: the periods of the year the requirement runs in, sent only
+        # on one that some period leaves out. See periodWeeks above for why
+        # the engine has it first.
+        "periods",
     }
     # A locked lesson, which no half of the contract pinned until a field was
     # added to it. pupilGroupIds is sent only on a lock whose subject a
@@ -5042,6 +5054,8 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         # Placeringsregler: sent only on a lock in a shared room, with the
         # pupils who sit it.
         "studentCount",
+        # Terminer: the periods of the year the lock holds its window in.
+        "periods",
     }
     # The response's one row. teacherId is a split post's lead of THIS lesson,
     # and omitted wherever it is None — on every lesson of every other post —

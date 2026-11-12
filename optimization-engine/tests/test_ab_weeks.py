@@ -164,7 +164,7 @@ def test_week_parts_keeps_a_row_without_alternating_members_whole() -> None:
         (ODD_WEEKS, items), (EVEN_WEEKS, ["a", "c"]),
     ]
     # A row whose locks alternate is cut with every item weekly.
-    assert week_parts(items, lambda _: None, alternating=True) == [
+    assert week_parts(items, lambda _: None, others=[ODD_WEEKS]) == [
         (ODD_WEEKS, items), (EVEN_WEEKS, items),
     ]
 
@@ -315,7 +315,7 @@ def _allocator_alone(model, lessons, rooms):  # type: ignore[no-untyped-def]
         requirement = AnonymousRequirement.model_validate({
             "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": str(uuid4()),
             "lessonsPerWeek": 1, "minutesPerLesson": 15, "studentGroupSize": 10,
-            **({"recurrence": parity} if parity else {}),
+            **({"recurrence": str(parity)} if parity else {}),
             **({"requiredRoomType": room_type} if room_type else {}),
         })
         begin = model.NewIntVar(start, start, f"s_{name}")

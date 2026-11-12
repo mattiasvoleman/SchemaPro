@@ -33,6 +33,29 @@ SolverStatus = Literal["OPTIMAL", "FEASIBLE", "INFEASIBLE", "TIMEOUT"]
 # own LessonRecurrence names, and ALL_WEEKS is deliberately not one of them:
 # every week is the field left out, one way of saying it (app/solver/weeks.py).
 WeekParity = Literal["ODD_WEEKS", "EVEN_WEEKS"]
+#: Terminer: the most periods a year is cut into. A period is a set of real
+#: ISO weeks in which the same entries run, and a läsår has at most 53 weeks,
+#: so a gateway reading one läsår week by week cannot send more.
+MAX_PERIODS = 53
+
+
+def _checked_periods(value: tuple[bool, ...] | None) -> tuple[bool, ...] | None:
+    """A mask names some period and not every one.
+
+    ONE REPRESENTATION PER MEANING, as lessonTeacherIds has: every period is
+    the field left out, so a mask of nothing but true is a gateway that forgot
+    to drop it. A mask of nothing but false is an entry that never runs, which
+    has no week to be planned in and is not a thing to send.
+    """
+    if value is None:
+        return value
+    if not any(value):
+        msg = "periods must name at least one period the entry runs in."
+        raise ValueError(msg)
+    if all(value):
+        msg = "periods must leave some period out; every period is the field left out."
+        raise ValueError(msg)
+    return value
 ConflictCategory = Literal[
     "REQUIREMENT_DEMAND",
     "TEACHER_OVERLAP",
@@ -211,7 +234,8 @@ class AnonymousRequirement(CamelModel):
     #:
     #: Up to 80, twice the most lessons a week a requirement can have, because
     #: a school locking alternating weeks holds two lessons where it teaches
-    #: one — the engine has no weeks and counts them both.
+    #: one — the list carries no weeks, and the engine counts them both. The
+    #: same for locks of two terms: the stricter reading, never the looser.
     locked_days: list[DayOfWeek] = Field(
         default_factory=list, alias="lockedDays", max_length=80,
     )
@@ -312,6 +336,45 @@ class AnonymousRequirement(CamelModel):
     #: with the bytes it was answered with. app/solver/weeks.py says how the
     #: model holds each rule in the two weeks.
     recurrence: WeekParity | None = Field(default=None)
+    #: Terminer: the periods of the year the requirement runs in, as a mask
+    #: over the periods the gateway cut the year into — [true, false, true] is
+    #: a post that runs in the first and the third of three. A period is a set
+    #: of real weeks in which the same entries of the payload run: the gateway
+    #: reads each entry's dates against every ISO week of the läsår and joins
+    #: the weeks that hold the same entries (src/optimization). Hemkunskap for
+    #: half the classes until December and for the other half from January is
+    #: then two requirements that never meet, and they may share the teacher,
+    #: the room, the pupils and the hour, counted in neither's week together.
+    #:
+    #: THE ENGINE STILL HAS NO DATES. It is told which entries run together,
+    #: never when; a refusal counted in one period names it by its index
+    #: (`period` in the params), and the gateway turns that into dates.
+    #:
+    #: BESIDE `recurrence`, NOT INSTEAD OF IT. A concrete week is one period in
+    #: one parity, and the requirement runs in those of its periods that are of
+    #: its parity. That product is the gateway's own weeksCanOverlap — the
+    #: dates overlap AND the parities are not opposed — so nothing here reads a
+    #: pair more leniently than a lesson placed by hand is read.
+    #:
+    #: A MASK, SO THE ENTRY SAYS IT ALL: its length is how many periods the
+    #: year has, and every mask of one payload has the same length
+    #: (OptimizeScheduleRequest.validate_periods). A reader needs the entry and
+    #: nothing else to know its weeks, so nothing is lost where a request is
+    #: copied or cut into its weeks.
+    #:
+    #: OPTIONAL AND ADDITIVE. Absent is every period, which is every
+    #: requirement of every school until one dates a post; the gateway sends
+    #: the key only on an entry that some period leaves out, so a payload
+    #: without one is byte for byte what it was, builds the model it built,
+    #: and is answered with the bytes it was answered with.
+    periods: tuple[bool, ...] | None = Field(
+        default=None, min_length=2, max_length=MAX_PERIODS,
+    )
+
+    @field_validator("periods")
+    @classmethod
+    def validate_periods(cls, value: tuple[bool, ...] | None) -> tuple[bool, ...] | None:
+        return _checked_periods(value)
 
     @model_validator(mode="after")
     def validate_lesson_lengths(self) -> AnonymousRequirement:
@@ -825,9 +888,11 @@ class AnonymousTeacherDayLimit(CamelModel):
     #: Tuesday every week; [[1, 2], [3, 4]] for the odd and even weeks above.
     #:
     #: WHAT THE ENGINE HOLDS, for every set L: the generated lessons take at
-    #: most max(0, N − |L|) of the grid's days outside L. A generated lesson
-    #: is a weekly lesson — the stricter reading for an A/B or dated
-    #: requirement, as everywhere the engine has no weeks — so it adds a day
+    #: most max(0, N − |L|) of the grid's days outside L. The sets carry no
+    #: parity and no period, so the generated lessons of each week the
+    #: teacher has (app/solver/weeks.py) are held against EVERY set — the
+    #: stricter reading for a teacher whose locks differ by term, never a day
+    #: over the post — and a lesson adds a day
     #: to every week whose locks do not already hold its weekday, and a week
     #: with |L| days locked has N − |L| left to add. A week the locks alone
     #: put over N gets nothing added, and is not refused for what it holds.
@@ -984,10 +1049,18 @@ class FixedLesson(CamelModel):
     #: in odd ISO weeks or only in even ones, so a generated lesson of the
     #: other weeks may take the same hour of the same class, teacher or room.
     #: Absent is every week, today's reading exactly; the gateway sends the
-    #: key only on a lock that alternates. A lock with dates and no parity is
-    #: still every week here — the engine plans one year-long week of each
-    #: parity and no terms (AnonymousRequirement.recurrence).
+    #: key only on a lock that alternates. A lock's dates are its `periods`.
     recurrence: WeekParity | None = Field(default=None)
+    #: Terminer, for a lesson the school locked: the periods of the year it
+    #: holds its window in, as AnonymousRequirement.periods says them and with
+    #: the same length. A lesson locked for the autumn holds its teacher, its
+    #: pupils and its room in the autumn's periods and no others, so a
+    #: generated lesson of the spring may take the same hour. Absent is every
+    #: period, today's reading exactly; the gateway sends the key only on a
+    #: lock some period leaves out.
+    periods: tuple[bool, ...] | None = Field(
+        default=None, min_length=2, max_length=MAX_PERIODS,
+    )
     #: Placeringsregler, regel 3: how many pupils sit the lesson, distinct, all
     #: its groups and named pupils counted once. Sent only on a lock in a room
     #: a school has marked shareable (AnonymousRoom.shareable), because that is
@@ -995,6 +1068,11 @@ class FixedLesson(CamelModel):
     #: then taken off the room's capacity for the lock's window. Absent is a
     #: lock that takes the whole room, which every lock does today.
     student_count: int | None = Field(default=None, alias="studentCount", ge=1, le=1000)
+
+    @field_validator("periods")
+    @classmethod
+    def validate_periods(cls, value: tuple[bool, ...] | None) -> tuple[bool, ...] | None:
+        return _checked_periods(value)
 
 
 class PreviousLesson(CamelModel):
@@ -1480,6 +1558,22 @@ class OptimizeScheduleRequest(CamelModel):
     #: Förlagda poster, present only when a post of the week has one. Read by
     #: the explanation alone, never by a model builder. See Placements.
     placements: Placements | None = None
+    #: Terminer: how many real weeks each period of the year is, in the order
+    #: the masks name them (AnonymousRequirement.periods) — [18, 1, 21] for an
+    #: autumn, the week the terms share, and a spring.
+    #:
+    #: WEIGHTS FOR WHAT IS MEASURED, NEVER A RULE. A hole in a teacher's or a
+    #: pupil's day that exists in one period only is that period's share of a
+    #: hole in an ordinary week, and the soft terms and pupilIdleMinutes weigh
+    #: it so (weeks.share). No hard row reads this: which entries run together
+    #: is the masks' to say, and a week is held whether it comes once a year
+    #: or forty times.
+    #:
+    #: Only beside masks, and as long as they are. Absent, with masks, weighs
+    #: every period alike.
+    period_weeks: list[Annotated[int, Field(ge=1, le=MAX_PERIODS)]] | None = Field(
+        default=None, alias="periodWeeks", min_length=2, max_length=MAX_PERIODS,
+    )
 
     @field_validator("group_conflicts")
     @classmethod
@@ -1526,6 +1620,34 @@ class OptimizeScheduleRequest(CamelModel):
         teachers = [limit.teacher_id for limit in self.teacher_day_limits]
         if len(set(teachers)) != len(teachers):
             msg = "teacherDayLimits names one teacher twice."
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_periods(self) -> OptimizeScheduleRequest:
+        """One cut of the year: every mask as long as every other.
+
+        A SHAPE, refused as the day limits are. The masks of one payload name
+        the same periods, so two lengths are a gateway that cut the year twice,
+        and no reading of them together is the school's: which period of five
+        is the second of three? periodWeeks counts those same periods, so it
+        has their length, and without a mask it counts nothing.
+        """
+        masks = [
+            entry.periods
+            for entry in (
+                *self.requirements,
+                *self.fixed_lessons,
+                *(self.placements.requirements if self.placements is not None else ()),
+            )
+            if entry.periods is not None
+        ]
+        lengths = {len(mask) for mask in masks}
+        if len(lengths) > 1:
+            msg = "periods masks must all have the same length."
+            raise ValueError(msg)
+        if self.period_weeks is not None and lengths != {len(self.period_weeks)}:
+            msg = "periodWeeks must be as long as the periods masks, and needs one."
             raise ValueError(msg)
         return self
 
