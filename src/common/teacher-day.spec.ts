@@ -672,10 +672,93 @@ describe('lockedWeekdaySetsByPeriod', () => {
     expect(lockedWeekdaySetsByPeriod([empty], 2, year, periods.weekPeriods)).toBeNull();
   });
 
-  it('holds every real week: its own weekdays, or a set of at most the post’s days around them, in its period', () => {
-    // Against the weeks read one by one with runsOn, the rule publishing
-    // materialises a lesson by: 300 random teachers on random cuts of the
-    // year. What is left out must be implied where it was left out.
+  it('leaves out no set that only shares a weekday with a larger one', () => {
+    // A post of three days. The autumn's odd weeks hold Monday and Tuesday,
+    // its even weeks Tuesday to Thursday: the two share the Tuesday and
+    // neither lies inside the other, so both are the autumn's lines. Read as
+    // "some weekday of the smaller is in the larger", Monday's weeks would
+    // have no line and the engine could fill them with three other days.
+    const periods = cut(AUTUMN, SPRING);
+    const kept = [
+      lesson('tu', 2, AUTUMN),
+      lesson('m', 1, { ...AUTUMN, recurrence: 'ODD_WEEKS' }),
+      lesson('w', 3, { ...AUTUMN, recurrence: 'EVEN_WEEKS' }),
+      lesson('th', 4, { ...AUTUMN, recurrence: 'EVEN_WEEKS' }),
+    ];
+    expect(lockedWeekdaySetsByPeriod(kept, 3, year, periods.weekPeriods)).toEqual([
+      { weekdays: [], periods: [false, true, true] },
+      { weekdays: [1, 2], periods: [true, false, false] },
+      { weekdays: [2, 3, 4], periods: [true, false, false] },
+    ]);
+    // On a post of four the same: inside is every weekday, not one of them.
+    expect(lockedWeekdaySetsByPeriod(kept, 4, year, periods.weekPeriods)).toEqual([
+      { weekdays: [], periods: [false, true, true] },
+      { weekdays: [1, 2], periods: [true, false, false] },
+      { weekdays: [2, 3, 4], periods: [true, false, false] },
+    ]);
+  });
+
+  it('counts the weeks from the Monday of the läsår’s first week, whatever weekday the läsår starts on', () => {
+    // Production's läsår starts on a Saturday, 15 August 2026: its first week
+    // is the two days before the first Monday. A Monday and a Tuesday kept
+    // from Wednesday 13 January, on a post of one day: the week of the 11th
+    // is in their period and holds neither, so the empty week is a line of
+    // the spring too. Counted from the läsår's own first day, that week's
+    // "Monday" would be Saturday the 16th, inside the window, and the week
+    // would be told as holding both: the spring without its empty line.
+    const saturday = { startDate: '2026-08-15', endDate: '2027-06-12' };
+    const from = { startDate: '2027-01-13', endDate: null };
+    const periods = yearPeriodsOf(saturday, [[from]])!;
+    expect(periods.weeks).toEqual([22, 22]);
+    expect(lockedWeekdaySetsByPeriod([lesson('m', 1, from), lesson('tu', 2, from)], 1, saturday, periods.weekPeriods)).toEqual([
+      { weekdays: [], periods: [true, true] },
+      { weekdays: [1, 2], periods: [false, true] },
+    ]);
+  });
+
+  it('tells the läsår’s first, incomplete week apart once a post starts on the first Monday, for odd and even locks', () => {
+    // No term differs from another here, and the periods are still told: the
+    // two days before Monday 17 August are a week of their own (week 33, an
+    // odd one) as soon as a post is dated from that Monday, and a teacher
+    // kept on Tuesdays in the odd weeks and on Wednesdays in the even ones
+    // holds the Tuesday there and both in the rest (docs/DEPLOYMENT.md 19.5).
+    const saturday = { startDate: '2026-08-15', endDate: '2027-06-12' };
+    const periods = yearPeriodsOf(saturday, [[{ startDate: '2026-08-17', endDate: null }]])!;
+    expect(periods.weeks).toEqual([1, 43]);
+    const kept = [lesson('odd', 2, { recurrence: 'ODD_WEEKS' }), lesson('even', 3, { recurrence: 'EVEN_WEEKS' })];
+    expect(lockedWeekdaySetsByPeriod(kept, 2, saturday, periods.weekPeriods)).toEqual([
+      { weekdays: [2], periods: [true, true] },
+      { weekdays: [3], periods: [false, true] },
+    ]);
+    // In a läsår that starts on that Monday there is no such week, and
+    // nothing to tell apart.
+    const monday = { startDate: '2026-08-17', endDate: '2027-06-12' };
+    expect(yearPeriodsOf(monday, [[{ startDate: '2026-08-17', endDate: null }]])).toBeNull();
+  });
+
+  /*
+   * THE WEEKS READ ONE BY ONE with runsOn, the rule publishing materialises a
+   * lesson by, on random teachers and random cuts of the year — and for a
+   * läsår starting on each weekday from Saturday to Wednesday, since the
+   * weeks are counted from the Monday of the läsår's first week and not from
+   * its first day (production's starts on Saturday 15 August 2026). The
+   * Mondays are written out here, not computed as the function computes them.
+   *
+   * Three things are held, and together they say exactly what is sent:
+   *   - every real week is held: its own weekdays are a line of its period,
+   *     or lie inside a line of at most the post's days;
+   *   - every line of a period is the weekdays of a real week of it;
+   *   - no line of a period lies inside another line of it of at most the
+   *     post's days — what the larger one implies is left out.
+   */
+  it.each([
+    ['2026-08-15', '2026-08-10'],
+    ['2026-08-16', '2026-08-10'],
+    ['2026-08-17', '2026-08-17'],
+    ['2026-08-18', '2026-08-17'],
+    ['2026-08-19', '2026-08-17'],
+  ])('holds every real week, and nothing else, in its period: a läsår from %s (first week’s Monday %s)', (startDate, firstMonday) => {
+    const year = { startDate, endDate: '2027-06-11' };
     let seed = 20261112;
     const random = (below: number) => {
       // mulberry32: the low bits of a plain linear generator repeat every four draws.
@@ -694,8 +777,11 @@ describe('lockedWeekdaySetsByPeriod', () => {
         { startDate: days[a]!, endDate: days[b]! },
       ][random(4)]!;
     };
-    const monday = new Date('2026-08-17T00:00:00.000Z').getTime();
+    const monday = new Date(`${firstMonday}T00:00:00.000Z`).getTime();
+    const inside = (set: readonly number[], larger: readonly number[], max: number) =>
+      larger.length > set.length && larger.length <= max && set.every((day) => larger.includes(day));
     let told = 0;
+    let overlapping = 0;
     for (let round = 0; round < 300; round++) {
       const kept = Array.from({ length: 1 + random(5) }, (_, index) =>
         lesson(`l${index}`, 1 + random(5), {
@@ -710,6 +796,7 @@ describe('lockedWeekdaySetsByPeriod', () => {
       const sent = lockedWeekdaySetsByPeriod(kept, max, year, periods.weekPeriods);
       const sets = sent ?? lockedWeekdaySets(kept, max, year).map((weekdays) => ({ weekdays, periods: periods.weeks.map(() => true) }));
       if (sent) told++;
+      const real = periods.weeks.map(() => new Set<string>());
       periods.weekPeriods.forEach((period, week) => {
         const own = [
           ...new Set(
@@ -727,6 +814,7 @@ describe('lockedWeekdaySetsByPeriod', () => {
               .map((entry) => entry.dayOfWeek),
           ),
         ].sort((a, b) => a - b);
+        real[period]!.add(own.join(','));
         const here = sets.filter((entry) => entry.periods[period]);
         const holds = here.some(
           (entry) =>
@@ -734,12 +822,41 @@ describe('lockedWeekdaySetsByPeriod', () => {
             (entry.weekdays.length === own.length || entry.weekdays.length <= max),
         );
         expect({ round, week, own, holds }).toEqual({ round, week, own, holds: true });
-        // And nothing is held in a period no week of which has it.
-        for (const entry of here) expect(entry.weekdays.every((day) => kept.some((lesson) => lesson.dayOfWeek === day))).toBe(true);
       });
-      // Every period is told.
-      if (sent) expect(periods.weeks.map((_, period) => sent.some((entry) => entry.periods[period]))).not.toContain(false);
+      periods.weeks.forEach((_, period) => {
+        const here = sets.filter((entry) => entry.periods[period]).map((entry) => entry.weekdays);
+        // Every period is told,
+        expect({ round, period, lines: here.length > 0 }).toEqual({ round, period, lines: true });
+        for (const line of here) {
+          // each line is a real week of it,
+          expect({ round, period, line, real: real[period]!.has(line.join(',')) }).toEqual({ round, period, line, real: true });
+          // and none is implied by another line of it.
+          expect({ round, period, line, implied: here.some((larger) => inside(line, larger, max)) }).toEqual({
+            round,
+            period,
+            line,
+            implied: false,
+          });
+        }
+        // How often the rounds reach two real weeks that share a weekday
+        // with neither inside the other, the larger within the post's days.
+        const weeks = [...real[period]!].map((key) => (key ? key.split(',').map(Number) : []));
+        if (
+          weeks.some((set) =>
+            weeks.some(
+              (larger) =>
+                larger.length > set.length &&
+                larger.length <= max &&
+                set.some((day) => larger.includes(day)) &&
+                !set.every((day) => larger.includes(day)),
+            ),
+          )
+        ) {
+          overlapping++;
+        }
+      });
     }
     expect(told).toBeGreaterThan(100);
+    expect(overlapping).toBeGreaterThan(0);
   });
 });

@@ -7387,6 +7387,48 @@ describe('OptimizationProxyService', () => {
           expect(Object.keys(limit()).sort()).toEqual(['id', 'lockedWeekdays', 'maxTeachingDaysPerWeek', 'teacherId']);
         });
 
+        it('leaves a set out of a period by each post’s own number of days, not by one day more', async () => {
+          // Co-taught until Christmas: Monday every week, Tuesday and
+          // Wednesday the even ones. The autumn's odd weeks hold {Mon} and
+          // its even weeks {Mon, Tue, Wed}. On the co-teacher's post of three
+          // days the larger set implies the smaller, which is left out; on
+          // the lead's post of two it is over the post and implies nothing,
+          // so {Mon} is a line of the autumn — read with three days, the
+          // lead's odd weeks would have no line the engine holds them to.
+          arrange({
+            requirements: [requirement({ coTeacherId: CO_TEACHER, lessonsPerWeek: 10 })],
+            posts: [post({ maxTeachingDaysPerWeek: 2 }), post({ id: 'post-of-co', userId: CO_TEACHER, maxTeachingDaysPerWeek: 3 })],
+            lockedLessons: [
+              lockedLesson({ id: 'mon', dayOfWeek: 1, coTeacherId: CO_TEACHER, endDate: at('2026-12-18') }),
+              lockedLesson({ id: 'tue', dayOfWeek: 2, coTeacherId: CO_TEACHER, recurrence: 'EVEN_WEEKS', endDate: at('2026-12-18') }),
+              lockedLesson({ id: 'wed', dayOfWeek: 3, coTeacherId: CO_TEACHER, recurrence: 'EVEN_WEEKS', endDate: at('2026-12-18') }),
+            ],
+          });
+          tx.academicYear.findUnique.mockResolvedValue({ startDate: at('2026-08-17'), endDate: at('2027-06-11') } as never);
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(postedPayload().periodWeeks).toEqual([18, 25]);
+          expect(postedPayload().teacherDayLimits!.map((sent) => [sent.maxTeachingDaysPerWeek, sent.lockedWeekdayPeriods])).toEqual([
+            [
+              2,
+              [
+                { weekdays: [], periods: [false, true] },
+                { weekdays: [1], periods: [true, false] },
+                { weekdays: [1, 2, 3], periods: [true, false] },
+              ],
+            ],
+            [
+              3,
+              [
+                { weekdays: [], periods: [false, true] },
+                { weekdays: [1, 2, 3], periods: [true, false] },
+              ],
+            ],
+          ]);
+        });
+
         it('counts the lessons the teacher co-teaches, and no colleague’s, nor one that takes no time', async () => {
           arrange({
             // Demand the four do not cover, so the engine is asked.
