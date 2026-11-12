@@ -7817,7 +7817,10 @@ class SchedulerSolver:
                             "windowStart": rule.lunch_start_time[:5],
                             "windowEnd": rule.lunch_end_time[:5],
                             "day": day_of_week,
-                            **({} if period is None else {"period": period}),
+                            **(
+                                {} if period is None
+                                else self._periods_with_these_locks(year, week, key, locked)
+                            ),
                         })
 
         # The rest against the longest night the week can offer.
@@ -8005,6 +8008,46 @@ class SchedulerSolver:
                     "days": limit.max_teaching_days_per_week,
                     "weekMinutes": week_minutes[teacher_id],
                 })
+
+    def _periods_with_these_locks(
+        self,
+        year: OptimizeScheduleRequest,
+        week: Weeks | None,
+        key: tuple[UUID, int],
+        locked: list[tuple[int, int]],
+    ) -> dict[str, str | int]:
+        """Where in the year a teacher's lunch is closed by these locks: every period that has them.
+
+        A LÄSÅR HAS MORE PERIODS THAN TERMS — every dated post of the school
+        cuts it — so the autumn's locks are in several, and the first of them
+        is often a few days long. Named by that one alone, the refusal read
+        "the weeks 15 to 16 August" for locks that close the lunch until
+        Christmas. So it says every period in which the teacher has a lesson
+        to place and the same locked hours on that weekday: `period`, the
+        first, and `periods` beside it where there are more ("0,1,2",
+        weeks.named's own two words, which the gateway reads together and
+        turns into one run of weeks).
+        """
+        assert week is not None
+        teacher_id = key[0]
+        same: list[int] = []
+        for period in range(week.periods):
+            term = Weeks(0b11 << (2 * period), week.periods)
+            if not any(
+                meet(weeks_of(requirement), term)
+                for requirement in year.requirements
+                if teacher_id in _teachers_of(requirement)
+            ):
+                continue
+            busy = self._teacher_busy_from_locks(
+                [fixed for fixed in year.fixed_lessons if meet(weeks_of(fixed), term)],
+            ).get(key, [])
+            if sorted(busy) == sorted(locked):
+                same.append(period)
+        said: dict[str, str | int] = {"period": same[0]}
+        if len(same) > 1:
+            said["periods"] = ",".join(str(period) for period in same)
+        return said
 
     def _locks_in_stretch(
         self,

@@ -437,6 +437,38 @@ def test_locks_that_fill_a_teachers_lunch_window_are_refused_for_the_term_they_f
         } | {"rule": refused.params["rule"]}
 
 
+def test_a_teachers_lunch_refusal_names_every_period_the_same_locks_close_it_in() -> None:
+    """A real year has more periods than terms, and the first is often a few days long.
+
+    Four periods. The teacher has a lesson to place in the first three; two
+    locks fill the window in the first two and in the last. The refusal is
+    the first two periods', both of them — one run of weeks to the gateway —
+    and not the first alone, nor the last, where the teacher has nothing to
+    place and is owed no break.
+    """
+    teacher = str(uuid4())
+    held = [True, True, False, True]
+    payload = _payload(
+        [_requirement(str(uuid4()), 2, teacher=teacher, periods=[True, True, True, False]),
+         _requirement(str(uuid4()), 1, periods=[False, False, False, True])],
+        teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, "lunchMinutes": 30,
+                           "lunchStartTime": "11:00:00", "lunchEndTime": "12:00:00"}],
+        fixedLessons=[
+            _lock(str(uuid4()), 1, "11:00:00", "11:30:00", teacher, held),
+            _lock(str(uuid4()), 1, "11:30:00", "12:00:00", teacher, held),
+        ],
+    )
+    refused = _refusal(payload)
+    assert refused.code == "TEACHER_LUNCH_LEAVES_NO_START"
+    assert (refused.params["period"], refused.params["periods"]) == (0, "0,1")
+    # Another lock in the second period, outside the window: other locked
+    # hours that day, and a period of its own.
+    payload["fixedLessons"].append(  # type: ignore[union-attr]
+        _lock(str(uuid4()), 1, "08:00:00", "09:00:00", teacher, [False, True, False, False]))
+    refused = _refusal(payload)
+    assert refused.params["period"] == 0 and "periods" not in refused.params
+
+
 def test_a_lock_in_each_term_leaves_each_term_its_lunch() -> None:
     """One half of the window locked in the autumn and the other in the spring: no refusal, and a timetable."""
     settings = _settings(5, "1")
