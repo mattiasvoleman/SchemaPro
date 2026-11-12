@@ -2088,6 +2088,8 @@ describe('OptimizationProxyService', () => {
         ['a post’s mask alone', [['body', 'requirements', 3, 'periods']]],
         ['a lock’s mask alone', [['body', 'fixedLessons', 0, 'periods']]],
         ['a released post’s mask alone', [['body', 'placements', 'requirements', 1, 'periods']]],
+        // An engine that knows periods and not yet a post's days by period names this alone.
+        ['a post’s days by period alone', [['body', 'teacherDayLimits', 0, 'lockedWeekdayPeriods']]],
       ] as [string, (string | number)[][]][])('reads %s as the same engine', async (_name, locs) => {
         http.post.mockReturnValue(throwError(() => refusing(...locs)));
         const error = await callWith(dated).catch((thrown: unknown) => thrown);
@@ -2108,6 +2110,7 @@ describe('OptimizationProxyService', () => {
           ['body', 'requirements', 0, 'colour'],
           ['body', 'periodWeeks', 0],
           ['body', 'periods'],
+          ['body', 'lockedWeekdayPeriods'],
           ['query', 'periodWeeks'],
         ]) {
           http.post.mockReturnValue(throwError(() => refusing(loc)));
@@ -7242,6 +7245,51 @@ describe('OptimizationProxyService', () => {
             [1, 2],
             [4, 5],
           ]);
+        });
+
+        it('sends each set with its periods once the läsår has them: the autumn’s Monday takes no day of the spring', async () => {
+          // The part-timer of the review of #300 (MEDEL-1): two days a week
+          // and a Monday kept until Christmas. Held against every week, the
+          // Monday left the spring one day; with its periods it is the
+          // autumn's, and the spring holds the empty week.
+          arrange({
+            requirements: [requirement({ lessonsPerWeek: 10 })],
+            posts: [post({ maxTeachingDaysPerWeek: 2 })],
+            lockedLessons: [lockedLesson({ id: 'mon', dayOfWeek: 1, endDate: at('2026-12-18') })],
+          });
+          tx.academicYear.findUnique.mockResolvedValue({ startDate: at('2026-08-17'), endDate: at('2027-06-11') } as never);
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(postedPayload().periodWeeks).toEqual([18, 25]);
+          expect(postedPayload().fixedLessons.map((lesson) => lesson.periods)).toEqual([[true, false]]);
+          // The sets as they were, for an engine that reads no periods of them.
+          expect(limit().lockedWeekdays).toEqual([[1]]);
+          expect(limit().lockedWeekdayPeriods).toEqual([
+            { weekdays: [], periods: [false, true] },
+            { weekdays: [1], periods: [true, false] },
+          ]);
+        });
+
+        it('sends no periods for a teacher whose fixed lessons every period holds alike, in a läsår that has periods', async () => {
+          // The periods are a colleague's: this teacher's Monday is every
+          // week's, and the limit is the object it was.
+          arrange({
+            requirements: [requirement({ lessonsPerWeek: 10 })],
+            posts: [post({ maxTeachingDaysPerWeek: 2 })],
+            lockedLessons: [
+              lockedLesson({ id: 'mon', dayOfWeek: 1 }),
+              lockedLesson({ id: 'colleague', dayOfWeek: 3, teacherId: CO_TEACHER, endDate: at('2026-12-18') }),
+            ],
+          });
+          tx.academicYear.findUnique.mockResolvedValue({ startDate: at('2026-08-17'), endDate: at('2027-06-11') } as never);
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(postedPayload().periodWeeks).toEqual([18, 25]);
+          expect(Object.keys(limit()).sort()).toEqual(['id', 'lockedWeekdays', 'maxTeachingDaysPerWeek', 'teacherId']);
         });
 
         it('counts the lessons the teacher co-teaches, and no colleague’s, nor one that takes no time', async () => {

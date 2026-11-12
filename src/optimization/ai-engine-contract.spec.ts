@@ -96,6 +96,14 @@ const WORK_RULE_FIELDS_STRETCH = [
  * the limit is held against in place of every weekday any of them holds.
  */
 const DAY_LIMIT_FIELDS = ['id', 'lockedWeekdays', 'maxTeachingDaysPerWeek', 'teacherId'];
+/**
+ * Terminer: the same sets with the periods each is held in, only for a
+ * teacher whose periods differ (lockedWeekdaySetsByPeriod). With it the
+ * engine's `_field_names(AnonymousTeacherDayLimit)` is THIS set, and each
+ * entry its `_field_names(LockedWeekdaysInPeriods)`.
+ */
+const DAY_LIMIT_FIELDS_DATED = [...DAY_LIMIT_FIELDS, 'lockedWeekdayPeriods'].sort();
+const LOCKED_WEEKDAY_PERIOD_FIELDS = ['periods', 'weekdays'];
 
 /** The top level with a day limit sent: the key exists only then. */
 const PAYLOAD_FIELDS_WITH_DAY_LIMITS = [...PAYLOAD_FIELDS, 'teacherDayLimits'].sort();
@@ -1499,6 +1507,36 @@ describe('AI engine wire contract', () => {
         lastTx['masterLesson']!['createMany']!.mock.calls as [{ data: { startDate: Date | null; endDate: Date | null }[] }][]
       ).flatMap(([call]) => call.data);
       expect(written.map((lesson) => [lesson.startDate, lesson.endDate])).toEqual([[null, day('2026-12-18')]]);
+    });
+
+    it('sends a post’s days their periods exactly as the engine declares them, beside the sets as they were', async () => {
+      // A lock on Tuesdays from 11 January, on a post of two days: the autumn
+      // and the weeks between the terms hold no weekday, the spring Tuesday.
+      const payload = await buildPayload(
+        { recurrence: 'ALL_WEEKS', startDate: null, endDate: day('2026-12-18') },
+        [lock('ml-spring', day('2027-01-11'), null)],
+        [],
+        (tx) => {
+          year(tx);
+          tx['teacherEmployment']!['findMany']!.mockResolvedValue([
+            { id: 'post-1', userId: 't1', maxTeachingDaysPerWeek: 2 },
+          ]);
+        },
+      );
+      const limits = payload['teacherDayLimits'] as Array<Record<string, unknown>>;
+
+      expect(payload['periodWeeks']).toEqual([18, 3, 22]);
+      expect(Object.keys(limits[0]!).sort()).toEqual(DAY_LIMIT_FIELDS_DATED);
+      expect(limits[0]!['lockedWeekdays']).toEqual([[2]]);
+      const held = limits[0]!['lockedWeekdayPeriods'] as Array<Record<string, unknown>>;
+      expect(held.map((entry) => Object.keys(entry).sort())).toEqual([
+        LOCKED_WEEKDAY_PERIOD_FIELDS,
+        LOCKED_WEEKDAY_PERIOD_FIELDS,
+      ]);
+      expect(held).toEqual([
+        { weekdays: [], periods: [true, true, false] },
+        { weekdays: [2], periods: [false, false, true] },
+      ]);
     });
 
     it('sends a school that dates nothing the payload it always sent, and reads no läsår for it', async () => {

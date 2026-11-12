@@ -455,6 +455,18 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
               ...limit,
               id: realOf(limit.id),
               teacherId: realOf(limit.teacherId),
+              // Terminer: the periods each set of weekdays is held in, as one
+              // string a set, for the requirements' reason: the digest sorts
+              // every array, and a sorted mask could not tell a Monday of the
+              // autumn from one of the spring. Only on a limit sent with them.
+              ...(limit.lockedWeekdayPeriods !== undefined
+                ? {
+                    lockedWeekdayPeriods: limit.lockedWeekdayPeriods.map((entry) => ({
+                      weekdays: entry.weekdays,
+                      periods: entry.periods.map((held) => (held ? '1' : '0')).join(''),
+                    })),
+                  }
+                : {}),
             })),
           }
         : {}),

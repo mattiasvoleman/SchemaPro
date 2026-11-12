@@ -62,6 +62,12 @@ export interface YearPeriods {
   /** Each period's weeks as stretches of days, in order, clipped to the läsår. */
   stretches: PeriodStretch[][];
   /**
+   * The period of each week of the läsår, from the week of its first day:
+   * for what is read week by week and sent period by period (a teacher's
+   * kept weekdays, src/common/teacher-day.ts).
+   */
+  weekPeriods: number[];
+  /**
    * Each entry's mask, by its position in what was read; undefined for an
    * entry that runs in every period, which is sent without the key.
    */
@@ -114,6 +120,7 @@ export function yearPeriodsOf(year: YearSpan, entries: readonly (readonly HeldWi
   const periodOf = new Map<string, number>();
   const firstWeek: number[] = [];
   const weeksIn: number[][] = [];
+  const weekPeriods: number[] = [];
   weeks.forEach((_, week) => {
     const signature = runs.map((inWeek, entry) => (dated[entry] && inWeek[week] ? '1' : '0')).join('');
     let period = periodOf.get(signature);
@@ -124,6 +131,7 @@ export function yearPeriodsOf(year: YearSpan, entries: readonly (readonly HeldWi
       weeksIn.push([]);
     }
     weeksIn[period]!.push(week);
+    weekPeriods.push(period);
   });
   // At least two by now: a dated entry runs in some week and not in another.
   if (firstWeek.length > MAX_PERIODS) return null;
@@ -144,6 +152,7 @@ export function yearPeriodsOf(year: YearSpan, entries: readonly (readonly HeldWi
       });
       return stretches;
     }),
+    weekPeriods,
     // The same in every week of a period, by what a period is: read in its first.
     masks: runs.map((inWeek, entry) => (dated[entry] ? firstWeek.map((week) => inWeek[week]!) : undefined)),
   };
