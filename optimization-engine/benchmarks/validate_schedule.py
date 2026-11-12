@@ -500,6 +500,84 @@ def _teacher_day_problems(request, lessons) -> list[str]:
     return problems
 
 
+def _teacher_lunch_problems(grid, request, lessons) -> list[str]:
+    """A teacher's own lunch (a work rule's lunch trio), re-read from the request's words.
+
+    A teacher a rule names, with a lesson the solver placed in this week, is
+    owed on every school day a gap of `lunchMinutes` inside the window
+    `lunchStartTime`-`lunchEndTime`, clear of every lesson they are on — a
+    placed one, or one locked in this week — and of what the school has
+    reserved for them (an UNAVAILABLE reservation of the teacher's). A day
+    reserved across the whole window owes none: the teacher is not there.
+
+    BY THE CLOCK AND WITHOUT MARGINS, which is the lenient reading on every
+    count: the engine rounds the window inward to its grid and a lock
+    outward, and keeps the break clear of the minutes around a lesson. Each
+    of those can only take a start away, so a week the engine laid has a gap
+    here, and a week with no gap here has none there either.
+
+    THE WEEK IS THIS REQUEST'S: validate() calls with one real week's lessons
+    and locks, so a lesson of the autumn is not in the way of the spring's
+    lunch — and the odd weeks' are not in the way of the even weeks', which
+    the engine is stricter about and this file has no reason to be.
+    """
+    rules = [
+        rule for rule in request.teacher_work_rules
+        if rule.lunch_minutes and rule.lunch_start_time and rule.lunch_end_time
+    ]
+    if not rules:
+        return []
+    req_by_id = {r.id: r for r in request.requirements}
+    busy: dict = defaultdict(lambda: defaultdict(list))
+    placed_on: set = set()
+    for lesson in lessons:
+        requirement = req_by_id.get(lesson.requirement_id)
+        if requirement is None:
+            continue
+        for teacher in _lesson_teachers(requirement, lesson):
+            placed_on.add(teacher)
+            busy[teacher][lesson.day_of_week].append((_clock(lesson.start_time), _clock(lesson.end_time)))
+    for fixed in request.fixed_lessons:
+        for teacher in {fixed.teacher_id, fixed.co_teacher_id} - {None}:
+            busy[teacher][fixed.day_of_week].append((_clock(fixed.start_time), _clock(fixed.end_time)))
+    closed: dict = defaultdict(lambda: defaultdict(list))
+    for constraint in request.constraints:
+        if constraint.resource_kind != "TEACHER" or constraint.kind != "UNAVAILABLE":
+            continue
+        days = [constraint.day_of_week] if constraint.day_of_week is not None else grid.schedule_days
+        for day in days:
+            closed[constraint.resource_id][day].append(
+                (_clock(constraint.start_time), _clock(constraint.end_time)))
+
+    problems: list[str] = []
+    for rule in rules:
+        teacher = rule.teacher_id
+        if teacher not in placed_on:
+            continue
+        low = max(_clock(rule.lunch_start_time), grid.day_start_minutes)
+        high = min(_clock(rule.lunch_end_time), grid.day_end_minutes)
+        for weekday in grid.schedule_days:
+            away = closed.get(teacher, {}).get(weekday, [])
+            if _union_minutes([(max(low, a), min(high, b)) for a, b in away]) >= high - low:
+                continue
+            taken = sorted(
+                (max(low, a), min(high, b))
+                for a, b in busy.get(teacher, {}).get(weekday, []) + away
+                if min(high, b) > max(low, a)
+            )
+            longest, reach = 0, low
+            for start, end in taken:
+                longest = max(longest, start - reach)
+                reach = max(reach, end)
+            longest = max(longest, high - reach)
+            if longest < rule.lunch_minutes:
+                problems.append(
+                    f"teacher work rule {rule.id}: no {rule.lunch_minutes}-minute lunch inside "
+                    f"{rule.lunch_start_time[:5]}-{rule.lunch_end_time[:5]} on weekday {weekday} "
+                    f"(longest gap {max(0, longest)} minutes)")
+    return problems
+
+
 def stretch_breaches(request, lessons) -> list[dict]:
     """Sammanhängande undervisning — every stretch of teaching longer than its teacher's limit.
 
@@ -718,9 +796,31 @@ def _weeks(request):
             )
             weeks.append((label, request.model_copy(update={
                 "requirements": requirements, "fixed_lessons": fixed_lessons,
+                "teacher_day_limits": _limits_of_period(request, period),
                 "period_weeks": None,
             })))
     return weeks
+
+
+def _limits_of_period(request, period):
+    """The posts' days as one period's weeks hold them: the sets that period is named for.
+
+    `lockedWeekdayPeriods`, where a limit carries it, says for each set of
+    locked weekdays which periods have a week with exactly that set. A week
+    of period p is then held to the sets marked for p, and to no other
+    term's; a limit without it holds every set in every week, as it did.
+    """
+    if period is None:
+        return request.teacher_day_limits
+    return [
+        limit if limit.locked_weekday_periods is None else limit.model_copy(update={
+            "locked_weekdays": [
+                list(entry.weekdays) for entry in limit.locked_weekday_periods if entry.periods[period]
+            ],
+            "locked_weekday_periods": None,
+        })
+        for limit in request.teacher_day_limits
+    ]
 
 
 def validate(grid, request, lessons) -> list[str]:
@@ -1122,6 +1222,7 @@ def _validate_week(grid, request, lessons, classes=None) -> list[str]:
     problems.extend(_distribution_problems(request, placed_weekdays))
     problems.extend(_block_problems(request, lessons))
     problems.extend(_teacher_day_problems(request, lessons))
+    problems.extend(_teacher_lunch_problems(grid, request, lessons))
     problems.extend(_travel_problems(request, lessons))
 
     rules = request.rules

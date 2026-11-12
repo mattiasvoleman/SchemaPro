@@ -98,6 +98,7 @@ from ortools.sat.python import cp_model
 
 from app.schemas.schedule import (
     AnonymousRequirement,
+    AnonymousTeacherDayLimit,
     ConflictDetail,
     FixedLesson,
     OptimizeScheduleRequest,
@@ -361,6 +362,19 @@ def _week_lessons(
     return requirement is not None and meet(weeks_of(requirement), week)
 
 
+def _held_weekdays(limit: AnonymousTeacherDayLimit, week: Weeks | None) -> set[frozenset[int]]:
+    """The sets of locked weekdays a post's days are held against in one week.
+
+    The model's own reading (scheduler_solver._week_sets, before it leaves out
+    what another set implies): every set of the limit, or, where the sets
+    carry their periods, those of the week's.
+    """
+    by_period = limit.locked_weekday_periods
+    if by_period is None:
+        return {frozenset(weekdays) for weekdays in limit.locked_weekdays}
+    return {frozenset(entry.weekdays) for entry in by_period if meet(weeks_of(entry), week)}
+
+
 def _weeks_of(request: OptimizeScheduleRequest) -> tuple[Weeks | None, ...]:
     """The weeks the request's lessons and locks tell apart: one, every week, for a school with none."""
     return each_week([
@@ -494,7 +508,7 @@ def _work_day_deviations(
             if not generated:
                 continue
             worst: tuple[int, frozenset[int]] | None = None
-            for held in {frozenset(weekdays) for weekdays in limit.locked_weekdays}:
+            for held in _held_weekdays(limit, week):
                 outside = [day for day in generated if day not in held]
                 over = len(outside) - max(0, limit.max_teaching_days_per_week - len(held))
                 if over > 0 and (worst is None or over > worst[0]):

@@ -236,6 +236,27 @@ def meet(first: Weeks | str | None, second: Weeks | str | None) -> bool:
     return bool(first.lifted(periods) & second.lifted(periods))  # type: ignore[union-attr]
 
 
+def whole_periods(week: Weeks | str | None) -> Weeks | None:
+    """The periods these weeks lie in, in both parities; None when that is every week.
+
+    What a row is cut by when it is held per PERIOD and not per parity: a
+    teacher's own lunch (scheduler_solver._add_teacher_lunch) is one hour for
+    the odd weeks and the even ones of a term, as it always was, and its own
+    hour in each term. A parity alone — a year without periods — is every week
+    here, so such a year is cut by nothing and builds what it built.
+    """
+    week = _weeks(week)
+    if week is None:
+        return None
+    bits = 0
+    for period in range(week.periods):
+        if (week.bits >> (2 * period)) & 0b11:
+            bits |= 0b11 << (2 * period)
+    if bits == (1 << (2 * week.periods)) - 1:
+        return None
+    return Weeks(bits, week.periods)
+
+
 def alternates(weeks: Iterable[Weeks | str | None]) -> bool:
     """Whether any of these runs in some weeks only."""
     return any(runs is not None for runs in weeks)

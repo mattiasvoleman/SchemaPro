@@ -4774,6 +4774,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         AnonymousTeacherWorkRule,
         FixedLesson,
         FrameTime,
+        LockedWeekdaysInPeriods,
         LunchPlacement,
         LunchServing,
         OptimizeScheduleRequest,
@@ -4936,12 +4937,18 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
     # reading of the real weeks — the weekdays the teacher's preserved
     # lessons hold together in each — and is required on every limit, [[]]
     # for a teacher with no lock: the engine has no weeks to read it from.
+    #
+    # Terminer: lockedWeekdayPeriods is the same sets with the periods each is
+    # held in, sent only for a teacher whose periods differ — and then beside
+    # lockedWeekdays, never in its place.
     assert _field_names(AnonymousTeacherDayLimit) == {
         "id",
         "teacherId",
         "maxTeachingDaysPerWeek",
         "lockedWeekdays",
+        "lockedWeekdayPeriods",
     }
+    assert _field_names(LockedWeekdaysInPeriods) == {"weekdays", "periods"}
     # The group's years, so a serving and a frame can reach a MEAL — which has
     # no requirement to read a span off.
     assert _field_names(AnonymousGroup) == {
