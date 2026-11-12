@@ -176,7 +176,9 @@ export function yearPeriodsOf(year: YearSpan, entries: readonly (readonly HeldWi
  * meet (the autumn ends on the Sunday the spring starts after) are one
  * stretch, so the sentence names the whole run of weeks and not the half of
  * it the first index stands for. A `periods` that cannot be read is left
- * alone and the first period's stretches stand, as before.
+ * alone and the first period's stretches stand, as before. A period listed
+ * twice ("0,0") is that period once: its stretch read twice would be counted
+ * as two, and the sentence would add other weeks that do not exist.
  */
 export function withPeriodDates<P extends Record<string, string | number>>(
   params: P,
@@ -188,7 +190,7 @@ export function withPeriodDates<P extends Record<string, string | number>>(
   if (!own || own.length === 0) return params;
   const listed =
     typeof params.periods === 'string' && /^\d+(,\d+)*$/.test(params.periods)
-      ? params.periods.split(',').map(Number)
+      ? [...new Set(params.periods.split(',').map(Number))]
       : [period];
   const readable = listed.includes(period) && listed.every((index) => (stretches[index]?.length ?? 0) > 0);
   const joined = joinedStretches((readable ? listed : [period]).flatMap((index) => stretches[index]!));
@@ -239,9 +241,9 @@ export function periodSentence(params: Record<string, string | number>): string 
  * the stretches not written out: a part that comes back later in the year, or
  * a third part.
  *
- * Params without the key, with fewer than two parts, or naming a period the
- * read does not have, are returned as they came: the refusal then says what
- * it always said.
+ * Params without the key, with fewer than two parts, naming a period the
+ * read does not have, or naming one period in two parts, are returned as they
+ * came: the refusal then says what it always said.
  */
 export function withLockPeriodDates<P extends Record<string, string | number>>(
   params: P,
@@ -252,7 +254,10 @@ export function withLockPeriodDates<P extends Record<string, string | number>>(
   const listed = params.lockPeriods;
   if (typeof listed !== 'string' || !/^\d+(,\d+)*(;\d+(,\d+)*)+$/.test(listed) || !stretches) return params;
   const parts = listed.split(';').map((part) => [...new Set(part.split(',').map(Number))]);
-  if (parts.flat().some((index) => (stretches[index]?.length ?? 0) === 0)) return params;
+  const named = parts.flat();
+  if (named.some((index) => (stretches[index]?.length ?? 0) === 0)) return params;
+  // A period in two parts would have its weeks written out as both of them.
+  if (new Set(named).size !== named.length) return params;
   const runs = parts.map((part) => joinedStretches(part.flatMap((index) => stretches[index]!)));
   const [first, second] = [runs[0]![0]!, runs[1]![0]!].sort(byFrom);
   return {

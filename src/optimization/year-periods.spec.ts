@@ -384,6 +384,17 @@ describe('withPeriodDates', () => {
         period: 0, periods, periodFrom: '2026-08-17', periodTo: '2026-12-20', periodStretches: 1,
       });
     }
+    // A period listed twice is that period once: no stretch is counted twice, and the
+    // sentence adds no other weeks (review of #301, round two, LÅG-1).
+    for (const [twice, once] of [['0,0', '0'], ['0,2,0', '0,2'], ['1,0,1,0', '0,1'], ['2,2,2', '2']] as const) {
+      const first = Number(once[0]);
+      const dated = withPeriodDates({ period: first, periods: once }, year);
+      expect(withPeriodDates({ period: first, periods: twice }, year)).toEqual({ ...dated, periods: twice });
+    }
+    expect(withPeriodDates({ period: 0, periods: '0,0' }, year)).toMatchObject({ periodStretches: 1 });
+    expect(periodSentence(withPeriodDates({ period: 0, periods: '0,0' }, year))).toBe(
+      ' Counted for the weeks from 2026-08-17 to 2026-12-20, which is when these run together.',
+    );
     // And the sentence follows: the other weeks are said, with the parity.
     expect(periodSentence(withPeriodDates({ period: 0, periods: '0,2', parity: 'ODD_WEEKS' }, year))).toBe(
       ' Counted for the weeks from 2026-08-17 to 2026-12-20 and the other weeks with the same entries' +
@@ -510,6 +521,10 @@ describe('periodSentence', () => {
         { ...refusal, lockPeriods: ';0;2' },
         { ...refusal, lockPeriods: '0,;2' },
         { ...refusal, lockPeriods: 'a;b' },
+        // One period in two parts: the same weeks would be written out as both.
+        { ...refusal, lockPeriods: '0;0' },
+        { ...refusal, lockPeriods: '0,2;2' },
+        { ...refusal, lockPeriods: '0;1;0' },
         { ...refusal, lockPeriods: '' },
         { ...refusal, lockPeriods: 2 },
       ]) {
