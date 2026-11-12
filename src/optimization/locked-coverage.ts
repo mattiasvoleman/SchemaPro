@@ -119,9 +119,10 @@ export function coverLockedSharedLessons(
  * How much of the weekly demand is already placed by hand.
  *
  * Only a lesson that is there for every week the requirement is can cancel
- * one of its lessons a week. The engine has no concept of weeks at all, so
- * whatever is subtracted here is subtracted from all of them alike — there
- * is no way to say "one lesson, but only on odd ones". That leaves only the
+ * one of its lessons a week. The engine places each lesson of a requirement
+ * once, for every week the requirement runs, so whatever is subtracted here
+ * is subtracted from all of them alike — there is no way to say "one lesson,
+ * but only on odd ones". That leaves only the
  * choice of which way to be wrong, and the two directions are not
  * symmetric.
  *

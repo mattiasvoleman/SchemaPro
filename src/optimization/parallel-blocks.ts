@@ -79,7 +79,8 @@ export interface BlockJudgement {
  *    refused as partly locked. EVERY preserved lesson of a member counts, not
  *    only those that cancel demand, for the reason lockedDays gives (one
  *    locked odd weeks is still on its Monday in the weeks it runs, and the
- *    engine, which has no weeks, would place the block beside it).
+ *    engine, which places a block once for all its weeks, would place it
+ *    beside it).
  *  - Otherwise every member has its whole demand, which the database holds
  *    equal across the block (TB409), and a block of two or more members with
  *    lessons to place is sent.

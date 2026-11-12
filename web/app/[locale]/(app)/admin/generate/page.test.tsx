@@ -601,6 +601,49 @@ describe("a days refusal, read with HR-läs", () => {
     );
   });
 
+  it("terminer: says which weeks a refusal was counted for, under its sentence and before the names", () => {
+    const refused = (params: Record<string, string | number>) => ({
+      id: "job-p",
+      status: "SUCCEEDED",
+      solverStatus: "INFEASIBLE",
+      conflictSummary: "Too many lessons for one teacher's hours.",
+      conflictSummaryCode: "DEMAND_TEACHER_HOURS_SHORT",
+      conflictSummaryParams: params,
+      conflictSummaryNames: ["Eva Ek"],
+      conflicts: [{ category: "REQUIREMENT_DEMAND", message: "x", resourceNames: [] }],
+      createdAt: "2026-10-18T10:00:00.000Z",
+    });
+    state.job = refused({ teachers: 1, period: 2, periodFrom: "2027-01-11", periodTo: "2027-01-17", periodStretches: 1 });
+    const { unmount } = render(<GeneratePage />);
+
+    const sentence = screen.getByText("engineMessages.DEMAND_TEACHER_HOURS_SHORT(1|2|2027-01-11|2027-01-17|1)");
+    const note = sentence.nextElementSibling!;
+    expect(note).toHaveTextContent("generate.countedInPeriod(11 januari 2027|17 januari 2027|no|ALL)");
+    expect(note.nextElementSibling).toHaveTextContent(/^Eva Ek$/);
+    unmount();
+
+    // A period of several stretches, counted in the odd weeks only, says both.
+    state.job = refused({
+      teachers: 1,
+      period: 0,
+      periodFrom: "2026-08-17",
+      periodTo: "2026-12-20",
+      periodStretches: 2,
+      parity: "ODD_WEEKS",
+    });
+    const again = render(<GeneratePage />);
+    expect(
+      screen.getByText("generate.countedInPeriod(17 augusti 2026|20 december 2026|yes|ODD_WEEKS)"),
+    ).toBeInTheDocument();
+    again.unmount();
+
+    // A refusal that names no period — every refusal of a school that dates nothing — has no such line.
+    state.job = refused({ teachers: 1 });
+    render(<GeneratePage />);
+    expect(screen.queryByText(/generate\.countedInPeriod/)).not.toBeInTheDocument();
+    expect(screen.getByText("engineMessages.DEMAND_TEACHER_HOURS_SHORT(1)").nextElementSibling).toHaveTextContent(/^Eva Ek$/);
+  });
+
   it("names nobody under a summary that came with an empty list, or with none", () => {
     const summary = (extra: Record<string, unknown>) => ({
       id: "job-s",
@@ -1573,7 +1616,7 @@ describe("Schemaförslag beside Generera (design §6)", () => {
     expect(screen.getByRole("button", { name: "scheduleCandidates.section.start" })).toBeEnabled();
   });
 
-  it.each(["GENERATE_STALE", "SCHEDULE_BUSY"])("says in its own words why a job stopped before writing (%s)", (code) => {
+  it.each(["GENERATE_STALE", "SCHEDULE_BUSY", "ENGINE_LACKS_PERIODS"])("says in its own words why a job stopped before writing (%s)", (code) => {
     // The gateway's codes, not the engine's: engineMessages has no sentence
     // for them, so without these the admin would read the English.
     state.job = {

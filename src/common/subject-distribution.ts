@@ -34,8 +34,9 @@
  * week never meets one that starts in that week. Nor are they needed: a
  * Monday lesson that ends on the Monday and a Tuesday lesson that starts on
  * the Tuesday share no date and are taught in one week, on days in a row.
- * The engine has no weeks at all and counts every locked lesson; its reading
- * is the stricter one, which is the safe direction for a generator and would
+ * The engine is told a post's locked weekdays without their weeks
+ * (lockedDays) and counts every locked lesson; its reading is the stricter
+ * one, which is the safe direction for a generator and would
  * be the noisy one here.
  *
  * PURE. Dates are 'YYYY-MM-DD', read as the midnight UTC a @db.Date column

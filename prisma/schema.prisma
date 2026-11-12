@@ -2334,12 +2334,12 @@ model TeachingRequirement {
   /// actually runs, so 2 lessons a week over a spring-only window is two a week
   /// that spring — not two averaged across the year.
   ///
-  /// The engine has no concept of weeks (optimization-proxy.service.ts), so it
-  /// still packs a windowed requirement as if it ran all year: the window is
-  /// stamped on the resulting lessons afterwards. That over-provisions — two
-  /// half-year subjects get separate slots where they could have shared one —
-  /// which costs packing room and not correctness, and is visible on the
-  /// timetable rather than hidden.
+  /// The engine has no dates, so the gateway tells it what the window comes
+  /// to: the periods of the läsår the requirement runs in, beside its parity
+  /// (src/optimization/year-periods.ts). Two half-year subjects that never
+  /// share a week may then share a slot, a teacher and a room, and nothing
+  /// counts them in one week. The window is stamped on the resulting lessons
+  /// as it always was.
   recurrence LessonRecurrence @default(ALL_WEEKS)
   /// First date the requirement is read; null means "from the start of the
   /// year". With endDate this expresses a subject read for one term only.
@@ -3954,8 +3954,9 @@ model TeacherEmployment {
   /// teaching the post allows, 1..6; null = no limit. HARD where set, in the
   /// generator, a hand edit's warning and the Vikarietavla. HR data like the
   /// tjänstgöringsgrad: hideHr leaves it out for an administrator without
-  /// HR-läs, and no refusal, warning or ranking states it to them. The whole
-  /// year's, not a period's: the generator plans one week.
+  /// HR-läs, and no refusal, warning or ranking states it to them. One figure
+  /// for the whole year, not one per period: the generator holds it in every
+  /// week it plans (terminer: each period of the läsår on its own).
   maxTeachingDaysPerWeek       Int?
   /// Sammanhängande undervisning (20261218090000): the most minutes of teaching
   /// in a row, a stretch ending at a break of `consecutiveBreakMinutes`

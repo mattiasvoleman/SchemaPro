@@ -59,10 +59,23 @@ export interface AnonymousRequirement {
    * (weeksCanOverlap, calendar/lesson-recurrence.ts). lessonsPerWeek counts
    * the weeks it runs. Sent only on an alternating requirement, so every
    * other payload is what it always was; absent = every week on the engine
-   * (AnonymousRequirement.recurrence). A requirement's dates are not sent:
-   * the engine plans the year as one odd and one even week.
+   * (AnonymousRequirement.recurrence). A requirement's dates are not sent
+   * either: what they amount to is, as `periods` below.
    */
   recurrence?: AlternatingWeeks;
+  /**
+   * Terminer: the periods of the läsår the requirement runs in, as a mask
+   * over the periods its dates and every other entry's cut the year into
+   * (year-periods.ts) — [true, false] is a post of the first of two. A post of
+   * the autumn and one of the spring then never meet in the engine, and may
+   * share an hour, a teacher, a room and the pupils. Every mask of a payload
+   * has the same length, and periodWeeks counts the same periods. Sent only on
+   * an entry some period leaves out, so a school that dates no post sends the
+   * payload it always sent; absent = every period on the engine
+   * (AnonymousRequirement.periods). A leader post of two blocks on the same
+   * times carries its followers' periods beside its own (same-times.ts).
+   */
+  periods?: boolean[];
   teacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
@@ -516,10 +529,17 @@ export interface AnonymousFixedLesson {
   /**
    * A/B-veckor: the lock holds its window only in odd ISO weeks or only in
    * even ones, so a lesson of the other weeks may take its hour. Sent only on
-   * an alternating lock (FixedLesson.recurrence); a lock with dates and every
-   * week is still every week to the engine.
+   * an alternating lock (FixedLesson.recurrence); a lock's dates are its
+   * `periods`.
    */
   recurrence?: AlternatingWeeks;
+  /**
+   * Terminer: the periods of the läsår the lock holds its window in, as
+   * AnonymousRequirement.periods says them. A lesson locked for the autumn
+   * leaves its hour to a generated lesson of the spring. Sent only on a lock
+   * some period leaves out (FixedLesson.periods).
+   */
+  periods?: boolean[];
   roomId: string | null;
   dayOfWeek: DayOfWeek;
   /** HH:MM:SS */
@@ -687,6 +707,14 @@ export interface AiEngineScheduleRequest {
    * it always sent.
    */
   placements?: AnonymousPlacements;
+  /**
+   * Terminer: how many real weeks each period of the läsår is, in the masks'
+   * order (AnonymousRequirement.periods). Weights for what the engine
+   * MEASURES — a hole that exists in one period is that period's share of a
+   * hole — and never a rule. The KEY is sent only beside a mask, so every
+   * school that dates no post sends the payload it always sent.
+   */
+  periodWeeks?: number[];
 }
 
 /**

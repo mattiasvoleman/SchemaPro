@@ -53,6 +53,7 @@ import {
   PlanningYearPicker,
   ProjectedRostersBanner,
 } from "@/components/schedule/planning-year";
+import { PeriodNote } from "@/components/schedule/period-note";
 import { CandidatesSection, candidatesHref } from "./candidates-section";
 import { useScheduleCandidates } from "./use-schedule-candidates";
 
@@ -167,10 +168,10 @@ export default function GeneratePage() {
 
   /**
    * Uppdrag with Från or Till and fixed times (migration 20261017090000).
-   * The master is one week, so the engine holds such a time free in every
-   * week of the year, as it holds a dated requirement's lessons: the
-   * vikarietavla and the load count only the uppdrag's dates, the weekly
-   * timetable cannot. Said here, before the run, because a teacher missing
+   * Its times reach the engine as reservations, which carry no weeks, so the
+   * engine holds such a time free in every week of the year — unlike a dated
+   * requirement, which it plans only in the weeks it runs (terminer). The
+   * vikarietavla and the load count only the uppdrag's dates. Said here, before the run, because a teacher missing
    * from Tuesday 15:00 in September for an APT that starts in January is
    * otherwise a mystery in the grid. keepsTimesAllYear is the rule, the one
    * the duties card says the same sentence by: dates on the läsår's own
@@ -485,14 +486,19 @@ export default function GeneratePage() {
   /**
    * The gateway's own reasons for a job it stopped before writing, which are
    * not the engine's and so not in its catalogue: the draft changed under
-   * the run (GENERATE_STALE), or another write held the year (SCHEDULE_BUSY).
+   * the run (GENERATE_STALE), another write held the year (SCHEDULE_BUSY), or
+   * the engine is older than the periods the run carried (ENGINE_LACKS_PERIODS).
    */
   const jobErrorText = (code: string | null): string | null =>
     code === "GENERATE_STALE"
       ? tCandidates("jobErrors.GENERATE_STALE")
       : code === "SCHEDULE_BUSY"
         ? tCandidates("jobErrors.SCHEDULE_BUSY")
-        : null;
+        : // Terminer: an engine older than the periods a school with dated
+          // posts is sent, in the minutes of a release or after a rollback.
+          code === "ENGINE_LACKS_PERIODS"
+          ? tCandidates("jobErrors.ENGINE_LACKS_PERIODS")
+          : null;
 
   const solverStatus = job?.status === "SUCCEEDED" ? job.solverStatus : null;
   // Both verdicts mean "no timetable came back", but only INFEASIBLE is a
@@ -956,6 +962,8 @@ export default function GeneratePage() {
                             params: job.errorParams,
                           })}
                         </p>
+                        {/* Terminer: where in the läsår a week was counted, when it was one part of it. */}
+                        <PeriodNote params={job.errorParams} />
                         {errorNames.length > 0 ? <p className="font-medium">{errorNames.join(", ")}</p> : null}
                       </>
                     )
@@ -1031,6 +1039,7 @@ export default function GeneratePage() {
                       params: job.conflictSummaryParams,
                     })}
                   </p>
+                  <PeriodNote params={job.conflictSummaryParams} />
                   {summaryNames.length > 0 ? <p className="text-sm font-medium">{summaryNames.join(", ")}</p> : null}
                 </>
               ) : null}

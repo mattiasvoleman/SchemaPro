@@ -22,8 +22,10 @@ import type { Prisma } from '@prisma/client';
  *
  * AN UPPDRAG'S DATES ARE NOT. A time of an uppdrag that runs from January
  * still blocks the teacher in the year's weekly master for the whole year:
- * the master is one week, and the engine has no dated week to hold it in. A
- * dated teaching requirement over-provisions the same way. The vikarietavla,
+ * the master is one week, and a reservation is every week's in the engine.
+ * (A dated teaching requirement is no longer read so: the generator is told
+ * the periods its dates come to, src/optimization/year-periods.ts.) The
+ * vikarietavla,
  * which works on a date, reads the dates (cover-context.ts).
  */
 export function constraintsOfYear(academicYearId: string): Prisma.AvailabilityConstraintWhereInput {

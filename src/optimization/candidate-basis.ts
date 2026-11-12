@@ -71,6 +71,7 @@ export const BASIS_PAYLOAD_FIELDS = [
   'groups',
   'lunchPlacements',
   'lunchServings',
+  'periodWeeks',
   'placementRules',
   'placements',
   'previousLessons',
@@ -111,6 +112,16 @@ export interface PreservedContent {
    * and a lock moved between odd and even weeks makes a run stale.
    */
   recurrence?: Exclude<LessonRecurrence, 'ALL_WEEKS'>;
+  /**
+   * Terminer: the lock's own dates, YYYY-MM-DD, which are what the engine was
+   * told its periods by (year-periods.ts). Each only when set, so a school
+   * without a dated lock hashes what it did, and a lock moved to another term
+   * makes a run stale. The dates and not the mask: an apply compares this
+   * with the preserved masters in the database (preservedContentOf), where a
+   * row has its dates and no mask.
+   */
+  startDate?: string;
+  endDate?: string;
 }
 
 /** One of the draft's own (non-preserved) lessons, by content. */
@@ -148,6 +159,7 @@ export type BasisPayload = Pick<
   | 'previousLessons'
   | 'groupConflicts'
   | 'siteTravelTimes'
+  | 'periodWeeks'
   | 'pupilGaps'
   | 'placementRules'
   | 'placements'
@@ -189,6 +201,13 @@ export interface BasisSource {
    * school with none, whose `requirements` part is then what it always was.
    */
   mirrors?: readonly MirroredRow[];
+  /**
+   * Terminer: each fixed lesson's own dates, by its id in the payload — the
+   * payload carries what they amount to (periods), and the basis reads the
+   * dates themselves (PreservedContent.startDate). Absent for a caller with
+   * no dated lock.
+   */
+  lockDates?: ReadonlyMap<string, { startDate: string | null; endDate: string | null }>;
 }
 
 /** The six parts' content, in real ids, before hashing. */
@@ -303,6 +322,12 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
     coTeacherId: realOrNull(requirement.coTeacherId),
     requiredRoomType: realOrNull(requirement.requiredRoomType),
     ...(requirement.blockId !== undefined ? { blockId: realOf(requirement.blockId) } : {}),
+    // Terminer: the periods as one string, because the digest sorts every
+    // array (canonicalJson) and a sorted mask could not tell the autumn's
+    // post from the spring's. Only on a post sent with them.
+    ...(requirement.periods !== undefined
+      ? { periods: requirement.periods.map((runs) => (runs ? '1' : '0')).join('') }
+      : {}),
     // Delade lektioner: each lesson's teacher, so shares changed since the
     // run make it stale. As [length, teacher] pairs, because the digest
     // sorts every array (canonicalJson) and a list of teachers sorted
@@ -326,6 +351,8 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
    */
   const placedFixed = new Set((payload.placements?.lessons ?? []).map((lesson) => lesson.fixedLessonId));
   const fixedById = new Map(payload.fixedLessons.map((lesson) => [lesson.id, lesson]));
+  const fixedLessonContent = (lesson: AnonymousFixedLesson, real: (anonId: string) => string): PreservedContent =>
+    fixedContent(lesson, real, source.lockDates?.get(lesson.id));
 
   return {
     // As sent, every field, so a field the engine is sent later is covered the
@@ -352,6 +379,10 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
             },
           ]
         : []),
+      // Terminer: how long each period is, in the masks' order (a string, for
+      // the masks' reason). Only when the year is cut, so every other school's
+      // part hashes as before; the weights move what a candidate is priced by.
+      ...(payload.periodWeeks !== undefined ? [{ periodWeeks: payload.periodWeeks.join(',') }] : []),
     ],
     preserved: payload.fixedLessons
       .filter((lesson) => !placedFixed.has(lesson.id))
@@ -514,9 +545,10 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
  * names the same ones over a database row — the apply's last check compares
  * the two, and they agree because they are this one shape.
  */
-function fixedLessonContent(
+function fixedContent(
   lesson: AnonymousFixedLesson,
   realOf: (anonId: string) => string,
+  dates?: { startDate: string | null; endDate: string | null },
 ): PreservedContent {
   const orNull = (anonId: string | null): string | null => (anonId === null ? null : realOf(anonId));
   return {
@@ -529,6 +561,8 @@ function fixedLessonContent(
     startTime: lesson.startTime,
     endTime: lesson.endTime,
     ...(lesson.recurrence !== undefined ? { recurrence: lesson.recurrence } : {}),
+    ...(dates?.startDate ? { startDate: dates.startDate } : {}),
+    ...(dates?.endDate ? { endDate: dates.endDate } : {}),
   };
 }
 
@@ -544,6 +578,9 @@ export interface PreservedRow {
   extraGroups?: { studentGroupId: string }[];
   /** A/B-veckor: read wherever this is compared with a payload's lock (fixedLessonContent). */
   recurrence: LessonRecurrence;
+  /** Terminer: the row's own dates, read for the same comparison. Absent reads as open. */
+  startDate?: Date | null;
+  endDate?: Date | null;
 }
 
 /**
@@ -562,6 +599,8 @@ export function preservedContentOf(row: PreservedRow): PreservedContent {
     startTime: clockOf(row.startTime, true) ?? '',
     endTime: clockOf(row.endTime, true) ?? '',
     ...(row.recurrence !== 'ALL_WEEKS' ? { recurrence: row.recurrence } : {}),
+    ...(row.startDate ? { startDate: dayOf(row.startDate)! } : {}),
+    ...(row.endDate ? { endDate: dayOf(row.endDate)! } : {}),
   };
 }
 
