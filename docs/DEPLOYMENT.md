@@ -4911,12 +4911,29 @@ and `LunchSittings` holds one row per class and weekday of a läsår. A class
 lock 11:00–11:30 in the autumn and one 11:30–12:00 in the spring, in a
 window 11:00–12:00 for 30 minutes: each term has a break, and Generera
 answers 400 `LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK` ("Låsta lektioner lämnar
-klassen … ingen lunchlucka"), without a period. It never lays a timetable
-that breaks a rule. The way round: move or unlock one of the two locks.
-Production had no locked lesson when this was written. A meal per period
-needs a migration (dates on `LunchSittings` and `PublishedLunchSittings`,
-an exclusion constraint in place of the unique key) and every reader of the
-table; it is not built.
+klassen … ingen lunchlucka"). It never lays a timetable that breaks a rule.
+A förlagd post is a lock to the engine, so a post förlagd in the autumn and
+one in the spring, in the same class's lunch window on the same weekday, is
+the same case: the week is refused with each förläggning named and this
+sentence beneath them.
+
+The refusal says what it is. When no one period's locks close the window
+alone, the engine names the periods whose locks take a start of it
+(`lockPeriods`, "0,2"), the gateway adds the days of the two earliest
+(`lockFrom`, `lockTo`, `otherLockFrom`, `otherLockTo`, and
+`lockWeeksElsewhere` for the stretches not written out), and the line under
+the sentence reads: "De låsta lektionerna som tillsammans stänger
+lunchfönstret ligger i olika delar av läsåret: veckorna 17 augusti 2026 –
+20 december 2026 och veckorna 11 januari 2027 – 11 juni 2027. Klassens lunch
+är en och samma tid hela läsåret och måste därför gå fri från låsta
+lektioner i varje del av det." The same code and the same values as before,
+with those beside them; a refusal that one period's locks cause alone
+carries none of them and reads exactly as it did. The way round: move or
+unlock one of the locks.
+
+A meal per period needs a migration (dates on `LunchSittings` and
+`PublishedLunchSittings`, an exclusion constraint in place of the unique
+key) and every reader of the table; it is not built.
 
 ### 19.4 Operations
 
