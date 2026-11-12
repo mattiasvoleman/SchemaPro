@@ -62,6 +62,12 @@ export interface YearPeriods {
   /** Each period's weeks as stretches of days, in order, clipped to the läsår. */
   stretches: PeriodStretch[][];
   /**
+   * The period of each week of the läsår, from the week of its first day:
+   * for what is read week by week and sent period by period (a teacher's
+   * kept weekdays, src/common/teacher-day.ts).
+   */
+  weekPeriods: number[];
+  /**
    * Each entry's mask, by its position in what was read; undefined for an
    * entry that runs in every period, which is sent without the key.
    */
@@ -114,6 +120,7 @@ export function yearPeriodsOf(year: YearSpan, entries: readonly (readonly HeldWi
   const periodOf = new Map<string, number>();
   const firstWeek: number[] = [];
   const weeksIn: number[][] = [];
+  const weekPeriods: number[] = [];
   weeks.forEach((_, week) => {
     const signature = runs.map((inWeek, entry) => (dated[entry] && inWeek[week] ? '1' : '0')).join('');
     let period = periodOf.get(signature);
@@ -124,6 +131,7 @@ export function yearPeriodsOf(year: YearSpan, entries: readonly (readonly HeldWi
       weeksIn.push([]);
     }
     weeksIn[period]!.push(week);
+    weekPeriods.push(period);
   });
   // At least two by now: a dated entry runs in some week and not in another.
   if (firstWeek.length > MAX_PERIODS) return null;
@@ -144,6 +152,7 @@ export function yearPeriodsOf(year: YearSpan, entries: readonly (readonly HeldWi
       });
       return stretches;
     }),
+    weekPeriods,
     // The same in every week of a period, by what a period is: read in its first.
     masks: runs.map((inWeek, entry) => (dated[entry] ? firstWeek.map((week) => inWeek[week]!) : undefined)),
   };
@@ -167,7 +176,9 @@ export function yearPeriodsOf(year: YearSpan, entries: readonly (readonly HeldWi
  * meet (the autumn ends on the Sunday the spring starts after) are one
  * stretch, so the sentence names the whole run of weeks and not the half of
  * it the first index stands for. A `periods` that cannot be read is left
- * alone and the first period's stretches stand, as before.
+ * alone and the first period's stretches stand, as before. A period listed
+ * twice ("0,0") is that period once: its stretch read twice would be counted
+ * as two, and the sentence would add other weeks that do not exist.
  */
 export function withPeriodDates<P extends Record<string, string | number>>(
   params: P,
@@ -179,22 +190,10 @@ export function withPeriodDates<P extends Record<string, string | number>>(
   if (!own || own.length === 0) return params;
   const listed =
     typeof params.periods === 'string' && /^\d+(,\d+)*$/.test(params.periods)
-      ? params.periods.split(',').map(Number)
+      ? [...new Set(params.periods.split(',').map(Number))]
       : [period];
   const readable = listed.includes(period) && listed.every((index) => (stretches[index]?.length ?? 0) > 0);
-  const held = (readable ? listed : [period])
-    .flatMap((index) => stretches[index]!)
-    .slice()
-    .sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
-  const joined: PeriodStretch[] = [];
-  for (const stretch of held) {
-    const last = joined[joined.length - 1];
-    if (last !== undefined && dayOf(addDays(parseDay(last.to), 1)) === stretch.from) {
-      joined[joined.length - 1] = { from: last.from, to: stretch.to };
-    } else {
-      joined.push({ from: stretch.from, to: stretch.to });
-    }
-  }
+  const joined = joinedStretches((readable ? listed : [period]).flatMap((index) => stretches[index]!));
   return { ...params, periodFrom: joined[0]!.from, periodTo: joined[0]!.to, periodStretches: joined.length };
 }
 
@@ -216,5 +215,99 @@ export function periodSentence(params: Record<string, string | number>): string 
   return (
     ` Counted for the weeks from ${params.periodFrom} to ${params.periodTo}` +
     `${more ? ' and the other weeks with the same entries' : ''}${parity}, which is when these run together.`
+  );
+}
+
+/**
+ * KLASSENS LUNCH: a refusal's params with the parts of the year its locks run
+ * in turned into dates.
+ *
+ * A class's meal is one hour all year, so locked lessons of two terms that
+ * close its lunch window between them refuse the year though each term has a
+ * gap. The engine says which periods' locks they are — `lockPeriods`, and
+ * only when no one period's locks close the window alone
+ * (scheduler_solver._lunch_lock_periods). The periods come in PARTS: those
+ * whose locks take the same starts of the window have commas between them,
+ * and the parts semicolons ("0,1,2,3;4,5"), because a läsår has more periods
+ * than terms and the autumn's lock is in several of them. The first two
+ * parts are two that close the window between them, where two do.
+ *
+ * Here the first stretch of weeks of each of those two parts is added, flat
+ * like every value a sentence carries: `lockFrom` and `lockTo`,
+ * `otherLockFrom` and `otherLockTo`, the earlier of the two first. A part's
+ * periods are read together — their stretches in the order of the year, and
+ * two that meet are one — so the autumn is one run of weeks however many
+ * periods the school's other posts cut it into. `lockWeeksElsewhere` counts
+ * the stretches not written out: a part that comes back later in the year, or
+ * a third part.
+ *
+ * Params without the key, with fewer than two parts, naming a period the
+ * read does not have, or naming one period in two parts, are returned as they
+ * came: the refusal then says what it always said.
+ */
+export function withLockPeriodDates<P extends Record<string, string | number>>(
+  params: P,
+  stretches: readonly (readonly PeriodStretch[])[] | undefined,
+):
+  | P
+  | (P & { lockFrom: string; lockTo: string; otherLockFrom: string; otherLockTo: string; lockWeeksElsewhere: number }) {
+  const listed = params.lockPeriods;
+  if (typeof listed !== 'string' || !/^\d+(,\d+)*(;\d+(,\d+)*)+$/.test(listed) || !stretches) return params;
+  const parts = listed.split(';').map((part) => [...new Set(part.split(',').map(Number))]);
+  const named = parts.flat();
+  if (named.some((index) => (stretches[index]?.length ?? 0) === 0)) return params;
+  // A period in two parts would have its weeks written out as both of them.
+  if (new Set(named).size !== named.length) return params;
+  const runs = parts.map((part) => joinedStretches(part.flatMap((index) => stretches[index]!)));
+  const [first, second] = [runs[0]![0]!, runs[1]![0]!].sort(byFrom);
+  return {
+    ...params,
+    lockFrom: first!.from,
+    lockTo: first!.to,
+    otherLockFrom: second!.from,
+    otherLockTo: second!.to,
+    lockWeeksElsewhere: runs.reduce((count, run) => count + run.length, 0) - 2,
+  };
+}
+
+const byFrom = (a: PeriodStretch, b: PeriodStretch): number => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0);
+
+/** Stretches in the order of the year, two that meet (one ends the day before the next starts) made one. */
+function joinedStretches(stretches: readonly PeriodStretch[]): PeriodStretch[] {
+  const joined: PeriodStretch[] = [];
+  for (const stretch of [...stretches].sort(byFrom)) {
+    const last = joined[joined.length - 1];
+    if (last !== undefined && dayOf(addDays(parseDay(last.to), 1)) === stretch.from) {
+      joined[joined.length - 1] = { from: last.from, to: stretch.to };
+    } else {
+      joined.push({ from: stretch.from, to: stretch.to });
+    }
+  }
+  return joined;
+}
+
+/**
+ * The English for it, for a reader with no catalogue: appended to the
+ * engine's own sentence. The web's, word for word (generate.lunchLocksInPeriods
+ * in web/messages/en.json; catalogue-sentences.spec.ts holds the two
+ * together), with the days as the API writes them. Nothing for params
+ * without the dates.
+ */
+export function lunchLocksSentence(params: Record<string, string | number>): string {
+  const { lockFrom, lockTo, otherLockFrom, otherLockTo } = params;
+  if (
+    typeof lockFrom !== 'string' ||
+    typeof lockTo !== 'string' ||
+    typeof otherLockFrom !== 'string' ||
+    typeof otherLockTo !== 'string'
+  ) {
+    return '';
+  }
+  const more = typeof params.lockWeeksElsewhere === 'number' && params.lockWeeksElsewhere > 0;
+  return (
+    ` The locked lessons that close the lunch window between them run in different parts of the school year:` +
+    ` the weeks from ${lockFrom} to ${lockTo} and the weeks from ${otherLockFrom} to ${otherLockTo}` +
+    `${more ? ', among others' : ''}.` +
+    ` A class's lunch is one time all year, so it has to keep clear of locked lessons in every part of the year.`
   );
 }

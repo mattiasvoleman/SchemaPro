@@ -556,6 +556,37 @@ describe('the candidate basis', () => {
     expect(changedParts(partsOf(limited(3, [[1]])), partsOf(limited(3, [[1], [2]]), 1))).toEqual(['rules']);
   });
 
+  it('moves with the periods a post’s locked weekdays are held in, and not with the order they are sent in', () => {
+    const held = (monday: boolean[], empty: boolean[], turned = false) => {
+      const real = school();
+      const entries = [
+        { weekdays: [], periods: empty },
+        { weekdays: [1], periods: monday },
+      ];
+      real.payload.teacherDayLimits = [
+        {
+          id: 'post-bo',
+          teacherId: 't-bo',
+          maxTeachingDaysPerWeek: 2,
+          lockedWeekdays: [[1]] as never,
+          lockedWeekdayPeriods: (turned ? [...entries].reverse() : entries) as never,
+        },
+      ];
+      return real;
+    };
+    const autumn = partsOf(held([true, false], [false, true]));
+    expect(partsOf(held([true, false], [false, true], true), 1)).toEqual(autumn);
+    // The Monday moved to the spring: the same sets, the same masks as a
+    // sorted list, another year.
+    expect(changedParts(autumn, partsOf(held([false, true], [true, false]), 1))).toEqual(['rules']);
+    // And a limit that stops saying its periods is the reading it was before them.
+    const unsaid = school();
+    unsaid.payload.teacherDayLimits = [
+      { id: 'post-bo', teacherId: 't-bo', maxTeachingDaysPerWeek: 2, lockedWeekdays: [[1]] as never },
+    ];
+    expect(changedParts(autumn, partsOf(unsaid, 1))).toEqual(['rules']);
+  });
+
   it('reads the walk in real ids, as a change of rooms and rules, and a school without it as before', () => {
     const walked = (minutes: number) => {
       const real = school();

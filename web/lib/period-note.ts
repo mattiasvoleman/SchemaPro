@@ -20,17 +20,67 @@ export interface PeriodDates {
   parity: "ODD_WEEKS" | "EVEN_WEEKS" | "ALL";
 }
 
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * A day the calendar has, written YYYY-MM-DD: one that reads as a date and
+ * is written back as itself, which nothing of another shape is. "2026-13-45"
+ * has the shape and is no day: written out (periodDay) it throws, and the
+ * page with it. And "2026-02-30" is read by the browser as 2 March, a day
+ * nobody sent. Neither is shown: the line is left out, as for a refusal that
+ * names no period.
+ */
+const isDay = (value: unknown): value is string => {
+  if (typeof value !== "string") return false;
+  const time = Date.parse(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(time) && new Date(time).toISOString().slice(0, 10) === value;
+};
 
 export function periodDatesOf(params: Record<string, string | number> | null | undefined): PeriodDates | null {
   if (!params) return null;
   const { periodFrom: from, periodTo: to, periodStretches: stretches, parity } = params;
-  if (typeof from !== "string" || typeof to !== "string" || !DAY.test(from) || !DAY.test(to)) return null;
+  if (!isDay(from) || !isDay(to)) return null;
   return {
     from,
     to,
     more: typeof stretches === "number" && stretches > 1,
     parity: parity === "ODD_WEEKS" || parity === "EVEN_WEEKS" ? parity : "ALL",
+  };
+}
+
+/**
+ * Klassens lunch: the two parts of the läsår whose locked lessons close a
+ * class's lunch window between them.
+ *
+ * A class's meal is one time all year. Locked lessons of two terms can fill
+ * its window between them though each term has a gap, and the refusal then
+ * says which parts of the year they are in: the engine names the periods
+ * (`lockPeriods`), the API turns the two earliest into days (`lockFrom`,
+ * `lockTo`, `otherLockFrom`, `otherLockTo`) and counts the stretches of weeks
+ * it did not write out (`lockWeeksElsewhere`). This reads those out of a
+ * sentence's params, or nothing: a refusal one period's locks cause alone
+ * carries none of them, and reads as it always did.
+ */
+export interface LockPeriodDates {
+  from: string;
+  to: string;
+  otherFrom: string;
+  otherTo: string;
+  /** Whether the locks run in more weeks than the two stretches named. */
+  more: boolean;
+}
+
+export function lockPeriodDatesOf(
+  params: Record<string, string | number> | null | undefined,
+): LockPeriodDates | null {
+  if (!params) return null;
+  const { lockFrom: from, lockTo: to, otherLockFrom: otherFrom, otherLockTo: otherTo, lockWeeksElsewhere: elsewhere } = params;
+  const days = [from, to, otherFrom, otherTo];
+  if (!days.every(isDay)) return null;
+  return {
+    from: days[0] as string,
+    to: days[1] as string,
+    otherFrom: days[2] as string,
+    otherTo: days[3] as string,
+    more: typeof elsewhere === "number" && elsewhere > 0,
   };
 }
 

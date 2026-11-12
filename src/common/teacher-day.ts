@@ -456,6 +456,83 @@ export function lockedWeekdaySets(
   return sets.filter((set) => !sets.some((larger) => implies(larger, set))).sort(byWeekdays);
 }
 
+/** A set of weekdays a teacher's kept lessons hold together, and the periods of the läsår some week holds it in. */
+export interface LockedWeekdaysInPeriods {
+  weekdays: number[];
+  periods: boolean[];
+}
+
+/**
+ * TERMINER: THE SAME WEEKDAYS, PERIOD BY PERIOD — what the generator holds a
+ * post's days against once the läsår has periods
+ * (AnonymousTeacherDayLimit.lockedWeekdayPeriods), or null when every period
+ * holds the same sets and lockedWeekdaySets already says all there is.
+ *
+ * WHY THE SETS NEED THEIR PERIODS. The engine held every set against every
+ * week the teacher has, which is the reading for a year that is one week
+ * long. A post of two days, a kept lesson on Mondays that runs in the autumn
+ * only, and posts that need Tuesday and Wednesday in the spring: the autumn
+ * has one day and the spring two, and the Monday held against the spring
+ * left it one day and refused a timetable every term of which exists. With
+ * its periods, a set is held where a week has it and nowhere else.
+ *
+ * `weekPeriods` is the period of each week of the läsår, from its first
+ * (YearPeriods.weekPeriods): a period is the weeks in which the same entries
+ * of the payload have a date, so every week is in one, and every lesson the
+ * generator places in a week of a period runs in the whole period. The set
+ * of a week is read as lockedWeekdaySets reads it — the lessons that run on
+ * their own weekday's date of that week — and EVERY week of the läsår is
+ * read, not the weeks around a start or an end: between two of the teacher's
+ * own events the set stays and the period does not, since the periods are
+ * cut by every post the school has.
+ *
+ * LEFT OUT PERIOD BY PERIOD, by lockedWeekdaySets' rule and its proof: a set
+ * inside a larger one of at most N weekdays, where the SAME period holds
+ * both. Across periods nothing is implied — {Monday} in the autumn says
+ * nothing of a spring whose weeks hold {Monday, Tuesday}, and the other way
+ * round the autumn would be left with no line at all — which is why this is
+ * a list of its own and not a mask beside each of lockedWeekdaySets' sets.
+ * Every period is in at least one entry: a period with no kept lesson holds
+ * the empty set.
+ *
+ * The parity is not read here. An odd week's set and an even week's of the
+ * same period are both that period's, held in each of its weeks: what the
+ * engine did before it knew periods, and still the stricter reading.
+ */
+export function lockedWeekdaySetsByPeriod(
+  lessons: readonly TeachingLesson[],
+  maxDaysPerWeek: number,
+  year: YearSpan,
+  weekPeriods: readonly number[],
+): LockedWeekdaysInPeriods[] | null {
+  const taking = lessons.filter((lesson) => lesson.endMinutes > lesson.startMinutes);
+  const periods = Math.max(...weekPeriods) + 1;
+  const held: Map<string, number[]>[] = Array.from({ length: periods }, () => new Map<string, number[]>());
+  const first = mondayOf(parseDay(year.startDate));
+  weekPeriods.forEach((period, week) => {
+    const monday = addDays(first, 7 * week);
+    const days = [...new Set(taking.filter((lesson) => runsInWeek(lesson, monday)).map((lesson) => lesson.dayOfWeek))].sort(
+      (a, b) => a - b,
+    );
+    held[period]!.set(days.join(','), days);
+  });
+  const implies = (larger: number[], set: number[]) =>
+    larger.length > set.length && larger.length <= maxDaysPerWeek && set.every((day) => larger.includes(day));
+  const entries = new Map<string, LockedWeekdaysInPeriods>();
+  held.forEach((ofPeriod, period) => {
+    const sets = [...ofPeriod.values()];
+    for (const set of sets) {
+      if (sets.some((larger) => implies(larger, set))) continue;
+      const key = set.join(',');
+      const entry = entries.get(key) ?? { weekdays: set, periods: Array.from({ length: periods }, () => false) };
+      entry.periods[period] = true;
+      entries.set(key, entry);
+    }
+  });
+  const sent = [...entries.values()].sort((a, b) => byWeekdays(a.weekdays, b.weekdays));
+  return sent.every((entry) => entry.periods.every(Boolean)) ? null : sent;
+}
+
 /** Weekday by weekday, a set before the sets it begins. */
 function byWeekdays(a: readonly number[], b: readonly number[]): number {
   for (let i = 0; i < Math.min(a.length, b.length); i++) {

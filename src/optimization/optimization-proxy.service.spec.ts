@@ -2088,6 +2088,8 @@ describe('OptimizationProxyService', () => {
         ['a post’s mask alone', [['body', 'requirements', 3, 'periods']]],
         ['a lock’s mask alone', [['body', 'fixedLessons', 0, 'periods']]],
         ['a released post’s mask alone', [['body', 'placements', 'requirements', 1, 'periods']]],
+        // An engine that knows periods and not yet a post's days by period names this alone.
+        ['a post’s days by period alone', [['body', 'teacherDayLimits', 0, 'lockedWeekdayPeriods']]],
       ] as [string, (string | number)[][]][])('reads %s as the same engine', async (_name, locs) => {
         http.post.mockReturnValue(throwError(() => refusing(...locs)));
         const error = await callWith(dated).catch((thrown: unknown) => thrown);
@@ -2108,6 +2110,7 @@ describe('OptimizationProxyService', () => {
           ['body', 'requirements', 0, 'colour'],
           ['body', 'periodWeeks', 0],
           ['body', 'periods'],
+          ['body', 'lockedWeekdayPeriods'],
           ['query', 'periodWeeks'],
         ]) {
           http.post.mockReturnValue(throwError(() => refusing(loc)));
@@ -4426,6 +4429,101 @@ describe('OptimizationProxyService', () => {
                 ' (odd weeks), which is when these run together.',
             },
           });
+        });
+
+        it('says which parts of the year the locks of a class’s lunch refusal are in, on a 400 and on a line', async () => {
+          // Klassens lunch is one hour all year. Locked lessons of two periods
+          // that close its window between them are refused by the engine with
+          // the periods named (`lockPeriods`), and the dates are added here.
+          const late = { startDate: day('2027-02-01') };
+          arrangeTerms({ s1: late, s2: late });
+          year();
+          const lunch = { group: 'g', minutes: 30, windowStart: '11:00', windowEnd: '12:00', day: 1 };
+          // The first period has two stretches of weeks (one is written out), the second one.
+          const dated = {
+            lockPeriods: '0;1',
+            lockFrom: '2026-08-17',
+            lockTo: '2027-01-10',
+            otherLockFrom: '2027-01-11',
+            otherLockTo: '2027-01-31',
+            lockWeeksElsewhere: 1,
+          };
+          const said =
+            ' The locked lessons that close the lunch window between them run in different parts of the school year:' +
+            ' the weeks from 2026-08-17 to 2027-01-10 and the weeks from 2027-01-11 to 2027-01-31, among others.' +
+            " A class's lunch is one time all year, so it has to keep clear of locked lessons in every part of the year.";
+
+          const refused = new AxiosError('boom');
+          refused.response = {
+            status: 400,
+            data: {
+              code: 'INVALID_SCHEDULE_INPUT',
+              message: 'Locked lessons leave student group g no 30-minute lunch break inside 11:00-12:00 on Monday.',
+              details: { code: 'LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK', params: { ...lunch, lockPeriods: '0;1' } },
+            },
+          } as never;
+          http.post.mockReturnValue(throwError(() => refused));
+          await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+            status: 400,
+            response: {
+              code: 'LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK',
+              params: { ...lunch, ...dated },
+              message: `Locked lessons leave student group g no 30-minute lunch break inside 11:00-12:00 on Monday.${said}`,
+            },
+          });
+
+          // One period's locks alone: the engine names no periods, and nothing is added.
+          const alone = new AxiosError('boom');
+          alone.response = {
+            status: 400,
+            data: {
+              code: 'INVALID_SCHEDULE_INPUT',
+              message: 'Locked lessons leave student group g no 30-minute lunch break inside 11:00-12:00 on Monday.',
+              details: { code: 'LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK', params: lunch },
+            },
+          } as never;
+          http.post.mockReturnValue(throwError(() => alone));
+          await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+            response: {
+              params: lunch,
+              message: 'Locked lessons leave student group g no 30-minute lunch break inside 11:00-12:00 on Monday.',
+            },
+          });
+
+          // Förlagda poster: the same sentence as the line beneath them in a refused week.
+          http.post.mockImplementation((_url: string, payload: any) =>
+            of({
+              data: {
+                requestId: payload.requestId,
+                status: 'INFEASIBLE',
+                lessons: [],
+                conflicts: {
+                  summary: 'The placed lessons are why.',
+                  summaryCode: 'PLACEMENTS_PROBE_SUMMARY',
+                  summaryParams: { placed: 2 },
+                  conflicts: [
+                    {
+                      category: 'PLACEMENT',
+                      code: 'LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK',
+                      params: { ...lunch, lockPeriods: '0;1' },
+                      message: 'Locked lessons leave student group g no 30-minute lunch break inside 11:00-12:00 on Monday.',
+                      requirementIds: [],
+                      roomIds: [],
+                      constraintIds: [],
+                      resourceIds: [],
+                    },
+                  ],
+                },
+              },
+            }),
+          );
+          const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+          expect(result.conflicts!.conflicts[0]!.params).toEqual({ ...lunch, ...dated });
+          expect(result.conflicts!.conflicts[0]!.message).toBe(
+            `Locked lessons leave student group g no 30-minute lunch break inside 11:00-12:00 on Monday.${said}`,
+          );
+          // The summary names no period and gets no sentence of either kind.
+          expect(result.conflicts!.summary).toBe('The placed lessons are why.');
         });
       });
 
@@ -7241,6 +7339,93 @@ describe('OptimizationProxyService', () => {
           expect(limit().lockedWeekdays).toEqual([
             [1, 2],
             [4, 5],
+          ]);
+        });
+
+        it('sends each set with its periods once the läsår has them: the autumn’s Monday takes no day of the spring', async () => {
+          // The part-timer of the review of #300 (MEDEL-1): two days a week
+          // and a Monday kept until Christmas. Held against every week, the
+          // Monday left the spring one day; with its periods it is the
+          // autumn's, and the spring holds the empty week.
+          arrange({
+            requirements: [requirement({ lessonsPerWeek: 10 })],
+            posts: [post({ maxTeachingDaysPerWeek: 2 })],
+            lockedLessons: [lockedLesson({ id: 'mon', dayOfWeek: 1, endDate: at('2026-12-18') })],
+          });
+          tx.academicYear.findUnique.mockResolvedValue({ startDate: at('2026-08-17'), endDate: at('2027-06-11') } as never);
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(postedPayload().periodWeeks).toEqual([18, 25]);
+          expect(postedPayload().fixedLessons.map((lesson) => lesson.periods)).toEqual([[true, false]]);
+          // The sets as they were, for an engine that reads no periods of them.
+          expect(limit().lockedWeekdays).toEqual([[1]]);
+          expect(limit().lockedWeekdayPeriods).toEqual([
+            { weekdays: [], periods: [false, true] },
+            { weekdays: [1], periods: [true, false] },
+          ]);
+        });
+
+        it('sends no periods for a teacher whose fixed lessons every period holds alike, in a läsår that has periods', async () => {
+          // The periods are a colleague's: this teacher's Monday is every
+          // week's, and the limit is the object it was.
+          arrange({
+            requirements: [requirement({ lessonsPerWeek: 10 })],
+            posts: [post({ maxTeachingDaysPerWeek: 2 })],
+            lockedLessons: [
+              lockedLesson({ id: 'mon', dayOfWeek: 1 }),
+              lockedLesson({ id: 'colleague', dayOfWeek: 3, teacherId: CO_TEACHER, endDate: at('2026-12-18') }),
+            ],
+          });
+          tx.academicYear.findUnique.mockResolvedValue({ startDate: at('2026-08-17'), endDate: at('2027-06-11') } as never);
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(postedPayload().periodWeeks).toEqual([18, 25]);
+          expect(Object.keys(limit()).sort()).toEqual(['id', 'lockedWeekdays', 'maxTeachingDaysPerWeek', 'teacherId']);
+        });
+
+        it('leaves a set out of a period by each post’s own number of days, not by one day more', async () => {
+          // Co-taught until Christmas: Monday every week, Tuesday and
+          // Wednesday the even ones. The autumn's odd weeks hold {Mon} and
+          // its even weeks {Mon, Tue, Wed}. On the co-teacher's post of three
+          // days the larger set implies the smaller, which is left out; on
+          // the lead's post of two it is over the post and implies nothing,
+          // so {Mon} is a line of the autumn — read with three days, the
+          // lead's odd weeks would have no line the engine holds them to.
+          arrange({
+            requirements: [requirement({ coTeacherId: CO_TEACHER, lessonsPerWeek: 10 })],
+            posts: [post({ maxTeachingDaysPerWeek: 2 }), post({ id: 'post-of-co', userId: CO_TEACHER, maxTeachingDaysPerWeek: 3 })],
+            lockedLessons: [
+              lockedLesson({ id: 'mon', dayOfWeek: 1, coTeacherId: CO_TEACHER, endDate: at('2026-12-18') }),
+              lockedLesson({ id: 'tue', dayOfWeek: 2, coTeacherId: CO_TEACHER, recurrence: 'EVEN_WEEKS', endDate: at('2026-12-18') }),
+              lockedLesson({ id: 'wed', dayOfWeek: 3, coTeacherId: CO_TEACHER, recurrence: 'EVEN_WEEKS', endDate: at('2026-12-18') }),
+            ],
+          });
+          tx.academicYear.findUnique.mockResolvedValue({ startDate: at('2026-08-17'), endDate: at('2027-06-11') } as never);
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(postedPayload().periodWeeks).toEqual([18, 25]);
+          expect(postedPayload().teacherDayLimits!.map((sent) => [sent.maxTeachingDaysPerWeek, sent.lockedWeekdayPeriods])).toEqual([
+            [
+              2,
+              [
+                { weekdays: [], periods: [false, true] },
+                { weekdays: [1], periods: [true, false] },
+                { weekdays: [1, 2, 3], periods: [true, false] },
+              ],
+            ],
+            [
+              3,
+              [
+                { weekdays: [], periods: [false, true] },
+                { weekdays: [1, 2, 3], periods: [true, false] },
+              ],
+            ],
           ]);
         });
 

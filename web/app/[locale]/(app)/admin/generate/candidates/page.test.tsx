@@ -854,6 +854,63 @@ describe("a run that is not a batch", () => {
     expect(within(causes).queryByText(/generate\.countedInPeriod/)).toBeNull();
   });
 
+  it("klassens lunch: says which parts of the läsår the locks are in, under the refusal and under a line", () => {
+    const lunch = { group: "7A", minutes: 30, windowStart: "11:00", windowEnd: "12:00", day: 1 };
+    const dated = {
+      ...lunch,
+      lockPeriods: "0;2",
+      lockFrom: "2026-08-17",
+      lockTo: "2026-12-20",
+      otherLockFrom: "2027-01-11",
+      otherLockTo: "2027-06-11",
+      lockWeeksElsewhere: 0,
+    };
+    const NOTE = "generate.lunchLocksInPeriods(17 augusti 2026|20 december 2026|11 januari 2027|11 juni 2027|no)";
+    const refused = (errorParams: Record<string, string | number>, lineParams: Record<string, string | number>) => ({
+      latest: latest({ status: "FAILED", errorCode: "CANDIDATES_FIRST_FAILED" }, [
+        candidate(1, "KEEP", {
+          solverStatus: null,
+          errorCode: "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK",
+          errorParams,
+          metrics: null,
+          conflicts: [
+            {
+              category: "PLACEMENT",
+              code: "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK",
+              message: "Locked lessons leave student group 7A no lunch break.",
+              resourceNames: ["7A"],
+              params: lineParams,
+            },
+          ],
+        }),
+      ]),
+      batch: null,
+      unplaced: null,
+    });
+    // Under the first candidate's own refusal.
+    state.overview = refused(dated, lunch);
+    const first = render(<CandidatesPage />);
+    let causes = screen.getByRole("heading", { name: "scheduleCandidates.failed.conflicts" }).closest("section")!;
+    expect(within(causes).getAllByText(NOTE)).toHaveLength(1);
+    expect(within(causes).getAllByText(/^engineMessages\.LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK\(/)[0]!.nextElementSibling).toHaveTextContent(NOTE);
+    first.unmount();
+
+    // Under the line that carries it, before the line's names.
+    state.overview = refused(lunch, dated);
+    const second = render(<CandidatesPage />);
+    causes = screen.getByRole("heading", { name: "scheduleCandidates.failed.conflicts" }).closest("section")!;
+    const note = within(causes).getByText(NOTE);
+    expect(note.previousElementSibling).toHaveTextContent(/^engineMessages\.LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK\(/);
+    expect(note.nextElementSibling).toHaveTextContent(/^7A$/);
+    second.unmount();
+
+    // One period's locks alone: nothing is added anywhere.
+    state.overview = refused(lunch, lunch);
+    render(<CandidatesPage />);
+    causes = screen.getByRole("heading", { name: "scheduleCandidates.failed.conflicts" }).closest("section")!;
+    expect(within(causes).queryByText(/generate\.lunchLocksInPeriods/)).toBeNull();
+  });
+
   it("says a first candidate that ran out of time in its own words, with what the probe found", () => {
     // Candidate 1 TIMEOUT, no relaxation helped: the engine's summary and
     // no conflicts. "What stopped it is below" over nothing was the bug.

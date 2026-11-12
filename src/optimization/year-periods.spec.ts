@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { LessonRecurrence } from '@prisma/client';
 import { runsOn, weeksCanOverlap } from '../calendar/lesson-recurrence';
-import { MAX_PERIODS, periodSentence, withPeriodDates, yearPeriodsOf, type HeldWindow } from './year-periods';
+import { MAX_PERIODS, periodSentence, lunchLocksSentence, withLockPeriodDates, withPeriodDates, yearPeriodsOf, type HeldWindow } from './year-periods';
 
 const DAY_MS = 86_400_000;
 const day = (value: string): Date => new Date(`${value}T00:00:00.000Z`);
@@ -384,6 +384,17 @@ describe('withPeriodDates', () => {
         period: 0, periods, periodFrom: '2026-08-17', periodTo: '2026-12-20', periodStretches: 1,
       });
     }
+    // A period listed twice is that period once: no stretch is counted twice, and the
+    // sentence adds no other weeks (review of #301, round two, LÅG-1).
+    for (const [twice, once] of [['0,0', '0'], ['0,2,0', '0,2'], ['1,0,1,0', '0,1'], ['2,2,2', '2']] as const) {
+      const first = Number(once[0]);
+      const dated = withPeriodDates({ period: first, periods: once }, year);
+      expect(withPeriodDates({ period: first, periods: twice }, year)).toEqual({ ...dated, periods: twice });
+    }
+    expect(withPeriodDates({ period: 0, periods: '0,0' }, year)).toMatchObject({ periodStretches: 1 });
+    expect(periodSentence(withPeriodDates({ period: 0, periods: '0,0' }, year))).toBe(
+      ' Counted for the weeks from 2026-08-17 to 2026-12-20, which is when these run together.',
+    );
     // And the sentence follows: the other weeks are said, with the parity.
     expect(periodSentence(withPeriodDates({ period: 0, periods: '0,2', parity: 'ODD_WEEKS' }, year))).toBe(
       ' Counted for the weeks from 2026-08-17 to 2026-12-20 and the other weeks with the same entries' +
@@ -436,5 +447,116 @@ describe('periodSentence', () => {
     expect(periodSentence({ ...week, parity: 'ALL_WEEKS' })).toBe(
       ' Counted for the weeks from 2027-01-11 to 2027-01-17, which is when these run together.',
     );
+  });
+
+  describe('klassens lunch: locked lessons of several periods', () => {
+    // The autumn, the weeks between, the spring: three periods, each one stretch.
+    const year = [
+      [{ from: '2026-08-17', to: '2026-12-20' }],
+      [{ from: '2026-12-21', to: '2027-01-10' }],
+      [{ from: '2027-01-11', to: '2027-06-11' }],
+    ];
+    const refusal = { group: '7A', minutes: 30, windowStart: '11:00', windowEnd: '12:00', day: 1 };
+
+    it('adds the first stretch of the first two parts, the earlier of them first', () => {
+      const dated = { lockFrom: '2026-08-17', lockTo: '2026-12-20', otherLockFrom: '2027-01-11', otherLockTo: '2027-06-11' };
+      expect(withLockPeriodDates({ ...refusal, lockPeriods: '0;2' }, year)).toEqual({
+        ...refusal, lockPeriods: '0;2', ...dated, lockWeeksElsewhere: 0,
+      });
+      // The parts as the engine orders them (the pair that closes the window first), the days as the year does.
+      expect(withLockPeriodDates({ lockPeriods: '2;0' }, year)).toEqual({ lockPeriods: '2;0', ...dated, lockWeeksElsewhere: 0 });
+    });
+
+    it('reads the periods of one part together: the autumn is one run of weeks, however many periods cut it', () => {
+      // What a school of six periods was told before the parts: two stretches of the autumn, and never the spring.
+      const six = [
+        [{ from: '2026-08-15', to: '2026-08-16' }],
+        [{ from: '2026-08-17', to: '2026-12-20' }],
+        [{ from: '2026-12-21', to: '2027-01-10' }],
+        [{ from: '2027-01-11', to: '2027-01-17' }],
+        [{ from: '2027-01-18', to: '2027-03-28' }],
+        [{ from: '2027-03-29', to: '2027-06-11' }],
+      ];
+      expect(withLockPeriodDates({ lockPeriods: '0,1,2,3;4,5' }, six)).toEqual({
+        lockPeriods: '0,1,2,3;4,5',
+        lockFrom: '2026-08-15',
+        lockTo: '2027-01-17',
+        otherLockFrom: '2027-01-18',
+        otherLockTo: '2027-06-11',
+        lockWeeksElsewhere: 0,
+      });
+      // In whatever order a part's periods came, and a period named twice is one.
+      expect(withLockPeriodDates({ lockPeriods: '3,1,0,2,1;5,4' }, six)).toMatchObject({
+        lockFrom: '2026-08-15', lockTo: '2027-01-17', otherLockFrom: '2027-01-18', otherLockTo: '2027-06-11',
+        lockWeeksElsewhere: 0,
+      });
+    });
+
+    it('counts the stretches it does not write out: a part that comes back, or a third part', () => {
+      // The first part is the autumn and the spring's last weeks: two runs, one written out.
+      const back = [
+        [{ from: '2026-08-17', to: '2026-12-20' }],
+        [{ from: '2026-12-21', to: '2027-03-28' }],
+        [{ from: '2027-03-29', to: '2027-06-11' }],
+      ];
+      expect(withLockPeriodDates({ lockPeriods: '0,2;1' }, back)).toMatchObject({
+        lockFrom: '2026-08-17', lockTo: '2026-12-20', otherLockFrom: '2026-12-21', otherLockTo: '2027-03-28',
+        lockWeeksElsewhere: 1,
+      });
+      // Three parts: the first two are named (the engine put the pair that closes the window there).
+      expect(withLockPeriodDates({ lockPeriods: '0;2;1' }, year)).toMatchObject({
+        lockFrom: '2026-08-17', lockTo: '2026-12-20', otherLockFrom: '2027-01-11', otherLockTo: '2027-06-11',
+        lockWeeksElsewhere: 1,
+      });
+    });
+
+    it('leaves alone what names no two parts the read has', () => {
+      for (const params of [
+        refusal,
+        // One part is one period's own shortage, which the engine never sends.
+        { ...refusal, lockPeriods: '0' },
+        { ...refusal, lockPeriods: '0,2' },
+        { ...refusal, lockPeriods: '0;7' },
+        { ...refusal, lockPeriods: '0;2;' },
+        { ...refusal, lockPeriods: ';0;2' },
+        { ...refusal, lockPeriods: '0,;2' },
+        { ...refusal, lockPeriods: 'a;b' },
+        // One period in two parts: the same weeks would be written out as both.
+        { ...refusal, lockPeriods: '0;0' },
+        { ...refusal, lockPeriods: '0,2;2' },
+        { ...refusal, lockPeriods: '0;1;0' },
+        { ...refusal, lockPeriods: '' },
+        { ...refusal, lockPeriods: 2 },
+      ]) {
+        expect(withLockPeriodDates(params, year)).toBe(params);
+      }
+      const named = { ...refusal, lockPeriods: '0;2' };
+      expect(withLockPeriodDates(named, undefined)).toBe(named);
+      // A period this part does not name may have no weeks; one it names may not.
+      expect(withLockPeriodDates(named, [year[0]!, [], year[2]!])).toMatchObject({ otherLockFrom: '2027-01-11' });
+      expect(withLockPeriodDates(named, [year[0]!, year[1]!, []])).toBe(named);
+      expect(withLockPeriodDates({ ...refusal, lockPeriods: '0,1;2' }, [year[0]!, [], year[2]!])).toMatchObject({
+        lockPeriods: '0,1;2',
+      });
+      expect(withLockPeriodDates({ ...refusal, lockPeriods: '0,1;2' }, [year[0]!, [], year[2]!])).not.toHaveProperty('lockFrom');
+    });
+
+    it('says the two parts of the year and that the meal is the year’s, and nothing without the dates', () => {
+      expect(lunchLocksSentence(withLockPeriodDates({ ...refusal, lockPeriods: '0;2' }, year))).toBe(
+        ' The locked lessons that close the lunch window between them run in different parts of the school year:' +
+          ' the weeks from 2026-08-17 to 2026-12-20 and the weeks from 2027-01-11 to 2027-06-11.' +
+          " A class's lunch is one time all year, so it has to keep clear of locked lessons in every part of the year.",
+      );
+      expect(lunchLocksSentence(withLockPeriodDates({ lockPeriods: '0;1;2' }, year))).toContain(
+        'the weeks from 2026-12-21 to 2027-01-10, among others. A class',
+      );
+      expect(lunchLocksSentence(refusal)).toBe('');
+      expect(lunchLocksSentence({ ...refusal, lockPeriods: '0;2' })).toBe('');
+      // Every one of the four days, or no sentence.
+      const dated = withLockPeriodDates({ lockPeriods: '0;2' }, year) as Record<string, string | number>;
+      for (const key of ['lockFrom', 'lockTo', 'otherLockFrom', 'otherLockTo']) {
+        expect(lunchLocksSentence({ ...dated, [key]: 20270111 })).toBe('');
+      }
+    });
   });
 });

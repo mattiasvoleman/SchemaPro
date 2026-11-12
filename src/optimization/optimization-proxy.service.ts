@@ -69,9 +69,11 @@ import {
   replacingBySubject,
   replacingGroupsOfNamed,
 } from '../common/replacing-groups';
-import { lockedWeekdaySets, type YearSpan } from '../common/teacher-day';
+import { lockedWeekdaySets, lockedWeekdaySetsByPeriod, type TeachingLesson, type YearSpan } from '../common/teacher-day';
 import {
+  lunchLocksSentence,
   periodSentence,
+  withLockPeriodDates,
   withPeriodDates,
   yearPeriodsOf,
   type HeldWindow,
@@ -1162,7 +1164,9 @@ export const ENGINE_LACKS_PERIODS = 'ENGINE_LACKS_PERIODS';
  * The engine's refusal of terminer's fields as unknown ones: `periodWeeks` on
  * the request, or `periods` wherever an entry carries it (a requirement, a
  * fixed lesson, a released post under `placements`). An older engine names
- * every one of them; any is enough.
+ * every one of them; any is enough. And `lockedWeekdayPeriods` on a day
+ * limit, which an engine that knows periods but not a post's days by period
+ * names alone.
  */
 function refusesPeriods(body: { details?: { errors?: unknown } | null } | null): boolean {
   const errors = body?.details?.errors;
@@ -1171,7 +1175,11 @@ function refusesPeriods(body: { details?: { errors?: unknown } | null } | null):
     errors.some((entry: unknown) => {
       const { type, loc } = (entry ?? {}) as { type?: unknown; loc?: unknown };
       if (type !== 'extra_forbidden' || !Array.isArray(loc) || loc[0] !== 'body') return false;
-      return (loc.length === 2 && loc[1] === 'periodWeeks') || (loc.length > 2 && loc[loc.length - 1] === 'periods');
+      const last = loc[loc.length - 1];
+      return (
+        (loc.length === 2 && last === 'periodWeeks') ||
+        (loc.length > 2 && (last === 'periods' || last === 'lockedWeekdayPeriods'))
+      );
     })
   );
 }
@@ -2160,7 +2168,10 @@ export class OptimizationProxyService {
         const params = this.namedParams(detail.params ?? {}, maps);
         const realised = {
           ...detail,
-          message: this.named(detail.message, maps),
+          // Klassens lunch: the line that says locked lessons leave a class
+          // no lunch says which parts of the year they are in, where they are
+          // in several (the web renders the same from the params).
+          message: this.named(detail.message, maps) + lunchLocksSentence(params),
           params: yearGrades(detail.code, params, maps),
           resourceIds,
           // Only the ones there IS a name for. A teacher is deliberately
@@ -2301,17 +2312,24 @@ export class OptimizationProxyService {
    * (withPeriodDates) — on every route a sentence's params leave by, so the
    * summary, each line under it and a refusal before the model all say the
    * same stretch of the year.
+   *
+   * KLASSENS LUNCH: and a refusal about locked lessons of several periods
+   * that close a class's lunch window between them names those periods
+   * (`lockPeriods`); their days are added the same way (withLockPeriodDates).
    */
   private namedParams(
     params: Record<string, string | number>,
     maps: AnonMaps,
   ): Record<string, string | number> {
-    return withPeriodDates(
-      Object.fromEntries(
-        Object.entries(params).map(([key, value]) => [
-          key,
-          typeof value === 'string' ? this.named(value, maps) : value,
-        ]),
+    return withLockPeriodDates(
+      withPeriodDates(
+        Object.fromEntries(
+          Object.entries(params).map(([key, value]) => [
+            key,
+            typeof value === 'string' ? this.named(value, maps) : value,
+          ]),
+        ),
+        maps.periods,
       ),
       maps.periods,
     );
@@ -3870,22 +3888,22 @@ export class OptimizationProxyService {
      * is no week the school has — and are read only when a post has a limit:
      * one statement then, none for a school that sets no days.
      */
+    const fixedLessonsOf = (userId: string): TeachingLesson[] =>
+      preservedLessons
+        .filter((lesson) => lesson.teacherId === userId || lesson.coTeacherId === userId)
+        .map((lesson) => ({
+          id: lesson.id,
+          dayOfWeek: lesson.dayOfWeek,
+          startMinutes: clockMinutes(lesson.startTime),
+          endMinutes: clockMinutes(lesson.endTime),
+          recurrence: lesson.recurrence,
+          startDate: lesson.startDate ? lesson.startDate.toISOString().slice(0, 10) : null,
+          endDate: lesson.endDate ? lesson.endDate.toISOString().slice(0, 10) : null,
+        }));
     const lockedWeekdaysOf = (userId: string, maxDays: number, year: YearSpan | undefined): DayOfWeek[][] =>
-      lockedWeekdaySets(
-        preservedLessons
-          .filter((lesson) => lesson.teacherId === userId || lesson.coTeacherId === userId)
-          .map((lesson) => ({
-            id: lesson.id,
-            dayOfWeek: lesson.dayOfWeek,
-            startMinutes: clockMinutes(lesson.startTime),
-            endMinutes: clockMinutes(lesson.endTime),
-            recurrence: lesson.recurrence,
-            startDate: lesson.startDate ? lesson.startDate.toISOString().slice(0, 10) : null,
-            endDate: lesson.endDate ? lesson.endDate.toISOString().slice(0, 10) : null,
-          })),
-        maxDays,
-        year,
-      ) as DayOfWeek[][];
+      lockedWeekdaySets(fixedLessonsOf(userId), maxDays, year) as DayOfWeek[][];
+    /** Whose limit each entry is, by the id it is sent under: for the periods' read below. */
+    const dayLimitUsers = new Map<string, string>();
     /*
      * SAMMANHÄNGANDE UNDERVISNING rides on the same read: the limit on
      * teaching in a row is the post's too (20261218090000), HR data beside the
@@ -3953,9 +3971,11 @@ export class OptimizationProxyService {
         dayLimitTeacherIds.set(post.id, post.userId);
         // The where admits no null.
         const maxTeachingDaysPerWeek = post.maxTeachingDaysPerWeek as number;
+        const id = anonId(dayLimitAnonMap, post.id);
+        dayLimitUsers.set(id, post.userId);
         return [
           {
-            id: anonId(dayLimitAnonMap, post.id),
+            id,
             teacherId,
             maxTeachingDaysPerWeek,
             lockedWeekdays: lockedWeekdaysOf(post.userId, maxTeachingDaysPerWeek, yearSpan),
@@ -4127,6 +4147,29 @@ export class OptimizationProxyService {
         return mask ? { ...entry, periods: mask } : entry;
       });
     const requirementsInPeriods = inPeriods(requirements, 0);
+    /*
+     * LÄRARENS DAG, PERIOD BY PERIOD. A post's days are held against the
+     * weekdays the teacher's fixed lessons hold, and with periods those are
+     * each period's own (lockedWeekdaySetsByPeriod): a Monday kept in the
+     * autumn takes a day of the autumn's weeks and none of the spring's.
+     * Sent beside `lockedWeekdays`, which stays what it was, and only for a
+     * teacher whose periods differ — every other limit, and every limit of a
+     * year without periods, is the object it was.
+     */
+    const teacherDayLimitsInPeriods: AnonymousTeacherDayLimit[] =
+      yearPeriods && yearSpan
+        ? teacherDayLimits.map((limit) => {
+            const lockedWeekdayPeriods = lockedWeekdaySetsByPeriod(
+              fixedLessonsOf(dayLimitUsers.get(limit.id)!),
+              limit.maxTeachingDaysPerWeek,
+              yearSpan,
+              yearPeriods.weekPeriods,
+            );
+            return lockedWeekdayPeriods
+              ? { ...limit, lockedWeekdayPeriods: lockedWeekdayPeriods as AnonymousTeacherDayLimit['lockedWeekdayPeriods'] }
+              : limit;
+          })
+        : teacherDayLimits;
     const fixedLessonsInPeriods = inPeriods(fixedLessonsSent, requirements.length);
     const releasedInPeriods = inPeriods(releasedRequirements, requirements.length + fixedLessonsSent.length);
 
@@ -4243,7 +4286,7 @@ export class OptimizationProxyService {
       rasts,
       roomPreferences,
       teacherWorkRules,
-      teacherDayLimits,
+      teacherDayLimits: teacherDayLimitsInPeriods,
       fixedLessons: fixedLessonsInPeriods,
       groups,
       previousLessons,
@@ -4572,7 +4615,11 @@ export class OptimizationProxyService {
                 }
                 throw new HttpException(
                   // Terminer: a count made in one period says which, as a refused 200's summary does.
-                  { message: detail + periodSentence(named.params ?? {}), ...named },
+                  // Klassens lunch: and locks of several periods say which parts of the year they are in.
+                  {
+                    message: detail + periodSentence(named.params ?? {}) + lunchLocksSentence(named.params ?? {}),
+                    ...named,
+                  },
                   error.response.status,
                 );
               }

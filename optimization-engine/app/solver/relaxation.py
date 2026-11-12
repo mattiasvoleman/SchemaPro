@@ -98,12 +98,13 @@ from ortools.sat.python import cp_model
 
 from app.schemas.schedule import (
     AnonymousRequirement,
+    AnonymousTeacherDayLimit,
     ConflictDetail,
     FixedLesson,
     OptimizeScheduleRequest,
     ScheduledLesson,
 )
-from app.solver.weeks import Weeks, each_week, meet, named, weeks_of
+from app.solver.weeks import Weeks, each_week, meet, named, says_exactly, together, weeks_of
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -361,6 +362,19 @@ def _week_lessons(
     return requirement is not None and meet(weeks_of(requirement), week)
 
 
+def _held_weekdays(limit: AnonymousTeacherDayLimit, week: Weeks | None) -> set[frozenset[int]]:
+    """The sets of locked weekdays a post's days are held against in one week.
+
+    The model's own reading (scheduler_solver._week_sets, before it leaves out
+    what another set implies): every set of the limit, or, where the sets
+    carry their periods, those of the week's.
+    """
+    by_period = limit.locked_weekday_periods
+    if by_period is None:
+        return {frozenset(weekdays) for weekdays in limit.locked_weekdays}
+    return {frozenset(entry.weekdays) for entry in by_period if meet(weeks_of(entry), week)}
+
+
 def _weeks_of(request: OptimizeScheduleRequest) -> tuple[Weeks | None, ...]:
     """The weeks the request's lessons and locks tell apart: one, every week, for a school with none."""
     return each_week([
@@ -417,7 +431,7 @@ def _cap_deviations(
     capped = [rule for rule in request.teacher_work_rules if rule.max_teaching_minutes_per_day]
     if not capped:
         return []
-    found: list[ConflictDetail] = []
+    found: list[tuple[Weeks | None, ConflictDetail]] = []
     for week in _weeks_of(request):
         locked = flatten([fixed for fixed in request.fixed_lessons if meet(weeks_of(fixed), week)])
         taught: dict[tuple[UUID, int], int] = defaultdict(int)
@@ -441,7 +455,7 @@ def _cap_deviations(
                 over = generated - max(0, cap - locked_minutes)
                 if over <= 0:
                     continue
-                found.append(ConflictDetail(
+                found.append((week, ConflictDetail(
                     category="DEVIATION",
                     code="DEVIATION_TEACHER_DAILY_CAP",
                     params={
@@ -455,7 +469,7 @@ def _cap_deviations(
                     },
                     requirement_ids=list(dict.fromkeys(on_day[(teacher, day)])),
                     resource_ids=[rule.id],
-                ))
+                )))
     return _worst_week(found, ("rule", "day"), _weeks_of(request))
 
 
@@ -476,7 +490,7 @@ def _work_day_deviations(
     """
     if not request.teacher_day_limits:
         return []
-    found: list[ConflictDetail] = []
+    found: list[tuple[Weeks | None, ConflictDetail]] = []
     for week in _weeks_of(request):
         days: dict[UUID, Counter[int]] = defaultdict(Counter)
         requirements_of: dict[tuple[UUID, int], list[UUID]] = defaultdict(list)
@@ -494,7 +508,7 @@ def _work_day_deviations(
             if not generated:
                 continue
             worst: tuple[int, frozenset[int]] | None = None
-            for held in {frozenset(weekdays) for weekdays in limit.locked_weekdays}:
+            for held in _held_weekdays(limit, week):
                 outside = [day for day in generated if day not in held]
                 over = len(outside) - max(0, limit.max_teaching_days_per_week - len(held))
                 if over > 0 and (worst is None or over > worst[0]):
@@ -506,7 +520,7 @@ def _work_day_deviations(
             # lesson costs least, and so where a reader should look first.
             added = sorted((day for day in generated if day not in held), key=lambda d: generated[d])
             extra = added[:over]
-            found.append(ConflictDetail(
+            found.append((week, ConflictDetail(
                 category="DEVIATION",
                 code="DEVIATION_TEACHER_WORK_DAYS",
                 params={
@@ -523,7 +537,7 @@ def _work_day_deviations(
                     for requirement in requirements_of[(limit.teacher_id, day)]
                 )),
                 resource_ids=[limit.id],
-            ))
+            )))
     return _worst_week(found, ("limit",), _weeks_of(request))
 
 
@@ -645,7 +659,9 @@ def _unnamed(detail: ConflictDetail) -> tuple[dict[str, str | int], list[UUID]]:
 
 
 def _worst_week(
-    found: list[ConflictDetail], key: tuple[str, ...], weeks: tuple[Weeks | None, ...],
+    found: list[tuple[Weeks | None, ConflictDetail]],
+    key: tuple[str, ...],
+    weeks: tuple[Weeks | None, ...],
 ) -> list[ConflictDetail]:
     """One line per rule (and day), the week that breaks it by most.
 
@@ -660,19 +676,30 @@ def _worst_week(
     figures, or other lessons, than the rest — says which week that was. The
     same line in every week the request has, figures and lessons both, is
     that line once without its week.
+
+    AND ONE SOME WEEKS HAVE ALIKE SAYS EACH OF THEM (as a refusal does,
+    scheduler_solver._named_weeks): a cap the autumn's lessons break is
+    broken in every period the autumn is cut into, and the line says them
+    together, `period` the first and `periods` all. Only when those words
+    say exactly the weeks that share the line (weeks.says_exactly); else the
+    worst week is said alone, as it was.
     """
     best: dict[tuple, ConflictDetail] = {}
-    lines: dict[tuple, list[ConflictDetail]] = defaultdict(list)
-    for detail in found:
+    lines: dict[tuple, list[tuple[Weeks | None, ConflictDetail]]] = defaultdict(list)
+    for week, detail in found:
         identity = tuple(detail.params[name] for name in key)
-        lines[identity].append(detail)
+        lines[identity].append((week, detail))
         held = best.get(identity)
         if held is None or int(detail.params["over"]) > int(held.params["over"]):
             best[identity] = detail
     out: list[ConflictDetail] = []
     for identity, detail in best.items():
-        alike = [other for other in lines[identity] if _unnamed(other) == _unnamed(detail)]
+        alike = [week for week, other in lines[identity] if _unnamed(other) == _unnamed(detail)]
         if len(alike) == len(weeks):
             detail = detail.model_copy(update={"params": _unnamed(detail)[0]})
+        elif len(alike) > 1:
+            said = together([week for week in alike if week is not None])
+            if says_exactly(said):
+                detail = detail.model_copy(update={"params": {**_unnamed(detail)[0], **named(said)}})
         out.append(detail)
     return out

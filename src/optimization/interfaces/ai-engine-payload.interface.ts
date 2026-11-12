@@ -438,8 +438,9 @@ export interface AnonymousTeacherDayLimit {
    * days literal — a placed lesson is a weekly lesson to it, and adds a day
    * to every week whose fixed lessons are not already on its weekday.
    *
-   * The sets carry no parity, so a teacher whose two weeks differ holds each
-   * of them in both (the engine's stricter reading); reading every weekday
+   * The sets carry no parity and no period, so a teacher whose weeks differ
+   * holds each of them in every one (the engine's stricter reading, and for
+   * terms the reason `lockedWeekdayPeriods` exists, below); reading every weekday
    * any fixed lesson holds as taught in every week — the union — was the
    * lenient direction: a part-timer of two days on Monday
    * and Tuesday in odd weeks and Wednesday and Thursday in even ones left
@@ -451,6 +452,22 @@ export interface AnonymousTeacherDayLimit {
    * deployed without it.
    */
   lockedWeekdays: DayOfWeek[][];
+  /**
+   * TERMINER: the same weekdays, period by period — each set with the periods
+   * of the läsår (an index into `periodWeeks`, as a requirement's `periods`)
+   * in which some real week holds exactly it. When present the engine holds a
+   * set only against the weeks of its periods, so a Monday kept in the autumn
+   * takes no day of the spring; `lockedWeekdays` stays, and is what an engine
+   * reads where this is absent: every set in every week.
+   *
+   * A list of its own and not a mask per set of `lockedWeekdays`, because
+   * what may be left out differs: there, a set inside a larger one anywhere
+   * in the year; here, only inside one the same period holds. Every period is
+   * in at least one entry (a period without fixed lessons holds the empty
+   * set). Sent only when the periods differ — src/common/teacher-day.ts,
+   * lockedWeekdaySetsByPeriod.
+   */
+  lockedWeekdayPeriods?: { weekdays: DayOfWeek[]; periods: boolean[] }[];
 }
 
 export interface AnonymousConstraint {

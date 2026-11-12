@@ -2396,7 +2396,16 @@
       <li>Säger genereringen att något inte går i en viss del av läsåret
         står veckorna under meddelandet: <em>Räknat för veckorna 11 januari
         2027 – 17 januari 2027</em>. Det är då posterna i meddelandet går
-        samtidigt.</li>
+        samtidigt. Raden säger alla veckor där samma sak räknades med samma
+        poster och samma tal. En lärare som har för många timmar hela hösten
+        får alltså höstens veckor, också när andra poster börjar eller slutar
+        under hösten. Hänger veckorna inte ihop står den första sträckan,
+        följd av <em>och övriga veckor med samma poster</em>.</li>
+      <li>Tre saker måste genereringen pröva sig fram till: om matsalen
+        rymmer klassernas luncher, om en klass timmar ryms i dess dagar och
+        om läsårets tätaste vecka går ihop. Där säger raden den vecka där det
+        först upptäcktes, och inte fler. Samma sak kan gälla andra veckor
+        också. Rätta det meddelandet säger och kör igen.</li>
       <li>Ändrar du veckor eller datum på en post eller på en låst eller
         bevarad lektion medan genereringen pågår skrivs inget schema: det
         räknades för veckorna som de var. Kör den igen.</li>
@@ -2417,23 +2426,25 @@
       <li><strong>Spärrar och uppdrag med datum</strong> (4.3), lektioner på
         en annan skola (2.5) och lånade lokaler håller sina tider hela
         läsåret.</li>
-      <li><strong>Deltid i dagar</strong> (4.4): de veckodagar lärarens
-        bevarade lektioner håller räknas mot varje del av läsåret, också den
-        del där lektionen inte går. En lärare med två dagar i veckan och en
-        låst lektion på måndagar bara på hösten får alltså bara en dag till
-        på våren, fast våren har rum för två. Genereringen svarar då att
-        tjänstens dagar är en av reglerna som inte kan gälla samtidigt.</li>
-      <li><strong>Lärarens lunch</strong> (4.4): lunchen i en arbetstidsregel
-        ligger på en och samma tid hela läsåret och ska gå fri från lärarens
-        låsta lektioner i varje del av det. Två låsta lektioner som
-        tillsammans fyller lunchfönstret, en på hösten och en på våren,
-        lämnar ingen lunch, fast varje termin har en. Genereringen svarar att
-        låsta lektioner lämnar arbetstidsregeln ingen lunch. Inga veckor står
-        under det meddelandet, eftersom det gäller hela läsåret.</li>
-      <li><strong>Klassens lunch</strong>: klassens måltid är en tid per dag
-        hela läsåret. Två låsta lektioner i olika terminer som tillsammans
-        fyller lunchfönstret nekas med <em>Låsta lektioner lämnar klassen
-        ingen lunchlucka</em>, fast varje termin har en lucka.</li>
+      <li><strong>Deltid i dagar</strong> och <strong>lärarens lunch</strong>
+        (4.4) räknas per termin: en låst lektion på måndagar bara på hösten
+        tar ingen av vårens dagar, och en lärare kan äta en tid på hösten och
+        en annan på våren. Udda och jämna veckor inom en termin räknas
+        däremot tillsammans: de veckodagar bevarade lektioner håller i udda
+        veckor räknas också mot de jämna, och lunchen är en tid för båda.
+        Nekas en lärares lunch av låsta lektioner står terminens veckor under
+        meddelandet, om det inte gäller hela läsåret.</li>
+      <li><strong>Klassens lunch</strong>: klassens lunch är en och samma
+        tid hela läsåret och måste gå fri från låsta lektioner i varje del av
+        det. Hit räknas också förlagda poster (nedan). Två låsta lektioner i
+        olika terminer som tillsammans fyller lunchfönstret nekas därför med
+        <em>Låsta lektioner lämnar klassen ingen lunchlucka</em>, fast varje
+        termin har en lucka. Under meddelandet står då vilka delar av läsåret
+        de låsta lektionerna ligger i, till exempel <em>veckorna 17 augusti
+        2026 – 20 december 2026 och veckorna 11 januari 2027 – 11 juni
+        2027</em>, och att klassens lunch är en tid hela läsåret. Flytta
+        eller lås upp en av dem. Står inga veckor under meddelandet fyller
+        en enda termins låsta lektioner fönstret själva.</li>
       <li><strong>Ämnesfördelningen</strong>: en bevarad lektions veckodag
         räknas alla veckor.</li>
       <li><strong>Block på samma tider</strong> (nedan): höstens post håller

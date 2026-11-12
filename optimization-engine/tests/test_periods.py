@@ -257,6 +257,23 @@ MIRRORED = sorted(
     name for name in dir(ab) if name.startswith("test_") and name not in NOT_MIRRORED
 )
 
+#: The two-week tests that a TERM is no longer held by as a parity is, and
+#: the one reading of the two weeks they still hold in. A teacher's own lunch
+#: is one hour for a term's odd weeks and its even ones, and its own hour in
+#: each term (test_period_rules.py): the test's two locks, each in a term of
+#: its own, leave each term its hour, where an odd-week lock and an even-week
+#: lock of one term leave that term none.
+HELD_BY_PARITY_ALONE = {
+    "test_a_teachers_lunch_keeps_clear_of_both_weeks_locks_and_is_refused_by_name":
+        "the odd and the even weeks of one term",
+}
+MIRRORED_AS = [
+    (name, weeks)
+    for name in MIRRORED
+    for weeks in sorted(AS_PERIODS)
+    if HELD_BY_PARITY_ALONE.get(name, weeks) == weeks
+]
+
 
 class _IsARequest(type):
     def __instancecheck__(cls, instance: object) -> bool:
@@ -287,6 +304,9 @@ def _AsPeriods(weeks: dict[str, dict[str, object]]) -> type:  # noqa: N802 - sta
 
 def test_the_mirror_reaches_every_week_test_of_the_two_weeks() -> None:
     assert len(MIRRORED) == 24
+    # Every reading of the two weeks for each, less the four a term is not held by.
+    assert len(MIRRORED_AS) == 24 * len(AS_PERIODS) - 4
+    assert set(HELD_BY_PARITY_ALONE) <= set(MIRRORED)
     # And it does write periods: a parity in, a mask out.
     request = _AsPeriods(AS_PERIODS["two terms"]).model_validate(
         _payload([ab._requirement(str(uuid4()), 1, recurrence=ODD)]),
@@ -295,8 +315,7 @@ def test_the_mirror_reaches_every_week_test_of_the_two_weeks() -> None:
     assert request.requirements[0].recurrence is None
 
 
-@pytest.mark.parametrize("weeks", sorted(AS_PERIODS))
-@pytest.mark.parametrize("name", MIRRORED)
+@pytest.mark.parametrize(("name", "weeks"), MIRRORED_AS)
 def test_a_period_is_held_as_a_parity_is(
     name: str, weeks: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1879,11 +1898,17 @@ def test_a_solved_refusal_is_the_weeks_only_when_the_weeks_own_entries_made_it()
     asked_of.clear()
     assert solver._solved_in(said, None, plain, plain, nothing) is said
     assert asked_of == []
-    # No entry of every week at all: the week's own entries are all there is.
+    # No entry of every week at all: asked of the year without a post, which
+    # still has its classes, its hall and its rules (review of #300, round
+    # two, LÅG-2). The same verdict there is nobody's period; another is the
+    # week's.
     dated = OptimizeScheduleRequest.model_validate(
         _payload([_requirement(group, 1, periods=AUTUMN), _requirement(group, 1, periods=SPRING)]))
     (label, week), _ = _weeks_and_requests(dated)
-    assert solver._solved_in(said, label, week, dated, the_same).summary_params == {"n": 1, "period": 0}
+    asked_of.clear()
+    assert solver._solved_in(said, label, week, dated, the_same) is said
+    assert asked_of == [0]
+    assert solver._solved_in(said, label, week, dated, nothing).summary_params == {"n": 1, "period": 0}
     # A LOCK is a week's own entry too. One post of every week, a lock of
     # every week and a lock of the spring: the spring differs from the rest
     # by its lock alone, and what is asked again is asked without it.
@@ -1905,15 +1930,17 @@ def test_a_solved_refusal_is_the_weeks_only_when_the_weeks_own_entries_made_it()
     assert locks_asked == [1]
 
 
-def test_the_teachers_lunch_is_refused_as_the_years_and_names_no_period() -> None:
-    """A teacher's own lunch is one hour all year, read against every lock of the year.
+def test_the_teachers_lunch_is_refused_for_the_term_its_locks_are_in() -> None:
+    """A teacher's own lunch against the locks, named by where the locks are.
 
     Lunch 11:00-12:00, half an hour. Two locks fill the window, both in the
     SPRING; the teacher has a post all year and one of the autumn. The refusal
     was raised while the autumn's request was being read and said `period: 0`
     — the autumn, which has no lock at all (review of #300, M1). The gateway
     turns the index into dates, so the school would have gone to the wrong
-    term. It is the year's refusal: it names no period, wherever the locks are.
+    term. The lunch is read period by period now (test_period_rules.py), and
+    the check says the period ITSELF: the spring for two locks of the spring,
+    whichever week's request was being read, and none for locks of every week.
     """
     teacher = str(uuid4())
     rule = {"id": str(uuid4()), "teacherId": teacher, "lunchMinutes": 30,
@@ -1936,11 +1963,13 @@ def test_the_teachers_lunch_is_refused_as_the_years_and_names_no_period() -> Non
 
     every_year = refusal(None, None)
     assert every_year.code == "TEACHER_LUNCH_LEAVES_NO_START"
-    for first, second in ((SPRING, SPRING), (AUTUMN, AUTUMN), (SPRING, AUTUMN), (None, SPRING)):
+    assert "period" not in every_year.params and "periods" not in every_year.params
+    for first, second, period in ((SPRING, SPRING, 1), (AUTUMN, AUTUMN, 0), (None, SPRING, 1)):
         refused = refusal(first, second)
         assert refused.code == "TEACHER_LUNCH_LEAVES_NO_START"
-        assert "period" not in refused.params and "periods" not in refused.params
-        assert refused.params.keys() == every_year.params.keys()
+        assert refused.params["period"] == period
+        assert "periods" not in refused.params and "parity" not in refused.params
+        assert refused.params.keys() - {"period"} == every_year.params.keys()
 
 
 def test_a_teachers_lunch_window_too_narrow_is_the_rules_own_and_names_no_period() -> None:
@@ -2305,15 +2334,19 @@ def test_a_lunch_stage_refusal_the_years_posts_give_alone_names_no_period_in_the
     assert _summary_week(payload, test_optimize._settings()) == ("LUNCH_HALL_CANNOT_SEAT_CLASSES", {})
 
 
-def test_a_teacher_of_one_term_whose_lunch_the_other_terms_locks_close_is_told_no_period() -> None:
-    """C03: the teacher's lunch is the year's by name, not because every week happens to refuse it.
+def test_a_teacher_of_one_term_is_refused_nothing_for_the_other_terms_locks_in_her_lunch() -> None:
+    """C03 of #300's second review, as the lunch is read now: one in each period.
 
     Every post of the teacher's is the autumn's; two locks of the SPRING fill
-    her lunch window. Only the autumn's week reads her rule (the spring has
-    no lesson of hers), so "the same refusal in every week" does not hold,
-    and the refusal would be the autumn's — the term that has no lock at all
-    (review of #300, M1, in the one form its first test did not have: there
-    the teacher had a post of every week).
+    her lunch window. While the lunch was one hour all year this year was
+    refused, and the test held that the refusal named no period (left to the
+    week it was raised from it would have been the autumn's, the term with no
+    lock at all). Read period by period (test_period_rules.py) there is
+    nothing to refuse: the spring has no lesson of hers for a lunch to be
+    kept clear beside, and the autumn has no lock. The year is laid.
+
+    The same two locks in the AUTUMN, where her lessons are, are the
+    autumn's, and the refusal says so itself.
     """
     teacher = str(uuid4())
     payload = _payload(
@@ -2326,10 +2359,20 @@ def test_a_teacher_of_one_term_whose_lunch_the_other_terms_locks_close_is_told_n
             _lock(str(uuid4()), "11:30:00", "12:00:00", teacher=teacher, periods=SPRING),
         ],
     )
+    settings = _settings(hours=5)
+    SchedulerSolver(settings)._validate_request(OptimizeScheduleRequest.model_validate(payload))
+    response = _solve(payload, settings)
+    assert response.status in SOLVED
+    assert len(response.lessons) == 3
+    assert _validate(payload, response.lessons, settings) == []
+
+    for lock in payload["fixedLessons"]:  # type: ignore[union-attr]
+        lock["periods"] = AUTUMN
     with pytest.raises(InvalidScheduleInputError) as refused:
-        SchedulerSolver(_settings(hours=5))._validate_request(OptimizeScheduleRequest.model_validate(payload))
+        SchedulerSolver(settings)._validate_request(OptimizeScheduleRequest.model_validate(payload))
     assert refused.value.code == "TEACHER_LUNCH_LEAVES_NO_START"
-    assert not {"period", "periods", "parity"} & set(refused.value.params)
+    assert {name: refused.value.params[name] for name in ("period", "periods", "parity")
+            if name in refused.value.params} == {"period": 0}
 
 
 def _cap_breach(others: list[dict[str, object]], **extra: object):

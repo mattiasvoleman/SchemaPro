@@ -839,6 +839,41 @@ class AnonymousTeacherWorkRule(CamelModel):
         return self.lunch_minutes is not None
 
 
+class LockedWeekdaysInPeriods(CamelModel):
+    """A set of weekdays a teacher's preserved lessons hold together, and where in the year.
+
+    One entry of AnonymousTeacherDayLimit.locked_weekday_periods: `weekdays`
+    as one set of `locked_weekdays` is written, and `periods` the periods of
+    the year — AnonymousRequirement.periods' own indices and length — in which
+    some real ISO week holds exactly that set.
+
+    EVERY PERIOD IS A MASK HERE, unlike a requirement's: a set held all year
+    beside one held in the spring is two entries of one list, and "every
+    period" left out would be an entry with no mask among entries with one.
+    A mask of nothing but false is a set no week has, and is not a thing to
+    send.
+    """
+
+    weekdays: list[DayOfWeek] = Field(max_length=7)
+    periods: tuple[bool, ...] = Field(min_length=2, max_length=MAX_PERIODS)
+
+    @field_validator("weekdays")
+    @classmethod
+    def weekdays_once_each(cls, value: list[DayOfWeek]) -> list[DayOfWeek]:
+        if len(set(value)) != len(value):
+            msg = "lockedWeekdayPeriods names a weekday twice in one week."
+            raise ValueError(msg)
+        return value
+
+    @field_validator("periods")
+    @classmethod
+    def some_period(cls, value: tuple[bool, ...]) -> tuple[bool, ...]:
+        if not any(value):
+            msg = "lockedWeekdayPeriods must name at least one period a set is held in."
+            raise ValueError(msg)
+        return value
+
+
 class AnonymousTeacherDayLimit(CamelModel):
     """Deltid in days: a teacher's post allows teaching on at most N days a week.
 
@@ -891,8 +926,9 @@ class AnonymousTeacherDayLimit(CamelModel):
     #: most max(0, N − |L|) of the grid's days outside L. The sets carry no
     #: parity and no period, so the generated lessons of each week the
     #: teacher has (app/solver/weeks.py) are held against EVERY set — the
-    #: stricter reading for a teacher whose locks differ by term, never a day
-    #: over the post — and a lesson adds a day
+    #: stricter reading, never a day over the post, and what refused a
+    #: teacher whose locks differ by term until the sets could say their
+    #: periods (locked_weekday_periods, below) — and a lesson adds a day
     #: to every week whose locks do not already hold its weekday, and a week
     #: with |L| days locked has N − |L| left to add. A week the locks alone
     #: put over N gets nothing added, and is not refused for what it holds.
@@ -946,6 +982,61 @@ class AnonymousTeacherDayLimit(CamelModel):
                 msg = "lockedWeekdays names a weekday twice in one week."
                 raise ValueError(msg)
         return value
+
+    #: TERMINER: THE SAME SETS, EACH WITH THE PERIODS IT IS HELD IN. With
+    #: `locked_weekdays` alone every set is held against every week the
+    #: teacher has, which refuses a year whose every term has a timetable: a
+    #: post of two days, a Monday locked in the autumn only, and lessons that
+    #: need Tuesday and Wednesday in the spring. Each term fits its two days,
+    #: and the autumn's Monday held against the spring left the spring one.
+    #:
+    #: WHAT THE ENGINE HOLDS WHEN THIS IS SENT: for a week of the teacher's
+    #: (app/solver/weeks.py), the sets whose periods meet that week's, each by
+    #: the line above, and no other set. A real week lies in one period, and a
+    #: lesson the engine places in a week of a period runs in all of it, so
+    #: that is every real week's own line and nothing more. The parity is not
+    #: told apart: an odd week's set and an even week's of one period are both
+    #: held in each of its weeks, as before.
+    #:
+    #: A LIST OF ITS OWN, NOT A MASK BESIDE EACH SET ABOVE, because what may
+    #: be left out differs. `locked_weekdays` leaves out a set inside a larger
+    #: one of at most N weekdays wherever in the year the two are held; here
+    #: {Monday} in the autumn says nothing of a spring that holds {Monday,
+    #: Tuesday} and must stay, or the autumn has no line at all. The gateway
+    #: leaves out only inside one period (lockedWeekdaySetsByPeriod, src/
+    #: common/teacher-day.ts) and the engine prunes again among the sets of
+    #: one week (scheduler_solver._week_sets).
+    #:
+    #: EVERY PERIOD IS IN SOME ENTRY — a period whose weeks hold no preserved
+    #: lesson holds the empty set — and each set is written once, with every
+    #: period it is held in: shapes, refused as two limits for one post are. A
+    #: period no entry names would be a term with no line, the silent breach
+    #: `locked_weekdays` exists to close.
+    #:
+    #: ABSENT IS TODAY'S READING EXACTLY, and `locked_weekdays` stays required
+    #: beside it: the gateway sends this only for a teacher whose periods
+    #: differ, so every other limit builds the rows it always built.
+    locked_weekday_periods: list[LockedWeekdaysInPeriods] | None = Field(
+        default=None, alias="lockedWeekdayPeriods", min_length=1, max_length=128,
+    )
+
+    @model_validator(mode="after")
+    def periods_told_once_and_all(self) -> AnonymousTeacherDayLimit:
+        """Each set once, masks of one length, and no period without a set."""
+        held = self.locked_weekday_periods
+        if held is None:
+            return self
+        sets = [frozenset(entry.weekdays) for entry in held]
+        if len(set(sets)) != len(sets):
+            msg = "lockedWeekdayPeriods names one set of weekdays twice."
+            raise ValueError(msg)
+        if len({len(entry.periods) for entry in held}) > 1:
+            msg = "lockedWeekdayPeriods masks must all have the same length."
+            raise ValueError(msg)
+        if not all(any(period) for period in zip(*(entry.periods for entry in held))):
+            msg = "lockedWeekdayPeriods must name a set for every period."
+            raise ValueError(msg)
+        return self
 
 
 class FrameTime(CamelModel):
@@ -1642,6 +1733,12 @@ class OptimizeScheduleRequest(CamelModel):
             )
             if entry.periods is not None
         ]
+        # A post's days by period are cut as everything else is.
+        masks.extend(
+            entry.periods
+            for limit in self.teacher_day_limits
+            for entry in limit.locked_weekday_periods or ()
+        )
         lengths = {len(mask) for mask in masks}
         if len(lengths) > 1:
             msg = "periods masks must all have the same length."

@@ -236,6 +236,27 @@ def meet(first: Weeks | str | None, second: Weeks | str | None) -> bool:
     return bool(first.lifted(periods) & second.lifted(periods))  # type: ignore[union-attr]
 
 
+def whole_periods(week: Weeks | str | None) -> Weeks | None:
+    """The periods these weeks lie in, in both parities; None when that is every week.
+
+    What a row is cut by when it is held per PERIOD and not per parity: a
+    teacher's own lunch (scheduler_solver._add_teacher_lunch) is one hour for
+    the odd weeks and the even ones of a term, as it always was, and its own
+    hour in each term. A parity alone — a year without periods — is every week
+    here, so such a year is cut by nothing and builds what it built.
+    """
+    week = _weeks(week)
+    if week is None:
+        return None
+    bits = 0
+    for period in range(week.periods):
+        if (week.bits >> (2 * period)) & 0b11:
+            bits |= 0b11 << (2 * period)
+    if bits == (1 << (2 * week.periods)) - 1:
+        return None
+    return Weeks(bits, week.periods)
+
+
 def alternates(weeks: Iterable[Weeks | str | None]) -> bool:
     """Whether any of these runs in some weeks only."""
     return any(runs is not None for runs in weeks)
@@ -440,6 +461,31 @@ def named(week: Weeks | str | None) -> dict[str, str | int]:
     if parity is not None:
         said["parity"] = parity
     return said
+
+
+def together(weeks: Sequence[Weeks]) -> Weeks:
+    """Several of one year's weeks as one set: what is true of each is said of them all."""
+    periods = max(week.periods for week in weeks)
+    bits = 0
+    for week in weeks:
+        bits |= week.lifted(periods)
+    return Weeks(bits, periods)
+
+
+def says_exactly(week: Weeks) -> bool:
+    """Whether named() says these weeks and no others.
+
+    Its words are periods and at most one parity — "the odd weeks of periods 0
+    and 2". Weeks of one parity are always that: those weeks of each period
+    they lie in. Weeks of both are said as their periods whole, and are more
+    than they are said to be unless each of those periods is there in both:
+    the odd weeks of the autumn with every week of the spring would come out
+    as both terms whole.
+    """
+    if week.parity() is not None:
+        return True
+    pairs = ((week.bits >> (2 * period)) & 0b11 for period in range(week.periods))
+    return all(pair == 0b11 for pair in pairs if pair)
 
 
 def year_of(request: object) -> list[int]:
