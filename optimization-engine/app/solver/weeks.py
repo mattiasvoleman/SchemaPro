@@ -463,6 +463,31 @@ def named(week: Weeks | str | None) -> dict[str, str | int]:
     return said
 
 
+def together(weeks: Sequence[Weeks]) -> Weeks:
+    """Several of one year's weeks as one set: what is true of each is said of them all."""
+    periods = max(week.periods for week in weeks)
+    bits = 0
+    for week in weeks:
+        bits |= week.lifted(periods)
+    return Weeks(bits, periods)
+
+
+def says_exactly(week: Weeks) -> bool:
+    """Whether named() says these weeks and no others.
+
+    Its words are periods and at most one parity — "the odd weeks of periods 0
+    and 2". Weeks of one parity are always that: those weeks of each period
+    they lie in. Weeks of both are said as their periods whole, and are more
+    than they are said to be unless each of those periods is there in both:
+    the odd weeks of the autumn with every week of the spring would come out
+    as both terms whole.
+    """
+    if week.parity() is not None:
+        return True
+    pairs = ((week.bits >> (2 * period)) & 0b11 for period in range(week.periods))
+    return all(pair == 0b11 for pair in pairs if pair)
+
+
 def year_of(request: object) -> list[int]:
     """How many real weeks each period of the request's year is: [1] for a year without periods.
 

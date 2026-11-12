@@ -40,7 +40,7 @@ from app.schemas.schedule import (
 )
 from app.solver.relaxation import deviations_of
 from app.solver.scheduler_solver import SchedulerSolver, _teacher_locks, _week_sets
-from app.solver.weeks import EVEN_WEEKS, ODD_WEEKS, Weeks, whole_periods
+from app.solver.weeks import EVEN_WEEKS, ODD_WEEKS, Weeks, named, says_exactly, together, whole_periods
 
 AUTUMN, SPRING = periods.AUTUMN, periods.SPRING
 SOLVED = periods.SOLVED
@@ -1285,3 +1285,215 @@ def test_two_weeks_with_posts_are_asked_of_each_other_and_not_of_the_year_withou
     assert _refused(_payload([capped, beside], teacherWorkRules=cap), settings) == (
         "TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK", {},
     )
+
+
+# ---------------------------------------------------------------------------
+# Every period a refusal is said the same in
+# ---------------------------------------------------------------------------
+
+#: The autumn of a läsår cut the way a real one is: the days before the first
+#: Monday, the autumn itself and the weeks around the new year, and then the
+#: spring. Four periods, and a term's posts run in the first three.
+ALL_AUTUMN = [True, True, True, False]
+
+
+def _cut_into_four() -> list[dict[str, object]]:
+    """Posts of other teachers and classes that tell the four periods apart, an hour each."""
+    return [
+        _requirement(str(uuid4()), 1, periods=[False, True, True, True]),   # from the first Monday
+        _requirement(str(uuid4()), 1, periods=[True, True, False, False]),  # until the holiday
+        _requirement(str(uuid4()), 1, periods=[False, False, False, True]),  # the spring's own
+    ]
+
+
+def test_a_teacher_over_her_hours_all_autumn_is_told_every_period_of_the_autumn() -> None:
+    """EVERY WEEK THAT SHARES A REFUSAL IS SAID, NOT THE FIRST.
+
+    Five posts of one teacher, an hour each on a day of four, all autumn. The
+    autumn is three periods here, as a real one is, and she is over her hours
+    in each with the same posts and the same figures. Named by the first week
+    the refusal said `period: 0` and the school read "the weeks from 15
+    August to 16 August". It says all three, the first in `period`, and the
+    gateway reads their stretches as one run of weeks.
+    """
+    teacher = str(uuid4())
+    settings = periods._settings()
+    posts = [_requirement(str(uuid4()), 1, teacher=teacher, periods=ALL_AUTUMN) for _ in range(5)]
+    assert _refused(_payload([*posts, *_cut_into_four()]), settings) == (
+        "DEMAND_TEACHER_HOURS_SHORT", {"period": 0, "periods": "0,1,2"},
+    )
+    # The odd and the even weeks of one term that share it are the term: no parity.
+    in_autumn = [_requirement(str(uuid4()), 1, teacher=teacher, periods=AUTUMN) for _ in range(5)]
+    apart = [
+        _requirement(str(uuid4()), 1, periods=AUTUMN, recurrence="ODD_WEEKS"),
+        _requirement(str(uuid4()), 1, periods=SPRING),
+    ]
+    assert _refused(_payload([*in_autumn, *apart]), settings) == ("DEMAND_TEACHER_HOURS_SHORT", {"period": 0})
+    # A refusal one week has alone says what it always said.
+    autumn_proper = [
+        _requirement(str(uuid4()), 1, teacher=teacher, periods=[False, True, False, False]) for _ in range(5)
+    ]
+    assert _refused(_payload([*autumn_proper, *_cut_into_four()]), settings) == (
+        "DEMAND_TEACHER_HOURS_SHORT", {"period": 1},
+    )
+    # And one more post of hers from the first Monday makes the autumn itself
+    # another count, with other figures: the first week's refusal is shared
+    # by the weeks around the new year and by no other.
+    sixth = _requirement(str(uuid4()), 1, teacher=teacher, periods=[False, True, False, False])
+    assert _refused(_payload([*posts, sixth, *_cut_into_four()]), settings) == (
+        "DEMAND_TEACHER_HOURS_SHORT", {"period": 0, "periods": "0,2"},
+    )
+
+
+def test_a_400_some_weeks_share_says_each_of_them() -> None:
+    """The same for a 400: a cap of an hour a day against two hours of every week of the autumn."""
+    teacher = str(uuid4())
+    cap = [{"id": str(uuid4()), "teacherId": teacher, "maxTeachingMinutesPerDay": 60}]
+    capped = _requirement(str(uuid4()), 2, teacher=teacher, periods=ALL_AUTUMN)
+    assert _refused(_payload([capped, *_cut_into_four()], teacherWorkRules=cap), periods._settings()) == (
+        "TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK", {"period": 0, "periods": "0,1,2"},
+    )
+    alone = _requirement(str(uuid4()), 2, teacher=teacher, periods=[False, False, True, False])
+    assert _refused(_payload([alone, *_cut_into_four()], teacherWorkRules=cap), periods._settings()) == (
+        "TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK", {"period": 2},
+    )
+
+
+def test_a_week_is_asked_as_itself_and_not_as_the_week_the_refusal_was_found_in() -> None:
+    """Each week that may share a 400 is read with its own period's locks.
+
+    The cap again, too small all autumn. Another teacher has a lunch of her
+    own, a lesson in the autumn proper, and two locks that fill her lunch
+    window in the days before the first Monday, where she has no lesson: she
+    is refused nothing. Asked whether the autumn proper shares the cap's
+    refusal, that week is read with its own locks. Read with the locks of
+    the week the refusal was found in, her lunch would be refused there
+    first, and the autumn proper would drop out of what the cap's refusal
+    says.
+    """
+    teacher, other = str(uuid4()), str(uuid4())
+    first_days, autumn_proper = [True, False, False, False], [False, True, False, False]
+    rules = [
+        {"id": str(uuid4()), "teacherId": teacher, "maxTeachingMinutesPerDay": 60},
+        {"id": str(uuid4()), "teacherId": other, "lunchMinutes": 30,
+         "lunchStartTime": "11:00:00", "lunchEndTime": "12:00:00"},
+    ]
+    payload = _payload(
+        [_requirement(str(uuid4()), 2, teacher=teacher, periods=ALL_AUTUMN),
+         _requirement(str(uuid4()), 1, teacher=other, periods=autumn_proper),
+         *_cut_into_four()],
+        teacherWorkRules=rules,
+        fixedLessons=[
+            periods._lock(str(uuid4()), "11:00:00", "11:30:00", teacher=other, periods=first_days),
+            periods._lock(str(uuid4()), "11:30:00", "12:00:00", teacher=other, periods=first_days),
+        ],
+    )
+    assert _refused(payload, periods._settings(hours=5)) == (
+        "TEACHER_DAILY_CAP_TOO_SMALL_FOR_WEEK", {"period": 0, "periods": "0,1,2"},
+    )
+
+
+def test_weeks_the_words_cannot_say_exactly_leave_the_week_it_was_found_in() -> None:
+    """ONLY WHEN THE WORDS SAY THOSE WEEKS AND NO OTHERS.
+
+    Two terms, odd and even weeks. The teacher's five posts of every week
+    put her over her hours all year, and a sixth in the even weeks of the
+    spring makes that one week another count. A post of the autumn's odd
+    weeks tells those apart, so the first refusal is shared by the odd weeks
+    of the autumn, its even weeks and the odd weeks of the spring: three of
+    the four, which "periods 0 and 1" would say as all four. The week it was
+    found in is said alone, as before.
+    """
+    teacher = str(uuid4())
+    posts = [_requirement(str(uuid4()), 1, teacher=teacher) for _ in range(5)]
+    sixth = _requirement(str(uuid4()), 1, teacher=teacher, periods=SPRING, recurrence="EVEN_WEEKS")
+    apart = _requirement(str(uuid4()), 1, periods=AUTUMN, recurrence="ODD_WEEKS")
+    assert _refused(_payload([*posts, sixth, apart]), periods._settings()) == (
+        "DEMAND_TEACHER_HOURS_SHORT", {"period": 0, "parity": "ODD_WEEKS"},
+    )
+
+
+def test_a_breach_the_weeks_of_the_autumn_have_alike_says_each_of_them() -> None:
+    """Bästa möjliga schema, the same: a cap broken alike in every period of the autumn.
+
+    test_periods' breach: 120 minutes of every week over a cap of 60. A lock
+    of an hour all autumn takes the cap's whole hour there, so the lesson is
+    120 over in each of the autumn's three periods and 60 over in the spring.
+    The worst week was said alone, the first of the three; the line says the
+    three.
+    """
+    line = periods._cap_breach(
+        _cut_into_four(),
+        locks=[periods._lock(str(uuid4()), "10:00:00", "11:00:00", periods=ALL_AUTUMN)],
+    )
+    assert line.params["over"] == 120
+    assert {name: line.params[name] for name in WEEK_WORDS if name in line.params} == {
+        "period": 0, "periods": "0,1,2",
+    }
+    # Broken by most in one period alone: that period, as before.
+    line = periods._cap_breach(
+        _cut_into_four(),
+        locks=[periods._lock(str(uuid4()), "10:00:00", "11:00:00", periods=[False, False, True, False])],
+    )
+    assert {name: line.params[name] for name in WEEK_WORDS if name in line.params} == {"period": 2}
+    # The odd and the even weeks of the autumn alike, each a week of its own:
+    # the autumn, and the parity the worst week was found in is not said.
+    line = periods._cap_breach(
+        [_requirement(str(uuid4()), 1, periods=AUTUMN, recurrence="ODD_WEEKS"),
+         _requirement(str(uuid4()), 1, periods=SPRING)],
+        locks=[periods._lock(str(uuid4()), "10:00:00", "11:00:00", periods=AUTUMN)],
+    )
+    assert line.params["over"] == 120
+    assert {name: line.params[name] for name in WEEK_WORDS if name in line.params} == {"period": 0}
+    # The autumn and the odd weeks of the spring alike: no words say those
+    # three weeks of four and no other, so the worst week is said alone.
+    line = periods._cap_breach([], locks=[
+        periods._lock(str(uuid4()), "10:00:00", "11:00:00", periods=AUTUMN),
+        periods._lock(str(uuid4()), "10:00:00", "11:00:00", periods=SPRING, recurrence="ODD_WEEKS"),
+    ])
+    assert line.params["over"] == 120
+    assert {name: line.params[name] for name in WEEK_WORDS if name in line.params} == {"period": 0}
+
+
+def test_a_solved_refusal_says_the_week_it_was_found_in_and_no_other() -> None:
+    """WHAT IS NOT SAID: a verdict that solves something names the one week it was found in.
+
+    test_optimize's middle years, whose lunch stage refuses for what the
+    posts pack, with every post all autumn and the autumn in three periods.
+    The stage is a model, run on at most MAX_SOLVED_WEEKS weeks and stopped
+    at the first that refuses; saying which other weeks share the verdict
+    would be solving each of them. So the line under this refusal is the
+    week it was found in — here the first of the three — and the handbook
+    says that it may hold in more.
+    """
+    packed = _posts_dated(periods._hall_of_the_middle_years(), [ALL_AUTUMN])
+    packed["requirements"].extend(_cut_into_four())  # type: ignore[union-attr]
+    assert _refused(packed, periods.test_optimize._settings()) == (
+        "LUNCH_HALL_CANNOT_SEAT_CLASSES", {"period": 0},
+    )
+
+
+@pytest.mark.parametrize(("bits", "count", "exactly"), [
+    (0b0011, 2, True),      # the autumn, odd and even
+    (0b0101, 2, True),      # the odd weeks of both terms
+    (0b1010, 2, True),      # the even weeks of both
+    (0b1111, 2, True),      # every week
+    (0b0111, 2, False),     # the autumn and the spring's odd weeks
+    (0b0110, 2, False),     # the autumn's even weeks and the spring's odd
+    (0b110011, 3, True),    # the first and the third of three periods
+    (0b010011, 3, False),   # the first whole and the third's odd weeks
+    (0b01, 1, True),        # a year without periods: its odd weeks
+])
+def test_the_words_for_a_week_say_exactly_a_set_of_whole_periods_in_one_parity_or_both(
+    bits: int, count: int, exactly: bool,
+) -> None:
+    assert says_exactly(Weeks(bits, count)) is exactly
+
+
+def test_weeks_said_together_are_each_of_them_and_no_other() -> None:
+    first, third = Weeks(0b000011, 3), Weeks(0b110000, 3)
+    assert together([first, third]) == Weeks(0b110011, 3)
+    assert named(together([first, third])) == {"period": 0, "periods": "0,2"}
+    assert together([third]) == third
+    # A parity of a year without periods beside a period: the parity is every period's.
+    assert together([ODD_WEEKS, Weeks(0b0010, 2)]) == Weeks(0b0111, 2)

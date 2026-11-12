@@ -110,8 +110,10 @@ from app.solver.weeks import (
     each_week,
     meet,
     named as week_named,
+    says_exactly as week_says_exactly,
     share as week_share,
     tag as week_tag,
+    together as weeks_together,
     week_parts,
     weeks_of,
     whole_periods,
@@ -5112,7 +5114,29 @@ class SchedulerSolver:
         count: Callable[[OptimizeScheduleRequest], ConflictAnalysis | None],
         whole: OptimizeScheduleRequest,
     ) -> ConflictAnalysis:
-        """A counted refusal with the week it was counted in — unless it is every week's.
+        """A counted refusal with the weeks it is said of (_named_weeks).
+
+        The same count is made in every week, and the weeks that give this
+        verdict, to the word, are the ones named. Arithmetic, a few
+        milliseconds a week, and only on the way to a refusal. A year without
+        periods names no week whatever is counted (weeks.named), so nothing
+        is counted twice for it.
+        """
+        return _in_week(verdict, self._named_weeks(
+            label, weeks, whole, lambda other, _whole, _week: count(other) == verdict,
+        ))
+
+    def _named_weeks(
+        self,
+        label: Weeks | None,
+        weeks: list[tuple[Weeks | None, OptimizeScheduleRequest]],
+        whole: OptimizeScheduleRequest,
+        shares: Callable[[OptimizeScheduleRequest, OptimizeScheduleRequest, Weeks | None], bool],
+    ) -> Weeks | None:
+        """The weeks a refusal found in the week `label` is said of; None for no week at all.
+
+        `shares(request, whole, week)` is whether that week's request is
+        refused the same, to the word and the figure.
 
         TERMINER: `period` IS WHERE THE COUNT WAS MADE, AND ONLY WHERE THAT SAYS
         SOMETHING. A count that reads nothing the weeks differ in — the dining
@@ -5123,6 +5147,23 @@ class SchedulerSolver:
         index into dates). So the same count is made in every week, and a
         refusal they all share word for word names none.
 
+        EVERY WEEK THAT SHARES IT IS SAID, NOT THE FIRST. A real läsår is not
+        two terms. Each dated post cuts it, and the school this was built for
+        has six periods, the first of them the two days before the first
+        Monday. A teacher over her hours all autumn is over them in four of
+        the six, and named by the first week she was told "the weeks from 15
+        August to 16 August": true, and no help at all. So the weeks that give
+        the same verdict are said together (weeks.together): `period` is still
+        the first of them, and `periods` every period they lie in ("0,1,2,3"),
+        the form a week that lies in several periods has always had. The
+        gateway reads their stretches together and says one run of weeks.
+
+        ONLY WHEN THE WORDS SAY THOSE WEEKS AND NO OTHERS (weeks.says_exactly).
+        The words are periods and at most one parity. Weeks that are not such
+        a set — the odd weeks of the autumn with every week of the spring —
+        would be said as more than share the refusal, and the week it was
+        found in is said alone, as it was before.
+
         ONE WEEK WITH ANYTHING TO PLACE HAS NO OTHER TO AGREE WITH. A year
         whose every post is dated to the autumn has the autumn's request and
         no more (_weeks_and_requests leaves out a week with nothing to place),
@@ -5132,19 +5173,21 @@ class SchedulerSolver:
         A teacher over her hours is not over them there, and the refusal is
         the autumn's; a hall too small for the classes is as small, and it
         names none.
-
-        Arithmetic, microseconds a week, and only on the way to a refusal. A
-        year without periods names no week whatever is counted (weeks.named),
-        so nothing is counted twice for it.
         """
-        if not week_named(label):
-            return verdict
-        others = [other for _, other in weeks]
-        if len(others) == 1:
-            others = [_every_week_only(whole)]
-        if all(count(other) == verdict for other in others):
-            return verdict
-        return _in_week(verdict, label)
+        if label is None or not week_named(label):
+            return None
+        if len(weeks) == 1:
+            shared = _every_week_only(whole)
+            return None if shares(shared, shared, None) else label
+        sharing = [
+            other_label
+            for other_label, other in weeks
+            if other_label is not None and (other_label == label or shares(other, whole, other_label))
+        ]
+        if len(sharing) == len(weeks):
+            return None
+        said = weeks_together(sharing)
+        return said if week_says_exactly(said) else label
 
     def _solved_in(
         self,
@@ -6929,15 +6972,16 @@ class SchedulerSolver:
         # count says (`period`, weeks.named).
         #
         # `period` IS WHERE THE COUNT WAS MADE, AND ONLY WHERE THAT SAYS
-        # SOMETHING (_is_every_weeks): a refusal that read the year and not
-        # the week names none, and neither does one every week shares.
+        # SOMETHING (_refused_weeks): a refusal that read the year and not
+        # the week names none, neither does one every week shares, and one
+        # that some of them share says each of those.
         weeks = _weeks_and_requests(request)
         for label, week in weeks:
             try:
                 self._verify_week(week, request, label)
             except InvalidScheduleInputError as refusal:
-                said = week_named(label)
-                if not said or self._is_every_weeks(refusal, weeks, request):
+                said = week_named(self._refused_weeks(refusal, label, weeks, request))
+                if not said:
                     raise
                 raise InvalidScheduleInputError(
                     str(refusal), code=refusal.code, params={**refusal.params, **said},
@@ -7053,19 +7097,23 @@ class SchedulerSolver:
         "TEACHER_LUNCH_LEAVES_NO_START",
     })
 
-    def _is_every_weeks(
+    def _refused_weeks(
         self,
         refusal: InvalidScheduleInputError,
+        label: Weeks | None,
         weeks: list[tuple[Weeks | None, OptimizeScheduleRequest]],
         whole: OptimizeScheduleRequest,
-    ) -> bool:
-        """Whether a refusal raised from one week's request is not that week's.
+    ) -> Weeks | None:
+        """The weeks a refusal raised from the week `label`'s request is said of; None for none.
 
-        Either it says its own weeks (_SAY_THEIR_OWN_WEEKS: the week it was
-        raised from adds nothing true), or every week refuses with the same
-        code and the same figures: a rule too tight for a teacher whose posts
-        all run every week. Counted again in each week, arithmetic
-        on constants, and only on the way to a 400 of a year with periods.
+        None for a refusal that says its own weeks (_SAY_THEIR_OWN_WEEKS: the
+        week it was raised from adds nothing true). Otherwise what
+        _named_weeks says of it, two weeks sharing a refusal when both are
+        refused with the same code and the same figures: none when every week
+        is — a rule too tight for a teacher whose posts all run every week —
+        and each week that is when only some are. Counted again in each week,
+        arithmetic on constants, and only on the way to a 400 of a year with
+        periods.
 
         One week with anything to place has no other to agree with, and is
         asked what _counted_in asks of it: the same check on the year without
@@ -7074,19 +7122,18 @@ class SchedulerSolver:
         autumn's.
         """
         if refusal.code in self._SAY_THEIR_OWN_WEEKS:
-            return True
-        if len(weeks) == 1:
-            shared = _every_week_only(whole)
-            weeks, whole = [(None, shared)], shared
-        for label, other in weeks:
+            return None
+
+        def shares(
+            other: OptimizeScheduleRequest, year: OptimizeScheduleRequest, week: Weeks | None,
+        ) -> bool:
             try:
-                self._verify_week(other, whole, label)
+                self._verify_week(other, year, week)
             except InvalidScheduleInputError as same:
-                if (same.code, same.params) != (refusal.code, refusal.params):
-                    return False
-            else:
-                return False
-        return True
+                return (same.code, same.params) == (refusal.code, refusal.params)
+            return False
+
+        return self._named_weeks(label, weeks, whole, shares)
 
     def _verify_week(
         self,
@@ -16890,7 +16937,7 @@ def _every_week_only(request: OptimizeScheduleRequest) -> OptimizeScheduleReques
     """The request with only what runs every week: what each week's request has in common.
 
     For asking whether a refusal found in one week had anything to do with
-    that week's own entries (_solved_in, _counted_in, _is_every_weeks). With
+    that week's own entries (_solved_in, _named_weeks). With
     no post at all when none runs every week: the classes, the rooms and the
     rules are still every week's, and a refusal that reads only those is
     said of the year.
