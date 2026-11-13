@@ -109,3 +109,78 @@ test("the totals stay pinned to the right of the matrix from 640 px, and scroll 
   ]);
   expect(misses, MISSES).toEqual([]);
 });
+
+// Review of #310, LÅG-3: Tab and Shift+Tab scroll the focused cell to the nearest edge of the matrix, which is under a
+// pinned column. `scroll-padding` on the scroller is the size of what is pinned, so that the focus ring is in view.
+// The totals are pinned from 640 px; under it they scroll with the table, and nothing is pinned on the right.
+for (const width of [320, 375, 1024]) {
+  test(`the matrix at ${width} px: the cell that has the keyboard focus is not under a pinned column or the pinned header`, async ({ page, baseURL }) => {
+    const misses = await open(page, baseURL!, width);
+    await page.getByRole("table").locator("tbody td button").first().focus();
+
+    const hidden = () =>
+      page.evaluate(() => {
+        const button = document.activeElement as HTMLElement;
+        const heads = [...document.querySelectorAll("table thead th")];
+        const box = button.getBoundingClientRect();
+        // What is pinned over the cells: the name to the left, the header row above, the totals to the right when they are pinned.
+        const pinnedRight = heads.slice(-2).filter((head) => getComputedStyle(head).right !== "auto");
+        const nameRight = heads[0]!.getBoundingClientRect().right;
+        const totalsLeft = pinnedRight.length ? Math.min(...pinnedRight.map((head) => head.getBoundingClientRect().left)) : Infinity;
+        const headBottom = heads[0]!.getBoundingClientRect().bottom;
+        const part = (covered: number, of: number) => Math.round((Math.max(0, covered) / of) * 100) / 100;
+        return {
+          cell: (button.getAttribute("aria-label") ?? button.textContent ?? "").slice(0, 40),
+          underName: part(nameRight - box.left, box.width),
+          underTotals: part(box.right - totalsLeft, box.width),
+          underHeader: part(headBottom - box.top, box.height),
+        };
+      });
+
+    const steps: Awaited<ReturnType<typeof hidden>>[] = [];
+    for (let i = 0; i < 12; i++) {
+      await page.keyboard.press("Tab");
+      steps.push(await hidden());
+    }
+    for (let i = 0; i < 12; i++) {
+      await page.keyboard.press("Shift+Tab");
+      steps.push(await hidden());
+    }
+    // Without the padding these fail: focus scrolls a cell to the nearest edge of the matrix, which is
+    // under the pinned column (a ring that is not seen). With it a browser still leaves a cell that is partly under the
+    // name column where it is, 0.3 of it at most in the fixture school at 320 px; the line is drawn at 0.4 of the cell.
+    const covered = steps.filter((step) => Math.max(step.underName, step.underTotals, step.underHeader) > 0.4);
+    expect(covered, `${width} px: of 24 steps, those where a pinned column or the header covers more than two fifths of the focused cell`).toEqual([]);
+    expect(misses, MISSES).toEqual([]);
+  });
+}
+
+// The same from below: the fixture school's matrix fits an ordinary window, so it is made to scroll upright by a short one
+// (the matrix is 70 % of the window's height), and Shift+Tab walks up from its last cell under the pinned header row.
+test("the matrix in a short window: Shift+Tab does not scroll a cell under the pinned header row", async ({ page, baseURL }) => {
+  const misses = await open(page, baseURL!, 1024);
+  await page.setViewportSize({ width: 1024, height: 420 });
+  const scrolls = await page.evaluate(() => {
+    const scroller = document.querySelector("table")!.parentElement!;
+    return scroller.scrollHeight > scroller.clientHeight;
+  });
+  expect(scrolls, "the matrix scrolls upright in a window this short").toBe(true);
+  await page.getByRole("table").locator("tbody td button").last().focus();
+
+  const covered: { cell: string; underHeader: number }[] = [];
+  for (let step = 0; step < 40; step++) {
+    await page.keyboard.press("Shift+Tab");
+    const seen = await page.evaluate(() => {
+      const button = document.activeElement as HTMLElement;
+      const box = button.getBoundingClientRect();
+      const headBottom = document.querySelector("table thead th")!.getBoundingClientRect().bottom;
+      return {
+        cell: (button.getAttribute("aria-label") ?? button.textContent ?? "").slice(0, 40),
+        underHeader: Math.round((Math.max(0, headBottom - box.top) / box.height) * 100) / 100,
+      };
+    });
+    if (seen.underHeader > 0.4) covered.push(seen);
+  }
+  expect(covered, "steps where the header row covers more than two fifths of the focused cell").toEqual([]);
+  expect(misses, MISSES).toEqual([]);
+});

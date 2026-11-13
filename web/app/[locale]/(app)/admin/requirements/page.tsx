@@ -1609,7 +1609,11 @@ export default function RequirementsPage() {
             is also what scrolls vertically. Hence the height cap and
             overflow-auto rather than page scrolling.
           */}
-          <div className="max-h-[70vh] overflow-auto rounded-lg border bg-card">
+          {/* scroll-padding is what is pinned over the cells (the name 7.25rem to the left, the header 3.8rem above, the totals
+              10.3rem to the right from `sm`), so that Tab and Shift+Tab scroll a focused cell clear of them and not under them.
+              A cell that is partly under the name column when focus reaches it is left where it is, as far as a browser's
+              "in view" goes (a third of it at most, at 320 px), and scroll-margin on the buttons made that worse. */}
+          <div className="max-h-[70vh] scroll-pl-[7.25rem] scroll-pt-[3.8rem] overflow-auto rounded-lg border bg-card sm:scroll-pr-[10.3rem]">
             <table className="w-full text-sm">
               {/*
                 The caption carries the caveat as well as the name, because a
