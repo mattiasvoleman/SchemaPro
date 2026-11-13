@@ -1844,6 +1844,14 @@ def test_a_week_refused_by_an_earlier_count_first_still_gives_the_later_count_s_
     spring_posts = [_requirement(str(uuid4()), 1, teacher=teacher, periods=AUTUMN) for _ in range(5)]
     code, said = _refused(_payload([*spring_posts, *overfull, _requirement(str(uuid4()), 1, periods=AUTUMN)]), settings)
     assert (code, said) == ("DEMAND_TEACHER_HOURS_SHORT", {"period": 0})
+    # Another teacher over her hours in the spring is another refusal, not hers: the spring refuses the
+    # same count with another figure behind the class hours, and is not said.
+    other = str(uuid4())
+    others_posts = [_requirement(str(uuid4()), 1, teacher=other, periods=SPRING) for _ in range(5)]
+    code, said = _refused(
+        _payload([*spring_posts, *overfull, *others_posts, _requirement(str(uuid4()), 1, periods=AUTUMN)]), settings,
+    )
+    assert (code, said) == ("DEMAND_TEACHER_HOURS_SHORT", {"period": 0})
 
 
 def test_a_year_without_periods_is_not_asked_of_its_other_weeks_for_a_refusal(
