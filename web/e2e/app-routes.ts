@@ -86,6 +86,8 @@ const QUERY: Record<string, string> = {
   "/admin/timplan/tackning": "",
   // ?guardians= opens one pupil's guardians, from the integration review.
   "/admin/people": "",
+  // ?filter=GUARDIAN_DECLINED opens the tab of the requests a guardian's no ended, from the bell's link.
+  "/admin/leave": "",
   // Lektionslogg's klassbok, opened on 7A's week so axe reads the book itself.
   "/admin/klassbok": `group=${GROUPS.g7A.id}&from=${THIS_MONDAY}&to=${addDays(THIS_MONDAY, 4)}`,
   "/teacher/klassbok": `group=${GROUPS.g7A.id}&from=${THIS_MONDAY}&to=${addDays(THIS_MONDAY, 4)}`,
