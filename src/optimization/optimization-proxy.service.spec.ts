@@ -690,8 +690,9 @@ describe('OptimizationProxyService', () => {
       /*
        * The engine reports a pinned meal back like any other, so its answer for
        * a hand-placed day lands on a row that already exists. Creating over it
-       * would break LunchSittings_group_day_key inside this transaction, after
-       * a solve the school watched succeed. The hand row keeps its start and
+       * would break the exclusion constraint LunchSittings_one_meal_at_a_time
+       * (a class has one meal on a date) inside this transaction, after a
+       * solve the school watched succeed. The hand row keeps its start and
        * takes the length and headcount from the answer instead.
        */
       tx.lunchSitting.findMany.mockImplementation(

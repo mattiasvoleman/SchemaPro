@@ -272,6 +272,16 @@ describe('ClassTeacherService.week', () => {
     expect(tx['classTeacherChange']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ where: { studentGroupId: 'class-1', status: 'DRAFT' } }));
   });
 
+  it('says a template lesson Generera wrote from a förläggning is refused, and lets the database’s own refusal stand when it has one', async () => {
+    const { service, tx } = withWeek();
+    tx['masterLesson']!['findMany']!.mockResolvedValue([{ id: 'master-1' }, { id: 'master-2' }]);
+    const view = await service.week('class-1', { from: '2027-03-24' }, teacher);
+    expect(view.template.map((lesson) => [lesson.id, lesson.refusal])).toEqual([['master-1', 'LESSON_IS_PLACED'], ['master-2', 'OTHER_TEACHER']]);
+    expect(tx['masterLesson']!['findMany']).toHaveBeenCalledWith({ where: { id: { in: ['master-1', 'master-2'] }, fromPlacement: true }, select: { id: true } });
+    // The dated lessons are the dates' own.
+    expect(view.occasions.map((lesson) => lesson.refusal)).toEqual([null, 'OTHER_TEACHER']);
+  });
+
   it('asks for this week on the school’s clock when no date is given', async () => {
     const { service } = withWeek();
     const view = await service.week('class-1', {}, teacher);
@@ -343,6 +353,22 @@ describe('ClassTeacherService.create', () => {
     await expect(gone.service.create('class-1', dto, teacher)).rejects.toBeInstanceOf(NotFoundException);
     const stranger = setup({ appointed: false });
     await expect(stranger.service.create('class-1', dto, teacher)).rejects.toMatchObject({ response: { code: CODES.NOT_APPOINTED } });
+  });
+
+  it('refuses a draft of the template for a lesson Generera wrote from a förläggning, with its reason, and writes nothing (it could never be published)', async () => {
+    const { service, tx } = setup();
+    tx['masterLesson']!['findMany']!.mockResolvedValue([{ id: 'master-1' }]);
+    const move = { kind: 'TEMPLATE_MOVE' as const, masterLessonId: 'master-1', baseVersion: 'a'.repeat(32), targetDayOfWeek: 2, targetStart: '10:00', targetEnd: '11:00' };
+    await expect(service.create('class-1', move, teacher)).rejects.toMatchObject({
+      status: 403,
+      response: { code: CODES.OUTSIDE_FRAME, params: { reason: 'LESSON_IS_PLACED' }, message: expect.stringContaining('förlagd') },
+    });
+    expect(tx['classTeacherChange']!['create']).not.toHaveBeenCalled();
+    // A change of one date is not asked about the template at all.
+    tx['masterLesson']!['findMany']!.mockClear();
+    tx['classTeacherChange']!['create']!.mockResolvedValue(changeRow());
+    await service.create('class-1', dto, teacher);
+    expect(tx['masterLesson']!['findMany']).not.toHaveBeenCalled();
   });
 
   it('is 404 when the class or the lesson cannot be read', async () => {

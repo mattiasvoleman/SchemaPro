@@ -438,6 +438,22 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-maltidskollen.ts
 
+      # Klassens måltid håller veckor (20270209090000): the oracle over the
+      # calendar, date by date through a läsår that starts on a Saturday, of a
+      # school whose classes eat at another time in the autumn and in the spring
+      # (and one week of another in October), published through the real
+      # CalendarService; the publication's snapshot keeps the weeks and a
+      # calendar materialised from it alone is the live one, instant for instant;
+      # a meal placed by hand takes the day over, and the placement that loses a
+      # race at the exclusion constraint is a 409; the swap board reads the meal
+      # that holds the date. Nothing writes a date yet, so the rows are planted as
+      # the owner. It removes the school it made.
+      - name: Meal per term probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-maltid-per-termin.ts
+
       # Analys och planering (K1, 20270130090000): the löneunderlag of a
       # person who has left, through the real AnalysisService, statement E and
       # the vikarie export on the API's role. A teacher deactivated mid-period

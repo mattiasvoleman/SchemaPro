@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { createPrismaMock, createTxMock, testUser, type TxMock } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
-import type { MasterLessonsService } from '../calendar/master-lessons.service';
+import { LESSON_IS_PLACED, type MasterLessonsService } from '../calendar/master-lessons.service';
 import type { CalendarLessonsService } from '../calendar/calendar-lessons.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { RealtimeService } from '../realtime/realtime.service';
@@ -352,6 +352,34 @@ describe('ClassTeacherEngine.evaluate', () => {
     expect(options).toEqual({});
   });
 
+  describe('a lesson Generera wrote from a förläggning (review of #293: a CONFLICT with nothing to name)', () => {
+    it('is REFUSED with its own reason before any clash is looked for, for a move and for a split', async () => {
+      for (const kind of ['TEMPLATE_MOVE', 'TEMPLATE_SPLIT'] as const) {
+        const { engine, tx, masters } = setup();
+        tx['masterLesson']!['findUnique']!.mockResolvedValue(master);
+        tx['masterLesson']!['findMany']!.mockResolvedValue([{ id: 'master-1' }]);
+        const change = template({ kind, ...(kind === 'TEMPLATE_SPLIT' ? { keepEnd: time('09:00') } : {}) });
+        expect(await engine.evaluate(tx as never, change)).toEqual({ state: 'REFUSED', reason: 'LESSON_IS_PLACED' });
+        expect(tx['masterLesson']!['findMany']).toHaveBeenCalledWith({ where: { id: { in: ['master-1'] }, fromPlacement: true }, select: { id: true } });
+        expect(masters.findConflicts).not.toHaveBeenCalled();
+      }
+    });
+
+    it('is no concern of a change of one date: that lesson is the date’s own, and nothing is asked of the template', async () => {
+      const { engine, tx } = setup();
+      await engine.evaluate(tx as never, row({ kind: 'OCCASION_CANCEL' }));
+      expect(tx['masterLesson']!['findMany']).not.toHaveBeenCalled();
+    });
+
+    it('lets a lesson that no förläggning wrote through to the clash search as before', async () => {
+      const { engine, tx, masters } = setup();
+      tx['masterLesson']!['findUnique']!.mockResolvedValue(master);
+      tx['masterLesson']!['findMany']!.mockResolvedValue([]);
+      expect(await engine.evaluate(tx as never, template())).toEqual({ state: 'OK' });
+      expect(masters.findConflicts).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('is OK when the editor’s check finds nothing, with the room the draft asks for', async () => {
     const { engine, tx, masters } = setup();
     tx['masterLesson']!['findUnique']!.mockResolvedValue(master);
@@ -557,6 +585,40 @@ describe('ClassTeacherEngine.publishOne', () => {
     tx['masterLesson']!['findUnique']!.mockResolvedValue(null);
     expect((await engine.publishOne(actor, split)).outcome).toBe('CONFLICT');
     expect(masters.update).not.toHaveBeenCalled();
+  });
+
+  describe('a lesson Generera wrote from a förläggning', () => {
+    const move = row({ kind: 'TEMPLATE_MOVE', calendarLessonId: null, masterLessonId: 'master-1', date: null, targetDayOfWeek: 3, targetStart: time('10:00'), targetEnd: time('11:00') });
+
+    it('is refused before the draft is claimed, with the reason, and the editor is never asked', async () => {
+      const { engine, tx, masters } = setup();
+      claims(tx, move);
+      tx['masterLesson']!['findMany']!.mockResolvedValue([{ id: 'master-1' }]);
+      expect(await engine.publishOne(actor, move)).toEqual({ id: 'change-1', outcome: 'REFUSED', reason: 'LESSON_IS_PLACED' });
+      expect(tx['classTeacherChange']!['updateMany']).not.toHaveBeenCalled();
+      expect(masters.update).not.toHaveBeenCalled();
+    });
+
+    it('is a REFUSED with the reason, and not a CONFLICT with no clash in it, when the lesson was written from a förläggning between the judging and the writing', async () => {
+      const { engine, tx, masters } = setup();
+      claims(tx, move);
+      tx['masterLesson']!['findUnique']!.mockResolvedValue({ id: 'master-1', academicYearId: 'year-1', schoolId: 'school-1', studentGroupId: 'class-1', subjectId: 'subject-1', teacherId: 'teacher-1', coTeacherId: null, roomId: 'room-1', dayOfWeek: 1, startTime: time('08:30'), endTime: time('09:30'), recurrence: 'ALL_WEEKS', startDate: null, endDate: null, extraGroups: [], participants: [], subject: { name: 'Matte' } });
+      tx['masterLesson']!['findMany']!.mockResolvedValue([]);
+      masters.update.mockRejectedValueOnce(new ConflictException({ message: 'Lektionen är förlagd på timplanen.', code: LESSON_IS_PLACED }));
+      expect(await engine.publishOne(actor, move)).toEqual({ id: 'change-1', outcome: 'REFUSED', reason: 'LESSON_IS_PLACED' });
+      // Asked once, before the claim: the answer is not looked up again for a clash that is not there.
+      expect(tx['$queryRaw']!.mock.calls.filter((call) => sql(call[0]).includes('class_teacher_frame'))).toHaveLength(1);
+    });
+
+    it('still asks again about a clash the editor found that carries no code of its own', async () => {
+      const { engine, tx, masters } = setup();
+      claims(tx, move);
+      tx['masterLesson']!['findUnique']!.mockResolvedValue({ id: 'master-1', academicYearId: 'year-1', schoolId: 'school-1', studentGroupId: 'class-1', subjectId: 'subject-1', teacherId: 'teacher-1', coTeacherId: null, roomId: 'room-1', dayOfWeek: 1, startTime: time('08:30'), endTime: time('09:30'), recurrence: 'ALL_WEEKS', startDate: null, endDate: null, extraGroups: [], participants: [], subject: { name: 'Matte' } });
+      tx['masterLesson']!['findMany']!.mockResolvedValue([]);
+      masters.update.mockRejectedValueOnce(new ConflictException('The teacher is busy.'));
+      expect(await engine.publishOne(actor, move)).toEqual({ id: 'change-1', outcome: 'CONFLICT', conflicts: [] });
+      expect(tx['$queryRaw']!.mock.calls.filter((call) => sql(call[0]).includes('class_teacher_frame'))).toHaveLength(2);
+    });
   });
 
   it('answers FAILED for an editor refusal that is not a clash, and rethrows what it does not know', async () => {
@@ -792,6 +854,33 @@ describe('ClassTeacherEngine.evaluate: the rest of what the editor holds a place
       const change = expected === 'FRAME' ? move({ targetStart: time('15:30'), targetEnd: time('16:30') }) : move();
       expect(await engine.evaluate(tx as never, change)).toEqual({ state: 'CONFLICT', conflicts: [{ kind: expected }] });
     }
+  });
+
+  it('holds a lesson to the meals of its own weeks when the class eats at another time in another part of the läsår (20270209090000)', async () => {
+    // Tuesday: 11:00–11:30 in the autumn (to Sunday 2026-12-20), 11:30–12:00 from Monday 2027-01-11. The change moves the lesson to 11:30–12:00.
+    const board = {
+      ...noBoard,
+      spans: new Map([['class-1', [4, 4]]]),
+      sittings: new Map([[
+        'class-1|2',
+        [
+          { studentGroupId: 'class-1', dayOfWeek: 2, startMinutes: 660, endMinutes: 690, startDate: null, endDate: '2026-12-20' },
+          { studentGroupId: 'class-1', dayOfWeek: 2, startMinutes: 690, endMinutes: 720, startDate: '2027-01-11', endDate: null },
+        ],
+      ]]),
+    };
+    const onSpringsMeal = async (weeks: { startDate: Date | null; endDate: Date | null }) => {
+      const { engine, tx } = setup();
+      tx['masterLesson']!['findUnique']!.mockResolvedValue({ ...grundschema, ...weeks });
+      (readBoardFacts as jest.Mock).mockResolvedValue(board);
+      return engine.evaluate(tx as never, move({ targetStart: time('11:30'), targetEnd: time('12:00') }));
+    };
+    // A lesson of the autumn is clear of the spring's meal; one of the spring, and one of every week, are not.
+    expect(await onSpringsMeal({ startDate: day('2026-08-17'), endDate: day('2026-12-18') })).toEqual({ state: 'OK' });
+    expect(await onSpringsMeal({ startDate: day('2027-01-11'), endDate: day('2027-06-11') })).toEqual({ state: 'CONFLICT', conflicts: [{ kind: 'LUNCH' }] });
+    expect(await onSpringsMeal({ startDate: null, endDate: null })).toEqual({ state: 'CONFLICT', conflicts: [{ kind: 'LUNCH' }] });
+    // A lesson that starts in the autumn and has no end meets both meals.
+    expect(await onSpringsMeal({ startDate: day('2026-12-18'), endDate: null })).toEqual({ state: 'CONFLICT', conflicts: [{ kind: 'LUNCH' }] });
   });
 
   it('reads the board with the year’s own numbering of its årskurser', async () => {

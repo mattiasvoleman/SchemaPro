@@ -3,6 +3,7 @@ import { toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { gradeSpanOf, loadRosters } from '../optimization/room-eligibility';
 import { constraintsOfYear } from '../staffing/duty-slot-year';
 import type { RosterBasis } from '../year-rollover/projected-rosters';
+import { sittingHoldsDay, sittingMeetsWindow, windowKeysOf, type SittingWindow } from '../common/lunch-window';
 import { frameWindow, type GapSpan } from './swap-gaps';
 import type { SwapConstraint, SwapFrame, SwapSitting } from './swap-snapshot';
 import type { SwapSlot } from './swap-types';
@@ -65,8 +66,20 @@ export function indexSittings(sittings: Iterable<SwapSitting>): Map<string, Swap
 /**
  * The hard rule among FRAME, LUNCH and GRADE_RULE that a lesson of `groups`
  * breaks standing at `to`, or null. In that order: the first found names it.
+ *
+ * `window` is the weeks the lesson runs in, when it runs only in some. A class
+ * may eat at another time in another part of the läsår (a meal holds weeks,
+ * 20270209090000), and a lesson of the autumn is clear of a spring meal that
+ * would be on top of it. A lesson with no window, and a weekly template read
+ * for no lesson at all, is held to every meal of the class that day: the
+ * stricter reading, never a lesson on a meal the pupil is served.
  */
-export function boardCodeOf(facts: BoardFacts, groups: readonly string[], to: SwapSlot): BoardCode | null {
+export function boardCodeOf(
+  facts: BoardFacts,
+  groups: readonly string[],
+  to: SwapSlot,
+  window?: SittingWindow | null,
+): BoardCode | null {
   const day = to.dayOfWeek;
   // FRAME: any group outside its stage's day is enough (breaksFrame).
   if (facts.frames.length > 0) {
@@ -79,6 +92,7 @@ export function boardCodeOf(facts: BoardFacts, groups: readonly string[], to: Sw
   }
   for (const groupId of groups) {
     for (const sitting of facts.sittings.get(sittingKey(groupId, day)) ?? []) {
+      if (!sittingMeetsWindow(sitting, window)) continue;
       if (overlaps(to.startMinutes, to.endMinutes, sitting.startMinutes, sitting.endMinutes)) return 'LUNCH';
     }
   }
@@ -109,11 +123,19 @@ export const frameOf = (row: { minGradeLevel: number; maxGradeLevel: number; day
   end: minutesOfTime(row.endTime),
 });
 
-export const sittingOf = (row: { studentGroupId: string; dayOfWeek: number; startTime: Date; endTime: Date }): SwapSitting => ({
+export const sittingOf = (row: {
+  studentGroupId: string;
+  dayOfWeek: number;
+  startTime: Date;
+  endTime: Date;
+  startDate?: Date | null;
+  endDate?: Date | null;
+}): SwapSitting => ({
   studentGroupId: row.studentGroupId,
   dayOfWeek: row.dayOfWeek,
   startMinutes: minutesOfTime(row.startTime),
   endMinutes: minutesOfTime(row.endTime),
+  ...windowKeysOf(row),
 });
 
 export const constraintOf = (row: {
@@ -187,7 +209,7 @@ export async function readBoardFacts(tx: PrismaClient, input: BoardReadInput): P
         dayOfWeek: weekday,
         ...(input.handPlacedSittingsOnly ? { isGenerated: false } : {}),
       },
-      select: { studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true },
+      select: { studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true, startDate: true, endDate: true },
     }),
     await tx.availabilityConstraint.findMany({
       where: {
@@ -214,7 +236,9 @@ export async function readBoardFacts(tx: PrismaClient, input: BoardReadInput): P
     }),
   ];
 
-  let sittings = weeklySittings.map(sittingOf);
+  // A dated board holds the meal the class has ON that date; the week's
+  // template, read for no date, holds every meal the class has that weekday.
+  let sittings = weeklySittings.map(sittingOf).filter((sitting) => !input.date || sittingHoldsDay(sitting, input.date.day));
   if (input.date) {
     const lunches = await tx.calendarLunch.findMany({
       where: { studentGroupId: { in: [...groupIds] }, date: new Date(`${input.date.day}T00:00:00.000Z`) },

@@ -1,4 +1,5 @@
 import { toNioarig } from '../common/grade-numbering';
+import { sittingHoldsDay, windowOf, type SittingWindow } from '../common/lunch-window';
 import {
   BadRequestException,
   Injectable,
@@ -100,12 +101,19 @@ export interface MaterialiseOptions {
   notBefore?: Date;
 }
 
-/** One lunch sitting as materialise reads it. */
+/**
+ * One lunch sitting as materialise reads it. `startDate` and `endDate` are the
+ * weeks it holds (src/common/lunch-window.ts): a class may eat at another time
+ * in another part of the läsår, and the sitting for a date is the one that
+ * holds it. Absent or null is the whole läsår, as every sitting was.
+ */
 export interface MaterialiseSitting {
   studentGroupId: string;
   dayOfWeek: number;
   startTime: Date;
   endTime: Date;
+  startDate?: Date | null;
+  endDate?: Date | null;
 }
 
 /**
@@ -444,13 +452,22 @@ export class CalendarService {
         dayOfWeek: true,
         startTime: true,
         endTime: true,
+        startDate: true,
+        endDate: true,
       },
     });
-    const sittingsByWeekday = new Map<number, typeof sittings>();
+    /*
+     * By weekday, each with the weeks it holds read once. A class may have
+     * several meals on one weekday (a different time in the autumn and in the
+     * spring), and the date below takes the one that holds it; the database
+     * keeps two of one class from holding the same day, so at most one does.
+     */
+    const sittingsByWeekday = new Map<number, Array<{ sitting: MaterialiseSitting; window: SittingWindow }>>();
     for (const sitting of sittings) {
+      const held = { sitting, window: windowOf(sitting) };
       const list = sittingsByWeekday.get(sitting.dayOfWeek);
-      if (list) list.push(sitting);
-      else sittingsByWeekday.set(sitting.dayOfWeek, [sitting]);
+      if (list) list.push(held);
+      else sittingsByWeekday.set(sitting.dayOfWeek, [held]);
     }
     let lunchesCreated = 0;
     let rastsCreated = 0;
@@ -479,7 +496,9 @@ export class CalendarService {
     for (const date of iterateDates(fromDate, toDate)) {
       const weekday = isoWeekday(date);
 
-      for (const sitting of sittingsByWeekday.get(weekday) ?? []) {
+      for (const { sitting, window } of sittingsByWeekday.get(weekday) ?? []) {
+        // Another part of the läsår's meal, not this date's.
+        if (!sittingHoldsDay(window, date)) continue;
         // The class is not in school, so there is no meal to serve — the
         // same answer, and the same call, the lessons make below.
         if (

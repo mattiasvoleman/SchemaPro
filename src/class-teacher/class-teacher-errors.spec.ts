@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { appointerGone, frameRefusal, rethrowClassTeacherError, staleDraft, staleLesson } from './class-teacher-errors';
-import { CODES, FRAME_MESSAGES, FRAME_REASONS } from './class-teacher.types';
+import { CODES, FRAME_MESSAGES, FRAME_REASONS, LESSON_IS_PLACED_MESSAGE } from './class-teacher.types';
 
 const sqlError = (state: string): Prisma.PrismaClientKnownRequestError =>
   new Prisma.PrismaClientKnownRequestError('refused', { code: 'P2010', clientVersion: 'test', meta: { driverAdapterError: { cause: { originalCode: state } } } });
@@ -15,6 +15,13 @@ describe('frame refusals', () => {
     const outside = frameRefusal('SHARED_ROOM');
     expect(outside).toBeInstanceOf(ForbiddenException);
     expect(outside.getResponse()).toEqual({ message: FRAME_MESSAGES.SHARED_ROOM, code: CODES.OUTSIDE_FRAME, params: { reason: 'SHARED_ROOM' } });
+  });
+
+  it('says a lesson written from a förläggning as the gateway’s own reason, outside the frame, which is not one of the frame’s (the web mirrors those)', () => {
+    const placed = frameRefusal('LESSON_IS_PLACED');
+    expect(placed).toBeInstanceOf(ForbiddenException);
+    expect(placed.getResponse()).toEqual({ message: LESSON_IS_PLACED_MESSAGE, code: CODES.OUTSIDE_FRAME, params: { reason: 'LESSON_IS_PLACED' } });
+    expect(FRAME_REASONS as readonly string[]).not.toContain('LESSON_IS_PLACED');
   });
 
   it('keeps the list and the sentences one to one', () => {

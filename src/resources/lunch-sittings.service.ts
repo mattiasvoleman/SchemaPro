@@ -1,10 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import type { LunchSitting } from '@prisma/client';
+import type { LunchSitting, Prisma } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { assertWholeMinutes } from '../common/solver-grid';
 import { requireSchoolId } from '../common/utils/request-context';
-import { rethrowPrismaError } from '../common/utils/prisma-errors';
+import { exclusionViolation, rethrowPrismaError, writeConflict } from '../common/utils/prisma-errors';
+import { windowOf } from '../common/lunch-window';
 import { parseTimeString, toWallClock } from '../common/utils/time';
 import type { MoveLunchSittingDto, PlaceLunchSittingDto } from './dto/lunch-sitting.dto';
 import {
@@ -25,6 +26,13 @@ export interface LunchSittingResponse {
   headcount: number;
   /** False for a meal the school placed by hand, which a run keeps. */
   isGenerated: boolean;
+  /**
+   * The weeks the meal holds, 'YYYY-MM-DD': a Monday and a Sunday, null for the
+   * läsår's own first and last day (20270209090000). Null and null is the whole
+   * läsår, which is every meal placed here until a meal can be dated.
+   */
+  startDate: string | null;
+  endDate: string | null;
 }
 
 /**
@@ -41,6 +49,12 @@ export interface LunchSittingResponse {
  * it was dropped. Only a hand-placed row can be deleted, because deleting the
  * solver's would leave the day with no meal until the next run — a band that
  * vanishes for a reason the screen cannot show.
+ *
+ * A meal placed here holds the whole läsår. A class may have several rows for
+ * one weekday, each holding other weeks (20270209090000), and the table now
+ * says so with an exclusion constraint where it said "one row" with a unique
+ * key; that is why a placing is a read and a write rather than an upsert, and
+ * why a write that meets the constraint is a conflict to try again.
  */
 @Injectable()
 export class LunchSittingsService {
@@ -58,35 +72,20 @@ export class LunchSittingsService {
         // yet activated seats 8A's coming pupils, not the nobody in it today.
         const basis = await rostersOfYear(tx, user, dto.academicYearId, year);
         const headcount = await headcountOf(tx, basis, dto.studentGroupId);
-        return tx.lunchSitting.upsert({
-          where: {
-            academicYearId_studentGroupId_dayOfWeek: {
-              academicYearId: dto.academicYearId,
-              studentGroupId: dto.studentGroupId,
-              dayOfWeek: dto.dayOfWeek,
-            },
-          },
-          create: {
-            schoolId,
-            academicYearId: dto.academicYearId,
-            studentGroupId: dto.studentGroupId,
-            dayOfWeek: dto.dayOfWeek,
+        return putWholeYearMeal(
+          tx,
+          { schoolId, academicYearId: dto.academicYearId, studentGroupId: dto.studentGroupId, dayOfWeek: dto.dayOfWeek },
+          {
             startTime: parseTimeString(dto.startTime),
             endTime: parseTimeString(endTime),
             headcount,
             isGenerated: false,
           },
-          update: {
-            startTime: parseTimeString(dto.startTime),
-            endTime: parseTimeString(endTime),
-            headcount,
-            isGenerated: false,
-          },
-        });
+        );
       });
       return toResponse(row);
     } catch (error) {
-      rethrowPrismaError(error);
+      rethrowLunchError(error);
     }
   }
 
@@ -115,11 +114,14 @@ export class LunchSittingsService {
         const dayOfWeek = dto.dayOfWeek ?? current.dayOfWeek;
         const startTime = dto.startTime ?? toWallClock(current.startTime);
         if (dayOfWeek !== current.dayOfWeek) {
+          // The meals the class has that day in the weeks this one holds: the
+          // moved meal takes their place. A meal of other weeks is not in its way.
           await tx.lunchSitting.deleteMany({
             where: {
               academicYearId: current.academicYearId,
               studentGroupId: current.studentGroupId,
               dayOfWeek,
+              ...meetingWeeksOf(current),
             },
           });
         }
@@ -135,7 +137,7 @@ export class LunchSittingsService {
       });
       return toResponse(row);
     } catch (error) {
-      rethrowPrismaError(error);
+      rethrowLunchError(error);
     }
   }
 
@@ -161,6 +163,57 @@ export class LunchSittingsService {
 }
 
 type Tx = Parameters<Parameters<PrismaService['withRls']>[1]>[0];
+
+/**
+ * A write the exclusion constraint refused (LunchSittings_one_meal_at_a_time) is
+ * a race: two placements for one class and day, neither seeing the other's row.
+ * Nothing was written and trying again finds it, so it is the 409 every other
+ * aborted concurrent write is, not a 500.
+ */
+function rethrowLunchError(error: unknown): never {
+  if (exclusionViolation(error)) throw writeConflict();
+  return rethrowPrismaError(error);
+}
+
+/**
+ * The rows of the same class and weekday that hold a day in the weeks of
+ * `row`: the Prisma filter for "meets this meal's weeks". A meal of the whole
+ * läsår meets every row and adds no condition.
+ */
+function meetingWeeksOf(row: { startDate?: Date | null; endDate?: Date | null }): Prisma.LunchSittingWhereInput {
+  const conditions: Prisma.LunchSittingWhereInput[] = [];
+  // No date (null, or a row read without the column) is the läsår's own bound, which meets everything.
+  if (row.endDate) conditions.push({ OR: [{ startDate: null }, { startDate: { lte: row.endDate } }] });
+  if (row.startDate) conditions.push({ OR: [{ endDate: null }, { endDate: { gte: row.startDate } }] });
+  return conditions.length === 0 ? {} : { AND: conditions };
+}
+
+/**
+ * Puts the class's meal on a weekday, for the whole läsår, in place of what it
+ * had. The one row of the whole läsår it already has is updated where it
+ * stands (its id is what the grid holds); anything else the class had that day
+ * (the solver's meals of several parts of the year) goes, and the meal is
+ * created. The table's constraint is what says a class has one meal on a date,
+ * so a write that raced another is refused there.
+ */
+async function putWholeYearMeal(
+  tx: Tx,
+  key: { schoolId: string; academicYearId: string; studentGroupId: string; dayOfWeek: number },
+  data: { startTime: Date; endTime: Date; headcount: number; isGenerated: boolean },
+): Promise<LunchSitting> {
+  const rows = await tx.lunchSitting.findMany({
+    where: { academicYearId: key.academicYearId, studentGroupId: key.studentGroupId, dayOfWeek: key.dayOfWeek },
+    select: { id: true, startDate: true, endDate: true },
+  });
+  const [only] = rows;
+  if (rows.length === 1 && !only!.startDate && !only!.endDate) {
+    return tx.lunchSitting.update({ where: { id: only!.id }, data });
+  }
+  if (rows.length > 0) {
+    await tx.lunchSitting.deleteMany({ where: { id: { in: rows.map((row) => row.id) } } });
+  }
+  return tx.lunchSitting.create({ data: { ...key, ...data } });
+}
 
 /**
  * The school's meal length, and the refusal when there is no meal at all.
@@ -246,5 +299,6 @@ function toResponse(row: LunchSitting): LunchSittingResponse {
     endTime: toWallClock(row.endTime),
     headcount: row.headcount,
     isGenerated: row.isGenerated,
+    ...windowOf(row),
   };
 }

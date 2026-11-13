@@ -339,7 +339,7 @@ describe('the active year’s statement budget', () => {
     ]);
   });
 
-  it('a meal placed by hand: 4 statements, as before', async () => {
+  it('a meal placed by hand: 5 statements, the 4 it had and one read of the class’s meals that day', async () => {
     const { world, prisma } = school();
     await new LunchSittingsService(prisma).place(
       { academicYearId: IDS.yearA, studentGroupId: IDS.g7a, dayOfWeek: 1, startTime: '11:00' },
@@ -352,7 +352,12 @@ describe('the active year’s statement budget', () => {
       // `studentGroup.findFirst › academicYear` it was one more.
       'academicYear.findFirst',
       'user.count',
-      'lunchSitting.upsert',
+      // Klassens måltid per del av läsåret (20270209090000): a class has one
+      // meal on a DATE, which the table's exclusion constraint says, so the
+      // placing reads the class's meals of the weekday (one SELECT) and
+      // writes after, in place of an upsert on the unique key that is gone.
+      'lunchSitting.findMany',
+      'lunchSitting.create',
     ]);
   });
 });

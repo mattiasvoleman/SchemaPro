@@ -12,6 +12,7 @@ import { ConflictReads } from '../calendar/conflict-reads';
 import { loadRosters, gradeSpanOf } from '../optimization/room-eligibility';
 import { rostersOfYear, type RosterBasis } from '../year-rollover/projected-rosters';
 import { toNioarigSpan } from '../common/grade-numbering';
+import { windowKeysOf } from '../common/lunch-window';
 import { recordRead } from '../access-log/access-log';
 import { markedIds } from '../users/person-protections';
 import { redactPersonalNumbers, scrubPersonalNumbers } from './file-safety';
@@ -730,7 +731,7 @@ export class ScheduleExchangeService {
         tx.rast.findMany(),
         tx.lunchSetting.findUnique({ where: { schoolId: year.schoolId } }),
         tx.lunchServing.findMany(),
-        tx.lunchSitting.findMany({ where: { academicYearId }, select: { studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true } }),
+        tx.lunchSitting.findMany({ where: { academicYearId }, select: { studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true, startDate: true, endDate: true } }),
         tx.teachingRequirement.findMany({
           where: { academicYearId },
           select: {
@@ -801,7 +802,7 @@ export class ScheduleExchangeService {
       rasts: rasts.map((r) => ({ name: r.name, minGradeLevel: r.minGradeLevel, maxGradeLevel: r.maxGradeLevel, dayOfWeek: r.dayOfWeek, startMin: minutes(r.startTime), endMin: minutes(r.endTime) })),
       lunch: lunch ? { enabled: lunch.lunchEnabled, startMin: minutes(lunch.lunchStartTime), endMin: minutes(lunch.lunchEndTime), minutes: lunch.lunchMinutes } : null,
       servings: servings.map((s) => ({ minGradeLevel: s.minGradeLevel, maxGradeLevel: s.maxGradeLevel, dayOfWeek: s.dayOfWeek, startMin: minutes(s.startTime), endMin: minutes(s.endTime) })),
-      sittings: sittings.map((s) => ({ groupId: s.studentGroupId, day: s.dayOfWeek, startMin: minutes(s.startTime), endMin: minutes(s.endTime) })),
+      sittings: sittings.map((s) => ({ groupId: s.studentGroupId, day: s.dayOfWeek, startMin: minutes(s.startTime), endMin: minutes(s.endTime), ...windowKeysOf(s) })),
       requirements: requirements.map((r): RequirementRow => ({
         id: r.id,
         groupId: r.studentGroupId,

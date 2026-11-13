@@ -1675,20 +1675,28 @@ model PublishedLesson {
 /// The lunch sittings a snapshot publication published (20261011130000):
 /// what a DRAFT school's refill materialises its meals from. No FK to the
 /// group; a reader drops a row whose group is gone. Append-only by privilege.
+///
+/// A sitting carries the weeks it holds, as LunchSitting does
+/// (20270209090000): startDate and endDate, NULL for the läsår's own bound.
+/// A class has at most one meal on a date, which the EXCLUDE constraint
+/// PublishedLunchSittings_one_meal_at_a_time keeps and Prisma cannot state.
 model PublishedLunchSitting {
-  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  schoolId       String   @db.Uuid
-  publicationId  String   @db.Uuid
-  academicYearId String   @db.Uuid
-  studentGroupId String   @db.Uuid
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String    @db.Uuid
+  publicationId  String    @db.Uuid
+  academicYearId String    @db.Uuid
+  studentGroupId String    @db.Uuid
   dayOfWeek      Int
-  startTime      DateTime @db.Time(6)
-  endTime        DateTime @db.Time(6)
+  startTime      DateTime  @db.Time(6)
+  endTime        DateTime  @db.Time(6)
+  /// A Monday, or NULL for the läsår's first day (20270209090000).
+  startDate      DateTime? @db.Date
+  /// A Sunday, or NULL for the läsår's last day (20270209090000).
+  endDate        DateTime? @db.Date
 
   school      School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   publication TimetablePublication @relation(fields: [publicationId, academicYearId, schoolId], references: [id, academicYearId, schoolId], onDelete: Cascade)
 
-  @@unique([publicationId, studentGroupId, dayOfWeek])
   @@index([schoolId])
   @@map("PublishedLunchSittings")
 }
@@ -4536,6 +4544,13 @@ model LunchSitting {
   dayOfWeek      Int
   startTime      DateTime @db.Time(0)
   endTime        DateTime @db.Time(0)
+  /// The first day this meal holds: a Monday, or NULL for the läsår's first
+  /// day (20270209090000). A class eats at one time on a date, but may eat at
+  /// another in another part of the year; MasterLesson dates its weeks the
+  /// same way. Whole ISO weeks, because the engine plans in whole weeks.
+  startDate      DateTime? @db.Date
+  /// The last day this meal holds: a Sunday, or NULL for the läsår's last day.
+  endDate        DateTime? @db.Date
   /// Children seated, as the engine was told. Kept so the kitchen's list does
   /// not have to re-derive a roster that may have changed since the run.
   headcount      Int      @default(0)
@@ -4555,7 +4570,11 @@ model LunchSitting {
   academicYear AcademicYear @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
   studentGroup StudentGroup @relation(fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade)
 
-  @@unique([academicYearId, studentGroupId, dayOfWeek], map: "LunchSittings_group_day_key")
+  // Not stated here, because schema.prisma cannot: the EXCLUDE constraint
+  // LunchSittings_one_meal_at_a_time (a class has one meal on a date: no two
+  // rows of one year, class and weekday hold the same day) and the CHECKs that
+  // make the window whole weeks. It replaced the unique key
+  // LunchSittings_group_day_key. See 20270209090000.
   @@index([schoolId, academicYearId])
   @@map("LunchSittings")
 }

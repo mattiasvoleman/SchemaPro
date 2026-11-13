@@ -303,6 +303,17 @@ describe('ResourcesService', () => {
         expect(tx.resourceBooking.findMany.mock.invocationCallOrder[0]!).toBeLessThan(tx.resource.update.mock.invocationCallOrder[0]!);
       });
 
+      it('takes the same lock for an id written in upper case, since the trigger hashes the uuid as Postgres writes it (review of #291, R2-2)', async () => {
+        tx.resource.update.mockResolvedValue(row({ quantity: 20 }));
+
+        const lower = 'abcdef01-2345-4678-89ab-cdef01234567';
+        expect(lower.toUpperCase()).not.toBe(lower);
+        await service.update(lower.toUpperCase(), { quantity: 20 }, testUser());
+
+        const call = tx.$executeRaw.mock.calls[0]!;
+        expect(call.slice(1)).toEqual([`ResourceBookings:${lower}`]);
+      });
+
       it('takes no lock when the quantity is not what changes', async () => {
         tx.resource.update.mockResolvedValue(row());
 

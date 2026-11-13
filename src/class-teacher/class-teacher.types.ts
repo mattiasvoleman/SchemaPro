@@ -68,6 +68,23 @@ export const FRAME_MESSAGES: Readonly<Record<FrameReason, string>> = {
   SPLIT_MINUTES: 'Delarna ska vara minst 15 minuter var och tillsammans lika långa som lektionen.',
 };
 
+/**
+ * A refusal of the gateway's own, which the database's frame does not know: the lesson was written by Generera from a förläggning on
+ * its timplanspost (MasterLessons.fromPlacement), and the editor refuses to move or change it (LESSON_IS_PLACED, 409,
+ * MasterLessonsService.assertPlacedLessonStands) since the next Generera writes it again from the förläggning. A klasslärare's draft of
+ * the template for such a lesson can never be published, so it is said so before it is written, listed and judged, and not as
+ * "krockar i schemat" with nothing to point at (review of #293, LÅG-2 and the follow-up that named it). Kept apart from FRAME_REASONS,
+ * which the web mirrors one for one (web/lib/class-teacher.contract.test.ts): a reason the web does not know is said there as
+ * "the lesson cannot be changed by the class teacher", which is true, until the web has its own sentence for this one.
+ */
+export const LESSON_IS_PLACED_REASON = 'LESSON_IS_PLACED' as const;
+
+export const LESSON_IS_PLACED_MESSAGE =
+  'Lektionen är förlagd på timplanen och skrivs om därifrån vid varje Generera. Den ändras av schemaläggaren, på timplansposten.';
+
+/** Why a lesson is not the class teacher's to change: the frame's reasons, and the one the gateway adds. */
+export type RefusalReason = FrameReason | typeof LESSON_IS_PLACED_REASON;
+
 export const CHANGE_KINDS = ['OCCASION_MOVE', 'OCCASION_CANCEL', 'OCCASION_ROOM', 'TEMPLATE_MOVE', 'TEMPLATE_SPLIT'] as const;
 export type ChangeKind = (typeof CHANGE_KINDS)[number];
 
@@ -136,7 +153,7 @@ export interface RemovalView {
 
 export type Verdict =
   | { state: 'OK'; removes?: RemovalView }
-  | { state: 'REFUSED'; reason: FrameReason }
+  | { state: 'REFUSED'; reason: RefusalReason }
   | { state: 'STALE'; changed: FieldChange[] }
   | { state: 'GONE' }
   | { state: 'CONFLICT'; conflicts: ConflictView[] };
@@ -169,7 +186,7 @@ export interface ChangeView {
 export interface PublishOutcome {
   id: string;
   outcome: 'PUBLISHED' | 'REFUSED' | 'STALE' | 'CONFLICT' | 'GONE' | 'FAILED';
-  reason?: FrameReason;
+  reason?: RefusalReason;
   changed?: FieldChange[];
   conflicts?: ConflictView[];
 }

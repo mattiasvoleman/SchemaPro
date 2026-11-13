@@ -8,7 +8,7 @@ import {
 import { sqlStateOf } from '../cover/cover-errors';
 import { isWriteConflict, writeConflict } from '../common/utils/prisma-errors';
 import { isLockTimeout, publishInProgress } from '../publication/publish-mode';
-import { CODES, FRAME_MESSAGES, type FieldChange, type FrameReason } from './class-teacher.types';
+import { CODES, FRAME_MESSAGES, LESSON_IS_PLACED_MESSAGE, LESSON_IS_PLACED_REASON, type FieldChange, type RefusalReason } from './class-teacher.types';
 
 /**
  * The coded 403/404 for a frame reason: the web translates by `params.reason`,
@@ -16,7 +16,10 @@ import { CODES, FRAME_MESSAGES, type FieldChange, type FrameReason } from './cla
  * `code` and its FLAT `params` and nothing else of the body, so the reason
  * rides in `params`: a field of its own would be dropped on the way out.
  */
-export function frameRefusal(reason: FrameReason): HttpException {
+export function frameRefusal(reason: RefusalReason): HttpException {
+  if (reason === LESSON_IS_PLACED_REASON) {
+    return new ForbiddenException({ message: LESSON_IS_PLACED_MESSAGE, code: CODES.OUTSIDE_FRAME, params: { reason } });
+  }
   if (reason === 'NOT_APPOINTED') {
     return new ForbiddenException({ message: FRAME_MESSAGES[reason], code: CODES.NOT_APPOINTED, params: { reason } });
   }
