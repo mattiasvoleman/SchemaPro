@@ -284,6 +284,10 @@ export interface SlotTemplate {
   recurrence: Prisma.MasterLessonGetPayload<{ select: { recurrence: true } }>['recurrence'];
   startDate: Date | null;
   endDate: Date | null;
+  /** DIRECT only: a parked lesson has no slot to carry a lesson to. */
+  isParked?: boolean;
+  /** DIRECT only: when the master was last written, which tells a template moved after a batch from an exception that was there before it. */
+  updatedAt?: Date;
 }
 
 export const SLOT_SELECT = {
@@ -323,7 +327,7 @@ export async function publishedTemplates(
   const ids = [...new Set(rows.map(keyOf).filter((id): id is string => id !== null))];
   if ((await publishModeOf(tx, schoolId)) === 'DIRECT') {
     const masters = new Map(
-      (await tx.masterLesson.findMany({ where: { id: { in: ids } }, select: { id: true, isParked: true, ...SLOT_SELECT } })).map(
+      (await tx.masterLesson.findMany({ where: { id: { in: ids } }, select: { id: true, isParked: true, updatedAt: true, ...SLOT_SELECT } })).map(
         (master) => [master.id, master],
       ),
     );
@@ -360,6 +364,80 @@ export async function publishedTemplates(
   return out;
 }
 
+/** A cancelled lesson carried back to the template's slot of its own week (see relocationsOf): where it stood and where it goes. */
+export interface Relocation {
+  id: string;
+  previousNote: string | null;
+  from: string;
+  to: string;
+  startsAt: Date;
+  endsAt: Date;
+}
+
+const shiftDay = (iso: string, by: number): string => new Date(Date.parse(`${iso}T00:00:00.000Z`) + by * 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * THE LESSON THAT A TEMPLATE MOVED OUT FROM UNDER A BATCH IS STILL THE CLASS'S LESSON THAT WEEK.
+ *
+ * A DIRECT school's edit of the template moves the rows it can carry (reconcilableLessons: SCHEDULED, ahead, no register) and
+ * writes no row for the new day, so a lesson the batch had cancelled stays cancelled at the old slot and the new slot has no row:
+ * the week's lesson is the cancelled one. When the batch is taken back it is that row that is the lesson, and deleting it (as a
+ * row whose lesson already runs where the template says is deleted) leaves the class without it until the next publication.
+ * So it goes to the template's slot of its own week: the date of the template's weekday in the row's ISO week, the template's own
+ * hours, provided that
+ *
+ *   - the school is DIRECT (a DRAFT school's publication writes the new day itself, and the row there is deleted as before);
+ *   - the master lesson is there, is not parked, and was written after the batch was made (a row that was an exception before it
+ *     stays an old slot as before);
+ *   - the slot is ahead and the template runs on that date (its weeks and its dates), as propagateTemplateChange's standsAt asks;
+ *   - no row of the master stands on that date already (a publication wrote it, or another cancelled row of this batch came first):
+ *     then the lesson is where it runs now and the old row is deleted, as before.
+ *
+ * The room is asked about at the new slot like a reinstated lesson's (reversePlan). One query for all the rows' target days.
+ */
+async function relocationsOf(
+  tx: PrismaClient,
+  schoolId: string,
+  batch: BatchRow,
+  lessons: ReadonlyArray<{ id: string; date: Date; startsAt: Date; endsAt: Date; masterLessonId: string | null }>,
+  templates: ReadonlyMap<string, SlotTemplate | null>,
+  timezone: string,
+  now: Date,
+): Promise<Map<string, { to: string; startsAt: Date; endsAt: Date }>> {
+  const out = new Map<string, { to: string; startsAt: Date; endsAt: Date }>();
+  if ((await publishModeOf(tx, schoolId)) !== 'DIRECT') return out;
+  const wanted: Array<{ id: string; masterLessonId: string; to: string; startsAt: Date; endsAt: Date }> = [];
+  for (const lesson of lessons) {
+    const template = templates.get(lesson.id) ?? null;
+    if (template === null || lesson.masterLessonId === null || runsAt(template, lesson, timezone)) continue;
+    if (template.isParked === true || template.updatedAt === undefined || template.updatedAt <= batch.createdAt) continue;
+    const date = asDay(lesson.date);
+    const to = shiftDay(shiftDay(date, 1 - isoWeekday(date)), template.dayOfWeek - 1);
+    const startsAt = zonedTimeToUtc(to, timeToString(template.startTime), timezone);
+    const endsAt = zonedTimeToUtc(to, timeToString(template.endTime), timezone);
+    if (startsAt <= now || !runsOn(template, day(to))) continue;
+    wanted.push({ id: lesson.id, masterLessonId: lesson.masterLessonId, to, startsAt, endsAt });
+  }
+  if (wanted.length === 0) return out;
+  const there = await tx.calendarLesson.findMany({
+    // Not the rows being judged: a template moved to another hour of the same day has its new slot on the very date the old row stands on.
+    where: {
+      id: { notIn: lessons.map((lesson) => lesson.id) },
+      masterLessonId: { in: [...new Set(wanted.map((entry) => entry.masterLessonId))] },
+      date: { in: [...new Set(wanted.map((entry) => day(entry.to)))] },
+    },
+    select: { masterLessonId: true, date: true },
+  });
+  const taken = new Set(there.map((entry) => `${entry.masterLessonId}|${asDay(entry.date)}`));
+  for (const entry of wanted) {
+    const key = `${entry.masterLessonId}|${entry.to}`;
+    if (taken.has(key)) continue;
+    taken.add(key);
+    out.set(entry.id, { to: entry.to, startsAt: entry.startsAt, endsAt: entry.endsAt });
+  }
+  return out;
+}
+
 /** Does the template run this row's lesson at exactly this date and slot? */
 export function runsAt(template: SlotTemplate | null, row: { date: Date; startsAt: Date; endsAt: Date }, timezone: string): boolean {
   if (template === null) return false;
@@ -380,6 +458,12 @@ export function runsAt(template: SlotTemplate | null, row: { date: Date; startsA
  */
 export interface ReverseOptions {
   only?: ReadonlySet<string>;
+  /**
+   * False: a lesson whose template has moved is deleted, never carried to the template's slot. An activity that CHANGES puts back
+   * the lessons it no longer takes and takes new ones by the new description, which a lesson carried to another day would not be
+   * judged by; a removal and a reversal of a whole batch relocate.
+   */
+  relocate?: boolean;
 }
 
 export async function reversePlan(
@@ -420,6 +504,7 @@ export async function reversePlan(
   const skipped: ReversePreview['skippedRoomTaken'] = [];
   const templateMoved: ReversePreview['removedTemplateMoved'] = [];
   const reinstate: Array<{ id: string; previousNote: string | null }> = [];
+  const relocate: Relocation[] = [];
   // The slot the lesson runs at NOW. A publish (or a DIRECT edit) since the
   // batch moves the template, materialises the new day, and the batch takes
   // that row too (S7); reinstating the old day's row as well would give the
@@ -430,12 +515,19 @@ export async function reversePlan(
     row.academicYearId,
     candidates.map((entry) => entry.calendarLesson),
   );
+  // A DIRECT edit of the template since the batch moved only the rows it could carry (the SCHEDULED ones), and wrote no row where
+  // the cancelled one stood in the way: a lesson whose template moved and whose new day has no row is the class's lesson that
+  // week, and it goes to the template's slot (relocation) instead of being deleted with the old one.
+  const relocation = options.relocate === false ? null : await relocationsOf(tx, schoolId, row, candidates.map((entry) => entry.calendarLesson), templates, timezone, now);
   for (const entry of candidates) {
     const lesson = entry.calendarLesson;
-    if (!runsAt(templates.get(lesson.id) ?? null, lesson, timezone)) {
+    const moved = relocation?.get(lesson.id) ?? null;
+    if (moved === null && !runsAt(templates.get(lesson.id) ?? null, lesson, timezone)) {
       templateMoved.push({ lessonId: lesson.id, date: asDay(lesson.date) });
       continue;
     }
+    const startsAt = moved?.startsAt ?? lesson.startsAt;
+    const endsAt = moved?.endsAt ?? lesson.endsAt;
     if (lesson.roomId !== null) {
       // The room's other SCHEDULED lessons, and its live bookings (the
       // booking flow's own predicate: PENDING or APPROVED), over the slot.
@@ -444,15 +536,15 @@ export async function reversePlan(
           id: { not: lesson.id },
           roomId: lesson.roomId,
           status: 'SCHEDULED',
-          startsAt: { lt: lesson.endsAt },
-          endsAt: { gt: lesson.startsAt },
+          startsAt: { lt: endsAt },
+          endsAt: { gt: startsAt },
         },
         select: { id: true },
       });
       // A lesson there is no taking when the room is a shared one that holds
       // both classes' pupils (Delade salar): asked only now that one was found.
       const other =
-        found && (await sharedRoomTakes(tx, schoolId, lesson.id, lesson.roomId, lesson.startsAt, lesson.endsAt))
+        found && (await sharedRoomTakes(tx, schoolId, lesson.id, lesson.roomId, startsAt, endsAt))
           ? null
           : found;
       const booking = other
@@ -461,17 +553,18 @@ export async function reversePlan(
             where: {
               roomId: lesson.roomId,
               status: { in: ['PENDING', 'APPROVED'] },
-              startsAt: { lt: lesson.endsAt },
-              endsAt: { gt: lesson.startsAt },
+              startsAt: { lt: endsAt },
+              endsAt: { gt: startsAt },
             },
             select: { id: true },
           });
       if (other || booking) {
-        skipped.push({ lessonId: lesson.id, date: asDay(lesson.date), roomId: lesson.roomId, by: other ? 'LESSON' : 'BOOKING' });
+        skipped.push({ lessonId: lesson.id, date: moved?.to ?? asDay(lesson.date), roomId: lesson.roomId, by: other ? 'LESSON' : 'BOOKING' });
         continue;
       }
     }
-    reinstate.push({ id: lesson.id, previousNote: entry.previousNote });
+    if (moved) relocate.push({ id: lesson.id, previousNote: entry.previousNote, from: asDay(lesson.date), to: moved.to, startsAt, endsAt });
+    else reinstate.push({ id: lesson.id, previousNote: entry.previousNote });
   }
   const credits = options.only
     ? []
@@ -481,6 +574,7 @@ export async function reversePlan(
       });
   return {
     reinstate,
+    relocate,
     skipped,
     templateMoved,
     notReinstatable: lessons.length - candidates.length,
@@ -507,7 +601,8 @@ export type ReversalPlan = Awaited<ReturnType<typeof reversePlan>>;
 
 /**
  * Writes a reversal plan's lessons: every reinstated row back to SCHEDULED
- * with the note it had, every row whose template has moved deleted, in the
+ * with the note it had, every relocated row carried to its template's slot,
+ * every other row whose template has moved deleted, in the
  * statements the plan read them by (the guards repeated in the write). Shared
  * by a reversal of the whole batch and by an activity that puts back only some
  * of its lessons.
@@ -523,6 +618,13 @@ export async function applyReinstatement(tx: PrismaClient, cause: BatchRow['caus
     await tx.calendarLesson.updateMany({
       where: { id: { in: lessonIds }, status: 'CANCELLED', cancelCause: cause },
       data: { status: 'SCHEDULED', cancelCause: null, note },
+    });
+  }
+  // A lesson carried to the template's slot: the same guards, and the new date and hours with it.
+  for (const move of plan.relocate) {
+    await tx.calendarLesson.updateMany({
+      where: { id: move.id, status: 'CANCELLED', cancelCause: cause, startsAt: { gt: new Date() }, attendanceRecords: { none: {} } },
+      data: { date: day(move.to), startsAt: move.startsAt, endsAt: move.endsAt, status: 'SCHEDULED', cancelCause: null, note: move.previousNote },
     });
   }
   if (plan.templateMoved.length > 0) {

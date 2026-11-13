@@ -234,20 +234,27 @@ export class ExamPlannerService {
    * laid again. What the exam itself holds in the rooms is let go first, inside
    * the same transaction (`freeTheRooms`). `skippedRoomTaken` is what the removal
    * could still not put back because a lesson or a booking that is not the exam's
-   * holds the room, as the removal of any activity says it.
+   * holds the room, as the removal of any activity says it. `relocated` is the
+   * lessons the grundschema moved after the exam was laid, carried to their
+   * new time that week instead of put back at the old one.
    */
-  async unplan(examId: string, user: AuthenticatedUser): Promise<{ removed: true; skippedRoomTaken: RemovePreview['skippedRoomTaken'] }> {
+  async unplan(
+    examId: string,
+    user: AuthenticatedUser,
+  ): Promise<{ removed: true; skippedRoomTaken: RemovePreview['skippedRoomTaken']; relocated: RemovePreview['relocated'] }> {
     requireSchoolId(user);
     const row = await this.prisma.withRls(user, (tx) => readOne(tx, examId));
     let skippedRoomTaken: RemovePreview['skippedRoomTaken'] = [];
+    let relocated: RemovePreview['relocated'] = [];
     if (row.activityId && isPlanned(row)) {
       const removal = await this.activities.remove(row.activityId, user, (tx) => freeTheRooms(tx, examId));
       skippedRoomTaken = removal.skippedRoomTaken;
+      relocated = removal.relocated;
     } else if (row.sittings.length === 0 && row.activityId === null) {
       throw conflictingExam(EXAM_NOT_PLANNED, 'Provet är inte lagt.');
     }
     await this.prisma.withRls(user, async (tx) => clearLeftovers(tx, [await readOne(tx, examId)]));
-    return { removed: true, skippedRoomTaken };
+    return { removed: true, skippedRoomTaken, relocated };
   }
 
   // -------------------------------------------------------------------------

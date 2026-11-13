@@ -569,14 +569,21 @@ describe('ExamPlannerService', () => {
   });
 
   describe('unplanning', () => {
-    const removal = (over: Record<string, unknown> = {}) => ({ reinstate: 1, skippedRoomTaken: [], ...over });
+    const removal = (over: Record<string, unknown> = {}) => ({ reinstate: 1, skippedRoomTaken: [], relocated: [], ...over });
 
     it('removes the activity by its own remove, then what the exam holds beside it', async () => {
       tx.exam.findUnique.mockResolvedValue(standing('e1', DATE, '08:20', '09:20'));
       activities.remove.mockResolvedValue(removal());
-      expect(await service.unplan('e1', user)).toEqual({ removed: true, skippedRoomTaken: [] });
+      expect(await service.unplan('e1', user)).toEqual({ removed: true, skippedRoomTaken: [], relocated: [] });
       expect(activities.remove).toHaveBeenCalledWith('act-e1', user, expect.any(Function));
       expect(tx.exam.findUnique).toHaveBeenCalledTimes(2);
+    });
+
+    it('says which lessons the removal carried to their template’s slot, in the answer, for the planner to name (review of #286: the class was left without the lesson)', async () => {
+      tx.exam.findUnique.mockResolvedValue(standing('e1', DATE, '08:20', '09:20'));
+      const relocated = [{ lessonId: 'cl-9', from: '2026-11-09', to: '2026-11-11' }];
+      activities.remove.mockResolvedValue(removal({ relocated }));
+      expect(await service.unplan('e1', user)).toEqual({ removed: true, skippedRoomTaken: [], relocated });
     });
 
     it('lets go of the exam’s rooms inside the removal, before the lessons are put back', async () => {
@@ -620,7 +627,7 @@ describe('ExamPlannerService', () => {
       tx.exam.findUnique.mockResolvedValue(standing('e1', DATE, '08:20', '09:20'));
       const skipped = [{ lessonId: 'l1', date: DATE, roomId: R1, by: 'LESSON' as const }];
       activities.remove.mockResolvedValue(removal({ skippedRoomTaken: skipped }));
-      expect(await service.unplan('e1', user)).toEqual({ removed: true, skippedRoomTaken: skipped });
+      expect(await service.unplan('e1', user)).toEqual({ removed: true, skippedRoomTaken: skipped, relocated: [] });
     });
 
     it('says an exam that is not laid is not laid, and cleans up an exam whose activity is gone', async () => {
@@ -628,7 +635,7 @@ describe('ExamPlannerService', () => {
       expect(await code(service.unplan('e1', user))).toBe('EXAM_NOT_PLANNED');
       expect(activities.remove).not.toHaveBeenCalled();
       tx.exam.findUnique.mockResolvedValue(row({ activityId: 'act', activity: { id: 'act', removedAt: new Date(), batch: { fromDate: day(DATE), startTime: clockOf('08:20'), endTime: clockOf('09:20'), reversedAt: null } }, sittings: [{ roomId: R1, writers: 28, bookingId: 'b1', invigilators: [] }] }));
-      expect(await service.unplan('e1', user)).toEqual({ removed: true, skippedRoomTaken: [] });
+      expect(await service.unplan('e1', user)).toEqual({ removed: true, skippedRoomTaken: [], relocated: [] });
       expect(activities.remove).not.toHaveBeenCalled();
       expect(tx.examSitting.deleteMany).toHaveBeenCalled();
     });

@@ -962,6 +962,27 @@ describe('ScheduleActivitiesService', () => {
       expect(preview.matched).toBe(2);
     });
 
+    it('deletes, and never carries to another day, a lesson whose template has moved: the new description decides what the days hold', async () => {
+      shrink();
+      tx.masterLesson.findMany.mockResolvedValue([
+        {
+          id: 'm2',
+          isParked: false,
+          updatedAt: new Date('2026-11-03T08:00:00.000Z'),
+          dayOfWeek: 4,
+          startTime: new Date('1970-01-01T07:00:00.000Z'),
+          endTime: new Date('1970-01-01T08:00:00.000Z'),
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+        },
+      ]);
+      const result = await service.update(ACTIVITY, change(), user);
+      expect(result).toMatchObject({ released: 0, taken: 1 });
+      expect(tx.calendarLesson.updateMany).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ date: expect.anything() }) }));
+      expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: { in: ['l2'] } }) }));
+    });
+
     it('does not put back a lesson that a replacement lesson that was held stands for (a removal’s rule)', async () => {
       shrink();
       // 7A's replacement lesson on 10 Nov has begun: l2 stays cancelled with it.
@@ -1158,10 +1179,97 @@ describe('ScheduleActivitiesService', () => {
         creditsDeleted: 2,
         skippedRoomTaken: [],
         removedTemplateMoved: [],
+        relocated: [],
         notReinstatable: 0,
       });
       expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
       expect(tx.scheduleActivity.update).not.toHaveBeenCalled();
+    });
+
+    /**
+     * THE GRUNDSCHEMA WAS MOVED AFTER THE ACTIVITY (the exam's unplan, review of #286): l2 was Tuesday 10 Nov 07:00-08:00 and the
+     * template went to Thursday, written after the activity was made. A DIRECT edit moves the rows it can carry and wrote none for
+     * Thursday, so the cancelled Tuesday row is the class's lesson that week: the removal carries it to Thursday 12 Nov, a lesson again.
+     */
+    describe('a lesson whose template moved after the activity', () => {
+      const moved = (over: Record<string, unknown> = {}) => [
+        {
+          id: 'm2',
+          isParked: false,
+          updatedAt: new Date('2026-11-03T08:00:00.000Z'),
+          dayOfWeek: 4,
+          startTime: new Date('1970-01-01T07:00:00.000Z'),
+          endTime: new Date('1970-01-01T08:00:00.000Z'),
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+          ...over,
+        },
+      ];
+
+      it('names the lesson it will carry, and does not count it as put back or as deleted', async () => {
+        lessons();
+        tx.masterLesson.findMany.mockResolvedValue(moved());
+        const preview = await service.removePreview(ACTIVITY, user);
+        expect(preview).toMatchObject({
+          reinstate: 0,
+          removedTemplateMoved: [],
+          relocated: [{ lessonId: 'l2', from: '2026-11-10', to: '2026-11-12' }],
+        });
+      });
+
+      it('writes the lesson at its new day and hours, scheduled, and tells the class as it tells of any lesson it puts back', async () => {
+        lessons();
+        tx.masterLesson.findMany.mockResolvedValue(moved());
+        tx.cancellationBatch.findMany.mockResolvedValue([]);
+        const result = await service.remove(ACTIVITY, user);
+
+        expect(result).toMatchObject({ reinstate: 0, notify: 3, relocated: [{ lessonId: 'l2', from: '2026-11-10', to: '2026-11-12' }] });
+        expect(tx.calendarLesson.updateMany).toHaveBeenCalledWith({
+          where: { id: 'l2', status: 'CANCELLED', cancelCause: 'EVENT', startsAt: { gt: NOW }, attendanceRecords: { none: {} } },
+          data: {
+            date: day('2026-11-12'),
+            startsAt: instant('2026-11-12T06:00'),
+            endsAt: instant('2026-11-12T07:00'),
+            status: 'SCHEDULED',
+            cancelCause: null,
+            note: null,
+          },
+        });
+        // Not deleted, and counted among the lessons that came back for the notices and the board.
+        expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: { in: ['l2'] }, status: 'CANCELLED' }) }));
+        expect(digest).toHaveBeenCalledTimes(1);
+        expect(realtime.notifyLessonsChanged).toHaveBeenCalledWith(tx, ['l2']);
+        // The board hears of the new day as well as of the activity's own days.
+        expect(realtime.notifyCoverBoardChanged).toHaveBeenCalledWith(SCHOOL, '2026-11-09', '2026-11-12');
+      });
+
+      it('holds the carried lesson against the batches still on, after this activity is marked removed (it must not take its own lesson back)', async () => {
+        lessons();
+        tx.masterLesson.findMany.mockResolvedValue(moved());
+        tx.cancellationBatch.findMany.mockResolvedValue([]);
+        await service.remove(ACTIVITY, user);
+        expect(tx.cancellationBatch.findMany).toHaveBeenCalledWith({
+          where: { academicYearId: YEAR, reversedAt: null, fromDate: { lte: day('2026-11-12') }, toDate: { gte: day('2026-11-12') } },
+          select: expect.anything(),
+        });
+        const [marked] = tx.cancellationBatch.update.mock.invocationCallOrder;
+        const [held] = tx.cancellationBatch.findMany.mock.invocationCallOrder;
+        expect(marked).toBeLessThan(held!);
+      });
+
+      it('deletes the old row as before when the lesson already stands on its new day', async () => {
+        lessons();
+        tx.masterLesson.findMany.mockResolvedValue(moved());
+        tx.calendarLesson.findMany.mockImplementation(async ({ where }) => {
+          if (where.masterLessonId) return [{ masterLessonId: 'm2', date: day('2026-11-12') }];
+          if (where.id?.in) return world.digestRows;
+          return [];
+        });
+        const result = await service.remove(ACTIVITY, user);
+        expect(result).toMatchObject({ relocated: [], removedTemplateMoved: [{ lessonId: 'l2', date: '2026-11-10' }] });
+        expect(tx.cancellationBatch.findMany).not.toHaveBeenCalled();
+      });
     });
 
     it('reaches nobody for an activity that told nobody', async () => {
