@@ -20338,6 +20338,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('TimplanCredits', '{DRIFT}', '{DRIFT}', '{DRIFT}', '{}'),
   ('TimplanStatementPublications', '{PUBLICERING}', '{PUBLICERING}', '{PUBLICERING}', '{}'),
   ('TimplanStatements', '{PUBLICERING}', '{PUBLICERING}', '{PUBLICERING}', '{}'),
+  ('UserDeactivations', '{}', '{PERSONAL}', '{}', '{}'),
   ('UserRoleChanges', '{}', '{}', '{}', '{}'),
   ('Users', '{PERSONAL}', '{PERSONAL,PLANERING}', '{PERSONAL}', '{}');
 -- END GENERATED: area matrix
@@ -59208,5 +59209,520 @@ BEGIN
       current_setting('app.test_mt478_school'), current_setting('app.test_mt478_year'), current_setting('app.test_mt478_class'))),
     '42501 rls');
   RAISE NOTICE 'mt 478: % checks', current_setting('mt.checks');
+END $$;
+ROLLBACK;
+
+-- En avaktiverad person minns sina perioder (20270210090000), sections 480-484: UserDeactivations, every period a
+-- person has been inactive, kept by Users_deactivations_are_kept beside "isActive", with "startsAt" of the open period
+-- the person's last working day when an administrator names it. Helpers are pg_temp functions with the prefix av_, made
+-- outside any transaction so they outlive the sections' BEGIN ... ROLLBACK. Every section plants its own people as the
+-- matrix school's administrators (the API's role, as the gateway writes them) and leaves nothing behind. (The owner's
+-- side, rls-owner-checks.sql 480o-484o: the function D6 reads them through, and what holds for the rows as a whole.)
+--
+--   480  the catalogue: columns, keys with their actions, CHECKs, the exclusion, indexes, row security, arms,
+--        privileges, the trigger function and its trigger, and the line of app.absence_stats_lessons
+--   481  who reads and who writes: every profile, a teacher, a pupil, a guardian, the other school, PostgREST's role
+--   482  the trigger: a person goes inactive, active, inactive again; a person inserted inactive; what leaves the
+--        periods alone
+--   483  the last working day: "startsAt" of the open period, in both directions, and every refusal
+--   484  a person removed takes their periods with them
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.av_tick() RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('av.checks', (coalesce(nullif(current_setting('av.checks', true), ''), '0')::integer + 1)::text, true);
+$f$;
+CREATE FUNCTION pg_temp.av_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.av_tick();
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'av %: got\n%\nwanted\n%', p_label, p_got, p_want USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+CREATE FUNCTION pg_temp.av_true(p_label text, p_cond boolean) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.av_tick();
+  IF p_cond IS NOT TRUE THEN
+    RAISE EXCEPTION 'av %: not true', p_label USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+CREATE FUNCTION pg_temp.av_as(p_sub text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', p_sub)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+-- Runs a statement and says what became of it: ok, a row-security refusal, or the SQLSTATE with the constraint's name.
+-- A failed statement leaves nothing.
+CREATE FUNCTION pg_temp.av_try(p_stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  st text;
+  msg text;
+  con text;
+BEGIN
+  BEGIN
+    EXECUTE p_stmt;
+    RETURN 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, con = CONSTRAINT_NAME;
+  END;
+  IF st = '42501' AND msg LIKE '%row-level security%' THEN
+    RETURN '42501 rls';
+  ELSIF coalesce(con, '') <> '' AND st <> '23502' THEN
+    RETURN st || ' ' || con;
+  END IF;
+  RETURN st;
+END $f$;
+CREATE FUNCTION pg_temp.av_case(p_label text, p_stmt text, p_want text) RETURNS void LANGUAGE sql AS $f$
+  SELECT pg_temp.av_expect(p_label, pg_temp.av_try(p_stmt), p_want);
+$f$;
+-- The rows a statement touched (an UPDATE that row security leaves nothing to touch says 0).
+CREATE FUNCTION pg_temp.av_rows(p_stmt text) RETURNS bigint LANGUAGE plpgsql AS $f$
+DECLARE n bigint;
+BEGIN
+  EXECUTE p_stmt;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END $f$;
+-- A person of the current principal's school, written as the principal writes one.
+CREATE FUNCTION pg_temp.av_person(p_role text, p_active boolean DEFAULT true) RETURNS uuid LANGUAGE plpgsql AS $f$
+DECLARE
+  v_id uuid;
+BEGIN
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (app.current_school_id(), 'av-' || gen_random_uuid() || '@example.invalid', 'Av', 'Person', p_role::"UserRole", gen_random_uuid(), p_active, now())
+  RETURNING "Users".id INTO v_id;
+  RETURN v_id;
+END $f$;
+-- The person's periods as one line each, oldest first: 'open' or 'closed', and whether it began at the person's own date.
+CREATE FUNCTION pg_temp.av_periods(p_user uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT coalesce(string_agg(CASE WHEN "endsAt" IS NULL THEN 'open' ELSE 'closed' END, ',' ORDER BY "startsAt", "id"), '-')
+    FROM "UserDeactivations" WHERE "userId" = p_user;
+$f$;
+
+-- 480: the catalogue as 20270210090000 wrote it.
+BEGIN;
+DO $$
+DECLARE
+  tbl constant regclass := '"UserDeactivations"'::regclass;
+  got text;
+  want text;
+  r text;
+  priv text;
+  c record;
+  k record;
+BEGIN
+  PERFORM pg_temp.av_expect('480 columns',
+    (SELECT string_agg(format('%s %s %s %s', a.attname, format_type(a.atttypid, a.atttypmod), CASE WHEN a.attnotnull THEN 'NN' ELSE 'N' END,
+                              coalesce(pg_get_expr(d.adbin, d.adrelid), '-')), '; ' ORDER BY a.attnum)
+       FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+      WHERE a.attrelid = tbl AND a.attnum > 0 AND NOT a.attisdropped),
+    'id uuid NN gen_random_uuid(); schoolId uuid NN -; userId uuid NN -; startsAt timestamp(6) with time zone NN -; '
+    || 'endsAt timestamp(6) with time zone N -; recordedAt timestamp(6) with time zone NN clock_timestamp()');
+
+  -- The keys and what each does to the other: the person's carries the school and does not follow a move of it (the tenant keys' rule), and both cascade.
+  FOR k IN SELECT * FROM (VALUES
+      ('UserDeactivations_pkey',                       'p', 'PRIMARY KEY (id)', NULL, NULL),
+      ('UserDeactivations_schoolId_fkey',              'f', 'FOREIGN KEY ("schoolId") REFERENCES "Schools"(id) ON UPDATE CASCADE ON DELETE CASCADE', 'c', 'c'),
+      ('UserDeactivations_userId_schoolId_fkey',       'f', 'FOREIGN KEY ("userId", "schoolId") REFERENCES "Users"(id, "schoolId") ON DELETE CASCADE', 'a', 'c'),
+      ('UserDeactivations_ends_after_it_starts',       'c', 'CHECK ((("endsAt" IS NULL) OR ("startsAt" < "endsAt")))', NULL, NULL),
+      ('UserDeactivations_starts_before_it_is_recorded', 'c', 'CHECK (("startsAt" <= "recordedAt"))', NULL, NULL),
+      ('UserDeactivations_one_period_at_a_time',       'x', 'EXCLUDE USING gist ("userId" WITH =, tstzrange("startsAt", "endsAt") WITH &&)', NULL, NULL)
+    ) v(name, type, def, upd, del) LOOP
+    SELECT format('%s %s %s %s %s', c2.contype, pg_get_constraintdef(c2.oid), coalesce(nullif(c2.confupdtype, ' '), '-'), coalesce(nullif(c2.confdeltype, ' '), '-'), c2.convalidated::text)
+      INTO got FROM pg_constraint c2 WHERE c2.conrelid = tbl AND c2.conname = k.name;
+    PERFORM pg_temp.av_expect('480 constraint ' || k.name, got,
+      format('%s %s %s %s true', k.type, k.def, coalesce(k.upd, '-'), coalesce(k.del, '-')));
+  END LOOP;
+  PERFORM pg_temp.av_expect('480 the table has those constraints and no other', (SELECT count(*) FROM pg_constraint WHERE conrelid = tbl)::text, '6');
+
+  PERFORM pg_temp.av_expect('480 indexes',
+    (SELECT string_agg(i.indexname || ' ' || regexp_replace(i.indexdef, '^.* USING ', ''), '; ' ORDER BY i.indexname COLLATE "C")
+       FROM pg_indexes i WHERE i.schemaname = 'public' AND i.tablename = 'UserDeactivations'),
+    'UserDeactivations_one_period_at_a_time gist ("userId", tstzrange("startsAt", "endsAt")); UserDeactivations_pkey btree (id); '
+    || 'UserDeactivations_schoolId_userId_idx btree ("schoolId", "userId"); UserDeactivations_userId_schoolId_startsAt_idx btree ("userId", "schoolId", "startsAt")');
+  PERFORM pg_temp.av_true('480 the table is commented', coalesce(obj_description(tbl, 'pg_class'), '') <> '');
+
+  -- Row security: on, and not forced, as the sibling log (the definer trigger writes past the policies as the owner).
+  PERFORM pg_temp.av_true('480 row security is on', (SELECT relrowsecurity FROM pg_class WHERE oid = tbl));
+  PERFORM pg_temp.av_expect('480 row security is forced as on UserRoleChanges', (SELECT relforcerowsecurity::text FROM pg_class WHERE oid = tbl),
+                            (SELECT relforcerowsecurity::text FROM pg_class WHERE oid = '"UserRoleChanges"'::regclass));
+
+  -- The two arms: names, commands, the role, and what each asks.
+  PERFORM pg_temp.av_expect('480 arms',
+    (SELECT string_agg(policyname || ' ' || cmd || ' ' || roles::text, '; ' ORDER BY policyname COLLATE "C") FROM pg_policies WHERE schemaname = 'public' AND tablename = 'UserDeactivations'),
+    'user_deactivations_admin_select SELECT {authenticated}; user_deactivations_admin_update UPDATE {authenticated}');
+  FOR k IN SELECT * FROM pg_policies WHERE schemaname = 'public' AND tablename = 'UserDeactivations' LOOP
+    got := coalesce(k.qual, '') || ' ' || coalesce(k.with_check, '');
+    PERFORM pg_temp.av_true('480 ' || k.policyname || ' keeps to the school', got LIKE '%"schoolId" = ( SELECT app.current_school_id()%');
+    PERFORM pg_temp.av_true('480 ' || k.policyname || ' is an administrator''s', got LIKE '%current_user_role()%= ''SCHOOL_ADMIN''%');
+    PERFORM pg_temp.av_true('480 ' || k.policyname || ' names no teacher, pupil or guardian', got !~ 'TEACHER|STUDENT|GUARDIAN');
+    PERFORM pg_temp.av_true('480 ' || k.policyname || ' reaches no service or sync principal', got !~ 'current_service_school_id|current_sync_school_id|is_service_key_lookup|current_service_key_id');
+  END LOOP;
+  -- The read asks no area (every profile reads); the update asks Personal in WITH CHECK only (USING serves a locking read, section 110)
+  -- and reaches the open period alone, in both.
+  SELECT * INTO c FROM pg_policies WHERE schemaname = 'public' AND tablename = 'UserDeactivations' AND policyname = 'user_deactivations_admin_select';
+  PERFORM pg_temp.av_true('480 the read asks no area and is not narrowed to the open period', c.qual NOT LIKE '%current_user_may%' AND c.qual NOT LIKE '%endsAt%' AND c.with_check IS NULL);
+  SELECT * INTO c FROM pg_policies WHERE schemaname = 'public' AND tablename = 'UserDeactivations' AND policyname = 'user_deactivations_admin_update';
+  PERFORM pg_temp.av_true('480 the update asks Personal in WITH CHECK', c.with_check LIKE '%current_user_may(''PERSONAL''::"AdminArea", true)%');
+  PERFORM pg_temp.av_true('480 the update asks no area in USING', c.qual NOT LIKE '%current_user_may%');
+  PERFORM pg_temp.av_true('480 the update reaches the open period alone, in USING and in WITH CHECK',
+    c.qual LIKE '%("endsAt" IS NULL)%' AND c.with_check LIKE '%("endsAt" IS NULL)%');
+
+  -- Privileges: the API's role reads and changes one column; service_role reads; nobody else anything; PUBLIC nothing.
+  SELECT string_agg(g.who || '=' || g.privs, ';' ORDER BY g.who COLLATE "C") INTO got
+    FROM (SELECT coalesce(ro.rolname, 'PUBLIC')::text AS who, string_agg(a.privilege_type, ',' ORDER BY a.privilege_type COLLATE "C") AS privs
+            FROM pg_class cl CROSS JOIN LATERAL aclexplode(cl.relacl) a LEFT JOIN pg_roles ro ON ro.oid = a.grantee
+           WHERE cl.oid = tbl AND a.grantee <> cl.relowner GROUP BY 1) g;
+  want := 'app_authenticated=SELECT' || CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN ';service_role=SELECT' ELSE '' END;
+  PERFORM pg_temp.av_expect('480 who holds what on the table (the owner aside)', got, want);
+  PERFORM pg_temp.av_expect('480 the one column grant is the API role''s, on startsAt',
+    (SELECT string_agg(a.attname || ':' || a.attacl::text, ';' ORDER BY a.attname COLLATE "C") FROM pg_attribute a WHERE a.attrelid = tbl AND a.attacl IS NOT NULL),
+    'startsAt:{app_authenticated=w/' || (SELECT r.rolname FROM pg_class cl JOIN pg_roles r ON r.oid = cl.relowner WHERE cl.oid = tbl) || '}');
+  FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    FOREACH priv IN ARRAY ARRAY['INSERT', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      PERFORM pg_temp.av_true(format('480 %s holds %s on the table', r, priv) || ' (it must not)', NOT has_table_privilege(r, tbl, priv));
+    END LOOP;
+    IF current_setting('server_version_num')::int >= 170000 THEN
+      PERFORM pg_temp.av_true(format('480 %s holds MAINTAIN on the table', r) || ' (it must not)', NOT has_table_privilege(r, tbl, 'MAINTAIN'));
+    END IF;
+    PERFORM pg_temp.av_true(format('480 %s may update the whole table', r) || ' (it must not)', NOT has_table_privilege(r, tbl, 'UPDATE'));
+    FOREACH priv IN ARRAY ARRAY['id', 'schoolId', 'userId', 'endsAt', 'recordedAt'] LOOP
+      PERFORM pg_temp.av_true(format('480 %s holds UPDATE on %s', r, priv) || ' (it must not)', NOT has_column_privilege(r, tbl, priv, 'UPDATE'));
+      PERFORM pg_temp.av_true(format('480 %s holds INSERT on %s', r, priv) || ' (it must not)', NOT has_column_privilege(r, tbl, priv, 'INSERT'));
+    END LOOP;
+    PERFORM pg_temp.av_true(format('480 %s holds INSERT on startsAt', r) || ' (it must not)', NOT has_column_privilege(r, tbl, 'startsAt', 'INSERT'));
+    PERFORM pg_temp.av_expect(format('480 %s UPDATE on startsAt', r), has_column_privilege(r, tbl, 'startsAt', 'UPDATE')::text, (r = 'app_authenticated')::text);
+    PERFORM pg_temp.av_expect(format('480 %s SELECT', r), has_table_privilege(r, tbl, 'SELECT')::text, (r IN ('app_authenticated', 'service_role'))::text);
+    IF r IN ('authenticated', 'anon') THEN
+      FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] LOOP
+        PERFORM pg_temp.av_true(format('480 %s holds %s on a column', r, priv) || ' (it must not)', NOT has_any_column_privilege(r, tbl, priv));
+      END LOOP;
+    END IF;
+  END LOOP;
+
+  -- The function and its trigger: a definer of the table's owner with a pinned path, run by nobody else, commented.
+  PERFORM pg_temp.av_true('480 the function is a definer of the table''s owner with a pinned search path',
+    (SELECT p.prosecdef AND p.proowner = (SELECT relowner FROM pg_class WHERE oid = tbl)
+            AND EXISTS (SELECT 1 FROM unnest(p.proconfig) cfg WHERE cfg = 'search_path=public, pg_temp')
+       FROM pg_proc p WHERE p.oid = 'app.users_deactivations_are_kept()'::regprocedure));
+  PERFORM pg_temp.av_expect('480 nobody but the owner runs the function',
+    (SELECT count(*) FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+      WHERE p.oid = 'app.users_deactivations_are_kept()'::regprocedure AND a.grantee <> p.proowner)::text, '0');
+  PERFORM pg_temp.av_true('480 the function is commented', coalesce(obj_description('app.users_deactivations_are_kept()'::regprocedure, 'pg_proc'), '') <> '');
+  -- AFTER (so a write the CHECKs refuse leaves nothing), per row, on INSERT and UPDATE OF "isActive" alone: 1 row + 4 insert + 16 update = 21.
+  SELECT format('%s %s %s %s', t.tgtype, t.tgenabled, (t.tgfoid = 'app.users_deactivations_are_kept()'::regprocedure)::text,
+                (SELECT string_agg(a.attname, ',' ORDER BY a.attname COLLATE "C") FROM unnest(t.tgattr::int2[]) x(attnum) JOIN pg_attribute a ON a.attrelid = t.tgrelid AND a.attnum = x.attnum))
+    INTO got FROM pg_trigger t WHERE t.tgname = 'Users_deactivations_are_kept' AND t.tgrelid = '"Users"'::regclass AND NOT t.tgisinternal;
+  PERFORM pg_temp.av_expect('480 trigger Users_deactivations_are_kept', got, '21 O true isActive');
+  PERFORM pg_temp.av_expect('480 the function is fired by that trigger and no other',
+    (SELECT count(*) FROM pg_trigger WHERE tgfoid = 'app.users_deactivations_are_kept()'::regprocedure AND NOT tgisinternal)::text, '1');
+  -- The two triggers that date the person and fire before it (BEFORE, in name order) are still there: the period starts at their date.
+  PERFORM pg_temp.av_expect('480 the dating triggers are enabled',
+    (SELECT string_agg(tgname || ':' || tgenabled::text, ',' ORDER BY tgname COLLATE "C") FROM pg_trigger
+      WHERE tgrelid = '"Users"'::regclass AND tgname LIKE 'Users\_deactivation\_is\_dated%'),
+    'Users_deactivation_is_dated_on_insert:O,Users_deactivation_is_dated_on_update:O');
+
+  -- D6's lesson function asks the periods and not the latest stamp, and is as it was in every other way (the owner's side, 480o, holds the rest).
+  SELECT p.prosrc INTO got FROM pg_proc p WHERE p.oid = 'app.absence_stats_lessons(uuid, date, date, timestamptz)'::regprocedure;
+  PERFORM pg_temp.av_true('480 absence_stats_lessons asks UserDeactivations, once', (length(got) - length(replace(got, '"UserDeactivations"', ''))) = length('"UserDeactivations"'));
+  PERFORM pg_temp.av_true('480 and no longer the latest stamp', position('deactivatedAt' IN got) = 0);
+  PERFORM pg_temp.av_expect('480 it is no definer and has no path of its own (it is inlined into the definer that calls it)',
+    (SELECT p.prosecdef::text || ':' || coalesce(p.proconfig::text, '') FROM pg_proc p WHERE p.oid = 'app.absence_stats_lessons(uuid, date, date, timestamptz)'::regprocedure), 'false:');
+  RAISE NOTICE 'av 480: % checks', current_setting('av.checks');
+END $$;
+ROLLBACK;
+
+-- 481: who reads and who writes, and the school boundary. The matrix school's FULL administrator deactivates a teacher and a
+-- pupil; every profile reads both periods, a teacher, a pupil and a guardian read none, another school's administrator reads
+-- none of them, and PostgREST's role is refused the table.
+BEGIN;
+SELECT set_config('app.test_av_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  full_sub constant text := '00000000-0000-4000-8000-000000000105';
+  teacher uuid;
+  teacher_sub text;
+  pupil uuid;
+  pupil_sub text;
+  guardian uuid;
+  guardian_sub text;
+  gone_teacher uuid;
+  gone_pupil uuid;
+  school uuid;
+  sub text;
+  profile text;
+  n bigint;
+BEGIN
+  PERFORM pg_temp.av_as(full_sub);
+  school := app.current_school_id();
+  PERFORM pg_temp.av_expect('481 the matrix school', (SELECT slug FROM "Schools" WHERE id = school), 'rls-roller-school');
+  teacher := pg_temp.av_person('TEACHER');
+  pupil := pg_temp.av_person('STUDENT');
+  guardian := pg_temp.av_person('GUARDIAN');
+  gone_teacher := pg_temp.av_person('TEACHER');
+  gone_pupil := pg_temp.av_person('STUDENT');
+  SELECT "authId"::text INTO teacher_sub FROM "Users" WHERE id = teacher;
+  SELECT "authId"::text INTO pupil_sub FROM "Users" WHERE id = pupil;
+  SELECT "authId"::text INTO guardian_sub FROM "Users" WHERE id = guardian;
+  UPDATE "Users" SET "isActive" = false WHERE id IN (gone_teacher, gone_pupil);
+  PERFORM pg_temp.av_expect('481 two people deactivated, two open periods, as their own administrator reads them',
+    (SELECT count(*) FROM "UserDeactivations" WHERE "userId" IN (gone_teacher, gone_pupil) AND "endsAt" IS NULL)::text, '2');
+
+  -- Every profile reads them: the read asks no area.
+  FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000105', '00000000-0000-4000-8000-000000000106', '00000000-0000-4000-8000-000000000107',
+                             '00000000-0000-4000-8000-000000000108', '00000000-0000-4000-8000-000000000109', '00000000-0000-4000-8000-000000000110',
+                             '00000000-0000-4000-8000-000000000115', '00000000-0000-4000-8000-000000000116'] LOOP
+    PERFORM pg_temp.av_as(sub);
+    SELECT u."adminProfile"::text INTO profile FROM "Users" u WHERE u.id = app.current_user_id();
+    PERFORM pg_temp.av_expect('481 ' || profile || ' (' || sub || ') is an administrator of the matrix school', app.current_school_id()::text || ' ' || app.current_user_role()::text, school::text || ' SCHOOL_ADMIN');
+    PERFORM pg_temp.av_expect('481 ' || profile || ' reads both periods', (SELECT count(*) FROM "UserDeactivations" WHERE "userId" IN (gone_teacher, gone_pupil))::text, '2');
+    PERFORM pg_temp.av_expect('481 ' || profile || ' reads no other school''s', (SELECT count(*) FROM "UserDeactivations" WHERE "schoolId" <> school)::text, '0');
+  END LOOP;
+
+  -- Nobody who is not an administrator reads any, their own included.
+  PERFORM pg_temp.av_as(teacher_sub);
+  PERFORM pg_temp.av_expect('481 a teacher is a teacher of the school', app.current_user_role()::text || ' ' || app.current_school_id()::text, 'TEACHER ' || school::text);
+  PERFORM pg_temp.av_expect('481 a teacher reads none', (SELECT count(*) FROM "UserDeactivations")::text, '0');
+  PERFORM pg_temp.av_as(pupil_sub);
+  PERFORM pg_temp.av_expect('481 a pupil reads none', (SELECT count(*) FROM "UserDeactivations")::text, '0');
+  PERFORM pg_temp.av_as(guardian_sub);
+  PERFORM pg_temp.av_expect('481 a guardian reads none', (SELECT count(*) FROM "UserDeactivations")::text, '0');
+  -- A deactivated person's own login resolves to nobody (Users_login...), so a person who has left reads nothing either.
+  UPDATE "Users" SET "isActive" = false WHERE false;
+  PERFORM pg_temp.av_as(full_sub);
+  UPDATE "Users" SET "isActive" = false WHERE id = teacher;
+  PERFORM pg_temp.av_as(teacher_sub);
+  PERFORM pg_temp.av_expect('481 a teacher who has left reads none', (SELECT count(*) FROM "UserDeactivations")::text, '0');
+
+  -- Another school's administrator: the primary school's. It reads none of the matrix school's periods and none of its own are the matrix school's.
+  PERFORM pg_temp.av_as(current_setting('app.test_av_admin_a'));
+  PERFORM pg_temp.av_expect('481 the primary school is not the matrix school', (app.current_school_id() IS DISTINCT FROM school)::text, 'true');
+  PERFORM pg_temp.av_expect('481 the primary school''s administrator reads none of the matrix school''s periods',
+    (SELECT count(*) FROM "UserDeactivations" WHERE "schoolId" = school OR "userId" IN (gone_teacher, gone_pupil, teacher))::text, '0');
+  PERFORM pg_temp.av_expect('481 and every period they read is their own school''s', (SELECT count(*) FROM "UserDeactivations" WHERE "schoolId" <> app.current_school_id())::text, '0');
+  PERFORM pg_temp.av_expect('481 the primary school''s administrator updates none of them',
+    pg_temp.av_rows(format($q$UPDATE "UserDeactivations" SET "startsAt" = "startsAt" - interval '1 day' WHERE "userId" IN (%L, %L)$q$, gone_teacher, gone_pupil))::text, '0');
+
+  -- The update arm on its own (a statement that reads nothing of the row is judged by it alone, as a lock is): the one school's administrator
+  -- touches the one school's open periods and no others, and a teacher touches none. An arm that let a row of another school or a row of
+  -- somebody who is no administrator through USING would be refused by its own check, and the statement would fail instead of finding nothing.
+  PERFORM pg_temp.av_as(current_setting('app.test_av_admin_a'));
+  PERFORM pg_temp.av_case('481 the primary school''s administrator: an update with no WHERE reaches the school''s own open periods and no other''s',
+    $q$UPDATE "UserDeactivations" SET "startsAt" = now() - interval '1 day'$q$, 'ok');
+  PERFORM pg_temp.av_as(full_sub);
+  UPDATE "Users" SET "isActive" = true WHERE id = teacher;
+  PERFORM pg_temp.av_as(teacher_sub);
+  PERFORM pg_temp.av_case('481 a teacher''s update with no WHERE finds nothing', $q$UPDATE "UserDeactivations" SET "startsAt" = now() - interval '1 day'$q$, 'ok');
+  PERFORM pg_temp.av_expect('481 and touched none', pg_temp.av_rows($q$UPDATE "UserDeactivations" SET "startsAt" = now() - interval '1 day'$q$)::text, '0');
+  PERFORM pg_temp.av_as(pupil_sub);
+  PERFORM pg_temp.av_expect('481 nor a pupil''s', pg_temp.av_rows($q$UPDATE "UserDeactivations" SET "startsAt" = now() - interval '1 day'$q$)::text, '0');
+  PERFORM pg_temp.av_as(guardian_sub);
+  PERFORM pg_temp.av_expect('481 nor a guardian''s', pg_temp.av_rows($q$UPDATE "UserDeactivations" SET "startsAt" = now() - interval '1 day'$q$)::text, '0');
+
+  -- PostgREST's role holds nothing on the table, and the table is not readable through it.
+  PERFORM pg_temp.av_as(full_sub);
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.av_case('481 PostgREST''s role is refused a read', 'SELECT count(*) FROM "UserDeactivations"', '42501');
+  PERFORM pg_temp.av_case('481 and an update', $q$UPDATE "UserDeactivations" SET "startsAt" = "startsAt"$q$, '42501');
+  SET LOCAL ROLE app_authenticated;
+  RAISE NOTICE 'av 481: % checks', current_setting('av.checks');
+END $$;
+ROLLBACK;
+
+-- 482: the trigger. A person goes inactive, active and inactive again; a person inserted inactive; and what leaves the periods alone.
+BEGIN;
+DO $$
+DECLARE
+  t uuid;
+  u uuid;
+  first_end timestamptz;
+  first_start timestamptz;
+  stamp timestamptz;
+  second_start timestamptz;
+  before timestamptz;
+  after timestamptz;
+BEGIN
+  PERFORM pg_temp.av_as('00000000-0000-4000-8000-000000000105');
+  t := pg_temp.av_person('TEACHER');
+  PERFORM pg_temp.av_expect('482 an active person has no period', pg_temp.av_periods(t), '-');
+
+  UPDATE "Users" SET "isActive" = false WHERE id = t;
+  PERFORM pg_temp.av_expect('482 deactivated: one open period', pg_temp.av_periods(t), 'open');
+  SELECT "deactivatedAt" INTO stamp FROM "Users" WHERE id = t;
+  SELECT "startsAt" INTO first_start FROM "UserDeactivations" WHERE "userId" = t;
+  PERFORM pg_temp.av_expect('482 it starts at the person''s own date', first_start::text, stamp::text);
+  PERFORM pg_temp.av_true('482 and was recorded then or after', (SELECT "recordedAt" >= "startsAt" FROM "UserDeactivations" WHERE "userId" = t));
+  PERFORM pg_temp.av_expect('482 the school is the person''s', (SELECT "schoolId"::text FROM "UserDeactivations" WHERE "userId" = t), app.current_school_id()::text);
+
+  -- What leaves it alone: a statement that changes nothing about "isActive", one that names it with the value it has, and one
+  -- that writes a date (the dating trigger keeps the person's own).
+  UPDATE "Users" SET phone = '070-482' WHERE id = t;
+  UPDATE "Users" SET "isActive" = false WHERE id = t;
+  UPDATE "Users" SET "isActive" = false, "deactivatedAt" = now() - interval '3 years' WHERE id = t;
+  PERFORM pg_temp.av_expect('482 a statement that does not change "isActive" leaves one open period', pg_temp.av_periods(t), 'open');
+  PERFORM pg_temp.av_expect('482 and the date the dating trigger keeps is the period''s start',
+    (SELECT "startsAt"::text FROM "UserDeactivations" WHERE "userId" = t), stamp::text);
+
+  -- Made active again: the open period closes, once, after it began, at the moment it happens.
+  before := clock_timestamp();
+  UPDATE "Users" SET "isActive" = true WHERE id = t;
+  after := clock_timestamp();
+  PERFORM pg_temp.av_expect('482 made active again: the one period is closed', pg_temp.av_periods(t), 'closed');
+  SELECT "endsAt" INTO first_end FROM "UserDeactivations" WHERE "userId" = t;
+  PERFORM pg_temp.av_true('482 it ended after it began', first_end > first_start);
+  PERFORM pg_temp.av_true('482 and at the moment the person was made active, not before it and not after', first_end >= before AND first_end <= after);
+  PERFORM pg_temp.av_expect('482 the person''s own date is gone, as it was', (SELECT "deactivatedAt" IS NULL FROM "Users" WHERE id = t)::text, 'true');
+  UPDATE "Users" SET "isActive" = true WHERE id = t;
+  PERFORM pg_temp.av_expect('482 made active when active: nothing changes', pg_temp.av_periods(t), 'closed');
+
+  -- Inactive again: a second period, which begins no earlier than the first ended, whatever the date the person is given. (One transaction has
+  -- one now(), so the person's date is before the first period ended and the trigger moves the start to the end.)
+  UPDATE "Users" SET "isActive" = false WHERE id = t;
+  PERFORM pg_temp.av_expect('482 inactive again: a closed and an open period', pg_temp.av_periods(t), 'closed,open');
+  SELECT "startsAt" INTO second_start FROM "UserDeactivations" WHERE "userId" = t AND "endsAt" IS NULL;
+  PERFORM pg_temp.av_true('482 the second begins no earlier than the first ended', second_start >= first_end);
+  PERFORM pg_temp.av_expect('482 the person''s own date is the click, now(), which is earlier than the period begins (the transaction has one)',
+    (SELECT ("deactivatedAt" < second_start)::text FROM "Users" WHERE id = t), 'true');
+  UPDATE "Users" SET "isActive" = true WHERE id = t;
+  UPDATE "Users" SET "isActive" = false WHERE id = t;
+  PERFORM pg_temp.av_expect('482 and a third', pg_temp.av_periods(t), 'closed,closed,open');
+  PERFORM pg_temp.av_true('482 no two periods of a person overlap (the exclusion holds it, and the trigger did not break it)',
+    NOT EXISTS (SELECT 1 FROM "UserDeactivations" a JOIN "UserDeactivations" b ON a."userId" = b."userId" AND a.id < b.id
+                 WHERE a."userId" = t AND tstzrange(a."startsAt", a."endsAt") && tstzrange(b."startsAt", b."endsAt")));
+
+  -- A person added inactive has an open period from the start.
+  u := pg_temp.av_person('TEACHER', false);
+  PERFORM pg_temp.av_expect('482 inserted inactive: one open period', pg_temp.av_periods(u), 'open');
+  PERFORM pg_temp.av_expect('482 at the person''s own date',
+    (SELECT (d."startsAt" = p."deactivatedAt")::text FROM "UserDeactivations" d JOIN "Users" p ON p.id = d."userId" WHERE d."userId" = u), 'true');
+  -- A pupil's, and a guardian's, as well: the rule is about "isActive", not about a role.
+  PERFORM pg_temp.av_expect('482 a pupil inserted inactive', pg_temp.av_periods(pg_temp.av_person('STUDENT', false)), 'open');
+  PERFORM pg_temp.av_expect('482 a guardian inserted inactive', pg_temp.av_periods(pg_temp.av_person('GUARDIAN', false)), 'open');
+  -- Made active in the same breath it is written: nothing was ever open.
+  PERFORM pg_temp.av_expect('482 an active person inserted has none', pg_temp.av_periods(pg_temp.av_person('TEACHER', true)), '-');
+
+  -- The invariant, for every person of the school the API role reads: inactive is exactly one open period, active none.
+  PERFORM pg_temp.av_expect('482 every inactive person of the school has exactly one open period, and nobody active has one',
+    (SELECT count(*)::text FROM "Users" p
+      WHERE p."schoolId" = app.current_school_id()
+        AND (SELECT count(*) FROM "UserDeactivations" d WHERE d."userId" = p.id AND d."endsAt" IS NULL) <> CASE WHEN p."isActive" THEN 0 ELSE 1 END), '0');
+  RAISE NOTICE 'av 482: % checks', current_setting('av.checks');
+END $$;
+ROLLBACK;
+
+-- 482 (second part): the same person flipped in separate statements of one transaction, and in two transactions in a row: the second
+-- deactivation is after the first return whatever order the clocks read.
+BEGIN;
+DO $$
+DECLARE
+  t uuid;
+BEGIN
+  PERFORM pg_temp.av_as('00000000-0000-4000-8000-000000000105');
+  t := pg_temp.av_person('TEACHER');
+  UPDATE "Users" SET "isActive" = false WHERE id = t;
+  UPDATE "Users" SET "isActive" = true WHERE id = t;
+  PERFORM pg_sleep(0.01);
+  UPDATE "Users" SET "isActive" = false WHERE id = t;
+  PERFORM pg_temp.av_expect('482 a flip, a pause and a flip: two periods, the second open', pg_temp.av_periods(t), 'closed,open');
+  PERFORM pg_temp.av_true('482 the first was a few milliseconds and not nothing: it is there', (SELECT count(*) FROM "UserDeactivations" WHERE "userId" = t AND "endsAt" IS NOT NULL) = 1);
+  RAISE NOTICE 'av 482 flip: % checks', current_setting('av.checks');
+END $$;
+ROLLBACK;
+
+-- 483: the last working day. "startsAt" of the open period, in both directions, and every refusal.
+BEGIN;
+DO $$
+DECLARE
+  full_sub constant text := '00000000-0000-4000-8000-000000000105';
+  t uuid;
+  u uuid;
+  recorded timestamptz;
+  click timestamptz;
+  returned timestamptz;
+  open_row uuid;
+  closed_row uuid;
+BEGIN
+  PERFORM pg_temp.av_as(full_sub);
+  t := pg_temp.av_person('TEACHER');
+  UPDATE "Users" SET "isActive" = false WHERE id = t;
+  SELECT id, "recordedAt" INTO open_row, recorded FROM "UserDeactivations" WHERE "userId" = t AND "endsAt" IS NULL;
+  SELECT "deactivatedAt" INTO click FROM "Users" WHERE id = t;
+
+  -- Earlier: three days before. The click, which gallring counts from, does not move.
+  PERFORM pg_temp.av_expect('483 backdated three days: one row', pg_temp.av_rows(format($q$UPDATE "UserDeactivations" SET "startsAt" = %L::timestamptz - interval '3 days' WHERE "userId" = %L AND "endsAt" IS NULL$q$, recorded, t))::text, '1');
+  PERFORM pg_temp.av_expect('483 the period begins three days before it was recorded', (SELECT ("recordedAt" - "startsAt")::text FROM "UserDeactivations" WHERE id = open_row), '3 days');
+  PERFORM pg_temp.av_expect('483 the click is where it was', (SELECT ("deactivatedAt" = click)::text FROM "Users" WHERE id = t), 'true');
+  -- Later again, as far as the moment it was recorded and no further.
+  PERFORM pg_temp.av_case('483 moved to the moment it was recorded', format($q$UPDATE "UserDeactivations" SET "startsAt" = "recordedAt" WHERE id = %L$q$, open_row), 'ok');
+  PERFORM pg_temp.av_case('483 a microsecond after: a last day is not in the future',
+    format($q$UPDATE "UserDeactivations" SET "startsAt" = "recordedAt" + interval '1 microsecond' WHERE id = %L$q$, open_row), '23514 UserDeactivations_starts_before_it_is_recorded');
+  PERFORM pg_temp.av_case('483 an empty value', format($q$UPDATE "UserDeactivations" SET "startsAt" = NULL WHERE id = %L$q$, open_row), '23502');
+
+  -- Every other column is the trigger's: the API role is refused the column itself, before the policies are asked.
+  PERFORM pg_temp.av_case('483 endsAt', format($q$UPDATE "UserDeactivations" SET "endsAt" = now() WHERE id = %L$q$, open_row), '42501');
+  PERFORM pg_temp.av_case('483 userId', format($q$UPDATE "UserDeactivations" SET "userId" = %L WHERE id = %L$q$, t, open_row), '42501');
+  PERFORM pg_temp.av_case('483 schoolId', format($q$UPDATE "UserDeactivations" SET "schoolId" = "schoolId" WHERE id = %L$q$, open_row), '42501');
+  PERFORM pg_temp.av_case('483 recordedAt', format($q$UPDATE "UserDeactivations" SET "recordedAt" = now() WHERE id = %L$q$, open_row), '42501');
+  PERFORM pg_temp.av_case('483 id', format($q$UPDATE "UserDeactivations" SET id = gen_random_uuid() WHERE id = %L$q$, open_row), '42501');
+  PERFORM pg_temp.av_case('483 an insert', format($q$INSERT INTO "UserDeactivations" ("schoolId", "userId", "startsAt") VALUES (app.current_school_id(), %L, now() - interval '9 days')$q$, t), '42501');
+  PERFORM pg_temp.av_case('483 a delete', format($q$DELETE FROM "UserDeactivations" WHERE id = %L$q$, open_row), '42501');
+  PERFORM pg_temp.av_case('483 a truncate', 'TRUNCATE "UserDeactivations"', '42501');
+
+  -- A closed period is the person's history and is not changed: the arm reaches the open one alone.
+  UPDATE "Users" SET "isActive" = true WHERE id = t;
+  SELECT "endsAt" INTO returned FROM "UserDeactivations" WHERE id = open_row;
+  PERFORM pg_temp.av_true('483 closed', returned IS NOT NULL);
+  PERFORM pg_temp.av_expect('483 a closed period''s start is not changed', pg_temp.av_rows(format($q$UPDATE "UserDeactivations" SET "startsAt" = "startsAt" - interval '1 day' WHERE id = %L$q$, open_row))::text, '0');
+
+  -- The second period cannot begin before the person came back: the exclusion, and the CHECK of the first, say so.
+  UPDATE "Users" SET "isActive" = false WHERE id = t;
+  SELECT id INTO closed_row FROM "UserDeactivations" WHERE "userId" = t AND "endsAt" IS NOT NULL;
+  SELECT id, "startsAt" INTO open_row, click FROM "UserDeactivations" WHERE "userId" = t AND "endsAt" IS NULL;
+  PERFORM pg_temp.av_expect('483 the second period begins when the first ended or after', (click >= returned)::text, 'true');
+  PERFORM pg_temp.av_case('483 backdated into the first period: refused by the exclusion',
+    format($q$UPDATE "UserDeactivations" SET "startsAt" = %L::timestamptz - interval '1 microsecond' WHERE id = %L$q$, returned, open_row), '23P01 UserDeactivations_one_period_at_a_time');
+  PERFORM pg_temp.av_case('483 backdated to the very instant the first ended: adjacent, and allowed',
+    format($q$UPDATE "UserDeactivations" SET "startsAt" = %L::timestamptz WHERE id = %L$q$, returned, open_row), 'ok');
+  PERFORM pg_temp.av_expect('483 and the first is as it was', (SELECT ("endsAt" = returned)::text FROM "UserDeactivations" WHERE id = closed_row), 'true');
+
+  -- Every profile but the ones that write Personal is refused, as a row-security refusal and not as an empty answer (the row is found).
+  PERFORM pg_temp.av_as('00000000-0000-4000-8000-000000000107');
+  PERFORM pg_temp.av_case('483 a schemaläggare is refused', format($q$UPDATE "UserDeactivations" SET "startsAt" = "startsAt" - interval '1 hour' WHERE id = %L$q$, open_row), '42501 rls');
+  PERFORM pg_temp.av_as('00000000-0000-4000-8000-000000000109');
+  PERFORM pg_temp.av_case('483 a schemaläggare with HR-läs is refused', format($q$UPDATE "UserDeactivations" SET "startsAt" = "startsAt" - interval '1 hour' WHERE id = %L$q$, open_row), '42501 rls');
+  PERFORM pg_temp.av_as('00000000-0000-4000-8000-000000000115');
+  PERFORM pg_temp.av_case('483 a läsare is refused', format($q$UPDATE "UserDeactivations" SET "startsAt" = "startsAt" - interval '1 hour' WHERE id = %L$q$, open_row), '42501 rls');
+  PERFORM pg_temp.av_as('00000000-0000-4000-8000-000000000108');
+  PERFORM pg_temp.av_case('483 the expedition writes Personal and may', format($q$UPDATE "UserDeactivations" SET "startsAt" = %L::timestamptz WHERE id = %L$q$, returned, open_row), 'ok');
+  PERFORM pg_temp.av_as('00000000-0000-4000-8000-000000000106');
+  PERFORM pg_temp.av_case('483 rektor may', format($q$UPDATE "UserDeactivations" SET "startsAt" = %L::timestamptz WHERE id = %L$q$, returned, open_row), 'ok');
+
+  -- A teacher who is made inactive and the person who named the day: only an administrator reaches the row at all.
+  PERFORM pg_temp.av_as(full_sub);
+  u := pg_temp.av_person('TEACHER');
+  UPDATE "Users" SET "isActive" = false WHERE id = u;
+  PERFORM pg_temp.av_as((SELECT "authId"::text FROM "Users" WHERE id = pg_temp.av_person('TEACHER')));
+  PERFORM pg_temp.av_expect('483 a teacher updates none', pg_temp.av_rows(format($q$UPDATE "UserDeactivations" SET "startsAt" = "startsAt" WHERE "userId" = %L$q$, u))::text, '0');
+  RAISE NOTICE 'av 483: % checks', current_setting('av.checks');
+END $$;
+ROLLBACK;
+
+-- 484: a person removed takes their periods with them (the key cascades), and the periods of the others stay.
+BEGIN;
+DO $$
+DECLARE
+  a uuid;
+  b uuid;
+BEGIN
+  PERFORM pg_temp.av_as('00000000-0000-4000-8000-000000000105');
+  a := pg_temp.av_person('TEACHER');
+  b := pg_temp.av_person('TEACHER');
+  UPDATE "Users" SET "isActive" = false WHERE id IN (a, b);
+  UPDATE "Users" SET "isActive" = true WHERE id = a;
+  UPDATE "Users" SET "isActive" = false WHERE id = a;
+  PERFORM pg_temp.av_expect('484 a has two periods and b one', pg_temp.av_periods(a) || ' ' || pg_temp.av_periods(b), 'closed,open open');
+  PERFORM pg_temp.av_case('484 a is removed', format($q$DELETE FROM "Users" WHERE id = %L$q$, a), 'ok');
+  PERFORM pg_temp.av_expect('484 a''s periods went with them', (SELECT count(*) FROM "UserDeactivations" WHERE "userId" = a)::text, '0');
+  PERFORM pg_temp.av_expect('484 b''s did not', pg_temp.av_periods(b), 'open');
+  RAISE NOTICE 'av 484: % checks', current_setting('av.checks');
 END $$;
 ROLLBACK;

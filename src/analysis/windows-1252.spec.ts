@@ -1,3 +1,4 @@
+import { encodeWindows1252 as encodeCodePage } from '../common/windows-1252';
 import { encodeWindows1252 } from './windows-1252';
 
 const decode = (bytes: Buffer): string => new TextDecoder('windows-1252').decode(bytes);
@@ -38,6 +39,37 @@ describe('encodeWindows1252', () => {
     const { bytes, replaced } = encodeWindows1252('a\u0085b'.replace('\u0085', '\u0081'));
     expect(decode(bytes)).toBe('a?b');
     expect(replaced).toBe(1);
+  });
+
+  // LÅG-5 of the review of #280: a NUL or a BEL in a name reached the file as itself, and a NUL is what makes Excel
+  // call a CSV corrupt. The code page's own encoder (D8's, common/windows-1252.ts) writes a space for each.
+  it('writes a NUL in a name as a space, as the code page encoder does, and counts it', () => {
+    const { bytes, replaced } = encodeWindows1252('Ek\u0000ström');
+    expect([...bytes]).toEqual([...Buffer.from('Ek ström', 'latin1')]);
+    expect(bytes.includes(0x00)).toBe(false);
+    expect(decode(bytes)).toBe('Ek ström');
+    expect(replaced).toBe(1);
+  });
+
+  it('writes a BEL, a backspace and the rest of the control characters as spaces, but keeps tab, line feed and carriage return', () => {
+    const { bytes, replaced } = encodeWindows1252('a\u0007b\u0008c\u001bd\te\nf\rg');
+    expect(decode(bytes)).toBe('a b c d\te\nf\rg');
+    expect(replaced).toBe(3);
+  });
+
+  it('writes every character below a space exactly as the code page encoder does, so the two cannot come to differ', () => {
+    for (let code = 0; code < 0x20; code += 1) {
+      const char = String.fromCharCode(code);
+      const { bytes, replaced } = encodeWindows1252(`x${char}y`);
+      expect([...bytes]).toEqual([...Buffer.concat([Buffer.from('x'), encodeCodePage(char), Buffer.from('y')])]);
+      expect(replaced).toBe(code === 0x09 || code === 0x0a || code === 0x0d ? 0 : 1);
+    }
+  });
+
+  it('counts a control character with the letters that have no byte, each once', () => {
+    const { bytes, replaced } = encodeWindows1252('Łu\u0000k\u0007');
+    expect(decode(bytes)).toBe('Lu k ');
+    expect(replaced).toBe(3);
   });
 
   it('is empty for no text', () => {

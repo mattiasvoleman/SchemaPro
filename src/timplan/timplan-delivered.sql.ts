@@ -111,20 +111,31 @@ export interface DeliveredWindow {
  *             moved off and a school with no move has the rows it always had;
  *             every other statement, the default included, is without the
  *             column and byte for byte what it was.
- *   endedBy   an instant: only lessons that ENDED at or before it (Analys och
- *             planering, the löneunderlag of a person who has left: a lesson
- *             counts to its teacher only if the teacher had not left when it
- *             was over, `endsAt <= deactivatedAt`, D6's rule). A condition on
- *             which rows are asked about, like `range`, and no part of the
- *             classification; absent, the statement is without it and byte for
- *             byte what it was.
+ *   away      the periods a person was inactive (UserDeactivations): only
+ *             lessons that were over while the person was active (Analys och
+ *             planering, the löneunderlag of a person who has left or has
+ *             been away: a lesson counts to its teacher only if the teacher
+ *             was active when it was over, D6's rule `endsAt <= deactivatedAt`
+ *             made to cover a return). A period from `from` to `to` drops the
+ *             lessons that ended after `from` and before `to`, so a lesson over
+ *             at the very instant of either still counts; a period with no `to`
+ *             (the person is still inactive) drops those that ended after
+ *             `from`. A condition on which rows are asked about, like `range`,
+ *             and no part of the classification; absent or empty, the
+ *             statement is without it and byte for byte what it was.
  */
 export interface DeliveredOptions {
   subjects?: 'timplan' | 'all';
   audience?: 'full' | 'groups' | 'none';
   range?: { from: string; to: string };
   movedOff?: boolean;
-  endedBy?: Date;
+  away?: readonly AwayPeriodSql[];
+}
+
+/** A period a person was inactive, as an instant each side (`to` null while it lasts). */
+export interface AwayPeriodSql {
+  from: Date;
+  to: Date | null;
 }
 
 /** The classification, as a CTE body; see the header. */
@@ -151,9 +162,21 @@ export function deliveredLessons(window: DeliveredWindow, options: DeliveredOpti
            ARRAY(SELECT m."studentId" FROM "LessonPupilMoves" m
                   WHERE m."fromLessonId" = cl."id" AND m."schoolId" = cl."schoolId" ORDER BY 1) AS "movedOffIds"`
       : Prisma.empty;
-  // Only the lessons over by an instant (see DeliveredOptions): nothing is added when it is not asked for.
-  const endedBy = options.endedBy ? Prisma.sql`
-       AND cl."endsAt" <= ${options.endedBy}::timestamptz` : Prisma.empty;
+  // Only the lessons over while a person was active (see DeliveredOptions): nothing is added when it is not asked for.
+  // One condition for each period the person was inactive.
+  const away =
+    options.away && options.away.length > 0
+      ? Prisma.join(
+          options.away.map((period) =>
+            period.to === null
+              ? Prisma.sql`
+       AND cl."endsAt" <= ${period.from}::timestamptz`
+              : Prisma.sql`
+       AND (cl."endsAt" <= ${period.from}::timestamptz OR cl."endsAt" >= ${period.to}::timestamptz)`,
+          ),
+          '',
+        )
+      : Prisma.empty;
   // Rule 5, or every subject. The default spells the line P3 wrote.
   const counted = options.subjects === 'all' ? Prisma.sql`AND TRUE` : Prisma.sql`AND s."countsTowardTimplan"`;
   // Asked only of a CANCELLED row, past or ahead: one test, written once.
@@ -192,7 +215,7 @@ export function deliveredLessons(window: DeliveredWindow, options: DeliveredOpti
       JOIN "Subjects" s ON s."id" = cl."subjectId"
      WHERE g."academicYearId" = ${academicYearId}::uuid
        ${counted}
-       AND cl."date" BETWEEN ${from}::date AND ${to}::date${endedBy}
+       AND cl."date" BETWEEN ${from}::date AND ${to}::date${away}
   `;
 }
 
@@ -383,19 +406,20 @@ export function datesStatement(window: DeliveredWindow, dates: string[]): Prisma
  * teacher test of the CASE stays its correlated EXISTS; the rows here are
  * found by the (calendarLessonId, teacherId) unique index.
  *
- * `endedBy` (an instant) narrows the lessons asked about to those over by it
- * (DeliveredOptions): the löneunderlag asks for a person who has left with
- * `own` = the person and `endedBy` = the moment they were deactivated. Absent,
- * the statement is byte for byte what it was.
+ * `away` (the periods a person was inactive) narrows the lessons asked about to
+ * those over while they were active (DeliveredOptions): the löneunderlag asks
+ * for a person who has left, or been away and returned, with `own` = the person
+ * and `away` = their UserDeactivations. Absent or empty, the statement is byte
+ * for byte what it was.
  */
 export function staffingCreditStatement(
   window: DeliveredWindow,
   range: { from: string; to: string },
   own: string | null,
   published: PublishedKey | null = null,
-  endedBy: Date | null = null,
+  away: readonly AwayPeriodSql[] = [],
 ): Prisma.Sql {
-  const lessons = deliveredLessons(window, { subjects: 'all', audience: 'groups', range, ...(endedBy === null ? {} : { endedBy }) });
+  const lessons = deliveredLessons(window, { subjects: 'all', audience: 'groups', range, ...(away.length === 0 ? {} : { away }) });
   const ownTeacher = own === null ? Prisma.empty : Prisma.sql`WHERE t."teacherId" = ${own}::uuid`;
   const ownSlot = own === null ? Prisma.empty : Prisma.sql`AND s."person" = ${own}::uuid`;
   const groups =

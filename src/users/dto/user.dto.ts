@@ -16,6 +16,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { BulkIdsDto, lowerCaseId } from '../../common/bulk';
+import { IsCalendarDate } from '../../resources/dto/is-calendar-date';
 
 export class CreateUserDto {
   @IsEnum(UserRole)
@@ -108,6 +109,19 @@ export class UpdateUserDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  /**
+   * Sista arbetsdag (20270210090000): the person's last working day, the school's date as ÅÅÅÅ-MM-DD, when a
+   * person is deactivated (`isActive: false`) or, alone, for a person who is inactive already. Their time counts
+   * through the end of that day (Analys och planering's löneunderlag and Frånvarostatistik read it), where
+   * without it it counts to the moment of the click; the click is still what gallring counts from. Not a day
+   * ahead (a person who leaves tomorrow is deactivated tomorrow), not before the person was last made active
+   * again or before the person was added to Rastra, and refused for a person who stays or becomes active. A person
+   * made active again carries no date. `null` is no day, the same as leaving the field out.
+   */
+  @IsOptional()
+  @IsCalendarDate({ message: 'leftOn: ett riktigt datum som ÅÅÅÅ-MM-DD.' })
+  leftOn?: string | null;
 
   /** See CreateUserDto.adminProfile. A change is a decision. */
   @IsOptional()

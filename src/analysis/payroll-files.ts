@@ -117,8 +117,25 @@ export function payrollTable(rows: readonly PayrollFileRow[], from: string, to: 
  * guesses the delimiter) would have written.
  */
 function field(cell: string): string {
-  const guarded = guardFormula(cell);
+  const guarded = guarded1252(cell);
   return /[";\r\n]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
+}
+
+/**
+ * The control characters the encoder writes as a space (everything below U+0020 but tab, line feed and carriage return;
+ * src/common/windows-1252.ts). `\s` in the formula guard's shape does not cover NUL, BEL or ESC, and a space before
+ * `=` is exactly what that shape calls dangerous, so a cell `<BEL>=HYPERLINK(..)` slipped past a guard that read it
+ * before the encoder had made it ` =HYPERLINK(..)` (the review of #308, LÅG-2).
+ */
+const WRITTEN_AS_SPACE = /[\x00-\x08\x0b\x0c\x0e-\x1f]/g;
+
+/**
+ * The formula guard asked about the cell as the file will read, and applied to the cell as it is: the encoder still
+ * sees the control character, which it counts, and the apostrophe goes in front of the whole cell.
+ */
+function guarded1252(cell: string): string {
+  const seen = cell.replace(WRITTEN_AS_SPACE, ' ');
+  return guardFormula(seen) === seen ? cell : `'${cell}`;
 }
 
 /** The CSV: Swedish Excel's, in windows-1252. `replaced` counts the characters 1252 could not hold. */

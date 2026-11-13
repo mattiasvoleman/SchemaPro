@@ -18,7 +18,8 @@ import { PrismaService } from '../database/prisma.service';
 import { tellNewMentors } from '../family/leave-notices';
 import { NotificationsService } from '../notifications/notifications.service';
 import { requireSchoolId } from '../common/utils/request-context';
-import { todayInZone } from '../common/utils/time';
+import { todayInZone, zonedTimeToUtc } from '../common/utils/time';
+import { addDays } from '../common/year-rollover';
 import { listNames, rethrowPrismaError } from '../common/utils/prisma-errors';
 import { lockTeachers } from '../cover/cover-decisions';
 import {
@@ -45,6 +46,14 @@ import type { BulkUpdateStudentsDto, CreateUserDto, UpdateUserDto } from './dto/
 
 /** A pseudonymised person (gallring, 20261021110000) cannot be made active again. */
 export const USER_IS_PSEUDONYMISED = 'USER_IS_PSEUDONYMISED';
+/** A last working day (`leftOn`) names a person who is, or stays, active. */
+export const USER_LEFT_ON_NEEDS_INACTIVE = 'USER_LEFT_ON_NEEDS_INACTIVE';
+/** A last working day after the school's today. */
+export const USER_LEFT_ON_IN_THE_FUTURE = 'USER_LEFT_ON_IN_THE_FUTURE';
+/** A last working day before the day the person was last made active again. */
+export const USER_LEFT_ON_BEFORE_RETURN = 'USER_LEFT_ON_BEFORE_RETURN';
+/** A last working day before the day the person was added to Rastra (a year typed wrong, or no year at all). */
+export const USER_LEFT_ON_BEFORE_START = 'USER_LEFT_ON_BEFORE_START';
 /** A change that would leave the school with nobody who decides (Roller i skolan). */
 export const LAST_DECIDER = 'LAST_DECIDER';
 /** A row of a bulk call of the register that is no pupil (Massåtgärder). */
@@ -554,6 +563,11 @@ export class UsersService {
         if (current.pseudonymisedAt && dto.isActive === true) {
           throw isPseudonymised();
         }
+        // Sista arbetsdag (20270210090000), judged before anything is written: the day after it, at the school's
+        // midnight, is the instant their time stops counting.
+        // `leftOn: null` is no day, as an absent one is (the DTO lets null through, as it does for the phone number
+        // and the class, where it clears): an integration that sends every field must be able to deactivate.
+        const stopsAt = dto.leftOn == null ? null : await leftOnInstant(tx, current, { isActive: dto.isActive, leftOn: dto.leftOn }, id);
         const role = dto.role ?? current.role;
         // Roller i skolan: an administrator's row, and anybody's role,
         // profile or HR-läs, are rektor's or a full administrator's to
@@ -614,6 +628,10 @@ export class UsersService {
             ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
           },
         });
+        // The open period Users_deactivations_are_kept has just opened (or opened before, for a person who was
+        // inactive already) starts at the day's end, and never later than the period was recorded: a last day is not
+        // in the future, and a person named for today is counted to the click, as without a date.
+        if (stopsAt !== null) await startPeriodAt(tx, id, stopsAt);
         // A pupil's class says who their mentors are, and a teacher's role
         // and isActive whether they are one (app.leave_mentors): a move, a
         // reactivation or a role change may give a mentor a pending leave
@@ -1224,6 +1242,72 @@ function recordedATimplanDecision(
     `Personen står som den som registrerade ${what} ${which} och kan inte tas bort. ` +
       'Inaktivera kontot i stället; beslutet behåller sitt namn.',
   );
+}
+
+/**
+ * The instant a person's time stops counting when their last working day is `dto.leftOn`: the school's midnight
+ * after it. Refuses a day that has not happened, a person who is or becomes active, a day before the person was
+ * added to Rastra (a last day typed with the wrong year would otherwise take a whole year of payroll from them, and
+ * a year 1 is not a date the database can hold), and a day before the person was last made active again (their
+ * periods never overlap; the exclusion constraint holds it, this says it first).
+ */
+async function leftOnInstant(
+  tx: PrismaClient,
+  current: Pick<User, 'isActive' | 'schoolId'>,
+  dto: { isActive: boolean | undefined; leftOn: string },
+  id: string,
+): Promise<Date> {
+  const leftOn = dto.leftOn;
+  const staysInactive = dto.isActive === false || (dto.isActive === undefined && !current.isActive);
+  if (!staysInactive) {
+    throw new BadRequestException({
+      message: 'leftOn: en sista arbetsdag hör till en person som avaktiveras eller redan är avaktiverad.',
+      code: USER_LEFT_ON_NEEDS_INACTIVE,
+    });
+  }
+  const school = await tx.school.findUnique({ where: { id: current.schoolId }, select: { timezone: true } });
+  const timezone = school?.timezone ?? 'Europe/Stockholm';
+  const today = todayInZone(timezone).toISOString().slice(0, 10);
+  if (leftOn > today) {
+    throw new BadRequestException({
+      message: `leftOn: den sista arbetsdagen har inte varit (i dag är ${today}). Avaktivera personen när dagen har gått.`,
+      code: USER_LEFT_ON_IN_THE_FUTURE,
+    });
+  }
+  const added = await tx.user.findUnique({ where: { id }, select: { createdAt: true } });
+  if (added) {
+    const first = todayInZone(timezone, added.createdAt).toISOString().slice(0, 10);
+    if (leftOn < first) {
+      throw new BadRequestException({
+        message: `leftOn: personen lades till i Rastra ${first}, så den sista arbetsdagen kan inte ligga före det.`,
+        code: USER_LEFT_ON_BEFORE_START,
+        params: { added: first },
+      });
+    }
+  }
+  const stopsAt = zonedTimeToUtc(addDays(leftOn, 1), '00:00', timezone);
+  const returned = await tx.userDeactivation.findFirst({
+    where: { userId: id, endsAt: { not: null } },
+    orderBy: { endsAt: 'desc' },
+    select: { endsAt: true },
+  });
+  if (returned?.endsAt && stopsAt.getTime() < returned.endsAt.getTime()) {
+    const back = todayInZone(timezone, returned.endsAt).toISOString().slice(0, 10);
+    throw new BadRequestException({
+      message: `leftOn: personen aktiverades igen ${back}, så den sista arbetsdagen kan inte ligga före det.`,
+      code: USER_LEFT_ON_BEFORE_RETURN,
+      params: { returned: back },
+    });
+  }
+  return stopsAt;
+}
+
+/** The open period of the person starts at `stopsAt`, or when it was recorded if that is earlier. */
+async function startPeriodAt(tx: PrismaClient, id: string, stopsAt: Date): Promise<void> {
+  const open = await tx.userDeactivation.findFirst({ where: { userId: id, endsAt: null }, select: { recordedAt: true } });
+  if (!open) return;
+  const startsAt = stopsAt.getTime() < open.recordedAt.getTime() ? stopsAt : open.recordedAt;
+  await tx.userDeactivation.updateMany({ where: { userId: id, endsAt: null }, data: { startsAt } });
 }
 
 /** A pseudonymised person (gallring) stays inactive: update()'s refusal, and the bulk update's per row. */

@@ -2,84 +2,164 @@ import { addDays } from '../common/year-rollover';
 import type { LoadDuty } from '../staffing/teacher-load';
 
 /*
- * Den som har slutat i ett löneunderlag.
+ * Den som har slutat, eller varit borta, i ett löneunderlag.
  *
- * A löneunderlag books time on a person, so it must not book a person after the
- * day they left. `Users.deactivatedAt` is the moment `isActive` went false
- * (Users_deactivation_is_dated stamps it, so no writer can forget it), and the
- * rule for lessons is D6's: a lesson counts to a teacher only if the teacher had
- * not left when it was over, `endsAt <= deactivatedAt`. D6 wrote that for its
- * statistics (app.absence_stats_lessons); statement E asks the same question
- * through `staffingCreditStatement`'s `endedBy`, and a vikarie's covers are
- * lessons too.
+ * A löneunderlag books time on a person, so it must not book a person for the time they were inactive.
+ * UserDeactivations (20270210090000) has a row for every period a person has been inactive: from `startsAt`,
+ * the administrator's click or the last working day they named, to `endsAt`, the moment the person was made
+ * active again (null while they are inactive). Users.deactivatedAt, which this module read before, is the
+ * latest click and is cleared by a return, so a person who came back was counted for the weeks between
+ * (LÅG-1 of the review of #280), and it could not be backdated, so the days between a last day and the click
+ * were booked (LÅG-2).
  *
- * Uppdrag are not lessons, they run by the day, and a person's rastvaktspass
- * already stops on the DAY BEFORE the school's date of the stamp (load-input.ts,
- * `chargedShift`: "a deactivated teacher's pass is charged until the day before").
- * The stored uppdrag (mentorskap, ämnesansvar) stop the same day, so that the
- * two kinds of uppdrag of one person end together; a lesson held that morning
- * is the person's, a day's share of an uppdrag is not charged for the day they
- * left. (BESLUT.)
+ * The rule for lessons is D6's: a lesson counts to a teacher only if the teacher was active when it was over,
+ * which is `endsAt <= startsAt` for a person who is still away and now also holds for one who returned: a
+ * lesson over at the very instant they left counts, one over strictly inside a period does not, and one over
+ * at the instant they returned counts. D6 wrote that for its statistics (app.absence_stats_lessons asks the
+ * same question of the same table); statement E asks it through `staffingCreditStatement`'s `away`, and a
+ * vikarie's covers are lessons too.
  *
- * A person who is made active again has no `deactivatedAt` any more (the same
- * trigger clears it), so they are counted as if they had never left: the
- * history of an earlier leave is not kept, here or in D6's statistics.
+ * Uppdrag are not lessons, they run by the day, and a person's rastvaktspass already stops on the DAY BEFORE
+ * the school's date of the stamp (load-input.ts, `chargedShift`: "a deactivated teacher's pass is charged
+ * until the day before"). The stored uppdrag (mentorskap, ämnesansvar) stop the same day, so that the two
+ * kinds of uppdrag of one person end together; a lesson held that morning is the person's, a day's share of
+ * an uppdrag is not charged for the day they left. (BESLUT.) A return counts the same way from the other
+ * side: the days charged again start with the school's date of `endsAt`, the day the person is active at
+ * its end, so a person who left and came back the same day loses no day.
+ *
+ * A person is asked about only if some period of theirs reaches the days of the payroll period
+ * (`touches`); everyone else is counted as they always were.
  *
  * PURE.
  */
 
-export interface Leaver {
-  userId: string;
-  /** When the person was deactivated. */
-  at: Date;
-  /** The school's date of `at`. */
-  day: string;
+/** One period a person was inactive, with the school's date of each end. */
+export interface AwayPeriod {
+  /** `startsAt`: the instant their time stops counting. */
+  from: Date;
+  /** `endsAt`: the instant it counts again; null while they are inactive. */
+  to: Date | null;
+  /** The school's date of `from`. */
+  fromDay: string;
+  /** The school's date of `to`; null while they are inactive. */
+  toDay: string | null;
 }
 
-/** The people in `rows` who are inactive and dated; the school's date comes from the caller (its timezone). */
+/** A person with every period they have been inactive, in order. */
+export interface Leaver {
+  userId: string;
+  periods: AwayPeriod[];
+}
+
+/**
+ * The people in `rows`, each with their periods in order. The school's date comes from the caller (its
+ * timezone). A person without a row is not a leaver and is not in the map.
+ */
 export function leaversOf(
-  rows: readonly { id: string; deactivatedAt: Date | null }[],
+  rows: readonly { userId: string; startsAt: Date; endsAt: Date | null }[],
   schoolDay: (at: Date) => string,
 ): Map<string, Leaver> {
   const leavers = new Map<string, Leaver>();
   for (const row of rows) {
-    if (!(row.deactivatedAt instanceof Date)) continue;
-    leavers.set(row.id, { userId: row.id, at: row.deactivatedAt, day: schoolDay(row.deactivatedAt) });
+    const leaver = leavers.get(row.userId) ?? { userId: row.userId, periods: [] };
+    leaver.periods.push({
+      from: row.startsAt,
+      to: row.endsAt,
+      fromDay: schoolDay(row.startsAt),
+      toDay: row.endsAt === null ? null : schoolDay(row.endsAt),
+    });
+    leavers.set(row.userId, leaver);
   }
+  for (const leaver of leavers.values()) leaver.periods.sort((a, b) => a.from.getTime() - b.from.getTime());
   return leavers;
 }
 
-/**
- * Does the period reach the day the person left? Then their time is cut (or, when the whole period is
- * after it, gone). A person who left after the period's last day is counted as they always were.
- */
-export function leftBy(leaver: Leaver, to: string): boolean {
-  return leaver.day <= to;
+/** Was the person inactive at the instant? At the very instant they left, and at the one they returned, they were not. */
+export function awayAt(leaver: Leaver, at: Date): boolean {
+  const time = at.getTime();
+  return leaver.periods.some((period) => period.from.getTime() < time && (period.to === null || time < period.to.getTime()));
 }
 
 /**
- * The days of the period to ask statement E about for a person who left by its end: up to and including the
- * school's date of the stamp (the instant rule, `endedBy`, drops what was over after it that day). Null when
- * the person left before the period began: nothing is asked.
+ * Does any period of the person reach the days of the payroll period? Then their time is cut (or, when the
+ * whole period is inside one, gone). A person whose every period ended before the period began, or began after
+ * its last day, is counted as they always were.
  */
-export function lessonDays(leaver: Leaver, from: string, to: string): { from: string; to: string } | null {
-  if (leaver.day < from) return null;
-  return { from, to: leaver.day < to ? leaver.day : to };
+export function touches(leaver: Leaver, from: string, to: string): boolean {
+  return leaver.periods.some((period) => period.fromDay <= to && (period.toDay === null || period.toDay >= from));
 }
 
-/** The uppdrag with each leaver's `validTo` cut to the day before the school's date of the stamp. */
+/** True when one period covers every day of the payroll period, so that no lesson in it can have been over while the person was active. */
+export function awayAllPeriod(leaver: Leaver, from: string, to: string): boolean {
+  return leaver.periods.some((period) => period.fromDay < from && (period.toDay === null || period.toDay > to));
+}
+
+/** The periods as statement E asks them (`away`); the instants only. */
+export function awayInstants(leaver: Leaver): { from: Date; to: Date | null }[] {
+  return leaver.periods.map((period) => ({ from: period.from, to: period.to }));
+}
+
+/**
+ * The days a period holds that an uppdrag is not charged for: from the school's date of `from` to the day before
+ * the school's date of `to`, or without an end while the person is inactive. Empty when the person left and
+ * returned the same day.
+ */
+function chargedOff(period: AwayPeriod): { from: string; to: string } | null {
+  if (period.toDay === null) return { from: period.fromDay, to: '9999-12-31' };
+  const last = addDays(period.toDay, -1);
+  return last < period.fromDay ? null : { from: period.fromDay, to: last };
+}
+
+/**
+ * The uppdrag with every day a leaver was inactive taken out. An uppdrag the leaver's periods do not reach is
+ * the object it was; one they cut from the end is the same uppdrag with an earlier `validTo`; one with a gap in
+ * the middle is two, each with the same weekly minutes. `yearEnd` stands in for a missing `validTo`, as
+ * everywhere in the load's pure half.
+ */
 export function cutDuties(duties: readonly LoadDuty[], leavers: ReadonlyMap<string, Leaver>, yearEnd: string): LoadDuty[] {
-  return duties.map((duty) => {
+  const result: LoadDuty[] = [];
+  for (const duty of duties) {
     const leaver = leavers.get(duty.userId);
-    if (!leaver) return duty;
-    const last = addDays(leaver.day, -1);
-    const validTo = duty.validTo ?? yearEnd;
-    return validTo <= last ? duty : { ...duty, validTo: last };
-  });
+    const off = leaver ? leaver.periods.map(chargedOff).filter((range): range is { from: string; to: string } => range !== null) : [];
+    if (off.length === 0) {
+      result.push(duty);
+      continue;
+    }
+    let pieces: { validFrom?: string | null; validTo?: string | null }[] = [
+      { ...(duty.validFrom !== undefined ? { validFrom: duty.validFrom } : {}), ...(duty.validTo !== undefined ? { validTo: duty.validTo } : {}) },
+    ];
+    let changed = false;
+    for (const range of off) {
+      const next: typeof pieces = [];
+      for (const piece of pieces) {
+        const start = piece.validFrom ?? '0000-01-01';
+        const end = piece.validTo ?? yearEnd;
+        if (range.to < start || range.from > end) {
+          next.push(piece);
+          continue;
+        }
+        changed = true;
+        if (start < range.from) next.push({ ...(piece.validFrom !== undefined ? { validFrom: piece.validFrom } : {}), validTo: addDays(range.from, -1) });
+        if (range.to < end) {
+          next.push({ validFrom: addDays(range.to, 1), ...(piece.validTo !== undefined ? { validTo: piece.validTo } : {}) });
+        }
+      }
+      pieces = next;
+    }
+    if (!changed) {
+      result.push(duty);
+      continue;
+    }
+    for (const piece of pieces) {
+      const { validFrom: _from, validTo: _to, ...rest } = duty;
+      result.push({ ...rest, ...piece });
+    }
+  }
+  return result;
 }
 
-/** A vikarie's cover is a lesson: it counts only if it was over when they left. */
+/** A vikarie's cover is a lesson: it counts only if it was over while they were active. */
 export function coverStands(row: { userId: string; endsAt: string }, leavers: ReadonlyMap<string, Leaver>): boolean {
   const leaver = leavers.get(row.userId);
-  return !leaver || Date.parse(row.endsAt) <= leaver.at.getTime();
+  return !leaver || !awayAt(leaver, new Date(Date.parse(row.endsAt)));
 }
