@@ -840,12 +840,16 @@ describe("Timplan matrix", () => {
       expect(max).toBe(min);
       return min;
     };
+    // The offset holds from `sm` (640 px) only: under it the totals scroll with the table, because beside the pinned
+    // group name they left a phone's 286 px a window of 12 px and no post could be opened (e2e/requirement-matrix).
     const offsetOf = (element: Element | undefined) =>
-      /(?:^|\s)right-(\d+)/.exec(element?.className ?? "")?.[1];
+      /(?:^|\s)sm:right-(\d+)/.exec(element?.className ?? "")?.[1];
+    const unpinnedSideways = (element: Element | undefined) => !/(?:^|\s)right-\d/.test(element?.className ?? "");
 
     expect(peak?.className).toContain("sticky");
     expect(offsetOf(hours)).toBe("0");
     expect(offsetOf(peak)).toBe(widthOf(hours));
+    expect(unpinnedSideways(hours) && unpinnedSideways(peak)).toBe(true);
     // Same pairing on the body cells, which stick independently of the header
     // and carry their own width — a header pinned to 6rem does not hold a body
     // cell that has drifted back to `w-`, and the column takes the wider of the
@@ -857,6 +861,10 @@ describe("Timplan matrix", () => {
     expect(offsetOf(bodyHours)).toBe("0");
     expect(widthOf(bodyHours)).toBe(widthOf(hours));
     expect(offsetOf(bodyPeak)).toBe(widthOf(hours));
+    expect(unpinnedSideways(bodyHours) && unpinnedSideways(bodyPeak)).toBe(true);
+    // Pinned from `sm` as well, not static from `sm` up: the body cells stick sideways only where the header does.
+    expect(bodyHours?.className).toContain("sm:sticky");
+    expect(bodyPeak?.className).toContain("sm:sticky");
   });
 
   it("lets the section label span the whole row, totals included", () => {
