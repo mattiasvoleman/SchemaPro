@@ -4826,11 +4826,38 @@ Two changes, in two releases. No migration in either.
    is the first and `periods` all of them ("0,1,2,3"), the form a week that
    lies in several periods already had, and the gateway reads their
    stretches together, so a teacher over her hours all autumn is told the
-   autumn's weeks and not its first two days. "Share" is the same count with
-   the same posts and the same figures; for a 400, the same code and the
-   same figures. The lines of a best possible timetable say their weeks the
-   same way. Weeks that no words say exactly (the odd weeks of one term with
-   every week of the other) leave the week the refusal was found in.
+   autumn's weeks and not its first two days. "Share" is one rule, for a
+   count, a 400 and the lines of a best possible timetable alike
+   (`optimization-engine/app/solver/refusals.py`): the same sentence (the
+   code), the same figures, and the same posts, rooms, rules and people the
+   refusal names, in any order. A 400 names what it names in its figures, so
+   two terms with other posts and the same figures are one 400 and two
+   counts, each naming its posts. Weeks that no words say exactly (the odd
+   weeks of one term with every week of the other) leave the first of the
+   weeks that give it.
+
+   **When the weeks are refused differently, the refusal said is the one
+   whose weeks are most of the year** (`periodWeeks`; every period alike
+   where none is sent), and the earliest on a tie. A läsår starts on a
+   Saturday, so its first two days are a period of their own, and a teacher
+   with a post of her own from the first Monday is over her hours there with
+   other figures than in the autumn: it is the autumn that is said. Each
+   week gives its first refusal, in the order the counts are made, and it is
+   among those that the most weeks is chosen: a refusal a week would also
+   give, but only after an earlier count, is not weighed (a count says the
+   weeks it refuses the same behind an earlier count, once it is the one
+   said, and a 400 has no such weeks). The weeks are weighed by
+   `periodWeeks`, where the odd and the even weeks of a period count as many
+   each, so "most" is most to within a week a period. Weeks with nothing to
+   place are not asked. Where no week was left out, two weeks that agree name
+   none; where a week was, they name none only if the year without a post of
+   its own is refused the same way: a teacher's trouble is named by where it
+   is and not by how the posts are cut. The gateway asks each stretch of a
+   period on its own, by the ISO weeks it holds, and names only the stretches
+   that hold a week of the parity the engine counted (week 53 and week 1 are
+   both odd): a period that has none of that parity is left out, and so is a
+   lone week of the other parity before a longer stretch. A stretch that is
+   named is named whole, with the other parity's weeks inside it.
 
    Three verdicts solve a model instead of counting (the lunch stage, a
    class's hours, the year's tightest week). They run on at most eight weeks
@@ -4998,10 +5025,11 @@ term has a timetable (the reviews of #300):
   period's. Nothing new is sent: the locks and the posts already carry their
   periods. `TEACHER_LUNCH_LEAVES_NO_START` is read period by period and
   names where in the year it is — every period in which the teacher has a
-  lesson to place and the same locked hours that weekday (`period`, and
-  `periods` where there are several, which the gateway reads as one run of
-  weeks: a läsår has more periods than terms) — unless the locks of every
-  period refuse it, which is the year's refusal and names none.
+  lesson to place and her lunch that weekday is refused the same (the same
+  rule, day and cause, whatever locks close it; `period`, and `periods`
+  where there are several, which the gateway reads as one run of weeks: a
+  läsår has more periods than terms) — unless the locks of every period
+  refuse it, which is the year's refusal and names none.
 
 **Deploy order.** The engine and the gateway are one release here. The
 engine's models forbid unknown fields, so in the minutes between the API's
