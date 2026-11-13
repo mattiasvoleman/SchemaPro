@@ -8,6 +8,7 @@ import hashlib
 import time
 from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
+from itertools import product
 from collections.abc import Callable
 from collections.abc import Collection, Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -114,6 +115,7 @@ from app.solver.weeks import (
     each_week,
     meet,
     named as week_named,
+    part_weeks,
     says_exactly as week_says_exactly,
     share as week_share,
     tag as week_tag,
@@ -121,6 +123,7 @@ from app.solver.weeks import (
     week_parts,
     weeks_of,
     whole_periods,
+    within,
     year_of,
 )
 from app.solver.travel import (
@@ -1530,6 +1533,11 @@ class SchedulerSolver:
             request.lunch_servings, request.frame_times,
             request.group_conflicts, request.lunch_placements,
             step=step,
+            lunch_periods=(
+                len(request.period_weeks)
+                if request.lunch_per_period and request.period_weeks
+                else 0
+            ),
         )
         # After the lunch, because a rast's stretch is counted from the
         # previous break and the class's own meal can be that break.
@@ -3711,6 +3719,89 @@ class SchedulerSolver:
                 by_length[grid.minutes_to_slots(m)] for m in requirement.lesson_minutes()
             ]
         return kinds_of
+
+    def _lunch_parts(
+        self,
+        periods: int,
+        fixed_lessons: list[FixedLesson],
+        placements: list[LunchPlacement],
+        lunch_group_ids: list[UUID],
+        shares_students: dict[UUID, list[UUID]],
+        window: tuple[int, int, int],
+    ) -> dict[UUID, list[tuple[Weeks, dict[tuple[UUID, int], list[tuple[int, int]]], dict[tuple[UUID, int], int]]]]:
+        """Klassens måltid per del av läsåret: the parts of the year a class's meal tells apart.
+
+        A PART IS A GROUP OF PERIODS IN WHICH THE CLASS'S MEAL IS HELD THE SAME
+        WAY. The meal is a class's, one start a day, and what holds it is the
+        starts its locked lessons leave it (a lock reaches the meal only as a
+        narrowing of its domain, _lunch_starts_blocked_by_fixed_lessons) and
+        the start the school placed by hand. Two periods whose locks leave the
+        class the same starts on every day, and that place the same meals, are
+        one part: the meal is one there, as it always was. Locks that differ
+        cut the year, and a lock in the autumn that fills the window beside a
+        lock in the spring that fills it too no longer refuse a year whose
+        every term has a gap (_lunch_lock_periods says it of the year).
+
+        NOT CUT BY WHAT THE CLASS IS TAUGHT. A lesson that is not locked is
+        placed once, the same hour in every week it runs, and keeps clear of
+        the meal in each of them (_post_lunch_rows): it cuts nothing here, so
+        a school with ten dated posts has as many parts of the meal as it has
+        different ways of being locked, not ten.
+
+        PER PERIOD, NEVER PER PARITY, as a teacher's own lunch is
+        (whole_periods): the meal is one for the odd weeks and the even ones
+        of a part, so the odd weeks' lock and the even weeks' are both the
+        part's. And never joined: the pre-flight reads each period's locks on
+        its own (_verify_lunch), and a part over two periods' locks could be
+        an empty domain it never saw.
+
+        Only classes with MORE THAN ONE part are returned: each as its parts'
+        weeks, with the locks' starts and the placed meals of one period of
+        the part, which are the part's (that is what a part is). A class
+        absent from the answer has one part and is built as it always was.
+        """
+        window_start, window_end, lunch_slots = window
+        eating = set(lunch_group_ids)
+        blocked: list[dict[tuple[UUID, int], list[tuple[int, int]]]] = []
+        pins: list[dict[tuple[UUID, int], int]] = []
+        for period in range(periods):
+            blocked.append(self._lunch_starts_blocked_by_fixed_lessons(
+                [fixed for fixed in fixed_lessons if fixed.periods is None or fixed.periods[period]],
+                eating,
+                shares_students,
+                window_start,
+                window_end - lunch_slots,
+                lunch_slots,
+            ))
+            pins.append(self._lunch_pins(
+                [placement for placement in placements if placement.periods is None or placement.periods[period]],
+                lunch_group_ids,
+            ))
+        signatures: dict[UUID, list[tuple[object, object]]] = {group_id: [] for group_id in lunch_group_ids}
+        for period in range(periods):
+            forbidden_of: dict[UUID, dict[int, tuple[tuple[int, int], ...]]] = defaultdict(dict)
+            for (group_id, day_index), starts in blocked[period].items():
+                forbidden_of[group_id][day_index] = _merged(starts)
+            pinned_of: dict[UUID, dict[int, int]] = defaultdict(dict)
+            for (group_id, day_index), slot in pins[period].items():
+                pinned_of[group_id][day_index] = slot
+            for group_id in lunch_group_ids:
+                signatures[group_id].append((
+                    tuple(sorted(forbidden_of[group_id].items())),
+                    tuple(sorted(pinned_of[group_id].items())),
+                ))
+        parts: dict[UUID, list[tuple[Weeks, dict[tuple[UUID, int], list[tuple[int, int]]], dict[tuple[UUID, int], int]]]] = {}
+        for group_id in lunch_group_ids:
+            held: dict[tuple[object, object], list[int]] = {}
+            for period, signature in enumerate(signatures[group_id]):
+                held.setdefault(signature, []).append(period)
+            if len(held) < 2:
+                continue
+            parts[group_id] = [
+                (part_weeks(inside, periods), blocked[inside[0]], pins[inside[0]])
+                for inside in held.values()
+            ]
+        return parts
 
     def _lunch_pins(
         self,
@@ -7058,6 +7149,20 @@ class SchedulerSolver:
             # typed a seat count and not yet decided when lunch is has made no
             # error and must not be told it has.
             return
+        if request.lunch_per_period and request.period_weeks:
+            # KLASSENS MÅLTID PER DEL AV LÄSÅRET: the meal is held in each
+            # part of the year on its own, so what the locks leave it is asked
+            # of each period on its own (_period_view) — which is the
+            # refusal's own shortage, named by the period it is in — and not of
+            # the year, whose locks together are the one refusal it exists to
+            # lift. Every period is checked, the parts of a class that are
+            # alike included: the same question, asked again.
+            count = len(request.period_weeks)
+            for period in range(count):
+                self._verify_lunch(
+                    _period_view(request, period), rules, part_weeks([period], count),
+                )
+            return
         self._verify_lunch(request, rules)
 
     def _lunch_lock_periods(
@@ -7270,8 +7375,18 @@ class SchedulerSolver:
                     "offeredMinutes": available * minutes,
                 })
 
-    def _verify_lunch(self, request: OptimizeScheduleRequest, rules: ScheduleRules) -> None:
+    def _verify_lunch(
+        self,
+        request: OptimizeScheduleRequest,
+        rules: ScheduleRules,
+        period: Weeks | None = None,
+    ) -> None:
         """_validate_request's lunch refusals, on the whole request.
+
+        Or on one period of it (`period`, with the request as _period_view
+        gives it) for a request that asks for a meal per part of the year: the
+        refusal that names a class's day then names the period too, `period`
+        and `periods` in its params, which the gateway turns into dates.
 
         The meal is every week's, so it keeps clear of a lock of either week,
         and every check here reads the request as the model's lunch does.
@@ -7363,6 +7478,7 @@ class SchedulerSolver:
                     "windowEnd": rules.lunch_end_time[:5],
                     "day": self._grid.schedule_days[day_index],
                     **self._lunch_lock_periods(request, group_id, day_index, rules),
+                    **week_named(period),
                 })
 
         # The declarations, before either subtraction: a serving or a frame too
@@ -7533,6 +7649,7 @@ class SchedulerSolver:
                     "windowStart": rules.lunch_start_time[:5],
                     "windowEnd": rules.lunch_end_time[:5],
                     "day": day_of_week,
+                    **week_named(period),
                 })
 
     def _validate_blocks(self, request: OptimizeScheduleRequest) -> None:
@@ -9100,6 +9217,15 @@ class SchedulerSolver:
                 base = day_index * slots_per_day
                 lunch_start = lunch_starts.get((group.id, day_index))
                 after_lunch = meal_bounds and lunch_start is not None
+                # A class whose meal has parts (lunchPerPeriod) is "after
+                # lunch" in each of them: a lesson that runs in the weeks of
+                # both comes after the meal of both, which is never looser
+                # than the one reading a class with one meal has.
+                meals = [
+                    held for _, held in getattr(lunch_starts, "parts", {}).get(
+                        (group.id, day_index), [],
+                    )
+                ] or ([lunch_start] if lunch_start is not None else [])
                 # A LESSON'S OWN LITERALS ARE THE LESSON'S, NOT A WEEK'S: "it
                 # sits in this stretch" and "it starts after the break" say
                 # the same of a lesson every week in both weeks, so each is
@@ -9153,9 +9279,10 @@ class SchedulerSolver:
                         # equal to its end: one linear row rather than two,
                         # and presolve reads straight through to the meal.
                         if after_lunch:
-                            model.Add(
-                                decision.start >= lunch_start + lunch_slots,
-                            ).OnlyEnforceIf(flag)
+                            for meal in meals:
+                                model.Add(
+                                    decision.start >= meal + lunch_slots,
+                                ).OnlyEnforceIf(flag)
                         else:
                             model.Add(decision.start >= base + opens).OnlyEnforceIf(flag)
                         model.Add(decision.end <= base + first).OnlyEnforceIf(flag)
@@ -13367,6 +13494,7 @@ class SchedulerSolver:
         lunch_placements: list[LunchPlacement] | None = None,
         *,
         step: int,
+        lunch_periods: int = 0,
     ) -> dict[tuple[UUID, int], cp_model.IntVar]:
         """Hard school rules: lunch break, dining hall seats, lessons per day.
 
@@ -13384,7 +13512,7 @@ class SchedulerSolver:
         empty dining hall and say nothing about it. A TypeError names the
         caller; a default would have let it profile the wrong model in silence.
         """
-        lunch_starts: dict[tuple[UUID, int], cp_model.IntVar] = {}
+        lunch_starts = _MealStarts()
         if rules is None:
             return lunch_starts
 
@@ -13539,6 +13667,23 @@ class SchedulerSolver:
                 window_end,
                 lunch_slots,
             )
+            # KLASSENS MÅLTID PER DEL AV LÄSÅRET: the classes whose locked
+            # lessons tell the parts of the year apart, each with its parts.
+            # Empty — and the meal of every class one, as it always was — for
+            # a request that did not ask (`lunchPerPeriod`), and for a class
+            # whose parts are all alike.
+            meal_parts = (
+                self._lunch_parts(
+                    lunch_periods,
+                    fixed_lessons,
+                    lunch_placements or [],
+                    lunch_group_ids,
+                    shares_students,
+                    (window_start, window_end, lunch_slots),
+                )
+                if lunch_periods > 0
+                else {}
+            )
 
             # "There is a contiguous free window of `lunch_slots` inside the
             # lunch window" is exactly "a mandatory task of that length can be
@@ -13585,6 +13730,9 @@ class SchedulerSolver:
             # sentence — every class eats every school day.
             sittings: list[cp_model.IntervalVar] = []
             headcounts: list[int] = []
+            # The weeks each sitting stands for: None, every week, for every
+            # class whose meal is one. The seats are counted in each real week.
+            sitting_weeks: list[Weeks | None] = []
 
             slots_per_day = self._grid.slots_per_day
             for group_id in lunch_group_ids:
@@ -13612,8 +13760,16 @@ class SchedulerSolver:
                 # has told us who eats" — which is what the engine sees until
                 # the gateway that sends `groups` is deployed.
                 headcount = headcount_by_group.get(group_id, 0)
-                lunch_intervals: list[cp_model.IntervalVar] = []
-                for day_index in range(len(self._grid.schedule_days)):
+                # THE PARTS OF THIS CLASS'S YEAR: one, every week, with the
+                # locks and the placed meals of the whole request, for a class
+                # whose meal is one; otherwise one for each part (_lunch_parts).
+                views = meal_parts.get(group_id) or [(None, blocked_starts, pins)]
+                intervals_by_part: list[list[cp_model.IntervalVar]] = [[] for _ in views]
+                for part_index, day_index in product(
+                    range(len(views)), range(len(self._grid.schedule_days)),
+                ):
+                    part, part_blocked, part_pins = views[part_index]
+                    lunch_intervals = intervals_by_part[part_index]
                     # The school has closed this day for this class. No lunch
                     # variable, no mandatory interval, no seat demand — the
                     # class is not in the building to eat.
@@ -13622,7 +13778,7 @@ class SchedulerSolver:
                     day_offset = day_index * slots_per_day
                     # Inclusive bounds matching the candidate enumeration this
                     # replaces: range(window_start, window_end - lunch_slots + 1).
-                    pin = pins.get((group_id, day_index))
+                    pin = part_pins.get((group_id, day_index))
                     low, high = self._lunch_start_bounds(
                         pin, day_offset, window_start, window_end, lunch_slots,
                     )
@@ -13631,9 +13787,16 @@ class SchedulerSolver:
                     # hull loses neither end.
                     lunch_start = model.NewIntVarFromDomain(
                         _on_lattice(cp_model.Domain(low, high), lattice),
-                        f"lunchstart_{group_id}_{day_index}",
+                        week_tag(f"lunchstart_{group_id}_{day_index}", part),
                     )
-                    lunch_starts[(group_id, day_index)] = lunch_start
+                    # The first part's variable is what the key holds, for the
+                    # readers that know of one meal (_MealStarts); a class
+                    # with parts has them all in `parts`.
+                    lunch_starts.setdefault((group_id, day_index), lunch_start)
+                    if part is not None:
+                        lunch_starts.parts.setdefault((group_id, day_index), []).append(
+                            (part, lunch_start),
+                        )
 
                     # The school's own sentence about when this stage eats, and
                     # the hours its stage may be taught in at all. Both narrow
@@ -13663,7 +13826,7 @@ class SchedulerSolver:
                     # And the locks and reservations are not narrowings of a
                     # pinned meal: _verify_lunch_placements refused any pin
                     # that lands on one, so on a pinned day they say nothing.
-                    forbidden = None if pin is not None else blocked_starts.get((group_id, day_index))
+                    forbidden = None if pin is not None else part_blocked.get((group_id, day_index))
                     if forbidden:
                         # UNDER AN ASSUMPTION LITERAL, not bare. A bare domain
                         # subtraction lets CP-SAT prove infeasibility without
@@ -13699,7 +13862,7 @@ class SchedulerSolver:
                         # _add_capacity_constraints already registers per lesson.
                         lunch_literal = registry.register(
                             model,
-                            name=f"lunchlock_{group_id}_{day_index}",
+                            name=week_tag(f"lunchlock_{group_id}_{day_index}", part),
                             category="GROUP_OVERLAP",
                             # The same fact _validate_request refuses by
                             # name when the locks alone leave nothing, said
@@ -13711,6 +13874,7 @@ class SchedulerSolver:
                                 "windowStart": rules.lunch_start_time[:5],
                                 "windowEnd": rules.lunch_end_time[:5],
                                 "day": self._grid.schedule_days[day_index],
+                                **week_named(part),
                             },
                             resource_ids=[group_id],
                         )
@@ -13737,7 +13901,7 @@ class SchedulerSolver:
                         # admin can look up.
                         closed_literal = registry.register(
                             model,
-                            name=f"lunchclosed_{group_id}_{day_index}",
+                            name=week_tag(f"lunchclosed_{group_id}_{day_index}", part),
                             category="AVAILABILITY",
                             code="LUNCH_AVAILABILITY_LEAVES_NO_BREAK",
                             params={
@@ -13771,7 +13935,7 @@ class SchedulerSolver:
                         # school placed does not make the hall any larger.
                         pin_literal = registry.register(
                             model,
-                            name=f"lunchpin_{group_id}_{day_index}",
+                            name=week_tag(f"lunchpin_{group_id}_{day_index}", part),
                             category="LUNCH_WINDOW",
                             code="LUNCH_PLACED_BY_HAND",
                             params={
@@ -13786,7 +13950,7 @@ class SchedulerSolver:
                         model.NewFixedSizeIntervalVar(
                             lunch_start,
                             lunch_slots,
-                            f"lunch_{group_id}_{day_index}",
+                            week_tag(f"lunch_{group_id}_{day_index}", part),
                         ),
                     )
                     if seats_literal is not None and headcount > 0:
@@ -13802,71 +13966,20 @@ class SchedulerSolver:
                                 lunch_start,
                                 lunch_slots,
                                 seats_literal,
-                                f"sitting_{group_id}_{day_index}",
+                                week_tag(f"sitting_{group_id}_{day_index}", part),
                             ),
                         )
                         headcounts.append(headcount)
-                if lunch_intervals:
-                    # THE PUPILS' OWN INTERVAL, like every other family whose
-                    # members are the children: a class still in the changing
-                    # room has not got its break, and a meal that starts while
-                    # they are showering is a meal the model records and nobody
-                    # eats. Twenty minutes of shower is worth more of a lunch
-                    # break than a corridor ever was.
-                    #
-                    # THE CLASS SPACE FOR WHO EATS, THE PUPIL SPACE FOR NOTHING
-                    # ELSE. The meal is the class's, so it avoids every lesson
-                    # filed under the class, its svenska too whoever sits it.
-                    # But one no-overlap over all of them would also hold them
-                    # apart from EACH OTHER, a lesson-against-lesson row the
-                    # pupils' own relation may not have: two derived keys of
-                    # one class sharing no pupil may run at once. So one
-                    # no-overlap per pupil key among them (_by_pupils), which
-                    # is one, the one it always was, for every class without a
-                    # pupilGroupId — and the bare lunch row for a class with no
-                    # lessons, as before. Bare no-overlaps of the kind always
-                    # posted here, so no literal is owed: a derived key only
-                    # takes rows away from the one this was.
-                    #
-                    # AND ONE PER WEEK THE PUPILS HAVE (week_parts): the meal
-                    # is every week's, so it keeps clear of slöjd udda veckor
-                    # and of hemkunskap jämna veckor, which keep clear only of
-                    # each other's weeks.
-                    for part in _by_pupils(lessons) or [lessons]:
-                        for _, week in week_parts(part, _parity):
-                            model.AddNoOverlap(
-                                [pupil_padded_of(model, decision) for decision in week]
-                                + lunch_intervals,
-                            )
-                    # The break also has to be free of the lessons this group's
-                    # own children sit in elsewhere. 7A cannot be eating while
-                    # Ma71 is taught: those are the same thirty pupils, and the
-                    # model would otherwise record a lunch that nobody had.
-                    #
-                    # One NoOverlap per sharing group, deliberately NOT one
-                    # over the union of them all. Ma71 and Sp71 are both cut
-                    # out of 7A but share no student with each other, and a
-                    # single set containing both would forbid them from running
-                    # at the same time — which is precisely what a school cuts
-                    # parallel groups in order to do.
-                    #
-                    # Nothing lesson-against-lesson is added here: the partner's
-                    # own lessons are already pairwise disjoint through
-                    # _add_group_no_overlap, and so is every lesson pair across
-                    # a sharing pair. The one new fact is lunch-against-lesson,
-                    # so do not "simplify" this by folding it into the pair
-                    # NoOverlap over there — that one carries no lunch. Split
-                    # by pupil key for the reason just above.
-                    for other_id in sharing:
-                        for part in _by_pupils(by_group[other_id]):
-                            for _, week in week_parts(part, _parity):
-                                model.AddNoOverlap(
-                                    [
-                                        pupil_padded_of(model, decision)
-                                        for decision in week
-                                    ]
-                                    + lunch_intervals,
-                                )
+                        sitting_weeks.append(part)
+                for part_index, (part, _, _) in enumerate(views):
+                    if intervals_by_part[part_index]:
+                        self._post_lunch_rows(
+                            model,
+                            lessons,
+                            [by_group[other_id] for other_id in sharing],
+                            intervals_by_part[part_index],
+                            part,
+                        )
 
             if sittings:
                 # One cumulative for the whole week, not one per day. Every
@@ -13876,9 +13989,111 @@ class SchedulerSolver:
                 # so two sittings on different days provably cannot overlap and
                 # five per-day cumulatives would only cost five times the
                 # constraints to say the same thing.
-                model.AddCumulative(sittings, headcounts, seats)
+                if all(held is None for held in sitting_weeks):
+                    model.AddCumulative(sittings, headcounts, seats)
+                else:
+                    # A sitting stands for the weeks of its part: the hall is
+                    # counted in each real week, over the meals of that week
+                    # (week_parts: a row that only gets easier when a member
+                    # goes, so a week whose sittings are all in another's is
+                    # left out and past eight the parts are joined, which
+                    # holds more sittings at once and so no more than the
+                    # seats allow).
+                    for _, held in week_parts(range(len(sittings)), lambda index: sitting_weeks[index]):
+                        model.AddCumulative(
+                            [sittings[index] for index in held],
+                            [headcounts[index] for index in held],
+                            seats,
+                        )
 
         return lunch_starts
+
+    def _post_lunch_rows(
+        self,
+        model: cp_model.CpModel,
+        lessons: list[LessonDecision],
+        sharing: list[list[LessonDecision]],
+        lunch_intervals: list[cp_model.IntervalVar],
+        meal_part: Weeks | None,
+    ) -> None:
+        """The rows that keep a class's meal clear of its lessons, in the weeks of one part of its year.
+
+        A class with ONE part (`meal_part` None) is every week, and each row is the
+        one it always was. A class with parts has one meal in each, and the
+        meal of a part is in the rows of the weeks of that part ONLY: two
+        parts' meals in one row would be held apart from each other, which two
+        meals of different periods have no reason to be (a class that eats at
+        the same hour in the autumn and the spring is the school's wish, and
+        the soft term for it, not a thing the rows may forbid). So a lesson is
+        cut to the weeks it runs in AND the part's (`within`), and a lesson
+        that runs in none of the part's is not in its rows.
+        """
+        def cut(members: list[LessonDecision]) -> list[tuple[Weeks | None, list[LessonDecision]]]:
+            if meal_part is None:
+                return week_parts(members, _parity)
+            inside = [decision for decision in members if meet(_parity(decision), meal_part)]
+            return week_parts(inside, lambda decision: within(_parity(decision), meal_part))
+
+        # THE PUPILS' OWN INTERVAL, like every other family whose
+        # members are the children: a class still in the changing
+        # room has not got its break, and a meal that starts while
+        # they are showering is a meal the model records and nobody
+        # eats. Twenty minutes of shower is worth more of a lunch
+        # break than a corridor ever was.
+        #
+        # THE CLASS SPACE FOR WHO EATS, THE PUPIL SPACE FOR NOTHING
+        # ELSE. The meal is the class's, so it avoids every lesson
+        # filed under the class, its svenska too whoever sits it.
+        # But one no-overlap over all of them would also hold them
+        # apart from EACH OTHER, a lesson-against-lesson row the
+        # pupils' own relation may not have: two derived keys of
+        # one class sharing no pupil may run at once. So one
+        # no-overlap per pupil key among them (_by_pupils), which
+        # is one, the one it always was, for every class without a
+        # pupilGroupId — and the bare lunch row for a class with no
+        # lessons, as before. Bare no-overlaps of the kind always
+        # posted here, so no literal is owed: a derived key only
+        # takes rows away from the one this was.
+        #
+        # AND ONE PER WEEK THE PUPILS HAVE (week_parts): the meal
+        # is every week's, so it keeps clear of slöjd udda veckor
+        # and of hemkunskap jämna veckor, which keep clear only of
+        # each other's weeks.
+        for part in _by_pupils(lessons) or [lessons]:
+            for _, week in cut(part):
+                model.AddNoOverlap(
+                    [pupil_padded_of(model, decision) for decision in week]
+                    + lunch_intervals,
+                )
+        # The break also has to be free of the lessons this group's
+        # own children sit in elsewhere. 7A cannot be eating while
+        # Ma71 is taught: those are the same thirty pupils, and the
+        # model would otherwise record a lunch that nobody had.
+        #
+        # One NoOverlap per sharing group, deliberately NOT one
+        # over the union of them all. Ma71 and Sp71 are both cut
+        # out of 7A but share no student with each other, and a
+        # single set containing both would forbid them from running
+        # at the same time — which is precisely what a school cuts
+        # parallel groups in order to do.
+        #
+        # Nothing lesson-against-lesson is added here: the partner's
+        # own lessons are already pairwise disjoint through
+        # _add_group_no_overlap, and so is every lesson pair across
+        # a sharing pair. The one new fact is lunch-against-lesson,
+        # so do not "simplify" this by folding it into the pair
+        # NoOverlap over there — that one carries no lunch. Split
+        # by pupil key for the reason just above.
+        for other in sharing:
+            for part in _by_pupils(other):
+                for _, week in cut(part):
+                    model.AddNoOverlap(
+                        [
+                            pupil_padded_of(model, decision)
+                            for decision in week
+                        ]
+                        + lunch_intervals,
+                    )
 
     def _teacher_day_bounds(
         self,
@@ -15823,6 +16038,25 @@ class SchedulerSolver:
                 model.AddAbsEquality(magnitude, drift)
                 terms.append(weights.lunch_drift * magnitude)
 
+        # THE PARTS OF ONE CLASS'S DAY (lunchPerPeriod): eat alike in all of
+        # them where the locks allow, so that a meal is split only where a
+        # lock forces it. Measured against the class's first part, the same
+        # day, and at the same lowest weight as the drift between days: left
+        # unpriced the solver would move a meal between the terms for nothing.
+        for (group_id, day_index), held in getattr(lunch_starts, "parts", {}).items():
+            first = held[0][1]
+            for part, variable in held[1:]:
+                gap = model.NewIntVar(
+                    -slots_per_day, slots_per_day,
+                    week_tag(f"lunchpartgap_{group_id}_{day_index}", part),
+                )
+                model.Add(gap == variable - first)
+                magnitude = model.NewIntVar(
+                    0, slots_per_day, week_tag(f"lunchpartgapabs_{group_id}_{day_index}", part),
+                )
+                model.AddAbsEquality(magnitude, gap)
+                terms.append(weights.lunch_drift * magnitude)
+
         return terms
 
     def _lunches_of(
@@ -15867,20 +16101,47 @@ class SchedulerSolver:
         """
         duration = self._grid.minutes_to_slots(lunch_minutes)
         lunches: list[ScheduledLunch] = []
-        for (group_id, _day_index), variable in lunch_starts.items():
-            day_of_week, start_slot = self._grid.decode_absolute(solver.Value(variable))
-            start_time, end_time = self._grid.format_hhmmss(start_slot, duration)
-            lunches.append(
-                ScheduledLunch(
-                    student_group_id=group_id,
-                    day_of_week=day_of_week,  # type: ignore[arg-type]
-                    start_time=start_time,
-                    end_time=end_time,
-                ),
-            )
+        parts = getattr(lunch_starts, "parts", {})
+        for (group_id, day_index), variable in lunch_starts.items():
+            # A class whose locks tell the parts of the year apart eats at a
+            # time in each. Parts that came to eat at the SAME time are one
+            # meal for the periods of them all, and a day on which every part
+            # eats at the same time is the answer it always was: one meal, no
+            # mask. A mask says only that the class eats at more than one time
+            # that day, and then on every one of its meals that day, disjoint
+            # and together every period.
+            held_parts = parts.get((group_id, day_index))
+            if not held_parts:
+                held_parts = [(None, variable)]
+            by_start: dict[int, int] = {}
+            for part, held in held_parts:
+                start = solver.Value(held)
+                by_start[start] = by_start.get(start, 0) | (0 if part is None else part.bits)
+            count = held_parts[0][0].periods if held_parts[0][0] is not None else 0
+            for start, bits in by_start.items():
+                day_of_week, start_slot = self._grid.decode_absolute(start)
+                start_time, end_time = self._grid.format_hhmmss(start_slot, duration)
+                lunches.append(
+                    ScheduledLunch(
+                        student_group_id=group_id,
+                        day_of_week=day_of_week,  # type: ignore[arg-type]
+                        start_time=start_time,
+                        end_time=end_time,
+                        periods=(
+                            tuple(bool((bits >> (2 * period)) & 0b11) for period in range(count))
+                            if len(by_start) > 1
+                            else None
+                        ),
+                    ),
+                )
         # Stable order: the dict is insertion-ordered by (group, day) already,
         # but a response a school reads should not depend on that being true.
-        lunches.sort(key=lambda lunch: (str(lunch.student_group_id), lunch.day_of_week))
+        # A class's meals follow each other in the order of the year.
+        lunches.sort(key=lambda lunch: (
+            str(lunch.student_group_id),
+            lunch.day_of_week,
+            lunch.periods.index(True) if lunch.periods else -1,
+        ))
         return lunches
 
     def _extract_lessons(
@@ -16942,11 +17203,12 @@ def _weeks_and_requests(
     fixed_lessons = request.fixed_lessons
     runs = [weeks_of(requirement) for requirement in requirements]
     locked = [weeks_of(fixed) for fixed in fixed_lessons]
-    if not alternates(runs) and not alternates(locked):
+    placed_meals = [weeks_of(placement) for placement in request.lunch_placements]
+    if not alternates(runs) and not alternates(locked) and not alternates(placed_meals):
         return [(None, request)]
     every_week = {"recurrence": None, "periods": None}
     weeks: list[tuple[Weeks | None, OptimizeScheduleRequest]] = []
-    for week in each_week([*runs, *locked]):
+    for week in each_week([*runs, *locked, *placed_meals]):
         placed = [
             requirement.model_copy(update=every_week)
             for requirement, held in zip(requirements, runs)
@@ -16962,9 +17224,79 @@ def _weeks_and_requests(
                 if meet(held, week)
             ],
             "teacher_day_limits": _limits_in(request.teacher_day_limits, week),
+            # The meals placed for this week, as every week's: a week's request
+            # reads a year without periods, and a meal per period is a reading
+            # of a year with them.
+            "lunch_placements": [
+                placement.model_copy(update={"periods": None})
+                for placement, held in zip(request.lunch_placements, placed_meals)
+                if meet(held, week)
+            ],
             "period_weeks": None,
+            "lunch_per_period": False,
         })))
     return weeks
+
+
+class _MealStarts(dict):  # type: ignore[type-arg]
+    """The lunch start variable per (class, day) — and its parts, where there are several.
+
+    A DICT FIRST: every reader of the model's meals (the objective of a pupil's
+    holes, the rasts, the answer) asks `lunch_starts[(class, day)]` and gets a
+    variable, as it always did. A class whose locked lessons tell the parts of
+    the year apart (Klassens måltid per del av läsåret, `lunchPerPeriod`) has
+    one variable per part, and the dict holds the FIRST of them; `parts` holds
+    all, with the weeks each stands for, for the readers that know. A class
+    with one part has an empty `parts` entry and is exactly what it was.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: dict[tuple[UUID, int], list[tuple[Weeks | None, cp_model.IntVar]]] = {}
+
+    def in_weeks(self, key: tuple[UUID, int], week: Weeks | str | None) -> list[cp_model.IntVar]:
+        """The variables of the meal in the weeks `week` (every week for None): one for a class with one part."""
+        held = self.parts.get(key)
+        if held is None:
+            variable = self.get(key)
+            return [] if variable is None else [variable]
+        return [variable for part, variable in held if part is None or meet(part, week)]
+
+
+def _merged(intervals: list[tuple[int, int]]) -> tuple[tuple[int, int], ...]:
+    """These inclusive intervals as the fewest that say the same, in order: what two sets of locks leave of a window compared by."""
+    merged: list[tuple[int, int]] = []
+    for low, high in sorted(intervals):
+        if merged and low <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], high))
+        else:
+            merged.append((low, high))
+    return tuple(merged)
+
+
+def _period_view(request: OptimizeScheduleRequest, period: int) -> OptimizeScheduleRequest:
+    """The request as ONE PERIOD has it, for what asks about a class's meal: its locks, its placed meals.
+
+    The locks that run in the period and the meals placed for it, each an
+    every-week one, and nothing else changed: the meal is one for the odd weeks
+    and the even ones of a period, so a lock of either parity is the period's.
+    No `lunchPerPeriod` and no periods are left to read, so a reader of the
+    view reads exactly what it reads of a year without periods.
+    """
+    return request.model_copy(update={
+        "fixed_lessons": [
+            fixed.model_copy(update={"periods": None})
+            for fixed in request.fixed_lessons
+            if fixed.periods is None or fixed.periods[period]
+        ],
+        "lunch_placements": [
+            placement.model_copy(update={"periods": None})
+            for placement in request.lunch_placements
+            if placement.periods is None or placement.periods[period]
+        ],
+        "period_weeks": None,
+        "lunch_per_period": False,
+    })
 
 
 def _limits_in(
