@@ -442,14 +442,24 @@ export default function RequirementsPage() {
     setLinkedYearId(query.get("year"));
     setSubjectId(query.get("subject"));
   }, []);
-  /** The choice in the address, beside ?year=, so a reload or a shared link keeps it. */
-  const pickSubject = (value: string) => {
+  /** A choice in the address, beside the others, so a reload or a shared link keeps it. */
+  const writeQuery = (key: "year" | "subject", value: string | null) => {
     const query = new URLSearchParams(window.location.search);
-    if (value === ALL_SUBJECTS) query.delete("subject");
-    else query.set("subject", value);
-    setSubjectId(value === ALL_SUBJECTS ? null : value);
+    if (value === null) query.delete(key);
+    else query.set(key, value);
     const search = String(query);
     window.history.replaceState(null, "", search ? `?${search}` : window.location.pathname);
+  };
+  const pickSubject = (value: string) => {
+    const next = value === ALL_SUBJECTS ? null : value;
+    setSubjectId(next);
+    // The checkbox goes with the subject; left ticked it would come back ticked with the next one, unseen.
+    if (next === null) setWithoutPosts(false);
+    writeQuery("subject", next);
+  };
+  const pickYear = (value: string) => {
+    setSelectedYearId(value);
+    writeQuery("year", value);
   };
   const activeYearId =
     selectedYearId ??
@@ -1355,14 +1365,14 @@ export default function RequirementsPage() {
             <YearSelect
               value={activeYearId}
               label={t("yearLabel")}
-              onValueChange={(value) => setSelectedYearId(value)}
+              onValueChange={pickYear}
             />
             {/*
               Ämne, named like the year picker. The list by name, as every
               dropdown is; the columns stay by code.
             */}
             <Select value={view.subject?.id ?? ALL_SUBJECTS} onValueChange={pickSubject}>
-              <SelectTrigger className="w-44" aria-label={t("subjectFilter.label")}>
+              <SelectTrigger className="w-60 max-w-full" aria-label={t("subjectFilter.label")}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

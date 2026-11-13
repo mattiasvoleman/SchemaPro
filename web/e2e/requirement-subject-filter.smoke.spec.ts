@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { freezeClock, settle, signIn, watchStubMisses } from "./signed-in";
+import { STUB_ORIGIN } from "./stub/sessions";
 import { SUBJECTS } from "./stub/fixtures/world";
 
 /**
@@ -140,6 +141,45 @@ for (const size of VIEWPORTS) {
     const misses = await open(page, baseURL!, size, `${REQUIREMENTS}?subject=00000000-0000-4000-8000-000000000000`);
     await expect(page.getByRole("combobox", { name: "Ämne" })).toHaveText("Alla ämnen");
     expect((await headers(page)).length).toBe(1 + Object.keys(SUBJECTS).length + 2);
+    expect(misses, MISSES).toEqual([]);
+  });
+}
+
+// Review of #297, LÅG-5: the picker was 176 px, and "Samhällsorienterande ämnen" (26 characters, a name the national
+// plan itself uses) read "Samhällsorienterande …" in it. The whole name stands in the sentence under the matrix, but
+// the picker is where one reads which subject is chosen.
+for (const size of [{ name: "320×800", width: 320, height: 800 }, ...VIEWPORTS]) {
+  test(`Ämne at ${size.name}: the picker shows a long subject's whole name`, async ({ page, baseURL }) => {
+    const LONG = "Samhällsorienterande ämnen";
+    await page.route(`${STUB_ORIGIN}/**`, async (route) => {
+      const response = await route.fetch();
+      if (!(response.headers()["content-type"] ?? "").includes("json")) return route.fulfill({ response });
+      await route.fulfill({ response, body: (await response.text()).replaceAll("Idrott och hälsa", LONG) });
+    });
+    const misses = await open(page, baseURL!, size);
+    await chooseSubject(page, LONG);
+
+    const picker = page.getByRole("combobox", { name: "Ämne" });
+    await expect(picker).toContainText(LONG);
+    const facts = await picker.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const text = element.firstElementChild!;
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const rects = [...range.getClientRects()];
+      return {
+        pickerRight: box.right,
+        textRight: Math.max(...rects.map((rect) => rect.right)),
+        // The span clips to one line; text drawn past its own box is the cut name.
+        spanRight: text.getBoundingClientRect().right,
+        rows: new Set(rects.map((rect) => Math.round(rect.top))).size,
+        pageScrollsSideways: document.documentElement.scrollWidth > window.innerWidth,
+      };
+    });
+    expect(facts.rows, "the name is on one row").toBe(1);
+    expect(facts.textRight, "the name ends inside the picker's own text box, not cut at its edge").toBeLessThanOrEqual(facts.spanRight + 0.5);
+    expect(facts.textRight, "the name ends inside the picker").toBeLessThanOrEqual(facts.pickerRight + 0.5);
+    expect(facts.pageScrollsSideways, "the page does not scroll sideways").toBe(false);
     expect(misses, MISSES).toEqual([]);
   });
 }

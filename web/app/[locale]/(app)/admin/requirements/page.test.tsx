@@ -3874,7 +3874,60 @@ describe("Ämne on Timplansposter", () => {
       // Next year's 8B reads Bild: 1 × 60 all year, 43 weeks = 43 h.
       expect(subjectHeaders()).toEqual(["BI"]);
       expect(hoursFor("8B")).toBe("43 h");
-      expect(window.location.search).toBe("?subject=s-bi");
+      // The läsår is in the address too (review of #297, LÅG-3): a reload or a shared link opens on it.
+      expect(window.location.search).toBe("?subject=s-bi&year=y2");
+    });
+
+    it("writes the läsår to the address when the picker changes, beside the subject and whatever else is there", async () => {
+      twoYears();
+      window.history.replaceState(null, "", "/?subject=s-bi&other=1");
+      const user = userEvent.setup();
+      render(<RequirementsPage />);
+
+      await user.click(screen.getByRole("combobox", { name: "yearLabel" }));
+      await user.click(screen.getByRole("option", { name: "2027/2028" }));
+      expect(window.location.search).toBe("?subject=s-bi&other=1&year=y2");
+
+      await user.click(screen.getByRole("combobox", { name: "yearLabel" }));
+      await user.click(screen.getByRole("option", { name: "2026/2027" }));
+      expect(window.location.search).toBe("?subject=s-bi&other=1&year=y1");
+    });
+
+    it("opens on the läsår the address names after a reload", async () => {
+      twoYears();
+      const user = userEvent.setup();
+      const first = render(<RequirementsPage />);
+      await user.click(screen.getByRole("combobox", { name: "yearLabel" }));
+      await user.click(screen.getByRole("option", { name: "2027/2028" }));
+      first.unmount();
+
+      render(<RequirementsPage />);
+      await waitFor(() => expect(screen.getByRole("combobox", { name: "yearLabel" })).toHaveTextContent("2027/2028"));
+    });
+
+    // Review of #297, LÅG-3: Visa grupper utan post is gone with Alla ämnen and came back ticked with the next subject.
+    it("unticks Visa grupper utan post when Alla ämnen takes the checkbox away, so the next subject opens as its posts", async () => {
+      const user = userEvent.setup();
+      render(<RequirementsPage />);
+      await pick(user, "Slöjd");
+      await user.click(withoutPosts()!);
+      expect(withoutPosts()).toBeChecked();
+
+      await pick(user, "subjectFilter.all");
+      await pick(user, "Bild");
+
+      expect(withoutPosts()).not.toBeChecked();
+    });
+
+    it("keeps Visa grupper utan post ticked from one subject to the next, which is a choice the checkbox shows", async () => {
+      const user = userEvent.setup();
+      render(<RequirementsPage />);
+      await pick(user, "Slöjd");
+      await user.click(withoutPosts()!);
+
+      await pick(user, "Bild");
+
+      expect(withoutPosts()).toBeChecked();
     });
   });
 });
