@@ -22,6 +22,15 @@ import {
   type PlacementPost,
 } from './placement-fit';
 import { judgePlacementTeachersNow } from './placement-teachers';
+import {
+  boardPostOf,
+  boardPostShape,
+  coveringLocksOf,
+  keptViewOf,
+  mealViewOf,
+  type BoardPlacementView,
+  type PlacementBoardResponse,
+} from './placement-board';
 import { lockPostForShares } from '../resources/requirement-shares';
 import {
   clockText,
@@ -107,6 +116,42 @@ const POST_SELECT = {
   academicYear: { select: { isActive: true, predecessorId: true, gradeNumbering: true } },
 } as const;
 
+/** What the week of förläggningar reads of every post of the year. */
+const BOARD_POST_SELECT = {
+  id: true,
+  studentGroupId: true,
+  subjectId: true,
+  teacherId: true,
+  coTeacherId: true,
+  lessonsPerWeek: true,
+  minutesPerLesson: true,
+  lessonLengths: true,
+  recurrence: true,
+  blockId: true,
+  startDate: true,
+  endDate: true,
+  shares: { select: { teacherId: true, lessons: true, minutes: true } },
+} as const;
+
+/** What the week reads of a lesson Generera keeps: where it stands and whose it is, no pupil. */
+const BOARD_KEPT_SELECT = {
+  id: true,
+  dayOfWeek: true,
+  startTime: true,
+  endTime: true,
+  studentGroupId: true,
+  subjectId: true,
+  teacherId: true,
+  coTeacherId: true,
+  roomId: true,
+  recurrence: true,
+  startDate: true,
+  endDate: true,
+  isLocked: true,
+  isGenerated: true,
+  extraGroups: { select: { studentGroupId: true } },
+} as const;
+
 type PostRow = Prisma.TeachingRequirementGetPayload<{ select: typeof POST_SELECT }>;
 
 type StoredView = {
@@ -190,6 +235,108 @@ export class RequirementPlacementsService {
       });
       const verdicts = await this.judge(tx, user, post, rows.map(slotOf));
       return { placements: rows.map(viewOf), verdicts };
+    });
+  }
+
+  /**
+   * THE WEEK OF FÖRLÄGGNINGAR: every row of the year with its verdict, every
+   * post's lessons counted the way Generera counts them, and the lessons and
+   * meals the rows are held against. One read of the year for the page that
+   * shows them in a week (admin/placements), before and after a run.
+   *
+   * The rows are judged by judgePlacements as Generera's pre-flight judges them
+   * (every row of the year at once, none held beside), not by a second rule, and
+   * a post's `left` is demandLeftOf's, which Generera's fetch reads. A read:
+   * every administrator's. It names no person (the judge names a class and a
+   * subject; a teacher is an id the page resolves, as it does for the list of
+   * the year's rows), and it asks nothing of the caller's own person, so a login
+   * with none (the huvudman's reader) is answered in the same shape.
+   */
+  async boardOfYear(academicYearId: string, user: AuthenticatedUser): Promise<PlacementBoardResponse> {
+    return this.prisma.withRls(user, async (tx) => {
+      const year = await tx.academicYear.findUnique({
+        where: { id: academicYearId },
+        select: { isActive: true, predecessorId: true, gradeNumbering: true },
+      });
+      if (!year) throw new NotFoundException('Läsåret finns inte.');
+      const [posts, rows, keptRows, mealRows] = await Promise.all([
+        tx.teachingRequirement.findMany({ where: { academicYearId }, select: BOARD_POST_SELECT, orderBy: { id: 'asc' } }),
+        tx.teachingRequirementPlacement.findMany({
+          where: { requirement: { academicYearId } },
+          select: { ...VIEW_SELECT, updatedAt: true },
+          orderBy: [{ requirementId: 'asc' }, ...VIEW_ORDER],
+        }),
+        // What Generera keeps (and the rows are held against): the same read, the same filter.
+        tx.masterLesson.findMany({
+          where: { academicYearId, isParked: false, OR: PRESERVED_FROM_REGENERATION },
+          select: BOARD_KEPT_SELECT,
+          orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
+        }),
+        // The meals the school placed by hand: the only ones a row is held to (placement-judge.ts).
+        tx.lunchSitting.findMany({
+          where: { academicYearId, isGenerated: false },
+          select: { id: true, studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true, startDate: true, endDate: true },
+          orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
+        }),
+      ]);
+
+      const kept = keptRows.map((lesson) => ({
+        ...lesson,
+        minutes: minutesOfClock(lesson.endTime) - minutesOfClock(lesson.startTime),
+      }));
+      const postById = new Map(posts.map((post) => [post.id, post]));
+      const slotsOf = new Map<string, PlacementSlot[]>();
+      for (const row of rows) {
+        const list = slotsOf.get(row.requirementId);
+        if (list) list.push(slotOf(row));
+        else slotsOf.set(row.requirementId, [slotOf(row)]);
+      }
+      const locksByPost = new Map(posts.map((post) => [post.id, coveringLocksOf(boardPostShape(post), kept)]));
+
+      // Every row of the year at once, as Generera's pre-flight judges them, against the lessons it keeps and each other.
+      const verdicts: PlacementVerdict[] =
+        rows.length === 0
+          ? []
+          : await judgePlacements(tx, this.masters, {
+              academicYearId,
+              schoolId: requireSchoolId(user),
+              gradeNumbering: year.gradeNumbering as GradeNumbering,
+              basis: await rostersOfYear(tx, user, academicYearId, { isActive: year.isActive, predecessorId: year.predecessorId }),
+              rows: rows.map((row) => ({ ...judgedOf(postById.get(row.requirementId)!, slotOf(row)), id: row.id })),
+              beside: [],
+              demand: new Map(
+                [...slotsOf].map(([postId, slots]) => {
+                  const post = postById.get(postId)!;
+                  const locks = locksByPost.get(postId) ?? [];
+                  return [
+                    postId,
+                    {
+                      post,
+                      lockedMinutes: locks.map((lock) => lock.minutes),
+                      placed: placedLessonsOf(post, slots),
+                      // Delade lektioner: a lock answers its own teacher's lesson first, and a förläggning takes one of its own.
+                      ...(post.shares.length > 0 ? { taught: { locked: locks, placed: placedTaughtOf(post, slots) } } : {}),
+                    },
+                  ] as const;
+                }),
+              ),
+            });
+
+      const placements: BoardPlacementView[] = rows.map((row, index) => {
+        const verdict = verdicts[index] ?? { index, ok: true };
+        return {
+          ...viewOf(row),
+          changedAt: row.updatedAt.toISOString(),
+          verdict: { ok: verdict.ok, ...(verdict.reason ? { reason: verdict.reason } : {}), ...(verdict.params ? { params: verdict.params } : {}) },
+        };
+      });
+      return {
+        academicYearId,
+        placements,
+        posts: posts.map((post) => boardPostOf(boardPostShape(post), locksByPost.get(post.id) ?? [], slotsOf.get(post.id) ?? [])),
+        kept: kept.map(keptViewOf),
+        meals: mealRows.map(mealViewOf),
+      };
     });
   }
 
