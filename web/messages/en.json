@@ -1039,6 +1039,7 @@
       "badge": "Placed",
       "row": "{day} {start}–{end}, {room}{weeks, select, ODD_WEEKS {, odd weeks} EVEN_WEEKS {, even weeks} other {}}",
       "badgeNote": "Placed: {rows}",
+      "rowOf": "{row} ({teacher})",
       "title": "Place the lessons of {post}",
       "description": "Give a day, a time and a room to a lesson you know in advance cannot go anywhere else. Generate lays the rest of the week around it.",
       "nextGenerate": "The change applies at the next Generate, which moves the placed lesson in the base timetable to where the row says. The base timetable is not changed until then.",

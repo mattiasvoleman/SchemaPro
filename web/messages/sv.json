@@ -1039,6 +1039,7 @@
       "badge": "Förlagd",
       "row": "{day} {start}–{end}, {room}{weeks, select, ODD_WEEKS {, udda veckor} EVEN_WEEKS {, jämna veckor} other {}}",
       "badgeNote": "Förlagd: {rows}",
+      "rowOf": "{row} ({teacher})",
       "title": "Förlägg {post}",
       "description": "Ange dag, tid och sal för en lektion som du på förhand vet inte går att lägga någon annanstans. Generera lägger resten av veckan runt den.",
       "nextGenerate": "Ändringen gäller vid nästa Generera, som flyttar den förlagda lektionen i grundschemat dit raden säger. Grundschemat ändras inte förrän dess.",

@@ -89,7 +89,7 @@ function answer(placements: ReturnType<typeof stored>[], verdicts?: unknown[]) {
 }
 
 /** The page's list of people, as it names a teacher. */
-const NAMES: Record<string, string> = { t1: "Anna Ek", t2: "Bo Alm", t3: "Cilla Öst" };
+const NAMES: Record<string, string> = { t1: "Anna Ek", t2: "Bo Alm", t3: "Cilla Öst", t4: "Alma Berg" };
 const teacherName = (id: string) => NAMES[id] ?? null;
 
 function renderDialog(requirement: TeachingRequirement = post(), shares?: readonly LessonShare[]) {
@@ -629,6 +629,70 @@ describe("a post that shares its lessons between teachers", () => {
     expect(first.labels?.[0]?.textContent).toBe("teacher");
   });
 
+  // Review of #298, LÅG-3: the parts come by id, the gateway's order; the teacher reads a list of names.
+  it("lists the others by name after the huvudlärare, though their ids come in another order", async () => {
+    // t2 (Bo) has the smaller id and t4 (Alma) the earlier name.
+    const shares: LessonShare[] = [
+      { teacherId: "t2", lessons: 1, minutes: 60 },
+      { teacherId: "t4", lessons: 1, minutes: 60 },
+    ];
+    answer([stored({ teacherId: "t1" })]);
+    await opened(post({ lessonsPerWeek: 4 }), shares);
+
+    expect(optionsOf(select(rowNamed(1), "teacher"))).toEqual(["teacherPlaceholder", "Anna Ek", "Alma Berg", "Bo Alm"]);
+    expect(screen.getByText(/^perTeacher/)).toHaveTextContent(
+      "perTeacher(teacherCount(Anna Ek|1|2), teacherCount(Alma Berg|0|1), teacherCount(Bo Alm|0|1))",
+    );
+  });
+
+  it("keeps each teacher's count in one piece, so a narrow screen breaks between teachers and not inside a name", async () => {
+    answer([stored({ teacherId: "t1" })]);
+    await opened(three, boOne);
+
+    // The words of a count are joined by no-break spaces; the counts are joined by a comma and an ordinary space.
+    const line = screen.getByText(/^perTeacher/).textContent!;
+    expect(line).toContain("teacherCount(Anna\u00a0Ek|1|2), teacherCount(Bo\u00a0Alm|0|1)");
+  });
+
+  // Review of #298, LÅG-2: a row given to a teacher with no lesson left read "2 av 1" and was refused only at Spara.
+  describe("a teacher with every lesson placed", () => {
+    it("is not offered for another row, and stays on the row that has them", async () => {
+      // Bo's one lesson is row 1's.
+      answer([stored({ teacherId: "t2" }), stored({ id: "p2", dayOfWeek: 4, teacherId: "t1" })]);
+      await opened(three, boOne);
+
+      const options = (row: HTMLElement) => [...select(row, "teacher").options].map((option) => [option.textContent, option.disabled]);
+      expect(options(rowNamed(1))).toEqual([["teacherPlaceholder", false], ["Anna Ek", false], ["Bo Alm", false]]);
+      expect(options(rowNamed(2))).toEqual([["teacherPlaceholder", false], ["Anna Ek", false], ["Bo Alm", true]]);
+    });
+
+    it("is offered again when the row that had their lesson is given to someone else", async () => {
+      answer([stored({ teacherId: "t2" }), stored({ id: "p2", dayOfWeek: 4, teacherId: "t1" })]);
+      const { user } = await opened(three, boOne);
+
+      await user.selectOptions(select(rowNamed(1), "teacher"), "t1");
+
+      expect(([...select(rowNamed(2), "teacher").options].find((option) => option.value === "t2"))!.disabled).toBe(false);
+    });
+
+    it("reads in red when a stored row has more of a teacher's lessons than the teacher has", async () => {
+      // Both rows are Bo's, who has one lesson: the gateway refuses it at save, and the line says it already.
+      answer([stored({ teacherId: "t2" }), stored({ id: "p2", dayOfWeek: 4, teacherId: "t2" })]);
+      await opened(three, boOne);
+
+      const line = screen.getByText(/^perTeacher/);
+      expect(line).toHaveTextContent("teacherCount(Bo Alm|2|1)");
+      expect(line).toHaveClass("text-destructive");
+    });
+
+    it("leaves the count in the ordinary colour while no teacher is over", async () => {
+      answer([stored({ teacherId: "t1" }), stored({ id: "p2", dayOfWeek: 4, teacherId: "t2" })]);
+      await opened(three, boOne);
+
+      expect(screen.getByText(/^perTeacher/)).not.toHaveClass("text-destructive");
+    });
+  });
+
   it("counts each teacher's placed lessons against their part, in a line", async () => {
     answer([stored({ teacherId: "t1" }), stored({ id: "p2", dayOfWeek: 4, teacherId: "t2" })]);
     await opened(three, boOne);
@@ -743,10 +807,11 @@ describe("a post that shares its lessons between teachers", () => {
       ]);
       const { user } = await opened(mixed, boFortyShare);
 
+      // Bo has one lesson, so only one row at a time can be his (see "a teacher with every lesson placed").
       await user.selectOptions(select(rowNamed(1), "teacher"), "t2");
-      await user.selectOptions(select(rowNamed(2), "teacher"), "t2");
-
       expect(select(rowNamed(1), "length").value).toBe("40");
+      await user.selectOptions(select(rowNamed(1), "teacher"), "t1");
+      await user.selectOptions(select(rowNamed(2), "teacher"), "t2");
       expect(select(rowNamed(2), "length").value).toBe("40");
     });
 

@@ -1858,7 +1858,7 @@ export default function RequirementsPage() {
                               (targetSentence ? `. ${targetSentence}` : "") +
                               // The mark's words, for the same reason as the badge's
                               // above: a label replaces what is inside the cell.
-                              (placed ? `. ${t("placements.badgeNote", { rows: placementsSummary(placed, t, tCommon) })}` : "")
+                              (placed ? `. ${t("placements.badgeNote", { rows: placementsSummary(placed, t, tCommon, personName) })}` : "")
                             }
                             onClick={() => openCell(group.id, subject.id)}
                             // An empty cell's "+" adds a post: planering's.
@@ -1912,7 +1912,7 @@ export default function RequirementsPage() {
                             ) : (
                               <Plus className="size-4" />
                             )}
-                            {placed ? <PlacedBadge rows={placed} /> : null}
+                            {placed ? <PlacedBadge rows={placed} teacherName={personName} /> : null}
                           </button>
                         </td>
                       );
@@ -2221,7 +2221,7 @@ export default function RequirementsPage() {
             {/* Förlagda poster: where the post's lessons are placed, and the way to place them. A reader sees the first and not the second. */}
             {cell?.existing && placementsOf.has(cell.existing.id) ? (
               <p className="text-sm">
-                <PlacedBadge rows={placementsOf.get(cell.existing.id)!} withRows />
+                <PlacedBadge rows={placementsOf.get(cell.existing.id)!} withRows teacherName={personName} />
               </p>
             ) : null}
             {cell?.existing && !reader ? (

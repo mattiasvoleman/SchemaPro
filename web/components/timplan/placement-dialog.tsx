@@ -210,7 +210,11 @@ function PlacementForm({
   const shared = shares.length > 0;
   const post = { ...requirement, shares };
   const lessonParts = shared ? teacherPartsOf(post) : [];
-  const teachers = lessonParts.flatMap((part) => (part.teacherId === null ? [] : [{ ...part, teacherId: part.teacherId }]));
+  const nameOf = (teacherId: string) => teacherName?.(teacherId) ?? t("teacherUnnamed");
+  // The huvudlärare first, then the others by name as a reader looks for them (the part list itself is by id, the
+  // order the gateway keeps; a list of names in the order of their ids reads as no order at all).
+  const named = lessonParts.flatMap((part) => (part.teacherId === null ? [] : [{ ...part, teacherId: part.teacherId }]));
+  const teachers = [...named.filter((part) => part.role === "LEAD"), ...sortByName(named.filter((part) => part.role !== "LEAD"), (part) => nameOf(part.teacherId))];
   const untaught = lessonParts.reduce((sum, part) => sum + (part.teacherId === null ? part.lessons : 0), 0);
   const lessonsOf = shared ? lessonTeachersOf(post) : [];
   const slots = shared
@@ -224,7 +228,6 @@ function PlacementForm({
           .filter((slot) => slot.count > 0),
       )
     : parts.map(({ minutes, count }) => ({ teacherId: "", minutes, count }));
-  const nameOf = (teacherId: string) => teacherName?.(teacherId) ?? t("teacherUnnamed");
 
   const read = useQuery({
     queryKey: placementsOfKey(requirement.id),
@@ -289,17 +292,22 @@ function PlacementForm({
       ) < slot.count,
   );
   const canAdd = !readOnly && (open !== undefined || lone !== null);
-  // Each teacher's placed lessons against their part: "Anna 1 av 2, Bo 1 av 1".
+  // Each teacher's placed lessons against their part: "Anna 1 av 2, Bo 1 av 1". A teacher with every lesson placed is
+  // not offered a row more, and a count above the part (a row changed over to them, a stored one) is read in red.
+  const placedBy = new Map(
+    teachers.map((part) => [
+      part.teacherId,
+      lessonsDrafted(
+        list.filter((row) => row.teacherId === part.teacherId),
+        postWeeks,
+      ),
+    ]),
+  );
+  const over = teachers.some((part) => placedBy.get(part.teacherId)! > part.lessons);
+  // Each count is one unit: a narrow screen breaks the line between teachers, not inside a name or before its figures.
   const counts = teachers
     .map((part) =>
-      t("teacherCount", {
-        name: nameOf(part.teacherId),
-        placed: lessonsDrafted(
-          list.filter((row) => row.teacherId === part.teacherId),
-          postWeeks,
-        ),
-        of: part.lessons,
-      }),
+      t("teacherCount", { name: nameOf(part.teacherId), placed: placedBy.get(part.teacherId)!, of: part.lessons }).replaceAll(" ", "\u00a0"),
     )
     .join(", ");
   const stale = list.filter((row) => row.verdict !== null && !row.verdict.ok).length;
@@ -477,7 +485,7 @@ function PlacementForm({
           {shared ? (
             // Said as the rows change, so a reader hears how many lessons each teacher has left.
             <div aria-live="polite" className="space-y-2">
-              {counts ? <p className="text-sm">{t("perTeacher", { counts })}</p> : null}
+              {counts ? <p className={over ? "text-sm text-destructive" : "text-sm"}>{t("perTeacher", { counts })}</p> : null}
               {untaught > 0 ? (
                 <Notice tone="warning" role={null}>
                   {t("noTeacher", { count: untaught })}
@@ -558,7 +566,12 @@ function PlacementForm({
                         >
                           <option value="">{t("teacherPlaceholder")}</option>
                           {teachers.map((part) => (
-                            <option key={part.teacherId} value={part.teacherId}>
+                            // A teacher whose lessons are all placed elsewhere is not offered for this row; the one it has stays.
+                            <option
+                              key={part.teacherId}
+                              value={part.teacherId}
+                              disabled={row.teacherId !== part.teacherId && placedBy.get(part.teacherId)! >= part.lessons}
+                            >
                               {nameOf(part.teacherId)}
                             </option>
                           ))}
