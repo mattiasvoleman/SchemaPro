@@ -70,6 +70,12 @@ export interface SwapSitting {
   dayOfWeek: number;
   startMinutes: number;
   endMinutes: number;
+  /**
+   * The weeks the meal holds, 'YYYY-MM-DD', null (or absent) for the läsår's
+   * own bound (20270209090000; src/common/lunch-window.ts).
+   */
+  startDate?: string | null;
+  endDate?: string | null;
 }
 
 export interface SwapData {
@@ -182,7 +188,7 @@ export async function readSwapData(
       }),
       tx.lunchSitting.findMany({
         where: { academicYearId },
-        select: { studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true },
+        select: { studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true, startDate: true, endDate: true },
       }),
     ]);
 

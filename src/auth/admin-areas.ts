@@ -355,6 +355,10 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   PersonProtectionEvents: readOnly,
   // Skyddad identitet i löneunderlaget (20270206091000): written by the mark's trigger alone.
   PayrollPseudonyms: readOnly,
+  // En avaktiverad person minns sina perioder (20270210090000): written by Users_deactivations_are_kept; an
+  // administrator who writes Personal changes the start of the open period, the person's last working day, and
+  // nothing else of it.
+  UserDeactivations: just('PERSONAL', 'update'),
   // Hela skolans data (20270114090000): ordered, read and withdrawn by those who decide, and by nobody else;
   // the pieces are read by them while the file is fresh and written by the job's functions alone.
   SchoolExports: { insert: ['DECIDES'], update: [], delete: ['DECIDES'], read: ['DECIDES'] },

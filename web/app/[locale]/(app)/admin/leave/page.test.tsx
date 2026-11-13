@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { toast } from "sonner";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import sv from "@/messages/sv.json";
 import LeaveRequestsPage from "./page";
@@ -357,6 +357,28 @@ describe("Ledighetsansökningar under the school's policy (Ledighetspolicy)", ()
     expect(within(row).getByText("1 av 3 vårdnadshavare har samtyckt")).toBeInTheDocument();
     expect(within(row).queryByRole("button")).not.toBeInTheDocument();
     expect(row).not.toHaveTextContent(/Rektor beslutar|Mentorn beslutar/);
+  });
+
+  // Review of #309 (LÅG-3): the bell leads an administrator here after a guardian's no, to the tab the ended request is under.
+  describe("opened from the bell after a guardian's no", () => {
+    afterEach(() => window.history.replaceState(null, "", "/"));
+
+    it("opens on the tab of ended requests and asks the inbox for them, though the school no longer asks for consent", async () => {
+      window.history.replaceState(null, "", "/?filter=GUARDIAN_DECLINED");
+      state.policy = { data: DELIVERED, isLoading: false, isError: false };
+      renderPage();
+
+      await waitFor(() => expect(state.statuses.at(-1)).toBe("GUARDIAN_DECLINED"));
+      expect(screen.getByRole("tab", { name: "Avslutade av vårdnadshavare", selected: true })).toBeInTheDocument();
+    });
+
+    it("opens on Väntar for any other address, as it always did", () => {
+      window.history.replaceState(null, "", "/?filter=APPROVED");
+      renderPage();
+
+      expect(state.statuses.at(-1)).toBe("PENDING");
+      expect(screen.getByRole("tab", { name: "Väntar", selected: true })).toBeInTheDocument();
+    });
   });
 
   it("says nothing was ended when none was, under that tab", async () => {

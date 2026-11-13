@@ -2169,7 +2169,9 @@ Walk the full product loop once, in order:
   are Rapporteringsgradens, but not of the teachers who work now.* `app.absence_stats_lessons`
   is `app.reporting_lessons` (20270112090100) with one line changed: D2 asks whether the
   teacher is active **now** (`Users."isActive"`), the history asks whether she had not left
-  when the lesson was over (`"deactivatedAt" IS NULL OR "endsAt" <= "deactivatedAt"`).
+  when the lesson was over (`"deactivatedAt" IS NULL OR "endsAt" <= "deactivatedAt"`;
+  since 20270210090000 (section 16.5) she is asked of `UserDeactivations`, every period she
+  was inactive, so a lesson that ended while she was away is not hers when she returns).
   Without it a month, once stored, lost every lesson of a teacher who has since left and
   was never counted again (the plan asks only for months without a row). The two are
   one definition in two texts, and a jest spec (`absence-stats-definition.spec.ts`) and
@@ -4566,13 +4568,17 @@ and no job, notice or setting is added.
   `payrollNumber`, `protectedIdentity` and `pseudonym`; the page names a marked
   person the same way and resolves a code to the name in a key outside the
   table, on the screen alone.
-  A person who has been deactivated (`Users.deactivatedAt`) is booked up to
-  that moment and no further: lessons and covers that were over by it
-  (`endsAt <= deactivatedAt`, D6's rule, through statement E's `endedBy`), the
-  stored uppdrag and the rastvakt to the day before the school's date of it,
-  and nothing for a period wholly after; `ANALYSIS_LEFT_IN_PERIOD` says how
-  many. A person made active again has no stamp and is booked as if they had
-  never left (the earlier leave is not kept).
+  A person is booked for the time they were active (`UserDeactivations`,
+  20270210090000, section 16.5): lessons and covers that were not over inside a
+  period they were inactive (`startsAt < endsAt < period end`; one over at the
+  very instant they left or came back counts, D6's rule made to cover a
+  return, through statement E's `away`), the stored uppdrag and the rastvakt
+  for the days outside it (from the school's date they left to the day before
+  the school's date they came back), and nothing for a payroll period wholly
+  inside one; `ANALYSIS_LEFT_IN_PERIOD` says how many were inactive in or before
+  the period. Before 20270210090000 this read `Users.deactivatedAt` alone: a
+  person made active again was booked as if they had never left, the gap
+  included.
 - Writes (a skoldel, a rate): those who decide, in the gateway (`@Decides`)
   and in the database's arms.
 
@@ -4627,9 +4633,108 @@ Rastra's import format); the person's own registerutdrag does, and their code.
   teachers and 2 000 pupils: see the PR for the figures and the method.
 - The payroll CSV is Windows-1252 (`text/csv; charset=windows-1252`): a
   character it cannot hold is written as the nearest letter and counted in a
-  notice. The Excel file keeps every character.
+  notice. A control character (a NUL or a BEL pasted into a name) is written as
+  a space, which is what the code page encoder `src/common/windows-1252.ts`
+  (D8's) does and the payroll's encoder asks it for, and counted in the same
+  notice: a NUL in the file is what makes Excel call it corrupt. The formula
+  guard reads a cell as the file will (a BEL before `=` is a space before `=`,
+  which the guard calls dangerous), so such a cell is guarded too. The Excel file
+  keeps every character but the control characters, which XML cannot carry: it
+  drops them without saying so, and the notice says as much.
 - Rolling back the API past this release leaves two unused tables. Nothing
   else reads them.
+
+### 16.5 A person's periods of being inactive (20270210090000)
+
+`Users."deactivatedAt"` (20261021100000) is the moment `isActive` last went
+false and is cleared by a return. That is the date gallring counts from and the
+wrong thing to read for a person's time: a person made active again was counted
+for the weeks between the two clicks (the review of #280, LÅG-1), and the stamp
+is the click, so the days between a last working day and the click were booked
+(LÅG-2). One migration, `20270210090000_en_avaktiverad_person_minns_sina_perioder`
+(run before the merge, in stamp order, section 2):
+
+- **`UserDeactivations`** (schoolId, userId, `startsAt`, `endsAt`, `recordedAt`):
+  one row for every period a person has been inactive. `startsAt` is the click
+  (the same instant as `Users.deactivatedAt`) or the person's last working day
+  when an administrator named it; `endsAt` is the moment the person was made
+  active again, null while inactive. A person is inactive in exactly one open
+  row and active in none. CHECKs: `endsAt` after `startsAt`; `startsAt` not later
+  than `recordedAt` (a last day is not in the future); the exclusion constraint
+  `UserDeactivations_one_period_at_a_time` (btree_gist) keeps one person's
+  periods from overlapping. The key to the person is composite (userId,
+  schoolId), `ON DELETE CASCADE ON UPDATE NO ACTION`.
+- **`Users_deactivations_are_kept`**, an AFTER trigger (`INSERT OR UPDATE OF
+  "isActive"`, SECURITY DEFINER, `app.users_deactivations_are_kept`): a row that
+  is inserted inactive or goes inactive opens a period at its `deactivatedAt`,
+  never earlier than the person's previous return (two administrators flipping
+  one person at once cannot make the periods overlap); a row that goes active
+  closes the open one at `clock_timestamp()`. `Users.deactivatedAt` is unchanged.
+  Every writer goes through it, the release before this one included.
+- **What is carried over:** every person inactive today gets an open period
+  from their `deactivatedAt`. A person who was inactive and became active
+  again before the migration has none, because Users forgot the date when they
+  returned and no other table kept it (`TeacherEmploymentLogs` logs a post,
+  `Ss12000EntityVersions` is a counter): their gap stays counted as it was, and
+  no figure produced before the migration changes.
+- **Row-level security:** read by the school's administrators (every profile,
+  as `UserRoleChanges`), `startsAt` of an *open* row changed by those who write
+  Personal (`TABLE_WRITE_GATES.UserDeactivations`: update `PERSONAL`; the gate is
+  asked in WITH CHECK only, as on every table). The API role holds `SELECT` and
+  `UPDATE ("startsAt")`; nobody inserts or deletes; `service_role` reads.
+- **`app.absence_stats_lessons`** (D6) is replaced by its own body with one line
+  exchanged: the teacher counts unless the lesson ended inside one of her
+  inactive periods. The migration stops if the body is not the one
+  `20270122091000` wrote (`md5(prosrc)` `265b9b21353ecd7e441397f99e565643`).
+  Months D6 has already stored are not recomputed.
+- **The gateway:** the löneunderlag reads the periods (statement E's `away`,
+  `src/analysis/leavers.ts`), and `PATCH /api/v1/users/{id}` takes `leftOn`
+  (the school's date, `ÅÅÅÅ-MM-DD`), for a person being deactivated or one who
+  is inactive already: their time then counts through the end of that day.
+  `leftOn: null` is no day, as leaving it out is (an integration that sends every
+  field must still be able to deactivate). It is refused for a day that has not
+  been (`USER_LEFT_ON_IN_THE_FUTURE`), for a person who is or becomes active
+  (`USER_LEFT_ON_NEEDS_INACTIVE`), for a day before the person was added to
+  Rastra (`USER_LEFT_ON_BEFORE_START`, in the school's days; a year typed wrong
+  would otherwise take a year of payroll from them) and for a day before the
+  person last came back (`USER_LEFT_ON_BEFORE_RETURN`). There is no field for it
+  on the People page yet.
+- **Not changed:** the load report, the SCB file (`inactiveSince`), the
+  rastvakt's coverage and the school export still read `Users.deactivatedAt`
+  (the click), so a last working day named for a person moves the payroll and
+  the absence statistics and nothing else. Gallring counts from the click on
+  purpose: a last working day must not shorten a retention period.
+
+**Beside the live API.** The foreign keys take `SHARE ROW EXCLUSIVE` on `Schools`
+and `Users`, and so does the trigger's `CREATE TRIGGER`: writes wait, reads do
+not, for the milliseconds the file runs. Both are taken first, `NOWAIT` and
+together, in a loop for at most 30 seconds (the rule of section 2); after a
+refusal for that long nothing is changed. The release before this one writes
+`isActive` alone and the table follows, so the order is migration first, then
+merge; rolling the code back leaves the table and the trigger in place and
+harmless. After a failed attempt, `prisma migrate resolve --rolled-back
+20270210090000_en_avaktiverad_person_minns_sina_perioder`, then deploy again. That
+the loop gives up is proved against a real database by
+`scripts/test/probe-analysis.ts` (lo): the first DO block of the file, with its 30
+seconds made one, stops with the message above while another connection holds
+`Users` `ACCESS EXCLUSIVE`, and passes when both tables are free.
+
+Verify (as the owner, `public` only): `UserDeactivations` exists with six
+constraints (pkey, two keys, two CHECKs and the exclusion) and two policies; the
+trigger `Users_deactivations_are_kept` is enabled; `md5(prosrc)` of
+`app.absence_stats_lessons` is no longer `265b9b21…`; and every inactive person
+has exactly one open period and nobody active has one:
+
+```sql
+SELECT count(*) FROM "Users" u
+ WHERE (SELECT count(*) FROM "UserDeactivations" d WHERE d."userId" = u.id AND d."endsAt" IS NULL)
+       <> CASE WHEN u."isActive" THEN 0 ELSE 1 END;   -- 0
+```
+
+Reading a person's periods (the owner or the API role as an administrator):
+`SELECT "startsAt", "endsAt", "recordedAt" FROM "UserDeactivations" WHERE "userId" = '…' ORDER BY "startsAt";`
+Correcting a last working day that was named wrongly is the same `PATCH` with a new
+`leftOn`; a row is never edited by hand.
 
 ## 17. Lokal: resources and external bookers (K3)
 
@@ -4826,11 +4931,38 @@ Two changes, in two releases. No migration in either.
    is the first and `periods` all of them ("0,1,2,3"), the form a week that
    lies in several periods already had, and the gateway reads their
    stretches together, so a teacher over her hours all autumn is told the
-   autumn's weeks and not its first two days. "Share" is the same count with
-   the same posts and the same figures; for a 400, the same code and the
-   same figures. The lines of a best possible timetable say their weeks the
-   same way. Weeks that no words say exactly (the odd weeks of one term with
-   every week of the other) leave the week the refusal was found in.
+   autumn's weeks and not its first two days. "Share" is one rule, for a
+   count, a 400 and the lines of a best possible timetable alike
+   (`optimization-engine/app/solver/refusals.py`): the same sentence (the
+   code), the same figures, and the same posts, rooms, rules and people the
+   refusal names, in any order. A 400 names what it names in its figures, so
+   two terms with other posts and the same figures are one 400 and two
+   counts, each naming its posts. Weeks that no words say exactly (the odd
+   weeks of one term with every week of the other) leave the first of the
+   weeks that give it.
+
+   **When the weeks are refused differently, the refusal said is the one
+   whose weeks are most of the year** (`periodWeeks`; every period alike
+   where none is sent), and the earliest on a tie. A läsår starts on a
+   Saturday, so its first two days are a period of their own, and a teacher
+   with a post of her own from the first Monday is over her hours there with
+   other figures than in the autumn: it is the autumn that is said. Each
+   week gives its first refusal, in the order the counts are made, and it is
+   among those that the most weeks is chosen: a refusal a week would also
+   give, but only after an earlier count, is not weighed (a count says the
+   weeks it refuses the same behind an earlier count, once it is the one
+   said, and a 400 has no such weeks). The weeks are weighed by
+   `periodWeeks`, where the odd and the even weeks of a period count as many
+   each, so "most" is most to within a week a period. Weeks with nothing to
+   place are not asked. Where no week was left out, two weeks that agree name
+   none; where a week was, they name none only if the year without a post of
+   its own is refused the same way: a teacher's trouble is named by where it
+   is and not by how the posts are cut. The gateway asks each stretch of a
+   period on its own, by the ISO weeks it holds, and names only the stretches
+   that hold a week of the parity the engine counted (week 53 and week 1 are
+   both odd): a period that has none of that parity is left out, and so is a
+   lone week of the other parity before a longer stretch. A stretch that is
+   named is named whole, with the other parity's weeks inside it.
 
    Three verdicts solve a model instead of counting (the lunch stage, a
    class's hours, the year's tightest week). They run on at most eight weeks
@@ -4959,9 +5091,10 @@ with those beside them; a refusal that one period's locks cause alone
 carries none of them and reads exactly as it did. The way round: move or
 unlock one of the locks.
 
-A meal per period needs a migration (dates on `LunchSittings` and
-`PublishedLunchSittings`, an exclusion constraint in place of the unique
-key) and every reader of the table; it is not built.
+A meal per period needs dates on `LunchSittings` and
+`PublishedLunchSittings`, an exclusion constraint in place of the unique key,
+and every reader of the tables. The tables and the readers are 19.6; the
+generator does not plan a meal per period yet, so the limit stands.
 
 ### 19.4 Operations
 
@@ -4997,10 +5130,11 @@ term has a timetable (the reviews of #300):
   period's. Nothing new is sent: the locks and the posts already carry their
   periods. `TEACHER_LUNCH_LEAVES_NO_START` is read period by period and
   names where in the year it is — every period in which the teacher has a
-  lesson to place and the same locked hours that weekday (`period`, and
-  `periods` where there are several, which the gateway reads as one run of
-  weeks: a läsår has more periods than terms) — unless the locks of every
-  period refuse it, which is the year's refusal and names none.
+  lesson to place and her lunch that weekday is refused the same (the same
+  rule, day and cause, whatever locks close it; `period`, and `periods`
+  where there are several, which the gateway reads as one run of weeks: a
+  läsår has more periods than terms) — unless the locks of every period
+  refuse it, which is the year's refusal and names none.
 
 **Deploy order.** The engine and the gateway are one release here. The
 engine's models forbid unknown fields, so in the minutes between the API's
@@ -5032,3 +5166,98 @@ fails the runs that carry the field with the same 503.
 
 Schemaförslag of a school that is sent the field go stale once, as in 19.4:
 the candidate basis reads it.
+
+### 19.6 A class's meal holds weeks ("Klassens måltid per del av läsåret")
+
+The first release of a class's meal per part of the läsår: the tables and
+every reader of them. **Nothing writes a date yet**, so no school sees a
+difference, and the limit in 19.3 stands (the generator still plans one meal
+a day all year). A later release lets Generera lay one meal per part and the
+school date a meal by hand.
+
+**The migration** `20270209090000_klassens_maltid_har_ett_datum`
+(sha256 `14e0064464ef922dcc5037c38efbdaed81a160b88a6fca27454a456e3bd26b56`).
+`LunchSittings` and `PublishedLunchSittings` get `startDate` and `endDate`
+(`date`, nullable, no default, no backfill: every row there is, and every row
+the API before this one writes, is NULL and NULL, the whole läsår). They are
+the first and the last day the meal holds, a Monday and a Sunday (a CHECK
+each, and one that they are in order), NULL for the läsår's own bound; the
+names and the meaning are `MasterLessons`', and the window is whole weeks
+because the generator plans in whole weeks. The unique key
+`LunchSittings_group_day_key`, and the unique index on
+`PublishedLunchSittings`, are replaced by `EXCLUDE USING gist` over the class,
+the weekday, the läsår (the publication, for the snapshot) and
+`daterange("startDate", "endDate", '[]')`: a class has at most one meal on a
+date. A row with no dates meets every other row of its class and weekday,
+which is what the unique key said. No policy, grant, function or trigger is
+touched, and no policy names a date (section 475 asks).
+
+**Deploy order** is 2's: migrate first, then merge. The file takes both tables
+`ACCESS EXCLUSIVE` first, `NOWAIT` and together, in a loop with a 30 s
+deadline (a request holds them in both orders: Generera writes
+`LunchSittings`, a publication reads it and writes the snapshot). It has a
+`$$` body, so Prisma runs it as one transaction; if the loop gives up nothing
+is changed, and `prisma migrate resolve --rolled-back
+20270209090000_klassens_maltid_har_ett_datum` then `migrate deploy` again is
+all it takes (shown on a throwaway database with a session holding one table
+for longer than the loop waits: the P0001 message above, no column added, the
+old key still there). The tables hold a row per class and weekday (25 in
+production on 2026-11-13, none placed by hand, none published), so the two
+indexes build in milliseconds inside the lock. Run it in a quiet window and
+read `pg_stat_progress_vacuum` first, as 2 says of every NOWAIT migration.
+
+**The one thing the minutes between the migration and the deploy cost.** The
+API before this release places a meal by hand (`POST
+/api/v1/lunch-sittings`, the grid's click on an empty slot) with a Prisma
+`upsert`, which Prisma 7 writes as `INSERT … ON CONFLICT ("academicYearId",
+"studentGroupId", "dayOfWeek") DO UPDATE`. An exclusion constraint cannot be
+the arbiter of an `ON CONFLICT` list, so with the unique key gone that
+statement fails (SQLSTATE 42P10; measured on the throwaway database: "there
+is no unique or exclusion constraint matching the ON CONFLICT
+specification"). The administrator who places a meal in those minutes sees
+the grid's error toast and the meal is not placed; placing it again once the
+new API serves works. Nothing else reads the key: Generera writes with
+`createMany`, `update` and `deleteMany`, and the readers select named
+columns. The new API places by reading the class's meals of the weekday first
+and writing after, and a write that meets the constraint at once (two
+placements for one class and day, neither seeing the other) is a 409
+`WRITE_CONFLICT` ("försök igen"), not a 500.
+
+**What reads the weeks** (every reader asks `src/common/lunch-window.ts`, and
+the browser `web/lib/lunch-window.ts`, which read a date alike): the calendar
+(`CalendarService.materialise` lays each date's meal from the sitting that
+holds the date, none in the weeks no sitting holds), the publication's
+snapshot (`snapshotSittings` and `readPublishedSittings` carry the dates, so a
+refill lays each week's meal), the swap board and the klasslärare's schedule
+(`readBoardFacts`, `boardCodeOf`: a lesson is held to the meals of its own
+weeks, a lesson with no weeks to all of them, a dated board to the meal of its
+date), the schedule exchange (`ON_LUNCH_SITTING`), the admin grid (a meal's
+weeks in its label, the check against every meal of the weekday) and the
+kitchen's flow (a day to show, only when some meal holds weeks). The
+rollover copies no meal (`LunchSitting` is skipped) and the mobile app and
+Måltidskollen read `CalendarLunches`, which are dated already.
+
+**Before and after.** `prod-fore.sql` and `prod-efter.sql` (read-only, one
+`SELECT` per row: `check, got, expected, ok`; text fingerprints ordered with
+`COLLATE "C"`, since production sorts `en_US`) ask: the migration pending or
+run; the four columns; the six CHECKs, validated; the two exclusion
+constraints and their indexes; the old key and index gone; no row with a date;
+the row counts and md5 of the rows equal before and after; the policies'
+names, commands and md5 equal; the privileges per role (`has_table_privilege`
+per role, not as the owner); no MAINTAIN on 17; the md5 of every `app.*`
+function equal (no function is touched); no session holding either table in a
+transaction. Rolling back the code keeps everything but placing a meal by hand:
+older code never names the columns, but its `upsert` meets the constraint
+instead of the unique key and answers 500 (SQLSTATE 42P10), as in the minutes
+before the deploy, until the new code serves again (moving and removing a meal
+work). Rolling back the migration is not a one-liner once a row has a date:
+restore the unique key only after the rows that share a weekday are reduced to
+one per class, year and weekday.
+
+**Tests.** RLS sections 475 to 479 (`rls-owner-checks.sql` 475 to 477 and 479,
+`rls-policies.sql` 478): the catalogue, what the constraint tolerates and
+refuses (53 weeks of one class and weekday; an update into a conflict; every
+CHECK), the snapshot's, what each role reads and writes, and the cascades; the
+*Meal per term probe* in CI runs the oracle over the calendar date by date,
+the snapshot, the placement and its race, and the board's reader.
+

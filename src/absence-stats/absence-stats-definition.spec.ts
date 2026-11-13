@@ -120,9 +120,14 @@ function liveBody(name: string): { migration: string; body: string } {
   return found;
 }
 
-/** The one line that differs: D2 asks who is a teacher now, the history asks who had not left when the lesson was over. */
+/**
+ * The one line that differs: D2 asks who is a teacher now, the history asks who was active when the lesson was over.
+ * Since 20270210090000 that is read from UserDeactivations, every period a person was inactive, and not from the
+ * latest stamp (Users."deactivatedAt", which a return clears): a lesson that ended inside a period does not count to
+ * the teacher, one over at the instant they left or the instant they returned does.
+ */
 const D2_TEACHER = `AND u."role" = 'TEACHER' AND u."isActive"`;
-const HISTORY_TEACHER = `AND u."role" = 'TEACHER' AND (u."deactivatedAt" IS NULL OR cl."endsAt" <= u."deactivatedAt")`;
+const HISTORY_TEACHER = `AND u."role" = 'TEACHER' AND NOT EXISTS (SELECT 1 FROM "public"."UserDeactivations" d WHERE d."userId" = u."id" AND d."startsAt" < cl."endsAt" AND (d."endsAt" IS NULL OR cl."endsAt" < d."endsAt"))`;
 
 describe('the lessons are Rapporteringsgradens, with the one line about the teacher', () => {
   it('app.absence_stats_month reads app.absence_stats_lessons, once a lesson, and asks no definition of its own', () => {

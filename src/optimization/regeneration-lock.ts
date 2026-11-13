@@ -235,10 +235,48 @@ export function scheduleCandidateStale(
   });
 }
 
-export function generateStale(): ConflictException {
+/**
+ * A Generera whose answer no longer fits the timetable it was asked about.
+ *
+ * `changed` names the basis parts that differ (candidate-basis.ts) and
+ * `refusalCode` the pre-flight refusal the school now meets, when the write's
+ * own read of the school was refused. Both only when the write read the basis
+ * again, and then as flat `params`, because the problem filter sends a
+ * refusal's code and flat params and nothing else (the job row stores them
+ * beside the code). A refusal from one of the write's field checks names
+ * neither, and is the body it always was.
+ */
+export function generateStale(changed: readonly string[] = [], refusalCode: string | null = null): ConflictException {
   return new ConflictException({
     message:
       'Grundschemat ändrades medan schemat genererades, så resultatet sparades inte. Generera igen.',
     code: GENERATE_STALE,
+    ...(changed.length > 0 || refusalCode
+      ? {
+          params: {
+            ...(changed.length > 0 ? { changed: changed.join(',') } : {}),
+            ...(refusalCode ? { refusalCode } : {}),
+          },
+        }
+      : {}),
   });
+}
+
+/**
+ * A Generera refused by the write's own read of the school (what the engine
+ * was sent, read again in the write's transaction), with what that read read
+ * of a person's data. The refusal rolls the transaction back, and with it the
+ * Läslogg row the read wrote; the caller (triggerScheduling) logs `employmentReads`
+ * in a transaction of its own, because the read happened whatever came of it.
+ * The body is generateStale's, byte for byte.
+ */
+export class GenerateStaleAtWrite extends ConflictException {
+  constructor(
+    changed: readonly string[],
+    refusalCode: string | null,
+    /** Users ids of the teachers whose post the read read (an EMPLOYMENT read). */
+    readonly employmentReads: readonly string[],
+  ) {
+    super(generateStale(changed, refusalCode).getResponse());
+  }
 }

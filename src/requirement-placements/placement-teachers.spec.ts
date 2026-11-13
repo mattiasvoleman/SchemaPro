@@ -58,7 +58,7 @@ describe('moveTeachers', () => {
 
 describe('placementFollowRefusal', () => {
   it('names the förläggning and its post flat in params, and no person', () => {
-    const body = placementFollowRefusal({ ok: false, reason: 'TEACHER', row: stored('p1', BO, 2, 'ODD_WEEKS'), unstaffed: false }, 'post-1').getResponse() as {
+    const body = placementFollowRefusal({ ok: false, reason: 'TEACHER', row: stored('p1', BO, 2, 'ODD_WEEKS'), unstaffed: false, startsSharing: false }, 'post-1').getResponse() as {
       message: string;
       params: Record<string, unknown>;
     };
@@ -68,12 +68,35 @@ describe('placementFollowRefusal', () => {
   });
 
   it('carries the flag followPlacements gives, and the sentence follows it', () => {
-    const nobody = placementFollowRefusal({ ok: false, reason: 'TEACHER_COUNT', row: stored('p1', null), unstaffed: true }, 'post-1');
+    const nobody = placementFollowRefusal({ ok: false, reason: 'TEACHER_COUNT', row: stored('p1', null), unstaffed: true, startsSharing: false }, 'post-1');
     const body = nobody.getResponse() as { message: string; params: Record<string, unknown> };
     expect(body.params).toMatchObject({ reason: 'TEACHER_COUNT', unstaffed: 1 });
     expect(body.message).toContain('Ta bort förläggningen först');
     expect(body.message).not.toContain('välj en annan lärare');
-    expect(placementFollowSentence({ ok: false, reason: 'TEACHER_COUNT', row: stored('p1', null), unstaffed: true }, 'post-1')).toBe(body.message);
+    expect(placementFollowSentence({ ok: false, reason: 'TEACHER_COUNT', row: stored('p1', null), unstaffed: true, startsSharing: false }, 'post-1')).toBe(body.message);
+  });
+});
+
+describe('placementFollowRefusal: a post that starts to share and changes its huvudlärare at once (review of #298, LÅG-3 of the second round)', () => {
+  it('says why the förläggning cannot be given a teacher, and the two steps that go, in params as `starts`', () => {
+    const body = placementFollowRefusal({ ok: false, reason: 'TEACHER', row: stored('p1', null, 2, 'ODD_WEEKS'), unstaffed: false, startsSharing: true }, 'post-1').getResponse() as {
+      message: string;
+      params: Record<string, unknown>;
+    };
+    expect(body.params).toEqual({ reason: 'TEACHER', day: 2, start: '10:00', end: '11:00', weeks: 'ODD_WEEKS', requirementId: 'post-1', starts: 1 });
+    expect(body.message).toContain('ny huvudlärare och delade lektioner i samma ändring');
+    expect(body.message).not.toContain('Välj en av postens lärare');
+  });
+
+  it('is the ordinary sentence otherwise, and the unstaffed sentence wins over it', () => {
+    const plain = placementFollowRefusal({ ok: false, reason: 'TEACHER', row: stored('p1', null), unstaffed: false, startsSharing: false }, 'post-1').getResponse() as { message: string; params: Record<string, unknown> };
+    expect(plain.message).toContain('Välj en av postens lärare');
+    expect(plain.params).not.toHaveProperty('starts');
+    const counted = placementFollowRefusal({ ok: false, reason: 'TEACHER_COUNT', row: stored('p1', null), unstaffed: false, startsSharing: true }, 'post-1').getResponse() as { message: string; params: Record<string, unknown> };
+    expect(counted.message).not.toContain('ny huvudlärare');
+    expect(counted.params).not.toHaveProperty('starts');
+    const both = placementFollowRefusal({ ok: false, reason: 'TEACHER', row: stored('p1', null), unstaffed: true, startsSharing: true }, 'post-1').getResponse() as { message: string };
+    expect(both.message).toContain('ingen lärare sedan dess lärare togs bort');
   });
 });
 

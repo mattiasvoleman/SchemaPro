@@ -4039,7 +4039,18 @@ ROLLBACK;
 -- is counted again after t has left must not lose what she held: t leaves on 2026-03-15 and February is the same; t
 -- leaves on 2026-02-10 and L4, which no one was left to report, goes while L1-L3 stay; t is back and L4 is again.
 -- (Rapporteringsgraden's own function drops the teacher in every one of these, which is its question and not this.)
+-- Since 20270210090000 the question is asked of UserDeactivations, every period a person was inactive (the triggers are off in this
+-- section, so the periods are written beside the stamp as the trigger would have written them): a lesson counts to her unless it
+-- ended strictly inside a period, and she may have come back.
 BEGIN;
+CREATE FUNCTION pg_temp.av_period(p_user uuid, p_from timestamptz, p_to timestamptz DEFAULT NULL, p_keep boolean DEFAULT false) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT p_keep THEN
+    DELETE FROM "UserDeactivations" WHERE "userId" = p_user;
+  END IF;
+  INSERT INTO "UserDeactivations" ("schoolId", "userId", "startsAt", "endsAt", "recordedAt")
+  SELECT "schoolId", id, p_from, p_to, greatest(clock_timestamp(), p_from, coalesce(p_to, p_from)) FROM "Users" WHERE id = p_user;
+END $$;
 DO $$
 DECLARE
   s uuid := pg_temp.d6o_school('d6o-gone', 5, 0);
@@ -4066,6 +4077,7 @@ BEGIN
   -- Leaves after the month (deactivatedAt is the instant the trigger would have written; the triggers are off here).
   PERFORM set_config('session_replication_role', 'replica', true);
   UPDATE "Users" SET "isActive" = false, "deactivatedAt" = '2026-03-15 12:00+01' WHERE id = t;
+  PERFORM pg_temp.av_period(t, '2026-03-15 12:00+01');
   PERFORM app.absence_stats_month(s, feb, '2026-03-01');
   PERFORM pg_temp.d6o_expect('392o a teacher who left after the month: February is what it was', pg_temp.d6o_rows(s, feb), whole);
   PERFORM pg_temp.d6o_expect('392o and the reporting function drops her, which is its question',
@@ -4073,23 +4085,51 @@ BEGIN
 
   -- Leaves in the middle of it: the lesson after she left has no one left to report it.
   UPDATE "Users" SET "deactivatedAt" = '2026-02-10 12:00+01' WHERE id = t;
+  PERFORM pg_temp.av_period(t, '2026-02-10 12:00+01');
   PERFORM app.absence_stats_month(s, feb, '2026-03-01');
   PERFORM pg_temp.d6o_expect('392o a teacher who left on the 10th: L1 to L3 stay, L4 goes',
     pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 3/2 | A 5/5 750/0/50/0/0 3/2');
   -- The instant is the lesson's end: a lesson over before she left is hers, one that ends after is not.
   UPDATE "Users" SET "deactivatedAt" = '2026-02-02 08:50+01' WHERE id = t;
+  PERFORM pg_temp.av_period(t, '2026-02-02 08:50+01');
   PERFORM app.absence_stats_month(s, feb, '2026-03-01');
   PERFORM pg_temp.d6o_expect('392o left the minute L1 ended: L1 is hers, L2 is not, L3 has t2',
     pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 2/2 | A 5/5 750/0/50/0/0 2/2');
   UPDATE "Users" SET "deactivatedAt" = '2026-02-02 08:49+01' WHERE id = t;
+  PERFORM pg_temp.av_period(t, '2026-02-02 08:49+01');
   PERFORM app.absence_stats_month(s, feb, '2026-03-01');
   PERFORM pg_temp.d6o_expect('392o left a minute before L1 ended: only L3, which t2 held',
     pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 1/1 | A 5/5 750/0/50/0/0 1/1');
 
-  -- Back again: the lessons come back.
+  -- Back again (20270210090000, LÅG-1 of the review of #280): what she was away for stays out, what she came back to is hers. She left at
+  -- 08:49 on the 2nd, so L1 (over at 08:50) and L2 (over at 08:50 on the 3rd) are inside the leave, L3 has t2 and L4 is on the 16th.
+  --   back at the instant L2 was over: L2 is hers (a lesson over at the instant of a return counts), L1 is not:  L2, L3 and L4 held, L3 and L4 reported
+  --   back a minute after it: L2 is inside the leave:                                                           L3 and L4 held and reported
+  --   back before L4:                                                                                          L3 and L4 held and reported
+  --   back after L4 (the 17th), L4 inside the leave, L3 held by t2:                                             L3 alone
   UPDATE "Users" SET "isActive" = true, "deactivatedAt" = NULL WHERE id = t;
+  PERFORM pg_temp.av_period(t, '2026-02-02 08:49+01', '2026-02-03 08:50+01');
   PERFORM app.absence_stats_month(s, feb, '2026-03-01');
-  PERFORM pg_temp.d6o_expect('392o a teacher who is back: four held, three reported', pg_temp.d6o_rows(s, feb), whole);
+  PERFORM pg_temp.d6o_expect('392o back at the instant L2 was over: L2 counts, L1 does not', pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 3/2 | A 5/5 750/0/50/0/0 3/2');
+  PERFORM pg_temp.av_period(t, '2026-02-02 08:49+01', '2026-02-03 08:51+01');
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o back a minute after L2 was over: it is inside the leave', pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 2/2 | A 5/5 750/0/50/0/0 2/2');
+  PERFORM pg_temp.av_period(t, '2026-02-02 08:49+01', '2026-02-16 07:00+01');
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o back on the 16th before L4: L4 is hers again', pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 2/2 | A 5/5 750/0/50/0/0 2/2');
+  PERFORM pg_temp.av_period(t, '2026-02-02 08:49+01', '2026-02-17 07:00+01');
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o back on the 17th: L4 is inside the leave, only L3 which t2 held', pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 1/1 | A 5/5 750/0/50/0/0 1/1');
+  -- She left twice: the first leave over by L2 (08:51 on the 3rd), the second from the 4th, which holds L4 and L3 (t2's).
+  PERFORM pg_temp.av_period(t, '2026-02-02 08:49+01', '2026-02-03 08:51+01');
+  PERFORM pg_temp.av_period(t, '2026-02-04 07:00+01', NULL, true);
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o left twice: L1 and L2 inside the first leave, L4 inside the second, L3 held by t2', pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 1/1 | A 5/5 750/0/50/0/0 1/1');
+  -- A person who never left has no period at all: everything is hers, as before 20270210090000.
+  UPDATE "Users" SET "isActive" = true, "deactivatedAt" = NULL WHERE id = t;
+  DELETE FROM "UserDeactivations" WHERE "userId" = t;
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o a teacher who never left: four held, three reported', pg_temp.d6o_rows(s, feb), whole);
 
   -- Only a teacher counts: a lesson whose only person is an administrator of the school is nobody's to report.
   l := pg_temp.d6o_lesson(s, 'd6o-gone', 'A', '2026-02-05', 8, 50, 'SCHEDULED', all5);
@@ -4118,10 +4158,10 @@ DECLARE
   d2 text := pg_temp.d6o_norm((SELECT prosrc FROM pg_proc WHERE oid = 'app.reporting_lessons(uuid, date, date, timestamptz)'::regprocedure));
   d6 text := pg_temp.d6o_norm((SELECT prosrc FROM pg_proc WHERE oid = 'app.absence_stats_lessons(uuid, date, date, timestamptz)'::regprocedure));
   live constant text := E'AND u."role" = ''TEACHER'' AND u."isActive"';
-  gone constant text := E'AND u."role" = ''TEACHER'' AND (u."deactivatedAt" IS NULL OR cl."endsAt" <= u."deactivatedAt")';
+  gone constant text := E'AND u."role" = ''TEACHER'' AND NOT EXISTS (SELECT 1 FROM "public"."UserDeactivations" d WHERE d."userId" = u."id" AND d."startsAt" < cl."endsAt" AND (d."endsAt" IS NULL OR cl."endsAt" < d."endsAt"))';
 BEGIN
   PERFORM pg_temp.d6o_expect('392o D2 asks who is a teacher now', ((length(d2) - length(replace(d2, live, ''))) / length(live))::text, '1');
-  PERFORM pg_temp.d6o_expect('392o the history asks who had not left', ((length(d6) - length(replace(d6, gone, ''))) / length(gone))::text, '1');
+  PERFORM pg_temp.d6o_expect('392o the history asks who was active when the lesson was over, from the periods', ((length(d6) - length(replace(d6, gone, ''))) / length(gone))::text, '1');
   PERFORM pg_temp.d6o_expect('392o and not who is a teacher now', ((length(d6) - length(replace(d6, live, ''))) / length(live))::text, '0');
   PERFORM pg_temp.d6o_expect('392o the two bodies are the same but for that line', (replace(d2, live, gone) = d6)::text, 'true');
   PERFORM pg_temp.d6o_expect('392o neither is a definer or has a path of its own (they are inlined into the caller)',
@@ -5562,5 +5602,415 @@ BEGIN
   IF (SELECT count(*) FROM "TeachingRequirementPlacements" WHERE "requirementId" IN (p4, p5)) <> 2 THEN
     RAISE EXCEPTION 'delade 474o: the removals did not leave the two rows that do not fit';
   END IF;
+END $$;
+ROLLBACK;
+
+-- ===========================================================================
+-- Sections 475, 476, 477 and 479: a class's meal holds weeks (20270209090000).
+--
+-- LunchSittings and PublishedLunchSittings carry "startDate" and "endDate" (a Monday and a Sunday, NULL for the läsår's
+-- own bound), and a class has at most one meal on a date: an EXCLUDE constraint in place of each unique key. Run as the
+-- owner, with the foreign keys off where a section plants rows of its own (session_replication_role = replica does not
+-- turn off a CHECK or an exclusion constraint, which is what these ask); 479 plants a school of its own with the keys on.
+-- Section 478 in rls-policies.sql is the same tables through the API's role.
+--
+-- Recorded when the migration was written, not asserted (a later rewrite of a policy must not trip a catalogue check):
+-- md5 of the policies' lines (name:cmd:qual|with_check, one per policy, in name order, COLLATE "C"; prod-fore.sql has the query) was 27f3fa162033c9f0984a0e5916c16f13 on
+-- LunchSittings and 3373900a51afa39bdfefdc1ac3c8580e on PublishedLunchSittings before the migration and after it.
+-- Migration sha256: see the PR.
+-- ===========================================================================
+
+CREATE FUNCTION pg_temp.mt_tick() RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('mt.checks', (coalesce(nullif(current_setting('mt.checks', true), ''), '0')::integer + 1)::text, true);
+$f$;
+CREATE FUNCTION pg_temp.mt_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.mt_tick();
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'mt %: got\n%\nwanted\n%', p_label, p_got, p_want USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+CREATE FUNCTION pg_temp.mt_true(p_label text, p_cond boolean) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.mt_tick();
+  IF p_cond IS NOT TRUE THEN
+    RAISE EXCEPTION 'mt %: not true', p_label USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+-- The statements in order, taken back whatever the answer: 'ok', or the SQLSTATE and the constraint that refused.
+CREATE FUNCTION pg_temp.mt_try(VARIADIC p_stmts text[]) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  st text; con text; s text;
+BEGIN
+  BEGIN
+    FOREACH s IN ARRAY p_stmts LOOP EXECUTE s; END LOOP;
+    RAISE EXCEPTION 'taken back' USING ERRCODE = 'MT999';
+  EXCEPTION
+    WHEN SQLSTATE 'MT999' THEN RETURN 'ok';
+    WHEN OTHERS THEN GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, con = CONSTRAINT_NAME;
+  END;
+  RETURN st || coalesce(' ' || nullif(con, ''), '');
+END $f$;
+CREATE FUNCTION pg_temp.mt_case(p_label text, p_want text, VARIADIC p_stmts text[]) RETURNS void LANGUAGE sql AS $f$
+  SELECT pg_temp.mt_expect(p_label, pg_temp.mt_try(VARIADIC p_stmts), p_want);
+$f$;
+-- A live meal of the plant's: class, weekday, the weeks (NULL for the läsår's bound) and, apart, the year.
+CREATE FUNCTION pg_temp.mt_sit(p_group uuid, p_day integer, p_from text, p_to text, p_year uuid DEFAULT '00000000-0000-4000-8000-0000000e0001') RETURNS text LANGUAGE sql AS $f$
+  SELECT format($q$INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "startDate", "endDate", "updatedAt")
+                   VALUES ('00000000-0000-4000-8000-0000000e0000', %L, %L, %s, '11:00', '11:30', %L, %L, now())$q$, p_year, p_group, p_day, p_from, p_to)
+$f$;
+-- A published meal, in the publication p_pub.
+CREATE FUNCTION pg_temp.mt_pub(p_pub uuid, p_group uuid, p_day integer, p_from text, p_to text) RETURNS text LANGUAGE sql AS $f$
+  SELECT format($q$INSERT INTO "PublishedLunchSittings" ("schoolId", "publicationId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "startDate", "endDate")
+                   VALUES ('00000000-0000-4000-8000-0000000e0000', %L, '00000000-0000-4000-8000-0000000e0001', %L, %s, '11:00', '11:30', %L, %L)$q$, p_pub, p_group, p_day, p_from, p_to)
+$f$;
+
+-- ---------------------------------------------------------------------------
+-- Section 475: the catalogue as 20270209090000 wrote it.
+-- Nothing is planted. The two columns (a date, nullable, no default), the three CHECKs of the weeks, the EXCLUDE constraint
+-- and what is gone with it (the unique key, the unique index), the keys and the policies and the grants as they were, and
+-- that no policy reads a date: a row's weeks decide nothing about who sees it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  t text;
+  tbl regclass;
+  col text;
+  got text;
+  r text;
+  ck text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['LunchSittings', 'PublishedLunchSittings'] LOOP
+    tbl := format('public.%I', t)::regclass;
+    FOREACH col IN ARRAY ARRAY['startDate', 'endDate'] LOOP
+      SELECT format('%s %s %s', format_type(a.atttypid, a.atttypmod), CASE WHEN a.attnotnull THEN 'NN' ELSE 'N' END, coalesce(pg_get_expr(d.adbin, d.adrelid), '-'))
+        INTO got FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+       WHERE a.attrelid = tbl AND a.attname = col AND NOT a.attisdropped;
+      PERFORM pg_temp.mt_expect(format('475 %s.%s', t, col), got, 'date N -');
+    END LOOP;
+
+    -- The three CHECKs, one fact each, validated.
+    FOREACH ck IN ARRAY ARRAY['weeks_are_ordered', 'weeks_start_on_a_monday', 'weeks_end_on_a_sunday'] LOOP
+      PERFORM pg_temp.mt_expect(format('475 %s_%s', t, ck),
+        (SELECT format('%s %s', c.contype, CASE WHEN c.convalidated THEN 'validated' ELSE 'NOT VALID' END) FROM pg_constraint c WHERE c.conrelid = tbl AND c.conname = t || '_' || ck),
+        'c validated');
+    END LOOP;
+    -- The clock's own CHECKs are untouched (the new names are not theirs).
+    PERFORM pg_temp.mt_true('475 ' || t || ' keeps its clock check',
+      EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid = tbl AND c.contype = 'c'
+                 AND c.conname = CASE t WHEN 'LunchSittings' THEN 'LunchSittings_window_is_ordered' ELSE 'PublishedLunchSittings_times_are_ordered' END));
+
+    -- The EXCLUDE constraint: a class has one meal on a date. Its scope is the year (the live table) or the publication (the snapshot).
+    SELECT pg_get_constraintdef(c.oid) INTO got FROM pg_constraint c WHERE c.conrelid = tbl AND c.conname = t || '_one_meal_at_a_time' AND c.contype = 'x';
+    PERFORM pg_temp.mt_expect('475 ' || t || ' one meal at a time', got,
+      format('EXCLUDE USING gist ("%s" WITH =, "studentGroupId" WITH =, "dayOfWeek" WITH =, daterange("startDate", "endDate", ''[]''::text) WITH &&)',
+             CASE t WHEN 'LunchSittings' THEN 'academicYearId' ELSE 'publicationId' END));
+    SELECT format('%s %s %s', i.indisunique::text, i.indisvalid::text, i.indisready::text)
+      INTO got FROM pg_constraint c JOIN pg_index i ON i.indexrelid = c.conindid WHERE c.conrelid = tbl AND c.conname = t || '_one_meal_at_a_time';
+    PERFORM pg_temp.mt_expect('475 ' || t || ' the constraint''s index is whole', got, 'false true true');
+
+    -- What is gone: the key that said one row per class and weekday, in either form. Nothing unique is left but the id.
+    PERFORM pg_temp.mt_expect('475 ' || t || ' has no unique constraint but its key',
+      (SELECT coalesce(string_agg(c.conname, ',' ORDER BY c.conname COLLATE "C"), '-') FROM pg_constraint c WHERE c.conrelid = tbl AND c.contype = 'u'), '-');
+    PERFORM pg_temp.mt_expect('475 ' || t || ' has no unique index but its key',
+      (SELECT coalesce(string_agg(i.indexrelid::regclass::text, ',' ORDER BY i.indexrelid::regclass::text COLLATE "C"), '-') FROM pg_index i WHERE i.indrelid = tbl AND i.indisunique AND NOT i.indisprimary), '-');
+
+    -- RLS is on, and no policy of the table names a date.
+    PERFORM pg_temp.mt_true('475 ' || t || ' has row security on', (SELECT relrowsecurity FROM pg_class WHERE oid = tbl));
+    PERFORM pg_temp.mt_expect('475 ' || t || ' no policy reads a date',
+      (SELECT count(*) FROM pg_policy WHERE polrelid = tbl AND (coalesce(pg_get_expr(polqual, polrelid), '') || coalesce(pg_get_expr(polwithcheck, polrelid), '')) ~ '(startDate|endDate)')::text, '0');
+  END LOOP;
+
+  -- The policies as they were (names and commands), and the keys.
+  PERFORM pg_temp.mt_expect('475 LunchSittings policies',
+    (SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname COLLATE "C") FROM pg_policy WHERE polrelid = '"LunchSittings"'::regclass),
+    'lunch_sittings_admin_delete:d,lunch_sittings_admin_insert:a,lunch_sittings_admin_select:r,lunch_sittings_admin_update:w,lunch_sittings_guardian_select:r,lunch_sittings_staff_select:r,lunch_sittings_student_select:r');
+  PERFORM pg_temp.mt_expect('475 PublishedLunchSittings policies',
+    (SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname COLLATE "C") FROM pg_policy WHERE polrelid = '"PublishedLunchSittings"'::regclass),
+    'published_lunch_sittings_admin_insert:a,published_lunch_sittings_admin_select:r');
+  PERFORM pg_temp.mt_expect('475 LunchSittings keys',
+    (SELECT string_agg(c.conname || ':' || c.confdeltype::text || c.confupdtype::text, ',' ORDER BY c.conname COLLATE "C") FROM pg_constraint c WHERE c.conrelid = '"LunchSittings"'::regclass AND c.contype = 'f'),
+    'LunchSittings_academicYearId_schoolId_fkey:cc,LunchSittings_schoolId_fkey:cc,LunchSittings_studentGroupId_schoolId_fkey:cc');
+  PERFORM pg_temp.mt_expect('475 PublishedLunchSittings keys',
+    (SELECT string_agg(c.conname || ':' || c.confdeltype::text || c.confupdtype::text, ',' ORDER BY c.conname COLLATE "C") FROM pg_constraint c WHERE c.conrelid = '"PublishedLunchSittings"'::regclass AND c.contype = 'f'),
+    'PublishedLunchSittings_publicationId_academicYearId_schoolId_fk:cc,PublishedLunchSittings_schoolId_fkey:cc');
+
+  -- The grants, per role, as they were: the live table is the admin's to write, the snapshot is append-only, the service key reads.
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    SELECT coalesce(string_agg(p, ',' ORDER BY p COLLATE "C"), '-') INTO got
+      FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p WHERE has_table_privilege(r, 'public."LunchSittings"', p);
+    PERFORM pg_temp.mt_expect('475 ' || r || ' on LunchSittings', got,
+      CASE r WHEN 'anon' THEN '-' WHEN 'service_role' THEN 'SELECT' ELSE 'DELETE,INSERT,SELECT,UPDATE' END);
+    SELECT coalesce(string_agg(p, ',' ORDER BY p COLLATE "C"), '-') INTO got
+      FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p WHERE has_table_privilege(r, 'public."PublishedLunchSittings"', p);
+    PERFORM pg_temp.mt_expect('475 ' || r || ' on PublishedLunchSittings', got,
+      CASE r WHEN 'anon' THEN '-' WHEN 'service_role' THEN 'SELECT' ELSE 'INSERT,SELECT' END);
+    -- Postgres 17 only (the privilege does not exist on 16): nobody holds MAINTAIN on either.
+    IF current_setting('server_version_num')::integer >= 170000 THEN
+      PERFORM pg_temp.mt_true('475 ' || r || ' holds no MAINTAIN on the meals',
+        NOT has_table_privilege(r, 'public."LunchSittings"', 'MAINTAIN') AND NOT has_table_privilege(r, 'public."PublishedLunchSittings"', 'MAINTAIN'));
+    END IF;
+  END LOOP;
+  RAISE NOTICE 'mt 475: % checks', current_setting('mt.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 476: a class has one meal on a date (LunchSittings).
+-- Planted with the keys off (replica): the school, the year and the classes are not rows. The answers are SQLSTATE and the
+-- constraint's own name, each case taken back. Years: the läsår 2026-08-17 .. 2027-06-11 reads in weeks.
+--   23P01 LunchSittings_one_meal_at_a_time     two meals of one class, weekday and year that hold a day together
+--   23514 LunchSittings_weeks_start_on_a_monday / _end_on_a_sunday / _are_ordered   the window is whole weeks
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('session_replication_role', 'replica', true);
+DO $$
+DECLARE
+  ga constant uuid := '00000000-0000-4000-8000-0000000e0011';
+  gb constant uuid := '00000000-0000-4000-8000-0000000e0012';
+  other_year constant uuid := '00000000-0000-4000-8000-0000000e0002';
+  clash constant text := '23P01 LunchSittings_one_meal_at_a_time';
+  n integer;
+  d date;
+BEGIN
+  -- The whole läsår is the one meal, as the unique key said.
+  PERFORM pg_temp.mt_case('476 a meal with no dates', 'ok', pg_temp.mt_sit(ga, 1, NULL, NULL));
+  PERFORM pg_temp.mt_case('476 two meals with no dates', clash, pg_temp.mt_sit(ga, 1, NULL, NULL), pg_temp.mt_sit(ga, 1, NULL, NULL));
+  PERFORM pg_temp.mt_case('476 a meal of some weeks beside the whole läsår', clash, pg_temp.mt_sit(ga, 1, NULL, NULL), pg_temp.mt_sit(ga, 1, '2026-08-17', '2026-08-23'));
+  PERFORM pg_temp.mt_case('476 the whole läsår beside a meal of some weeks', clash, pg_temp.mt_sit(ga, 1, '2026-08-17', '2026-08-23'), pg_temp.mt_sit(ga, 1, NULL, NULL));
+  PERFORM pg_temp.mt_case('476 a meal that runs to the läsår''s end beside one that runs from its start, and they meet', clash,
+    pg_temp.mt_sit(ga, 1, NULL, '2026-12-20'), pg_temp.mt_sit(ga, 1, '2026-12-14', NULL));
+
+  -- Two parts of the year do not meet, whether or not a bound is the läsår's.
+  PERFORM pg_temp.mt_case('476 the autumn and the spring', 'ok', pg_temp.mt_sit(ga, 1, NULL, '2026-12-20'), pg_temp.mt_sit(ga, 1, '2027-01-11', NULL));
+  PERFORM pg_temp.mt_case('476 the autumn and the very next Monday', 'ok', pg_temp.mt_sit(ga, 1, NULL, '2026-12-20'), pg_temp.mt_sit(ga, 1, '2026-12-21', NULL));
+  PERFORM pg_temp.mt_case('476 the autumn and its own last week again', clash, pg_temp.mt_sit(ga, 1, NULL, '2026-12-20'), pg_temp.mt_sit(ga, 1, '2026-12-14', '2026-12-20'));
+  PERFORM pg_temp.mt_case('476 a week that two meals share', clash, pg_temp.mt_sit(ga, 1, '2026-08-17', '2026-12-20'), pg_temp.mt_sit(ga, 1, '2026-12-14', '2027-01-17'));
+  PERFORM pg_temp.mt_case('476 one week twice', clash, pg_temp.mt_sit(ga, 1, '2026-10-05', '2026-10-11'), pg_temp.mt_sit(ga, 1, '2026-10-05', '2026-10-11'));
+  PERFORM pg_temp.mt_case('476 two weeks in a row', 'ok', pg_temp.mt_sit(ga, 1, '2026-10-05', '2026-10-11'), pg_temp.mt_sit(ga, 1, '2026-10-12', '2026-10-18'));
+  PERFORM pg_temp.mt_case('476 a gap of a week between two meals is no meal there, and no conflict', 'ok',
+    pg_temp.mt_sit(ga, 1, '2026-10-05', '2026-10-11'), pg_temp.mt_sit(ga, 1, '2026-10-19', '2026-10-25'));
+
+  -- Another class, another weekday, another year hold their own meal.
+  PERFORM pg_temp.mt_case('476 another class', 'ok', pg_temp.mt_sit(ga, 1, NULL, NULL), pg_temp.mt_sit(gb, 1, NULL, NULL));
+  PERFORM pg_temp.mt_case('476 another weekday', 'ok', pg_temp.mt_sit(ga, 1, NULL, NULL), pg_temp.mt_sit(ga, 2, NULL, NULL));
+  PERFORM pg_temp.mt_case('476 another läsår', 'ok', pg_temp.mt_sit(ga, 1, NULL, NULL), pg_temp.mt_sit(ga, 1, NULL, NULL, other_year));
+
+  -- A whole läsår in single weeks: 53 rows of one class and weekday, every one its own Monday to Sunday.
+  FOR n IN 0..52 LOOP
+    d := date '2026-08-17' + 7 * n;
+    INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "startDate", "endDate", "updatedAt")
+    VALUES ('00000000-0000-4000-8000-0000000e0000', '00000000-0000-4000-8000-0000000e0001', gb, 3, '11:00', '11:30', d, d + 6, now());
+  END LOOP;
+  PERFORM pg_temp.mt_expect('476 53 weeks of one class and weekday', (SELECT count(*) FROM "LunchSittings" WHERE "studentGroupId" = gb AND "dayOfWeek" = 3)::text, '53');
+  PERFORM pg_temp.mt_case('476 and a whole läsår over them is refused', clash, pg_temp.mt_sit(gb, 3, NULL, NULL));
+  PERFORM pg_temp.mt_case('476 as is any single day of them', clash, pg_temp.mt_sit(gb, 3, '2027-03-01', '2027-03-07'));
+
+  -- The window is whole weeks.
+  PERFORM pg_temp.mt_case('476 a Monday to a Sunday', 'ok', pg_temp.mt_sit(ga, 1, '2026-08-17', '2026-08-23'));
+  PERFORM pg_temp.mt_case('476 a window that starts on a Tuesday', '23514 LunchSittings_weeks_start_on_a_monday', pg_temp.mt_sit(ga, 1, '2026-08-18', '2026-08-23'));
+  PERFORM pg_temp.mt_case('476 a window that starts on a Sunday (the läsår''s Saturday start is NULL, not a date)', '23514 LunchSittings_weeks_start_on_a_monday', pg_temp.mt_sit(ga, 1, '2026-08-16', '2026-08-23'));
+  PERFORM pg_temp.mt_case('476 a window that ends on a Saturday', '23514 LunchSittings_weeks_end_on_a_sunday', pg_temp.mt_sit(ga, 1, '2026-08-17', '2026-08-22'));
+  PERFORM pg_temp.mt_case('476 a window that ends on a Monday', '23514 LunchSittings_weeks_end_on_a_sunday', pg_temp.mt_sit(ga, 1, NULL, '2026-08-24'));
+  PERFORM pg_temp.mt_case('476 a window that ends before it starts', '23514 LunchSittings_weeks_are_ordered', pg_temp.mt_sit(ga, 1, '2026-08-24', '2026-08-23'));
+  PERFORM pg_temp.mt_case('476 one bound alone: a Monday', 'ok', pg_temp.mt_sit(ga, 1, '2026-08-24', NULL));
+  PERFORM pg_temp.mt_case('476 one bound alone: a Sunday', 'ok', pg_temp.mt_sit(ga, 1, NULL, '2026-08-23'));
+
+  -- A row moved into a conflict is refused too, by its UPDATE.
+  PERFORM pg_temp.mt_case('476 an update that makes the autumn reach the spring', clash,
+    pg_temp.mt_sit(ga, 1, NULL, '2026-12-20'), pg_temp.mt_sit(ga, 1, '2027-01-11', NULL),
+    $q$UPDATE "LunchSittings" SET "endDate" = '2027-01-17' WHERE "studentGroupId" = '00000000-0000-4000-8000-0000000e0011' AND "endDate" = '2026-12-20'$q$);
+  PERFORM pg_temp.mt_case('476 an update that moves a meal to the weekday another holds', clash,
+    pg_temp.mt_sit(ga, 1, NULL, NULL), pg_temp.mt_sit(ga, 2, NULL, NULL),
+    $q$UPDATE "LunchSittings" SET "dayOfWeek" = 2 WHERE "studentGroupId" = '00000000-0000-4000-8000-0000000e0011' AND "dayOfWeek" = 1$q$);
+  PERFORM pg_temp.mt_case('476 an update of the time alone is no conflict', 'ok',
+    pg_temp.mt_sit(ga, 1, NULL, '2026-12-20'), pg_temp.mt_sit(ga, 1, '2027-01-11', NULL),
+    $q$UPDATE "LunchSittings" SET "startTime" = '11:30', "endTime" = '12:00'$q$);
+
+  -- What the table said before still holds.
+  PERFORM pg_temp.mt_case('476 a weekday 8', '23514 LunchSittings_day_is_iso',
+    $q$INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+       VALUES ('00000000-0000-4000-8000-0000000e0000', '00000000-0000-4000-8000-0000000e0001', '00000000-0000-4000-8000-0000000e0011', 8, '11:00', '11:30', now())$q$);
+  PERFORM pg_temp.mt_case('476 a meal that ends before it starts', '23514 LunchSittings_window_is_ordered',
+    $q$INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+       VALUES ('00000000-0000-4000-8000-0000000e0000', '00000000-0000-4000-8000-0000000e0001', '00000000-0000-4000-8000-0000000e0011', 1, '11:30', '11:00', now())$q$);
+  RAISE NOTICE 'mt 476: % checks', current_setting('mt.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 477: the snapshot's meals (PublishedLunchSittings): the same, per publication.
+-- A publication's meals of one class and weekday hold different weeks or are refused; another publication's are its own.
+-- The snapshot stays append-only: nothing here is an UPDATE or a DELETE for the API's role (section 478 asks it).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('session_replication_role', 'replica', true);
+DO $$
+DECLARE
+  ga constant uuid := '00000000-0000-4000-8000-0000000e0011';
+  p1 constant uuid := '00000000-0000-4000-8000-0000000e0021';
+  p2 constant uuid := '00000000-0000-4000-8000-0000000e0022';
+  clash constant text := '23P01 PublishedLunchSittings_one_meal_at_a_time';
+BEGIN
+  PERFORM pg_temp.mt_case('477 a meal with no dates', 'ok', pg_temp.mt_pub(p1, ga, 1, NULL, NULL));
+  PERFORM pg_temp.mt_case('477 two meals with no dates', clash, pg_temp.mt_pub(p1, ga, 1, NULL, NULL), pg_temp.mt_pub(p1, ga, 1, NULL, NULL));
+  PERFORM pg_temp.mt_case('477 a meal of some weeks beside the whole läsår', clash, pg_temp.mt_pub(p1, ga, 1, NULL, NULL), pg_temp.mt_pub(p1, ga, 1, '2026-08-17', '2026-08-23'));
+  PERFORM pg_temp.mt_case('477 the autumn and the spring', 'ok', pg_temp.mt_pub(p1, ga, 1, NULL, '2026-12-20'), pg_temp.mt_pub(p1, ga, 1, '2027-01-11', NULL));
+  PERFORM pg_temp.mt_case('477 two meals that share a week', clash, pg_temp.mt_pub(p1, ga, 1, '2026-08-17', '2026-12-20'), pg_temp.mt_pub(p1, ga, 1, '2026-12-14', '2027-01-17'));
+  PERFORM pg_temp.mt_case('477 another publication has its own', 'ok', pg_temp.mt_pub(p1, ga, 1, NULL, NULL), pg_temp.mt_pub(p2, ga, 1, NULL, NULL));
+  PERFORM pg_temp.mt_case('477 another weekday', 'ok', pg_temp.mt_pub(p1, ga, 1, NULL, NULL), pg_temp.mt_pub(p1, ga, 2, NULL, NULL));
+  PERFORM pg_temp.mt_case('477 a window that starts on a Tuesday', '23514 PublishedLunchSittings_weeks_start_on_a_monday', pg_temp.mt_pub(p1, ga, 1, '2026-08-18', '2026-08-23'));
+  PERFORM pg_temp.mt_case('477 a window that ends on a Saturday', '23514 PublishedLunchSittings_weeks_end_on_a_sunday', pg_temp.mt_pub(p1, ga, 1, '2026-08-17', '2026-08-22'));
+  PERFORM pg_temp.mt_case('477 a window that ends before it starts', '23514 PublishedLunchSittings_weeks_are_ordered', pg_temp.mt_pub(p1, ga, 1, '2026-08-24', '2026-08-23'));
+  PERFORM pg_temp.mt_case('477 a weekday 8', '23514 PublishedLunchSittings_day_is_a_weekday',
+    $q$INSERT INTO "PublishedLunchSittings" ("schoolId", "publicationId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime")
+       VALUES ('00000000-0000-4000-8000-0000000e0000', '00000000-0000-4000-8000-0000000e0021', '00000000-0000-4000-8000-0000000e0001', '00000000-0000-4000-8000-0000000e0011', 8, '11:00', '11:30')$q$);
+  RAISE NOTICE 'mt 477: % checks', current_setting('mt.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 479: the keys, with real rows. A school of its own (the keys on): a meal goes with its class, with its läsår, with its
+-- school, and a published meal with its publication, dated or not; a class cannot be given a meal in another school's name.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  s uuid; s2 uuid; y uuid; y2 uuid; ga uuid; gb uuid; pub uuid;
+  got text;
+BEGIN
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ('MT 479', 'mt-479-a', 'Europe/Stockholm', now()) RETURNING id INTO s;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ('MT 479 annan', 'mt-479-b', 'Europe/Stockholm', now()) RETURNING id INTO s2;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt") VALUES (s, 'MT', '2026-08-15', '2027-06-11', true, now()) RETURNING id INTO y;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt") VALUES (s2, 'MT', '2026-08-15', '2027-06-11', true, now()) RETURNING id INTO y2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (s, y, 'A', 7, now()) RETURNING id INTO ga;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (s, y, 'B', 7, now()) RETURNING id INTO gb;
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo", "lessonCount")
+  VALUES (s, y, 'BASELINE', 'PUBLISHED', 'DRAFT', '2026-08-15', '2027-06-11', 0) RETURNING id INTO pub;
+
+  INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "startDate", "endDate", "updatedAt") VALUES
+    (s, y, ga, 1, '11:00', '11:30', NULL, '2026-12-20', now()),
+    (s, y, ga, 1, '11:30', '12:00', '2027-01-11', NULL, now()),
+    (s, y, gb, 1, '11:00', '11:30', NULL, NULL, now());
+  INSERT INTO "PublishedLunchSittings" ("schoolId", "publicationId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "startDate", "endDate") VALUES
+    (s, pub, y, ga, 1, '11:00', '11:30', NULL, '2026-12-20'),
+    (s, pub, y, ga, 1, '11:30', '12:00', '2027-01-11', NULL);
+
+  -- A class of the school's, and a year of another school's, cannot be named by a meal of this school.
+  PERFORM pg_temp.mt_case('479 a meal for a year of another school', '23503 LunchSittings_academicYearId_schoolId_fkey',
+    format($q$INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt") VALUES (%L, %L, %L, 2, '11:00', '11:30', now())$q$, s, y2, ga));
+  PERFORM pg_temp.mt_case('479 a meal for a class of another school', '23503 LunchSittings_studentGroupId_schoolId_fkey',
+    format($q$INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt") VALUES (%L, %L, %L, 2, '11:00', '11:30', now())$q$, s2, y2, ga));
+
+  -- A class that goes takes its meals, both of them.
+  DELETE FROM "StudentGroups" WHERE id = ga;
+  PERFORM pg_temp.mt_expect('479 the meals of a class that is removed', (SELECT count(*) FROM "LunchSittings" WHERE "studentGroupId" = ga)::text, '0');
+  PERFORM pg_temp.mt_expect('479 and the other class''s stay', (SELECT count(*) FROM "LunchSittings" WHERE "studentGroupId" = gb)::text, '1');
+  -- The snapshot has no key to the class (a reader drops a meal whose class is gone): its meals stay until the publication goes.
+  PERFORM pg_temp.mt_expect('479 a published meal has no key to the class', (SELECT count(*) FROM "PublishedLunchSittings" WHERE "publicationId" = pub)::text, '2');
+  -- A publication that goes takes its meals.
+  DELETE FROM "TimetablePublications" WHERE id = pub;
+  PERFORM pg_temp.mt_expect('479 the meals of a publication that is removed', (SELECT count(*) FROM "PublishedLunchSittings" WHERE "academicYearId" = y)::text, '0');
+  -- A läsår that goes takes the rest, and a school its years.
+  DELETE FROM "AcademicYears" WHERE id = y;
+  PERFORM pg_temp.mt_expect('479 the meals of a läsår that is removed', (SELECT count(*) FROM "LunchSittings" WHERE "academicYearId" = y)::text, '0');
+  RAISE NOTICE 'mt 479: % checks', current_setting('mt.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- En avaktiverad person minns sina perioder (20270210090000), the owner's side of sections 480-484 (rls-policies.sql). The sections
+-- there go through the API's role and the trigger; these look at the whole of what the fixtures and the sections before them have left,
+-- run the migration's own statement for what it carried over, and remove a school. (392o above is the function D6 reads the periods
+-- through.)
+--
+--   480o  the whole database: every inactive person has exactly one open period and nobody else has one
+--   481o  what the migration carried over, as its own INSERT writes it: an open period from each inactive person's date, none for a person
+--         who is active, and one recorded no earlier than its start even where a stamp is ahead of the clock
+--   482o  a school removed takes the periods of its people (and the person's key does not follow a school id)
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.avo_expect(p_label text, p_got text, p_expected text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_expected THEN
+    RAISE EXCEPTION E'avaktivering %:\n   got      %\n   expected %', p_label, coalesce(p_got, '<null>'), p_expected;
+  END IF;
+END $$;
+
+-- 480o: the invariant the trigger keeps and Users_deactivations_are_kept's own comment states. A person planted by the fixtures with the
+-- triggers off would break it, so this is also what tells a fixture that forgot the period. Offenders are named by e-mail.
+DO $$
+DECLARE
+  offenders text;
+BEGIN
+  SELECT string_agg(u.email || ' (' || CASE WHEN u."isActive" THEN 'active with ' ELSE 'inactive with ' END || n || ' open)', ', ' ORDER BY u.email COLLATE "C")
+    INTO offenders
+    FROM "Users" u
+    CROSS JOIN LATERAL (SELECT count(*) AS n FROM "UserDeactivations" d WHERE d."userId" = u.id AND d."endsAt" IS NULL) c
+   WHERE n <> CASE WHEN u."isActive" THEN 0 ELSE 1 END;
+  PERFORM pg_temp.avo_expect('480o every inactive person has exactly one open period, nobody active has one', offenders, NULL);
+  PERFORM pg_temp.avo_expect('480o no period names a person of another school than its own',
+    (SELECT count(*)::text FROM "UserDeactivations" d JOIN "Users" u ON u.id = d."userId" WHERE u."schoolId" <> d."schoolId"), '0');
+  PERFORM pg_temp.avo_expect('480o and there are periods to have looked at', (SELECT (count(*) > 0)::text FROM "UserDeactivations"), 'true');
+END $$;
+
+-- 481o: what the migration carried over. Its INSERT, verbatim (src/users/user-deactivations-migration.spec.ts holds the two texts equal),
+-- run over the school's own people with the table emptied: an open period from each inactive person's date, recorded no earlier than it
+-- starts (a stamp the clock has not reached would otherwise break the CHECK and the whole migration), and none for an active person.
+BEGIN;
+DO $$
+DECLARE
+  ahead uuid;
+  old_one uuid;
+  active_one uuid;
+BEGIN
+  PERFORM set_config('session_replication_role', 'replica', true);
+  SELECT id INTO active_one FROM "Users" WHERE "isActive" AND role = 'TEACHER' ORDER BY id LIMIT 1;
+  SELECT id INTO old_one FROM "Users" WHERE NOT "isActive" ORDER BY id LIMIT 1;
+  SELECT id INTO ahead FROM "Users" WHERE NOT "isActive" AND id <> old_one ORDER BY id LIMIT 1;
+  UPDATE "Users" SET "deactivatedAt" = '2024-05-02 09:00+02' WHERE id = old_one;
+  UPDATE "Users" SET "deactivatedAt" = clock_timestamp() + interval '2 days' WHERE id = ahead;
+  DELETE FROM "UserDeactivations";
+
+  INSERT INTO "UserDeactivations" ("schoolId", "userId", "startsAt", "recordedAt")
+  SELECT u."schoolId", u."id", u."deactivatedAt", greatest(clock_timestamp(), u."deactivatedAt")
+    FROM "Users" u
+   WHERE NOT u."isActive" AND u."deactivatedAt" IS NOT NULL;
+
+  PERFORM pg_temp.avo_expect('481o one open period for each inactive person, none for anybody else',
+    (SELECT count(*)::text FROM "UserDeactivations" WHERE "endsAt" IS NULL), (SELECT count(*)::text FROM "Users" WHERE NOT "isActive"));
+  PERFORM pg_temp.avo_expect('481o nothing for an active person', (SELECT count(*)::text FROM "UserDeactivations" WHERE "userId" = active_one), '0');
+  PERFORM pg_temp.avo_expect('481o every period starts at its person''s own date',
+    (SELECT count(*)::text FROM "UserDeactivations" d JOIN "Users" u ON u.id = d."userId" WHERE d."startsAt" IS DISTINCT FROM u."deactivatedAt"), '0');
+  PERFORM pg_temp.avo_expect('481o the old one starts when it did', (SELECT "startsAt"::text FROM "UserDeactivations" WHERE "userId" = old_one), ('2024-05-02 09:00+02'::timestamptz)::text);
+  PERFORM pg_temp.avo_expect('481o one whose date is ahead of the clock is recorded at that date and not before it',
+    (SELECT ("recordedAt" >= "startsAt")::text FROM "UserDeactivations" WHERE "userId" = ahead), 'true');
+  PERFORM pg_temp.avo_expect('481o and it is not changed by the CHECKs', (SELECT count(*)::text FROM "UserDeactivations" WHERE "startsAt" > "recordedAt"), '0');
+END $$;
+ROLLBACK;
+
+-- 482o: a school removed takes the periods of its people. Built with the triggers on, as a school really is: the teacher is made
+-- inactive, active and inactive again (three rows' worth of history, two periods), and the school goes.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.d6o_school('av-gone', 1, 0);
+  t uuid;
+BEGIN
+  SELECT id INTO t FROM "Users" WHERE "schoolId" = s AND email = 'd6o-av-gone-t@example.invalid';
+  PERFORM set_config('session_replication_role', 'origin', true);
+  UPDATE "Users" SET "isActive" = false WHERE id = t;
+  UPDATE "Users" SET "isActive" = true WHERE id = t;
+  UPDATE "Users" SET "isActive" = false WHERE id = t;
+  PERFORM pg_temp.avo_expect('482o the school''s teacher has two periods, the second open',
+    (SELECT string_agg(CASE WHEN "endsAt" IS NULL THEN 'open' ELSE 'closed' END, ',' ORDER BY "startsAt", id) FROM "UserDeactivations" WHERE "userId" = t), 'closed,open');
+  DELETE FROM "Schools" WHERE id = s;
+  PERFORM pg_temp.avo_expect('482o the school is gone with its periods', (SELECT count(*)::text FROM "UserDeactivations" WHERE "schoolId" = s OR "userId" = t), '0');
 END $$;
 ROLLBACK;

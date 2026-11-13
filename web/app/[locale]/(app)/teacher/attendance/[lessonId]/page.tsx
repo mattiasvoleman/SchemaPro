@@ -132,6 +132,11 @@ export default function LessonAttendancePage({
     (status) => status !== "UNKNOWN",
   ).length;
 
+  // A mark cleared from the list of moved pupils: the pupil stands as UNKNOWN on this page, which goes before what the
+  // register holds. Taking the choice away instead would put the register's old mark back until the records have been
+  // read again (the save that cleared it does not wait for that), and a Spara in that gap would mark the pupil anew.
+  const forget = (studentId: string) => setChosen((previous) => ({ ...previous, [studentId]: "UNKNOWN" }));
+
   const markAllPresent = () => {
     const next: Record<string, AttendanceStatus> = {};
     for (const student of students ?? []) {
@@ -316,7 +321,7 @@ export default function LessonAttendancePage({
 
       {moving || hasMoves ? (
         <Suspense fallback={null}>
-          <LessonMovesSection lessonId={lessonId} moving={moving} onMovingChange={setMoving} />
+          <LessonMovesSection lessonId={lessonId} moving={moving} onMovingChange={setMoving} onMarkCleared={forget} />
         </Suspense>
       ) : null}
 

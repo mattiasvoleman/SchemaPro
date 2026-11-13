@@ -402,6 +402,189 @@ describe('withPeriodDates', () => {
     );
   });
 
+  describe('a period with no week of the parity counted', () => {
+    // Review of #301, round two, LÅG-2. The engine counted the odd weeks of periods 29 and 30
+    // ("29,30", ODD_WEEKS) and period 30 is one EVEN week: week 18, 3 to 9 May 2027. Its
+    // stretch in the window made it a week wider than the week that was counted.
+    const at = (held: Record<number, { from: string; to: string }[]>) =>
+      Array.from({ length: 31 }, (_, index) => held[index] ?? [{ from: '2026-08-17', to: '2026-08-23' }]);
+    const odd29 = { from: '2027-04-26', to: '2027-05-02' }; // week 17
+    const even30 = { from: '2027-05-03', to: '2027-05-09' }; // week 18
+
+    it('is left out of the window: the weeks counted, and no week more', () => {
+      const counted = { period: 29, periods: '29,30', parity: 'ODD_WEEKS' };
+      expect(withPeriodDates(counted, at({ 29: [odd29], 30: [even30] }))).toEqual({
+        ...counted, periodFrom: '2027-04-26', periodTo: '2027-05-02', periodStretches: 1,
+      });
+      expect(periodSentence(withPeriodDates(counted, at({ 29: [odd29], 30: [even30] })))).toBe(
+        ' Counted for the weeks from 2027-04-26 to 2027-05-02 (odd weeks), which is when these run together.',
+      );
+    });
+
+    it('is left out the same way when it is the first of them, and the dates are the others’', () => {
+      // The even weeks of the same two periods: period 29 is week 17, an odd one, and is the
+      // one with none. `period` is the engine's own word and stays; the dates are week 18's.
+      expect(withPeriodDates({ period: 29, periods: '29,30', parity: 'EVEN_WEEKS' }, at({ 29: [odd29], 30: [even30] }))).toEqual({
+        period: 29, periods: '29,30', parity: 'EVEN_WEEKS',
+        periodFrom: '2027-05-03', periodTo: '2027-05-09', periodStretches: 1,
+      });
+    });
+
+    it('is kept when any stretch of it holds a week of the parity: two weeks hold both', () => {
+      const two = { from: '2027-05-03', to: '2027-05-16' }; // weeks 18 and 19
+      expect(withPeriodDates({ period: 29, periods: '29,30', parity: 'ODD_WEEKS' }, at({ 29: [odd29], 30: [two] }))).toMatchObject({
+        periodFrom: '2027-04-26', periodTo: '2027-05-16', periodStretches: 1,
+      });
+      // Each stretch is asked on its own (review of #304, MEDEL-1): period 30 has week 18, an
+      // even week that was not counted, and week 21, an odd one that was. Only week 21 is
+      // written, beside week 17; the period's keeping its odd week does not keep its even one.
+      expect(
+        withPeriodDates({ period: 29, periods: '29,30', parity: 'ODD_WEEKS' }, at({
+          29: [odd29], 30: [even30, { from: '2027-05-24', to: '2027-05-30' }], // …and week 21
+        })),
+      ).toMatchObject({ periodFrom: '2027-04-26', periodTo: '2027-05-02', periodStretches: 2 });
+    });
+
+    describe('a läsår that starts on a Saturday, as the production’s does (review of #304, MEDEL-1)', () => {
+      // 15 August 2026 is a Saturday, and the läsår has 53 ISO weeks in it: week 53 starts on
+      // Monday 28 December and week 1 of 2027 on 4 January. Both are odd.
+      const year = { startDate: '2026-08-15', endDate: '2027-06-12' };
+
+      it('reads two weeks in a row as the parities they are: week 53 and week 1 hold no even week', () => {
+        // The autumn's post and the spring's: the two weeks between them are a period of their own.
+        const periods = yearPeriodsOf(year, [
+          [{ startDate: '2026-08-15', endDate: '2026-12-27' }],
+          [{ startDate: '2027-01-11', endDate: '2027-06-12' }],
+        ]);
+        expect(periods!.stretches).toEqual([
+          [{ from: '2026-08-15', to: '2026-12-27' }],
+          [{ from: '2026-12-28', to: '2027-01-10' }],
+          [{ from: '2027-01-11', to: '2027-06-12' }],
+        ]);
+        const dated = (params: Record<string, string | number>) => withPeriodDates(params, periods!.stretches);
+        // The even weeks of the two periods: the spring's, and not the two that have none.
+        expect(dated({ period: 1, periods: '1,2', parity: 'EVEN_WEEKS' })).toMatchObject({
+          periodFrom: '2027-01-11', periodTo: '2027-06-12', periodStretches: 1,
+        });
+        expect(periodSentence(dated({ period: 1, periods: '1,2', parity: 'EVEN_WEEKS' }))).toBe(
+          ' Counted for the weeks from 2027-01-11 to 2027-06-12 (even weeks), which is when these run together.',
+        );
+        // The odd weeks are the Christmas weeks and then the spring's, and they meet.
+        expect(dated({ period: 1, periods: '1,2', parity: 'ODD_WEEKS' })).toMatchObject({
+          periodFrom: '2026-12-28', periodTo: '2027-06-12', periodStretches: 1,
+        });
+        // The period alone has no even week to be named by: its dates stand as they came.
+        expect(dated({ period: 1, parity: 'EVEN_WEEKS' })).toMatchObject({
+          periodFrom: '2026-12-28', periodTo: '2027-01-10', periodStretches: 1,
+        });
+      });
+
+      it('asks a period’s stretches one by one: a lone week of the other parity is not the first window', () => {
+        // One post, held in week 34 (Monday 17 August) and from week 48 (Monday 23 November) on: the
+        // period that holds it has the lone week, then the long run.
+        const periods = yearPeriodsOf(year, [[
+          { startDate: '2026-08-17', endDate: '2026-08-23' },
+          { startDate: '2026-11-23', endDate: '2027-06-12' },
+        ]]);
+        expect(periods!.stretches[1]).toEqual([
+          { from: '2026-08-17', to: '2026-08-23' },
+          { from: '2026-11-23', to: '2027-06-12' },
+        ]);
+        // Week 34 is even. The odd weeks are counted in the long run, and the window is its.
+        expect(withPeriodDates({ period: 1, parity: 'ODD_WEEKS' }, periods!.stretches)).toMatchObject({
+          periodFrom: '2026-11-23', periodTo: '2027-06-12', periodStretches: 1,
+        });
+        // The even weeks are in both: the lone week first, and the run after it.
+        expect(withPeriodDates({ period: 1, parity: 'EVEN_WEEKS' }, periods!.stretches)).toMatchObject({
+          periodFrom: '2026-08-17', periodTo: '2026-08-23', periodStretches: 2,
+        });
+      });
+
+      it('has both parities in any three weeks in a row, and in two weeks that are not both odd', () => {
+        // The stretch asked, beside a period that has both parities in March (weeks 9 to 11): where the
+        // stretch is dropped the window is March's, and where it is kept the window is its own.
+        const asked = (parity: string, from: string, to: string) =>
+          withPeriodDates({ period: 1, periods: '1,2', parity }, [
+            [{ from: '2026-08-15', to: '2026-08-16' }],
+            [{ from, to }],
+            [{ from: '2027-03-01', to: '2027-03-21' }],
+          ]);
+        const kept = (from: string, to: string) => ({ periodFrom: from, periodTo: to, periodStretches: 2 });
+        // Weeks 52, 53 and 1 (even, odd, odd) and 53, 1 and 2 (odd, odd, even): each has both.
+        for (const [from, to] of [['2026-12-21', '2027-01-10'], ['2026-12-28', '2027-01-17']] as const) {
+          for (const parity of ['ODD_WEEKS', 'EVEN_WEEKS']) {
+            expect(asked(parity, from, to)).toMatchObject(kept(from, to));
+          }
+        }
+        // Weeks 52 and 53 (even, odd) and 1 and 2 (odd, even): two weeks that differ have both.
+        for (const [from, to] of [['2026-12-21', '2027-01-03'], ['2027-01-04', '2027-01-17']] as const) {
+          for (const parity of ['ODD_WEEKS', 'EVEN_WEEKS']) {
+            expect(asked(parity, from, to)).toMatchObject(kept(from, to));
+          }
+        }
+        // Week 53 and week 1 are odd twice: kept for the odd weeks, and left out of the even ones.
+        expect(asked('ODD_WEEKS', '2026-12-28', '2027-01-10')).toMatchObject(kept('2026-12-28', '2027-01-10'));
+        expect(asked('EVEN_WEEKS', '2026-12-28', '2027-01-10')).toMatchObject({
+          periodFrom: '2027-03-01', periodTo: '2027-03-21', periodStretches: 1,
+        });
+        // Week 1 is odd and week 2 even, one week each: each is asked on its own.
+        expect(asked('EVEN_WEEKS', '2027-01-04', '2027-01-10')).toMatchObject({ periodFrom: '2027-03-01', periodStretches: 1 });
+        expect(asked('ODD_WEEKS', '2027-01-11', '2027-01-17')).toMatchObject({ periodFrom: '2027-03-01', periodStretches: 1 });
+      });
+    });
+
+    it('reads the läsår’s first two days, a Saturday and a Sunday, as the week they are in', () => {
+      // 15 and 16 August 2026 are week 33, odd, though the period is two days and not a week.
+      const stretches = [
+        [{ from: '2026-08-15', to: '2026-08-16' }], // week 33
+        [{ from: '2026-08-17', to: '2026-08-23' }], // week 34
+      ];
+      expect(withPeriodDates({ period: 0, periods: '0,1', parity: 'ODD_WEEKS' }, stretches)).toMatchObject({
+        periodFrom: '2026-08-15', periodTo: '2026-08-16', periodStretches: 1,
+      });
+      expect(withPeriodDates({ period: 0, periods: '0,1', parity: 'EVEN_WEEKS' }, stretches)).toMatchObject({
+        periodFrom: '2026-08-17', periodTo: '2026-08-23', periodStretches: 1,
+      });
+    });
+
+    it('reads the week number of the ISO year: week 53 and week 1 are both odd', () => {
+      const stretches = [
+        [{ from: '2026-12-28', to: '2027-01-03' }], // week 53 of 2026
+        [{ from: '2027-01-04', to: '2027-01-10' }], // week 1 of 2027
+        [{ from: '2027-01-11', to: '2027-01-17' }], // week 2
+      ];
+      expect(withPeriodDates({ period: 0, periods: '0,1,2', parity: 'ODD_WEEKS' }, stretches)).toMatchObject({
+        periodFrom: '2026-12-28', periodTo: '2027-01-10',
+      });
+      expect(withPeriodDates({ period: 0, periods: '0,1,2', parity: 'EVEN_WEEKS' }, stretches)).toMatchObject({
+        periodFrom: '2027-01-11', periodTo: '2027-01-17',
+      });
+    });
+
+    it('leaves the dates as they came where none of the periods has a week of the parity', () => {
+      // Nothing to leave them out for: the engine's words are then all there is.
+      const odds = [odd29, { from: '2027-05-10', to: '2027-05-16' }]; // weeks 17 and 19
+      expect(
+        withPeriodDates({ period: 0, periods: '0,1', parity: 'EVEN_WEEKS' }, [[odds[0]!], [odds[1]!]]),
+      ).toMatchObject({ periodFrom: '2027-04-26', periodTo: '2027-05-02', periodStretches: 2 });
+      expect(withPeriodDates({ period: 0, parity: 'EVEN_WEEKS' }, [[odds[0]!]])).toMatchObject({
+        periodFrom: '2027-04-26', periodTo: '2027-05-02',
+      });
+    });
+
+    it('is no business of a count that names no parity, or one that is not a parity', () => {
+      const cases: Record<string, string | number>[] = [
+        { period: 29, periods: '29,30' },
+        { period: 29, periods: '29,30', parity: 'ALL_WEEKS' },
+      ];
+      for (const params of cases) {
+        expect(withPeriodDates(params, at({ 29: [odd29], 30: [even30] }))).toMatchObject({
+          periodFrom: '2027-04-26', periodTo: '2027-05-09', periodStretches: 1,
+        });
+      }
+    });
+  });
+
   it('leaves alone what names no period, or one the read does not have', () => {
     const plain = { demandMinutes: 2560 };
     expect(withPeriodDates(plain, stretches)).toBe(plain);

@@ -209,6 +209,8 @@ export const LUNCH_SITTINGS: LunchSitting[] = CLASSES.flatMap((group, groupIndex
     endTime: group.gradeLevel === 7 ? "12:10:00" : "12:40:00",
     headcount: 25,
     isGenerated: true,
+    startDate: null,
+    endDate: null,
   })),
 );
 

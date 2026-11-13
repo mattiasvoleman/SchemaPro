@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { toast } from "sonner";
 import {
@@ -184,12 +184,15 @@ import {
   buildGroupConflictMap,
   buildPupilBufferMap,
   detectConflicts,
+  type LunchOf,
+  type Meal,
   pupilBufferOf,
   teacherIdsOf,
   toPlacement,
   validatePlacement,
   type Placement,
 } from "@/lib/conflicts";
+import { mealDayFormatter, mealWeeksOf } from "@/lib/lunch-window";
 import type { OpenSlotMatch, PlacementSuggestion } from "@/lib/placement-search";
 import { buildGradeSpans } from "@/lib/grade-span";
 import { restorableInput } from "@/lib/lesson-restore";
@@ -281,6 +284,7 @@ type GroupBy = "none" | "teacher" | "room" | "group";
 
 export default function TimetablePage() {
   const t = useTranslations("timetable");
+  const locale = useLocale();
   const tLunch = useTranslations("lunch");
   const tCommon = useTranslations("common");
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
@@ -728,17 +732,24 @@ export default function TimetablePage() {
    * the lesson's own groups, and a lesson for a class that is not the one being
    * looked at is still a lesson on that class's meal.
    */
-  const lunchOf = useMemo(() => {
+  const lunchOf = useMemo<LunchOf | undefined>(() => {
     if (!lunchSittings) return undefined;
-    return new Map(
-      lunchSittings.map((sitting) => [
-        `${sitting.studentGroupId}:${sitting.dayOfWeek}`,
-        {
-          startMinutes: timeToMinutes(sitting.startTime),
-          endMinutes: timeToMinutes(sitting.endTime),
-        },
-      ]),
-    );
+    // A class may eat at another time in another part of the läsår, so a day
+    // can hold several meals; the check holds a lesson to those of its weeks.
+    const meals = new Map<string, Meal[]>();
+    for (const sitting of lunchSittings) {
+      const key = `${sitting.studentGroupId}:${sitting.dayOfWeek}`;
+      const meal: Meal = {
+        startMinutes: timeToMinutes(sitting.startTime),
+        endMinutes: timeToMinutes(sitting.endTime),
+        startDate: sitting.startDate,
+        endDate: sitting.endDate,
+      };
+      const held = meals.get(key);
+      if (held) held.push(meal);
+      else meals.set(key, [meal]);
+    }
+    return meals;
   }, [lunchSittings]);
 
   /**
@@ -884,6 +895,25 @@ export default function TimetablePage() {
   );
 
   /**
+   * "Lunch", and the weeks it holds when it holds only some: a class that eats
+   * at another time in another part of the läsår has a band for each, and the
+   * label is what tells them apart.
+   */
+  const mealDay = useMemo(() => mealDayFormatter(locale), [locale]);
+  const mealLabel = useCallback(
+    (sitting: { startDate: string | null; endDate: string | null }): string => {
+      const weeks = mealWeeksOf(sitting, mealDay);
+      if (weeks === null) return tLunch("bandLabel");
+      return weeks.kind === "between"
+        ? tLunch("bandLabelBetween", { from: weeks.from, to: weeks.to })
+        : weeks.kind === "from"
+          ? tLunch("bandLabelFrom", { from: weeks.from })
+          : tLunch("bandLabelTo", { to: weeks.to });
+    },
+    [mealDay, tLunch],
+  );
+
+  /**
    * The lunch drawn behind the lessons — but ONLY when one class is in view.
    *
    * A sitting belongs to a group. The default view is every group at once, and
@@ -900,7 +930,7 @@ export default function TimetablePage() {
         dayOfWeek: sitting.dayOfWeek,
         startMinutes: timeToMinutes(sitting.startTime),
         endMinutes: timeToMinutes(sitting.endTime),
-        label: tLunch("bandLabel"),
+        label: mealLabel(sitting),
         // Every meal can be moved — touching one makes it the school's — and
         // only one the school placed can be removed: the solver's own is
         // replaced by the next run, and removing it would leave the day blank.
@@ -935,7 +965,7 @@ export default function TimetablePage() {
     );
 
     return [...meals, ...breaks];
-  }, [lunchSittings, rasts, gradeSpanOf, onlyGroup, tLunch, t]);
+  }, [lunchSittings, rasts, gradeSpanOf, onlyGroup, mealLabel, t]);
 
   /**
    * lessonId → what this lesson means for the class in view. Empty for "all".
