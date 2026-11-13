@@ -862,6 +862,56 @@ MESSAGES: dict[str, str] = {
         "{requirement}, placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} "
         "5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end} in {room}."
     ),
+    # Fästa lektioner (app/solver/pins.py): a lesson of a requirement the
+    # school laid by hand and the engine holds there, the requirement's own
+    # lesson and not a lock. With its room it is named by the line above; this
+    # is the same lesson where the engine chooses the room.
+    "PLACED_LESSON_IN_THE_WAY_ANY_ROOM": (
+        "{requirement}, placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} "
+        "5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end}, in a room the "
+        "timetable chooses."
+    ),
+    # Refused before any model is built (pins.verify_pins): what the placed
+    # lesson's own post rules out, whatever the rest of the week is.
+    "PLACED_LESSON_OUTSIDE_THE_WEEK": (
+        "{requirement} is placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
+        "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end}, which "
+        "is not a time of the week the timetable is laid in: the day is not a school day, or the "
+        "time is outside the school day or between the steps of its time grid. Move the placed "
+        "lesson."
+    ),
+    "PLACED_LESSON_OUTSIDE_FRAME": (
+        "{requirement} is placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
+        "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end}, "
+        "outside the frame time of its years. Move the placed lesson or change the frame time."
+    ),
+    # Its own sentence, as the margins have beside the frames' everywhere
+    # else: the frame offers these minutes, and what does not fit is the time
+    # round the lesson.
+    "PLACED_LESSON_MARGINS_PAST_THE_DAY": (
+        "{requirement} is placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
+        "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end}, and "
+        "from there the minutes its pupils need before and after the lesson, or the margin "
+        "between lessons its years have, reach past the school day. Move the placed lesson or "
+        "shorten the margins."
+    ),
+    "PLACED_LESSON_IN_A_RAST": (
+        "{requirement} is placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
+        "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end}, across "
+        "a rast of its years. Move the placed lesson or the rast."
+    ),
+    "PLACED_LESSON_ROOM_NOT_ALLOWED": (
+        "{requirement} is placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
+        "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end} in "
+        "{room}, a room its lessons may not use: of another type, too small, kept for other "
+        "years, or outside the rooms its subject is locked to. Choose another room for the "
+        "placed lesson, or leave the room to the timetable."
+    ),
+    "PLACED_LESSONS_OF_BLOCK_DIFFER": (
+        "The block {block} has a lesson placed for some of its entries and not for others, or at "
+        "different times: {requirement} and {other}. A block's lessons start together, so place "
+        "the same lesson of every entry at one time."
+    ),
     # Sent by the GATEWAY before the engine is called (the generate pre-flight
     # in optimization-proxy.service.ts), for the reason BLOCK_PARTLY_LOCKED is:
     # a förläggning is judged with the hand edit's rules there

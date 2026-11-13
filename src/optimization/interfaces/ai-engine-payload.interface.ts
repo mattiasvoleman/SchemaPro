@@ -158,6 +158,23 @@ export interface AnonymousRequirement {
    */
   lessonTeacherIds?: (string | null)[];
   /**
+   * Fästa lektioner: the lessons of the post the school laid by hand that
+   * the engine holds where they were laid, one place per lesson in
+   * lessonTeacherIds' order (the engine's lesson_minutes(), longest first),
+   * null for a lesson the engine places. A pinned lesson stays the post's
+   * own: it is counted in `lessonsPerWeek`, comes back among the post's
+   * lessons, and is held to every rule they are, which a lesson sent as a
+   * fixed lesson is not (optimization-engine/app/solver/pins.py). So its
+   * weekday is NOT also told in `lockedDays`, nor in a teacher's
+   * `lockedWeekdays`: the engine would count the lesson twice.
+   *
+   * NOTHING SENDS THIS YET. The engine has to know the key before a gateway
+   * does, because it answers 422 to one it does not know. Sent, when it is,
+   * only on a post with a pinned lesson, so every other entry is byte for
+   * byte what it was.
+   */
+  pinnedLessons?: (AnonymousPinnedLesson | null)[];
+  /**
    * The years this group's students actually belong to, derived from their
    * home classes. Null when the group has no members with a year at all —
    * then no room limit can be checked against it.
@@ -175,6 +192,22 @@ export interface AnonymousRequirement {
  * class whose lessons are all placed by hand has no requirement left — and it
  * still eats.
  */
+/**
+ * One pinned lesson (AnonymousRequirement.pinnedLessons): the weekday and the
+ * clock it is held at, and its room when the school chose one. Without a
+ * room the engine chooses it as for any lesson of the post. `endTime` is the
+ * start plus the length of the lesson at that place: a check the engine makes
+ * of the gateway's places, refused (422) when it does not hold.
+ */
+export interface AnonymousPinnedLesson {
+  dayOfWeek: DayOfWeek;
+  /** HH:MM:SS. */
+  startTime: string;
+  /** HH:MM:SS. */
+  endTime: string;
+  roomId?: string;
+}
+
 export interface AnonymousGroup {
   id: string;
   lunchHeadcount: number;

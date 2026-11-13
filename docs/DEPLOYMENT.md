@@ -5261,3 +5261,80 @@ CHECK), the snapshot's, what each role reads and writes, and the cascades; the
 *Meal per term probe* in CI runs the oracle over the calendar date by date,
 the snapshot, the placement and its race, and the board's reader.
 
+
+## 20. Pinned lessons in the generator ("Fästa lektioner")
+
+A lesson a school lays by hand before Generera has reached the engine as a
+locked lesson, taken off its post (§ on *Förlagda poster*). A lock has to name
+its room, and no proof of an impossible week can name a lock. The engine now
+also takes the same lesson as a **pinned lesson**: a new optional key on a
+requirement, `pinnedLessons`, one place per lesson of the post in the order
+`lessonTeacherIds` has (longest lesson first), each place empty or
+`{dayOfWeek, startTime, endTime, roomId?}`. A pinned lesson stays the post's
+own lesson. The engine holds it at that weekday and start, in that room when
+one is named and in a room it chooses when none is, and it comes back among the
+post's lessons in the answer.
+
+**Nothing sends the key yet.** This release is the engine's half. No
+migration, no setting, and no school's week changes: a request without the key
+builds the model it built and is answered with the bytes it was answered with.
+
+### 20.1 Deploy order
+
+**The engine first**, for the reason §19.1 gives: its request models forbid
+unknown fields, so an engine without the key answers 422 to a run that carries
+one.
+
+1. Merge this release. Verify that `https://<solver-host>/openapi.json` has a
+   schema named `PinnedLesson` and names `pinnedLessons` under
+   `AnonymousRequirement`, and that no schema has been renamed (a name holding
+   `__` is one that was).
+2. A later release makes the gateway send the key. That release is refused
+   by an engine without this one, and says so in its own section.
+
+### 20.2 Rolling back
+
+Safe at any time while nothing sends the key: reverting this release takes the
+key out of the engine and changes no answer. Once a gateway sends it, the
+engine must not be rolled back past this release before that gateway is.
+
+### 20.3 A pinned lesson is held to more than a locked one
+
+A locked lesson is a window the generated lessons steer round. It has no
+years, no subject and no margins of its own, and two locks are never compared.
+A pinned lesson is a lesson of its post, and every rule of the post holds for
+it. For a school this is where the two differ:
+
+- **Refused before the week is laid, with the lesson named:** a pinned lesson
+  outside the school's week or its time grid, outside the frame time of its
+  years, across a rast of its years, or in a room its post may not use (type,
+  size, years, or the rooms its subject is locked to).
+- **Refused by the proof, with the lesson and the rule named:** a pinned
+  lesson that breaks the subject's distribution rule (two pinned on one day
+  under "at most one a day"), the teacher's daily cap or days a week, or the
+  class's daily maximum. A locked lesson is taken as a fact by all four.
+- **Two pinned lessons in each other's way** (one teacher, one class, one
+  room, one hour) are refused with both named. Two locks are not compared.
+- **In a parallel block** a lesson is pinned for every entry of the block or
+  for none, at one time (`PLACED_LESSONS_OF_BLOCK_DIFFER`).
+
+A pinned lesson never gives way, in Bästa möjliga schema either.
+
+### 20.4 Operations
+
+- **The lines.** A pinned lesson in the way of a week is named as a förlagd
+  lesson is: `PLACED_LESSON_IN_THE_WAY` with its room, and
+  `PLACED_LESSON_IN_THE_WAY_ANY_ROOM` where the engine chooses the room.
+- **A refused week with a pinned lesson is explained on the model without the
+  objective.** Measured on the högstadium benchmark with 200 lessons pinned
+  and two of them on one hour of a teacher's: the model with the objective
+  named every rule of the week, 668 of 668, and the one without named the two
+  pinned lessons, in 9 s on a loaded machine. A week without a pinned lesson
+  is explained as before.
+- **When the proof names nothing** inside its fifteen seconds, the week is
+  solved once more with every pinned lesson free to move, as it is for the
+  förlagda locks, and a timetable found then names them all.
+- **The start step.** A lesson pinned at 08:05 takes a school that is searched
+  every thirty minutes down to every five, as a lesson locked at 08:05 does.
+- **A pinned room is a room class of its own**, as a locked lesson's room is,
+  and costs the model what that costs.
