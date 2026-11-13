@@ -2290,10 +2290,10 @@
     <span class="ui">Visa grupper utan post</span> för att se resten av
     läsårets grupper, till exempel när ämnet ska läggas till för en ny klass.
     Den tyngsta veckan och timmarna räknar bara ämnets poster, både på varje
-    rad och för hela skolan. Valet sparas i sidans adress, så att du kan ladda
-    om sidan eller dela länken, och det gäller kvar när du byter läsår.
-    Läsåret du byter till sparas inte i adressen. Exporten innehåller alltid
-    alla ämnen.
+    rad och för hela skolan. Ämnet och läsåret sparas i sidans adress, så att du
+    kan ladda om sidan eller dela länken, och ämnet gäller kvar när du byter
+    läsår. Kryssrutan nollställs när du väljer <span class="ui">Alla ämnen</span>.
+    Exporten innehåller alltid alla ämnen.
   </p>
   <p>
     <strong>Ett ämne i läget Mål.</strong> Med ett ämne valt och
@@ -2306,7 +2306,9 @@
     timplanen har ett mål för NO, heter kolumnen
     <span class="ui">Planerat / mål i NO</span> och visar gruppens siffror
     med <em>hela NO</em> under dem, också för en klass som inte har någon
-    post i gruppens ämnen än. Meningen ovanför matrisen säger vilka ämnen som
+    post i gruppens ämnen än. Ämnets tomma ruta i en sådan klass har gruppens
+    färg: röd när ingenting är planerat på raden, gul när något fattas.
+    Meningen ovanför matrisen säger vilka ämnen som
     räknas tillsammans. Ett ämne som inte räknas som undervisningstid, till
     exempel mentorstid, har ingen rad i timplanen. Då står det så i stället
     för siffror. Täckningen för hela klassen visas inte med ett ämne valt.
@@ -3151,17 +3153,30 @@
     lärare (se Dela lektionerna mellan lärare ovan) förläggs lektion för
     lektion, var och en med sin lärare. Du kan förlägga en, några eller alla
     av postens lektioner. Fältet <span class="ui">Lärare</span> på varje rad
-    listar de lärare som har en del av posten: huvudläraren och varje lärare
-    som tar lektioner av den. Väljer du en annan lärare på en rad behåller
+    listar de lärare som har en del av posten: huvudläraren först och sedan
+    varje lärare som tar lektioner av den, i namnordning. En lärare vars
+    lektioner redan är förlagda på andra rader erbjuds inte för raden. Väljer
+    du en annan lärare på en rad behåller
     raden sin längd om den nya läraren har en lektion av den längden, och får
     annars hens första längd. Ovanför raderna står en rad som räknar varje
     lärares förlagda lektioner mot hens del, till exempel <em>Förlagda
-    lektioner per lärare: Anna Svensson 1 av 2, Bo Lind 1 av 1.</em> Ett par
+    lektioner per lärare: Anna Svensson 1 av 2, Bo Lind 1 av 1.</em> Har en
+    lärare fler förlagda lektioner än hens del, till exempel på en sparad rad,
+    blir raden röd. Ett par
     (nedan) är en lektion och därför en lärares: båda halvorna ska ha samma
     lärare. <span class="ui">Lägg till lektion</span> ger den nya raden åt den
     första läraren som har en lektion kvar, och är stängd när varje lektion
     som har en lärare är förlagd. Krocken med en annan lektion prövas mot
     förläggningens egen lärare.
+  </p>
+  <p>
+    Ett lås i grundschemat räknas av mot postens lektioner av samma längd, och
+    ett lås vars lärare inte ingår i posten, eller vars längd posten inte har,
+    räknas först mot huvudlärarens lektion. Har huvudläraren förlagt alla sina
+    lektioner av längden kan en annan lärares förläggning därför vägras med
+    <em>Posten har ingen lektion av den längden kvar</em>, fast postens
+    lektioner räcker till. Ta bort eller flytta låset, eller ändra
+    förläggningen, så går den att spara.
   </p>
   <p>
     En del utan lärare kan inte förläggas. Det gäller lektioner som står som
@@ -3187,7 +3202,8 @@
   </p>
   <p>
     Posten får märket <span class="ui">Förlagd</span> i matrisen, med dag, tid
-    och sal i en ledtext. Postens dialog listar raderna. Med
+    och sal i en ledtext, och på en delad post också vems lektion varje rad
+    är. Postens dialog listar raderna. Med
     Läsbehörighet syns märket och raderna men inte <span class="ui">Förlägg
     …</span>.
   </p>
