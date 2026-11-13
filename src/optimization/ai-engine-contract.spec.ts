@@ -1666,10 +1666,13 @@ describe('AI engine wire contract', () => {
     };
     await expect(
       buildPayload({ lessonsPerWeek: 3, shares: [{ teacherId: 't3', lessons: 1, minutes: 60 }] }, [], [], (tx) => {
-        // The fetch reads Bo's one; the write's own read finds two.
+        // The fetch reads Bo's one; the write's own read of the rows finds two;
+        // and the fetch it reads once more (the basis) finds Bo's one again, so
+        // that only the shares check can be what refuses.
         tx['teachingRequirement']!['findMany']!
           .mockResolvedValueOnce([{ ...row, shares: [{ teacherId: 't3', lessons: 1, minutes: 60 }] }])
-          .mockResolvedValue([{ ...row, shares: [{ teacherId: 't3', lessons: 2, minutes: 60 }] }]);
+          .mockResolvedValueOnce([{ ...row, shares: [{ teacherId: 't3', lessons: 2, minutes: 60 }] }])
+          .mockResolvedValue([{ ...row, shares: [{ teacherId: 't3', lessons: 1, minutes: 60 }] }]);
       }),
     ).rejects.toMatchObject({ status: 409, response: expect.objectContaining({ code: 'GENERATE_STALE' }) });
     expect(lastTx['masterLesson']!['createMany']).not.toHaveBeenCalled();

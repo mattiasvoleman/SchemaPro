@@ -205,5 +205,29 @@ describe('the year’s regeneration lock', () => {
   it('names a generate that lost its draft under it', () => {
     expect(generateStale().getStatus()).toBe(409);
     expect(bodyOf(generateStale())).toMatchObject({ code: GENERATE_STALE });
+    // The field checks name nothing: the body is what it always was.
+    expect(bodyOf(generateStale())).not.toHaveProperty('params');
+  });
+
+  it('names the basis parts a generate was refused for, as flat params the problem filter forwards', () => {
+    expect(bodyOf(generateStale(['preserved', 'rules']))).toMatchObject({
+      code: GENERATE_STALE,
+      message: expect.any(String),
+      params: { changed: 'preserved,rules' },
+    });
+    expect(bodyOf(generateStale(['rules']))).toEqual({
+      message: expect.any(String),
+      code: GENERATE_STALE,
+      params: { changed: 'rules' },
+    });
+  });
+
+  it('names the refusal the school met instead, when the write’s own read of it was refused', () => {
+    expect(bodyOf(generateStale([], 'BLOCK_PARTLY_LOCKED_SUMMARY'))).toMatchObject({
+      code: GENERATE_STALE,
+      params: { refusalCode: 'BLOCK_PARTLY_LOCKED_SUMMARY' },
+    });
+    expect(bodyOf(generateStale([], 'BLOCK_PARTLY_LOCKED_SUMMARY'))).not.toHaveProperty('params.changed');
+    expect(bodyOf(generateStale(['rules'], 'X'))).toMatchObject({ params: { changed: 'rules', refusalCode: 'X' } });
   });
 });
