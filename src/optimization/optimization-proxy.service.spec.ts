@@ -2107,6 +2107,10 @@ describe('OptimizationProxyService', () => {
         ['a released post’s mask alone', [['body', 'placements', 'requirements', 1, 'periods']]],
         // An engine that knows periods and not yet a post's days by period names this alone.
         ['a post’s days by period alone', [['body', 'teacherDayLimits', 0, 'lockedWeekdayPeriods']]],
+        // And one that knows the days by period but not by parity names the parity on an entry.
+        ['a post’s days by parity alone', [['body', 'teacherDayLimits', 0, 'lockedWeekdayPeriods', 2, 'recurrence']]],
+        // One that knows periods but not which of them have an odd week.
+        ['which periods have an odd week alone', [['body', 'periodOddWeeks']]],
       ] as [string, (string | number)[][]][])('reads %s as the same engine', async (_name, locs) => {
         http.post.mockReturnValue(throwError(() => refusing(...locs)));
         const error = await callWith(dated).catch((thrown: unknown) => thrown);
@@ -2126,9 +2130,14 @@ describe('OptimizationProxyService', () => {
         for (const loc of [
           ['body', 'requirements', 0, 'colour'],
           ['body', 'periodWeeks', 0],
+          ['body', 'periodOddWeeks', 0],
           ['body', 'periods'],
           ['body', 'lockedWeekdayPeriods'],
           ['query', 'periodWeeks'],
+          ['query', 'periodOddWeeks'],
+          // A post's own parity is a field every engine knows, and so is one a day limit has nothing of.
+          ['body', 'requirements', 0, 'recurrence'],
+          ['body', 'teacherDayLimits', 0, 'recurrence'],
         ]) {
           http.post.mockReturnValue(throwError(() => refusing(loc)));
           const error = await callWith(dated).catch((thrown: unknown) => thrown);
@@ -7928,6 +7937,40 @@ describe('OptimizationProxyService', () => {
           ]);
         });
 
+        it('sends how many of each period’s weeks are odd, where a period has one parity alone', async () => {
+          // Review of #304, MEDEL-2. A lock that ends on the first Sunday is a period of its own, the
+          // läsår's first two days (Saturday and Sunday, week 33: odd), and the engine's cell for its
+          // even weeks is no week. 43 weeks follow, 22 of them odd (weeks 35 to 53 and 1 to 23).
+          arrange({
+            requirements: [requirement({ lessonsPerWeek: 10 })],
+            posts: [post({ maxTeachingDaysPerWeek: 2 })],
+            lockedLessons: [lockedLesson({ id: 'mon', dayOfWeek: 1, endDate: at('2026-08-16') })],
+          });
+          tx.academicYear.findUnique.mockResolvedValue({ startDate: at('2026-08-15'), endDate: at('2027-06-12') } as never);
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(postedPayload().periodWeeks).toEqual([1, 43]);
+          expect(postedPayload().periodOddWeeks).toEqual([1, 22]);
+        });
+
+        it('sends it beside periodWeeks where every period has both parities too', async () => {
+          arrange({
+            requirements: [requirement({ lessonsPerWeek: 10 })],
+            posts: [post({ maxTeachingDaysPerWeek: 2 })],
+            lockedLessons: [lockedLesson({ id: 'mon', dayOfWeek: 1, endDate: at('2026-12-18') })],
+          });
+          tx.academicYear.findUnique.mockResolvedValue({ startDate: at('2026-08-17'), endDate: at('2027-06-11') } as never);
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(postedPayload().periodWeeks).toEqual([18, 25]);
+          // Weeks 34 to 51 (nine odd), and 52, 53 and 1 to 23 (thirteen: 53, 1, 3 … 23).
+          expect(postedPayload().periodOddWeeks).toEqual([9, 13]);
+        });
+
         it('sends each set with its periods once the läsår has them: the autumn’s Monday takes no day of the spring', async () => {
           // The part-timer of the review of #300 (MEDEL-1): two days a week
           // and a Monday kept until Christmas. Held against every week, the
@@ -8001,15 +8044,16 @@ describe('OptimizationProxyService', () => {
               2,
               [
                 { weekdays: [], periods: [false, true] },
-                { weekdays: [1], periods: [true, false] },
-                { weekdays: [1, 2, 3], periods: [true, false] },
+                { weekdays: [1], periods: [true, false], recurrence: 'ODD_WEEKS' },
+                { weekdays: [1, 2, 3], periods: [true, false], recurrence: 'EVEN_WEEKS' },
               ],
             ],
             [
               3,
               [
                 { weekdays: [], periods: [false, true] },
-                { weekdays: [1, 2, 3], periods: [true, false] },
+                { weekdays: [1], periods: [true, false], recurrence: 'ODD_WEEKS' },
+                { weekdays: [1, 2, 3], periods: [true, false], recurrence: 'EVEN_WEEKS' },
               ],
             ],
           ]);

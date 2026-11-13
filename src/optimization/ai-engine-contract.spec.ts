@@ -159,6 +159,7 @@ const PAYLOAD_FIELDS_ALL = [
   'placementRules',
   'placements',
   'periodWeeks',
+  'periodOddWeeks',
 ].sort();
 /** The generator's room: the engine's `_field_names(AnonymousRoom)` with the walk on. */
 const ROOM_FIELDS = ['capacity', 'id', 'maxGradeLevel', 'minGradeLevel', 'type'];
@@ -1492,9 +1493,11 @@ describe('AI engine wire contract', () => {
       );
       const reads = lastTx['academicYear']!['findUnique']!.mock.calls as [{ select?: Record<string, unknown> }][];
       expect(reads.map(([read]) => Object.keys(read.select ?? {}).sort().join(','))).toContain('endDate,startDate');
-      expect(Object.keys(payload).sort()).toEqual([...PAYLOAD_FIELDS, 'periodWeeks'].sort());
+      expect(Object.keys(payload).sort()).toEqual([...PAYLOAD_FIELDS, 'periodOddWeeks', 'periodWeeks'].sort());
       // The autumn (18 weeks), the three weeks between the terms, the spring (22).
       expect(payload['periodWeeks']).toEqual([18, 3, 22]);
+      // Nine odd weeks in the autumn (35 to 51), two between the terms (53 and 1), eleven in the spring (3 to 23).
+      expect(payload['periodOddWeeks']).toEqual([9, 2, 11]);
       const requirements = payload['requirements'] as Array<Record<string, unknown>>;
       expect(Object.keys(requirements[0]!).sort()).toEqual([...REQUIREMENT_FIELDS, 'periods'].sort());
       expect(requirements[0]!['periods']).toEqual([true, false, false]);
@@ -1507,6 +1510,25 @@ describe('AI engine wire contract', () => {
         lastTx['masterLesson']!['createMany']!.mock.calls as [{ data: { startDate: Date | null; endDate: Date | null }[] }][]
       ).flatMap(([call]) => call.data);
       expect(written.map((lesson) => [lesson.startDate, lesson.endDate])).toEqual([[null, day('2026-12-18')]]);
+    });
+
+    it('says the odd weeks of a läsår that starts on a Saturday: the two first days are one week of one parity', async () => {
+      // Review of #304, MEDEL-2. A lock that starts on the first Monday leaves the Saturday and the
+      // Sunday before it as a period of their own: week 33, an odd week, and no even one.
+      const payload = await buildPayload(
+        { recurrence: 'ALL_WEEKS', startDate: null, endDate: null },
+        [lock('ml-from-monday', day('2026-08-17'), null)],
+        [],
+        (tx) =>
+          tx['academicYear']!['findUnique']!.mockResolvedValue({
+            startDate: day('2026-08-15'),
+            endDate: day('2027-06-12'),
+          }),
+      );
+      expect(Object.keys(payload).sort()).toEqual([...PAYLOAD_FIELDS, 'periodOddWeeks', 'periodWeeks'].sort());
+      expect(payload['periodWeeks']).toEqual([1, 43]);
+      // Week 33 is odd; weeks 34 to 53 and 1 to 23 hold 22 odd ones (35, 37 … 53 and 1, 3 … 23).
+      expect(payload['periodOddWeeks']).toEqual([1, 22]);
     });
 
     it('sends a post’s days their periods exactly as the engine declares them, beside the sets as they were', async () => {

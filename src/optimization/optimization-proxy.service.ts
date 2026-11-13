@@ -1165,10 +1165,12 @@ export const ENGINE_LACKS_PERIODS = 'ENGINE_LACKS_PERIODS';
 /**
  * The engine's refusal of terminer's fields as unknown ones: `periodWeeks` on
  * the request, or `periods` wherever an entry carries it (a requirement, a
- * fixed lesson, a released post under `placements`). An older engine names
- * every one of them; any is enough. And `lockedWeekdayPeriods` on a day
- * limit, which an engine that knows periods but not a post's days by period
- * names alone.
+ * fixed lesson, a released post under `placements`), and `periodOddWeeks` beside
+ * it (which periods have an odd week). An older engine names every one of them;
+ * any is enough. And `lockedWeekdayPeriods` on a day limit, which an engine that
+ * knows periods but not a post's days by period names alone, and `recurrence`
+ * on one of its entries (the days of a post by parity), which an engine that
+ * knows the days by period but not the parity names alone.
  */
 function refusesPeriods(body: { details?: { errors?: unknown } | null } | null): boolean {
   const errors = body?.details?.errors;
@@ -1179,8 +1181,11 @@ function refusesPeriods(body: { details?: { errors?: unknown } | null } | null):
       if (type !== 'extra_forbidden' || !Array.isArray(loc) || loc[0] !== 'body') return false;
       const last = loc[loc.length - 1];
       return (
-        (loc.length === 2 && last === 'periodWeeks') ||
-        (loc.length > 2 && (last === 'periods' || last === 'lockedWeekdayPeriods'))
+        (loc.length === 2 && (last === 'periodWeeks' || last === 'periodOddWeeks')) ||
+        (loc.length > 2 &&
+          (last === 'periods' ||
+            last === 'lockedWeekdayPeriods' ||
+            (last === 'recurrence' && loc.includes('lockedWeekdayPeriods'))))
       );
     })
   );
@@ -1665,7 +1670,13 @@ export class OptimizationProxyService {
       ...(data.placements ? { placements: data.placements } : {}),
       // Terminer: only when a post or a lock of the week is dated, the entries
       // then carrying their periods. See AiEngineScheduleRequest.
-      ...(data.yearPeriods ? { periodWeeks: data.yearPeriods.weeks } : {}),
+      ...(data.yearPeriods
+        ? {
+            periodWeeks: data.yearPeriods.weeks,
+            // How many of them are odd, so that a cell no week is in is not read as one.
+            periodOddWeeks: data.yearPeriods.oddWeeks,
+          }
+        : {}),
     };
 
     // Over the payload turned back to real ids — the teacher's and the
