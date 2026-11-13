@@ -251,8 +251,72 @@ describe("the list of the pupils a lesson lost and gained", () => {
     await user.click(first!);
 
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith("Eleven har redan en närvaromarkering på lektionen de flyttats till. Ta bort markeringen först."),
+      expect(toast.error).toHaveBeenCalledWith(
+        "Eleven har redan en närvaromarkering på lektionen de flyttats till. Läraren på den lektionen, eller en administratör, kan rensa markeringen i lektionens närvarolista. Sedan går flytten att ångra.",
+      ),
     );
+  });
+
+  // LM415 left a pupil moved onto a lesson with a mark that only the API could take away (the register's buttons are
+  // the four marks). "Rensa markering" saves UNKNOWN, which is no mark, so the move can be undone.
+  describe("Rensa markering, for the pupil who was moved here and holds a mark", () => {
+    const REPORT = "/api/v1/attendance/report";
+    const records = (status: string) => ({
+      records: [{ id: "r-1", calendarLessonId: LESSON, studentId: "p-2", status, recordedAt: "2026-11-10T07:10:00.000Z", note: null }],
+    });
+    const serve = (marks: unknown) =>
+      api.get.mockImplementation(async (path: string) => (path === `/api/v1/attendance/lessons/${LESSON}/records` ? marks : moves()));
+
+    it("saves UNKNOWN for that pupil alone, says so, and tells the page to forget what it had chosen", async () => {
+      const user = userEvent.setup();
+      const forget = vi.fn();
+      serve(records("PRESENT"));
+      api.post.mockResolvedValue({ created: 0, updated: 1 });
+      renderIn(<LessonMovesSection lessonId={LESSON} moving={false} onMovingChange={() => {}} onMarkCleared={forget} />);
+
+      await user.click(await screen.findByRole("button", { name: "Rensa markering" }));
+
+      await waitFor(() =>
+        expect(api.post).toHaveBeenCalledWith(REPORT, { calendarLessonId: LESSON, records: [{ studentId: "p-2", status: "UNKNOWN" }] }),
+      );
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Markeringen för Bo Berg är rensad."));
+      expect(forget).toHaveBeenCalledWith("p-2");
+    });
+
+    it("is on the arrival's row only: not on a pupil who was moved away, and not on an arrival with no mark", async () => {
+      serve({ records: [] });
+      renderIn(<LessonMovesSection lessonId={LESSON} moving={false} onMovingChange={() => {}} />);
+      await screen.findByRole("region", { name: "Flyttade elever" });
+      expect(screen.queryByRole("button", { name: "Rensa markering" })).toBeNull();
+    });
+
+    it("offers nothing for a mark that is already UNKNOWN, which is the state the button leaves", async () => {
+      serve(records("UNKNOWN"));
+      renderIn(<LessonMovesSection lessonId={LESSON} moving={false} onMovingChange={() => {}} />);
+      await screen.findByRole("region", { name: "Flyttade elever" });
+      await waitFor(() => expect(api.get).toHaveBeenCalledWith(`/api/v1/attendance/lessons/${LESSON}/records`));
+      expect(screen.queryByRole("button", { name: "Rensa markering" })).toBeNull();
+    });
+
+    it("keeps the mark as it was, and says why, when the gateway refuses (a teacher who is not on this lesson)", async () => {
+      const user = userEvent.setup();
+      const forget = vi.fn();
+      serve(records("ABSENT"));
+      api.post.mockRejectedValue(new ApiError(403, "You are not assigned to this lesson and cannot record attendance for it."));
+      renderIn(<LessonMovesSection lessonId={LESSON} moving={false} onMovingChange={() => {}} onMarkCleared={forget} />);
+
+      await user.click(await screen.findByRole("button", { name: "Rensa markering" }));
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("You are not assigned to this lesson and cannot record attendance for it."));
+      expect(forget).not.toHaveBeenCalled();
+      expect(toast.success).not.toHaveBeenCalled();
+    });
+
+    it("says it in English too", async () => {
+      serve(records("LATE"));
+      renderIn(<LessonMovesSection lessonId={LESSON} moving={false} onMovingChange={() => {}} />, "en");
+      expect(await screen.findByRole("button", { name: "Clear mark" })).toBeInTheDocument();
+    });
   });
 
   it("draws nothing for a lesson nobody was moved from or to", async () => {

@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +15,10 @@ import LessonAttendancePage from "./page";
  * the lesson list that led here was read, and reloading never helps.
  */
 
+/** Elevens lektion för dagen: the pupils moved to or from the lesson, as the page's list of moves reads them. */
+const moves = vi.hoisted(() => ({
+  arrivals: [] as Array<{ moveId: string; studentId: string; studentName: string; other: unknown; movedByName: string | null; createdAt: string }>,
+}));
 const roster = vi.hoisted(() => ({
   error: null as unknown,
   /** When set, the roster answers with these pupils instead of failing. */
@@ -49,7 +53,14 @@ const answers = vi.hoisted(() => ({
 vi.mock("@/utils/supabase/client", () => ({ createClient: () => ({}) }));
 // Elevens lektion för dagen: the page asks which pupils were moved to or from the lesson. This file is about the
 // register's list, so nobody was: the list of moves (and its chunk) is in components/lesson-moves/lesson-moves.test.tsx.
-vi.mock("@/lib/lesson-moves-queries", () => ({ useLessonMoves: () => ({ data: { departures: [], arrivals: [] } }) }));
+vi.mock("@/lib/lesson-moves-queries", () => ({
+  useLessonMoves: () => ({ data: { departures: [], arrivals: moves.arrivals } }),
+  // What the list of moves and its dialog read, closed: nothing asked, nothing answered.
+  useUndoMove: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useMovablePupils: () => ({ data: undefined, isLoading: false, isError: false }),
+  useMoveCandidates: () => ({ data: undefined, isLoading: false, isError: false }),
+  useMovePupil: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 vi.mock("@/i18n/navigation", () => ({
   Link: ({ children, ...rest }: { children: React.ReactNode }) => <a {...rest}>{children}</a>,
 }));
@@ -88,6 +99,7 @@ function renderPage() {
 }
 
 beforeEach(() => {
+  moves.arrivals = [];
   roster.error = null;
   roster.students = null;
   answers.attendance = { data: [], isError: false };
@@ -185,5 +197,59 @@ describe("/teacher/attendance/[lessonId], what each pupil opens as", () => {
     await user.click(screen.getByRole("button", { name: "Spara närvaro" }));
     const sent = answers.report.mutateAsync.mock.lastCall![0] as { records: Array<{ studentId: string }> };
     expect(sent.records.map((record) => record.studentId).sort()).toEqual([ELLA.id, JAMAL.id].sort());
+  });
+
+  // LM415: a pupil moved onto this lesson who was marked here cannot be moved back. "Rensa markering" (in the list of
+  // moved pupils) saves UNKNOWN; this page must let go of what it held for the pupil, or the next save marks them again.
+  it("lets go of a choice made for a pupil whose mark is cleared from the list of moved pupils", async () => {
+    roster.students = [JAMAL, ELLA];
+    moves.arrivals = [
+      {
+        moveId: "m-1",
+        studentId: ELLA.id,
+        studentName: "Ella Nord",
+        other: { id: "l-2", subject: "Engelska", className: "7B", start: "08:00", end: "08:45", room: null },
+        movedByName: null,
+        createdAt: "2026-10-14T06:00:00.000Z",
+      },
+    ];
+    answers.attendance = { data: [], isError: false };
+    answers.report.mutateAsync.mockClear();
+    renderPage();
+    const user = userEvent.setup();
+
+    // "Markera alla" marks everybody, Ella too, and the save stores it: that is how she came to hold a mark here.
+    await user.click(screen.getByRole("button", { name: "Markera alla närvarande" }));
+    await user.click(screen.getByRole("button", { name: "Spara närvaro" }));
+    answers.attendance = {
+      data: [
+        { id: "r-1", calendarLessonId: "l-1", studentId: JAMAL.id, status: "PRESENT", recordedAt: null, note: null },
+        { id: "r-2", calendarLessonId: "l-1", studentId: ELLA.id, status: "PRESENT", recordedAt: null, note: null },
+      ],
+      isError: false,
+    };
+    answers.report.mutateAsync.mockClear();
+    // The save of the clear, as the gateway keeps it: Ella's record is UNKNOWN from then on.
+    answers.report.mutateAsync.mockImplementationOnce(async () => {
+      answers.attendance = {
+        data: [
+          { id: "r-1", calendarLessonId: "l-1", studentId: JAMAL.id, status: "PRESENT", recordedAt: null, note: null },
+          { id: "r-2", calendarLessonId: "l-1", studentId: ELLA.id, status: "UNKNOWN", recordedAt: null, note: null },
+        ],
+        isError: false,
+      };
+      return undefined;
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Rensa markering" }));
+
+    await waitFor(() => expect(answers.report.mutateAsync).toHaveBeenCalledWith({ calendarLessonId: "l-1", records: [{ studentId: ELLA.id, status: "UNKNOWN" }] }));
+    // Ella opens with no mark; Jamal keeps his.
+    await waitFor(() => expect(within(group("Ella Nord")).queryByRole("radio", { checked: true })).toBeNull());
+    expect(within(group("Jamal Sjö")).getByRole("radio", { name: "Närvarande" })).toBeChecked();
+    // The next save sends Jamal's mark and not Ella's.
+    answers.report.mutateAsync.mockClear();
+    await user.click(screen.getByRole("button", { name: "Spara närvaro" }));
+    expect(answers.report.mutateAsync).toHaveBeenLastCalledWith({ calendarLessonId: "l-1", records: [{ studentId: JAMAL.id, status: "PRESENT" }] });
   });
 });

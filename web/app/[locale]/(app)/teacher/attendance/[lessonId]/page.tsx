@@ -132,6 +132,11 @@ export default function LessonAttendancePage({
     (status) => status !== "UNKNOWN",
   ).length;
 
+  // A mark cleared from the list of moved pupils is no longer this page's to hold: what was chosen for the pupil
+  // here would otherwise stand in the list and be saved again by the next save.
+  const forget = (studentId: string) =>
+    setChosen((previous) => Object.fromEntries(Object.entries(previous).filter(([id]) => id !== studentId)));
+
   const markAllPresent = () => {
     const next: Record<string, AttendanceStatus> = {};
     for (const student of students ?? []) {
@@ -316,7 +321,7 @@ export default function LessonAttendancePage({
 
       {moving || hasMoves ? (
         <Suspense fallback={null}>
-          <LessonMovesSection lessonId={lessonId} moving={moving} onMovingChange={setMoving} />
+          <LessonMovesSection lessonId={lessonId} moving={moving} onMovingChange={setMoving} onMarkCleared={forget} />
         </Suspense>
       ) : null}
 

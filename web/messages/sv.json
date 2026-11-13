@@ -9088,6 +9088,8 @@
     "moved": "Eleven är flyttad.",
     "undone": "Flytten är ångrad.",
     "undo": "Ångra",
+    "clearMark": "Rensa markering",
+    "markCleared": "Markeringen för {name} är rensad.",
     "sectionTitle": "Flyttade elever",
     "sectionDescription": "Elever som är flyttade till eller från den här lektionen för dagen. De räknas på lektionen de går på, inte som frånvarande på den här.",
     "departure": "Flyttad till {subject} ({className}, {start}–{end})",
@@ -9116,7 +9118,7 @@
       "LESSON_MOVE_PUPIL_NOT_ON_LESSON": "Eleven går inte på lektionen.",
       "LESSON_MOVE_ALREADY_ON_TARGET": "Eleven går redan på den lektionen.",
       "LESSON_MOVE_PUPIL_DOUBLE_BOOKED": "Eleven skulle få två lektioner samtidigt.",
-      "LESSON_MOVE_HAS_ATTENDANCE": "Eleven har redan en närvaromarkering på lektionen de flyttats till. Ta bort markeringen först.",
+      "LESSON_MOVE_HAS_ATTENDANCE": "Eleven har redan en närvaromarkering på lektionen de flyttats till. Läraren på den lektionen, eller en administratör, kan rensa markeringen i lektionens närvarolista. Sedan går flytten att ångra.",
       "LESSON_MOVE_EXISTS": "Eleven är redan flyttad från lektionen.",
       "LESSON_MOVE_CHANGED": "Flytten ändrades just nu. Försök igen.",
       "LESSON_MOVE_NOT_A_PUPIL": "Eleven finns inte."

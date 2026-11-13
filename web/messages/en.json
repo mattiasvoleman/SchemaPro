@@ -9088,6 +9088,8 @@
     "moved": "The pupil has been moved.",
     "undone": "The move is undone.",
     "undo": "Undo",
+    "clearMark": "Clear mark",
+    "markCleared": "The mark for {name} is cleared.",
     "sectionTitle": "Moved pupils",
     "sectionDescription": "Pupils moved to or from this lesson for the day. They count on the lesson they attend, not as absent from this one.",
     "departure": "Moved to {subject} ({className}, {start}–{end})",
@@ -9116,7 +9118,7 @@
       "LESSON_MOVE_PUPIL_NOT_ON_LESSON": "The pupil is not on the lesson.",
       "LESSON_MOVE_ALREADY_ON_TARGET": "The pupil is already on that lesson.",
       "LESSON_MOVE_PUPIL_DOUBLE_BOOKED": "The pupil would have two lessons at once.",
-      "LESSON_MOVE_HAS_ATTENDANCE": "The pupil already has an attendance mark on the lesson they were moved to. Take the mark away first.",
+      "LESSON_MOVE_HAS_ATTENDANCE": "The pupil already has an attendance mark on the lesson they were moved to. The teacher on that lesson, or an administrator, can clear the mark in the lesson's register. Then the move can be undone.",
       "LESSON_MOVE_EXISTS": "The pupil is already moved from the lesson.",
       "LESSON_MOVE_CHANGED": "The move changed just now. Try again.",
       "LESSON_MOVE_NOT_A_PUPIL": "The pupil does not exist."

@@ -82,6 +82,14 @@ const HREF: Partial<Record<NotificationRow["type"], string>> = {
  */
 const CRISIS_HREF = { SCHOOL_ADMIN: "/admin/crisis", TEACHER: "/teacher/crisis" } as const;
 
+/**
+ * Ledighetspolicy: a guardian's "no" ends the request for whoever filed it, and that is a guardian, a pupil or an
+ * administrator (family.controller: GUARDIAN, STUDENT, SCHOOL_ADMIN). The guardian and the administrator each
+ * read their requests on a page of their own; a pupil has none in the web, so the notice says what happened and
+ * leads nowhere rather than to a page that does not show the request.
+ */
+const LEAVE_REFUSED_HREF: Readonly<Record<string, string>> = { GUARDIAN: "/guardian", SCHOOL_ADMIN: "/admin/leave" };
+
 /** The notice as one sentence, in the reader's language. */
 export function noticeText(entry: NotificationRow, t: NoticeTranslator): string {
   const meta = entry.meta ?? {};
@@ -262,5 +270,6 @@ export function noticeHref(entry: NotificationRow, role?: string): string | unde
   if (entry.type === "CRISIS_ALARM" || entry.type === "CRISIS_ENDED") {
     return role === "SCHOOL_ADMIN" ? CRISIS_HREF.SCHOOL_ADMIN : CRISIS_HREF.TEACHER;
   }
+  if (entry.type === "LEAVE_CONSENT_REFUSED" && role) return LEAVE_REFUSED_HREF[role];
   return entry.meta?.reason === "UNANSWERED" ? "/admin/cover" : HREF[entry.type];
 }
