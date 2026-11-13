@@ -24,7 +24,8 @@ import { schoolTimezone } from '../cover/cover-context';
 import { gradeSpanOf, loadRosters, roomNeedsOf, type RoomNeeds } from './room-eligibility';
 import { fromNioarig, toNioarig, toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { dayNumberingOf, yearNumberingOf } from '../common/year-numbering';
-import { coverLockedLessons, coverLockedSharedLessons, lockCoversDemand, type TaughtLesson } from './locked-coverage';
+import { lockCoversDemand, type TaughtLesson } from './locked-coverage';
+import { demandLeftOf } from './post-demand';
 import { PRESERVED_FROM_REGENERATION } from './preserved-lessons';
 import { requirementName } from '../common/requirement-name';
 import {
@@ -35,8 +36,6 @@ import {
   placementsKeyOf,
   placementsRefusalOf,
   storedPlacementsOf,
-  withoutPlaced,
-  withoutPlacedShared,
   type PlacedLessonRow,
 } from './placed-lessons';
 import { judgePlacements } from '../requirement-placements/placement-judge';
@@ -55,8 +54,8 @@ import {
   type SameTimesLink,
   type SameTimesRow,
 } from './same-times';
-import { canonicalShape, lessonMinutesOf } from '../common/lesson-lengths';
-import { canonicalShares, hasShares, lessonTeachersOf, type LessonShare } from '../common/lesson-shares';
+import { canonicalShape } from '../common/lesson-lengths';
+import { canonicalShares, type LessonShare } from '../common/lesson-shares';
 import { effectiveDistribution, hasDistributionRule, type DistributionRule } from '../common/subject-distribution';
 import { minutesOf } from '../common/solver-grid';
 import {
@@ -2981,36 +2980,26 @@ export class OptimizationProxyService {
       const covering = (
         preservedByDemand.get(`${r.studentGroupId}:${r.subjectId}`) ?? []
       ).filter((lesson) => !placedIds.has(lesson.id) && coversDemand(lesson, r));
-      const shares = r.shares ?? [];
-      if (hasShares({ ...r, shares })) {
-        const locks = covering.map((lesson) => ({
+      // The post's lessons less the locks and then the förläggningar, counted in post-demand.ts: the figure the
+      // week of förläggningar shows the school before a run is the one this sends.
+      const demand = demandLeftOf(
+        r,
+        covering.map((lesson) => ({
           minutes: lessonMinutes(lesson.startTime, lesson.endTime),
           teacherId: lesson.teacherId ?? null,
-        }));
-        const afterLocks = coverLockedSharedLessons(lessonTeachersOf({ ...r, shares }), locks);
-        // Förlagda poster: then each förläggning, off its own teacher's
-        // lessons of its length, never another's (withoutPlacedShared).
-        const placed = placedTaught.get(r.id);
-        const left = placed ? withoutPlacedShared(afterLocks, placed) : afterLocks;
-        remainingOf.set(r.id, left.map((lesson) => lesson.minutes));
-        teachersLeftOf.set(r.id, left.map((lesson) => lesson.teacherId));
-        if (placed) {
-          lockedMinutesOf.set(r.id, locks.map((lock) => lock.minutes));
-          lockedTaughtOf.set(r.id, locks);
-          releasedOf.set(r.id, afterLocks.map((lesson) => lesson.minutes));
-          releasedTeachersOf.set(r.id, afterLocks.map((lesson) => lesson.teacherId));
+        })),
+        { minutes: placedMinutes.get(r.id), taught: placedTaught.get(r.id) },
+      );
+      remainingOf.set(r.id, demand.left.map((lesson) => lesson.minutes));
+      // Delade lektioner: the teacher of each lesson left, in remainingOf's order.
+      if (demand.shared) teachersLeftOf.set(r.id, demand.left.map((lesson) => lesson.teacherId));
+      if (demand.placed) {
+        lockedMinutesOf.set(r.id, demand.locks.map((lock) => lock.minutes));
+        releasedOf.set(r.id, demand.afterLocks.map((lesson) => lesson.minutes));
+        if (demand.shared) {
+          lockedTaughtOf.set(r.id, demand.locks);
+          releasedTeachersOf.set(r.id, demand.afterLocks.map((lesson) => lesson.teacherId));
         }
-        continue;
-      }
-      const locked = covering.map((lesson) => lessonMinutes(lesson.startTime, lesson.endTime));
-      const afterLocks = coverLockedLessons(lessonMinutesOf(r), locked);
-      // Then the post's förläggningar, each the exact length it places, after
-      // the locks: the order the judge holds them to (placementsFitBesideLocks).
-      const placed = placedMinutes.get(r.id);
-      remainingOf.set(r.id, placed ? withoutPlaced(afterLocks, placed) : afterLocks);
-      if (placed) {
-        lockedMinutesOf.set(r.id, locked);
-        releasedOf.set(r.id, afterLocks);
       }
     }
     const demandOf = new Map(rawRequirements.map((r) => [r.id, `${r.studentGroupId}:${r.subjectId}`]));
