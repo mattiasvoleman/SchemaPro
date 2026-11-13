@@ -61,7 +61,7 @@ const PARAMS: Record<string, string> = {
 
 /**
  * The query each page that reads one is opened with: `searchParams` on a
- * server page, `location.search` on a client one. A page that needs its
+ * server page, `location.search` or `useSearchParams` on a client one. A page that needs its
  * query shows only its empty state without one, and axe then checks that
  * and nothing of the page. "" is a decision too: the page as the menu opens
  * it, where the query is an optional deep link.
@@ -93,8 +93,8 @@ const QUERY: Record<string, string> = {
   "/teacher/klassbok": `group=${GROUPS.g7A.id}&from=${THIS_MONDAY}&to=${addDays(THIS_MONDAY, 4)}`,
 };
 
-/** What makes a page.tsx read a query, the two ways (app) does it. */
-const READS_QUERY = /\bsearchParams\b|\blocation\.search\b/;
+/** What makes a page.tsx read a query, the three ways (app) does it. */
+const READS_QUERY = /\bsearchParams\b|\buseSearchParams\b|\blocation\.search\b/;
 
 const AREAS: Array<[prefix: string, personas: Persona[]]> = [
   ["/admin", ["admin"]],

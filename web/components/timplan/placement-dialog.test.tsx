@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import type { LessonShare } from "@/lib/lesson-shares";
 import type { TeachingRequirement } from "@/lib/types";
+import sv from "@/messages/sv.json";
 import { PlacementDialog } from "./placement-dialog";
 
 /**
@@ -22,6 +23,8 @@ const state = vi.hoisted(() => ({
   readOnly: false,
   rooms: [] as { id: string; name: string }[],
   roomsFailed: false,
+  /** Keys whose real sentence a test wants (a no-break space cannot be told from a space in an echoed key). */
+  sentences: {} as Record<string, string>,
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -39,7 +42,11 @@ vi.mock("next-intl", () => ({
   useTranslations: () =>
     Object.assign(
       (key: string, values?: Record<string, unknown>) =>
-        values ? `${key}(${Object.values(values).join("|")})` : key,
+        values && state.sentences[key]
+          ? state.sentences[key].replace(/\{(\w+)\}/g, (_, name: string) => String(values[name]))
+          : values
+            ? `${key}(${Object.values(values).join("|")})`
+            : key,
       { has: () => true },
     ),
 }));
@@ -89,7 +96,18 @@ function answer(placements: ReturnType<typeof stored>[], verdicts?: unknown[]) {
 }
 
 /** The page's list of people, as it names a teacher. */
-const NAMES: Record<string, string> = { t1: "Anna Ek", t2: "Bo Alm", t3: "Cilla Öst" };
+const NAMES: Record<string, string> = {
+  t1: "Anna Ek",
+  t2: "Bo Alm",
+  t3: "Cilla Öst",
+  t4: "Alma Berg",
+  t5: "Åsa Berg",
+  t6: "Ärla Holm",
+  t7: "Zack Ek",
+  // Four words, the shape that is wider than a phone's dialog when its count cannot break inside the name.
+  t8: "Maria Magdalena Gustafsson Andersson",
+  // t0 is a teacher the page has no name for.
+};
 const teacherName = (id: string) => NAMES[id] ?? null;
 
 function renderDialog(requirement: TeachingRequirement = post(), shares?: readonly LessonShare[]) {
@@ -133,6 +151,7 @@ beforeEach(() => {
   state.error.mockReset();
   state.readOnly = false;
   state.roomsFailed = false;
+  state.sentences = {};
   // Out of order on purpose: the dialog lists them by name.
   state.rooms = [
     { id: "room-gym", name: "Gymnastiksalen" },
@@ -629,6 +648,105 @@ describe("a post that shares its lessons between teachers", () => {
     expect(first.labels?.[0]?.textContent).toBe("teacher");
   });
 
+  // Review of #298, LÅG-3: the parts come by id, the gateway's order; the teacher reads a list of names.
+  it("lists the others by name after the huvudlärare, though their ids come in another order", async () => {
+    // t2 (Bo) has the smaller id and t4 (Alma) the earlier name.
+    const shares: LessonShare[] = [
+      { teacherId: "t2", lessons: 1, minutes: 60 },
+      { teacherId: "t4", lessons: 1, minutes: 60 },
+    ];
+    answer([stored({ teacherId: "t1" })]);
+    await opened(post({ lessonsPerWeek: 4 }), shares);
+
+    expect(optionsOf(select(rowNamed(1), "teacher"))).toEqual(["teacherPlaceholder", "Anna Ek", "Alma Berg", "Bo Alm"]);
+    expect(screen.getByText(/^perTeacher/)).toHaveTextContent(
+      "perTeacher(teacherCount(Anna Ek|1|2), teacherCount(Alma Berg|0|1), teacherCount(Bo Alm|0|1))",
+    );
+  });
+
+  // Review of #312, MEDEL-1: a count with every space no-break was one line that could not break, and two double
+  // names scrolled the dialog sideways at 320 px (requirement-placements-shared.smoke.spec.ts measures that).
+  it("keeps a count's figures with the last word of the name and with each other, and lets the name itself break", async () => {
+    state.sentences.teacherCount = sv.requirements.placements.teacherCount;
+    answer([stored({ teacherId: "t1" })]);
+    await opened(three, [{ teacherId: "t8", lessons: 1, minutes: 60 }]);
+
+    expect(screen.getByText(/^perTeacher/).textContent).toBe(
+      "perTeacher(Anna Ek\u00a01\u00a0av\u00a02, Maria Magdalena Gustafsson Andersson\u00a00\u00a0av\u00a01)",
+    );
+  });
+
+  // Review of #312, LÅG-2: a teacher the page cannot name sorted by the placeholder's letters, among the names.
+  it("lists a teacher without a name after the named ones, and Å, Ä after Z in that order", async () => {
+    // The unnamed teacher has the smallest id, which is where the gateway keeps the part.
+    const shares: LessonShare[] = ["t0", "t4", "t5", "t6", "t7"].map((teacherId) => ({ teacherId, lessons: 1, minutes: 60 }));
+    answer([stored({ teacherId: "t1" })]);
+    await opened(post({ lessonsPerWeek: 7 }), shares);
+
+    expect(optionsOf(select(rowNamed(1), "teacher"))).toEqual([
+      "teacherPlaceholder",
+      "Anna Ek",
+      "Alma Berg",
+      "Zack Ek",
+      "Åsa Berg",
+      "Ärla Holm",
+      "teacherUnnamed",
+    ]);
+  });
+
+  // Review of #298, LÅG-2: a row given to a teacher with no lesson left read "2 av 1" and was refused only at Spara.
+  describe("a teacher with every lesson placed", () => {
+    it("is not offered for another row, and stays on the row that has them", async () => {
+      // Bo's one lesson is row 1's.
+      answer([stored({ teacherId: "t2" }), stored({ id: "p2", dayOfWeek: 4, teacherId: "t1" })]);
+      await opened(three, boOne);
+
+      const options = (row: HTMLElement) => [...select(row, "teacher").options].map((option) => [option.textContent, option.disabled]);
+      expect(options(rowNamed(1))).toEqual([["teacherPlaceholder", false], ["Anna Ek", false], ["Bo Alm", false]]);
+      expect(options(rowNamed(2))).toEqual([["teacherPlaceholder", false], ["Anna Ek", false], ["Bo Alm", true]]);
+    });
+
+    it("is offered again when the row that had their lesson is given to someone else", async () => {
+      answer([stored({ teacherId: "t2" }), stored({ id: "p2", dayOfWeek: 4, teacherId: "t1" })]);
+      const { user } = await opened(three, boOne);
+
+      await user.selectOptions(select(rowNamed(1), "teacher"), "t1");
+
+      expect(([...select(rowNamed(2), "teacher").options].find((option) => option.value === "t2"))!.disabled).toBe(false);
+    });
+
+    // Review of #312, LÅG-3: a lone half counts as the teacher's lesson, so the row that is its other half was refused them.
+    it("is offered for the row that is the other half of a lesson they hold the odd or even weeks of, and not for a row that would be a second", async () => {
+      answer([
+        stored({ teacherId: "t2", recurrence: "ODD_WEEKS" }),
+        stored({ id: "p2", dayOfWeek: 4, teacherId: "t1", recurrence: "EVEN_WEEKS" }),
+        stored({ id: "p3", dayOfWeek: 5, teacherId: "t1" }),
+      ]);
+      await opened(three, boOne);
+
+      const bo = (row: HTMLElement) => [...select(row, "teacher").options].find((option) => option.value === "t2")!;
+      expect(bo(rowNamed(2)).disabled).toBe(false);
+      expect(bo(rowNamed(3)).disabled).toBe(true);
+    });
+
+    it("reads in red when a stored row has more of a teacher's lessons than the teacher has", async () => {
+      // Both rows are Bo's, who has one lesson: the gateway refuses it at save, and the line says it already.
+      answer([stored({ teacherId: "t2" }), stored({ id: "p2", dayOfWeek: 4, teacherId: "t2" })]);
+      await opened(three, boOne);
+
+      const line = screen.getByText(/^perTeacher/);
+      expect(line).toHaveTextContent("teacherCount(Bo Alm|2|1)");
+      expect(line).toHaveClass("text-destructive");
+    });
+
+    it("leaves the count in the ordinary colour while no teacher is over", async () => {
+      answer([stored({ teacherId: "t1" }), stored({ id: "p2", dayOfWeek: 4, teacherId: "t2" })]);
+      await opened(three, boOne);
+
+      expect(screen.getByText(/^perTeacher/)).not.toHaveClass("text-destructive");
+    });
+  });
+
   it("counts each teacher's placed lessons against their part, in a line", async () => {
     answer([stored({ teacherId: "t1" }), stored({ id: "p2", dayOfWeek: 4, teacherId: "t2" })]);
     await opened(three, boOne);
@@ -743,10 +861,11 @@ describe("a post that shares its lessons between teachers", () => {
       ]);
       const { user } = await opened(mixed, boFortyShare);
 
+      // Bo has one lesson, so only one row at a time can be his (see "a teacher with every lesson placed").
       await user.selectOptions(select(rowNamed(1), "teacher"), "t2");
-      await user.selectOptions(select(rowNamed(2), "teacher"), "t2");
-
       expect(select(rowNamed(1), "length").value).toBe("40");
+      await user.selectOptions(select(rowNamed(1), "teacher"), "t1");
+      await user.selectOptions(select(rowNamed(2), "teacher"), "t2");
       expect(select(rowNamed(2), "length").value).toBe("40");
     });
 

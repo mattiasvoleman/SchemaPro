@@ -3,7 +3,19 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
-import { AREA_NOT_YOURS, CHANGE_KINDS, CODES, CONFLICT_KINDS, FRAME_REASONS, OUTCOMES, PART_MIN, NOTE_MAX, SPANS_MAX, WEEKDAYS } from "./class-teacher";
+import {
+  AREA_NOT_YOURS,
+  CHANGE_KINDS,
+  CODES,
+  CONFLICT_KINDS,
+  FRAME_REASONS,
+  LESSON_IS_PLACED,
+  OUTCOMES,
+  PART_MIN,
+  NOTE_MAX,
+  SPANS_MAX,
+  WEEKDAYS,
+} from "./class-teacher";
 
 /**
  * The web's copy of the gateway's vocabulary. The gateway's file
@@ -16,6 +28,7 @@ import { AREA_NOT_YOURS, CHANGE_KINDS, CODES, CONFLICT_KINDS, FRAME_REASONS, OUT
 const TYPES = readFileSync(join(__dirname, "..", "..", "src", "class-teacher", "class-teacher.types.ts"), "utf8");
 const DTO = readFileSync(join(__dirname, "..", "..", "src", "class-teacher", "dto", "class-teacher.dto.ts"), "utf8");
 const GUARD = readFileSync(join(__dirname, "..", "..", "src", "auth", "roles.guard.ts"), "utf8");
+const MASTER_LESSONS = readFileSync(join(__dirname, "..", "..", "src", "calendar", "master-lessons.service.ts"), "utf8");
 
 const listOf = (name: string): string[] => {
   const body = new RegExp(`export const ${name} = \\[([^\\]]*)\\]`).exec(TYPES)?.[1] ?? "";
@@ -72,11 +85,22 @@ describe("every reason has a sentence in both languages", () => {
   const sentenceOf = (messages: typeof sv, reason: string): unknown => (messages.classTeacher.reason as Record<string, unknown>)[reason];
 
   it("has one for each reason and one for a reason the web does not know yet", () => {
-    for (const reason of [...FRAME_REASONS, "UNKNOWN"]) {
+    for (const reason of [...FRAME_REASONS, LESSON_IS_PLACED, "UNKNOWN"]) {
       expect(typeof sentenceOf(sv, reason), `sv ${reason}`).toBe("string");
       expect(typeof sentenceOf(en, reason), `en ${reason}`).toBe("string");
     }
-    expect(Object.keys(sv.classTeacher.reason).sort()).toEqual([...FRAME_REASONS, "UNKNOWN"].sort());
+    expect(Object.keys(sv.classTeacher.reason).sort()).toEqual([...FRAME_REASONS, LESSON_IS_PLACED, "UNKNOWN"].sort());
+    expect(Object.keys(en.classTeacher.reason).sort()).toEqual(Object.keys(sv.classTeacher.reason).sort());
+  });
+
+  // The gateway keeps this reason out of FRAME_REASONS (the list above is mirrored one for one) and says it in its own file.
+  it("says the reason the gateway adds to the frame's by its code and its Swedish sentence", () => {
+    expect(TYPES).toContain(`export const LESSON_IS_PLACED_REASON = '${LESSON_IS_PLACED}'`);
+    expect(MASTER_LESSONS).toContain(`export const LESSON_IS_PLACED = '${LESSON_IS_PLACED}'`);
+    const sentence = /export const LESSON_IS_PLACED_MESSAGE =\s*'([^']*)'/.exec(TYPES)?.[1];
+    expect(sentence).toBeTruthy();
+    expect(sentenceOf(sv, LESSON_IS_PLACED)).toBe(sentence);
+    expect(sentenceOf(en, LESSON_IS_PLACED)).not.toBe(sentence);
   });
 
   it("says the Swedish ones as the gateway says them to a client without the web's strings", () => {

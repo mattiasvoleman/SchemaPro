@@ -840,12 +840,16 @@ describe("Timplan matrix", () => {
       expect(max).toBe(min);
       return min;
     };
+    // The offset holds from `sm` (640 px) only: under it the totals scroll with the table, because beside the pinned
+    // group name they left a phone's 286 px a window of 12 px and no post could be opened (e2e/requirement-matrix).
     const offsetOf = (element: Element | undefined) =>
-      /(?:^|\s)right-(\d+)/.exec(element?.className ?? "")?.[1];
+      /(?:^|\s)sm:right-(\d+)/.exec(element?.className ?? "")?.[1];
+    const unpinnedSideways = (element: Element | undefined) => !/(?:^|\s)right-\d/.test(element?.className ?? "");
 
     expect(peak?.className).toContain("sticky");
     expect(offsetOf(hours)).toBe("0");
     expect(offsetOf(peak)).toBe(widthOf(hours));
+    expect(unpinnedSideways(hours) && unpinnedSideways(peak)).toBe(true);
     // Same pairing on the body cells, which stick independently of the header
     // and carry their own width — a header pinned to 6rem does not hold a body
     // cell that has drifted back to `w-`, and the column takes the wider of the
@@ -857,6 +861,10 @@ describe("Timplan matrix", () => {
     expect(offsetOf(bodyHours)).toBe("0");
     expect(widthOf(bodyHours)).toBe(widthOf(hours));
     expect(offsetOf(bodyPeak)).toBe(widthOf(hours));
+    expect(unpinnedSideways(bodyHours) && unpinnedSideways(bodyPeak)).toBe(true);
+    // Pinned from `sm` as well, not static from `sm` up: the body cells stick sideways only where the header does.
+    expect(bodyHours?.className).toContain("sm:sticky");
+    expect(bodyPeak?.className).toContain("sm:sticky");
   });
 
   it("lets the section label span the whole row, totals included", () => {
@@ -1451,6 +1459,35 @@ describe("the ?year= deep link", () => {
     window.history.replaceState(null, "", "/?year=nope");
     render(<RequirementsPage />);
     expect(await screen.findByText("7A")).toBeInTheDocument();
+  });
+
+  // Review of #312, LÅG-5: the id stayed in the address and was carried along with the next choice.
+  it("takes an id that is no year out of the address, and leaves the rest of it", async () => {
+    twoYears();
+    window.history.replaceState(null, "", "/?year=nope&other=1");
+    render(<RequirementsPage />);
+    expect(await screen.findByText("7A")).toBeInTheDocument();
+    await waitFor(() => expect(window.location.search).toBe("?other=1"));
+  });
+
+  it("leaves a year that exists in the address", async () => {
+    twoYears();
+    window.history.replaceState(null, "", "/?year=y2");
+    render(<RequirementsPage />);
+    expect(await screen.findByText("8B")).toBeInTheDocument();
+    expect(window.location.search).toBe("?year=y2");
+  });
+
+  it("does not judge the address before the läsår list has been read", async () => {
+    window.history.replaceState(null, "", "/?year=y2");
+    state.years = pending();
+    const view = render(<RequirementsPage />);
+    expect(window.location.search).toBe("?year=y2");
+
+    twoYears();
+    view.rerender(<RequirementsPage />);
+    expect(await screen.findByText("8B")).toBeInTheDocument();
+    expect(window.location.search).toBe("?year=y2");
   });
 });
 
@@ -3466,6 +3503,22 @@ describe("Förlagda poster on the timplan", () => {
     );
   });
 
+  // Review of #312, MEDEL-2: the badge's own tests hand it a name themselves; what they cannot see is that the page does,
+  // in the three places it draws a placed row (the tooltip, the cell's name, the dialog's line).
+  it("names the teacher of a row on a shared post in the tooltip, in the cell's name and beside the mark in the dialog", async () => {
+    state.people = loaded([
+      { id: "t-bo", role: "TEACHER", firstName: "Bo", lastName: "Ek", email: "bo@example.test", isActive: true, studentGroupId: null },
+    ]);
+    state.placements = loaded([placed({ teacherId: "t-bo" })]);
+    render(<RequirementsPage />);
+    const named = `placements.rowOf(${TUESDAY_ROW}|Bo Ek)`;
+
+    expect(within(soCell()).getByText("placements.badge").closest("span[title]")).toHaveAttribute("title", named);
+    expect(soCell().getAttribute("aria-label")).toContain(`placements.badgeNote(${named})`);
+    await userEvent.click(soCell());
+    expect(within(screen.getByRole("dialog")).getByText(named)).toBeInTheDocument();
+  });
+
   it("marks a post's cell in Mål mode as well", async () => {
     state.requirements = loaded([{ ...requirements[0]!, recurrence: "ALL_WEEKS" }, requirements[1]!]);
     state.yearTimplans = loaded([{ gradeLevel: 7, localTimplanId: "p-7", planName: "Grundskola 2026", planStatus: "DECIDED" }]);
@@ -3874,7 +3927,60 @@ describe("Ämne on Timplansposter", () => {
       // Next year's 8B reads Bild: 1 × 60 all year, 43 weeks = 43 h.
       expect(subjectHeaders()).toEqual(["BI"]);
       expect(hoursFor("8B")).toBe("43 h");
-      expect(window.location.search).toBe("?subject=s-bi");
+      // The läsår is in the address too (review of #297, LÅG-3): a reload or a shared link opens on it.
+      expect(window.location.search).toBe("?subject=s-bi&year=y2");
+    });
+
+    it("writes the läsår to the address when the picker changes, beside the subject and whatever else is there", async () => {
+      twoYears();
+      window.history.replaceState(null, "", "/?subject=s-bi&other=1");
+      const user = userEvent.setup();
+      render(<RequirementsPage />);
+
+      await user.click(screen.getByRole("combobox", { name: "yearLabel" }));
+      await user.click(screen.getByRole("option", { name: "2027/2028" }));
+      expect(window.location.search).toBe("?subject=s-bi&other=1&year=y2");
+
+      await user.click(screen.getByRole("combobox", { name: "yearLabel" }));
+      await user.click(screen.getByRole("option", { name: "2026/2027" }));
+      expect(window.location.search).toBe("?subject=s-bi&other=1&year=y1");
+    });
+
+    it("opens on the läsår the address names after a reload", async () => {
+      twoYears();
+      const user = userEvent.setup();
+      const first = render(<RequirementsPage />);
+      await user.click(screen.getByRole("combobox", { name: "yearLabel" }));
+      await user.click(screen.getByRole("option", { name: "2027/2028" }));
+      first.unmount();
+
+      render(<RequirementsPage />);
+      await waitFor(() => expect(screen.getByRole("combobox", { name: "yearLabel" })).toHaveTextContent("2027/2028"));
+    });
+
+    // Review of #297, LÅG-3: Visa grupper utan post is gone with Alla ämnen and came back ticked with the next subject.
+    it("unticks Visa grupper utan post when Alla ämnen takes the checkbox away, so the next subject opens as its posts", async () => {
+      const user = userEvent.setup();
+      render(<RequirementsPage />);
+      await pick(user, "Slöjd");
+      await user.click(withoutPosts()!);
+      expect(withoutPosts()).toBeChecked();
+
+      await pick(user, "subjectFilter.all");
+      await pick(user, "Bild");
+
+      expect(withoutPosts()).not.toBeChecked();
+    });
+
+    it("keeps Visa grupper utan post ticked from one subject to the next, which is a choice the checkbox shows", async () => {
+      const user = userEvent.setup();
+      render(<RequirementsPage />);
+      await pick(user, "Slöjd");
+      await user.click(withoutPosts()!);
+
+      await pick(user, "Bild");
+
+      expect(withoutPosts()).toBeChecked();
     });
   });
 });

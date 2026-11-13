@@ -504,6 +504,30 @@ describe("a move, typed", () => {
     expect(await screen.findByText("Tiden är inte öppen för klasslärarens ändringar.")).toBeInTheDocument();
   });
 
+  // The reason the gateway adds to the frame's: said in its own words, not as "cannot be changed by the klasslärare".
+  const PLACED_SAYS = "Lektionen är förlagd på timplanen och skrivs om därifrån vid varje Generera. Den ändras av schemaläggaren, på timplansposten.";
+
+  it("names a lesson that is placed on its timplanspost when the gateway refuses the save with that reason", async () => {
+    const user = await openMove();
+    api.post.mockImplementation(async (path: string) => {
+      if (path === `${CLASS}/preview`) return { verdict: { state: "OK" } };
+      throw new ApiError(403, "Lektionen är förlagd", "CLASS_TEACHER_OUTSIDE_FRAME", { reason: "LESSON_IS_PLACED" });
+    });
+    fireEvent.change(screen.getByLabelText("Nytt datum"), { target: { value: "2026-11-05" } });
+    await user.click(screen.getByRole("button", { name: "Spara utkast" }));
+    expect(await screen.findByText(PLACED_SAYS)).toBeInTheDocument();
+    expect(screen.queryByText("Lektionen kan inte ändras av klassläraren.")).toBeNull();
+  });
+
+  it("names it in the preview's verdict too", async () => {
+    await openMove();
+    state.preview = () => ({ state: "REFUSED", reason: "LESSON_IS_PLACED" });
+    fireEvent.change(screen.getByLabelText("Till"), { target: { value: "13:00" } });
+    const region = screen.getByTestId("preview-region");
+    expect(await within(region).findByText(PLACED_SAYS, {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Spara utkast" })).toBeDisabled();
+  });
+
   it("tells a klasslärare whose appointment lapsed to ask for a new one", async () => {
     const user = await openMove();
     api.post.mockImplementation(async (path: string) => {
