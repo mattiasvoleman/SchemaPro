@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
   refetch: vi.fn(),
   year: { id: "y1", name: "2026/27", startDate: "2026-08-15", endDate: "2027-06-11", isActive: true } as unknown,
   search: "",
+  peopleLoading: false,
 }));
 
 vi.mock("@/lib/placement-board-queries", () => ({
@@ -42,7 +43,7 @@ vi.mock("@/lib/queries", () => ({
       { id: "anna", role: "TEACHER", firstName: "Anna", lastName: "Ek" },
       { id: "bo", role: "TEACHER", firstName: "Bo", lastName: "Lind" },
     ],
-    isLoading: false,
+    isLoading: state.peopleLoading,
   }),
 }));
 vi.mock("@/i18n/navigation", () => ({
@@ -141,6 +142,7 @@ beforeEach(() => {
   state.board = board();
   state.boardState = { isLoading: false, isError: false };
   state.refetch.mockReset();
+  state.peopleLoading = false;
   window.history.replaceState(null, "", "/sv/admin/placements");
 });
 
@@ -267,6 +269,22 @@ describe("the link from the dialog", () => {
     window.HTMLElement.prototype.scrollIntoView = scroll;
     window.history.replaceState(null, "", "/sv/admin/placements?post=post-sl");
     render(<PlacementsPage />);
+    await vi.waitFor(() => expect(scroll).toHaveBeenCalled());
+    expect(document.activeElement).toBe(document.getElementById("post-post-sl"));
+  });
+
+  it("waits for a name list that is slower than the board, then opens the list on the post (review of #315, LÅG-1)", async () => {
+    const scroll = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scroll;
+    window.history.replaceState(null, "", "/sv/admin/placements?post=post-sl");
+    // The board is in; the people are not, so the list is a skeleton and the post's element is not there yet.
+    state.peopleLoading = true;
+    const { rerender } = render(<PlacementsPage />);
+    expect(document.getElementById("post-post-sl")).toBeNull();
+    expect(scroll).not.toHaveBeenCalled();
+    // The people arrive: the board has not changed, and the post is reached all the same.
+    state.peopleLoading = false;
+    rerender(<PlacementsPage />);
     await vi.waitFor(() => expect(scroll).toHaveBeenCalled());
     expect(document.activeElement).toBe(document.getElementById("post-post-sl"));
   });

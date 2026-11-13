@@ -322,3 +322,30 @@ describe("the engine's refusals about placed lessons", () => {
     expect(en.conflictCategories.PLACEMENT).toBe("Placed lessons");
   });
 });
+
+describe("the figures of a post in the week of förläggningar", () => {
+  // A post with one lesson a week is the usual one: "1 lektioner" and "1 fasta" read as a slip (review of #315, LÅG-4).
+  const svWeek = createTranslator({ locale: "sv", messages: sv, namespace: "placementWeek" });
+  const enWeek = createTranslator({ locale: "en", messages: en, namespace: "placementWeek" });
+
+  it("says one lesson and one fixed lesson in the singular, and several in the plural, in Swedish", () => {
+    expect(svWeek("postFigures", { placed: 0, count: 1, locked: 0, left: 1 })).toBe(
+      "0 av 1 lektion förlagd, 0 fasta i grundschemat, 1 kvar för Generera.",
+    );
+    expect(svWeek("postFigures", { placed: 0, count: 1, locked: 1, left: 0 })).toBe(
+      "0 av 1 lektion förlagd, 1 fast i grundschemat, 0 kvar för Generera.",
+    );
+    expect(svWeek("postFigures", { placed: 1, count: 3, locked: 1, left: 1 })).toBe(
+      "1 av 3 lektioner förlagda, 1 fast i grundschemat, 1 kvar för Generera.",
+    );
+  });
+
+  it("says one lesson in the singular, and several in the plural, in English", () => {
+    expect(enWeek("postFigures", { placed: 0, count: 1, locked: 0, left: 1 })).toBe(
+      "0 of 1 lesson placed, 0 fixed in the master timetable, 1 left for Generate.",
+    );
+    expect(enWeek("postFigures", { placed: 1, count: 3, locked: 1, left: 1 })).toBe(
+      "1 of 3 lessons placed, 1 fixed in the master timetable, 1 left for Generate.",
+    );
+  });
+});

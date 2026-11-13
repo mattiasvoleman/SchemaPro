@@ -167,18 +167,21 @@ export default function PlacementsPage() {
     return byPost;
   }, [shown]);
 
-  // The post the Förlägg dialog's link names: scrolled to and focused once the list is there.
+  // The list is drawn once the board AND the four name lists are there (a skeleton stands in until then).
+  const loading = !year || board.isLoading || groupsQuery.isLoading || subjectsQuery.isLoading || roomsQuery.isLoading || peopleQuery.isLoading;
+
+  // The post the Förlägg dialog's link names: scrolled to and focused once the list is there. The board can
+  // arrive before a name list (a slow /users); the effect then waits for `loading` to end and runs again.
   useEffect(() => {
-    if (!focusPost || !shown) return;
+    if (!focusPost || !shown || loading) return;
     const element = document.getElementById(`post-${focusPost}`);
     if (!element) return;
     element.scrollIntoView({ block: "center" });
     element.focus({ preventScroll: true });
     setFocusPost(null);
-  }, [focusPost, shown]);
+  }, [focusPost, shown, loading]);
 
   const failingShown = (shown?.placements ?? []).filter((row) => !row.verdict.ok);
-  const loading = !year || board.isLoading || groupsQuery.isLoading || subjectsQuery.isLoading || roomsQuery.isLoading || peopleQuery.isLoading;
   const failed = board.isError && board.data === undefined;
 
   const selectedCard: TimetableLesson | undefined = cards.find((card) => card.id === selected);

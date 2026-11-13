@@ -1976,7 +1976,7 @@
     "postsDescription": "Varje timplanspost med vad som är förlagt och vad som är kvar för Generera att lägga.",
     "noPosts": "Inga poster att visa.",
     "noTeacher": "ingen lärare",
-    "postFigures": "{placed} av {count} lektioner förlagda, {locked} fasta i grundschemat, {left} kvar för Generera.",
+    "postFigures": "{placed} av {count, plural, one {# lektion förlagd} other {# lektioner förlagda}}, {locked, plural, one {# fast} other {# fasta}} i grundschemat, {left} kvar för Generera.",
     "part": "{teacher}: {count} × {minutes} min, förlagt {placed}, fast {locked}, kvar {left}.",
     "postWindow": "gäller {from}–{to}",
     "windowFromStart": "läsårets början",

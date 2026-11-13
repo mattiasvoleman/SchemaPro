@@ -1976,7 +1976,7 @@
     "postsDescription": "Every timetable post with what is placed and what is left for Generate to place.",
     "noPosts": "No posts to show.",
     "noTeacher": "no teacher",
-    "postFigures": "{placed} of {count} lessons placed, {locked} fixed in the master timetable, {left} left for Generate.",
+    "postFigures": "{placed} of {count, plural, one {# lesson} other {# lessons}} placed, {locked} fixed in the master timetable, {left} left for Generate.",
     "part": "{teacher}: {count} × {minutes} min, placed {placed}, fixed {locked}, left {left}.",
     "postWindow": "runs {from}–{to}",
     "windowFromStart": "the start of the year",
