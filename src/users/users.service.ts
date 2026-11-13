@@ -52,6 +52,8 @@ export const USER_LEFT_ON_NEEDS_INACTIVE = 'USER_LEFT_ON_NEEDS_INACTIVE';
 export const USER_LEFT_ON_IN_THE_FUTURE = 'USER_LEFT_ON_IN_THE_FUTURE';
 /** A last working day before the day the person was last made active again. */
 export const USER_LEFT_ON_BEFORE_RETURN = 'USER_LEFT_ON_BEFORE_RETURN';
+/** A last working day before the day the person was added to Rastra (a year typed wrong, or no year at all). */
+export const USER_LEFT_ON_BEFORE_START = 'USER_LEFT_ON_BEFORE_START';
 /** A change that would leave the school with nobody who decides (Roller i skolan). */
 export const LAST_DECIDER = 'LAST_DECIDER';
 /** A row of a bulk call of the register that is no pupil (Massåtgärder). */
@@ -563,7 +565,9 @@ export class UsersService {
         }
         // Sista arbetsdag (20270210090000), judged before anything is written: the day after it, at the school's
         // midnight, is the instant their time stops counting.
-        const stopsAt = dto.leftOn === undefined ? null : await leftOnInstant(tx, current, dto, id);
+        // `leftOn: null` is no day, as an absent one is (the DTO lets null through, as it does for the phone number
+        // and the class, where it clears): an integration that sends every field must be able to deactivate.
+        const stopsAt = dto.leftOn == null ? null : await leftOnInstant(tx, current, { isActive: dto.isActive, leftOn: dto.leftOn }, id);
         const role = dto.role ?? current.role;
         // Roller i skolan: an administrator's row, and anybody's role,
         // profile or HR-läs, are rektor's or a full administrator's to
@@ -1242,16 +1246,18 @@ function recordedATimplanDecision(
 
 /**
  * The instant a person's time stops counting when their last working day is `dto.leftOn`: the school's midnight
- * after it. Refuses a day that has not happened, a person who is or becomes active, and a day before the person
- * was last made active again (their periods never overlap; the exclusion constraint holds it, this says it first).
+ * after it. Refuses a day that has not happened, a person who is or becomes active, a day before the person was
+ * added to Rastra (a last day typed with the wrong year would otherwise take a whole year of payroll from them, and
+ * a year 1 is not a date the database can hold), and a day before the person was last made active again (their
+ * periods never overlap; the exclusion constraint holds it, this says it first).
  */
 async function leftOnInstant(
   tx: PrismaClient,
   current: Pick<User, 'isActive' | 'schoolId'>,
-  dto: Pick<UpdateUserDto, 'isActive' | 'leftOn'>,
+  dto: { isActive: boolean | undefined; leftOn: string },
   id: string,
 ): Promise<Date> {
-  const leftOn = dto.leftOn!;
+  const leftOn = dto.leftOn;
   const staysInactive = dto.isActive === false || (dto.isActive === undefined && !current.isActive);
   if (!staysInactive) {
     throw new BadRequestException({
@@ -1267,6 +1273,17 @@ async function leftOnInstant(
       message: `leftOn: den sista arbetsdagen har inte varit (i dag är ${today}). Avaktivera personen när dagen har gått.`,
       code: USER_LEFT_ON_IN_THE_FUTURE,
     });
+  }
+  const added = await tx.user.findUnique({ where: { id }, select: { createdAt: true } });
+  if (added) {
+    const first = todayInZone(timezone, added.createdAt).toISOString().slice(0, 10);
+    if (leftOn < first) {
+      throw new BadRequestException({
+        message: `leftOn: personen lades till i Rastra ${first}, så den sista arbetsdagen kan inte ligga före det.`,
+        code: USER_LEFT_ON_BEFORE_START,
+        params: { added: first },
+      });
+    }
   }
   const stopsAt = zonedTimeToUtc(addDays(leftOn, 1), '00:00', timezone);
   const returned = await tx.userDeactivation.findFirst({

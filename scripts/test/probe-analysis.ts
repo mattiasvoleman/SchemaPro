@@ -57,9 +57,17 @@
  *   (ln)  two administrators flipping the same person at once, from two connections, in both
  *         orders: the second waits for the first, and the periods never overlap (the exclusion
  *         constraint would refuse the second deactivation if it began before the first return).
+ *   (lo)  the migration's lock loop (20270210090000) gives up: the first DO block of the file, read
+ *         from the file with its 30 seconds made one, passes when Schools and Users are free and,
+ *         with Users held ACCESS EXCLUSIVE by another connection, stops with the message that
+ *         names the way back and nothing taken, in about a second and not never (the review of
+ *         #308, LÅG-5: a loop that never gave up would hang `migrate deploy`).
  */
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { ValidationPipe } from '@nestjs/common';
 import { Client } from 'pg';
 import { AnalysisService } from '../../src/analysis/analysis.service';
 import type { PayrollBasisResponse } from '../../src/analysis/analysis.types';
@@ -69,6 +77,7 @@ import { CoverReportsService } from '../../src/cover/cover-reports.service';
 import { PrismaService } from '../../src/database/prisma.service';
 import { readXlsx } from '../../src/schedule-exchange/xlsx';
 import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
+import { UpdateUserDto } from '../../src/users/dto/user.dto';
 import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
 import { UsersService } from '../../src/users/users.service';
 
@@ -455,6 +464,8 @@ async function checks(owner: Client, api: PrismaService, slug: string): Promise<
     const people = new UsersService(api, {} as SupabaseAdminService);
     const eva = await user('Eva', 'TEACHER');
     const fia = await user('Fia', 'TEACHER');
+    // Added to Rastra in August, as a teacher with lessons in October was: the last day may not be before the person was there.
+    await owner.query(`UPDATE "Users" SET "createdAt" = '2026-08-03 08:00+02' WHERE id = ANY($1::uuid[])`, [[eva.id, fia.id]]);
     for (const teacher of [eva, fia]) {
       await lesson('2026-10-13', '08:00', '09:00', teacher.id);
       await lesson('2026-10-15', '08:00', '09:00', teacher.id);
@@ -494,6 +505,23 @@ async function checks(owner: Client, api: PrismaService, slug: string): Promise<
     await people.update(fia.id, { isActive: true }, asAdmin);
     assert.equal(await refused({ isActive: false, leftOn: '2026-10-01' }, fia.id), 'USER_LEFT_ON_BEFORE_RETURN');
     assert.equal((await one<{ active: boolean }>(`SELECT "isActive" AS active FROM "Users" WHERE id = $1`, [fia.id])).active, true);
+
+    // The review of #308: no day before the person was added (a year typed wrong, and year 1, which the database cannot hold), and
+    // null, which the DTO lets through, is no day and not a 500. Through the real ValidationPipe, as a request reaches the service.
+    const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true, transformOptions: { enableImplicitConversion: false } });
+    const body = async (raw: object) => (await pipe.transform(raw, { type: 'body', metatype: UpdateUserDto })) as UpdateUserDto;
+    const hanna = await user('Hanna', 'TEACHER');
+    await owner.query(`UPDATE "Users" SET "createdAt" = '2026-08-03 08:00+02' WHERE id = $1`, [hanna.id]);
+    assert.equal(await refused(await body({ isActive: false, leftOn: '2026-08-02' }), hanna.id), 'USER_LEFT_ON_BEFORE_START');
+    assert.equal(await refused(await body({ isActive: false, leftOn: '0001-01-01' }), hanna.id), 'USER_LEFT_ON_BEFORE_START');
+    assert.equal(await refused(await body({ isActive: false, leftOn: '2025-10-13' }), hanna.id), 'USER_LEFT_ON_BEFORE_START');
+    assert.equal((await one<{ active: boolean }>(`SELECT "isActive" AS active FROM "Users" WHERE id = $1`, [hanna.id])).active, true, 'a refused day deactivated the person');
+    // The day they were added is a day they could leave on; null is no day.
+    await people.update(hanna.id, await body({ isActive: false, leftOn: '2026-08-03' }), asAdmin);
+    assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "UserDeactivations" WHERE "userId" = $1 AND "endsAt" IS NULL`, [hanna.id])).n, 1);
+    await people.update(hanna.id, await body({ isActive: true }), asAdmin);
+    await people.update(hanna.id, await body({ isActive: false, leftOn: null }), asAdmin);
+    assert.equal((await one<{ active: boolean }>(`SELECT "isActive" AS active FROM "Users" WHERE id = $1`, [hanna.id])).active, false, 'leftOn null did not deactivate');
   });
 
   await check('(ln) two administrators flipping the same person at once: the second waits, and the periods never overlap', async () => {
@@ -546,6 +574,43 @@ async function checks(owner: Client, api: PrismaService, slug: string): Promise<
       for (let i = 1; i < after.length; i += 1) {
         assert.ok(after[i - 1]!.endsAt !== null && after[i]!.startsAt >= after[i - 1]!.endsAt!, `period ${i} began before period ${i - 1} ended`);
       }
+    } finally {
+      await second.query('ROLLBACK').catch(() => undefined);
+      await owner.query('ROLLBACK').catch(() => undefined);
+      await second.end();
+    }
+  });
+
+  await check('(lo) the migration\'s lock loop gives up when Users is held, and takes both locks when it is not', async () => {
+    const name = '20270210090000_en_avaktiverad_person_minns_sina_perioder';
+    const text = readFileSync(join(__dirname, '..', '..', 'prisma', 'migrations', name, 'migration.sql'), 'utf8');
+    const loop = /DO \$\$\nDECLARE\n {2}give_up[\s\S]*?\nEND\n\$\$;/.exec(text)?.[0];
+    assert.ok(loop?.includes('LOCK TABLE "Schools"') && loop.includes('LOCK TABLE "Users"'), 'the first DO block is not the lock loop');
+    const quick = loop.replace("interval '30 seconds'", "interval '1 second'");
+    assert.notEqual(quick, loop, 'the loop no longer has a 30 second deadline to shorten');
+    const second = new Client({ connectionString: requiredEnv('PROBE_OWNER_URL') });
+    await second.connect();
+    try {
+      // Free: both locks at once, and out.
+      await second.query('BEGIN');
+      await second.query(quick);
+      await second.query('ROLLBACK');
+      // Held: another connection has Users ACCESS EXCLUSIVE, as an ALTER of it would. The loop must give up, not wait and not spin for ever.
+      await owner.query('BEGIN');
+      await owner.query('LOCK TABLE "Users" IN ACCESS EXCLUSIVE MODE');
+      await second.query('BEGIN');
+      await second.query("SET LOCAL statement_timeout = '10s'");
+      const started = Date.now();
+      let message = '';
+      try {
+        await second.query(quick);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      const waited = Date.now() - started;
+      assert.match(message, /Schools and Users were not free at once in 30 s: nothing is changed/, `it did not give up: ${message}`);
+      assert.ok(message.includes(`prisma migrate resolve --rolled-back ${name}`), 'the message does not name the way back');
+      assert.ok(waited >= 900 && waited < 8000, `it gave up after ${waited} ms, not after about the second it was given`);
     } finally {
       await second.query('ROLLBACK').catch(() => undefined);
       await owner.query('ROLLBACK').catch(() => undefined);

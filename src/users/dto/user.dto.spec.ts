@@ -55,6 +55,8 @@ describe('UpdateUserDto leftOn (sista arbetsdag)', () => {
 
   it('is optional, and is not a field of a new person', async () => {
     await expect(failing(UpdateUserDto, {})).resolves.toEqual([]);
+    // null passes IsOptional as it does for the phone number and the class; UsersService.update reads it as no day (the review of #308, MEDEL-1).
+    await expect(failing(UpdateUserDto, { isActive: false, leftOn: null })).resolves.toEqual([]);
     expect('leftOn' in plainToInstance(CreateUserDto, { role: 'TEACHER', firstName: 'A', lastName: 'B', email: 'a@b.se' })).toBe(false);
   });
 });

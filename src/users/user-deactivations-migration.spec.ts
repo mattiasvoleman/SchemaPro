@@ -72,6 +72,10 @@ describe(NAME, () => {
     expect(loop.length).toBeGreaterThan(0);
     expect(migration).toContain("PERFORM set_config('lock_timeout', '5s', true);");
     expect(migration).toContain('EXCEPTION WHEN lock_not_available THEN');
+    // It gives up: past its deadline it raises and leaves nothing, and the deadline is not unconditional. (The database runs the
+    // loop with its deadline shortened, in scripts/test/probe-analysis.ts (lo): this only holds the text of it.)
+    expect(migration).toMatch(/IF clock_timestamp\(\) > give_up THEN\s+RAISE EXCEPTION 'Schools and Users were not free at once in 30 s: nothing is changed;/);
+    expect(migration).toMatch(/give_up timestamptz := clock_timestamp\(\) \+ interval '30 seconds'/);
     expect(migration).toContain('interval \'30 seconds\'');
     // No other table is locked, and no LOCK without NOWAIT.
     const locks = migration.match(/LOCK TABLE [^;]*;/g) ?? [];

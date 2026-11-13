@@ -8038,8 +8038,9 @@
       <em>Personal</em> ange personens sista arbetsdag, och då räknas hen till slutet av den dagen och dagarna
       efter är inte hens. Dagen anges när personen avaktiveras eller i efterhand för en person som redan är
       avaktiverad (anropet <span class="path">PATCH /api/v1/users/{id}</span> med fältet <em>leftOn</em>,
-      ÅÅÅÅ-MM-DD); sidan Personer har ännu ingen ruta för den. Dagen får inte ligga i framtiden och inte före den
-      dag personen senast aktiverades igen. Dagen gäller löneunderlaget och frånvarostatistiken; gallringen
+      ÅÅÅÅ-MM-DD); sidan Personer har ännu ingen ruta för den. Dagen får inte ligga i framtiden, inte före den
+      dag personen senast aktiverades igen och inte före den dag personen lades till i Rastra (så att ett årtal som
+      skrivs fel inte tar ett helt år ur underlaget). Dagen gäller löneunderlaget och frånvarostatistiken; gallringen
       räknar fortfarande från den dag avaktiveringen gjordes, så att en sista arbetsdag aldrig förkortar hur länge
       uppgifterna sparas.</li>
     <li><strong>Filen.</strong> <span class="ui">CSV för Excel</span> är Excels svenska format:

@@ -4636,8 +4636,11 @@ Rastra's import format); the person's own registerutdrag does, and their code.
   notice. A control character (a NUL or a BEL pasted into a name) is written as
   a space, which is what the code page encoder `src/common/windows-1252.ts`
   (D8's) does and the payroll's encoder asks it for, and counted in the same
-  notice: a NUL in the file is what makes Excel call it corrupt. The Excel
-  file keeps every character.
+  notice: a NUL in the file is what makes Excel call it corrupt. The formula
+  guard reads a cell as the file will (a BEL before `=` is a space before `=`,
+  which the guard calls dangerous), so such a cell is guarded too. The Excel file
+  keeps every character but the control characters, which XML cannot carry: it
+  drops them without saying so, and the notice says as much.
 - Rolling back the API past this release leaves two unused tables. Nothing
   else reads them.
 
@@ -4687,11 +4690,15 @@ is the click, so the days between a last working day and the click were booked
 - **The gateway:** the löneunderlag reads the periods (statement E's `away`,
   `src/analysis/leavers.ts`), and `PATCH /api/v1/users/{id}` takes `leftOn`
   (the school's date, `ÅÅÅÅ-MM-DD`), for a person being deactivated or one who
-  is inactive already: their time then counts through the end of that day. It is
-  refused for a day that has not been (`USER_LEFT_ON_IN_THE_FUTURE`), for a
-  person who is or becomes active (`USER_LEFT_ON_NEEDS_INACTIVE`) and for a day
-  before the person last came back (`USER_LEFT_ON_BEFORE_RETURN`). There is no
-  field for it on the People page yet.
+  is inactive already: their time then counts through the end of that day.
+  `leftOn: null` is no day, as leaving it out is (an integration that sends every
+  field must still be able to deactivate). It is refused for a day that has not
+  been (`USER_LEFT_ON_IN_THE_FUTURE`), for a person who is or becomes active
+  (`USER_LEFT_ON_NEEDS_INACTIVE`), for a day before the person was added to
+  Rastra (`USER_LEFT_ON_BEFORE_START`, in the school's days; a year typed wrong
+  would otherwise take a year of payroll from them) and for a day before the
+  person last came back (`USER_LEFT_ON_BEFORE_RETURN`). There is no field for it
+  on the People page yet.
 - **Not changed:** the load report, the SCB file (`inactiveSince`), the
   rastvakt's coverage and the school export still read `Users.deactivatedAt`
   (the click), so a last working day named for a person moves the payroll and
@@ -4706,7 +4713,11 @@ refusal for that long nothing is changed. The release before this one writes
 `isActive` alone and the table follows, so the order is migration first, then
 merge; rolling the code back leaves the table and the trigger in place and
 harmless. After a failed attempt, `prisma migrate resolve --rolled-back
-20270210090000_en_avaktiverad_person_minns_sina_perioder`, then deploy again.
+20270210090000_en_avaktiverad_person_minns_sina_perioder`, then deploy again. That
+the loop gives up is proved against a real database by
+`scripts/test/probe-analysis.ts` (lo): the first DO block of the file, with its 30
+seconds made one, stops with the message above while another connection holds
+`Users` `ACCESS EXCLUSIVE`, and passes when both tables are free.
 
 Verify (as the owner, `public` only): `UserDeactivations` exists with six
 constraints (pkey, two keys, two CHECKs and the exclusion) and two policies; the

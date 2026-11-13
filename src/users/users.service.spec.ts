@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
   ServiceUnavailableException,
+  ValidationPipe,
 } from '@nestjs/common';
 import { Prisma, UserRole } from '@prisma/client';
 import {
@@ -19,7 +20,7 @@ import { recordedReads } from '../../test/utils/recorded-reads';
 import { BULK_TIMEOUT_MS } from '../common/bulk';
 import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
-import type { CreateUserDto } from './dto/user.dto';
+import { UpdateUserDto, type CreateUserDto } from './dto/user.dto';
 import { UserLookupError, type SupabaseAdminService } from './supabase-admin.service';
 import { UsersService } from './users.service';
 
@@ -937,16 +938,23 @@ describe('UsersService', () => {
       /** The period Users_deactivations_are_kept has opened by the click, as the database holds it. */
       const RECORDED = new Date('2026-11-13T09:00:00.500Z');
       let previousReturn: { endsAt: Date } | null;
+      /** Returns before the previous one: the database answers the extreme the query's own order asks for. */
+      let earlierReturns: { endsAt: Date }[];
       let openPeriod: { recordedAt: Date } | null;
 
       beforeEach(() => {
         jest.useFakeTimers({ now: NOW });
         previousReturn = null;
+        earlierReturns = [];
         openPeriod = { recordedAt: RECORDED };
         tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
-        tx.userDeactivation.findFirst.mockImplementation((args: { where: { endsAt?: unknown } }) =>
-          Promise.resolve(args.where.endsAt === null ? openPeriod : previousReturn),
-        );
+        // The person was added long ago, so no test below is about the lower bound unless it says so.
+        tx.user.findUnique.mockResolvedValue({ createdAt: new Date('2020-01-01T08:00:00.000Z') });
+        tx.userDeactivation.findFirst.mockImplementation((args: { where: { endsAt?: unknown }; orderBy?: { endsAt?: 'asc' | 'desc' } }) => {
+          if (args.where.endsAt === null) return Promise.resolve(openPeriod);
+          const all = [...(previousReturn ? [previousReturn] : []), ...earlierReturns].sort((a, b) => a.endsAt.getTime() - b.endsAt.getTime());
+          return Promise.resolve((args.orderBy?.endsAt === 'asc' ? all[0] : all[all.length - 1]) ?? null);
+        });
         tx.userDeactivation.updateMany.mockResolvedValue({ count: 1 });
         tx.user.update.mockResolvedValue({ id: USER_ID });
       });
@@ -981,15 +989,30 @@ describe('UsersService', () => {
         });
       });
 
-      it('takes the school\'s day for today, not UTC\'s: 00:30 on the 14th in Stockholm still names the 13th as yesterday\'s', async () => {
+      it('takes the school\'s day for today, not UTC\'s: at 00:30 on the 14th in Stockholm the 14th is today and the 13th is over', async () => {
         jest.setSystemTime(new Date('2026-11-13T23:30:00.000Z'));
         openPeriod = { recordedAt: new Date('2026-11-13T23:30:00.500Z') };
-        await service.update(USER_ID, { isActive: false, leftOn: '2026-11-13' }, testUser());
         // The 13th is over in Stockholm: its end is the 14th at 00:00, which is 23:00 UTC, before the click.
+        await service.update(USER_ID, { isActive: false, leftOn: '2026-11-13' }, testUser());
         expect(tx.userDeactivation.updateMany).toHaveBeenCalledWith({
           where: { userId: USER_ID, endsAt: null },
           data: { startsAt: new Date('2026-11-13T23:00:00.000Z') },
         });
+        // And the 14th is today for the school, though it is the 13th in UTC: named, it is counted to the click and refused by nobody.
+        tx.userDeactivation.updateMany.mockClear();
+        await expect(service.update(USER_ID, { isActive: false, leftOn: '2026-11-14' }, testUser())).resolves.toEqual({ id: USER_ID });
+        expect(tx.userDeactivation.updateMany).toHaveBeenCalledWith({
+          where: { userId: USER_ID, endsAt: null },
+          data: { startsAt: new Date('2026-11-13T23:30:00.500Z') },
+        });
+        // The 15th is not.
+        await expect(service.update(USER_ID, { isActive: false, leftOn: '2026-11-15' }, testUser())).rejects.toMatchObject({
+          response: { code: 'USER_LEFT_ON_IN_THE_FUTURE' },
+        });
+        // In summer, 00:30 CEST on the 14th June is 22:30 UTC on the 13th.
+        jest.setSystemTime(new Date('2026-06-13T22:30:00.000Z'));
+        openPeriod = { recordedAt: new Date('2026-06-13T22:30:00.500Z') };
+        await expect(service.update(USER_ID, { isActive: false, leftOn: '2026-06-14' }, testUser())).resolves.toEqual({ id: USER_ID });
       });
 
       it('refuses a day that has not been, writing nothing', async () => {
@@ -1039,6 +1062,62 @@ describe('UsersService', () => {
         tx.userDeactivation.updateMany.mockClear();
         previousReturn = { endsAt: new Date('2026-11-05T23:00:00.000Z') };
         await service.update(USER_ID, { isActive: false, leftOn: '2026-11-05' }, testUser());
+        expect(tx.userDeactivation.updateMany).toHaveBeenCalledTimes(1);
+      });
+
+      // The review of #308, MEDEL-1: class-validator's IsOptional lets null through, and the service read it as a date.
+      it('reads leftOn: null as no day, through the real ValidationPipe, and deactivates', async () => {
+        const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true, transformOptions: { enableImplicitConversion: false } });
+        for (const body of [{ isActive: false, leftOn: null }, { isActive: false }]) {
+          const dto = (await pipe.transform(body, { type: 'body', metatype: UpdateUserDto })) as UpdateUserDto;
+          tx.userDeactivation.findFirst.mockClear();
+          tx.userDeactivation.updateMany.mockClear();
+          tx.user.update.mockClear();
+          await expect(service.update(USER_ID, dto, testUser())).resolves.toEqual({ id: USER_ID });
+          expect(tx.user.update).toHaveBeenCalledWith({ where: { id: USER_ID }, data: { isActive: false } });
+          // No day: no read of the periods, no write of one, and the school is not asked its zone.
+          expect(tx.userDeactivation.findFirst).not.toHaveBeenCalled();
+          expect(tx.userDeactivation.updateMany).not.toHaveBeenCalled();
+        }
+        // On a person who is inactive already, null alone is a change of nothing and not an error.
+        storeUser({ role: UserRole.STUDENT, studentGroupId: null, pseudonymisedAt: null, isActive: false });
+        const dto = (await pipe.transform({ leftOn: null }, { type: 'body', metatype: UpdateUserDto })) as UpdateUserDto;
+        await expect(service.update(USER_ID, dto, testUser())).resolves.toEqual({ id: USER_ID });
+        expect(tx.userDeactivation.updateMany).not.toHaveBeenCalled();
+      });
+
+      // The review of #308, LÅG-4: nothing stopped a last day from before the person was there, and year 1 was a 500.
+      it('refuses a day before the person was added to Rastra, in the school\'s days, and not the day they were added', async () => {
+        // Added at 00:30 on the 11th in Stockholm (23:30 UTC on the 10th).
+        tx.user.findUnique.mockResolvedValue({ createdAt: new Date('2026-11-10T23:30:00.000Z') });
+        await expect(service.update(USER_ID, { isActive: false, leftOn: '2026-11-10' }, testUser())).rejects.toMatchObject({
+          status: 400,
+          response: { code: 'USER_LEFT_ON_BEFORE_START', params: { added: '2026-11-11' } },
+        });
+        expect(tx.user.update).not.toHaveBeenCalled();
+        await service.update(USER_ID, { isActive: false, leftOn: '2026-11-11' }, testUser());
+        expect(tx.userDeactivation.updateMany).toHaveBeenCalledTimes(1);
+      });
+
+      it.each(['0001-01-01', '0100-06-01', '1000-01-01', '1970-01-01', '2019-12-31'])('refuses %s for a person added in 2020, and writes nothing', async (leftOn) => {
+        await expect(service.update(USER_ID, { isActive: false, leftOn }, testUser())).rejects.toMatchObject({
+          response: { code: 'USER_LEFT_ON_BEFORE_START' },
+        });
+        expect(tx.user.update).not.toHaveBeenCalled();
+        expect(tx.userDeactivation.updateMany).not.toHaveBeenCalled();
+      });
+
+      // The review of #308, MEDEL-2: with two earlier returns the LATEST decides, not the oldest.
+      it('judges a day against the latest return of a person who has come back twice', async () => {
+        earlierReturns = [{ endsAt: new Date('2026-10-05T06:00:00.000Z') }];
+        previousReturn = { endsAt: new Date('2026-11-05T07:00:00.000Z') };
+        // Between the two returns: after the first, before the second.
+        await expect(service.update(USER_ID, { isActive: false, leftOn: '2026-10-20' }, testUser())).rejects.toMatchObject({
+          response: { code: 'USER_LEFT_ON_BEFORE_RETURN', params: { returned: '2026-11-05' } },
+        });
+        expect(tx.user.update).not.toHaveBeenCalled();
+        // After the second: fine.
+        await service.update(USER_ID, { isActive: false, leftOn: '2026-11-06' }, testUser());
         expect(tx.userDeactivation.updateMany).toHaveBeenCalledTimes(1);
       });
 
