@@ -58,7 +58,7 @@ def with_parts(payload: dict[str, Any], count: int, *, every: int) -> dict[str, 
         for period in range(count):
             first_half = period % 2 == 0
             locks.append({
-                "id": str(uuid.uuid5(uuid.NAMESPACE_OID, f"lunch-lock-{group}-{period}")),
+                "id": str(uuid.UUID(int=uuid.uuid5(uuid.NAMESPACE_OID, f"lunch-lock-{group}-{period}").int, version=4)),
                 "studentGroupId": group,
                 "teacherId": teacher_of[group],
                 "dayOfWeek": 1,

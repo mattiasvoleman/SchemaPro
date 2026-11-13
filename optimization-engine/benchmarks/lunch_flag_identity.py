@@ -76,7 +76,7 @@ def main() -> int:
 
     module.SchedulerSolver._lunch_parts = watching  # type: ignore[method-assign]
 
-    seen = identical = in_parts = refused_differently = 0
+    seen = identical = in_parts = refused_differently = estimated = 0
     findings: list[str] = []
     for path in args.files:
         for number, line in enumerate(path.open(encoding="utf-8"), 1):
@@ -98,6 +98,11 @@ def main() -> int:
                 identical += 1
                 continue
             parted = any(count > 0 for count in recorded)
+            if differing == ["estimate"] and int(after["estimate"]) > int(before["estimate"]):
+                # The size guard (_estimate_model_size) charges an upper bound for the parts a request that
+                # asks for them could have, whether or not any class has more than one: no model differs.
+                estimated += 1
+                continue
             lunch_refusal = "validate" in differing and str(before.get("validate", "")).startswith(
                 "refused LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK",
             )
@@ -110,7 +115,8 @@ def main() -> int:
     print(
         f"{seen} payloads with periods and a lunch rule: {identical} identical in every build, "
         f"{in_parts} differ with a class in parts (expected), "
-        f"{refused_differently} refused differently by period (expected)",
+        f"{refused_differently} refused differently by period (expected), "
+        f"{estimated} differ only in the size guard's upper bound (expected)",
     )
     for finding in findings:
         print(finding)
