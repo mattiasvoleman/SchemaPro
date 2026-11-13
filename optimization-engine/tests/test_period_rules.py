@@ -519,6 +519,42 @@ def test_other_locks_that_close_the_same_window_the_same_way_are_the_same_refusa
     assert _said_periods(refused) == (1, "1,3")
 
 
+def test_a_reservation_is_part_of_what_two_periods_lunch_refusals_are_compared_by() -> None:
+    """Review of #304, LÅG-4 (mutants L02 and L09): the school's reservations close her window in every period.
+
+    The window is 10:30-12:30 for an hour, and the school has reserved the
+    first quarter of an hour. The autumn's lock is 11:00-11:45 and the
+    spring's 11:15-12:00: with the reservation neither leaves an hour, and the
+    cause is the two together in all four periods. Compared without it the
+    spring's locks alone would be another cause ("locked") and the periods said
+    would be the autumn's two; and a comparison that read no reservation at
+    all would find no period that is refused the same, and no period to say.
+    """
+    teacher = str(uuid4())
+    window = {"lunchMinutes": 60, "lunchStartTime": "10:30:00", "lunchEndTime": "12:30:00"}
+    lessons = ([True, True, False, False], [False, False, True, True])
+    locks = [("11:00:00", "11:45:00", (0, 1)), ("11:15:00", "12:00:00", (2, 3))]
+
+    def refusal(closed: list[dict[str, object]]) -> InvalidScheduleInputError:
+        return _refusal(_payload(
+            [_requirement(str(uuid4()), 1, teacher=teacher, periods=mask) for mask in lessons],
+            teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, **window}],
+            fixedLessons=[
+                _lock(str(uuid4()), 1, start, end, teacher, [index in held for index in range(4)])
+                for start, end, held in locks
+            ],
+            constraints=closed,
+        ))
+
+    refused = refusal([_closed_for(teacher, "10:30:00", "10:45:00")])
+    assert refused.params["causes"] == "locked_closed"
+    assert _said_periods(refused) == (0, "0,1,2,3")
+    # Without the reservation the locks alone refuse it, in the same four periods, by their own cause.
+    refused = refusal([])
+    assert refused.params["causes"] == "locked"
+    assert _said_periods(refused) == (0, "0,1,2,3")
+
+
 def test_a_lunch_refused_for_a_term_is_the_terms_in_both_parities_whichever_week_it_was_found_in() -> None:
     """The lunch says its own weeks: a term's, and no parity (_SAY_THEIR_OWN_WEEKS).
 
