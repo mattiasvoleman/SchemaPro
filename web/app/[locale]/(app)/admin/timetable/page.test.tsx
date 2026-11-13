@@ -1236,6 +1236,19 @@ describe("a re-teachered lesson under the staffing policy", () => {
     expect(text).toContain("engineMessages.STAFF_TEACHER_NOT_QUALIFIED(TEACHER|Slöjd|5)");
     expect(text).not.toContain("timetable.editConflict");
   });
+
+  // A lesson Generera writes from a förläggning is refused by the editor with a Swedish sentence and a code;
+  // it is no clash, so it is not told as one, and an English reader gets it in English.
+  it("shows the refusal of a placed lesson as its own sentence, not as a schedule clash", async () => {
+    noMutation.mutateAsync.mockRejectedValue(
+      new ApiError(409, "Lektionen är förlagd på timplanen och skrivs om därifrån vid varje Generera.", "LESSON_IS_PLACED"),
+    );
+
+    await saveSlojd();
+
+    await waitFor(() => expect(toasts.error).toHaveBeenCalledTimes(1));
+    expect(toasts.error.mock.calls[0]![0]).toBe("timetable.lessonIsPlaced");
+  });
 });
 
 describe("the edit dialog's width", () => {
