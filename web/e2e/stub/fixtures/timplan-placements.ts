@@ -21,7 +21,8 @@ import { REQUIREMENTS, ROOMS, TEACHERS } from "./world";
  *   nobody    1 × 60            a share whose teacher was deleted since
  *
  * Two lessons are placed: Cecilia's on Tuesday and Bo's of 40 minutes on
- * Thursday, on odd weeks.
+ * Thursday, both every week. (A pair of odd and even weeks per teacher is the
+ * dialog's component test's: components/timplan/placement-dialog.test.tsx.)
  */
 
 export const SHARED_PLACEMENTS_SCENARIO = "shared-placements";

@@ -30,7 +30,10 @@
  *   (le)  the report: a week of the hall as the figures say, and the CSV;
  *   (lf)  forty rooms, a term of Tuesdays each, a full schedule: the whole registration in under 2 s (or, on a
  *         machine slower than the one the phase measured on, within eighty empty transactions a series, which the
- *         probe measures first on the same connection; it also prints where a series goes);
+ *         probe measures first on the same connection; it also prints where a series goes). That is the gate for a
+ *         catastrophe; what a series SENDS is counted, which does not wait on a clock: the same statements and
+ *         transactions for a series of two days as for one of twenty, and no more than a cap with room above what
+ *         one sends today;
  */
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
@@ -40,6 +43,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ConflictException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { Client as PgClient } from 'pg';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import { createPgAdapter } from '../../src/database/pool-config';
@@ -98,6 +102,38 @@ const tuesdayOnOrAfter = (iso: string) => {
   const dow = new Date(`${iso}T12:00:00Z`).getUTCDay();
   return dayShift(iso, (9 - (dow === 0 ? 7 : dow)) % 7);
 };
+
+/**
+ * What one series may send, with room above what it sends today: 8 statements in one transaction (BEGIN, the claims, the school's
+ * timezone, the clash read, the series, its days, the late lessons, COMMIT; the log line of (lf) prints both counts). Four more
+ * statements or a second transaction is a change someone makes on purpose and moves these with a reason; twenty more is a lookup
+ * for each day.
+ */
+const SERIES_STATEMENTS_CAP = 12;
+const SERIES_TRANSACTIONS_CAP = 2;
+
+/**
+ * What `run` sends to Postgres, counted where the adapter sends it: every statement through pg's Client.query (the pool's own
+ * query() ends there too), and the transactions among them (BEGIN, which is how the adapter opens one). The count is the
+ * request's own as long as nothing else in the process talks to the database meanwhile, which holds where this is used: one call,
+ * awaited. A count does not wait on a clock, so a series that asks one more statement per day is seen on a runner that is slow
+ * and on a laptop alike, which the time of the whole registration cannot promise.
+ */
+async function sent<T>(run: () => Promise<T>): Promise<{ result: T; statements: number; transactions: number; texts: string[] }> {
+  const original = PgClient.prototype.query;
+  const texts: string[] = [];
+  PgClient.prototype.query = function (this: PgClient, ...args: unknown[]) {
+    const first = args[0];
+    texts.push(typeof first === 'string' ? first : String((first as { text?: unknown } | null | undefined)?.text ?? ''));
+    return (original as (...a: unknown[]) => unknown).apply(this, args);
+  } as typeof original;
+  try {
+    const result = await run();
+    return { result, statements: texts.length, transactions: texts.filter((text) => /^\s*BEGIN\b/i.test(text)).length, texts: [...texts] };
+  } finally {
+    PgClient.prototype.query = original;
+  }
+}
 
 async function main(): Promise<void> {
   const owner = new PrismaClient({ adapter: createPgAdapter(requiredEnv('PROBE_OWNER_URL')) });
@@ -486,6 +522,20 @@ async function checks(owner: PrismaClient, api: PrismaService, slug: string): Pr
       return external.create({ target: 'ROOM', roomId: rooms[shifted]!.id, weekdays: [2], startDate: tuesdayOnOrAfter(from), endDate: dayShift(tuesdayOnOrAfter(from), 7 * 19), startTime: '18:00', endTime: '20:00', ...organisation, organisation: `Senare ${shifted}` }, asAdmin);
     });
     assert.equal(days, 40 * 20);
+    // What a series sends, counted and not timed (review of #291, R2-1: twenty more statements a series, or forty, went through the
+    // time gate below). A series of two days and one of twenty, far past the term the forty took, in rooms of their own: the same
+    // statements and the same transactions, whatever the days, and no more than the cap, which has room above what one sends today.
+    const farTuesday = tuesdayOnOrAfter(dayShift(termEnd, 7 * 300));
+    const series = (room: { id: string }, weeks: number) =>
+      external.create({ target: 'ROOM', roomId: room.id, weekdays: [2], startDate: farTuesday, endDate: dayShift(farTuesday, 7 * (weeks - 1)), startTime: '18:00', endTime: '20:00', ...organisation, organisation: `Räknad ${weeks}` }, asAdmin);
+    const two = await sent(() => series(rooms[20]!, 2));
+    const twenty = await sent(() => series(rooms[21]!, 20));
+    assert.equal([two.result.created, twenty.result.created].join('/'), '2/20');
+    console.log(`     a series of 2 days sends ${two.statements} statements in ${two.transactions} transactions; one of 20 days, ${twenty.statements} in ${twenty.transactions}`);
+    assert.equal(twenty.statements, two.statements, `a series of 20 days sends ${twenty.statements - two.statements} more statements than one of 2: a statement a day\n${twenty.texts.map((text) => text.slice(0, 90)).join('\n')}`);
+    assert.equal(twenty.transactions, two.transactions, 'a series of 20 days opens other transactions than one of 2');
+    assert.ok(twenty.statements <= SERIES_STATEMENTS_CAP, `a series sends ${twenty.statements} statements, over the cap of ${SERIES_STATEMENTS_CAP}`);
+    assert.ok(twenty.transactions <= SERIES_TRANSACTIONS_CAP, `a series opens ${twenty.transactions} transactions, over the cap of ${SERIES_TRANSACTIONS_CAP}`);
     // Under the phase's 2 s, as measured on the developer machine; on a slower one, no more than eighty empty
     // transactions a series (the floor above).
     assert.ok(ms < 2000 || ms / 40 <= 80 * floor, `registered in ${ms.toFixed(0)} ms: over the phase's 2000 ms, and over eighty empty transactions (${floor.toFixed(1)} ms) a series`);
