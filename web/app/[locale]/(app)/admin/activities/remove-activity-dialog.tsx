@@ -107,6 +107,18 @@ export function RemoveActivityDialog({
                 </ul>
               </div>
             ) : null}
+            {plan.relocated && plan.relocated.length > 0 ? (
+              <div className="space-y-1">
+                <p>{t("removeRelocated", { count: plan.relocated.length })}</p>
+                <ul className="list-disc pl-5 text-xs">
+                  {plan.relocated.map((row) => (
+                    <li key={row.lessonId}>
+                      {dayText(row.from)} → {dayText(row.to)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             {plan.notReinstatable > 0 ? <p>{t("removeHistory", { count: plan.notReinstatable })}</p> : null}
             {plan.creditsDeleted > 0 ? <p>{t("removeCredits", { count: plan.creditsDeleted })}</p> : null}
             {plan.notify > 0 ? <p>{t("removeNotify", { count: plan.notify })}</p> : null}

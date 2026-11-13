@@ -365,6 +365,11 @@ export interface ReversePreview {
   skippedRoomTaken: Array<{ lessonId: string; date: string; roomId: string; by: "LESSON" | "BOOKING" }>;
   /** Rows whose lesson the grundschema has moved since: deleted, the week has it where it runs now. */
   removedTemplateMoved: Array<{ lessonId: string; date: string }>;
+  /**
+   * Rows whose lesson the grundschema has moved since, and wrote no row for the new day: the row goes to the new time, from `from`
+   * to `to`, and is a lesson again. Absent from a gateway older than the change.
+   */
+  relocated?: Array<{ lessonId: string; from: string; to: string }>;
   notReinstatable: number;
   creditsDeleted: number;
 }

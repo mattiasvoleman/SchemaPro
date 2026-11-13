@@ -151,6 +151,7 @@ const REMOVE_PREVIEW: ActivityRemovePreview = {
   creditsDeleted: 2,
   skippedRoomTaken: [{ lessonId: "cl-9", date: "2026-11-02", roomId: "r-12", by: "BOOKING" }],
   removedTemplateMoved: [{ lessonId: "cl-11", date: "2026-11-03" }],
+  relocated: [{ lessonId: "cl-12", from: "2026-11-04", to: "2026-11-06" }],
   notReinstatable: 4,
 };
 let listed: ScheduleActivity[] = [ACTIVITY];
@@ -699,6 +700,8 @@ describe("/admin/activities", () => {
     expect(dialog).toHaveTextContent("1 ersättningslektion behålls, eftersom de har hållits eller har närvaro.");
     expect(dialog).toHaveTextContent("1 lektion förblir inställd, eftersom salen har bokats");
     expect(dialog).toHaveTextContent("2 nov. 2026 · Sal 12 · en lokalbokning");
+    expect(dialog).toHaveTextContent("1 lektion flyttas till sin nya tid den veckan, eftersom schemat har flyttat lektionen sedan aktiviteten");
+    expect(dialog).toHaveTextContent("4 nov. 2026 → 6 nov. 2026");
     expect(dialog).toHaveTextContent("1 lektion tas bort, eftersom schemat har flyttat lektionen");
     expect(dialog).toHaveTextContent("3 nov. 2026");
     expect(dialog).toHaveTextContent("4 lektioner har börjat eller ändrats sedan och lämnas som de är.");
