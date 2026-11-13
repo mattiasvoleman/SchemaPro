@@ -8,16 +8,15 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { parseTimeString, toWallClock } from '../common/utils/time';
 import { PrismaService } from '../database/prisma.service';
 import { lockCoversDemand, type TaughtLesson } from '../optimization/locked-coverage';
-import { PRESERVED_FROM_REGENERATION } from '../optimization/preserved-lessons';
+import { judgeDemandOf } from '../optimization/post-demand';
+import { keptMastersWhere } from '../optimization/preserved-lessons';
 import { lockYearForGrundschemaEdit } from '../optimization/regeneration-lock';
 import { rostersOfYear } from '../year-rollover/projected-rosters';
 import type { ReplacePlacementsDto } from './dto/requirement-placements.dto';
 import {
-  placedLessonsOf,
-  placedTaughtOf,
+  placedByRowsOf,
   placementFitOf,
   teacherMisfitOf,
-  teacherOfRow,
   type PlacementFitReason,
   type PlacementPost,
 } from './placement-fit';
@@ -34,6 +33,7 @@ import {
 import { lockPostForShares } from '../resources/requirement-shares';
 import {
   clockText,
+  judgedRowOf,
   judgePlacements,
   type JudgedPlacement,
   type PlacementParams,
@@ -246,7 +246,11 @@ export class RequirementPlacementsService {
    *
    * The rows are judged by judgePlacements as Generera's pre-flight judges them
    * (every row of the year at once, none held beside), not by a second rule, and
-   * a post's `left` is demandLeftOf's, which Generera's fetch reads. A read:
+   * a post's `left` is demandLeftOf's, which Generera's fetch reads. The judge's
+   * input is put together by the same functions on both sides: a row by
+   * judgedRowOf, a post's locks and placed lessons by judgeDemandOf, the lessons
+   * kept by keptMastersWhere (review of #315, MEDEL-1; the adapter probe's vv6
+   * reads one world through both and requires the same input and verdicts). A read:
    * every administrator's. It names no person (the judge names a class and a
    * subject; a teacher is an id the page resolves, as it does for the list of
    * the year's rows), and it asks nothing of the caller's own person, so a login
@@ -268,7 +272,7 @@ export class RequirementPlacementsService {
         }),
         // What Generera keeps (and the rows are held against): the same read, the same filter.
         tx.masterLesson.findMany({
-          where: { academicYearId, isParked: false, OR: PRESERVED_FROM_REGENERATION },
+          where: keptMastersWhere(academicYearId),
           select: BOARD_KEPT_SELECT,
           orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
         }),
@@ -302,22 +306,12 @@ export class RequirementPlacementsService {
               schoolId: requireSchoolId(user),
               gradeNumbering: year.gradeNumbering as GradeNumbering,
               basis: await rostersOfYear(tx, user, academicYearId, { isActive: year.isActive, predecessorId: year.predecessorId }),
-              rows: rows.map((row) => ({ ...judgedOf(postById.get(row.requirementId)!, slotOf(row)), id: row.id })),
+              rows: rows.map((row) => judgedRowOf(postById.get(row.requirementId)!, slotOf(row), row.id)),
               beside: [],
               demand: new Map(
                 [...slotsOf].map(([postId, slots]) => {
                   const post = postById.get(postId)!;
-                  const locks = locksByPost.get(postId) ?? [];
-                  return [
-                    postId,
-                    {
-                      post,
-                      lockedMinutes: locks.map((lock) => lock.minutes),
-                      placed: placedLessonsOf(post, slots),
-                      // Delade lektioner: a lock answers its own teacher's lesson first, and a förläggning takes one of its own.
-                      ...(post.shares.length > 0 ? { taught: { locked: locks, placed: placedTaughtOf(post, slots) } } : {}),
-                    },
-                  ] as const;
+                  return [postId, judgeDemandOf(post, locksByPost.get(postId) ?? [], placedByRowsOf(post, slots))] as const;
                 }),
               ),
             });
@@ -455,26 +449,14 @@ export class RequirementPlacementsService {
     });
     const beside = await this.besideOf(tx, post);
     const locks = await this.locksOf(tx, post);
-    const shared = post.shares.length > 0;
     return judgePlacements(tx, this.masters, {
       academicYearId: post.academicYearId,
       schoolId,
       gradeNumbering: post.academicYear.gradeNumbering as GradeNumbering,
       basis,
-      rows: slots.map((slot) => judgedOf(post, slot)),
+      rows: slots.map((slot) => judgedRowOf(post, slot)),
       beside,
-      demand: new Map([
-        [
-          post.id,
-          {
-            post,
-            lockedMinutes: locks.map((lock) => lock.minutes),
-            placed: placedLessonsOf(post, slots),
-            // Delade lektioner: a lock answers its own teacher's lesson first, and a förläggning takes one of its own.
-            ...(shared ? { taught: { locked: locks, placed: placedTaughtOf(post, slots) } } : {}),
-          },
-        ],
-      ]),
+      demand: new Map([[post.id, judgeDemandOf(post, locks, placedByRowsOf(post, slots))]]),
     });
   }
 
@@ -532,13 +514,7 @@ export class RequirementPlacementsService {
     post: { academicYearId: string; studentGroupId: string; subjectId: string; recurrence: LessonRecurrence; startDate: Date | null; endDate: Date | null },
   ): Promise<TaughtLesson[]> {
     const lessons = await tx.masterLesson.findMany({
-      where: {
-        academicYearId: post.academicYearId,
-        studentGroupId: post.studentGroupId,
-        subjectId: post.subjectId,
-        isParked: false,
-        OR: PRESERVED_FROM_REGENERATION,
-      },
+      where: { ...keptMastersWhere(post.academicYearId), studentGroupId: post.studentGroupId, subjectId: post.subjectId },
       select: { startTime: true, endTime: true, recurrence: true, startDate: true, endDate: true, teacherId: true },
     });
     return lessons
@@ -584,36 +560,4 @@ function fitIndexOf(post: PlacementPost, rows: readonly PlacementSlot[], fit: Pl
     if (misfit) return { index: misfit.index };
   }
   return {};
-}
-
-/** A row of the post as the judge reads it: the slot is the row's, the class, subject, teachers and window the post's. */
-function judgedOf(
-  post: {
-    id: string;
-    studentGroupId: string;
-    subjectId: string;
-    teacherId: string | null;
-    coTeacherId: string | null;
-    startDate: Date | null;
-    endDate: Date | null;
-    shares: readonly { teacherId: string | null; lessons: number; minutes: number }[];
-  },
-  slot: PlacementSlot,
-): JudgedPlacement {
-  return {
-    id: null,
-    requirementId: post.id,
-    studentGroupId: post.studentGroupId,
-    subjectId: post.subjectId,
-    // Delade lektioner: the förläggning's own teacher on a post that shares its lessons.
-    teacherId: teacherOfRow(post, slot),
-    coTeacherId: post.coTeacherId,
-    dayOfWeek: slot.dayOfWeek,
-    startMinutes: slot.startMinutes,
-    minutes: slot.minutes,
-    roomId: slot.roomId,
-    recurrence: slot.recurrence,
-    startDate: post.startDate,
-    endDate: post.endDate,
-  };
 }

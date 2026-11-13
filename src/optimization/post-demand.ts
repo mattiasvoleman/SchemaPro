@@ -1,6 +1,7 @@
 import type { LessonShape } from '../common/lesson-lengths';
 import { lessonMinutesOf } from '../common/lesson-lengths';
 import { hasShares, lessonTeachersOf, type LessonShare } from '../common/lesson-shares';
+import type { PlacementDemand } from '../requirement-placements/placement-judge';
 import { coverLockedLessons, coverLockedSharedLessons, type TaughtLesson } from './locked-coverage';
 import { withoutPlaced, withoutPlacedShared } from './placed-lessons';
 
@@ -90,5 +91,25 @@ export function demandLeftOf(
     afterLocks: tagged(afterLocks),
     left: tagged(minutes ? withoutPlaced(afterLocks, minutes) : afterLocks),
     placed: minutes !== undefined,
+  };
+}
+
+/**
+ * What the judge asks of a post for OVER_DEMAND (JudgePlacementsInput.demand):
+ * the locks that cover it, and the lessons its förläggningar place, each with
+ * its teacher on a post that shares its lessons (Bo's lock answers Bo's lesson,
+ * and Bo's förläggning takes one of his). The one place that map entry is made,
+ * for Generera's pre-flight, the week of förläggningar and the dialog's own
+ * save and read, so a lock or a förläggning counts the same wherever the row is
+ * judged (review of #315, MEDEL-1). The locks are read as `demandLeftOf` reads
+ * them, which is how the post's own count answers them first.
+ */
+export function judgeDemandOf(post: DemandPost, covering: readonly TaughtLesson[], placed: DemandPlaced): PlacementDemand {
+  const demand = demandLeftOf(post, covering, placed);
+  return {
+    post,
+    lockedMinutes: demand.locks.map((lock) => lock.minutes),
+    placed: [...(placed.minutes ?? [])],
+    ...(demand.shared ? { taught: { locked: demand.locks, placed: [...(placed.taught ?? [])] } } : {}),
   };
 }

@@ -1,6 +1,7 @@
 import {
   followPlacements,
   insideSchoolDay,
+  placedByRowsOf,
   placedLessonsOf,
   placedTaughtOf,
   placementFitOf,
@@ -460,5 +461,31 @@ describe('followPlacements: a change of teacher carries the förläggningar when
 
   it('answers no rows with nothing to do', () => {
     expect(followPlacements(shared(), post(), [])).toEqual({ ok: true, moves: [] });
+  });
+});
+
+describe('placedByRowsOf: what a post\'s rows place, as the count and the judge read it (review of #315, MEDEL-1)', () => {
+  const rows = [
+    { minutes: 60, recurrence: 'ALL_WEEKS' as const, teacherId: 'bo' },
+    { minutes: 60, recurrence: 'ALL_WEEKS' as const, teacherId: 'anna' },
+  ];
+
+  it('gives nothing for a post with no row, which is not an empty answer', () => {
+    expect(placedByRowsOf({ recurrence: 'ALL_WEEKS', teacherId: 'anna', shares: [] }, [])).toEqual({});
+  });
+
+  it('gives the lengths alone for a post that shares nothing, whoever the rows name', () => {
+    const placed = placedByRowsOf({ recurrence: 'ALL_WEEKS', teacherId: 'anna', shares: [] }, rows);
+    expect(placed).toEqual({ minutes: [60, 60] });
+    expect(placed).not.toHaveProperty('taught');
+  });
+
+  it('adds each lesson\'s teacher for a post that shares its lessons, the helpers\' own answers', () => {
+    const post = { recurrence: 'ALL_WEEKS' as const, teacherId: 'anna', shares: [{ teacherId: 'bo', lessons: 1, minutes: 60 }] };
+    expect(placedByRowsOf(post, rows)).toEqual({ minutes: placedLessonsOf(post, rows), taught: placedTaughtOf(post, rows) });
+    expect(placedByRowsOf(post, rows).taught).toEqual([
+      { minutes: 60, teacherId: 'anna' },
+      { minutes: 60, teacherId: 'bo' },
+    ]);
   });
 });

@@ -1,7 +1,7 @@
 import { coverLockedLessons, coverLockedSharedLessons } from './locked-coverage';
-import { demandLeftOf } from './post-demand';
+import { demandLeftOf, judgeDemandOf } from './post-demand';
 import { lessonTeachersOf } from '../common/lesson-shares';
-import { placedLessonsOf, placedTaughtOf } from '../requirement-placements/placement-fit';
+import { placedLessonsOf, placedTaughtOf, placementsFitBesideLocks, sharedPlacementsFitBesideLocks } from '../requirement-placements/placement-fit';
 import { withoutPlaced, withoutPlacedShared } from './placed-lessons';
 
 const ANNA = 'anna';
@@ -102,5 +102,46 @@ describe('demandLeftOf: a post that shares its lessons', () => {
     const demand = demandLeftOf(SHARED, [], { minutes: [60] });
     expect(demand.placed).toBe(false);
     expect(demand.left).toHaveLength(3);
+  });
+});
+
+describe('judgeDemandOf: what the judge asks of a post (review of #315, MEDEL-1)', () => {
+  it('hands the judge the covering locks and the lessons the rows place, for a post that shares nothing', () => {
+    const demand = judgeDemandOf(UNIFORM, [{ minutes: 60, teacherId: 'x' }], { minutes: [60, 60] });
+    expect(demand).toEqual({ post: UNIFORM, lockedMinutes: [60], placed: [60, 60] });
+    expect(demand).not.toHaveProperty('taught');
+    // One lock and two förläggningar fill the post's three lessons; a third förläggning is over the demand.
+    expect(placementsFitBesideLocks(demand.post, demand.lockedMinutes, demand.placed)).toBe(true);
+    const over = judgeDemandOf(UNIFORM, [{ minutes: 60, teacherId: 'x' }], { minutes: [60, 60, 60] });
+    expect(placementsFitBesideLocks(over.post, over.lockedMinutes, over.placed)).toBe(false);
+  });
+
+  it('says nothing is placed for a post with no förläggning, and no lock for a post nothing keeps', () => {
+    expect(judgeDemandOf(UNIFORM, [], {})).toEqual({ post: UNIFORM, lockedMinutes: [], placed: [] });
+  });
+
+  it('adds each lesson\'s teacher on a post that shares its lessons, and asks the per-teacher rule', () => {
+    const locks = [{ minutes: 60, teacherId: BO }];
+    const taught = [
+      { minutes: 60, teacherId: BO },
+      { minutes: 60, teacherId: ANNA },
+    ];
+    const demand = judgeDemandOf(SHARED, locks, { minutes: [60, 60], taught });
+    expect(demand.taught).toEqual({ locked: locks, placed: taught });
+    expect(demand.lockedMinutes).toEqual([60]);
+    // Bo's lock took Bo's only lesson, so Bo's förläggning is over the demand though the post has lessons left.
+    expect(sharedPlacementsFitBesideLocks(demand.post as typeof SHARED, demand.taught!.locked, demand.taught!.placed)).toBe(false);
+    const fits = judgeDemandOf(SHARED, locks, { minutes: [60], taught: [{ minutes: 60, teacherId: ANNA }] });
+    expect(sharedPlacementsFitBesideLocks(fits.post as typeof SHARED, fits.taught!.locked, fits.taught!.placed)).toBe(true);
+  });
+
+  it('reads the same locks as the count does, call for call', () => {
+    const covering = [
+      { minutes: 80, teacherId: ANNA },
+      { minutes: 40, teacherId: null },
+    ];
+    const demand = judgeDemandOf(SPLIT, covering, { minutes: [] });
+    expect(demand.lockedMinutes).toEqual(demandLeftOf(SPLIT, covering, { minutes: [] }).locks.map((lock) => lock.minutes));
+    expect(demand.lockedMinutes).toEqual([80, 40]);
   });
 });

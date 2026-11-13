@@ -3,7 +3,7 @@ import { lockCoversDemand, type TaughtLesson } from '../optimization/locked-cove
 import { demandLeftOf } from '../optimization/post-demand';
 import { hasShares, lessonTeachersOf, type LessonShare } from '../common/lesson-shares';
 import type { LessonShape } from '../common/lesson-lengths';
-import { placedLessonsOf, placedTaughtOf, type PlacementShape } from './placement-fit';
+import { placedByRowsOf, type PlacementShape } from './placement-fit';
 import type { PlacementParams, PlacementRefusalReason } from './placement-judge';
 import type { RequirementPlacementView } from './requirement-placements.service';
 
@@ -129,13 +129,7 @@ export function coveringLocksOf(post: BoardPost, kept: readonly KeptForCount[]):
  */
 export function boardPostOf(post: BoardPost, locks: readonly TaughtLesson[], rows: readonly PlacementShape[]): BoardPostView {
   const shared = hasShares(post);
-  const demand = demandLeftOf(
-    post,
-    locks,
-    rows.length === 0
-      ? {}
-      : { minutes: placedLessonsOf(post, rows), ...(shared ? { taught: placedTaughtOf(post, rows) } : {}) },
-  );
+  const demand = demandLeftOf(post, locks, placedByRowsOf(post, rows));
   const all = lessonTeachersOf(post);
   const afterLocks = tally(demand.afterLocks);
   const left = tally(demand.left);

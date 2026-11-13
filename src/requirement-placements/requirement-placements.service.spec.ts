@@ -3,10 +3,12 @@ import { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock, testUser, type TxMock } from '../../test/utils/prisma-mock';
 import type { MasterLessonsService } from '../calendar/master-lessons.service';
 import type { PrismaService } from '../database/prisma.service';
+import { keptMastersWhere } from '../optimization/preserved-lessons';
 import { lockYearForGrundschemaEdit } from '../optimization/regeneration-lock';
 import { readOtherSchoolHolds } from '../optimization/other-school-holds';
 import { readBoardFacts } from '../swaps/board-rules';
 import { rostersOfYear } from '../year-rollover/projected-rosters';
+import * as placementJudge from './placement-judge';
 import { RequirementPlacementsService } from './requirement-placements.service';
 
 jest.mock('../year-rollover/projected-rosters', () => ({ rostersOfYear: jest.fn() }));
@@ -704,10 +706,79 @@ describe('RequirementPlacementsService.boardOfYear', () => {
     expect(answer.meals).toEqual([{ id: 'm-1', studentGroupId: GROUP, dayOfWeek: 2, startTime: '11:00', endTime: '11:30', startDate: null, endDate: null }]);
     // The same filter as Generera's and the judge's (a kept lesson, not parked), and only the meals the school placed.
     const keptRead = tx['masterLesson']!['findMany']!.mock.calls[0]![0] as { where: Record<string, unknown>; select: Record<string, unknown> };
-    expect(keptRead.where).toMatchObject({ academicYearId: YEAR, isParked: false });
-    expect(keptRead.where['OR']).toBeDefined();
+    // Exactly the read of Generera's fetch and the judge (keptMastersWhere): every arm of the rule, the year, not parked.
+    expect(keptRead.where).toEqual(keptMastersWhere(YEAR));
     expect(keptRead.select).not.toHaveProperty('participants');
     expect(tx['lunchSitting']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ where: { academicYearId: YEAR, isGenerated: false } }));
+  });
+
+  describe('asks the judge what the dialog asks it (review of #315, MEDEL-1)', () => {
+    const BO_LOCK = () => keptLesson({ id: 'k-bo', teacherId: BO });
+    const sharedPost = () => ({ ...POST, lessonsPerWeek: 3, shares: [{ teacherId: BO, lessons: 1, minutes: 60 }] });
+
+    /** The post's demand entry as the judge reads it: the post by the fields it counts with (the two reads select different extras). */
+    const demandOf = (asked: placementJudge.JudgePlacementsInput) => {
+      const { post, ...rest } = asked.demand!.get(REQ)!;
+      return { ...rest, post: { lessonsPerWeek: post.lessonsPerWeek, minutesPerLesson: post.minutesPerLesson, lessonLengths: post.lessonLengths, teacherId: post.teacherId, shares: post.shares } };
+    };
+
+    /** What judgePlacements was handed by the week and by the dialog's read of the same post. */
+    async function askedByBoth(world: World) {
+      const spy = jest.spyOn(placementJudge, 'judgePlacements');
+      try {
+        const { service } = board({ ...world, posts: [boardPost(world.post ?? {})] });
+        await service.boardOfYear(YEAR, user);
+        await service.listOfPost(REQ, user);
+        const [week, dialog] = spy.mock.calls.map(([, , asked]) => asked);
+        return { week: week!, dialog: dialog!, demandOf: demandOf(week!), dialogDemandOf: demandOf(dialog!) };
+      } finally {
+        spy.mockRestore();
+      }
+    }
+
+    it('hands over the same rows, each as the post and its own slot make it', async () => {
+      const rows = [stored({ id: 'p-1' }), stored({ id: 'p-2', dayOfWeek: 4, recurrence: 'ODD_WEEKS' })];
+      const { week, dialog } = await askedByBoth({ rows, post: { ...POST, startDate: new Date('2026-08-24T00:00:00.000Z') } as never });
+      expect(week.rows.map((row) => ({ ...row, id: null }))).toEqual(dialog.rows);
+      expect(week.rows.map((row) => row.id)).toEqual(['p-1', 'p-2']);
+      expect(week.rows[0]).toMatchObject({ requirementId: REQ, studentGroupId: GROUP, subjectId: SUBJECT, teacherId: TEACHER, startDate: expect.any(Date) });
+    });
+
+    it('hands over the same demand for a post that shares nothing: the lock, and the lessons the rows place', async () => {
+      const { demandOf: week, dialogDemandOf: dialog } = await askedByBoth({ kept: [keptLesson()], rows: [stored({ id: 'p-1' })] });
+      expect(week).toEqual(dialog);
+      expect(week).toMatchObject({ lockedMinutes: [60], placed: [60] });
+      expect(week).not.toHaveProperty('taught');
+    });
+
+    it('hands over the same demand for a shared post: Bo\'s lock answers Bo\'s lesson, each row takes one of its teacher\'s', async () => {
+      const post = sharedPost();
+      const rows = [stored({ id: 'p-1', teacherId: TEACHER }), stored({ id: 'p-2', dayOfWeek: 4, teacherId: BO })];
+      const { demandOf: week, dialogDemandOf: dialog } = await askedByBoth({ post, kept: [BO_LOCK()], rows });
+      expect(week).toEqual(dialog);
+      expect(week).toMatchObject({
+        lockedMinutes: [60],
+        placed: [60, 60],
+        taught: {
+          locked: [{ minutes: 60, teacherId: BO }],
+          placed: [
+            { minutes: 60, teacherId: TEACHER },
+            { minutes: 60, teacherId: BO },
+          ],
+        },
+      });
+    });
+
+    it('holds a lesson that has a second class or named pupils against the row, as the dialog does', async () => {
+      const lessons = [
+        keptLesson({ id: 'k-extra', isLocked: false, isGenerated: true, extraGroups: [{ studentGroupId: 'g-7b' }] }),
+        keptLesson({ id: 'k-pupils', isLocked: false, isGenerated: true, participants: [{ studentId: 'pupil-1' }] }),
+      ];
+      const { demandOf: week, dialogDemandOf: dialog } = await askedByBoth({ kept: lessons, rows: [stored({ id: 'p-1' })] });
+      expect(week).toEqual(dialog);
+      // Both answer a lesson of the post (the post has two), so a lock of 60 per lesson is counted twice.
+      expect(week).toMatchObject({ lockedMinutes: [60, 60], placed: [60] });
+    });
   });
 
   it('is read through the caller\'s RLS and never asks for the caller\'s own person', async () => {

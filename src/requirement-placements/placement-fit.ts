@@ -248,6 +248,21 @@ export function placedTaughtOf(
 }
 
 /**
+ * What a post's rows place, as the count (demandLeftOf) and the judge
+ * (judgeDemandOf) read it: the lengths of the lessons, and on a post that
+ * shares its lessons each with its teacher. Nothing at all for a post with no
+ * row, which is not the same as an empty answer from a pair that matches
+ * nothing (the post then has rows for the count to read).
+ */
+export function placedByRowsOf(
+  post: Pick<PlacementPost, 'recurrence' | 'teacherId' | 'shares'>,
+  rows: readonly PlacementShape[],
+): { minutes?: number[]; taught?: TaughtLesson[] } {
+  if (rows.length === 0) return {};
+  return { minutes: placedLessonsOf(post, rows), ...((post.shares ?? []).length > 0 ? { taught: placedTaughtOf(post, rows) } : {}) };
+}
+
+/**
  * The post's lessons the rows place, one length each, longest first: a row of
  * the post's own weeks is one, an odd and an even row of one length on an
  * every-week post are one together. Rows that pair with nothing (which the

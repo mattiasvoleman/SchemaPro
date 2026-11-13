@@ -24,9 +24,9 @@ import { schoolTimezone } from '../cover/cover-context';
 import { gradeSpanOf, loadRosters, roomNeedsOf, type RoomNeeds } from './room-eligibility';
 import { fromNioarig, toNioarig, toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { dayNumberingOf, yearNumberingOf } from '../common/year-numbering';
-import { lockCoversDemand, type TaughtLesson } from './locked-coverage';
-import { demandLeftOf } from './post-demand';
-import { PRESERVED_FROM_REGENERATION } from './preserved-lessons';
+import { lockCoversDemand } from './locked-coverage';
+import { demandLeftOf, judgeDemandOf } from './post-demand';
+import { keptMastersWhere, PRESERVED_FROM_REGENERATION } from './preserved-lessons';
 import { requirementName } from '../common/requirement-name';
 import {
   placedLessonRowsOf,
@@ -38,7 +38,7 @@ import {
   storedPlacementsOf,
   type PlacedLessonRow,
 } from './placed-lessons';
-import { judgePlacements } from '../requirement-placements/placement-judge';
+import { judgedRowOf, judgePlacements, type PlacementDemand } from '../requirement-placements/placement-judge';
 import { MasterLessonsService } from '../calendar/master-lessons.service';
 import { judgeBlocks, partlyLockedRefusal } from './parallel-blocks';
 import {
@@ -1962,7 +1962,7 @@ export class OptimizationProxyService {
           });
           if (machineOwned !== created) throw scheduleCandidateStale(['draft']);
           const preserved = await tx.masterLesson.findMany({
-            where: { academicYearId, isParked: false, OR: PRESERVED_FROM_REGENERATION },
+            where: keptMastersWhere(academicYearId),
             select: {
               studentGroupId: true,
               teacherId: true,
@@ -2630,7 +2630,7 @@ export class OptimizationProxyService {
       // does not own it — but it is NOT sent as a fixed placement: it occupies
       // nothing, and blocking the engine out of a slot nobody is in would be
       // reading its memory of where it was as where it is.
-      where: { academicYearId, isParked: false, OR: PRESERVED_FROM_REGENERATION },
+      where: keptMastersWhere(academicYearId),
       select: {
         id: true,
         subjectId: true,
@@ -2990,15 +2990,15 @@ export class OptimizationProxyService {
     // Delade lektioner: on a shared row, the teacher of each lesson left, in
     // remainingOf's order (coverLockedSharedLessons); absent on every other.
     const teachersLeftOf = new Map<string, (string | null)[]>();
-    // Förlagda poster: the locks of each post with förläggningar, by minutes,
-    // for the judge's OVER_DEMAND, and its lessons with nothing förlagt, for
-    // the engine's released week (AnonymousPlacements).
-    const lockedMinutesOf = new Map<string, number[]>();
+    // Förlagda poster: what the judge asks of each post with förläggningar for
+    // OVER_DEMAND (its locks and the lessons its rows place, per teacher on a
+    // shared post: judgeDemandOf, the one function every judge of a row asks),
+    // and its lessons with nothing förlagt, for the engine's released week
+    // (AnonymousPlacements).
+    const judgeDemandOfPost = new Map<string, PlacementDemand>();
     const releasedOf = new Map<string, number[]>();
-    // Delade lektioner, the same per teacher: the covering locks with their
-    // teachers (OVER_DEMAND) and the released lessons' teachers (the released
-    // entry's lessonTeacherIds).
-    const lockedTaughtOf = new Map<string, TaughtLesson[]>();
+    // Delade lektioner: the released lessons' teachers (the released entry's
+    // lessonTeacherIds).
     const releasedTeachersOf = new Map<string, (string | null)[]>();
     for (const r of rawRequirements) {
       // A förläggning never covers as a lock does: a pair of odd and even
@@ -3008,24 +3008,19 @@ export class OptimizationProxyService {
       ).filter((lesson) => !placedIds.has(lesson.id) && coversDemand(lesson, r));
       // The post's lessons less the locks and then the förläggningar, counted in post-demand.ts: the figure the
       // week of förläggningar shows the school before a run is the one this sends.
-      const demand = demandLeftOf(
-        r,
-        covering.map((lesson) => ({
-          minutes: lessonMinutes(lesson.startTime, lesson.endTime),
-          teacherId: lesson.teacherId ?? null,
-        })),
-        { minutes: placedMinutes.get(r.id), taught: placedTaught.get(r.id) },
-      );
+      const coveringLocks = covering.map((lesson) => ({
+        minutes: lessonMinutes(lesson.startTime, lesson.endTime),
+        teacherId: lesson.teacherId ?? null,
+      }));
+      const placedOfPost = { minutes: placedMinutes.get(r.id), taught: placedTaught.get(r.id) };
+      const demand = demandLeftOf(r, coveringLocks, placedOfPost);
       remainingOf.set(r.id, demand.left.map((lesson) => lesson.minutes));
       // Delade lektioner: the teacher of each lesson left, in remainingOf's order.
       if (demand.shared) teachersLeftOf.set(r.id, demand.left.map((lesson) => lesson.teacherId));
       if (demand.placed) {
-        lockedMinutesOf.set(r.id, demand.locks.map((lock) => lock.minutes));
+        judgeDemandOfPost.set(r.id, judgeDemandOf(r, coveringLocks, placedOfPost));
         releasedOf.set(r.id, demand.afterLocks.map((lesson) => lesson.minutes));
-        if (demand.shared) {
-          lockedTaughtOf.set(r.id, demand.locks);
-          releasedTeachersOf.set(r.id, demand.afterLocks.map((lesson) => lesson.teacherId));
-        }
+        if (demand.shared) releasedTeachersOf.set(r.id, demand.afterLocks.map((lesson) => lesson.teacherId));
       }
     }
     const demandOf = new Map(rawRequirements.map((r) => [r.id, `${r.studentGroupId}:${r.subjectId}`]));
@@ -4219,41 +4214,23 @@ export class OptimizationProxyService {
         schoolId,
         gradeNumbering: numbering,
         basis,
-        rows: placedRows.map((row) => ({
-          id: row.id,
-          requirementId: row.requirementId,
-          studentGroupId: row.studentGroupId,
-          subjectId: row.subjectId,
-          teacherId: row.teacherId,
-          coTeacherId: row.coTeacherId,
-          dayOfWeek: row.dayOfWeek,
-          startMinutes: clockMinutes(row.startTime),
-          minutes: row.minutes,
-          roomId: row.roomId,
-          recurrence: row.recurrence,
-          startDate: row.startDate,
-          endDate: row.endDate,
-        })),
-        beside: [],
-        demand: new Map(
-          [...placedMinutes].flatMap(([postId, placed]) => {
-            const post = postById.get(postId);
-            if (!post) return [];
-            const taught = placedTaught.get(postId);
-            return [
-              [
-                postId,
-                {
-                  post,
-                  lockedMinutes: lockedMinutesOf.get(postId) ?? [],
-                  placed,
-                  // Delade lektioner: Bo's lock answers Bo's lesson, and Bo's förläggning takes one of his.
-                  ...(taught ? { taught: { locked: lockedTaughtOf.get(postId) ?? [], placed: taught } } : {}),
-                },
-              ] as const,
-            ];
-          }),
+        // Each row as every judge of one reads it (judgedRowOf), from its post and its own slot.
+        rows: placedRows.map((row) =>
+          judgedRowOf(
+            postById.get(row.requirementId)!,
+            {
+              dayOfWeek: row.dayOfWeek,
+              startMinutes: clockMinutes(row.startTime),
+              minutes: row.minutes,
+              roomId: row.roomId,
+              recurrence: row.recurrence,
+              teacherId: row.placementTeacherId,
+            },
+            row.id,
+          ),
         ),
+        beside: [],
+        demand: judgeDemandOfPost,
       });
       placementsRefusal = placementsRefusalOf(placedRows, verdicts, {
         requirement: (realId) => anonId(requirementAnonMap, realId),
