@@ -5123,17 +5123,27 @@ class SchedulerSolver:
         """
         def refused_in(
             week: OptimizeScheduleRequest, _whole: OptimizeScheduleRequest, _label: Weeks | None,
-        ) -> ConflictAnalysis | None:
-            for count in counts:
+        ) -> tuple[int, ConflictAnalysis] | None:
+            for index, count in enumerate(counts):
                 verdict = count(week)
                 if verdict is not None:
-                    return verdict
+                    return index, verdict
             return None
 
-        found = self._refusal_of_most_weeks(weeks, whole, refused_in, of_analysis)
+        def also_given(
+            refusal: tuple[int, ConflictAnalysis], week: OptimizeScheduleRequest,
+        ) -> bool:
+            """Whether the count that made `refusal` refuses this week the same, though another count refuses it first."""
+            again = counts[refusal[0]](week)
+            return again is not None and of_analysis(again) == of_analysis(refusal[1])
+
+        found = self._refusal_of_most_weeks(
+            weeks, whole, refused_in, lambda refusal: (refusal[0], of_analysis(refusal[1])),
+            also_given=also_given,
+        )
         if found is None:
             return None
-        verdict, said = found
+        (_, verdict), said = found
         return _in_week(verdict, said)
 
     def _refusal_of_most_weeks(
@@ -5144,6 +5154,7 @@ class SchedulerSolver:
         same: Callable[[R], Hashable],
         *,
         names: Callable[[R], bool] = lambda _refusal: True,
+        also_given: Callable[[R, OptimizeScheduleRequest], bool] | None = None,
     ) -> tuple[R, Weeks | None] | None:
         """The refusal said of a year, and the weeks it is said of; None for no week at all.
 
@@ -5191,7 +5202,11 @@ class SchedulerSolver:
         and the refusal is the autumn's and the winter's; a hall too small
         for the classes is as small, and it names none.
 
-        `names` is false for a refusal that says its own weeks.
+        `names` is false for a refusal that says its own weeks. `also_given(
+        refusal, request)` says whether a week refused another way first gives
+        this one too: a count that refuses a week the same, behind an earlier
+        count that refuses it first, is that week's trouble as much as the
+        first is, and the weeks are said by what is true of them.
         """
         found: list[tuple[Weeks, R]] = []
         for label, week in weeks:
@@ -5208,6 +5223,13 @@ class SchedulerSolver:
         refusal, held = of_most_weeks(found, same, year_of(whole))
         if not names(refusal):
             return refusal, None
+        if also_given is not None:
+            giving = set(held)
+            refused = {label for label, _ in found}
+            held = [
+                label for label, week in weeks
+                if label in giving or (label in refused and also_given(refusal, week))
+            ]
 
         def the_year_gives_it() -> bool:
             shared = _every_week_only(whole)

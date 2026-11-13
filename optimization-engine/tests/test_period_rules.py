@@ -1822,6 +1822,30 @@ def test_a_week_refused_by_two_counts_gives_the_first_in_the_order_of_the_counts
     assert _refused(_payload(posts), settings)[0].startswith("DEMAND_")
 
 
+def test_a_week_refused_by_an_earlier_count_first_still_gives_the_later_count_s_refusal() -> None:
+    """The weeks said are those the refusal is true of, not only those it is the first refusal of.
+
+    A teacher over her hours in every week, five posts of an hour on a day of
+    four. A class of the spring has five lessons of its own, over its day: in
+    the spring it is the class hours that refuse first, and the teacher's
+    refusal comes behind it. The refusal said is the autumn's, the teacher's
+    (the weeks tie and the autumn is the earliest), and it is as true of the
+    spring: said of the autumn alone, the school would read that she has no
+    trouble in the spring, and every week is hers.
+    """
+    teacher, klass = str(uuid4()), str(uuid4())
+    posts = [_requirement(str(uuid4()), 1, teacher=teacher) for _ in range(5)]
+    # Five posts of the class's own, one teacher each: the class is over its day, no teacher over hers.
+    overfull = [_requirement(klass, 1, teacher=str(uuid4()), periods=SPRING) for _ in range(5)]
+    settings = periods._settings()
+    code, said = _refused(_payload([*posts, *overfull, _requirement(str(uuid4()), 1, periods=AUTUMN)]), settings)
+    assert (code, said) == ("DEMAND_TEACHER_HOURS_SHORT", {})
+    # Her trouble in the autumn alone is the autumn's, and the class's in the spring is another refusal.
+    spring_posts = [_requirement(str(uuid4()), 1, teacher=teacher, periods=AUTUMN) for _ in range(5)]
+    code, said = _refused(_payload([*spring_posts, *overfull, _requirement(str(uuid4()), 1, periods=AUTUMN)]), settings)
+    assert (code, said) == ("DEMAND_TEACHER_HOURS_SHORT", {"period": 0})
+
+
 def test_a_year_without_periods_is_not_asked_of_its_other_weeks_for_a_refusal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
