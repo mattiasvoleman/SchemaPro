@@ -7168,7 +7168,7 @@
     "generateBlocked": "Schemaförslag tas fram för läsåret just nu. Generera går att starta när de är klara.",
     "generateBlockedLink": "Se förslagen",
     "jobErrors": {
-      "GENERATE_STALE": "Grundschemat ändrades medan körningen pågick — en lektion låstes eller togs bort, eller ett schemaförslag tillämpades — så körningen skrev ingenting. Generera igen.",
+      "GENERATE_STALE": "Det som schemat räknades på ändrades medan körningen pågick — en lektion låstes, flyttades eller togs bort, en tjänst, en arbetstidsregel, en reservation, en sal eller en måltid ändrades, eller ett schemaförslag tillämpades — så körningen skrev ingenting. Generera igen.",
       "SCHEDULE_BUSY": "Grundschemat skrevs av någon annan samtidigt, så körningen sparades inte. Försök igen om en stund.",
       "ENGINE_LACKS_PERIODS": "Schemamotorn är äldre än resten av tjänsten och kan inte planera poster med datum ännu. Försök igen om några minuter.",
       "CANDIDATES_RUNNING": "Schemaförslag tas fram för läsåret just nu. Generera går att starta när de är klara."
