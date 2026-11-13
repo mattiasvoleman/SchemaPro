@@ -442,15 +442,29 @@ export default function RequirementsPage() {
     setLinkedYearId(query.get("year"));
     setSubjectId(query.get("subject"));
   }, []);
-  /** The choice in the address, beside ?year=, so a reload or a shared link keeps it. */
-  const pickSubject = (value: string) => {
+  /** A choice in the address, beside the others, so a reload or a shared link keeps it. */
+  const writeQuery = (key: "year" | "subject", value: string | null) => {
     const query = new URLSearchParams(window.location.search);
-    if (value === ALL_SUBJECTS) query.delete("subject");
-    else query.set("subject", value);
-    setSubjectId(value === ALL_SUBJECTS ? null : value);
+    if (value === null) query.delete(key);
+    else query.set(key, value);
     const search = String(query);
     window.history.replaceState(null, "", search ? `?${search}` : window.location.pathname);
   };
+  const pickSubject = (value: string) => {
+    const next = value === ALL_SUBJECTS ? null : value;
+    setSubjectId(next);
+    // The checkbox goes with the subject; left ticked it would come back ticked with the next one, unseen.
+    if (next === null) setWithoutPosts(false);
+    writeQuery("subject", next);
+  };
+  const pickYear = (value: string) => {
+    setSelectedYearId(value);
+    writeQuery("year", value);
+  };
+  // An id that is no läsår of the school is left out of the address, or every later choice would carry it along.
+  useEffect(() => {
+    if (years && linkedYearId && !years.some((year) => year.id === linkedYearId)) writeQuery("year", null);
+  }, [years, linkedYearId]);
   const activeYearId =
     selectedYearId ??
     years?.find((year) => year.id === linkedYearId)?.id ??
@@ -1355,14 +1369,14 @@ export default function RequirementsPage() {
             <YearSelect
               value={activeYearId}
               label={t("yearLabel")}
-              onValueChange={(value) => setSelectedYearId(value)}
+              onValueChange={pickYear}
             />
             {/*
               Ämne, named like the year picker. The list by name, as every
               dropdown is; the columns stay by code.
             */}
             <Select value={view.subject?.id ?? ALL_SUBJECTS} onValueChange={pickSubject}>
-              <SelectTrigger className="w-44" aria-label={t("subjectFilter.label")}>
+              <SelectTrigger className="w-auto min-w-44 max-w-full" aria-label={t("subjectFilter.label")}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1595,7 +1609,11 @@ export default function RequirementsPage() {
             is also what scrolls vertically. Hence the height cap and
             overflow-auto rather than page scrolling.
           */}
-          <div className="max-h-[70vh] overflow-auto rounded-lg border bg-card">
+          {/* scroll-padding is what is pinned over the cells (the name 7.25rem to the left, the header 3.8rem above, the totals
+              10.3rem to the right from `sm`), so that Tab and Shift+Tab scroll a focused cell clear of them and not under them.
+              A cell that is partly under the name column when focus reaches it is left where it is, as far as a browser's
+              "in view" goes (a third of it at most, at 320 px), and scroll-margin on the buttons made that worse. */}
+          <div className="max-h-[70vh] scroll-pl-[7.25rem] scroll-pt-[3.8rem] overflow-auto rounded-lg border bg-card sm:scroll-pr-[10.3rem]">
             <table className="w-full text-sm">
               {/*
                 The caption carries the caveat as well as the name, because a
@@ -1677,13 +1695,13 @@ export default function RequirementsPage() {
                   ) : null}
                   <th
                     scope="col"
-                    className="sticky right-24 top-0 z-30 border-l bg-card px-3 py-2.5 text-right font-medium text-foreground"
+                    className="sticky top-0 z-30 border-l bg-card px-3 py-2.5 text-right font-medium text-foreground sm:right-24"
                   >
                     {t(view.subject ? "peakHeaderSubject" : "peakHeader")}
                   </th>
                   <th
                     scope="col"
-                    className="sticky right-0 top-0 z-30 min-w-24 max-w-24 border-l bg-card px-3 py-2.5 text-right font-medium text-foreground"
+                    className="sticky top-0 z-30 min-w-24 max-w-24 border-l bg-card px-3 py-2.5 text-right font-medium text-foreground sm:right-0"
                   >
                     {t(view.subject ? "hoursHeaderSubject" : "hoursHeader")}
                   </th>
@@ -1848,7 +1866,7 @@ export default function RequirementsPage() {
                               (targetSentence ? `. ${targetSentence}` : "") +
                               // The mark's words, for the same reason as the badge's
                               // above: a label replaces what is inside the cell.
-                              (placed ? `. ${t("placements.badgeNote", { rows: placementsSummary(placed, t, tCommon) })}` : "")
+                              (placed ? `. ${t("placements.badgeNote", { rows: placementsSummary(placed, t, tCommon, personName) })}` : "")
                             }
                             onClick={() => openCell(group.id, subject.id)}
                             // An empty cell's "+" adds a post: planering's.
@@ -1902,7 +1920,7 @@ export default function RequirementsPage() {
                             ) : (
                               <Plus className="size-4" />
                             )}
-                            {placed ? <PlacedBadge rows={placed} /> : null}
+                            {placed ? <PlacedBadge rows={placed} teacherName={personName} /> : null}
                           </button>
                         </td>
                       );
@@ -1915,10 +1933,10 @@ export default function RequirementsPage() {
                         />
                       </td>
                     ) : null}
-                    <td className="sticky right-24 z-10 border-l bg-card px-3 py-2 text-right font-medium tabular-nums text-foreground">
+                    <td className="border-l bg-card px-3 py-2 text-right font-medium tabular-nums text-foreground sm:sticky sm:right-24 sm:z-10">
                       {peakByGroup.get(group.id) ?? 0}
                     </td>
-                    <td className="sticky right-0 z-10 min-w-24 max-w-24 border-l bg-card px-3 py-2 text-right font-medium tabular-nums text-foreground">
+                    <td className="min-w-24 max-w-24 border-l bg-card px-3 py-2 text-right font-medium tabular-nums text-foreground sm:sticky sm:right-0 sm:z-10">
                       {formatHours(annualMinutesByGroup.get(group.id) ?? 0)}
                     </td>
                   </tr>
@@ -1947,8 +1965,8 @@ export default function RequirementsPage() {
                         <td className="border-l px-3 py-2 text-right font-medium tabular-nums text-foreground">
                           <target.module.GroupTotalCell summary={null} total={ownTarget?.total ?? target.view.total} />
                         </td>
-                        <td className="sticky right-24 z-10 border-l bg-muted" />
-                        <td className="sticky right-0 z-10 min-w-24 max-w-24 border-l bg-muted" />
+                        <td className="border-l bg-muted sm:sticky sm:right-24 sm:z-10" />
+                        <td className="min-w-24 max-w-24 border-l bg-muted sm:sticky sm:right-0 sm:z-10" />
                       </tr>
                     ) : null}
                   </Fragment>
@@ -2211,7 +2229,7 @@ export default function RequirementsPage() {
             {/* Förlagda poster: where the post's lessons are placed, and the way to place them. A reader sees the first and not the second. */}
             {cell?.existing && placementsOf.has(cell.existing.id) ? (
               <p className="text-sm">
-                <PlacedBadge rows={placementsOf.get(cell.existing.id)!} withRows />
+                <PlacedBadge rows={placementsOf.get(cell.existing.id)!} withRows teacherName={personName} />
               </p>
             ) : null}
             {cell?.existing && !reader ? (

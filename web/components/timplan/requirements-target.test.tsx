@@ -6,6 +6,7 @@ import {
   TargetCellBody,
   TargetHint,
   TargetHost,
+  targetCellClass,
 } from "@/components/timplan/requirements-target";
 import {
   buildTargetView,
@@ -148,6 +149,23 @@ describe("a part of a national line in Mål mode", () => {
       const sentence = cellSentence(identity, under.view.cell("g-7a", subject)!, under.input);
       expect(sentence, subject).toMatch(/^target\.cellUnder\(60\|65\|5\|-5\) target\.cellParts\(/);
     }
+  });
+
+  // Review of #297, round 3 (LÅG-1): a part with no post in a class whose plan has the line was a plain "+", the red warning
+  // that Mål mode is for missing from it, and a screen reader heard only the cell's name.
+  it("paints a part without a post in the line's tone, and says what the plan asks of the line", () => {
+    // No post at all: the plan's 65 on Slöjd is unplanned, and every part's empty cell says so, naming Slöjd, where the plan has it.
+    const bare = viewOf([]);
+    for (const subject of ["s-tx", "s-tm"]) {
+      const cell = bare.view.cell("g-7a", subject)!;
+      expect(cell, subject).toMatchObject({ planned: 0, tone: "unplanned", national: true, linePlanned: 0, lineTarget: 65, partnerSubjectIds: ["s-sl"] });
+      expect(cellSentence(identity, cell, bare.input), subject).toBe("target.cellUnplanned(0|65|65|-65) target.cellParts(Slöjd)");
+      expect(targetCellClass(cell.tone), subject).toContain("border-destructive");
+    }
+    // A line that is short, not empty, is amber in the part nobody has posted (Trä- och metallslöjd, beside a textil post of 40).
+    const short = viewOf([row("r-tx", "s-tx", 1, 40)]).view.cell("g-7a", "s-tm")!;
+    expect(short).toMatchObject({ planned: 0, tone: "under", linePlanned: 40, lineTarget: 65 });
+    expect(targetCellClass(short.tone)).toContain("bg-warning/15");
   });
 
   it("says in the dialog that the parts count together toward the target, and the shared target for an alternative", () => {

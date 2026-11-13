@@ -1039,6 +1039,7 @@
       "badge": "Förlagd",
       "row": "{day} {start}–{end}, {room}{weeks, select, ODD_WEEKS {, udda veckor} EVEN_WEEKS {, jämna veckor} other {}}",
       "badgeNote": "Förlagd: {rows}",
+      "rowOf": "{row} ({teacher})",
       "title": "Förlägg {post}",
       "description": "Ange dag, tid och sal för en lektion som du på förhand vet inte går att lägga någon annanstans. Generera lägger resten av veckan runt den.",
       "nextGenerate": "Ändringen gäller vid nästa Generera, som flyttar den förlagda lektionen i grundschemat dit raden säger. Grundschemat ändras inte förrän dess.",
@@ -1761,6 +1762,7 @@
     "propagateHint": "Framtida publicerade lektioner utan registrerad närvaro flyttas med automatiskt.",
     "editSaved": "Lektionen uppdaterad — {count} kalenderlektioner flyttades med",
     "editConflict": "Schemakonflikt",
+    "lessonIsPlaced": "Lektionen är förlagd på timplanen, och Generera skriver om den därifrån. Ändra förläggningen på timplansposten i stället.",
     "addLesson": "Lägg till lektion",
     "addTitle": "Lägg till lektion",
     "addBody": "Placera en lektion manuellt på grundschemat. Den kontrolleras mot resten av schemat innan den sparas.",
@@ -9846,6 +9848,7 @@
       "ROOM_NOT_FOUND": "Salen finns inte.",
       "ROOM_NEEDS_APPROVAL": "Salen kräver godkännande och bokas i stället av expeditionen.",
       "SPLIT_MINUTES": "Delarna ska vara minst 15 minuter var och tillsammans lika långa som lektionen.",
+      "LESSON_IS_PLACED": "Lektionen är förlagd på timplanen och skrivs om därifrån vid varje Generera. Den ändras av schemaläggaren, på timplansposten.",
       "UNKNOWN": "Lektionen kan inte ändras av klassläraren."
     },
     "problem": {

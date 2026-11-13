@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Loader2, Lock } from "lucide-react";
 import { ApiError } from "@/lib/api";
+import { LESSON_IS_PLACED } from "@/lib/lesson-is-placed";
 import {
   applyBody,
   clockOf,
@@ -165,7 +166,7 @@ export function SwapDialog({
       });
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
-        // Stale, parted or locked: the proposals no longer describe the
+        // Stale, parted, locked or placed: the proposals no longer describe the
         // timetable, and the clash rule's own sentence is the reason otherwise.
         toast.error(
           error.code === SWAP_STALE
@@ -174,7 +175,9 @@ export function SwapDialog({
               ? t("splitsParallel")
               : error.code === SWAP_LOCKED
                 ? t("lockedPartner")
-                : error.message,
+                : error.code === LESSON_IS_PLACED
+                  ? t("placed")
+                  : error.message,
         );
         void search();
         return;

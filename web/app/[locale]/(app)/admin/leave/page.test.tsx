@@ -51,6 +51,11 @@ vi.mock("@/lib/leave-policy-queries", () => ({
 vi.mock("@/lib/retention-queries", () => ({ usePurgedBefore: () => ({ of: () => null }) }));
 vi.mock("@/components/profile-context", () => ({ useProfile: () => state.profile }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// The router's address, read from the window each time the page is drawn: the tests move it with history.replaceState.
+vi.mock("next/navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/navigation")>()),
+  useSearchParams: () => new URLSearchParams(window.location.search),
+}));
 
 const DELEGATION = { mentorMaxSchoolDays: 3, reference: "Dnr 2026:12", decidedAt: "2026-08-10T08:00:00.000Z", decidedBy: "Rut Rektor" };
 const ANNA = { id: "t-anna", name: "Anna Mentor" };
@@ -88,15 +93,26 @@ const request = (overrides: Record<string, unknown>) => ({
 });
 
 function renderPage() {
-  render(
+  // A new element each time: React leaves an element it has already drawn as it is.
+  const page = () => (
     <NextIntlClientProvider locale="sv" messages={sv} timeZone="Europe/Stockholm">
       <LeaveRequestsPage />
-    </NextIntlClientProvider>,
+    </NextIntlClientProvider>
   );
+  const view = render(page());
+  return {
+    /** The address changed under the page, which the router then draws again. */
+    followLink: (search: string) => {
+      window.history.replaceState(null, "", `/${search}`);
+      view.rerender(page());
+    },
+  };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // A tab pressed in one test is written to the address, which the next test would open on.
+  window.history.replaceState(null, "", "/");
   state.inbox = { data: [request({ schoolDays: 5 })], isLoading: false, isError: false };
   state.delegation = { data: { current: DELEGATION, history: [DELEGATION] }, isLoading: false, isError: false };
   state.policy = { data: DELIVERED, isLoading: false, isError: false };
@@ -372,12 +388,46 @@ describe("Ledighetsansökningar under the school's policy (Ledighetspolicy)", ()
       expect(screen.getByRole("tab", { name: "Avslutade av vårdnadshavare", selected: true })).toBeInTheDocument();
     });
 
-    it("opens on Väntar for any other address, as it always did", () => {
-      window.history.replaceState(null, "", "/?filter=APPROVED");
+    it("opens on Väntar for an address that names no tab", () => {
+      window.history.replaceState(null, "", "/?filter=NOPE");
       renderPage();
 
       expect(state.statuses.at(-1)).toBe("PENDING");
       expect(screen.getByRole("tab", { name: "Väntar", selected: true })).toBeInTheDocument();
+    });
+
+    it("opens on any of the tabs the address names", async () => {
+      window.history.replaceState(null, "", "/?filter=APPROVED");
+      renderPage();
+
+      await waitFor(() => expect(screen.getByRole("tab", { name: "Beviljad", selected: true })).toBeInTheDocument());
+      expect(state.statuses.at(-1)).toBe("APPROVED");
+    });
+
+    // Review of #309, LÅG-6: the link of a notice leads here also when the administrator is on the page, where nothing mounts again.
+    it("moves to the tab of a link followed while the page is open", async () => {
+      const page = renderPage();
+      expect(screen.getByRole("tab", { name: "Väntar", selected: true })).toBeInTheDocument();
+
+      page.followLink("?filter=GUARDIAN_DECLINED");
+
+      await waitFor(() => expect(screen.getByRole("tab", { name: "Avslutade av vårdnadshavare", selected: true })).toBeInTheDocument());
+      expect(state.statuses.at(-1)).toBe("GUARDIAN_DECLINED");
+    });
+
+    it("writes the tab to the address, so a second link to the tab the first one led to is a change again", async () => {
+      window.history.replaceState(null, "", "/?filter=GUARDIAN_DECLINED");
+      const user = userEvent.setup();
+      const page = renderPage();
+      await waitFor(() => expect(screen.getByRole("tab", { name: "Avslutade av vårdnadshavare", selected: true })).toBeInTheDocument());
+
+      await user.click(screen.getByRole("tab", { name: "Beviljad" }));
+      expect(window.location.search).toBe("?filter=APPROVED");
+      await user.click(screen.getByRole("tab", { name: "Väntar" }));
+      expect(window.location.search).toBe("");
+
+      page.followLink("?filter=GUARDIAN_DECLINED");
+      await waitFor(() => expect(screen.getByRole("tab", { name: "Avslutade av vårdnadshavare", selected: true })).toBeInTheDocument());
     });
   });
 
