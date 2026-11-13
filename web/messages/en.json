@@ -1046,6 +1046,7 @@
       "nextGenerate": "The change applies at the next Generate, which moves the placed lesson in the base timetable to where the row says. The base timetable is not changed until then.",
       "handMove": "If you move a placed lesson by hand in the base timetable, that holds only until the next Generate. Change the placement here instead.",
       "neverGivesWay": "A placed lesson never gives way, not even in Best possible timetable. If it cannot be laid, Generate refuses and says which one it is.",
+      "showInWeek": "Show in the week",
       "loading": "Loading the placed lessons …",
       "loadFailed": "The entry's placed lessons could not be read. Reload the page and try again.",
       "roomsFailed": "The rooms could not be read, so a room cannot be chosen right now. Reload the page and try again.",

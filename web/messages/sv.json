@@ -1046,6 +1046,7 @@
       "nextGenerate": "Ändringen gäller vid nästa Generera, som flyttar den förlagda lektionen i grundschemat dit raden säger. Grundschemat ändras inte förrän dess.",
       "handMove": "Flyttar du en förlagd lektion för hand i grundschemat håller det bara till nästa Generera. Ändra förläggningen här i stället.",
       "neverGivesWay": "En förlagd lektion ger aldrig vika, inte heller i Bästa möjliga schema. Går den inte att lägga vägrar Generera och säger vilken det är.",
+      "showInWeek": "Visa i veckan",
       "loading": "Hämtar förläggningarna …",
       "loadFailed": "Postens förläggningar kunde inte läsas. Ladda om sidan och försök igen.",
       "roomsFailed": "Salarna kunde inte läsas, så en sal kan inte väljas just nu. Ladda om sidan och försök igen.",

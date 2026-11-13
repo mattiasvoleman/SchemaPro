@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { scanBothSchemes, setScheme } from "./axe";
 import { askForScenario, freezeClock, settle, signIn, watchStubMisses } from "./signed-in";
 import { PLACEMENT_WEEK_SCENARIO } from "./stub/fixtures/timplan-board";
-import { STUB_ORIGIN } from "./stub/sessions";
+import { KIND, STUB_ORIGIN, uid } from "./stub/sessions";
 import { SUBJECTS, TEACHERS } from "./stub/fixtures/world";
 
 /**
@@ -199,6 +199,22 @@ test("Förlägg i veckan: opening a card says its verdict in words, and a class 
   await page.getByRole("button", { name: /Grupper/ }).click();
   await page.getByRole("menuitemcheckbox", { name: "7A", exact: true }).click();
   await expect(page.getByText("Måltid 7A")).toBeVisible();
+  expect(misses, MISSES).toEqual([]);
+});
+
+test("Förlägg i veckan: the link from the dialog (?post=) lands on the post's own row, in view and focused", async ({ page, baseURL }) => {
+  const post = uid(KIND.requirement, 2);
+  await signIn(page.context(), "admin", baseURL!);
+  await freezeClock(page);
+  await askForScenario(page, PLACEMENT_WEEK_SCENARIO);
+  const misses = watchStubMisses(page);
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto(`${PAGE}?post=${post}`);
+  await settle(page);
+  const row = page.locator(`#post-${post}`);
+  await expect(row).toBeFocused();
+  await expect(row).toBeInViewport();
+  await expect(row).toContainText("Matematik 7A");
   expect(misses, MISSES).toEqual([]);
 });
 
