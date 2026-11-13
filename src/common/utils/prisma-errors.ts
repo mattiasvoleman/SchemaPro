@@ -643,6 +643,21 @@ export function driverAdapterCode(error: unknown): string | undefined {
   return typeof original === 'string' ? original : undefined;
 }
 
+/**
+ * Whether an EXCLUSION constraint refused the write (SQLSTATE 23P01), as a model
+ * call reports it (under meta.driverAdapterError) or a failed COMMIT does. A
+ * caller that knows which constraint it can meet says what that means; this
+ * only reads the state.
+ */
+export function exclusionViolation(error: unknown): boolean {
+  const atCommit = driverAdapterCode(error);
+  if (atCommit !== undefined) return atCommit === '23P01';
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  const cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)
+    ?.driverAdapterError?.cause;
+  return cause?.originalCode === '23P01';
+}
+
 /** The 409 for a write the database aborted because another one ran at once. */
 export function writeConflict(): ConflictException {
   return new ConflictException({

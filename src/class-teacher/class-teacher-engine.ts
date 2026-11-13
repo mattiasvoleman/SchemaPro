@@ -17,6 +17,7 @@ import { lockLessons } from '../cover/cover-decisions';
 import { schoolTimezone } from '../cover/cover-context';
 import { scopeOf } from '../calendar/lesson-roster';
 import { parseDateString, toWallClock, zonedTimeToUtc } from '../common/utils/time';
+import { windowOf } from '../common/lunch-window';
 import { requireSchoolId } from '../common/utils/request-context';
 import { datedConflicts, localMinutes, type DatedContext } from './dated-conflicts';
 import {
@@ -346,7 +347,13 @@ export class ClassTeacherEngine {
       groupIds: groups,
       weekday: change.targetDayOfWeek,
     });
-    const board = boardCodeOf(facts, groups, { dayOfWeek: change.targetDayOfWeek, startMinutes: candidate.startMinutes, endMinutes: candidate.endMinutes });
+    // The weeks the lesson runs in: a meal of another part of the läsår is not its meal.
+    const board = boardCodeOf(
+      facts,
+      groups,
+      { dayOfWeek: change.targetDayOfWeek, startMinutes: candidate.startMinutes, endMinutes: candidate.endMinutes },
+      windowOf(lesson),
+    );
     if (board !== null) views.push({ kind: board });
 
     if (mode === 'DIRECT') views.push(...(await this.exceptionsOf(tx, lesson)));

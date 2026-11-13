@@ -317,6 +317,10 @@ export async function snapshotMasters(
  * Writes the year's lunch sittings as a publication's snapshot
  * (PublishedLunchSittings, 20261011130000): in DRAFT they are part of the
  * draft, and a refill must restore the meals that were published.
+ *
+ * With the weeks each holds (20270209090000): a class that eats at another
+ * time in the spring has two rows for a weekday, and the snapshot keeps both
+ * with their dates, so a refill lays each week's meal and not the last row's.
  */
 export async function snapshotSittings(
   tx: PrismaClient,
@@ -324,8 +328,8 @@ export async function snapshotSittings(
 ): Promise<number> {
   const sittings = await tx.lunchSitting.findMany({
     where: { academicYearId: publication.academicYearId },
-    select: { studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true },
-    orderBy: [{ studentGroupId: 'asc' }, { dayOfWeek: 'asc' }],
+    select: { studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true, startDate: true, endDate: true },
+    orderBy: [{ studentGroupId: 'asc' }, { dayOfWeek: 'asc' }, { startDate: { sort: 'asc', nulls: 'first' } }],
   });
   if (sittings.length === 0) return 0;
   const { count } = await tx.publishedLunchSitting.createMany({
@@ -343,11 +347,20 @@ export async function snapshotSittings(
 export async function readPublishedSittings(
   tx: PrismaClient,
   publicationId: string,
-): Promise<Array<{ studentGroupId: string; dayOfWeek: number; startTime: Date; endTime: Date }>> {
+): Promise<
+  Array<{
+    studentGroupId: string;
+    dayOfWeek: number;
+    startTime: Date;
+    endTime: Date;
+    startDate: Date | null;
+    endDate: Date | null;
+  }>
+> {
   const rows = await tx.publishedLunchSitting.findMany({
     where: { publicationId },
-    select: { studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true },
-    orderBy: [{ studentGroupId: 'asc' }, { dayOfWeek: 'asc' }],
+    select: { studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true, startDate: true, endDate: true },
+    orderBy: [{ studentGroupId: 'asc' }, { dayOfWeek: 'asc' }, { startDate: { sort: 'asc', nulls: 'first' } }],
   });
   if (rows.length === 0) return [];
   const groups = new Set(

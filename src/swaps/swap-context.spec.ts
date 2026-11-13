@@ -160,6 +160,26 @@ describe('boardRefusal: the grid’s other hard kinds', () => {
     expect(landing(ctx, slot(2, 690))).toBeNull();
   });
 
+  it('holds a lesson to the meal of its own weeks when the class eats at another time in another part of the läsår', () => {
+    // Tuesday: 11:00–11:30 in the autumn (to Sunday 2026-12-20), 11:30–12:00 from Monday 2027-01-11.
+    const meals = [
+      { studentGroupId: 'c1', dayOfWeek: 2, startMinutes: 660, endMinutes: 690, startDate: null, endDate: '2026-12-20' },
+      { studentGroupId: 'c1', dayOfWeek: 2, startMinutes: 690, endMinutes: 720, startDate: '2027-01-11', endDate: null },
+    ];
+    const autumnLesson = lesson('autumn', 'c1', 1, 480, { startDate: '2026-08-17', endDate: '2026-12-18' });
+    const springLesson = lesson('spring', 'c1', 1, 480, { startDate: '2027-01-11', endDate: '2027-06-11' });
+    const ctx = context([autumnLesson, springLesson], { sittings: meals });
+    const on = (stands: SwapLesson, to: SwapSlot) => ctx.boardRefusal({ lesson: stands, to });
+    // 11:00–11:30 is the autumn's meal and not the spring's, and the other way round for 11:30–12:00.
+    expect(on(autumnLesson, slot(2, 660, 30))).toBe('LUNCH');
+    expect(on(autumnLesson, slot(2, 690, 30))).toBeNull();
+    expect(on(springLesson, slot(2, 660, 30))).toBeNull();
+    expect(on(springLesson, slot(2, 690, 30))).toBe('LUNCH');
+    // A lesson of every week stands on neither.
+    expect(landing(ctx, slot(2, 660, 30))).toBe('LUNCH');
+    expect(landing(ctx, slot(2, 690, 30))).toBe('LUNCH');
+  });
+
   it('refuses a lesson in a weekly rule on whole årskurser, for the years the class holds', () => {
     const rule = (min: number | null, max: number | null) => ({
       resourceType: 'GRADE_LEVEL',

@@ -315,7 +315,10 @@ export class SwapContext {
    */
   boardRefusal({ lesson, to }: Landing): Exclude<HardCode, 'CLASH'> | null {
     const groups = [lesson.studentGroupId, ...lesson.extraGroupIds];
-    return boardCodeOf(this.board, groups, to) ?? (this.holdsAt(lesson, to).length > 0 ? 'OTHER_SCHOOL' : null);
+    return (
+      boardCodeOf(this.board, groups, to, { startDate: lesson.startDate, endDate: lesson.endDate }) ??
+      (this.holdsAt(lesson, to).length > 0 ? 'OTHER_SCHOOL' : null)
+    );
   }
 
   /** The other schools' holds that a lesson at `to` would sit inside. */

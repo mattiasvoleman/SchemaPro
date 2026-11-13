@@ -241,6 +241,35 @@ describe('frames, raster and lunch sittings', () => {
     expect(fitRefusals(resolved({ start: '10:00', end: '11:00' }, ctx), ctx).refusals).toEqual([]);
   });
 
+  describe('a class that eats at another time in another part of the läsår', () => {
+    // Monday: 11:00–11:30 in the autumn (to Sunday 2026-12-20), 11:30–12:00 from the Monday 2027-01-11.
+    const meals = [
+      { groupId: 'g-7a', day: 1, startMin: 11 * 60, endMin: 11 * 60 + 30, endDate: '2026-12-20' },
+      { groupId: 'g-7a', day: 1, startMin: 11 * 60 + 30, endMin: 12 * 60, startDate: '2027-01-11' },
+    ];
+    const codes = (over: Partial<ExchangeLesson>) => {
+      const ctx = context({ sittings: meals });
+      return fitRefusals(resolved({ start: '11:15', end: '11:45', ...over }, ctx), ctx).refusals.map((r) => r.code);
+    };
+
+    it('holds a lesson of the autumn to the autumn’s meal only', () => {
+      expect(codes({ from: '2026-08-17', to: '2026-12-18' })).toEqual(['ON_LUNCH_SITTING']);
+      // 11:30–12:00 is clear of the autumn's 11:00–11:30, and the spring's meal is in no week of it.
+      expect(codes({ start: '11:30', end: '12:00', from: '2026-08-17', to: '2026-12-18' })).toEqual([]);
+    });
+
+    it('holds a lesson of the spring to the spring’s meal only', () => {
+      expect(codes({ start: '11:00', end: '11:30', from: '2027-01-11', to: '2027-06-11' })).toEqual([]);
+      expect(codes({ start: '11:30', end: '12:00', from: '2027-01-11', to: '2027-06-11' })).toEqual(['ON_LUNCH_SITTING']);
+    });
+
+    it('holds a lesson of every week to both: the stricter reading', () => {
+      expect(codes({ start: '11:00', end: '11:30' })).toEqual(['ON_LUNCH_SITTING']);
+      expect(codes({ start: '11:30', end: '12:00' })).toEqual(['ON_LUNCH_SITTING']);
+      expect(codes({ start: '12:00', end: '12:30' })).toEqual([]);
+    });
+  });
+
   it('warns, and does not refuse, for a lesson outside the engine’s day or a group of unknown year', () => {
     const ctx = context({ frames: [frame()], spans: new Map() });
     const out = fitRefusals(resolved({ start: '07:30', end: '08:30' }, ctx), ctx);

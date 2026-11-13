@@ -648,6 +648,81 @@ describe('CalendarService', () => {
         ]);
       });
 
+      describe('a class that eats at another time in another part of the läsår', () => {
+        // A Monday meal of the autumn (to the Sunday 2026-12-20) at 11:00 and one of the
+        // spring (from the Monday 2027-01-11) at 11:30; the weeks between hold none.
+        const autumn = sitting({ endDate: day('2026-12-20'), startTime: time(11), endTime: time(11, 30) });
+        const spring = sitting({ startDate: day('2027-01-11'), startTime: time(11, 30), endTime: time(12) });
+        // The fixture's läsår is August 2026; these weeks are the winter after it.
+        const arrange = (sittings: Record<string, unknown>[]) => {
+          arrangePublish([template()], { sittings });
+          arrangeYear({ endDate: day('2027-06-30') });
+        };
+        const publishFrom = (fromDate: string, toDate: string) =>
+          service.publish(dto({ fromDate, toDate }), testUser());
+        const mealOn = (iso: string) =>
+          lunchData().find((meal) => (meal.date as Date).getTime() === day(iso).getTime());
+
+        it('lays each Monday’s meal from the sitting that holds that Monday', async () => {
+          arrange([autumn, spring]);
+
+          await publishFrom('2026-12-14', '2027-01-17');
+
+          expect(mealOn('2026-12-14')?.startsAt).toEqual(new Date('2026-12-14T11:00:00.000Z'));
+          expect(mealOn('2027-01-11')?.startsAt).toEqual(new Date('2027-01-11T11:30:00.000Z'));
+          // 20 Dec is a Sunday and the autumn's last day: no Monday of it is outside.
+          expect(mealOn('2026-12-21')).toBeUndefined();
+          expect(mealOn('2026-12-28')).toBeUndefined();
+          expect(mealOn('2027-01-04')).toBeUndefined();
+        });
+
+        it('lays one meal for a Monday and never one per sitting of the weekday', async () => {
+          arrange([autumn, spring]);
+
+          await publishFrom('2026-12-14', '2027-01-17');
+
+          const mondays = lunchData().map((meal) => (meal.date as Date).toISOString().slice(0, 10));
+          expect(mondays).toEqual([...new Set(mondays)]);
+          expect(mondays).toEqual(['2026-12-14', '2027-01-11']);
+        });
+
+        it('holds both ends of a sitting and the läsår’s own bound for a sitting with no date', async () => {
+          arrange([
+            sitting({ startDate: day('2026-12-14'), endDate: day('2026-12-20'), startTime: time(10), endTime: time(10, 30) }),
+          ]);
+
+          await publishFrom('2026-12-07', '2026-12-27');
+
+          expect(lunchData().map((meal) => (meal.date as Date).toISOString().slice(0, 10))).toEqual(['2026-12-14']);
+        });
+
+        it('lays a sitting without dates on every Monday, as it always did', async () => {
+          arrange([sitting()]);
+
+          await publishFrom('2026-12-14', '2027-01-17');
+
+          expect(lunchData().map((meal) => (meal.date as Date).toISOString().slice(0, 10))).toEqual([
+            '2026-12-14',
+            '2026-12-21',
+            '2026-12-28',
+            '2027-01-04',
+            '2027-01-11',
+          ]);
+        });
+
+        it('reads the dates in the same query that reads the weekday’s sittings', async () => {
+          arrange([autumn]);
+
+          await publishFrom('2026-12-14', '2026-12-14');
+
+          expect(tx.lunchSitting.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+              select: expect.objectContaining({ startDate: true, endDate: true }),
+            }),
+          );
+        });
+      });
+
       it('serves only the sittings of the year being published', async () => {
         arrangePublish([template()], {
           sittings: [
