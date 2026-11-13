@@ -934,6 +934,16 @@ describe('rethrowPrismaError and Förlagda poster', () => {
     expect(conflict.getResponse()).toMatchObject({ code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT' });
   });
 
+  it('names no post when the refusal does not (no DETAIL id, the rendered message only): params carry the rule and no requirementId (review of #298, LÅG-4)', () => {
+    const conflict = thrown(placementRefusal('PAIRS', { meta: false })) as ConflictException;
+    const params = (conflict.getResponse() as { params: Record<string, unknown> }).params;
+    expect(params).toEqual({ reason: 'PAIRS' });
+    expect(params).not.toHaveProperty('requirementId');
+    // And a rule the gateway has no sentence for, with no id, has no params at all.
+    const isolation = thrown(placementRefusal('ISOLATION', { meta: false })) as ConflictException;
+    expect((isolation.getResponse() as { params?: unknown }).params).toBeUndefined();
+  });
+
   it('keeps the decided plan\'s TP409 a decided plan', () => {
     const conflict = thrown(triggerRefusal('Grundskolan 2024')) as ConflictException;
     expect(conflict.getResponse()).toMatchObject({ code: TIMPLAN_IS_DECIDED });

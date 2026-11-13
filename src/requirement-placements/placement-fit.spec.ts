@@ -210,6 +210,17 @@ describe('teacherFitOf and teacherMisfitOf (the deferred trigger’s rules)', ()
     expect(teacherMisfitOf(shared(), [])).toBeNull();
   });
 
+  it('pairs odd and even rows per teacher AND per length: one teacher’s 80 on odd weeks and 40 on even weeks are two unpaired rows (review of #298, LÅG-2)', () => {
+    // Anna has an 80 and a 40, Bo a 40.
+    const twoLengths = post({ lessonsPerWeek: 3, minutesPerLesson: 80, lessonLengths: [80, 40, 40], shares: [{ teacherId: 'bo', lessons: 1, minutes: 40 }] });
+    expect(teacherPartsOf(twoLengths)).toEqual(new Map([['anna', new Map([[80, 1], [40, 1]])], ['bo', new Map([[40, 1]])]]));
+    expect(teacherMisfitOf(twoLengths, [row(80, 'ODD_WEEKS', 'anna'), row(40, 'EVEN_WEEKS', 'anna')])).toEqual({ reason: 'TEACHER_PAIRS', index: 0 });
+    // Paired by length they fit.
+    expect(teacherMisfitOf(twoLengths, [row(80, 'ODD_WEEKS', 'anna'), row(80, 'EVEN_WEEKS', 'anna')])).toBeNull();
+    // And the count is per length too: two 40 rows of Anna's, though Anna has two lessons, are one more than her one 40.
+    expect(teacherMisfitOf(twoLengths, [row(40, 'ALL_WEEKS', 'anna'), row(40, 'ALL_WEEKS', 'anna')])).toEqual({ reason: 'TEACHER_COUNT', index: 1 });
+  });
+
   it('reads an odd-weeks post’s rows as one lesson each', () => {
     const odd = shared({ recurrence: 'ODD_WEEKS' });
     expect(teacherFitOf(odd, [row(60, 'ODD_WEEKS', 'bo')])).toBeNull();
@@ -310,6 +321,23 @@ describe('followPlacements: a change of teacher carries the förläggningar when
     });
     const row = stored('p1', 'bo');
     expect(followPlacements(before, after, [stored('p0', 'anna'), row])).toEqual({ ok: false, reason: 'TEACHER', row, unstaffed: false });
+  });
+
+  it('is a change of teacher only when exactly one teacher leaves and exactly one comes in: two out for one in, and one out for two in, are not (review of #298, LÅG-2)', () => {
+    // Anna's two lessons and Bo's two, then both gone for Carl, who has two: Anna's lessons are the very ones Carl has, and still it is two teachers changed at once.
+    const twoOut = followPlacements(
+      post({ lessonsPerWeek: 4, shares: [{ teacherId: 'bo', lessons: 2, minutes: 60 }] }),
+      post({ lessonsPerWeek: 2, teacherId: 'carl' }),
+      [stored('p1', 'anna')],
+    );
+    expect(twoOut).toEqual({ ok: false, reason: 'TEACHER', row: stored('p1', 'anna'), unstaffed: false });
+    // Anna's two lessons, then Carl's two and Dan's two: one out, two in, and Anna's förläggning is not Carl's for being the first of the two.
+    const twoIn = followPlacements(
+      post({ lessonsPerWeek: 2, teacherId: 'anna' }),
+      post({ lessonsPerWeek: 4, teacherId: 'carl', shares: [{ teacherId: 'dan', lessons: 2, minutes: 60 }] }),
+      [stored('p1', null)],
+    );
+    expect(twoIn).toEqual({ ok: false, reason: 'TEACHER', row: stored('p1', null), unstaffed: false });
   });
 
   it('stops a share removed under its förläggning, and a share whose new teacher has other lessons', () => {
