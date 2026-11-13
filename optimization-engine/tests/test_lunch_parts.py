@@ -248,9 +248,8 @@ def test_a_class_whose_locks_are_alike_in_every_period_has_the_meal_it_had() -> 
     first, second = _solve(with_flag), _solve(without)
     assert first.status in SOLVED and second.status in SOLVED
     assert _meals(first, group) == _meals(second, group) == [("11:30", None)]
-    assert [(l.requirement_id, l.day_of_week, l.start_time) for l in first.lessons] == [
-        (l.requirement_id, l.day_of_week, l.start_time) for l in second.lessons
-    ]
+    # The lessons are not compared: two solves of one model may lay equal ones differently.
+    # What is the same is the model itself (test_the_model_of_a_class_whose_locks_are_alike...).
     assert first.model_dump(by_alias=True, mode="json")["lunches"] == second.model_dump(by_alias=True, mode="json")["lunches"]
     assert _read(with_flag, first) == []
 
@@ -381,6 +380,12 @@ def test_the_hall_seats_the_classes_of_one_week_and_not_of_two() -> None:
     assert _meals(response, a) == [("11:30", (True, False)), ("11:00", (False, True))]
     assert _meals(response, b) == [("11:00", (True, False)), ("11:30", (False, True))]
     assert _read(payload, response) == []
+    # The check that checks the answer: both classes at 11:00 in the spring is forty pupils in a hall of twenty.
+    crowded = response.model_copy(update={"lunches": [
+        lunch.model_copy(update={"start_time": "11:00:00", "end_time": "11:30:00"}) if lunch.periods == (False, True) else lunch
+        for lunch in response.lunches
+    ]})
+    assert any("pupils eat" in problem for problem in _read(payload, crowded))
 
 
 def test_a_hall_too_small_for_a_term_refuses_the_term_and_only_it() -> None:
@@ -490,3 +495,191 @@ def test_the_validator_of_the_meals_finds_a_meal_on_a_lock_in_its_period() -> No
     assert any("2 meals" in line or "no mask" in line for line in problems)
     gap = response.model_copy(update={"lunches": [response.lunches[0]]})
     assert any("0 meals" in line for line in _read(payload, gap))
+
+
+# ---------------------------------------------------------------------------
+# What a part is, and what is not one
+# ---------------------------------------------------------------------------
+
+
+def test_locks_that_lie_differently_and_take_the_same_starts_are_one_part() -> None:
+    """The autumn's 11:00-11:30 and the spring's 11:00-11:15 beside 11:15-11:30 forbid the same starts.
+
+    A part is the STARTS its locks take (merged), not the locks: two periods
+    that close the same half hour, one with a lock and one with two, are one
+    part, and the class eats at one time all year with no mask.
+    """
+    payload, (group,) = _school(
+        (*FIRST_HALF, {"periods": AUTUMN}),
+        ("11:00:00", "11:15:00", {"periods": SPRING}),
+        ("11:15:00", "11:30:00", {"periods": SPRING}),
+    )
+    response = _solve(payload)
+    assert response.status in SOLVED
+    assert _meals(response, group) == [("11:30", None)]
+    assert _read(payload, response) == []
+    # One part, so not a variable more than the year's reading builds: the model is the one without the flag.
+    assert _proto_of(payload) == _proto_of({key: value for key, value in payload.items() if key != "lunchPerPeriod"})
+
+
+def test_a_lock_of_one_parity_is_the_part_s_in_both_and_the_meal_is_one_for_the_two() -> None:
+    """Odd weeks of the autumn and even weeks of the spring: a meal per period, not per parity.
+
+    The autumn's lock holds only the odd weeks and the spring's only the even
+    ones, and each is read as the whole period's (as a teacher's own lunch
+    is): two parts, the meal of the autumn clear of the lock in the even weeks
+    too. A lesson that only the odd weeks have is laid clear of it.
+    """
+    group = str(uuid4())
+    payload = _payload(
+        [
+            _requirement(group, 2),
+            _requirement(group, 1, periods=SPRING),
+            _requirement(group, 1, periods=AUTUMN, recurrence="ODD_WEEKS"),
+        ],
+        rules=MEAL,
+        lunchPerPeriod=True,
+        periodWeeks=[20, 21],
+        fixedLessons=[
+            {**_lock(group, 1, *FIRST_HALF, str(uuid4())), "periods": AUTUMN, "recurrence": "ODD_WEEKS"},
+            {**_lock(group, 1, *SECOND_HALF, str(uuid4())), "periods": SPRING, "recurrence": "EVEN_WEEKS"},
+        ],
+    )
+    response = _solve(payload)
+    assert response.status in SOLVED
+    assert _meals(response, group) == [("11:30", (True, False)), ("11:00", (False, True))]
+    assert _read(payload, response) == []
+
+
+def test_the_meal_is_one_for_the_odd_weeks_and_the_even_ones_of_a_period() -> None:
+    """A lock of the odd weeks and a lesson of the even weeks close the autumn's window between them.
+
+    The odd weeks' lock leaves the meal the second half hour, and an even
+    weeks' lesson that its teacher can only give from 11:30 takes it: the meal
+    is one time for both parities, so the autumn has none, in every week of it.
+    A reading per parity would eat in the first half of the even weeks, and
+    that is not the class's meal.
+    """
+    group, teacher = str(uuid4()), str(uuid4())
+    payload = _payload(
+        [
+            _requirement(group, 1, periods=AUTUMN, recurrence="EVEN_WEEKS", teacher=teacher),
+            _requirement(group, 1, periods=SPRING),
+        ],
+        rules=MEAL,
+        lunchPerPeriod=True,
+        periodWeeks=[20, 21],
+        fixedLessons=[{**_lock(group, 1, *FIRST_HALF, str(uuid4())), "periods": AUTUMN, "recurrence": "ODD_WEEKS"}],
+        constraints=[
+            periods.ab._closed("TEACHER", teacher, 1, "08:00:00", "11:30:00"),
+            periods.ab._closed("TEACHER", teacher, 1, "12:30:00", "13:00:00"),
+        ],
+    )
+    assert _solve(payload).status not in SOLVED
+
+
+def test_a_lesson_of_one_term_does_not_hold_the_meal_of_the_other() -> None:
+    """The spring's lesson can only be at 11:30-12:30, and the autumn's meal is the second half hour too.
+
+    A teacher who is in the building from 11:30 to 12:30 in the spring only: the
+    spring lesson lies in the second half of the window, and the autumn's lock in
+    the first leaves the autumn's meal the same half. A meal that read the spring's
+    lesson in the autumn's rows would have nowhere to eat.
+    """
+    group, teacher = str(uuid4()), str(uuid4())
+    payload = _payload(
+        [_requirement(group, 1, periods=SPRING, teacher=teacher), _requirement(group, 1, periods=AUTUMN)],
+        rules=MEAL,
+        lunchPerPeriod=True,
+        periodWeeks=[20, 21],
+        fixedLessons=[{**_lock(group, 1, *FIRST_HALF, str(uuid4())), "periods": AUTUMN}],
+        constraints=[
+            periods.ab._closed("TEACHER", teacher, 1, "08:00:00", "11:30:00"),
+            periods.ab._closed("TEACHER", teacher, 1, "12:30:00", "13:00:00"),
+        ],
+    )
+    response = _solve(payload)
+    assert response.status in SOLVED
+    assert _meals(response, group) == [("11:30", (True, False)), ("11:00", (False, True))]
+    assert _read(payload, response) == []
+
+
+def _planted_world(seed: int) -> tuple[dict[str, object], list[str], dict[str, list[int]]]:
+    """Meals first, locks after: a school with a timetable by construction.
+
+    Each class eats at a start of its own in each period (a multiple of five
+    minutes in the window), and its locks are drawn from what that start
+    leaves free, a few in each period. The planted meals are a solution of the
+    school, so every refusal and every infeasible verdict is a false one.
+    """
+    import random
+
+    random.seed(seed)
+    count = random.choice([2, 3, 4])
+    classes = random.choice([1, 2])
+    groups = [str(uuid4()) for _ in range(classes)]
+    planted: dict[str, list[int]] = {}
+    locks: list[tuple[str, int, int, list[bool]]] = []
+    for group in groups:
+        planted[group] = [660 + 5 * random.randint(0, 6) for _ in range(count)]
+        for period in range(count):
+            start = planted[group][period]
+            free = [(660, start), (start + 30, 720)]
+            for _ in range(random.randint(1, 3)):
+                low, high = random.choice([segment for segment in free if segment[1] - segment[0] >= 5])
+                begin = random.randrange(low, high - 4, 5)
+                end = min(high, begin + 5 * random.randint(1, 6))
+                mask = [index == period for index in range(count)]
+                locks.append((group, begin, end, mask))
+
+    def clock(minutes: int) -> str:
+        return f"{minutes // 60:02d}:{minutes % 60:02d}:00"
+
+    requirements = [
+        row
+        for group in groups
+        for row in (_requirement(group, 2), _requirement(group, 1, periods=[index == count - 1 for index in range(count)]))
+    ]
+    payload = _payload(
+        requirements,
+        rules=MEAL,
+        lunchPerPeriod=True,
+        periodWeeks=[20 + index for index in range(count)],
+        fixedLessons=[
+            {**_lock(group, 1, clock(begin), clock(end), str(uuid4())), "periods": mask}
+            for group, begin, end, mask in locks
+        ],
+    )
+    return payload, groups, planted
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_a_school_with_meals_planted_first_is_never_refused_and_its_meals_are_read_in_every_week(seed: int) -> None:
+    payload, groups, planted = _planted_world(seed)
+    response = _solve(payload)
+    assert response.status in SOLVED, (seed, planted, _codes(response))
+    assert _read(payload, response) == [], (seed, planted)
+
+
+def _codes(response) -> list[str]:
+    return [line.code for line in response.conflicts.conflicts] if response.conflicts else []
+
+
+def test_the_size_guard_is_charged_for_the_parts_only_when_there_can_be_some() -> None:
+    """An upper bound, so a school that asks for a meal per part is not let past the guard on the price of one meal."""
+    solver = SchedulerSolver(_settings())
+
+    def estimate(payload: dict[str, object]) -> int:
+        return solver._estimate_model_size(OptimizeScheduleRequest.model_validate(payload))
+
+    parted, _ = _school(
+        (*FIRST_HALF, {"periods": [True, True, False, False]}), (*SECOND_HALF, {"periods": [False, False, True, True]}), masks=4,
+    )
+    without = {key: value for key, value in parted.items() if key != "lunchPerPeriod"}
+    assert estimate(parted) > estimate(without)
+    # Nothing to tell the periods apart by (no lock, no placed meal): nothing to charge.
+    bare, _ = _school(masks=4)
+    assert estimate(bare) == estimate({key: value for key, value in bare.items() if key != "lunchPerPeriod"})
+    # And a placed meal alone is something.
+    placed, _ = _school(masks=4, placements=[{"startTime": "11:00:00", "periods": [True, False, False, False]}])
+    assert estimate(placed) > estimate({key: value for key, value in placed.items() if key not in ("lunchPerPeriod", "lunchPlacements")})

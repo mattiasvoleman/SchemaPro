@@ -6419,6 +6419,21 @@ class SchedulerSolver:
             if self._settings.weight_lunch_drift > 0
             else 0
         )
+        # Klassens måltid per del av läsåret: a class whose locks and placed
+        # meals tell the periods apart has a start for each extra part and day,
+        # the literals its lock, its closure and its placed meal hang on, and
+        # the signed gap and magnitude that price the split. Charged for every
+        # eating class, at the most parts there can be (one per period), and
+        # only when the request asks and there is something to tell periods
+        # apart by: an upper bound, as every term here is, and one that costs a
+        # school with parts a few thousand variables of a million.
+        lunch_part_vars = (
+            lunch_groups * day_count * (len(request.period_weeks) - 1) * 6
+            if request.lunch_per_period
+            and request.period_weeks
+            and (request.fixed_lessons or request.lunch_placements)
+            else 0
+        )
         # The seat rule's entire variable cost, charged whether or not the lunch
         # window that would build it is set — an estimate that is high by one is
         # still an upper bound.
@@ -6583,6 +6598,7 @@ class SchedulerSolver:
             # One literal per meal the school placed by hand.
             + len(request.lunch_placements)
             + lunch_drift_vars
+            + lunch_part_vars
             + dining_vars
             + spread_pairs
             + idle_vars
@@ -14031,8 +14047,10 @@ class SchedulerSolver:
         def cut(members: list[LessonDecision]) -> list[tuple[Weeks | None, list[LessonDecision]]]:
             if meal_part is None:
                 return week_parts(members, _parity)
-            inside = [decision for decision in members if meet(_parity(decision), meal_part)]
-            return week_parts(inside, lambda decision: within(_parity(decision), meal_part))
+            # `within` leaves a lesson that runs in none of the part's weeks
+            # with no week at all, and week_parts puts a member with none in no
+            # row: so it is in none of this part's rows without being filtered.
+            return week_parts(members, lambda decision: within(_parity(decision), meal_part))
 
         # THE PUPILS' OWN INTERVAL, like every other family whose
         # members are the children: a class still in the changing
