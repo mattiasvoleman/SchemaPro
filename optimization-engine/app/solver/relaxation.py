@@ -104,7 +104,8 @@ from app.schemas.schedule import (
     OptimizeScheduleRequest,
     ScheduledLesson,
 )
-from app.solver.weeks import Weeks, each_week, meet, named, says_exactly, together, weeks_of
+from app.solver.refusals import of_line
+from app.solver.weeks import WEEK_WORDS, Weeks, each_week, meet, named, says_exactly, together, weeks_of
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -648,14 +649,9 @@ def _room_lock_deviations(
     return out
 
 
-#: What a line says of its week (weeks.named), and nothing else in its params.
-_WEEK_WORDS = ("period", "periods", "parity")
-
-
-def _unnamed(detail: ConflictDetail) -> tuple[dict[str, str | int], list[UUID]]:
-    """A line less its week: what two weeks' lines have alike when they are the same breach."""
-    params = {name: value for name, value in detail.params.items() if name not in _WEEK_WORDS}
-    return params, detail.requirement_ids
+def _unnamed(detail: ConflictDetail) -> dict[str, str | int | float]:
+    """A line less its week: its params without the words that say which week they are of."""
+    return {name: value for name, value in detail.params.items() if name not in WEEK_WORDS}
 
 
 def _worst_week(
@@ -678,7 +674,7 @@ def _worst_week(
     that line once without its week.
 
     AND ONE SOME WEEKS HAVE ALIKE SAYS EACH OF THEM (as a refusal does,
-    scheduler_solver._named_weeks): a cap the autumn's lessons break is
+    scheduler_solver._refusal_of_most_weeks): a cap the autumn's lessons break is
     broken in every period the autumn is cut into, and the line says them
     together, `period` the first and `periods` all. Only when those words
     say exactly the weeks that share the line (weeks.says_exactly); else the
@@ -694,12 +690,12 @@ def _worst_week(
             best[identity] = detail
     out: list[ConflictDetail] = []
     for identity, detail in best.items():
-        alike = [week for week, other in lines[identity] if _unnamed(other) == _unnamed(detail)]
+        alike = [week for week, other in lines[identity] if of_line(other) == of_line(detail)]
         if len(alike) == len(weeks):
-            detail = detail.model_copy(update={"params": _unnamed(detail)[0]})
+            detail = detail.model_copy(update={"params": _unnamed(detail)})
         elif len(alike) > 1:
             said = together([week for week in alike if week is not None])
             if says_exactly(said):
-                detail = detail.model_copy(update={"params": {**_unnamed(detail)[0], **named(said)}})
+                detail = detail.model_copy(update={"params": {**_unnamed(detail), **named(said)}})
         out.append(detail)
     return out

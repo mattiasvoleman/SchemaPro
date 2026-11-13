@@ -12,6 +12,7 @@ from collections.abc import Callable
 from collections.abc import Collection, Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date as date_type
+from typing import TypeVar
 from uuid import UUID
 
 from ortools.sat.python import cp_model
@@ -44,6 +45,7 @@ from app.solver.placement import (
 )
 from app.solver.placements import release_placements
 from app.solver.rasts import blocks_for, blocks_with_demand, forbidden_starts
+from app.solver.refusals import of_analysis, of_error, of_most_weeks, said_weeks
 from app.solver.relaxation import (
     Relax,
     deviations_of,
@@ -81,6 +83,8 @@ from app.schemas.schedule import (
 )
 
 logger = logging.getLogger(__name__)
+
+R = TypeVar("R")
 
 
 from app.solver.conflict_analyzer import (
@@ -5048,23 +5052,20 @@ class SchedulerSolver:
             self._teacher_hours_verdict,
             self._lesson_gaps_verdict,
         )
-        for label, week in weeks:
-            # Arithmetic first, models second: a hall the school cannot fit in
-            # is decided here in microseconds and reported the way a solve
-            # would have. In this order within a week, the first that refuses.
-            for count in counts:
-                verdict = count(week)
-                if verdict is None:
-                    continue
-                return (
-                    OptimizeScheduleResponse(
-                        request_id=request.request_id,
-                        status="INFEASIBLE",
-                        lessons=[],
-                        conflicts=self._counted_in(verdict, label, weeks, count, request),
-                    ),
-                    step, lunch_hints, nearly_full,
-                )
+        # Arithmetic first, models second: a hall the school cannot fit in
+        # is decided here in microseconds and reported the way a solve
+        # would have. In this order within a week, the first that refuses.
+        counted = self._counted_refusal(weeks, counts, request)
+        if counted is not None:
+            return (
+                OptimizeScheduleResponse(
+                    request_id=request.request_id,
+                    status="INFEASIBLE",
+                    lessons=[],
+                    conflicts=counted,
+                ),
+                step, lunch_hints, nearly_full,
+            )
         for label, week in self._solved_weeks(weeks):
             # Then the lunches alone: a small model that proves what the full
             # one could not in a minute, or hands it a warm start. See
@@ -5106,37 +5107,50 @@ class SchedulerSolver:
                 )
         return None, step, lunch_hints, nearly_full
 
-    def _counted_in(
+    def _counted_refusal(
         self,
-        verdict: ConflictAnalysis,
-        label: Weeks | None,
         weeks: list[tuple[Weeks | None, OptimizeScheduleRequest]],
-        count: Callable[[OptimizeScheduleRequest], ConflictAnalysis | None],
+        counts: Sequence[Callable[[OptimizeScheduleRequest], ConflictAnalysis | None]],
         whole: OptimizeScheduleRequest,
-    ) -> ConflictAnalysis:
-        """A counted refusal with the weeks it is said of (_named_weeks).
+    ) -> ConflictAnalysis | None:
+        """The refusal the counts give, with the weeks it is said of (_refusal_of_most_weeks); None if every week passes.
 
-        The same count is made in every week, and the weeks that give this
-        verdict, to the word, are the ones named. Arithmetic, a few
-        milliseconds a week, and only on the way to a refusal. A year without
-        periods names no week whatever is counted (weeks.named), so nothing
-        is counted twice for it.
+        Each week gives the first of `counts` that refuses it, and the same
+        count is made in every week. Arithmetic, a few milliseconds a week,
+        and only on the way to a refusal. A year without periods is said by
+        its first refusing week and names no week whatever is counted
+        (weeks.named), so nothing is counted twice for it.
         """
-        return _in_week(verdict, self._named_weeks(
-            label, weeks, whole, lambda other, _whole, _week: count(other) == verdict,
-        ))
+        def refused_in(
+            week: OptimizeScheduleRequest, _whole: OptimizeScheduleRequest, _label: Weeks | None,
+        ) -> ConflictAnalysis | None:
+            for count in counts:
+                verdict = count(week)
+                if verdict is not None:
+                    return verdict
+            return None
 
-    def _named_weeks(
+        found = self._refusal_of_most_weeks(weeks, whole, refused_in, of_analysis)
+        if found is None:
+            return None
+        verdict, said = found
+        return _in_week(verdict, said)
+
+    def _refusal_of_most_weeks(
         self,
-        label: Weeks | None,
         weeks: list[tuple[Weeks | None, OptimizeScheduleRequest]],
         whole: OptimizeScheduleRequest,
-        shares: Callable[[OptimizeScheduleRequest, OptimizeScheduleRequest, Weeks | None], bool],
-    ) -> Weeks | None:
-        """The weeks a refusal found in the week `label` is said of; None for no week at all.
+        refused_in: Callable[[OptimizeScheduleRequest, OptimizeScheduleRequest, Weeks | None], R | None],
+        same: Callable[[R], Hashable],
+        *,
+        names: Callable[[R], bool] = lambda _refusal: True,
+    ) -> tuple[R, Weeks | None] | None:
+        """The refusal said of a year, and the weeks it is said of; None for no week at all.
 
-        `shares(request, whole, week)` is whether that week's request is
-        refused the same, to the word and the figure.
+        `refused_in(request, whole, week)` is what that week's request is
+        refused with, and `same` reads two of them as one refusal when the
+        school would (refusals.py: the one rule, for the counted refusals, the
+        400s and the lines of Bästa möjliga schema).
 
         TERMINER: `period` IS WHERE THE COUNT WAS MADE, AND ONLY WHERE THAT SAYS
         SOMETHING. A count that reads nothing the weeks differ in — the dining
@@ -5144,19 +5158,21 @@ class SchedulerSolver:
         post runs every week — says the same in each of them, to the figure.
         Named by the first week it would send a school to the autumn's dates
         for a refusal that is as true of the spring (the gateway turns the
-        index into dates). So the same count is made in every week, and a
-        refusal they all share word for word names none.
+        index into dates). So every week is asked, and a refusal they all
+        share says none.
 
-        EVERY WEEK THAT SHARES IT IS SAID, NOT THE FIRST. A real läsår is not
-        two terms. Each dated post cuts it, and the school this was built for
-        has six periods, the first of them the two days before the first
-        Monday. A teacher over her hours all autumn is over them in four of
-        the six, and named by the first week she was told "the weeks from 15
-        August to 16 August": true, and no help at all. So the weeks that give
-        the same verdict are said together (weeks.together): `period` is still
-        the first of them, and `periods` every period they lie in ("0,1,2,3"),
-        the form a week that lies in several periods has always had. The
-        gateway reads their stretches together and says one run of weeks.
+        THE REFUSAL SAID IS THE ONE WHOSE WEEKS ARE MOST OF THE YEAR
+        (refusals.of_most_weeks), and EVERY WEEK THAT SHARES IT IS SAID WITH
+        IT. A real läsår is not two terms. Each dated post cuts it, and the
+        school this was built for has six periods, the first of them the two
+        days before the first Monday. A teacher over her hours all autumn is
+        over them in four of the six, and named by the first week she was
+        told "the weeks from 15 August to 16 August": true, and no help at all.
+        The weeks that give the same refusal are said together
+        (weeks.together): `period` is still the first of them, and `periods`
+        every period they lie in ("0,1,2,3"), the form a week that lies in
+        several periods has always had. The gateway reads their stretches
+        together and says one run of weeks.
 
         ONLY WHEN THE WORDS SAY THOSE WEEKS AND NO OTHERS (weeks.says_exactly).
         The words are periods and at most one parity. Weeks that are not such
@@ -5164,30 +5180,43 @@ class SchedulerSolver:
         would be said as more than share the refusal, and the week it was
         found in is said alone, as it was before.
 
-        ONE WEEK WITH ANYTHING TO PLACE HAS NO OTHER TO AGREE WITH. A year
-        whose every post is dated to the autumn has the autumn's request and
-        no more (_weeks_and_requests leaves out a week with nothing to place),
-        and "they all say the same" is then true of anything. What is asked
-        of it instead is what _solved_in asks: the same count on what every
-        week has, which here is the year without one post (_every_week_only).
-        A teacher over her hours is not over them there, and the refusal is
-        the autumn's; a hall too small for the classes is as small, and it
-        names none.
+        A WEEK WITH NOTHING TO PLACE IS NOT ASKED (_weeks_and_requests leaves
+        it out), so "every week it was asked of gives the same" is true of
+        anything when some are left out: a year whose every post is dated to
+        the autumn has the autumn's request and no more, and so has a year
+        whose posts are the autumn's and the winter's with the spring empty.
+        What is asked of the weeks left out is what _solved_in asks: the same
+        question on what every week has, which is the year without one post
+        (_every_week_only). A teacher over her hours is not over them there,
+        and the refusal is the autumn's and the winter's; a hall too small
+        for the classes is as small, and it names none.
+
+        `names` is false for a refusal that says its own weeks.
         """
-        if label is None or not week_named(label):
+        found: list[tuple[Weeks, R]] = []
+        for label, week in weeks:
+            refusal = refused_in(week, whole, label)
+            if refusal is None:
+                continue
+            if label is None or not week_named(label):
+                # A year without periods says no week, and is said by the
+                # first that refuses, which is all it was ever told.
+                return refusal, None
+            found.append((label, refusal))
+        if not found:
             return None
-        if len(weeks) == 1:
+        refusal, held = of_most_weeks(found, same, year_of(whole))
+        if not names(refusal):
+            return refusal, None
+
+        def the_year_gives_it() -> bool:
             shared = _every_week_only(whole)
-            return None if shares(shared, shared, None) else label
-        sharing = [
-            other_label
-            for other_label, other in weeks
-            if other_label is not None and (other_label == label or shares(other, whole, other_label))
-        ]
-        if len(sharing) == len(weeks):
-            return None
-        said = weeks_together(sharing)
-        return said if week_says_exactly(said) else label
+            again = refused_in(shared, shared, None)
+            return again is not None and same(again) == same(refusal)
+
+        return refusal, said_weeks(
+            held, [label for label, _ in weeks if label is not None], the_year_gives_it,
+        )
 
     def _solved_in(
         self,
@@ -5201,7 +5230,7 @@ class SchedulerSolver:
 
         The verdicts that solve something (the lunch stage, the class hours,
         the year's load) are not run on every week only to compare them, as
-        the counted ones are (_counted_in): each is a model. What is asked
+        the counted ones are (_counted_refusal): each is a model. What is asked
         instead is whether the week's own entries had anything to do with it.
         The entries that run every week are in every week's request; the same
         verdict on them alone, to the word, is a refusal no week added
@@ -5221,8 +5250,10 @@ class SchedulerSolver:
             len(week.requirements) != len(every_week.requirements)
             or len(week.fixed_lessons) != len(every_week.fixed_lessons)
         )
-        if has_its_own and asked(every_week) != verdict:
-            return _in_week(verdict, label)
+        if has_its_own:
+            alone = asked(every_week)
+            if alone is None or of_analysis(alone) != of_analysis(verdict):
+                return _in_week(verdict, label)
         return verdict
 
     def _solved_weeks(
@@ -6972,20 +7003,32 @@ class SchedulerSolver:
         # count says (`period`, weeks.named).
         #
         # `period` IS WHERE THE COUNT WAS MADE, AND ONLY WHERE THAT SAYS
-        # SOMETHING (_refused_weeks): a refusal that read the year and not
-        # the week names none, neither does one every week shares, and one
-        # that some of them share says each of those.
+        # SOMETHING (_refusal_of_most_weeks): a refusal that read the year and
+        # not the week names none, neither does one every week shares, and
+        # one that some of them share says each of those. The one said is
+        # the one most of the year gives, and not the first week's.
         weeks = _weeks_and_requests(request)
-        for label, week in weeks:
+
+        def refused_in(
+            week: OptimizeScheduleRequest, year: OptimizeScheduleRequest, label: Weeks | None,
+        ) -> InvalidScheduleInputError | None:
             try:
-                self._verify_week(week, request, label)
+                self._verify_week(week, year, label)
             except InvalidScheduleInputError as refusal:
-                said = week_named(self._refused_weeks(refusal, label, weeks, request))
-                if not said:
-                    raise
-                raise InvalidScheduleInputError(
-                    str(refusal), code=refusal.code, params={**refusal.params, **said},
-                ) from refusal
+                return refusal
+            return None
+
+        found = self._refusal_of_most_weeks(
+            weeks, request, refused_in, of_error,
+            names=lambda refusal: refusal.code not in self._SAY_THEIR_OWN_WEEKS,
+        )
+        if found is not None:
+            refusal, said = found
+            if not week_named(said):
+                raise refusal
+            raise InvalidScheduleInputError(
+                str(refusal), code=refusal.code, params={**refusal.params, **week_named(said)},
+            ) from refusal
 
         rules = request.rules
         if rules is None or not _lunch_window_is_set(rules):
@@ -7100,44 +7143,6 @@ class SchedulerSolver:
         "TEACHER_LUNCH_WINDOW_TOO_NARROW",
         "TEACHER_LUNCH_LEAVES_NO_START",
     })
-
-    def _refused_weeks(
-        self,
-        refusal: InvalidScheduleInputError,
-        label: Weeks | None,
-        weeks: list[tuple[Weeks | None, OptimizeScheduleRequest]],
-        whole: OptimizeScheduleRequest,
-    ) -> Weeks | None:
-        """The weeks a refusal raised from the week `label`'s request is said of; None for none.
-
-        None for a refusal that says its own weeks (_SAY_THEIR_OWN_WEEKS: the
-        week it was raised from adds nothing true). Otherwise what
-        _named_weeks says of it, two weeks sharing a refusal when both are
-        refused with the same code and the same figures: none when every week
-        is — a rule too tight for a teacher whose posts all run every week —
-        and each week that is when only some are. Counted again in each week,
-        arithmetic on constants, and only on the way to a 400 of a year with
-        periods.
-
-        One week with anything to place has no other to agree with, and is
-        asked what _counted_in asks of it: the same check on the year without
-        a post that some weeks only have (_every_week_only). A cap too small
-        for a teacher's autumn refuses nothing there, and the refusal is the
-        autumn's.
-        """
-        if refusal.code in self._SAY_THEIR_OWN_WEEKS:
-            return None
-
-        def shares(
-            other: OptimizeScheduleRequest, year: OptimizeScheduleRequest, week: Weeks | None,
-        ) -> bool:
-            try:
-                self._verify_week(other, year, week)
-            except InvalidScheduleInputError as same:
-                return (same.code, same.params) == (refusal.code, refusal.params)
-            return False
-
-        return self._named_weeks(label, weeks, whole, shares)
 
     def _verify_week(
         self,
@@ -7831,64 +7836,15 @@ class SchedulerSolver:
                     window = _teacher_lunch_slots(rule, self._grid)
                     if window is None:
                         continue
-                    window_start, window_end, lunch_slots = window
                     for day_index, day_of_week in enumerate(self._grid.schedule_days):
-                        day_offset = day_index * slots_per_day
                         key = (rule.teacher_id, day_index)
-                        closed = closed_busy.get(key, [])
-                        # A reservation over the whole window says the teacher is not
-                        # here; the builder grants no break on such a day, so nothing
-                        # can leave one too short.
-                        if _covers(
-                            closed, day_offset + window_start, day_offset + window_end,
-                        ):
-                            continue
-                        locked = locked_busy.get(key, [])
-                        # PER SOURCE, and not from `locked + closed`, because the
-                        # `causes` key below names what the school has to go and
-                        # change. Asking only whether the teacher HAS a lock or a
-                        # reservation somewhere that day answers a different
-                        # question: a locked lesson at 08:00 cannot take a lunch
-                        # start away from a window that opens at 10:30, and naming
-                        # it sends the rektor to move a lesson whose removal changes
-                        # nothing. _forbidden_lunch_starts has already dropped the
-                        # rows that rule out no admissible start, so its OUTPUT is
-                        # the honest answer — which is what the group lunch's own
-                        # causes read, from blocked_starts and closed_starts.
-                        #
-                        # Splitting the call changes no outcome: the helper is per
-                        # interval and coalesces nothing, so two calls concatenated
-                        # are the one call's list in another order, and the domain
-                        # subtraction below is order-blind.
-                        forbidden_by_source = [
-                            (
-                                name,
-                                _forbidden_lunch_starts(
-                                    rows,
-                                    day_offset + window_start,
-                                    day_offset + window_end - lunch_slots,
-                                    lunch_slots,
-                                ),
-                            )
-                            for name, rows in (("locked", locked), ("closed", closed))
-                        ]
-                        forbidden = [
-                            band for _, bands in forbidden_by_source for band in bands
-                        ]
-                        if not forbidden:
-                            continue
-                        allowed = self._admissible_lunch_starts(
-                            day_offset, window_start, window_end, lunch_slots, forbidden,
+                        causes = self._lunch_has_no_start(
+                            window, day_index, closed_busy.get(key, []), locked_busy.get(key, []),
                         )
-                        if not allowed.is_empty():
+                        if causes is None:
                             continue
-                        # Which of the two it was, as ONE key rather than a joined
-                        # list: "locked lessons and reservations" is an English list,
-                        # and a language that inflects its members cannot be handed
-                        # one already punctuated. The sentence branches on the key.
-                        causes = [name for name, bands in forbidden_by_source if bands]
                         raise InvalidScheduleInputError.of("TEACHER_LUNCH_LEAVES_NO_START", {
-                            "causes": "_".join(causes),
+                            "causes": causes,
                             "rule": str(rule.id),
                             "minutes": rule.lunch_minutes,
                             "windowStart": rule.lunch_start_time[:5],
@@ -7896,7 +7852,9 @@ class SchedulerSolver:
                             "day": day_of_week,
                             **(
                                 {} if period is None
-                                else self._periods_with_these_locks(year, week, key, locked)
+                                else self._periods_with_this_refusal(
+                                    year, week, rule.teacher_id, day_index, window, causes,
+                                )
                             ),
                         })
 
@@ -8086,27 +8044,102 @@ class SchedulerSolver:
                     "weekMinutes": week_minutes[teacher_id],
                 })
 
-    def _periods_with_these_locks(
+    def _lunch_has_no_start(
+        self,
+        window: tuple[int, int, int],
+        day_index: int,
+        closed: list[tuple[int, int]],
+        locked: list[tuple[int, int]],
+    ) -> str | None:
+        """What leaves a teacher's lunch no start on one weekday, or None if it has one.
+
+        `closed` are her reservations that day and `locked` the locked
+        lessons of the period read, as busy ranges. The answer is the key for
+        what the school has to go and change: "locked", "closed" or
+        "locked_closed". One check for the refusal and for every period said
+        to give the same one (_periods_with_this_refusal), so the two cannot
+        disagree about when a teacher may eat.
+        """
+        window_start, window_end, lunch_slots = window
+        day_offset = day_index * self._grid.slots_per_day
+        # A reservation over the whole window says the teacher is not
+        # here; the builder grants no break on such a day, so nothing
+        # can leave one too short.
+        if _covers(closed, day_offset + window_start, day_offset + window_end):
+            return None
+        # PER SOURCE, and not from `locked + closed`, because the
+        # `causes` key below names what the school has to go and
+        # change. Asking only whether the teacher HAS a lock or a
+        # reservation somewhere that day answers a different
+        # question: a locked lesson at 08:00 cannot take a lunch
+        # start away from a window that opens at 10:30, and naming
+        # it sends the rektor to move a lesson whose removal changes
+        # nothing. _forbidden_lunch_starts has already dropped the
+        # rows that rule out no admissible start, so its OUTPUT is
+        # the honest answer — which is what the group lunch's own
+        # causes read, from blocked_starts and closed_starts.
+        #
+        # Splitting the call changes no outcome: the helper is per
+        # interval and coalesces nothing, so two calls concatenated
+        # are the one call's list in another order, and the domain
+        # subtraction below is order-blind.
+        forbidden_by_source = [
+            (
+                name,
+                _forbidden_lunch_starts(
+                    rows,
+                    day_offset + window_start,
+                    day_offset + window_end - lunch_slots,
+                    lunch_slots,
+                ),
+            )
+            for name, rows in (("locked", locked), ("closed", closed))
+        ]
+        forbidden = [band for _, bands in forbidden_by_source for band in bands]
+        if not forbidden:
+            return None
+        allowed = self._admissible_lunch_starts(
+            day_offset, window_start, window_end, lunch_slots, forbidden,
+        )
+        if not allowed.is_empty():
+            return None
+        # Which of the two it was, as ONE key rather than a joined
+        # list: "locked lessons and reservations" is an English list,
+        # and a language that inflects its members cannot be handed
+        # one already punctuated. The sentence branches on the key.
+        return "_".join(name for name, bands in forbidden_by_source if bands)
+
+    def _periods_with_this_refusal(
         self,
         year: OptimizeScheduleRequest,
         week: Weeks | None,
-        key: tuple[UUID, int],
-        locked: list[tuple[int, int]],
+        teacher_id: UUID,
+        day_index: int,
+        window: tuple[int, int, int],
+        causes: str,
     ) -> dict[str, str | int]:
-        """Where in the year a teacher's lunch is closed by these locks: every period that has them.
+        """Where in the year a teacher's lunch is refused the same: every period that is.
 
         A LÄSÅR HAS MORE PERIODS THAN TERMS — every dated post of the school
         cuts it — so the autumn's locks are in several, and the first of them
         is often a few days long. Named by that one alone, the refusal read
         "the weeks 15 to 16 August" for locks that close the lunch until
         Christmas. So it says every period in which the teacher has a lesson
-        to place and the same locked hours on that weekday: `period`, the
-        first, and `periods` beside it where there are more ("0,1,2",
-        weeks.named's own two words, which the gateway reads together and
-        turns into one run of weeks).
+        to place and her lunch that weekday is left no start for the same
+        cause: `period`, the first, and `periods` beside it where there are
+        more ("0,1,2", weeks.named's own two words, which the gateway reads
+        together and turns into one run of weeks).
+
+        THE SAME REFUSAL, NOT THE SAME LOCKS. Two periods whose locks are
+        other lessons at other times close the same window the same day, and
+        the school reads one sentence for both (refusals.py: the code, the
+        figures and what is named: the rule, the day, the cause). Said by
+        the periods with exactly the same locked hours only, the spring's
+        refusal came after the autumn's had been put right.
         """
         assert week is not None
-        teacher_id = key[0]
+        key = (teacher_id, day_index)
+        closed = self._teacher_busy_from_constraints(year.constraints).get(key, [])
         same: list[int] = []
         for period in range(week.periods):
             term = Weeks(0b11 << (2 * period), week.periods)
@@ -8119,7 +8152,7 @@ class SchedulerSolver:
             busy = self._teacher_busy_from_locks(
                 [fixed for fixed in year.fixed_lessons if meet(weeks_of(fixed), term)],
             ).get(key, [])
-            if sorted(busy) == sorted(locked):
+            if self._lunch_has_no_start(window, day_index, closed, busy) == causes:
                 same.append(period)
         said: dict[str, str | int] = {"period": same[0]}
         if len(same) > 1:
@@ -16941,7 +16974,7 @@ def _every_week_only(request: OptimizeScheduleRequest) -> OptimizeScheduleReques
     """The request with only what runs every week: what each week's request has in common.
 
     For asking whether a refusal found in one week had anything to do with
-    that week's own entries (_solved_in, _named_weeks). With
+    that week's own entries (_solved_in, _refusal_of_most_weeks). With
     no post at all when none runs every week: the classes, the rooms and the
     rules are still every week's, and a refusal that reads only those is
     said of the year.
