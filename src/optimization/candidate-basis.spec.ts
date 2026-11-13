@@ -6,12 +6,14 @@ import {
   basisPartsOf,
   canonicalJson,
   changedParts,
+  changedPartsForWrite,
   preservedPartOf,
   sha256Hex,
   type BasisParts,
   type BasisPayload,
   type BasisSource,
   type DraftContent,
+  WRITE_BASIS_PARTS,
 } from './candidate-basis';
 import type { ScheduleRules } from './interfaces/ai-engine-payload.interface';
 
@@ -820,6 +822,57 @@ describe('the candidate basis', () => {
       basisPartsOf(basisInputsOf({ ...source, mirrors: [{ ...spring, shares: [share] }] }));
     expect(changedParts(shared, other({ teacherId: 'cecilia', lessons: 1, minutes: 40 }))).toEqual(['requirements']);
     expect(changedParts(shared, other({ teacherId: 'bo', lessons: 1, minutes: 60 }))).toEqual(['requirements']);
+  });
+
+  describe('Generera’s write: the parts it holds still', () => {
+    it('are all of them but the draft’s, in the parts’ own order', () => {
+      expect(WRITE_BASIS_PARTS).toEqual(['requirements', 'preserved', 'rooms', 'rules', 'rosters']);
+      expect(WRITE_BASIS_PARTS).toEqual(BASIS_PARTS.filter((part) => part !== 'draft'));
+    });
+
+    it.each<[string, (real: School) => void, string[]]>([
+      // The draft is what the write replaces: a lesson of it moved by hand, or
+      // a hint the engine was given, is no change in what the answer depends on.
+      ['a draft lesson is moved by hand', (s) => void (s.draftLessons[0]!.dayOfWeek = 5), []],
+      ['a draft lesson gets a term', (s) => void (s.draftLessons[0]!.endDate = '2026-12-18'), []],
+      ['a hint the engine is given moves', (s) => void (s.payload.previousLessons[0]!.startTime = '13:00:00'), []],
+      // Each of the others is the question the engine was asked.
+      ['a locked lesson moves to another weekday', (s) => void (s.payload.fixedLessons[0]!.dayOfWeek = 4), ['preserved']],
+      ['a locked lesson is removed', (s) => void s.payload.fixedLessons.pop(), ['preserved']],
+      ['a post’s teacher changes', (s) => void (s.payload.requirements[0]!.teacherId = 't-bo'), ['requirements']],
+      ['a room gets smaller', (s) => void (s.payload.rooms[0]!.capacity = 20), ['rooms']],
+      ['a reservation moves', (s) => void (s.payload.constraints[0]!.endTime = '11:00:00'), ['rules']],
+      ['a class gets a pupil', (s) => void (s.payload.groups[0]!.lunchHeadcount = 25), ['rosters']],
+    ])('%s: %j', (_edit, edit, expected) => {
+      const before = partsOf(school());
+      const changed = school();
+      edit(changed);
+
+      expect(changedPartsForWrite(before, partsOf(changed, 1))).toEqual(expected);
+    });
+
+    it('names a part once however many of its inputs moved, and the parts in the basis’ order', () => {
+      const before = partsOf(school());
+      const changed = school();
+      changed.payload.groups[0]!.lunchHeadcount = 25;
+      changed.payload.rooms[0]!.capacity = 20;
+      changed.payload.rasts[0]!.startTime = '09:50:00';
+      changed.payload.constraints[0]!.endTime = '11:00:00';
+      changed.draftLessons[0]!.dayOfWeek = 5;
+
+      expect(changedPartsForWrite(before, partsOf(changed, 1))).toEqual(['rooms', 'rules', 'rosters']);
+    });
+
+    it('is the candidate apply’s comparison less the draft’s part, so the two cannot disagree about anything else', () => {
+      const before = partsOf(school());
+      const changed = school();
+      changed.payload.fixedLessons[0]!.roomId = 'room-hall';
+      changed.draftLessons[0]!.dayOfWeek = 5;
+      const now = partsOf(changed, 1);
+
+      expect(changedParts(before, now)).toEqual(['preserved', 'draft']);
+      expect(changedPartsForWrite(before, now)).toEqual(changedParts(before, now).filter((part) => part !== 'draft'));
+    });
   });
 
   it('names every part changed against a stored value that is not a parts object', () => {

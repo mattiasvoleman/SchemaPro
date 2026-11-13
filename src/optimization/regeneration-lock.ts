@@ -235,10 +235,29 @@ export function scheduleCandidateStale(
   });
 }
 
-export function generateStale(): ConflictException {
+/**
+ * A Generera whose answer no longer fits the timetable it was asked about.
+ *
+ * `changed` names the basis parts that differ (candidate-basis.ts) and
+ * `refusalCode` the pre-flight refusal the school now meets, when the write's
+ * own read of the school was refused. Both only when the write read the basis
+ * again, and then as flat `params`, because the problem filter sends a
+ * refusal's code and flat params and nothing else (the job row stores them
+ * beside the code). A refusal from one of the write's field checks names
+ * neither, and is the body it always was.
+ */
+export function generateStale(changed: readonly string[] = [], refusalCode: string | null = null): ConflictException {
   return new ConflictException({
     message:
       'Grundschemat ändrades medan schemat genererades, så resultatet sparades inte. Generera igen.',
     code: GENERATE_STALE,
+    ...(changed.length > 0 || refusalCode
+      ? {
+          params: {
+            ...(changed.length > 0 ? { changed: changed.join(',') } : {}),
+            ...(refusalCode ? { refusalCode } : {}),
+          },
+        }
+      : {}),
   });
 }
