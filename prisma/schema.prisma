@@ -517,6 +517,7 @@ model User {
   substitutePoolMemberships SubstitutePoolMember[] @relation("PoolMemberUser")
   /// This person's changes of role, profile and HR-läs, written by a trigger.
   roleChanges               UserRoleChange[]       @relation("RoleChangeSubject")
+  deactivations             UserDeactivation[]     @relation("UserDeactivationSubject")
 
   @@unique([schoolId, email])
   @@unique([authId, schoolId])
@@ -556,6 +557,31 @@ model UserRoleChange {
 
   @@index([schoolId, userId, createdAt(sort: Desc)])
   @@map("UserRoleChanges")
+}
+
+/// One period a person has been inactive (20270210090000): from startsAt, the
+/// click or the person's last working day when an administrator named it, to
+/// endsAt, the moment they were made active again (null while inactive). Kept
+/// by the trigger Users_deactivations_are_kept, whoever wrote Users: a person
+/// is inactive in exactly one open row and active in none, and one person's
+/// periods never overlap (the exclusion constraint UserDeactivations_one_period_at_a_time,
+/// which schema.prisma cannot state). Users.deactivatedAt stays the click.
+/// The API role reads it (administrators) and changes startsAt of an open row.
+model UserDeactivation {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId   String    @db.Uuid
+  /// The person. Composite (userId, schoolId) key, cascading: the periods go with the person.
+  userId     String    @db.Uuid
+  /// The instant their time stops counting; never later than recordedAt.
+  startsAt   DateTime  @db.Timestamptz(6)
+  endsAt     DateTime? @db.Timestamptz(6)
+  recordedAt DateTime  @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  user User @relation("UserDeactivationSubject", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([schoolId, userId])
+  @@index([userId, schoolId, startsAt])
+  @@map("UserDeactivations")
 }
 
 // -----------------------------------------------------------------------------
