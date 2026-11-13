@@ -88,6 +88,7 @@ import {
   basisInputsOf,
   basisOf,
   basisPartsOf,
+  changedPartsForWrite,
   clockOf,
   dayOf,
   preservedPartOf,
@@ -1396,6 +1397,7 @@ export class OptimizationProxyService {
         prepared.splitLessons,
         prepared.placedRows,
         prepared.lockWeeks,
+        prepared.basisParts,
       ),
     );
 
@@ -4674,6 +4676,13 @@ export class OptimizationProxyService {
     placedRows: readonly PlacedLessonRow[] = [],
     /** Terminer: the preserved masters' weeks as the fetch read them, by id (PreparedSchedule.lockWeeks). */
     lockWeeks: ReadonlyMap<string, string> = new Map(),
+    /**
+     * What the engine was sent, by the basis the fetch hashed it into
+     * (PreparedSchedule.basisParts). Read again under the lock before the
+     * write, and a difference is GENERATE_STALE. Absent, nothing is read
+     * again: only a caller that has no fetch of its own leaves it out.
+     */
+    startBasis: BasisParts | null = null,
   ): Promise<TimedLesson[] | null> {
     // First, before anything is read: the publication lock and the mode
     // (publish-mode.ts). In DRAFT the regenerated grundschema is a draft.
@@ -4805,6 +4814,39 @@ export class OptimizationProxyService {
           `Generated timetable not written: a förlagd post's dates changed while the solver ran [academicYearId=${academicYearId}].`,
         );
         throw generateStale();
+      }
+
+      // And everything else the engine was sent. The checks above each name
+      // one thing the write reads again, and a lock made, moved or removed,
+      // a post's days cut, a work rule, a reservation or a sitting changed
+      // was in none of them: the answer was solved around hours that are no
+      // longer the school's, and was written all the same (clashes in a
+      // timetable nobody was told to doubt). The fetch is read again here —
+      // under the year lock, the same code, in this transaction — and its
+      // basis is compared with the one the engine's request was hashed into,
+      // so what the request read and what the write checks cannot part ways:
+      // a field the payload gains is a field this refuses a change in, the
+      // day it is added (candidate-basis.ts, ai-engine-contract.spec.ts).
+      //
+      // Not the draft's part, which is what this write replaces. A change in
+      // either direction is refused, a looser limit too: the answer was to
+      // another question, and a run to ask the right one costs a minute where
+      // a miss costs a timetable that breaks the school's own rules.
+      if (startBasis !== null) {
+        const rebuilt = await this.prepareSchedule(tx, academicYearId, user);
+        if (!rebuilt.ready) {
+          this.logger.warn(
+            `Generated timetable not written: the school now meets a refusal it did not (${rebuilt.refusalCode}) [academicYearId=${academicYearId}].`,
+          );
+          throw generateStale([], rebuilt.refusalCode);
+        }
+        const changed = changedPartsForWrite(startBasis, rebuilt.basisParts);
+        if (changed.length > 0) {
+          this.logger.warn(
+            `Generated timetable not written: what the engine was sent changed while the solver ran (${changed.join(', ')}) [academicYearId=${academicYearId}].`,
+          );
+          throw generateStale(changed);
+        }
       }
 
       // The answer in real ids, each mirrored post's lessons written beside

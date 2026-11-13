@@ -95,6 +95,26 @@ export const BASIS_EXCLUDED_FIELDS = ['academicYearId', 'relaxation', 'requestId
 export type BasisPart = (typeof BASIS_PARTS)[number];
 export type BasisParts = Record<BasisPart, string>;
 
+/**
+ * THE PARTS GENERERA'S OWN WRITE HOLDS STILL: every part but the draft's.
+ *
+ * Generera writes an answer minutes after it asked for it, and reads the
+ * basis again before it writes (OptimizationProxyService.persistMasterLessons)
+ * for the same reason a candidate's apply does: what the engine was sent is
+ * what it solved, and an answer to another question must not replace the
+ * timetable. Five of the six parts are that question — the posts, the locks,
+ * the rooms, the rules and the pupils.
+ *
+ * The draft is not. It is what the write REPLACES, so a lesson of it moved by
+ * hand while the solver ran changes nothing the answer depends on: the engine
+ * got it as a hint (previousLessons) and as the price of moving a lesson, never
+ * as something to keep. The write compares which lessons the draft has instead
+ * (draftIds), the one thing it does delete by. Left in, the draft part would
+ * make every hand edit of an unlocked lesson a stale run, and a run is
+ * minutes long.
+ */
+export const WRITE_BASIS_PARTS: readonly BasisPart[] = BASIS_PARTS.filter((part) => part !== 'draft');
+
 /** A lesson regeneration keeps, by content: what the engine was told it must plan around. */
 export interface PreservedContent {
   studentGroupId: string;
@@ -283,6 +303,14 @@ export function changedParts(stored: unknown, current: BasisParts): BasisPart[] 
       ? (stored as Record<string, unknown>)
       : {};
   return BASIS_PARTS.filter((part) => previous[part] !== current[part]);
+}
+
+/**
+ * The parts Generera's write must refuse a difference in, in BASIS_PARTS
+ * order: changedParts without the draft's (WRITE_BASIS_PARTS).
+ */
+export function changedPartsForWrite(start: BasisParts, now: BasisParts): BasisPart[] {
+  return WRITE_BASIS_PARTS.filter((part) => start[part] !== now[part]);
 }
 
 /**
