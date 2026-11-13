@@ -1955,6 +1955,7 @@
     "clearFilters": "Show all",
     "weekTitle": "The week",
     "weekDescription": "Monday to Friday, 08:00–18:00. Pick a class to see its meals.",
+    "weekEmpty": "Nothing to show in the week. Placed lessons, and lessons Generate keeps, appear here.",
     "legend": "Key",
     "legendPlaced": "Coloured box: a placed lesson",
     "legendKept": "Padlock: fixed in the master timetable, and Generate leaves it",

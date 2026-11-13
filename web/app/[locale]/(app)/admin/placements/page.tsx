@@ -119,11 +119,19 @@ export default function PlacementsPage() {
   const postById = useMemo(() => new Map((everything?.posts ?? []).map((post) => [post.id, post])), [everything]);
   const summary = useMemo(() => (everything ? summaryOf(everything) : null), [everything]);
 
-  const cards = useMemo(() => {
-    if (!shown) return [];
-    const lessons = [...placementCards(shown.placements, postById, names), ...keptCards(shown.kept, names)];
-    return [...lessons, ...dayEndMarkers(reachOf(lessons), { title: t("dayEndTitle"), line: t("dayEnd") })];
-  }, [shown, postById, names, t]);
+  const lessonCards = useMemo(
+    () => (shown ? [...placementCards(shown.placements, postById, names), ...keptCards(shown.kept, names)] : []),
+    [shown, postById, names],
+  );
+  // A week with no lesson in it is not drawn: its scrolling box would have nothing to focus (axe's
+  // scrollable-region-focusable) and the day's end strips are not controls. With one lesson the box has a button.
+  const cards = useMemo(
+    () =>
+      lessonCards.length === 0
+        ? []
+        : [...lessonCards, ...dayEndMarkers(reachOf(lessonCards), { title: t("dayEndTitle"), line: t("dayEnd") })],
+    [lessonCards, t],
+  );
   const bands = useMemo(
     () => (shown ? mealBands(shown.meals, (meal) => t("meal", { group: groupById.get(meal.studentGroupId)?.name ?? "" })) : []),
     [shown, groupById, t],
@@ -285,12 +293,18 @@ export default function PlacementsPage() {
               <li>{t("legendKept")}</li>
               <li>{t("legendFailing")}</li>
             </ul>
-            <TimetableGrid
-              lessons={cards}
-              bands={bands}
-              onLessonClick={(lesson) => setSelected((current) => (current === lesson.id ? null : lesson.id))}
-              selectedIds={selected ? new Set([selected]) : undefined}
-            />
+            {lessonCards.length === 0 ? (
+              <p className="text-sm text-muted-foreground" data-testid="placement-week-empty">
+                {t("weekEmpty")}
+              </p>
+            ) : (
+              <TimetableGrid
+                lessons={cards}
+                bands={bands}
+                onLessonClick={(lesson) => setSelected((current) => (current === lesson.id ? null : lesson.id))}
+                selectedIds={selected ? new Set([selected]) : undefined}
+              />
+            )}
             <div aria-live="polite" className="mt-3 text-sm" data-testid="placement-detail">
               {selectedCard ? (
                 <div className="rounded-md border p-3">

@@ -163,14 +163,28 @@ for (const size of VIEWPORTS) {
     });
   }
 
-  test(`Förlägg i veckan at ${size.name}: an empty week still shows the whole school day`, async ({ page, baseURL }) => {
+  test(`Förlägg i veckan at ${size.name}: a week with nothing in it is said and not drawn`, async ({ page, baseURL }) => {
     const misses = await open(page, baseURL!, size, "light", false);
     await expect(page.getByText("Inget är förlagt än")).toBeVisible();
+    await expect(page.getByTestId("placement-week-empty")).toBeVisible();
     const facts = await measure(page);
     expect(facts.problems).toEqual([]);
     expect(facts.pageScrollsSideways).toBe(false);
-    // Nothing reaches the afternoon: the grid would stop at 16:00, so the day's end is drawn.
-    expect(facts.dayEnd).toBe(5);
+    expect(facts.cards).toBe(0);
+    expect(misses, MISSES).toEqual([]);
+  });
+
+  test(`Förlägg i veckan at ${size.name}: a week whose lessons end early is still drawn to 18:00`, async ({ page, baseURL }) => {
+    const misses = await open(page, baseURL!, size, "light", true);
+    // Anna's one förläggning is Tuesday 10:00–11:00: the grid would stop at 16:00 for it.
+    await page.getByRole("button", { name: /Lärare/ }).click();
+    await page.getByRole("menuitemcheckbox", { name: "Anna Lind", exact: true }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-lesson-id^='placement:']")).toHaveCount(1);
+    const facts = await measure(page);
+    expect(facts.problems).toEqual([]);
+    expect(facts.pageScrollsSideways).toBe(false);
+    expect(facts.dayEnd, "the strips that end the school day").toBe(5);
     expect(facts.hours.at(-1)).toBe("17:00");
     expect(misses, MISSES).toEqual([]);
   });

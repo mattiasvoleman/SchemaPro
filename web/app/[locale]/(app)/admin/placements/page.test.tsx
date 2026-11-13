@@ -232,6 +232,13 @@ describe("the week", () => {
     expect(document.querySelectorAll("[data-lesson-id^='day-end:']")).toHaveLength(5);
   });
 
+  it("does not draw a week with no lesson in it, since its scrolling box would have nothing to focus", () => {
+    state.board = board({ placements: [], kept: [] });
+    render(<PlacementsPage />);
+    expect(screen.getByTestId("placement-week-empty")).toHaveTextContent("weekEmpty");
+    expect(document.querySelector("[data-lesson-id]")).not.toBeInTheDocument();
+  });
+
   it("opens a card's own words, with its verdict, under the week", async () => {
     render(<PlacementsPage />);
     await userEvent.click(document.querySelector("[data-lesson-id='placement:row-bad']")!);

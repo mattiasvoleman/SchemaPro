@@ -1955,6 +1955,7 @@
     "clearFilters": "Visa allt",
     "weekTitle": "Veckan",
     "weekDescription": "Måndag till fredag, 08:00–18:00. Välj en klass för att se dess måltider.",
+    "weekEmpty": "Inget att visa i veckan. Förläggningar och lektioner som Generera behåller syns här.",
     "legend": "Teckenförklaring",
     "legendPlaced": "Färgad ruta: en förlagd lektion",
     "legendKept": "Hänglås: ligger fast i grundschemat, och Generera lämnar den",
