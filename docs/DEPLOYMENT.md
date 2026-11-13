@@ -4953,7 +4953,9 @@ Two changes, in two releases. No migration in either.
    weeks it refuses the same behind an earlier count, once it is the one
    said, and a 400 has no such weeks). The weeks are weighed by
    `periodWeeks`, where the odd and the even weeks of a period count as many
-   each, so "most" is most to within a week a period. Weeks with nothing to
+   each, so "most" is most to within a week a period, unless the gateway said
+   how many of them are odd (`periodOddWeeks`, 19.7): then they are the real
+   ones. Weeks with nothing to
    place are not asked. Where no week was left out, two weeks that agree name
    none; where a week was, they name none only if the year without a post of
    its own is refused the same way: a teacher's trouble is named by where it
@@ -4962,7 +4964,10 @@ Two changes, in two releases. No migration in either.
    that hold a week of the parity the engine counted (week 53 and week 1 are
    both odd): a period that has none of that parity is left out, and so is a
    lone week of the other parity before a longer stretch. A stretch that is
-   named is named whole, with the other parity's weeks inside it.
+   named is named whole, with the other parity's weeks inside it. Where none
+   of the periods named has a stretch of the parity (the engine counted the
+   even weeks of a period that is week 53 and week 1 alone), nothing is left
+   out and the dates stand as they came.
 
    Three verdicts solve a model instead of counting (the lunch stage, a
    class's hours, the year's tightest week). They run on at most eight weeks
@@ -4971,7 +4976,8 @@ Two changes, in two releases. No migration in either.
    in, and the handbook (4.2) says that it may hold in more.
 
 A third release, on top of these, reads a post's days and a teacher's own
-lunch period by period: 19.5.
+lunch period by period: 19.5. A fourth reads them by parity too, and no longer
+counts or names a cell that no real week is in: 19.7.
 
 ### 19.1 Deploy order
 
@@ -5261,3 +5267,67 @@ CHECK), the snapshot's, what each role reads and writes, and the cascades; the
 *Meal per term probe* in CI runs the oracle over the calendar date by date,
 the snapshot, the placement and its race, and the board's reader.
 
+### 19.7 A teacher's lunch and days, by parity
+
+A fourth release, on top of 19.5; no migration. The odd and even weeks of a
+period were held together by a teacher's two rules, and a week of one parity
+was refused a day or an hour the other parity's lessons take (the review of
+#302: 20 of 1 700 small worlds, every one with locks or days that differ
+between odd and even weeks).
+
+- **The days of a post.** `lockedWeekdayPeriods` entries get an optional
+  `recurrence` (`ODD_WEEKS` or `EVEN_WEEKS`; absent is both) and a week is
+  held against the sets of its own parity. The gateway sends it only where
+  some period's odd and even weeks hold other sets, after what a larger set
+  implies is left out inside each parity
+  (`lockedWeekdaySetsByPeriod`, `src/common/teacher-day.ts`); a teacher whose
+  parities agree in every period is sent the list she always was. A period
+  with weeks of one parity only (the läsår's first, incomplete week) is read
+  as that parity's sets for both. The engine reads the field with
+  `weeks_of`, so every rule that asks which sets a week is held against asks
+  it of the parity too.
+- **A teacher's own lunch.** One break a period for both parities, as
+  before, except for a teacher whose lessons or locked lessons in her lunch
+  window are told apart by parity (`weeks.needs_a_part_per_parity`): such a
+  teacher has a break for each odd and even week of each period, clear of that
+  week's lessons and locks, and a refusal of her lunch before the model says
+  `parity` beside the periods when it is one parity's. A request in which no
+  teacher is so told apart builds the model it built, byte for byte
+  (`benchmarks/model_identity.py`).
+- **A cell no real week is in** (`periodOddWeeks`; the review of #304,
+  MEDEL-2). The engine's week is a period in a parity, so a period of one week
+  (the läsår's first two days, a test week, the weeks between terms) had a
+  cell for the other parity that no calendar has: a post of the odd weeks
+  dated into a period that is one even week was held, counted and built
+  there, and a school whose every real week fits was refused for it; and a
+  refusal of the real week said "the even weeks" of a period that has no
+  others. The gateway now says how many of each period's weeks are odd
+  (`periodOddWeeks`, in the order of `periodWeeks`, and beside it wherever it
+  is sent). A period with weeks of one parity alone is every läsår that starts
+  on a Saturday (its first two days are one odd week), so every school of the
+  kind this was built for. The engine takes a post of a parity out of the
+  periods that have none of it (one that would then run in no week at all is
+  left as it came), asks nothing of a cell no week is in (the counts, the
+  lunch read week by week, the lines of Bästa möjliga schema), says a period
+  whole where its only real week is ("period 1", not "the even weeks of
+  period 1"), and fills such a period in when it decides whether the words
+  say exactly the weeks a refusal is given in. A request without the field
+  is read as it was (the engine acts on it only where some period lacks a
+  parity).
+- **Which refusal is said** (the same review, LÅG-1 and LÅG-2). Where the
+  field is sent the refusal is chosen by the real weeks that give it (an odd
+  and an even week were as many in a period of three), and weeks that no words
+  say exactly are said as their first week and no more (before, as the first
+  group of cells, which could hold a period whole beside another's odd
+  weeks, and so name a period too many).
+
+Deploy and roll back as 19.2 and 19.5: the older engine answers 422
+(`extra_forbidden` at `lockedWeekdayPeriods.N.recurrence`, or at
+`periodOddWeeks`) to a request that carries either, and the gateway says it
+as 503 `ENGINE_LACKS_PERIODS`. **`periodOddWeeks` is sent on every run of a
+school that dates a post** (beside `periodWeeks`), so the engine's release
+goes first (19.1): until it is live, those schools are told to try again in a
+few minutes. The days by parity are sent only where a
+teacher's parities differ, and production had no post with a day limit and no
+locked lesson when this was written. Schemaförslag of a school that is sent
+either field go stale once, as in 19.4: the candidate basis reads them.
