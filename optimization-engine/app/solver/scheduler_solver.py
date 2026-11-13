@@ -3728,6 +3728,8 @@ class SchedulerSolver:
         lunch_group_ids: list[UUID],
         shares_students: dict[UUID, list[UUID]],
         window: tuple[int, int, int],
+        *,
+        coupled: bool = False,
     ) -> dict[UUID, list[tuple[Weeks, dict[tuple[UUID, int], list[tuple[int, int]]], dict[tuple[UUID, int], int]]]]:
         """Klassens måltid per del av läsåret: the parts of the year a class's meal tells apart.
 
@@ -3737,7 +3739,11 @@ class SchedulerSolver:
         narrowing of its domain, _lunch_starts_blocked_by_fixed_lessons) and
         the start the school placed by hand. Two periods whose locks leave the
         class the same starts on every day, and that place the same meals, are
-        one part: the meal is one there, as it always was. Locks that differ
+        one part: the meal is one there, as it always was. It is THE STARTS A
+        LOCK LEAVES that are compared and not the lock: a lesson that runs
+        10:15-11:15 in the autumn and one that runs 10:30-11:15 in the spring
+        leave a lunch window of 11:00-12:00 the same starts, and are one part.
+        Locks that differ
         cut the year, and a lock in the autumn that fills the window beside a
         lock in the spring that fills it too no longer refuse a year whose
         every term has a gap (_lunch_lock_periods says it of the year).
@@ -3754,6 +3760,18 @@ class SchedulerSolver:
         part's. And never joined: the pre-flight reads each period's locks on
         its own (_verify_lunch), and a part over two periods' locks could be
         an empty domain it never saw.
+
+        THE DINING HALL COUPLES THE CLASSES (`coupled`). Its seats are one
+        resource every class's meal draws on, so a class with no lock of its
+        own can need to eat at one time in the autumn and another in the
+        spring because another class's locks leave the hall no other way to
+        seat them both: cut by the classes' own locks alone, it would be
+        asked for one time all year and the school refused though a timetable
+        exists. A coupled school is cut by every class's locks together, the
+        common refinement, and every class has the same parts; the parts of a
+        class that none of the locks tell apart cost a variable each and are
+        pulled together by the same soft term as any others (and answered as
+        one meal, as they are one). Without a hall nothing couples them.
 
         Only classes with MORE THAN ONE part are returned: each as its parts'
         weeks, with the locks' starts and the placed meals of one period of
@@ -3778,10 +3796,19 @@ class SchedulerSolver:
                 lunch_group_ids,
             ))
         signatures: dict[UUID, list[tuple[object, object]]] = {group_id: [] for group_id in lunch_group_ids}
+        slots_per_day = self._grid.slots_per_day
         for period in range(periods):
             forbidden_of: dict[UUID, dict[int, tuple[tuple[int, int], ...]]] = defaultdict(dict)
             for (group_id, day_index), starts in blocked[period].items():
-                forbidden_of[group_id][day_index] = _merged(starts)
+                # The starts the locks leave, not the intervals they close:
+                # clipped to where a meal can start (as _forbidden_lunch_starts
+                # clips), so two locks that differ only outside the window
+                # are the same part.
+                first = day_index * slots_per_day + window_start
+                last = day_index * slots_per_day + window_end - lunch_slots
+                forbidden_of[group_id][day_index] = _merged_starts(
+                    [(max(low, first), min(high, last)) for low, high in starts],
+                )
             pinned_of: dict[UUID, dict[int, int]] = defaultdict(dict)
             for (group_id, day_index), slot in pins[period].items():
                 pinned_of[group_id][day_index] = slot
@@ -3790,10 +3817,21 @@ class SchedulerSolver:
                     tuple(sorted(forbidden_of[group_id].items())),
                     tuple(sorted(pinned_of[group_id].items())),
                 ))
+        # What tells two periods apart, for the class itself or, where the hall
+        # couples them, for any class: the classes' signatures side by side.
+        told_by: dict[UUID, list[object]] = {
+            group_id: list(signatures[group_id]) for group_id in lunch_group_ids
+        }
+        if coupled:
+            together = [
+                tuple(signatures[group_id][period] for group_id in lunch_group_ids)
+                for period in range(periods)
+            ]
+            told_by = {group_id: list(together) for group_id in lunch_group_ids}
         parts: dict[UUID, list[tuple[Weeks, dict[tuple[UUID, int], list[tuple[int, int]]], dict[tuple[UUID, int], int]]]] = {}
         for group_id in lunch_group_ids:
-            held: dict[tuple[object, object], list[int]] = {}
-            for period, signature in enumerate(signatures[group_id]):
+            held: dict[object, list[int]] = {}
+            for period, signature in enumerate(told_by[group_id]):
                 held.setdefault(signature, []).append(period)
             if len(held) < 2:
                 continue
@@ -13696,6 +13734,10 @@ class SchedulerSolver:
                     lunch_group_ids,
                     shares_students,
                     (window_start, window_end, lunch_slots),
+                    # A hall too small for the whole school at once is one
+                    # resource the classes' meals share (_lunch_parts).
+                    coupled=seats is not None
+                    and sum(headcount_by_group.get(group_id, 0) for group_id in lunch_group_ids) > seats,
                 )
                 if lunch_periods > 0
                 else {}
@@ -16154,12 +16196,10 @@ class SchedulerSolver:
                 )
         # Stable order: the dict is insertion-ordered by (group, day) already,
         # but a response a school reads should not depend on that being true.
-        # A class's meals follow each other in the order of the year.
-        lunches.sort(key=lambda lunch: (
-            str(lunch.student_group_id),
-            lunch.day_of_week,
-            lunch.periods.index(True) if lunch.periods else -1,
-        ))
+        # A class's meals follow each other in the order of the year: the
+        # sort is stable and `by_start` was filled in the order of the parts,
+        # which are ordered by their first period.
+        lunches.sort(key=lambda lunch: (str(lunch.student_group_id), lunch.day_of_week))
         return lunches
 
     def _extract_lessons(
@@ -17272,17 +17312,13 @@ class _MealStarts(dict):  # type: ignore[type-arg]
         super().__init__()
         self.parts: dict[tuple[UUID, int], list[tuple[Weeks | None, cp_model.IntVar]]] = {}
 
-    def in_weeks(self, key: tuple[UUID, int], week: Weeks | str | None) -> list[cp_model.IntVar]:
-        """The variables of the meal in the weeks `week` (every week for None): one for a class with one part."""
-        held = self.parts.get(key)
-        if held is None:
-            variable = self.get(key)
-            return [] if variable is None else [variable]
-        return [variable for part, variable in held if part is None or meet(part, week)]
 
+def _merged_starts(intervals: list[tuple[int, int]]) -> tuple[tuple[int, int], ...]:
+    """These INCLUSIVE start intervals as the fewest that say the same, in order: what two sets of locks leave of a window compared by.
 
-def _merged(intervals: list[tuple[int, int]]) -> tuple[tuple[int, int], ...]:
-    """These inclusive intervals as the fewest that say the same, in order: what two sets of locks leave of a window compared by."""
+    Not `_merged`, which joins half-open spans and is another reader's: two
+    definitions of one name left the later one to every caller of the first.
+    """
     merged: list[tuple[int, int]] = []
     for low, high in sorted(intervals):
         if merged and low <= merged[-1][1] + 1:

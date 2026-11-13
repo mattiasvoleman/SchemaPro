@@ -622,6 +622,20 @@ describe('ScheduleCandidatesService', () => {
       }
     });
 
+    it('keeps the periods of a meal that is one of its day’s several, and reads them back as the engine said them', async () => {
+      // Klassens måltid per del av läsåret: a class's two meals of a day, each for some periods of the year.
+      // Stored without the mask, the apply would write them as two rows of the whole läsår, which the table refuses.
+      const meals = [
+        { studentGroupId: G7A, dayOfWeek: 1, startTime: '11:30:00', endTime: '12:00:00', periods: [true, false] },
+        { studentGroupId: G7A, dayOfWeek: 1, startTime: '11:00:00', endTime: '11:30:00', periods: [false, true] },
+      ];
+      proxy.solveCandidate.mockResolvedValueOnce(solved({ lunches: meals }));
+      await startAndRun(dto({ count: 1 }));
+
+      expect(stored[0]!['lunches']).toEqual(meals);
+      expect(storedLunchesOf(stored[0]!['lunches'])).toEqual(meals);
+    });
+
     it('stores a later INFEASIBLE or TIMEOUT candidate with no metrics and goes on', async () => {
       proxy.solveCandidate
         .mockResolvedValueOnce(solved())

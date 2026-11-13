@@ -5274,8 +5274,16 @@ a class whose parts come to eat at one time is answered with the one meal and no
 mask, as before.
 
 **What a part is.** A group of periods in which the class's meal is held the
-same way: its locked lessons (a förlagd post is one) leave it the same starts
-on every day and the same meals are placed in them. A lesson that is not locked
+same way: its locked lessons (a förlagd post is one) leave it the same STARTS
+on every day (the starts of the lunch window that remain, not the lessons: a
+lock that runs to 12:30 and one that runs to 12:15 leave a window ending at
+12:00 the same starts) and the same meals are placed in them. **A school with a
+dining hall too small for every class at once cuts all its classes by the
+locks of all of them**: the hall is one resource the meals share, so a class
+with no lock of its own can need one time in the autumn and another in the
+spring because another class's locks leave the hall no other way to seat both
+(without this the school was refused though a timetable existed). A hall that
+seats the whole school at once couples nothing. A lesson that is not locked
 cuts nothing: it is laid once and keeps clear of the meal in every week it
 runs. Parts are cut per period, never per parity (the meal is one for the odd
 weeks and the even weeks of a period, as a teacher's own lunch is, 19.3), and
@@ -5320,10 +5328,17 @@ field with the 503 above.
 
 **Tests.** `optimization-engine/tests/test_lunch_parts.py` (the contract, the
 year the old reading refused, the identity of a class whose locks are alike, the
-period's own refusal, pins by period, the hall counted per week, the validator
-that checks the answer's meals in every real week: `benchmarks/
-validate_schedule.py`), `src/optimization/lunch-parts.spec.ts` and the
-persist specs (the rows), `ai-engine-contract.spec.ts` (the key), and the
-*Meal per term probe*, which runs the real engine over a school whose autumn
-locks and spring locks fill the lunch window together and checks every date of
-the läsår.
+period's own refusal, pins by period, the hall counted per week and coupling the
+classes, the validator that checks the answer's meals in every real week:
+`benchmarks/validate_schedule.py`), `src/optimization/lunch-parts.spec.ts` (the
+rows of a mask), `optimization-proxy.service.spec.ts` (from the periods the
+fetch read, through an engine answer with masks, to the rows: in Generera and in
+the apply of a schemaförslag), `schedule-candidates.service.spec.ts` (a stored
+meal keeps its mask) and `ai-engine-contract.spec.ts` (the key). **No CI job
+runs the real engine through Generera**: the *Meal per term probe* (19.6) reads
+the calendar over rows it plants itself and calls no engine. The whole path (a
+real engine, a real Postgres, Generera, the calendar read date by date) was run
+by hand before the release and is not re-run by CI; the engine's own answer is
+checked in every real week by `benchmarks/validate_schedule.lunch_problems`
+inside `test_lunch_parts.py`, and `benchmarks/lunch_flag_identity.py` measures
+that a request whose classes' starts are alike builds the model it built.

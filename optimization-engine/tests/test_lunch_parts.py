@@ -33,7 +33,14 @@ import test_periods as periods
 from app.config import Settings
 from app.exceptions import InvalidScheduleInputError
 from app.schemas.schedule import LunchPlacement, OptimizeScheduleRequest, ScheduledLunch
-from app.solver.scheduler_solver import SchedulerSolver, _period_view, _weeks_and_requests
+from app.solver.scheduler_solver import (
+    SchedulerSolver,
+    _covered_both,
+    _merged,
+    _merged_starts,
+    _period_view,
+    _weeks_and_requests,
+)
 from app.solver.weeks import part_weeks, within
 
 AUTUMN, SPRING, SOLVED = periods.AUTUMN, periods.SPRING, periods.SOLVED
@@ -151,6 +158,10 @@ def test_the_flag_needs_periods_and_a_mask_on_a_placed_meal_needs_the_flag() -> 
         OptimizeScheduleRequest.model_validate({**payload, "lunchPlacements": [{**placed, "periods": [True, False, False]}]})
     with pytest.raises(ValidationError):
         LunchPlacement.model_validate({**placed, "periods": [True]})
+    # And it names some period and not every one: all of them is the field left out, none is a meal for no week.
+    for mask in ([True, True], [False, False]):
+        with pytest.raises(ValidationError, match="periods must"):
+            LunchPlacement.model_validate({**placed, "periods": mask})
 
 
 def test_a_meal_has_a_mask_only_where_it_is_one_of_several() -> None:
@@ -254,11 +265,11 @@ def test_a_class_whose_locks_are_alike_in_every_period_has_the_meal_it_had() -> 
     assert _read(with_flag, first) == []
 
 
-def _proto_of(payload: dict[str, object]) -> bytes:
+def _proto_of(payload: dict[str, object], days: str = "1") -> bytes:
     """The model a request builds, as the bytes of its proto (benchmarks/model_identity.py takes them the same way)."""
     import tempfile
 
-    solver = SchedulerSolver(_settings())
+    solver = SchedulerSolver(_settings(days))
     model, *_ = solver._build_model(
         OptimizeScheduleRequest.model_validate(payload), use_assumptions=False, include_objective=True,
     )
@@ -398,6 +409,58 @@ def test_a_hall_too_small_for_a_term_refuses_the_term_and_only_it() -> None:
     assert response.status not in SOLVED
 
 
+def _start_variables(payload: dict[str, object], group: str, days: str = "1") -> int:
+    """How many meal-start variables the model built for a class (a part and a day each)."""
+    solver = SchedulerSolver(_settings(days))
+    model, *_ = solver._build_model(
+        OptimizeScheduleRequest.model_validate(payload), use_assumptions=False, include_objective=True,
+    )
+    return sum(1 for variable in model.Proto().variables if variable.name.startswith(f"lunchstart_{group}_"))
+
+
+QUARTER_AUTUMN = ("11:00:00", "11:15:00", {"periods": AUTUMN})
+QUARTER_SPRING = ("11:30:00", "11:45:00", {"periods": SPRING})
+
+
+def test_the_hall_couples_the_classes_a_class_with_no_lock_eats_at_another_time_in_each_term() -> None:
+    """7A has no lock at all, and the hall is the reason it eats at one time in the autumn and another in the spring.
+
+    A hall of one class at a time, a meal of half an hour in 11:00-12:00, and
+    7B locked in the first quarter hour of the autumn and in the third of the
+    spring: in the autumn only 7B at 11:30 and 7A at 11:00 fit, in the spring
+    7B at 11:00 and 7A at 11:30. A school cut by each class's own locks would
+    give 7A one part and ask it for one time all year, which no year has.
+    """
+    payload, (a, b) = _school(QUARTER_AUTUMN, QUARTER_SPRING, classes=2, seats=20, owners=[1, 1])
+    response = _solve(payload)
+    assert response.status in SOLVED
+    assert _meals(response, a) == [("11:00", (True, False)), ("11:30", (False, True))]
+    assert _meals(response, b) == [("11:30", (True, False)), ("11:00", (False, True))]
+    assert _read(payload, response) == []
+    # Without the hall nothing couples them: 7A has one meal and, as it always had, no mask.
+    free, (a, b) = _school(QUARTER_AUTUMN, QUARTER_SPRING, classes=2, owners=[1, 1])
+    answer = _solve(free)
+    assert answer.status in SOLVED
+    assert [mask for _, mask in _meals(answer, a)] == [None]
+    assert len(_meals(answer, b)) == 2
+    assert _start_variables(free, a) == 1
+
+
+def test_a_hall_that_seats_the_whole_school_at_once_couples_nothing() -> None:
+    """Forty pupils in a hall of forty: no meal of one class can keep another from its seat, so 7A is one part."""
+    for seats, parts_of_a in ((40, 1), (39, 2), (20, 2)):
+        payload, (a, b) = _school(QUARTER_AUTUMN, QUARTER_SPRING, classes=2, seats=seats, owners=[1, 1])
+        assert _start_variables(payload, a) == parts_of_a, seats
+        assert _start_variables(payload, b) == 2, seats
+
+
+def test_a_school_with_a_hall_where_no_class_has_parts_builds_the_model_it_built() -> None:
+    """The coupling cuts nothing by itself: locks alike in every period leave one part in every class."""
+    alike, _ = _school(("11:00:00", "11:15:00", {}), classes=2, seats=20, owners=[0, 0])
+    without = {key: value for key, value in alike.items() if key != "lunchPerPeriod"}
+    assert _proto_of(alike) == _proto_of(without)
+
+
 # ---------------------------------------------------------------------------
 # The lessons keep clear of the meal of their own part
 # ---------------------------------------------------------------------------
@@ -446,6 +509,28 @@ def test_the_weeks_a_request_is_cut_into_carry_the_meals_placed_for_them() -> No
         assert week_request.lunch_placements[0].periods is None
     starts = {week.suffix(): placed.lunch_placements[0].start_time for week, placed in weeks if week is not None}
     assert sorted(starts.values()) == ["11:00:00", "11:30:00"]
+
+
+def test_a_request_whose_only_difference_between_the_weeks_is_a_placed_meal_is_cut_into_them() -> None:
+    """No lesson and no lock tells the periods apart, and the meals placed for each do: two weeks, not one."""
+    group = str(uuid4())
+    payload = _payload(
+        [_requirement(group, 2)],
+        rules=MEAL,
+        lunchPerPeriod=True,
+        periodWeeks=[20, 21],
+        lunchPlacements=[
+            {"studentGroupId": group, "dayOfWeek": 1, "startTime": "11:00:00", "periods": AUTUMN},
+            {"studentGroupId": group, "dayOfWeek": 1, "startTime": "11:30:00", "periods": SPRING},
+        ],
+    )
+    weeks = _weeks_and_requests(OptimizeScheduleRequest.model_validate(payload))
+    assert len(weeks) == 2
+    assert sorted(placed.lunch_placements[0].start_time for _, placed in weeks) == ["11:00:00", "11:30:00"]
+    response = _solve(payload)
+    assert response.status in SOLVED
+    assert _meals(response, group) == [("11:00", (True, False)), ("11:30", (False, True))]
+    assert _read(payload, response) == []
 
 
 def test_a_period_view_is_the_request_of_one_period() -> None:
@@ -520,6 +605,71 @@ def test_locks_that_lie_differently_and_take_the_same_starts_are_one_part() -> N
     assert _read(payload, response) == []
     # One part, so not a variable more than the year's reading builds: the model is the one without the flag.
     assert _proto_of(payload) == _proto_of({key: value for key, value in payload.items() if key != "lunchPerPeriod"})
+
+
+def test_locks_that_differ_only_outside_the_window_leave_the_same_starts_and_are_one_part() -> None:
+    """A part is the starts a lock leaves in the window, not the lock: what it closes beyond the window is no part.
+
+    A lesson 11:30-12:30 in the autumn and one 11:30-12:15 in the spring both
+    leave the window 11:00-12:00 the start 11:00 alone, whatever they do after
+    12:00; a lesson 10:15-11:15 and one 10:30-11:15 both leave 11:15 and after.
+    Each is the one part the class had, and builds the model it built without
+    the flag, and the answer says one meal.
+    """
+    for autumn, spring in (
+        (("11:30:00", "12:30:00"), ("11:30:00", "12:15:00")),
+        (("10:15:00", "11:15:00"), ("10:30:00", "11:15:00")),
+        (("10:00:00", "11:15:00"), ("10:00:00", "11:15:00")),
+    ):
+        payload, (group,) = _school(
+            (*autumn, {"periods": AUTUMN}), (*spring, {"periods": SPRING}),
+        )
+        without = {key: value for key, value in payload.items() if key != "lunchPerPeriod"}
+        assert _proto_of(payload) == _proto_of(without), (autumn, spring)
+        assert _start_variables(payload, group) == 1
+        response = _solve(payload)
+        assert response.status in SOLVED
+        assert [mask for _, mask in _meals(response, group)] == [None]
+    # The control: locks that leave different starts are two parts, as they were.
+    payload, (group,) = _school(
+        ("11:30:00", "12:30:00", {"periods": AUTUMN}), ("11:15:00", "12:30:00", {"periods": SPRING}),
+    )
+    assert _start_variables(payload, group) == 2
+
+
+def test_the_starts_a_lock_leaves_are_read_on_the_day_it_is_on_and_to_the_edges_of_the_window() -> None:
+    """The clip is the window's own: Tuesday's window is not Monday's, and a start at an edge is a start.
+
+    A lock of the autumn 10:15-11:15 and one of the spring 10:30-11:15 leave
+    the same starts on Tuesday as on Monday (one part). At the edges of the
+    window: a lock ending at 11:35 and one ending at 11:40 both close every
+    start the window has from 11:05, and a lock beginning 11:25 and one
+    beginning 11:20 both close every start up to 11:25 from the window's own
+    first start, 11:00.
+    """
+    cases = (
+        (("10:15:00", "11:15:00"), ("10:30:00", "11:15:00"), {"dayOfWeek": 2}),
+        (("11:30:00", "11:35:00"), ("11:30:00", "11:40:00"), {}),
+        (("11:25:00", "11:30:00"), ("11:20:00", "11:30:00"), {}),
+    )
+    for autumn, spring, where in cases:
+        payload, (group,) = _school(
+            (*autumn, {"periods": AUTUMN, **where}), (*spring, {"periods": SPRING, **where}),
+        )
+        # Two days, so that Tuesday is a day of the grid; one variable for Monday and one for Tuesday.
+        assert _start_variables(payload, group, "1,2") == 2, (autumn, spring)
+        without = {key: value for key, value in payload.items() if key != "lunchPerPeriod"}
+        assert _proto_of(payload, "1,2") == _proto_of(without, "1,2"), (autumn, spring)
+
+
+def test_the_two_helpers_that_merge_intervals_are_two_and_keep_their_own_readings() -> None:
+    """`_merged` joins half-open spans and `_merged_starts` inclusive starts; one name for both gave the second to the first's callers."""
+    assert _merged([(0, 2), (3, 5)]) == [(0, 2), (3, 5)]
+    assert _merged_starts([(0, 2), (3, 5)]) == ((0, 5),)
+    assert _merged([(0, 3), (3, 5), (7, 7)]) == [(0, 5)]
+    assert _merged_starts([(7, 7), (0, 3), (9, 10)]) == ((0, 3), (7, 7), (9, 10))
+    # A slot left uncovered between two spans is not covered by what counts what two sets cover.
+    assert _covered_both([(0, 5)], [(0, 2), (3, 5)]) == 4
 
 
 def test_a_lock_of_one_parity_is_the_part_s_in_both_and_the_meal_is_one_for_the_two() -> None:
