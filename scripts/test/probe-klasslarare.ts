@@ -55,7 +55,9 @@
  *         for a lesson of the template and for one date, and what the gate of a room change on one date says;
  *   kl-s  a lesson an exam week (G4, through the schedule activities of D3) has cancelled, and the replacement lesson
  *         it laid, meet the klasslärare as named reasons and never as an error, for a draft written before and one
- *         written after; a change of the template goes on over the cancelled lesson and leaves it be.
+ *         written after; a change of the template goes on over the cancelled lesson and leaves it be;
+ *   kl-t  a lesson Generera wrote from a förläggning is no draft of the template's to move: refused with its reason in the list, the
+ *         check, the draft and the publication, whether the draft was written before or after it was placed.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -960,6 +962,56 @@ export async function klasslarareChecks(owner: Client, api: PrismaService, marke
     await owner.query(`DELETE FROM "CalendarLessons" WHERE "schoolId" = $1 AND "masterLessonId" = $2`, [s, examMaster]);
     await owner.query(`DELETE FROM "MasterLessons" WHERE id = $1`, [examMaster]);
     await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND role = 'STUDENT'`, [s]);
+  });
+
+  await check('(kl-t) a lesson Generera wrote from a förläggning is not the klasslärare’s to move: listed refused, a draft refused with the reason, and a draft written before it was placed is REFUSED at publication, not CONFLICT with nothing in it', async () => {
+    // A lesson of 4A’s template that nothing has placed and no draft waits for: Tuesday 08:30, in the open hours.
+    const mP = await master(svenska, g4a, sal1, karin, 2, '08:30', '09:30');
+    const before = await template(mP);
+    assert.equal(before.refusal, null);
+    const made = await teacherService.create(g4a, { kind: 'TEMPLATE_MOVE', masterLessonId: mP, baseVersion: before.version, targetDayOfWeek: 2, targetStart: '10:00', targetEnd: '11:00' }, karin);
+    // Generera writes the lesson from a förläggning on the timplanspost.
+    await owner.query(`UPDATE "MasterLessons" SET "fromPlacement" = true WHERE id = $1`, [mP]);
+    try {
+      assert.equal((await template(mP)).refusal, 'LESSON_IS_PLACED', 'the week lists the lesson as refused, with its reason');
+      const checked = (await teacherService.check(g4a, karin)).find((row) => row.change.id === made.id)!;
+      assert.deepEqual(checked.verdict, { state: 'REFUSED', reason: 'LESSON_IS_PLACED' });
+      const seen = (await adminService.drafts(g4a, sara)).find((row) => row.change.id === made.id)!;
+      assert.deepEqual(seen.verdict, { state: 'REFUSED', reason: 'LESSON_IS_PLACED' });
+      const rev = (await one<{ rev: number }>(`SELECT rev FROM "ClassTeacherChanges" WHERE id = $1`, [made.id])).rev;
+      assert.deepEqual((await adminService.publish(g4a, [made.id], sara)).outcomes, [{ id: made.id, outcome: 'REFUSED', reason: 'LESSON_IS_PLACED' }]);
+      const row = await one<{ dayOfWeek: number; startTime: string }>(`SELECT "dayOfWeek", "startTime"::text FROM "MasterLessons" WHERE id = $1`, [mP]);
+      assert.deepEqual([row.dayOfWeek, row.startTime], [2, '08:30:00'], 'the lesson was not moved');
+      const draft = await one<{ status: string; rev: number }>(`SELECT status, rev FROM "ClassTeacherChanges" WHERE id = $1`, [made.id]);
+      assert.deepEqual([draft.status, draft.rev], ['DRAFT', rev], 'a draft refused before it was claimed is left a draft at its revision');
+      await teacherService.discard(g4a, made.id, rev, karin);
+
+      // And a new draft for it is refused as it is written, by its reason, with nothing written.
+      const version = (await template(mP)).version;
+      const refused = await refusedWith(() => teacherService.create(g4a, { kind: 'TEMPLATE_MOVE', masterLessonId: mP, baseVersion: version, targetDayOfWeek: 2, targetStart: '10:00', targetEnd: '11:00' }, karin));
+      assert.deepEqual([refused.status, refused.response.code, refused.response.params], [403, 'CLASS_TEACHER_OUTSIDE_FRAME', { reason: 'LESSON_IS_PLACED' }]);
+      assert.equal((await one<{ n: string }>(`SELECT count(*) AS n FROM "ClassTeacherChanges" WHERE "masterLessonId" = $1`, [mP])).n, '0');
+    } finally {
+      await owner.query(`UPDATE "MasterLessons" SET "fromPlacement" = false WHERE id = $1`, [mP]);
+    }
+    // The same race: the förläggning wrote it between the judging and the writing. The editor says LESSON_IS_PLACED and the outcome says what
+    // it is (the draft was judged OK before the lesson was marked, so the mark is put on at the editor's own refusal).
+    const second = await teacherService.create(g4a, { kind: 'TEMPLATE_MOVE', masterLessonId: mP, baseVersion: (await template(mP)).version, targetDayOfWeek: 2, targetStart: '10:00', targetEnd: '11:00' }, karin);
+    const winner = new (class extends MasterLessonsService {
+      override async update(...args: Parameters<MasterLessonsService['update']>): ReturnType<MasterLessonsService['update']> {
+        await owner.query(`UPDATE "MasterLessons" SET "fromPlacement" = true WHERE id = $1`, [mP]);
+        try {
+          return await super.update(...args);
+        } finally {
+          await owner.query(`UPDATE "MasterLessons" SET "fromPlacement" = false WHERE id = $1`, [mP]);
+        }
+      }
+    })(api, realtime, notifications);
+    const racing = new ClassTeacherAdminService(api, new ClassTeacherEngine(api, winner, calendar, notifications, realtime));
+    const outcome = (await racing.publish(g4a, [second.id], sara)).outcomes[0]!;
+    assert.deepEqual(outcome, { id: second.id, outcome: 'REFUSED', reason: 'LESSON_IS_PLACED' });
+    await teacherService.discard(g4a, second.id, (await one<{ rev: number }>(`SELECT rev FROM "ClassTeacherChanges" WHERE id = $1`, [second.id])).rev, karin);
+    await owner.query(`DELETE FROM "MasterLessons" WHERE id = $1`, [mP]);
   });
 
 }

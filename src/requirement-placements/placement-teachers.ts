@@ -91,6 +91,7 @@ export function placementFollowRefusal(refusal: Extract<PlacementsFollow, { ok: 
     },
     requirementId,
     unstaffed: refusal.unstaffed,
+    startsSharing: refusal.startsSharing,
   });
 }
 

@@ -410,6 +410,14 @@ const UNSTAFFED_SENTENCE =
   'Förläggningen har ingen lärare sedan dess lärare togs bort, och ändringen lämnar ingen lektion utan lärare för den. ' +
   'Ta bort förläggningen först, och förlägg lektionen igen när posten har sina lärare.';
 
+/**
+ * A change of the post that gives it a new huvudlärare and shares its lessons at once, refused for a förläggning of the huvudlärare
+ * who is replaced: it cannot be said whose lesson the förläggning is, so the change is made in two steps.
+ */
+const STARTS_SHARING_SENTENCE =
+  'Posten får en ny huvudlärare och delade lektioner i samma ändring, och då går det inte att avgöra vems lektion förläggningen är. ' +
+  'Byt huvudlärare först och dela lektionerna i ett eget steg, eller ta bort förläggningen först.';
+
 /** Where a förläggning stands, for a refusal that has to say which one is to be changed first. */
 export interface NamedPlacement {
   dayOfWeek: number;
@@ -430,11 +438,13 @@ export interface NamedPlacement {
  * `end`, `weeks`) and never by person; `requirementId` the post it is on, so
  * that a write of many posts (the staffing proposal) can say which; and
  * `unstaffed` that the förläggning names nobody (its teacher was removed),
- * for which the one way on is to remove it (`unstaffed: 1`).
+ * for which the one way on is to remove it (`unstaffed: 1`); and
+ * `startsSharing` that the post got a new huvudlärare and its shares in one
+ * change, so that the förläggning's lesson cannot be told (`starts: 1`).
  */
 export function requirementPlacementsConflict(
   reason: PlacementsRule | null,
-  at: { index?: number; placement?: NamedPlacement; requirementId?: string; unstaffed?: boolean } = {},
+  at: { index?: number; placement?: NamedPlacement; requirementId?: string; unstaffed?: boolean; startsSharing?: boolean } = {},
 ): ConflictException {
   const named = at.placement
     ? {
@@ -451,7 +461,7 @@ export function requirementPlacementsConflict(
     message:
       reason === null
         ? 'Förläggningarna passar inte timplansposten. Ändra förläggningarna eller posten.'
-        : where + (at.unstaffed ? UNSTAFFED_SENTENCE : PLACEMENT_SENTENCES[reason]),
+        : where + (at.unstaffed ? UNSTAFFED_SENTENCE : at.startsSharing && reason === 'TEACHER' ? STARTS_SHARING_SENTENCE : PLACEMENT_SENTENCES[reason]),
     code: REQUIREMENT_PLACEMENTS_DO_NOT_FIT,
     ...(reason !== null
       ? {
@@ -462,6 +472,7 @@ export function requirementPlacementsConflict(
             ...named,
             ...(at.requirementId !== undefined ? { requirementId: at.requirementId } : {}),
             ...(at.unstaffed ? { unstaffed: 1 } : {}),
+            ...(at.startsSharing && reason === 'TEACHER' ? { starts: 1 } : {}),
           },
         }
       : {}),

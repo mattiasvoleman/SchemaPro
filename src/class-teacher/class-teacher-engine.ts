@@ -2,7 +2,7 @@ import { ConflictException, HttpException, Injectable, Logger } from '@nestjs/co
 import { Prisma, type ClassTeacherChange, type PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
-import { MasterLessonsService, type DayLesson } from '../calendar/master-lessons.service';
+import { LESSON_IS_PLACED, MasterLessonsService, type DayLesson } from '../calendar/master-lessons.service';
 import { CalendarLessonsService } from '../calendar/calendar-lessons.service';
 import { reconcilableLessons, wouldRemoveOnUpdate } from '../calendar/propagate-template';
 import { isoWeekday } from '../calendar/publish-days';
@@ -21,6 +21,7 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { datedConflicts, localMinutes, type DatedContext } from './dated-conflicts';
 import {
   isOccasionKind,
+  LESSON_IS_PLACED_REASON,
   type ChangeKind,
   type ChangeView,
   type ConflictView,
@@ -37,6 +38,11 @@ export type ChangeRow = ClassTeacherChange;
 const minutesOf = (time: Date): number => Number(toWallClock(time).slice(0, 2)) * 60 + Number(toWallClock(time).slice(3));
 const dayString = (date: Date | null): string | null => (date ? date.toISOString().slice(0, 10) : null);
 const clockString = (time: Date | null): string | null => (time ? toWallClock(time) : null);
+/** The problem `code` a 409 of the editor carries, when its body has one. */
+const conflictCodeOf = (error: ConflictException): string | null => {
+  const body = error.getResponse();
+  return typeof body === 'object' && body !== null && typeof (body as { code?: unknown }).code === 'string' ? (body as { code: string }).code : null;
+};
 /** HH:MM on the school's clock of an instant. */
 const clockOfInstant = (instant: Date, timezone: string): string => {
   const minutes = localMinutes(instant, timezone);
@@ -140,6 +146,17 @@ export async function lessonState(
   return { version: row.version, snapshot: row.snapshot };
 }
 
+/**
+ * Which of the template's lessons Generera wrote from a förläggning on a timplanspost (MasterLessons.fromPlacement). The editor refuses
+ * every change of such a lesson but lock, unlock and park (LESSON_IS_PLACED), so a draft of the template for one is refused here
+ * before it is claimed, and not found out at the editor with no clash to name.
+ */
+export async function placedMasters(tx: PrismaClient, lessonIds: readonly string[]): Promise<Set<string>> {
+  if (lessonIds.length === 0) return new Set();
+  const rows = await tx.masterLesson.findMany({ where: { id: { in: [...lessonIds] }, fromPlacement: true }, select: { id: true } });
+  return new Set(rows.map((row) => row.id));
+}
+
 /** What a verdict is asked for. */
 export interface EvaluateOptions {
   /** A NEW draft, not yet written: a change waiting on the other layer stops it. */
@@ -217,6 +234,10 @@ export class ClassTeacherEngine {
     if (now.version !== change.baseVersion) {
       return { state: 'STALE', changed: diffSnapshots(change.baseSnapshot, now.snapshot) };
     }
+
+    // A lesson Generera wrote from a förläggning is not moved by a draft of the template (one date's change is another matter): the
+    // editor would refuse it with LESSON_IS_PLACED, and a clash search would find nothing to name.
+    if (!layerIsDated && (await placedMasters(tx, [lessonId])).has(lessonId)) return { state: 'REFUSED', reason: LESSON_IS_PLACED_REASON };
 
     const mode = await publishModeOf(tx, change.schoolId);
     const conflicts = layerIsDated ? await this.occasionConflicts(tx, change) : await this.templateConflicts(tx, change, mode);
@@ -500,6 +521,10 @@ export class ClassTeacherEngine {
     try {
       await this.carryOut(actor, change);
     } catch (error) {
+      if (error instanceof ConflictException && conflictCodeOf(error) === LESSON_IS_PLACED) {
+        // Written from a förläggning in between the judging and the writing: not a clash, and said as what it is.
+        return { id: change.id, outcome: 'REFUSED', reason: LESSON_IS_PLACED_REASON };
+      }
       if (error instanceof ConflictException) {
         // The editor's own check found a clash this one did not (a write in between): named by asking again.
         const again = await this.prisma.withRls(actor, (tx) => this.evaluate(tx, change, options)).catch(() => null);
