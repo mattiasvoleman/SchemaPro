@@ -4959,9 +4959,10 @@ with those beside them; a refusal that one period's locks cause alone
 carries none of them and reads exactly as it did. The way round: move or
 unlock one of the locks.
 
-A meal per period needs a migration (dates on `LunchSittings` and
-`PublishedLunchSittings`, an exclusion constraint in place of the unique
-key) and every reader of the table; it is not built.
+A meal per period needs dates on `LunchSittings` and
+`PublishedLunchSittings`, an exclusion constraint in place of the unique key,
+and every reader of the tables. The tables and the readers are 19.6; the
+generator does not plan a meal per period yet, so the limit stands.
 
 ### 19.4 Operations
 
@@ -5032,3 +5033,95 @@ fails the runs that carry the field with the same 503.
 
 Schemaförslag of a school that is sent the field go stale once, as in 19.4:
 the candidate basis reads it.
+
+### 19.6 A class's meal holds weeks ("Klassens måltid per del av läsåret")
+
+The first release of a class's meal per part of the läsår: the tables and
+every reader of them. **Nothing writes a date yet**, so no school sees a
+difference, and the limit in 19.3 stands (the generator still plans one meal
+a day all year). A later release lets Generera lay one meal per part and the
+school date a meal by hand.
+
+**The migration** `20270209090000_klassens_maltid_har_ett_datum`
+(sha256 `14e0064464ef922dcc5037c38efbdaed81a160b88a6fca27454a456e3bd26b56`).
+`LunchSittings` and `PublishedLunchSittings` get `startDate` and `endDate`
+(`date`, nullable, no default, no backfill: every row there is, and every row
+the API before this one writes, is NULL and NULL, the whole läsår). They are
+the first and the last day the meal holds, a Monday and a Sunday (a CHECK
+each, and one that they are in order), NULL for the läsår's own bound; the
+names and the meaning are `MasterLessons`', and the window is whole weeks
+because the generator plans in whole weeks. The unique key
+`LunchSittings_group_day_key`, and the unique index on
+`PublishedLunchSittings`, are replaced by `EXCLUDE USING gist` over the class,
+the weekday, the läsår (the publication, for the snapshot) and
+`daterange("startDate", "endDate", '[]')`: a class has at most one meal on a
+date. A row with no dates meets every other row of its class and weekday,
+which is what the unique key said. No policy, grant, function or trigger is
+touched, and no policy names a date (section 475 asks).
+
+**Deploy order** is 2's: migrate first, then merge. The file takes both tables
+`ACCESS EXCLUSIVE` first, `NOWAIT` and together, in a loop with a 30 s
+deadline (a request holds them in both orders: Generera writes
+`LunchSittings`, a publication reads it and writes the snapshot). It has a
+`$$` body, so Prisma runs it as one transaction; if the loop gives up nothing
+is changed, and `prisma migrate resolve --rolled-back
+20270209090000_klassens_maltid_har_ett_datum` then `migrate deploy` again is
+all it takes (shown on a throwaway database with a session holding one table
+for longer than the loop waits: the P0001 message above, no column added, the
+old key still there). The tables hold a row per class and weekday (25 in
+production on 2026-11-13, none placed by hand, none published), so the two
+indexes build in milliseconds inside the lock. Run it in a quiet window and
+read `pg_stat_progress_vacuum` first, as 2 says of every NOWAIT migration.
+
+**The one thing the minutes between the migration and the deploy cost.** The
+API before this release places a meal by hand (`POST
+/api/v1/lunch-sittings`, the grid's click on an empty slot) with a Prisma
+`upsert`, which Prisma 7 writes as `INSERT … ON CONFLICT ("academicYearId",
+"studentGroupId", "dayOfWeek") DO UPDATE`. An exclusion constraint cannot be
+the arbiter of an `ON CONFLICT` list, so with the unique key gone that
+statement fails (SQLSTATE 42P10; measured on the throwaway database: "there
+is no unique or exclusion constraint matching the ON CONFLICT
+specification"). The administrator who places a meal in those minutes sees
+the grid's error toast and the meal is not placed; placing it again once the
+new API serves works. Nothing else reads the key: Generera writes with
+`createMany`, `update` and `deleteMany`, and the readers select named
+columns. The new API places by reading the class's meals of the weekday first
+and writing after, and a write that meets the constraint at once (two
+placements for one class and day, neither seeing the other) is a 409
+`WRITE_CONFLICT` ("försök igen"), not a 500.
+
+**What reads the weeks** (every reader asks `src/common/lunch-window.ts`, and
+the browser `web/lib/lunch-window.ts`, which read a date alike): the calendar
+(`CalendarService.materialise` lays each date's meal from the sitting that
+holds the date, none in the weeks no sitting holds), the publication's
+snapshot (`snapshotSittings` and `readPublishedSittings` carry the dates, so a
+refill lays each week's meal), the swap board and the klasslärare's schedule
+(`readBoardFacts`, `boardCodeOf`: a lesson is held to the meals of its own
+weeks, a lesson with no weeks to all of them, a dated board to the meal of its
+date), the schedule exchange (`ON_LUNCH_SITTING`), the admin grid (a meal's
+weeks in its label, the check against every meal of the weekday) and the
+kitchen's flow (a day to show, only when some meal holds weeks). The
+rollover copies no meal (`LunchSitting` is skipped) and the mobile app and
+Måltidskollen read `CalendarLunches`, which are dated already.
+
+**Before and after.** `prod-fore.sql` and `prod-efter.sql` (read-only, one
+`SELECT` per row: `check, got, expected, ok`; text fingerprints ordered with
+`COLLATE "C"`, since production sorts `en_US`) ask: the migration pending or
+run; the four columns; the six CHECKs, validated; the two exclusion
+constraints and their indexes; the old key and index gone; no row with a date;
+the row counts and md5 of the rows equal before and after; the policies'
+names, commands and md5 equal; the privileges per role (`has_table_privilege`
+per role, not as the owner); no MAINTAIN on 17; the md5 of every `app.*`
+function equal (no function is touched); no session holding either table in a
+transaction. Rolling back the code is safe at any time (older code never names
+the columns). Rolling back the migration is not a one-liner once a row has a
+date: restore the unique key only after the rows that share a weekday are
+reduced to one per class, year and weekday.
+
+**Tests.** RLS sections 475 to 479 (`rls-owner-checks.sql` 475 to 477 and 479,
+`rls-policies.sql` 478): the catalogue, what the constraint tolerates and
+refuses (53 weeks of one class and weekday; an update into a conflict; every
+CHECK), the snapshot's, what each role reads and writes, and the cascades; the
+*Meal per term probe* in CI runs the oracle over the calendar date by date,
+the snapshot, the placement and its race, and the board's reader.
+
