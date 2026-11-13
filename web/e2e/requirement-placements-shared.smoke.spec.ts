@@ -52,17 +52,42 @@ async function shapeTheSharedPost(page: Page) {
   });
 }
 
-async function openPlacement(page: Page, baseURL: string, size: { width: number; height: number }) {
+/** The browser's read of the school's people, with some teachers given other names (first name, last name). */
+async function renameTeachers(page: Page, names: Partial<Record<keyof typeof TEACHERS, [string, string]>>) {
+  const byId = new Map(Object.entries(names).map(([key, value]) => [TEACHERS[key as keyof typeof TEACHERS].id, value]));
+  await page.route(`${STUB_ORIGIN}/api/v1/users*`, async (route) => {
+    const response = await route.fetch();
+    if (!(response.headers()["content-type"] ?? "").includes("json")) return route.fulfill({ response });
+    const rows = (await response.json()) as { id: string; firstName: string; lastName: string }[];
+    const renamed = rows.map((person) => {
+      const name = byId.get(person.id);
+      return name ? { ...person, firstName: name[0], lastName: name[1] } : person;
+    });
+    await route.fulfill({ response, body: JSON.stringify(renamed) });
+  });
+}
+
+async function openPlacement(
+  page: Page,
+  baseURL: string,
+  size: { width: number; height: number },
+  names: Parameters<typeof renameTeachers>[1] = {},
+) {
   await signIn(page.context(), "admin", baseURL);
   await freezeClock(page);
   await askForScenario(page, SHARED_PLACEMENTS_SCENARIO);
   const misses = watchStubMisses(page);
   await shapeTheSharedPost(page);
+  await renameTeachers(page, names);
   await page.setViewportSize(size);
   await page.goto(REQUIREMENTS);
   await settle(page);
   // The post's own cell (the marks of its placed lessons follow its name), not 7A's empty Biologi cells beside it.
-  await page.getByRole("button", { name: /^Biologi för 7A: 3 lektioner à 60 minuter och 1 lektion à 40 minuter/ }).click();
+  // Opened by the page's own click handler: that a phone's pinned columns leave the cell reachable is
+  // requirement-matrix.smoke.spec.ts's to say, and this spec is about what stands in the dialog.
+  await page
+    .getByRole("button", { name: /^Biologi för 7A: 3 lektioner à 60 minuter och 1 lektion à 40 minuter/ })
+    .evaluate((button) => (button as HTMLElement).click());
   const cell = await settled(page.getByRole("dialog"));
   await cell.getByRole("button", { name: "Förlägg …" }).click();
   const dialog = await settled(page.getByRole("dialog", { name: /^Förlägg 7A/ }));
@@ -132,6 +157,37 @@ function expectInFlow(facts: Layout, where: string) {
   expect(inside(facts.add), `${where}: the add button is inside the dialog`).toBe(true);
   expect(facts.scrollsSideways, `${where}: the dialog does not scroll sideways`).toBe(false);
   expect(facts.pageScrollsSideways, `${where}: the page does not scroll sideways`).toBe(false);
+}
+
+// Review of #312, MEDEL-1: a count that could not break inside a name was wider than a phone's dialog for two names of
+// two double names each, and "2" was cut off. The name's own spaces are where the line breaks; the figures stay whole.
+for (const size of [{ name: "320×700", width: 320, height: 700 }, ...VIEWPORTS]) {
+  test(`Förlägg a shared post at ${size.name}: a count with double names breaks at the names and does not scroll the dialog sideways`, async ({
+    page,
+    baseURL,
+  }) => {
+    const { dialog, misses } = await openPlacement(page, baseURL!, size, {
+      cecilia: ["Anna Maria", "Andersson Lindqvist"],
+      bo: ["Maria Magdalena", "Gustafsson Andersson"],
+    });
+    const count = dialog.locator("p", { hasText: "Förlagda lektioner per lärare" }).first();
+    await expect(count).toContainText("Anna Maria Andersson Lindqvist 1 av 1, Maria Magdalena Gustafsson Andersson 1 av 2.");
+
+    const facts = await count.evaluate((element) => {
+      const box = element.closest("[role=dialog]")!;
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return {
+        textRight: Math.max(...[...range.getClientRects()].map((rect) => rect.right)),
+        dialogRight: box.getBoundingClientRect().right,
+        scrollsSideways: box.scrollWidth > box.clientWidth,
+      };
+    });
+    expect(facts.textRight, "the count's text ends inside the dialog").toBeLessThanOrEqual(facts.dialogRight + EPS);
+    expect(facts.scrollsSideways, "the dialog does not scroll sideways").toBe(false);
+    expectInFlow(await layout(dialog), "double names");
+    expect(misses, MISSES).toEqual([]);
+  });
 }
 
 for (const size of VIEWPORTS) {

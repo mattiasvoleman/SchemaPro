@@ -498,7 +498,26 @@ export function buildTargetView(
       const key = `${groupId}:${subjectId}`;
       const cell = cells.get(key);
       const line = lineByCell.get(key);
-      if (!cell || !line) return null;
+      if (!cell || !line) {
+        // A child of an ämnesgrupp (Biologi) in a class whose plan names the group (NO) and that has no post in it
+        // has no cell, but the group's line reaches it (subjectFigures reads it the same way for its row): the cell
+        // is empty and says what the line says, in the line's tone, and not a plain "+" that hides a missing target.
+        const top = topOf.get(subjectId) ?? null;
+        const own = top === null ? undefined : summaries.get(groupId)?.lines.find((entry) => entry.nationalCode === top && entry.targetMinutesPerWeek !== null);
+        if (!own) return null;
+        return {
+          planned: 0,
+          target: null,
+          delta: own.deltaMinutesPerWeek,
+          tone: toneOf(own.status),
+          alternative: false,
+          national: true,
+          linePlanned: own.plannedMinutesPerWeek,
+          lineTarget: own.targetMinutesPerWeek,
+          // The subject has no cell, so it is not among the line's own: every one of them is a partner.
+          partnerSubjectIds: own.subjectIds,
+        };
+      }
       return {
         planned: cell.plannedMinutesPerWeek,
         target: cell.targetMinutesPerWeek,

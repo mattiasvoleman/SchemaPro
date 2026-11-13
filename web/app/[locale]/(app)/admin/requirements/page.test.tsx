@@ -1460,6 +1460,35 @@ describe("the ?year= deep link", () => {
     render(<RequirementsPage />);
     expect(await screen.findByText("7A")).toBeInTheDocument();
   });
+
+  // Review of #312, LÅG-5: the id stayed in the address and was carried along with the next choice.
+  it("takes an id that is no year out of the address, and leaves the rest of it", async () => {
+    twoYears();
+    window.history.replaceState(null, "", "/?year=nope&other=1");
+    render(<RequirementsPage />);
+    expect(await screen.findByText("7A")).toBeInTheDocument();
+    await waitFor(() => expect(window.location.search).toBe("?other=1"));
+  });
+
+  it("leaves a year that exists in the address", async () => {
+    twoYears();
+    window.history.replaceState(null, "", "/?year=y2");
+    render(<RequirementsPage />);
+    expect(await screen.findByText("8B")).toBeInTheDocument();
+    expect(window.location.search).toBe("?year=y2");
+  });
+
+  it("does not judge the address before the läsår list has been read", async () => {
+    window.history.replaceState(null, "", "/?year=y2");
+    state.years = pending();
+    const view = render(<RequirementsPage />);
+    expect(window.location.search).toBe("?year=y2");
+
+    twoYears();
+    view.rerender(<RequirementsPage />);
+    expect(await screen.findByText("8B")).toBeInTheDocument();
+    expect(window.location.search).toBe("?year=y2");
+  });
 });
 
 describe("Timplan CSV", () => {
@@ -3474,6 +3503,22 @@ describe("Förlagda poster on the timplan", () => {
     );
   });
 
+  // Review of #312, MEDEL-2: the badge's own tests hand it a name themselves; what they cannot see is that the page does,
+  // in the three places it draws a placed row (the tooltip, the cell's name, the dialog's line).
+  it("names the teacher of a row on a shared post in the tooltip, in the cell's name and beside the mark in the dialog", async () => {
+    state.people = loaded([
+      { id: "t-bo", role: "TEACHER", firstName: "Bo", lastName: "Ek", email: "bo@example.test", isActive: true, studentGroupId: null },
+    ]);
+    state.placements = loaded([placed({ teacherId: "t-bo" })]);
+    render(<RequirementsPage />);
+    const named = `placements.rowOf(${TUESDAY_ROW}|Bo Ek)`;
+
+    expect(within(soCell()).getByText("placements.badge").closest("span[title]")).toHaveAttribute("title", named);
+    expect(soCell().getAttribute("aria-label")).toContain(`placements.badgeNote(${named})`);
+    await userEvent.click(soCell());
+    expect(within(screen.getByRole("dialog")).getByText(named)).toBeInTheDocument();
+  });
+
   it("marks a post's cell in Mål mode as well", async () => {
     state.requirements = loaded([{ ...requirements[0]!, recurrence: "ALL_WEEKS" }, requirements[1]!]);
     state.yearTimplans = loaded([{ gradeLevel: 7, localTimplanId: "p-7", planName: "Grundskola 2026", planStatus: "DECIDED" }]);
@@ -3882,7 +3927,60 @@ describe("Ämne on Timplansposter", () => {
       // Next year's 8B reads Bild: 1 × 60 all year, 43 weeks = 43 h.
       expect(subjectHeaders()).toEqual(["BI"]);
       expect(hoursFor("8B")).toBe("43 h");
-      expect(window.location.search).toBe("?subject=s-bi");
+      // The läsår is in the address too (review of #297, LÅG-3): a reload or a shared link opens on it.
+      expect(window.location.search).toBe("?subject=s-bi&year=y2");
+    });
+
+    it("writes the läsår to the address when the picker changes, beside the subject and whatever else is there", async () => {
+      twoYears();
+      window.history.replaceState(null, "", "/?subject=s-bi&other=1");
+      const user = userEvent.setup();
+      render(<RequirementsPage />);
+
+      await user.click(screen.getByRole("combobox", { name: "yearLabel" }));
+      await user.click(screen.getByRole("option", { name: "2027/2028" }));
+      expect(window.location.search).toBe("?subject=s-bi&other=1&year=y2");
+
+      await user.click(screen.getByRole("combobox", { name: "yearLabel" }));
+      await user.click(screen.getByRole("option", { name: "2026/2027" }));
+      expect(window.location.search).toBe("?subject=s-bi&other=1&year=y1");
+    });
+
+    it("opens on the läsår the address names after a reload", async () => {
+      twoYears();
+      const user = userEvent.setup();
+      const first = render(<RequirementsPage />);
+      await user.click(screen.getByRole("combobox", { name: "yearLabel" }));
+      await user.click(screen.getByRole("option", { name: "2027/2028" }));
+      first.unmount();
+
+      render(<RequirementsPage />);
+      await waitFor(() => expect(screen.getByRole("combobox", { name: "yearLabel" })).toHaveTextContent("2027/2028"));
+    });
+
+    // Review of #297, LÅG-3: Visa grupper utan post is gone with Alla ämnen and came back ticked with the next subject.
+    it("unticks Visa grupper utan post when Alla ämnen takes the checkbox away, so the next subject opens as its posts", async () => {
+      const user = userEvent.setup();
+      render(<RequirementsPage />);
+      await pick(user, "Slöjd");
+      await user.click(withoutPosts()!);
+      expect(withoutPosts()).toBeChecked();
+
+      await pick(user, "subjectFilter.all");
+      await pick(user, "Bild");
+
+      expect(withoutPosts()).not.toBeChecked();
+    });
+
+    it("keeps Visa grupper utan post ticked from one subject to the next, which is a choice the checkbox shows", async () => {
+      const user = userEvent.setup();
+      render(<RequirementsPage />);
+      await pick(user, "Slöjd");
+      await user.click(withoutPosts()!);
+
+      await pick(user, "Bild");
+
+      expect(withoutPosts()).toBeChecked();
     });
   });
 });

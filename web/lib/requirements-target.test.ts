@@ -583,8 +583,9 @@ describe("the parts of a national subject", () => {
       national: true,
       partnerSubjectIds: ["s-tx"],
     });
-    // Trä- och metallslöjd is only in the halves: the class has no cell for it.
-    expect(view.cell("g-7a", "s-tm")).toBeNull();
+    // Trä- och metallslöjd is only in the halves, so the class has no post of it: an empty cell on the line, which the halves carry.
+    expect(view.cell("g-7a", "s-tm")).toMatchObject({ planned: 0, target: null, delta: -25, tone: "pupils", national: true, linePlanned: 40, lineTarget: 65 });
+    expect(view.cell("g-7a", "s-tm")!.partnerSubjectIds.sort()).toEqual(["s-sl", "s-tx"]);
   });
 
   it("totals each column on its own cells, which add up to the class's one line", () => {
@@ -636,7 +637,9 @@ describe("the children of an ämnesgrupp", () => {
     ],
     requirements: [...requirements, row("r-bio7", "g-7a", "s-bio", 1, 30), row("r-fys7", "g-7a", "s-fys", 1, 30)],
   };
-  const view = buildTargetView(computePlannedCoverage(targetInput(children)), children.plans);
+  const childrenInput = targetInput(children);
+  // The subjects go in as the page hands them, so the view knows which subject is a child of which group.
+  const view = buildTargetView(computePlannedCoverage(childrenInput), children.plans, childrenInput.subjects);
 
   it("hands the module the ämnesgrupp on the subjects that have one only", () => {
     const input = targetInput(children);
@@ -663,8 +666,43 @@ describe("the children of an ämnesgrupp", () => {
       partnerSubjectIds: ["s-fys", "s-no"],
     });
     expect(view.cell("g-7a", "s-no")).toMatchObject({ planned: 0, target: 90, delta: -30, national: true, partnerSubjectIds: ["s-bio", "s-fys"] });
-    // Kemi has no post and no entry in 7A: no cell.
-    expect(view.cell("g-7a", "s-kem")).toBeNull();
+    // Kemi has no post and no entry in 7A, but the group's 90 reaches it: an empty cell in the line's tone (60 of 90, under),
+    // which names the others, and not a plain "+" that says nothing of what the plan asks for.
+    expect(view.cell("g-7a", "s-kem")).toEqual({
+      planned: 0,
+      target: null,
+      delta: -30,
+      tone: "under",
+      alternative: false,
+      national: true,
+      linePlanned: 60,
+      lineTarget: 90,
+      partnerSubjectIds: ["s-bio", "s-fys", "s-no"],
+    });
+  });
+
+  it("gives an empty child no cell in a class whose plan has no line for the group, and none outside the group", () => {
+    // 8A's plan names no NO (the NO entry is 7A's), and Mentorstid is on no national line at all.
+    expect(view.cell("g-8a", "s-kem")).toBeNull();
+    expect(view.cell("g-7a", "s-mt")).toBeNull();
+  });
+
+  it("gives an empty child no cell when the plan has no target on the group: nothing to say, and no tone to paint", () => {
+    // 7A's posts on Biologi and Fysik make a NO line, but this plan has no entry on NO (or on the children) for årskurs 7.
+    const noTarget: TargetSources = { ...children, plans: [{ ...plans[0]!, entries: plans[0]!.entries }, plans[1]!] };
+    const noTargetInput = targetInput(noTarget);
+    const noTargetView = buildTargetView(computePlannedCoverage(noTargetInput), noTarget.plans, noTargetInput.subjects);
+    expect(noTargetView.summary("g-7a")!.lines.find((entry) => entry.nationalCode === "NO")).toMatchObject({ targetMinutesPerWeek: null });
+    expect(noTargetView.cell("g-7a", "s-kem")).toBeNull();
+  });
+
+  it("paints the empty child red when the line has nothing planned at all, and with the line's own figures", () => {
+    const bare: TargetSources = { ...children, requirements };
+    const bareInput = targetInput(bare);
+    const bareView = buildTargetView(computePlannedCoverage(bareInput), bare.plans, bareInput.subjects);
+    for (const child of ["s-bio", "s-fys", "s-kem"]) {
+      expect(bareView.cell("g-7a", child)).toMatchObject({ planned: 0, target: null, delta: -90, tone: "unplanned", national: true, linePlanned: 0, lineTarget: 90 });
+    }
   });
 
   it("totals the class on the line once: the posts of the children add up under the group’s 90", () => {
@@ -716,5 +754,61 @@ describe("the children of an ämnesgrupp", () => {
       const hint = draftHint(targetInput(named), "g-7a", "s-kem", fields({ lessonsPerWeek: "1", minutesPerLesson: "60" }));
       expect(hint).toMatchObject({ kind: "target", target: 60, planned: 60, delta: 0, status: "MET", national: false, partnerSubjectIds: [] });
     });
+  });
+});
+
+// Review of #297, round 3: the lines the committed tests did not reach (three mutants survived: lineCodes.add(top) gone,
+// the partner row gone, and `=== top` widened). A school's first weeks of a new läsår look like this: the plan names NO and no
+// class has a post in any of its subjects yet.
+describe("a child of an ämnesgrupp where no class has a post in any of the group's subjects", () => {
+  const mk = (id: string, name: string, nationalCode: string | null, parentCode: string | null) => ({
+    id,
+    name,
+    nationalCode,
+    countsTowardTimplan: true,
+    ...(parentCode ? { parentCode } : {}),
+  });
+  const lineSubjects = [mk("s-no", "Naturorienterande", "NO", null), mk("s-bi", "Biologi", "BI", "NO"), mk("s-fy", "Fysik", "FY", "NO"), mk("s-ma", "Matematik", "MA", null)];
+  const lineGroups = [
+    { id: "g-7a", name: "7A", kind: "CLASS" as const, gradeLevel: 7 },
+    { id: "g-7b", name: "7B", kind: "CLASS" as const, gradeLevel: 7 },
+  ];
+  const linePlans = [{ id: "p", name: "Plan", status: "DECIDED" as const, entries: [{ subjectId: "s-no", gradeLevel: 7, minutesPerWeek: 90 }] }];
+  const lineSources: TargetSources = {
+    year,
+    closures: [],
+    attachments: [{ gradeLevel: 7, localTimplanId: "p" }],
+    plans: linePlans,
+    subjects: lineSubjects,
+    groups: lineGroups,
+    requirements: [],
+    people: [],
+    memberships: [],
+  };
+  const lineView = () => {
+    const input = targetInput(lineSources);
+    return buildTargetView(computePlannedCoverage(input), linePlans, input.subjects);
+  };
+
+  it("shows every class with the group's target, sums the line, and names the line's subject", () => {
+    const bi = lineView().subjectOwn("s-bi")!;
+    expect([...bi.targeted].sort()).toEqual(["g-7a", "g-7b"]);
+    expect(bi.row("g-7a")).toMatchObject({ planned: 0, target: 90, line: "NO" });
+    expect(bi.total).toMatchObject({ planned: 0, target: 180, line: "NO" });
+    expect(bi.partnerSubjectIds).toEqual(["s-no"]);
+  });
+
+  it("gives a subject that is not on the plan's line no class, whatever other lines the plan has", () => {
+    const ma = lineView().subjectOwn("s-ma")!;
+    expect(ma.targeted.size).toBe(0);
+    expect(ma.row("g-7a")).toBeUndefined();
+    expect(ma.total).toMatchObject({ planned: 0, target: null });
+    expect(ma.total.line).toBeUndefined();
+  });
+
+  it("paints the child's empty cell in each of those classes, red, with the group's line behind it", () => {
+    const cell = lineView().cell("g-7b", "s-bi");
+    expect(cell).toMatchObject({ planned: 0, delta: -90, tone: "unplanned", national: true, linePlanned: 0, lineTarget: 90 });
+    expect(lineView().cell("g-7b", "s-ma")).toBeNull();
   });
 });
