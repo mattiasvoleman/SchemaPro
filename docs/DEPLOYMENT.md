@@ -5113,10 +5113,13 @@ the row counts and md5 of the rows equal before and after; the policies'
 names, commands and md5 equal; the privileges per role (`has_table_privilege`
 per role, not as the owner); no MAINTAIN on 17; the md5 of every `app.*`
 function equal (no function is touched); no session holding either table in a
-transaction. Rolling back the code is safe at any time (older code never names
-the columns). Rolling back the migration is not a one-liner once a row has a
-date: restore the unique key only after the rows that share a weekday are
-reduced to one per class, year and weekday.
+transaction. Rolling back the code keeps everything but placing a meal by hand:
+older code never names the columns, but its `upsert` meets the constraint
+instead of the unique key and answers 500 (SQLSTATE 42P10), as in the minutes
+before the deploy, until the new code serves again (moving and removing a meal
+work). Rolling back the migration is not a one-liner once a row has a date:
+restore the unique key only after the rows that share a weekday are reduced to
+one per class, year and weekday.
 
 **Tests.** RLS sections 475 to 479 (`rls-owner-checks.sql` 475 to 477 and 479,
 `rls-policies.sql` 478): the catalogue, what the constraint tolerates and

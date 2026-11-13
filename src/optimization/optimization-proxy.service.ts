@@ -5239,7 +5239,8 @@ export class OptimizationProxyService {
     /*
      * The engine reports a pinned meal back like any other, so the answer for a
      * hand-placed day lands on a row that already exists — and creating over it
-     * would break LunchSittings_group_day_key inside this transaction, after a
+     * would break the exclusion constraint LunchSittings_one_meal_at_a_time
+     * (a class has one meal on a date) inside this transaction, after a
      * solve the school watched succeed. So a hand row keeps its start, the one
      * thing the school said, and takes the rest from the answer: the length,
      * because lunchMinutes may have changed since it was placed, and the
