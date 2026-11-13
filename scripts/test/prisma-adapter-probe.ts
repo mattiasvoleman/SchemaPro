@@ -159,6 +159,7 @@ import { klasslarareChecks, sweepKlasslarareSchool } from './probe-klasslarare';
 import { elevlistanChecks, sweepElevlistanSchool } from './probe-elevlistan';
 import { massvalChecks, sweepMassvalSchool } from './probe-massatgarder';
 import { sweepTenantKeySchools, tenantKeyChecks } from './probe-tenant-keys';
+import { placementWeekChecks, sweepPlacementWeekSchools } from './probe-forlagg-veckan';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import { CoverService } from '../../src/cover/cover.service';
 import { TeacherAbsencesService } from '../../src/cover/teacher-absences.service';
@@ -6064,6 +6065,8 @@ async function runChecks(
   await elevlistanChecks(owner, api, MARKER, check);
   await massvalChecks(owner, api, MARKER, check);
   await pagingOrderChecks(owner, api, MARKER, check);
+  // Förlägg i veckan: the year's week of förläggningar, as each profile reads it.
+  await placementWeekChecks(owner, api, MARKER, check);
 }
 
 
@@ -6580,6 +6583,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepElevlistanSchool(owner, MARKER);
   // Massåtgärder's school, likewise.
   await sweepMassvalSchool(owner, MARKER);
+  // Förlägg i veckan's two schools, likewise.
+  await sweepPlacementWeekSchools(owner, MARKER);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);
   // Lärarens dag's school, whole, likewise.
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-lararensdag'`, [MARKER]);
