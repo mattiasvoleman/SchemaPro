@@ -1452,6 +1452,35 @@ describe("the ?year= deep link", () => {
     render(<RequirementsPage />);
     expect(await screen.findByText("7A")).toBeInTheDocument();
   });
+
+  // Review of #312, LÅG-5: the id stayed in the address and was carried along with the next choice.
+  it("takes an id that is no year out of the address, and leaves the rest of it", async () => {
+    twoYears();
+    window.history.replaceState(null, "", "/?year=nope&other=1");
+    render(<RequirementsPage />);
+    expect(await screen.findByText("7A")).toBeInTheDocument();
+    await waitFor(() => expect(window.location.search).toBe("?other=1"));
+  });
+
+  it("leaves a year that exists in the address", async () => {
+    twoYears();
+    window.history.replaceState(null, "", "/?year=y2");
+    render(<RequirementsPage />);
+    expect(await screen.findByText("8B")).toBeInTheDocument();
+    expect(window.location.search).toBe("?year=y2");
+  });
+
+  it("does not judge the address before the läsår list has been read", async () => {
+    window.history.replaceState(null, "", "/?year=y2");
+    state.years = pending();
+    const view = render(<RequirementsPage />);
+    expect(window.location.search).toBe("?year=y2");
+
+    twoYears();
+    view.rerender(<RequirementsPage />);
+    expect(await screen.findByText("8B")).toBeInTheDocument();
+    expect(window.location.search).toBe("?year=y2");
+  });
 });
 
 describe("Timplan CSV", () => {
@@ -3464,6 +3493,22 @@ describe("Förlagda poster on the timplan", () => {
       "title",
       `${TUESDAY_ROW}; placements.row(thursday|13:00|14:00|Aulan|ODD_WEEKS)`,
     );
+  });
+
+  // Review of #312, MEDEL-2: the badge's own tests hand it a name themselves; what they cannot see is that the page does,
+  // in the three places it draws a placed row (the tooltip, the cell's name, the dialog's line).
+  it("names the teacher of a row on a shared post in the tooltip, in the cell's name and beside the mark in the dialog", async () => {
+    state.people = loaded([
+      { id: "t-bo", role: "TEACHER", firstName: "Bo", lastName: "Ek", email: "bo@example.test", isActive: true, studentGroupId: null },
+    ]);
+    state.placements = loaded([placed({ teacherId: "t-bo" })]);
+    render(<RequirementsPage />);
+    const named = `placements.rowOf(${TUESDAY_ROW}|Bo Ek)`;
+
+    expect(within(soCell()).getByText("placements.badge").closest("span[title]")).toHaveAttribute("title", named);
+    expect(soCell().getAttribute("aria-label")).toContain(`placements.badgeNote(${named})`);
+    await userEvent.click(soCell());
+    expect(within(screen.getByRole("dialog")).getByText(named)).toBeInTheDocument();
   });
 
   it("marks a post's cell in Mål mode as well", async () => {

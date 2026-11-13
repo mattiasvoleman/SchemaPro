@@ -461,6 +461,10 @@ export default function RequirementsPage() {
     setSelectedYearId(value);
     writeQuery("year", value);
   };
+  // An id that is no läsår of the school is left out of the address, or every later choice would carry it along.
+  useEffect(() => {
+    if (years && linkedYearId && !years.some((year) => year.id === linkedYearId)) writeQuery("year", null);
+  }, [years, linkedYearId]);
   const activeYearId =
     selectedYearId ??
     years?.find((year) => year.id === linkedYearId)?.id ??

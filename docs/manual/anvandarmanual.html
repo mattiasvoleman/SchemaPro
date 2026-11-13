@@ -2307,8 +2307,10 @@
     <span class="ui">Planerat / mål i NO</span> och visar gruppens siffror
     med <em>hela NO</em> under dem, också för en klass som inte har någon
     post i gruppens ämnen än. Ämnets tomma ruta i en sådan klass har gruppens
-    färg: röd när ingenting är planerat på raden, gul när något fattas.
-    Meningen ovanför matrisen säger vilka ämnen som
+    färg: röd när ingenting är planerat på raden, gul när något fattas. Är
+    gruppens rad redan uppfylld eller överfylld av andra ämnen i gruppen ser
+    den tomma rutan i stället ut som en ruta med post, men säger 0: den har
+    ändå ingen post. Meningen ovanför matrisen säger vilka ämnen som
     räknas tillsammans. Ett ämne som inte räknas som undervisningstid, till
     exempel mentorstid, har ingen rad i timplanen. Då står det så i stället
     för siffror. Täckningen för hela klassen visas inte med ett ämne valt.
@@ -3177,8 +3179,10 @@
   </p>
   <p>
     Ett lås i grundschemat räknas av mot postens lektioner av samma längd, och
-    ett lås vars lärare inte ingår i posten, eller vars längd posten inte har,
-    räknas först mot huvudlärarens lektion. Har huvudläraren förlagt alla sina
+    ett lås vars lärare inte ingår i posten, eller vars längd läraren inte har,
+    räknas mot den första lektionen av längden i postens ordning, eller av den
+    närmaste längden om posten inte har någon. Den första är huvudlärarens om
+    hen har en kvar av längden. Har huvudläraren förlagt alla sina
     lektioner av längden kan en annan lärares förläggning därför vägras med
     <em>Posten har ingen lektion av den längden kvar</em>, fast postens
     lektioner räcker till. Ta bort eller flytta låset, eller ändra

@@ -124,6 +124,9 @@ export interface PlacementDialogProps {
 
 const DAYS = [1, 2, 3, 4, 5] as const;
 
+/** Stands where a teacher's name goes while a count is made, so the message's own spaces can be told from the name's. */
+const NAME_MARK = "";
+
 /** What a pair is made of: one teacher's lessons of one length (the teacher is "" on a post that shares nothing). */
 const unitOf = (row: RowDraft) => `${row.teacherId}|${row.minutes}`;
 
@@ -212,9 +215,19 @@ function PlacementForm({
   const lessonParts = shared ? teacherPartsOf(post) : [];
   const nameOf = (teacherId: string) => teacherName?.(teacherId) ?? t("teacherUnnamed");
   // The huvudlärare first, then the others by name as a reader looks for them (the part list itself is by id, the
-  // order the gateway keeps; a list of names in the order of their ids reads as no order at all).
+  // order the gateway keeps; a list of names in the order of their ids reads as no order at all). A teacher the page
+  // has no name for goes last, not among the names by the placeholder's letters; two of the same name keep the
+  // gateway's order (the sort is stable).
   const named = lessonParts.flatMap((part) => (part.teacherId === null ? [] : [{ ...part, teacherId: part.teacherId }]));
-  const teachers = [...named.filter((part) => part.role === "LEAD"), ...sortByName(named.filter((part) => part.role !== "LEAD"), (part) => nameOf(part.teacherId))];
+  const others = named.filter((part) => part.role !== "LEAD");
+  const teachers = [
+    ...named.filter((part) => part.role === "LEAD"),
+    ...sortByName(
+      others.filter((part) => teacherName?.(part.teacherId)),
+      (part) => nameOf(part.teacherId),
+    ),
+    ...others.filter((part) => !teacherName?.(part.teacherId)),
+  ];
   const untaught = lessonParts.reduce((sum, part) => sum + (part.teacherId === null ? part.lessons : 0), 0);
   const lessonsOf = shared ? lessonTeachersOf(post) : [];
   const slots = shared
@@ -304,11 +317,20 @@ function PlacementForm({
     ]),
   );
   const over = teachers.some((part) => placedBy.get(part.teacherId)! > part.lessons);
-  // Each count is one unit: a narrow screen breaks the line between teachers, not inside a name or before its figures.
+  /** What a teacher would have placed if this row were theirs: the other half of a pair they hold is no lesson more. */
+  const placedIfGiven = (row: RowDraft, teacherId: string) =>
+    lessonsDrafted(
+      list.map((other) => (other.key === row.key ? { ...other, teacherId } : other)).filter((other) => other.teacherId === teacherId),
+      postWeeks,
+    );
+  // A narrow screen breaks the line between teachers and inside a name, never between a name's last word and its
+  // figures or inside them: the message's own spaces are no-break and the name's are left to break at (two double
+  // names are wider than the dialog at 320 px, and a count that cannot break there scrolls the dialog sideways).
   const counts = teachers
-    .map((part) =>
-      t("teacherCount", { name: nameOf(part.teacherId), placed: placedBy.get(part.teacherId)!, of: part.lessons }).replaceAll(" ", "\u00a0"),
-    )
+    .map((part) => {
+      const [before = "", ...after] = t("teacherCount", { name: NAME_MARK, placed: placedBy.get(part.teacherId)!, of: part.lessons }).split(NAME_MARK);
+      return [before, ...after].map((piece) => piece.replaceAll(" ", "\u00a0")).join(nameOf(part.teacherId));
+    })
     .join(", ");
   const stale = list.filter((row) => row.verdict !== null && !row.verdict.ok).length;
   const storedCount = read.data?.placements.length ?? 0;
@@ -566,11 +588,12 @@ function PlacementForm({
                         >
                           <option value="">{t("teacherPlaceholder")}</option>
                           {teachers.map((part) => (
-                            // A teacher whose lessons are all placed elsewhere is not offered for this row; the one it has stays.
+                            // A teacher this row would give more lessons than they have is not offered for it (the other half of
+                            // their odd or even weeks is not a lesson more); the one it has stays.
                             <option
                               key={part.teacherId}
                               value={part.teacherId}
-                              disabled={row.teacherId !== part.teacherId && placedBy.get(part.teacherId)! >= part.lessons}
+                              disabled={row.teacherId !== part.teacherId && placedIfGiven(row, part.teacherId) > part.lessons}
                             >
                               {nameOf(part.teacherId)}
                             </option>
