@@ -2166,6 +2166,13 @@ describe('the pieces', () => {
     expect(storedLunchesOf(null)).toBeNull();
     expect(storedLunchesOf([{ studentGroupId: 'g', dayOfWeek: 1, startTime: '11:30:00', endTime: '12:00:00' }])).toHaveLength(1);
     expect(storedLunchesOf([{ studentGroupId: 1 }])).toBeNull();
+    // Klassens måltid per del av läsåret: a meal of some periods keeps its mask,
+    // or an apply would write a class's two meals of one day as two rows of the whole läsår.
+    const meal = { studentGroupId: 'g', dayOfWeek: 1, startTime: '11:30:00', endTime: '12:00:00' };
+    expect(storedLunchesOf([{ ...meal, periods: [true, false] }])).toEqual([{ ...meal, periods: [true, false] }]);
+    expect(storedLunchesOf([meal])).toEqual([meal]);
+    expect(storedLunchesOf([{ ...meal, periods: [true, 'no'] }])).toBeNull();
+    expect(storedLunchesOf([{ ...meal, periods: 'AB' }])).toBeNull();
   });
 
   it('reads a failure that is not an HttpException as its message with no code', () => {

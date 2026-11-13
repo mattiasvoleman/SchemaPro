@@ -2440,17 +2440,20 @@
         veckor räknas också mot de jämna, och lunchen är en tid för båda.
         Nekas en lärares lunch av låsta lektioner står terminens veckor under
         meddelandet, om det inte gäller hela läsåret.</li>
-      <li><strong>Klassens lunch</strong>: klassens lunch är en och samma
-        tid hela läsåret och måste gå fri från låsta lektioner i varje del av
-        det. Hit räknas också förlagda poster (nedan). Två låsta lektioner i
-        olika terminer som tillsammans fyller lunchfönstret nekas därför med
-        <em>Låsta lektioner lämnar klassen ingen lunchlucka</em>, fast varje
-        termin har en lucka. Under meddelandet står då vilka delar av läsåret
-        de låsta lektionerna ligger i, till exempel <em>veckorna 17 augusti
-        2026 – 20 december 2026 och veckorna 11 januari 2027 – 11 juni
-        2027</em>, och att klassens lunch är en tid hela läsåret. Flytta
-        eller lås upp en av dem. Står inga veckor under meddelandet fyller
-        en enda termins låsta lektioner fönstret själva.</li>
+      <li><strong>Klassens lunch</strong> läggs för varje del av läsåret för
+        sig. Har klassen låsta lektioner som skiljer sig mellan terminerna (hit
+        räknas förlagda poster, nedan) får den en lunch för var och en, och
+        schemat visar varje lunch med de veckor den gäller, till exempel
+        <em>veckorna 17 augusti 2026 – 20 december 2026</em>. Generera lägger
+        samma tid i alla delar där det går, så lunchen delas bara där en låst
+        lektion tvingar den. Två låsta lektioner i olika terminer som
+        tillsammans fyller lunchfönstret nekar därför inte längre genereringen,
+        fast varje termin har en lucka. Nekas den ändå, med <em>Låsta
+        lektioner lämnar klassen ingen lunchlucka</em>, står terminens veckor
+        under meddelandet: den terminens egna låsta lektioner fyller då
+        fönstret, och en av dem måste flyttas eller låsas upp. Udda och jämna
+        veckor inom en termin räknas däremot tillsammans: lunchen är en tid för
+        båda. En lunch du lagt själv gäller hela läsåret.</li>
       <li><strong>Ämnesfördelningen</strong>: en bevarad lektions veckodag
         räknas alla veckor.</li>
       <li><strong>Block på samma tider</strong> (nedan): höstens post håller
@@ -5140,7 +5143,8 @@
   <h4>Lägga lunchen själv</h4>
   <p>
     Ibland kan motorn inte lägga en klass lunch — oftast för att låsta lektioner
-    fyller hela lunchfönstret en dag, och då nekas genereringen med
+    i en och samma termin fyller hela lunchfönstret en dag, och då nekas
+    genereringen med
     <em>Låsta lektioner lämnar klassen … ingen lunchlucka</em>. Då kan du lägga
     lunchen själv. Välj en enda klass, tryck <span class="ui">Placera lunch</span>
     och klicka där måltiden ska ligga. Den får skolans lunchlängd och går inte att

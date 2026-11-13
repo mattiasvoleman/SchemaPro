@@ -80,6 +80,7 @@ import {
   type PeriodStretch,
   type YearPeriods,
 } from './year-periods';
+import { datedMeals, MealPartsError, type DatedMeal } from './lunch-parts';
 import { computeScheduledCoverage, type ScheduledLessonInput } from '../common/timplan-scheduled';
 import type { PlannedGroup, PlannedRequirement, PlannedSubject } from '../common/timplan-planned';
 import type { ClosedRange, YearBounds } from '../staffing/teaching-weeks';
@@ -593,6 +594,13 @@ export interface PreparedSchedule {
    * has the same from its basis, which hashes the locks' dates.
    */
   lockWeeks: Map<string, string>;
+  /**
+   * Klassens måltid per del av läsåret: each period's weeks as stretches of
+   * days (YearPeriods.stretches), which a meal's mask is written as dates by
+   * (lunch-parts.ts). Null for a school whose year is not cut into periods,
+   * and then every meal is the whole läsår, as it was.
+   */
+  periodStretches: PeriodStretch[][] | null;
   /** Only when asked for ({ coverage: true }): it costs six more reads. */
   coverage: CoverageBase | null;
 }
@@ -1162,6 +1170,13 @@ export const ENGINE_LACKS_BEST_EFFORT = 'ENGINE_LACKS_BEST_EFFORT';
 export const ENGINE_LACKS_PERIODS = 'ENGINE_LACKS_PERIODS';
 
 /**
+ * The engine answered a meal per period whose masks are not a partition of
+ * the year's periods (lunch-parts.ts): the gateway and the engine read the
+ * year differently, and nothing is written.
+ */
+export const ENGINE_MEALS_INCONSISTENT = 'ENGINE_MEALS_INCONSISTENT';
+
+/**
  * The engine's refusal of terminer's fields as unknown ones: `periodWeeks` on
  * the request, or `periods` wherever an entry carries it (a requirement, a
  * fixed lesson, a released post under `placements`). An older engine names
@@ -1178,11 +1193,16 @@ function refusesPeriods(body: { details?: { errors?: unknown } | null } | null):
       if (type !== 'extra_forbidden' || !Array.isArray(loc) || loc[0] !== 'body') return false;
       const last = loc[loc.length - 1];
       return (
-        (loc.length === 2 && last === 'periodWeeks') ||
+        (loc.length === 2 && (last === 'periodWeeks' || last === 'lunchPerPeriod')) ||
         (loc.length > 2 && (last === 'periods' || last === 'lockedWeekdayPeriods'))
       );
     })
   );
+}
+
+/** Whether the rules plan a class's meal: the window and its length, which is what the engine reads as a lunch. */
+export function hasLunchRule(rules: ScheduleRules | null | undefined): boolean {
+  return Boolean(rules?.lunchStartTime && rules.lunchEndTime && rules.lunchMinutes);
 }
 
 function engineLacksPeriods(): HttpException {
@@ -1398,6 +1418,7 @@ export class OptimizationProxyService {
         prepared.placedRows,
         prepared.lockWeeks,
         prepared.basisParts,
+        prepared.periodStretches,
       ),
     );
 
@@ -1647,6 +1668,12 @@ export class OptimizationProxyService {
       // Terminer: only when a post or a lock of the week is dated, the entries
       // then carrying their periods. See AiEngineScheduleRequest.
       ...(data.yearPeriods ? { periodWeeks: data.yearPeriods.weeks } : {}),
+      // Klassens måltid per del av läsåret: beside the periods, and only for
+      // a school that has a lunch rule to plan a meal by. The rules a call
+      // brings of its own win over the stored ones at the call (Generera's
+      // body); a flag on a request whose rules have no lunch plans nothing,
+      // and a request that has lunch only in its body is planned as before.
+      ...(data.yearPeriods && hasLunchRule(data.storedRules) ? { lunchPerPeriod: true } : {}),
     };
 
     // Over the payload turned back to real ids — the teacher's and the
@@ -1725,6 +1752,7 @@ export class OptimizationProxyService {
       draftLessons,
       placedRows: data.placedRows,
       lockWeeks: new Map(data.preservedRows.map((row) => [row.id, weeksKeyOf(row)] as const)),
+      periodStretches: data.yearPeriods ? data.yearPeriods.stretches : null,
       coverage: options.coverage
         ? await this.readCoverageBase(tx, academicYearId, [...data.preservedRows, ...data.placedRows], draftLessons)
         : null,
@@ -1929,6 +1957,7 @@ export class OptimizationProxyService {
         requirementRows: prepared.requirementRows,
         lunches: input.lunches,
         headcountByGroup: prepared.headcountByGroup,
+        periodStretches: prepared.periodStretches,
         scope: { kind: 'IDS', ids: prepared.draftIds },
         placed: prepared.placedRows,
         after: { ...input.after, safetyVersionId: version.id },
@@ -4683,6 +4712,8 @@ export class OptimizationProxyService {
      * again: only a caller that has no fetch of its own leaves it out.
      */
     startBasis: BasisParts | null = null,
+    /** Klassens måltid per del av läsåret: PreparedSchedule.periodStretches. */
+    periodStretches: PeriodStretch[][] | null = null,
   ): Promise<TimedLesson[] | null> {
     // First, before anything is read: the publication lock and the mode
     // (publish-mode.ts). In DRAFT the regenerated grundschema is a draft.
@@ -4862,6 +4893,7 @@ export class OptimizationProxyService {
         requirementRows,
         lunches,
         headcountByGroup,
+        periodStretches,
         scope: { kind: 'NOT_PRESERVED' },
         placed: placedRows,
       });
@@ -4904,6 +4936,8 @@ export class OptimizationProxyService {
       requirementRows: readonly RegenerationRequirementRow[];
       lunches: AiEngineLunch[] | null;
       headcountByGroup: Map<string, number>;
+      /** Klassens måltid per del av läsåret: what a meal's mask is written as dates by (null: no periods). */
+      periodStretches: PeriodStretch[][] | null;
       scope: RegenerationScope;
       /** Merged into the entry's `after`, under the counts (which it cannot override). */
       after?: Prisma.InputJsonObject;
@@ -5138,7 +5172,15 @@ export class OptimizationProxyService {
      * asked the engine, which has no sittings to replace them with.
      */
     if (input.lunches !== null) {
-      await this.replaceSittings(tx, schoolId, academicYearId, input.lunches, input.headcountByGroup, sweepFrom);
+      await this.replaceSittings(
+        tx,
+        schoolId,
+        academicYearId,
+        input.lunches,
+        input.headcountByGroup,
+        input.periodStretches,
+        sweepFrom,
+      );
     }
 
     await input.verify?.(written.length);
@@ -5197,6 +5239,8 @@ export class OptimizationProxyService {
     academicYearId: string,
     lunches: AiEngineLunch[],
     headcountByGroup: Map<string, number>,
+    /** Klassens måltid per del av läsåret: each period's stretches, null when the year has none. */
+    periodStretches: PeriodStretch[][] | null,
     /** The lessons' first swept day (regenerationSweepDay); null in DRAFT. */
     sweepFrom: Date | null,
   ): Promise<void> {
@@ -5235,6 +5279,22 @@ export class OptimizationProxyService {
       ).map((group) => group.id),
     );
     const classSittings = lunches.filter((lunch) => classIds.has(lunch.studentGroupId));
+    // A class that eats at another time in another part of the year has
+    // several meals a day, each for the periods it holds (lunchPerPeriod);
+    // a meal is written as a row for each run of neighbouring weeks it is
+    // for (lunch-parts.ts). An answer that is not a partition of the periods
+    // is not written at all: the school would be served twice or not at all.
+    let datedSittings: DatedMeal[];
+    try {
+      datedSittings = datedMeals(classSittings, periodStretches);
+    } catch (error) {
+      if (!(error instanceof MealPartsError)) throw error;
+      this.logger.error(`The engine's meals cannot be written: ${error.message}`);
+      throw new HttpException(
+        { message: 'The AI engine returned meals that do not fit the school year.', code: ENGINE_MEALS_INCONSISTENT },
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
 
     /*
      * The engine reports a pinned meal back like any other, so the answer for a
@@ -5248,12 +5308,21 @@ export class OptimizationProxyService {
      * school's, the pin did not bind — two halves of one seam have drifted, and
      * that is said loudly rather than papered over.
      */
-    const fresh = classSittings.filter(
-      (lunch) => !handByKey.has(`${lunch.studentGroupId}:${lunch.dayOfWeek}`),
+    const fresh = datedSittings.filter(
+      ({ lunch }) => !handByKey.has(`${lunch.studentGroupId}:${lunch.dayOfWeek}`),
     );
     for (const lunch of classSittings) {
       const hand = handByKey.get(`${lunch.studentGroupId}:${lunch.dayOfWeek}`);
       if (hand === undefined) continue;
+      // A meal placed by hand is the whole läsår (no dates are written by
+      // hand yet) and went to the engine as a pin in every period, so it
+      // comes back as one meal. Several would be the pin not binding in some
+      // part of the year, which is said and not written over.
+      if (lunch.periods !== undefined) {
+        this.logger.error(
+          `A hand-placed lunch came back for some periods only: group ${lunch.studentGroupId} day ${lunch.dayOfWeek}.`,
+        );
+      }
       if (this.timeToString(hand.startTime) !== lunch.startTime) {
         this.logger.error(
           `A hand-placed lunch did not bind: group ${lunch.studentGroupId} day ${lunch.dayOfWeek} ` +
@@ -5291,7 +5360,7 @@ export class OptimizationProxyService {
 
     if (fresh.length > 0) {
       await tx.lunchSitting.createMany({
-        data: fresh.map((lunch) => ({
+        data: fresh.map(({ lunch, startDate, endDate }) => ({
           schoolId,
           academicYearId,
           studentGroupId: lunch.studentGroupId,
@@ -5300,6 +5369,11 @@ export class OptimizationProxyService {
           endTime: this.parseTime(lunch.endTime),
           headcount: headcountByGroup.get(lunch.studentGroupId) ?? 0,
           isGenerated: true,
+          // The weeks of the row, a Monday and a Sunday or null for the
+          // läsår's own bound. Absent for a meal of the whole läsår, which
+          // is then the row it always was (no key in the insert).
+          ...(startDate !== null ? { startDate: new Date(`${startDate}T00:00:00.000Z`) } : {}),
+          ...(endDate !== null ? { endDate: new Date(`${endDate}T00:00:00.000Z`) } : {}),
         })),
       });
     }
