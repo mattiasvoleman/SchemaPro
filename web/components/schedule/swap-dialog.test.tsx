@@ -353,6 +353,8 @@ describe("SwapDialog: apply", () => {
     ["SWAP_STALE", "stale"],
     ["SWAP_SPLITS_PARALLEL", "splitsParallel"],
     ["SWAP_LOCKED", "lockedPartner"],
+    // The gateway's own sentence for it is Swedish, which an English reader got as it stood.
+    ["LESSON_IS_PLACED", "placed"],
   ])("on a 409 %s says so and asks for new proposals", async (code, text) => {
     await opened();
     swaps.apply.mutateAsync.mockRejectedValueOnce(new ApiError(409, "english", code));

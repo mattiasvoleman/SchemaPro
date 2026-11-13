@@ -56,6 +56,7 @@ import {
   ProjectedRostersBanner,
 } from "@/components/schedule/planning-year";
 import { ApiError } from "@/lib/api";
+import { LESSON_IS_PLACED } from "@/lib/lesson-is-placed";
 import type { MessageLookup } from "@/lib/engine-message";
 import { refusalText, savedToast, staffingRefusal } from "@/lib/staffing-warnings";
 import { FilterPicker } from "@/components/schedule/filter-picker";
@@ -1248,6 +1249,9 @@ export default function TimetablePage() {
       const refusal = staffingRefusal(error);
       if (refusal) {
         toast.error(refusalText(tEngine, refusal));
+      } else if (error instanceof ApiError && error.code === LESSON_IS_PLACED) {
+        // No clash either: the lesson is its förläggning's, and is changed there.
+        toast.error(t("lessonIsPlaced"));
       } else if (error instanceof ApiError && error.status === 409) {
         toast.error(`${t("editConflict")}: ${error.message}`);
       } else {

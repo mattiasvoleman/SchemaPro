@@ -1761,6 +1761,7 @@
     "propagateHint": "Future published lessons without recorded attendance are moved along automatically.",
     "editSaved": "Lesson updated — {count} calendar lessons moved along",
     "editConflict": "Scheduling conflict",
+    "lessonIsPlaced": "The lesson is placed on the curriculum, and Generera writes it again from there. Change the placement on its curriculum entry instead.",
     "addLesson": "Add lesson",
     "addTitle": "Add lesson",
     "addBody": "Manually place a lesson on the master timetable. It is checked against the rest of the timetable before saving.",
@@ -9845,6 +9846,7 @@
       "ROOM_NOT_FOUND": "The room does not exist.",
       "ROOM_NEEDS_APPROVAL": "The room requires approval and is booked by the office instead.",
       "SPLIT_MINUTES": "The parts must be at least 15 minutes each and together as long as the lesson.",
+      "LESSON_IS_PLACED": "The lesson is placed on the curriculum and is written again from there at every Generera. The scheduler changes it, on its curriculum entry.",
       "UNKNOWN": "The lesson cannot be changed by the class teacher."
     },
     "problem": {

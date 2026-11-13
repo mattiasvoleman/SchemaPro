@@ -12,8 +12,8 @@ import {
   problemOf,
   weekdayOf,
   type ChangeView,
-  type FrameReason,
   type LessonRef,
+  type RefusalReason,
 } from "@/lib/class-teacher";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -107,7 +107,7 @@ export function ClassSchedule({
   const itemOf = (
     id: string,
     day: number,
-    lesson: { start: string; end: string; subjectName: string; roomId: string | null; refusal: FrameReason | null; draftId: string | null; status?: string },
+    lesson: { start: string; end: string; subjectName: string; roomId: string | null; refusal: RefusalReason | null; draftId: string | null; status?: string },
     when: string,
   ): GridItem => {
     const state = lessonState(lesson);
