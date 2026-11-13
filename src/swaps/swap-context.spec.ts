@@ -175,6 +175,20 @@ describe('boardRefusal: the grid’s other hard kinds', () => {
     expect(on(autumnLesson, slot(2, 690, 30))).toBeNull();
     expect(on(springLesson, slot(2, 660, 30))).toBeNull();
     expect(on(springLesson, slot(2, 690, 30))).toBe('LUNCH');
+    // A lesson that starts in the autumn and ends in the spring meets both meals, by its start and by its end:
+    // a window read with its two ends swapped, or with one end for both, would clear it of one.
+    const across = lesson('across', 'c1', 1, 480, { startDate: '2026-12-18', endDate: '2027-01-31' });
+    const acrossCtx = context([across], { sittings: meals });
+    expect(acrossCtx.boardRefusal({ lesson: across, to: slot(2, 660, 30) })).toBe('LUNCH');
+    expect(acrossCtx.boardRefusal({ lesson: across, to: slot(2, 690, 30) })).toBe('LUNCH');
+    // A lesson of the weeks between the two meets neither, and one that only starts in the spring meets only the spring's.
+    const between = lesson('between', 'c1', 1, 480, { startDate: '2026-12-21', endDate: '2027-01-08' });
+    const springOnly = lesson('springOnly', 'c1', 1, 480, { startDate: '2027-01-11', endDate: null });
+    const rest = context([between, springOnly], { sittings: meals });
+    expect(rest.boardRefusal({ lesson: between, to: slot(2, 660, 30) })).toBeNull();
+    expect(rest.boardRefusal({ lesson: between, to: slot(2, 690, 30) })).toBeNull();
+    expect(rest.boardRefusal({ lesson: springOnly, to: slot(2, 660, 30) })).toBeNull();
+    expect(rest.boardRefusal({ lesson: springOnly, to: slot(2, 690, 30) })).toBe('LUNCH');
     // A lesson of every week stands on neither.
     expect(landing(ctx, slot(2, 660, 30))).toBe('LUNCH');
     expect(landing(ctx, slot(2, 690, 30))).toBe('LUNCH');

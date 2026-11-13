@@ -263,6 +263,17 @@ describe('frames, raster and lunch sittings', () => {
       expect(codes({ start: '11:30', end: '12:00', from: '2027-01-11', to: '2027-06-11' })).toEqual(['ON_LUNCH_SITTING']);
     });
 
+    it('holds a lesson that starts in the autumn and ends in the spring to both meals, and one of the weeks between to neither', () => {
+      // By its start and by its end: a window read with its two ends swapped, or with one end for both, would clear it of one.
+      expect(codes({ start: '11:00', end: '11:30', from: '2026-12-18', to: '2027-01-31' })).toEqual(['ON_LUNCH_SITTING']);
+      expect(codes({ start: '11:30', end: '12:00', from: '2026-12-18', to: '2027-01-31' })).toEqual(['ON_LUNCH_SITTING']);
+      expect(codes({ start: '11:00', end: '11:30', from: '2026-12-21', to: '2027-01-08' })).toEqual([]);
+      expect(codes({ start: '11:30', end: '12:00', from: '2026-12-21', to: '2027-01-08' })).toEqual([]);
+      // One that only starts in the spring meets only the spring's.
+      expect(codes({ start: '11:00', end: '11:30', from: '2027-01-11' })).toEqual([]);
+      expect(codes({ start: '11:30', end: '12:00', from: '2027-01-11' })).toEqual(['ON_LUNCH_SITTING']);
+    });
+
     it('holds a lesson of every week to both: the stricter reading', () => {
       expect(codes({ start: '11:00', end: '11:30' })).toEqual(['ON_LUNCH_SITTING']);
       expect(codes({ start: '11:30', end: '12:00' })).toEqual(['ON_LUNCH_SITTING']);

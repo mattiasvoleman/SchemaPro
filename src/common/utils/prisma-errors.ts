@@ -645,13 +645,15 @@ export function driverAdapterCode(error: unknown): string | undefined {
 
 /**
  * Whether an EXCLUSION constraint refused the write (SQLSTATE 23P01), as a model
- * call reports it (under meta.driverAdapterError) or a failed COMMIT does. A
- * caller that knows which constraint it can meet says what that means; this
- * only reads the state.
+ * call reports it (under meta.driverAdapterError). A caller that knows which
+ * constraint it can meet says what that means; this only reads the state.
+ *
+ * Only the statement's own refusal is read: the exclusion constraints a caller
+ * of this meets (LunchSittings_one_meal_at_a_time) are not deferrable, so they
+ * are checked at the statement and never at COMMIT, where a DriverAdapterError
+ * would carry the state.
  */
 export function exclusionViolation(error: unknown): boolean {
-  const atCommit = driverAdapterCode(error);
-  if (atCommit !== undefined) return atCommit === '23P01';
   if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
   const cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)
     ?.driverAdapterError?.cause;
