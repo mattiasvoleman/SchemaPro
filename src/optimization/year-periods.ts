@@ -181,13 +181,16 @@ export function yearPeriodsOf(year: YearSpan, entries: readonly (readonly HeldWi
  * twice ("0,0") is that period once: its stretch read twice would be counted
  * as two, and the sentence would add other weeks that do not exist.
  *
- * A PERIOD WITH NO WEEK OF THE PARITY IS NOT NAMED. The engine's weeks are a
- * period in a parity, and a period of the läsår may have no real week of the
- * parity it says: a count of the odd weeks in "29,30" where period 30 is one
- * even week. Its stretch added to the window would make it a week wider than
- * the weeks that were counted, so a period none of whose stretches holds a
- * week of the `parity` (ISO week numbers, as everywhere else: runsOn) is left
- * out. Where none of the named periods does, the dates stand as they came.
+ * A STRETCH WITH NO WEEK OF THE PARITY IS NOT NAMED. The engine's weeks are a
+ * period in a parity, and a period of the läsår may have stretches with no real
+ * week of the parity it says: a count of the odd weeks in "29,30" where period
+ * 30 is one even week, or of the even weeks of a period whose one stretch is
+ * week 53 and week 1, which are both odd. Such a stretch added to the window
+ * would make it wider than the weeks that were counted (and a window that
+ * starts with a week of the other parity starts a stretch that was never
+ * counted), so each stretch is asked on its own, by the real ISO weeks it
+ * holds (stretchHoldsParity), and only the stretches that hold one are joined.
+ * Where none of the named periods' stretches does, the dates stand as they came.
  */
 export function withPeriodDates<P extends Record<string, string | number>>(
   params: P,
@@ -203,24 +206,31 @@ export function withPeriodDates<P extends Record<string, string | number>>(
       : [period];
   const readable = listed.includes(period) && listed.every((index) => (stretches[index]?.length ?? 0) > 0);
   const named = readable ? listed : [period];
-  const real = named.filter((index) => holdsParity(stretches[index]!, params.parity));
-  const joined = joinedStretches((real.length > 0 ? real : named).flatMap((index) => stretches[index]!));
+  const every = named.flatMap((index) => stretches[index]!);
+  const real = every.filter((stretch) => stretchHoldsParity(stretch, params.parity));
+  const joined = joinedStretches(real.length > 0 ? real : every);
   return { ...params, periodFrom: joined[0]!.from, periodTo: joined[0]!.to, periodStretches: joined.length };
 }
 
 /**
- * Whether the stretches hold a real week of the engine's `parity`, an ISO week of that
- * parity. True for any other value of it, which says no parity. A stretch of two weeks or
- * more has both; one week is the parity of its own number.
+ * Whether the stretch holds a real week of the engine's `parity`: an ISO week of that
+ * parity, read week by week from the Monday of the stretch's first day. True for any other
+ * value of it, which says no parity.
+ *
+ * Week by week, because a stretch of two weeks does not have both parities: week 53 and
+ * week 1 are both odd. Three weeks in a row always have both (the only two in a row of one
+ * parity are 53 and 1, and week 52 and week 2 are even), so no more than the first three
+ * are read. A stretch whose days cannot be read is kept, as it was before it was asked.
  */
-function holdsParity(stretches: readonly PeriodStretch[], parity: string | number | undefined): boolean {
+function stretchHoldsParity(stretch: PeriodStretch, parity: string | number | undefined): boolean {
   if (parity !== 'ODD_WEEKS' && parity !== 'EVEN_WEEKS') return true;
   const odd = parity === 'ODD_WEEKS';
-  return stretches.some(({ from, to }) => {
-    const first = parseDay(from);
-    // The Monday of the last week is after the first day only when the stretch spans two weeks.
-    return mondayOf(parseDay(to)).getTime() > first.getTime() || (isoWeekNumber(first) % 2 === 1) === odd;
-  });
+  const last = parseDay(stretch.to).getTime();
+  for (let monday = mondayOf(parseDay(stretch.from)), week = 0; week < 3; week += 1, monday = addDays(monday, 7)) {
+    if (monday.getTime() > last) return false;
+    if ((isoWeekNumber(monday) % 2 === 1) === odd) return true;
+  }
+  return true;
 }
 
 /**
