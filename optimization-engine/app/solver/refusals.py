@@ -1,7 +1,7 @@
 """When two weeks' refusals are one refusal, and which of them is said.
 
 A school with periods is refused week by week, and the weeks that are refused
-alike are said together (scheduler_solver._said_weeks). What "alike" means is
+alike are said together (scheduler_solver._refusal_of_most_weeks). What "alike" means is
 decided here, once, for everything that is said of a week: the counted
 refusals (an INFEASIBLE answer before the model), the 400s of
 _verify_week, and the lines of Bästa möjliga schema.
