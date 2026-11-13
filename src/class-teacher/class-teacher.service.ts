@@ -14,6 +14,7 @@ import {
   askFrame,
   frameInputOf,
   lessonState,
+  placedMasters,
   toChangeView,
   type ChangeRow,
   type FrameInput,
@@ -22,10 +23,12 @@ import { appointerGone, frameRefusal, rethrowClassTeacherError, staleDraft, stal
 import {
   CODES,
   isOccasionKind,
+  LESSON_IS_PLACED_REASON,
   type ChangeKind,
   type ChangeView,
   type FrameReason,
   type PublishOutcome,
+  type RefusalReason,
   type Verdict,
 } from './class-teacher.types';
 import type { ChangeTargetDto, CreateChangeDto, PreviewChangeDto, PublishDto, UpdateChangeDto, WeekQueryDto } from './dto/class-teacher.dto';
@@ -49,7 +52,7 @@ export interface OccasionView {
   /** The klasslärare teaches it; of a colleague's lesson nothing but "not yours" is said. */
   mine: boolean;
   version: string;
-  refusal: FrameReason | null;
+  refusal: RefusalReason | null;
   draftId: string | null;
 }
 
@@ -65,7 +68,7 @@ export interface TemplateLessonView {
   recurrence: string;
   mine: boolean;
   version: string;
-  refusal: FrameReason | null;
+  refusal: RefusalReason | null;
   draftId: string | null;
 }
 
@@ -241,6 +244,7 @@ export class ClassTeacherService {
         },
         orderBy: [{ startsAt: 'asc' }],
       });
+      const placed = await placedMasters(tx, masters.map((lesson) => lesson.id));
       const stateOf = new Map(states.map((row) => [row.calendarLessonId, row]));
       const draftOf = new Map<string, string>();
       for (const draft of drafts) {
@@ -295,7 +299,8 @@ export class ClassTeacherService {
           recurrence: lesson.recurrence,
           mine: lesson.teacherId === me,
           version: lesson.version,
-          refusal: lesson.refusal,
+          // A lesson Generera wrote from a förläggning is the förläggning's: a draft of it could never be published.
+          refusal: lesson.refusal ?? (placed.has(lesson.id) ? LESSON_IS_PLACED_REASON : null),
           draftId: draftOf.get(lesson.id) ?? null,
         })),
         drafts: drafts.map(toChangeView),
@@ -336,6 +341,7 @@ export class ClassTeacherService {
         if (refusal) throw frameRefusal(refusal);
         const occasion = isOccasionKind(dto.kind);
         const lessonId = (occasion ? dto.calendarLessonId : dto.masterLessonId)!;
+        if (!occasion && (await placedMasters(tx, [lessonId])).has(lessonId)) throw frameRefusal(LESSON_IS_PLACED_REASON);
         const state = await lessonState(tx, occasion ? 'calendar' : 'master', lessonId);
         if (!state) throw frameRefusal('LESSON_GONE');
         if (state.version !== dto.baseVersion) throw staleLesson({ current: state });

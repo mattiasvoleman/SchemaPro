@@ -107,8 +107,10 @@ export class ResourcesService {
       return await this.prisma.withRls(user, async (tx) => {
         if (dto.quantity !== undefined) {
           // The booking trigger judges a booking against the quantity under this lock (one per resource); without it a
-          // booking written while the quantity is cut would be counted against the old quantity after the cut.
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`ResourceBookings:${id}`}, 0))`;
+          // booking written while the quantity is cut would be counted against the old quantity after the cut. The trigger
+          // hashes the key with the id as Postgres writes a uuid, in lower case, and ParseUUIDPipe lets an upper-case id
+          // through: the key here is built the same way, or the two take different locks (review of #291, R2-2).
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`ResourceBookings:${id.toLowerCase()}`}, 0))`;
           await this.assertQuantityHolds(tx, id, dto.quantity);
         }
         const row = await tx.resource.update({

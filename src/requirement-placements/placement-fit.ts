@@ -368,6 +368,12 @@ export type PlacementsFollow =
        * is theirs (review of #298, MEDEL-3).
        */
       unstaffed: boolean;
+      /**
+       * The post starts to share its lessons in this very change and the förläggning belongs to a huvudlärare who is replaced in it
+       * (TEACHER): with a new huvudlärare AND shares at once there is no saying whose lesson the förläggning is, so the change is
+       * done in two steps. Only on a post that shared nothing before (review of #298, LÅG-3 of the second round).
+       */
+      startsSharing: boolean;
     };
 
 const sameParts = (a: ReadonlyMap<number, number>, b: ReadonlyMap<number, number>): boolean =>
@@ -424,19 +430,21 @@ export function followPlacements(
   const shared = hasShares(after);
   // A row is nobody's because its teacher was removed only on a post that shared its lessons already.
   const unstaffed = (row: FollowedRow): boolean => hasShares(before) && (row.teacherId ?? null) === null;
+  // A refusal on a post that shared nothing and now shares: TEACHER is the huvudlärare changed together with the shares.
+  const startsSharing = !hasShares(before) && shared;
   const placed: FollowedRow[] = [];
   for (const row of rows) {
     const from = teacherOfRow(before, row);
-    if (!to.has(from)) return { ok: false, reason: 'TEACHER', row, unstaffed: unstaffed(row) };
+    if (!to.has(from)) return { ok: false, reason: 'TEACHER', row, unstaffed: unstaffed(row), startsSharing };
     const teacher = to.get(from)!;
     // A lesson that was somebody's is never made nobody's by a change of the post.
-    if (shared && teacher === null && from !== null) return { ok: false, reason: 'NO_TEACHER', row, unstaffed: false };
+    if (shared && teacher === null && from !== null) return { ok: false, reason: 'NO_TEACHER', row, unstaffed: false, startsSharing: false };
     placed.push({ ...row, teacherId: shared ? teacher : null });
   }
   const misfit = teacherMisfitOf(after, placed);
   if (misfit !== null) {
     const row = rows[misfit.index]!;
-    return { ok: false, reason: misfit.reason, row, unstaffed: unstaffed(row) };
+    return { ok: false, reason: misfit.reason, row, unstaffed: unstaffed(row), startsSharing: startsSharing && misfit.reason === 'TEACHER' };
   }
   return {
     ok: true,

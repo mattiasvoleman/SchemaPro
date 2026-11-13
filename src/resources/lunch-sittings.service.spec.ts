@@ -1,4 +1,5 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   createPrismaMock,
   createTxMock,
@@ -27,6 +28,8 @@ const storedSitting = (overrides: Record<string, unknown> = {}) => ({
   endTime: wallClock('13:30'),
   headcount: 24,
   isGenerated: false,
+  startDate: null,
+  endDate: null,
   createdAt: new Date('2026-09-11T09:00:00.000Z'),
   updatedAt: new Date('2026-09-11T09:00:00.000Z'),
   ...overrides,
@@ -116,42 +119,45 @@ describe('LunchSittingsService', () => {
        */
       await expect(place('13:00:30')).rejects.toThrow(/must be whole minutes/);
 
-      expect(tx.lunchSitting.upsert).not.toHaveBeenCalled();
+      expect(tx.lunchSitting.create).not.toHaveBeenCalled();
+      expect(tx.lunchSitting.update).not.toHaveBeenCalled();
     });
 
     it('still takes the zero seconds PostgREST sends, so a row round-trips', async () => {
       // Why the DTO admits HH:MM:SS at all.
-      tx.lunchSitting.upsert.mockResolvedValue(storedSitting());
+      tx.lunchSitting.create.mockResolvedValue(storedSitting());
 
       await place('13:00:00');
 
-      expect(tx.lunchSitting.upsert).toHaveBeenCalled();
+      expect(tx.lunchSitting.create).toHaveBeenCalled();
     });
 
     it('marks it as the school’s, so the next run keeps it', async () => {
-      tx.lunchSitting.upsert.mockResolvedValue(storedSitting());
-
+      tx.lunchSitting.create.mockResolvedValue(storedSitting());
       await place();
+      expect(tx.lunchSitting.create.mock.calls[0][0].data.isGenerated).toBe(false);
 
-      const { create, update } = tx.lunchSitting.upsert.mock.calls[0][0];
-      expect(create.isGenerated).toBe(false);
-      expect(update.isGenerated).toBe(false);
+      // And the row of the whole läsår it takes over in place is the school's from then on.
+      tx.lunchSitting.findMany.mockResolvedValue([{ id: SITTING_ID, startDate: null, endDate: null }]);
+      tx.lunchSitting.update.mockResolvedValue(storedSitting());
+      await place();
+      expect(tx.lunchSitting.update.mock.calls[0][0].data.isGenerated).toBe(false);
     });
 
     it('takes its length from the school’s lunchMinutes, not from the body', async () => {
       // The body carries no end at all. A meal whose end the page chose would
       // be a second answer to "how long is lunch", and would disagree with
       // the setting the moment it changed.
-      tx.lunchSitting.upsert.mockResolvedValue(storedSitting());
+      tx.lunchSitting.create.mockResolvedValue(storedSitting());
 
       await place('13:00');
 
-      const { create } = tx.lunchSitting.upsert.mock.calls[0][0];
-      expect(create.endTime).toEqual(wallClock('13:30'));
+      const { data } = tx.lunchSitting.create.mock.calls[0][0];
+      expect(data.endTime).toEqual(wallClock('13:30'));
     });
 
     it('answers with the meal as the grid draws it', async () => {
-      tx.lunchSitting.upsert.mockResolvedValue(storedSitting());
+      tx.lunchSitting.create.mockResolvedValue(storedSitting());
 
       await expect(place()).resolves.toEqual({
         id: SITTING_ID,
@@ -161,50 +167,132 @@ describe('LunchSittingsService', () => {
         endTime: '13:30',
         headcount: 24,
         isGenerated: false,
+        startDate: null,
+        endDate: null,
       });
+    });
+
+    it('answers with the weeks a dated meal holds, as days', async () => {
+      // A meal of the autumn read back through the API (it holds a Monday to a Sunday).
+      tx.lunchSitting.create.mockResolvedValue(
+        storedSitting({ startDate: new Date('2026-08-17T00:00:00.000Z'), endDate: new Date('2026-12-20T00:00:00.000Z') }),
+      );
+
+      await expect(place()).resolves.toMatchObject({ startDate: '2026-08-17', endDate: '2026-12-20' });
     });
 
     it('writes the end of an early sitting with its leading zero', async () => {
       // "9:30" is not a clock parseTimeString accepts, so an end written
       // without the zero would turn every sitting that ends before ten into a
       // 400 about a time the admin never typed.
-      tx.lunchSitting.upsert.mockResolvedValue(
+      tx.lunchSitting.create.mockResolvedValue(
         storedSitting({ startTime: wallClock('09:00'), endTime: wallClock('09:30') }),
       );
 
       await expect(place('09:00')).resolves.toMatchObject({ endTime: '09:30' });
-      expect(tx.lunchSitting.upsert.mock.calls[0][0].create.endTime).toEqual(
+      expect(tx.lunchSitting.create.mock.calls[0][0].data.endTime).toEqual(
         wallClock('09:30'),
       );
     });
 
-    it('replaces whatever the class already had that day', async () => {
-      // One meal a day per class — the table's unique key — so a meal placed on
-      // a day the solver already fed takes that row over rather than failing.
-      tx.lunchSitting.upsert.mockResolvedValue(storedSitting());
+    describe('replacing whatever the class already had that day', () => {
+      // A class has one meal on a date, which the table's exclusion constraint
+      // says, so a meal placed on a day the solver already fed takes that
+      // over rather than failing. The meal placed holds the whole läsår.
+      const day = { academicYearId: YEAR_ID, studentGroupId: CLASS_ID, dayOfWeek: 2 };
 
-      await place();
+      it('looks only at that class, that year and that weekday', async () => {
+        tx.lunchSitting.create.mockResolvedValue(storedSitting());
 
-      expect(tx.lunchSitting.upsert.mock.calls[0][0].where).toEqual({
-        academicYearId_studentGroupId_dayOfWeek: {
-          academicYearId: YEAR_ID,
-          studentGroupId: CLASS_ID,
-          dayOfWeek: 2,
-        },
+        await place();
+
+        expect(tx.lunchSitting.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: day }));
+      });
+
+      it('creates the meal when the class has none', async () => {
+        tx.lunchSitting.create.mockResolvedValue(storedSitting());
+
+        await place();
+
+        expect(tx.lunchSitting.create.mock.calls[0][0].data).toMatchObject({ schoolId: SCHOOL_ID, ...day });
+        expect(tx.lunchSitting.deleteMany).not.toHaveBeenCalled();
+        expect(tx.lunchSitting.update).not.toHaveBeenCalled();
+      });
+
+      it('takes the one row of the whole läsår over where it stands, so the grid keeps its id', async () => {
+        tx.lunchSitting.findMany.mockResolvedValue([{ id: SITTING_ID, startDate: null, endDate: null }]);
+        tx.lunchSitting.update.mockResolvedValue(storedSitting());
+
+        await place();
+
+        expect(tx.lunchSitting.update).toHaveBeenCalledWith({
+          where: { id: SITTING_ID },
+          data: expect.objectContaining({ startTime: wallClock('13:00'), isGenerated: false }),
+        });
+        expect(tx.lunchSitting.create).not.toHaveBeenCalled();
+        expect(tx.lunchSitting.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it('removes the meals of several parts of the year before it places the one of the whole', async () => {
+        // The solver's meals of the autumn and of the spring: neither is the whole läsår,
+        // and a meal of the whole läsår would meet both.
+        const autumn = { id: 'a1', startDate: null, endDate: new Date('2026-12-20T00:00:00.000Z') };
+        const spring = { id: 'a2', startDate: new Date('2027-01-11T00:00:00.000Z'), endDate: null };
+        tx.lunchSitting.findMany.mockResolvedValue([autumn, spring]);
+        tx.lunchSitting.create.mockResolvedValue(storedSitting());
+
+        await place();
+
+        expect(tx.lunchSitting.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['a1', 'a2'] } } });
+        expect(tx.lunchSitting.create).toHaveBeenCalledTimes(1);
+        expect(tx.lunchSitting.update).not.toHaveBeenCalled();
+      });
+
+      it('replaces one dated meal too: only the whole läsår is taken over in place', async () => {
+        tx.lunchSitting.findMany.mockResolvedValue([
+          { id: 'a1', startDate: new Date('2026-08-17T00:00:00.000Z'), endDate: null },
+        ]);
+        tx.lunchSitting.create.mockResolvedValue(storedSitting());
+
+        await place();
+
+        expect(tx.lunchSitting.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['a1'] } } });
+        expect(tx.lunchSitting.create).toHaveBeenCalled();
+      });
+
+      it('answers 409 and says to try again when a placing that ran at once beat it to the day', async () => {
+        // Neither saw the other's row, so both create: the constraint refuses the second.
+        const refused = new Prisma.PrismaClientKnownRequestError('exclusion', {
+          code: 'P2010',
+          clientVersion: 'test',
+          meta: { driverAdapterError: { cause: { originalCode: '23P01' } } },
+        });
+        tx.lunchSitting.create.mockRejectedValue(refused);
+
+        await expect(place()).rejects.toBeInstanceOf(ConflictException);
+        await expect(place()).rejects.toMatchObject({ response: expect.objectContaining({ code: 'WRITE_CONFLICT' }) });
+      });
+
+      it('leaves another failure to the one mapping every service uses', async () => {
+        tx.lunchSitting.create.mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError('missing', { code: 'P2025', clientVersion: 'test' }),
+        );
+
+        await expect(place()).rejects.toBeInstanceOf(NotFoundException);
       });
     });
 
     it('seats the class the way a run counts it', async () => {
       // Active pupils whose HOME class this is. A second rule here would put a
       // different number on the kitchen's list for a meal placed by hand.
-      tx.lunchSitting.upsert.mockResolvedValue(storedSitting());
+      tx.lunchSitting.create.mockResolvedValue(storedSitting());
 
       await place();
 
       expect(tx.user.count).toHaveBeenCalledWith({
         where: { role: 'STUDENT', isActive: true, studentGroupId: CLASS_ID },
       });
-      expect(tx.lunchSitting.upsert.mock.calls[0][0].create.headcount).toBe(24);
+      expect(tx.lunchSitting.create.mock.calls[0][0].data.headcount).toBe(24);
     });
 
     it.each([
@@ -221,7 +309,7 @@ describe('LunchSittingsService', () => {
           'Lunch is not switched on for this school, so there is no meal to place.',
         ),
       );
-      expect(tx.lunchSitting.upsert).not.toHaveBeenCalled();
+      expect(tx.lunchSitting.create).not.toHaveBeenCalled();
     });
 
     it('refuses a group that is not a class of the year', async () => {
@@ -252,7 +340,7 @@ describe('LunchSittingsService', () => {
       await expect(place('23:30')).rejects.toThrow(
         new BadRequestException('The meal would run past midnight.'),
       );
-      expect(tx.lunchSitting.upsert).not.toHaveBeenCalled();
+      expect(tx.lunchSitting.create).not.toHaveBeenCalled();
     });
   });
 
@@ -273,6 +361,8 @@ describe('LunchSittingsService', () => {
         endTime: '13:00',
         headcount: 24,
         isGenerated: false,
+        startDate: null,
+        endDate: null,
       });
 
       expect(tx.lunchSitting.update).toHaveBeenCalledWith({
@@ -296,6 +386,47 @@ describe('LunchSittingsService', () => {
       await service.move(SITTING_ID, { dayOfWeek: 3 }, user);
       expect(tx.lunchSitting.deleteMany).toHaveBeenCalledWith({
         where: { academicYearId: YEAR_ID, studentGroupId: CLASS_ID, dayOfWeek: 3 },
+      });
+    });
+
+    it('clears only the meals of the new day that hold weeks of the moved one', async () => {
+      // A meal of the autumn dragged to Wednesday takes the Wednesday meal of the autumn
+      // (and of any week it shares with it); the Wednesday meal of the spring stays.
+      givenSitting({
+        startDate: new Date('2026-08-17T00:00:00.000Z'),
+        endDate: new Date('2026-12-20T00:00:00.000Z'),
+      });
+      tx.lunchSitting.update.mockResolvedValue(storedSitting());
+
+      await service.move(SITTING_ID, { dayOfWeek: 3 }, user);
+
+      expect(tx.lunchSitting.deleteMany).toHaveBeenCalledWith({
+        where: {
+          academicYearId: YEAR_ID,
+          studentGroupId: CLASS_ID,
+          dayOfWeek: 3,
+          AND: [
+            { OR: [{ startDate: null }, { startDate: { lte: new Date('2026-12-20T00:00:00.000Z') } }] },
+            { OR: [{ endDate: null }, { endDate: { gte: new Date('2026-08-17T00:00:00.000Z') } }] },
+          ],
+        },
+      });
+    });
+
+    it('clears the meals of a new day that run to the läsår’s edge for a moved meal that does too', async () => {
+      // A moved meal with no end meets every meal that has no end, and so on; one bound is one condition.
+      givenSitting({ startDate: new Date('2027-01-11T00:00:00.000Z'), endDate: null });
+      tx.lunchSitting.update.mockResolvedValue(storedSitting());
+
+      await service.move(SITTING_ID, { dayOfWeek: 3 }, user);
+
+      expect(tx.lunchSitting.deleteMany).toHaveBeenCalledWith({
+        where: {
+          academicYearId: YEAR_ID,
+          studentGroupId: CLASS_ID,
+          dayOfWeek: 3,
+          AND: [{ OR: [{ endDate: null }, { endDate: { gte: new Date('2027-01-11T00:00:00.000Z') } }] }],
+        },
       });
     });
 

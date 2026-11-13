@@ -160,10 +160,23 @@ describe("the guardian's notices of a leave request that asks for consent (Ledig
     }
   });
 
-  it("leads all three to the guardian's page, where the requests are listed, whoever the reader is", () => {
+  it("leads all three to the guardian's page, where the requests are listed, when the reader's role is not given", () => {
     for (const type of TYPES) {
       expect(noticeHref(row(type, meta))).toBe("/guardian");
       expect(noticeHref(row(type, meta), "GUARDIAN")).toBe("/guardian");
+    }
+  });
+
+  // The "no" is the one of the three that reaches someone who is not a guardian: whoever filed the request.
+  it("leads the administrator who filed the request to the tab of ended requests, and a pupil nowhere, since they list theirs on no page", () => {
+    expect(noticeHref(row("LEAVE_CONSENT_REFUSED", meta), "SCHOOL_ADMIN")).toBe("/admin/leave?filter=GUARDIAN_DECLINED");
+    expect(noticeHref(row("LEAVE_CONSENT_REFUSED", meta), "STUDENT")).toBeUndefined();
+    expect(noticeHref(row("LEAVE_CONSENT_REFUSED", meta), "TEACHER")).toBeUndefined();
+  });
+
+  it("leaves the two notices that ask a guardian for consent on the guardian's page whatever the role says", () => {
+    for (const type of ["LEAVE_CONSENT_REQUESTED", "LEAVE_CONSENT_REMINDER"] as const) {
+      expect(noticeHref(row(type, meta), "SCHOOL_ADMIN")).toBe("/guardian");
     }
   });
 });

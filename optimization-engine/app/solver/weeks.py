@@ -143,6 +143,10 @@ class Weeks:
             period for period in range(self.periods) if (self.bits >> (2 * period)) & 0b11
         )
 
+    def is_every_week(self) -> bool:
+        """Whether these are every concrete week of the year: no week of any period is left out."""
+        return self.bits == (1 << (2 * self.periods)) - 1
+
     def parity(self) -> str | None:
         """The gateway's name for the parity these weeks are of; None when they are of both."""
         odd = sum(1 << (2 * period) for period in range(self.periods))
@@ -252,9 +256,8 @@ def whole_periods(week: Weeks | str | None) -> Weeks | None:
     for period in range(week.periods):
         if (week.bits >> (2 * period)) & 0b11:
             bits |= 0b11 << (2 * period)
-    if bits == (1 << (2 * week.periods)) - 1:
-        return None
-    return Weeks(bits, week.periods)
+    whole = Weeks(bits, week.periods)
+    return None if whole.is_every_week() else whole
 
 
 def alternates(weeks: Iterable[Weeks | str | None]) -> bool:
@@ -436,6 +439,12 @@ def tag(name: str, week: Weeks | str | None) -> str:
     if week is None:
         return name
     return f"{name}_{week.suffix()}"
+
+
+#: The words `named` says of a week, and the only keys a week adds to a
+#: refusal's params. What decides which weeks a refusal is of, so what a
+#: comparison of two refusals leaves out (refusals.py).
+WEEK_WORDS = ("period", "periods", "parity")
 
 
 def named(week: Weeks | str | None) -> dict[str, str | int]:

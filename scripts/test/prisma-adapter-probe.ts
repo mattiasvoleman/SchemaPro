@@ -5623,7 +5623,12 @@ async function runChecks(
           // teacher above, a new hour) asks nothing.
           'PATCH a drag': 25,
           'PATCH a drag back beside 8A': 29,
-          'place a meal': 7,
+          // +1 since Klassens måltid per del av läsåret (20270209090000): a
+          // class has one meal on a DATE, which the table's exclusion
+          // constraint says, so the placing reads the class's meals of the
+          // weekday first (one SELECT, on the constraint's index) and writes
+          // after, in place of an upsert on the unique key that is gone.
+          'place a meal': 8,
           // +1 since Tjänstens perioder (20261022120000): the year has posts,
           // so the load read asks for their periods (one indexed SELECT); a
           // year without a post asks nothing more.

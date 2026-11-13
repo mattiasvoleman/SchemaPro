@@ -16,6 +16,7 @@ import {
 import type { LunchServing } from "@/lib/types";
 import { servingsFor } from "@/lib/lunch-servings";
 import { lunchFlow, peakSeated } from "@/lib/lunch-flow";
+import { anyMealDated, dayWithin, mealsOnDay } from "@/lib/lunch-window";
 import { clock } from "@/lib/clock";
 import { formatTime, timeToMinutes } from "@/lib/utils";
 import { Page } from "@/components/layout/page";
@@ -27,6 +28,7 @@ import {
   useSpanLabel,
 } from "@/components/schedule/stage-week-matrix";
 import { Button } from "@/components/ui/button";
+import { DateField } from "@/components/ui/date-field";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -95,6 +97,21 @@ export default function LunchServingsPage() {
     isError: sittingsFailed,
   } = useLunchSittings(activeYear?.id ?? null);
   const { data: groups } = useGroups();
+
+  /*
+   * THE KITCHEN'S DAY. A class may eat at another time in another part of the
+   * läsår (20270209090000), and the flow is one day's list: listing every meal
+   * of a weekday would seat 7A twice, at both of its times. With any meal
+   * dated the page asks for a day, today's by default (clamped to the läsår);
+   * with none it asks nothing and is the page it was.
+   */
+  const [pickedDay, setPickedDay] = useState("");
+  const datedMeals = useMemo(() => anyMealDated(sittings ?? []), [sittings]);
+  const flowDay = pickedDay || dayWithin(new Date().toISOString().slice(0, 10), activeYear?.startDate, activeYear?.endDate);
+  const mealsShown = useMemo(
+    () => (datedMeals ? mealsOnDay(sittings ?? [], flowDay) : (sittings ?? [])),
+    [datedMeals, sittings, flowDay],
+  );
 
   const mutations = useCrudMutations<{
     minGradeLevel: number;
@@ -380,6 +397,23 @@ export default function LunchServingsPage() {
         {sittingsFailed && sittings !== undefined ? (
           <LoadError variant="inline" title={t("flowLoadFailed")} hint={tCommon("refetchFailedHint")} />
         ) : null}
+        {datedMeals ? (
+          <div className="space-y-1">
+            <FormField id="flow-day" label={t("flowDate")}>
+              <DateField
+                label={t("flowDate")}
+                value={flowDay}
+                min={activeYear?.startDate}
+                max={activeYear?.endDate}
+                onChange={(value) => setPickedDay(value)}
+              />
+            </FormField>
+            <p className="text-sm text-muted-foreground">{t("flowDateHint")}</p>
+            {mealsShown.length === 0 ? (
+              <p className="text-sm text-muted-foreground">{t("flowEmptyOnDay")}</p>
+            ) : null}
+          </div>
+        ) : null}
         {/*
           The flow is the active year's. Without one the request is never made,
           so a school whose years failed, or that has none active, would read
@@ -400,14 +434,14 @@ export default function LunchServingsPage() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {WEEKDAYS.map((day) => {
-              const waves = lunchFlow(sittings, day);
+              const waves = lunchFlow(mealsShown, day);
               if (waves.length === 0) return null;
               return (
                 <div key={day} className="space-y-2 rounded-lg border bg-card p-4">
                   <div className="space-y-1">
                     <h3 className="text-sm font-semibold">{tDays(String(day))}</h3>
                     <p className="text-sm text-muted-foreground">
-                      {t("flowTotal", { count: peakSeated(sittings, day) })}
+                      {t("flowTotal", { count: peakSeated(mealsShown, day) })}
                     </p>
                   </div>
                   <ol className="space-y-1 text-sm">

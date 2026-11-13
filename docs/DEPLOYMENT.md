@@ -4826,11 +4826,38 @@ Two changes, in two releases. No migration in either.
    is the first and `periods` all of them ("0,1,2,3"), the form a week that
    lies in several periods already had, and the gateway reads their
    stretches together, so a teacher over her hours all autumn is told the
-   autumn's weeks and not its first two days. "Share" is the same count with
-   the same posts and the same figures; for a 400, the same code and the
-   same figures. The lines of a best possible timetable say their weeks the
-   same way. Weeks that no words say exactly (the odd weeks of one term with
-   every week of the other) leave the week the refusal was found in.
+   autumn's weeks and not its first two days. "Share" is one rule, for a
+   count, a 400 and the lines of a best possible timetable alike
+   (`optimization-engine/app/solver/refusals.py`): the same sentence (the
+   code), the same figures, and the same posts, rooms, rules and people the
+   refusal names, in any order. A 400 names what it names in its figures, so
+   two terms with other posts and the same figures are one 400 and two
+   counts, each naming its posts. Weeks that no words say exactly (the odd
+   weeks of one term with every week of the other) leave the first of the
+   weeks that give it.
+
+   **When the weeks are refused differently, the refusal said is the one
+   whose weeks are most of the year** (`periodWeeks`; every period alike
+   where none is sent), and the earliest on a tie. A läsår starts on a
+   Saturday, so its first two days are a period of their own, and a teacher
+   with a post of her own from the first Monday is over her hours there with
+   other figures than in the autumn: it is the autumn that is said. Each
+   week gives its first refusal, in the order the counts are made, and it is
+   among those that the most weeks is chosen: a refusal a week would also
+   give, but only after an earlier count, is not weighed (a count says the
+   weeks it refuses the same behind an earlier count, once it is the one
+   said, and a 400 has no such weeks). The weeks are weighed by
+   `periodWeeks`, where the odd and the even weeks of a period count as many
+   each, so "most" is most to within a week a period. Weeks with nothing to
+   place are not asked. Where no week was left out, two weeks that agree name
+   none; where a week was, they name none only if the year without a post of
+   its own is refused the same way: a teacher's trouble is named by where it
+   is and not by how the posts are cut. The gateway asks each stretch of a
+   period on its own, by the ISO weeks it holds, and names only the stretches
+   that hold a week of the parity the engine counted (week 53 and week 1 are
+   both odd): a period that has none of that parity is left out, and so is a
+   lone week of the other parity before a longer stretch. A stretch that is
+   named is named whole, with the other parity's weeks inside it.
 
    Three verdicts solve a model instead of counting (the lunch stage, a
    class's hours, the year's tightest week). They run on at most eight weeks
@@ -4959,9 +4986,10 @@ with those beside them; a refusal that one period's locks cause alone
 carries none of them and reads exactly as it did. The way round: move or
 unlock one of the locks.
 
-A meal per period needs a migration (dates on `LunchSittings` and
-`PublishedLunchSittings`, an exclusion constraint in place of the unique
-key) and every reader of the table; it is not built.
+A meal per period needs dates on `LunchSittings` and
+`PublishedLunchSittings`, an exclusion constraint in place of the unique key,
+and every reader of the tables. The tables and the readers are 19.6; the
+generator does not plan a meal per period yet, so the limit stands.
 
 ### 19.4 Operations
 
@@ -4997,10 +5025,11 @@ term has a timetable (the reviews of #300):
   period's. Nothing new is sent: the locks and the posts already carry their
   periods. `TEACHER_LUNCH_LEAVES_NO_START` is read period by period and
   names where in the year it is — every period in which the teacher has a
-  lesson to place and the same locked hours that weekday (`period`, and
-  `periods` where there are several, which the gateway reads as one run of
-  weeks: a läsår has more periods than terms) — unless the locks of every
-  period refuse it, which is the year's refusal and names none.
+  lesson to place and her lunch that weekday is refused the same (the same
+  rule, day and cause, whatever locks close it; `period`, and `periods`
+  where there are several, which the gateway reads as one run of weeks: a
+  läsår has more periods than terms) — unless the locks of every period
+  refuse it, which is the year's refusal and names none.
 
 **Deploy order.** The engine and the gateway are one release here. The
 engine's models forbid unknown fields, so in the minutes between the API's
@@ -5032,3 +5061,98 @@ fails the runs that carry the field with the same 503.
 
 Schemaförslag of a school that is sent the field go stale once, as in 19.4:
 the candidate basis reads it.
+
+### 19.6 A class's meal holds weeks ("Klassens måltid per del av läsåret")
+
+The first release of a class's meal per part of the läsår: the tables and
+every reader of them. **Nothing writes a date yet**, so no school sees a
+difference, and the limit in 19.3 stands (the generator still plans one meal
+a day all year). A later release lets Generera lay one meal per part and the
+school date a meal by hand.
+
+**The migration** `20270209090000_klassens_maltid_har_ett_datum`
+(sha256 `14e0064464ef922dcc5037c38efbdaed81a160b88a6fca27454a456e3bd26b56`).
+`LunchSittings` and `PublishedLunchSittings` get `startDate` and `endDate`
+(`date`, nullable, no default, no backfill: every row there is, and every row
+the API before this one writes, is NULL and NULL, the whole läsår). They are
+the first and the last day the meal holds, a Monday and a Sunday (a CHECK
+each, and one that they are in order), NULL for the läsår's own bound; the
+names and the meaning are `MasterLessons`', and the window is whole weeks
+because the generator plans in whole weeks. The unique key
+`LunchSittings_group_day_key`, and the unique index on
+`PublishedLunchSittings`, are replaced by `EXCLUDE USING gist` over the class,
+the weekday, the läsår (the publication, for the snapshot) and
+`daterange("startDate", "endDate", '[]')`: a class has at most one meal on a
+date. A row with no dates meets every other row of its class and weekday,
+which is what the unique key said. No policy, grant, function or trigger is
+touched, and no policy names a date (section 475 asks).
+
+**Deploy order** is 2's: migrate first, then merge. The file takes both tables
+`ACCESS EXCLUSIVE` first, `NOWAIT` and together, in a loop with a 30 s
+deadline (a request holds them in both orders: Generera writes
+`LunchSittings`, a publication reads it and writes the snapshot). It has a
+`$$` body, so Prisma runs it as one transaction; if the loop gives up nothing
+is changed, and `prisma migrate resolve --rolled-back
+20270209090000_klassens_maltid_har_ett_datum` then `migrate deploy` again is
+all it takes (shown on a throwaway database with a session holding one table
+for longer than the loop waits: the P0001 message above, no column added, the
+old key still there). The tables hold a row per class and weekday (25 in
+production on 2026-11-13, none placed by hand, none published), so the two
+indexes build in milliseconds inside the lock. Run it in a quiet window and
+read `pg_stat_progress_vacuum` first, as 2 says of every NOWAIT migration.
+
+**The one thing the minutes between the migration and the deploy cost.** The
+API before this release places a meal by hand (`POST
+/api/v1/lunch-sittings`, the grid's click on an empty slot) with a Prisma
+`upsert`, which Prisma 7 writes as `INSERT … ON CONFLICT ("academicYearId",
+"studentGroupId", "dayOfWeek") DO UPDATE`. An exclusion constraint cannot be
+the arbiter of an `ON CONFLICT` list, so with the unique key gone that
+statement fails (SQLSTATE 42P10; measured on the throwaway database: "there
+is no unique or exclusion constraint matching the ON CONFLICT
+specification"). The administrator who places a meal in those minutes sees
+the grid's error toast and the meal is not placed; placing it again once the
+new API serves works. Nothing else reads the key: Generera writes with
+`createMany`, `update` and `deleteMany`, and the readers select named
+columns. The new API places by reading the class's meals of the weekday first
+and writing after, and a write that meets the constraint at once (two
+placements for one class and day, neither seeing the other) is a 409
+`WRITE_CONFLICT` ("försök igen"), not a 500.
+
+**What reads the weeks** (every reader asks `src/common/lunch-window.ts`, and
+the browser `web/lib/lunch-window.ts`, which read a date alike): the calendar
+(`CalendarService.materialise` lays each date's meal from the sitting that
+holds the date, none in the weeks no sitting holds), the publication's
+snapshot (`snapshotSittings` and `readPublishedSittings` carry the dates, so a
+refill lays each week's meal), the swap board and the klasslärare's schedule
+(`readBoardFacts`, `boardCodeOf`: a lesson is held to the meals of its own
+weeks, a lesson with no weeks to all of them, a dated board to the meal of its
+date), the schedule exchange (`ON_LUNCH_SITTING`), the admin grid (a meal's
+weeks in its label, the check against every meal of the weekday) and the
+kitchen's flow (a day to show, only when some meal holds weeks). The
+rollover copies no meal (`LunchSitting` is skipped) and the mobile app and
+Måltidskollen read `CalendarLunches`, which are dated already.
+
+**Before and after.** `prod-fore.sql` and `prod-efter.sql` (read-only, one
+`SELECT` per row: `check, got, expected, ok`; text fingerprints ordered with
+`COLLATE "C"`, since production sorts `en_US`) ask: the migration pending or
+run; the four columns; the six CHECKs, validated; the two exclusion
+constraints and their indexes; the old key and index gone; no row with a date;
+the row counts and md5 of the rows equal before and after; the policies'
+names, commands and md5 equal; the privileges per role (`has_table_privilege`
+per role, not as the owner); no MAINTAIN on 17; the md5 of every `app.*`
+function equal (no function is touched); no session holding either table in a
+transaction. Rolling back the code keeps everything but placing a meal by hand:
+older code never names the columns, but its `upsert` meets the constraint
+instead of the unique key and answers 500 (SQLSTATE 42P10), as in the minutes
+before the deploy, until the new code serves again (moving and removing a meal
+work). Rolling back the migration is not a one-liner once a row has a date:
+restore the unique key only after the rows that share a weekday are reduced to
+one per class, year and weekday.
+
+**Tests.** RLS sections 475 to 479 (`rls-owner-checks.sql` 475 to 477 and 479,
+`rls-policies.sql` 478): the catalogue, what the constraint tolerates and
+refuses (53 weeks of one class and weekday; an update into a conflict; every
+CHECK), the snapshot's, what each role reads and writes, and the cascades; the
+*Meal per term probe* in CI runs the oracle over the calendar date by date,
+the snapshot, the placement and its race, and the board's reader.
+

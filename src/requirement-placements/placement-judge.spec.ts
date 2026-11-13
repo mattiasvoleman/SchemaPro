@@ -455,6 +455,26 @@ describe('judgePlacements', () => {
       expect((await judge(fakeTx(), [row()]))[0]?.reason).toBe('LUNCH');
     });
 
+    it('LUNCH: a post of some weeks is held to the placed meal of its own weeks (20270209090000)', async () => {
+      // Tuesday: 10:30–11:00 in the autumn (to Sunday 2026-12-20), 11:00–11:30 from Monday 2027-01-11; the post is 11:00–12:00.
+      (readBoardFacts as jest.Mock).mockResolvedValue(
+        facts({
+          sittings: new Map([[
+            `${G7A}|2`,
+            [
+              { studentGroupId: G7A, dayOfWeek: 2, startMinutes: 630, endMinutes: 660, startDate: null, endDate: '2026-12-20' },
+              { studentGroupId: G7A, dayOfWeek: 2, startMinutes: 660, endMinutes: 690, startDate: '2027-01-11', endDate: null },
+            ],
+          ]]),
+        }),
+      );
+      const at = (startDate: Date | null, endDate: Date | null) => judge(fakeTx(), [row({ startMinutes: 660, minutes: 60, startDate, endDate })]);
+      // A post of the autumn is clear of the spring's meal, which is on top of 11:00–12:00; a post of the spring and one of every week are not.
+      expect((await at(new Date('2026-08-17T00:00:00.000Z'), new Date('2026-12-18T00:00:00.000Z')))[0]).toMatchObject({ ok: true });
+      expect((await at(new Date('2027-01-11T00:00:00.000Z'), new Date('2027-06-11T00:00:00.000Z')))[0]).toMatchObject({ ok: false, reason: 'LUNCH' });
+      expect((await at(null, null))[0]).toMatchObject({ ok: false, reason: 'LUNCH' });
+    });
+
     it('LUNCH is the school’s placed meals only: Generera’s own sittings, which it lays again, are not read (MEDEL-1 of #293)', async () => {
       (readBoardFacts as jest.Mock).mockResolvedValue(facts());
       await judge(fakeTx(), [row()]);

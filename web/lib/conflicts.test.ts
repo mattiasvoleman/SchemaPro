@@ -10,6 +10,8 @@ import {
   toPlacement,
   weeksCanOverlap,
   validatePlacement,
+  type LunchOf,
+  type Meal,
   type Placement,
   type RoomLockCheck,
 } from "./conflicts";
@@ -2601,5 +2603,61 @@ describe("alternating weeks", () => {
         );
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validatePlacement — a class that eats at another time in another part of the läsår
+// ---------------------------------------------------------------------------
+
+describe("validatePlacement lunch sittings that hold weeks", () => {
+  const spans = new Map([["gA", { min: 4, max: 4 }]]);
+
+  /** gA eats 11:00–11:30 on Mondays of the autumn and 11:30–12:00 on Mondays of the spring. */
+  const split = (): LunchOf =>
+    new Map<string, readonly Meal[]>([
+      [
+        "gA:1",
+        [
+          { startMinutes: 11 * 60, endMinutes: 11 * 60 + 30, startDate: null, endDate: "2026-12-20" },
+          { startMinutes: 11 * 60 + 30, endMinutes: 12 * 60, startDate: "2027-01-11", endDate: null },
+        ],
+      ],
+    ]);
+  const autumn = { startDate: "2026-08-17", endDate: "2026-12-18" };
+  const spring = { startDate: "2027-01-11", endDate: "2027-06-11" };
+
+  const check = (start: number, end: number, window: Partial<Placement>, lunchOf: LunchOf | undefined = split()) =>
+    validatePlacement(
+      makePlacement({ studentGroupId: "gA", startMinutes: start, endMinutes: end, ...window }),
+      [],
+      [],
+      undefined,
+      undefined,
+      spans,
+      [],
+      lunchOf,
+    );
+
+  it("holds a lesson of the autumn to the autumn's meal and lets it stand on the spring's", () => {
+    expect(check(11 * 60, 11 * 60 + 30, autumn)).toEqual([{ kind: "LUNCH" }]);
+    expect(check(11 * 60 + 30, 12 * 60, autumn)).toEqual([]);
+  });
+
+  it("holds a lesson of the spring to the spring's meal and lets it stand on the autumn's", () => {
+    expect(check(11 * 60, 11 * 60 + 30, spring)).toEqual([]);
+    expect(check(11 * 60 + 30, 12 * 60, spring)).toEqual([{ kind: "LUNCH" }]);
+  });
+
+  it("holds a lesson of every week to both: the stricter reading", () => {
+    expect(check(11 * 60, 11 * 60 + 30, {})).toEqual([{ kind: "LUNCH" }]);
+    expect(check(11 * 60 + 30, 12 * 60, { startDate: null, endDate: null })).toEqual([{ kind: "LUNCH" }]);
+    expect(check(12 * 60, 13 * 60, {})).toEqual([]);
+  });
+
+  it("still takes one meal as an object, as every caller before the dates did", () => {
+    const one: LunchOf = new Map([["gA:1", { startMinutes: 11 * 60, endMinutes: 11 * 60 + 30 }]]);
+    expect(check(11 * 60, 11 * 60 + 30, autumn, one)).toEqual([{ kind: "LUNCH" }]);
+    expect(check(11 * 60, 11 * 60 + 30, spring, one)).toEqual([{ kind: "LUNCH" }]);
   });
 });

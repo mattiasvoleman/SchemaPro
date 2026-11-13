@@ -48,6 +48,15 @@ describe('the mappers', () => {
   it('states a frame, a sitting and a constraint in minutes', () => {
     expect(frameOf({ minGradeLevel: 1, maxGradeLevel: 6, dayOfWeek: null, startTime: time('08:00'), endTime: time('15:00') })).toEqual({ min: 1, max: 6, day: null, start: 480, end: 900 });
     expect(sittingOf({ studentGroupId: '4A', dayOfWeek: 2, startTime: time('11:00'), endTime: time('11:30') })).toEqual({ studentGroupId: '4A', dayOfWeek: 2, startMinutes: 660, endMinutes: 690 });
+    // A meal of some weeks says which, as days; one of the whole läsår is the object it always was.
+    expect(sittingOf({ studentGroupId: '4A', dayOfWeek: 2, startTime: time('11:00'), endTime: time('11:30'), startDate: new Date('2027-01-11T00:00:00.000Z'), endDate: null })).toEqual({
+      studentGroupId: '4A',
+      dayOfWeek: 2,
+      startMinutes: 660,
+      endMinutes: 690,
+      startDate: '2027-01-11',
+      endDate: null,
+    });
     expect(
       constraintOf({ resourceType: 'GRADE_LEVEL', userId: null, roomId: null, studentGroupId: null, minGradeLevel: 1, maxGradeLevel: 3, dayOfWeek: 4, startTime: time('13:00'), endTime: time('14:00') }),
     ).toEqual({ resourceType: 'GRADE_LEVEL', userId: null, roomId: null, studentGroupId: null, minGradeLevel: 1, maxGradeLevel: 3, dayOfWeek: 4, startMinutes: 780, endMinutes: 840 });
@@ -106,6 +115,37 @@ describe('boardCodeOf', () => {
       expect(boardCodeOf(facts({ sittings: meal('11:00', '11:30') }), ['4A'], slot(2, '11:15', '12:15'))).toBe('LUNCH');
       expect(boardCodeOf(facts({ sittings: meal('11:00', '11:30') }), ['4A'], slot(2, '10:00', '11:00'))).toBeNull();
       expect(boardCodeOf(facts({ sittings: meal('11:00', '11:30') }), ['4A'], slot(2, '11:30', '12:30'))).toBeNull();
+    });
+
+    describe('a class that eats at another time in another part of the läsår', () => {
+      // Tuesday: 11:00–11:30 in the autumn, 11:30–12:00 in the spring.
+      const split = new Map([
+        [
+          sittingKey('4A', 2),
+          [
+            { studentGroupId: '4A', dayOfWeek: 2, startMinutes: 660, endMinutes: 690, startDate: null, endDate: '2026-12-20' },
+            { studentGroupId: '4A', dayOfWeek: 2, startMinutes: 690, endMinutes: 720, startDate: '2027-01-11', endDate: null },
+          ],
+        ],
+      ]);
+      const autumn = { startDate: '2026-08-17', endDate: '2026-12-18' };
+      const spring = { startDate: '2027-01-11', endDate: '2027-06-11' };
+
+      it('holds a lesson of the autumn to the autumn’s meal, and lets it stand on the spring’s', () => {
+        expect(boardCodeOf(facts({ sittings: split }), ['4A'], slot(2, '11:00', '11:30'), autumn)).toBe('LUNCH');
+        expect(boardCodeOf(facts({ sittings: split }), ['4A'], slot(2, '11:30', '12:00'), autumn)).toBeNull();
+      });
+
+      it('holds a lesson of the spring to the spring’s meal, and lets it stand on the autumn’s', () => {
+        expect(boardCodeOf(facts({ sittings: split }), ['4A'], slot(2, '11:00', '11:30'), spring)).toBeNull();
+        expect(boardCodeOf(facts({ sittings: split }), ['4A'], slot(2, '11:30', '12:00'), spring)).toBe('LUNCH');
+      });
+
+      it('holds a lesson with no window, and the weekly template, to both: the stricter reading', () => {
+        expect(boardCodeOf(facts({ sittings: split }), ['4A'], slot(2, '11:00', '11:30'))).toBe('LUNCH');
+        expect(boardCodeOf(facts({ sittings: split }), ['4A'], slot(2, '11:30', '12:00'), null)).toBe('LUNCH');
+        expect(boardCodeOf(facts({ sittings: split }), ['4A'], slot(2, '11:30', '12:00'), { startDate: null, endDate: null })).toBe('LUNCH');
+      });
     });
 
     it('is the class’s sitting of that day, and any of the groups’', () => {
@@ -231,6 +271,44 @@ describe('readBoardFacts', () => {
       expect(tx['calendarLunch']!['findMany']!.mock.calls[0]![0].where).toEqual({ studentGroupId: { in: ['4A', '4B'] }, date: new Date('2027-03-23T00:00:00.000Z') });
       expect(result.sittings.get(sittingKey('4A', 2))).toEqual([{ studentGroupId: '4A', dayOfWeek: 2, startMinutes: 720, endMinutes: 760 }]);
       expect(result.sittings.get(sittingKey('4B', 2))).toEqual([{ studentGroupId: '4B', dayOfWeek: 2, startMinutes: 720, endMinutes: 750 }]);
+    });
+
+    describe('when the class has a meal for each part of the läsår', () => {
+      const autumn = { studentGroupId: '4A', dayOfWeek: 2, startTime: time('11:00'), endTime: time('11:30'), startDate: null, endDate: new Date('2026-12-20T00:00:00.000Z') };
+      const spring = { studentGroupId: '4A', dayOfWeek: 2, startTime: time('11:30'), endTime: time('12:00'), startDate: new Date('2027-01-11T00:00:00.000Z'), endDate: null };
+
+      it('reads the meals’ dates with them', async () => {
+        const tx = world();
+        await read(tx);
+        expect(tx['lunchSitting']!['findMany']!.mock.calls[0]![0].select).toMatchObject({ startDate: true, endDate: true });
+      });
+
+      it('holds the date to the meal that holds it, and takes no other', async () => {
+        const tx = world();
+        tx['lunchSitting']!['findMany']!.mockResolvedValue([autumn, spring]);
+        const result = await read(tx, { date: { day: '2027-03-23', localMinutes: () => 0 } });
+        expect(result.sittings.get(sittingKey('4A', 2))).toEqual([
+          { studentGroupId: '4A', dayOfWeek: 2, startMinutes: 690, endMinutes: 720, startDate: '2027-01-11', endDate: null },
+        ]);
+        const early = await read(tx, { date: { day: '2026-10-06', localMinutes: () => 0 } });
+        expect(early.sittings.get(sittingKey('4A', 2))).toEqual([
+          { studentGroupId: '4A', dayOfWeek: 2, startMinutes: 660, endMinutes: 690, startDate: null, endDate: '2026-12-20' },
+        ]);
+      });
+
+      it('has no meal for a date in the weeks between the two', async () => {
+        const tx = world();
+        tx['lunchSitting']!['findMany']!.mockResolvedValue([autumn, spring]);
+        const between = await read(tx, { date: { day: '2026-12-29', localMinutes: () => 0 } });
+        expect(between.sittings.get(sittingKey('4A', 2))).toBeUndefined();
+      });
+
+      it('keeps every meal of the weekday for a read with no date: the week’s template', async () => {
+        const tx = world();
+        tx['lunchSitting']!['findMany']!.mockResolvedValue([autumn, spring]);
+        const template = await read(tx);
+        expect(template.sittings.get(sittingKey('4A', 2))).toHaveLength(2);
+      });
     });
 
     it('falls back on the weekly sitting where the publication laid no meal for the class', async () => {

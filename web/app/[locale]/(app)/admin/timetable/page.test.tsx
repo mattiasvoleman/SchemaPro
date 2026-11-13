@@ -2108,6 +2108,32 @@ describe("why there is no lunch band", () => {
     expect(screen.getAllByText("lunch.bandLabel")).toHaveLength(1);
   });
 
+  it("says which weeks a meal holds when it holds only some, and nothing when it holds them all", async () => {
+    // A class that eats at 11:40 in the autumn and 11:00 from January has a band for each,
+    // and the label is what tells them apart (20270209090000).
+    enabled();
+    state.sittings = [
+      { ...sitting("g-41"), startDate: null, endDate: "2026-12-20" },
+      { ...sitting("g-41"), id: "s-g-41-spring", startTime: "11:00:00", endTime: "11:20:00", startDate: "2027-01-11", endDate: null },
+    ];
+    render(<TimetablePage />);
+    await filterTo("4.1");
+
+    expect(screen.getAllByText(/^lunch\.bandLabelTo\(.*20/)).toHaveLength(1);
+    expect(screen.getAllByText(/^lunch\.bandLabelFrom\(.*11/)).toHaveLength(1);
+    expect(screen.queryByText("lunch.bandLabel")).toBeNull();
+  });
+
+  it("says nothing of the weeks of a meal that holds the whole läsår, with or without the dates in the row", async () => {
+    enabled();
+    state.sittings = [{ ...sitting("g-41"), startDate: null, endDate: null }];
+    render(<TimetablePage />);
+    await filterTo("4.1");
+
+    expect(screen.getAllByText("lunch.bandLabel")).toHaveLength(1);
+    expect(screen.queryByText(/bandLabelFrom|bandLabelTo|bandLabelBetween/)).toBeNull();
+  });
+
   it("says nothing while every class is in view", () => {
     // The bands are hidden there on purpose; a notice about their absence
     // would explain a choice, not a gap.
