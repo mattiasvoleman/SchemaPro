@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { ApiError } from "@/lib/api";
-import { isActiveRun, VARIANT_KEYS, variantLabel } from "@/lib/candidates/labels";
+import { changedPartsText, isActiveRun, staleParts, VARIANT_KEYS, variantLabel } from "@/lib/candidates/labels";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import {
   useAcademicYears,
@@ -486,12 +486,18 @@ export default function GeneratePage() {
   /**
    * The gateway's own reasons for a job it stopped before writing, which are
    * not the engine's and so not in its catalogue: the draft changed under
-   * the run (GENERATE_STALE), another write held the year (SCHEDULE_BUSY), or
-   * the engine is older than the periods the run carried (ENGINE_LACKS_PERIODS).
+   * the run (GENERATE_STALE, which names the parts the write found changed
+   * when it read the school again, as the candidates page does for its apply),
+   * another write held the year (SCHEDULE_BUSY), or the engine is older than
+   * the periods the run carried (ENGINE_LACKS_PERIODS).
    */
-  const jobErrorText = (code: string | null): string | null =>
+  const jobErrorText = (code: string | null, params: Record<string, string | number> | null): string | null =>
     code === "GENERATE_STALE"
-      ? tCandidates("jobErrors.GENERATE_STALE")
+      ? staleParts(params).length > 0
+        ? tCandidates("jobErrors.GENERATE_STALE_PARTS", {
+            parts: changedPartsText(tCandidates, staleParts(params), locale),
+          })
+        : tCandidates("jobErrors.GENERATE_STALE")
       : code === "SCHEDULE_BUSY"
         ? tCandidates("jobErrors.SCHEDULE_BUSY")
         : // Terminer: an engine older than the periods a school with dated
@@ -951,7 +957,7 @@ export default function GeneratePage() {
           }
           description={
             job.status === "FAILED"
-              ? jobErrorText(job.errorCode) ??
+              ? jobErrorText(job.errorCode, job.errorParams) ??
                 (job.error
                   ? (
                       <>

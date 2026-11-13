@@ -83,3 +83,35 @@ describe("a post's rows in words", () => {
     expect(placementLine(row({ dayOfWeek: 6 }), t, (key) => key)).toMatch(/^placements\.row:6\|10:00/);
   });
 });
+
+// Review of #298, LÅG-4: a shared post's rows are different teachers' lessons, and a row said only when and where.
+describe("a shared post's rows say whose lesson each is", () => {
+  const NAMES: Record<string, string> = { "t-bo": "Bo Ek", "t-ce": "Cecilia Ås" };
+  const nameOf = (id: string) => NAMES[id] ?? null;
+
+  it("adds the teacher's name to the row, in the tooltip and beside the word, in both languages", () => {
+    const rows = [row({ teacherId: "t-ce", recurrence: "ALL_WEEKS" }), row({ id: "p2", dayOfWeek: 4, startTime: "13:15", endTime: "13:55", teacherId: "t-bo" })];
+    inLocale("sv", <PlacedBadge rows={rows} withRows teacherName={nameOf} />);
+    expect(screen.getByText("Förlagd").parentElement).toHaveAttribute(
+      "title",
+      "tis 10:00–11:00, Simhallen (Cecilia Ås); tor 13:15–13:55, Simhallen, udda veckor (Bo Ek)",
+    );
+    expect(screen.getByText("tis 10:00–11:00, Simhallen (Cecilia Ås); tor 13:15–13:55, Simhallen, udda veckor (Bo Ek)")).toBeInTheDocument();
+  });
+
+  it("says it in English", () => {
+    inLocale("en", <PlacedBadge rows={[row({ teacherId: "t-bo", recurrence: "ALL_WEEKS" })]} teacherName={nameOf} />);
+    expect(screen.getByText("Placed").parentElement).toHaveAttribute("title", "tue 10:00–11:00, Simhallen (Bo Ek)");
+  });
+
+  it("leaves a row as it was when it has no teacher, or when the teacher cannot be named, or when no name is given", () => {
+    inLocale("sv", <PlacedBadge rows={[row({ teacherId: null }), row({ id: "p2", dayOfWeek: 4, teacherId: "t-gone" })]} teacherName={nameOf} />);
+    expect(screen.getByText("Förlagd").parentElement).toHaveAttribute("title", "tis 10:00–11:00, Simhallen, udda veckor; tor 10:00–11:00, Simhallen, udda veckor");
+  });
+
+  it("is the page's words for the cell's label when the summary is asked for with names", () => {
+    const t = (key: string, values?: Record<string, string | number>) => `${key}:${Object.values(values ?? {}).join("|")}`;
+    expect(placementLine(row({ teacherId: "t-bo" }), t, (key) => key, nameOf)).toBe("placements.rowOf:placements.row:tuesday|10:00|11:00|Simhallen|ODD_WEEKS|Bo Ek");
+    expect(placementsSummary([row({ teacherId: "t-bo" })], t, (key) => key)).toBe("placements.row:tuesday|10:00|11:00|Simhallen|ODD_WEEKS");
+  });
+});

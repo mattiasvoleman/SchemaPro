@@ -26,22 +26,31 @@ const DAY_KEYS = ["", "monday", "tuesday", "wednesday", "thursday", "friday"] as
 
 type Translate = (key: string, values?: Record<string, string | number>) => string;
 
-/** "tis 10:00–11:00, Simhallen, udda veckor": one placed lesson, for a tooltip and a cell's label. */
-export function placementLine(row: RequirementPlacement, t: Translate, tCommon: Translate): string {
-  return t("placements.row", {
+/** The teacher's name for a row that says whose lesson it is: a shared post's. */
+type TeacherName = (teacherId: string) => string | null;
+
+/**
+ * "tis 10:00–11:00, Simhallen, udda veckor": one placed lesson, for a tooltip and a cell's label. On a shared post
+ * the rows are different teachers' lessons and the line says whose ("… (Bo Ek)"); a post that shares nothing places
+ * every row as its teacher's, and its line is as it was.
+ */
+export function placementLine(row: RequirementPlacement, t: Translate, tCommon: Translate, teacherName?: TeacherName): string {
+  const line = t("placements.row", {
     day: DAY_KEYS[row.dayOfWeek] ? tCommon(DAY_KEYS[row.dayOfWeek]!).toLowerCase() : String(row.dayOfWeek),
     start: row.startTime,
     end: row.endTime,
     room: row.roomName,
     weeks: row.recurrence,
   });
+  const name = row.teacherId ? teacherName?.(row.teacherId) : null;
+  return name ? t("placements.rowOf", { row: line, teacher: name }) : line;
 }
 
 /** All of a post's rows in the order the week reads them, one after another. */
-export function placementsSummary(rows: readonly RequirementPlacement[], t: Translate, tCommon: Translate): string {
+export function placementsSummary(rows: readonly RequirementPlacement[], t: Translate, tCommon: Translate, teacherName?: TeacherName): string {
   return [...rows]
     .sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.startTime.localeCompare(b.startTime))
-    .map((row) => placementLine(row, t, tCommon))
+    .map((row) => placementLine(row, t, tCommon, teacherName))
     .join("; ");
 }
 
@@ -49,15 +58,18 @@ export function PlacedBadge({
   rows,
   className,
   withRows = false,
+  teacherName,
 }: {
   rows: readonly RequirementPlacement[];
   className?: string;
   /** Says the rows beside the mark, for a place with room for them (the cell's dialog). */
   withRows?: boolean;
+  /** Names the teacher of each row of a shared post, in the tooltip and beside the mark. */
+  teacherName?: TeacherName;
 }) {
   const t = useTranslations("requirements");
   const tCommon = useTranslations("common");
-  const summary = placementsSummary(rows, t, tCommon);
+  const summary = placementsSummary(rows, t, tCommon, teacherName);
   return (
     <span
       title={summary}

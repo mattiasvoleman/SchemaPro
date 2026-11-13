@@ -19,6 +19,13 @@ import { STUB_ORIGIN } from "./stub/sessions";
  * nothing past the fieldset's edge, and each row above the next one, the
  * add button under the last and the line under the rows (problem or sums)
  * under the add button.
+ *
+ * And where the fields stand to each other, which the first reading of the
+ * layout left unasked (eight changes to it passed the file): from 640 px
+ * Lektioner stands to the right of the picker with its label on the line of
+ * "Lärare", however tall the picker has grown; under it the picker has the
+ * whole row and Lektioner goes below. Lektioner is a narrow field, so the name
+ * keeps the room, and a name of one long word breaks inside the picker.
  */
 
 const REQUIREMENTS = "/sv/admin/requirements";
@@ -100,6 +107,9 @@ function layout(shares: Locator) {
               }));
             }),
           lessons: box(row.querySelector("input[type=number]")),
+          lessonsLabel: box(row.querySelector("label[for*='-lessons-']")),
+          // The arrow beside the value: drawn, and as wide as it is drawn when nothing is squeezed.
+          chevron: box(picker.querySelector(":scope > svg")),
           remove: box([...row.querySelectorAll("button")].find((b) => b.getAttribute("aria-label")?.startsWith("Ta bort"))),
         };
       });
@@ -120,14 +130,35 @@ type Layout = Awaited<ReturnType<typeof layout>>;
 /** Half a pixel for subpixel rounding: boxes are compared, not drawn. */
 const EPS = 0.5;
 
-function expectInFlow(facts: Layout, where: string) {
+/** From this width the row has room for Lektioner beside the picker (Tailwind's `sm`). */
+const BESIDE_FROM = 640;
+
+function expectInFlow(
+  facts: Layout,
+  where: string,
+  width: number,
+  // `sideways: false` where the summary line, not the rows, may run past the dialog; `chosen: false` for a row with no teacher yet.
+  { sideways = true, chosen = true }: { sideways?: boolean; chosen?: boolean } = {},
+) {
   facts.rows.forEach((row, index) => {
     const at = `${where}, row ${index + 1} (${row.text})`;
+    if (width >= BESIDE_FROM) {
+      expect(row.lessons.left, `${at}: Lektioner stands to the right of the picker`).toBeGreaterThanOrEqual(row.picker.right - EPS);
+      expect(row.lessons.top, `${at}: Lektioner stands on the picker's row, not below it`).toBeLessThan(row.picker.bottom);
+      expect(Math.abs(row.lessonsLabel.top - row.label.top), `${at}: "Lektioner" stands on the line of "Lärare", however tall the picker is`).toBeLessThanOrEqual(1);
+      expect(row.chevron.right - row.chevron.left, `${at}: the arrow keeps its 16 px`).toBeCloseTo(16, 0);
+    } else {
+      expect(row.lessons.top, `${at}: under ${BESIDE_FROM} px Lektioner goes under the picker`).toBeGreaterThanOrEqual(row.picker.bottom - EPS);
+      expect(row.chevron.right - row.chevron.left, `${at}: the arrow keeps its 16 px`).toBeCloseTo(16, 0);
+    }
+    expect(row.lessons.right - row.lessons.left, `${at}: Lektioner is 5rem wide, so the name keeps the room`).toBeCloseTo(80, 0);
     expect(row.value.top, `${at}: the chosen line starts inside the picker`).toBeGreaterThanOrEqual(row.picker.top - EPS);
     expect(row.value.bottom, `${at}: the chosen line ends inside the picker`).toBeLessThanOrEqual(row.picker.bottom + EPS);
     expect(row.value.right, `${at}: the chosen line stops at the picker's edge`).toBeLessThanOrEqual(row.picker.right + EPS);
-    expect(row.parts.length, `${at}: the chosen line has its parts`).toBeGreaterThan(0);
-    expect(Math.abs(row.parts[0]!.left - row.value.left), `${at}: the name starts at the picker's left, as a field's text does`).toBeLessThanOrEqual(1);
+    if (chosen) {
+      expect(row.parts.length, `${at}: the chosen line has its parts`).toBeGreaterThan(0);
+      expect(Math.abs(row.parts[0]!.left - row.value.left), `${at}: the name starts at the picker's left, as a field's text does`).toBeLessThanOrEqual(1);
+    }
     for (const part of row.parts) {
       expect(
         part.left >= row.value.left - EPS &&
@@ -145,7 +176,7 @@ function expectInFlow(facts: Layout, where: string) {
     expect(row.picker.bottom, `${at}: the picker ends above what follows its row`).toBeLessThanOrEqual(below.top + EPS);
   });
   expect(facts.add.bottom, `${where}: the line under the rows is under "Lägg till lärare"`).toBeLessThanOrEqual(facts.line.top + EPS);
-  expect(facts.scrollsSideways, `${where}: the dialog does not scroll sideways`).toBe(false);
+  if (sideways) expect(facts.scrollsSideways, `${where}: the dialog does not scroll sideways`).toBe(false);
 }
 
 for (const size of VIEWPORTS) {
@@ -157,14 +188,25 @@ for (const size of VIEWPORTS) {
     // the longest line the picker shows, three rows in the row's column.
     await choose(page, pickers.nth(0), /^Bo Ek/);
     await expect(pickers.nth(0), "the fixture still makes this the long line").toContainText(/Saknar behörighet.*över mål/);
-    expectInFlow(await layout(shares), "one row");
+    const one = await layout(shares);
+    expectInFlow(one, "one row", size.width);
+    // The line breaks between the chip and the minutes, not before the chip: name and chip share the first row when
+    // they fit it, and the minutes are the second (the chip's own box does not take part in the wrap).
+    const [name, ...rest] = one.rows[0]!.parts;
+    const chip = rest.find((part) => part.text.startsWith("Saknar"))!;
+    const minutes = rest.find((part) => part.text.includes("min/v"))!;
+    expect(Math.abs(chip.top - name!.top), "the chip stands on the name's row").toBeLessThanOrEqual(4);
+    expect(minutes.top, "the minutes stand under them").toBeGreaterThan(chip.bottom - 4);
 
     // A second row on a two-lesson post: the lead would keep none, so the
     // problem line stands under the add button, which stands under both rows.
     await shares.getByRole("button", { name: "Lägg till lärare" }).click();
+    // The new row, before a teacher is chosen: the picker holds a short word, and on a phone it still has the whole
+    // row to itself, so Lektioner goes under it and does not squeeze in beside it.
+    expectInFlow(await layout(shares), "an added row with no teacher yet", size.width, { chosen: false });
     await choose(page, pickers.nth(1), /^Eva Holm/);
     await expect(shares.locator("[aria-live]")).toContainText("Läraren ovan behåller minst en lektion");
-    expectInFlow(await layout(shares), "two rows and a problem");
+    expectInFlow(await layout(shares), "two rows and a problem", size.width);
 
     expect(misses, MISSES).toEqual([]);
   });
@@ -185,7 +227,29 @@ for (const size of VIEWPORTS) {
     const picker = shares.getByRole("combobox").nth(0);
     await choose(page, picker, /^Maria-Kristina Charlotte Lindblom-Johansson Söderström/);
     await expect(picker).toContainText(/Saknar behörighet.*över mål/);
-    expectInFlow(await layout(shares), "a long name");
+    expectInFlow(await layout(shares), "a long name", size.width);
+
+    expect(misses, MISSES).toEqual([]);
+  });
+
+  test(`Delade lektioner at ${size.name}: a name of one long word breaks inside the picker`, async ({ page, baseURL }) => {
+    // No space or hyphen to break at: 70 characters in a picker that holds
+    // about 20. Only overflow-wrap lets it break; without it the name runs
+    // out past the picker's edge. The summary line under the rows does not
+    // break a word that long (also on the page as it was), so whether the
+    // dialog scrolls sideways is not asked here.
+    await page.route(`${STUB_ORIGIN}/**`, async (route) => {
+      const response = await route.fetch();
+      if (!(response.headers()["content-type"] ?? "").includes("json")) return route.fulfill({ response });
+      const body = (await response.text()).replaceAll('"firstName":"Bo"', `"firstName":"${"Aabcdefghi".repeat(7)}"`);
+      await route.fulfill({ response, body });
+    });
+    const { shares, misses } = await openShares(page, baseURL!, size, "Biologi för 7A: 2 lektioner à 60 minuter");
+    await choose(page, shares.getByRole("combobox").nth(0), /^Aabcdefghi/);
+    const facts = await layout(shares);
+    expectInFlow(facts, "one long word", size.width, { sideways: false });
+    const wordWidth = facts.rows[0]!.parts[0]!.right - facts.rows[0]!.parts[0]!.left;
+    expect(wordWidth, "the word is not drawn on one line wider than the picker").toBeLessThan(facts.rows[0]!.picker.right - facts.rows[0]!.picker.left);
 
     expect(misses, MISSES).toEqual([]);
   });
@@ -200,7 +264,7 @@ for (const size of VIEWPORTS) {
     await choose(page, shares.getByRole("combobox").nth(0), /^Bo Ek/);
     await choose(page, shares.getByRole("combobox", { name: "Längd" }), /^40 min/);
     const facts = await layout(shares);
-    expectInFlow(facts, "two lengths");
+    expectInFlow(facts, "two lengths", size.width);
     expect(facts.rows).toHaveLength(1);
 
     expect(misses, MISSES).toEqual([]);
@@ -224,6 +288,13 @@ for (const size of VIEWPORTS) {
     const picker = halves.getByRole("combobox", { name: "Lärare i Biologi (valfritt)", exact: true });
     await choose(page, picker, /^Bo Ek/);
     await expect(picker, "the fixture still makes this a line that wraps").toContainText(/Saknar behörighet.*över mål/);
+    // The line is cut at its one row: its box is 24 px with overflow hidden, so what does not fit is not drawn past it.
+    const cut = await picker.evaluate((element) => {
+      const line = element.querySelector("[data-candidate-line]")!;
+      return { overflow: getComputedStyle(line).overflowY, height: line.getBoundingClientRect().height };
+    });
+    expect(cut.overflow, "the chosen line is clipped to its box").toBe("hidden");
+    expect(cut.height, "the chosen line's box is one row").toBeLessThanOrEqual(24.5);
     const sizes = await heights(halves);
     expect(Object.keys(sizes).length, "the halves dialog's pickers").toBeGreaterThan(2);
     expect(sizes, "every picker in the halves dialog is 36 px, the chosen teacher's too").toEqual(
