@@ -7162,7 +7162,8 @@
     "generateBlocked": "Timetable proposals are being computed for this school year. Generate can be started once they are done.",
     "generateBlockedLink": "See the proposals",
     "jobErrors": {
-      "GENERATE_STALE": "What the timetable was calculated from changed while the run was in progress — a lesson was locked, moved or deleted, a post, a work rule, a reservation, a room or a meal was changed, or a timetable proposal was applied — so the run wrote nothing. Generate again.",
+      "GENERATE_STALE": "What the timetable was calculated from changed while the run was in progress — a lesson was locked, moved or deleted, a curriculum entry, a teacher’s post, a work rule, a reservation, a room, a meal, a pupil or a school rule was changed, or a timetable proposal was applied — so the run wrote nothing. Generate again.",
+      "GENERATE_STALE_PARTS": "What the timetable was calculated from changed while the run was in progress: {parts}. The run wrote nothing. Generate again.",
       "SCHEDULE_BUSY": "Someone else was writing the base timetable at the same time, so the run was not saved. Try again in a moment.",
       "ENGINE_LACKS_PERIODS": "The timetable engine is older than the rest of the service and cannot plan curriculum entries with dates yet. Try again in a few minutes.",
       "CANDIDATES_RUNNING": "Timetable proposals are being computed for this school year. Generate can be started once they are done."
