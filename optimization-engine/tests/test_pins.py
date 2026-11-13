@@ -290,6 +290,36 @@ class TestTheModel:
         assert roomed > plain
         assert plain == solver._estimate_model_size(_request(_payload())) + 1
 
+    def test_the_estimate_of_the_named_rooms_reads_the_pinned_room(self) -> None:
+        """A class of rooms that names them (odd weeks beside every week) is a room smaller for a pin's."""
+        solver = SchedulerSolver(_settings())
+        mixed = {MATTE: {"recurrence": "ODD_WEEKS"}}
+        plain = solver._named_room_vars(_request(_payload({SVENSKA: [_pin(3, "11:00"), None, None]}, posts=mixed)))
+        roomed = solver._named_room_vars(
+            _request(_payload({SVENSKA: [_pin(3, "11:00", room=R3), None, None]}, posts=mixed)),
+        )
+        assert 0 < roomed < plain
+
+    def test_the_probe_that_makes_blocks_of_its_own_leaves_a_pinned_post_alone(self) -> None:
+        """A block ties place to place, and the probe's blocks are checked by nobody (test_week_load's year)."""
+        import test_week_load as week
+
+        payload = week._year(class_lessons=27)
+        rows = week._group_rows(payload)
+        pin = _pin(1, "08:25", minutes=40)
+        # One of the three groups a teacher shares, and one of the siblings beside them.
+        rows[1]["pinnedLessons"] = [pin, None, None, None]
+        rows[3]["pinnedLessons"] = [None, pin, None, None]
+        solver = SchedulerSolver(week._settings())
+        request = week._request(payload)
+        relaxed = solver._parallel_groups_probe(request, solver._week_loads(request))
+        assert relaxed is not None
+        by_id = {str(requirement.id): requirement for requirement in relaxed.requirements}
+        assert by_id[str(rows[1]["id"])].block_id is None
+        assert by_id[str(rows[3]["id"])].block_id is None
+        blocked = [by_id[str(rows[index]["id"])].block_id for index in (0, 2, 4)]
+        assert len(set(blocked)) == 1 and blocked[0] is not None
+
     def test_every_lesson_of_a_post_can_be_pinned(self) -> None:
         payload = _payload({
             MATTE: [_pin(1, "08:00", room=R1), _pin(1, "09:00", room=R2), _pin(5, "11:00", room=R3)],
@@ -563,6 +593,42 @@ class TestTheName:
         assert _codes(response) == [IN_THE_WAY, IN_THE_WAY]
         assert {detail.params["room"] for detail in response.conflicts.conflicts} == {R1}
         assert {str(room) for detail in response.conflicts.conflicts for room in detail.room_ids} == {R1}
+
+    def test_a_pinned_room_that_is_never_free_is_named_with_the_pin(self) -> None:
+        """R1 is closed all week. Nothing but the pin puts matte there, so the proof rests on the pin.
+
+        The room's equality hangs on the pin's literal as the start's does:
+        posted bare, the week would be refused for the room's reservations
+        with no word of the lesson the school laid in it.
+        """
+        closed = [{**_away(R1, day), "resourceKind": "ROOM"} for day in (1, 2, 3, 4, 5)]
+        response = _solve(_payload({MATTE: [_pin(2, "09:00", room=R1), None, None]}, constraints=closed))
+        assert response.status == "INFEASIBLE"
+        codes = _codes(response)
+        assert codes.count(IN_THE_WAY) == 1
+        assert set(codes) == {"AVAIL_CONSTRAINT_BLOCKS_LESSONS", IN_THE_WAY}
+
+    def test_a_pinned_room_locked_all_week_is_named_by_the_proof_itself(self) -> None:
+        """R1 holds another class's locked lessons every hour of the week, and matte is pinned into it.
+
+        A lock's window has no literal, so the only thing the proof can rest
+        on is the pin, and it does: the summary is the proof's, not the
+        released week's. With the room's equality posted bare the week is
+        impossible on no assumption at all, and the pin is named only by
+        the reserve.
+        """
+        elsewhere = str(uuid4())
+        locks = [
+            {
+                "id": str(uuid4()), "teacherId": BERTIL, "studentGroupId": elsewhere, "roomId": R1,
+                "dayOfWeek": day, "startTime": "08:00:00", "endTime": "12:00:00",
+            }
+            for day in (1, 2, 3, 4, 5)
+        ]
+        response = _solve(_payload({MATTE: [_pin(2, "09:00", room=R1), None, None]}, fixedLessons=locks))
+        assert response.status == "INFEASIBLE"
+        assert response.conflicts.summary_code == "CONFLICT_CORE_SUMMARY"
+        assert _codes(response) == [IN_THE_WAY]
 
     def test_a_pin_where_the_teacher_is_away_is_named_with_the_reservation(self) -> None:
         response = _solve(_payload(
