@@ -2,6 +2,7 @@ import { ConflictException } from '@nestjs/common';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   GENERATE_STALE,
+  GenerateStaleAtWrite,
   generateStale,
   lockApplyYearKey,
   lockYearsOfLessonsForGrundschemaEdit,
@@ -229,5 +230,29 @@ describe('the year’s regeneration lock', () => {
     });
     expect(bodyOf(generateStale([], 'BLOCK_PARTLY_LOCKED_SUMMARY'))).not.toHaveProperty('params.changed');
     expect(bodyOf(generateStale(['rules'], 'X'))).toMatchObject({ params: { changed: 'rules', refusalCode: 'X' } });
+  });
+
+  describe('a refusal by the write’s own read of the school (GenerateStaleAtWrite)', () => {
+    it('answers as generateStale does, byte for byte, and is a 409 like it', () => {
+      for (const [changed, refusalCode] of [
+        [['preserved', 'rules'], null],
+        [[], 'BLOCK_PARTLY_LOCKED_SUMMARY'],
+        [['rules'], 'X'],
+      ] as [string[], string | null][]) {
+        const refused = new GenerateStaleAtWrite(changed, refusalCode, []);
+
+        expect(refused).toBeInstanceOf(ConflictException);
+        expect(refused.getStatus()).toBe(409);
+        expect(refused.getResponse()).toEqual(generateStale(changed, refusalCode).getResponse());
+      }
+    });
+
+    it('carries the posts its read read, which the rolled-back transaction could not log', () => {
+      const refused = new GenerateStaleAtWrite(['rules'], null, ['teacher-a', 'teacher-b']);
+
+      expect(refused.employmentReads).toEqual(['teacher-a', 'teacher-b']);
+      // And they are not in what the school is told.
+      expect(JSON.stringify(refused.getResponse())).not.toContain('teacher-a');
+    });
   });
 });

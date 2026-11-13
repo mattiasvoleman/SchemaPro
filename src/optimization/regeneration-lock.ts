@@ -261,3 +261,22 @@ export function generateStale(changed: readonly string[] = [], refusalCode: stri
       : {}),
   });
 }
+
+/**
+ * A Generera refused by the write's own read of the school (what the engine
+ * was sent, read again in the write's transaction), with what that read read
+ * of a person's data. The refusal rolls the transaction back, and with it the
+ * Läslogg row the read wrote; the caller (triggerScheduling) logs `employmentReads`
+ * in a transaction of its own, because the read happened whatever came of it.
+ * The body is generateStale's, byte for byte.
+ */
+export class GenerateStaleAtWrite extends ConflictException {
+  constructor(
+    changed: readonly string[],
+    refusalCode: string | null,
+    /** Users ids of the teachers whose post the read read (an EMPLOYMENT read). */
+    readonly employmentReads: readonly string[],
+  ) {
+    super(generateStale(changed, refusalCode).getResponse());
+  }
+}

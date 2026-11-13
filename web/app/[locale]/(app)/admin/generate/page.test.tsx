@@ -1696,4 +1696,42 @@ describe("Schemaförslag beside Generera (design §6)", () => {
     expect(screen.getByText(`scheduleCandidates.jobErrors.${code}`)).toBeInTheDocument();
     expect(screen.queryByText("The draft changed during the run.")).toBeNull();
   });
+
+  describe("a run the write refused after reading the school again (GENERATE_STALE with the parts it found changed)", () => {
+    const stale = (errorParams: Record<string, string | number> | null) => {
+      state.job = {
+        id: "job-9", status: "FAILED", solverStatus: null, error: "Grundschemat ändrades medan schemat genererades.",
+        errorCode: "GENERATE_STALE", errorParams, conflicts: [], createdAt: "2026-10-17T08:00:00.000Z",
+      };
+      render(<GeneratePage />);
+    };
+
+    it("names the parts, in the words the candidates page names them in", () => {
+      stale({ changed: "preserved,rules" });
+
+      // The stub echoes the key and the values; the list is Swedish's "a och b".
+      expect(
+        screen.getByText(
+          "scheduleCandidates.jobErrors.GENERATE_STALE_PARTS(scheduleCandidates.parts.preserved och scheduleCandidates.parts.rules)",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("scheduleCandidates.jobErrors.GENERATE_STALE")).toBeNull();
+    });
+
+    it("says the general sentence for a refusal that named nothing, or named something else", () => {
+      stale({ refusalCode: "STAFF_UNSTAFFED_REQUIREMENTS" });
+
+      expect(screen.getByText("scheduleCandidates.jobErrors.GENERATE_STALE")).toBeInTheDocument();
+    });
+
+    it("lists a part this build has no word for by its name rather than dropping it", () => {
+      stale({ changed: "rules,somethingNew" });
+
+      expect(
+        screen.getByText(
+          "scheduleCandidates.jobErrors.GENERATE_STALE_PARTS(scheduleCandidates.parts.rules och somethingNew)",
+        ),
+      ).toBeInTheDocument();
+    });
+  });
 });

@@ -1677,13 +1677,13 @@ export default function RequirementsPage() {
                   ) : null}
                   <th
                     scope="col"
-                    className="sticky right-24 top-0 z-30 border-l bg-card px-3 py-2.5 text-right font-medium text-foreground"
+                    className="sticky top-0 z-30 border-l bg-card px-3 py-2.5 text-right font-medium text-foreground sm:right-24"
                   >
                     {t(view.subject ? "peakHeaderSubject" : "peakHeader")}
                   </th>
                   <th
                     scope="col"
-                    className="sticky right-0 top-0 z-30 min-w-24 max-w-24 border-l bg-card px-3 py-2.5 text-right font-medium text-foreground"
+                    className="sticky top-0 z-30 min-w-24 max-w-24 border-l bg-card px-3 py-2.5 text-right font-medium text-foreground sm:right-0"
                   >
                     {t(view.subject ? "hoursHeaderSubject" : "hoursHeader")}
                   </th>
@@ -1915,10 +1915,10 @@ export default function RequirementsPage() {
                         />
                       </td>
                     ) : null}
-                    <td className="sticky right-24 z-10 border-l bg-card px-3 py-2 text-right font-medium tabular-nums text-foreground">
+                    <td className="border-l bg-card px-3 py-2 text-right font-medium tabular-nums text-foreground sm:sticky sm:right-24 sm:z-10">
                       {peakByGroup.get(group.id) ?? 0}
                     </td>
-                    <td className="sticky right-0 z-10 min-w-24 max-w-24 border-l bg-card px-3 py-2 text-right font-medium tabular-nums text-foreground">
+                    <td className="min-w-24 max-w-24 border-l bg-card px-3 py-2 text-right font-medium tabular-nums text-foreground sm:sticky sm:right-0 sm:z-10">
                       {formatHours(annualMinutesByGroup.get(group.id) ?? 0)}
                     </td>
                   </tr>
@@ -1947,8 +1947,8 @@ export default function RequirementsPage() {
                         <td className="border-l px-3 py-2 text-right font-medium tabular-nums text-foreground">
                           <target.module.GroupTotalCell summary={null} total={ownTarget?.total ?? target.view.total} />
                         </td>
-                        <td className="sticky right-24 z-10 border-l bg-muted" />
-                        <td className="sticky right-0 z-10 min-w-24 max-w-24 border-l bg-muted" />
+                        <td className="border-l bg-muted sm:sticky sm:right-24 sm:z-10" />
+                        <td className="min-w-24 max-w-24 border-l bg-muted sm:sticky sm:right-0 sm:z-10" />
                       </tr>
                     ) : null}
                   </Fragment>

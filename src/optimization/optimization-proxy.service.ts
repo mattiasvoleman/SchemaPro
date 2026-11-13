@@ -97,6 +97,7 @@ import {
 } from './candidate-basis';
 import {
   generateStale,
+  GenerateStaleAtWrite,
   lockYearForRegeneration,
   scheduleBusy,
   scheduleCandidateStale,
@@ -1380,25 +1381,34 @@ export class OptimizationProxyService {
     // anything is deleted, the mirrors as the posts written at their leader
     // posts' times, and the draft's ids as what the fetch saw — see
     // persistMasterLessons.
-    const written = await this.prisma.withRls(user, (tx) =>
-      this.persistMasterLessons(
-        tx,
-        academicYearId,
-        user,
-        response,
-        prepared.demand,
-        prepared.mirrors,
-        anonMaps.requirementAnonMap,
-        anonMaps.roomAnonMap,
-        realisedLunches,
-        prepared.headcountByGroup,
-        prepared.draftIds,
-        prepared.splitLessons,
-        prepared.placedRows,
-        prepared.lockWeeks,
-        prepared.basisParts,
-      ),
-    );
+    let written: TimedLesson[] | null;
+    try {
+      written = await this.prisma.withRls(user, (tx) =>
+        this.persistMasterLessons(
+          tx,
+          academicYearId,
+          user,
+          response,
+          prepared.demand,
+          prepared.mirrors,
+          anonMaps.requirementAnonMap,
+          anonMaps.roomAnonMap,
+          realisedLunches,
+          prepared.headcountByGroup,
+          prepared.draftIds,
+          prepared.basisParts,
+          prepared.splitLessons,
+          prepared.placedRows,
+          prepared.lockWeeks,
+        ),
+      );
+    } catch (error) {
+      // The write's own read of the school read a post's days (HR data) and
+      // then refused, which rolled the transaction back and the Läslogg row
+      // with it. The read happened, so it is logged in a transaction of its own.
+      if (error instanceof GenerateStaleAtWrite) await this.logRolledBackReads(user, error.employmentReads);
+      throw error;
+    }
 
     this.logger.log(
       `Optimization complete [requestId=${requestId}, status=${response.status}, ` +
@@ -1441,13 +1451,15 @@ export class OptimizationProxyService {
    * read the same code the job row stores.
    *
    * `coverage: true` adds the timplan rows the "unplaced" figure needs; only a
-   * candidate run asks, since it is six more reads.
+   * candidate run asks, since it is six more reads. `employmentReads` collects
+   * the Users ids of the posts the fetch read, for a caller that may roll its
+   * transaction (and the Läslogg row the read wrote) back.
    */
   async prepareSchedule(
     tx: PrismaClient,
     academicYearId: string,
     user: AuthenticatedUser,
-    options: { requestId?: string; coverage?: boolean } = {},
+    options: { requestId?: string; coverage?: boolean; employmentReads?: string[] } = {},
   ): Promise<PrepareResult> {
     const requestId = options.requestId ?? randomUUID();
     // Whose classes these are: for a rolled year not yet activated, the
@@ -1467,7 +1479,14 @@ export class OptimizationProxyService {
         refusalCode: unstaffed.conflicts?.summaryCode ?? STAFF_UNSTAFFED_REQUIREMENTS,
       };
     }
-    const data = await this.fetchAndAnonymize(tx, academicYearId, schoolId, rosterBasis, user.channel);
+    const data = await this.fetchAndAnonymize(
+      tx,
+      academicYearId,
+      schoolId,
+      rosterBasis,
+      user.channel,
+      options.employmentReads,
+    );
     const anonMaps: AnonMaps = {
       // The numberings a refusal's årskurser are named back in (yearGrades).
       gradeNumbering: data.gradeNumbering,
@@ -2388,6 +2407,13 @@ export class OptimizationProxyService {
     basis: RosterBasis,
     /** The reader's client, for the Läslogg row the days limits write. */
     channel?: AccessChannel | null,
+    /**
+     * Where to put the Users ids of the posts this read read (the EMPLOYMENT
+     * row it logs), for a caller whose transaction may be rolled back: the
+     * write's own read of the school (persistMasterLessons) logs them itself
+     * when its refusal takes the row with it.
+     */
+    employmentReads?: string[],
   ): Promise<{
     requirements: AnonymousRequirement[];
     rooms: AnonymousRoom[];
@@ -4031,7 +4057,9 @@ export class OptimizationProxyService {
     // the Läslogg in the read's own transaction, as every read of a post is.
     // Nobody shown them — the engine gets anonymous numbers — but the starter's
     // session read them, and the log is of reads. No limit sent, nothing written.
-    await recordRead(tx, 'EMPLOYMENT', [...dayLimitTeacherIds.values(), ...consecutiveTeacherIds], channel);
+    const readPosts = [...dayLimitTeacherIds.values(), ...consecutiveTeacherIds];
+    await recordRead(tx, 'EMPLOYMENT', readPosts, channel);
+    employmentReads?.push(...readPosts);
 
     /*
      * Elevernas håltimmar: the pupils, as the sets the håltimmesrapport counts
@@ -4632,6 +4660,55 @@ export class OptimizationProxyService {
   }
 
   /**
+   * The write's own read of the school: the fetch again, in the write's
+   * transaction, and its basis against the one the engine's request was hashed
+   * into (changedPartsForWrite). A difference, or a refusal the school did not
+   * meet when it was asked, is GENERATE_STALE with what changed in its params,
+   * and the caller's transaction is rolled back; what the read read of a
+   * person's data travels with the refusal (GenerateStaleAtWrite), since the
+   * rollback takes its Läslogg row.
+   */
+  private async refuseIfSchoolChanged(
+    tx: PrismaClient,
+    academicYearId: string,
+    user: AuthenticatedUser,
+    startBasis: BasisParts,
+    employmentReads: string[],
+  ): Promise<void> {
+    const rebuilt = await this.prepareSchedule(tx, academicYearId, user, { employmentReads });
+    if (!rebuilt.ready) {
+      this.logger.warn(
+        `Generated timetable not written: the school now meets a refusal it did not (${rebuilt.refusalCode}) [academicYearId=${academicYearId}].`,
+      );
+      throw new GenerateStaleAtWrite([], rebuilt.refusalCode, employmentReads);
+    }
+    const changed = changedPartsForWrite(startBasis, rebuilt.basisParts);
+    if (changed.length > 0) {
+      this.logger.warn(
+        `Generated timetable not written: what the engine was sent changed while the solver ran (${changed.join(', ')}) [academicYearId=${academicYearId}].`,
+      );
+      throw new GenerateStaleAtWrite(changed, null, employmentReads);
+    }
+  }
+
+  /**
+   * The Läslogg row of a read whose transaction was rolled back: the refusal
+   * of the write's own read of the school (GenerateStaleAtWrite). The log is of
+   * reads, and the read happened. Best effort, as the 409 it rides beside is
+   * the answer: a log that cannot be written is said and does not hide it.
+   */
+  private async logRolledBackReads(user: AuthenticatedUser, employmentReads: readonly string[]): Promise<void> {
+    if (employmentReads.length === 0) return;
+    try {
+      await this.prisma.withRls(user, (tx) => recordRead(tx, 'EMPLOYMENT', employmentReads, user.channel));
+    } catch (error) {
+      this.logger.warn(
+        `The Läslogg row of a refused Generera's read of posts could not be written: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
    * Writes the engine's week in place of the machine's last one, and answers
    * with the timetable that leaves, by its lessons' teachers and weekday: the
    * lessons it kept, as they stand after its delete, and the ones it wrote —
@@ -4659,20 +4736,28 @@ export class OptimizationProxyService {
     headcountByGroup: Map<string, number>,
     /** The draft's own masters as the fetch saw them, sorted (prepareSchedule). */
     draftIds: readonly string[],
+    /**
+     * What the engine was sent, by the basis the fetch hashed it into
+     * (PreparedSchedule.basisParts): read again under the year lock before the
+     * write and once more before the commit, and a difference is
+     * GENERATE_STALE. Required, so that a caller who has no fetch of its own
+     * says so (null) and a new caller cannot leave the protection out by
+     * leaving the argument out.
+     */
+    startBasis: BasisParts | null,
     /** Delade lektioner: the posts sent with their lessons' teachers. */
     splitLessons: SplitLessons = NO_SPLIT,
     /** Förlagda poster: the förläggningar as the fetch read them, written beside the answer. */
     placedRows: readonly PlacedLessonRow[] = [],
     /** Terminer: the preserved masters' weeks as the fetch read them, by id (PreparedSchedule.lockWeeks). */
     lockWeeks: ReadonlyMap<string, string> = new Map(),
-    /**
-     * What the engine was sent, by the basis the fetch hashed it into
-     * (PreparedSchedule.basisParts). Read again under the lock before the
-     * write, and a difference is GENERATE_STALE. Absent, nothing is read
-     * again: only a caller that has no fetch of its own leaves it out.
-     */
-    startBasis: BasisParts | null = null,
   ): Promise<TimedLesson[] | null> {
+    // The type says it, and a caller that is not typed (a probe, a script) must
+    // not read the missing argument as "no basis": loud, before anything is
+    // locked or read.
+    if (startBasis === undefined) {
+      throw new TypeError('persistMasterLessons: startBasis is required (null for a caller with no fetch of its own).');
+    }
     // First, before anything is read: the publication lock and the mode
     // (publish-mode.ts). In DRAFT the regenerated grundschema is a draft.
     // A principal with no tenant is refused below, before anything is
@@ -4821,21 +4906,14 @@ export class OptimizationProxyService {
       // either direction is refused, a looser limit too: the answer was to
       // another question, and a run to ask the right one costs a minute where
       // a miss costs a timetable that breaks the school's own rules.
+      //
+      // Before the write, so that what the write cannot survive (a post, a
+      // room or a teacher deleted since: a mismatch or a foreign key) is said
+      // as what it is, a school that changed, and not as the engine's fault.
+      // And again after it, below.
+      const employmentReads: string[] = [];
       if (startBasis !== null) {
-        const rebuilt = await this.prepareSchedule(tx, academicYearId, user);
-        if (!rebuilt.ready) {
-          this.logger.warn(
-            `Generated timetable not written: the school now meets a refusal it did not (${rebuilt.refusalCode}) [academicYearId=${academicYearId}].`,
-          );
-          throw generateStale([], rebuilt.refusalCode);
-        }
-        const changed = changedPartsForWrite(startBasis, rebuilt.basisParts);
-        if (changed.length > 0) {
-          this.logger.warn(
-            `Generated timetable not written: what the engine was sent changed while the solver ran (${changed.join(', ')}) [academicYearId=${academicYearId}].`,
-          );
-          throw generateStale(changed);
-        }
+        await this.refuseIfSchoolChanged(tx, academicYearId, user, startBasis, employmentReads);
       }
 
       // The answer in real ids, each mirrored post's lessons written beside
@@ -4854,6 +4932,19 @@ export class OptimizationProxyService {
         scope: { kind: 'NOT_PRESERVED' },
         placed: placedRows,
       });
+      // The same read once more, as the last thing before the commit. The
+      // first was made before the write, which takes tens to hundreds of
+      // milliseconds, and a reservation, a post's days or a room saved in that
+      // time was in neither the engine's question nor that check. Hand edits of
+      // lessons cannot meet this write (they take the year lock shared); the
+      // services that write the rest take none, and are left without one on
+      // purpose: waiting for a Generera's write on every one of them is a wait
+      // for every edit of a school, and for every import, to guard a window of
+      // this length. What is left is the time from this read of a table to the
+      // commit: tens of milliseconds on a quiet database.
+      if (startBasis !== null) {
+        await this.refuseIfSchoolChanged(tx, academicYearId, user, startBasis, employmentReads);
+      }
       return written.timetable;
     } catch (error) {
       // lock_timeout stays 5 s for the rest of the transaction, so a row a

@@ -277,6 +277,7 @@ describe('OptimizationProxyService', () => {
           lunches: AiEngineLunch[],
           headcountByGroup: Map<string, number>,
           draftIds: string[],
+          startBasis: null,
         ) => Promise<unknown>;
       }
     ).persistMasterLessons(
@@ -305,6 +306,8 @@ describe('OptimizationProxyService', () => {
       lunches,
       headcountByGroup,
       draftIds,
+      // These direct calls have no fetch of their own to read again.
+      null,
     );
 
   /**
@@ -1336,6 +1339,19 @@ describe('OptimizationProxyService', () => {
       expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
       expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
       expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a caller that leaves the basis out altogether, before it takes a lock or reads a row', async () => {
+      // `null` is how a caller says it has no fetch to read again; an argument
+      // that is simply missing (an untyped caller) is a mistake, and the
+      // protection is not switched off by it.
+      const untyped = (service as unknown as { persistMasterLessons: (...args: unknown[]) => Promise<unknown> }).persistMasterLessons;
+
+      await expect(
+        untyped.call(service, tx, ACADEMIC_YEAR, testUser(), { status: 'FEASIBLE', lessons: [] }, [], [], new Map(), new Map(), [], new Map(), []),
+      ).rejects.toThrow(/startBasis is required/);
+      expect(tx.$executeRaw).not.toHaveBeenCalled();
+      expect(tx.masterLesson.findMany).not.toHaveBeenCalled();
     });
 
     it('writes when the draft is the one the fetch saw, whatever order its rows come in', async () => {
@@ -2559,8 +2575,8 @@ describe('OptimizationProxyService', () => {
         expect(postedPayload().constraints).toEqual([]);
         // The loans are read (an owner keeps an approved loan of its room
         // after the borrower has left); the other schools' times are not. Once
-        // by the fetch and once by the write's own read of it (the basis).
-        expect(tx.roomLoan.findMany).toHaveBeenCalledTimes(2);
+        // by the fetch and twice by the write's own reads of it (the basis).
+        expect(tx.roomLoan.findMany).toHaveBeenCalledTimes(3);
         expect(tx.$queryRaw.mock.calls.some((call) => String((call[0] as { sql?: string }).sql ?? '').includes('shared_teacher_busy'))).toBe(false);
       });
 
@@ -6795,17 +6811,37 @@ describe('OptimizationProxyService', () => {
         writesNothing();
       });
 
-      it('reads the fetch again in the write’s own transaction, after the year lock', async () => {
+      it('refuses a reservation for a teacher who has nothing this year as well: it is in the payload, and the answer is not told apart by who it is for', async () => {
+        // A false alarm that costs a run and is accepted (review of #303, LÅG-4):
+        // the payload gives every reservation a teacher, also one with no post
+        // and no lock, and the engine can place nothing for her. Leaving such a
+        // reservation out of the basis would change what a school's stored
+        // schemaförslag hash to, for a case that has not cost a school a timetable.
+        const error = await run({
+          constraints: [
+            constraintRow({ resourceType: 'ROOM', roomId: ROOM_ID }),
+            constraintRow({ id: 'c-idle', resourceType: 'TEACHER', userId: 'teacher-with-nothing-this-year', dayOfWeek: 2 }),
+          ],
+        });
+
+        expect(bodyOf(error)).toMatchObject({ code: 'GENERATE_STALE', params: { changed: 'rules' } });
+        writesNothing();
+      });
+
+      it('reads the fetch again in the write’s own transaction, after the year lock, and once more after the write', async () => {
         arrange(school());
         echoEngine();
 
         await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
-        // One read by the fetch, one by the write.
-        expect(tx.availabilityConstraint.findMany).toHaveBeenCalledTimes(2);
-        expect(tx.availabilityConstraint.findMany.mock.invocationCallOrder[1]!).toBeGreaterThan(
-          tx.$executeRaw.mock.invocationCallOrder[1]!,
-        );
+        // One read by the fetch, one before the write and one before the commit.
+        const reads = tx.availabilityConstraint.findMany.mock.invocationCallOrder;
+        expect(reads).toHaveLength(3);
+        expect(reads[1]!).toBeGreaterThan(tx.$executeRaw.mock.invocationCallOrder[1]!);
+        expect(reads[1]!).toBeLessThan(tx.masterLesson.deleteMany.mock.invocationCallOrder[0]!);
+        // The last one is after everything the write wrote, and the change log entry is the last of those.
+        expect(reads[2]!).toBeGreaterThan(tx.masterLesson.createMany.mock.invocationCallOrder[0]!);
+        expect(reads[2]!).toBeGreaterThan(tx.scheduleChangeLog.create.mock.invocationCallOrder[0]!);
       });
 
       it('reads it again for the same year and the same user, and only when there is something to write', async () => {
@@ -6815,8 +6851,9 @@ describe('OptimizationProxyService', () => {
 
         await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
-        expect(prepare).toHaveBeenCalledTimes(2);
+        expect(prepare).toHaveBeenCalledTimes(3);
         expect(prepare.mock.calls.map(([, year, user]) => [year, (user as { userId?: string }).userId])).toEqual([
+          [ACADEMIC_YEAR, testUser().userId],
           [ACADEMIC_YEAR, testUser().userId],
           [ACADEMIC_YEAR, testUser().userId],
         ]);
@@ -6833,6 +6870,225 @@ describe('OptimizationProxyService', () => {
         await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).resolves.toMatchObject({ status: 'INFEASIBLE' });
         expect(prepare).toHaveBeenCalledTimes(1);
         writesNothing();
+      });
+
+      /*
+       * THE WINDOW AFTER THE FIRST READ. The first read is before the write,
+       * which takes tens to hundreds of milliseconds, and a change saved in
+       * that time was in neither the engine's question nor that check. The
+       * write's own transaction is where it is caught: the school is read once
+       * more as the last thing before the commit, and a difference rolls the
+       * whole write back.
+       */
+      describe('a change made while the write ran', () => {
+        /** Each transaction the run opened, as it ended, and what the Läslogg held by then. */
+        let ended: { how: 'committed' | 'rolled back'; loggedReads: number }[];
+
+        beforeEach(() => {
+          ended = [];
+          const open = prisma.withRls.getMockImplementation()!;
+          prisma.withRls.mockImplementation(async (...args: Parameters<typeof open>) => {
+            try {
+              const result = await open(...args);
+              ended.push({ how: 'committed', loggedReads: recordedReads(tx).length });
+              return result;
+            } catch (error) {
+              ended.push({ how: 'rolled back', loggedReads: recordedReads(tx).length });
+              throw error;
+            }
+          });
+        });
+
+        /** The school changes at the moment the write inserts its lessons. */
+        const run = (change: Arrangement) => {
+          arrange(school());
+          echoEngine();
+          tx.masterLesson.createMany.mockImplementation(async () => {
+            arrange({ ...school(), ...change });
+            return { count: 0 };
+          });
+          return service.triggerScheduling(ACADEMIC_YEAR, testUser()).then(
+            () => null,
+            (thrown: unknown) => thrown,
+          );
+        };
+
+        it.each<[string, Arrangement, string]>([
+          ['a reservation is made', { constraints: [constraintRow({ resourceType: 'ROOM', roomId: ROOM_ID }), constraintRow({ id: 'c2', resourceType: 'TEACHER', userId: TEACHER_ID, dayOfWeek: 3 })] }, 'rules'],
+          ['a teacher’s days are cut', { posts: [employment({ maxTeachingDaysPerWeek: 1 })] }, 'rules'],
+          ['a teacher’s daily cap is lowered', { workRules: [rule({ maxTeachingMinutesPerDay: 60 })] }, 'rules'],
+          ['a room gets smaller', { rooms: [{ id: ROOM_ID, capacity: 5, type: 'CLASSROOM' }, { id: OTHER_ROOM, capacity: 30, type: 'CLASSROOM' }] }, 'rooms'],
+          ['a post asks for another lesson', { requirements: [requirement({ lessonsPerWeek: 4 })] }, 'requirements'],
+        ])('refuses the write (GENERATE_STALE) when %s, and the transaction is rolled back', async (_what, change, part) => {
+          const error = await run(change);
+
+          expect((error as HttpException).getStatus()).toBe(409);
+          expect(bodyOf(error)).toMatchObject({ code: 'GENERATE_STALE', params: { changed: expect.stringContaining(part) } });
+          // The write had run when it was found out, so it is the transaction
+          // that keeps it from the school: the fetch committed, the write did not.
+          expect(tx.masterLesson.createMany).toHaveBeenCalledTimes(1);
+          expect(ended.map(({ how }) => how)).toEqual(['committed', 'rolled back', 'committed']);
+        });
+
+        it('writes, and commits, when nothing changed meanwhile', async () => {
+          const error = await run({});
+
+          expect(error).toBeNull();
+          expect(ended.map(({ how }) => how)).toEqual(['committed', 'committed']);
+        });
+
+        it('writes when only a lesson of the draft is moved meanwhile, as it does for a change before the write', async () => {
+          const error = await run({ draftLessons: [draft({ dayOfWeek: 5, startTime: nineAm, endTime: tenAm })] });
+
+          expect(error).toBeNull();
+          expect(ended.map(({ how }) => how)).toEqual(['committed', 'committed']);
+        });
+
+        it('refuses it with the refusal the school now meets, when that is what the last read finds', async () => {
+          arrange(school());
+          echoEngine();
+          const read = service.prepareSchedule.bind(service);
+          let reads = 0;
+          jest.spyOn(service, 'prepareSchedule').mockImplementation(async (...args) =>
+            ++reads < 3
+              ? read(...args)
+              : ({
+                  ready: false,
+                  requestId: 'r',
+                  academicYearId: ACADEMIC_YEAR,
+                  refusal: { status: 'INFEASIBLE', lessons: [], lunches: [], conflicts: null },
+                  refusalCode: 'BLOCK_PARTLY_LOCKED_SUMMARY',
+                } as never),
+          );
+
+          const error = await service.triggerScheduling(ACADEMIC_YEAR, testUser()).catch((thrown: unknown) => thrown);
+
+          expect(bodyOf(error)).toMatchObject({ code: 'GENERATE_STALE', params: { refusalCode: 'BLOCK_PARTLY_LOCKED_SUMMARY' } });
+          // The two reads before it read the post, so the log is written outside the rolled-back write.
+          expect(ended.map(({ how }) => how)).toEqual(['committed', 'rolled back', 'committed']);
+        });
+
+        /*
+         * THE LÄSLOGG. A read of a post's days is HR data, and the write's own
+         * read of the school reads it. The refusal rolls its transaction back,
+         * and with it the log row the read wrote, so the refusal logs the read
+         * in a transaction of its own: the log is of reads, and it happened.
+         */
+        describe('the Läslogg of a read whose transaction was rolled back', () => {
+          const read = (ids: string[]) => ({ kind: 'EMPLOYMENT', channel: 'WEB', ids });
+          const OVE = 'ffffffff-aaaa-4aaa-8aaa-ffffffffffff';
+          const OVES_POST = 'f0f0f0f0-aaaa-4aaa-8aaa-f0f0f0f0f0f0';
+          const asAdmin = () => testUser({ channel: 'WEB' });
+
+          it('logs it, once the transaction that read it is rolled back, when the school changed meanwhile', async () => {
+            // Ove teaches, and has a post with no days when the run starts. It
+            // gets some while the write runs: the first fetch read nobody's
+            // post but the teacher's, and the write's reads read his.
+            const withOve = (): Arrangement => ({
+              ...school(),
+              requirements: [requirement(), requirement({ id: 'req-ove', teacherId: OVE })],
+            });
+            arrange(withOve());
+            echoEngine();
+            tx.masterLesson.createMany.mockImplementation(async () => {
+              arrange({ ...withOve(), posts: [employment(), employment({ id: OVES_POST, userId: OVE })] });
+              return { count: 0 };
+            });
+
+            const error = await service.triggerScheduling(ACADEMIC_YEAR, asAdmin()).catch((thrown: unknown) => thrown);
+
+            if (!(error instanceof HttpException)) throw error;
+            expect((error as HttpException).getStatus()).toBe(409);
+            expect(ended.map(({ how }) => how)).toEqual(['committed', 'rolled back', 'committed']);
+            // What the log held when each transaction ended: the fetch's row, the
+            // write's two (before and after its own rollback in a real database),
+            // and then the one more that is written outside it.
+            const [fetch, write, logged] = ended.map(({ loggedReads }) => loggedReads);
+            expect(fetch).toBe(1);
+            expect(logged).toBe(write! + 1);
+            // Nobody but the teachers the writes' reads read: Ove among them.
+            expect(recordedReads(tx).at(-1)).toEqual(read(expect.arrayContaining([OVE]) as never));
+          });
+
+          it('logs it as well when the first of the write’s reads is the one that refuses, as it did for a change while the solver ran', async () => {
+            // The review's case: Ove has no days when the run starts and three
+            // by the time the write reads his post.
+            const withOve = (): Arrangement => ({
+              ...school(),
+              requirements: [requirement(), requirement({ id: 'req-ove', teacherId: OVE })],
+            });
+            arrange(withOve());
+            echoAfter(() => arrange({ ...withOve(), posts: [employment(), employment({ id: OVES_POST, userId: OVE, maxTeachingDaysPerWeek: 3 })] }));
+
+            const error = await service.triggerScheduling(ACADEMIC_YEAR, asAdmin()).catch((thrown: unknown) => thrown);
+
+            if (!(error instanceof HttpException)) throw error;
+            expect(bodyOf(error)).toMatchObject({ code: 'GENERATE_STALE', params: { changed: 'rules' } });
+            // Nothing was written, and the read of Ove's post is in the log all the same.
+            expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+            expect(ended.map(({ how }) => how)).toEqual(['committed', 'rolled back', 'committed']);
+            expect(recordedReads(tx).at(-1)).toEqual(read(expect.arrayContaining([OVE]) as never));
+          });
+
+          it('opens no transaction to log a read that read nobody’s post', async () => {
+            // A school whose posts set no days: the reads read no HR data, so there is no row to write.
+            const noPosts = (): Arrangement => ({ ...school(), posts: [] });
+            arrange(noPosts());
+            echoAfter(() =>
+              arrange({
+                ...noPosts(),
+                constraints: [constraintRow({ resourceType: 'ROOM', roomId: ROOM_ID }), constraintRow({ id: 'c2', resourceType: 'ROOM', roomId: OTHER_ROOM, dayOfWeek: 2 })],
+              }),
+            );
+
+            const error = await service.triggerScheduling(ACADEMIC_YEAR, asAdmin()).catch((thrown: unknown) => thrown);
+
+            if (!(error instanceof HttpException)) throw error;
+            expect(bodyOf(error)).toMatchObject({ code: 'GENERATE_STALE', params: { changed: 'rules' } });
+            expect(ended.map(({ how }) => how)).toEqual(['committed', 'rolled back']);
+            expect(recordedReads(tx)).toEqual([]);
+          });
+
+          it('logs nothing more when a check before any read of the school refused the write', async () => {
+            arrange(school());
+            echoEngine();
+            const fetchRead = tx.masterLesson.findMany.getMockImplementation()!;
+            let draftReads = 0;
+            tx.masterLesson.findMany.mockImplementation(async (query: Query = {}) =>
+              // The second read of the draft is the write's own: a lesson unlocked meanwhile.
+              query.where?.['NOT'] && ++draftReads > 1 ? [{ id: 'draft-1' }, { id: 'unlocked-since' }] : fetchRead(query),
+            );
+
+            const error = await service.triggerScheduling(ACADEMIC_YEAR, asAdmin()).catch((thrown: unknown) => thrown);
+
+            if (!(error instanceof HttpException)) throw error;
+            expect(bodyOf(error)).toMatchObject({ code: 'GENERATE_STALE' });
+            expect(ended).toHaveLength(2);
+          });
+
+          it('answers 409 all the same when the log row cannot be written', async () => {
+            const warn = warnings();
+            arrange(school());
+            echoEngine();
+            tx.masterLesson.createMany.mockImplementation(async () => {
+              arrange({ ...school(), posts: [employment({ maxTeachingDaysPerWeek: 1 })] });
+              return { count: 0 };
+            });
+            let calls = 0;
+            const original = tx.$executeRaw.getMockImplementation();
+            tx.$executeRaw.mockImplementation((...args: unknown[]) => {
+              const sql = ((args[0] as { strings?: readonly string[] })?.strings ?? []).join('?');
+              if (sql.includes('app.personal_data_read(') && ++calls === 4) return Promise.reject(new Error('log unavailable'));
+              return original ? (original as (...a: unknown[]) => unknown)(...args) : Promise.resolve(0);
+            });
+
+            const error = await service.triggerScheduling(ACADEMIC_YEAR, asAdmin()).catch((thrown: unknown) => thrown);
+
+            expect((error as HttpException).getStatus()).toBe(409);
+            expect(bodyOf(error)).toMatchObject({ code: 'GENERATE_STALE' });
+            expect(warn.mock.calls.map(([message]) => String(message)).some((message) => message.includes('log unavailable'))).toBe(true);
+          });
+        });
       });
 
       it('refuses the write when the school now meets a pre-flight refusal it did not, and names it', async () => {
@@ -6960,8 +7216,8 @@ describe('OptimizationProxyService', () => {
         expect(Object.keys(payload.placements!).sort()).toEqual(PLACEMENTS_FIELDS);
         expect(Object.keys(payload.placements!.lessons[0]!).sort()).toEqual(PLACED_LESSON_FIELDS);
         // Judged with the hand edit's rule before it was sent, and again by
-        // the write's own read of the fetch (the basis it is held to).
-        expect(masters.findConflicts).toHaveBeenCalledTimes(2);
+        // the write's two reads of the fetch (the basis it is held to).
+        expect(masters.findConflicts).toHaveBeenCalledTimes(3);
       });
 
       it('takes one lesson off the post for an odd and an even row of one length, each held in its weeks', async () => {
@@ -7563,11 +7819,11 @@ describe('OptimizationProxyService', () => {
           },
         });
         // A post's days are HR, and this transaction read them: the Läslogg
-        // names the teacher, by their Users id. Once for the fetch and once for
-        // the write's own read of it, which the log's quarter-hour dedupe
+        // names the teacher, by their Users id. Once for the fetch and twice
+        // for the write's own reads of it, which the log's quarter-hour dedupe
         // (app.personal_data_read) makes one row.
         const read = { kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] };
-        expect(recordedReads(tx)).toEqual([read, read]);
+        expect(recordedReads(tx)).toEqual([read, read, read]);
       });
 
       /*
@@ -8113,10 +8369,10 @@ describe('OptimizationProxyService', () => {
           expect(stored).not.toMatch(/"max"|breakMinutes|60 minutes|15 minutes/);
           expect(stored).not.toContain(POST_ID);
           // And the run's own read of the post is a read of HR data, recorded:
-          // by the fetch, and again by the write's own read of it (one row in
+          // by the fetch, and again by the write's two reads of it (one row in
           // the log, which dedupes a reader's quarter hour).
           const read = { kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] };
-          expect(recordedReads(tx)).toEqual([read, read]);
+          expect(recordedReads(tx)).toEqual([read, read, read]);
         });
 
         it('gives a teacher with no work rule an entry of their own, the lunch and the rest as nulls', async () => {
@@ -8147,8 +8403,8 @@ describe('OptimizationProxyService', () => {
 
           await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
-          // Once by the fetch and once by the write's own read of it.
-          expect(tx.teacherEmployment.findMany).toHaveBeenCalledTimes(2);
+          // Once by the fetch and twice by the write's own reads of it.
+          expect(tx.teacherEmployment.findMany).toHaveBeenCalledTimes(3);
           expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith(
             expect.objectContaining({
               where: {
@@ -8179,9 +8435,9 @@ describe('OptimizationProxyService', () => {
           expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith(
             expect.objectContaining({ where: { academicYearId: ACADEMIC_YEAR, maxTeachingDaysPerWeek: { not: null } } }),
           );
-          // The fetch's read and the write's own read of it.
+          // The fetch's read and the write's two reads of it.
           const read = { kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] };
-          expect(recordedReads(tx)).toEqual([read, read]);
+          expect(recordedReads(tx)).toEqual([read, read, read]);
           expect(notes).toEqual([]);
         });
 
@@ -8206,11 +8462,11 @@ describe('OptimizationProxyService', () => {
           expect(without.limits).toEqual([[60, 15]]);
           expect(withHr.limits).toEqual(without.limits);
           // The run reads the post for whoever starts it, so the log says so
-          // for either: twice for the first (the fetch, and the write's own
-          // read of it) and twice more for the second (the mock's log runs on).
+          // for either: three times for the first (the fetch, and the write's
+          // two reads of it) and three more for the second (the mock's log runs on).
           const read = { kind: 'EMPLOYMENT', channel: 'WEB', ids: [TEACHER_ID] };
-          expect(withHr.reads).toEqual([read, read]);
-          expect(without.reads).toEqual([read, read, read, read]);
+          expect(withHr.reads).toEqual([read, read, read]);
+          expect(without.reads).toEqual([read, read, read, read, read, read]);
         });
 
         it('leaves out a limit whose teacher this year never mentions, says so, and logs no read of it', async () => {
