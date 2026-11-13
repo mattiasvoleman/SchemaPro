@@ -196,7 +196,7 @@ describe('coveringLocksOf', () => {
   });
 
   it('leaves out a lesson of other weeks, and one that stops before the post does (lockCoversDemand)', () => {
-    const dated = boardPostShape({ ...post(), startDate: date('2026-08-24'), endDate: date('2026-12-20') });
+    const dated = boardPostShape({ ...post(), lessonLengths: [], startDate: date('2026-08-24'), endDate: date('2026-12-20') });
     expect(coveringLocksOf(unit, [kept({ recurrence: 'ODD_WEEKS' })])).toEqual([]);
     expect(coveringLocksOf(dated, [kept({ endDate: date('2026-10-04') })])).toEqual([]);
     // A lesson that runs the whole year covers a post that runs a term.
