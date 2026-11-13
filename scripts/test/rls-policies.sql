@@ -59044,3 +59044,74 @@ BEGIN
   RAISE NOTICE 'fd 474 SER: % checks', current_setting('fd.checks');
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 485: three rules of the deferred function that no section pinned (review of #298, LÅG-2). A mutant of
+-- app.teaching_requirement_placement_teachers_fit() that took the rule out passed sections 470-474 each time; each case
+-- here is the one that kills one of them, on the helpers of 470-474 (fd_).
+--
+--   1. A removal on a post of ODD or EVEN weeks asks no pairs of what is left (its rows are all of its weeks, one
+--      lesson each): without the ALL_WEEKS test of the removal's branch every removal of one of two odd rows of a
+--      teacher is refused as TEACHER_PAIRS, the writer's own replacement of a post's rows too.
+--   2. A removal of a row nobody teaches (a removed teacher's) is asked for pairs: here by the post's own PAIRS, first and at
+--      once. (The deferred function's own `IS NOT DISTINCT FROM` for that row cannot be pinned from outside: for nobody's group to
+--      be unpaired while the post's odd and even rows are equal, another group must be unpaired the other way, and whatever
+--      made it so is judged for it by the same deferred function, which says the same TEACHER_PAIRS. With `=` the answer to a
+--      removal is the same in every state a writer can reach; the case below is the removal it is asked of.)
+--   3. TEACHER_COUNT is per teacher AND per length: with the length out of the join a teacher with two lessons of 60
+--      and one of 40 is held to one lesson for all three rows.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_fd_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  side text;
+  sub text;
+  p jsonb;
+  l text;
+  od uuid;
+  s uuid;
+  mx uuid;
+BEGIN
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    sub := CASE side WHEN 'a' THEN current_setting('app.test_fd_admin_a') ELSE '00000000-0000-4000-8000-000000000006' END;
+    p := pg_temp.fd_plant(sub, side);
+    l := '485 ' || side || ' ';
+
+    -- 1. An odd post: A has two of its three lessons, B one, every row of its weeks.
+    od := pg_temp.fd_post(p, 'A', 3, 60, '{}', 'ODD_WEEKS');
+    PERFORM pg_temp.fd_case(l || 'an odd post: B''s share, and A''s two rows and B''s', 'ok', pg_temp.fd_share(p, od, 'B', 1, 60),
+      pg_temp.fd_ins(p, od, '1|08:00|60|A|ODD_WEEKS', '2|08:00|60|A|ODD_WEEKS', '3|08:00|60|B|ODD_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'one of A''s two rows removed: no pair is asked of an odd post, and the one left is a lesson', 'ok',
+      format($q$DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = %L AND "dayOfWeek" = 2$q$, od));
+    PERFORM pg_temp.fd_expect(l || 'A''s other row and B''s stand', pg_temp.fd_who(p, od), 'A1 B1');
+    PERFORM pg_temp.fd_case(l || 'and A''s last row, and B''s', 'ok', pg_temp.fd_clear_stmt(od));
+    PERFORM pg_temp.fd_expect(l || 'nothing left', pg_temp.fd_who(p, od), 'none');
+
+    -- 2. B's pair and A's pair on an every-week post; B is removed and the pair is nobody's. One of the two nobody's rows removed leaves
+    -- nobody's lessons with half a pair: refused (the removal's own post-wide PAIRS is the first function's, at once, and says PAIRS).
+    s := pg_temp.fd_post(p, 'A', 3);
+    PERFORM pg_temp.fd_case(l || 'an every-week post: B''s pair and A''s one row', 'ok', pg_temp.fd_share(p, s, 'B', 1, 60),
+      pg_temp.fd_ins(p, s, '1|08:00|60|B|ODD_WEEKS', '1|10:00|60|B|EVEN_WEEKS', '2|08:00|60|A|ALL_WEEKS'));
+    PERFORM pg_temp.fd_case(l || 'B removed: the pair is nobody''s and stands', 'ok', format($q$DELETE FROM "Users" WHERE id = %L$q$, pg_temp.fd_t(p, 'B')));
+    PERFORM pg_temp.fd_expect(l || 'nobody''s two rows and A''s', pg_temp.fd_who(p, s), '-2 A1');
+    PERFORM pg_temp.fd_nowcase(l || 'one of nobody''s two rows removed: refused by the post''s own PAIRS, at once', 'FP409 PAIRS',
+      format($q$DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = %L AND "teacherId" IS NULL AND recurrence = 'ODD_WEEKS'$q$, s));
+    PERFORM pg_temp.fd_case(l || 'both of nobody''s rows removed: nothing of theirs is left unpaired', 'ok',
+      format($q$DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = %L AND "teacherId" IS NULL$q$, s));
+    PERFORM pg_temp.fd_expect(l || 'A''s row is left', pg_temp.fd_who(p, s), 'A1');
+
+    -- 3. Two lengths for A, 60 twice and 40 once, and C's 40 (B is removed above): A's three rows are three lessons of A's, not one lesson too many.
+    mx := pg_temp.fd_post(p, 'A', 4, 60, '{60,60,40,40}');
+    PERFORM pg_temp.fd_case(l || 'a mixed post: C''s share of one 40', 'ok', pg_temp.fd_share(p, mx, 'C', 1, 40));
+    PERFORM pg_temp.fd_case(l || 'A''s two 60 and one 40, and C''s 40: every lesson of the post is placed, each by its teacher and length', 'ok',
+      pg_temp.fd_ins(p, mx, '1|08:00|60|A|ALL_WEEKS', '2|08:00|60|A|ALL_WEEKS', '3|08:00|40|A|ALL_WEEKS', '4|08:00|40|C|ALL_WEEKS'));
+    PERFORM pg_temp.fd_expect(l || 'as four rows', pg_temp.fd_who(p, mx), 'A3 C1');
+    PERFORM pg_temp.fd_clear(mx);
+    PERFORM pg_temp.fd_case(l || 'but a second 40 for A is one more than A''s one 40, with A''s sixty-minute lessons to hide it', 'FP409 TEACHER_COUNT',
+      pg_temp.fd_ins(p, mx, '1|08:00|60|A|ALL_WEEKS', '2|08:00|60|A|ALL_WEEKS', '3|08:00|40|A|ALL_WEEKS', '4|08:00|40|A|ALL_WEEKS'));
+  END LOOP;
+  RAISE NOTICE 'fd 485: % checks', current_setting('fd.checks');
+END $$;
+ROLLBACK;
