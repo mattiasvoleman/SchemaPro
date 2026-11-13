@@ -1,3 +1,5 @@
+import type { UserRole } from "@/lib/types";
+
 /**
  * What the bell says of a notice and where it leads: pure functions of the
  * row, kept out of notification-bell.tsx. The bell is in the same chunk as
@@ -66,7 +68,9 @@ const HREF: Partial<Record<NotificationRow["type"], string>> = {
   EXTERNAL_BOOKING_CLASH: "/admin/external-bookings",
   ACK_REQUESTED: "/guardian/acknowledgements",
   ACK_REMINDER: "/guardian/acknowledgements",
-  // Ledighetspolicy: the guardian, and whoever applied, to the page that lists the leave requests.
+  // Ledighetspolicy: the guardian, whom the school asks for consent, to the page that lists the leave requests.
+  // The "no" that ends a request goes to whoever filed it, by their role (LEAVE_REFUSED_HREF); "/guardian" is
+  // what it says for a reader whose role is not given.
   LEAVE_CONSENT_REQUESTED: "/guardian",
   LEAVE_CONSENT_REMINDER: "/guardian",
   LEAVE_CONSENT_REFUSED: "/guardian",
@@ -81,6 +85,18 @@ const HREF: Partial<Record<NotificationRow["type"], string>> = {
  * ended, and there is nothing a guardian could open.
  */
 const CRISIS_HREF = { SCHOOL_ADMIN: "/admin/crisis", TEACHER: "/teacher/crisis" } as const;
+
+/**
+ * Ledighetspolicy: a guardian's "no" ends the request for whoever filed it, and that is a guardian, a pupil or an
+ * administrator (family.controller: GUARDIAN, STUDENT, SCHOOL_ADMIN). The guardian and the administrator each
+ * read their requests on a page of their own; a pupil has none in the web, so the notice says what happened and
+ * leads nowhere rather than to a page that does not show the request. The administrator lands on the tab the ended
+ * request is under (GUARDIAN_DECLINED), which the page opens on when the address says so.
+ */
+const LEAVE_REFUSED_HREF: Partial<Record<UserRole, string>> = {
+  GUARDIAN: "/guardian",
+  SCHOOL_ADMIN: "/admin/leave?filter=GUARDIAN_DECLINED",
+};
 
 /** The notice as one sentence, in the reader's language. */
 export function noticeText(entry: NotificationRow, t: NoticeTranslator): string {
@@ -258,9 +274,10 @@ export function noticeText(entry: NotificationRow, t: NoticeTranslator): string 
  * `role` is the reader's (an alarm leads a teacher and an administrator to
  * different pages).
  */
-export function noticeHref(entry: NotificationRow, role?: string): string | undefined {
+export function noticeHref(entry: NotificationRow, role?: UserRole): string | undefined {
   if (entry.type === "CRISIS_ALARM" || entry.type === "CRISIS_ENDED") {
     return role === "SCHOOL_ADMIN" ? CRISIS_HREF.SCHOOL_ADMIN : CRISIS_HREF.TEACHER;
   }
+  if (entry.type === "LEAVE_CONSENT_REFUSED" && role) return LEAVE_REFUSED_HREF[role];
   return entry.meta?.reason === "UNANSWERED" ? "/admin/cover" : HREF[entry.type];
 }
