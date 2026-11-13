@@ -43,3 +43,18 @@ describe.each([
     ]);
   });
 });
+
+describe('UpdateUserDto leftOn (sista arbetsdag)', () => {
+  it('takes a date that exists and nothing else: not an instant, not a rolled-over day, not a number', async () => {
+    await expect(failing(UpdateUserDto, { isActive: false, leftOn: '2026-11-10' })).resolves.toEqual([]);
+    await expect(failing(UpdateUserDto, { leftOn: '2026-02-30' })).resolves.toEqual(['leftOn']);
+    await expect(failing(UpdateUserDto, { leftOn: '2026-11-10T12:00:00Z' })).resolves.toEqual(['leftOn']);
+    await expect(failing(UpdateUserDto, { leftOn: '10 november' })).resolves.toEqual(['leftOn']);
+    await expect(failing(UpdateUserDto, { leftOn: 20261110 })).resolves.toEqual(['leftOn']);
+  });
+
+  it('is optional, and is not a field of a new person', async () => {
+    await expect(failing(UpdateUserDto, {})).resolves.toEqual([]);
+    expect('leftOn' in plainToInstance(CreateUserDto, { role: 'TEACHER', firstName: 'A', lastName: 'B', email: 'a@b.se' })).toBe(false);
+  });
+});

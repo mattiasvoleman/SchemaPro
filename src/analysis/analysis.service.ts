@@ -34,7 +34,7 @@ import {
   type SchoolPartView,
 } from './analysis.types';
 import { audiencesOf, type Audiences } from './audience';
-import { coverStands, cutDuties, leaversOf, leftBy, lessonDays } from './leavers';
+import { awayAllPeriod, awayInstants, coverStands, cutDuties, leaversOf, touches } from './leavers';
 import { buildCostBasis, type SubstituteRow } from './cost-basis';
 import { buildKeyFigures } from './key-figures';
 import { buildPayroll } from './payroll-basis';
@@ -352,10 +352,11 @@ export class AnalysisService {
       };
       addTeaching(credits);
 
-      // A person who has left is booked up to the day they left and no further (leavers.ts). Everyone in the
-      // period's rows is asked about, one read; the few who are inactive and dated have their lessons asked
-      // again for themselves alone, over the days up to the stamp and only the lessons over by it (statement E's
-      // `endedBy`), in place of the rows the whole period gave them.
+      // A person is booked for the time they were active and no other (leavers.ts): not after the day they left, and
+      // not for the weeks between a leave and a return. Everyone in the period's rows is asked about, one read of
+      // UserDeactivations; the few whose periods reach the days have their lessons asked again for themselves
+      // alone, over the whole period and only the lessons over while they were active (statement E's `away`), in
+      // place of the rows the whole period gave them.
       const asked = new Set<string>([...teaching.values()].map((entry) => entry.userId));
       for (const duty of read.input.duties) asked.add(duty.userId);
       for (const row of hours.rows) asked.add(row.userId);
@@ -364,20 +365,14 @@ export class AnalysisService {
         select: { school: { select: { timezone: true } } },
       });
       const timezone = zone?.school?.timezone ?? 'Europe/Stockholm';
-      const inactive =
-        asked.size === 0
-          ? []
-          : await tx.user.findMany({
-              where: { id: { in: [...asked] }, isActive: false, deactivatedAt: { not: null } },
-              select: { id: true, deactivatedAt: true },
-            });
-      const leavers = leaversOf(inactive, (at) => asDay(todayInZone(timezone, at)));
-      const leftInPeriod = [...leavers.values()].filter((leaver) => leftBy(leaver, to));
+      const periods =
+        asked.size === 0 ? [] : await tx.userDeactivation.findMany({ where: { userId: { in: [...asked] } }, select: { userId: true, startsAt: true, endsAt: true } });
+      const leavers = leaversOf(periods, (at) => asDay(todayInZone(timezone, at)));
+      const leftInPeriod = [...leavers.values()].filter((leaver) => touches(leaver, from, to));
       for (const leaver of leftInPeriod) {
         for (const [key, entry] of [...teaching]) if (entry.userId === leaver.userId) teaching.delete(key);
-        const days = lessonDays(leaver, from, to);
-        if (days === null || spans.published === null) continue;
-        addTeaching(await tx.$queryRaw<StaffingCreditRow[]>(staffingCreditStatement(window, days, leaver.userId, null, leaver.at)));
+        if (spans.published === null || awayAllPeriod(leaver, from, to)) continue;
+        addTeaching(await tx.$queryRaw<StaffingCreditRow[]>(staffingCreditStatement(window, { from, to }, leaver.userId, null, awayInstants(leaver))));
       }
 
       const employments = new Map(read.input.employments.map((post) => [post.userId, post]));

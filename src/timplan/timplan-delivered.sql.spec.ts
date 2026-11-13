@@ -150,26 +150,32 @@ describe('staffingCreditStatement (statement E)', () => {
 });
 
 /**
- * Analys och planering asks statement E for a person who has left with `endedBy`: only the lessons over by the
- * instant they were deactivated (D6's `endsAt <= deactivatedAt`). It is a condition on which rows are asked
- * about and is in no statement unless asked for, so every pinned statement above is unchanged by it.
+ * Analys och planering asks statement E for a person who has left, or been away and come back, with `away`: only
+ * the lessons that were over while the person was active (D6's `endsAt <= deactivatedAt`, made to cover a
+ * return). It is a condition on which rows are asked about and is in no statement unless asked for, so every
+ * pinned statement above is unchanged by it.
  */
-describe('endedBy (a person who has left)', () => {
+describe('away (a person who has left or been away)', () => {
   const range = { from: '2026-09-07', to: '2026-09-18' };
   const left = new Date('2026-09-15T10:00:00.000Z');
+  const back = new Date('2026-09-17T08:00:00.000Z');
 
   it('is absent from every statement that is not asked, so the default is byte for byte what it was', () => {
-    expect(hash(staffingCreditStatement(WINDOW, range, null, null, null))).toBe(hash(staffingCreditStatement(WINDOW, range, null)));
-    expect(hash(deliveredLessons(WINDOW, { subjects: 'all', audience: 'groups', range, endedBy: undefined }))).toBe(
+    expect(hash(staffingCreditStatement(WINDOW, range, null, null, []))).toBe(hash(staffingCreditStatement(WINDOW, range, null)));
+    expect(hash(deliveredLessons(WINDOW, { subjects: 'all', audience: 'groups', range, away: undefined }))).toBe(
+      hash(deliveredLessons(WINDOW, { subjects: 'all', audience: 'groups', range })),
+    );
+    expect(hash(deliveredLessons(WINDOW, { subjects: 'all', audience: 'groups', range, away: [] }))).toBe(
       hash(deliveredLessons(WINDOW, { subjects: 'all', audience: 'groups', range })),
     );
     for (const statement of [deliveredLessons(WINDOW), audienceStatement(WINDOW), substituteHoursStatement(WINDOW, range), staffingCreditStatement(WINDOW, range, 'me')]) {
       expect(statement.sql).not.toContain('"endsAt" <=');
+      expect(statement.sql).not.toContain('"endsAt" >=');
     }
   });
 
-  it('adds the one condition on the lesson\'s end, with the instant as a value, and nothing else', () => {
-    const asked = staffingCreditStatement(WINDOW, range, 'me', null, left);
+  it('adds, for a person who is still away, the one condition on the lesson\'s end, with the instant as a value, and nothing else', () => {
+    const asked = staffingCreditStatement(WINDOW, range, 'me', null, [{ from: left, to: null }]);
     const plain = staffingCreditStatement(WINDOW, range, 'me');
     expect(asked.sql).toContain('AND cl."endsAt" <= ?::timestamptz');
     expect(asked.values).toContainEqual(left);
@@ -177,8 +183,31 @@ describe('endedBy (a person who has left)', () => {
     expect(asked.values.filter((value) => value !== left)).toEqual(plain.values);
   });
 
+  it('adds, for a person who came back, a condition that keeps a lesson over at either instant and drops the ones between', () => {
+    const asked = staffingCreditStatement(WINDOW, range, 'me', null, [{ from: left, to: back }]);
+    const plain = staffingCreditStatement(WINDOW, range, 'me');
+    const condition = /\s+AND \(cl\."endsAt" <= \?::timestamptz OR cl\."endsAt" >= \?::timestamptz\)/;
+    expect(asked.sql).toMatch(condition);
+    expect(asked.sql.replace(condition, '')).toBe(plain.sql);
+    // The instants go in as values, the leaving one first, in the order the condition reads them.
+    const added = asked.values.filter((value) => value === left || value === back);
+    expect(added).toEqual([left, back]);
+    expect(asked.values.filter((value) => value !== left && value !== back)).toEqual(plain.values);
+  });
+
+  it('adds one condition for each period, in order, so that a person who left twice is judged on both', () => {
+    const second = new Date('2026-09-18T09:00:00.000Z');
+    const asked = staffingCreditStatement(WINDOW, range, 'me', null, [
+      { from: left, to: back },
+      { from: second, to: null },
+    ]);
+    expect(asked.sql.match(/"endsAt" <= \?::timestamptz/g)).toHaveLength(2);
+    expect(asked.sql.match(/"endsAt" >= \?::timestamptz/g)).toHaveLength(1);
+    expect(asked.values.filter((value) => value instanceof Date && [left, back, second].includes(value))).toEqual([left, back, second]);
+  });
+
   it('is asked of the classification\'s own rows, so a lesson a vikarie took is still displaced', () => {
-    const { sql } = staffingCreditStatement(WINDOW, range, 'me', null, left);
+    const { sql } = staffingCreditStatement(WINDOW, range, 'me', null, [{ from: left, to: back }]);
     expect(sql).toContain(`THEN 'DISPLACED'`);
     expect(sql.indexOf('"endsAt" <=')).toBeLessThan(sql.indexOf('JOIN "CalendarLessonTeachers" t'));
   });

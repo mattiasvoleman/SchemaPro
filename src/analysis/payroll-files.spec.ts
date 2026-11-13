@@ -91,6 +91,17 @@ describe('renderPayrollCsv: Excel\'s Swedish CSV', () => {
     expect(odd.replaced).toBe(2);
     expect(decode(odd.bytes)).toContain('Lukasz;?;');
   });
+
+  // LÅG-5 of the review of #280: the NUL of a pasted name was a byte of the file, and Excel calls such a file corrupt.
+  it('writes no control character into the file: a NUL in a name is a space, and the line breaks the file itself uses stay', () => {
+    const odd = renderPayrollCsv(payrollTable([row({ lastName: 'Ek\u0000ström', firstName: 'A\u0007B' })], 'a', 'b'));
+    expect(odd.bytes.includes(0x00)).toBe(false);
+    expect(odd.bytes.includes(0x07)).toBe(false);
+    expect(decode(odd.bytes)).toContain('Ek ström;A B;');
+    expect(odd.replaced).toBe(2);
+    // Every line still ends in CRLF.
+    expect(decode(odd.bytes).split('\r\n')).toHaveLength(3);
+  });
 });
 
 describe('a person with a protected identity: the signature and the Löne-id, or the code, and nothing else of who they are', () => {

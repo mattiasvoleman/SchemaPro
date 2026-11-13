@@ -446,7 +446,11 @@ jobs:
       # carrying her would give; a period wholly after gives no line and no
       # file row, and a notice; a lesson later the same day is not hers; a
       # vikarie's cover after the stamp is not his; a person made active again
-      # is booked as if they had never left. It removes the school it made.
+      # is booked for what they held before the leave and after it and for
+      # nothing between (UserDeactivations, 20270210090000); a last working day
+      # named through UsersService moves the start of the period; and two
+      # administrators flipping one person at once leave periods that never
+      # overlap. It removes the school it made.
       - name: Analysis and planning probe
         env:
           DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=2

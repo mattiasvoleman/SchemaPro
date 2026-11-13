@@ -2169,7 +2169,9 @@ Walk the full product loop once, in order:
   are Rapporteringsgradens, but not of the teachers who work now.* `app.absence_stats_lessons`
   is `app.reporting_lessons` (20270112090100) with one line changed: D2 asks whether the
   teacher is active **now** (`Users."isActive"`), the history asks whether she had not left
-  when the lesson was over (`"deactivatedAt" IS NULL OR "endsAt" <= "deactivatedAt"`).
+  when the lesson was over (`"deactivatedAt" IS NULL OR "endsAt" <= "deactivatedAt"`;
+  since 20270210090000 (section 16.5) she is asked of `UserDeactivations`, every period she
+  was inactive, so a lesson that ended while she was away is not hers when she returns).
   Without it a month, once stored, lost every lesson of a teacher who has since left and
   was never counted again (the plan asks only for months without a row). The two are
   one definition in two texts, and a jest spec (`absence-stats-definition.spec.ts`) and
@@ -4566,13 +4568,17 @@ and no job, notice or setting is added.
   `payrollNumber`, `protectedIdentity` and `pseudonym`; the page names a marked
   person the same way and resolves a code to the name in a key outside the
   table, on the screen alone.
-  A person who has been deactivated (`Users.deactivatedAt`) is booked up to
-  that moment and no further: lessons and covers that were over by it
-  (`endsAt <= deactivatedAt`, D6's rule, through statement E's `endedBy`), the
-  stored uppdrag and the rastvakt to the day before the school's date of it,
-  and nothing for a period wholly after; `ANALYSIS_LEFT_IN_PERIOD` says how
-  many. A person made active again has no stamp and is booked as if they had
-  never left (the earlier leave is not kept).
+  A person is booked for the time they were active (`UserDeactivations`,
+  20270210090000, section 16.5): lessons and covers that were not over inside a
+  period they were inactive (`startsAt < endsAt < period end`; one over at the
+  very instant they left or came back counts, D6's rule made to cover a
+  return, through statement E's `away`), the stored uppdrag and the rastvakt
+  for the days outside it (from the school's date they left to the day before
+  the school's date they came back), and nothing for a payroll period wholly
+  inside one; `ANALYSIS_LEFT_IN_PERIOD` says how many were inactive in or before
+  the period. Before 20270210090000 this read `Users.deactivatedAt` alone: a
+  person made active again was booked as if they had never left, the gap
+  included.
 - Writes (a skoldel, a rate): those who decide, in the gateway (`@Decides`)
   and in the database's arms.
 
@@ -4627,9 +4633,97 @@ Rastra's import format); the person's own registerutdrag does, and their code.
   teachers and 2 000 pupils: see the PR for the figures and the method.
 - The payroll CSV is Windows-1252 (`text/csv; charset=windows-1252`): a
   character it cannot hold is written as the nearest letter and counted in a
-  notice. The Excel file keeps every character.
+  notice. A control character (a NUL or a BEL pasted into a name) is written as
+  a space, which is what the code page encoder `src/common/windows-1252.ts`
+  (D8's) does and the payroll's encoder asks it for, and counted in the same
+  notice: a NUL in the file is what makes Excel call it corrupt. The Excel
+  file keeps every character.
 - Rolling back the API past this release leaves two unused tables. Nothing
   else reads them.
+
+### 16.5 A person's periods of being inactive (20270210090000)
+
+`Users."deactivatedAt"` (20261021100000) is the moment `isActive` last went
+false and is cleared by a return. That is the date gallring counts from and the
+wrong thing to read for a person's time: a person made active again was counted
+for the weeks between the two clicks (the review of #280, LÅG-1), and the stamp
+is the click, so the days between a last working day and the click were booked
+(LÅG-2). One migration, `20270210090000_en_avaktiverad_person_minns_sina_perioder`
+(run before the merge, in stamp order, section 2):
+
+- **`UserDeactivations`** (schoolId, userId, `startsAt`, `endsAt`, `recordedAt`):
+  one row for every period a person has been inactive. `startsAt` is the click
+  (the same instant as `Users.deactivatedAt`) or the person's last working day
+  when an administrator named it; `endsAt` is the moment the person was made
+  active again, null while inactive. A person is inactive in exactly one open
+  row and active in none. CHECKs: `endsAt` after `startsAt`; `startsAt` not later
+  than `recordedAt` (a last day is not in the future); the exclusion constraint
+  `UserDeactivations_one_period_at_a_time` (btree_gist) keeps one person's
+  periods from overlapping. The key to the person is composite (userId,
+  schoolId), `ON DELETE CASCADE ON UPDATE NO ACTION`.
+- **`Users_deactivations_are_kept`**, an AFTER trigger (`INSERT OR UPDATE OF
+  "isActive"`, SECURITY DEFINER, `app.users_deactivations_are_kept`): a row that
+  is inserted inactive or goes inactive opens a period at its `deactivatedAt`,
+  never earlier than the person's previous return (two administrators flipping
+  one person at once cannot make the periods overlap); a row that goes active
+  closes the open one at `clock_timestamp()`. `Users.deactivatedAt` is unchanged.
+  Every writer goes through it, the release before this one included.
+- **What is carried over:** every person inactive today gets an open period
+  from their `deactivatedAt`. A person who was inactive and became active
+  again before the migration has none, because Users forgot the date when they
+  returned and no other table kept it (`TeacherEmploymentLogs` logs a post,
+  `Ss12000EntityVersions` is a counter): their gap stays counted as it was, and
+  no figure produced before the migration changes.
+- **Row-level security:** read by the school's administrators (every profile,
+  as `UserRoleChanges`), `startsAt` of an *open* row changed by those who write
+  Personal (`TABLE_WRITE_GATES.UserDeactivations`: update `PERSONAL`; the gate is
+  asked in WITH CHECK only, as on every table). The API role holds `SELECT` and
+  `UPDATE ("startsAt")`; nobody inserts or deletes; `service_role` reads.
+- **`app.absence_stats_lessons`** (D6) is replaced by its own body with one line
+  exchanged: the teacher counts unless the lesson ended inside one of her
+  inactive periods. The migration stops if the body is not the one
+  `20270122091000` wrote (`md5(prosrc)` `265b9b21353ecd7e441397f99e565643`).
+  Months D6 has already stored are not recomputed.
+- **The gateway:** the löneunderlag reads the periods (statement E's `away`,
+  `src/analysis/leavers.ts`), and `PATCH /api/v1/users/{id}` takes `leftOn`
+  (the school's date, `ÅÅÅÅ-MM-DD`), for a person being deactivated or one who
+  is inactive already: their time then counts through the end of that day. It is
+  refused for a day that has not been (`USER_LEFT_ON_IN_THE_FUTURE`), for a
+  person who is or becomes active (`USER_LEFT_ON_NEEDS_INACTIVE`) and for a day
+  before the person last came back (`USER_LEFT_ON_BEFORE_RETURN`). There is no
+  field for it on the People page yet.
+- **Not changed:** the load report, the SCB file (`inactiveSince`), the
+  rastvakt's coverage and the school export still read `Users.deactivatedAt`
+  (the click), so a last working day named for a person moves the payroll and
+  the absence statistics and nothing else. Gallring counts from the click on
+  purpose: a last working day must not shorten a retention period.
+
+**Beside the live API.** The foreign keys take `SHARE ROW EXCLUSIVE` on `Schools`
+and `Users`, and so does the trigger's `CREATE TRIGGER`: writes wait, reads do
+not, for the milliseconds the file runs. Both are taken first, `NOWAIT` and
+together, in a loop for at most 30 seconds (the rule of section 2); after a
+refusal for that long nothing is changed. The release before this one writes
+`isActive` alone and the table follows, so the order is migration first, then
+merge; rolling the code back leaves the table and the trigger in place and
+harmless. After a failed attempt, `prisma migrate resolve --rolled-back
+20270210090000_en_avaktiverad_person_minns_sina_perioder`, then deploy again.
+
+Verify (as the owner, `public` only): `UserDeactivations` exists with six
+constraints (pkey, two keys, two CHECKs and the exclusion) and two policies; the
+trigger `Users_deactivations_are_kept` is enabled; `md5(prosrc)` of
+`app.absence_stats_lessons` is no longer `265b9b21…`; and every inactive person
+has exactly one open period and nobody active has one:
+
+```sql
+SELECT count(*) FROM "Users" u
+ WHERE (SELECT count(*) FROM "UserDeactivations" d WHERE d."userId" = u.id AND d."endsAt" IS NULL)
+       <> CASE WHEN u."isActive" THEN 0 ELSE 1 END;   -- 0
+```
+
+Reading a person's periods (the owner or the API role as an administrator):
+`SELECT "startsAt", "endsAt", "recordedAt" FROM "UserDeactivations" WHERE "userId" = '…' ORDER BY "startsAt";`
+Correcting a last working day that was named wrongly is the same `PATCH` with a new
+`leftOn`; a row is never edited by hand.
 
 ## 17. Lokal: resources and external bookers (K3)
 

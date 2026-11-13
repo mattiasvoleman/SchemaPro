@@ -171,6 +171,7 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('StudentEnrollments', ['studentId', 'schoolId'], 'CASCADE', { counted: 'enrolments' }),
   key('TimplanStatements', ['studentId', 'schoolId'], 'CASCADE', { counted: 'teachingTimeStatements' }),
   key('UserRoleChanges', ['userId', 'schoolId'], 'CASCADE', { counted: 'otherRows' }),
+  key('UserDeactivations', ['userId', 'schoolId'], 'CASCADE', others),
   key('RoomBookings', ['bookedById', 'schoolId'], 'CASCADE', others),
   key('CalendarLessonTeachers', ['teacherId', 'schoolId'], 'CASCADE', others),
   key('AvailabilityConstraints', ['userId', 'schoolId'], 'CASCADE', others),

@@ -930,6 +930,132 @@ describe('UsersService', () => {
       });
     });
 
+    // Sista arbetsdag (20270210090000, LÅG-2 of the review of #280): a person's time counts through the end of the
+    // day an administrator names, where it counted to the click.
+    describe('leftOn, the last working day', () => {
+      const NOW = new Date('2026-11-13T09:00:00.000Z');
+      /** The period Users_deactivations_are_kept has opened by the click, as the database holds it. */
+      const RECORDED = new Date('2026-11-13T09:00:00.500Z');
+      let previousReturn: { endsAt: Date } | null;
+      let openPeriod: { recordedAt: Date } | null;
+
+      beforeEach(() => {
+        jest.useFakeTimers({ now: NOW });
+        previousReturn = null;
+        openPeriod = { recordedAt: RECORDED };
+        tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+        tx.userDeactivation.findFirst.mockImplementation((args: { where: { endsAt?: unknown } }) =>
+          Promise.resolve(args.where.endsAt === null ? openPeriod : previousReturn),
+        );
+        tx.userDeactivation.updateMany.mockResolvedValue({ count: 1 });
+        tx.user.update.mockResolvedValue({ id: USER_ID });
+      });
+      afterEach(() => jest.useRealTimers());
+
+      it('starts the open period at the school\'s midnight after the day, in winter and in summer, and writes it after the person', async () => {
+        await service.update(USER_ID, { isActive: false, leftOn: '2026-11-10' }, testUser());
+        // The 11th at 00:00 in Stockholm (UTC+1).
+        expect(tx.userDeactivation.updateMany).toHaveBeenCalledWith({
+          where: { userId: USER_ID, endsAt: null },
+          data: { startsAt: new Date('2026-11-10T23:00:00.000Z') },
+        });
+        expect(tx.user.update.mock.invocationCallOrder[0]).toBeLessThan(tx.userDeactivation.updateMany.mock.invocationCallOrder[0]);
+        expect(tx.user.update).toHaveBeenCalledWith({ where: { id: USER_ID }, data: { isActive: false } });
+
+        tx.userDeactivation.updateMany.mockClear();
+        jest.setSystemTime(new Date('2026-06-20T09:00:00.000Z'));
+        openPeriod = { recordedAt: new Date('2026-06-20T09:00:00.500Z') };
+        await service.update(USER_ID, { isActive: false, leftOn: '2026-06-10' }, testUser());
+        // The 11th at 00:00 in Stockholm (UTC+2).
+        expect(tx.userDeactivation.updateMany).toHaveBeenCalledWith({
+          where: { userId: USER_ID, endsAt: null },
+          data: { startsAt: new Date('2026-06-10T22:00:00.000Z') },
+        });
+      });
+
+      it('counts a person named for today to the click, as without a date: a last day is not in the future', async () => {
+        await service.update(USER_ID, { isActive: false, leftOn: '2026-11-13' }, testUser());
+        expect(tx.userDeactivation.updateMany).toHaveBeenCalledWith({
+          where: { userId: USER_ID, endsAt: null },
+          data: { startsAt: RECORDED },
+        });
+      });
+
+      it('takes the school\'s day for today, not UTC\'s: 00:30 on the 14th in Stockholm still names the 13th as yesterday\'s', async () => {
+        jest.setSystemTime(new Date('2026-11-13T23:30:00.000Z'));
+        openPeriod = { recordedAt: new Date('2026-11-13T23:30:00.500Z') };
+        await service.update(USER_ID, { isActive: false, leftOn: '2026-11-13' }, testUser());
+        // The 13th is over in Stockholm: its end is the 14th at 00:00, which is 23:00 UTC, before the click.
+        expect(tx.userDeactivation.updateMany).toHaveBeenCalledWith({
+          where: { userId: USER_ID, endsAt: null },
+          data: { startsAt: new Date('2026-11-13T23:00:00.000Z') },
+        });
+      });
+
+      it('refuses a day that has not been, writing nothing', async () => {
+        await expect(service.update(USER_ID, { isActive: false, leftOn: '2026-11-14' }, testUser())).rejects.toMatchObject({
+          status: 400,
+          response: { code: 'USER_LEFT_ON_IN_THE_FUTURE' },
+        });
+        expect(tx.user.update).not.toHaveBeenCalled();
+        expect(tx.userDeactivation.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('refuses a last day for a person who stays or becomes active, and for an active person it does not deactivate', async () => {
+        for (const body of [{ isActive: true, leftOn: '2026-11-10' }, { leftOn: '2026-11-10' }]) {
+          await expect(service.update(USER_ID, body, testUser())).rejects.toMatchObject({
+            status: 400,
+            response: { code: 'USER_LEFT_ON_NEEDS_INACTIVE' },
+          });
+        }
+        expect(tx.user.update).not.toHaveBeenCalled();
+        expect(tx.userDeactivation.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('names the last day alone for a person who is inactive already, which is how a day named late is corrected', async () => {
+        storeUser({ role: UserRole.STUDENT, studentGroupId: null, pseudonymisedAt: null, isActive: false });
+        await service.update(USER_ID, { leftOn: '2026-11-10' }, testUser());
+        expect(tx.userDeactivation.updateMany).toHaveBeenCalledWith({
+          where: { userId: USER_ID, endsAt: null },
+          data: { startsAt: new Date('2026-11-10T23:00:00.000Z') },
+        });
+      });
+
+      it('refuses a day before the person was last made active again, naming the day they came back', async () => {
+        // Back on 5 November at 08:00 in Stockholm; the 3rd's end is the 4th at midnight, before that.
+        previousReturn = { endsAt: new Date('2026-11-05T07:00:00.000Z') };
+        await expect(service.update(USER_ID, { isActive: false, leftOn: '2026-11-03' }, testUser())).rejects.toMatchObject({
+          status: 400,
+          response: { code: 'USER_LEFT_ON_BEFORE_RETURN', params: { returned: '2026-11-05' } },
+        });
+        expect(tx.user.update).not.toHaveBeenCalled();
+        // The day they came back is theirs to name: the 5th ends after they returned.
+        await service.update(USER_ID, { isActive: false, leftOn: '2026-11-05' }, testUser());
+        expect(tx.userDeactivation.updateMany).toHaveBeenCalledWith({
+          where: { userId: USER_ID, endsAt: null },
+          data: { startsAt: new Date('2026-11-05T23:00:00.000Z') },
+        });
+        // And the day that ends at the very instant they returned is not before it: periods may meet (the exclusion allows it).
+        tx.userDeactivation.updateMany.mockClear();
+        previousReturn = { endsAt: new Date('2026-11-05T23:00:00.000Z') };
+        await service.update(USER_ID, { isActive: false, leftOn: '2026-11-05' }, testUser());
+        expect(tx.userDeactivation.updateMany).toHaveBeenCalledTimes(1);
+      });
+
+      it('leaves the periods alone when no day is named', async () => {
+        await service.update(USER_ID, { isActive: false }, testUser());
+        expect(tx.userDeactivation.findFirst).not.toHaveBeenCalled();
+        expect(tx.userDeactivation.updateMany).not.toHaveBeenCalled();
+        expect(tx.school.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('does nothing to a period that is not there (a person the trigger has not dated), and does not fail', async () => {
+        openPeriod = null;
+        await expect(service.update(USER_ID, { isActive: false, leftOn: '2026-11-10' }, testUser())).resolves.toEqual({ id: USER_ID });
+        expect(tx.userDeactivation.updateMany).not.toHaveBeenCalled();
+      });
+    });
+
     it('refuses to make a pseudonymised person active again, naming the way out', async () => {
       storeUser({ role: UserRole.STUDENT, studentGroupId: null, pseudonymisedAt: new Date('2026-10-21T01:10:00Z') });
 

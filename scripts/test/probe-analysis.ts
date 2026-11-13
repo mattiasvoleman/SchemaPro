@@ -28,8 +28,13 @@
  *         notice; the file (CSV) has no row for her either;
  *   (le)  a period that ends before the stamp's day is what it always was;
  *   (lf)  a vikarie who left: the cover over by the stamp stands, the cover after it does not;
- *   (lg)  made active again: the trigger clears the stamp and she is booked as if she had never
- *         left, the gap included (the earlier leave is not kept);
+ *   (lg)  made active again (20 October, 08:00): the leave is a closed period of UserDeactivations
+ *         (20270210090000), and she is booked for what she held before it and after it, and for
+ *         nothing in between: the lessons of the 16th and the 19th and the uppdrag of the 15th to
+ *         the 19th are not hers, those of the 20th on are. The answer says Anna and Dan (LÅG-1 of
+ *         the review of #280: she used to be booked for the whole gap);
+ *   (lk)  a period that begins after she came back is what it always was, with no notice for her;
+ *         one inside the leave has no row for her and the notice;
  *   (lh)  Bo marked as having a protected identity (PersonProtections, by hand): the mark's
  *         trigger gives him a code (PayrollPseudonyms, 20270206091000). The answer says his
  *         signature, the mark and the code and no name; both files have his row by signature (BO)
@@ -44,6 +49,14 @@
  *         insert's mark and removes the code, and the person is marked with none, for good.
  *   (lj)  the versions' guard (20270206091000): outside gallring no version changes; in gallring
  *         a version's payroll number may be set to null, and nothing else of it may change.
+ *   (lm)  the last working day (20270210090000, LÅG-2 of the review of #280), through the real
+ *         UsersService: a person deactivated with leftOn is booked through the end of that day and
+ *         not to the click (which is in November), one deactivated without it is booked to the
+ *         click, and a day named afterwards moves the start of the open period; refusals for a day
+ *         that has not been, a person who stays active, and a day before the person came back;
+ *   (ln)  two administrators flipping the same person at once, from two connections, in both
+ *         orders: the second waits for the first, and the periods never overlap (the exclusion
+ *         constraint would refuse the second deactivation if it began before the first return).
  */
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
@@ -56,6 +69,8 @@ import { CoverReportsService } from '../../src/cover/cover-reports.service';
 import { PrismaService } from '../../src/database/prisma.service';
 import { readXlsx } from '../../src/schedule-exchange/xlsx';
 import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
+import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
+import { UsersService } from '../../src/users/users.service';
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -194,6 +209,20 @@ async function checks(owner: Client, api: PrismaService, slug: string): Promise<
     }
   };
 
+  /**
+   * The person is made active again through the trigger (which closes the open period at the real clock), and the period is
+   * then said to have ended at `stamp`, as `leave` says when one began: the lessons are in October.
+   */
+  const comeBack = async (userId: string, stamp: string) => {
+    await owner.query(`UPDATE "Users" SET "isActive" = true WHERE id = $1`, [userId]);
+    const closed = await owner.query(
+      `UPDATE "UserDeactivations" SET "endsAt" = ($2::timestamp AT TIME ZONE $3)
+        WHERE id = (SELECT id FROM "UserDeactivations" WHERE "userId" = $1 ORDER BY "startsAt" DESC LIMIT 1) AND "endsAt" IS NOT NULL`,
+      [userId, stamp, TZ],
+    );
+    assert.equal(closed.rowCount, 1, 'the trigger did not close the period');
+  };
+
   await check('(la) active: the rows say 600 minutes of teaching and 120 + 200 of uppdrag, and nobody has left', async () => {
     const answer = await payroll('2026-10-12', '2026-10-23');
     const anna_ = totalsOf(answer, anna.id)!;
@@ -249,14 +278,34 @@ async function checks(owner: Client, api: PrismaService, slug: string): Promise<
     assert.deepEqual(after.notices.find((n) => n.code === 'ANALYSIS_LEFT_IN_PERIOD')?.params, { people: 2 });
   });
 
-  await check('(lg) made active again she is booked as if she had never left, the gap included', async () => {
-    await owner.query(`UPDATE "Users" SET "isActive" = true WHERE id = $1`, [anna.id]);
+  await check('(lg) made active again on the 20th: booked before the leave and after it, and for nothing in between', async () => {
+    await comeBack(anna.id, '2026-10-20 08:00');
     assert.equal((await one<{ gone: boolean }>(`SELECT "deactivatedAt" IS NOT NULL AS gone FROM "Users" WHERE id = $1`, [anna.id])).gone, false);
+    assert.deepEqual(
+      (await owner.query(`SELECT ("endsAt" IS NULL) AS open FROM "UserDeactivations" WHERE "userId" = $1 ORDER BY "startsAt"`, [anna.id])).rows,
+      [{ open: false }],
+      'her one period is closed',
+    );
     const answer = await payroll('2026-10-12', '2026-10-23');
     const anna_ = totalsOf(answer, anna.id)!;
-    // Ten mornings and the two lessons on the 15th: 720; ämnesansvar 120 and rastvakt 200.
-    assert.deepEqual([anna_.teachingMinutes, anna_.dutyMinutes], [720, 320]);
-    assert.deepEqual(answer.notices.find((n) => n.code === 'ANALYSIS_LEFT_IN_PERIOD')?.params, { people: 1 }, 'only Dan has left');
+    // Teaching: the five lessons over by the stamp on the 15th (12, 13, 14, and 08:00 and 10:00 on the 15th) and the four mornings from the 20th (08:00-09:00
+    // over after she came back at 08:00): 540; not the lessons of the 16th and the 19th. Uppdrag: 32 minutes a day on the 12th to the 14th and the 20th to the 23rd.
+    assert.deepEqual([anna_.teachingMinutes, anna_.dutyMinutes], [540, 7 * 32]);
+    assert.deepEqual(answer.notices.find((n) => n.code === 'ANALYSIS_LEFT_IN_PERIOD')?.params, { people: 2 }, 'Anna was away in the period, and Dan has left');
+  });
+
+  await check('(lk) a period that begins after she came back is what it always was, and one inside the leave has no row for her', async () => {
+    const after = await payroll('2026-10-21', '2026-10-23');
+    assert.deepEqual([totalsOf(after, anna.id)!.teachingMinutes, totalsOf(after, anna.id)!.dutyMinutes], [180, 3 * 32]);
+    assert.ok(!codes(after).includes('ANALYSIS_LEFT_IN_PERIOD'), 'a notice for a period nobody was away in');
+    // The 20th is the day she came back: from 08:00, so the lesson over at 09:00 is hers, and the day is charged.
+    const back = await payroll('2026-10-20', '2026-10-20');
+    assert.deepEqual([totalsOf(back, anna.id)!.teachingMinutes, totalsOf(back, anna.id)!.dutyMinutes], [60, 32]);
+    const inside = await payroll('2026-10-16', '2026-10-19');
+    assert.equal(totalsOf(inside, anna.id), undefined, 'booked on days she was away');
+    assert.ok(codes(inside).includes('ANALYSIS_LEFT_IN_PERIOD'));
+    const file = await analysis.payrollFile({ academicYearId: year, from: '2026-10-16', to: '2026-10-19', format: 'CSV' }, asAdmin);
+    assert.ok(!Buffer.from(file.contentBase64, 'base64').toString('latin1').includes('Anna'), 'the file names her');
   });
 
   await check('(lh) a marked teacher is in the answer and both files by signature and code, with no name and no e-mail', async () => {
@@ -399,6 +448,108 @@ async function checks(owner: Client, api: PrismaService, slug: string): Promise<
       assert.equal(await refused(`UPDATE "TeacherEmploymentLogs" SET "version" = "version" + 1000, "after" = jsonb_set("after", '{payrollNumber}', 'null'::jsonb) WHERE id = $1`, true), 'TL403', 'gallring changed a column beside the number');
     } finally {
       await owner.query(`UPDATE "TeacherEmployments" SET "payrollNumber" = NULL WHERE "userId" = $1`, [anna.id]);
+    }
+  });
+
+  await check('(lm) the last working day, through UsersService: booked through the end of it, and not to the click', async () => {
+    const people = new UsersService(api, {} as SupabaseAdminService);
+    const eva = await user('Eva', 'TEACHER');
+    const fia = await user('Fia', 'TEACHER');
+    for (const teacher of [eva, fia]) {
+      await lesson('2026-10-13', '08:00', '09:00', teacher.id);
+      await lesson('2026-10-15', '08:00', '09:00', teacher.id);
+    }
+    const teaching = async (userId: string) => totalsOf(await payroll('2026-10-12', '2026-10-16'), userId)?.teachingMinutes;
+    assert.equal(await teaching(eva.id), 120, 'both lessons while she is active');
+
+    // With a day: the end of the 13th (the school's midnight, 22:00 UTC the same evening in October), whatever the click.
+    await people.update(eva.id, { isActive: false, leftOn: '2026-10-13' }, asAdmin);
+    const evas = await one<{ starts: string; click: boolean }>(
+      `SELECT to_char(d."startsAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI') AS starts, (u."deactivatedAt" > '2026-11-01') AS click
+         FROM "UserDeactivations" d JOIN "Users" u ON u.id = d."userId" WHERE d."userId" = $1 AND d."endsAt" IS NULL`,
+      [eva.id],
+    );
+    assert.deepEqual(evas, { starts: '2026-10-13T22:00', click: true }, 'the period begins at the end of the 13th; the click is where it was (gallring counts from it)');
+    assert.equal(await teaching(eva.id), 60, 'only the lesson of the 13th is hers');
+
+    // Without one: to the click, which is in November: both lessons.
+    await people.update(fia.id, { isActive: false }, asAdmin);
+    assert.equal(await teaching(fia.id), 120);
+    // Named afterwards, for a person who is inactive already: the same move.
+    await people.update(fia.id, { leftOn: '2026-10-14' }, asAdmin);
+    assert.equal(await teaching(fia.id), 60, 'a day named late moves the start of the open period');
+
+    // The refusals: nothing is written for them.
+    const refused = async (body: Parameters<UsersService['update']>[1], id: string): Promise<unknown> => {
+      try {
+        await people.update(id, body, asAdmin);
+        return null;
+      } catch (error) {
+        return (error as { response?: { code?: string } }).response?.code ?? 'error';
+      }
+    };
+    assert.equal(await refused({ isActive: true, leftOn: '2026-10-13' }, fia.id), 'USER_LEFT_ON_NEEDS_INACTIVE');
+    assert.equal(await refused({ isActive: false, leftOn: '2099-01-01' }, fia.id), 'USER_LEFT_ON_IN_THE_FUTURE');
+    // Made active, then deactivated with a day before the return: refused, and the person stays active.
+    await people.update(fia.id, { isActive: true }, asAdmin);
+    assert.equal(await refused({ isActive: false, leftOn: '2026-10-01' }, fia.id), 'USER_LEFT_ON_BEFORE_RETURN');
+    assert.equal((await one<{ active: boolean }>(`SELECT "isActive" AS active FROM "Users" WHERE id = $1`, [fia.id])).active, true);
+  });
+
+  await check('(ln) two administrators flipping the same person at once: the second waits, and the periods never overlap', async () => {
+    const gus = await user('Gus', 'TEACHER');
+    const second = new Client({ connectionString: requiredEnv('PROBE_OWNER_URL') });
+    await second.connect();
+    const periods = async () =>
+      (
+        await owner.query(
+          `SELECT ("endsAt" IS NULL) AS open, "startsAt", "endsAt" FROM "UserDeactivations" WHERE "userId" = $1 ORDER BY "startsAt"`,
+          [gus.id],
+        )
+      ).rows as { open: boolean; startsAt: Date; endsAt: Date | null }[];
+    const flip = (client: Client, active: boolean) => client.query(`UPDATE "Users" SET "isActive" = $2 WHERE id = $1`, [gus.id, active]);
+    /** `first` holds its transaction open while `later` starts; says whether `later` finished before `first` committed. */
+    const race = async (a: Client, b: Client, first: () => Promise<unknown>, later: () => Promise<unknown>, startLaterFirst: boolean) => {
+      if (startLaterFirst) {
+        // The later transaction begins before the first one has done anything: its now(), which dates a deactivation, is the earlier.
+        await b.query('BEGIN');
+        await b.query('SELECT 1');
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      await a.query('BEGIN');
+      await first();
+      if (!startLaterFirst) await b.query('BEGIN');
+      let done = false;
+      const pending = later().then(() => (done = true));
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      const finishedEarly = done;
+      await a.query('COMMIT');
+      await pending;
+      await b.query('COMMIT');
+      return finishedEarly;
+    };
+    try {
+      // Active, deactivated by one and made active by the other.
+      const early1 = await race(owner, second, () => flip(owner, false), () => flip(second, true), false);
+      assert.equal(early1, false, 'the return did not wait for the deactivation');
+      assert.deepEqual((await periods()).map((p) => p.open), [false], 'deactivate, then the return: one closed period');
+      // Inactive, made active by one while the other, which began first, deactivates again: the new period begins no earlier than the return.
+      const early2 = await race(owner, second, () => flip(owner, false), () => flip(second, true), false);
+      assert.equal(early2, false);
+      const before = await periods();
+      assert.deepEqual(before.map((p) => p.open), [false, false]);
+      await flip(owner, false);
+      const early3 = await race(owner, second, () => flip(owner, true), () => flip(second, false), true);
+      assert.equal(early3, false, 'the second deactivation did not wait for the return');
+      const after = await periods();
+      assert.deepEqual(after.map((p) => p.open), [false, false, false, true]);
+      for (let i = 1; i < after.length; i += 1) {
+        assert.ok(after[i - 1]!.endsAt !== null && after[i]!.startsAt >= after[i - 1]!.endsAt!, `period ${i} began before period ${i - 1} ended`);
+      }
+    } finally {
+      await second.query('ROLLBACK').catch(() => undefined);
+      await owner.query('ROLLBACK').catch(() => undefined);
+      await second.end();
     }
   });
 }
