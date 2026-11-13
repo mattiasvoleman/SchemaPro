@@ -241,7 +241,7 @@ describe("/teacher/attendance/[lessonId], what each pupil opens as", () => {
       return undefined;
     });
 
-    await user.click(await screen.findByRole("button", { name: "Rensa markering" }));
+    await user.click(await screen.findByRole("button", { name: /^Rensa markering/ }));
 
     await waitFor(() => expect(answers.report.mutateAsync).toHaveBeenCalledWith({ calendarLessonId: "l-1", records: [{ studentId: ELLA.id, status: "UNKNOWN" }] }));
     // Ella opens with no mark; Jamal keeps his.
@@ -251,5 +251,56 @@ describe("/teacher/attendance/[lessonId], what each pupil opens as", () => {
     answers.report.mutateAsync.mockClear();
     await user.click(screen.getByRole("button", { name: "Spara närvaro" }));
     expect(answers.report.mutateAsync).toHaveBeenLastCalledWith({ calendarLessonId: "l-1", records: [{ studentId: JAMAL.id, status: "PRESENT" }] });
+  });
+});
+
+/*
+ * Review of #309 (MEDEL-1): what the page holds between the save of "Rensa markering" and the moment the stored records
+ * are read again. The mock below leaves answers.attendance as it was, which is what the gateway's records are until the
+ * invalidation's refetch has answered (useReportAttendance does not wait for it). The pupil stands as UNKNOWN on the
+ * page meanwhile; dropping the choice would show the register's old mark and a Spara would write it back.
+ */
+describe("/teacher/attendance/[lessonId], after Rensa markering and before the records are read again", () => {
+  const JAMAL = { id: "p-jamal", firstName: "Jamal", lastName: "Sjö", studentGroupId: "g-7a" };
+  const ELLA = { id: "p-ella", firstName: "Ella", lastName: "Nord", studentGroupId: "g-7a" };
+  const arrival = {
+    moveId: "m-1",
+    studentId: ELLA.id,
+    studentName: "Ella Nord",
+    other: { id: "l-2", subject: "Engelska", className: "7B", start: "08:00", end: "08:45", room: null },
+    movedByName: null,
+    createdAt: "2026-10-14T06:00:00.000Z",
+  };
+  const stored = (status: string) => ({ id: `r-${status}`, calendarLessonId: "l-1", studentId: ELLA.id, status, recordedAt: null, note: null });
+
+  it("a save does not mark the pupil who was just cleared", async () => {
+    roster.students = [JAMAL, ELLA];
+    moves.arrivals = [arrival];
+    answers.attendance = { data: [stored("PRESENT"), { ...stored("PRESENT"), id: "r-j", studentId: JAMAL.id }], isError: false };
+    answers.report.mutateAsync.mockClear();
+    renderPage();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: /^Rensa markering/ }));
+    await waitFor(() => expect(answers.report.mutateAsync).toHaveBeenCalledWith({ calendarLessonId: "l-1", records: [{ studentId: ELLA.id, status: "UNKNOWN" }] }));
+    answers.report.mutateAsync.mockClear();
+    await user.click(screen.getByRole("button", { name: "Spara närvaro" }));
+
+    const sent = answers.report.mutateAsync.mock.lastCall![0] as { records: Array<{ studentId: string; status: string }> };
+    expect(sent.records.map((record) => record.studentId)).not.toContain(ELLA.id);
+  });
+
+  it("clearing one pupil keeps what the teacher has chosen for another and not yet saved", async () => {
+    roster.students = [JAMAL, ELLA];
+    moves.arrivals = [arrival];
+    answers.attendance = { data: [stored("PRESENT")], isError: false };
+    answers.report.mutateAsync.mockClear();
+    renderPage();
+    const user = userEvent.setup();
+    await user.click(within(screen.getByRole("radiogroup", { name: "Jamal Sjö" })).getByRole("radio", { name: "Sen" }));
+
+    await user.click(await screen.findByRole("button", { name: /^Rensa markering/ }));
+    await waitFor(() => expect(answers.report.mutateAsync).toHaveBeenCalled());
+    expect(within(screen.getByRole("radiogroup", { name: "Jamal Sjö" })).getByRole("radio", { name: "Sen" })).toBeChecked();
   });
 });

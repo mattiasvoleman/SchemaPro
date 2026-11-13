@@ -128,12 +128,27 @@ function MoveRow({
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {onClearMark ? (
-          <Button variant="outline" size="sm" data-writes="DRIFT" disabled={clearing} onClick={onClearMark}>
+          <Button
+            variant="outline"
+            size="sm"
+            data-writes="DRIFT"
+            disabled={clearing}
+            onClick={onClearMark}
+            // The pupil is named in the button's name, which a list of buttons is read by; the visible words stay the first of it.
+            aria-label={t("clearMarkFor", { name: entry.studentName })}
+          >
             <Eraser aria-hidden="true" />
             {t("clearMark")}
           </Button>
         ) : null}
-        <Button variant="outline" size="sm" data-writes="DRIFT" disabled={pending} onClick={onUndo}>
+        <Button
+          variant="outline"
+          size="sm"
+          data-writes="DRIFT"
+          disabled={pending}
+          onClick={onUndo}
+          aria-label={t("undoFor", { name: entry.studentName })}
+        >
           <Undo2 aria-hidden="true" />
           {t("undo")}
         </Button>

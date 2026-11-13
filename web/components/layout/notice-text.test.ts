@@ -168,8 +168,8 @@ describe("the guardian's notices of a leave request that asks for consent (Ledig
   });
 
   // The "no" is the one of the three that reaches someone who is not a guardian: whoever filed the request.
-  it("leads the administrator who filed the request to the leave requests, and a pupil nowhere, since they list theirs on no page", () => {
-    expect(noticeHref(row("LEAVE_CONSENT_REFUSED", meta), "SCHOOL_ADMIN")).toBe("/admin/leave");
+  it("leads the administrator who filed the request to the tab of ended requests, and a pupil nowhere, since they list theirs on no page", () => {
+    expect(noticeHref(row("LEAVE_CONSENT_REFUSED", meta), "SCHOOL_ADMIN")).toBe("/admin/leave?filter=GUARDIAN_DECLINED");
     expect(noticeHref(row("LEAVE_CONSENT_REFUSED", meta), "STUDENT")).toBeUndefined();
     expect(noticeHref(row("LEAVE_CONSENT_REFUSED", meta), "TEACHER")).toBeUndefined();
   });
