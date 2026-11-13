@@ -487,7 +487,8 @@ export default function GeneratePage() {
    * The gateway's own reasons for a job it stopped before writing, which are
    * not the engine's and so not in its catalogue: the draft changed under
    * the run (GENERATE_STALE), another write held the year (SCHEDULE_BUSY), or
-   * the engine is older than the periods the run carried (ENGINE_LACKS_PERIODS).
+   * the engine is older than the periods the run carried (ENGINE_LACKS_PERIODS),
+   * or answered meals that do not fit them (ENGINE_MEALS_INCONSISTENT).
    */
   const jobErrorText = (code: string | null): string | null =>
     code === "GENERATE_STALE"
@@ -498,7 +499,11 @@ export default function GeneratePage() {
           // posts is sent, in the minutes of a release or after a rollback.
           code === "ENGINE_LACKS_PERIODS"
           ? tCandidates("jobErrors.ENGINE_LACKS_PERIODS")
-          : null;
+          : // Klassens måltid per del av läsåret: the engine's meals are not a
+            // partition of the year's periods, so nothing was written.
+            code === "ENGINE_MEALS_INCONSISTENT"
+            ? tCandidates("jobErrors.ENGINE_MEALS_INCONSISTENT")
+            : null;
 
   const solverStatus = job?.status === "SUCCEEDED" ? job.solverStatus : null;
   // Both verdicts mean "no timetable came back", but only INFEASIBLE is a

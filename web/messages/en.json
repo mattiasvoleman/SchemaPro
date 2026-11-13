@@ -7171,6 +7171,7 @@
       "GENERATE_STALE": "What the timetable was calculated from changed while the run was in progress — a lesson was locked, moved or deleted, a post, a work rule, a reservation, a room or a meal was changed, or a timetable proposal was applied — so the run wrote nothing. Generate again.",
       "SCHEDULE_BUSY": "Someone else was writing the base timetable at the same time, so the run was not saved. Try again in a moment.",
       "ENGINE_LACKS_PERIODS": "The timetable engine is older than the rest of the service and cannot plan curriculum entries with dates yet. Try again in a few minutes.",
+      "ENGINE_MEALS_INCONSISTENT": "The timetable engine answered with lunch times that do not fit the periods of the school year, so nothing was written. Try again, and get in touch if it keeps happening.",
       "CANDIDATES_RUNNING": "Timetable proposals are being computed for this school year. Generate can be started once they are done."
     },
     "page": {
