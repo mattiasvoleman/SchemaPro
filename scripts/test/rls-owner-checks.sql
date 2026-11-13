@@ -4039,7 +4039,18 @@ ROLLBACK;
 -- is counted again after t has left must not lose what she held: t leaves on 2026-03-15 and February is the same; t
 -- leaves on 2026-02-10 and L4, which no one was left to report, goes while L1-L3 stay; t is back and L4 is again.
 -- (Rapporteringsgraden's own function drops the teacher in every one of these, which is its question and not this.)
+-- Since 20270210090000 the question is asked of UserDeactivations, every period a person was inactive (the triggers are off in this
+-- section, so the periods are written beside the stamp as the trigger would have written them): a lesson counts to her unless it
+-- ended strictly inside a period, and she may have come back.
 BEGIN;
+CREATE FUNCTION pg_temp.av_period(p_user uuid, p_from timestamptz, p_to timestamptz DEFAULT NULL, p_keep boolean DEFAULT false) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT p_keep THEN
+    DELETE FROM "UserDeactivations" WHERE "userId" = p_user;
+  END IF;
+  INSERT INTO "UserDeactivations" ("schoolId", "userId", "startsAt", "endsAt", "recordedAt")
+  SELECT "schoolId", id, p_from, p_to, greatest(clock_timestamp(), p_from, coalesce(p_to, p_from)) FROM "Users" WHERE id = p_user;
+END $$;
 DO $$
 DECLARE
   s uuid := pg_temp.d6o_school('d6o-gone', 5, 0);
@@ -4066,6 +4077,7 @@ BEGIN
   -- Leaves after the month (deactivatedAt is the instant the trigger would have written; the triggers are off here).
   PERFORM set_config('session_replication_role', 'replica', true);
   UPDATE "Users" SET "isActive" = false, "deactivatedAt" = '2026-03-15 12:00+01' WHERE id = t;
+  PERFORM pg_temp.av_period(t, '2026-03-15 12:00+01');
   PERFORM app.absence_stats_month(s, feb, '2026-03-01');
   PERFORM pg_temp.d6o_expect('392o a teacher who left after the month: February is what it was', pg_temp.d6o_rows(s, feb), whole);
   PERFORM pg_temp.d6o_expect('392o and the reporting function drops her, which is its question',
@@ -4073,23 +4085,51 @@ BEGIN
 
   -- Leaves in the middle of it: the lesson after she left has no one left to report it.
   UPDATE "Users" SET "deactivatedAt" = '2026-02-10 12:00+01' WHERE id = t;
+  PERFORM pg_temp.av_period(t, '2026-02-10 12:00+01');
   PERFORM app.absence_stats_month(s, feb, '2026-03-01');
   PERFORM pg_temp.d6o_expect('392o a teacher who left on the 10th: L1 to L3 stay, L4 goes',
     pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 3/2 | A 5/5 750/0/50/0/0 3/2');
   -- The instant is the lesson's end: a lesson over before she left is hers, one that ends after is not.
   UPDATE "Users" SET "deactivatedAt" = '2026-02-02 08:50+01' WHERE id = t;
+  PERFORM pg_temp.av_period(t, '2026-02-02 08:50+01');
   PERFORM app.absence_stats_month(s, feb, '2026-03-01');
   PERFORM pg_temp.d6o_expect('392o left the minute L1 ended: L1 is hers, L2 is not, L3 has t2',
     pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 2/2 | A 5/5 750/0/50/0/0 2/2');
   UPDATE "Users" SET "deactivatedAt" = '2026-02-02 08:49+01' WHERE id = t;
+  PERFORM pg_temp.av_period(t, '2026-02-02 08:49+01');
   PERFORM app.absence_stats_month(s, feb, '2026-03-01');
   PERFORM pg_temp.d6o_expect('392o left a minute before L1 ended: only L3, which t2 held',
     pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 1/1 | A 5/5 750/0/50/0/0 1/1');
 
-  -- Back again: the lessons come back.
+  -- Back again (20270210090000, LÅG-1 of the review of #280): what she was away for stays out, what she came back to is hers. She left at
+  -- 08:49 on the 2nd, so L1 (over at 08:50) and L2 (over at 08:50 on the 3rd) are inside the leave, L3 has t2 and L4 is on the 16th.
+  --   back at the instant L2 was over: L2 is hers (a lesson over at the instant of a return counts), L1 is not:  L2, L3 and L4 held, L3 and L4 reported
+  --   back a minute after it: L2 is inside the leave:                                                           L3 and L4 held and reported
+  --   back before L4:                                                                                          L3 and L4 held and reported
+  --   back after L4 (the 17th), L4 inside the leave, L3 held by t2:                                             L3 alone
   UPDATE "Users" SET "isActive" = true, "deactivatedAt" = NULL WHERE id = t;
+  PERFORM pg_temp.av_period(t, '2026-02-02 08:49+01', '2026-02-03 08:50+01');
   PERFORM app.absence_stats_month(s, feb, '2026-03-01');
-  PERFORM pg_temp.d6o_expect('392o a teacher who is back: four held, three reported', pg_temp.d6o_rows(s, feb), whole);
+  PERFORM pg_temp.d6o_expect('392o back at the instant L2 was over: L2 counts, L1 does not', pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 3/2 | A 5/5 750/0/50/0/0 3/2');
+  PERFORM pg_temp.av_period(t, '2026-02-02 08:49+01', '2026-02-03 08:51+01');
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o back a minute after L2 was over: it is inside the leave', pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 2/2 | A 5/5 750/0/50/0/0 2/2');
+  PERFORM pg_temp.av_period(t, '2026-02-02 08:49+01', '2026-02-16 07:00+01');
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o back on the 16th before L4: L4 is hers again', pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 2/2 | A 5/5 750/0/50/0/0 2/2');
+  PERFORM pg_temp.av_period(t, '2026-02-02 08:49+01', '2026-02-17 07:00+01');
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o back on the 17th: L4 is inside the leave, only L3 which t2 held', pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 1/1 | A 5/5 750/0/50/0/0 1/1');
+  -- She left twice: the first leave over by L2 (08:51 on the 3rd), the second from the 4th, which holds L4 and L3 (t2's).
+  PERFORM pg_temp.av_period(t, '2026-02-02 08:49+01', '2026-02-03 08:51+01');
+  PERFORM pg_temp.av_period(t, '2026-02-04 07:00+01', NULL, true);
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o left twice: L1 and L2 inside the first leave, L4 inside the second, L3 held by t2', pg_temp.d6o_rows(s, feb), 'school 5/5 750/0/50/0/0 1/1 | A 5/5 750/0/50/0/0 1/1');
+  -- A person who never left has no period at all: everything is hers, as before 20270210090000.
+  UPDATE "Users" SET "isActive" = true, "deactivatedAt" = NULL WHERE id = t;
+  DELETE FROM "UserDeactivations" WHERE "userId" = t;
+  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.d6o_expect('392o a teacher who never left: four held, three reported', pg_temp.d6o_rows(s, feb), whole);
 
   -- Only a teacher counts: a lesson whose only person is an administrator of the school is nobody's to report.
   l := pg_temp.d6o_lesson(s, 'd6o-gone', 'A', '2026-02-05', 8, 50, 'SCHEDULED', all5);
@@ -4118,10 +4158,10 @@ DECLARE
   d2 text := pg_temp.d6o_norm((SELECT prosrc FROM pg_proc WHERE oid = 'app.reporting_lessons(uuid, date, date, timestamptz)'::regprocedure));
   d6 text := pg_temp.d6o_norm((SELECT prosrc FROM pg_proc WHERE oid = 'app.absence_stats_lessons(uuid, date, date, timestamptz)'::regprocedure));
   live constant text := E'AND u."role" = ''TEACHER'' AND u."isActive"';
-  gone constant text := E'AND u."role" = ''TEACHER'' AND (u."deactivatedAt" IS NULL OR cl."endsAt" <= u."deactivatedAt")';
+  gone constant text := E'AND u."role" = ''TEACHER'' AND NOT EXISTS (SELECT 1 FROM "public"."UserDeactivations" d WHERE d."userId" = u."id" AND d."startsAt" < cl."endsAt" AND (d."endsAt" IS NULL OR cl."endsAt" < d."endsAt"))';
 BEGIN
   PERFORM pg_temp.d6o_expect('392o D2 asks who is a teacher now', ((length(d2) - length(replace(d2, live, ''))) / length(live))::text, '1');
-  PERFORM pg_temp.d6o_expect('392o the history asks who had not left', ((length(d6) - length(replace(d6, gone, ''))) / length(gone))::text, '1');
+  PERFORM pg_temp.d6o_expect('392o the history asks who was active when the lesson was over, from the periods', ((length(d6) - length(replace(d6, gone, ''))) / length(gone))::text, '1');
   PERFORM pg_temp.d6o_expect('392o and not who is a teacher now', ((length(d6) - length(replace(d6, live, ''))) / length(live))::text, '0');
   PERFORM pg_temp.d6o_expect('392o the two bodies are the same but for that line', (replace(d2, live, gone) = d6)::text, 'true');
   PERFORM pg_temp.d6o_expect('392o neither is a definer or has a path of its own (they are inlined into the caller)',
@@ -5881,5 +5921,96 @@ BEGIN
   DELETE FROM "AcademicYears" WHERE id = y;
   PERFORM pg_temp.mt_expect('479 the meals of a läsår that is removed', (SELECT count(*) FROM "LunchSittings" WHERE "academicYearId" = y)::text, '0');
   RAISE NOTICE 'mt 479: % checks', current_setting('mt.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- En avaktiverad person minns sina perioder (20270210090000), the owner's side of sections 480-484 (rls-policies.sql). The sections
+-- there go through the API's role and the trigger; these look at the whole of what the fixtures and the sections before them have left,
+-- run the migration's own statement for what it carried over, and remove a school. (392o above is the function D6 reads the periods
+-- through.)
+--
+--   480o  the whole database: every inactive person has exactly one open period and nobody else has one
+--   481o  what the migration carried over, as its own INSERT writes it: an open period from each inactive person's date, none for a person
+--         who is active, and one recorded no earlier than its start even where a stamp is ahead of the clock
+--   482o  a school removed takes the periods of its people (and the person's key does not follow a school id)
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.avo_expect(p_label text, p_got text, p_expected text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_got IS DISTINCT FROM p_expected THEN
+    RAISE EXCEPTION E'avaktivering %:\n   got      %\n   expected %', p_label, coalesce(p_got, '<null>'), p_expected;
+  END IF;
+END $$;
+
+-- 480o: the invariant the trigger keeps and Users_deactivations_are_kept's own comment states. A person planted by the fixtures with the
+-- triggers off would break it, so this is also what tells a fixture that forgot the period. Offenders are named by e-mail.
+DO $$
+DECLARE
+  offenders text;
+BEGIN
+  SELECT string_agg(u.email || ' (' || CASE WHEN u."isActive" THEN 'active with ' ELSE 'inactive with ' END || n || ' open)', ', ' ORDER BY u.email COLLATE "C")
+    INTO offenders
+    FROM "Users" u
+    CROSS JOIN LATERAL (SELECT count(*) AS n FROM "UserDeactivations" d WHERE d."userId" = u.id AND d."endsAt" IS NULL) c
+   WHERE n <> CASE WHEN u."isActive" THEN 0 ELSE 1 END;
+  PERFORM pg_temp.avo_expect('480o every inactive person has exactly one open period, nobody active has one', offenders, NULL);
+  PERFORM pg_temp.avo_expect('480o no period names a person of another school than its own',
+    (SELECT count(*)::text FROM "UserDeactivations" d JOIN "Users" u ON u.id = d."userId" WHERE u."schoolId" <> d."schoolId"), '0');
+  PERFORM pg_temp.avo_expect('480o and there are periods to have looked at', (SELECT (count(*) > 0)::text FROM "UserDeactivations"), 'true');
+END $$;
+
+-- 481o: what the migration carried over. Its INSERT, verbatim (src/users/user-deactivations-migration.spec.ts holds the two texts equal),
+-- run over the school's own people with the table emptied: an open period from each inactive person's date, recorded no earlier than it
+-- starts (a stamp the clock has not reached would otherwise break the CHECK and the whole migration), and none for an active person.
+BEGIN;
+DO $$
+DECLARE
+  ahead uuid;
+  old_one uuid;
+  active_one uuid;
+BEGIN
+  PERFORM set_config('session_replication_role', 'replica', true);
+  SELECT id INTO active_one FROM "Users" WHERE "isActive" AND role = 'TEACHER' ORDER BY id LIMIT 1;
+  SELECT id INTO old_one FROM "Users" WHERE NOT "isActive" ORDER BY id LIMIT 1;
+  SELECT id INTO ahead FROM "Users" WHERE NOT "isActive" AND id <> old_one ORDER BY id LIMIT 1;
+  UPDATE "Users" SET "deactivatedAt" = '2024-05-02 09:00+02' WHERE id = old_one;
+  UPDATE "Users" SET "deactivatedAt" = clock_timestamp() + interval '2 days' WHERE id = ahead;
+  DELETE FROM "UserDeactivations";
+
+  INSERT INTO "UserDeactivations" ("schoolId", "userId", "startsAt", "recordedAt")
+  SELECT u."schoolId", u."id", u."deactivatedAt", greatest(clock_timestamp(), u."deactivatedAt")
+    FROM "Users" u
+   WHERE NOT u."isActive" AND u."deactivatedAt" IS NOT NULL;
+
+  PERFORM pg_temp.avo_expect('481o one open period for each inactive person, none for anybody else',
+    (SELECT count(*)::text FROM "UserDeactivations" WHERE "endsAt" IS NULL), (SELECT count(*)::text FROM "Users" WHERE NOT "isActive"));
+  PERFORM pg_temp.avo_expect('481o nothing for an active person', (SELECT count(*)::text FROM "UserDeactivations" WHERE "userId" = active_one), '0');
+  PERFORM pg_temp.avo_expect('481o every period starts at its person''s own date',
+    (SELECT count(*)::text FROM "UserDeactivations" d JOIN "Users" u ON u.id = d."userId" WHERE d."startsAt" IS DISTINCT FROM u."deactivatedAt"), '0');
+  PERFORM pg_temp.avo_expect('481o the old one starts when it did', (SELECT "startsAt"::text FROM "UserDeactivations" WHERE "userId" = old_one), ('2024-05-02 09:00+02'::timestamptz)::text);
+  PERFORM pg_temp.avo_expect('481o one whose date is ahead of the clock is recorded at that date and not before it',
+    (SELECT ("recordedAt" >= "startsAt")::text FROM "UserDeactivations" WHERE "userId" = ahead), 'true');
+  PERFORM pg_temp.avo_expect('481o and it is not changed by the CHECKs', (SELECT count(*)::text FROM "UserDeactivations" WHERE "startsAt" > "recordedAt"), '0');
+END $$;
+ROLLBACK;
+
+-- 482o: a school removed takes the periods of its people. Built with the triggers on, as a school really is: the teacher is made
+-- inactive, active and inactive again (three rows' worth of history, two periods), and the school goes.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.d6o_school('av-gone', 1, 0);
+  t uuid;
+BEGIN
+  SELECT id INTO t FROM "Users" WHERE "schoolId" = s AND email = 'd6o-av-gone-t@example.invalid';
+  PERFORM set_config('session_replication_role', 'origin', true);
+  UPDATE "Users" SET "isActive" = false WHERE id = t;
+  UPDATE "Users" SET "isActive" = true WHERE id = t;
+  UPDATE "Users" SET "isActive" = false WHERE id = t;
+  PERFORM pg_temp.avo_expect('482o the school''s teacher has two periods, the second open',
+    (SELECT string_agg(CASE WHEN "endsAt" IS NULL THEN 'open' ELSE 'closed' END, ',' ORDER BY "startsAt", id) FROM "UserDeactivations" WHERE "userId" = t), 'closed,open');
+  DELETE FROM "Schools" WHERE id = s;
+  PERFORM pg_temp.avo_expect('482o the school is gone with its periods', (SELECT count(*)::text FROM "UserDeactivations" WHERE "schoolId" = s OR "userId" = t), '0');
 END $$;
 ROLLBACK;

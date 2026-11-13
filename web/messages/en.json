@@ -7168,7 +7168,8 @@
     "generateBlocked": "Timetable proposals are being computed for this school year. Generate can be started once they are done.",
     "generateBlockedLink": "See the proposals",
     "jobErrors": {
-      "GENERATE_STALE": "What the timetable was calculated from changed while the run was in progress — a lesson was locked, moved or deleted, a post, a work rule, a reservation, a room or a meal was changed, or a timetable proposal was applied — so the run wrote nothing. Generate again.",
+      "GENERATE_STALE": "What the timetable was calculated from changed while the run was in progress — a lesson was locked, moved or deleted, a curriculum entry, a teacher’s post, a work rule, a reservation, a room, a meal, a pupil or a school rule was changed, or a timetable proposal was applied — so the run wrote nothing. Generate again.",
+      "GENERATE_STALE_PARTS": "What the timetable was calculated from changed while the run was in progress: {parts}. The run wrote nothing. Generate again.",
       "SCHEDULE_BUSY": "Someone else was writing the base timetable at the same time, so the run was not saved. Try again in a moment.",
       "ENGINE_LACKS_PERIODS": "The timetable engine is older than the rest of the service and cannot plan curriculum entries with dates yet. Try again in a few minutes.",
       "ENGINE_MEALS_INCONSISTENT": "The timetable engine answered with lunch times that do not fit the periods of the school year, so nothing was written. Try again, and get in touch if it keeps happening.",
@@ -8915,12 +8916,12 @@
       "ANALYSIS_PERIOD_CLAMPED": "The period is cut to the school year: {from} – {to}.",
       "ANALYSIS_NOTHING_PUBLISHED": "No schedule is published, so no teaching has been held and no hours can be stated.",
       "ANALYSIS_COVER_TO_CHECK": "{lessons} held cover lessons are left out, because the substitute was absent over the lesson themself. They are checked under Reports, Substitute hours.",
-      "ANALYSIS_LEFT_IN_PERIOD": "{people} people left before the end of the period. Their time is counted up to the day they were deactivated (lessons over by then, duties to the day before), and anyone who left before the period is not in it.",
+      "ANALYSIS_LEFT_IN_PERIOD": "{people, plural, one {# person was} other {# people were}} deactivated during the period or before it. Time is counted only while they were active (lessons that were over while they were active, duties for the days they were active), and anyone deactivated for the whole period is not in it.",
       "ANALYSIS_DUTIES_UNALLOCATED": "{people} people have duties but no teaching or cover in the period. Their duties are on a line with no school part and no account, for the school to book by hand.",
       "ANALYSIS_PROTECTED_IN_FILE": "{people, plural, one {# person with a protected identity is} other {# people with a protected identity are}} in the basis, because payroll pays everyone. They are listed without name or e-mail, here and in the file: by signature and payroll ID, or by a code where the payroll ID is missing.",
       "ANALYSIS_PROTECTED_WITHOUT_PAYROLL_NUMBER": "{people, plural, one {# of them has no payroll ID and is} other {# of them have no payroll ID and are}} listed by a code, SKYDDAD and a number, which is the same in every file. Which person a code stands for is shown under Who the codes are, here and nowhere else; tell the payroll office. The payroll ID is written on the teacher's post under Staffing. A substitute in the pool has no post and is always listed by their code.",
       "ANALYSIS_PROTECTED_WITHOUT_ID": "{people, plural, one {# of them has} other {# of them have}} neither a payroll ID nor a code, so the row does not say who it is. Write the payroll ID on the teacher's post under Staffing, or remove the mark and set it again so that the person gets a code.",
-      "ANALYSIS_CHARACTERS_REPLACED": "{characters} characters that windows-1252 cannot hold were replaced in the CSV file. The Excel file keeps them."
+      "ANALYSIS_CHARACTERS_REPLACED": "{characters, plural, one {# character was} other {# characters were}} replaced in the CSV file: a letter windows-1252 cannot hold is written as the nearest letter and a control character as a space. The Excel file keeps them, except the control characters, which it drops."
     },
     "keyFigures": {
       "loadFailed": "The key figures could not be loaded",

@@ -8032,14 +8032,27 @@
       någon årskurs och delas därför mellan personens skoldelar efter deras övriga tid. Har en person varken
       undervisning eller vikariepass i perioden ligger uppdragen på en rad utan skoldel och konto, som skolan
       bokar för hand, och en notis säger hur många det gäller.</li>
-    <li><strong>Den som har slutat.</strong> En person räknas till och med den dag hen avaktiverades och inte
-      längre. Hållna lektioner räknas om de var slut när hen avaktiverades (en lektion klockan 14 samma dag som
-      hen avaktiverades klockan 12 räknas inte), vikariepass på samma sätt, och uppdrag, mentorskap och
-      rastvakt räknas till dagen före. En person som slutade före perioden finns inte med, och en notis säger
-      hur många som har slutat. Dagen är den då avaktiveringen gjordes i Rastra, inte den då personen slutade:
-      avaktivera i tid. Aktiveras personen igen räknas hen som om hen aldrig slutat, också för tiden
-      däremellan; Rastra minns bara den senaste avaktiveringen. Lektioner som ligger kvar på den som slutat
-      efter sin sista dag ska flyttas till den som tar dem.</li>
+    <li><strong>Den som har slutat, eller varit borta.</strong> En person räknas bara för den tid hen var
+      aktiv i Rastra. Hållna lektioner räknas om de var slut när hen avaktiverades (en lektion klockan 14 samma
+      dag som hen avaktiverades klockan 12 räknas inte), vikariepass på samma sätt, och uppdrag, mentorskap och
+      rastvakt räknas till dagen före. En person som var avaktiverad hela perioden finns inte med, och en notis
+      säger hur många som var avaktiverade under perioden eller före den.
+      <em>Aktiveras personen igen</em> räknas hen på nytt från den dag hen aktiverades: det hen höll före
+      avaktiveringen och det som tog slut efter återaktiveringen står kvar, men en lektion som tog slut medan hen
+      var avaktiverad räknas inte, och inte heller uppdragen för dagarna däremellan. Rastra minns varje
+      avaktivering och återaktivering från och med att den här funktionen togs i bruk; en person som aktiverats
+      igen före dess räknas för tiden däremellan, som förut. Lektioner som ligger kvar på den som slutat
+      ska flyttas till den som tar dem.</li>
+    <li><strong>Sista arbetsdag.</strong> Som förval gäller den dag avaktiveringen gjordes i Rastra, inte den då
+      personen slutade: avaktivera i tid. Har du avaktiverat för sent kan en administratör som skriver
+      <em>Personal</em> ange personens sista arbetsdag, och då räknas hen till slutet av den dagen och dagarna
+      efter är inte hens. Dagen anges när personen avaktiveras eller i efterhand för en person som redan är
+      avaktiverad (anropet <span class="path">PATCH /api/v1/users/{id}</span> med fältet <em>leftOn</em>,
+      ÅÅÅÅ-MM-DD); sidan Personer har ännu ingen ruta för den. Dagen får inte ligga i framtiden, inte före den
+      dag personen senast aktiverades igen och inte före den dag personen lades till i Rastra (så att ett årtal som
+      skrivs fel inte tar ett helt år ur underlaget). Dagen gäller löneunderlaget och frånvarostatistiken; gallringen
+      räknar fortfarande från den dag avaktiveringen gjordes, så att en sista arbetsdag aldrig förkortar hur länge
+      uppgifterna sparas.</li>
     <li><strong>Filen.</strong> <span class="ui">CSV för Excel</span> är Excels svenska format:
       windows-1252, semikolon, decimalkomma och radslut CRLF, utan BOM. <span class="ui">Excel</span> är en
       .xlsx där minuter och timmar är tal, så att de går att summera. Båda har samma kolumner: signatur,

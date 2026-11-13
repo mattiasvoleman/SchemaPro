@@ -34915,6 +34915,10 @@
           "isActive": {
             "type": "boolean"
           },
+          "leftOn": {
+            "type": "string",
+            "nullable": true
+          },
           "adminProfile": {
             "type": "string",
             "enum": [

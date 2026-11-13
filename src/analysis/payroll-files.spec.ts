@@ -91,6 +91,38 @@ describe('renderPayrollCsv: Excel\'s Swedish CSV', () => {
     expect(odd.replaced).toBe(2);
     expect(decode(odd.bytes)).toContain('Lukasz;?;');
   });
+
+  // LÅG-5 of the review of #280: the NUL of a pasted name was a byte of the file, and Excel calls such a file corrupt.
+  it('writes no control character into the file: a NUL in a name is a space, and the line breaks the file itself uses stay', () => {
+    const odd = renderPayrollCsv(payrollTable([row({ lastName: 'Ek\u0000ström', firstName: 'A\u0007B' })], 'a', 'b'));
+    expect(odd.bytes.includes(0x00)).toBe(false);
+    expect(odd.bytes.includes(0x07)).toBe(false);
+    expect(decode(odd.bytes)).toContain('Ek ström;A B;');
+    expect(odd.replaced).toBe(2);
+    // Every line still ends in CRLF.
+    expect(decode(odd.bytes).split('\r\n')).toHaveLength(3);
+  });
+
+  // LÅG-2 of the review of #308: the guard read the cell before the encoder made its control character a space, and a space
+  // before = + - @ is exactly the shape the guard calls dangerous.
+  it('guards a formula behind a control character, which the file reads as a space before the sign', () => {
+    const csv = renderPayrollCsv(payrollTable([row({ lastName: '\u0007=HYPERLINK("x")', firstName: '\u0000@SUM(1)', partName: '\u001b-2+3' })], 'a', 'b'));
+    const text = decode(csv.bytes);
+    expect(text).toContain(`"' =HYPERLINK(""x"")"`);
+    expect(text).toContain(`;' @SUM(1);`);
+    expect(text).toContain(`;' -2+3;`);
+    expect(csv.bytes.includes(0x00) || csv.bytes.includes(0x07) || csv.bytes.includes(0x1b)).toBe(false);
+    expect(csv.replaced).toBe(3);
+  });
+
+  it('leaves alone what the guard leaves alone after the encoder: a number behind a control character, a name that merely holds one', () => {
+    const csv = renderPayrollCsv(payrollTable([row({ lastName: '\u0007-5', firstName: 'A\u0007=B', partName: '\u0007Skola' })], 'a', 'b'));
+    const text = decode(csv.bytes);
+    expect(text).toContain('; -5;');
+    expect(text).toContain(';A =B;');
+    expect(text).toContain('; Skola;');
+    expect(text).not.toContain("'");
+  });
 });
 
 describe('a person with a protected identity: the signature and the Löne-id, or the code, and nothing else of who they are', () => {

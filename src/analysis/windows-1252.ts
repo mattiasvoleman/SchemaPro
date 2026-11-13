@@ -1,3 +1,5 @@
+import { encodeWindows1252 as encodeCodePage } from '../common/windows-1252';
+
 /*
  * Text as Windows-1252 bytes: what a Swedish Excel writes for "CSV
  * (semikolonavgränsad)" and reads without a question. The schedule exchange
@@ -14,8 +16,18 @@
  * and as '?' otherwise, and the caller is told how many it replaced so the
  * file can say so. The Excel file keeps every character.
  *
+ * A control character below U+0020 is not a letter for any table to find the
+ * nearest of, and is not left as the byte it is either: a NUL or a BEL in a
+ * name is the one thing that makes Excel call the file corrupt (the review of
+ * #280, LÅG-5). The code page's own encoder (common/windows-1252.ts, D8's)
+ * already says what is written for each: tab, line feed and carriage return as
+ * they are, anything else as a space. This one asks it, for those characters,
+ * before it looks anything up here, so that the two encoders cannot come to
+ * differ; a control character it changed counts as replaced.
+ *
  * PURE.
  */
+
 
 const HIGH: ReadonlyMap<number, number> = new Map([
   [0x20ac, 0x80], [0x201a, 0x82], [0x0192, 0x83], [0x201e, 0x84], [0x2026, 0x85], [0x2020, 0x86], [0x2021, 0x87],
@@ -53,7 +65,14 @@ export function encodeWindows1252(text: string): Encoded1252 {
   const out: number[] = [];
   let replaced = 0;
   for (const char of text) {
-    const byte = byteOf(char.codePointAt(0)!);
+    const code = char.codePointAt(0)!;
+    if (code < 0x20) {
+      const byte = encodeCodePage(char)[0]!;
+      out.push(byte);
+      if (byte !== code) replaced += 1;
+      continue;
+    }
+    const byte = byteOf(code);
     if (byte !== null) {
       out.push(byte);
       continue;
