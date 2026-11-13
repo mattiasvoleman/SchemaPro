@@ -37,6 +37,7 @@
  * read as running in all of them — what the engine held for every dated entry
  * before it knew periods, and the stricter reading.
  */
+import { isoWeekNumber } from '../calendar/lesson-recurrence';
 import type { YearSpan } from '../common/teacher-day';
 
 const DAY_MS = 86_400_000;
@@ -179,6 +180,14 @@ export function yearPeriodsOf(year: YearSpan, entries: readonly (readonly HeldWi
  * alone and the first period's stretches stand, as before. A period listed
  * twice ("0,0") is that period once: its stretch read twice would be counted
  * as two, and the sentence would add other weeks that do not exist.
+ *
+ * A PERIOD WITH NO WEEK OF THE PARITY IS NOT NAMED. The engine's weeks are a
+ * period in a parity, and a period of the läsår may have no real week of the
+ * parity it says: a count of the odd weeks in "29,30" where period 30 is one
+ * even week. Its stretch added to the window would make it a week wider than
+ * the weeks that were counted, so a period none of whose stretches holds a
+ * week of the `parity` (ISO week numbers, as everywhere else: runsOn) is left
+ * out. Where none of the named periods does, the dates stand as they came.
  */
 export function withPeriodDates<P extends Record<string, string | number>>(
   params: P,
@@ -193,8 +202,25 @@ export function withPeriodDates<P extends Record<string, string | number>>(
       ? [...new Set(params.periods.split(',').map(Number))]
       : [period];
   const readable = listed.includes(period) && listed.every((index) => (stretches[index]?.length ?? 0) > 0);
-  const joined = joinedStretches((readable ? listed : [period]).flatMap((index) => stretches[index]!));
+  const named = readable ? listed : [period];
+  const real = named.filter((index) => holdsParity(stretches[index]!, params.parity));
+  const joined = joinedStretches((real.length > 0 ? real : named).flatMap((index) => stretches[index]!));
   return { ...params, periodFrom: joined[0]!.from, periodTo: joined[0]!.to, periodStretches: joined.length };
+}
+
+/**
+ * Whether the stretches hold a real week of the engine's `parity`, an ISO week of that
+ * parity. True for any other value of it, which says no parity. A stretch of two weeks or
+ * more has both; one week is the parity of its own number.
+ */
+function holdsParity(stretches: readonly PeriodStretch[], parity: string | number | undefined): boolean {
+  if (parity !== 'ODD_WEEKS' && parity !== 'EVEN_WEEKS') return true;
+  const odd = parity === 'ODD_WEEKS';
+  return stretches.some(({ from, to }) => {
+    const first = parseDay(from);
+    // The Monday of the last week is after the first day only when the stretch spans two weeks.
+    return mondayOf(parseDay(to)).getTime() > first.getTime() || (isoWeekNumber(first) % 2 === 1) === odd;
+  });
 }
 
 /**
