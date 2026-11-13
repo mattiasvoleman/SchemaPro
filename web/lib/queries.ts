@@ -380,7 +380,7 @@ export function useLunchSittings(academicYearId: string | null) {
       return fetchAllPages<LunchSitting>((from, to) =>
         supabase
           .from("LunchSittings")
-          .select("id, studentGroupId, dayOfWeek, startTime, endTime, headcount, isGenerated")
+          .select("id, studentGroupId, dayOfWeek, startTime, endTime, headcount, isGenerated, startDate, endDate")
           .eq("academicYearId", academicYearId!)
           .order("dayOfWeek")
           .order("id")

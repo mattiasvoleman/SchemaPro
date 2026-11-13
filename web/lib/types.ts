@@ -555,6 +555,14 @@ export interface LunchSitting {
    * hand in the Grundschema — which the next run keeps, and pins where it is.
    */
   isGenerated: boolean;
+  /**
+   * The weeks the meal holds, YYYY-MM-DD: a Monday and a Sunday, null for the
+   * läsår's own first and last day. Null and null is the whole läsår, which is
+   * every meal a school has until a class eats at another time in another part
+   * of the year (20270209090000).
+   */
+  startDate: string | null;
+  endDate: string | null;
 }
 
 /**

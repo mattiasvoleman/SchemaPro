@@ -7,6 +7,7 @@ import type { LessonShare } from '../common/lesson-shares';
 import type { TaughtLesson } from '../optimization/locked-coverage';
 import { PRESERVED_FROM_REGENERATION } from '../optimization/preserved-lessons';
 import { readOtherSchoolHolds, type OtherSchoolHold } from '../optimization/other-school-holds';
+import { windowOf } from '../common/lunch-window';
 import { boardCodeOf, readBoardFacts, type BoardFacts } from '../swaps/board-rules';
 import type { RosterBasis } from '../year-rollover/projected-rosters';
 import { insideSchoolDay, placementsFitBesideLocks, sharedPlacementsFitBesideLocks } from './placement-fit';
@@ -379,11 +380,17 @@ export async function judgePlacements(
   const lastOpen: number[] = [];
   for (const index of stillOpen) {
     const row = rows[index]!;
-    const code = boardCodeOf(await boardOf(row.dayOfWeek), [row.studentGroupId], {
-      dayOfWeek: row.dayOfWeek,
-      startMinutes: row.startMinutes,
-      endMinutes: row.startMinutes + row.minutes,
-    });
+    const code = boardCodeOf(
+      await boardOf(row.dayOfWeek),
+      [row.studentGroupId],
+      {
+        dayOfWeek: row.dayOfWeek,
+        startMinutes: row.startMinutes,
+        endMinutes: row.startMinutes + row.minutes,
+      },
+      // The post's weeks: a meal of another part of the läsår is not its meal.
+      windowOf(row),
+    );
     if (code !== null) refuse(index, code);
     else lastOpen.push(index);
   }

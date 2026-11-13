@@ -271,6 +271,31 @@ describe('ScheduleExchangeService.preview', () => {
     expect(masterLessons.findConflicts).not.toHaveBeenCalled();
   });
 
+  it('holds a lesson to the meal of its own weeks when the class eats at another time in another part of the läsår (20270209090000)', async () => {
+    // Wednesday: 11:00–11:30 in the autumn (to Sunday 2026-12-20), 11:30–12:00 from Monday 2027-01-11.
+    const meals = [
+      { studentGroupId: 'g-7a', dayOfWeek: 3, startTime: time(11), endTime: time(11, 30), startDate: null, endDate: date('2026-12-20') },
+      { studentGroupId: 'g-7a', dayOfWeek: 3, startTime: time(11, 30), endTime: time(12), startDate: date('2027-01-11'), endDate: null },
+    ];
+    const codes = async (lesson: Partial<ExchangeLesson>) => {
+      const { service, tx } = world({ sittings: meals });
+      const plan = await preview(service, [base({ day: 3, ...lesson })]);
+      // The weeks come from the query's own columns: the service asks for them.
+      expect(tx.lunchSitting.findMany).toHaveBeenCalledWith({
+        where: { academicYearId: YEAR },
+        select: expect.objectContaining({ startDate: true, endDate: true }),
+      });
+      return plan.rows[0]!.refusals.map((r) => r.code);
+    };
+    // 11:30–12:30 is on the spring's meal; a lesson of the autumn is clear of it, one of the spring and one of every week are not.
+    expect(await codes({ start: '11:30', end: '12:30', from: '2026-08-17', to: '2026-12-18' })).toEqual([]);
+    expect(await codes({ start: '11:30', end: '12:30', from: '2027-01-11', to: '2027-06-11' })).toEqual(['ON_LUNCH_SITTING']);
+    expect(await codes({ start: '11:30', end: '12:30' })).toEqual(['ON_LUNCH_SITTING']);
+    // And 10:30–11:15 is on the autumn's: the other way round.
+    expect(await codes({ start: '10:30', end: '11:15', from: '2027-01-11', to: '2027-06-11' })).toEqual([]);
+    expect(await codes({ start: '10:30', end: '11:15', from: '2026-08-17', to: '2026-12-18' })).toEqual(['ON_LUNCH_SITTING']);
+  });
+
   it('warns about a lesson outside the engine’s day and does not refuse it', async () => {
     const { service } = world();
     const plan = await preview(service, [base({ start: '07:30', end: '08:30' })]);

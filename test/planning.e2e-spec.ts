@@ -1975,6 +1975,8 @@ describe('Planning surface (e2e)', () => {
       endTime: wallClock('13:30'),
       headcount: 24,
       isGenerated: false,
+      startDate: null,
+      endDate: null,
       createdAt: new Date('2026-09-11T09:00:00.000Z'),
       updatedAt: new Date('2026-09-11T09:00:00.000Z'),
       ...overrides,
@@ -2001,7 +2003,9 @@ describe('Planning surface (e2e)', () => {
     });
 
     it('places the meal the grid sends as the school’s, as long as lunch is', async () => {
-      harness.tx['lunchSitting']!['upsert']!.mockResolvedValue(storedSitting());
+      // The class has no meal that day (the placing reads before it writes), so it is created.
+      harness.tx['lunchSitting']!['findMany']!.mockResolvedValue([]);
+      harness.tx['lunchSitting']!['create']!.mockResolvedValue(storedSitting());
 
       const response = await request(http())
         .post('/api/v1/lunch-sittings')
@@ -2017,14 +2021,16 @@ describe('Planning surface (e2e)', () => {
         endTime: '13:30',
         headcount: 24,
         isGenerated: false,
+        startDate: null,
+        endDate: null,
       });
       // The end is the school's one lunch length after the start, the tenant
       // comes from the principal, and false is what makes the next run keep
       // the meal and send it back as a pin.
-      const args = harness.tx['lunchSitting']!['upsert']!.mock.calls[0]?.[0] as {
-        create: { schoolId: string; endTime: Date; headcount: number; isGenerated: boolean };
+      const args = harness.tx['lunchSitting']!['create']!.mock.calls[0]?.[0] as {
+        data: { schoolId: string; endTime: Date; headcount: number; isGenerated: boolean };
       };
-      expect(args.create).toMatchObject({
+      expect(args.data).toMatchObject({
         schoolId: SCHOOL_ID,
         endTime: wallClock('13:30'),
         headcount: 24,
@@ -2043,7 +2049,8 @@ describe('Planning surface (e2e)', () => {
         .expect(400);
 
       expect(harness.tx['lunchSetting']!['findUnique']).not.toHaveBeenCalled();
-      expect(harness.tx['lunchSitting']!['upsert']).not.toHaveBeenCalled();
+      expect(harness.tx['lunchSitting']!['create']).not.toHaveBeenCalled();
+      expect(harness.tx['lunchSitting']!['update']).not.toHaveBeenCalled();
     });
 
     it('moves the solver’s meal as a drag sends it: pinned, a lunch long, in place of that day’s', async () => {
@@ -2068,8 +2075,8 @@ describe('Planning surface (e2e)', () => {
         endTime: '13:45',
         isGenerated: false,
       });
-      // A class eats once a day, so Wednesday's meal makes way for the one
-      // dragged onto it rather than failing on the unique key.
+      // A class has one meal on a date, so Wednesday's meal makes way for the one
+      // dragged onto it rather than failing on the exclusion constraint.
       expect(harness.tx['lunchSitting']!['deleteMany']).toHaveBeenCalledWith({
         where: { academicYearId: YEAR_ID, studentGroupId: GROUP_ID, dayOfWeek: 3 },
       });

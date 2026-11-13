@@ -1,7 +1,7 @@
 import type React from "react";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LunchServingsPage from "./page";
 
 // Radix needs these in jsdom to open a Select or a Dialog — environment, not
@@ -60,7 +60,7 @@ const state = vi.hoisted(() => ({
   sittings: { data: [] } as { data: unknown[] | undefined; isError?: boolean },
   /** useActiveYear: the flow is the active year's. */
   year: { activeYear: { id: "y-1" } } as {
-    activeYear: { id: string } | null;
+    activeYear: { id: string; startDate?: string; endDate?: string } | null;
     isLoading?: boolean;
     isError?: boolean;
   },
@@ -363,7 +363,88 @@ describe("the kitchen's flow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The warning that the rows mean nothing yet// ---------------------------------------------------------------------------
+// A class that eats at another time in another part of the läsår (20270209090000)
+// ---------------------------------------------------------------------------
+
+describe("the kitchen's flow when a class eats at another time in another part of the läsår", () => {
+  // 4A: 11:00 to the Sunday 2026-12-20 and 11:30 from the Monday 2027-01-11; 4B: 11:00 all year. All on Mondays.
+  const meal = (
+    id: string,
+    groupId: string,
+    start: string,
+    end: string,
+    startDate: string | null,
+    endDate: string | null,
+    headcount: number,
+  ) => ({ id, studentGroupId: groupId, dayOfWeek: 1, startTime: `${start}:00`, endTime: `${end}:00`, headcount, isGenerated: true, startDate, endDate });
+  const rows = () => [
+    meal("s1", "g-4a", "11:00", "11:30", null, "2026-12-20", 28),
+    meal("s2", "g-4a", "11:30", "12:00", "2027-01-11", null, 28),
+    meal("s3", "g-4b", "11:00", "11:30", null, null, 30),
+  ];
+  const day = (value: string) => fireEvent.change(screen.getByLabelText("flowDate"), { target: { value } });
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-05T09:00:00Z") });
+    state.year = { activeYear: { id: "y-1", startDate: "2026-08-15", endDate: "2027-06-11" }, isLoading: false, isError: false };
+    state.sittings = { data: rows() };
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const waves = () =>
+    within(screen.getByRole("region", { name: "flowTitle" }))
+      .queryAllByRole("listitem")
+      .map((item) => item.textContent);
+
+  it("asks for a day, today's by default, and lists the meals that hold it", () => {
+    render(<LunchServingsPage />);
+
+    expect(screen.getByLabelText("flowDate")).toHaveValue("2026-10-05");
+    // Autumn: 4A and 4B sit down together at 11:00, and 7A's spring meal is not on the list.
+    expect(waves()).toEqual(["11:00–11:30" + "4A, 4B" + "flowSeated(58)"]);
+  });
+
+  it("shows the spring's meal for a day in the spring, and the other class's meal that holds all year", () => {
+    render(<LunchServingsPage />);
+    day("2027-02-01");
+
+    expect(waves()).toEqual(["11:00–11:30" + "4B" + "flowSeated(30)", "11:30–12:00" + "4A" + "flowSeated(28)"]);
+    expect(within(screen.getByRole("region", { name: "flowTitle" })).getByText("flowTotal(30)")).toBeTruthy();
+  });
+
+  it("seats a class once, not at both of its times: the peak is the day's", () => {
+    render(<LunchServingsPage />);
+
+    expect(within(screen.getByRole("region", { name: "flowTitle" })).getByText("flowTotal(58)")).toBeTruthy();
+  });
+
+  it("says no class has a meal on a day in the weeks between, where the meals of every class are the dated ones", () => {
+    state.sittings = { data: [rows()[0]!, rows()[1]!] };
+    render(<LunchServingsPage />);
+    day("2026-12-28");
+
+    const region = screen.getByRole("region", { name: "flowTitle" });
+    expect(within(region).getByText("flowEmptyOnDay")).toBeTruthy();
+    expect(waves()).toEqual([]);
+  });
+
+  it("clamps today to the läsår when today is before it", () => {
+    vi.setSystemTime(new Date("2026-07-01T09:00:00Z"));
+    render(<LunchServingsPage />);
+
+    expect(screen.getByLabelText("flowDate")).toHaveValue("2026-08-15");
+  });
+
+  it("asks for no day when no meal holds only some weeks, and is the page it was", () => {
+    state.sittings = { data: rows().map((row) => ({ ...row, startDate: null, endDate: null, id: `x-${row.id}`, studentGroupId: row.studentGroupId })).slice(2) };
+    render(<LunchServingsPage />);
+
+    expect(screen.queryByLabelText("flowDate")).toBeNull();
+    expect(waves()).toEqual(["11:00–11:30" + "4B" + "flowSeated(30)"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The warning that the rows mean nothing yet
 // ---------------------------------------------------------------------------
 

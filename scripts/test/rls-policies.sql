@@ -59044,3 +59044,169 @@ BEGIN
   RAISE NOTICE 'fd 474 SER: % checks', current_setting('fd.checks');
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 478: a class's meal holds weeks (20270209090000), through the API's role.
+--
+-- A class has at most one meal on a date, and a meal holds a Monday-to-Sunday stretch or the whole läsår. What the API's role
+-- may do with a dated meal is what it could do with an undated one, and what each principal sees of a class's meals does not
+-- change because they hold weeks: the administrator writes and reads the school's; a teacher reads the school's; a pupil reads
+-- their own class's and a guardian their children's; another school's administrator reads nothing and writes nothing here.
+-- Planted on Sunday (weekday 7), which no fixture meal holds, for every class of the active year: an autumn meal (to a Sunday)
+-- and a spring meal (from a Monday). The snapshot (PublishedLunchSittings) takes dated meals as an append-only table.
+-- The constraints themselves are asked, with the foreign keys off, in rls-owner-checks.sql 476 and 477.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.mt_tick() RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('mt.checks', (coalesce(nullif(current_setting('mt.checks', true), ''), '0')::integer + 1)::text, true);
+$f$;
+CREATE FUNCTION pg_temp.mt_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.mt_tick();
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'mt %: got\n%\nwanted\n%', p_label, p_got, p_want USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+-- The statements, taken back whatever the answer: 'ok', or the SQLSTATE and the constraint that refused (a row-security refusal says so).
+CREATE FUNCTION pg_temp.mt_try(p_stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  st text; con text; msg text;
+BEGIN
+  BEGIN
+    EXECUTE p_stmt;
+    RAISE EXCEPTION 'taken back' USING ERRCODE = 'MT999';
+  EXCEPTION
+    WHEN SQLSTATE 'MT999' THEN RETURN 'ok';
+    WHEN OTHERS THEN GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, con = CONSTRAINT_NAME, msg = MESSAGE_TEXT;
+  END;
+  IF st = '42501' AND msg LIKE '%row-level security%' THEN RETURN '42501 rls'; END IF;
+  RETURN st || coalesce(' ' || nullif(con, ''), '');
+END $f$;
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid; y_start date; y_end date;
+  grp record;
+  pub uuid;
+  n integer := 0;
+  first_class uuid;
+  student record;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'mt 478: expected an admin, am %', app.current_user_role(); END IF;
+  SELECT id, "startDate", "endDate" INTO y, y_start, y_end FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  -- Every class of the year eats on Sundays, an autumn meal and a spring one (no fixture meal holds weekday 7).
+  FOR grp IN SELECT id FROM "StudentGroups" WHERE "schoolId" = school AND "academicYearId" = y AND kind = 'CLASS' ORDER BY id LOOP
+    n := n + 1;
+    first_class := coalesce(first_class, grp.id);
+    PERFORM pg_temp.mt_expect('478 the autumn meal of a class is written by the administrator',
+      pg_temp.mt_try(format($q$INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "startDate", "endDate", "updatedAt")
+                                VALUES (%L, %L, %L, 7, '11:00', '11:30', NULL, '2026-12-20', now())$q$, school, y, grp.id)), 'ok');
+    INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "startDate", "endDate", "updatedAt")
+    VALUES (school, y, grp.id, 7, '11:00', '11:30', NULL, '2026-12-20', now()), (school, y, grp.id, 7, '11:30', '12:00', '2027-01-11', NULL, now());
+  END LOOP;
+  IF n < 2 THEN RAISE EXCEPTION 'mt 478: the school has % classes in its active year; the fixtures did not run', n; END IF;
+  PERFORM pg_temp.mt_expect('478 the administrator reads the school''s dated meals', (SELECT count(*) FROM "LunchSittings" WHERE "dayOfWeek" = 7)::text, (2 * n)::text);
+
+  -- A class has one meal on a date, through the API's role as well.
+  PERFORM pg_temp.mt_expect('478 a meal for the whole läsår over the two parts',
+    pg_temp.mt_try(format($q$INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "updatedAt") VALUES (%L, %L, %L, 7, '12:00', '12:30', now())$q$, school, y, first_class)),
+    '23P01 LunchSittings_one_meal_at_a_time');
+  PERFORM pg_temp.mt_expect('478 a meal that shares a week with the autumn''s',
+    pg_temp.mt_try(format($q$INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "startDate", "endDate", "updatedAt") VALUES (%L, %L, %L, 7, '12:00', '12:30', '2026-12-14', '2026-12-20', now())$q$, school, y, first_class)),
+    '23P01 LunchSittings_one_meal_at_a_time');
+  PERFORM pg_temp.mt_expect('478 a meal for the weeks between the two is no conflict',
+    pg_temp.mt_try(format($q$INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "startDate", "endDate", "updatedAt") VALUES (%L, %L, %L, 7, '12:00', '12:30', '2026-12-21', '2027-01-10', now())$q$, school, y, first_class)),
+    'ok');
+  PERFORM pg_temp.mt_expect('478 a window that is not whole weeks',
+    pg_temp.mt_try(format($q$INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "startDate", "endDate", "updatedAt") VALUES (%L, %L, %L, 7, '12:00', '12:30', '2026-12-22', '2027-01-10', now())$q$, school, y, first_class)),
+    '23514 LunchSittings_weeks_start_on_a_monday');
+  PERFORM pg_temp.mt_expect('478 an update that makes the autumn reach the spring',
+    pg_temp.mt_try(format($q$UPDATE "LunchSittings" SET "endDate" = '2027-01-17' WHERE "studentGroupId" = %L AND "dayOfWeek" = 7 AND "endDate" = '2026-12-20'$q$, first_class)),
+    '23P01 LunchSittings_one_meal_at_a_time');
+
+  -- The snapshot takes dated meals, appended and never changed (the privileges of section 27i, asked with dates).
+  INSERT INTO "TimetablePublications" ("schoolId", "academicYearId", kind, outcome, "publishMode", "validFrom", "validTo", "lessonCount")
+  VALUES (school, y, 'BASELINE', 'PUBLISHED', 'DRAFT', y_start, y_end, 0) RETURNING id INTO pub;
+  INSERT INTO "PublishedLunchSittings" ("schoolId", "publicationId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "startDate", "endDate")
+  VALUES (school, pub, y, first_class, 7, '11:00', '11:30', NULL, '2026-12-20'), (school, pub, y, first_class, 7, '11:30', '12:00', '2027-01-11', NULL);
+  PERFORM pg_temp.mt_expect('478 a snapshot meal over the two parts',
+    pg_temp.mt_try(format($q$INSERT INTO "PublishedLunchSittings" ("schoolId", "publicationId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime") VALUES (%L, %L, %L, %L, 7, '12:00', '12:30')$q$, school, pub, y, first_class)),
+    '23P01 PublishedLunchSittings_one_meal_at_a_time');
+  PERFORM pg_temp.mt_expect('478 a published meal is not changed', pg_temp.mt_try(format($q$UPDATE "PublishedLunchSittings" SET "endDate" = '2026-12-13' WHERE "publicationId" = %L$q$, pub)), '42501');
+  PERFORM pg_temp.mt_expect('478 and not removed', pg_temp.mt_try(format($q$DELETE FROM "PublishedLunchSittings" WHERE "publicationId" = %L$q$, pub)), '42501');
+  PERFORM pg_temp.mt_expect('478 the administrator reads the snapshot''s dated meals', (SELECT count(*) FROM "PublishedLunchSittings" WHERE "publicationId" = pub)::text, '2');
+
+  SELECT u."authId"::text AS sub, u."studentGroupId" AS grp INTO student FROM "Users" u
+   WHERE u."schoolId" = school AND u.role = 'STUDENT' AND u."isActive" AND u."authId" IS NOT NULL
+     AND u."studentGroupId" IN (SELECT id FROM "StudentGroups" WHERE "academicYearId" = y AND kind = 'CLASS') ORDER BY u."authId" LIMIT 1;
+  IF student.sub IS NULL THEN RAISE EXCEPTION 'mt 478: no pupil with a class of the active year; the fixtures did not run'; END IF;
+  PERFORM set_config('app.test_mt478_n', n::text, true);
+  PERFORM set_config('app.test_mt478_school', school::text, true);
+  PERFORM set_config('app.test_mt478_year', y::text, true);
+  PERFORM set_config('app.test_mt478_class', first_class::text, true);
+  PERFORM set_config('app.test_mt478_student_sub', student.sub, true);
+  PERFORM set_config('app.test_mt478_student_class', student.grp::text, true);
+  PERFORM set_config('app.test_mt478_teacher_sub', (SELECT "authId"::text FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND "authId" IS NOT NULL ORDER BY "authId" LIMIT 1), true);
+END $$;
+
+-- A teacher reads the school's meals (the grundschema is live), and none of the snapshot.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_mt478_teacher_sub'))::text, true);
+DO $$
+DECLARE
+  changed integer;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN RAISE EXCEPTION 'mt 478: expected a TEACHER'; END IF;
+  PERFORM pg_temp.mt_expect('478 a teacher reads every class''s dated meals', (SELECT count(*) FROM "LunchSittings" WHERE "dayOfWeek" = 7)::text, (2 * current_setting('app.test_mt478_n')::integer)::text);
+  PERFORM pg_temp.mt_expect('478 a teacher reads none of the snapshot', (SELECT count(*) FROM "PublishedLunchSittings")::text, '0');
+  UPDATE "LunchSittings" SET "startTime" = '12:00', "endTime" = '12:30' WHERE "dayOfWeek" = 7;
+  GET DIAGNOSTICS changed = ROW_COUNT;
+  PERFORM pg_temp.mt_expect('478 a teacher changes no meal (no row is theirs to write)', changed::text, '0');
+  DELETE FROM "LunchSittings" WHERE "dayOfWeek" = 7;
+  GET DIAGNOSTICS changed = ROW_COUNT;
+  PERFORM pg_temp.mt_expect('478 and removes none', changed::text, '0');
+END $$;
+
+-- A pupil reads their own class's meals, both of them, and no other class's.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_mt478_student_sub'))::text, true);
+DO $$
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN RAISE EXCEPTION 'mt 478: expected a STUDENT'; END IF;
+  PERFORM pg_temp.mt_expect('478 a pupil reads their own class''s dated meals (the autumn''s and the spring''s)', (SELECT count(*) FROM "LunchSittings" WHERE "dayOfWeek" = 7)::text, '2');
+  PERFORM pg_temp.mt_expect('478 and every one of them is their class''s',
+    (SELECT count(*) FROM "LunchSittings" WHERE "dayOfWeek" = 7 AND "studentGroupId" = current_setting('app.test_mt478_student_class')::uuid)::text, '2');
+  PERFORM pg_temp.mt_expect('478 a pupil reads none of the snapshot', (SELECT count(*) FROM "PublishedLunchSittings")::text, '0');
+END $$;
+
+-- A guardian reads their children's classes' meals.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+DECLARE
+  classes integer;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'mt 478: expected a GUARDIAN'; END IF;
+  SELECT count(DISTINCT u."studentGroupId") INTO classes FROM "Users" u JOIN "GuardianStudents" gs ON gs."studentId" = u.id
+   WHERE gs."guardianId" = app.current_user_id() AND u."studentGroupId" IN (SELECT id FROM "StudentGroups" WHERE "academicYearId" = current_setting('app.test_mt478_year')::uuid AND kind = 'CLASS');
+  IF classes < 1 THEN RAISE EXCEPTION 'mt 478: the guardian has no child in a class of the active year; the fixtures did not run'; END IF;
+  PERFORM pg_temp.mt_expect('478 a guardian reads their children''s classes'' dated meals, two for each', (SELECT count(*) FROM "LunchSittings" WHERE "dayOfWeek" = 7)::text, (2 * classes)::text);
+  PERFORM pg_temp.mt_expect('478 a guardian reads none of the snapshot', (SELECT count(*) FROM "PublishedLunchSittings")::text, '0');
+END $$;
+
+-- Another school's administrator reads none of it, and writes none for this school.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text, true);
+DO $$
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR app.current_school_id() = current_setting('app.test_mt478_school')::uuid THEN
+    RAISE EXCEPTION 'mt 478: expected the other school''s administrator';
+  END IF;
+  PERFORM pg_temp.mt_expect('478 the other school''s administrator reads none of the dated meals', (SELECT count(*) FROM "LunchSittings" WHERE "dayOfWeek" = 7)::text, '0');
+  PERFORM pg_temp.mt_expect('478 and none of the snapshot', (SELECT count(*) FROM "PublishedLunchSittings")::text, '0');
+  PERFORM pg_temp.mt_expect('478 and writes none for the school''s class',
+    pg_temp.mt_try(format($q$INSERT INTO "LunchSittings" ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek", "startTime", "endTime", "startDate", "endDate", "updatedAt") VALUES (%L, %L, %L, 6, '12:00', '12:30', '2027-02-01', '2027-02-07', now())$q$,
+      current_setting('app.test_mt478_school'), current_setting('app.test_mt478_year'), current_setting('app.test_mt478_class'))),
+    '42501 rls');
+  RAISE NOTICE 'mt 478: % checks', current_setting('mt.checks');
+END $$;
+ROLLBACK;

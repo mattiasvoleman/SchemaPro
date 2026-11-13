@@ -6,6 +6,7 @@ import {
   type TeacherRef,
   type WeekPattern,
 } from './exchange-model';
+import { sittingMeetsWindow } from '../common/lunch-window';
 import { hasPersonalNumber, redactPersonalNumbers } from './file-safety';
 
 /**
@@ -173,6 +174,13 @@ export interface SittingRow {
   day: number;
   startMin: number;
   endMin: number;
+  /**
+   * The weeks the meal holds, 'YYYY-MM-DD', null (or absent) for the läsår's
+   * own bound (20270209090000): a class may eat at another time in another
+   * part of the year, and a lesson is held to the meals of its own weeks.
+   */
+  startDate?: string | null;
+  endDate?: string | null;
 }
 
 export interface RequirementRow {
@@ -657,7 +665,13 @@ export function fitRefusals(lesson: ResolvedLesson, ctx: PlanContext): { refusal
       }
     }
     for (const s of ctx.sittings) {
-      if (s.groupId === g.id && s.day === lesson.day && lesson.startMin < s.endMin && s.startMin < lesson.endMin) {
+      if (
+        s.groupId === g.id &&
+        s.day === lesson.day &&
+        lesson.startMin < s.endMin &&
+        s.startMin < lesson.endMin &&
+        sittingMeetsWindow(s, { startDate: lesson.from, endDate: lesson.to })
+      ) {
         refusals.push(
           refusal(
             'ON_LUNCH_SITTING',

@@ -184,6 +184,26 @@ describe('readSwapData', () => {
     expect(readOtherSchoolHolds).toHaveBeenCalledWith(expect.anything(), YEAR, SCHOOL);
   });
 
+  it('reads the weeks each meal holds, and carries them into the sittings as days (20270209090000)', async () => {
+    const findMany = jest.fn(async () => [
+      { studentGroupId: '7A', dayOfWeek: 1, startTime: clock(11), endTime: clock(11, 30), startDate: null, endDate: new Date('2026-12-20T00:00:00.000Z') },
+      { studentGroupId: '7A', dayOfWeek: 1, startTime: clock(11, 30), endTime: clock(12), startDate: new Date('2027-01-11T00:00:00.000Z'), endDate: null },
+      { studentGroupId: '7B', dayOfWeek: 2, startTime: clock(11), endTime: clock(11, 30), startDate: null, endDate: null },
+    ]);
+    const data = await readSwapData(tx({ lunchSitting: { findMany } }) as never, user, YEAR);
+    // The query asks for the dates: a column left out of the select is a meal of the whole läsår, silently.
+    expect(findMany).toHaveBeenCalledWith({
+      where: { academicYearId: YEAR },
+      select: { studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true, startDate: true, endDate: true },
+    });
+    expect(data.sittings).toEqual([
+      { studentGroupId: '7A', dayOfWeek: 1, startMinutes: 660, endMinutes: 690, startDate: null, endDate: '2026-12-20' },
+      { studentGroupId: '7A', dayOfWeek: 1, startMinutes: 690, endMinutes: 720, startDate: '2027-01-11', endDate: null },
+      // A meal of the whole läsår is the object it always was.
+      { studentGroupId: '7B', dayOfWeek: 2, startMinutes: 660, endMinutes: 690 },
+    ]);
+  });
+
   it('has no lunch rule when lunch is off, the window is empty, or there is no row; and never longer than the window', async () => {
     const lunch = (row: unknown) => readSwapData(tx({ lunchSetting: { findUnique: jest.fn(async () => row) } }) as never, user, YEAR).then((d) => d.lunch);
     expect(await lunch(null)).toBeNull();

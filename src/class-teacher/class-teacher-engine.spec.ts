@@ -856,6 +856,33 @@ describe('ClassTeacherEngine.evaluate: the rest of what the editor holds a place
     }
   });
 
+  it('holds a lesson to the meals of its own weeks when the class eats at another time in another part of the läsår (20270209090000)', async () => {
+    // Tuesday: 11:00–11:30 in the autumn (to Sunday 2026-12-20), 11:30–12:00 from Monday 2027-01-11. The change moves the lesson to 11:30–12:00.
+    const board = {
+      ...noBoard,
+      spans: new Map([['class-1', [4, 4]]]),
+      sittings: new Map([[
+        'class-1|2',
+        [
+          { studentGroupId: 'class-1', dayOfWeek: 2, startMinutes: 660, endMinutes: 690, startDate: null, endDate: '2026-12-20' },
+          { studentGroupId: 'class-1', dayOfWeek: 2, startMinutes: 690, endMinutes: 720, startDate: '2027-01-11', endDate: null },
+        ],
+      ]]),
+    };
+    const onSpringsMeal = async (weeks: { startDate: Date | null; endDate: Date | null }) => {
+      const { engine, tx } = setup();
+      tx['masterLesson']!['findUnique']!.mockResolvedValue({ ...grundschema, ...weeks });
+      (readBoardFacts as jest.Mock).mockResolvedValue(board);
+      return engine.evaluate(tx as never, move({ targetStart: time('11:30'), targetEnd: time('12:00') }));
+    };
+    // A lesson of the autumn is clear of the spring's meal; one of the spring, and one of every week, are not.
+    expect(await onSpringsMeal({ startDate: day('2026-08-17'), endDate: day('2026-12-18') })).toEqual({ state: 'OK' });
+    expect(await onSpringsMeal({ startDate: day('2027-01-11'), endDate: day('2027-06-11') })).toEqual({ state: 'CONFLICT', conflicts: [{ kind: 'LUNCH' }] });
+    expect(await onSpringsMeal({ startDate: null, endDate: null })).toEqual({ state: 'CONFLICT', conflicts: [{ kind: 'LUNCH' }] });
+    // A lesson that starts in the autumn and has no end meets both meals.
+    expect(await onSpringsMeal({ startDate: day('2026-12-18'), endDate: null })).toEqual({ state: 'CONFLICT', conflicts: [{ kind: 'LUNCH' }] });
+  });
+
   it('reads the board with the year’s own numbering of its årskurser', async () => {
     const { engine, tx } = setup();
     tx['masterLesson']!['findUnique']!.mockResolvedValue(grundschema);
