@@ -1372,7 +1372,7 @@ export default function RequirementsPage() {
               dropdown is; the columns stay by code.
             */}
             <Select value={view.subject?.id ?? ALL_SUBJECTS} onValueChange={pickSubject}>
-              <SelectTrigger className="w-60 max-w-full" aria-label={t("subjectFilter.label")}>
+              <SelectTrigger className="w-auto min-w-44 max-w-full" aria-label={t("subjectFilter.label")}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

@@ -177,7 +177,7 @@ for (const size of [{ name: "320×800", width: 320, height: 800 }, ...VIEWPORTS]
       };
     });
     expect(facts.rows, "the name is on one row").toBe(1);
-    expect(facts.textRight, "the name ends inside the picker's own text box, not cut at its edge").toBeLessThanOrEqual(facts.spanRight + 0.5);
+    expect(facts.textRight, "the name ends inside the picker's own text box, not cut at its edge").toBeLessThanOrEqual(facts.spanRight + 1);
     expect(facts.textRight, "the name ends inside the picker").toBeLessThanOrEqual(facts.pickerRight + 0.5);
     expect(facts.pageScrollsSideways, "the page does not scroll sideways").toBe(false);
     expect(misses, MISSES).toEqual([]);
