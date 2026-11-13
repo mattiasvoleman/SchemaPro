@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -852,10 +852,22 @@ class LockedWeekdaysInPeriods(CamelModel):
     period" left out would be an entry with no mask among entries with one.
     A mask of nothing but false is a set no week has, and is not a thing to
     send.
+
+    THE PARITY, ONLY WHERE THE SETS DIFFER BY IT. A period's odd weeks and its
+    even ones can hold other sets: a lesson locked on Mondays in the odd weeks
+    and on Wednesdays in the even ones. `recurrence` then says which of the
+    two a set is held in, as it does on a requirement, and a week is held
+    against the sets of its own parity (weeks.weeks_of reads it with `periods`,
+    as it does everywhere). Absent is both parities: a period whose odd and
+    even weeks hold the same sets is sent as it always was, and a limit whose
+    every period is so builds the rows it built. The same set may be written
+    once per parity (it can be held in the odd weeks of one period and in
+    both parities of another), and once without.
     """
 
     weekdays: list[DayOfWeek] = Field(max_length=7)
     periods: tuple[bool, ...] = Field(min_length=2, max_length=MAX_PERIODS)
+    recurrence: WeekParity | None = Field(default=None)
 
     @field_validator("weekdays")
     @classmethod
@@ -1026,16 +1038,20 @@ class AnonymousTeacherDayLimit(CamelModel):
         held = self.locked_weekday_periods
         if held is None:
             return self
-        sets = [frozenset(entry.weekdays) for entry in held]
+        sets = [(frozenset(entry.weekdays), entry.recurrence) for entry in held]
         if len(set(sets)) != len(sets):
             msg = "lockedWeekdayPeriods names one set of weekdays twice."
             raise ValueError(msg)
         if len({len(entry.periods) for entry in held}) > 1:
             msg = "lockedWeekdayPeriods masks must all have the same length."
             raise ValueError(msg)
-        if not all(any(period) for period in zip(*(entry.periods for entry in held))):
-            msg = "lockedWeekdayPeriods must name a set for every period."
-            raise ValueError(msg)
+        # Every week of every period, in each parity: a week no entry holds would
+        # be held against no set at all.
+        for parity in ("ODD_WEEKS", "EVEN_WEEKS"):
+            masks = [entry.periods for entry in held if entry.recurrence in (None, parity)]
+            if not masks or not all(any(period) for period in zip(*masks)):
+                msg = "lockedWeekdayPeriods must name a set for every period."
+                raise ValueError(msg)
         return self
 
 
@@ -1665,6 +1681,30 @@ class OptimizeScheduleRequest(CamelModel):
     period_weeks: list[Annotated[int, Field(ge=1, le=MAX_PERIODS)]] | None = Field(
         default=None, alias="periodWeeks", min_length=2, max_length=MAX_PERIODS,
     )
+    #: Terminer: how many of each period's `periodWeeks` are odd ISO weeks, in
+    #: the same order — [9, 1, 10] beside [18, 1, 21] says the autumn has nine
+    #: odd weeks and nine even ones, the one week the terms share is odd, and
+    #: the spring has ten odd and eleven even.
+    #:
+    #: WHAT A PERIOD IS MADE OF, SO THAT A CELL NO WEEK IS IN IS NOT A WEEK. The
+    #: engine's week is a period in a parity, and a period of one week (the
+    #: läsår's first two days, a test week, the weeks between terms) has the
+    #: one parity of that week. The other cell was counted, built and named as
+    #: if it were a week of its own, which refused a school for a week that no
+    #: calendar has (the review of #304, MEDEL-2). Where this is sent a post of
+    #: a parity runs only in the periods that have a week of it
+    #: (`drop_weeks_that_are_not_there`), a refusal is never made of a cell no
+    #: week is in, and the period is named whole where its only real week is
+    #: (weeks.phantom_cells). It also weighs the weeks the refusal said is
+    #: chosen by (weeks.share), where it said an odd week and an even one were
+    #: as many.
+    #:
+    #: OPTIONAL AND ADDITIVE. Absent is every cell a week, as it always was;
+    #: the gateway sends the key beside periodWeeks, and the engine acts on it
+    #: only where some period lacks a parity.
+    period_odd_weeks: list[Annotated[int, Field(ge=0, le=MAX_PERIODS)]] | None = Field(
+        default=None, alias="periodOddWeeks", min_length=2, max_length=MAX_PERIODS,
+    )
 
     @field_validator("group_conflicts")
     @classmethod
@@ -1746,6 +1786,58 @@ class OptimizeScheduleRequest(CamelModel):
         if self.period_weeks is not None and lengths != {len(self.period_weeks)}:
             msg = "periodWeeks must be as long as the periods masks, and needs one."
             raise ValueError(msg)
+        if self.period_odd_weeks is not None and (
+            self.period_weeks is None
+            or len(self.period_odd_weeks) != len(self.period_weeks)
+            or any(odd > weeks for odd, weeks in zip(self.period_odd_weeks, self.period_weeks, strict=True))
+        ):
+            msg = "periodOddWeeks must be as long as periodWeeks, with no more odd weeks than a period has weeks."
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def drop_weeks_that_are_not_there(self) -> OptimizeScheduleRequest:
+        """A post of a parity runs in the periods that have a week of it.
+
+        THE REVIEW OF #304 (MEDEL-2). A period that is one even week has no odd
+        week, and a post of the odd weeks that the gateway read as holding that
+        period's dates was held, counted and built in a cell no calendar has: a
+        school refused for 300 minutes in an odd week of a period that is one
+        even week, with 240 in the one that exists. The post does not run
+        there, so the period's bit is taken out of its mask — an entry with no
+        mask is every period, so it gets one — and nothing reads the cell as a
+        week of its own.
+
+        Only an entry of ONE parity is changed, and only by the periods that
+        have none of it; an entry that would run in no week at all is left as
+        it was (a mask of nothing is no mask), which is what the gateway never
+        sends: a post dated into a period it has no week in. A request with no
+        periodOddWeeks is not touched.
+        """
+        if self.period_odd_weeks is None or self.period_weeks is None:
+            return self
+        has = [
+            (odd > 0, total - odd > 0)
+            for odd, total in zip(self.period_odd_weeks, self.period_weeks, strict=True)
+        ]
+        if all(odd and even for odd, even in has):
+            return self
+        entries: list[Any] = [
+            *self.requirements,
+            *self.fixed_lessons,
+            *(self.placements.requirements if self.placements is not None else ()),
+        ]
+        entries.extend(
+            entry for limit in self.teacher_day_limits for entry in limit.locked_weekday_periods or ()
+        )
+        for entry in entries:
+            if entry.recurrence is None:
+                continue
+            side = 0 if entry.recurrence == "ODD_WEEKS" else 1
+            held = entry.periods if entry.periods is not None else (True,) * len(has)
+            real = tuple(here and has[period][side] for period, here in enumerate(held))
+            if any(real) and real != tuple(held):
+                entry.periods = real
         return self
 
     @model_validator(mode="after")

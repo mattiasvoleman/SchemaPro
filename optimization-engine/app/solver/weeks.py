@@ -56,12 +56,18 @@ TWO KINDS OF ROW, and `implied` says which:
   union would let one week's lesson answer for a week that does not have it.
 
 A PART IS NEVER EMPTY. A week with no member has nothing to hold.
+
+A ROW THAT IS ONE BREAK FOR A PERIOD'S TWO PARITIES (a teacher's own lunch)
+is cut by period alone, as main cuts it, and by parity too for a teacher
+whose entries in the lunch window are told apart by it
+(`needs_a_part_per_parity`): one break clear of both parities' entries is
+stricter than a break for each week, which is what a real week has.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Hashable, Iterable, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import TypeVar
@@ -433,6 +439,51 @@ def week_parts(
     ]
 
 
+def cells_of(periods: int) -> list[tuple[Weeks, Weeks]]:
+    """Each period's odd weeks and its even weeks, as the concrete weeks they are: [(odd, even), …]."""
+    return [(Weeks(1 << (2 * period), periods), Weeks(2 << (2 * period), periods)) for period in range(periods)]
+
+
+def needs_a_part_per_parity(
+    held: Iterable[tuple[Hashable, Weeks | str | None]],
+    owed: Iterable[Weeks | str | None],
+) -> bool:
+    """Whether one row for a period's odd and even weeks together is stricter than a row for each.
+
+    The row is ONE BREAK CLEAR OF EVERYTHING IT READS — the teacher's own
+    lunch (scheduler_solver._add_teacher_lunch). `held` are the entries it
+    reads, each with a key and the weeks it runs in: the locked lessons in
+    the lunch window and the lessons that can fall in it. `owed` are the
+    weeks of the lessons the teacher has at all: a week where she teaches is
+    a week she is owed a break in, and one where she does not is not.
+
+    A real week has a break of its own. Read for both parities of a period
+    at once, the break must be clear of the odd weeks' entries and the even
+    weeks' both, which refuses a period whose odd weeks take the first half
+    of the window and whose even weeks take the second, though each week has
+    a break. That is only so when no owed week of the period holds every
+    entry of the period: where one does, a break clear of that week's is
+    clear of the rest (they are a subset), and the row for the whole period
+    is the row for that week.
+
+    A year without periods is one period.
+    """
+    entries = [(key, _weeks(runs)) for key, runs in held]
+    weeks = [_weeks(runs) for runs in owed]
+    periods = max(
+        (runs.periods for runs in (*(runs for _, runs in entries), *weeks) if runs is not None),
+        default=1,
+    )
+    for odd, even in cells_of(periods):
+        owed_here = [cell for cell in (odd, even) if any(meet(runs, cell) for runs in weeks)]
+        if not owed_here:
+            continue
+        everything = {key for key, runs in entries if meet(runs, odd) or meet(runs, even)}
+        if not any({key for key, runs in entries if meet(runs, cell)} == everything for cell in owed_here):
+            return True
+    return False
+
+
 def tag(name: str, week: Weeks | str | None) -> str:
     """A variable's name in one week: the name itself for a row of every week."""
     week = _weeks(week)
@@ -527,7 +578,9 @@ def half_weeks(request: object) -> int:
     return 1 if any(getattr(entry, "recurrence", None) is not None for entry in entries) else 2
 
 
-def share(week: Weeks | str | None, period_weeks: Sequence[int]) -> int:
+def share(
+    week: Weeks | str | None, period_weeks: Sequence[int], odd_weeks: Sequence[int] | None = None,
+) -> int:
     """How much of the year these weeks are, in half weeks of `period_weeks`.
 
     `period_weeks` is how many real weeks each period is ([1] for a year
@@ -535,10 +588,92 @@ def share(week: Weeks | str | None, period_weeks: Sequence[int]) -> int:
     year without periods are 1 of 2, and a week that is None — every week —
     is the whole year. For weighing a soft term measured in one week against
     the year it is a part of; no rule reads it.
+
+    WHERE THE GATEWAY SAYS HOW MANY OF EACH PERIOD'S WEEKS ARE ODD
+    (`odd_weeks`, periodOddWeeks) the weights are the real ones: a period of
+    five weeks that starts on an odd week has three odd weeks and two even
+    ones, a period that is one week has one of them and none of the other, and
+    the whole year is the sum of `period_weeks`, in whole weeks (`period_weeks`
+    must then be the request's own and not what year_of divides through).
     """
     week = _weeks(week)
     periods = len(period_weeks)
+    if odd_weeks is not None:
+        if week is None:
+            return sum(period_weeks)
+        bits = week.lifted(periods)
+        return sum(
+            (odd_weeks[index // 2] if index % 2 == 0 else period_weeks[index // 2] - odd_weeks[index // 2])
+            for index in range(2 * periods) if bits >> index & 1
+        )
     if week is None:
         return 2 * sum(period_weeks)
     bits = week.lifted(periods)
     return sum(period_weeks[index // 2] for index in range(2 * periods) if bits >> index & 1)
+
+
+def year_weighing(request: object) -> tuple[list[int], list[int] | None]:
+    """What `share` weighs the request's year by: its period_weeks, and its odd weeks where it sent them.
+
+    Without periodOddWeeks that is year_of and nothing else, as it always was.
+    With it the request's own figures, undivided: how many of a period's weeks
+    are odd is a count of weeks and not a proportion.
+    """
+    odd = getattr(request, "period_odd_weeks", None)
+    sent = getattr(request, "period_weeks", None)
+    if sent is not None and odd is not None:
+        return list(sent), list(odd)
+    return year_of(request), None
+
+
+def phantom_cells(request: object) -> Weeks | None:
+    """The cells of the year that no real week is in: a period's odd weeks where it has none, or its even ones.
+
+    A period is a set of real weeks, and a period of one week (the läsår's
+    first two days, a test week, the weeks between terms) has the one parity
+    of that week. The engine's week is a period in a parity, so it has a cell
+    for the other one too, and nothing in it: no post of the parity runs
+    there, no count can be made of it and no refusal of it is any school's.
+    None where the gateway did not say (`period_odd_weeks`), which is every
+    cell being a week as it always was.
+    """
+    sent = getattr(request, "period_weeks", None)
+    odd = getattr(request, "period_odd_weeks", None)
+    if sent is None or odd is None:
+        return None
+    bits = 0
+    for period, (total, odd_here) in enumerate(zip(sent, odd)):
+        if odd_here == 0:
+            bits |= 0b01 << (2 * period)
+        if odd_here == total:
+            bits |= 0b10 << (2 * period)
+    return Weeks(bits, len(sent)) if bits else None
+
+
+def closed(week: Weeks | None, phantom: Weeks | None) -> Weeks | None:
+    """These weeks with the cell that is no week filled in beside the one that is, in each period they lie in.
+
+    What the words are said of: a period whose only real week is an even one is
+    "the period", and a refusal of that week is the period's, so it is not "the
+    even weeks of it" and a set of weeks with such a period in it is a set of
+    periods (weeks.says_exactly) and not the odd weeks of this one and every
+    week of that. A period the weeks do not touch is not filled in.
+    """
+    if week is None or phantom is None:
+        return week
+    periods = max(week.periods, phantom.periods)
+    gone, held = phantom.lifted(periods), week.lifted(periods)
+    bits = held
+    for period in range(periods):
+        pair = 0b11 << (2 * period)
+        if held & pair:
+            bits |= gone & pair
+    return week if bits == held and week.periods == periods else Weeks(bits, periods)
+
+
+def only_phantom(week: Weeks | None, phantom: Weeks | None) -> bool:
+    """Whether these weeks are cells that no real week is in, and nothing else."""
+    if week is None or phantom is None:
+        return False
+    periods = max(week.periods, phantom.periods)
+    return not (week.lifted(periods) & ~phantom.lifted(periods))
