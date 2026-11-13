@@ -4826,11 +4826,28 @@ Two changes, in two releases. No migration in either.
    is the first and `periods` all of them ("0,1,2,3"), the form a week that
    lies in several periods already had, and the gateway reads their
    stretches together, so a teacher over her hours all autumn is told the
-   autumn's weeks and not its first two days. "Share" is the same count with
-   the same posts and the same figures; for a 400, the same code and the
-   same figures. The lines of a best possible timetable say their weeks the
-   same way. Weeks that no words say exactly (the odd weeks of one term with
-   every week of the other) leave the week the refusal was found in.
+   autumn's weeks and not its first two days. "Share" is one rule, for a
+   count, a 400 and the lines of a best possible timetable alike
+   (`optimization-engine/app/solver/refusals.py`): the same sentence (the
+   code), the same figures, and the same posts, rooms, rules and people the
+   refusal names, in any order. A 400 names what it names in its figures, so
+   two terms with other posts and the same figures are one 400 and two
+   counts, each naming its posts. Weeks that no words say exactly (the odd
+   weeks of one term with every week of the other) leave the first of the
+   weeks that give it.
+
+   **When the weeks are refused differently, the refusal said is the one
+   whose weeks are most of the year** (`periodWeeks`; every period alike
+   where none is sent), and the earliest on a tie. A läsår starts on a
+   Saturday, so its first two days are a period of their own, and a teacher
+   with a post of her own from the first Monday is over her hours there with
+   other figures than in the autumn: it is the autumn that is said. Weeks
+   with nothing to place are not asked, so two weeks that agree name none
+   only if the year without a post of its own is refused the same way: a
+   teacher's trouble is named by where it is and not by how the posts are
+   cut. The gateway leaves a period out of the dates when the engine counted
+   the odd (or even) weeks of it and it has none of that parity, so the
+   window is no wider than the weeks that were counted.
 
    Three verdicts solve a model instead of counting (the lunch stage, a
    class's hours, the year's tightest week). They run on at most eight weeks
@@ -4997,10 +5014,11 @@ term has a timetable (the reviews of #300):
   period's. Nothing new is sent: the locks and the posts already carry their
   periods. `TEACHER_LUNCH_LEAVES_NO_START` is read period by period and
   names where in the year it is — every period in which the teacher has a
-  lesson to place and the same locked hours that weekday (`period`, and
-  `periods` where there are several, which the gateway reads as one run of
-  weeks: a läsår has more periods than terms) — unless the locks of every
-  period refuse it, which is the year's refusal and names none.
+  lesson to place and her lunch that weekday is refused the same (the same
+  rule, day and cause, whatever locks close it; `period`, and `periods`
+  where there are several, which the gateway reads as one run of weeks: a
+  läsår has more periods than terms) — unless the locks of every period
+  refuse it, which is the year's refusal and names none.
 
 **Deploy order.** The engine and the gateway are one release here. The
 engine's models forbid unknown fields, so in the minutes between the API's
