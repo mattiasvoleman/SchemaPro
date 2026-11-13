@@ -256,19 +256,72 @@ async function main(): Promise<void> {
     return service;
   };
 
+  let failed = false;
   try {
     const fixture = await findFixture(owner);
     await sweep(owner, fixture.schoolId);
     try {
       await runChecks(owner, fixture, appUrl, ownerUrl, open);
+    } catch (error) {
+      // Said before anything is cleaned up: a check that failed while it held a transaction, a lock or a pooled connection
+      // leaves the sweep and pg-pool's end() waiting for it, and a FAIL line that waited for them would never be written.
+      failed = true;
+      reportFailure(error);
+      throw error;
     } finally {
-      await sweep(owner, fixture.schoolId);
+      // After a failure the sweep may wait on a lock the failed check still holds: it gets a few seconds, not the job's timeout.
+      await within(failed ? CLEANUP_AFTER_FAILURE_MS : CLEANUP_MS, 'the sweep', () => sweep(owner, fixture.schoolId), failed);
     }
   } finally {
-    for (const service of services) {
-      await service.$disconnect();
+    await within(
+      failed ? CLEANUP_AFTER_FAILURE_MS : CLEANUP_MS,
+      'closing the pools',
+      async () => {
+        for (const service of services) {
+          await service.$disconnect();
+        }
+        await owner.end();
+      },
+      failed,
+    );
+  }
+}
+
+/** How long cleanup may take once every check has passed, and how long after a failure. */
+const CLEANUP_MS = 60_000;
+const CLEANUP_AFTER_FAILURE_MS = 5_000;
+
+/**
+ * Runs `work` for at most `ms`. A pool's end() waits for every connection still checked out, and a sweep waits for every lock still
+ * held, so cleanup after a failed check can wait forever; the process then stood until the job's time limit (the hang in the review of
+ * #293) with the FAIL line unwritten or the job's minutes spent. A cleanup that runs out of time is an error of its own when nothing
+ * failed before it (something leaked), and a line on stderr when a check already did.
+ */
+async function within(ms: number, what: string, work: () => Promise<void>, alreadyFailed: boolean): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const out = new Promise<'out'>((resolve) => {
+    timer = setTimeout(() => resolve('out'), ms);
+  });
+  try {
+    const finished = await Promise.race([work().then(() => 'done' as const), out]);
+    if (finished === 'out') {
+      if (!alreadyFailed) throw new Error(`${what} did not finish in ${ms} ms, and no check had failed: a connection or a lock is left over by a check that passed`);
+      console.error(`     (${what} did not finish in ${ms} ms after the failure, and is left to the process's exit)`);
     }
-    await owner.end();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The failures already written to stderr, so that the end of the process does not write one twice. */
+const reported = new WeakSet<object>();
+
+function reportFailure(error: unknown): void {
+  if (typeof error === 'object' && error !== null) reported.add(error);
+  if (error instanceof ProbeFailure) {
+    console.error(`FAIL ${error.label}\n     ${summarise(error.failure)}`);
+  } else {
+    console.error(`FAIL ${summarise(error)}`);
   }
 }
 
@@ -281,6 +334,15 @@ async function runChecks(
 ): Promise<void> {
   const { admin } = fixture;
   const api = open(appUrl);
+
+  // A way to see the end of the process for oneself: PROBE_SELF_TEST=exit-after-a-failure fails at once with a connection left open,
+  // and the probe must write its FAIL line and exit 1 within seconds (before the exit was forced it stood until killed, under Node 24).
+  if (process.env['PROBE_SELF_TEST'] === 'exit-after-a-failure') {
+    await check('(self-test) a failure with a connection left open still ends the process', async () => {
+      await new Client({ connectionString: process.env['PROBE_OWNER_URL'] }).connect();
+      assert.fail('forced failure with a connection left open');
+    });
+  }
 
   await check('(a) onModuleInit boots as app_authenticated', async () => {
     await api.onModuleInit();
@@ -8511,17 +8573,17 @@ async function teacherDayChecks(owner: Client, api: PrismaService): Promise<void
   }
 }
 
+// The process is ended here, not left to drain: a pool or a socket a failed check left open keeps Node 24 alive, and the step then stood
+// until the job's time limit instead of failing. stderr is flushed first, so the FAIL line is in the log.
 main().then(
   () => {
     console.log('==> Prisma adapter probe passed');
+    process.exit(0);
   },
   (error: unknown) => {
-    if (error instanceof ProbeFailure) {
-      console.error(`FAIL ${error.label}\n     ${summarise(error.failure)}`);
-    } else {
-      console.error(`FAIL ${summarise(error)}`);
-    }
-    process.exitCode = 1;
+    // A failed check has already been reported, before its cleanup; anything else (the fixture, the cleanup itself) is said here.
+    if (typeof error !== 'object' || error === null || !reported.has(error)) reportFailure(error);
+    process.stderr.write('', () => process.exit(1));
   },
 );
 

@@ -43,6 +43,11 @@ import { LeaveService } from '../../src/family/leave.service';
 import type { OutboxEntry } from '../../src/notifications/notification-outbox';
 import { NotificationsService } from '../../src/notifications/notifications.service';
 
+/** A UUID, as the JSON of a notice writes it. */
+const UUID_TEXT = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+/** Whether a notice's serialised text carries the reason, the child's name, or a year or a date, ids left out of the reading. */
+const saysTooMuch = (serialised: string): boolean => /Hemlig|Probe|\b20\d\d\b/.test(serialised.replace(UUID_TEXT, '<id>'));
+
 type Check = (label: string, body: () => Promise<void>) => Promise<void>;
 
 export function ledighetspolicySlug(marker: string): string {
@@ -371,7 +376,13 @@ export async function ledighetspolicyChecks(owner: Client, api: PrismaService, m
     assert.equal(sent[0]!.type, 'LEAVE_CONSENT_REMINDER');
     assert.deepEqual(sent[0]!.recipients.map((r) => r.userId), [g2.id]);
     assert.deepEqual(sent[0]!.email!.recipients, [{ userId: g2.id, email: g2.email }]);
-    assert.ok(!/Hemlig|Probe|20\d\d/.test(JSON.stringify([sent[0]!.email, sent[0]!.meta])), 'the reminder says too much');
+    // What the mail and the notice SAY: the reason, the child's name, a year or a date. Ids are not words: a UUID has 17 windows of
+    // four characters, each of which reads "20" and two decimals once in about 650, so the old pattern (unanchored) failed on an id
+    // in about 2.6 % of the runs. The ids are taken out before the text is read, and a year is a whole number.
+    assert.ok(!saysTooMuch(JSON.stringify([sent[0]!.email!.subject, sent[0]!.email!.body, sent[0]!.meta])), 'the reminder says too much');
+    // The reader itself: it finds each of the three, and finds nothing in an id however the id's digits fall.
+    assert.ok(saysTooMuch('Hemlig anledning') && saysTooMuch('barnet Probe') && saysTooMuch('från 2026-12-01') && saysTooMuch('2026'), 'the reader misses what it is for');
+    assert.ok(!saysTooMuch('{"id":"20202020-2030-2040-2050-203020402050","userId":"11112034-2099-4000-8000-000000002000"}'), 'the reader reads a year in an id');
     assert.deepEqual(await service.consentPass(), { notices: 0, reminded: 0 }, 'the second pass reminded again');
     assert.equal(await count(`SELECT count(*) AS n FROM "LeaveConsents" WHERE "remindedAt" IS NOT NULL AND "leaveRequestId" = ANY ($1::uuid[])`, [[due]]), 1);
     assert.equal(await count(`SELECT count(*) AS n FROM "LeaveConsents" WHERE "remindedAt" IS NOT NULL AND "leaveRequestId" = ANY ($1::uuid[])`, [[fresh, over]]), 0);
