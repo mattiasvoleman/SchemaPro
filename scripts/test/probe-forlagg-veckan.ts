@@ -24,13 +24,23 @@
  *        school's is told;
  *   vv5  a year with no row is answered without a roster basis (as the dialog
  *        is): the posts counted and nothing judged, for a year that is not yet
- *        activated too.
+ *        activated too;
+ *   vv6  the week and Generera's own pre-flight (prepareSchedule) judge the
+ *        same rows the same way: judgePlacements is handed the same rows and
+ *        the same demand by both, and answers the same verdict for each row,
+ *        on a post that shares its lessons (Bo's lock answers Bo's lesson), a
+ *        post whose lock is a lesson with a second class, a post nothing
+ *        keeps, and a post with no row; and what the week says is left for a
+ *        post is what Generera then sends the engine (review of #315,
+ *        MEDEL-1: the two used to build that input by hand, each its own).
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
+import type { HttpService } from '@nestjs/axios';
 import { NotFoundException } from '@nestjs/common';
+import type { ConfigService } from '@nestjs/config';
 import type { Client } from 'pg';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
@@ -38,6 +48,7 @@ import { MasterLessonsService } from '../../src/calendar/master-lessons.service'
 import type { PrismaService } from '../../src/database/prisma.service';
 import type { NotificationsService } from '../../src/notifications/notifications.service';
 import type { RealtimeService } from '../../src/realtime/realtime.service';
+import type { JudgePlacementsInput, PlacementVerdict } from '../../src/requirement-placements/placement-judge';
 import { RequirementPlacementsService } from '../../src/requirement-placements/requirement-placements.service';
 
 type Check = (label: string, body: () => Promise<void>) => Promise<void>;
@@ -298,6 +309,114 @@ export async function placementWeekChecks(owner: Client, api: PrismaService, mar
       const board = await placements.boardOfYear(next, a.users.schema);
       assert.deepEqual([board.placements.length, board.kept.length], [0, 0]);
       assert.deepEqual(board.posts.map((entry) => entry.parts.map((part) => [part.count, part.left])), [[[2, 2]]]);
+    });
+    await check('(vv6) the week and Generera\'s pre-flight judge every row alike, and the week says left what Generera then sends', async () => {
+      const { OptimizationProxyService } = await import('../../src/optimization/optimization-proxy.service');
+      const judgeModule = (await import('../../src/requirement-placements/placement-judge')) as unknown as {
+        judgePlacements: (...args: unknown[]) => Promise<PlacementVerdict[]>;
+      };
+      const config = { getOrThrow: () => ({ baseUrl: 'http://127.0.0.1:1', apiKey: 'x', timeoutMs: 1000 }) } as unknown as ConfigService;
+      const http = { post: () => { throw new Error('the pre-flight wakes no engine'); } } as unknown as HttpService;
+      const proxy = new OptimizationProxyService(api, http, config, masters);
+
+      // A third class with three posts: a shared one (Anna two of 60, Bo one), one a lesson with a second class will answer,
+      // and one nothing keeps and nothing places. Rows are saved first, as the week held them, and the week then moves under them.
+      const g7c = (
+        await one<{ id: string }>(
+          `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt") VALUES ($1, $2, 'VK 7C', 'CLASS', 7, now()) RETURNING id`,
+          [a.school, a.year],
+        )
+      ).id;
+      const subjectNamed = async (name: string) =>
+        (await one<{ id: string }>(`INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES ($1, $2, now()) RETURNING id`, [a.school, name])).id;
+      const [fysik, biologi, kemi] = [await subjectNamed('VK Fysik'), await subjectNamed('VK Biologi'), await subjectNamed('VK Kemi')];
+      const p6 = await a.post(g7c, fysik, a.anna.id, 3, 60);
+      await owner.query(
+        `INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES ($1, $2, $3, 1, 60, now())`,
+        [a.school, p6, a.bo.id],
+      );
+      const p7 = await a.post(g7c, biologi, a.anna.id, 2, 60);
+      const p8 = await a.post(g7c, kemi, a.bo.id, 2, 60);
+      await placements.replace(
+        p6,
+        { placements: [row(2, '13:00', 60, a.r1, { teacherId: a.anna.id }), row(3, '13:00', 60, a.r2, { teacherId: a.bo.id })] } as never,
+        a.users.schema,
+      );
+      await placements.replace(p7, { placements: [row(4, '13:00', 60, a.r1), row(5, '08:00', 60, a.r1)] } as never, a.users.schema);
+      // Bo's own lock (locked, hand-made) answers Bo's lesson of the shared post, which takes the lesson his förläggning would place.
+      await lesson(fysik, g7c, a.bo.id, a.r2, 1, '09:00', '10:00', true, false);
+      // A lesson Generera wrote and kept only because it has a second class: it answers one lesson of the biology post.
+      const withClass = await lesson(biologi, g7c, a.bo.id, a.r2, 1, '13:00', '14:00', false, true);
+      await owner.query(`INSERT INTO "MasterLessonGroups" ("schoolId", "masterLessonId", "studentGroupId") VALUES ($1, $2, $3)`, [a.school, withClass.rows[0]!.id, a.g7a]);
+
+      const proxyService = proxy as unknown as { prepareSchedule: (tx: unknown, year: string, user: AuthenticatedUser) => Promise<{ ready: boolean; payload?: any; demand?: any[] }> };
+      type Asked = { tag: string; input: JudgePlacementsInput; verdicts: PlacementVerdict[] };
+      const asked: Asked[] = [];
+      let tag = '';
+      const original = judgeModule.judgePlacements;
+      judgeModule.judgePlacements = async (...args: unknown[]) => {
+        const verdicts = await original(...args);
+        asked.push({ tag, input: args[2] as JudgePlacementsInput, verdicts });
+        return verdicts;
+      };
+      let board: Awaited<ReturnType<RequirementPlacementsService['boardOfYear']>>;
+      let prepared: Awaited<ReturnType<typeof proxyService.prepareSchedule>>;
+      try {
+        tag = 'week';
+        board = await placements.boardOfYear(a.year, a.users.schema);
+        tag = 'generera';
+        prepared = await api.withRls(a.users.schema, (tx) => proxyService.prepareSchedule(tx, a.year, a.users.schema));
+      } finally {
+        judgeModule.judgePlacements = original;
+      }
+      const week = asked.find((entry) => entry.tag === 'week');
+      const generera = asked.find((entry) => entry.tag === 'generera');
+      assert.ok(week && generera, `judgePlacements was asked by the week (${week ? 'yes' : 'no'}) and by Generera (${generera ? 'yes' : 'no'}; it answered ${prepared.ready ? 'ready' : 'a refusal before the judge'})`);
+
+      const byId = <T extends { id: string | null }>(rows: readonly T[]) => [...rows].sort((x, y) => String(x.id).localeCompare(String(y.id)));
+      assert.deepEqual(byId(week.input.rows), byId(generera.input.rows), 'the same rows, each as the post and its own slot make it');
+      const verdictsOf = (entry: Asked) =>
+        new Map(entry.input.rows.map((judged, at) => [judged.id, { ok: entry.verdicts[at]!.ok, reason: entry.verdicts[at]!.reason ?? null, params: entry.verdicts[at]!.params ?? null }]));
+      assert.deepEqual([...verdictsOf(week)].sort(), [...verdictsOf(generera)].sort(), 'the same verdict for every row');
+      const demandOf = (entry: Asked) =>
+        [...(entry.input.demand ?? [])]
+          .map(([id, demand]) => [id, { lockedMinutes: demand.lockedMinutes, placed: demand.placed, taught: demand.taught ?? null }] as const)
+          .sort(([x], [y]) => x.localeCompare(y));
+      assert.deepEqual(demandOf(week), demandOf(generera), 'the same locks and the same lessons placed, per post and per teacher');
+      assert.deepEqual(week.input.beside, generera.input.beside);
+
+      // What they say, in absolute terms (so that the two cannot drift together): the shared post's rows are over the demand because Bo's
+      // lock took Bo's lesson, the biology post's because a lesson with a second class answers one, and the rows of the first posts hold.
+      const reasonOfPost = (postId: string) => [...new Set(board.placements.filter((entry) => entry.requirementId === postId).map((entry) => entry.verdict.reason ?? 'ok'))];
+      assert.deepEqual([p1, p2, p3].map(reasonOfPost), [['ok'], ['ok'], ['ok']]);
+      assert.deepEqual([reasonOfPost(p6), reasonOfPost(p7)], [['OVER_DEMAND'], ['OVER_DEMAND']]);
+      assert.deepEqual(
+        demandOf(week).find(([id]) => id === p6)![1],
+        { lockedMinutes: [60], placed: [60, 60], taught: { locked: [{ minutes: 60, teacherId: a.bo.id }], placed: [{ minutes: 60, teacherId: a.anna.id }, { minutes: 60, teacherId: a.bo.id }].sort((x, y) => String(x.teacherId).localeCompare(String(y.teacherId))) } },
+      );
+      assert.deepEqual(demandOf(week).find(([id]) => id === p7)![1], { lockedMinutes: [60], placed: [60, 60], taught: null });
+      assert.ok(!demandOf(week).some(([id]) => id === p8), 'a post with no row is asked nothing');
+      assert.equal(prepared.ready, false, 'a row that does not hold refuses the run before the engine');
+
+      // The rows that do not hold taken away, as the school would, Generera goes through: what the week says is left is what it sends.
+      await owner.query(`DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = ANY($1::uuid[])`, [[p6, p7]]);
+      const after = await placements.boardOfYear(a.year, a.users.schema);
+      const sent = await api.withRls(a.users.schema, (tx) => proxyService.prepareSchedule(tx, a.year, a.users.schema));
+      assert.equal(sent.ready, true, 'the run goes through once every row holds');
+      const sentLeft = new Map((sent.demand ?? []).map((entry) => [entry.requirementId, entry.lessonsPerWeek as number]));
+      for (const post of after.posts) {
+        const left = post.parts.reduce((sum, part) => sum + part.left, 0);
+        assert.equal(sentLeft.get(post.id) ?? 0, left, `the week's left for ${post.id} is what Generera sends`);
+      }
+      assert.deepEqual(
+        [p6, p7, p8].map((postId) => after.posts.find((entry) => entry.id === postId)!.parts.reduce((sum, part) => sum + part.left, 0)),
+        [2, 1, 2],
+        'the shared post has its three less the lesson Bo\'s lock took, the biology post its two less the one the second class answers, the third post both',
+      );
+      // Only a post with a förläggning is in the engine's released week.
+      const withRows = new Set(after.placements.map((entry) => entry.requirementId));
+      assert.equal(sent.payload?.placements?.requirements.length, withRows.size, 'the released week holds the posts with a förläggning, and no other');
+      assert.ok(withRows.size > 0 && withRows.size < after.posts.length);
     });
   } finally {
     await sweepPlacementWeekSchools(owner, marker);
