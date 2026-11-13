@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, lazy, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { ClipboardCheck, Pencil } from "lucide-react";
@@ -51,6 +51,12 @@ export default function LeaveRequestsPage() {
   const tInbox = useTranslations("leaveInbox");
   const tCommon = useTranslations("common");
   const [filter, setFilter] = useState<Filter>("PENDING");
+  // The bell leads the administrator here with `?filter=GUARDIAN_DECLINED` after a guardian's no: that is where the
+  // ended request is, and its tab is shown while the filter is on it, whatever the school asks for now. Read once,
+  // after mount, so that the page the server drew and the first render agree.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("filter") === "GUARDIAN_DECLINED") setFilter("GUARDIAN_DECLINED");
+  }, []);
   const inbox = useLeaveInbox(filter);
   const delegation = useLeaveDelegation();
   const policy = useLeavePolicy();
