@@ -9240,6 +9240,9 @@ async function mealChecks(owner: Client, api: PrismaService): Promise<void> {
           // The draft's own masters as the fetch saw them: none, the school's
           // lessons are handmade.
           [],
+          // No fetch of its own, so nothing to read again: the basis argument
+          // is required, and a caller with none says so.
+          null,
         ),
       );
       assert.deepEqual({ student: await mealsSeenBy(student), guardian: await mealsSeenBy(parent) }, published);

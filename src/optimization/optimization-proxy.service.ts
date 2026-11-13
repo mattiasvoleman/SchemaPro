@@ -4763,6 +4763,12 @@ export class OptimizationProxyService {
     /** Terminer: the preserved masters' weeks as the fetch read them, by id (PreparedSchedule.lockWeeks). */
     lockWeeks: ReadonlyMap<string, string> = new Map(),
   ): Promise<TimedLesson[] | null> {
+    // The type says it, and a caller that is not typed (a probe, a script) must
+    // not read the missing argument as "no basis": loud, before anything is
+    // locked or read.
+    if (startBasis === undefined) {
+      throw new TypeError('persistMasterLessons: startBasis is required (null for a caller with no fetch of its own).');
+    }
     // First, before anything is read: the publication lock and the mode
     // (publish-mode.ts). In DRAFT the regenerated grundschema is a draft.
     // A principal with no tenant is refused below, before anything is

@@ -1340,6 +1340,19 @@ describe('OptimizationProxyService', () => {
       expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
     });
 
+    it('refuses a caller that leaves the basis out altogether, before it takes a lock or reads a row', async () => {
+      // `null` is how a caller says it has no fetch to read again; an argument
+      // that is simply missing (an untyped caller) is a mistake, and the
+      // protection is not switched off by it.
+      const untyped = (service as unknown as { persistMasterLessons: (...args: unknown[]) => Promise<unknown> }).persistMasterLessons;
+
+      await expect(
+        untyped.call(service, tx, ACADEMIC_YEAR, testUser(), { status: 'FEASIBLE', lessons: [] }, [], [], new Map(), new Map(), [], new Map(), []),
+      ).rejects.toThrow(/startBasis is required/);
+      expect(tx.$executeRaw).not.toHaveBeenCalled();
+      expect(tx.masterLesson.findMany).not.toHaveBeenCalled();
+    });
+
     it('writes when the draft is the one the fetch saw, whatever order its rows come in', async () => {
       // The draft read (NOT preserved) sees two lessons; the read of what the
       // delete kept sees none.
