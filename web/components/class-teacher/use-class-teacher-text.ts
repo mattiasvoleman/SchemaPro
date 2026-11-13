@@ -2,12 +2,12 @@
 
 import { useLocale, useTranslations } from "next-intl";
 import {
-  isFrameReason,
+  isRefusalReason,
   type ChangeProblem,
   type ChangeView,
   type ConflictView,
   type FieldChange,
-  type FrameReason,
+  type RefusalReason,
   type PublishOutcome,
   type Verdict,
 } from "@/lib/class-teacher";
@@ -52,8 +52,8 @@ export function useClassTeacherText() {
   const span = (start: string, end: string): string => `${start}–${end}`;
 
   /** A refusal's reason as a sentence; a reason this page does not know yet is said in general. */
-  const reason = (value: FrameReason | string | null | undefined): string =>
-    isFrameReason(value) ? t(`reason.${value}`) : t("reason.UNKNOWN");
+  const reason = (value: RefusalReason | string | null | undefined): string =>
+    isRefusalReason(value) ? t(`reason.${value}`) : t("reason.UNKNOWN");
 
   const conflictWhen = (other: NonNullable<ConflictView["other"]>): string => {
     const when = other.date ? day(other.date) : other.day ? dayName(other.day) : "";

@@ -18,10 +18,12 @@ import {
   isFault,
   isFrameReason,
   isPublishable,
+  isRefusalReason,
   isTime,
   layoutLanes,
   lessonOfDraft,
   lessonState,
+  LESSON_IS_PLACED,
   minutesOf,
   mondayOf,
   openSpansOf,
@@ -105,6 +107,16 @@ describe("the state of a lesson", () => {
     expect(isFrameReason("TIME_CLOSED")).toBe(true);
     expect(isFrameReason("A_NEW_ONE")).toBe(false);
     expect(isFrameReason(undefined)).toBe(false);
+  });
+
+  // The gateway adds one reason to the frame's, which the web mirrors one for one (class-teacher.contract.test.ts).
+  it("knows the reason of a lesson placed on its timplanspost as a refusal, though it is no frame reason", () => {
+    expect(isFrameReason(LESSON_IS_PLACED)).toBe(false);
+    expect(isRefusalReason(LESSON_IS_PLACED)).toBe(true);
+    expect(isRefusalReason("TIME_CLOSED")).toBe(true);
+    expect(isRefusalReason("A_NEW_ONE")).toBe(false);
+    expect(isEditable({ refusal: LESSON_IS_PLACED })).toBe(false);
+    expect(lessonState({ refusal: LESSON_IS_PLACED, draftId: null, status: "SCHEDULED" })).toBe("locked");
   });
 });
 
@@ -308,6 +320,8 @@ describe("an ApiError, as the page tells it", () => {
     // The global filter forwards only `code` and flat `params`: a reason that did not arrive is null, and the preview names it.
     expect(problemOf(error(403, CODES.OUTSIDE_FRAME))).toEqual({ kind: "frame", reason: null });
     expect(problemOf(error(403, CODES.OUTSIDE_FRAME, { reason: "SOMETHING_NEW" }))).toEqual({ kind: "frame", reason: null });
+    // The reason the gateway adds to the frame's is kept, so the page can say it in its own words.
+    expect(problemOf(error(403, CODES.OUTSIDE_FRAME, { reason: LESSON_IS_PLACED }))).toEqual({ kind: "frame", reason: LESSON_IS_PLACED });
   });
 
   it("tells each of the 409s apart by its code, since the status cannot", () => {

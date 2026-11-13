@@ -4,8 +4,8 @@
  *
  * The gateway's src/class-teacher/class-teacher.types.ts says the same
  * reasons, kinds and codes, and class-teacher.contract.test.ts reads it and
- * fails when this file drifts. Free of React and of imports, so that test can
- * read it as it is.
+ * fails when this file drifts. Free of React and of imports (but for the one
+ * string of lesson-is-placed.ts), so that test can read it as it is.
  *
  * WHO DECIDES WHAT MAY BE CHANGED is the database's frame
  * (app.class_teacher_frame): nothing here works out whether a lesson is
@@ -14,6 +14,8 @@
  * this file does is the form's own arithmetic (a split's minutes, an end after
  * its start), which spares a round trip and says the fault in words.
  */
+
+import { LESSON_IS_PLACED } from "./lesson-is-placed";
 
 // ---------------------------------------------------------------------------
 // The vocabulary (src/class-teacher/class-teacher.types.ts)
@@ -52,6 +54,21 @@ export type FrameReason = (typeof FRAME_REASONS)[number];
 
 export function isFrameReason(value: unknown): value is FrameReason {
   return typeof value === "string" && (FRAME_REASONS as readonly string[]).includes(value);
+}
+
+/**
+ * The one reason the gateway adds to the frame's (LESSON_IS_PLACED_REASON in the gateway's file, and the code of its 409 from the
+ * editor and the swaps): the lesson is written by Generera from a förläggning on its timplanspost, so it is changed there. Kept
+ * apart from FRAME_REASONS, which mirrors the gateway's list one for one. The string itself is on a file of its own
+ * (lib/lesson-is-placed.ts), which the pages that only compare a code with it import instead of this file.
+ */
+export { LESSON_IS_PLACED };
+
+/** Why a lesson is not the klasslärare's to change: the frame's reasons, and the one the gateway adds. */
+export type RefusalReason = FrameReason | typeof LESSON_IS_PLACED;
+
+export function isRefusalReason(value: unknown): value is RefusalReason {
+  return value === LESSON_IS_PLACED || isFrameReason(value);
 }
 
 export const CHANGE_KINDS = ["OCCASION_MOVE", "OCCASION_CANCEL", "OCCASION_ROOM", "TEMPLATE_MOVE", "TEMPLATE_SPLIT"] as const;
@@ -128,7 +145,7 @@ export interface RemovalView {
 
 export type Verdict =
   | { state: "OK"; removes?: RemovalView }
-  | { state: "REFUSED"; reason: FrameReason }
+  | { state: "REFUSED"; reason: RefusalReason }
   | { state: "STALE"; changed: FieldChange[] }
   | { state: "GONE" }
   | { state: "CONFLICT"; conflicts: ConflictView[] };
@@ -164,7 +181,7 @@ export type Outcome = (typeof OUTCOMES)[number];
 export interface PublishOutcome {
   id: string;
   outcome: Outcome;
-  reason?: FrameReason;
+  reason?: RefusalReason;
   changed?: FieldChange[];
   conflicts?: ConflictView[];
 }
@@ -188,7 +205,7 @@ export interface OccasionView {
   /** The klasslärare teaches it; of a colleague's lesson nothing but "not yours" is said. */
   mine: boolean;
   version: string;
-  refusal: FrameReason | null;
+  refusal: RefusalReason | null;
   draftId: string | null;
 }
 
@@ -204,7 +221,7 @@ export interface TemplateLessonView {
   recurrence: string;
   mine: boolean;
   version: string;
-  refusal: FrameReason | null;
+  refusal: RefusalReason | null;
   draftId: string | null;
 }
 
@@ -347,7 +364,7 @@ export const mondayOf = (date: string): string => addDaysIso(date, 1 - weekdayOf
 // ---------------------------------------------------------------------------
 
 /** The frame's say: a lesson without a refusal may be changed by the klasslärare. */
-export const isEditable = (lesson: { refusal: FrameReason | null }): boolean => lesson.refusal === null;
+export const isEditable = (lesson: { refusal: RefusalReason | null }): boolean => lesson.refusal === null;
 
 export type LessonState = "editable" | "locked" | "draft" | "cancelled";
 
@@ -356,7 +373,7 @@ export type LessonState = "editable" | "locked" | "draft" | "cancelled";
  * with a draft says so before it says anything else, a cancelled one is
  * cancelled whatever the frame says of it, and the rest is the frame's.
  */
-export function lessonState(lesson: { refusal: FrameReason | null; draftId: string | null; status?: string }): LessonState {
+export function lessonState(lesson: { refusal: RefusalReason | null; draftId: string | null; status?: string }): LessonState {
   if (lesson.draftId !== null) return "draft";
   if (lesson.status !== undefined && lesson.status !== "SCHEDULED") return "cancelled";
   return isEditable(lesson) ? "editable" : "locked";
@@ -663,7 +680,7 @@ export const updateTarget = (kind: ChangeKind, form: ChangeForm): ChangeTarget =
 
 export type ChangeProblem =
   /** 403: outside the frame. `reason` is known only when the gateway sent it (params.reason); the preview names it either way. */
-  | { kind: "frame"; reason: FrameReason | null }
+  | { kind: "frame"; reason: RefusalReason | null }
   | { kind: "notAppointed" }
   /** 409: the lesson changed since the page read it. */
   | { kind: "stale" }
@@ -693,7 +710,7 @@ export function problemOf(error: unknown): ChangeProblem {
   const { status, code, params } = error as Error & { status: number; code?: string; params?: Record<string, string | number> };
   switch (code) {
     case CODES.OUTSIDE_FRAME:
-      return { kind: "frame", reason: isFrameReason(params?.reason) ? params.reason : null };
+      return { kind: "frame", reason: isRefusalReason(params?.reason) ? params.reason : null };
     case CODES.NOT_APPOINTED:
       return { kind: "notAppointed" };
     case CODES.STALE:

@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, lazy, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { ClipboardCheck, Pencil } from "lucide-react";
@@ -28,7 +29,23 @@ const DelegationDialog = lazy(() =>
   import("@/components/leave/delegation-dialog").then((module) => ({ default: module.DelegationDialog })),
 );
 
-type Filter = "PENDING" | "APPROVED" | "REJECTED" | "GUARDIAN_DECLINED";
+const FILTERS = ["PENDING", "APPROVED", "REJECTED", "GUARDIAN_DECLINED"] as const;
+type Filter = (typeof FILTERS)[number];
+const isFilter = (value: string | null): value is Filter => FILTERS.some((filter) => filter === value);
+
+/**
+ * The tab the address asks for, handed up whenever the address changes: the link of a notice leads here from the bell
+ * with `?filter=GUARDIAN_DECLINED` (a guardian's no ended the request, and that is the tab it is under), also when the
+ * administrator is on the page already, where nothing mounts again. A component of its own, because useSearchParams
+ * needs a Suspense boundary of its own to prerender, and the page must not wait for it.
+ */
+function FilterOfAddress({ onFilter }: { onFilter: (filter: Filter) => void }) {
+  const asked = useSearchParams().get("filter");
+  useEffect(() => {
+    if (isFilter(asked)) onFilter(asked);
+  }, [asked, onFilter]);
+  return null;
+}
 
 /**
  * Ledighetsansökningar: rektor's inbox, through the gateway
@@ -51,12 +68,13 @@ export default function LeaveRequestsPage() {
   const tInbox = useTranslations("leaveInbox");
   const tCommon = useTranslations("common");
   const [filter, setFilter] = useState<Filter>("PENDING");
-  // The bell leads the administrator here with `?filter=GUARDIAN_DECLINED` after a guardian's no: that is where the
-  // ended request is, and its tab is shown while the filter is on it, whatever the school asks for now. Read once,
-  // after mount, so that the page the server drew and the first render agree.
-  useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("filter") === "GUARDIAN_DECLINED") setFilter("GUARDIAN_DECLINED");
-  }, []);
+  // The tab of the ended requests is shown while the filter is on it, whatever the school asks for now. The address
+  // follows the tab, so that the bell's link to a tab other than the one shown is a change of the address, and a
+  // link to the one shown is no change to make.
+  const choose = (value: Filter) => {
+    setFilter(value);
+    window.history.replaceState(null, "", value === "PENDING" ? window.location.pathname : `?filter=${value}`);
+  };
   const inbox = useLeaveInbox(filter);
   const delegation = useLeaveDelegation();
   const policy = useLeavePolicy();
@@ -146,8 +164,12 @@ export default function LeaveRequestsPage() {
       )}
 
       <FilterBar>
-        <Tabs value={filter} onValueChange={(value) => setFilter(value as Filter)}>
-          <TabsList aria-label={t("filterLabel")}>
+        <Suspense fallback={null}>
+          <FilterOfAddress onFilter={setFilter} />
+        </Suspense>
+        {/* Four tabs are wider than a phone: the row scrolls (from its start, not its middle) instead of the page. */}
+        <Tabs value={filter} onValueChange={(value) => choose(value as Filter)} className="min-w-0 max-w-full">
+          <TabsList aria-label={t("filterLabel")} className="max-w-full justify-start overflow-x-auto">
             <TabsTrigger value="PENDING">{tGuardian("statusPENDING")}</TabsTrigger>
             <TabsTrigger value="APPROVED">{tGuardian("statusAPPROVED")}</TabsTrigger>
             <TabsTrigger value="REJECTED">{tGuardian("statusREJECTED")}</TabsTrigger>
