@@ -13,6 +13,7 @@ import type {
 } from "@/lib/types";
 import { breaksFrame, type FrameTime } from "@/lib/frame-times";
 import { spanMeetsRule, type GradeSpan } from "@/lib/grade-span";
+import { mealMeetsWindow, type MealWindow } from "@/lib/lunch-window";
 import { timeToMinutes } from "@/lib/utils";
 import {
   keptByOf,
@@ -25,6 +26,22 @@ import {
   replacingGroupsOfNamed,
   yearsOf,
 } from "@/lib/replacing-groups";
+
+/**
+ * A class's meal on a weekday: the minutes it holds and, when it holds only
+ * some weeks of the läsår, which (src/common/lunch-window.ts).
+ */
+export interface Meal extends MealWindow {
+  startMinutes: number;
+  endMinutes: number;
+}
+
+/**
+ * The meals of each group by `groupId:weekday`. One meal, or several when the
+ * class eats at another time in another part of the year: a lesson is held to
+ * those of its own weeks.
+ */
+export type LunchOf = Map<string, Meal | readonly Meal[]>;
 
 /**
  * FRAME is its own kind rather than a second AVAILABILITY.
@@ -520,7 +537,7 @@ export function validatePlacement(
    * behind it looks like a rule and behaves like decoration: the lesson lands
    * on top of the meal, the stripe still shows, and nothing says a word.
    */
-  lunchOf?: Map<string, { startMinutes: number; endMinutes: number }>,
+  lunchOf?: LunchOf,
   /**
    * The school's room locks, and the lesson's subject and stage to read them
    * with. Omitted, locks are not checked.
@@ -694,16 +711,15 @@ export function validatePlacement(
   // is most likely to want anyway, so it reports after everything else.
   if (lunchOf !== undefined) {
     for (const groupId of groupsOf(candidate)) {
-      const sitting = lunchOf.get(`${groupId}:${candidate.dayOfWeek}`);
-      if (
-        sitting &&
-        overlaps(
-          candidate.startMinutes,
-          candidate.endMinutes,
-          sitting.startMinutes,
-          sitting.endMinutes,
-        )
-      ) {
+      // A class may eat at another time in another part of the läsår, so a
+      // day can hold several meals; the lesson is held to those of its own weeks.
+      const meals = lunchOf.get(`${groupId}:${candidate.dayOfWeek}`);
+      const clash = (Array.isArray(meals) ? meals : meals ? [meals] : []).some(
+        (meal: Meal) =>
+          mealMeetsWindow(meal, candidate) &&
+          overlaps(candidate.startMinutes, candidate.endMinutes, meal.startMinutes, meal.endMinutes),
+      );
+      if (clash) {
         hits.push({ kind: "LUNCH" });
         break;
       }
@@ -738,7 +754,7 @@ export function detectConflicts(
   /** The school's ramtider; without them frames are not checked. */
   frames?: FrameTime[],
   /** Each group's meal by `groupId:weekday`; without it meals are not checked. */
-  lunchOf?: Map<string, { startMinutes: number; endMinutes: number }>,
+  lunchOf?: LunchOf,
   /** The school's room locks; without them locks are not checked. */
   roomLock?: RoomLockCheck,
   /**
