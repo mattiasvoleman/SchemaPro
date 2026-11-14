@@ -5277,14 +5277,16 @@ mask, as before.
 same way: its locked lessons (a förlagd post is one) leave it the same STARTS
 on every day (the starts of the lunch window that remain, not the lessons: a
 lock that runs to 12:30 and one that runs to 12:15 leave a window ending at
-12:00 the same starts) and the same meals are placed in them. **A school with a
+12:00 the same starts) and the same meals are placed in them. A pinned lesson
+(§20) cuts the year as a locked one does, by the starts it takes together with
+its pupils' changing minutes (20.3). **A school with a
 dining hall too small for every class at once cuts all its classes by the
 locks of all of them**: the hall is one resource the meals share, so a class
 with no lock of its own can need one time in the autumn and another in the
 spring because another class's locks leave the hall no other way to seat both
 (without this the school was refused though a timetable existed). A hall that
-seats the whole school at once couples nothing. A lesson that is not locked
-cuts nothing: it is laid once and keeps clear of the meal in every week it
+seats the whole school at once couples nothing. A lesson that is neither locked
+nor pinned cuts nothing: it is laid once and keeps clear of the meal in every week it
 runs. Parts are cut per period, never per parity (the meal is one for the odd
 weeks and the even weeks of a period, as a teacher's own lunch is, 19.3), and
 never joined: a class whose locks are alike in every period is one part and
@@ -5438,11 +5440,19 @@ A pinned lesson never gives way, in Bästa möjliga schema either.
   name a room. On the 250-pupil benchmark (four workers): 3.1 s without,
   4.7 s with 12, 8.5 s with 120 of which 60 name a room, and 3.6 s with the
   same 120 and no room named. So a pinned lesson that names its room makes
-  the first timetable 1.5 to 3 times as dear, and one that leaves the room to
-  the engine about 1.2 times: the cost is the room's class of its own, not
-  the pin. It is the cost a locked lesson's room has, and the same lessons
-  sent as locks build a model 4 to 13 times as large (20 lessons: 31,822
-  variables as locks, 8,237 as pinned lessons; 200 lessons: 133,036 and
-  10,487). Not measured on the 2,000-pupil benchmark, where a first timetable
-  takes minutes and a factor of two to three is felt in the budget: that is
-  measured with the change that first sends the field.
+  the first timetable 1.5 to 3 times as dear (up to 3.5 times when every one
+  of the 120 names its room), and one that leaves the room to the engine
+  about 1.2 times: the cost is the room's class of its own, not the pin. A
+  locked lesson's room is a class of its own too, and a pinned lesson is not
+  dearer than the same lesson sent as a lock. On the 250-pupil benchmark
+  (paired, four workers, the same 120 lessons) a first timetable took 13 to
+  15 s with every lesson pinned in its room and 36 to 43 s with the lessons
+  sent as locks (7,870 variables against 87,642); on the högstadium benchmark
+  the two were alike (one worker, not paired: 19.9 s pinned and 22.8 s locked
+  with 200 lessons, 34.4 s and 35.6 s with 20). Like for like, with a room
+  named on every pinned lesson, the locks build a model 3.5 to 12 times as
+  large (20 lessons: 31,822 variables as locks, 9,047 as pinned lessons; 200
+  lessons: 133,036 and 10,739). Not measured on the 2,000-pupil benchmark,
+  where a first timetable takes minutes and a factor of two to three is felt
+  in the budget: that is measured with the change that first sends the
+  field.

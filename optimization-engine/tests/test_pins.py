@@ -26,6 +26,7 @@ Tove, three, and svenska with Sara, two. Three rooms that hold any of them.
 
 from __future__ import annotations
 
+import itertools
 import random
 import sys
 import tempfile
@@ -50,6 +51,7 @@ BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
 if str(BENCHMARKS) not in sys.path:
     sys.path.insert(0, str(BENCHMARKS))
 
+from lunch_flag_identity import classes_in_parts  # noqa: E402
 from validate_schedule import _pin_problems, lunch_problems, validate  # noqa: E402
 
 #: 08:00-12:00, Monday to Friday.
@@ -412,6 +414,17 @@ class TestTheModel:
         assert {(1, "08:00"), (2, "09:20")} <= _starts(response, MATTE)
         assert _problems(payload, response) == []
 
+    @pytest.mark.parametrize("order", list(itertools.permutations(["08:00", "09:20", "09:30"])))
+    def test_the_step_is_read_off_all_three_pins_in_any_order(self, order: tuple[str, ...]) -> None:
+        """On the hour, twenty past and half past: ten minutes, whichever of them stands first or last.
+
+        A step read off the first pin alone, off the first two or off the last
+        alone answers something else for one order or another (the second
+        review of PR 317, neighbours Q01 and Q02 of the first review's P09).
+        """
+        payload = _payload({MATTE: [_pin(1, order[0]), _pin(2, order[1]), _pin(3, order[2])]})
+        assert _start_step(_request(payload), SchedulerSolver(_settings())._grid) == 2
+
     def test_a_place_on_a_split_post_is_its_teachers_lesson(self) -> None:
         payload = _payload(
             {MATTE: [None, None, _pin(4, "10:00")]},
@@ -527,6 +540,39 @@ class TestTheModel:
         response = _solve(payload)
         assert response.status == "INFEASIBLE"
         assert _codes(response) == [IN_THE_WAY_ANY_ROOM, IN_THE_WAY_ANY_ROOM]
+
+
+def _three_member_block(odd_member: int, place: int) -> dict[str, object]:
+    """A block of three posts pinned at `place` on Tuesday 09:00 in each member but `odd_member`, which has Wednesday."""
+    block = str(uuid4())
+    third, class_c, teacher_c = str(uuid4()), str(uuid4()), str(uuid4())
+    members = [MATTE, MATTE_B, third]
+    payload = _payload(posts={MATTE: {"blockId": block}, MATTE_B: {"blockId": block, "teacherId": BERTIL}})
+    requirements: list[dict[str, object]] = payload["requirements"]  # type: ignore[assignment]
+    requirements.append({**_requirement(third, class_c, teacher_c), "blockId": block})
+    for requirement in requirements:
+        if requirement["id"] in members:
+            places: list[object] = [None, None, None]
+            places[place] = _pin(3 if members.index(str(requirement["id"])) == odd_member else 2, "09:00")
+            requirement["pinnedLessons"] = places
+    return payload
+
+
+def _beside_a_förläggning(payload: dict[str, object]) -> dict[str, object]:
+    """The week with a förläggning in it: svenska of 7B has a lesson as a lock on Friday, and `placements` says so."""
+    lock = str(uuid4())
+    requirements: list[dict[str, object]] = payload["requirements"]  # type: ignore[assignment]
+    whole = next(requirement for requirement in requirements if requirement["id"] == SVENSKA_B)
+    payload["requirements"] = [
+        {**requirement, "lessonsPerWeek": 1} if requirement["id"] == SVENSKA_B else requirement
+        for requirement in requirements
+    ]
+    payload["fixedLessons"] = [{
+        "id": lock, "teacherId": SARA, "studentGroupId": CLASS_7B, "roomId": R1,
+        "dayOfWeek": 5, "startTime": "10:00:00", "endTime": "11:00:00",
+    }]
+    payload["placements"] = {"lessons": [{"fixedLessonId": lock, "requirementId": SVENSKA_B}], "requirements": [whole]}
+    return payload
 
 
 class TestTheRefusalBeforeTheModel:
@@ -670,6 +716,36 @@ class TestTheRefusalBeforeTheModel:
         with pytest.raises(InvalidScheduleInputError) as refused:
             _solve(payload)
         assert refused.value.code == "PLACED_LESSON_OUTSIDE_FRAME"
+
+    @pytest.mark.parametrize("place", [0, 1, 2])
+    @pytest.mark.parametrize("odd_member", [0, 1, 2])
+    def test_a_member_of_a_block_pinned_apart_is_refused_wherever_it_stands(self, place: int, odd_member: int) -> None:
+        """Three members, and each of them in turn the one pinned on another day, at each place.
+
+        A rule that reads place 0 alone, leaves the last place unread or
+        compares only the second member with the first lets one of the nine
+        through to the model, which refuses it by another name (the second
+        review of PR 317, Q03 and Q04 beside the first review's V09).
+        """
+        assert self._refused(_three_member_block(odd_member, place)).code == "PLACED_LESSONS_OF_BLOCK_DIFFER"
+
+    def test_a_pin_outside_the_week_is_its_own_refusal_beside_a_förläggning(self) -> None:
+        """Not the frame's refusal alone: every refusal of a pin's own is kept out of the released week's question (Q06)."""
+        payload = _beside_a_förläggning(_payload({MATTE: [_pin(6, "08:00"), None, None]}))
+        assert self._refused(payload).code == "PLACED_LESSON_OUTSIDE_THE_WEEK"
+
+    def test_a_pin_in_a_room_too_small_is_its_own_refusal_beside_a_förläggning(self) -> None:
+        payload = _payload({MATTE: [_pin(1, "08:00", room=SMALL), None, None]})
+        payload["rooms"] = [*payload["rooms"], {"id": SMALL, "capacity": 5}]  # type: ignore[misc]
+        assert self._refused(_beside_a_förläggning(payload)).code == "PLACED_LESSON_ROOM_NOT_ALLOWED"
+
+    def test_a_block_pinned_apart_is_its_own_refusal_beside_a_förläggning(self) -> None:
+        """The block's code begins PLACED_LESSONS_, which a reading of the prefix PLACED_LESSON_ leaves out (Q07)."""
+        assert self._refused(_beside_a_förläggning(_three_member_block(2, 1))).code == "PLACED_LESSONS_OF_BLOCK_DIFFER"
+
+    def test_a_pin_five_minutes_past_the_days_end_is_refused_by_name(self) -> None:
+        """The day ends 12:00, and 11:05 and sixty minutes is one step of the grid past it (Q11)."""
+        assert self._refused(_payload({MATTE: [_pin(1, "11:05"), None, None]})).code == "PLACED_LESSON_OUTSIDE_THE_WEEK"
 
 
 class TestTheName:
@@ -929,7 +1005,8 @@ class TestTheIndependentCheck:
     """benchmarks/validate_schedule._pin_problems is the judge of the property tests, so it is judged here.
 
     One lesson handed to it at a time: in the wrong room, with the wrong end,
-    one lesson for two pins, and the wrong teacher's lesson on a split post.
+    one lesson for two pins, the wrong teacher's lesson on a split post, on
+    the wrong day, and with the wrong start.
     """
 
     def _lesson(self, requirement: str, **given: object) -> ScheduledLesson:
@@ -959,6 +1036,16 @@ class TestTheIndependentCheck:
         ))
         assert _pin_problems(request, [self._lesson(MATTE, teacher_id=TOVE)])
         assert not _pin_problems(request, [self._lesson(MATTE, teacher_id=BERTIL)])
+
+    def test_a_lesson_on_another_day_is_a_problem(self) -> None:
+        request = _request(_payload({MATTE: [None, _pin(3, "10:00"), None]}))
+        assert _pin_problems(request, [self._lesson(MATTE, day_of_week=4)])
+        assert not _pin_problems(request, [self._lesson(MATTE)])
+
+    def test_a_lesson_that_starts_at_another_minute_is_a_problem(self) -> None:
+        """With the pin's own end, so that the start alone tells the lesson from the pin."""
+        request = _request(_payload({MATTE: [None, _pin(3, "10:00"), None]}))
+        assert _pin_problems(request, [self._lesson(MATTE, start_time="10:05:00")])
 
 
 # ---------------------------------------------------------------------------
@@ -1293,6 +1380,32 @@ class TestTheMealOfATerm:
         assert response.status in ("OPTIMAL", "FEASIBLE")
         assert self._meals(response) == [("11:30", (True, False)), ("11:00", (False, True))]
         assert self._read(payload, response) == []
+        assert classes_in_parts(payload) == 1
+
+    def test_the_days_of_a_week_are_told_apart(self) -> None:
+        """Monday 11:00 and Tuesday 11:30 in the autumn, and the other way round in the spring.
+
+        Read without their day the two terms take the same starts, the year
+        is one part, and neither day has a half hour for a meal of the whole
+        year.
+        """
+        payload = self._year(
+            self._post(AUTUMN, _pin(1, "11:00", minutes=30)), self._post(AUTUMN, _pin(2, "11:30", minutes=30)),
+            self._post(SPRING, _pin(1, "11:30", minutes=30)), self._post(SPRING, _pin(2, "11:00", minutes=30)),
+        )
+        solver = SchedulerSolver(_settings(**{**self.ONE_DAY, "SCHEDULE_DAYS": "1,2"}))
+        request = _request(payload)
+        response = solver.solve(request)
+        assert response.status in ("OPTIMAL", "FEASIBLE")
+        assert sorted((lunch.day_of_week, lunch.start_time[:5], lunch.periods) for lunch in response.lunches) == [
+            (1, "11:00", (False, True)), (1, "11:30", (True, False)),
+            (2, "11:00", (True, False)), (2, "11:30", (False, True)),
+        ]
+        assert [
+            *validate(solver._grid, request, response.lessons),
+            *lunch_problems(solver._grid, request, response.lessons, response.lunches),
+        ] == []
+        assert classes_in_parts(payload) == 1
 
     def test_the_hall_carries_one_class_pins_into_another_class_year(self) -> None:
         """A hall that seats one class at a time: the class with no pin of its own eats around the one that has them.
@@ -1323,6 +1436,156 @@ class TestTheMealOfATerm:
             (other, (True, False)): "11:00", (other, (False, True)): "11:30",
         }
         assert self._read(payload, response) == []
+
+    def test_the_hall_seats_a_class_with_pinned_quarters_as_it_does_with_the_quarters_locked(self) -> None:
+        """A quarter of an hour pinned in each term, 11:00 and then 11:30, and a hall for one class at a time.
+
+        The world the second review of PR 314 left (seam_hall_pins.py): the
+        class with the quarters eats 11:30 and then 11:00, the other class
+        the other way round, and the same quarters sent as locks are seated
+        the same.
+        """
+        other = str(uuid4())
+
+        def hall(posts: list[dict[str, object]], locks: list[dict[str, object]]) -> dict[str, object]:
+            payload = self._year(*posts, locks=locks)
+            payload["requirements"].append(_requirement(str(uuid4()), other, str(uuid4()), 2))  # type: ignore[union-attr]
+            payload["groups"].append(  # type: ignore[union-attr]
+                {"id": other, "lunchHeadcount": 20, "minGradeLevel": 7, "maxGradeLevel": 7},
+            )
+            payload["rules"] = {**MEAL, "diningSeats": 20}
+            return payload
+
+        def seated(response) -> dict[tuple[str, tuple[bool, ...] | None], str]:
+            return {(str(lunch.student_group_id), lunch.periods): lunch.start_time[:5] for lunch in response.lunches}
+
+        pinned = hall([
+            {**self._post(AUTUMN, _pin(1, "11:00", minutes=15)), "minutesPerLesson": 15},
+            {**self._post(SPRING, _pin(1, "11:30", minutes=15)), "minutesPerLesson": 15},
+        ], [])
+        locked = hall([], [
+            _lock_of_a_term(self.GROUP, "11:00", AUTUMN, minutes=15),
+            _lock_of_a_term(self.GROUP, "11:30", SPRING, minutes=15),
+        ])
+        response = self._answer(pinned)
+        assert response.status in ("OPTIMAL", "FEASIBLE")
+        assert seated(response) == {
+            (self.GROUP, (True, False)): "11:30", (self.GROUP, (False, True)): "11:00",
+            (other, (True, False)): "11:00", (other, (False, True)): "11:30",
+        }
+        assert seated(response) == seated(self._answer(locked))
+        assert self._read(pinned, response) == []
+
+    @pytest.mark.parametrize(
+        ("posts", "cut"),
+        [
+            pytest.param(
+                [
+                    {"periods": AUTUMN, "pin": _pin(1, "11:00", minutes=30)},
+                    {"periods": SPRING, "pin": _pin(1, "11:30", minutes=30)},
+                ],
+                True, id="across the meal, one a term",
+            ),
+            pytest.param(
+                [{"periods": None, "pin": _pin(1, "11:00", minutes=30)}, {"periods": SPRING, "pin": None}],
+                False, id="in the meal all year",
+            ),
+            pytest.param(
+                [
+                    {"periods": AUTUMN, "pin": _pin(1, "10:00", minutes=30)},
+                    {"periods": SPRING, "pin": _pin(1, "10:30", minutes=30)},
+                ],
+                False, id="clear of every meal start",
+            ),
+            pytest.param(
+                [
+                    {"periods": AUTUMN, "pin": _pin(1, "10:30", minutes=30)},
+                    {"periods": SPRING, "pin": _pin(1, "12:00", minutes=30)},
+                ],
+                False, id="up to the window and from its end",
+            ),
+            pytest.param(
+                [
+                    {"periods": AUTUMN, "pin": _pin(1, "10:30", minutes=30), "minutesAfter": 20},
+                    {"periods": SPRING, "pin": _pin(1, "12:00", minutes=30), "minutesBefore": 20},
+                ],
+                True, id="the pupils' changing minutes, after one and before the other",
+            ),
+            pytest.param(
+                [
+                    {"periods": AUTUMN, "pin": _pin(1, "12:00", minutes=30), "minutesBefore": 20},
+                    {"periods": SPRING, "pin": _pin(1, "12:00", minutes=30)},
+                ],
+                True, id="the minutes before a lesson alone",
+            ),
+            pytest.param(
+                [
+                    {"periods": AUTUMN, "pin": _pin(1, "10:30", minutes=30), "minutesAfter": 3},
+                    {"periods": SPRING, "pin": _pin(1, "10:30", minutes=30), "minutesAfter": 5},
+                ],
+                False, id="three minutes and five are one step of the grid",
+            ),
+            pytest.param(
+                [
+                    {"periods": AUTUMN, "pin": _pin(1, "10:30", minutes=30), "minutesAfter": 5},
+                    {"periods": SPRING, "pin": _pin(1, "10:30", minutes=30), "minutesAfter": 10},
+                ],
+                True, id="five minutes and ten are two",
+            ),
+            pytest.param(
+                [
+                    {"periods": AUTUMN, "pin": _pin(1, "10:30", minutes=30), "frame": 10},
+                    {"periods": SPRING, "pin": _pin(1, "10:00", minutes=30), "frame": 10},
+                ],
+                True, id="the corridor of the class's years after a lesson",
+            ),
+            pytest.param(
+                [
+                    {"periods": AUTUMN, "pin": _pin(1, "10:45", minutes=20), "minutesPerLesson": 20},
+                    {"periods": AUTUMN, "pin": _pin(1, "11:30", minutes=30)},
+                    {"periods": SPRING, "pin": _pin(1, "11:00", minutes=60), "minutesPerLesson": 60},
+                ],
+                False, id="two lessons that take the starts one takes",
+            ),
+        ],
+    )
+    def test_the_payload_alone_tells_the_cut_the_engine_makes(
+        self, monkeypatch: pytest.MonkeyPatch, posts: list[dict[str, object]], cut: bool,
+    ) -> None:
+        """benchmarks/lunch_flag_identity.classes_in_parts reads a pinned lesson as the engine's parts do.
+
+        That reading is the judge of "the engine split exactly the classes
+        its starts split", written in minutes and sharing no code with the
+        engine, so it is judged here against the engine's own split: a
+        pinned lesson it did not read would call every cut by a pin a split
+        without cause. The worlds are the edges of what a pinned lesson
+        takes: its periods, the window's two ends, the pupils' minutes before
+        and after and their rounding onto the grid, the corridor of the
+        class's years, and two lessons whose starts join into one's.
+        """
+        def post(given: dict[str, object]) -> dict[str, object]:
+            values = {key: value for key, value in given.items() if key not in ("periods", "pin", "frame")}
+            return {**self._post(given["periods"], given["pin"]), **values}  # type: ignore[arg-type]
+
+        payload = self._year(*(post(given) for given in posts))
+        corridor = max((int(given.get("frame", 0)) for given in posts), default=0)  # type: ignore[call-overload]
+        if corridor:
+            payload["frameTimes"] = [{
+                "minGradeLevel": 7, "maxGradeLevel": 7, "startTime": "08:00:00", "endTime": "13:00:00",
+                "changeoverMinutes": corridor,
+            }]
+        cuts: list[int] = []
+        original = SchedulerSolver._lunch_parts
+
+        def watching(solver: SchedulerSolver, *arguments: object, **keywords: object):
+            parts = original(solver, *arguments, **keywords)  # type: ignore[arg-type]
+            cuts.append(len(parts))
+            return parts
+
+        monkeypatch.setattr(SchedulerSolver, "_lunch_parts", watching)
+        SchedulerSolver(_settings(**self.ONE_DAY))._build_model(_request(payload), use_assumptions=False)
+        assert cuts and (cuts[-1] > 0) is cut
+        assert (classes_in_parts(payload) > 0) is cut
 
     def test_two_posts_pinned_onto_the_whole_window_of_one_term_are_named(self) -> None:
         """Both in the autumn: that term has no half hour, and the refusal names the two pinned lessons."""
