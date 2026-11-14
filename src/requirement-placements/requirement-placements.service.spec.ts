@@ -3,10 +3,12 @@ import { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock, testUser, type TxMock } from '../../test/utils/prisma-mock';
 import type { MasterLessonsService } from '../calendar/master-lessons.service';
 import type { PrismaService } from '../database/prisma.service';
+import { keptMastersWhere } from '../optimization/preserved-lessons';
 import { lockYearForGrundschemaEdit } from '../optimization/regeneration-lock';
 import { readOtherSchoolHolds } from '../optimization/other-school-holds';
 import { readBoardFacts } from '../swaps/board-rules';
 import { rostersOfYear } from '../year-rollover/projected-rosters';
+import * as placementJudge from './placement-judge';
 import { RequirementPlacementsService } from './requirement-placements.service';
 
 jest.mock('../year-rollover/projected-rosters', () => ({ rostersOfYear: jest.fn() }));
@@ -59,6 +61,7 @@ const stored = (over: Record<string, unknown> = {}) => ({
   recurrence: 'ALL_WEEKS',
   teacherId: null as string | null,
   room: { name: 'Simhallen' },
+  updatedAt: new Date('2026-11-13T08:00:00.000Z'),
   ...over,
 });
 
@@ -568,5 +571,219 @@ describe('RequirementPlacementsService', () => {
         expect(options.against.map((lesson) => [lesson.id, lesson.teacherId])).toEqual([['placement:p-9', BO]]);
       });
     });
+  });
+});
+
+describe('RequirementPlacementsService.boardOfYear', () => {
+  const user = testUser();
+  const YEAR_ROW = { isActive: true, predecessorId: null, gradeNumbering: 'NIOARIG' };
+  const SECOND_REQ = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  const BO = '55555555-5555-4555-8555-555555555555';
+
+  /** A post as the board reads it (BOARD_POST_SELECT). */
+  const boardPost = (over: Record<string, unknown> = {}) => {
+    const { academicYear: _academicYear, schoolId: _schoolId, academicYearId: _year, ...post } = POST;
+    return { ...post, ...over };
+  };
+
+  /** A lesson Generera keeps, with what the board selects of it and what the judge selects of it. */
+  const keptLesson = (over: Record<string, unknown> = {}) => ({
+    id: 'k-1',
+    dayOfWeek: 2,
+    startTime: time('13:00'),
+    endTime: time('14:00'),
+    studentGroupId: GROUP,
+    subjectId: SUBJECT,
+    teacherId: TEACHER,
+    coTeacherId: null,
+    roomId: ROOM_2,
+    recurrence: 'ALL_WEEKS',
+    startDate: null,
+    endDate: null,
+    isLocked: true,
+    isGenerated: false,
+    subject: { name: 'Idrott och hälsa' },
+    studentGroup: { name: '7A' },
+    extraGroups: [],
+    participants: [],
+    ...over,
+  });
+
+  function board(world: World & { posts?: Array<Record<string, unknown>>; year?: unknown; meals?: unknown[] } = {}) {
+    const made = setup(world);
+    made.tx['academicYear']!['findUnique']!.mockResolvedValue(world.year === undefined ? YEAR_ROW : world.year);
+    made.tx['teachingRequirement']!['findMany']!.mockResolvedValue(world.posts ?? [boardPost()]);
+    made.tx['lunchSitting']!['findMany']!.mockResolvedValue(world.meals ?? []);
+    return made;
+  }
+
+  it('answers 404 for a year the caller cannot see, and reads nothing else', async () => {
+    const { tx, service } = board({ year: null });
+    await expect(service.boardOfYear(YEAR, user)).rejects.toBeInstanceOf(NotFoundException);
+    expect(tx['teachingRequirement']!['findMany']).not.toHaveBeenCalled();
+  });
+
+  it('answers a year with no row without judging anything or reading the year\'s classes', async () => {
+    const { masters, service } = board();
+    const answer = await service.boardOfYear(YEAR, user);
+    expect(answer.placements).toEqual([]);
+    expect(answer.posts).toEqual([
+      expect.objectContaining({ id: REQ, cannotPlace: null, parts: [expect.objectContaining({ count: 2, locked: 0, placed: 0, left: 2 })] }),
+    ]);
+    expect(masters.findConflicts).not.toHaveBeenCalled();
+    expect(rostersOfYear).not.toHaveBeenCalled();
+    expect(readBoardFacts).not.toHaveBeenCalled();
+  });
+
+  it('judges every row of the year once, as Generera\'s pre-flight does, and gives each its own verdict', async () => {
+    const { masters, service } = board({
+      posts: [boardPost(), boardPost({ id: SECOND_REQ, subjectId: 'sub-ma', lessonsPerWeek: 1 })],
+      rows: [
+        stored({ id: 'p-1', updatedAt: new Date('2026-11-13T08:00:00.000Z') }),
+        stored({ id: 'p-2', dayOfWeek: 4, updatedAt: new Date('2026-11-13T08:00:00.000Z') }),
+        stored({ id: 'p-3', requirementId: SECOND_REQ, dayOfWeek: 3, updatedAt: new Date('2026-11-13T09:30:00.000Z') }),
+      ],
+    });
+    masters.findConflicts.mockImplementation(async (_tx, _basis, _lesson, candidate: { dayOfWeek: number }, options: { against: Array<{ id: string }> }) =>
+      candidate.dayOfWeek === 4 ? [{ kind: 'ROOM', message: 'Room is already booked', masterLessonId: options.against[0]?.id }] : [],
+    );
+
+    const answer = await service.boardOfYear(YEAR, user);
+
+    expect(masters.findConflicts).toHaveBeenCalledTimes(3);
+    expect(rostersOfYear).toHaveBeenCalledTimes(1);
+    expect(answer.placements.map((row) => [row.id, row.verdict.ok, row.verdict.reason ?? null, row.changedAt])).toEqual([
+      ['p-1', true, null, '2026-11-13T08:00:00.000Z'],
+      ['p-2', false, 'ROOM', '2026-11-13T08:00:00.000Z'],
+      ['p-3', true, null, '2026-11-13T09:30:00.000Z'],
+    ]);
+    // Each row is held against the other rows of the year (here: none on its day but its own).
+    expect(answer.placements[0]).toMatchObject({ requirementId: REQ, roomName: 'Simhallen', startTime: '10:00', endTime: '11:00' });
+  });
+
+  it('counts each post with the locks Generera keeps and the rows the year places: the figure Generera sends', async () => {
+    const { service } = board({
+      kept: [keptLesson()],
+      rows: [stored({ id: 'p-1' })],
+    });
+    const [post] = (await service.boardOfYear(YEAR, user)).posts;
+    // Two lessons of 60: the kept lesson of 7A in the subject answers one, the förläggning the other.
+    expect(post!.parts).toEqual([{ teacherId: TEACHER, minutes: 60, count: 2, locked: 1, placed: 1, left: 0, cannotPlace: null }]);
+  });
+
+  it('holds a shared post\'s rows to their own teacher\'s lessons', async () => {
+    const shared = boardPost({ lessonsPerWeek: 3, shares: [{ teacherId: BO, lessons: 1, minutes: 60 }] });
+    const { masters, service } = board({ posts: [shared], rows: [stored({ id: 'p-1', teacherId: BO })] });
+    const answer = await service.boardOfYear(YEAR, user);
+    expect(answer.posts[0]!.parts).toEqual([
+      { teacherId: TEACHER, minutes: 60, count: 2, locked: 0, placed: 0, left: 2, cannotPlace: null },
+      { teacherId: BO, minutes: 60, count: 1, locked: 0, placed: 1, left: 0, cannotPlace: null },
+    ]);
+    // The clash rule is asked about Bo's week, since the lesson is Bo's.
+    expect(masters.findConflicts.mock.calls[0]![3]).toMatchObject({ teacherId: BO });
+  });
+
+  it('says what the rows are held against: the kept lessons with ids only, and the meals placed by hand', async () => {
+    const { tx, service } = board({
+      kept: [keptLesson({ participants: [{ studentId: 'secret-pupil' }], extraGroups: [{ studentGroupId: 'g-7b' }] })],
+      meals: [
+        {
+          id: 'm-1',
+          studentGroupId: GROUP,
+          dayOfWeek: 2,
+          startTime: time('11:00'),
+          endTime: time('11:30'),
+          startDate: null,
+          endDate: null,
+        },
+      ],
+    });
+    const answer = await service.boardOfYear(YEAR, user);
+    expect(answer.kept).toEqual([
+      expect.objectContaining({ id: 'k-1', startTime: '13:00', endTime: '14:00', extraGroupIds: ['g-7b'], locked: true, generated: false }),
+    ]);
+    expect(JSON.stringify(answer)).not.toContain('secret-pupil');
+    expect(answer.meals).toEqual([{ id: 'm-1', studentGroupId: GROUP, dayOfWeek: 2, startTime: '11:00', endTime: '11:30', startDate: null, endDate: null }]);
+    // The same filter as Generera's and the judge's (a kept lesson, not parked), and only the meals the school placed.
+    const keptRead = tx['masterLesson']!['findMany']!.mock.calls[0]![0] as { where: Record<string, unknown>; select: Record<string, unknown> };
+    // Exactly the read of Generera's fetch and the judge (keptMastersWhere): every arm of the rule, the year, not parked.
+    expect(keptRead.where).toEqual(keptMastersWhere(YEAR));
+    expect(keptRead.select).not.toHaveProperty('participants');
+    expect(tx['lunchSitting']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ where: { academicYearId: YEAR, isGenerated: false } }));
+  });
+
+  describe('asks the judge what the dialog asks it (review of #315, MEDEL-1)', () => {
+    const BO_LOCK = () => keptLesson({ id: 'k-bo', teacherId: BO });
+    const sharedPost = () => ({ ...POST, lessonsPerWeek: 3, shares: [{ teacherId: BO, lessons: 1, minutes: 60 }] });
+
+    /** The post's demand entry as the judge reads it: the post by the fields it counts with (the two reads select different extras). */
+    const demandOf = (asked: placementJudge.JudgePlacementsInput) => {
+      const { post, ...rest } = asked.demand!.get(REQ)!;
+      return { ...rest, post: { lessonsPerWeek: post.lessonsPerWeek, minutesPerLesson: post.minutesPerLesson, lessonLengths: post.lessonLengths, teacherId: post.teacherId, shares: post.shares } };
+    };
+
+    /** What judgePlacements was handed by the week and by the dialog's read of the same post. */
+    async function askedByBoth(world: World) {
+      const spy = jest.spyOn(placementJudge, 'judgePlacements');
+      try {
+        const { service } = board({ ...world, posts: [boardPost(world.post ?? {})] });
+        await service.boardOfYear(YEAR, user);
+        await service.listOfPost(REQ, user);
+        const [week, dialog] = spy.mock.calls.map(([, , asked]) => asked);
+        return { week: week!, dialog: dialog!, demandOf: demandOf(week!), dialogDemandOf: demandOf(dialog!) };
+      } finally {
+        spy.mockRestore();
+      }
+    }
+
+    it('hands over the same rows, each as the post and its own slot make it', async () => {
+      const rows = [stored({ id: 'p-1' }), stored({ id: 'p-2', dayOfWeek: 4, recurrence: 'ODD_WEEKS' })];
+      const { week, dialog } = await askedByBoth({ rows, post: { ...POST, startDate: new Date('2026-08-24T00:00:00.000Z') } as never });
+      expect(week.rows.map((row) => ({ ...row, id: null }))).toEqual(dialog.rows);
+      expect(week.rows.map((row) => row.id)).toEqual(['p-1', 'p-2']);
+      expect(week.rows[0]).toMatchObject({ requirementId: REQ, studentGroupId: GROUP, subjectId: SUBJECT, teacherId: TEACHER, startDate: expect.any(Date) });
+    });
+
+    it('hands over the same demand for a post that shares nothing: the lock, and the lessons the rows place', async () => {
+      const { demandOf: week, dialogDemandOf: dialog } = await askedByBoth({ kept: [keptLesson()], rows: [stored({ id: 'p-1' })] });
+      expect(week).toEqual(dialog);
+      expect(week).toMatchObject({ lockedMinutes: [60], placed: [60] });
+      expect(week).not.toHaveProperty('taught');
+    });
+
+    it('hands over the same demand for a shared post: Bo\'s lock answers Bo\'s lesson, each row takes one of its teacher\'s', async () => {
+      const post = sharedPost();
+      const rows = [stored({ id: 'p-1', teacherId: TEACHER }), stored({ id: 'p-2', dayOfWeek: 4, teacherId: BO })];
+      const { demandOf: week, dialogDemandOf: dialog } = await askedByBoth({ post, kept: [BO_LOCK()], rows });
+      expect(week).toEqual(dialog);
+      expect(week).toMatchObject({
+        lockedMinutes: [60],
+        placed: [60, 60],
+        taught: {
+          locked: [{ minutes: 60, teacherId: BO }],
+          placed: [
+            { minutes: 60, teacherId: TEACHER },
+            { minutes: 60, teacherId: BO },
+          ],
+        },
+      });
+    });
+
+    it('holds a lesson that has a second class or named pupils against the row, as the dialog does', async () => {
+      const lessons = [
+        keptLesson({ id: 'k-extra', isLocked: false, isGenerated: true, extraGroups: [{ studentGroupId: 'g-7b' }] }),
+        keptLesson({ id: 'k-pupils', isLocked: false, isGenerated: true, participants: [{ studentId: 'pupil-1' }] }),
+      ];
+      const { demandOf: week, dialogDemandOf: dialog } = await askedByBoth({ kept: lessons, rows: [stored({ id: 'p-1' })] });
+      expect(week).toEqual(dialog);
+      // Both answer a lesson of the post (the post has two), so a lock of 60 per lesson is counted twice.
+      expect(week).toMatchObject({ lockedMinutes: [60, 60], placed: [60] });
+    });
+  });
+
+  it('is read through the caller\'s RLS and never asks for the caller\'s own person', async () => {
+    const { prisma, service } = board();
+    await service.boardOfYear(YEAR, user);
+    expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
   });
 });

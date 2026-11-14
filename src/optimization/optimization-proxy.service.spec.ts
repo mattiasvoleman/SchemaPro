@@ -43,6 +43,7 @@ import * as eligibility from './room-eligibility';
 import { DEVIATION_WORK_DAYS_HIDDEN_MESSAGE, WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal } from './work-days';
 import { recordedReads } from '../../test/utils/recorded-reads';
 import * as candidateBasis from './candidate-basis';
+import * as placementJudge from '../requirement-placements/placement-judge';
 import { toNioarig, type GradeNumbering } from '../common/grade-numbering';
 
 const ACADEMIC_YEAR = '44444444-4444-4444-8444-444444444444';
@@ -7465,6 +7466,87 @@ describe('OptimizationProxyService', () => {
         // Judged with the hand edit's rule before it was sent, and again by
         // the write's two reads of the fetch (the basis it is held to).
         expect(masters.findConflicts).toHaveBeenCalledTimes(3);
+      });
+
+      it('releases only the posts that have a förläggning: a post with none is sent as it is and is not in the released week (review of #315, MEDEL-1)', async () => {
+        const OTHER_POST = '12121212-aaaa-4aaa-8aaa-121212121212';
+        arrange({ requirements: [requirement(), requirement({ id: OTHER_POST, subjectId: '23232323-aaaa-4aaa-8aaa-232323232323' })] });
+        placed([placement()]);
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const payload = postedPayload();
+        expect(payload.requirements).toHaveLength(2);
+        const lock = payload.placements!.lessons[0]!;
+        // The released week holds the one post the school has laid, with its three lessons, and not the other.
+        expect(payload.placements!.requirements).toHaveLength(1);
+        expect(payload.placements!.requirements[0]).toMatchObject({ id: lock.requirementId, lessonsPerWeek: 3 });
+        const untouched = payload.requirements.find((post) => post.id !== lock.requirementId)!;
+        expect(untouched.lessonsPerWeek).toBe(3);
+      });
+
+      describe('what the pre-flight asks the judge (review of #315, MEDEL-1: the week of förläggningar asks the same)', () => {
+        const asked = async (arrangement: Parameters<typeof arrange>[0], rows: unknown[]) => {
+          const spy = jest.spyOn(placementJudge, 'judgePlacements');
+          try {
+            arrange(arrangement);
+            placed(rows);
+            echoEngine();
+            await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+            return spy.mock.calls[0]![2];
+          } finally {
+            spy.mockRestore();
+          }
+        };
+
+        it('hands over the post, the lock that covers it and the lessons its rows place, as the week and the dialog do', async () => {
+          // A lock that stands beside the row (Monday 08:00): the judge goes on to read it by name, so it carries them.
+          const input = await asked({ lockedLessons: [lockedLesson({ subject: { name: 'Matematik' }, studentGroup: { name: '7A' } })] }, [placement()]);
+          expect(input.rows).toHaveLength(1);
+          expect(input.rows[0]).toMatchObject({
+            id: PLACED,
+            requirementId: REQ_ID,
+            studentGroupId: GROUP_ID,
+            subjectId: SUBJECT_ID,
+            teacherId: TEACHER_ID,
+            coTeacherId: null,
+            dayOfWeek: 3,
+            startMinutes: 600,
+            minutes: 60,
+            roomId: ROOM_ID,
+            recurrence: 'ALL_WEEKS',
+            startDate: null,
+            endDate: null,
+          });
+          expect(input.beside).toEqual([]);
+          // One lesson of the post is locked in the grundschema and one is placed: the judge is told both, in minutes.
+          expect(input.demand!.get(REQ_ID)).toMatchObject({ lockedMinutes: [60], placed: [60] });
+          expect(input.demand!.get(REQ_ID)).not.toHaveProperty('taught');
+        });
+
+        it('asks nothing of a post with no förläggning', async () => {
+          const OTHER_POST = '12121212-aaaa-4aaa-8aaa-121212121212';
+          const input = await asked(
+            { requirements: [requirement(), requirement({ id: OTHER_POST, subjectId: '23232323-aaaa-4aaa-8aaa-232323232323' })] },
+            [placement()],
+          );
+          expect([...input.demand!.keys()]).toEqual([REQ_ID]);
+        });
+
+        it('tells the judge each lesson\'s teacher on a shared post: Bo\'s lock is Bo\'s lesson, and his förläggning takes one of his', async () => {
+          const BO = '99999999-aaaa-4aaa-8aaa-999999999999';
+          const input = await asked(
+            { requirements: [requirement({ shares: [{ teacherId: BO, lessons: 1, minutes: 60 }] })], lockedLessons: [lockedLesson({ teacherId: BO })] },
+            [placement({ teacherId: BO })],
+          );
+          expect(input.rows[0]).toMatchObject({ teacherId: BO });
+          expect(input.demand!.get(REQ_ID)).toMatchObject({
+            lockedMinutes: [60],
+            placed: [60],
+            taught: { locked: [{ minutes: 60, teacherId: BO }], placed: [{ minutes: 60, teacherId: BO }] },
+          });
+        });
       });
 
       it('takes one lesson off the post for an odd and an even row of one length, each held in its weeks', async () => {

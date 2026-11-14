@@ -50,3 +50,17 @@ export const PRESERVED_FROM_REGENERATION: Prisma.MasterLessonWhereInput[] = [
   { extraGroups: { some: {} } },
   { participants: { some: {} } },
 ];
+
+/**
+ * The lessons Generera KEEPS and plans around: the preserved ones that occupy
+ * the grid (a parked lesson is kept like any hand-made one but occupies
+ * nothing, so the engine is not blocked out of an hour nobody is in). The one
+ * statement of that read for every reader that must hold the same lessons: the
+ * fetch of Generera, its apply's check, the judge of a förläggning, the lessons
+ * a post's locks are counted from and the week of förläggningar's "kept" and
+ * "left" (review of #315, MEDEL-1: each wrote the three keys out itself, and a
+ * reader that dropped an arm saw a different week than the run did).
+ */
+export function keptMastersWhere(academicYearId: string): Prisma.MasterLessonWhereInput {
+  return { academicYearId, isParked: false, OR: PRESERVED_FROM_REGENERATION };
+}

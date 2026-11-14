@@ -71,6 +71,9 @@
         - link "Grundschema":
           - /url: /sv/admin/timetable
       - listitem:
+        - link "Förlägg i veckan":
+          - /url: /sv/admin/placements
+      - listitem:
         - link "Klasslärare":
           - /url: /sv/admin/class-teachers
       - listitem:

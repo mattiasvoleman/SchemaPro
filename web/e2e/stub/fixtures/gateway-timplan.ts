@@ -1,6 +1,7 @@
 import { Reply, route, type GatewayRoute } from "../gateway-routes";
 import { plannedClassPupils, plannedCoverage, teachingTimeCard } from "./timplan-coverage";
 import { placedInYear, placedOf, placementsStored, SHARED_PLACEMENTS_SCENARIO, SHARED_POST_SHARES } from "./timplan-placements";
+import { boardOfYear } from "./timplan-board";
 import { NATIONAL_TIMPLANS } from "./timplan-national";
 import { CHECKS, CREDITS, PLAN_LIST, PLANS, YEAR_TIMPLANS } from "./timplan-plans";
 import { GUARDIAN_LINKS, NEXT_YEAR, REQUIREMENTS, YEAR } from "./world";
@@ -62,6 +63,17 @@ export const timplanRoutes: GatewayRoute[] = [
     if (person.role !== "SCHOOL_ADMIN") return new Reply(403, { message: "Åtkomst nekad." });
     if (!KNOWN_YEARS.has(query.get("academicYearId") ?? "")) return new Reply(400, { message: "academicYearId" });
     return query.get("academicYearId") === YEAR.id ? placedInYear(scenario) : [];
+  }),
+
+  // Förlägg i veckan: the year's rows with a verdict each, every post counted, and what the rows are held against.
+  // Declared with the literal `placements` route, which the `:id` routes below do not swallow (matchGateway: a
+  // literal segment beats a `:param` one).
+  route("GET", "/api/v1/teaching-requirements/placements/board", ({ person, query, scenario }) => {
+    if (!person) return new Reply(401, { message: "Inte inloggad." });
+    if (person.role !== "SCHOOL_ADMIN") return new Reply(403, { message: "Åtkomst nekad." });
+    const yearId = query.get("academicYearId") ?? "";
+    if (!KNOWN_YEARS.has(yearId)) return notFound("Läsåret");
+    return boardOfYear(yearId, scenario);
   }),
 
   // One post's rows and their verdicts (the dialog Förlägg opens on), and the

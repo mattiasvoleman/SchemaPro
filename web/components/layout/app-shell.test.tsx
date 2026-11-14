@@ -306,6 +306,8 @@ describe("AppShell navigation", () => {
     expect(group("nav.scheduling")).toEqual([
       "nav.generate",
       "nav.timetable",
+      // Förlägg i veckan: what is placed by hand, read against the grid.
+      "nav.placementWeek",
       // Klasslärarens schema: beside the grid whose lessons they change.
       "nav.classTeachers",
       "nav.gaps",

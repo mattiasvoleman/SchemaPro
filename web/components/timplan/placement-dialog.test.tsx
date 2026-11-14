@@ -35,6 +35,10 @@ vi.mock("@/lib/queries", () => ({
   useRooms: () => ({ data: state.roomsFailed ? undefined : state.rooms, isError: state.roomsFailed }),
 }));
 vi.mock("@/components/profile-context", () => ({ useReadOnly: () => state.readOnly }));
+// The link to the week: the router's own Link needs the app's intl provider, which this file replaces with a mock.
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({ children, ...rest }: { children: React.ReactNode }) => <a {...rest}>{children}</a>,
+}));
 vi.mock("sonner", () => ({ toast: { success: state.success, error: state.error } }));
 // Keys echoed with their values: the sentences are i18n/placements-messages.test.ts's.
 vi.mock("next-intl", () => ({
@@ -216,6 +220,16 @@ describe("the dialog", () => {
     expect(screen.getByText("nextGenerate")).toBeInTheDocument();
     expect(screen.getByText("handMove")).toBeInTheDocument();
     expect(screen.getByText("neverGivesWay")).toBeInTheDocument();
+  });
+
+  it("links to the post's own place in the week (Förlägg i veckan), in the year the post is of", async () => {
+    await opened();
+
+    const link = screen.getByRole("link", { name: "showInWeek" });
+    const url = new URL(link.getAttribute("href")!, "https://example.invalid");
+    expect(url.pathname).toBe("/admin/placements");
+    expect(url.searchParams.get("year")).toBe("y1");
+    expect(url.searchParams.get("post")).toBe("r-sl");
   });
 
   it("keeps a room the list no longer offers, as stored", async () => {
