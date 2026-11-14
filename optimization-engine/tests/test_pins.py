@@ -743,6 +743,43 @@ class TestTheRefusalBeforeTheModel:
         """The block's code begins PLACED_LESSONS_, which a reading of the prefix PLACED_LESSON_ leaves out (Q07)."""
         assert self._refused(_beside_a_förläggning(_three_member_block(2, 1))).code == "PLACED_LESSONS_OF_BLOCK_DIFFER"
 
+    @pytest.mark.parametrize("pinned", [False, True], ids=["no pin", "a room pinned for another class"])
+    def test_a_room_pinned_for_another_class_leaves_the_places_a_class_is_forced_into(self, pinned: bool) -> None:
+        """7A has a lesson in an ordinary room and one in the lab on the week's one day, and may be in one room a day.
+
+        The count before the model refuses it by the places the class is
+        forced into (PLACEMENT_PLACES_FORCED, _verify_place_limits). A lesson
+        of 7B pinned in one of the three ordinary rooms makes that room a
+        class of its own in the model. Read by the count too, 7A's ordinary
+        lesson would be free to choose between two places, the count would
+        pass, and the week would be refused by the proof without the count's
+        sentence. The first review's S23: the count once read the pinned
+        rooms, and the edit that took the reading away refused more weeks
+        early, every one of them rightly.
+        """
+        ordinary, lab = [str(uuid4()) for _ in range(3)], str(uuid4())
+        other = _requirement(str(uuid4()), CLASS_7B, str(uuid4()), 1, requiredRoomType="STD")
+        if pinned:
+            other["pinnedLessons"] = [_pin(1, "08:00", room=ordinary[0])]
+        payload = {
+            "requestId": str(uuid4()),
+            "academicYearId": str(uuid4()),
+            "requirements": [
+                _requirement(str(uuid4()), CLASS_7A, str(uuid4()), 1, requiredRoomType="STD"),
+                _requirement(str(uuid4()), CLASS_7A, str(uuid4()), 1, requiredRoomType="LAB"),
+                other,
+            ],
+            "rooms": [
+                *({"id": room, "capacity": 30, "type": "STD"} for room in ordinary),
+                {"id": lab, "capacity": 30, "type": "LAB"},
+            ],
+            "placementRules": {"places": {"mode": "HARD", "maxClassRooms": 1}},
+        }
+        with pytest.raises(InvalidScheduleInputError) as refused:
+            _solve(payload, SCHEDULE_DAYS="1")
+        assert refused.value.code == "PLACEMENT_PLACES_FORCED"
+        assert refused.value.params == {"party": "class", "kind": "room", "places": 2, "limit": 1, "days": 2, "open": 1}
+
     def test_a_pin_five_minutes_past_the_days_end_is_refused_by_name(self) -> None:
         """The day ends 12:00, and 11:05 and sixty minutes is one step of the grid past it (Q11)."""
         assert self._refused(_payload({MATTE: [_pin(1, "11:05"), None, None]})).code == "PLACED_LESSON_OUTSIDE_THE_WEEK"

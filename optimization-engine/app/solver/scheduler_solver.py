@@ -15056,11 +15056,19 @@ class SchedulerSolver:
         room_class_of: dict[int, int] = {}
         from types import SimpleNamespace
 
+        # WITHOUT THE PINNED ROOMS (pins.pinned_room_ids), which every other
+        # reading of the room classes has. In the model a pinned room is a
+        # class of its own so that the pin can hold its lesson there; no other
+        # lesson may use fewer rooms for it. Cut by it here, a lesson that may
+        # use A, B and C would read as free to choose between two places, and
+        # a class forced into two places would pass this count and be refused
+        # by the proof instead, without the count's sentence. The coarser
+        # classes are a lower bound of the model's: two lessons forced into
+        # different classes here are in different classes there.
         for room_class in build_room_classes(
             [SimpleNamespace(lesson=SimpleNamespace(requirement=r)) for r in request.requirements],
             rooms,
-            collect_distinguished_room_ids(request.constraints, request.fixed_lessons)
-            | pinned_room_ids(request.requirements),
+            collect_distinguished_room_ids(request.constraints, request.fixed_lessons),
             allowed,
             key,
             [
