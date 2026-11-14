@@ -41,6 +41,7 @@ import {
   yearOf,
   type BatchRow,
   type StoredSelection,
+  type Relocation,
 } from './cancellation-core';
 import { digestAudience, sendDigest, type DigestAudience, type DigestLesson } from './cancellation-digest';
 import {
@@ -436,17 +437,21 @@ export class ScheduleActivitiesService {
 
         // 1. Put back what the new description no longer takes, except the
         // lessons a replacement lesson that was held stands for: they stay
-        // cancelled with it, as in a removal (heldReplacements).
+        // cancelled with it, as in a removal (heldReplacements). A lesson whose
+        // template moved since goes to the template's slot, as in a removal: the
+        // class has it that week, and the new description then judges it where
+        // it stands (settleDirect, below).
         let reinstated: Array<{ id: string }> = [];
+        let relocated: Relocation[] = [];
         if (release.length > 0) {
-          // relocate: false: the new description decides what this day's lessons are, and a lesson carried to another day would not be judged by it.
-          const plan = await reversePlan(tx, schoolId, row, timezone, { only: new Set(release.map((lesson) => lesson.id)), relocate: false });
+          const plan = await reversePlan(tx, schoolId, row, timezone, { only: new Set(release.map((lesson) => lesson.id)) });
           await applyReinstatement(tx, 'EVENT', plan);
-          const gone = [...plan.reinstate.map((lesson) => lesson.id), ...plan.templateMoved.map((entry) => entry.lessonId)];
+          const gone = [...plan.reinstate.map((lesson) => lesson.id), ...plan.relocate.map((move) => move.id), ...plan.templateMoved.map((entry) => entry.lessonId)];
           if (gone.length > 0) {
             await tx.cancellationBatchLesson.deleteMany({ where: { batchId, calendarLessonId: { in: gone } } });
           }
           reinstated = plan.reinstate;
+          relocated = plan.relocate;
         }
 
         // 2. The avbokning itself: name, days, window, scope.
@@ -511,6 +516,11 @@ export class ScheduleActivitiesService {
         });
         await tx.cancellationBatch.update({ where: { id: batchId }, data: { cancelled } });
 
+        // 6b. A lesson carried to another day may land in a day another batch still holds: it is cancelled with that one (S7), as a
+        // row a template change moves there is. This activity's own batch judges it by the new description after the commit
+        // (settleDirect, which also tells the board of the replacement lessons that writes).
+        const landed = await holdRelocated(tx, schoolId, row.academicYearId, relocated, timezone, batchId);
+
         // 7. The people whose day moved hear of exactly that: what is newly
         // cancelled, and what comes back.
         if (checked.notify) {
@@ -521,28 +531,31 @@ export class ScheduleActivitiesService {
               plain: audience.plain,
             });
           }
-          if (reinstated.length > 0) {
+          const back = [...reinstated, ...relocated].filter((lesson) => !landed.has(lesson.id));
+          if (back.length > 0) {
             await sendDigest(
               this.notifications,
               tx,
               schoolId,
               { id: batchId, name: effective.name },
-              await digestAudience(tx, await digestLessonsOf(tx, reinstated)),
+              await digestAudience(tx, await digestLessonsOf(tx, back)),
               true,
               { responsible: new Map() },
             );
           }
         }
+        const moved = relocated.flatMap((move) => [move.from, move.to]);
         return {
           mode,
           batchId,
           take,
           reinstated,
+          relocated,
           synced,
           credits,
           range: {
-            from: [row.fromDate, day(effective.fromDate)].map(asDay).sort()[0],
-            to: [row.toDate, day(effective.toDate)].map(asDay).sort().reverse()[0],
+            from: [row.fromDate, day(effective.fromDate)].map(asDay).concat(moved).sort()[0],
+            to: [row.toDate, day(effective.toDate)].map(asDay).concat(moved).sort().reverse()[0],
           },
         };
       },
@@ -551,13 +564,14 @@ export class ScheduleActivitiesService {
     await this.broadcast(user, [
       ...done.take.map((lesson) => lesson.id),
       ...done.reinstated.map((lesson) => lesson.id),
+      ...done.relocated.map((move) => move.id),
       ...done.synced.created,
       ...done.synced.updated,
     ]);
     this.boardChanged(schoolId, done.range.from, done.range.to);
     if (done.mode === 'DIRECT') await this.settleDirect(user, schoolId, done.batchId);
     const view = await this.prisma.withRls(user, async (tx) => this.viewById(tx, id));
-    return { activity: view, released: done.reinstated.length, taken: done.take.length };
+    return { activity: view, released: done.reinstated.length + done.relocated.length, taken: done.take.length };
   }
 
   /**
@@ -731,7 +745,7 @@ export class ScheduleActivitiesService {
           data: {
             reversedAt: now,
             reversedByUserId: user.userId ?? null,
-            reinstated: plan.reversal.reinstate.length,
+            reinstated: plan.reversal.reinstate.length + plan.reversal.relocate.length,
             skippedRoomTaken: plan.reversal.skipped.length,
           },
         });
