@@ -5369,7 +5369,12 @@ between odd and even weeks).
   with weeks of one parity only (the läsår's first, incomplete week) is read
   as that parity's sets for both. The engine reads the field with
   `weeks_of`, so every rule that asks which sets a week is held against asks
-  it of the parity too.
+  it of the parity too. **A läsår nothing dates is one period** (the review
+  of #320, MEDEL-1): a school with A/B-weeks and no dated post sends the
+  parity sets too, as entries whose `periods` is a mask of one period (the
+  engine takes `min_length=1` there and reads it as the year without
+  periods), and no `periodWeeks`. An older engine refuses that as it refuses
+  the field, and the gateway says it as the same 503.
 - **A teacher's own lunch.** One break a period for both parities, as
   before, except for a teacher whose lessons or locked lessons in her lunch
   window are told apart by parity (`weeks.needs_a_part_per_parity`): such a
@@ -5387,23 +5392,32 @@ between odd and even weeks).
   refusal of the real week said "the even weeks" of a period that has no
   others. The gateway now says how many of each period's weeks are odd
   (`periodOddWeeks`, in the order of `periodWeeks`, and beside it wherever it
-  is sent). A period with weeks of one parity alone is every läsår that starts
-  on a Saturday (its first two days are one odd week), so every school of the
-  kind this was built for. The engine takes a post of a parity out of the
+  is sent). A period with weeks of one parity alone is the first, incomplete
+  week of a läsår that starts on a Saturday once a post is dated from the
+  first Monday (its two first days are then a period of their own, one odd
+  week: the production's läsår), and a test week or the weeks between two
+  terms. The engine takes a post of a parity out of the
   periods that have none of it (one that would then run in no week at all is
   left as it came), asks nothing of a cell no week is in (the counts, the
   lunch read week by week, the lines of Bästa möjliga schema), says a period
   whole where its only real week is ("period 1", not "the even weeks of
   period 1"), and fills such a period in when it decides whether the words
   say exactly the weeks a refusal is given in. A request without the field
-  is read as it was (the engine acts on it only where some period lacks a
-  parity).
+  is read as it was. Where the field is sent it is read in every dated year:
+  it weighs the weeks a refusal is chosen by (below), and it changes what is
+  built, counted and named only where some period has no week of a parity.
 - **Which refusal is said** (the same review, LÅG-1 and LÅG-2). Where the
   field is sent the refusal is chosen by the real weeks that give it (an odd
   and an even week were as many in a period of three), and weeks that no words
   say exactly are said as their first week and no more (before, as the first
   group of cells, which could hold a period whole beside another's odd
-  weeks, and so name a period too many).
+  weeks, and so name a period too many). A set is said filled in, a period
+  whose only week is the real one beside its other cell, where that is a set
+  the words say; where it is not, and the weeks as they are are, they are said
+  as they are (`weeks.as_said`, asked alike of a counted refusal, a teacher's
+  lunch, a solved refusal and a deviation): the refusal every odd week gives,
+  in a läsår whose first period is one odd week, is "the odd weeks of periods
+  0 and 1" and not the first two days of the year (the review of #320, HÖG-1).
 
 Deploy and roll back as 19.2 and 19.5: the older engine answers 422
 (`extra_forbidden` at `lockedWeekdayPeriods.N.recurrence`, or at
@@ -5412,7 +5426,9 @@ as 503 `ENGINE_LACKS_PERIODS`. **`periodOddWeeks` is sent on every run of a
 school that dates a post** (beside `periodWeeks`), so the engine's release
 goes first (19.1): until it is live, those schools are told to try again in a
 few minutes. The days by parity are sent only where a
-teacher's parities differ, and production had no post with a day limit and no
+teacher's parities differ (in a year nothing dates too: a school with A/B-weeks
+and no dated post that has such a teacher is told to try again as the others
+are), and production had no post with a day limit and no
 locked lesson when this was written. Schemaförslag of a school that is sent
 either field go stale once, as in 19.4: the candidate basis reads them.
 

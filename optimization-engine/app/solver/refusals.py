@@ -35,7 +35,7 @@ from typing import TypeVar
 
 from app.exceptions import InvalidScheduleInputError
 from app.schemas.schedule import ConflictAnalysis, ConflictDetail
-from app.solver.weeks import WEEK_WORDS, Weeks, closed, says_exactly, share, together
+from app.solver.weeks import WEEK_WORDS, Weeks, as_said, closed, says_exactly, share, together
 
 R = TypeVar("R")
 
@@ -126,8 +126,8 @@ def said_weeks(
     """
     if len(held) == len(asked) and (closed(together(asked), phantom).is_every_week() or the_year_gives_it()):
         return None
-    said = closed(together(held), phantom)
-    if says_exactly(said):
+    said = as_said(together(held), phantom)
+    if said is not None:
         return said
     first = held[0]
     real = first.bits if phantom is None else first.bits & ~phantom.lifted(first.periods)

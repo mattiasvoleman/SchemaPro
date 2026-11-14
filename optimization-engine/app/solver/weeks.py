@@ -697,6 +697,26 @@ def closed(week: Weeks | None, phantom: Weeks | None) -> Weeks | None:
     return week if bits == held and week.periods == periods else Weeks(bits, periods)
 
 
+def as_said(week: Weeks, phantom: Weeks | None) -> Weeks | None:
+    """These weeks as the words say them exactly, or None where no words do.
+
+    Filled in beside the real cell of each period that has a cell no real week
+    is in (`closed`) when that is a set the words say; else as they are, when
+    THAT is. The two differ for the odd weeks of several periods where the
+    first is one odd week and nothing else: filled in it is that period whole
+    beside the odd weeks of the others, which no words say, and unfilled it is
+    "the odd weeks of periods 0, 1 and 2", which they do (the review of #320,
+    HÖG-1: the refusal every odd week gives was said as the first two days of
+    the year). With nothing filled in the two are the same set.
+    """
+    filled = closed(week, phantom)
+    if filled is not None and says_exactly(filled):
+        return filled
+    if phantom is not None and says_exactly(week):
+        return week
+    return None
+
+
 def only_phantom(week: Weeks | None, phantom: Weeks | None) -> bool:
     """Whether these weeks are cells that no real week is in, and nothing else."""
     if week is None or phantom is None:

@@ -106,7 +106,7 @@ from app.schemas.schedule import (
 )
 from app.solver.refusals import of_line
 from app.solver.weeks import (
-    WEEK_WORDS, Weeks, closed, each_week, meet, named, only_phantom, phantom_cells, says_exactly,
+    WEEK_WORDS, Weeks, as_said, closed, each_week, meet, named, only_phantom, phantom_cells,
     together, weeks_of,
 )
 
@@ -707,9 +707,8 @@ def _worst_week(
         if len(alike) == len(weeks):
             detail = detail.model_copy(update={"params": _unnamed(detail)})
         elif len(alike) > 1:
-            said = closed(together([week for week in alike if week is not None]), phantom)
-            assert said is not None
-            if says_exactly(said):
+            said = as_said(together([week for week in alike if week is not None]), phantom)
+            if said is not None:
                 detail = detail.model_copy(update={"params": {**_unnamed(detail), **named(said)}})
         out.append(detail)
     return out

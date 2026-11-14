@@ -126,6 +126,7 @@ from app.solver.weeks import (
     each_week,
     meet,
     named as week_named,
+    as_said as weeks_as_said,
     closed as weeks_closed,
     only_phantom,
     phantom_cells,
@@ -133,7 +134,6 @@ from app.solver.weeks import (
     cells_of,
     needs_a_part_per_parity,
     part_weeks,
-    says_exactly as week_says_exactly,
     share as week_share,
     tag as week_tag,
     together as weeks_together,
@@ -5452,7 +5452,10 @@ class SchedulerSolver:
         (`groups`), and twenty classes a hall cannot seat in waves are as
         many whichever term their lessons are dated to.
         """
-        label = weeks_closed(label, phantom_cells(whole))
+        phantom = phantom_cells(whole)
+        if label is not None:
+            said = weeks_as_said(label, phantom)
+            label = said if said is not None else weeks_closed(label, phantom)
         if not week_named(label):
             return verdict
         every_week = _every_week_only(whole)
@@ -6838,7 +6841,11 @@ class SchedulerSolver:
             # teacher's weeks differ in (_add_teacher_lunch), under the day's
             # one literal, and in each parity of it where her entries in the
             # window are told apart by it. Nothing more for a year of odd and
-            # even weeks alone whose teacher's are not: her lunch is one.
+            # even weeks alone whose teacher's are not: her lunch is one. A
+            # year WITH periods is counted as if every lunch were cut by
+            # parity too, without asking: a ceiling, so the estimate is only
+            # ever too large, and the question (_lunch_by_parity_of) is asked
+            # of a year without periods alone (the review of #320, LÅG-3).
             if rule.has_lunch and (has_periods or self._lunch_by_parity_of(rule, request)):
                 extra += day_count
         extra += sum(
@@ -8457,8 +8464,8 @@ class SchedulerSolver:
             ).get(key, [])
             if self._lunch_has_no_start(window, day_index, closed, busy) == causes:
                 same.append(cell)
-        said = weeks_closed(weeks_together(same), phantom)
-        return week_named(said if week_says_exactly(said) else weeks_closed(same[0], phantom))
+        said = weeks_as_said(weeks_together(same), phantom)
+        return week_named(said if said is not None else weeks_closed(same[0], phantom))
 
     def _locks_in_stretch(
         self,

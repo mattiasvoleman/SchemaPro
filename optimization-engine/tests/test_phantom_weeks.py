@@ -26,7 +26,9 @@ from app.schemas.schedule import ConflictAnalysis, ConflictDetail, OptimizeSched
 from app.solver.refusals import of_most_weeks, said_weeks
 from app.solver.relaxation import _weeks_of, _worst_week, deviations_of
 from app.solver.scheduler_solver import SchedulerSolver, _locks_by_week, _teacher_locks, _weeks_and_requests
-from app.solver.weeks import Weeks, closed, named, only_phantom, phantom_cells, says_exactly, share, year_weighing
+from app.solver.weeks import (
+    Weeks, as_said, closed, named, only_phantom, phantom_cells, says_exactly, share, year_weighing,
+)
 
 _payload, _requirement = periods._payload, periods._requirement
 
@@ -292,6 +294,19 @@ def test_the_request_weighs_its_year_by_what_it_sent() -> None:
     assert year_weighing(_request({**_reviewers_school(told=False), "periodWeeks": [4, 2]})) == ([2, 1], None)
 
 
+def test_the_odd_weeks_are_weighed_by_the_figures_the_request_sent_and_not_by_what_they_share() -> None:
+    """LÅG-2 of the review of #320 (W17): periodWeeks [4, 4] have a factor in common, and the odd weeks [2, 2] do not divide by it.
+
+    Divided through, the periods would be one week each and the even weeks
+    of each would weigh minus one.
+    """
+    request = _request({**_reviewers_school(told=True), "periodWeeks": [4, 4], "periodOddWeeks": [2, 2]})
+    assert year_weighing(request) == ([4, 4], [2, 2])
+    even = Weeks(0b1010, 2)
+    assert share(even, *year_weighing(request)) == 4
+    assert share(Weeks(0b0101, 2), *year_weighing(request)) == 4
+
+
 # ---------------------------------------------------------------------------
 # The weeks a school is asked of
 # ---------------------------------------------------------------------------
@@ -500,6 +515,252 @@ def test_a_line_some_weeks_have_alike_says_them_with_the_period_filled_in() -> N
     )
     assert line.params["period"] == 0
     assert line.params["periods"] == "0,1"
+    assert "parity" not in line.params
+
+
+# ---------------------------------------------------------------------------
+# HÖG-1 of the review of #320: one parity of several periods, one of them a single week of it
+# ---------------------------------------------------------------------------
+
+#: What the words say of a refusal that every week of one parity gives, in the year the production has
+#: (a läsår that starts on a Saturday: period 0 is the two first days, one odd week) and in some like it.
+ONE_PARITY_EVERYWHERE = [
+    # (periodWeeks, periodOddWeeks, the parity of the posts, the words said of the refusal)
+    ([1, 43], [1, 22], "ODD_WEEKS", {"period": 0, "periods": "0,1", "parity": "ODD_WEEKS"}),
+    # Period 0 has no even week, so the refusal of the even weeks is the second period's alone.
+    ([1, 43], [1, 22], "EVEN_WEEKS", {"period": 1, "parity": "EVEN_WEEKS"}),
+    ([1, 20, 1, 20], [1, 10, 0, 10], "ODD_WEEKS", {"period": 0, "periods": "0,1,3", "parity": "ODD_WEEKS"}),
+    ([1, 3, 4], [0, 2, 2], "EVEN_WEEKS", {"period": 0, "periods": "0,1,2", "parity": "EVEN_WEEKS"}),
+    ([1, 3, 4], [1, 2, 2], "ODD_WEEKS", {"period": 0, "periods": "0,1,2", "parity": "ODD_WEEKS"}),
+    ([3, 1, 4], [2, 0, 2], "EVEN_WEEKS", {"period": 0, "periods": "0,1,2", "parity": "EVEN_WEEKS"}),
+    ([3, 1, 4], [2, 0, 2], "ODD_WEEKS", {"period": 0, "periods": "0,2", "parity": "ODD_WEEKS"}),
+]
+
+
+def _five_hours_of_one_parity(total: list[int], odd: list[int], recurrence: str, *, told: bool) -> dict[str, object]:
+    """Five posts of an hour of the one teacher in the weeks of one parity, in a day of four hours.
+
+    The sixth post, of another teacher and the first period alone, is what
+    cuts the year into periods.
+    """
+    teacher = str(uuid4())
+    posts = [_requirement(str(uuid4()), 1, teacher=teacher, recurrence=recurrence) for _ in range(5)]
+    posts.append(_requirement(str(uuid4()), 1, periods=[True] + [False] * (len(total) - 1)))
+    return _payload(posts, periodWeeks=total, **({"periodOddWeeks": odd} if told else {}))
+
+
+@pytest.mark.parametrize(("total", "odd", "recurrence", "said"), ONE_PARITY_EVERYWHERE)
+def test_a_refusal_one_parity_gives_in_every_period_is_said_of_them_all_though_a_period_is_one_week(
+    total: list[int], odd: list[int], recurrence: str, said: dict[str, object],
+) -> None:
+    """The odd weeks of the periods 0 and 1, where period 0 is one odd week: said as both, not as "period 0".
+
+    Filled in with the even cell of the period that has only an odd week, the
+    set is the first period whole beside the odd weeks of the others, which
+    no words say, and the refusal was said as its first cell: the first two
+    days of the year. Said as they are, the odd weeks of those periods are
+    what they are, and what the engine said before it was told which cell is
+    no week.
+    """
+    refused = _refused(_five_hours_of_one_parity(total, odd, recurrence, told=True))
+    assert refused is not None
+    assert refused.conflicts.summary_code == "DEMAND_TEACHER_HOURS_SHORT"
+    assert {k: v for k, v in refused.conflicts.summary_params.items() if k in ("period", "periods", "parity")} == said
+
+
+def test_weeks_no_filling_in_makes_say_exactly_are_said_as_they_are() -> None:
+    odd = Weeks(0b010101, 3)  # the odd weeks of three periods, the first of them one odd week
+    phantom = Weeks(0b000010, 3)  # ... whose even cell is no week
+    assert not says_exactly(closed(odd, phantom))
+    assert as_said(odd, phantom) == odd
+    assert named(as_said(odd, phantom)) == {"period": 0, "periods": "0,1,2", "parity": "ODD_WEEKS"}
+    # Where filling in makes a set the words say, it is said filled in, as before.
+    group = Weeks(0b1011, 2)
+    assert as_said(group, Weeks(0b0100, 2)) == closed(group, Weeks(0b0100, 2))
+    # And where neither does, nothing is said of them all.
+    assert as_said(Weeks(0b0111, 2), None) is None
+    assert as_said(Weeks(0b0111, 2), Weeks(0b0000, 2)) is None
+    other = Weeks(0b101000, 3)
+    assert said_weeks([odd], [odd, other], _never, phantom) == odd
+
+
+def test_a_solved_refusal_in_one_parity_of_several_periods_is_said_of_them_all() -> None:
+    request = _request(_five_hours_of_one_parity([1, 3, 4], [1, 2, 2], "ODD_WEEKS", told=True))
+    verdict = ConflictAnalysis(
+        summary_code="DEMAND_TEACHER_HOURS_SHORT", summary_params={"teachers": 1},
+        conflicts=[ConflictDetail(
+            category="REQUIREMENT_DEMAND", code="DEMAND_TEACHER_HOURS_SHORT", params={"x": 1}, message="m",
+        )],
+    )
+    said = SchedulerSolver(_settings())._solved_in(verdict, Weeks(0b010101, 3), request, request, lambda _week: None)
+    assert {k: v for k, v in said.summary_params.items() if k in ("period", "periods", "parity")} == {
+        "period": 0, "periods": "0,1,2", "parity": "ODD_WEEKS",
+    }
+
+
+def test_a_teacher_s_lunch_refused_in_every_odd_week_is_said_of_them_all_when_one_period_is_one_odd_week() -> None:
+    teacher = str(uuid4())
+
+    def refusal(told: bool) -> InvalidScheduleInputError:
+        payload = _payload(
+            [
+                _requirement(str(uuid4()), 1, teacher=teacher, recurrence="EVEN_WEEKS"),
+                _requirement(str(uuid4()), 1, teacher=teacher, recurrence="ODD_WEEKS"),
+                _requirement(str(uuid4()), 1, periods=[True, False, False]),
+            ],
+            teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, "lunchMinutes": 60,
+                               "lunchStartTime": "11:00:00", "lunchEndTime": "12:00:00"}],
+            fixedLessons=[{**rules._lock(str(uuid4()), 1, "11:00:00", "12:00:00", teacher), "recurrence": "ODD_WEEKS"}],
+            periodWeeks=[1, 4, 4], **({"periodOddWeeks": [1, 2, 2]} if told else {}),
+        )
+        with pytest.raises(InvalidScheduleInputError) as refused:
+            SchedulerSolver(periods._settings(hours=5, days="1", SOLVER_PROBE_SECONDS=0))._validate_request(
+                _request(payload),
+            )
+        return refused.value
+
+    for told in (False, True):
+        refused = refusal(told)
+        assert refused.code == "TEACHER_LUNCH_LEAVES_NO_START"
+        assert {k: v for k, v in refused.params.items() if k in ("period", "periods", "parity")} == {
+            "period": 0, "periods": "0,1,2", "parity": "ODD_WEEKS",
+        }
+
+
+def test_a_deviation_in_one_parity_of_several_periods_is_said_of_them_all() -> None:
+    odd = [Weeks(1 << (2 * period), 3) for period in range(3)]
+    even = [Weeks(2 << (2 * period), 3) for period in (1, 2)]
+    phantom = Weeks(0b000010, 3)
+
+    def breach(week: Weeks) -> ConflictDetail:
+        return ConflictDetail(
+            category="DEVIATION", code="DEVIATION_TEACHER_DAILY_CAP", message="m",
+            params={"rule": "r", "day": 1, "over": 60, **named(week)},
+        )
+
+    (line,) = _worst_week([(week, breach(week)) for week in odd], ("rule", "day"), (*odd, *even), phantom)
+    assert {k: v for k, v in line.params.items() if k in ("period", "periods", "parity")} == {
+        "period": 0, "periods": "0,1,2", "parity": "ODD_WEEKS",
+    }
+
+
+# ---------------------------------------------------------------------------
+# LÅG-2 of the review of #320: the lines no test reached
+# ---------------------------------------------------------------------------
+
+
+def test_a_lock_of_every_week_is_what_the_whole_year_refuses_a_teacher_s_lunch_by() -> None:
+    """S08: the lunch window is closed in every week, and the refusal is the year's, not the first period's.
+
+    One lock of every week fills the window and another keeps a lesson of the
+    odd weeks company. Each week refuses the lunch the same, so none is said.
+    Read without the lock of every week the year had no refusal of its own
+    and the first period was named.
+    """
+    teacher = str(uuid4())
+    payload = _payload(
+        [
+            _requirement(str(uuid4()), 1, teacher=teacher, recurrence="EVEN_WEEKS"),
+            _requirement(str(uuid4()), 1, teacher=teacher, recurrence="ODD_WEEKS"),
+            _requirement(str(uuid4()), 1, periods=[True, False]),
+        ],
+        teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, "lunchMinutes": 60,
+                           "lunchStartTime": "11:00:00", "lunchEndTime": "12:00:00"}],
+        fixedLessons=[
+            rules._lock(str(uuid4()), 1, "11:00:00", "12:00:00", teacher),
+            {**rules._lock(str(uuid4()), 1, "10:00:00", "10:30:00", teacher), "recurrence": "ODD_WEEKS"},
+        ],
+        periodWeeks=[3, 3], periodOddWeeks=[2, 2],
+    )
+    with pytest.raises(InvalidScheduleInputError) as refused:
+        SchedulerSolver(periods._settings(hours=4, days="1", SOLVER_PROBE_SECONDS=0))._validate_request(
+            _request(payload),
+        )
+    assert refused.value.code == "TEACHER_LUNCH_LEAVES_NO_START"
+    assert not {"period", "periods", "parity"} & set(refused.value.params)
+
+
+def test_the_locks_a_lunch_is_read_against_are_the_year_s_first_and_then_each_week_s() -> None:
+    teacher = str(uuid4())
+    payload = _payload(
+        [_requirement(str(uuid4()), 1, teacher=teacher, recurrence="ODD_WEEKS", periods=[True, False])],
+        fixedLessons=[
+            rules._lock(str(uuid4()), 1, "11:00:00", "12:00:00", teacher),
+            {**rules._lock(str(uuid4()), 1, "10:00:00", "10:30:00", teacher), "recurrence": "ODD_WEEKS"},
+        ],
+        periodWeeks=WEEKS, periodOddWeeks=ODD,
+    )
+    request = _request(payload)
+    every, odd = request.fixed_lessons
+    # A row of every week has the one reading, whatever the locks.
+    assert _locks_by_week(request.fixed_lessons, None) == [(None, request.fixed_lessons)]
+    # A row of the first period's odd weeks: the lock of every week, then the cell's own.
+    found = _locks_by_week(request.fixed_lessons, Weeks(0b0001, 2), phantom_cells(request))
+    assert found == [(None, [every]), (Weeks(0b0001, 2), [every, odd])]
+    # And a cell no real week is in is nobody's reading.
+    assert _locks_by_week(request.fixed_lessons, Weeks(0b0100, 2), phantom_cells(request)) == [(None, [every])]
+
+
+def test_a_set_of_days_held_by_parity_loses_the_period_that_has_none_of_it() -> None:
+    """C05: `lockedWeekdayPeriods` is cut as a post is: the odd weeks' set runs where the odd weeks are."""
+    teacher = str(uuid4())
+    request = _request(_payload(
+        [_requirement(str(uuid4()), 1, teacher=teacher, periods=[False, True]),
+         _requirement(str(uuid4()), 1, periods=[True, False])],
+        teacherDayLimits=[rules._limit(teacher, 2, [[1], [2]], [
+            {"weekdays": [1], "periods": [True, True], "recurrence": "ODD_WEEKS"},
+            {"weekdays": [2], "periods": [True, True], "recurrence": "EVEN_WEEKS"},
+        ])],
+        periodWeeks=WEEKS, periodOddWeeks=ODD,
+    ))
+    odd, even = request.teacher_day_limits[0].locked_weekday_periods
+    # Period 1 is one even week: the odd weeks' Monday is not held there; the even weeks' Tuesday is.
+    assert (odd.periods, even.periods) == ((True, False), (True, True))
+
+
+def test_a_released_post_of_one_parity_loses_the_period_that_has_none_of_it() -> None:
+    """C09: the posts a refusal is solved again with are cut as the posts to place are."""
+    teacher = str(uuid4())
+    released = _requirement(str(uuid4()), 1, teacher=teacher, recurrence="ODD_WEEKS")
+    lock = rules._lock(str(uuid4()), 1, "08:00:00", "09:00:00", teacher)
+    request = _request(_payload(
+        [_requirement(str(uuid4()), 1, teacher=teacher, periods=[False, True]),
+         _requirement(str(uuid4()), 1, periods=[True, False])],
+        fixedLessons=[lock],
+        placements={
+            "lessons": [{"fixedLessonId": lock["id"], "requirementId": released["id"]}],
+            "requirements": [released],
+        },
+        periodWeeks=WEEKS, periodOddWeeks=ODD,
+    ))
+    (kept,) = request.placements.requirements
+    assert kept.periods == (True, False)
+
+
+def test_a_work_day_breach_in_a_period_s_only_week_is_said_as_the_period() -> None:
+    """X03: two lessons of the even weeks on two days of a post of one, in the period that is one even week."""
+    teacher = str(uuid4())
+    posts = [
+        _requirement(str(uuid4()), 1, teacher=teacher, recurrence="EVEN_WEEKS", periods=[False, True])
+        for _ in range(2)
+    ]
+    request = _request(_payload(
+        posts, periodWeeks=WEEKS, periodOddWeeks=ODD,
+        teacherDayLimits=[rules._limit(teacher, 1, [[1]])],
+    ))
+    placed = [
+        ScheduledLesson.model_validate({
+            "requirementId": post["id"], "dayOfWeek": day, "startTime": "08:00:00", "endTime": "09:00:00", "roomId": None,
+        })
+        for day, post in zip((2, 3), posts, strict=True)
+    ]
+    lines = [
+        line for line in deviations_of(
+            request, placed, request.rooms, {}, (1, 2, 3), flatten=lambda fixed: _teacher_locks(fixed)[0],
+        ) if line.code == "DEVIATION_TEACHER_WORK_DAYS"
+    ]
+    (line,) = lines
+    assert line.params["period"] == 1
     assert "parity" not in line.params
 
 

@@ -923,7 +923,10 @@ class LockedWeekdaysInPeriods(CamelModel):
     beside one held in the spring is two entries of one list, and "every
     period" left out would be an entry with no mask among entries with one.
     A mask of nothing but false is a set no week has, and is not a thing to
-    send.
+    send. A MASK OF ONE PERIOD is the year without periods (a school that
+    dates nothing, and so sends no periodWeeks): its sets are told apart by
+    parity alone, which is all `recurrence` is for there (the review of #320,
+    MEDEL-1).
 
     THE PARITY, ONLY WHERE THE SETS DIFFER BY IT. A period's odd weeks and its
     even ones can hold other sets: a lesson locked on Mondays in the odd weeks
@@ -938,7 +941,7 @@ class LockedWeekdaysInPeriods(CamelModel):
     """
 
     weekdays: list[DayOfWeek] = Field(max_length=7)
-    periods: tuple[bool, ...] = Field(min_length=2, max_length=MAX_PERIODS)
+    periods: tuple[bool, ...] = Field(min_length=1, max_length=MAX_PERIODS)
     recurrence: WeekParity | None = Field(default=None)
 
     @field_validator("weekdays")
@@ -1772,8 +1775,10 @@ class OptimizeScheduleRequest(CamelModel):
     #: as many.
     #:
     #: OPTIONAL AND ADDITIVE. Absent is every cell a week, as it always was;
-    #: the gateway sends the key beside periodWeeks, and the engine acts on it
-    #: only where some period lacks a parity.
+    #: the gateway sends the key beside periodWeeks. The engine reads it
+    #: wherever it is sent: the weeks a refusal is chosen by are weighed by it
+    #: in every dated year, and what is built, counted and named changes only
+    #: where some period has no week of a parity.
     period_odd_weeks: list[Annotated[int, Field(ge=0, le=MAX_PERIODS)]] | None = Field(
         default=None, alias="periodOddWeeks", min_length=2, max_length=MAX_PERIODS,
     )
