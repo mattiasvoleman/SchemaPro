@@ -5278,8 +5278,8 @@ same way: its locked lessons (a förlagd post is one) leave it the same STARTS
 on every day (the starts of the lunch window that remain, not the lessons: a
 lock that runs to 12:30 and one that runs to 12:15 leave a window ending at
 12:00 the same starts) and the same meals are placed in them. A pinned lesson
-(§20) cuts the year as a locked one does, by the starts it takes together with
-its pupils' changing minutes (20.3). **A school with a
+(§21) cuts the year as a locked one does, by the starts it takes together with
+its pupils' changing minutes (21.3). **A school with a
 dining hall too small for every class at once cuts all its classes by the
 locks of all of them**: the hall is one resource the meals share, so a class
 with no lock of its own can need one time in the autumn and another in the
@@ -5345,7 +5345,70 @@ checked in every real week by `benchmarks/validate_schedule.lunch_problems`
 inside `test_lunch_parts.py`, and `benchmarks/lunch_flag_identity.py` measures
 that a request whose classes' starts are alike builds the model it built.
 
-## 20. Pinned lessons in the generator ("Fästa lektioner")
+## 20. An administrator who teaches ("Administratör som undervisar", `Users.teaches`)
+
+A rektor or a schemaläggare often teaches too. The investigation chose a mark on the person's row, not two rows per login and
+not a set of roles: one person stays one `Users.id`, and the mark adds the teacher's own arms beside the administrator's, which
+stay as they are. It is built in seven parts; **this is the first, the database, and it changes no behaviour**: the column is
+false for every row, no policy asks for it, and the gateway, the web and the apps do not know it yet.
+
+### 20.1 What 20270212090000 adds
+
+- `Users."teaches"` (boolean, NOT NULL DEFAULT false: a constant default, so the table is not rewritten) and the CHECK
+  `Users_teaches_is_a_teaching_administrators`: true only on a `SCHOOL_ADMIN` of the profile FULL, REKTOR, SCHEMALAGGARE or
+  EXPEDITION, never on a läsare (LASARE) and never on anybody else. The list of profiles is positive, as the HR-läs CHECK's is.
+- `UserRoleChanges."fromTeaches"` (NULL where there is no earlier value: a creation, and every row written before) and
+  `"toTeaches"` (NOT NULL DEFAULT false, which is true of every old row).
+- `app.current_user_teaches()`, the seventh of the helpers that pick the caller's row, with the clause RLS section 10 holds equal.
+- The three trigger functions of 20261110090000 are **patched from the catalogue** (`pg_get_functiondef`, named text changes with
+  the number of places they must occur in): the profile trigger zeroes the mark when the row is not an administrator of a
+  profile that writes (a role change, a läsare), the decision trigger counts the mark as an administrator's change (only rektor
+  and a full administratör set or take away the mark, as they alone change role, profile and HR-läs), and the log writes both
+  values. If a body is not as expected the migration stops with nothing changed. The two triggers that name columns name `teaches`.
+- Beslut 6: a person who teaches has a post. `Users_teaching_has_a_post` refuses the mark (SQLSTATE `TE409`) for a person with no
+  `TeacherEmployments` row for **any** läsår of the school, and
+  `TeacherEmployments_a_teaching_administrator_keeps_a_post` refuses to remove the last such row while the mark stands (`TE410`),
+  and refuses to move it to another person (an `UPDATE` that changes the post's `userId` or `schoolId` is judged as a removal
+  from the person it leaves; the trigger fires on `DELETE OR UPDATE OF "userId", "schoolId"`, so an ordinary change of a post's
+  percent, signature or note pays nothing).
+  Any läsår, not the current one: Aktivera flips a flag and the rollover only inserts, so a rule about the active year would
+  stick on every year switch. A person's deletion and a school's are not refused (the cascade asks whether they still exist);
+  a läsår's deletion that would take a marked person's only post is: switch the mark off first. Both checks lock the person's
+  posts `FOR SHARE`, so a mark set while the last post goes (or is moved away) cannot slip through; of two last posts removed
+  together one ends with 40P01.
+
+### 20.2 Deploy order and operations
+
+- **The order is the migration, then the merge.** The API before this release does not name the column; it writes Users without
+  it (false) and reads `UserRoleChanges` without the two new columns.
+- The migration takes `Users` and `UserRoleChanges` in ACCESS EXCLUSIVE and `TeacherEmployments` in SHARE ROW EXCLUSIVE, NOWAIT,
+  all three together, in a loop that retries every 50 ms for 30 s and holds nothing between tries (a reader of Users and a writer of
+  a post are not queued behind it: measured 0.07 s and 0.08 s while it waited five seconds for a lock). If the three are not free at
+  once in 30 s it stops with nothing changed, and says so: Prisma then marks the migration failed and refuses every later
+  `migrate deploy` (P3009) until `prisma migrate resolve --rolled-back
+  20270212090000_en_administrator_som_undervisar_har_en_markering_och_en_post` has been run (the error names it), then deploy again.
+- No existing row is touched. The checks before and after are `teaches-pr1-data/prod-fore.sql` and `prod-efter.sql` in the round's
+  notes (one SELECT per check, `public` and `app` only, `COLLATE "C"`): the three trigger functions' `md5(prosrc)` before and
+  after, the md5 of every other `app` and `public` function, of every policy and of the other CHECKs on Users equal before and
+  after, no person marked, no log row that names a mark.
+- **Until the gateway learns the field (part 2) nobody can set the mark**, except the database's owner. A person who is set
+  by the owner needs a post first; an administrator cannot be created with the mark in one statement (TE409: create, give a
+  post, mark). The mark is written with an UPDATE, never as part of an upsert's create half.
+- **Rolling back:** the column, the CHECK, the helper and the triggers can stay; nothing reads them. To remove them, take the
+  mark off every row first (the CHECK and the post check do not mind), then drop the triggers, the three new functions and the
+  columns, and put the three trigger functions back from 20261110090000.
+
+### 20.3 Tests
+
+RLS sections 490 to 494 in `rls-policies.sql` (the catalogue and the helper through both API roles; who sets and takes away the
+mark and what zeroes it; the post in both directions; the log, and the same person marked and unmarked seeing the same rows in
+every table a teacher's arm names; the guard that lists every policy and function that names TEACHER without asking for the
+mark, which is parts 3 and 4's worklist) and 490o and 492o in `rls-owner-checks.sql` (the CHECK alone with the triggers off, the
+owner held to the post, a school deleted in both orders its cascade can take). Section 116's matrix has a marked full
+administratör as an eleventh principal, and the *Admin areas* probe (`probe-admin-areas.ts`, `ar-i`) shows the codes arrive
+through the adapter as themselves.
+
+## 21. Pinned lessons in the generator ("Fästa lektioner")
 
 A lesson a school lays by hand before Generera has reached the engine as a
 locked lesson, taken off its post (§ on *Förlagda poster*). A lock has to name
@@ -5362,7 +5425,7 @@ post's lessons in the answer.
 migration, no setting, and no school's week changes: a request without the key
 builds the model it built and is answered with the bytes it was answered with.
 
-### 20.1 Deploy order
+### 21.1 Deploy order
 
 **The engine first**, for the reason §19.1 gives: its request models forbid
 unknown fields, so an engine without the key answers 422 to a run that carries
@@ -5375,13 +5438,13 @@ one.
 2. A later release makes the gateway send the key. That release is refused
    by an engine without this one, and says so in its own section.
 
-### 20.2 Rolling back
+### 21.2 Rolling back
 
 Safe at any time while nothing sends the key: reverting this release takes the
 key out of the engine and changes no answer. Once a gateway sends it, the
 engine must not be rolled back past this release before that gateway is.
 
-### 20.3 A pinned lesson is held to more than a locked one
+### 21.3 A pinned lesson is held to more than a locked one
 
 A locked lesson is a window the generated lessons steer round. It has no
 years, no subject and no margins of its own, and two locks are never compared.
@@ -5415,7 +5478,7 @@ named.
 
 A pinned lesson never gives way, in Bästa möjliga schema either.
 
-### 20.4 Operations
+### 21.4 Operations
 
 - **The lines.** A pinned lesson in the way of a week is named as a förlagd
   lesson is: `PLACED_LESSON_IN_THE_WAY` with its room, and
