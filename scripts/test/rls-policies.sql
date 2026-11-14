@@ -2700,12 +2700,13 @@ ROLLBACK;
 -- returned whichever the heap handed over first. Now a login has one row per
 -- school (Flera skolor per inloggning), and the six helpers pick the row by
 -- the school the request names or else the oldest, each with the same clause
--- (20261204090000 says why each has its own). Three things hold that up, and
+-- (20261204090000 says why each has its own). A seventh, current_user_teaches
+-- (20270212090000), is held to the same clause. Three things hold that up, and
 -- this section asserts them:
 --
 --   * the unique key is exactly (authId, schoolId), so a login has at most
 --     one row per school and "the row at school S" is one row;
---   * the six helpers' clauses are the same text, so no helper can answer
+--   * the seven helpers' clauses are the same text, so no helper can answer
 --     for another row than the others do;
 --   * no other function resolves the caller by "authId": a function that
 --     still did would pick an arbitrary row of a login with two schools. The
@@ -2733,7 +2734,7 @@ BEGIN
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = 'app'
        AND p.proname IN ('current_school_id', 'current_user_role', 'current_user_group_id', 'current_user_may', 'current_user_decides',
-                         'current_huvudman_member_id')
+                         'current_user_teaches', 'current_huvudman_member_id')
   LOOP
     IF strpos(helper.src, clause) = 0 THEN
       RAISE EXCEPTION 'app.%() does not pick the row with app.current_user_id()''s clause', helper.proname;
@@ -2743,8 +2744,9 @@ BEGIN
   -- Huvudman (20261212090000): the second branch, the huvudman's reader, is
   -- one clause too, from app.current_huvudman_member_id() (who the reader
   -- is) into the three helpers that answer for them. current_user_id,
-  -- current_user_group_id and current_user_decides have no second branch:
-  -- the reader is nobody's row, in no class, and decides nothing.
+  -- current_user_group_id, current_user_decides and current_user_teaches
+  -- have no second branch: the reader is nobody's row, in no class, decides
+  -- nothing and teaches nothing.
   SELECT regexp_replace(substring(p.prosrc FROM 'FROM "HuvudmanMembers" m.*LIMIT 1'), '\s+', ' ', 'g') INTO clause
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
    WHERE n.nspname = 'app' AND p.proname = 'current_huvudman_member_id';
@@ -2760,7 +2762,7 @@ BEGIN
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = 'app'
        AND p.proname IN ('current_user_id', 'current_school_id', 'current_user_role', 'current_user_group_id',
-                         'current_user_may', 'current_user_decides')
+                         'current_user_may', 'current_user_decides', 'current_user_teaches')
   LOOP
     IF (strpos(helper.src, clause) > 0) IS DISTINCT FROM (helper.proname IN ('current_school_id', 'current_user_role', 'current_user_may')) THEN
       RAISE EXCEPTION 'app.%() % the huvudman''s reader with app.current_huvudman_member_id()''s clause', helper.proname,
@@ -2806,13 +2808,14 @@ BEGIN
      AND p.prokind IN ('f', 'p')
      AND pg_get_functiondef(p.oid) ~ '"authId"'
      AND (n.nspname, p.proname) NOT IN (
-       -- The six helpers, with the clause asserted above.
+       -- The seven helpers, with the clause asserted above.
        ('app', 'current_user_id'),
        ('app', 'current_school_id'),
        ('app', 'current_user_role'),
        ('app', 'current_user_group_id'),
        ('app', 'current_user_may'),
        ('app', 'current_user_decides'),
+       ('app', 'current_user_teaches'),
        -- The switcher's list: the login's own rows, every one.
        ('app', 'my_schools'),
        -- Whether another row holds a login, for the gateway's deletes.
@@ -20154,7 +20157,9 @@ END $$;
 -- (Läsbehörighet, 20261120100000) twice, with and without; and two logins
 -- with a row at school A too (Flera skolor per inloggning, 20261204090000),
 -- each naming this school, one by header and one by the gateway's setting.
--- Each of the ten reads, inserts, updates and deletes in each table, and every cell is
+-- Each of the eleven (the last a full administrator who teaches, 20270212090000: the mark
+-- adds no cell, and the section would show the first policy that came to ask for it)
+-- reads, inserts, updates and deletes in each table, and every cell is
 -- compared with what src/auth/admin-areas.ts says, through the rows the
 -- generator writes below (scripts/test/generate-rls-area-matrix.ts):
 --
@@ -20351,16 +20356,19 @@ DECLARE
   -- two hold the other profile at school A, so a helper that answered for
   -- every row of the login would show here as the wrong profile's cells.
   principals constant text[][] := ARRAY[
-    ['00000000-0000-4000-8000-000000000105', 'FULL', 'false', ''],
-    ['00000000-0000-4000-8000-000000000106', 'REKTOR', 'false', ''],
-    ['00000000-0000-4000-8000-000000000107', 'SCHEMALAGGARE', 'false', ''],
-    ['00000000-0000-4000-8000-000000000108', 'EXPEDITION', 'false', ''],
-    ['00000000-0000-4000-8000-000000000109', 'SCHEMALAGGARE', 'true', ''],
-    ['00000000-0000-4000-8000-000000000110', 'EXPEDITION', 'true', ''],
-    ['00000000-0000-4000-8000-000000000115', 'LASARE', 'false', ''],
-    ['00000000-0000-4000-8000-000000000116', 'LASARE', 'true', ''],
-    ['fe000000-0000-4000-8000-000000000240', 'LASARE', 'false', 'header'],
-    ['fe000000-0000-4000-8000-000000000241', 'FULL', 'false', 'setting']];
+    ['00000000-0000-4000-8000-000000000105', 'FULL', 'false', '', 'false'],
+    ['00000000-0000-4000-8000-000000000106', 'REKTOR', 'false', '', 'false'],
+    ['00000000-0000-4000-8000-000000000107', 'SCHEMALAGGARE', 'false', '', 'false'],
+    ['00000000-0000-4000-8000-000000000108', 'EXPEDITION', 'false', '', 'false'],
+    ['00000000-0000-4000-8000-000000000109', 'SCHEMALAGGARE', 'true', '', 'false'],
+    ['00000000-0000-4000-8000-000000000110', 'EXPEDITION', 'true', '', 'false'],
+    ['00000000-0000-4000-8000-000000000115', 'LASARE', 'false', '', 'false'],
+    ['00000000-0000-4000-8000-000000000116', 'LASARE', 'true', '', 'false'],
+    ['fe000000-0000-4000-8000-000000000240', 'LASARE', 'false', 'header', 'false'],
+    ['fe000000-0000-4000-8000-000000000241', 'FULL', 'false', 'setting', 'false'],
+    -- En administratör som undervisar (20270212090000): a full administrator who is marked (below, with a post). Nothing asks
+    -- for the mark yet, so its cells are exactly the full administrator's, and a policy that came to ask for it would show here.
+    ['00000000-0000-4000-8000-000000000117', 'FULL', 'false', '', 'true']];
   i integer;
   m uuid;
   pr record;
@@ -20389,6 +20397,19 @@ BEGIN
       (SELECT count(*) FROM area_gates), (SELECT count(*) FROM area_profiles);
   END IF;
 
+  -- En administratör som undervisar (20270212090000): the eleventh principal is marked here, in this transaction. Rektor gives
+  -- the person a post (a mark is refused without one) and then the mark. The year's only post is now a marked person's, so
+  -- a delete of the year is met with TE410 below, which is the table's rule and not row security's (see the handler).
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000106')::text, true);
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+  SELECT u."schoolId", u.id, y.id, 40, now()
+    FROM "Users" u JOIN "AcademicYears" y ON y."schoolId" = u."schoolId" AND y."isActive"
+   WHERE u."authId" = '00000000-0000-4000-8000-000000000117';
+  UPDATE "Users" SET "teaches" = true WHERE "authId" = '00000000-0000-4000-8000-000000000117';
+  IF (SELECT count(*) FROM "Users" WHERE "teaches") <> 1 THEN
+    RAISE EXCEPTION 'matrix: rektor could not mark the eleventh principal';
+  END IF;
+
   FOR i IN 1 .. array_length(principals, 1) LOOP
     PERFORM set_config('request.jwt.claims', json_build_object('sub', principals[i][1])::text, true);
     PERFORM set_config('request.headers',
@@ -20400,12 +20421,14 @@ BEGIN
         RAISE EXCEPTION 'matrix: the full administrator is not in rls-roller-school; fixtures did not run';
       END IF;
     END IF;
-    SELECT u."adminProfile"::text AS profile, u."hrRead" AS hr INTO pr
+    SELECT u."adminProfile"::text AS profile, u."hrRead" AS hr, u."teaches" AS teaches INTO pr
       FROM "Users" u WHERE u.id = app.current_user_id();
     IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR app.current_school_id() IS DISTINCT FROM m
-       OR pr.profile IS DISTINCT FROM principals[i][2] OR pr.hr::text IS DISTINCT FROM principals[i][3] THEN
-      RAISE EXCEPTION 'matrix: % resolved as % % % in %, expected % with HR-läs %', principals[i][1],
-        app.current_user_role(), pr.profile, pr.hr, app.current_school_id(), principals[i][2], principals[i][3];
+       OR pr.profile IS DISTINCT FROM principals[i][2] OR pr.hr::text IS DISTINCT FROM principals[i][3]
+       OR pr.teaches::text IS DISTINCT FROM principals[i][5]
+       OR app.current_user_teaches()::text IS DISTINCT FROM principals[i][5] THEN
+      RAISE EXCEPTION 'matrix: % resolved as % % % % in %, expected % with HR-läs % who teaches %', principals[i][1],
+        app.current_user_role(), pr.profile, pr.hr, pr.teaches, app.current_school_id(), principals[i][2], principals[i][3], principals[i][5];
     END IF;
 
     FOR g IN SELECT * FROM area_gates ORDER BY tbl LOOP
@@ -20479,6 +20502,10 @@ BEGIN
         EXCEPTION
           WHEN SQLSTATE 'ZM116' THEN NULL;
           WHEN unique_violation OR foreign_key_violation THEN
+            outcome := 'admitted';
+          WHEN SQLSTATE 'TE410' THEN
+            -- A delete of the year that holds the marked principal's only post (20270212090000): row security admitted
+            -- it and the table's own rule refused it, as a unique violation is the table's, not the policy's.
             outcome := 'admitted';
           WHEN insufficient_privilege THEN
             GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
@@ -59795,5 +59822,978 @@ BEGIN
       pg_temp.fd_ins(p, mx, '1|08:00|60|A|ALL_WEEKS', '2|08:00|60|A|ALL_WEEKS', '3|08:00|40|A|ALL_WEEKS', '4|08:00|40|A|ALL_WEEKS'));
   END LOOP;
   RAISE NOTICE 'fd 485: % checks', current_setting('fd.checks');
+END $$;
+ROLLBACK;
+
+-- ===========================================================================
+-- Sections 490-494: en administratör som undervisar, del 1 (20270212090000).
+--
+-- Users."teaches" is a mark on an administrator's row that adds the teacher's own arms beside the administrator's. This
+-- migration adds the mark and what must hold for it, and NO policy asks for it yet:
+--
+--   490  what the migration wrote (the column, its CHECK, the triggers and where they sort, the log's two columns, the
+--        trigger functions no API role may call) and app.current_user_teaches(), through both API roles;
+--   491  who may set and take away the mark (rektor and a full administratör, nobody else), and what zeroes it (a role
+--        that is not an administrator's, a läsare), the CHECK's own list read through the triggers that keep it;
+--   492  beslut 6: the mark needs a post, and the last post stays while the mark stands, in both directions, through the
+--        year's deletion and the person's, and a deactivation;
+--   493  the log (UserRoleChanges.fromTeaches / toTeaches) and the proof that nothing else changed: the same person sees the
+--        same rows in every table a teacher's arm names, marked and unmarked, through both roles;
+--   494  the catalogue guard: every policy and function that names TEACHER without asking for the mark is on a list, and the
+--        list is the work that PRs 3 and 4 judge one arm at a time.
+--
+-- The roller school's cast (rls-fixtures.sql): …0105 full, …0106 rektor, …0107 schemaläggare, …0108 expedition, …0109/110
+-- the same with HR-läs, …0115/116 läsare, …0111 teacher (with a post), …0112 pupil, …0113 guardian; …0241 is a läsare at
+-- school A and a full administratör here. Rektor plants posts and marks, as a decider does. A section's rows go with its
+-- ROLLBACK; the helpers below live in the session.
+-- ===========================================================================
+
+-- Resolve a roller-school user by the last digits of its authId; sign in as one; try a statement and say how it ended.
+-- Called as the API's role before any SET ROLE (pg_temp is not searched after it).
+CREATE OR REPLACE FUNCTION pg_temp.tl_as(n int) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM set_config('request.jwt.claims',
+    json_build_object('sub', '00000000-0000-4000-8000-000000000' || lpad(n::text, 3, '0'))::text, true);
+END $f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tl_id(n int) RETURNS uuid LANGUAGE sql AS $f$
+  SELECT u.id FROM "Users" u
+   WHERE u."authId" = ('00000000-0000-4000-8000-000000000' || lpad(n::text, 3, '0'))::uuid
+     AND u."schoolId" = (SELECT s.id FROM "Schools" s WHERE s.slug = 'rls-roller-school')
+$f$;
+
+-- 'ok N' with the rows the statement touched, or the SQLSTATE it ended with. The subtransaction undoes a refused statement.
+CREATE OR REPLACE FUNCTION pg_temp.tl_try(stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE n bigint;
+BEGIN
+  EXECUTE stmt;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN 'ok ' || n;
+EXCEPTION WHEN OTHERS THEN
+  RETURN SQLSTATE;
+END $f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tl_expect(label text, got text, want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  IF got IS DISTINCT FROM want THEN
+    RAISE EXCEPTION 'tl %: got %, wanted %', label, coalesce(got, '(null)'), want;
+  END IF;
+END $f$;
+
+-- A post for the person in the year, as whoever is signed in (a decider writes posts).
+CREATE OR REPLACE FUNCTION pg_temp.tl_post(who uuid, yr uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT pg_temp.tl_try(format($q$INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+                                  SELECT "schoolId", id, %L, 50, now() FROM "Users" WHERE id = %L$q$, yr, who))
+$f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tl_mark(who uuid, v boolean) RETURNS text LANGUAGE sql AS $f$
+  SELECT pg_temp.tl_try(format($q$UPDATE "Users" SET teaches = %L WHERE id = %L$q$, v, who))
+$f$;
+
+-- ---------------------------------------------------------------------------
+-- Section 490
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_school_a', :'school_a', true);
+DO $$
+DECLARE
+  m uuid;
+  yr uuid;
+  a uuid := current_setting('app.test_school_a')::uuid;
+  p105 uuid;
+  p241 uuid;
+  via text;
+  w record;
+  got text;
+  def text;
+BEGIN
+  PERFORM pg_temp.tl_as(106);
+  m := app.current_school_id();
+  IF m IS NULL OR (SELECT slug FROM "Schools" WHERE id = m) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'tl 490: rektor is not in rls-roller-school; fixtures did not run';
+  END IF;
+  yr := (SELECT id FROM "AcademicYears" WHERE "schoolId" = m AND "isActive");
+  p105 := pg_temp.tl_id(105);
+  p241 := (SELECT id FROM "Users" WHERE "authId" = 'fe000000-0000-4000-8000-000000000241' AND "schoolId" = m);
+  IF yr IS NULL OR p105 IS NULL OR p241 IS NULL THEN
+    RAISE EXCEPTION 'tl 490: the roller school lacks its year, its full administrator or login …0241; fixtures did not run';
+  END IF;
+
+  -- 490a. The column: boolean, not null, false.
+  PERFORM pg_temp.tl_expect('490a the column',
+    (SELECT data_type || '/' || is_nullable || '/' || column_default FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'Users' AND column_name = 'teaches'), 'boolean/NO/false');
+  PERFORM pg_temp.tl_expect('490a nobody is marked before a decider says so', (SELECT count(*)::text FROM "Users" WHERE "teaches"), '0');
+
+  -- 490b. The CHECK names the four profiles that write and no other, and the role.
+  def := (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+           WHERE conrelid = '"Users"'::regclass AND conname = 'Users_teaches_is_a_teaching_administrators' AND contype = 'c');
+  -- Validated: a CHECK created NOT VALID holds for new writes and says nothing of the rows already there.
+  IF NOT (SELECT convalidated FROM pg_constraint
+           WHERE conrelid = '"Users"'::regclass AND conname = 'Users_teaches_is_a_teaching_administrators' AND contype = 'c') THEN
+    RAISE EXCEPTION 'tl 490b: the CHECK on teaches is NOT VALID';
+  END IF;
+  IF def IS NULL OR def NOT LIKE '%NOT teaches%' OR def NOT LIKE '%SCHOOL_ADMIN%' OR def LIKE '%LASARE%'
+     OR def NOT LIKE '%''FULL''%' OR def NOT LIKE '%''REKTOR''%' OR def NOT LIKE '%''SCHEMALAGGARE''%' OR def NOT LIKE '%''EXPEDITION''%' THEN
+    RAISE EXCEPTION 'tl 490b: the CHECK on teaches is %', coalesce(def, '(missing)');
+  END IF;
+
+  -- 490c. The triggers: the two that name columns name the mark; the post's two; where they sort among the BEFORE row
+  -- triggers (the profile follows the role, then the decision is judged on the row as written, then the post is asked for).
+  FOR w IN SELECT * FROM (VALUES
+      ('Users', 'Users_a_profile_follows_the_role', 'BEFORE INSERT OR UPDATE OF role, "adminProfile", "hrRead", teaches ON'),
+      ('Users', 'Users_role_changes_are_logged', 'AFTER INSERT OR UPDATE OF role, "adminProfile", "hrRead", teaches ON'),
+      ('Users', 'Users_teaching_has_a_post', 'BEFORE INSERT OR UPDATE OF teaches ON'),
+      ('TeacherEmployments', 'TeacherEmployments_a_teaching_administrator_keeps_a_post', 'BEFORE DELETE OR UPDATE OF "userId", "schoolId" ON')
+    ) AS t(tbl, trg, shape)
+  LOOP
+    def := (SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid = format('%I', w.tbl)::regclass AND tgname = w.trg AND NOT tgisinternal);
+    IF def IS NULL OR def NOT LIKE '%' || w.shape || '%' OR def NOT LIKE '%FOR EACH ROW%' THEN
+      RAISE EXCEPTION 'tl 490c: trigger % is %', w.trg, coalesce(def, '(missing)');
+    END IF;
+  END LOOP;
+  IF (SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid = '"Users"'::regclass AND tgname = 'Users_teaching_has_a_post') NOT LIKE '%WHEN (new.teaches)%' THEN
+    RAISE EXCEPTION 'tl 490c: the post check is not asked only of a row that teaches';
+  END IF;
+  def := (SELECT string_agg(tgname, ' < ' ORDER BY tgname COLLATE "C") FROM pg_trigger
+           WHERE tgrelid = '"Users"'::regclass AND NOT tgisinternal AND (tgtype & 2) = 2 AND (tgtype & 1) = 1
+             AND tgname IN ('Users_a_profile_follows_the_role', 'Users_administrators_are_decided', 'Users_teaching_has_a_post'));
+  PERFORM pg_temp.tl_expect('490c the order the BEFORE triggers fire in', def,
+    'Users_a_profile_follows_the_role < Users_administrators_are_decided < Users_teaching_has_a_post');
+
+  -- 490d. The log's two columns: fromTeaches may be null, toTeaches may not and is false by default.
+  PERFORM pg_temp.tl_expect('490d the log columns',
+    (SELECT string_agg(column_name || ':' || is_nullable || ':' || coalesce(column_default, '-'), ' ' ORDER BY column_name COLLATE "C")
+       FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'UserRoleChanges' AND column_name IN ('fromTeaches', 'toTeaches')),
+    'fromTeaches:YES:- toTeaches:NO:false');
+
+  -- 490e. The trigger functions are no API role's to call; the helper is as its sibling decides is.
+  FOR w IN SELECT * FROM (VALUES
+      ('app.users_teaching_has_a_post()'), ('app.teacher_employments_keep_a_teaching_administrators_post()'),
+      ('app.users_profile_follows_the_role()'), ('app.users_administrators_are_decided()'), ('app.users_role_changes_are_logged()')
+    ) AS t(fn)
+  LOOP
+    FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = via) AND has_function_privilege(via, w.fn, 'EXECUTE') THEN
+        RAISE EXCEPTION 'tl 490e: % may call %', via, w.fn;
+      END IF;
+    END LOOP;
+  END LOOP;
+  IF NOT (SELECT prosecdef AND provolatile = 's' AND prorettype = 'boolean'::regtype
+                 AND EXISTS (SELECT 1 FROM unnest(proconfig) c WHERE c = 'search_path=public, pg_temp')
+            FROM pg_proc WHERE oid = 'app.current_user_teaches()'::regprocedure) THEN
+    RAISE EXCEPTION 'tl 490e: app.current_user_teaches() is not a stable SECURITY DEFINER boolean with a fixed search_path';
+  END IF;
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    IF NOT has_function_privilege(via, 'app.current_user_teaches()', 'EXECUTE') THEN
+      RAISE EXCEPTION 'tl 490e: % cannot ask app.current_user_teaches(), which a policy evaluates as the caller', via;
+    END IF;
+  END LOOP;
+
+  -- 490f. The helper. Rektor plants the full administratör's post and mark; nobody else is marked.
+  PERFORM pg_temp.tl_expect('490f a post for the full administratör', pg_temp.tl_post(p105, yr), 'ok 1');
+  PERFORM pg_temp.tl_expect('490f rektor marks them', pg_temp.tl_mark(p105, true), 'ok 1');
+  PERFORM pg_temp.tl_expect('490f and the mark is there', (SELECT "teaches"::text FROM "Users" WHERE id = p105), 'true');
+
+  FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+    EXECUTE format('SET LOCAL ROLE %I', via);
+    FOR w IN SELECT * FROM (VALUES
+        (105, 'true',  'the marked full administratör'),
+        (106, 'false', 'rektor, who is not marked'),
+        (107, 'false', 'a schemaläggare'),
+        (108, 'false', 'an expedition'),
+        (109, 'false', 'a schemaläggare with HR-läs'),
+        (115, 'false', 'a läsare'),
+        (111, 'false', 'a teacher'),
+        (112, 'false', 'a pupil'),
+        (113, 'false', 'a guardian'),
+        (117, 'false', 'the eleventh administratör, whom section 116 marks')
+      ) AS t(n, want, label)
+    LOOP
+      PERFORM set_config('request.jwt.claims',
+        json_build_object('sub', '00000000-0000-4000-8000-000000000' || lpad(w.n::text, 3, '0'))::text, true);
+      got := app.current_user_teaches()::text;
+      IF got IS DISTINCT FROM w.want THEN
+        RAISE EXCEPTION 'tl 490f: through % %: app.current_user_teaches() is %, wanted %', via, w.label, coalesce(got, '(null)'), w.want;
+      END IF;
+    END LOOP;
+    PERFORM set_config('request.jwt.claims', '{}', true);
+    got := app.current_user_teaches()::text;
+    IF got IS DISTINCT FROM 'false' THEN
+      RAISE EXCEPTION 'tl 490f: through % with no principal app.current_user_teaches() is %, not false', via, coalesce(got, '(null)');
+    END IF;
+  END LOOP;
+  SET LOCAL ROLE app_authenticated;
+
+  -- 490g. A deactivated marked administratör does not teach: the helper's row is the active one.
+  PERFORM pg_temp.tl_as(106);
+  UPDATE "Users" SET "isActive" = false WHERE id = p105;
+  PERFORM pg_temp.tl_as(105);
+  PERFORM pg_temp.tl_expect('490g a deactivated administratör teaches nowhere', app.current_user_teaches()::text, 'false');
+  PERFORM pg_temp.tl_as(106);
+  UPDATE "Users" SET "isActive" = true WHERE id = p105;
+  PERFORM pg_temp.tl_as(105);
+  PERFORM pg_temp.tl_expect('490g and again when active', app.current_user_teaches()::text, 'true');
+
+  -- 490h. The helper answers for the row the request names. Login …0241 is a läsare at school A (the older row) and a full
+  -- administratör here; marked here, it teaches where the request names here and nowhere else.
+  PERFORM pg_temp.tl_as(106);
+  PERFORM pg_temp.tl_expect('490h a post for …0241 here', pg_temp.tl_post(p241, yr), 'ok 1');
+  PERFORM pg_temp.tl_expect('490h marked here', pg_temp.tl_mark(p241, true), 'ok 1');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', 'fe000000-0000-4000-8000-000000000241')::text, true);
+  PERFORM set_config('app.chosen_school_id', m::text, true);
+  PERFORM pg_temp.tl_expect('490h naming the school where it is marked', app.current_user_teaches()::text, 'true');
+  PERFORM set_config('app.chosen_school_id', a::text, true);
+  PERFORM pg_temp.tl_expect('490h naming the school where it is a läsare', app.current_user_teaches()::text, 'false');
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM pg_temp.tl_expect('490h naming none: the older row, the läsare''s', app.current_user_teaches()::text, 'false');
+  PERFORM set_config('app.chosen_school_id', '', true);
+
+  -- 490i. A school the access-token hook closed for the login (rastra_closed_schools: it took the single sign-on a school
+  -- requires) is not one the login teaches at: the helper does not answer for a closed school's row, as its siblings do not.
+  -- Another school's closure does not close this one.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105',
+    'rastra_closed_schools', json_build_object(m::text, 'sso_required'))::text, true);
+  PERFORM pg_temp.tl_expect('490i the marked school closed for the login', app.current_user_teaches()::text, 'false');
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105',
+    'rastra_closed_schools', json_build_object(a::text, 'sso_required'))::text, true);
+  PERFORM pg_temp.tl_expect('490i another school closed for the login', app.current_user_teaches()::text, 'true');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 491: who sets the mark, who takes it away, and what zeroes it.
+--
+-- Beslut 2: only rektor and a full administratör set or take away the mark, which is a change of an administrator
+-- (Users_administrators_are_decided, AR403). A schemaläggare, an expedition, the same two with HR-läs and a läsare are
+-- refused on anybody's row and on their own, whatever the mark's old value; a teacher, a pupil and a guardian write no
+-- administrator's row at all (the policy finds none: no row, no error, nothing changed). A decider may mark themselves, as
+-- they may change their own role and profile today: no path is added, and none the decider did not already have.
+--
+-- Beslut 3 and the profile trigger: the mark goes with anybody who is not an administrator of a profile that writes. A
+-- decider who marks a teacher, a pupil, a guardian or a läsare finds the mark false afterwards (zeroed, not refused, as
+-- HR-läs is: see the migration) and no log row. A marked administrator who becomes a teacher or a läsare loses the mark in
+-- the same statement; one who moves between the profiles that write keeps it; one who comes back does not get it back. An
+-- administrator created with the mark is refused for lack of a post (TE409: section 492 holds the post), a teacher created
+-- with it is a teacher.
+--
+-- The sync cannot touch an administrator at all (Users_sync_writes_are_narrow, SS403), so it cannot touch the mark.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  m uuid;
+  yr uuid;
+  p105 uuid; p106 uuid; p107 uuid; p108 uuid; p109 uuid; p110 uuid; p111 uuid; p112 uuid; p113 uuid; p115 uuid; p116 uuid;
+  n int;
+  w record;
+  s text;
+BEGIN
+  PERFORM pg_temp.tl_as(106);
+  m := app.current_school_id();
+  IF m IS NULL OR (SELECT slug FROM "Schools" WHERE id = m) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'tl 491: rektor is not in rls-roller-school; fixtures did not run';
+  END IF;
+  yr := (SELECT id FROM "AcademicYears" WHERE "schoolId" = m AND "isActive");
+  p105 := pg_temp.tl_id(105); p106 := pg_temp.tl_id(106); p107 := pg_temp.tl_id(107); p108 := pg_temp.tl_id(108);
+  p109 := pg_temp.tl_id(109); p110 := pg_temp.tl_id(110); p111 := pg_temp.tl_id(111); p112 := pg_temp.tl_id(112);
+  p113 := pg_temp.tl_id(113); p115 := pg_temp.tl_id(115); p116 := pg_temp.tl_id(116);
+  IF yr IS NULL OR p116 IS NULL OR p113 IS NULL THEN RAISE EXCEPTION 'tl 491: fixtures did not run'; END IF;
+
+  -- 491a. Rektor gives every administrator of a profile that writes a post, and marks each of them (rektor's own too).
+  FOR w IN SELECT * FROM (VALUES (p105, 'full'), (p106, 'rektor'), (p107, 'schemaläggare'), (p108, 'expedition'),
+                                 (p109, 'schemaläggare med HR-läs'), (p110, 'expedition med HR-läs')) AS t(id, label)
+  LOOP
+    PERFORM pg_temp.tl_expect('491a a post for ' || w.label, pg_temp.tl_post(w.id, yr), 'ok 1');
+    PERFORM pg_temp.tl_expect('491a marked ' || w.label, pg_temp.tl_mark(w.id, true), 'ok 1');
+  END LOOP;
+  PERFORM pg_temp.tl_expect('491a six are marked', (SELECT count(*)::text FROM "Users" WHERE "teaches"), '6');
+  -- The ones who may not mark, at their own row's mark, and rektor unmarks two to have somebody to refuse them on.
+  PERFORM pg_temp.tl_expect('491a rektor takes the mark from the expedition', pg_temp.tl_mark(p108, false), 'ok 1');
+  PERFORM pg_temp.tl_expect('491a and from rektor', pg_temp.tl_mark(p106, false), 'ok 1');
+
+  -- 491b. Nobody who does not decide changes the mark, on anyone's row or their own, to either value.
+  FOR w IN SELECT * FROM (VALUES (107, 'a schemaläggare'), (108, 'an expedition'), (109, 'a schemaläggare with HR-läs'),
+                                 (110, 'an expedition with HR-läs'), (115, 'a läsare'), (116, 'a läsare with HR-läs')) AS t(n, label)
+  LOOP
+    PERFORM pg_temp.tl_as(w.n);
+    PERFORM pg_temp.tl_expect('491b ' || w.label || ' takes the mark from the full administratör', pg_temp.tl_mark(p105, false), 'AR403');
+    PERFORM pg_temp.tl_expect('491b ' || w.label || ' gives the mark to rektor', pg_temp.tl_mark(p106, true), 'AR403');
+    PERFORM pg_temp.tl_expect('491b ' || w.label || ' marks the expedition', pg_temp.tl_mark(p108, true), 'AR403');
+    PERFORM pg_temp.tl_expect('491b ' || w.label || ' takes it from the marked schemaläggare', pg_temp.tl_mark(p107, false), 'AR403');
+    PERFORM pg_temp.tl_expect('491b ' || w.label || ' marks themselves', pg_temp.tl_mark(pg_temp.tl_id(w.n), true), 'AR403');
+    PERFORM pg_temp.tl_expect('491b ' || w.label || ' unmarks themselves', pg_temp.tl_mark(pg_temp.tl_id(w.n), false), 'AR403');
+  END LOOP;
+  PERFORM pg_temp.tl_as(106);
+  PERFORM pg_temp.tl_expect('491b the refusals changed nothing: marked are full, schemaläggare, two with HR-läs',
+    (SELECT string_agg(split_part(email, '@', 1), ',' ORDER BY split_part(email, '@', 1) COLLATE "C") FROM "Users" WHERE "teaches"),
+    'roller-exp-hr,roller-full,roller-schema,roller-schema-hr');
+
+  -- 491c. A teacher, a pupil and a guardian write no administrator's row: no error, no row, no change.
+  FOR w IN SELECT * FROM (VALUES (111, 'a teacher'), (112, 'a pupil'), (113, 'a guardian')) AS t(n, label)
+  LOOP
+    PERFORM pg_temp.tl_as(w.n);
+    PERFORM pg_temp.tl_expect('491c ' || w.label || ' marks the unmarked rektor', pg_temp.tl_mark(p106, true), 'ok 0');
+    PERFORM pg_temp.tl_expect('491c ' || w.label || ' unmarks the full administratör', pg_temp.tl_mark(p105, false), 'ok 0');
+  END LOOP;
+  PERFORM pg_temp.tl_as(106);
+  PERFORM pg_temp.tl_expect('491c nothing changed', (SELECT count(*)::text FROM "Users" WHERE "teaches"), '4');
+
+  -- 491d. A decider decides: rektor marks the unmarked and unmarks the marked, and so may a full administratör; either on
+  -- themselves, as they may already change their own profile.
+  PERFORM pg_temp.tl_expect('491d rektor marks the expedition again', pg_temp.tl_mark(p108, true), 'ok 1');
+  PERFORM pg_temp.tl_expect('491d rektor marks themselves', pg_temp.tl_mark(p106, true), 'ok 1');
+  PERFORM pg_temp.tl_as(105);
+  PERFORM pg_temp.tl_expect('491d the full administratör takes it from the schemaläggare', pg_temp.tl_mark(p107, false), 'ok 1');
+  PERFORM pg_temp.tl_expect('491d and gives it back', pg_temp.tl_mark(p107, true), 'ok 1');
+  PERFORM pg_temp.tl_expect('491d unmarks themselves', pg_temp.tl_mark(p105, false), 'ok 1');
+  PERFORM pg_temp.tl_expect('491d marks themselves', pg_temp.tl_mark(p105, true), 'ok 1');
+  PERFORM pg_temp.tl_expect('491d writing the mark it already has is a write and no change', pg_temp.tl_mark(p105, true), 'ok 1');
+
+  -- 491e. A decider's mark on somebody who cannot teach is zeroed: a teacher, a pupil, a guardian and the läsare, who each
+  -- have a post to ask for, so that the post is not what stops them. No log row for any of them.
+  PERFORM pg_temp.tl_as(106);
+  n := (SELECT count(*) FROM "UserRoleChanges");
+  PERFORM pg_temp.tl_expect('491e a post for the läsare', pg_temp.tl_post(p115, yr), 'ok 1');
+  PERFORM pg_temp.tl_expect('491e and for the läsare with HR-läs', pg_temp.tl_post(p116, yr), 'ok 1');
+  FOR w IN SELECT * FROM (VALUES (p111, 'a teacher with a post'), (p112, 'a pupil'), (p113, 'a guardian'),
+                                 (p115, 'a läsare with a post'), (p116, 'a läsare with HR-läs and a post')) AS t(id, label)
+  LOOP
+    PERFORM pg_temp.tl_expect('491e marking ' || w.label || ' is a write', pg_temp.tl_mark(w.id, true), 'ok 1');
+    PERFORM pg_temp.tl_expect('491e ' || w.label || ' is not marked', (SELECT "teaches"::text FROM "Users" WHERE id = w.id), 'false');
+  END LOOP;
+  PERFORM pg_temp.tl_expect('491e and nothing was logged', (SELECT count(*)::text FROM "UserRoleChanges"), n::text);
+
+  -- 491f. A marked administrator who stops being one, or becomes a läsare, loses the mark in the same statement; one who
+  -- moves between the profiles that write keeps it; and nothing gives it back.
+  PERFORM pg_temp.tl_expect('491f the marked schemaläggare becomes an expedition: still marked',
+    pg_temp.tl_try(format($q$UPDATE "Users" SET "adminProfile" = 'EXPEDITION' WHERE id = %L$q$, p107)), 'ok 1');
+  PERFORM pg_temp.tl_expect('491f ...and is', (SELECT "teaches"::text FROM "Users" WHERE id = p107), 'true');
+  PERFORM pg_temp.tl_expect('491f the marked full administratör becomes rektor: still marked, with no HR-läs',
+    pg_temp.tl_try(format($q$UPDATE "Users" SET "adminProfile" = 'REKTOR' WHERE id = %L$q$, p105)), 'ok 1');
+  PERFORM pg_temp.tl_expect('491f ...and is', (SELECT "teaches"::text FROM "Users" WHERE id = p105), 'true');
+  PERFORM pg_temp.tl_expect('491f the marked schemaläggare with HR-läs becomes a läsare: HR-läs stays, the mark goes',
+    pg_temp.tl_try(format($q$UPDATE "Users" SET "adminProfile" = 'LASARE' WHERE id = %L$q$, p109)), 'ok 1');
+  PERFORM pg_temp.tl_expect('491f ...HR-läs stays and the mark is gone',
+    (SELECT "hrRead"::text || '/' || "teaches"::text FROM "Users" WHERE id = p109), 'true/false');
+  PERFORM pg_temp.tl_expect('491f made a schemaläggare again, they do not get it back',
+    pg_temp.tl_try(format($q$UPDATE "Users" SET "adminProfile" = 'SCHEMALAGGARE' WHERE id = %L$q$, p109)), 'ok 1');
+  PERFORM pg_temp.tl_expect('491f ...not marked', (SELECT "teaches"::text FROM "Users" WHERE id = p109), 'false');
+  PERFORM pg_temp.tl_expect('491f the marked expedition with HR-läs becomes a teacher',
+    pg_temp.tl_try(format($q$UPDATE "Users" SET role = 'TEACHER' WHERE id = %L$q$, p110)), 'ok 1');
+  PERFORM pg_temp.tl_expect('491f ...no profile, no HR-läs, no mark',
+    (SELECT coalesce("adminProfile"::text, '-') || '/' || "hrRead"::text || '/' || "teaches"::text FROM "Users" WHERE id = p110), '-/false/false');
+  PERFORM pg_temp.tl_expect('491f a teacher who is made an administrator again is not marked',
+    pg_temp.tl_try(format($q$UPDATE "Users" SET role = 'SCHOOL_ADMIN', "adminProfile" = 'FULL' WHERE id = %L$q$, p110)), 'ok 1');
+  PERFORM pg_temp.tl_expect('491f ...not marked', (SELECT "teaches"::text FROM "Users" WHERE id = p110), 'false');
+  -- One statement that makes a teacher an administrator and marks them is judged on the row as it will be: the post exists
+  -- (the person was given one above), the profile writes, so it stands.
+  PERFORM pg_temp.tl_expect('491f made an administrator and marked in one statement',
+    pg_temp.tl_try(format($q$UPDATE "Users" SET "adminProfile" = 'EXPEDITION', teaches = true WHERE id = %L$q$, p110)), 'ok 1');
+  PERFORM pg_temp.tl_expect('491f ...marked', (SELECT "teaches"::text FROM "Users" WHERE id = p110), 'true');
+
+  -- 491g. Creation: an administrator created with the mark has no post yet (TE409); a teacher created with it is a teacher;
+  -- the sync, which writes pupils' and guardians' names and classes, cannot write an administrator.
+  PERFORM pg_temp.tl_expect('491g an administrator created with the mark has no post',
+    pg_temp.tl_try(format($q$INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", teaches, "authId", "updatedAt")
+      VALUES (%L, 'tl-491-admin@example.invalid', 'Ny', 'Admin', 'SCHOOL_ADMIN', 'FULL', true, gen_random_uuid(), now())$q$, m)), 'TE409');
+  PERFORM pg_temp.tl_expect('491g a teacher created with the mark', pg_temp.tl_try(format($q$INSERT INTO "Users"
+      ("schoolId", email, "firstName", "lastName", role, teaches, "authId", "updatedAt")
+      VALUES (%L, 'tl-491-teacher@example.invalid', 'Ny', 'Lärare', 'TEACHER', true, gen_random_uuid(), now())$q$, m)), 'ok 1');
+  PERFORM pg_temp.tl_expect('491g ...is a teacher and not marked',
+    (SELECT "teaches"::text FROM "Users" WHERE email = 'tl-491-teacher@example.invalid'), 'false');
+  PERFORM set_config('request.jwt.claims', '{}', true);
+  PERFORM set_config('app.sync_school_id', m::text, true);
+  PERFORM pg_temp.tl_expect('491g the sync unmarks a marked administrator', pg_temp.tl_mark(p105, false), 'SS403');
+  PERFORM pg_temp.tl_expect('491g and marks an unmarked one', pg_temp.tl_mark(p109, true), 'SS403');
+  PERFORM set_config('app.sync_school_id', '', true);
+  PERFORM pg_temp.tl_as(106);
+  PERFORM pg_temp.tl_expect('491g neither changed', (SELECT "teaches"::text FROM "Users" WHERE id = p105) || '/' || (SELECT "teaches"::text FROM "Users" WHERE id = p109), 'true/false');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 492: beslut 6, the mark needs a post and the post stays while the mark stands (20270212090000).
+--
+-- Users_teaching_has_a_post: the mark is refused (TE409) for a person with no TeacherEmployments row for any läsår of the
+-- school; a person who may not set the mark is refused for that first (AR403: the order of the triggers, section 490c).
+-- TeacherEmployments_a_teaching_administrator_keeps_a_post: the last post of a marked person is refused (TE410), whether
+-- it is deleted or MOVED to another person by an UPDATE of its userId (492j); one of several goes. ANY läsår counts, not the current one, so that a year switch (a flag flipped, the next year's posts
+-- inserted, nothing deleted) cannot stick on the guard or leave a mark "without a post" the day the year changes.
+--
+-- What is not refused: a person who is gone (their posts go with them), a person who is deactivated (nothing is deleted:
+-- the mark, the post and the history stand, and the helper is false while they are inactive), a school that is gone (owner
+-- side: 492o in rls-owner-checks.sql), an unmarked person's posts, the mark turned off and then the last post removed, a
+-- year's deletion that takes one of two posts. What IS refused is a year's deletion that would take a marked person's only
+-- post: turn the mark off first (the gateway says so).
+--
+-- Not asked here: the race between setting the mark and removing (or moving) the last post, which needs two connections. The
+-- check locks the person's posts FOR SHARE (the mark) and the other posts FOR SHARE (the removal); the migration's header says
+-- why, and the adapter probe's (ar-j) is the two-connection proof (this suite runs in one).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  m uuid;
+  yr uuid;
+  yr2 uuid;
+  p105 uuid; p107 uuid; p108 uuid; p111 uuid;
+  post1 uuid; post2 uuid;
+  gone uuid; moved uuid;
+BEGIN
+  PERFORM pg_temp.tl_as(106);
+  m := app.current_school_id();
+  IF m IS NULL OR (SELECT slug FROM "Schools" WHERE id = m) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'tl 492: rektor is not in rls-roller-school; fixtures did not run';
+  END IF;
+  yr := (SELECT id FROM "AcademicYears" WHERE "schoolId" = m AND "isActive");
+  p105 := pg_temp.tl_id(105); p107 := pg_temp.tl_id(107); p108 := pg_temp.tl_id(108); p111 := pg_temp.tl_id(111);
+  IF yr IS NULL OR p108 IS NULL THEN RAISE EXCEPTION 'tl 492: fixtures did not run'; END IF;
+
+  -- A second läsår, empty, for the schemaläggare's second post and the year's deletion.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (m, 'Roller 2031/32', '2031-08-15', '2032-06-15', false, now()) RETURNING id INTO yr2;
+
+  -- 492a. No post, no mark. Rektor is refused with what the person lacks; a person who may not mark is refused for that.
+  PERFORM pg_temp.tl_expect('492a the schemaläggare has no post', (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = p107), '0');
+  PERFORM pg_temp.tl_expect('492a rektor marks them: no post', pg_temp.tl_mark(p107, true), 'TE409');
+  PERFORM pg_temp.tl_as(108);
+  PERFORM pg_temp.tl_expect('492a the expedition marks them: not theirs to decide, before the post is asked', pg_temp.tl_mark(p107, true), 'AR403');
+  PERFORM pg_temp.tl_as(106);
+  PERFORM pg_temp.tl_expect('492a nothing changed', (SELECT "teaches"::text FROM "Users" WHERE id = p107), 'false');
+  -- A post of the person's own and of nobody else's does not do: the post is the person's.
+  PERFORM pg_temp.tl_expect('492a the teacher has a post', (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = p111), '1');
+  PERFORM pg_temp.tl_expect('492a and it is not the schemaläggare''s to lean on', pg_temp.tl_mark(p107, true), 'TE409');
+
+  -- 492b. With a post the mark stands; the post of the year is the last one and is not removed.
+  PERFORM pg_temp.tl_expect('492b a post in the active year', pg_temp.tl_post(p107, yr), 'ok 1');
+  post1 := (SELECT id FROM "TeacherEmployments" WHERE "userId" = p107 AND "academicYearId" = yr);
+  PERFORM pg_temp.tl_expect('492b marked', pg_temp.tl_mark(p107, true), 'ok 1');
+  PERFORM pg_temp.tl_expect('492b the last post is not removed', pg_temp.tl_try(format($q$DELETE FROM "TeacherEmployments" WHERE id = %L$q$, post1)), 'TE410');
+  PERFORM pg_temp.tl_expect('492b a post is not removed by its person and year either', pg_temp.tl_try(format(
+    $q$DELETE FROM "TeacherEmployments" WHERE "userId" = %L AND "academicYearId" = %L$q$, p107, yr)), 'TE410');
+  PERFORM pg_temp.tl_expect('492b it stands and so does the mark',
+    (SELECT count(*)::text FROM "TeacherEmployments" WHERE id = post1) || '/' || (SELECT "teaches"::text FROM "Users" WHERE id = p107), '1/true');
+  -- A change of the post is not its removal.
+  PERFORM pg_temp.tl_expect('492b a change of the post''s percent', pg_temp.tl_try(format($q$UPDATE "TeacherEmployments" SET "employmentPercent" = 60 WHERE id = %L$q$, post1)), 'ok 1');
+
+  -- 492c. Two posts: one goes, the last does not.
+  PERFORM pg_temp.tl_expect('492c a post in the second year', pg_temp.tl_post(p107, yr2), 'ok 1');
+  post2 := (SELECT id FROM "TeacherEmployments" WHERE "userId" = p107 AND "academicYearId" = yr2);
+  PERFORM pg_temp.tl_expect('492c the first goes: another is left', pg_temp.tl_try(format($q$DELETE FROM "TeacherEmployments" WHERE id = %L$q$, post1)), 'ok 1');
+  PERFORM pg_temp.tl_expect('492c the second is the last', pg_temp.tl_try(format($q$DELETE FROM "TeacherEmployments" WHERE id = %L$q$, post2)), 'TE410');
+  -- 492d. The year's deletion carries the person's only post: refused, the year stays. A year with the one of two goes.
+  PERFORM pg_temp.tl_expect('492d the year that holds the last post is not deleted', pg_temp.tl_try(format($q$DELETE FROM "AcademicYears" WHERE id = %L$q$, yr2)), 'TE410');
+  PERFORM pg_temp.tl_expect('492d it is there', (SELECT count(*)::text FROM "AcademicYears" WHERE id = yr2), '1');
+  PERFORM pg_temp.tl_expect('492d a post in the active year as well', pg_temp.tl_post(p107, yr), 'ok 1');
+  PERFORM pg_temp.tl_expect('492d the second year goes, with its post, the other is left', pg_temp.tl_try(format($q$DELETE FROM "AcademicYears" WHERE id = %L$q$, yr2)), 'ok 1');
+  PERFORM pg_temp.tl_expect('492d the person has the post of the active year and the mark',
+    (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = p107) || '/' || (SELECT "teaches"::text FROM "Users" WHERE id = p107), '1/true');
+
+  -- 492e. The mark off, the post goes; and back on, the post is asked for again.
+  PERFORM pg_temp.tl_expect('492e the mark off', pg_temp.tl_mark(p107, false), 'ok 1');
+  PERFORM pg_temp.tl_expect('492e the post goes', pg_temp.tl_try(format($q$DELETE FROM "TeacherEmployments" WHERE "userId" = %L$q$, p107)), 'ok 1');
+  PERFORM pg_temp.tl_expect('492e the mark on again: no post', pg_temp.tl_mark(p107, true), 'TE409');
+
+  -- 492f. An unmarked person's posts are anyone's to remove as before: the teacher's.
+  PERFORM pg_temp.tl_expect('492f the teacher''s post goes', pg_temp.tl_try(format($q$DELETE FROM "TeacherEmployments" WHERE "userId" = %L$q$, p111)), 'ok 1');
+
+  -- 492g. A marked person made a teacher loses the mark; the post is then anyone's to remove.
+  PERFORM pg_temp.tl_expect('492g a post for the expedition', pg_temp.tl_post(p108, yr), 'ok 1');
+  PERFORM pg_temp.tl_expect('492g marked', pg_temp.tl_mark(p108, true), 'ok 1');
+  PERFORM pg_temp.tl_expect('492g made a teacher: the mark goes', pg_temp.tl_try(format($q$UPDATE "Users" SET role = 'TEACHER' WHERE id = %L$q$, p108)), 'ok 1');
+  PERFORM pg_temp.tl_expect('492g the post goes with nothing to hold it', pg_temp.tl_try(format($q$DELETE FROM "TeacherEmployments" WHERE "userId" = %L$q$, p108)), 'ok 1');
+
+  -- 492h. A deactivated marked person: nothing is removed, so nothing sticks; the mark and the post stand and come back.
+  PERFORM pg_temp.tl_expect('492h a post for the full administratör', pg_temp.tl_post(p105, yr), 'ok 1');
+  PERFORM pg_temp.tl_expect('492h marked', pg_temp.tl_mark(p105, true), 'ok 1');
+  PERFORM pg_temp.tl_expect('492h deactivated', pg_temp.tl_try(format($q$UPDATE "Users" SET "isActive" = false WHERE id = %L$q$, p105)), 'ok 1');
+  PERFORM pg_temp.tl_expect('492h the mark and the post stand',
+    (SELECT "teaches"::text FROM "Users" WHERE id = p105) || '/' || (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = p105), 'true/1');
+  PERFORM pg_temp.tl_expect('492h the post is still not removed while marked', pg_temp.tl_try(format($q$DELETE FROM "TeacherEmployments" WHERE "userId" = %L$q$, p105)), 'TE410');
+  PERFORM pg_temp.tl_expect('492h reactivated', pg_temp.tl_try(format($q$UPDATE "Users" SET "isActive" = true WHERE id = %L$q$, p105)), 'ok 1');
+  PERFORM pg_temp.tl_expect('492h and teaches again', (SELECT "teaches"::text FROM "Users" WHERE id = p105), 'true');
+
+  -- 492i. A person removed takes their posts with them, marked or not, and the log of what was done to them: no TE410 for a
+  -- cascade from a person who is no longer there.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "updatedAt")
+  VALUES (m, 'tl-492-gone@example.invalid', 'Tl', 'Borta', 'SCHOOL_ADMIN', 'FULL', gen_random_uuid(), now()) RETURNING id INTO gone;
+  PERFORM pg_temp.tl_expect('492i a post for them', pg_temp.tl_post(gone, yr), 'ok 1');
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (m, 'Roller 2032/33', '2032-08-15', '2033-06-15', false, now()) RETURNING id INTO yr2;
+  PERFORM pg_temp.tl_expect('492i a second post, in another year', pg_temp.tl_post(gone, yr2), 'ok 1');
+  PERFORM pg_temp.tl_expect('492i marked', pg_temp.tl_mark(gone, true), 'ok 1');
+  PERFORM pg_temp.tl_expect('492i two log rows: the creation and the mark',
+    (SELECT count(*)::text FROM "UserRoleChanges" WHERE "userId" = gone), '2');
+  PERFORM pg_temp.tl_expect('492i the marked person is deleted', pg_temp.tl_try(format($q$DELETE FROM "Users" WHERE id = %L$q$, gone)), 'ok 1');
+  PERFORM pg_temp.tl_expect('492i their posts went with them', (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = gone), '0');
+  PERFORM pg_temp.tl_expect('492i and their log', (SELECT count(*)::text FROM "UserRoleChanges" WHERE "userId" = gone), '0');
+
+  -- 492j. Any läsår counts for the mark: a person whose only post is in a year that is not the active one is marked (a rule
+  -- about the active year would stick on every year switch). And a post that is MOVED to another person is taken from the
+  -- one it leaves as a deletion is: the composite key to Users lets a post change hands, and rektor may update one.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "updatedAt")
+  VALUES (m, 'tl-492-moved@example.invalid', 'Tl', 'Flyttad', 'SCHOOL_ADMIN', 'FULL', gen_random_uuid(), now()) RETURNING id INTO moved;
+  PERFORM pg_temp.tl_expect('492j the second year is not the active one', (SELECT "isActive"::text FROM "AcademicYears" WHERE id = yr2), 'false');
+  PERFORM pg_temp.tl_expect('492j a post in that year only', pg_temp.tl_post(moved, yr2), 'ok 1');
+  PERFORM pg_temp.tl_expect('492j marked on a post of an inactive year', pg_temp.tl_mark(moved, true), 'ok 1');
+  PERFORM pg_temp.tl_expect('492j and the mark stands', (SELECT "teaches"::text FROM "Users" WHERE id = moved), 'true');
+  -- The only post of a marked person is not given to somebody else: TE410, and it stays where it was.
+  PERFORM pg_temp.tl_expect('492j the only post is not moved to the teacher', pg_temp.tl_try(format(
+    $q$UPDATE "TeacherEmployments" SET "userId" = %L WHERE "userId" = %L$q$, p111, moved)), 'TE410');
+  PERFORM pg_temp.tl_expect('492j it stays with the person, and the teacher has none',
+    (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = moved) || '/' || (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = p111), '1/0');
+  -- An UPDATE that names the column and leaves it as it was is not a move (and one that does not name it does not fire the trigger).
+  PERFORM pg_temp.tl_expect('492j a post written back to its own person', pg_temp.tl_try(format(
+    $q$UPDATE "TeacherEmployments" SET "userId" = "userId" WHERE "userId" = %L$q$, moved)), 'ok 1');
+  PERFORM pg_temp.tl_expect('492j and it is still theirs', (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = moved), '1');
+  -- With another post left the first may go to somebody else: the move is the very update that went through, and applied.
+  PERFORM pg_temp.tl_expect('492j a second post, in the active year', pg_temp.tl_post(moved, yr), 'ok 1');
+  PERFORM pg_temp.tl_expect('492j one of two is moved to the teacher', pg_temp.tl_try(format(
+    $q$UPDATE "TeacherEmployments" SET "userId" = %L WHERE "userId" = %L AND "academicYearId" = %L$q$, p111, moved, yr)), 'ok 1');
+  PERFORM pg_temp.tl_expect('492j the teacher has it, and the person the other',
+    (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = p111 AND "academicYearId" = yr) || '/'
+      || (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = moved AND "academicYearId" = yr2), '1/1');
+  PERFORM pg_temp.tl_expect('492j the one that is left is the last', pg_temp.tl_try(format(
+    $q$UPDATE "TeacherEmployments" SET "userId" = %L WHERE "userId" = %L$q$, p108, moved)), 'TE410');
+  -- A person who is not marked has posts that are anyone's to move, as they are anyone's to remove.
+  PERFORM pg_temp.tl_expect('492j a post for the unmarked schemaläggare', pg_temp.tl_post(p107, yr), 'ok 1');
+  PERFORM pg_temp.tl_expect('492j moved to the expedition', pg_temp.tl_try(format(
+    $q$UPDATE "TeacherEmployments" SET "userId" = %L WHERE "userId" = %L$q$, p108, p107)), 'ok 1');
+  PERFORM pg_temp.tl_expect('492j the expedition has it and the schemaläggare none',
+    (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = p108) || '/' || (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = p107), '1/0');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 493: the log carries the mark, and nothing else behaves differently for a person who has it.
+--
+-- UserRoleChanges.fromTeaches / toTeaches are written by Users_role_changes_are_logged beside HR-läs: a mark set or taken
+-- away is one row with the actor (rektor, or the full administratör who did it), a change of role or profile that zeroes the
+-- mark says so in the same row, a name change or a mark written as it already was is none, a creation has no earlier value
+-- (fromTeaches null) and is not marked, and nobody but the trigger writes the log.
+--
+-- 493g is the proof that the mark changes no reach before an arm asks for it: ONE person (the full administratör), with a post
+-- from the start, is counted before and after rektor marks them, row by row in every table that has a policy naming TEACHER,
+-- through the gateway's role and through PostgREST's, together with the answers of the helpers the arms use today. They are
+-- equal. (The policies themselves are untouched by the migration; 494 holds that no policy asks for the mark.)
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  m uuid;
+  yr uuid;
+  p105 uuid; p106 uuid; p107 uuid; p111 uuid; fresh uuid;
+  n bigint;
+  s text;
+  via text;
+  tbl text;
+  c bigint;
+  snap text;
+  snap_a text;
+  snap_b text;
+  phase int;
+BEGIN
+  PERFORM pg_temp.tl_as(106);
+  m := app.current_school_id();
+  IF m IS NULL OR (SELECT slug FROM "Schools" WHERE id = m) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'tl 493: rektor is not in rls-roller-school; fixtures did not run';
+  END IF;
+  yr := (SELECT id FROM "AcademicYears" WHERE "schoolId" = m AND "isActive");
+  p105 := pg_temp.tl_id(105); p106 := pg_temp.tl_id(106); p107 := pg_temp.tl_id(107); p111 := pg_temp.tl_id(111);
+  IF yr IS NULL OR p111 IS NULL THEN RAISE EXCEPTION 'tl 493: fixtures did not run'; END IF;
+
+  -- The last log row of a person, as text: role, profile, HR-läs, mark (from/to), actor. '-' is null.
+  -- 493a. Rektor marks the schemaläggare, and takes it away.
+  PERFORM pg_temp.tl_expect('493a a post', pg_temp.tl_post(p107, yr), 'ok 1');
+  n := (SELECT count(*) FROM "UserRoleChanges" WHERE "userId" = p107);
+  PERFORM pg_temp.tl_expect('493a marked', pg_temp.tl_mark(p107, true), 'ok 1');
+  PERFORM pg_temp.tl_expect('493a one row more', (SELECT count(*)::text FROM "UserRoleChanges" WHERE "userId" = p107), (n + 1)::text);
+  SELECT concat_ws('/', "fromRole", "toRole", coalesce("fromProfile"::text, '-'), coalesce("toProfile"::text, '-'), "fromHrRead"::text, "toHrRead"::text,
+                   coalesce("fromTeaches"::text, '-'), "toTeaches"::text, (SELECT split_part(email, '@', 1) FROM "Users" WHERE id = "actorId"))
+    INTO s FROM "UserRoleChanges" WHERE "userId" = p107 ORDER BY "createdAt" DESC, id LIMIT 1;
+  PERFORM pg_temp.tl_expect('493a the mark set, by rektor', s, 'SCHOOL_ADMIN/SCHOOL_ADMIN/SCHEMALAGGARE/SCHEMALAGGARE/false/false/false/true/roller-rektor');
+  PERFORM pg_temp.tl_expect('493a unmarked', pg_temp.tl_mark(p107, false), 'ok 1');
+  SELECT concat_ws('/', "fromTeaches"::text, "toTeaches"::text) INTO s FROM "UserRoleChanges" WHERE "userId" = p107 ORDER BY "createdAt" DESC, id LIMIT 1;
+  PERFORM pg_temp.tl_expect('493a the mark taken away', s, 'true/false');
+  PERFORM pg_temp.tl_expect('493a two rows more', (SELECT count(*)::text FROM "UserRoleChanges" WHERE "userId" = p107), (n + 2)::text);
+
+  -- 493b. What is not a change is not logged: the mark written as it is, a name, a phone number.
+  PERFORM pg_temp.tl_expect('493b the mark off, again', pg_temp.tl_mark(p107, false), 'ok 1');
+  PERFORM pg_temp.tl_expect('493b a name', pg_temp.tl_try(format($q$UPDATE "Users" SET "firstName" = 'Tl' WHERE id = %L$q$, p107)), 'ok 1');
+  PERFORM pg_temp.tl_expect('493b a teacher marked (zeroed)', pg_temp.tl_mark(p111, true), 'ok 1');
+  PERFORM pg_temp.tl_expect('493b still two rows more', (SELECT count(*)::text FROM "UserRoleChanges" WHERE "userId" = p107), (n + 2)::text);
+  PERFORM pg_temp.tl_expect('493b and none for the teacher', (SELECT count(*)::text FROM "UserRoleChanges" WHERE "userId" = p111), '0');
+
+  -- 493c. A change that zeroes the mark says so in the row it makes: the profile to läsare, the role to teacher.
+  PERFORM pg_temp.tl_expect('493c marked again', pg_temp.tl_mark(p107, true), 'ok 1');
+  PERFORM pg_temp.tl_expect('493c a läsare', pg_temp.tl_try(format($q$UPDATE "Users" SET "adminProfile" = 'LASARE' WHERE id = %L$q$, p107)), 'ok 1');
+  SELECT concat_ws('/', "fromProfile", "toProfile", "fromTeaches"::text, "toTeaches"::text) INTO s FROM "UserRoleChanges" WHERE "userId" = p107 ORDER BY "createdAt" DESC, id LIMIT 1;
+  PERFORM pg_temp.tl_expect('493c the mark went with the profile, in one row', s, 'SCHEMALAGGARE/LASARE/true/false');
+  PERFORM pg_temp.tl_expect('493c two rows for the two changes', (SELECT count(*)::text FROM "UserRoleChanges" WHERE "userId" = p107), (n + 4)::text);
+  PERFORM pg_temp.tl_expect('493c a schemaläggare again', pg_temp.tl_try(format($q$UPDATE "Users" SET "adminProfile" = 'SCHEMALAGGARE' WHERE id = %L$q$, p107)), 'ok 1');
+  PERFORM pg_temp.tl_expect('493c marked', pg_temp.tl_mark(p107, true), 'ok 1');
+  PERFORM pg_temp.tl_expect('493c a teacher', pg_temp.tl_try(format($q$UPDATE "Users" SET role = 'TEACHER' WHERE id = %L$q$, p107)), 'ok 1');
+  SELECT concat_ws('/', "fromRole", "toRole", coalesce("toProfile"::text, '-'), "fromTeaches"::text, "toTeaches"::text) INTO s FROM "UserRoleChanges" WHERE "userId" = p107 ORDER BY "createdAt" DESC, id LIMIT 1;
+  PERFORM pg_temp.tl_expect('493c the mark went with the role, in one row', s, 'SCHOOL_ADMIN/TEACHER/-/true/false');
+
+  -- 493d. A creation has no earlier mark to name, and is not marked.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "updatedAt")
+  VALUES (m, 'tl-493-ny@example.invalid', 'Tl', 'Ny', 'SCHOOL_ADMIN', 'EXPEDITION', gen_random_uuid(), now()) RETURNING id INTO fresh;
+  SELECT concat_ws('/', coalesce("fromRole"::text, '-'), "toRole", coalesce("fromTeaches"::text, '-'), "toTeaches"::text) INTO s FROM "UserRoleChanges" WHERE "userId" = fresh;
+  PERFORM pg_temp.tl_expect('493d a new administrator, logged without an earlier mark', s, '-/SCHOOL_ADMIN/-/false');
+
+  -- 493e. A full administratör marks themselves: they are the actor. A decider's own row is theirs to write today.
+  PERFORM pg_temp.tl_expect('493e a post for the full administratör', pg_temp.tl_post(p105, yr), 'ok 1');
+  PERFORM pg_temp.tl_as(105);
+  PERFORM pg_temp.tl_expect('493e they mark themselves', pg_temp.tl_mark(p105, true), 'ok 1');
+  SELECT concat_ws('/', "fromTeaches"::text, "toTeaches"::text, (SELECT split_part(email, '@', 1) FROM "Users" WHERE id = "actorId")) INTO s
+    FROM "UserRoleChanges" WHERE "userId" = p105 ORDER BY "createdAt" DESC, id LIMIT 1;
+  PERFORM pg_temp.tl_expect('493e the full administratör is the actor', s, 'false/true/roller-full');
+  PERFORM pg_temp.tl_expect('493e they unmark themselves', pg_temp.tl_mark(p105, false), 'ok 1');
+
+  -- 493f. The log is the trigger's: the API writes and erases none of it, mark or no mark.
+  PERFORM pg_temp.tl_as(106);
+  PERFORM pg_temp.tl_expect('493f the API writes the log',
+    pg_temp.tl_try(format($q$INSERT INTO "UserRoleChanges" ("schoolId", "userId", "toRole", "toHrRead", "toTeaches") VALUES (%L, %L, 'SCHOOL_ADMIN', false, true)$q$, m, p105)), '42501');
+  PERFORM pg_temp.tl_expect('493f the API rewrites it', pg_temp.tl_try(format($q$UPDATE "UserRoleChanges" SET "toTeaches" = false WHERE "userId" = %L$q$, p105)), '42501');
+  PERFORM pg_temp.tl_expect('493f the API erases it', pg_temp.tl_try(format($q$DELETE FROM "UserRoleChanges" WHERE "userId" = %L$q$, p105)), '42501');
+
+  -- 493g. Nothing else changes for a person who has the mark. The full administratör, with a post, is counted unmarked and
+  -- marked: every table that has a policy naming TEACHER, through both API roles, and the answers the arms ask today.
+  FOR phase IN 1..2 LOOP
+    IF phase = 2 THEN
+      PERFORM pg_temp.tl_as(106);
+      PERFORM pg_temp.tl_expect('493g rektor marks the full administratör', pg_temp.tl_mark(p105, true), 'ok 1');
+    END IF;
+    snap := '';
+    FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
+      EXECUTE format('SET LOCAL ROLE %I', via);
+      PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
+      snap := snap || format('%s: role=%s decides=%s may=%s/%s', via, app.current_user_role(), app.current_user_decides(),
+                             app.current_user_may('PERSONAL', true), app.current_user_may('DRIFT', true));
+      FOR tbl IN
+        SELECT x.t FROM (SELECT DISTINCT tablename::text AS t FROM pg_policies
+                          WHERE schemaname = 'public' AND (coalesce(qual, '') || ' ' || coalesce(with_check, '')) LIKE '%TEACHER%') x
+         ORDER BY x.t COLLATE "C"
+      LOOP
+        IF has_table_privilege(via, format('public.%I', tbl), 'SELECT') THEN
+          EXECUTE format('SELECT count(*) FROM %I', tbl) INTO c;
+          snap := snap || format(' %s=%s', tbl, c);
+        END IF;
+      END LOOP;
+      snap := snap || E'\n';
+    END LOOP;
+    SET LOCAL ROLE app_authenticated;
+    IF phase = 1 THEN snap_a := snap; ELSE snap_b := snap; END IF;
+  END LOOP;
+  IF snap_a IS DISTINCT FROM snap_b THEN
+    RAISE EXCEPTION 'tl 493g: the marked full administratör sees something else than the unmarked one:%
+unmarked: %
+marked:   %', E'\n', snap_a, snap_b;
+  END IF;
+  IF length(snap_a) < 2000 OR snap_a NOT LIKE '%CalendarLessons=%' OR snap_a NOT LIKE '%LessonSubstituteNotes=%' OR snap_a NOT LIKE '%CrisisCalls=%' THEN
+    RAISE EXCEPTION 'tl 493g: the comparison covered too little: %', left(snap_a, 400);
+  END IF;
+  PERFORM pg_temp.tl_as(105);
+  PERFORM pg_temp.tl_expect('493g and it is the mark that differs', app.current_user_teaches()::text, 'true');
+  RAISE NOTICE 'tl 493g: % tables compared through two roles', (length(snap_a) - length(replace(snap_a, '=', ''))) / 2;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 494: the catalogue guard. Every arm that names TEACHER and does not ask for the mark is on a list.
+--
+-- 20270212090000 added app.current_user_teaches() and no policy asks for it. What the mark is FOR is the teacher's own arms:
+-- the ones that say current_user_role() = 'TEACHER' and let an administrator in nowhere. A teacher's arm that is not
+-- changed fails closed (the administrator who teaches is refused where a teacher is let in), and one added later without
+-- anyone asking what it means for the mark is the same silent hole. So the catalogue is read here and held to a list:
+--
+--   * every policy (qual or with check) and every function of the app, public and sign_in schemas whose text names TEACHER
+--     and does not name current_user_teaches is on the list below, and every entry still is. A new one fails this section
+--     until somebody has judged it and written it down; a converted one leaves the list in the migration that converts it
+--     (the entry then fails as stale, which is the reminder to remove it);
+--   * the second column says who judges it. ADMIN_TOO: the text also names SCHOOL_ADMIN (held: both ways, here), which for
+--     a policy means the arm already admits an administrator, and for a function only that the word is there. PR3 and PR4:
+--     the arm belongs to the later migration the investigation gave it (the note to the substitute and the PostgREST door;
+--     krisläge, mentor, kvittens and rapporteringsgrad). OUT: beslut 4 says the arm stays the teacher's alone (klasslärare,
+--     vikariepoolen, vikariefrågan: CT400 and SP409 stand). JUDGE: nobody has said yet. STAYS is for an arm a later
+--     migration judged and left as it is, with its reason beside it. The tag is a worklist, not a verdict;
+--   * nothing asks for the mark yet: the second list, of the policies and functions that name current_user_teaches, is
+--     empty. PR 3 and PR 4 add what they convert, and take it off the first list in the same commit.
+--
+-- A trap the list names, and 494c holds: app.cover_policy_arm_is_narrow (20261012130000) accepts a cover arm only if its
+-- TEXT matches current_user_role()%= 'TEACHER'::"UserRole", with no OR in it (section 112, the cover rules). An arm that
+-- becomes `... = 'TEACHER' OR current_user_teaches()` is refused by it. The function and the arms change together, and
+-- this section fails with the function's text until they do.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE TEMP TABLE tl_want (kind text, name text, owner text) ON COMMIT DROP;
+INSERT INTO tl_want SELECT 'P', v.name, v.owner FROM (VALUES
+  -- policies: table.policy
+    ('AbsenceReports.absence_reports_mentor_leave_insert', 'PR4'),
+    ('AbsenceWatchFindings.absence_watch_findings_mentor_select', 'PR4'),
+    ('AcademicYearTimplans.academic_year_timplans_staff_select', 'ADMIN_TOO'),
+    ('AckReceipts.ack_receipts_teacher_insert', 'PR4'),
+    ('AckReceipts.ack_receipts_teacher_select', 'PR4'),
+    ('AckRequests.ack_requests_staff_insert', 'ADMIN_TOO'),
+    ('AckRequests.ack_requests_teacher_select', 'PR4'),
+    ('AttendanceRecords.attendance_staff_select', 'ADMIN_TOO'),
+    ('AttendanceRecords.attendance_teacher_insert', 'PR3'),
+    ('AttendanceRecords.attendance_teacher_update', 'PR3'),
+    ('AvailabilityConstraints.availability_teacher_modify', 'PR3'),
+    ('AvailabilityConstraints.availability_teacher_select', 'ADMIN_TOO'),
+    ('CalendarLessonGroups.calendarlessongroups_staff_select', 'ADMIN_TOO'),
+    ('CalendarLessonStudents.calendarlessonstudents_staff_select', 'ADMIN_TOO'),
+    ('CalendarLessonTeachers.calendar_lesson_teachers_staff_select', 'ADMIN_TOO'),
+    ('CalendarLessons.calendar_lessons_staff_select', 'ADMIN_TOO'),
+    ('CalendarLunches.calendar_lunches_staff_select', 'ADMIN_TOO'),
+    ('CalendarRasts.calendar_rasts_staff_select', 'ADMIN_TOO'),
+    ('CancellationBatchCredits.cancellation_batch_credits_staff_select', 'PR3'),
+    ('ClassTeacherAppointments.class_teacher_appointments_teacher_select', 'OUT'),
+    ('ClassTeacherChanges.class_teacher_changes_teacher_delete', 'OUT'),
+    ('ClassTeacherChanges.class_teacher_changes_teacher_insert', 'OUT'),
+    ('ClassTeacherChanges.class_teacher_changes_teacher_select', 'OUT'),
+    ('ClassTeacherChanges.class_teacher_changes_teacher_update', 'OUT'),
+    ('ClassTeacherOpenTimes.class_teacher_open_times_staff_select', 'ADMIN_TOO'),
+    ('ClassTeacherSettings.class_teacher_settings_staff_select', 'ADMIN_TOO'),
+    ('ConsentAsks.consent_asks_teacher_insert', 'PR4'),
+    ('ConsentAsks.consent_asks_teacher_select', 'PR4'),
+    ('ConsentEntries.consent_entries_teacher_insert', 'PR4'),
+    ('ConsentEntries.consent_entries_teacher_select', 'PR4'),
+    ('ConsentLists.consent_lists_teacher_insert', 'PR4'),
+    ('ConsentLists.consent_lists_teacher_select', 'PR4'),
+    ('CoverConfirmations.cover_confirmations_substitute_select', 'OUT'),
+    ('CoverRequestLessons.cover_request_lessons_recipient_select', 'OUT'),
+    ('CoverRequestRecipients.cover_request_recipients_own_decline', 'OUT'),
+    ('CoverRequestRecipients.cover_request_recipients_own_select', 'OUT'),
+    ('CoverRequests.cover_requests_recipient_select', 'OUT'),
+    ('CoverSettings.cover_settings_staff_select', 'OUT'),
+    ('CrisisAlarms.crisis_alarms_teacher_select', 'PR4'),
+    ('CrisisCallTeachers.crisis_call_teachers_teacher_select', 'PR4'),
+    ('CrisisCalls.crisis_calls_teacher_select', 'PR4'),
+    ('CrisisPupils.crisis_pupils_teacher_select', 'PR4'),
+    ('CrisisReports.crisis_reports_teacher_found_insert', 'PR4'),
+    ('CrisisReports.crisis_reports_teacher_found_select', 'PR4'),
+    ('CrisisReports.crisis_reports_teacher_free_insert', 'PR4'),
+    ('CrisisReports.crisis_reports_teacher_insert', 'PR4'),
+    ('CrisisReports.crisis_reports_teacher_own_select', 'PR4'),
+    ('CrisisReports.crisis_reports_teacher_select', 'PR4'),
+    ('GuardianStudents.guardian_students_staff_select', 'ADMIN_TOO'),
+    ('InstructionProofs.checklist_proofs_teacher_insert', 'PR4'),
+    ('InstructionProofs.checklist_proofs_teacher_select', 'PR4'),
+    ('InstructionTemplates.checklist_templates_staff_select', 'ADMIN_TOO'),
+    ('LeaveDelegationDecisions.leave_delegation_decisions_staff_select', 'ADMIN_TOO'),
+    ('LeaveRequests.leave_requests_mentor_select', 'PR4'),
+    ('LeaveRequests.leave_requests_mentor_update', 'PR4'),
+    ('LessonLogs.lesson_logs_staff_select', 'ADMIN_TOO'),
+    ('LessonLogs.lesson_logs_teacher_delete', 'JUDGE'),
+    ('LessonLogs.lesson_logs_teacher_insert', 'JUDGE'),
+    ('LessonLogs.lesson_logs_teacher_update', 'JUDGE'),
+    ('LessonPupilMoves.lesson_pupil_moves_teacher_select', 'PR4'),
+    ('LessonSubstituteNotes.lesson_substitute_notes_teacher_delete', 'PR3'),
+    ('LessonSubstituteNotes.lesson_substitute_notes_teacher_insert', 'PR3'),
+    ('LessonSubstituteNotes.lesson_substitute_notes_teacher_select', 'PR3'),
+    ('LessonSubstituteNotes.lesson_substitute_notes_teacher_update', 'PR3'),
+    ('LocalTimplanEntries.local_timplan_entries_staff_select', 'ADMIN_TOO'),
+    ('LocalTimplans.local_timplans_staff_select', 'ADMIN_TOO'),
+    ('LunchSettings.lunch_settings_staff_select', 'ADMIN_TOO'),
+    ('LunchSittings.lunch_sittings_staff_select', 'ADMIN_TOO'),
+    ('MasterLessonGroups.masterlessongroups_staff_select', 'ADMIN_TOO'),
+    ('MasterLessonStudents.masterlessonstudents_staff_select', 'ADMIN_TOO'),
+    ('MasterLessons.master_lessons_staff_select', 'ADMIN_TOO'),
+    ('Notifications.notifications_staff_insert', 'ADMIN_TOO'),
+    ('PublicationPendingRemovals.publication_pending_removals_staff_select', 'PR3'),
+    ('PublishedLessons.published_lessons_staff_select', 'PR3'),
+    ('ReportingSettings.reporting_settings_teacher_select', 'PR4'),
+    ('ResourceBookings.resource_bookings_staff_insert', 'ADMIN_TOO'),
+    ('ResourceBookings.resource_bookings_staff_select', 'ADMIN_TOO'),
+    ('ResourceTypes.resource_types_staff_select', 'ADMIN_TOO'),
+    ('Resources.resources_staff_select', 'ADMIN_TOO'),
+    ('RoomBookings.room_bookings_staff_select', 'ADMIN_TOO'),
+    ('RoomBookings.room_bookings_teacher_insert', 'ADMIN_TOO'),
+    ('RoomLoans.room_loans_staff_select', 'ADMIN_TOO'),
+    ('RoomPreferenceRooms.room_preference_rooms_staff_select', 'ADMIN_TOO'),
+    ('RoomPreferences.room_preferences_staff_select', 'ADMIN_TOO'),
+    ('ScheduleActivities.schedule_activities_staff_select', 'ADMIN_TOO'),
+    ('ScheduleActivityLessons.schedule_activity_lessons_staff_select', 'ADMIN_TOO'),
+    ('ScheduleActivityTeachers.schedule_activity_teachers_staff_select', 'ADMIN_TOO'),
+    ('SchoolDaySettings.school_day_settings_staff_select', 'ADMIN_TOO'),
+    ('SchoolTravelTimes.school_travel_times_staff_select', 'ADMIN_TOO'),
+    ('SiteTravelTimes.site_travel_times_staff_select', 'ADMIN_TOO'),
+    ('Sites.sites_staff_select', 'ADMIN_TOO'),
+    ('StaffingPolicies.staffing_policies_staff_select', 'ADMIN_TOO'),
+    ('StudentEnrollments.student_enrollments_staff_select', 'JUDGE'),
+    ('StudentGroupMembers.student_group_members_staff_select', 'ADMIN_TOO'),
+    ('StudentGroups.student_groups_staff_select', 'ADMIN_TOO'),
+    ('SubstituteAvailabilities.substitute_availabilities_own_all', 'OUT'),
+    ('SubstitutePoolMembers.substitute_pool_members_own_select', 'OUT'),
+    ('SupervisionAreas.supervision_areas_staff_select', 'ADMIN_TOO'),
+    ('SupervisionCovers.supervision_covers_absent_select', 'JUDGE'),
+    ('SupervisionCovers.supervision_covers_substitute_select', 'JUDGE'),
+    ('SupervisionShifts.supervision_shifts_teacher_own_select', 'JUDGE'),
+    ('TeacherAbsenceCovers.teacher_absence_covers_own_select', 'PR3'),
+    ('TeacherAbsenceReasons.teacher_absence_reasons_staff_select', 'PR3'),
+    ('TeacherAbsences.teacher_absences_own_insert', 'PR3'),
+    ('TeacherAbsences.teacher_absences_own_select', 'PR3'),
+    ('TeacherAbsences.teacher_absences_own_update', 'PR3'),
+    ('TeacherDuties.teacher_duties_teacher_own_select', 'PR3'),
+    ('TeacherDutySlots.teacher_duty_slots_teacher_own_select', 'PR3'),
+    ('TeacherEmploymentLogs.teacher_employment_logs_teacher_own_select', 'PR3'),
+    ('TeacherEmploymentPeriods.teacher_employment_periods_teacher_own_select', 'PR3'),
+    ('TeacherEmployments.teacher_employments_teacher_own_select', 'PR3'),
+    ('TeacherReportingDays.reporting_days_teacher_select', 'PR4'),
+    ('TeacherSubjectQualifications.teacher_subject_qualifications_staff_select', 'ADMIN_TOO'),
+    ('TeacherWorkRules.teacher_work_rules_staff_select', 'ADMIN_TOO'),
+    ('TeacherWorkRules.teacher_work_rules_teacher_own', 'PR3'),
+    ('TeachingBlocks.teaching_blocks_staff_select', 'ADMIN_TOO'),
+    ('TeachingRequirementShares.teaching_requirement_shares_staff_select', 'ADMIN_TOO'),
+    ('TeachingRequirements.teaching_requirements_staff_select', 'ADMIN_TOO'),
+    ('TimplanCredits.timplan_credits_staff_select', 'ADMIN_TOO'),
+    ('Users.users_staff_select', 'ADMIN_TOO')) AS v(name, owner);
+INSERT INTO tl_want SELECT 'F', v.name, v.owner FROM (VALUES
+  -- functions: schema.name(identity arguments)
+    ('app.absence_reports_granted_leave_is_decided()', 'ADMIN_TOO'),
+    ('app.absence_stats_class_access(p_class uuid)', 'ADMIN_TOO'),
+    ('app.absence_stats_classes(p_from date, p_to date)', 'ADMIN_TOO'),
+    ('app.absence_stats_lessons(p_school uuid, p_from date, p_to date, p_now timestamp with time zone)', 'PR4'),
+    ('app.absence_stats_pupil_access(p_student uuid)', 'ADMIN_TOO'),
+    ('app.absence_stats_window()', 'ADMIN_TOO'),
+    ('app.absence_watch_digest_plan(p_school uuid, p_group "AbsenceWatchGroup", p_start date, p_end date, p_on date)', 'ADMIN_TOO'),
+    ('app.absence_watch_is_mentor_of(p_student uuid)', 'PR4'),
+    ('app.absence_watch_mentees(p_school uuid, p_on date)', 'PR4'),
+    ('app.ack_day_limit(p_kind text)', 'ADMIN_TOO'),
+    ('app.ack_mentee_ids()', 'PR4'),
+    ('app.ack_open_pairs(p_request uuid)', 'ADMIN_TOO'),
+    ('app.ack_receipts_limit()', 'ADMIN_TOO'),
+    ('app.ack_status(p_requests uuid[])', 'ADMIN_TOO'),
+    ('app.ack_stop_reminder(p_request uuid)', 'ADMIN_TOO'),
+    ('app.ack_usage(p_senders integer)', 'ADMIN_TOO'),
+    ('app.availability_constraints_keep_duty_blocks()', 'PR3'),
+    ('app.calendar_feed(token_hash text)', 'ADMIN_TOO'),
+    ('app.calendar_feed_audience_on()', 'ADMIN_TOO'),
+    ('app.calendar_feed_create(p_student uuid, p_token_hash text, p_locale text)', 'ADMIN_TOO'),
+    ('app.calendar_feeds_follow_the_person()', 'ADMIN_TOO'),
+    ('app.calendar_feeds_follow_the_school()', 'JUDGE'),
+    ('app.checklist_close_list(p_list uuid)', 'ADMIN_TOO'),
+    ('app.checklist_protected_ids(p_ids uuid[])', 'ADMIN_TOO'),
+    ('app.checklist_taught_ids()', 'PR4'),
+    ('app.checklist_void_proof(p_proof uuid, p_reason text)', 'ADMIN_TOO'),
+    ('app.class_teacher_actor(p_class uuid)', 'ADMIN_TOO'),
+    ('app.class_teacher_appointment_guard()', 'OUT'),
+    ('app.class_teacher_calendar_refusal_in(p_school uuid, p_teacher uuid, p_class uuid, p_calendar uuid, p_creating boolean)', 'OUT'),
+    ('app.class_teacher_change_guard()', 'ADMIN_TOO'),
+    ('app.class_teacher_master_refusal_in(p_school uuid, p_teacher uuid, p_class uuid, p_master uuid)', 'OUT'),
+    ('app.cover_confirm(p_lesson uuid)', 'OUT'),
+    ('app.cover_my_passes(p_from timestamp with time zone, p_to timestamp with time zone)', 'OUT'),
+    ('app.cover_policy_arm_is_narrow(p_table text, p_policy text, p_arm text)', 'ADMIN_TOO'),
+    ('app.cover_recipient_answer_is_narrow()', 'OUT'),
+    ('app.cover_request_sender(p_request uuid)', 'ADMIN_TOO'),
+    ('app.crisis_pupil_call(p_alarm uuid, p_student uuid)', 'ADMIN_TOO'),
+    ('app.family_lesson_labels(p_school uuid, p_display "TeacherDisplay", p_lesson_ids uuid[], p_without_protected boolean)', 'ADMIN_TOO'),
+    ('app.instruction_proofs_stamp()', 'ADMIN_TOO'),
+    ('app.leave_consent_facts(p_requests uuid[])', 'ADMIN_TOO'),
+    ('app.leave_mentors(p_school uuid, p_student uuid, p_from date, p_to date)', 'PR4'),
+    ('app.leave_mine_to_decide(p_school uuid, p_student uuid, p_from date, p_to date)', 'PR4'),
+    ('app.leave_request_facts(p_requests uuid[])', 'ADMIN_TOO'),
+    ('app.leave_request_taken(p_request uuid)', 'PR4'),
+    ('app.leave_requests_tell_new_mentors()', 'ADMIN_TOO'),
+    ('app.lesson_move_is_mentor(p_student uuid, p_on date)', 'PR4'),
+    ('app.lesson_move_may(p_student uuid, p_lessons uuid[], p_on date)', 'ADMIN_TOO'),
+    ('app.lesson_move_may_correct(p_lesson uuid)', 'ADMIN_TOO'),
+    ('app.lesson_pupil_move(p_student uuid, p_from uuid, p_to uuid)', 'ADMIN_TOO'),
+    ('app.lesson_teacher_role(p_lesson uuid)', 'PR3'),
+    ('app.print_timetables(p_kind "PublicScopeKind", p_on date, p_display "TeacherDisplay", p_meals boolean)', 'ADMIN_TOO'),
+    ('app.public_timetable_embed(token_hash text)', 'JUDGE'),
+    ('app.public_timetable_links_target_is_showable()', 'ADMIN_TOO'),
+    ('app.public_timetable_staff(token_hash text, target uuid, on_date date)', 'ADMIN_TOO'),
+    ('app.publication_snapshot_ranges(year uuid)', 'ADMIN_TOO'),
+    ('app.push_targets(p_school uuid, p_users uuid[], p_type "NotificationType", p_required boolean)', 'JUDGE'),
+    ('app.reported_absences(day date)', 'ADMIN_TOO'),
+    ('app.reporting_lessons(p_school uuid, p_from date, p_to date, p_now timestamp with time zone)', 'PR4'),
+    ('app.schemavisaren_read(token_hash text, target uuid, on_date date, staff_school uuid)', 'ADMIN_TOO'),
+    ('app.school_day_protected_staff()', 'ADMIN_TOO'),
+    ('app.shared_teacher_busy(p_from date, p_to date)', 'ADMIN_TOO'),
+    ('app.shared_teachers()', 'ADMIN_TOO'),
+    ('app.sibling_schools()', 'ADMIN_TOO'),
+    ('app.substitute_pool_member_is_a_teacher()', 'OUT'),
+    ('app.teacher_absences_own_writes_are_narrow()', 'PR3'),
+    ('app.teacher_duties_slots_stay_the_teachers()', 'PR3'),
+    ('app.teacher_duty_slots_are_links()', 'PR3'),
+    ('app.teacher_duty_slots_are_the_teachers()', 'PR3'),
+    ('app.teacher_employment_logs_append_only()', 'JUDGE'),
+    ('app.teaching_requirement_placement_teachers_fit()', 'JUDGE'),
+    ('app.teaching_requirement_placements_fit()', 'JUDGE'),
+    ('app.teaching_requirement_shares_fit()', 'JUDGE'),
+    ('app.timetable_validity(p_from date, p_to date, p_year uuid)', 'ADMIN_TOO'),
+    ('app.timetable_week_days(p_school uuid, p_kind "PublicScopeKind", p_target uuid, p_from date, p_tz text, p_display "TeacherDisplay", p_meals boolean, p_min_size integer)', 'JUDGE'),
+    ('sign_in.verdict(p_role "UserRole", p_provider "SignInProvider", p_entra_tenant_id uuid, p_google_hosted_domain text, p_sso_only_for_staff boolean, p_methods text[], p_identities jsonb, p_school_account_age interval)', 'ADMIN_TOO')) AS v(name, owner);
+
+CREATE TEMP TABLE tl_have ON COMMIT DROP AS
+SELECT 'P'::text AS kind, tablename::text || '.' || policyname::text AS name,
+       coalesce(qual, '') || ' ' || coalesce(with_check, '') AS x
+  FROM pg_policies WHERE schemaname = 'public'
+UNION ALL
+SELECT 'F', n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', pg_get_functiondef(p.oid)
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+ WHERE n.nspname IN ('app', 'public', 'sign_in') AND p.prokind IN ('f', 'p');
+
+DO $$
+DECLARE
+  missing text;
+  stale text;
+  inconsistent text;
+  strange text;
+  askers text;
+  src text;
+BEGIN
+  IF (SELECT count(*) FROM tl_want) < 150 OR (SELECT count(DISTINCT (kind, name)) FROM tl_want) <> (SELECT count(*) FROM tl_want) THEN
+    RAISE EXCEPTION 'tl 494: the list is malformed (% rows)', (SELECT count(*) FROM tl_want);
+  END IF;
+
+  -- 494a. The list is the catalogue: nothing new, nothing gone.
+  SELECT string_agg(h.kind || ':' || h.name, E'\n  ' ORDER BY h.kind, h.name COLLATE "C") INTO missing
+    FROM tl_have h
+   WHERE h.x ~ 'TEACHER' AND h.x !~ 'current_user_teaches'
+     AND NOT EXISTS (SELECT 1 FROM tl_want w WHERE w.kind = h.kind AND w.name = h.name);
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION E'tl 494a: names TEACHER and does not ask for the mark, and is not on the list in section 494 (judge each: convert it, or add it with who judges it):\n  %', missing;
+  END IF;
+  SELECT string_agg(w.kind || ':' || w.name, E'\n  ' ORDER BY w.kind, w.name COLLATE "C") INTO stale
+    FROM tl_want w
+   WHERE NOT EXISTS (SELECT 1 FROM tl_have h WHERE w.kind = h.kind AND w.name = h.name AND h.x ~ 'TEACHER' AND h.x !~ 'current_user_teaches');
+  IF stale IS NOT NULL THEN
+    RAISE EXCEPTION E'tl 494a: on the list in section 494 and no longer an arm that names TEACHER without the mark (converted, renamed or dropped: take it off the list):\n  %', stale;
+  END IF;
+
+  -- 494b. The tags: a known vocabulary, and ADMIN_TOO exactly where the text names SCHOOL_ADMIN.
+  SELECT string_agg(w.name || ' ' || w.owner, E'\n  ' ORDER BY w.name COLLATE "C") INTO strange
+    FROM tl_want w WHERE w.owner NOT IN ('ADMIN_TOO', 'PR3', 'PR4', 'OUT', 'JUDGE', 'STAYS');
+  IF strange IS NOT NULL THEN RAISE EXCEPTION E'tl 494b: an entry with an owner nobody knows:\n  %', strange; END IF;
+  SELECT string_agg(w.kind || ':' || w.name || ' is ' || w.owner || CASE WHEN h.x ~ 'SCHOOL_ADMIN' THEN ' and names SCHOOL_ADMIN' ELSE ' and does not name SCHOOL_ADMIN' END,
+                    E'\n  ' ORDER BY w.name COLLATE "C") INTO inconsistent
+    FROM tl_want w JOIN tl_have h ON h.kind = w.kind AND h.name = w.name
+   WHERE (w.owner = 'ADMIN_TOO') <> (h.x ~ 'SCHOOL_ADMIN');
+  IF inconsistent IS NOT NULL THEN RAISE EXCEPTION E'tl 494b: ADMIN_TOO is the text naming SCHOOL_ADMIN, and nothing else:\n  %', inconsistent; END IF;
+
+  -- 494c. The trap: the cover arms' narrowness is a match on the arm's text.
+  src := (SELECT prosrc FROM pg_proc WHERE oid = 'app.cover_policy_arm_is_narrow(text, text, text)'::regprocedure);
+  IF strpos(src, 'p_arm LIKE ''%current_user_role()%= ''''TEACHER''''::"UserRole"%''') = 0 OR strpos(src, 'p_arm NOT LIKE ''% OR %''') = 0 THEN
+    RAISE EXCEPTION 'tl 494c: app.cover_policy_arm_is_narrow no longer matches the cover arms by their TEACHER text and refuses an OR: change it and the arms together, and say so here. It is %', src;
+  END IF;
+
+  -- 494d. Nobody asks for the mark yet: it changes no arm's answer, and this is how that is held.
+  SELECT string_agg(h.kind || ':' || h.name, E'\n  ' ORDER BY h.kind, h.name COLLATE "C") INTO askers
+    FROM tl_have h WHERE h.x ~ 'current_user_teaches' AND h.name <> 'app.current_user_teaches()';
+  IF askers IS NOT NULL THEN
+    RAISE EXCEPTION E'tl 494d: asks for app.current_user_teaches() and is not on the list of those that may (section 494d is empty until PR 3):\n  %', askers;
+  END IF;
+  RAISE NOTICE 'tl 494: % arms judged or tagged, none asks for the mark', (SELECT count(*) FROM tl_want);
 END $$;
 ROLLBACK;
