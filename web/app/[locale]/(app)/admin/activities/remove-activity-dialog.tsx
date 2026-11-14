@@ -55,7 +55,8 @@ export function RemoveActivityDialog({
     if (!activity) return;
     try {
       const outcome = await remove.mutateAsync(activity.id);
-      toast.success(t("removed", { count: outcome.reinstate }));
+      // A lesson carried to its new time is back too.
+      toast.success(t("removed", { count: outcome.reinstate + (outcome.relocated?.length ?? 0) }));
       onClose();
     } catch (error) {
       toast.error(errorText(error));
@@ -103,6 +104,18 @@ export function RemoveActivityDialog({
                 <ul className="list-disc pl-5 text-xs">
                   {plan.removedTemplateMoved.map((row) => (
                     <li key={row.lessonId}>{dayText(row.date)}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {plan.relocated && plan.relocated.length > 0 ? (
+              <div className="space-y-1">
+                <p>{t("removeRelocated", { count: plan.relocated.length })}</p>
+                <ul className="list-disc pl-5 text-xs">
+                  {plan.relocated.map((row) => (
+                    <li key={row.lessonId}>
+                      {dayText(row.from)} → {dayText(row.to)}
+                    </li>
                   ))}
                 </ul>
               </div>

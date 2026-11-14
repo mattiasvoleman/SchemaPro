@@ -118,6 +118,12 @@ export interface ReversePreview {
    * is deleted, as a template change deletes a stale row, and named.
    */
   removedTemplateMoved: Array<{ lessonId: string; date: string }>;
+  /**
+   * Rows whose lesson the grundschema moved since the batch and wrote no row for (a DIRECT school's edit moves what it can carry,
+   * and a cancelled row stands in its own way): the lesson is the class's that week, so the row goes to the template's slot, from
+   * `from` to `to`, and is a lesson again. A row whose new slot already has one is in `removedTemplateMoved` instead.
+   */
+  relocated: Array<{ lessonId: string; from: string; to: string }>;
   /** Rows the batch took that have begun, been held or been changed since: history. */
   notReinstatable: number;
   /** Credits dated today or later that the reversal deletes. */
@@ -313,12 +319,13 @@ export class CancellationBatchesService {
       if (row.reversedAt !== null) throw reversed();
       await this.requireNoActivity(tx, id);
       const plan = await reversePlan(tx, schoolId, row, await this.timezoneOf(tx, row.academicYearId));
-      const audience = row.notifies ? await digestAudience(tx, await digestLessonsOf(tx, plan.reinstate)) : null;
+      const audience = row.notifies ? await digestAudience(tx, await digestLessonsOf(tx, [...plan.reinstate, ...plan.relocate])) : null;
       return {
         reinstate: plan.reinstate.length,
         notify: audience?.people.size ?? 0,
         skippedRoomTaken: plan.skipped,
         removedTemplateMoved: plan.templateMoved,
+        relocated: relocatedOf(plan),
         notReinstatable: plan.notReinstatable,
         creditsDeleted: plan.creditIds.length,
       };
@@ -330,9 +337,12 @@ export class CancellationBatchesService {
    * it and ahead goes back to SCHEDULED with the note it had, except a row
    * whose room was booked while it was free — that one stays cancelled and
    * is named (a reinstated row would double-book the room). A row whose
-   * lesson the grundschema has moved since is deleted instead: the lesson is
-   * where it runs now, and the old slot would hold it twice that week. Its
-   * credits dated
+   * lesson the grundschema has moved since goes where the lesson runs now: to
+   * the template's slot of its own week when the school's edit wrote no row
+   * there (the lesson is the class's that week), and with the template's room
+   * and LEAD (reversePlan, relocationsOf), or it is deleted when the lesson
+   * already stands on its new day, since the old slot would hold it twice
+   * that week. Its credits dated
    * today or later are deleted; a past one was a day already counted. Once.
    */
   async reverse(id: string, user: AuthenticatedUser): Promise<ReversePreview> {
@@ -352,10 +362,14 @@ export class CancellationBatchesService {
         data: {
           reversedAt: new Date(),
           reversedByUserId: user.userId ?? null,
-          reinstated: plan.reinstate.length,
+          // A lesson carried to the template's slot is a lesson that came back too.
+          reinstated: plan.reinstate.length + plan.relocate.length,
           skippedRoomTaken: plan.skipped.length,
         },
       });
+      // A lesson carried to another day may land in a day another batch still holds: it is cancelled with that one (S7). After the
+      // batch is marked reversed, so that this one does not take its own lesson back.
+      const landed = await holdRelocated(tx, schoolId, row.academicYearId, plan.relocate, await this.timezoneOf(tx, row.academicYearId));
       // Told when it was made, so told now: about the lessons that come back.
       const told = row.notifies
         ? await sendDigest(
@@ -363,18 +377,23 @@ export class CancellationBatchesService {
             tx,
             schoolId,
             { id: row.id, name: row.name },
-            await digestAudience(tx, await digestLessonsOf(tx, plan.reinstate)),
+            await digestAudience(tx, await digestLessonsOf(tx, [...plan.reinstate, ...plan.relocate].filter((lesson) => !landed.has(lesson.id)))),
             true,
           )
         : 0;
+      const days = plan.relocate.flatMap((move) => [move.from, move.to]);
       return {
-        ids: plan.reinstate.map((lesson) => lesson.id),
-        range: { from: asDay(row.fromDate), to: asDay(row.toDate) },
+        ids: [...plan.reinstate, ...plan.relocate].map((lesson) => lesson.id),
+        range: {
+          from: [asDay(row.fromDate), ...days].sort()[0]!,
+          to: [asDay(row.toDate), ...days].sort().reverse()[0]!,
+        },
         result: {
           reinstate: plan.reinstate.length,
           notify: told,
           skippedRoomTaken: plan.skipped,
           removedTemplateMoved: plan.templateMoved,
+          relocated: relocatedOf(plan),
           notReinstatable: plan.notReinstatable,
           creditsDeleted: plan.creditIds.length,
         },
@@ -382,7 +401,7 @@ export class CancellationBatchesService {
     });
     await this.broadcast(user, ids);
     this.boardChanged(schoolId, range.from, range.to);
-    this.logger.log(`Cancellation batch reversed [batch=${id}, reinstated=${result.reinstate}, skipped=${result.skippedRoomTaken.length}]`);
+    this.logger.log(`Cancellation batch reversed [batch=${id}, reinstated=${result.reinstate}, relocated=${result.relocated.length}, skipped=${result.skippedRoomTaken.length}]`);
     return result;
   }
 
@@ -493,6 +512,29 @@ const viewOf = (lesson: SelectionCandidate): BatchLessonView => ({
 });
 
 
+/** The plan's relocations as the answers name them. */
+export function relocatedOf(plan: { relocate: ReadonlyArray<{ id: string; from: string; to: string }> }): ReversePreview['relocated'] {
+  return plan.relocate.map((move) => ({ lessonId: move.id, from: move.from, to: move.to }));
+}
+
+/**
+ * Lessons carried to the template's slot, held against every batch still on: one that holds the new day takes them (S7), as it takes a
+ * row a template change moves there. Called after the batch that gave them back is marked reversed. The ids it took.
+ */
+export async function holdRelocated(
+  tx: PrismaClient,
+  schoolId: string,
+  academicYearId: string,
+  relocated: ReadonlyArray<{ id: string; to: string }>,
+  timezone: string,
+  exceptBatchId?: string,
+): Promise<Set<string>> {
+  if (relocated.length === 0) return new Set();
+  const days = relocated.map((move) => move.to).sort();
+  const taken = await reapplyActiveBatches(tx, schoolId, academicYearId, days[0]!, days[days.length - 1]!, timezone, exceptBatchId);
+  return new Set(taken);
+}
+
 /**
  * A batch's selection over the calendar as it is now, cancelling what it
  * takes that the batch does not hold yet. Also run by a publish or a refill
@@ -517,7 +559,10 @@ export async function reapplyInTransaction(
   return { ids: matched.map((lesson) => lesson.id), replacements };
 }
 
-/** Every unreversed batch overlapping [from, to], applied again (S7). Returns the rows it cancelled. */
+/**
+ * Every unreversed batch overlapping [from, to], applied again (S7). Returns the rows it cancelled. `exceptBatchId` leaves one batch
+ * out: the activity that is changing, which settles itself after its commit.
+ */
 export async function reapplyActiveBatches(
   tx: PrismaClient,
   schoolId: string,
@@ -525,9 +570,16 @@ export async function reapplyActiveBatches(
   from: string,
   to: string,
   timezone: string,
+  exceptBatchId?: string,
 ): Promise<string[]> {
   const batches = await tx.cancellationBatch.findMany({
-    where: { academicYearId, reversedAt: null, fromDate: { lte: day(to) }, toDate: { gte: day(from) } },
+    where: {
+      academicYearId,
+      reversedAt: null,
+      fromDate: { lte: day(to) },
+      toDate: { gte: day(from) },
+      ...(exceptBatchId ? { id: { not: exceptBatchId } } : {}),
+    },
     select: BATCH_SELECT,
   });
   const ids: string[] = [];

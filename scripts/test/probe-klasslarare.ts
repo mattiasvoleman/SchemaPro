@@ -55,7 +55,8 @@
  *         for a lesson of the template and for one date, and what the gate of a room change on one date says;
  *   kl-s  a lesson an exam week (G4, through the schedule activities of D3) has cancelled, and the replacement lesson
  *         it laid, meet the klasslärare as named reasons and never as an error, for a draft written before and one
- *         written after; a change of the template goes on over the cancelled lesson and leaves it be;
+ *         written after; a change of the template goes on over the cancelled lesson and leaves it be, and taking the exam week away
+ *         carries that lesson to the template's new hour instead of deleting it;
  *   kl-t  a lesson Generera wrote from a förläggning is no draft of the template's to move: refused with its reason in the list, the
  *         check, the draft and the publication, whether the draft was written before or after it was placed.
  *
@@ -943,7 +944,7 @@ export async function klasslarareChecks(owner: Client, api: PrismaService, marke
 
     // A draft for the template's hour, written after, goes on over the cancelled lesson: it is judged and published, and the
     // cancelled lesson, which no change of the template moves, stays cancelled where it was.
-    const hourDraft = await teacherService.create(g4a, { kind: 'TEMPLATE_MOVE', masterLessonId: examMaster, baseVersion: (await template(examMaster)).version, targetDayOfWeek: 2, targetStart: '09:30', targetEnd: '10:30' }, karin);
+    const hourDraft = await teacherService.create(g4a, { kind: 'TEMPLATE_MOVE', masterLessonId: examMaster, baseVersion: (await template(examMaster)).version, targetDayOfWeek: 2, targetStart: '08:00', targetEnd: '09:00' }, karin);
     const hourVerdict = (await teacherService.check(g4a, karin)).find((row) => row.change.id === hourDraft.id)!.verdict;
     assert.ok(['OK', 'CONFLICT'].includes(hourVerdict.state), `the template draft reads as ${hourVerdict.state}`);
     const hourOutcome = (await adminService.publish(g4a, [hourDraft.id], sara)).outcomes[0] as { outcome: string };
@@ -952,12 +953,25 @@ export async function klasslarareChecks(owner: Client, api: PrismaService, marke
     assert.deepEqual([after.status, after.start], ['CANCELLED', '09:00']);
 
     // Taking the exam week away goes through with the template moved since (the editor's reversal knows a lesson whose template has
-    // moved: it does not put the old hour back beside the new one), and the klasslärare's week is read as ever.
-    await activities.remove(made.activity.id, sara);
+    // moved: it does not put the old hour back beside the new one), and the klasslärare's week is read as ever. The class has the lesson
+    // in the week: the template went to 08:00 after the exam week was laid and wrote no row for it (the cancelled one stood where it
+    // was), so the cancelled row goes to the template's hour and is a lesson again, said in the answer (it was deleted, and the day
+    // stood without the lesson, until the next publication).
+    // (The exam planner lets the replacement lesson's room go first, freeTheRooms, as the removal of any activity asks of whoever calls it:
+    // the room the replacement lesson holds is what would keep the class's lesson cancelled, at its old hour or at its new one.)
+    await owner.query(`UPDATE "CalendarLessons" SET "roomId" = NULL WHERE id = $1`, [replacement.id]);
+    const removed = await activities.remove(made.activity.id, sara);
+    assert.deepEqual(removed.relocated, [{ lessonId: examDated, from: tuesday, to: tuesday }]);
+    assert.deepEqual(removed.removedTemplateMoved, []);
+    const carried = await one<{ status: string; cancelCause: string | null; start: string; end: string }>(
+      `SELECT status, "cancelCause", to_char("startsAt" AT TIME ZONE 'Europe/Stockholm', 'HH24:MI') AS start, to_char("endsAt" AT TIME ZONE 'Europe/Stockholm', 'HH24:MI') AS "end" FROM "CalendarLessons" WHERE id = $1`,
+      [examDated],
+    );
+    assert.deepEqual([carried.status, carried.cancelCause, carried.start, carried.end], ['SCHEDULED', null, '08:00', '09:00']);
     assert.equal((await weekOf(karin, g4a, tuesday)).className, '4A');
     assert.deepEqual(
       (await template(examMaster)).start,
-      '09:30',
+      '08:00',
     );
     await owner.query(`DELETE FROM "CalendarLessons" WHERE "schoolId" = $1 AND "masterLessonId" = $2`, [s, examMaster]);
     await owner.query(`DELETE FROM "MasterLessons" WHERE id = $1`, [examMaster]);

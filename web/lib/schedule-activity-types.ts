@@ -177,5 +177,7 @@ export interface ActivityRemovePreview {
   creditsDeleted: number;
   skippedRoomTaken: Array<{ lessonId: string; date: string; roomId: string; by: "LESSON" | "BOOKING" }>;
   removedTemplateMoved: Array<{ lessonId: string; date: string }>;
+  /** Lessons the grundschema moved since the activity, carried to their new time that week and lessons again. Absent from a gateway older than the change. */
+  relocated?: Array<{ lessonId: string; from: string; to: string }>;
   notReinstatable: number;
 }

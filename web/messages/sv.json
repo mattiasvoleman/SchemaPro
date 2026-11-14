@@ -5784,6 +5784,7 @@
     "reverseReinstate": "{count, plural, one {# lektion återställs} other {# lektioner återställs}}.",
     "reverseRoomTaken": "{count, plural, one {# lektion förblir inställd} other {# lektioner förblir inställda}}, eftersom salen har bokats eller fått en annan lektion under tiden:",
     "reverseTemplateMoved": "{count, plural, one {# lektion tas bort} other {# lektioner tas bort}}, eftersom schemat har flyttat lektionen sedan avbokningen och veckan redan har den där den ligger nu:",
+    "reverseRelocated": "{count, plural, one {# lektion flyttas} other {# lektioner flyttas}} till sin nya tid den veckan, eftersom schemat har flyttat lektionen sedan avbokningen och veckan inte har den där:",
     "takenBy": {
       "LESSON": "en annan lektion",
       "BOOKING": "en lokalbokning"
@@ -5942,6 +5943,7 @@
     "removeCredits": "{count, plural, one {# tillgodoräkning tas bort} other {# tillgodoräkningar tas bort}}.",
     "removeRoomTaken": "{count, plural, one {# lektion förblir inställd} other {# lektioner förblir inställda}}, eftersom salen har bokats eller fått en annan lektion under tiden:",
     "removeTemplateMoved": "{count, plural, one {# lektion tas bort} other {# lektioner tas bort}}, eftersom schemat har flyttat lektionen sedan aktiviteten och veckan redan har den där den ligger nu:",
+    "removeRelocated": "{count, plural, one {# lektion flyttas} other {# lektioner flyttas}} till sin nya tid den veckan, eftersom schemat har flyttat lektionen sedan aktiviteten och veckan inte har den där:",
     "takenBy": {
       "LESSON": "en annan lektion",
       "BOOKING": "en lokalbokning"
@@ -9613,6 +9615,7 @@
     "unplanBody": "Lektionerna sätts tillbaka, och ersättningslektionerna och salsbokningarna tas bort. Provet blir olagt och kan planeras om. Fick familjerna besked om provet får de besked om detta också.",
     "unplanned": "Planeringen av {name} är borttagen.",
     "unplannedHeld": "Planeringen av {name} är borttagen, men {count, plural, one {# lektion} other {# lektioner}} står kvar som inställd eftersom en annan lektion eller bokning håller salen. Kontrollera lektionerna i schemat.",
+    "unplannedRelocated": "Planeringen av {name} är borttagen, och {count, plural, one {# lektion} other {# lektioner}} flyttades till sin nya tid i schemat.",
     "removeTitle": "Ta bort {name}?",
     "removeBody": "Provet tas bort. Åtgärden kan inte ångras.",
     "removed": "{name} är borttaget.",

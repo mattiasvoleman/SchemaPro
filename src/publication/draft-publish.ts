@@ -6,17 +6,14 @@ import {
   propagateTemplateChange,
   type LostDayOperation,
 } from '../calendar/propagate-template';
-import {
-  breakDaysOf,
-  closuresByDateOf,
-  isoWeekday,
-  parseUtcDate,
-  timeToString,
-  type PublishDaysContext,
-} from '../calendar/publish-days';
+import { isoWeekday, parseUtcDate, timeToString } from '../calendar/publish-days';
 import type { GateEntry } from './publication-gates';
 import { effectiveSegments } from './publication-validity';
 import { slotChanged, snapshotRanges, type PublishedMaster } from './published-grundschema';
+import { landingContextOf } from './landing-context';
+
+// Moved to landing-context.ts; kept here for the callers that read it from the draft publish.
+export { landingContextOf };
 
 /**
  * A DRAFT school's publish: carrying the draft into the calendar.
@@ -66,44 +63,6 @@ export interface DraftCarry {
 }
 
 const WEEKDAY = ['', 'mån', 'tis', 'ons', 'tors', 'fre', 'lör', 'sön'];
-
-/** The lov, closures and years over [from, to]: what materialise reads, for the landing rules. */
-export async function landingContextOf(
-  tx: PrismaClient,
-  academicYearId: string,
-  from: string,
-  to: string,
-  timezone: string,
-): Promise<PublishDaysContext> {
-  const closures = await tx.availabilityConstraint.findMany({
-    where: { type: 'UNAVAILABLE', date: { not: null, gte: parseUtcDate(from), lte: parseUtcDate(to) } },
-    select: {
-      resourceType: true,
-      userId: true,
-      roomId: true,
-      studentGroupId: true,
-      minGradeLevel: true,
-      maxGradeLevel: true,
-      date: true,
-      startTime: true,
-      endTime: true,
-    },
-  });
-  const breaks = await tx.schoolBreak.findMany({
-    where: { academicYearId, startDate: { lte: parseUtcDate(to) }, endDate: { gte: parseUtcDate(from) } },
-    select: { startDate: true, endDate: true, minGradeLevel: true, maxGradeLevel: true },
-  });
-  const groups = await tx.studentGroup.findMany({
-    where: { academicYearId },
-    select: { id: true, gradeLevel: true },
-  });
-  return {
-    breakDays: breakDaysOf(breaks, from, to),
-    closuresByDate: closuresByDateOf(closures),
-    gradeOfGroup: new Map(groups.map((group) => [group.id, group.gradeLevel])),
-    timezone,
-  };
-}
 
 /**
  * Whether a master moving from weekday `a` to weekday `b` crosses an edge of

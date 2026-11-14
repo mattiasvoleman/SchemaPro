@@ -594,6 +594,17 @@ describe("/admin/activities/exams", () => {
     expect(toast.success).not.toHaveBeenCalledWith("Planeringen av Matematik, algebra är borttagen.");
   });
 
+  it("says a lesson the schedule moved after the exam was laid went to its new time, and that nothing stayed cancelled", async () => {
+    post.mockResolvedValue({ removed: true, skippedRoomTaken: [], relocated: [{ lessonId: "l7", from: "2030-10-08", to: "2030-10-10" }] });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Ta bort planeringen Matematik, algebra" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Ta bort planeringen" }));
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Planeringen av Matematik, algebra är borttagen, och 1 lektion flyttades till sin nya tid i schemat."),
+    );
+    expect(toast.warning).not.toHaveBeenCalled();
+  });
+
   // ---- the planner ------------------------------------------------------------
 
   describe("with the planner on", () => {
