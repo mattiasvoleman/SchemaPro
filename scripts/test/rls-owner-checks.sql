@@ -6014,3 +6014,194 @@ BEGIN
   PERFORM pg_temp.avo_expect('482o the school is gone with its periods', (SELECT count(*)::text FROM "UserDeactivations" WHERE "schoolId" = s OR "userId" = t), '0');
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Sections 490o and 492o on the owner's side: Users.teaches (20270212090000).
+--
+-- 490o: the CHECK on its own. Through the API's role the CHECK is unreachable: the profile trigger zeroes the mark on a row
+-- that cannot carry it, so no statement reaches the constraint (section 491). The owner turns the triggers off for the
+-- statement (session_replication_role = replica; CHECKs still hold) and asks the constraint alone: the mark is admitted on
+-- an administrator of each of the four profiles that write and on nobody else, a läsare and a teacher, a pupil and a
+-- guardian included, whether the row is inserted, marked, given the profile or given the role. Then the triggers are on again
+-- and the owner, who decides nothing and is no person, is held to the post as everybody is (TE409, TE410) and to the zeroing.
+--
+-- 492o: a school's deletion, in both orders its cascade can take. Users and TeacherEmployments both reference Schools, and
+-- which of them the cascade reaches first is the order their foreign keys were made in, which a restored dump does not keep.
+-- A marked person's last post is deleted in the statement that deletes the school, with the person still there: the delete
+-- is not refused, because the school it would ask for is gone. The second order is made here by making Users' key to Schools
+-- again (DDL, rolled back). A person's own deletion takes their posts; a year's deletion that takes the last post is refused.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION pg_temp.tlo_try(stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE n bigint; cn text;
+BEGIN
+  EXECUTE stmt;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN 'ok ' || n;
+EXCEPTION WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS cn = CONSTRAINT_NAME;
+  RETURN SQLSTATE || CASE WHEN coalesce(cn, '') <> '' THEN ':' || cn ELSE '' END;
+END $f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tlo_expect(label text, got text, want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  IF got IS DISTINCT FROM want THEN
+    RAISE EXCEPTION 'tl %: got %, wanted %', label, coalesce(got, '(null)'), want;
+  END IF;
+END $f$;
+
+-- A school with a year and one person of each kind; the people are returned by email in the school's own list.
+CREATE OR REPLACE FUNCTION pg_temp.tlo_school(tag text) RETURNS uuid LANGUAGE plpgsql AS $f$
+DECLARE s uuid; yr uuid;
+BEGIN
+  INSERT INTO "Schools" (name, slug, "updatedAt") VALUES ('tl ' || tag, 'tl-' || tag, now()) RETURNING id INTO s;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s, 'tl ' || tag || ' 2030/31', '2030-08-15', '2031-06-15', true, now()) RETURNING id INTO yr;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "updatedAt")
+  SELECT s, tag || '-' || lower(p) || '@example.invalid', 'Tl', p, 'SCHOOL_ADMIN', p::"AdminProfile", gen_random_uuid(), now()
+    FROM unnest(ARRAY['FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION', 'LASARE']) p;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "updatedAt")
+  SELECT s, tag || '-' || lower(r) || '@example.invalid', 'Tl', r, r::"UserRole", gen_random_uuid(), now()
+    FROM unnest(ARRAY['TEACHER', 'STUDENT', 'GUARDIAN']) r;
+  RETURN s;
+END $f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tlo_user(s uuid, tag text, who text) RETURNS uuid LANGUAGE sql AS $f$
+  SELECT id FROM "Users" WHERE "schoolId" = s AND email = tag || '-' || lower(who) || '@example.invalid'
+$f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tlo_post(s uuid, u uuid, yr uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT pg_temp.tlo_try(format($q$INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+                                   VALUES (%L, %L, %L, 50, now())$q$, s, u, yr))
+$f$;
+
+BEGIN;
+DO $$
+DECLARE
+  tag constant text := '490o';
+  s uuid := pg_temp.tlo_school(tag);
+  who text;
+  u uuid;
+  yr uuid;
+BEGIN
+  yr := (SELECT id FROM "AcademicYears" WHERE "schoolId" = s);
+
+  -- 490o-a. The CHECK alone, through each kind of row (the triggers are off for the statement).
+  PERFORM set_config('session_replication_role', 'replica', true);
+  FOREACH who IN ARRAY ARRAY['FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION'] LOOP
+    PERFORM pg_temp.tlo_expect('490o-a the mark on ' || who,
+      pg_temp.tlo_try(format($q$UPDATE "Users" SET teaches = true WHERE id = %L$q$, pg_temp.tlo_user(s, tag, who))), 'ok 1');
+  END LOOP;
+  FOREACH who IN ARRAY ARRAY['LASARE', 'TEACHER', 'STUDENT', 'GUARDIAN'] LOOP
+    PERFORM pg_temp.tlo_expect('490o-a the mark on ' || who,
+      pg_temp.tlo_try(format($q$UPDATE "Users" SET teaches = true WHERE id = %L$q$, pg_temp.tlo_user(s, tag, who))),
+      '23514:Users_teaches_is_a_teaching_administrators');
+  END LOOP;
+  -- A marked administrator given the profile of a läsare, and the role of a teacher, in a statement of its own.
+  u := pg_temp.tlo_user(s, tag, 'FULL');
+  PERFORM pg_temp.tlo_expect('490o-a a marked full administratör made a läsare',
+    pg_temp.tlo_try(format($q$UPDATE "Users" SET "adminProfile" = 'LASARE' WHERE id = %L$q$, u)), '23514:Users_teaches_is_a_teaching_administrators');
+  PERFORM pg_temp.tlo_expect('490o-a a marked full administratör made a teacher',
+    pg_temp.tlo_try(format($q$UPDATE "Users" SET role = 'TEACHER', "adminProfile" = NULL WHERE id = %L$q$, u)), '23514:Users_teaches_is_a_teaching_administrators');
+  PERFORM pg_temp.tlo_expect('490o-a made another profile that writes: still marked',
+    pg_temp.tlo_try(format($q$UPDATE "Users" SET "adminProfile" = 'EXPEDITION' WHERE id = %L$q$, u)), 'ok 1');
+  -- Rows written marked.
+  PERFORM pg_temp.tlo_expect('490o-a a teacher inserted marked', pg_temp.tlo_try(format($q$INSERT INTO "Users"
+      ("schoolId", email, "firstName", "lastName", role, teaches, "authId", "updatedAt")
+      VALUES (%L, 'tl-490o-ny-larare@example.invalid', 'Tl', 'Ny', 'TEACHER', true, gen_random_uuid(), now())$q$, s)),
+    '23514:Users_teaches_is_a_teaching_administrators');
+  PERFORM pg_temp.tlo_expect('490o-a a läsare inserted marked', pg_temp.tlo_try(format($q$INSERT INTO "Users"
+      ("schoolId", email, "firstName", "lastName", role, "adminProfile", teaches, "authId", "updatedAt")
+      VALUES (%L, 'tl-490o-ny-lasare@example.invalid', 'Tl', 'Ny', 'SCHOOL_ADMIN', 'LASARE', true, gen_random_uuid(), now())$q$, s)),
+    '23514:Users_teaches_is_a_teaching_administrators');
+  PERFORM pg_temp.tlo_expect('490o-a an administratör of a profile that writes inserted marked', pg_temp.tlo_try(format($q$INSERT INTO "Users"
+      ("schoolId", email, "firstName", "lastName", role, "adminProfile", teaches, "authId", "updatedAt")
+      VALUES (%L, 'tl-490o-ny-admin@example.invalid', 'Tl', 'Ny', 'SCHOOL_ADMIN', 'REKTOR', true, gen_random_uuid(), now())$q$, s)), 'ok 1');
+  PERFORM set_config('session_replication_role', 'origin', true);
+
+  -- 490o-b. The triggers on, the owner no person: the zeroing and the post bind the owner as they bind everybody.
+  UPDATE "Users" SET teaches = false WHERE "schoolId" = s;
+  PERFORM pg_temp.tlo_expect('490o-b the owner marks a teacher: zeroed',
+    pg_temp.tlo_try(format($q$UPDATE "Users" SET teaches = true WHERE id = %L$q$, pg_temp.tlo_user(s, tag, 'TEACHER'))), 'ok 1');
+  PERFORM pg_temp.tlo_expect('490o-b ...and not marked', (SELECT teaches::text FROM "Users" WHERE id = pg_temp.tlo_user(s, tag, 'TEACHER')), 'false');
+  PERFORM pg_temp.tlo_expect('490o-b the owner marks a läsare: zeroed',
+    pg_temp.tlo_try(format($q$UPDATE "Users" SET teaches = true WHERE id = %L$q$, pg_temp.tlo_user(s, tag, 'LASARE'))), 'ok 1');
+  PERFORM pg_temp.tlo_expect('490o-b ...and not marked', (SELECT teaches::text FROM "Users" WHERE id = pg_temp.tlo_user(s, tag, 'LASARE')), 'false');
+  u := pg_temp.tlo_user(s, tag, 'REKTOR');
+  PERFORM pg_temp.tlo_expect('490o-b the owner marks an administratör without a post: TE409',
+    pg_temp.tlo_try(format($q$UPDATE "Users" SET teaches = true WHERE id = %L$q$, u)), 'TE409');
+  PERFORM pg_temp.tlo_expect('490o-b a post', pg_temp.tlo_post(s, u, yr), 'ok 1');
+  PERFORM pg_temp.tlo_expect('490o-b marked', pg_temp.tlo_try(format($q$UPDATE "Users" SET teaches = true WHERE id = %L$q$, u)), 'ok 1');
+  PERFORM pg_temp.tlo_expect('490o-b the last post stays', pg_temp.tlo_try(format($q$DELETE FROM "TeacherEmployments" WHERE "userId" = %L$q$, u)), 'TE410');
+  -- Two posts in two years: one goes.
+  PERFORM pg_temp.tlo_expect('490o-b a second year', pg_temp.tlo_try(format($q$INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+      VALUES (%L, 'tl 490o 2031/32', '2031-08-15', '2032-06-15', false, now())$q$, s)), 'ok 1');
+  PERFORM pg_temp.tlo_expect('490o-b a post in it', pg_temp.tlo_post(s, u, (SELECT id FROM "AcademicYears" WHERE "schoolId" = s AND NOT "isActive")), 'ok 1');
+  PERFORM pg_temp.tlo_expect('490o-b the year''s post goes', pg_temp.tlo_try(format($q$DELETE FROM "TeacherEmployments" WHERE "userId" = %L AND "academicYearId" = %L$q$, u, yr)), 'ok 1');
+  PERFORM pg_temp.tlo_expect('490o-b the last year cannot be deleted', pg_temp.tlo_try(format($q$DELETE FROM "AcademicYears" WHERE "schoolId" = %L AND NOT "isActive"$q$, s)), 'TE410');
+  -- A mark that stands is not asked for a post again: a write that names it as it is is not refused for its sake, even for a
+  -- person whose post the owner took away with the triggers off (the one way to be marked without one).
+  PERFORM set_config('session_replication_role', 'replica', true);
+  PERFORM pg_temp.tlo_expect('490o-b the owner removes the last post with the triggers off', pg_temp.tlo_try(format($q$DELETE FROM "TeacherEmployments" WHERE "userId" = %L$q$, u)), 'ok 1');
+  PERFORM set_config('session_replication_role', 'origin', true);
+  PERFORM pg_temp.tlo_expect('490o-b the mark written as it is is not asked for a post', pg_temp.tlo_try(format($q$UPDATE "Users" SET teaches = true WHERE id = %L$q$, u)), 'ok 1');
+  PERFORM pg_temp.tlo_expect('490o-b a mark that is new is', pg_temp.tlo_try(format($q$UPDATE "Users" SET teaches = false WHERE id = %L$q$, u)), 'ok 1');
+  PERFORM pg_temp.tlo_expect('490o-b ...and cannot come back without a post', pg_temp.tlo_try(format($q$UPDATE "Users" SET teaches = true WHERE id = %L$q$, u)), 'TE409');
+  PERFORM pg_temp.tlo_expect('490o-b a post again', pg_temp.tlo_post(s, u, yr), 'ok 1');
+  PERFORM pg_temp.tlo_expect('490o-b and the mark', pg_temp.tlo_try(format($q$UPDATE "Users" SET teaches = true WHERE id = %L$q$, u)), 'ok 1');
+  PERFORM pg_temp.tlo_expect('490o-b the mark off', pg_temp.tlo_try(format($q$UPDATE "Users" SET teaches = false WHERE id = %L$q$, u)), 'ok 1');
+  PERFORM pg_temp.tlo_expect('490o-b and the year goes', pg_temp.tlo_try(format($q$DELETE FROM "AcademicYears" WHERE "schoolId" = %L AND NOT "isActive"$q$, s)), 'ok 1');
+END $$;
+ROLLBACK;
+
+-- 492o: a school with a marked person and two posts, deleted, in the cascade order its keys happen to have and in the other.
+BEGIN;
+DO $$
+DECLARE
+  tag text;
+  s uuid;
+  u uuid;
+  yr uuid;
+  yr2 uuid;
+  step int;
+BEGIN
+  FOR step IN 1..2 LOOP
+    tag := '492o' || step;
+    IF step = 2 THEN
+      -- Users' key to Schools made again, so its cascade trigger is the newest and fires after TeacherEmployments'.
+      ALTER TABLE "Users" DROP CONSTRAINT "Users_schoolId_fkey";
+      ALTER TABLE "Users" ADD CONSTRAINT "Users_schoolId_fkey" FOREIGN KEY ("schoolId") REFERENCES "Schools"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+    END IF;
+    s := pg_temp.tlo_school(tag);
+    yr := (SELECT id FROM "AcademicYears" WHERE "schoolId" = s);
+    INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+    VALUES (s, 'tl ' || tag || ' 2031/32', '2031-08-15', '2032-06-15', false, now()) RETURNING id INTO yr2;
+    u := pg_temp.tlo_user(s, tag, 'FULL');
+    PERFORM pg_temp.tlo_expect('492o a post ' || step, pg_temp.tlo_post(s, u, yr), 'ok 1');
+    PERFORM pg_temp.tlo_expect('492o a second post ' || step, pg_temp.tlo_post(s, u, yr2), 'ok 1');
+    PERFORM pg_temp.tlo_expect('492o marked ' || step, pg_temp.tlo_try(format($q$UPDATE "Users" SET teaches = true WHERE id = %L$q$, u)), 'ok 1');
+    -- The same person with only their last post: the school still goes.
+    PERFORM pg_temp.tlo_expect('492o the first post goes ' || step, pg_temp.tlo_try(format($q$DELETE FROM "TeacherEmployments" WHERE "userId" = %L AND "academicYearId" = %L$q$, u, yr)), 'ok 1');
+    PERFORM pg_temp.tlo_expect('492o the cascade order is the one this step means',
+      (SELECT string_agg(c.relname, ' < ' ORDER BY t.tgname COLLATE "C")
+         FROM pg_trigger t JOIN pg_constraint k ON k.oid = t.tgconstraint JOIN pg_class c ON c.oid = k.conrelid
+        WHERE t.tgrelid = '"Schools"'::regclass AND t.tgisinternal AND t.tgtype & 8 = 8 AND k.confdeltype = 'c'
+          AND k.conname IN ('Users_schoolId_fkey', 'TeacherEmployments_schoolId_fkey')),
+      CASE step WHEN 1 THEN 'Users < TeacherEmployments' ELSE 'TeacherEmployments < Users' END);
+    PERFORM pg_temp.tlo_expect('492o the school is deleted with its marked person and their last post ' || step,
+      pg_temp.tlo_try(format($q$DELETE FROM "Schools" WHERE id = %L$q$, s)), 'ok 1');
+    PERFORM pg_temp.tlo_expect('492o nothing of it is left ' || step,
+      (SELECT count(*)::text FROM "Users" WHERE "schoolId" = s) || '/' || (SELECT count(*)::text FROM "TeacherEmployments" WHERE "schoolId" = s), '0/0');
+  END LOOP;
+
+  -- A person's own deletion, as the owner: the posts follow, the person is not asked for them.
+  tag := '492o3';
+  s := pg_temp.tlo_school(tag);
+  yr := (SELECT id FROM "AcademicYears" WHERE "schoolId" = s);
+  u := pg_temp.tlo_user(s, tag, 'SCHEMALAGGARE');
+  PERFORM pg_temp.tlo_expect('492o a post for a person to be deleted', pg_temp.tlo_post(s, u, yr), 'ok 1');
+  PERFORM pg_temp.tlo_expect('492o marked', pg_temp.tlo_try(format($q$UPDATE "Users" SET teaches = true WHERE id = %L$q$, u)), 'ok 1');
+  PERFORM pg_temp.tlo_expect('492o the person is deleted', pg_temp.tlo_try(format($q$DELETE FROM "Users" WHERE id = %L$q$, u)), 'ok 1');
+  PERFORM pg_temp.tlo_expect('492o and their post with them', (SELECT count(*)::text FROM "TeacherEmployments" WHERE "schoolId" = s), '0');
+END $$;
+ROLLBACK;

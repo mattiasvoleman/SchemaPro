@@ -14,7 +14,11 @@
  *   (ar-e) UsersService: the expedition refused an administrator's row before
  *          the database is asked, rektor's profile change written and logged;
  *   (ar-f) TeacherEmploymentsService: the percentages left out for a planner
- *          without HR-läs, kept for one with it.
+ *          without HR-läs, kept for one with it;
+ *   (ar-i) Users.teaches (20270212090000): the mark is a decision (AR403, read as
+ *          DECISION_NOT_YOURS), needs a post (TE409), and keeps the last post
+ *          (TE410), each with the code in driverAdapterError.cause.originalCode
+ *          where the gateway's mapping will read it, and the log row carries it.
  *
  * Its school is its own (`<marker>-roller`), created and removed as the owner.
  */
@@ -49,6 +53,15 @@ async function refusalOf(work: Promise<unknown>): Promise<unknown> {
     return error;
   }
   assert.fail('the write was not refused');
+}
+
+/** The SQLSTATE a refused write carries through the adapter: the cause's originalCode, or the P2039 text. */
+function sqlstateOf(error: unknown): string | null {
+  const meta = (error as { meta?: { driverAdapterError?: { cause?: { originalCode?: unknown } } } } | null)?.meta;
+  const original = meta?.driverAdapterError?.cause?.originalCode;
+  if (typeof original === 'string') return original;
+  const m = /Code: `([A-Z0-9]{5})`/.exec(String((error as { message?: unknown } | null)?.message ?? ''));
+  return m ? m[1]! : null;
 }
 
 export async function adminAreaChecks(owner: Client, api: PrismaService, marker: string, check: Check): Promise<void> {
@@ -197,6 +210,56 @@ export async function adminAreaChecks(owner: Client, api: PrismaService, marker:
         (await cover.reasons(reader.principal)).map((reason) => reason.id),
         seeded.map((reason) => reason.id),
       );
+    });
+
+    await check('(ar-i) the mark is rektor\'s decision, needs a post and keeps the last one, and says so with its own codes (Administratör som undervisar)', async () => {
+      // A planner and an expedition are refused the mark as they are refused a profile: AR403, read as a decision.
+      for (const who of [planner, expedition, reader]) {
+        const error = await refusalOf(
+          api.withRls(who.principal, (tx) => tx.user.update({ where: { id: full.id }, data: { teaches: true } })),
+        );
+        assert.equal(sqlstateOf(error), 'AR403', `not AR403: ${String(error)}`);
+        assert.equal(areaRefusal(error)?.code, 'DECISION_NOT_YOURS', `not read as a decision refusal: ${String(error)}`);
+      }
+      // Rektor, who decides, is refused for lack of a post: TE409, which no gateway mapping reads yet and which must arrive as itself.
+      const noPost = await refusalOf(api.withRls(rektor.principal, (tx) => tx.user.update({ where: { id: full.id }, data: { teaches: true } })));
+      assert.equal(sqlstateOf(noPost), 'TE409', `not TE409: ${String(noPost)}`);
+      assert.equal(areaRefusal(noPost), null);
+      await owner.query(
+        `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt") VALUES ($1, $2, $3, 40, now())`,
+        [s, full.id, year.id],
+      );
+      const marked = await api.withRls(rektor.principal, (tx) =>
+        tx.user.update({ where: { id: full.id }, data: { teaches: true }, select: { teaches: true } }),
+      );
+      assert.equal(marked.teaches, true);
+      assert.equal((await api.withRls(full.principal, (tx) => tx.user.findUnique({ where: { id: full.id }, select: { teaches: true } })))?.teaches, true);
+      const logged = await one<{ fromTeaches: boolean | null; toTeaches: boolean; actor: string }>(
+        `SELECT "fromTeaches", "toTeaches", "actorId"::text AS actor FROM "UserRoleChanges" WHERE "userId" = $1 ORDER BY "createdAt" DESC, id LIMIT 1`,
+        [full.id],
+      );
+      assert.deepEqual(logged, { fromTeaches: false, toTeaches: true, actor: rektor.id });
+      const log = await api.withRls(rektor.principal, (tx) =>
+        tx.userRoleChange.findMany({ where: { userId: full.id }, orderBy: { createdAt: 'desc' }, take: 1, select: { fromTeaches: true, toTeaches: true } }),
+      );
+      assert.deepEqual(log, [{ fromTeaches: false, toTeaches: true }]);
+      // The last post stays, through the model API's delete (what TeacherEmploymentsService.remove calls).
+      const kept = await refusalOf(
+        api.withRls(rektor.principal, (tx) =>
+          tx.teacherEmployment.delete({ where: { schoolId_userId_academicYearId: { schoolId: s, userId: full.id, academicYearId: year.id } } }),
+        ),
+      );
+      assert.equal(sqlstateOf(kept), 'TE410', `not TE410: ${String(kept)}`);
+      // The mark off, and the post goes.
+      await api.withRls(rektor.principal, (tx) => tx.user.update({ where: { id: full.id }, data: { teaches: false } }));
+      await api.withRls(rektor.principal, (tx) =>
+        tx.teacherEmployment.delete({ where: { schoolId_userId_academicYearId: { schoolId: s, userId: full.id, academicYearId: year.id } } }),
+      );
+      // A mark written to a teacher is zeroed, not refused: the write the gateway before this release may still make.
+      const zeroed = await api.withRls(rektor.principal, (tx) =>
+        tx.user.update({ where: { id: teacher.id }, data: { teaches: true }, select: { teaches: true } }),
+      );
+      assert.equal(zeroed.teaches, false);
     });
   } finally {
     await sweepRollerSchool(owner, marker);
