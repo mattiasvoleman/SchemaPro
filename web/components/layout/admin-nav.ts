@@ -16,6 +16,7 @@ import {
   KeyRound,
   LayoutDashboard,
   MapPin,
+  Pin,
   Scale,
   SlidersHorizontal,
   Sparkles,
@@ -116,6 +117,10 @@ export const ADMIN_NAV: NavGroup[] = [
     items: [
       { labelKey: "generate", href: "/admin/generate", icon: Sparkles },
       { labelKey: "timetable", href: "/admin/timetable", icon: CalendarDays },
+      // Förlägg i veckan: what the school has placed by hand, in a week, with the verdict on each and what is left
+      // to lay. Beside the grid it is read against, and not under its address, so the menu marks one row and not
+      // two. Read by every administrator (a page that writes nothing); the pin is a lesson that stays.
+      { labelKey: "placementWeek", href: "/admin/placements", icon: Pin },
       // Klasslärarens schema (G5): who is klasslärare of which class, the hours open to them and the
       // drafts that wait. Beside the grid whose lessons they change. The groups' icon (Personer).
       { labelKey: "classTeachers", href: "/admin/class-teachers", icon: Users },

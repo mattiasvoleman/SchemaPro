@@ -31,6 +31,18 @@ export class RequirementPlacementsController {
     return this.placements.listOfYear(academicYearId, user);
   }
 
+  /**
+   * The year's week of förläggningar: every row with its verdict, every post's lessons counted as Generera counts
+   * them, and the lessons and meals the rows are held against. Declared before the `:id` routes.
+   */
+  @Get('placements/board')
+  boardOfYear(
+    @Query('academicYearId', new ParseUUIDPipe({ version: '4' })) academicYearId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.placements.boardOfYear(academicYearId, user);
+  }
+
   /** One post's förläggningar with a verdict for each, judged now. */
   @Get(':id/placements')
   listOfPost(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @CurrentUser() user: AuthenticatedUser) {

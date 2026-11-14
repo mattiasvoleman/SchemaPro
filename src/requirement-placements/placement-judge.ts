@@ -5,12 +5,12 @@ import type { GradeNumbering } from '../common/grade-numbering';
 import type { LessonShape } from '../common/lesson-lengths';
 import type { LessonShare } from '../common/lesson-shares';
 import type { TaughtLesson } from '../optimization/locked-coverage';
-import { PRESERVED_FROM_REGENERATION } from '../optimization/preserved-lessons';
+import { keptMastersWhere } from '../optimization/preserved-lessons';
 import { readOtherSchoolHolds, type OtherSchoolHold } from '../optimization/other-school-holds';
 import { windowOf } from '../common/lunch-window';
 import { boardCodeOf, readBoardFacts, type BoardFacts } from '../swaps/board-rules';
 import type { RosterBasis } from '../year-rollover/projected-rosters';
-import { insideSchoolDay, placementsFitBesideLocks, sharedPlacementsFitBesideLocks } from './placement-fit';
+import { insideSchoolDay, placementsFitBesideLocks, sharedPlacementsFitBesideLocks, teacherOfRow } from './placement-fit';
 
 /*
  * FÖRLAGDA POSTER: DOES A FÖRLÄGGNING STAND WHERE THE SCHOOL PUT IT?
@@ -93,6 +93,57 @@ export interface JudgedPlacement {
   /** The post's window, which the written lesson carries. */
   startDate: Date | null;
   endDate: Date | null;
+}
+
+/** Where a row stands: the part of a förläggning the post does not already say. */
+export interface JudgedSlot {
+  dayOfWeek: number;
+  startMinutes: number;
+  minutes: number;
+  roomId: string;
+  recurrence: LessonRecurrence;
+  /** Whose lesson it is, on a post that shares its lessons; null on every other (teacherOfRow). */
+  teacherId: string | null;
+}
+
+/** What a post gives a row it is judged as: its class, subject, teachers and window. */
+export interface JudgedPost {
+  id: string;
+  studentGroupId: string;
+  subjectId: string;
+  teacherId: string | null;
+  coTeacherId: string | null;
+  startDate: Date | null;
+  endDate: Date | null;
+  shares?: readonly LessonShare[] | null;
+}
+
+/**
+ * A förläggning as the judge reads it: the slot is the row's, the class,
+ * subject, teachers and window the post's, and on a post that shares its
+ * lessons the row's own teacher. The one place a row is put together, for
+ * every caller of judgePlacements (the dialog's save and read, Generera's
+ * pre-flight and the week of förläggningar), so that the verdict on a row is
+ * the same wherever it is asked (review of #315, MEDEL-1). `id` is the row's
+ * own, or null for a draft row at save.
+ */
+export function judgedRowOf(post: JudgedPost, slot: JudgedSlot, id: string | null = null): JudgedPlacement {
+  return {
+    id,
+    requirementId: post.id,
+    studentGroupId: post.studentGroupId,
+    subjectId: post.subjectId,
+    // Delade lektioner: the förläggning's own teacher on a post that shares its lessons.
+    teacherId: teacherOfRow(post, slot),
+    coTeacherId: post.coTeacherId,
+    dayOfWeek: slot.dayOfWeek,
+    startMinutes: slot.startMinutes,
+    minutes: slot.minutes,
+    roomId: slot.roomId,
+    recurrence: slot.recurrence,
+    startDate: post.startDate,
+    endDate: post.endDate,
+  };
 }
 
 export interface PlacementVerdict {
@@ -255,12 +306,7 @@ export async function judgePlacements(
       select: { id: true, name: true },
     }),
     tx.masterLesson.findMany({
-      where: {
-        academicYearId: input.academicYearId,
-        isParked: false,
-        dayOfWeek: { in: days },
-        OR: PRESERVED_FROM_REGENERATION,
-      },
+      where: { ...keptMastersWhere(input.academicYearId), dayOfWeek: { in: days } },
       select: KEPT_SELECT,
       orderBy: [{ startTime: 'asc' }, { id: 'asc' }],
     }),

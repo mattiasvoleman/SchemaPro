@@ -122,6 +122,9 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/resources": "PLANERING",
   "/admin/generate": "SCHEMALAGGNING",
   "/admin/timetable": "SCHEMALAGGNING",
+  // Förlägg i veckan: reads only. The förläggningar are written in the dialog on Timplansposter (Planering's), so
+  // no area gates this page and every administrator opens it whole, the expedition and the läsare too.
+  "/admin/placements": null,
   "/admin/gaps": "SCHEMALAGGNING",
   // Schema som fil: the export only reads, the import writes the grundschema and the posts it implies.
   "/admin/schedule-exchange": "SCHEMALAGGNING",

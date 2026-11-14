@@ -489,7 +489,9 @@ describe('the roster-reader inventory', () => {
       // rows (listOfPost) judges them, and the save (replace) judges the list
       // before it writes, so a year two steps ahead answers R6's 409 there as
       // the hand edit does. The year's list for the timplan's märke reads rows
-      // only and asks for no basis.
+      // only and asks for no basis. The year's week of förläggningar judges every
+      // row of the year at once (boardOfYear, the page Förlägg i veckan), which
+      // is the same question over every post, so it answers the same 409.
       expect(reached.map((entry) => entry.route).sort()).toEqual([
         'AnalysisController.costBasis',
         'AnalysisController.keyFigures',
@@ -525,6 +527,7 @@ describe('the roster-reader inventory', () => {
         'OptimizationController.trigger',
         'PublicationsController.preview',
         'PublicationsController.publish',
+        'RequirementPlacementsController.boardOfYear',
         'RequirementPlacementsController.listOfPost',
         'RequirementPlacementsController.replace',
         'ScbFileController.file',

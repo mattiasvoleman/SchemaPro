@@ -49,6 +49,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   recurrence: 'ALL_WEEKS',
   teacherId: null,
   room: { name: 'Simhallen' },
+  updatedAt: new Date('2026-11-13T08:00:00.000Z'),
   ...over,
 });
 
@@ -131,6 +132,78 @@ describe('Förlagda poster (e2e)', () => {
     it('answers 404 for a post the caller cannot see', async () => {
       harness.tx['teachingRequirement']!['findUnique']!.mockResolvedValue(null);
       await request(http()).get(`/api/v1/teaching-requirements/${POST_ID}/placements`).set('x-test-user', admin()).expect(404);
+    });
+
+    describe('the year\'s week of förläggningar', () => {
+      const board = (year = YEAR_ID) => request(http()).get(`/api/v1/teaching-requirements/placements/board?academicYearId=${year}`);
+      const KEPT = {
+        id: 'k-1',
+        dayOfWeek: 3,
+        teacherId: '88888888-8888-4888-8888-888888888888',
+        coTeacherId: null,
+        roomId: null,
+        studentGroupId: GROUP_ID,
+        subjectId: SUBJECT_ID,
+        startTime: wallClock('13:00'),
+        endTime: wallClock('14:00'),
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        isLocked: true,
+        isGenerated: false,
+        subject: { name: 'Idrott' },
+        studentGroup: { name: '7A' },
+        extraGroups: [],
+        participants: [{ studentId: 'a-pupil' }],
+      };
+
+      beforeEach(() => {
+        harness.tx['academicYear']!['findUnique']!.mockResolvedValue({ isActive: true, predecessorId: null, gradeNumbering: 'NIOARIG' });
+        const { academicYear: _year, ...post } = POST;
+        harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([post]);
+        harness.tx['lunchSitting']!['findMany']!.mockResolvedValue([]);
+        givenKept([KEPT]);
+      });
+
+      // Mocks outlive a test: what the week read must not stand in for what the rest of the file reads.
+      afterEach(() => {
+        harness.tx['academicYear']!['findUnique']!.mockReset();
+        harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([]);
+        harness.tx['lunchSitting']!['findMany']!.mockResolvedValue([]);
+      });
+
+      it('is answered on its own route, with the rows judged, the post counted and what the rows are held against', async () => {
+        const response = await board().set('x-test-user', admin()).expect(200);
+        expect(Object.keys(response.body).sort()).toEqual(['academicYearId', 'kept', 'meals', 'placements', 'posts']);
+        expect(response.body.placements).toEqual([
+          // The lock already answers the post's one lesson, so the row is over the demand: the judge says so, and
+          // the count agrees (the row places nothing).
+          expect.objectContaining({
+            id: '77777777-7777-4777-8777-777777777777',
+            roomName: 'Simhallen',
+            verdict: { ok: false, reason: 'OVER_DEMAND' },
+            changedAt: '2026-11-13T08:00:00.000Z',
+          }),
+        ]);
+        // One lesson a week: the kept lesson of its class and subject answers it, so the post has none left.
+        expect(response.body.posts).toEqual([
+          expect.objectContaining({ id: POST_ID, cannotPlace: null, parts: [expect.objectContaining({ count: 1, locked: 1, placed: 0, left: 0 })] }),
+        ]);
+        expect(response.body.kept).toEqual([expect.objectContaining({ id: 'k-1', startTime: '13:00', locked: true })]);
+        // A kept lesson says its class and subject by id and no pupil at all.
+        expect(JSON.stringify(response.body)).not.toContain('a-pupil');
+      });
+
+      it('refuses a year that is no uuid, and answers 404 for one the caller cannot see', async () => {
+        await board('x').set('x-test-user', admin()).expect(400);
+        harness.tx['academicYear']!['findUnique']!.mockResolvedValue(null);
+        await board().set('x-test-user', admin()).expect(404);
+      });
+
+      it('is every administrator\'s to read and no teacher\'s', async () => {
+        await board().set('x-test-user', asUser({ adminProfile: 'LASARE' as never })).expect(200);
+        await board().set('x-test-user', asUser({ role: Role.TEACHER })).expect(403);
+      });
     });
 
     it('is every administrator\'s to read, and no teacher\'s', async () => {
