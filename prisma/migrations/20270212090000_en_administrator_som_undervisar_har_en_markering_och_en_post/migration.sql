@@ -76,8 +76,13 @@
 --   the day the year changes. The year that matters for a lesson is asked
 --   of the lesson's, where it belongs.
 -- * TeacherEmployments_a_teaching_administrator_keeps_a_post: the last post of
---   a person who teaches is not removed (TE410). One of several is: a school
---   deletes a draft year, or a person's post for last year, without ceremony.
+--   a person who teaches is not removed (TE410), and not moved to somebody
+--   else either: an UPDATE that changes the post's userId or schoolId takes
+--   it from the person as a DELETE does, and is judged by the same function
+--   (the trigger fires on DELETE and on UPDATE OF "userId", "schoolId", so an
+--   ordinary change of a post's percent, signature or note pays nothing).
+--   One of several is not held: a school deletes a draft year, or a person's
+--   post for last year, without ceremony.
 --   A person who is gone (Users delete, and every row's cascade from it) and a
 --   school that is gone (a school's deletion cascades to both tables, in an
 --   order nobody chose) are not "a teaching person losing a post": the
@@ -89,8 +94,8 @@
 --   teaching person's only post: turn the mark off first.
 -- * The two checks lock what the other reads: the mark's check locks the
 --   person's posts FOR SHARE and the removal's check locks the person's other
---   posts FOR SHARE, so a mark set while the last post goes, and two last
---   posts going together, cannot both pass. A pair that closes a cycle ends
+--   posts FOR SHARE, so a mark set while the last post goes (or is moved
+--   away), and two last posts going together, cannot both pass. A pair that closes a cycle ends
 --   with one of them aborted (40P01), never with a mark and no post.
 --
 -- ## The three trigger functions are patched, not replaced
@@ -115,7 +120,9 @@
 -- together: a refusal rolls the subtransaction back and with it whatever it
 -- got, and it tries again 50 ms later. The migration never waits while it
 -- holds a lock and no request queues behind it. After 30 s of refusals it
--- stops with nothing done and can be rerun. lock_timeout bounds any wait
+-- stops with nothing done; Prisma then marks the migration failed (P3009 on
+-- every later deploy) until `prisma migrate resolve --rolled-back <name>` has
+-- been run, and the message says so. lock_timeout bounds any wait
 -- nobody foresaw. The new CHECK holds for every row (the column is false
 -- everywhere), so validating it scans Users once.
 
@@ -132,7 +139,7 @@ BEGIN
       EXIT;
     EXCEPTION WHEN lock_not_available THEN
       IF clock_timestamp() > give_up THEN
-        RAISE EXCEPTION 'Users, UserRoleChanges and TeacherEmployments were not free at once in 30 s: nothing is changed, run the migration again';
+        RAISE EXCEPTION 'Users, UserRoleChanges and TeacherEmployments were not free at once in 30 s: nothing is changed. Run "prisma migrate resolve --rolled-back 20270212090000_en_administrator_som_undervisar_har_en_markering_och_en_post" before the next "prisma migrate deploy", which refuses (P3009) until then';
       END IF;
       PERFORM pg_sleep(0.05);
     END;
@@ -298,28 +305,37 @@ CREATE TRIGGER "Users_teaching_has_a_post"
     FOR EACH ROW WHEN (NEW."teaches")
     EXECUTE FUNCTION app.users_teaching_has_a_post();
 
--- The person's last post is not removed while they teach. Not asked of a
--- person who is gone or a school that is gone: their rows are deleted by the
--- cascade of that deletion, whichever table the cascade reaches first, and the
--- parent is no longer there to ask in the statement that deletes the child.
+-- The person's last post is not removed while they teach, and not MOVED to
+-- another person either (an UPDATE of "userId" or "schoolId" takes it from
+-- the person as a DELETE does: the composite key to Users lets a post change
+-- hands, and a rule that heard only of deletions would leave a mark with no
+-- post). Not asked of a person who is gone or a school that is gone: their
+-- rows are deleted by the cascade of that deletion, whichever table the
+-- cascade reaches first, and the parent is no longer there to ask in the
+-- statement that deletes the child. An UPDATE that leaves both columns as
+-- they were is not a move (the trigger is not even fired by one that does not
+-- name them, but UPDATE ... SET "userId" = "userId" does).
 CREATE FUNCTION app.teacher_employments_keep_a_teaching_administrators_post() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 BEGIN
+  IF TG_OP = 'UPDATE' AND NEW."userId" = OLD."userId" AND NEW."schoolId" = OLD."schoolId" THEN
+    RETURN NEW;
+  END IF;
   PERFORM 1 FROM "Users" u
     WHERE u."id" = OLD."userId" AND u."schoolId" = OLD."schoolId" AND u."teaches";
   IF NOT FOUND THEN
-    RETURN OLD;
+    RETURN coalesce(NEW, OLD);
   END IF;
   PERFORM 1 FROM "Schools" s WHERE s."id" = OLD."schoolId";
   IF NOT FOUND THEN
-    RETURN OLD;
+    RETURN coalesce(NEW, OLD);
   END IF;
   PERFORM 1
      FROM "TeacherEmployments" e
     WHERE e."userId" = OLD."userId" AND e."schoolId" = OLD."schoolId" AND e."id" <> OLD."id"
       FOR SHARE;
   IF FOUND THEN
-    RETURN OLD;
+    RETURN coalesce(NEW, OLD);
   END IF;
   RAISE EXCEPTION 'A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS: en administratör som undervisar behåller sin sista tjänst, ta bort markeringen först'
     USING ERRCODE = 'TE410',
@@ -328,7 +344,7 @@ END
 $$;
 
 CREATE TRIGGER "TeacherEmployments_a_teaching_administrator_keeps_a_post"
-    BEFORE DELETE ON "TeacherEmployments"
+    BEFORE DELETE OR UPDATE OF "userId", "schoolId" ON "TeacherEmployments"
     FOR EACH ROW EXECUTE FUNCTION app.teacher_employments_keep_a_teaching_administrators_post();
 
 -- ---------------------------------------------------------------------------

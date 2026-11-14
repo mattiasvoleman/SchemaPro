@@ -59929,6 +59929,11 @@ BEGIN
   -- 490b. The CHECK names the four profiles that write and no other, and the role.
   def := (SELECT pg_get_constraintdef(oid) FROM pg_constraint
            WHERE conrelid = '"Users"'::regclass AND conname = 'Users_teaches_is_a_teaching_administrators' AND contype = 'c');
+  -- Validated: a CHECK created NOT VALID holds for new writes and says nothing of the rows already there.
+  IF NOT (SELECT convalidated FROM pg_constraint
+           WHERE conrelid = '"Users"'::regclass AND conname = 'Users_teaches_is_a_teaching_administrators' AND contype = 'c') THEN
+    RAISE EXCEPTION 'tl 490b: the CHECK on teaches is NOT VALID';
+  END IF;
   IF def IS NULL OR def NOT LIKE '%NOT teaches%' OR def NOT LIKE '%SCHOOL_ADMIN%' OR def LIKE '%LASARE%'
      OR def NOT LIKE '%''FULL''%' OR def NOT LIKE '%''REKTOR''%' OR def NOT LIKE '%''SCHEMALAGGARE''%' OR def NOT LIKE '%''EXPEDITION''%' THEN
     RAISE EXCEPTION 'tl 490b: the CHECK on teaches is %', coalesce(def, '(missing)');
@@ -59940,7 +59945,7 @@ BEGIN
       ('Users', 'Users_a_profile_follows_the_role', 'BEFORE INSERT OR UPDATE OF role, "adminProfile", "hrRead", teaches ON'),
       ('Users', 'Users_role_changes_are_logged', 'AFTER INSERT OR UPDATE OF role, "adminProfile", "hrRead", teaches ON'),
       ('Users', 'Users_teaching_has_a_post', 'BEFORE INSERT OR UPDATE OF teaches ON'),
-      ('TeacherEmployments', 'TeacherEmployments_a_teaching_administrator_keeps_a_post', 'BEFORE DELETE ON')
+      ('TeacherEmployments', 'TeacherEmployments_a_teaching_administrator_keeps_a_post', 'BEFORE DELETE OR UPDATE OF "userId", "schoolId" ON')
     ) AS t(tbl, trg, shape)
   LOOP
     def := (SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid = format('%I', w.tbl)::regclass AND tgname = w.trg AND NOT tgisinternal);
@@ -60215,8 +60220,8 @@ ROLLBACK;
 --
 -- Users_teaching_has_a_post: the mark is refused (TE409) for a person with no TeacherEmployments row for any läsår of the
 -- school; a person who may not set the mark is refused for that first (AR403: the order of the triggers, section 490c).
--- TeacherEmployments_a_teaching_administrator_keeps_a_post: the last post of a marked person is refused (TE410); one of
--- several goes. ANY läsår counts, not the current one, so that a year switch (a flag flipped, the next year's posts
+-- TeacherEmployments_a_teaching_administrator_keeps_a_post: the last post of a marked person is refused (TE410), whether
+-- it is deleted or MOVED to another person by an UPDATE of its userId (492j); one of several goes. ANY läsår counts, not the current one, so that a year switch (a flag flipped, the next year's posts
 -- inserted, nothing deleted) cannot stick on the guard or leave a mark "without a post" the day the year changes.
 --
 -- What is not refused: a person who is gone (their posts go with them), a person who is deactivated (nothing is deleted:
@@ -60225,9 +60230,9 @@ ROLLBACK;
 -- year's deletion that takes one of two posts. What IS refused is a year's deletion that would take a marked person's only
 -- post: turn the mark off first (the gateway says so).
 --
--- Not asked here: the race between setting the mark and removing the last post, which needs two connections. The check locks
--- the person's posts FOR SHARE (the mark) and the other posts FOR SHARE (the removal); the migration's header says why, and
--- the PR's text has the two-connection demonstration.
+-- Not asked here: the race between setting the mark and removing (or moving) the last post, which needs two connections. The
+-- check locks the person's posts FOR SHARE (the mark) and the other posts FOR SHARE (the removal); the migration's header says
+-- why, and the adapter probe's (ar-j) is the two-connection proof (this suite runs in one).
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -60238,7 +60243,7 @@ DECLARE
   yr2 uuid;
   p105 uuid; p107 uuid; p108 uuid; p111 uuid;
   post1 uuid; post2 uuid;
-  gone uuid;
+  gone uuid; moved uuid;
 BEGIN
   PERFORM pg_temp.tl_as(106);
   m := app.current_school_id();
@@ -60327,6 +60332,40 @@ BEGIN
   PERFORM pg_temp.tl_expect('492i the marked person is deleted', pg_temp.tl_try(format($q$DELETE FROM "Users" WHERE id = %L$q$, gone)), 'ok 1');
   PERFORM pg_temp.tl_expect('492i their posts went with them', (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = gone), '0');
   PERFORM pg_temp.tl_expect('492i and their log', (SELECT count(*)::text FROM "UserRoleChanges" WHERE "userId" = gone), '0');
+
+  -- 492j. Any läsår counts for the mark: a person whose only post is in a year that is not the active one is marked (a rule
+  -- about the active year would stick on every year switch). And a post that is MOVED to another person is taken from the
+  -- one it leaves as a deletion is: the composite key to Users lets a post change hands, and rektor may update one.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "updatedAt")
+  VALUES (m, 'tl-492-moved@example.invalid', 'Tl', 'Flyttad', 'SCHOOL_ADMIN', 'FULL', gen_random_uuid(), now()) RETURNING id INTO moved;
+  PERFORM pg_temp.tl_expect('492j the second year is not the active one', (SELECT "isActive"::text FROM "AcademicYears" WHERE id = yr2), 'false');
+  PERFORM pg_temp.tl_expect('492j a post in that year only', pg_temp.tl_post(moved, yr2), 'ok 1');
+  PERFORM pg_temp.tl_expect('492j marked on a post of an inactive year', pg_temp.tl_mark(moved, true), 'ok 1');
+  PERFORM pg_temp.tl_expect('492j and the mark stands', (SELECT "teaches"::text FROM "Users" WHERE id = moved), 'true');
+  -- The only post of a marked person is not given to somebody else: TE410, and it stays where it was.
+  PERFORM pg_temp.tl_expect('492j the only post is not moved to the teacher', pg_temp.tl_try(format(
+    $q$UPDATE "TeacherEmployments" SET "userId" = %L WHERE "userId" = %L$q$, p111, moved)), 'TE410');
+  PERFORM pg_temp.tl_expect('492j it stays with the person, and the teacher has none',
+    (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = moved) || '/' || (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = p111), '1/0');
+  -- An UPDATE that names the column and leaves it as it was is not a move (and one that does not name it does not fire the trigger).
+  PERFORM pg_temp.tl_expect('492j a post written back to its own person', pg_temp.tl_try(format(
+    $q$UPDATE "TeacherEmployments" SET "userId" = "userId" WHERE "userId" = %L$q$, moved)), 'ok 1');
+  PERFORM pg_temp.tl_expect('492j and it is still theirs', (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = moved), '1');
+  -- With another post left the first may go to somebody else: the move is the very update that went through, and applied.
+  PERFORM pg_temp.tl_expect('492j a second post, in the active year', pg_temp.tl_post(moved, yr), 'ok 1');
+  PERFORM pg_temp.tl_expect('492j one of two is moved to the teacher', pg_temp.tl_try(format(
+    $q$UPDATE "TeacherEmployments" SET "userId" = %L WHERE "userId" = %L AND "academicYearId" = %L$q$, p111, moved, yr)), 'ok 1');
+  PERFORM pg_temp.tl_expect('492j the teacher has it, and the person the other',
+    (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = p111 AND "academicYearId" = yr) || '/'
+      || (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = moved AND "academicYearId" = yr2), '1/1');
+  PERFORM pg_temp.tl_expect('492j the one that is left is the last', pg_temp.tl_try(format(
+    $q$UPDATE "TeacherEmployments" SET "userId" = %L WHERE "userId" = %L$q$, p108, moved)), 'TE410');
+  -- A person who is not marked has posts that are anyone's to move, as they are anyone's to remove.
+  PERFORM pg_temp.tl_expect('492j a post for the unmarked schemaläggare', pg_temp.tl_post(p107, yr), 'ok 1');
+  PERFORM pg_temp.tl_expect('492j moved to the expedition', pg_temp.tl_try(format(
+    $q$UPDATE "TeacherEmployments" SET "userId" = %L WHERE "userId" = %L$q$, p108, p107)), 'ok 1');
+  PERFORM pg_temp.tl_expect('492j the expedition has it and the schemaläggare none',
+    (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = p108) || '/' || (SELECT count(*)::text FROM "TeacherEmployments" WHERE "userId" = p107), '1/0');
 END $$;
 ROLLBACK;
 

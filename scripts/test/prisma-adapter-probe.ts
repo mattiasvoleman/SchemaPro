@@ -6102,7 +6102,7 @@ async function runChecks(
   await calendarFeedChecks(owner, api, MARKER, check);
   await leaveChecks(owner, api, MARKER, check);
   await skolenheterChecks(owner, api, MARKER, check);
-  await adminAreaChecks(owner, api, MARKER, check);
+  await adminAreaChecks(owner, api, MARKER, check, open, appUrl);
   await huvudmanChecks(owner, api, check);
   await deladeChecks(owner, api, check);
   await scbFileChecks(owner, api, MARKER, check);

@@ -5284,12 +5284,15 @@ false for every row, no policy asks for it, and the gateway, the web and the app
   values. If a body is not as expected the migration stops with nothing changed. The two triggers that name columns name `teaches`.
 - Beslut 6: a person who teaches has a post. `Users_teaching_has_a_post` refuses the mark (SQLSTATE `TE409`) for a person with no
   `TeacherEmployments` row for **any** läsår of the school, and
-  `TeacherEmployments_a_teaching_administrator_keeps_a_post` refuses to remove the last such row while the mark stands (`TE410`).
+  `TeacherEmployments_a_teaching_administrator_keeps_a_post` refuses to remove the last such row while the mark stands (`TE410`),
+  and refuses to move it to another person (an `UPDATE` that changes the post's `userId` or `schoolId` is judged as a removal
+  from the person it leaves; the trigger fires on `DELETE OR UPDATE OF "userId", "schoolId"`, so an ordinary change of a post's
+  percent, signature or note pays nothing).
   Any läsår, not the current one: Aktivera flips a flag and the rollover only inserts, so a rule about the active year would
   stick on every year switch. A person's deletion and a school's are not refused (the cascade asks whether they still exist);
   a läsår's deletion that would take a marked person's only post is: switch the mark off first. Both checks lock the person's
-  posts `FOR SHARE`, so a mark set while the last post goes cannot slip through; of two last posts removed together one ends
-  with 40P01.
+  posts `FOR SHARE`, so a mark set while the last post goes (or is moved away) cannot slip through; of two last posts removed
+  together one ends with 40P01.
 
 ### 20.2 Deploy order and operations
 
@@ -5298,8 +5301,9 @@ false for every row, no policy asks for it, and the gateway, the web and the app
 - The migration takes `Users` and `UserRoleChanges` in ACCESS EXCLUSIVE and `TeacherEmployments` in SHARE ROW EXCLUSIVE, NOWAIT,
   all three together, in a loop that retries every 50 ms for 30 s and holds nothing between tries (a reader of Users and a writer of
   a post are not queued behind it: measured 0.07 s and 0.08 s while it waited five seconds for a lock). If the three are not free at
-  once in 30 s it stops with nothing changed, and says so: `prisma migrate resolve --rolled-back
-  20270212090000_en_administrator_som_undervisar_har_en_markering_och_en_post`, then deploy again.
+  once in 30 s it stops with nothing changed, and says so: Prisma then marks the migration failed and refuses every later
+  `migrate deploy` (P3009) until `prisma migrate resolve --rolled-back
+  20270212090000_en_administrator_som_undervisar_har_en_markering_och_en_post` has been run (the error names it), then deploy again.
 - No existing row is touched. The checks before and after are `teaches-pr1-data/prod-fore.sql` and `prod-efter.sql` in the round's
   notes (one SELECT per check, `public` and `app` only, `COLLATE "C"`): the three trigger functions' `md5(prosrc)` before and
   after, the md5 of every other `app` and `public` function, of every policy and of the other CHECKs on Users equal before and
