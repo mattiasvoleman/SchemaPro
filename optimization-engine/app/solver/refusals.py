@@ -35,7 +35,7 @@ from typing import TypeVar
 
 from app.exceptions import InvalidScheduleInputError
 from app.schemas.schedule import ConflictAnalysis, ConflictDetail
-from app.solver.weeks import WEEK_WORDS, Weeks, says_exactly, share, together
+from app.solver.weeks import WEEK_WORDS, Weeks, as_said, closed, says_exactly, share, together
 
 R = TypeVar("R")
 
@@ -75,15 +75,18 @@ def of_most_weeks(
     found: Sequence[tuple[Weeks, R]],
     same: Callable[[R], Hashable],
     period_weeks: Sequence[int],
+    odd_weeks: Sequence[int] | None = None,
 ) -> tuple[R, list[Weeks]]:
     """The refusal that is said, and the weeks that give it: the one whose weeks are most of the year.
 
     `found` is each refused week and its refusal, in the order of the year.
     Weeks whose refusals are one (`same`) are one answer, and the answer whose
     weeks add up to most real weeks (weeks.share, `period_weeks` being how
-    many each period has) is the one said, in the words of its first week. The
-    earliest of the answers that tie. The weeks of one answer never overlap,
-    so their shares add.
+    many each period has, and `odd_weeks` how many of them are odd where the
+    gateway said so: without it a period's odd and even weeks weigh the same,
+    and "most" is most to within a week a period) is the one said, in the
+    words of its first week. The earliest of the answers that tie. The weeks
+    of one answer never overlap, so their shares add.
     """
     answers: dict[Hashable, list[tuple[Weeks, R]]] = {}
     for week, refusal in found:
@@ -91,7 +94,7 @@ def of_most_weeks(
     # `max` keeps the first of equals, and a dict keeps the order the answers came in.
     best = max(
         answers.values(),
-        key=lambda held: share(together([week for week, _ in held]), period_weeks),
+        key=lambda held: share(together([week for week, _ in held]), period_weeks, odd_weeks),
     )
     return best[0][1], [week for week, _ in best]
 
@@ -100,6 +103,7 @@ def said_weeks(
     held: Sequence[Weeks],
     asked: Sequence[Weeks],
     the_year_gives_it: Callable[[], bool],
+    phantom: Weeks | None = None,
 ) -> Weeks | None:
     """The weeks a refusal is said of; None when it is the year's.
 
@@ -109,9 +113,25 @@ def said_weeks(
     if the year without a post of its own gives it too (`the_year_gives_it`,
     asked only then). Otherwise the weeks that give it, as one set of weeks,
     when the words for a week say exactly those and no others
-    (weeks.says_exactly); else the first of them alone.
+    (weeks.says_exactly); else the first of them alone, and if the words do
+    not say that one either, its first CELL: a week is a group of cells that the
+    same posts run in, and a group can hold one period's both parities beside
+    another's one, which no words say, so its first concrete week is said and
+    no period more than that (the review of #304, LÅG-1).
+
+    `phantom` is the cells of the year that no real week is in (weeks.
+    phantom_cells), filled in beside the real cell of their period in what is
+    said and in what is compared with the year: a period that is one even week
+    is said as the period, and the year it is a part of is every week.
     """
-    if len(held) == len(asked) and (together(asked).is_every_week() or the_year_gives_it()):
+    if len(held) == len(asked) and (closed(together(asked), phantom).is_every_week() or the_year_gives_it()):
         return None
-    said = together(held)
-    return said if says_exactly(said) else held[0]
+    said = as_said(together(held), phantom)
+    if said is not None:
+        return said
+    first = held[0]
+    real = first.bits if phantom is None else first.bits & ~phantom.lifted(first.periods)
+    group = closed(Weeks(real, first.periods), phantom)
+    if says_exactly(group):
+        return group
+    return closed(Weeks(real & -real, first.periods), phantom)

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { runsOn } from '../calendar/lesson-recurrence';
-import { yearPeriodsOf } from '../optimization/year-periods';
+import { isoWeekNumber, runsOn } from '../calendar/lesson-recurrence';
+import { weekPeriodsOfUndatedYear, yearPeriodsOf } from '../optimization/year-periods';
 import fixture from './__fixtures__/teacher-day-cases.json';
 import {
   MAX_TEACHING_DAYS_PER_WEEK_MAX,
@@ -19,6 +19,7 @@ import {
   unionMinutes,
   type TeacherDayRule,
   type TeachingLesson,
+  type LockedWeekdaysInPeriods,
 } from './teacher-day';
 
 /**
@@ -612,9 +613,77 @@ describe('lockedWeekdaySetsByPeriod', () => {
     const periods = cut(AUTUMN, SPRING);
     expect(lockedWeekdaySetsByPeriod([lesson('m', 1), lesson('tu', 2)], 2, year, periods.weekPeriods)).toBeNull();
     expect(lockedWeekdaySetsByPeriod([], 2, year, periods.weekPeriods)).toBeNull();
-    // Odd and even weeks all year: both sets in every period.
+    // Odd and even weeks that hold the same weekday are the same set in both parities.
+    const same = [lesson('o', 1, { recurrence: 'ODD_WEEKS' }), lesson('e', 1, { recurrence: 'EVEN_WEEKS' })];
+    expect(lockedWeekdaySetsByPeriod(same, 1, year, periods.weekPeriods)).toBeNull();
+  });
+
+  it('sends the parity where a period’s odd and even weeks hold other sets, and only then', () => {
+    // Odd weeks' Monday and even weeks' Thursday, all year: another set in the
+    // two weeks of every period. Held both in every week, as the engine did, the
+    // odd weeks were refused the Thursday the even weeks' lesson takes.
+    const periods = cut(AUTUMN, SPRING);
     const alternating = [lesson('o', 1, { recurrence: 'ODD_WEEKS' }), lesson('e', 4, { recurrence: 'EVEN_WEEKS' })];
-    expect(lockedWeekdaySetsByPeriod(alternating, 1, year, periods.weekPeriods)).toBeNull();
+    expect(lockedWeekdaySetsByPeriod(alternating, 1, year, periods.weekPeriods)).toEqual([
+      { weekdays: [1], periods: [true, true, true], recurrence: 'ODD_WEEKS' },
+      { weekdays: [4], periods: [true, true, true], recurrence: 'EVEN_WEEKS' },
+    ]);
+    // A period where they agree has the set once, for both: the autumn alternates, the spring does not.
+    const kept = [
+      lesson('o', 1, { ...AUTUMN, recurrence: 'ODD_WEEKS' }),
+      lesson('e', 4, { ...AUTUMN, recurrence: 'EVEN_WEEKS' }),
+      lesson('w', 3, SPRING),
+    ];
+    expect(lockedWeekdaySetsByPeriod(kept, 1, year, periods.weekPeriods)).toEqual([
+      { weekdays: [], periods: [false, true, false] },
+      { weekdays: [1], periods: [true, false, false], recurrence: 'ODD_WEEKS' },
+      { weekdays: [3], periods: [false, false, true] },
+      { weekdays: [4], periods: [true, false, false], recurrence: 'EVEN_WEEKS' },
+    ]);
+  });
+
+  it('is one period in a year nothing dates: the parity says the sets apart, and nothing else does', () => {
+    // The review of #320, MEDEL-1: a school with A/B-weeks that dates no post has no periods, and its
+    // teacher's odd weeks (a Monday) and even weeks (a Thursday) were held against both sets.
+    const one = weekPeriodsOfUndatedYear(year);
+    expect(one.length).toBe(43);
+    expect(one.every((period) => period === 0)).toBe(true);
+    const alternating = [lesson('o', 1, { recurrence: 'ODD_WEEKS' }), lesson('e', 4, { recurrence: 'EVEN_WEEKS' })];
+    expect(lockedWeekdaySetsByPeriod(alternating, 1, year, one)).toEqual([
+      { weekdays: [1], periods: [true], recurrence: 'ODD_WEEKS' },
+      { weekdays: [4], periods: [true], recurrence: 'EVEN_WEEKS' },
+    ]);
+    // Where the two parities hold the same sets, or the lessons are every week's, the sets say it already.
+    const same = [lesson('o', 1, { recurrence: 'ODD_WEEKS' }), lesson('e', 1, { recurrence: 'EVEN_WEEKS' })];
+    expect(lockedWeekdaySetsByPeriod(same, 1, year, one)).toBeNull();
+    expect(lockedWeekdaySetsByPeriod([lesson('m', 1), lesson('tu', 2)], 2, year, one)).toBeNull();
+    expect(lockedWeekdaySetsByPeriod([], 2, year, one)).toBeNull();
+    // The odd weeks' one day and the even weeks' two: each parity is its own line.
+    const inside = [
+      lesson('o', 1, { recurrence: 'ODD_WEEKS' }),
+      lesson('e', 1, { recurrence: 'EVEN_WEEKS' }),
+      lesson('e2', 2, { recurrence: 'EVEN_WEEKS' }),
+    ];
+    expect(lockedWeekdaySetsByPeriod(inside, 2, year, one)).toEqual([
+      { weekdays: [1], periods: [true], recurrence: 'ODD_WEEKS' },
+      { weekdays: [1, 2], periods: [true], recurrence: 'EVEN_WEEKS' },
+    ]);
+  });
+
+  it('holds a set in both parities of one period and in one parity of another: one entry for each', () => {
+    // Monday every week in the autumn and the spring's odd weeks, Tuesday in the spring's even ones.
+    const periods = cut(AUTUMN, SPRING);
+    const kept = [
+      lesson('m', 1, AUTUMN),
+      lesson('m2', 1, { ...SPRING, recurrence: 'ODD_WEEKS' }),
+      lesson('tu', 2, { ...SPRING, recurrence: 'EVEN_WEEKS' }),
+    ];
+    expect(lockedWeekdaySetsByPeriod(kept, 1, year, periods.weekPeriods)).toEqual([
+      { weekdays: [], periods: [false, true, false] },
+      { weekdays: [1], periods: [true, false, false] },
+      { weekdays: [1], periods: [false, false, true], recurrence: 'ODD_WEEKS' },
+      { weekdays: [2], periods: [false, false, true], recurrence: 'EVEN_WEEKS' },
+    ]);
   });
 
   it('leaves a set out only where the same period holds the larger one', () => {
@@ -640,15 +709,71 @@ describe('lockedWeekdaySetsByPeriod', () => {
       lesson('tu', 2, { ...AUTUMN, recurrence: 'EVEN_WEEKS' }),
       lesson('w', 3, { ...AUTUMN, recurrence: 'EVEN_WEEKS' }),
     ];
-    expect(lockedWeekdaySetsByPeriod(kept, 2, year, periods.weekPeriods)).toEqual([
+    const sent = [
       { weekdays: [], periods: [false, true, true] },
-      { weekdays: [1], periods: [true, false, false] },
-      { weekdays: [1, 2, 3], periods: [true, false, false] },
+      { weekdays: [1], periods: [true, false, false], recurrence: 'ODD_WEEKS' },
+      { weekdays: [1, 2, 3], periods: [true, false, false], recurrence: 'EVEN_WEEKS' },
+    ];
+    expect(lockedWeekdaySetsByPeriod(kept, 2, year, periods.weekPeriods)).toEqual(sent);
+    // On a post of three the larger set is held by the even weeks and the smaller one by the odd: a
+    // week is held against the sets of its own parity, so nothing is left out across the two.
+    expect(lockedWeekdaySetsByPeriod(kept, 3, year, periods.weekPeriods)).toEqual(sent);
+  });
+
+  it('compares what each parity holds in full: two pools of the same size that share only some sets differ', () => {
+    // One period for the whole läsår. The odd weeks hold {Mon} until Wednesday 20 January and {Mon, Tue}
+    // after it; the even weeks {Mon} until Wednesday 3 February and {Mon, Wed} after it. Two sets each,
+    // one of them the same: other sets, so the parity is sent (on a post of one day nothing is left out).
+    const whole = yearPeriodsOf(year, [[{ startDate: '2027-02-03', endDate: null }]])!;
+    const oneYear = whole.weekPeriods.map(() => 0);
+    const kept = [
+      lesson('m', 1),
+      lesson('tu', 2, { startDate: '2027-01-20', endDate: null, recurrence: 'ODD_WEEKS' }),
+      lesson('w', 3, { startDate: '2027-02-03', endDate: null, recurrence: 'EVEN_WEEKS' }),
+    ];
+    expect(lockedWeekdaySetsByPeriod(kept, 1, year, oneYear)).toEqual([
+      { weekdays: [1], periods: [true], recurrence: 'ODD_WEEKS' },
+      { weekdays: [1], periods: [true], recurrence: 'EVEN_WEEKS' },
+      { weekdays: [1, 2], periods: [true], recurrence: 'ODD_WEEKS' },
+      { weekdays: [1, 3], periods: [true], recurrence: 'EVEN_WEEKS' },
     ]);
-    // On a post of three the larger set holds the smaller one's line.
-    expect(lockedWeekdaySetsByPeriod(kept, 3, year, periods.weekPeriods)).toEqual([
-      { weekdays: [], periods: [false, true, true] },
-      { weekdays: [1, 2, 3], periods: [true, false, false] },
+  });
+
+  it('writes a set without a parity before the same set held by one, in the order of the weekdays', () => {
+    // The autumn's odd weeks hold Monday and its even weeks Tuesday; the spring holds Monday every week.
+    // {Mon} is held by the odd weeks of the first period and by both parities of the last: the one
+    // without a parity first, then the odd weeks', then the sets of the next weekday.
+    const periods = cut(AUTUMN, SPRING);
+    const kept = [
+      lesson('o', 1, { ...AUTUMN, recurrence: 'ODD_WEEKS' }),
+      lesson('e', 2, { ...AUTUMN, recurrence: 'EVEN_WEEKS' }),
+      lesson('m', 1, SPRING),
+    ];
+    expect(lockedWeekdaySetsByPeriod(kept, 2, year, periods.weekPeriods)).toEqual([
+      { weekdays: [], periods: [false, true, false] },
+      { weekdays: [1], periods: [false, false, true] },
+      { weekdays: [1], periods: [true, false, false], recurrence: 'ODD_WEEKS' },
+      { weekdays: [2], periods: [true, false, false], recurrence: 'EVEN_WEEKS' },
+    ]);
+  });
+
+  it('leaves a set out inside a period and a parity only, and compares the sets after it', () => {
+    // A Monday and a Tuesday kept from Wednesday 13 January: the week of the 11th, an even one, holds
+    // neither. On a post of two days {} lies inside {Mon, Tue} in the even weeks and is left out, so both
+    // parities hold {Mon, Tue} and the spring is the one set it always was. On a post of one day it
+    // is not inside it, and the odd weeks hold {Mon, Tue} alone while the even weeks hold it and the empty week.
+    const from = { startDate: '2027-01-13', endDate: null };
+    const periods = cut(from);
+    const kept = [lesson('m', 1, from), lesson('tu', 2, from)];
+    expect(lockedWeekdaySetsByPeriod(kept, 2, year, periods.weekPeriods)).toEqual([
+      { weekdays: [], periods: [true, false] },
+      { weekdays: [1, 2], periods: [false, true] },
+    ]);
+    expect(lockedWeekdaySetsByPeriod(kept, 1, year, periods.weekPeriods)).toEqual([
+      { weekdays: [], periods: [true, false] },
+      { weekdays: [], periods: [false, true], recurrence: 'EVEN_WEEKS' },
+      { weekdays: [1, 2], periods: [false, true], recurrence: 'ODD_WEEKS' },
+      { weekdays: [1, 2], periods: [false, true], recurrence: 'EVEN_WEEKS' },
     ]);
   });
 
@@ -656,13 +781,16 @@ describe('lockedWeekdaySetsByPeriod', () => {
     // A Monday and a Tuesday kept from Wednesday 13 January: the week of the
     // 11th is in their period (the window has a day in it) and holds neither
     // of them. On a post of one day the two together are over it, so the
-    // empty week is a line of its own in the spring too.
+    // empty week is a line of its own in the spring too: it is an even week,
+    // and the odd weeks of the spring are not held against it.
     const from = { startDate: '2027-01-13', endDate: null };
     const periods = cut(from);
     const kept = [lesson('m', 1, from), lesson('tu', 2, from)];
     expect(lockedWeekdaySetsByPeriod(kept, 1, year, periods.weekPeriods)).toEqual([
-      { weekdays: [], periods: [true, true] },
-      { weekdays: [1, 2], periods: [false, true] },
+      { weekdays: [], periods: [true, false] },
+      { weekdays: [], periods: [false, true], recurrence: 'EVEN_WEEKS' },
+      { weekdays: [1, 2], periods: [false, true], recurrence: 'ODD_WEEKS' },
+      { weekdays: [1, 2], periods: [false, true], recurrence: 'EVEN_WEEKS' },
     ]);
   });
 
@@ -685,17 +813,14 @@ describe('lockedWeekdaySetsByPeriod', () => {
       lesson('w', 3, { ...AUTUMN, recurrence: 'EVEN_WEEKS' }),
       lesson('th', 4, { ...AUTUMN, recurrence: 'EVEN_WEEKS' }),
     ];
-    expect(lockedWeekdaySetsByPeriod(kept, 3, year, periods.weekPeriods)).toEqual([
+    const sent = [
       { weekdays: [], periods: [false, true, true] },
-      { weekdays: [1, 2], periods: [true, false, false] },
-      { weekdays: [2, 3, 4], periods: [true, false, false] },
-    ]);
+      { weekdays: [1, 2], periods: [true, false, false], recurrence: 'ODD_WEEKS' },
+      { weekdays: [2, 3, 4], periods: [true, false, false], recurrence: 'EVEN_WEEKS' },
+    ];
+    expect(lockedWeekdaySetsByPeriod(kept, 3, year, periods.weekPeriods)).toEqual(sent);
     // On a post of four the same: inside is every weekday, not one of them.
-    expect(lockedWeekdaySetsByPeriod(kept, 4, year, periods.weekPeriods)).toEqual([
-      { weekdays: [], periods: [false, true, true] },
-      { weekdays: [1, 2], periods: [true, false, false] },
-      { weekdays: [2, 3, 4], periods: [true, false, false] },
-    ]);
+    expect(lockedWeekdaySetsByPeriod(kept, 4, year, periods.weekPeriods)).toEqual(sent);
   });
 
   it('counts the weeks from the Monday of the läsår’s first week, whatever weekday the läsår starts on', () => {
@@ -711,8 +836,10 @@ describe('lockedWeekdaySetsByPeriod', () => {
     const periods = yearPeriodsOf(saturday, [[from]])!;
     expect(periods.weeks).toEqual([22, 22]);
     expect(lockedWeekdaySetsByPeriod([lesson('m', 1, from), lesson('tu', 2, from)], 1, saturday, periods.weekPeriods)).toEqual([
-      { weekdays: [], periods: [true, true] },
-      { weekdays: [1, 2], periods: [false, true] },
+      { weekdays: [], periods: [true, false] },
+      { weekdays: [], periods: [false, true], recurrence: 'EVEN_WEEKS' },
+      { weekdays: [1, 2], periods: [false, true], recurrence: 'ODD_WEEKS' },
+      { weekdays: [1, 2], periods: [false, true], recurrence: 'EVEN_WEEKS' },
     ]);
   });
 
@@ -721,14 +848,16 @@ describe('lockedWeekdaySetsByPeriod', () => {
     // two days before Monday 17 August are a week of their own (week 33, an
     // odd one) as soon as a post is dated from that Monday, and a teacher
     // kept on Tuesdays in the odd weeks and on Wednesdays in the even ones
-    // holds the Tuesday there and both in the rest (docs/DEPLOYMENT.md 19.5).
+    // holds the Tuesday there and, in the rest, the Tuesday in the odd weeks and the Wednesday in the
+    // even ones (docs/DEPLOYMENT.md 19.5). The first week has weeks of one parity only, and says both.
     const saturday = { startDate: '2026-08-15', endDate: '2027-06-12' };
     const periods = yearPeriodsOf(saturday, [[{ startDate: '2026-08-17', endDate: null }]])!;
     expect(periods.weeks).toEqual([1, 43]);
     const kept = [lesson('odd', 2, { recurrence: 'ODD_WEEKS' }), lesson('even', 3, { recurrence: 'EVEN_WEEKS' })];
     expect(lockedWeekdaySetsByPeriod(kept, 2, saturday, periods.weekPeriods)).toEqual([
-      { weekdays: [2], periods: [true, true] },
-      { weekdays: [3], periods: [false, true] },
+      { weekdays: [2], periods: [true, false] },
+      { weekdays: [2], periods: [false, true], recurrence: 'ODD_WEEKS' },
+      { weekdays: [3], periods: [false, true], recurrence: 'EVEN_WEEKS' },
     ]);
     // In a läsår that starts on that Monday there is no such week, and
     // nothing to tell apart.
@@ -782,6 +911,7 @@ describe('lockedWeekdaySetsByPeriod', () => {
       larger.length > set.length && larger.length <= max && set.every((day) => larger.includes(day));
     let told = 0;
     let overlapping = 0;
+    let parity = 0;
     for (let round = 0; round < 300; round++) {
       const kept = Array.from({ length: 1 + random(5) }, (_, index) =>
         lesson(`l${index}`, 1 + random(5), {
@@ -794,9 +924,11 @@ describe('lockedWeekdaySetsByPeriod', () => {
       if (!periods) continue;
       const max = 1 + random(4);
       const sent = lockedWeekdaySetsByPeriod(kept, max, year, periods.weekPeriods);
-      const sets = sent ?? lockedWeekdaySets(kept, max, year).map((weekdays) => ({ weekdays, periods: periods.weeks.map(() => true) }));
+      const sets: LockedWeekdaysInPeriods[] =
+        sent ?? lockedWeekdaySets(kept, max, year).map((weekdays) => ({ weekdays, periods: periods.weeks.map(() => true) }));
       if (sent) told++;
-      const real = periods.weeks.map(() => new Set<string>());
+      // The real sets of each period, in the odd weeks and in the even ones.
+      const real = periods.weeks.map(() => ({ ODD_WEEKS: new Set<string>(), EVEN_WEEKS: new Set<string>() }));
       periods.weekPeriods.forEach((period, week) => {
         const own = [
           ...new Set(
@@ -814,33 +946,39 @@ describe('lockedWeekdaySetsByPeriod', () => {
               .map((entry) => entry.dayOfWeek),
           ),
         ].sort((a, b) => a - b);
-        real[period]!.add(own.join(','));
-        const here = sets.filter((entry) => entry.periods[period]);
+        const parity = isoWeekNumber(new Date(monday + 7 * week * 86_400_000)) % 2 === 1 ? 'ODD_WEEKS' : 'EVEN_WEEKS';
+        real[period]![parity].add(own.join(','));
+        // Held against the sets of its own period and parity: the entries that name them.
+        const here = sets.filter((entry) => entry.periods[period] && (!entry.recurrence || entry.recurrence === parity));
         const holds = here.some(
           (entry) =>
             own.every((day) => entry.weekdays.includes(day)) &&
             (entry.weekdays.length === own.length || entry.weekdays.length <= max),
         );
-        expect({ round, week, own, holds }).toEqual({ round, week, own, holds: true });
+        expect({ round, week, parity, own, holds }).toEqual({ round, week, parity, own, holds: true });
       });
       periods.weeks.forEach((_, period) => {
-        const here = sets.filter((entry) => entry.periods[period]).map((entry) => entry.weekdays);
-        // Every period is told,
-        expect({ round, period, lines: here.length > 0 }).toEqual({ round, period, lines: true });
-        for (const line of here) {
-          // each line is a real week of it,
-          expect({ round, period, line, real: real[period]!.has(line.join(',')) }).toEqual({ round, period, line, real: true });
-          // and none is implied by another line of it.
-          expect({ round, period, line, implied: here.some((larger) => inside(line, larger, max)) }).toEqual({
-            round,
-            period,
-            line,
-            implied: false,
-          });
+        const either = new Set([...real[period]!.ODD_WEEKS, ...real[period]!.EVEN_WEEKS]);
+        for (const parity of ['ODD_WEEKS', 'EVEN_WEEKS'] as const) {
+          const here = sets.filter((entry) => entry.periods[period] && (!entry.recurrence || entry.recurrence === parity));
+          // Every period is told in each parity,
+          expect({ round, period, parity, lines: here.length > 0 }).toEqual({ round, period, parity, lines: true });
+          for (const line of here) {
+            // each line is a real week of it (of its own parity where it names one),
+            const own = line.recurrence ? real[period]![line.recurrence] : either;
+            expect({ round, period, line, real: own.has(line.weekdays.join(',')) }).toEqual({ round, period, line, real: true });
+            // and none is implied by another line the same weeks are held against.
+            expect({
+              round,
+              period,
+              line,
+              implied: here.some((larger) => inside(line.weekdays, larger.weekdays, max)),
+            }).toEqual({ round, period, line, implied: false });
+          }
         }
         // How often the rounds reach two real weeks that share a weekday
         // with neither inside the other, the larger within the post's days.
-        const weeks = [...real[period]!].map((key) => (key ? key.split(',').map(Number) : []));
+        const weeks = [...either].map((key) => (key ? key.split(',').map(Number) : []));
         if (
           weeks.some((set) =>
             weeks.some(
@@ -855,8 +993,18 @@ describe('lockedWeekdaySetsByPeriod', () => {
           overlapping++;
         }
       });
+      // The parity is sent only where some period's odd and even weeks hold other sets, and then it is.
+      const differs = real.some(
+        ({ ODD_WEEKS: odd, EVEN_WEEKS: even }) =>
+          odd.size > 0 && even.size > 0 && (odd.size !== even.size || [...odd].some((key) => !even.has(key))),
+      );
+      const withParity = sets.some((entry) => entry.recurrence);
+      if (withParity) parity++;
+      if (withParity) expect({ round, differs }).toEqual({ round, differs: true });
+      if (!differs) expect({ round, withParity }).toEqual({ round, withParity: false });
     }
     expect(told).toBeGreaterThan(100);
     expect(overlapping).toBeGreaterThan(0);
+    expect(parity).toBeGreaterThan(20);
   });
 });

@@ -60,6 +60,14 @@ export interface PeriodStretch {
 export interface YearPeriods {
   /** How many real weeks each period is: the payload's `periodWeeks`. */
   weeks: number[];
+  /**
+   * How many of each period's weeks are odd ISO weeks: the payload's `periodOddWeeks`. The
+   * engine's week is a period in a parity, and a period of one week (the läsår's first two
+   * days, a test week) has no week of the other: the engine asks nothing of that cell, says
+   * the period whole where its only week is, and weighs the weeks a refusal is chosen by as
+   * they are, an odd and an even week not being as many in a period of three.
+   */
+  oddWeeks: number[];
   /** Each period's weeks as stretches of days, in order, clipped to the läsår. */
   stretches: PeriodStretch[][];
   /**
@@ -88,6 +96,15 @@ function weeksOfYear(year: YearSpan): { monday: string; sunday: string }[] {
     weeks.push({ monday: dayOf(monday), sunday: dayOf(addDays(monday, 6)) });
   }
   return weeks;
+}
+
+/**
+ * The läsår as ONE period: the period of each of its weeks, all the first. What a year that nothing
+ * dates is read as, for what is read week by week (a teacher's kept weekdays, which differ by parity
+ * in a school with A/B-weeks whether or not it dates a post: the review of #320, MEDEL-1).
+ */
+export function weekPeriodsOfUndatedYear(year: YearSpan): number[] {
+  return weeksOfYear(year).map(() => 0);
 }
 
 /** Whether some window has a day in the week: ISO days compare as text. */
@@ -138,8 +155,14 @@ export function yearPeriodsOf(year: YearSpan, entries: readonly (readonly HeldWi
   if (firstWeek.length > MAX_PERIODS) return null;
 
   const clip = (day: string, low: string, high: string): string => (day < low ? low : day > high ? high : day);
+  // A week is odd by the ISO number of the week its Monday is in, as everywhere else (runsOn), also
+  // for the läsår's first week that starts on a Saturday.
+  const oddWeeks = weeksIn.map(
+    (held) => held.filter((week) => isoWeekNumber(parseDay(weeks[week]!.monday)) % 2 === 1).length,
+  );
   return {
     weeks: weeksIn.map((held) => held.length),
+    oddWeeks,
     stretches: weeksIn.map((held) => {
       const stretches: PeriodStretch[] = [];
       let from = held[0]!;
@@ -220,7 +243,10 @@ export function withPeriodDates<P extends Record<string, string | number>>(
  * Week by week, because a stretch of two weeks does not have both parities: week 53 and
  * week 1 are both odd. Three weeks in a row always have both (the only two in a row of one
  * parity are 53 and 1, and week 52 and week 2 are even), so no more than the first three
- * are read. A stretch whose days cannot be read is kept, as it was before it was asked.
+ * are read. A stretch whose days cannot be read is kept when it is the only one read (nothing
+ * then holds the parity, and the dates stand as they came); beside a readable one it is kept
+ * while the readable one is asked and can be dropped, so the unreadable one is the window.
+ * Outside the contract: the days come out of yearPeriodsOf and are always days.
  */
 function stretchHoldsParity(stretch: PeriodStretch, parity: string | number | undefined): boolean {
   if (parity !== 'ODD_WEEKS' && parity !== 'EVEN_WEEKS') return true;

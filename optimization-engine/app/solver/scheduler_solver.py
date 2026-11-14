@@ -126,8 +126,14 @@ from app.solver.weeks import (
     each_week,
     meet,
     named as week_named,
+    as_said as weeks_as_said,
+    closed as weeks_closed,
+    only_phantom,
+    phantom_cells,
+    year_weighing,
+    cells_of,
+    needs_a_part_per_parity,
     part_weeks,
-    says_exactly as week_says_exactly,
     share as week_share,
     tag as week_tag,
     together as weeks_together,
@@ -1209,11 +1215,19 @@ class _TeacherWeekLocks:
             for teacher_id in (fixed.teacher_id, fixed.co_teacher_id):
                 if teacher_id is not None:
                     self._weeks[teacher_id].append(runs)
+        self._by_teacher: dict[UUID, list[FixedLesson]] = defaultdict(list)
+        for fixed in fixed_lessons:
+            for teacher_id in {fixed.teacher_id, fixed.co_teacher_id} - {None}:
+                self._by_teacher[teacher_id].append(fixed)
         self._busy: dict[Weeks, dict[tuple[UUID, int], list[tuple[int, int]]]] = {}
         self._minutes: dict[Weeks, dict[tuple[UUID, int], int]] = {}
 
     def weeks(self, teacher_id: UUID) -> list[Weeks | None]:
         return self._weeks.get(teacher_id, [])
+
+    def of(self, teacher_id: UUID) -> list[FixedLesson]:
+        """The locks the teacher leads or co-teaches, in the payload's order."""
+        return self._by_teacher.get(teacher_id, [])
 
     def locks(self, week: Weeks) -> list[FixedLesson]:
         return [fixed for fixed in self._fixed if meet(weeks_of(fixed), week)]
@@ -5379,6 +5393,9 @@ class SchedulerSolver:
         first is, and the weeks are said by what is true of them.
         """
         found: list[tuple[Weeks, R]] = []
+        # The cells of the year no real week is in (periodOddWeeks): said as
+        # the period whose real week sits beside them, and weighing nothing.
+        phantom = phantom_cells(whole)
         for label, week in weeks:
             refusal = refused_in(week, whole, label)
             if refusal is None:
@@ -5390,7 +5407,7 @@ class SchedulerSolver:
             found.append((label, refusal))
         if not found:
             return None
-        refusal, held = of_most_weeks(found, same, year_of(whole))
+        refusal, held = of_most_weeks(found, same, *year_weighing(whole))
         if not names(refusal):
             return refusal, None
         if also_given is not None:
@@ -5407,7 +5424,7 @@ class SchedulerSolver:
             return again is not None and same(again) == same(refusal)
 
         return refusal, said_weeks(
-            held, [label for label, _ in weeks if label is not None], the_year_gives_it,
+            held, [label for label, _ in weeks if label is not None], the_year_gives_it, phantom,
         )
 
     def _solved_in(
@@ -5435,6 +5452,10 @@ class SchedulerSolver:
         (`groups`), and twenty classes a hall cannot seat in waves are as
         many whichever term their lessons are dated to.
         """
+        phantom = phantom_cells(whole)
+        if label is not None:
+            said = weeks_as_said(label, phantom)
+            label = said if said is not None else weeks_closed(label, phantom)
         if not week_named(label):
             return verdict
         every_week = _every_week_only(whole)
@@ -6818,9 +6839,14 @@ class SchedulerSolver:
                 extra += 2 * day_count + 1
             # The teacher's own lunch has a start per day in each PERIOD the
             # teacher's weeks differ in (_add_teacher_lunch), under the day's
-            # one literal. Nothing for a year of odd and even weeks alone,
-            # whose lunch is one as it was.
-            if rule.has_lunch and has_periods:
+            # one literal, and in each parity of it where her entries in the
+            # window are told apart by it. Nothing more for a year of odd and
+            # even weeks alone whose teacher's are not: her lunch is one. A
+            # year WITH periods is counted as if every lunch were cut by
+            # parity too, without asking: a ceiling, so the estimate is only
+            # ever too large, and the question (_lunch_by_parity_of) is asked
+            # of a year without periods alone (the review of #320, LÅG-3).
+            if rule.has_lunch and (has_periods or self._lunch_by_parity_of(rule, request)):
                 extra += day_count
         extra += sum(
             2 * day_count + 1
@@ -8079,35 +8105,57 @@ class SchedulerSolver:
             # odd weeks of two terms, and this is one term's in both parities.
             # The same locks the model's break is kept clear of, so what
             # passes here is no empty domain there.
+            #
+            # PARITY, WHERE THE MODEL CUTS BY IT. A teacher whose lessons or
+            # locks in her window are told apart by parity has a break for each
+            # (period, parity) week in the model (_add_teacher_lunch), so her
+            # locks are read week by week here too, by the same question: the
+            # locks of a period's odd weeks alone can leave a start that the
+            # whole period's do not.
             year = whole or request
             closed_busy = self._teacher_busy_from_constraints(year.constraints)
-            for period, locks in _locks_by_period(year.fixed_lessons, week):
-                locked_busy = self._teacher_busy_from_locks(locks)
-                for rule in reaching:
-                    window = _teacher_lunch_slots(rule, self._grid)
-                    if window is None:
-                        continue
-                    for day_index, day_of_week in enumerate(self._grid.schedule_days):
-                        key = (rule.teacher_id, day_index)
-                        causes = self._lunch_has_no_start(
-                            window, day_index, closed_busy.get(key, []), locked_busy.get(key, []),
-                        )
-                        if causes is None:
+            by_parity = {
+                rule.teacher_id for rule in reaching
+                if (window := _teacher_lunch_slots(rule, self._grid)) is not None
+                and self._lunch_needs_a_part_per_parity(
+                    rule.teacher_id, window, year.fixed_lessons,
+                    [requirement for requirement in year.requirements if rule.teacher_id in _teachers_of(requirement)],
+                )
+            }
+            for per_parity, readings in (
+                (False, _locks_by_period(year.fixed_lessons, week)),
+                (True, _locks_by_week(year.fixed_lessons, week, phantom_cells(year)) if by_parity else []),
+            ):
+                for reading, locks in readings:
+                    locked_busy = self._teacher_busy_from_locks(locks)
+                    for rule in reaching:
+                        if (rule.teacher_id in by_parity) is not per_parity:
                             continue
-                        raise InvalidScheduleInputError.of("TEACHER_LUNCH_LEAVES_NO_START", {
-                            "causes": causes,
-                            "rule": str(rule.id),
-                            "minutes": rule.lunch_minutes,
-                            "windowStart": rule.lunch_start_time[:5],
-                            "windowEnd": rule.lunch_end_time[:5],
-                            "day": day_of_week,
-                            **(
-                                {} if period is None
-                                else self._periods_with_this_refusal(
-                                    year, week, rule.teacher_id, day_index, window, causes,
-                                )
-                            ),
-                        })
+                        window = _teacher_lunch_slots(rule, self._grid)
+                        if window is None:
+                            continue
+                        for day_index, day_of_week in enumerate(self._grid.schedule_days):
+                            key = (rule.teacher_id, day_index)
+                            causes = self._lunch_has_no_start(
+                                window, day_index, closed_busy.get(key, []), locked_busy.get(key, []),
+                            )
+                            if causes is None:
+                                continue
+                            raise InvalidScheduleInputError.of("TEACHER_LUNCH_LEAVES_NO_START", {
+                                "causes": causes,
+                                "rule": str(rule.id),
+                                "minutes": rule.lunch_minutes,
+                                "windowStart": rule.lunch_start_time[:5],
+                                "windowEnd": rule.lunch_end_time[:5],
+                                "day": day_of_week,
+                                **(
+                                    {} if reading is None
+                                    else self._weeks_with_this_refusal(
+                                        year, week, rule.teacher_id, day_index, window, causes,
+                                        per_parity=per_parity,
+                                    )
+                                ),
+                            })
 
         # The rest against the longest night the week can offer.
         #
@@ -8360,7 +8408,7 @@ class SchedulerSolver:
         # one already punctuated. The sentence branches on the key.
         return "_".join(name for name, bands in forbidden_by_source if bands)
 
-    def _periods_with_this_refusal(
+    def _weeks_with_this_refusal(
         self,
         year: OptimizeScheduleRequest,
         week: Weeks | None,
@@ -8368,8 +8416,10 @@ class SchedulerSolver:
         day_index: int,
         window: tuple[int, int, int],
         causes: str,
+        *,
+        per_parity: bool,
     ) -> dict[str, str | int]:
-        """Where in the year a teacher's lunch is refused the same: every period that is.
+        """Where in the year a teacher's lunch is refused the same: every period, or every week, that is.
 
         A LÄSÅR HAS MORE PERIODS THAN TERMS — every dated post of the school
         cuts it — so the autumn's locks are in several, and the first of them
@@ -8387,28 +8437,35 @@ class SchedulerSolver:
         figures and what is named: the rule, the day, the cause). Said by
         the periods with exactly the same locked hours only, the spring's
         refusal came after the autumn's had been put right.
+
+        A teacher whose break is per parity (`per_parity`) is read in each
+        odd week and each even one, and the refusal says those: the periods
+        and, when they are all of one parity, which (`parity`). Where the
+        weeks are not a set the words can say (the odd weeks of the autumn
+        and the even weeks of the spring), the first of them is said alone.
         """
         assert week is not None
         key = (teacher_id, day_index)
         closed = self._teacher_busy_from_constraints(year.constraints).get(key, [])
-        same: list[int] = []
-        for period in range(week.periods):
-            term = Weeks(0b11 << (2 * period), week.periods)
+        phantom = phantom_cells(year)
+        same: list[Weeks] = []
+        for cell in (
+            [cell for pair in cells_of(week.periods) for cell in pair] if per_parity
+            else [Weeks(0b11 << (2 * period), week.periods) for period in range(week.periods)]
+        ):
             if not any(
-                meet(weeks_of(requirement), term)
+                meet(weeks_of(requirement), cell)
                 for requirement in year.requirements
                 if teacher_id in _teachers_of(requirement)
             ):
                 continue
             busy = self._teacher_busy_from_locks(
-                [fixed for fixed in year.fixed_lessons if meet(weeks_of(fixed), term)],
+                [fixed for fixed in year.fixed_lessons if meet(weeks_of(fixed), cell)],
             ).get(key, [])
             if self._lunch_has_no_start(window, day_index, closed, busy) == causes:
-                same.append(period)
-        said: dict[str, str | int] = {"period": same[0]}
-        if len(same) > 1:
-            said["periods"] = ",".join(str(period) for period in same)
-        return said
+                same.append(cell)
+        said = weeks_as_said(weeks_together(same), phantom)
+        return week_named(said if said is not None else weeks_closed(same[0], phantom))
 
     def _locks_in_stretch(
         self,
@@ -14530,17 +14587,35 @@ class SchedulerSolver:
         period's locks on their own (_verify_teacher_work_rules), and a part
         over two periods' locks could be an empty domain it never saw.
 
+        PARITY, FOR THE TEACHER WHOSE ENTRIES IN THE WINDOW ARE TOLD APART BY
+        IT (_lunch_needs_a_part_per_parity). A teacher whose odd weeks take the
+        first half of the window and whose even weeks the second has a break
+        in each week, as a real week does, and one break clear of both
+        refused her a timetable every week of which exists (the review of
+        #302). She is cut by the weeks her entries tell apart, odd or even in
+        each period (the same week_parts, by `_parity`), and every other
+        teacher is cut as above, so a request in which no teacher is told
+        apart builds the model it built.
+
         ONE LITERAL PER DAY, WHATEVER THE PARTS. The rule on a day is still
         what the school opens, and two literals with one code and the same
         values would be merged into one line anyway.
         """
         window_start, window_end, lunch_slots = window
-        parts = week_parts(
-            group,
-            lambda decision: whole_periods(_parity(decision)),
-            others=[whole_periods(runs) for runs in week_locks.weeks(rule.teacher_id)],
-            capped=False,
-        )
+        if self._lunch_needs_a_part_per_parity(
+            rule.teacher_id, window, week_locks.of(rule.teacher_id),
+            list({id(decision.lesson.requirement): decision.lesson.requirement for decision in group}.values()),
+        ):
+            # A break for each week the teacher's entries tell apart, odd or even
+            # in each period, as a real week has its own.
+            parts = week_parts(group, _parity, others=week_locks.weeks(rule.teacher_id), capped=False)
+        else:
+            parts = week_parts(
+                group,
+                lambda decision: whole_periods(_parity(decision)),
+                others=[whole_periods(runs) for runs in week_locks.weeks(rule.teacher_id)],
+                capped=False,
+            )
         literals: dict[int, cp_model.IntVar] = {}
         for period, members in parts:
             self._add_teacher_lunch_of(
@@ -14549,6 +14624,56 @@ class SchedulerSolver:
                 closed_busy,
                 period,
             )
+
+    def _lunch_by_parity_of(self, rule: AnonymousTeacherWorkRule, request: OptimizeScheduleRequest) -> bool:
+        """_lunch_needs_a_part_per_parity, asked of the request's own entries (the size estimate has no lessons placed)."""
+        window = _teacher_lunch_slots(rule, self._grid)
+        return window is not None and self._lunch_needs_a_part_per_parity(
+            rule.teacher_id, window, request.fixed_lessons,
+            [requirement for requirement in request.requirements if rule.teacher_id in _teachers_of(requirement)],
+        )
+
+    def _lunch_needs_a_part_per_parity(
+        self,
+        teacher_id: UUID,
+        window: tuple[int, int, int],
+        locks: Iterable[FixedLesson],
+        requirements: Iterable[AnonymousRequirement],
+    ) -> bool:
+        """Whether this teacher's lessons or locks in the lunch window differ between a period's odd and even weeks.
+
+        THE BREAK IS PER PERIOD, AND PER PARITY WHERE THAT MATTERS
+        (weeks.needs_a_part_per_parity). One break for a period's odd weeks
+        and its even ones is what main builds, and for most teachers it is
+        what a real week needs too. It refuses a period whose odd weeks take
+        the first half of the window and whose even weeks take the second,
+        though each week has a break (the review of #302: 20 of 1 700 small
+        worlds). Only a teacher whose entries in the window are told apart by
+        parity is given the finer cut, so every other teacher's rows are the
+        rows main builds.
+
+        What is read is what can take part of the window: her locks that
+        overlap it on a day, and her lessons (every one of them: the model
+        decides where they go). The weeks she is owed a
+        break in are the weeks of her lessons. The model, the pre-flight and
+        the size estimate ask the same of the same entries, so the three agree
+        on which teachers are cut.
+        """
+        window_start, window_end, _ = window
+        slots_per_day = self._grid.slots_per_day
+        held: list[tuple[object, Weeks | None]] = []
+        for fixed in locks:
+            if teacher_id not in (fixed.teacher_id, fixed.co_teacher_id):
+                continue
+            span = self._fixed_window(fixed)
+            if span is None:
+                continue
+            offset = span[0] // slots_per_day * slots_per_day
+            if span[0] < offset + window_end and span[1] > offset + window_start:
+                held.append((fixed.id, weeks_of(fixed)))
+        owed = [weeks_of(requirement) for requirement in requirements]
+        held.extend((index, runs) for index, runs in enumerate(owed))
+        return needs_a_part_per_parity(held, owed)
 
     def _add_teacher_lunch_of(
         self,
@@ -17119,6 +17244,30 @@ def _locks_by_period(
     return found
 
 
+def _locks_by_week(
+    fixed_lessons: list[FixedLesson], week: Weeks | None, phantom: Weeks | None = None,
+) -> list[tuple[Weeks | None, list[FixedLesson]]]:
+    """The locks a teacher's lunch is read against where it is held per parity: every week's, then each concrete week's.
+
+    First the locks that run every week, under None (what they refuse, every
+    week refuses), then each period and parity `week` is, odd or even, with
+    the locks that run in that one (weeks.cells_of). `[(None, every lock)]`
+    for a row of every week.
+    """
+    if week is None:
+        return [(None, fixed_lessons)]
+    found: list[tuple[Weeks | None, list[FixedLesson]]] = [
+        (None, [fixed for fixed in fixed_lessons if weeks_of(fixed) is None]),
+    ]
+    for index in range(2 * week.periods):
+        if week.bits >> index & 1:
+            cell = Weeks(1 << index, week.periods)
+            if only_phantom(cell, phantom):
+                continue  # a cell no real week is in is nobody's refusal
+            found.append((cell, [fixed for fixed in fixed_lessons if meet(weeks_of(fixed), cell)]))
+    return found
+
+
 def _week_sets(
     limit: AnonymousTeacherDayLimit, week: Weeks | None = None,
 ) -> list[frozenset[int]]:
@@ -17387,7 +17536,15 @@ def _weeks_and_requests(
         return [(None, request)]
     every_week = {"recurrence": None, "periods": None}
     weeks: list[tuple[Weeks | None, OptimizeScheduleRequest]] = []
+    # MEDEL-2 of the review of #304: a cell no real week is in (weeks.
+    # phantom_cells) is asked of nobody. What runs only in it is taken out of
+    # the entries (OptimizeScheduleRequest.drop_weeks_that_are_not_there), and
+    # what is left of it runs in the real cell of its period as well, so a
+    # refusal there is the real week's.
+    phantom = phantom_cells(request)
     for week in each_week([*runs, *locked, *placed_meals]):
+        if only_phantom(week, phantom):
+            continue
         placed = [
             requirement.model_copy(update=every_week)
             for requirement, held in zip(requirements, runs)
@@ -17412,6 +17569,7 @@ def _weeks_and_requests(
                 if meet(held, week)
             ],
             "period_weeks": None,
+            "period_odd_weeks": None,
             "lunch_per_period": False,
         })))
     return weeks
@@ -17470,6 +17628,7 @@ def _period_view(request: OptimizeScheduleRequest, period: int) -> OptimizeSched
             if placement.periods is None or placement.periods[period]
         ],
         "period_weeks": None,
+        "period_odd_weeks": None,
         "lunch_per_period": False,
     })
 
@@ -17512,6 +17671,7 @@ def _every_week_only(request: OptimizeScheduleRequest) -> OptimizeScheduleReques
         "requirements": [r for r in request.requirements if weeks_of(r) is None],
         "fixed_lessons": [f for f in request.fixed_lessons if weeks_of(f) is None],
         "period_weeks": None,
+        "period_odd_weeks": None,
     })
 
 

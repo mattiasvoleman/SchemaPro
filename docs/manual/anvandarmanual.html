@@ -2368,9 +2368,12 @@
       en dag eller en vecka räknas för varje vecka för sig: högst antal
       lektioner per dag, raster, restid, lärarens dag och vila, och
       kontrollerna innan genereringen startar. Säger genereringen att något
-      inte går, gäller det en vecka där allt i meddelandet ligger. Lunchen,
-      klassens och lärarens, ligger däremot på samma tid varje vecka och hålls
-      därför fri från båda veckornas lektioner.
+      inte går, gäller det en vecka där allt i meddelandet ligger. Klassens
+      lunch ligger däremot på samma tid varje vecka och hålls därför fri från
+      båda veckornas lektioner. Lärarens lunch gör det också, utom för en
+      lärare vars lektioner eller låsta lektioner i lunchfönstret skiljer sig
+      mellan udda och jämna veckor: hon har en lunch för varje, så att hon kan
+      äta kl. 12 de udda veckorna och kl. 11 de jämna.
     </p>
     <p>
       En lektion där du själv ändrat veckorna behålls vid omgenerering, som
@@ -2407,8 +2410,8 @@
         följd av <em>och övriga veckor med samma poster</em>. Får veckorna
         olika besked, till exempel för att läraren har en egen post från
         första måndagen, ger varje vecka sitt första besked, och det som
-        flest veckor ger visas (veckorna räknas ungefär: en periods udda och
-        jämna veckor räknas lika många), och vid lika många det tidigaste.
+        flest veckor ger visas (veckorna som finns, udda och jämna för sig),
+        och vid lika många det tidigaste.
         Ett besked som en vecka också skulle ge, men först efter ett annat,
         räknas inte med.</li>
       <li>Tre saker måste genereringen pröva sig fram till: om matsalen
@@ -2439,11 +2442,16 @@
       <li><strong>Deltid i dagar</strong> och <strong>lärarens lunch</strong>
         (4.4) räknas per termin: en låst lektion på måndagar bara på hösten
         tar ingen av vårens dagar, och en lärare kan äta en tid på hösten och
-        en annan på våren. Udda och jämna veckor inom en termin räknas
-        däremot tillsammans: de veckodagar bevarade lektioner håller i udda
-        veckor räknas också mot de jämna, och lunchen är en tid för båda.
-        Nekas en lärares lunch av låsta lektioner står terminens veckor under
-        meddelandet, om det inte gäller hela läsåret.</li>
+        en annan på våren. Udda och jämna veckor inom en termin räknas var
+        för sig där de skiljer sig: har en lärare bevarade lektioner på
+        måndagar de udda veckorna och på onsdagar de jämna räknas varje vecka
+        mot sina egna dagar, och en lärare vars lektioner eller låsta
+        lektioner i lunchfönstret skiljer sig mellan dem äter en tid de udda
+        veckorna och en annan de jämna. Skiljer de sig inte, räknas de
+        tillsammans som förut. Nekas en lärares lunch av låsta lektioner står
+        terminens veckor under meddelandet, och <em>udda veckor</em> eller
+        <em>jämna veckor</em> när det är dem det gäller, om det inte gäller
+        hela läsåret.</li>
       <li><strong>Klassens lunch</strong> läggs för varje del av läsåret för
         sig. Har klassen låsta lektioner som skiljer sig mellan terminerna (hit
         räknas förlagda poster, nedan) får den en lunch för var och en, och

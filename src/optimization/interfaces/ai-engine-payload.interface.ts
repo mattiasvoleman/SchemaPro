@@ -499,6 +499,10 @@ export interface AnonymousTeacherDayLimit {
    * takes no day of the spring; `lockedWeekdays` stays, and is what an engine
    * reads where this is absent: every set in every week.
    *
+   * `recurrence`, only where a period's odd and even weeks hold other sets,
+   * says which parity holds the set: a week is then held against the sets of
+   * its own parity. Absent is both, as it always was.
+   *
    * A list of its own and not a mask per set of `lockedWeekdays`, because
    * what may be left out differs: there, a set inside a larger one anywhere
    * in the year; here, only inside one the same period holds. Every period is
@@ -506,7 +510,7 @@ export interface AnonymousTeacherDayLimit {
    * set). Sent only when the periods differ — src/common/teacher-day.ts,
    * lockedWeekdaySetsByPeriod.
    */
-  lockedWeekdayPeriods?: { weekdays: DayOfWeek[]; periods: boolean[] }[];
+  lockedWeekdayPeriods?: { weekdays: DayOfWeek[]; periods: boolean[]; recurrence?: 'ODD_WEEKS' | 'EVEN_WEEKS' }[];
 }
 
 export interface AnonymousConstraint {
@@ -771,6 +775,15 @@ export interface AiEngineScheduleRequest {
    * school that dates no post sends the payload it always sent.
    */
   periodWeeks?: number[];
+  /**
+   * Terminer: how many of each period's `periodWeeks` are odd ISO weeks, in the same order.
+   * Sent beside `periodWeeks`, so the engine does not read the other parity of a period of one
+   * week (the läsår's first two days, a test week) as a week: a post of a parity runs only in
+   * the periods that have a week of it, no count is made of a cell no week is in, and the
+   * period is said whole where its only week is. It also weighs the weeks a refusal is chosen
+   * by as they are. See year-periods.ts.
+   */
+  periodOddWeeks?: number[];
   /**
    * Klassens måltid per del av läsåret (20270209090000): plan a class's meal
    * in each part of the year its locked lessons tell apart, instead of one

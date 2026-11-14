@@ -72,6 +72,7 @@ export const BASIS_PAYLOAD_FIELDS = [
   'lunchPerPeriod',
   'lunchPlacements',
   'lunchServings',
+  'periodOddWeeks',
   'periodWeeks',
   'placementRules',
   'placements',
@@ -182,6 +183,7 @@ export type BasisPayload = Pick<
   | 'groupConflicts'
   | 'siteTravelTimes'
   | 'periodWeeks'
+  | 'periodOddWeeks'
   | 'pupilGaps'
   | 'placementRules'
   | 'placements'
@@ -413,6 +415,10 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
       // the masks' reason). Only when the year is cut, so every other school's
       // part hashes as before; the weights move what a candidate is priced by.
       ...(payload.periodWeeks !== undefined ? [{ periodWeeks: payload.periodWeeks.join(',') }] : []),
+      // And how many of them are odd, where the year has a period of one parity alone: what a post of a
+      // parity runs in and what is refused move with it. Present only when sent, so every other school's
+      // part hashes as before.
+      ...(payload.periodOddWeeks !== undefined ? [{ periodOddWeeks: payload.periodOddWeeks.join(',') }] : []),
     ],
     preserved: payload.fixedLessons
       .filter((lesson) => !placedFixed.has(lesson.id))
@@ -494,6 +500,10 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
                     lockedWeekdayPeriods: limit.lockedWeekdayPeriods.map((entry) => ({
                       weekdays: entry.weekdays,
                       periods: entry.periods.map((held) => (held ? '1' : '0')).join(''),
+                      // The parity the set is held in, where it is one: the odd weeks' Monday and the even
+                      // weeks' Tuesday of a period are two sets, and a basis that did not tell them apart
+                      // could not see a change from one to the other. Only on an entry sent with it.
+                      ...(entry.recurrence !== undefined ? { recurrence: entry.recurrence } : {}),
                     })),
                   }
                 : {}),

@@ -369,6 +369,7 @@ const anonymised = (real: School, turn = 0): BasisSource => {
       : {}),
     // Terminer: sent only when a post or a lock is dated.
     ...(p.periodWeeks !== undefined ? { periodWeeks: p.periodWeeks } : {}),
+    ...(p.periodOddWeeks !== undefined ? { periodOddWeeks: p.periodOddWeeks } : {}),
     // Klassens måltid per del av läsåret: sent beside the periods when the school has a lunch rule.
     ...(p.lunchPerPeriod !== undefined ? { lunchPerPeriod: p.lunchPerPeriod } : {}),
     // Elevernas håltimmar: sent only when the school turned it on.
@@ -589,6 +590,47 @@ describe('the candidate basis', () => {
       { id: 'post-bo', teacherId: 't-bo', maxTeachingDaysPerWeek: 2, lockedWeekdays: [[1]] as never },
     ];
     expect(changedParts(autumn, partsOf(unsaid, 1))).toEqual(['rules']);
+  });
+
+  it('moves with the parity a post’s locked weekdays are held in: the odd weeks’ Monday is not the even weeks’', () => {
+    const held = (first: 'ODD_WEEKS' | 'EVEN_WEEKS', second: 'ODD_WEEKS' | 'EVEN_WEEKS', turned = false) => {
+      const real = school();
+      const entries = [
+        { weekdays: [1], periods: [true, true], recurrence: first },
+        { weekdays: [2], periods: [true, true], recurrence: second },
+      ];
+      real.payload.teacherDayLimits = [
+        {
+          id: 'post-bo',
+          teacherId: 't-bo',
+          maxTeachingDaysPerWeek: 2,
+          lockedWeekdays: [[1], [2]] as never,
+          lockedWeekdayPeriods: (turned ? [...entries].reverse() : entries) as never,
+        },
+      ];
+      return real;
+    };
+    const base = partsOf(held('ODD_WEEKS', 'EVEN_WEEKS'));
+    // Not by the order they are sent in, but by which parity holds which set.
+    expect(partsOf(held('ODD_WEEKS', 'EVEN_WEEKS', true), 1)).toEqual(base);
+    expect(changedParts(base, partsOf(held('EVEN_WEEKS', 'ODD_WEEKS'), 1))).toEqual(['rules']);
+  });
+
+  it('moves with which periods have an odd week, and a school that does not say it hashes as before', () => {
+    const told = (odd?: number[]) => {
+      const real = school();
+      real.payload.periodWeeks = [1, 43];
+      if (odd !== undefined) real.payload.periodOddWeeks = odd;
+      return real;
+    };
+    expect(partsOf(told([1, 22]), 1)).toEqual(partsOf(told([1, 22])));
+    // The first period's one week odd, or even: another reading of the year.
+    expect(changedParts(partsOf(told([1, 22])), partsOf(told([0, 22]), 1))).toEqual(['requirements']);
+    // And a year that says nothing is the reading it was before the field.
+    expect(changedParts(partsOf(told([1, 22])), partsOf(told(), 1))).toEqual(['requirements']);
+    const unsaid = school();
+    unsaid.payload.periodWeeks = [1, 43];
+    expect(partsOf(unsaid, 1)).toEqual(partsOf(told(), 1));
   });
 
   it('reads the walk in real ids, as a change of rooms and rules, and a school without it as before', () => {

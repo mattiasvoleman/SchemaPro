@@ -2208,10 +2208,44 @@ describe('OptimizationProxyService', () => {
         ['a released post’s mask alone', [['body', 'placements', 'requirements', 1, 'periods']]],
         // An engine that knows periods and not yet a post's days by period names this alone.
         ['a post’s days by period alone', [['body', 'teacherDayLimits', 0, 'lockedWeekdayPeriods']]],
+        // And one that knows the days by period but not by parity names the parity on an entry.
+        ['a post’s days by parity alone', [['body', 'teacherDayLimits', 0, 'lockedWeekdayPeriods', 2, 'recurrence']]],
+        // One that knows periods but not which of them have an odd week.
+        ['which periods have an odd week alone', [['body', 'periodOddWeeks']]],
       ] as [string, (string | number)[][]][])('reads %s as the same engine', async (_name, locs) => {
         http.post.mockReturnValue(throwError(() => refusing(...locs)));
         const error = await callWith(dated).catch((thrown: unknown) => thrown);
         expect(bodyOf(error)).toHaveProperty('code', 'ENGINE_LACKS_PERIODS');
+      });
+
+      it('says it is one for a day limit’s sets by parity in a year nothing dates, which carries no periodWeeks', async () => {
+        // The review of #320, MEDEL-1: a mask of one period on `lockedWeekdayPeriods`, and a `recurrence` an
+        // older engine does not know, in a request with no lengths. Said as the engine being older, not as
+        // this gateway's mistake; and never sent again without it, since the year would be read stricter.
+        const undated = {
+          requirements: [{ id: 'r' }],
+          teacherDayLimits: [
+            { id: 'l', lockedWeekdays: [[1], [4]], lockedWeekdayPeriods: [{ weekdays: [1], periods: [true], recurrence: 'ODD_WEEKS' }] },
+          ],
+        };
+        http.post.mockReturnValue(
+          throwError(() => refusing(['body', 'teacherDayLimits', 0, 'lockedWeekdayPeriods', 0, 'recurrence'])),
+        );
+
+        const error = await callWith(undated).catch((thrown: unknown) => thrown);
+
+        expect((error as HttpException).getStatus()).toBe(503);
+        expect(bodyOf(error)).toHaveProperty('code', 'ENGINE_LACKS_PERIODS');
+        expect(http.post).toHaveBeenCalledTimes(1);
+        // The same refusal of a request that carries no such sets is the validation error it is.
+        http.post.mockClear();
+        http.post.mockReturnValue(
+          throwError(() => refusing(['body', 'teacherDayLimits', 0, 'lockedWeekdayPeriods', 0, 'recurrence'])),
+        );
+        const plain = await callWith({ requirements: [{ id: 'r' }], teacherDayLimits: [{ id: 'l', lockedWeekdays: [[1]] }] }).catch(
+          (thrown: unknown) => thrown,
+        );
+        expect((plain as HttpException).getStatus()).toBe(422);
       });
 
       it('leaves the same refusal of a request without periods the validation error it is', async () => {
@@ -2227,11 +2261,16 @@ describe('OptimizationProxyService', () => {
         for (const loc of [
           ['body', 'requirements', 0, 'colour'],
           ['body', 'periodWeeks', 0],
+          ['body', 'periodOddWeeks', 0],
           ['body', 'lunchPerPeriod', 0],
           ['body', 'requirements', 0, 'lunchPerPeriod'],
           ['body', 'periods'],
           ['body', 'lockedWeekdayPeriods'],
           ['query', 'periodWeeks'],
+          ['query', 'periodOddWeeks'],
+          // A post's own parity is a field every engine knows, and so is one a day limit has nothing of.
+          ['body', 'requirements', 0, 'recurrence'],
+          ['body', 'teacherDayLimits', 0, 'recurrence'],
         ]) {
           http.post.mockReturnValue(throwError(() => refusing(loc)));
           const error = await callWith(dated).catch((thrown: unknown) => thrown);
@@ -8257,6 +8296,40 @@ describe('OptimizationProxyService', () => {
           ]);
         });
 
+        it('sends how many of each period’s weeks are odd, where a period has one parity alone', async () => {
+          // Review of #304, MEDEL-2. A lock that ends on the first Sunday is a period of its own, the
+          // läsår's first two days (Saturday and Sunday, week 33: odd), and the engine's cell for its
+          // even weeks is no week. 43 weeks follow, 22 of them odd (weeks 35 to 53 and 1 to 23).
+          arrange({
+            requirements: [requirement({ lessonsPerWeek: 10 })],
+            posts: [post({ maxTeachingDaysPerWeek: 2 })],
+            lockedLessons: [lockedLesson({ id: 'mon', dayOfWeek: 1, endDate: at('2026-08-16') })],
+          });
+          tx.academicYear.findUnique.mockResolvedValue({ startDate: at('2026-08-15'), endDate: at('2027-06-12') } as never);
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(postedPayload().periodWeeks).toEqual([1, 43]);
+          expect(postedPayload().periodOddWeeks).toEqual([1, 22]);
+        });
+
+        it('sends it beside periodWeeks where every period has both parities too', async () => {
+          arrange({
+            requirements: [requirement({ lessonsPerWeek: 10 })],
+            posts: [post({ maxTeachingDaysPerWeek: 2 })],
+            lockedLessons: [lockedLesson({ id: 'mon', dayOfWeek: 1, endDate: at('2026-12-18') })],
+          });
+          tx.academicYear.findUnique.mockResolvedValue({ startDate: at('2026-08-17'), endDate: at('2027-06-11') } as never);
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(postedPayload().periodWeeks).toEqual([18, 25]);
+          // Weeks 34 to 51 (nine odd), and 52, 53 and 1 to 23 (thirteen: 53, 1, 3 … 23).
+          expect(postedPayload().periodOddWeeks).toEqual([9, 13]);
+        });
+
         it('sends each set with its periods once the läsår has them: the autumn’s Monday takes no day of the spring', async () => {
           // The part-timer of the review of #300 (MEDEL-1): two days a week
           // and a Monday kept until Christmas. Held against every week, the
@@ -8330,18 +8403,63 @@ describe('OptimizationProxyService', () => {
               2,
               [
                 { weekdays: [], periods: [false, true] },
-                { weekdays: [1], periods: [true, false] },
-                { weekdays: [1, 2, 3], periods: [true, false] },
+                { weekdays: [1], periods: [true, false], recurrence: 'ODD_WEEKS' },
+                { weekdays: [1, 2, 3], periods: [true, false], recurrence: 'EVEN_WEEKS' },
               ],
             ],
             [
               3,
               [
                 { weekdays: [], periods: [false, true] },
-                { weekdays: [1, 2, 3], periods: [true, false] },
+                { weekdays: [1], periods: [true, false], recurrence: 'ODD_WEEKS' },
+                { weekdays: [1, 2, 3], periods: [true, false], recurrence: 'EVEN_WEEKS' },
               ],
             ],
           ]);
+        });
+
+        it('sends the days of each parity as a mask of one period in a year nothing dates', async () => {
+          // The review of #320, MEDEL-1: A/B-weeks without a dated post. The odd weeks' Monday and the even
+          // weeks' Thursday of a post of one day are two lines, each held in its own weeks; as one list of
+          // sets held in every week, the odd weeks were refused a day the even weeks' lesson takes.
+          arrange({
+            requirements: [requirement({ lessonsPerWeek: 10 })],
+            posts: [post({ maxTeachingDaysPerWeek: 1 })],
+            lockedLessons: [
+              lockedLesson({ id: 'mon', dayOfWeek: 1, recurrence: 'ODD_WEEKS' }),
+              lockedLesson({ id: 'thu', dayOfWeek: 4, recurrence: 'EVEN_WEEKS' }),
+            ],
+          });
+          tx.academicYear.findUnique.mockResolvedValue({ startDate: at('2026-08-17'), endDate: at('2027-06-11') } as never);
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(postedPayload().periodWeeks).toBeUndefined();
+          // The sets as they were, for an engine that reads no parity of them.
+          expect(limit().lockedWeekdays).toEqual([[1], [4]]);
+          expect(limit().lockedWeekdayPeriods).toEqual([
+            { weekdays: [1], periods: [true], recurrence: 'ODD_WEEKS' },
+            { weekdays: [4], periods: [true], recurrence: 'EVEN_WEEKS' },
+          ]);
+        });
+
+        it('sends nothing more for a teacher whose odd and even weeks hold the same days, in a year nothing dates', async () => {
+          arrange({
+            requirements: [requirement({ lessonsPerWeek: 10 })],
+            posts: [post({ maxTeachingDaysPerWeek: 2 })],
+            lockedLessons: [
+              lockedLesson({ id: 'odd', dayOfWeek: 1, recurrence: 'ODD_WEEKS' }),
+              lockedLesson({ id: 'even', dayOfWeek: 1, recurrence: 'EVEN_WEEKS' }),
+            ],
+          });
+          tx.academicYear.findUnique.mockResolvedValue({ startDate: at('2026-08-17'), endDate: at('2027-06-11') } as never);
+          echoEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(postedPayload().periodWeeks).toBeUndefined();
+          expect(Object.keys(limit()).sort()).toEqual(['id', 'lockedWeekdays', 'maxTeachingDaysPerWeek', 'teacherId']);
         });
 
         it('counts the lessons the teacher co-teaches, and no colleague’s, nor one that takes no time', async () => {

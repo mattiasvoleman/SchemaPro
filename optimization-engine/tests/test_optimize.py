@@ -4879,6 +4879,12 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         # half of this contract (ai-engine-contract.spec.ts) gains them with
         # the change that starts sending.
         "periodWeeks",
+        # Terminer: how many of each period's weeks are odd ISO weeks, sent only
+        # where some period has weeks of one parity alone: the cell of the other
+        # is no week, and nothing is counted, built or named there. Optional and
+        # additive (the review of #304, MEDEL-2); an engine without it answers
+        # 422 to a request that carries it, which the gateway says as 503.
+        "periodOddWeeks",
         # Klassens måltid per del av läsåret (20270209090000): plan a class's
         # meal in each part of the year its locks tell apart. Sent beside
         # periodWeeks and only to a school with a lunch rule, so every other
@@ -4958,7 +4964,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "lockedWeekdays",
         "lockedWeekdayPeriods",
     }
-    assert _field_names(LockedWeekdaysInPeriods) == {"weekdays", "periods"}
+    assert _field_names(LockedWeekdaysInPeriods) == {"weekdays", "periods", "recurrence"}
     # The group's years, so a serving and a frame can reach a MEAL — which has
     # no requirement to read a span off.
     assert _field_names(AnonymousGroup) == {

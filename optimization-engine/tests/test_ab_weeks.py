@@ -642,12 +642,16 @@ def test_no_walk_between_two_lessons_that_never_meet() -> None:
     assert _solve(_weekly(payload), settings).status == "INFEASIBLE"
 
 
-def test_a_teachers_lunch_keeps_clear_of_both_weeks_locks_and_is_refused_by_name() -> None:
-    """An odd-week lock 11-12 and an even-week lock 12-13 leave no hour between 11 and 13.
+def test_a_teachers_lunch_is_each_weeks_own_and_refused_by_name_where_a_week_has_no_hour() -> None:
+    """An odd-week lock 11-12 and an even-week lock 12-13 leave each week an hour between 11 and 13.
 
-    The teacher's break sits at one hour all year, so each week's locks are
-    in its way: refused before the model, by name, as a lock of every week
-    would be — though each week on its own leaves the hour.
+    A teacher whose locks in the lunch window are told apart by parity has a
+    break for each week (weeks.needs_a_part_per_parity): the odd weeks eat at
+    12 and the even ones at 11, as a real week does, and the year is laid.
+    Review of #302: one break for both weeks refused this with a timetable
+    every week of which exists. Both locks in the odd weeks leave those weeks
+    no hour, and are refused before the model, by name; the even weeks are no
+    part of it.
     """
     teacher, group = str(uuid4()), str(uuid4())
 
@@ -655,18 +659,26 @@ def test_a_teachers_lunch_keeps_clear_of_both_weeks_locks_and_is_refused_by_name
         return {"id": str(uuid4()), "teacherId": teacher, "studentGroupId": str(uuid4()),
                 "dayOfWeek": 1, "startTime": start, "endTime": end, "recurrence": parity}
 
-    payload = _payload(
-        [_requirement(group, 1, teacher=teacher)],
-        fixedLessons=[lock("11:00:00", "12:00:00", ODD), lock("12:00:00", "13:00:00", EVEN)],
-        teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, "lunchMinutes": 60,
-                           "lunchStartTime": "11:00:00", "lunchEndTime": "13:00:00"}],
-    )
+    def school(first: str, second: str) -> dict[str, object]:
+        return _payload(
+            [_requirement(group, 1, teacher=teacher)],
+            fixedLessons=[lock("11:00:00", "12:00:00", first), lock("12:00:00", "13:00:00", second)],
+            teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, "lunchMinutes": 60,
+                               "lunchStartTime": "11:00:00", "lunchEndTime": "13:00:00"}],
+        )
+
     settings = _settings(hours=6)
+    apart = school(ODD, EVEN)
+    SchedulerSolver(settings)._validate_request(OptimizeScheduleRequest.model_validate(apart))
+    response = _solve(apart, settings)
+    assert response.status in SOLVED
+    assert _validate(apart, response.lessons, settings) == []
+    # The two locks in the same weeks leave those weeks no hour.
     with pytest.raises(InvalidScheduleInputError) as refused:
-        SchedulerSolver(settings)._validate_request(OptimizeScheduleRequest.model_validate(payload))
+        SchedulerSolver(settings)._validate_request(OptimizeScheduleRequest.model_validate(school(ODD, ODD)))
     assert refused.value.code == "TEACHER_LUNCH_LEAVES_NO_START"
     # One lock alone leaves the hour the other one takes.
-    one = {**payload, "fixedLessons": payload["fixedLessons"][:1]}  # type: ignore[index]
+    one = {**apart, "fixedLessons": apart["fixedLessons"][:1]}  # type: ignore[index]
     assert _solve(one, settings).status in SOLVED
 
 
