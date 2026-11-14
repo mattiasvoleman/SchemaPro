@@ -404,6 +404,17 @@ model User {
   /// nedsättning. Rektor and full read them anyway, so the flag is false for
   /// them and for everybody who is not an administrator (CHECK).
   hrRead          Boolean   @default(false)
+  /// An administrator who also teaches (20270212090000). True only on a
+  /// SCHOOL_ADMIN of a profile that writes, never a läsare (CHECK
+  /// Users_teaches_is_a_teaching_administrators), and only while the person
+  /// has a TeacherEmployments row (Users_teaching_has_a_post, and the post's
+  /// last row stays: TeacherEmployments_a_teaching_administrator_keeps_a_post).
+  /// Set and taken away by rektor or a full administratör alone (the trigger
+  /// Users_administrators_are_decided); zeroed when the person stops being an
+  /// administrator or becomes a läsare; every change is in UserRoleChanges.
+  /// Adds the teacher's own arms beside the administrator's, through
+  /// app.current_user_teaches(); no policy asks for it yet.
+  teaches         Boolean   @default(false)
   /// When the row took the login it holds now (20261204090000): stamped by
   /// the trigger Users_login_since_is_the_logins on insert and on a change
   /// of authId, kept on every other write. A login's default row, when a
@@ -548,6 +559,11 @@ model UserRoleChange {
   toProfile   AdminProfile?
   fromHrRead  Boolean?
   toHrRead    Boolean
+  /// Users.teaches before and after (20270212090000). fromTeaches is null where
+  /// there is none to name: the person's creation, and every row written
+  /// before the column; toTeaches is false on every such row, when nobody taught.
+  fromTeaches Boolean?
+  toTeaches   Boolean       @default(false)
   /// app.current_user_id() of the writer; null for a migration, the seed, the
   /// owner or a sync. No foreign key: the history outlives the writer's row.
   actorId     String?       @db.Uuid

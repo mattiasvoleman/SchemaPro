@@ -5261,3 +5261,62 @@ CHECK), the snapshot's, what each role reads and writes, and the cascades; the
 *Meal per term probe* in CI runs the oracle over the calendar date by date,
 the snapshot, the placement and its race, and the board's reader.
 
+
+## 20. An administrator who teaches ("Administratör som undervisar", `Users.teaches`)
+
+A rektor or a schemaläggare often teaches too. The investigation chose a mark on the person's row, not two rows per login and
+not a set of roles: one person stays one `Users.id`, and the mark adds the teacher's own arms beside the administrator's, which
+stay as they are. It is built in seven parts; **this is the first, the database, and it changes no behaviour**: the column is
+false for every row, no policy asks for it, and the gateway, the web and the apps do not know it yet.
+
+### 20.1 What 20270212090000 adds
+
+- `Users."teaches"` (boolean, NOT NULL DEFAULT false: a constant default, so the table is not rewritten) and the CHECK
+  `Users_teaches_is_a_teaching_administrators`: true only on a `SCHOOL_ADMIN` of the profile FULL, REKTOR, SCHEMALAGGARE or
+  EXPEDITION, never on a läsare (LASARE) and never on anybody else. The list of profiles is positive, as the HR-läs CHECK's is.
+- `UserRoleChanges."fromTeaches"` (NULL where there is no earlier value: a creation, and every row written before) and
+  `"toTeaches"` (NOT NULL DEFAULT false, which is true of every old row).
+- `app.current_user_teaches()`, the seventh of the helpers that pick the caller's row, with the clause RLS section 10 holds equal.
+- The three trigger functions of 20261110090000 are **patched from the catalogue** (`pg_get_functiondef`, named text changes with
+  the number of places they must occur in): the profile trigger zeroes the mark when the row is not an administrator of a
+  profile that writes (a role change, a läsare), the decision trigger counts the mark as an administrator's change (only rektor
+  and a full administratör set or take away the mark, as they alone change role, profile and HR-läs), and the log writes both
+  values. If a body is not as expected the migration stops with nothing changed. The two triggers that name columns name `teaches`.
+- Beslut 6: a person who teaches has a post. `Users_teaching_has_a_post` refuses the mark (SQLSTATE `TE409`) for a person with no
+  `TeacherEmployments` row for **any** läsår of the school, and
+  `TeacherEmployments_a_teaching_administrator_keeps_a_post` refuses to remove the last such row while the mark stands (`TE410`).
+  Any läsår, not the current one: Aktivera flips a flag and the rollover only inserts, so a rule about the active year would
+  stick on every year switch. A person's deletion and a school's are not refused (the cascade asks whether they still exist);
+  a läsår's deletion that would take a marked person's only post is: switch the mark off first. Both checks lock the person's
+  posts `FOR SHARE`, so a mark set while the last post goes cannot slip through; of two last posts removed together one ends
+  with 40P01.
+
+### 20.2 Deploy order and operations
+
+- **The order is the migration, then the merge.** The API before this release does not name the column; it writes Users without
+  it (false) and reads `UserRoleChanges` without the two new columns.
+- The migration takes `Users` and `UserRoleChanges` in ACCESS EXCLUSIVE and `TeacherEmployments` in SHARE ROW EXCLUSIVE, NOWAIT,
+  all three together, in a loop that retries every 50 ms for 30 s and holds nothing between tries (a reader of Users and a writer of
+  a post are not queued behind it: measured 0.07 s and 0.08 s while it waited five seconds for a lock). If the three are not free at
+  once in 30 s it stops with nothing changed, and says so: `prisma migrate resolve --rolled-back
+  20270212090000_en_administrator_som_undervisar_har_en_markering_och_en_post`, then deploy again.
+- No existing row is touched. The checks before and after are `teaches-pr1-data/prod-fore.sql` and `prod-efter.sql` in the round's
+  notes (one SELECT per check, `public` and `app` only, `COLLATE "C"`): the three trigger functions' `md5(prosrc)` before and
+  after, the md5 of every other `app` and `public` function, of every policy and of the other CHECKs on Users equal before and
+  after, no person marked, no log row that names a mark.
+- **Until the gateway learns the field (part 2) nobody can set the mark**, except the database's owner. A person who is set
+  by the owner needs a post first; an administrator cannot be created with the mark in one statement (TE409: create, give a
+  post, mark). The mark is written with an UPDATE, never as part of an upsert's create half.
+- **Rolling back:** the column, the CHECK, the helper and the triggers can stay; nothing reads them. To remove them, take the
+  mark off every row first (the CHECK and the post check do not mind), then drop the triggers, the three new functions and the
+  columns, and put the three trigger functions back from 20261110090000.
+
+### 20.3 Tests
+
+RLS sections 490 to 494 in `rls-policies.sql` (the catalogue and the helper through both API roles; who sets and takes away the
+mark and what zeroes it; the post in both directions; the log, and the same person marked and unmarked seeing the same rows in
+every table a teacher's arm names; the guard that lists every policy and function that names TEACHER without asking for the
+mark, which is parts 3 and 4's worklist) and 490o and 492o in `rls-owner-checks.sql` (the CHECK alone with the triggers off, the
+owner held to the post, a school deleted in both orders its cascade can take). Section 116's matrix has a marked full
+administratör as an eleventh principal, and the *Admin areas* probe (`probe-admin-areas.ts`, `ar-i`) shows the codes arrive
+through the adapter as themselves.
