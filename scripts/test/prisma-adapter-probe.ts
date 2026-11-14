@@ -156,6 +156,7 @@ import { lessonMoveChecks, sweepLessonMovesSchool } from './probe-lesson-moves';
 import { checklistorChecks, sweepChecklistorSchool } from './probe-checklistor';
 import { skolansDagChecks, sweepSkolansDagSchool } from './probe-skolans-dag';
 import { klasslarareChecks, sweepKlasslarareSchool } from './probe-klasslarare';
+import { avbokningFlyttChecks, sweepAvbokningFlyttSchools } from './probe-avbokning-flytt';
 import { elevlistanChecks, sweepElevlistanSchool } from './probe-elevlistan';
 import { massvalChecks, sweepMassvalSchool } from './probe-massatgarder';
 import { sweepTenantKeySchools, tenantKeyChecks } from './probe-tenant-keys';
@@ -6089,6 +6090,7 @@ async function runChecks(
   await batchChecks(owner, api);
   await batchMoveChecks(owner, api);
   await batchMoveDirectChecks(owner, api);
+  await avbokningFlyttChecks(owner, api, MARKER, check);
   await viewerChecks(owner, api);
   await coverChecks(owner, api, open, appUrl);
   await teacherDayChecks(owner, api);
@@ -6639,6 +6641,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepSkolansDagSchool(owner, MARKER);
   // Klasslärarens schema's school, likewise.
   await sweepKlasslarareSchool(owner, MARKER);
+  // The schools of a batch taken back after a template moved, likewise.
+  await sweepAvbokningFlyttSchools(owner, MARKER);
   // Elevlistan i uppföljningen's school, likewise.
   await sweepElevlistanSchool(owner, MARKER);
   // Massåtgärder's school, likewise.
