@@ -12,7 +12,7 @@ import { BEST_EFFORT_VARIANT, snapshotNameOf, variantOf, variantsFor } from './c
 import { deviationsDigestOf, storedDeviationsOf } from './deviations';
 import type { StartCandidatesDto } from './dto/schedule-candidates.dto';
 import { TEACHER_FREE_DAY_WISH_NOT_KEPT, freeDayWishMessage } from './free-day-wishes';
-import type { AiEngineConflictAnalysis } from './interfaces/ai-engine-payload.interface';
+import type { AiEngineConflictAnalysis, AiEngineLunch } from './interfaces/ai-engine-payload.interface';
 import type { CandidateSolution, OptimizationProxyService, PreparedSchedule } from './optimization-proxy.service';
 import {
   BEST_EFFORT_NO_REFRESH,
@@ -620,6 +620,20 @@ describe('ScheduleCandidatesService', () => {
         const json = JSON.stringify(row);
         expect(json).not.toMatch(/studentIds|participants|p-1/);
       }
+    });
+
+    it('keeps the periods of a meal that is one of its day’s several, and reads them back as the engine said them', async () => {
+      // Klassens måltid per del av läsåret: a class's two meals of a day, each for some periods of the year.
+      // Stored without the mask, the apply would write them as two rows of the whole läsår, which the table refuses.
+      const meals: AiEngineLunch[] = [
+        { studentGroupId: G7A, dayOfWeek: 1, startTime: '11:30:00', endTime: '12:00:00', periods: [true, false] },
+        { studentGroupId: G7A, dayOfWeek: 1, startTime: '11:00:00', endTime: '11:30:00', periods: [false, true] },
+      ];
+      proxy.solveCandidate.mockResolvedValueOnce(solved({ lunches: meals }));
+      await startAndRun(dto({ count: 1 }));
+
+      expect(stored[0]!['lunches']).toEqual(meals);
+      expect(storedLunchesOf(stored[0]!['lunches'])).toEqual(meals);
     });
 
     it('stores a later INFEASIBLE or TIMEOUT candidate with no metrics and goes on', async () => {
@@ -2166,6 +2180,13 @@ describe('the pieces', () => {
     expect(storedLunchesOf(null)).toBeNull();
     expect(storedLunchesOf([{ studentGroupId: 'g', dayOfWeek: 1, startTime: '11:30:00', endTime: '12:00:00' }])).toHaveLength(1);
     expect(storedLunchesOf([{ studentGroupId: 1 }])).toBeNull();
+    // Klassens måltid per del av läsåret: a meal of some periods keeps its mask,
+    // or an apply would write a class's two meals of one day as two rows of the whole läsår.
+    const meal = { studentGroupId: 'g', dayOfWeek: 1, startTime: '11:30:00', endTime: '12:00:00' };
+    expect(storedLunchesOf([{ ...meal, periods: [true, false] }])).toEqual([{ ...meal, periods: [true, false] }]);
+    expect(storedLunchesOf([meal])).toEqual([meal]);
+    expect(storedLunchesOf([{ ...meal, periods: [true, 'no'] }])).toBeNull();
+    expect(storedLunchesOf([{ ...meal, periods: 'AB' }])).toBeNull();
   });
 
   it('reads a failure that is not an HttpException as its message with no code', () => {

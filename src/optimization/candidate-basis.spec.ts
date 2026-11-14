@@ -369,6 +369,8 @@ const anonymised = (real: School, turn = 0): BasisSource => {
       : {}),
     // Terminer: sent only when a post or a lock is dated.
     ...(p.periodWeeks !== undefined ? { periodWeeks: p.periodWeeks } : {}),
+    // Klassens måltid per del av läsåret: sent beside the periods when the school has a lunch rule.
+    ...(p.lunchPerPeriod !== undefined ? { lunchPerPeriod: p.lunchPerPeriod } : {}),
     // Elevernas håltimmar: sent only when the school turned it on.
     ...(p.pupilGaps !== undefined
       ? {
@@ -626,6 +628,23 @@ describe('the candidate basis', () => {
     expect(changedParts(partsOf(school()), partsOf(counted(12), 1))).toEqual(['rules', 'rosters']);
     // A pupil who moves between cohorts is the rosters' part alone.
     expect(changedParts(partsOf(counted(12)), partsOf(counted(11), 1))).toEqual(['rosters']);
+  });
+
+  it('reads a meal per period as a change of rules and of nothing else, and a school without it as before', () => {
+    // Klassens måltid per del av läsåret (20270209090000): the gateway sends
+    // the flag beside periodWeeks when the school has a lunch rule. A schemaförslag
+    // solved with one meal all year is not one to apply beside a year that plans
+    // one per part: stale once, in the rules it was solved under.
+    const planned = (flag: boolean) => {
+      const real = school();
+      real.payload.periodWeeks = [18, 22];
+      if (flag) real.payload.lunchPerPeriod = true;
+      return real;
+    };
+    expect(changedParts(partsOf(planned(false)), partsOf(planned(true), 1))).toEqual(['rules']);
+    expect(partsOf(planned(true), 1)).toEqual(partsOf(planned(true)));
+    // And the key is read only when it is sent: a school without it hashes what it did.
+    expect(partsOf(planned(false), 1)).toEqual(partsOf(planned(false)));
   });
 
   it('reads the placement rules in real ids, as a change of rules, and a school without them as before', () => {
