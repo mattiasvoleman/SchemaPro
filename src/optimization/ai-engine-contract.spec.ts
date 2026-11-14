@@ -260,6 +260,14 @@ const REQUIREMENT_FIELDS_ALTERNATING = [...REQUIREMENT_FIELDS_REPLACED, 'recurre
  */
 const REQUIREMENT_FIELDS_DATED = [...REQUIREMENT_FIELDS_ALTERNATING, 'periods'].sort();
 
+/*
+ * Fästa lektioner: THE ENGINE DECLARES ONE KEY MORE THAN THIS SIDE SENDS.
+ * `pinnedLessons` is in test_optimize.py's set and in no set here, because
+ * nothing sends it yet: the engine had to know the key first, as it knew
+ * `periods` first. The pull request that sends it pins it here, as
+ * REQUIREMENT_FIELDS_DATED plus the key, on a post with a pinned lesson.
+ */
+
 /** A locked lesson as the engine is told it; `pupilGroupIds` only beside a replacing group. */
 const FIXED_LESSON_FIELDS = ['coTeacherId', 'dayOfWeek', 'endTime', 'extraGroupIds', 'id', 'roomId', 'startTime', 'studentGroupId', 'teacherId'];
 const FIXED_LESSON_FIELDS_REPLACED = [...FIXED_LESSON_FIELDS, 'pupilGroupIds'].sort();

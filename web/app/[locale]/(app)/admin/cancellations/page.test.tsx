@@ -236,11 +236,19 @@ describe("/admin/cancellations", () => {
           reinstate: 330,
           skippedRoomTaken: [{ lessonId: "cl-9", date: "2026-10-20", roomId: "r-12", by: "BOOKING" }],
           removedTemplateMoved: [{ lessonId: "cl-11", date: "2026-10-19" }],
+          relocated: [{ lessonId: "cl-13", from: "2026-10-21", to: "2026-10-23" }],
           notReinstatable: 6,
           creditsDeleted: 1,
         };
       }
-      return { reinstate: 330, skippedRoomTaken: [], removedTemplateMoved: [], notReinstatable: 6, creditsDeleted: 1 };
+      return {
+        reinstate: 330,
+        skippedRoomTaken: [],
+        removedTemplateMoved: [],
+        relocated: [{ lessonId: "cl-13", from: "2026-10-21", to: "2026-10-23" }],
+        notReinstatable: 6,
+        creditsDeleted: 1,
+      };
     });
     const user = userEvent.setup();
     renderPage();
@@ -256,12 +264,16 @@ describe("/admin/cancellations", () => {
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText("330 lektioner återställs.")).toBeInTheDocument();
     expect(dialog).toHaveTextContent("20 okt. 2026 · Sal 12 · en lokalbokning");
+    expect(dialog).toHaveTextContent("1 lektion flyttas till sin nya tid den veckan, eftersom schemat har flyttat lektionen sedan avbokningen");
+    expect(dialog).toHaveTextContent("21 okt. 2026 → 23 okt. 2026");
     expect(dialog).toHaveTextContent("1 lektion tas bort, eftersom schemat har flyttat lektionen sedan avbokningen");
     expect(dialog).toHaveTextContent("19 okt. 2026");
     expect(dialog).toHaveTextContent("6 lektioner har börjat eller ändrats sedan");
     expect(dialog).toHaveTextContent("1 tillgodoräknad dag tas bort.");
     await user.click(within(dialog).getByRole("button", { name: "Ta tillbaka" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/cancellation-batches/b-1/reverse"));
+    // The lesson carried to its new time came back too: 330 where they stood and the one that moved, not "330" as if it had not.
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("331 lektioner återställdes."));
     // A batch that sent no digest tells nobody of its reversal, and says nothing about it.
     expect(row).not.toHaveTextContent("Sammanfattning skickad");
   });

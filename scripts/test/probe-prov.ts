@@ -44,6 +44,7 @@
  *         booking and the room of its replacement lesson would otherwise hold
  *         the room against it), and says so when another lesson holds the
  *         room and the lesson cannot come back;
+ *   pv-i2 the grundschema moved after an exam was laid: taking the plan away carries the lesson to the template's new hour;
  *   pv-j  an exam the planner left out can be changed (its reason goes with its
  *         figures, or the row is refused by Exams_reason_is_a_code);
  *   pv-k  an exam saved while the engine solves keeps its new version: the
@@ -539,7 +540,7 @@ export async function examChecks(owner: Client, api: PrismaService, marker: stri
       assert.equal((await one<{ roomId: string }>(`SELECT cl."roomId" FROM "ScheduleActivityLessons" sal JOIN "CalendarLessons" cl ON cl.id = sal."calendarLessonId" WHERE sal."activityId" = $1`, [activity])).roomId, sal1);
 
       const undone = await planner.unplan(exam.id, admin);
-      assert.deepEqual(undone, { removed: true, skippedRoomTaken: [] });
+      assert.deepEqual(undone, { removed: true, skippedRoomTaken: [], relocated: [] });
       // The class has its lesson, in its room, and nothing of the exam is left in the room.
       assert.deepEqual(await lessonState(lessonOfTheRoom), { status: 'SCHEDULED', cause: null, roomId: sal1 });
       assert.deepEqual(await bookingsOf('Rum 1'), ['CANCELLED']);
@@ -559,6 +560,31 @@ export async function examChecks(owner: Client, api: PrismaService, marker: stri
       assert.equal((await lessonState(blocker)).status, 'SCHEDULED');
       assert.equal((await exams.list(year.id, admin)).find((x) => x.id === exam.id)!.plan, null);
       assert.deepEqual(await bookingsOf('Rum 1'), ['CANCELLED', 'CANCELLED']);
+      await exams.remove(exam.id, admin);
+    });
+
+    await check('(pv-i2) an exam laid, the grundschema moved after it, and the plan taken away: the class has its lesson at the template’s new hour, and the answer says so', async () => {
+      const held = await lesson(friday, '12:00', '13:00', svenska, k7a, [anna], sal1);
+      await template(held, friday, '12:00', '13:00', svenska, k7a, anna, sal1);
+      const exam = await exams.create({ ...description({ name: 'Flytt 1', windowFrom: friday, windowTo: friday }), academicYearId: year.id } as never, admin);
+      const laid = await planner.apply({ academicYearId: year.id, items: [placement(exam, friday, '12:00', sal1, 25, [bo])], notify: false }, admin);
+      assert.equal(laid.applied, 1, JSON.stringify(laid));
+      assert.equal((await lessonState(held)).status, 'CANCELLED');
+      // The editor moves the template an hour and a half on after the exam was laid. A school that publishes at once moves the rows it can carry and
+      // writes none for the new hour, so the cancelled row is the class's lesson that day: it was deleted by the removal, and the class stood
+      // without it until the next publication.
+      await owner.query(
+        `UPDATE "MasterLessons" SET "startTime" = '13:30', "endTime" = '14:30', "updatedAt" = now() WHERE id = (SELECT "masterLessonId" FROM "CalendarLessons" WHERE id = $1)`,
+        [held],
+      );
+      const undone = await planner.unplan(exam.id, admin);
+      assert.deepEqual(undone, { removed: true, skippedRoomTaken: [], relocated: [{ lessonId: held, from: friday, to: friday }] });
+      const back = await one<{ status: string; cause: string | null; roomId: string | null; start: string; end: string }>(
+        `SELECT status::text, "cancelCause"::text AS cause, "roomId", to_char("startsAt" AT TIME ZONE 'Europe/Stockholm', 'HH24:MI') AS start, to_char("endsAt" AT TIME ZONE 'Europe/Stockholm', 'HH24:MI') AS "end" FROM "CalendarLessons" WHERE id = $1`,
+        [held],
+      );
+      assert.deepEqual(back, { status: 'SCHEDULED', cause: null, roomId: sal1, start: '13:30', end: '14:30' });
+      assert.deepEqual(await bookingsOf('Flytt 1'), ['CANCELLED']);
       await exams.remove(exam.id, admin);
     });
 
@@ -735,7 +761,7 @@ export async function examChecks(owner: Client, api: PrismaService, marker: stri
       assert.deepEqual(await movesOf(ella), []);
       // Taking the plan away puts the lesson back and does not put the move back: the pupil is on their own lesson, as the move's own rule says.
       const undone = await planner.unplan(exam.id, admin);
-      assert.deepEqual(undone, { removed: true, skippedRoomTaken: [] });
+      assert.deepEqual(undone, { removed: true, skippedRoomTaken: [], relocated: [] });
       assert.deepEqual(await lessonState(seven), { status: 'SCHEDULED', cause: null, roomId: sal1 });
       assert.deepEqual(await movesOf(ella), []);
 

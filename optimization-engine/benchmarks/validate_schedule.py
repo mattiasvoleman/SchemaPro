@@ -80,6 +80,12 @@ Checks, all derived from the request:
                       autumn's hemkunskap and the spring's in one hour of one
                       teacher and one room are no clash, and each period's
                       lessons are held to every rule on their own
+    pinned            Fästa lektioner: every lesson a requirement pins
+                      (`pinnedLessons`) is among the lessons placed for it,
+                      on the pin's weekday, start and end, in the pin's room
+                      when it names one, and led by the teacher of its place
+                      on a split requirement — one placed lesson per pin, so
+                      two pins are two lessons. See _pin_problems
 
 Use as a library::
 
@@ -830,7 +836,7 @@ def validate(grid, request, lessons) -> list[str]:
     """Return a list of rule violations; empty means the timetable is valid."""
     weeks = _weeks(request)
     if weeks is None:
-        return _validate_week(grid, request, lessons)
+        return [*_validate_week(grid, request, lessons), *_pin_problems(request, lessons)]
     problems: list[str] = []
     seen: set[str] = set()
     known = {r.id for r in request.requirements}
@@ -849,6 +855,54 @@ def validate(grid, request, lessons) -> list[str]:
             if problem not in seen:
                 seen.add(problem)
                 problems.append(f"{problem} ({label})")
+    # The year's question as well: a pinned lesson stands in every week its
+    # requirement runs, on the one weekday and hour it was pinned to.
+    problems.extend(_pin_problems(request, lessons))
+    return problems
+
+
+def _pin_problems(request, lessons) -> list[str]:
+    """Each pinned lesson found among its requirement's placed lessons, one for one.
+
+    Read off the request and the answer alone, as every check here is: a pin
+    says a weekday, a start, an end and perhaps a room, and on a requirement
+    split between leads its place says a teacher. A placed lesson answers at
+    most one pin, so a requirement that pins two lessons onto one hour is not
+    answered by one lesson standing there.
+    """
+    problems: list[str] = []
+    placed: dict = defaultdict(list)
+    for lesson in lessons:
+        placed[lesson.requirement_id].append(lesson)
+    for requirement in request.requirements:
+        left = list(placed[requirement.id])
+        for place, pin in enumerate(requirement.pinned_lessons or ()):
+            if pin is None:
+                continue
+            lead = (
+                requirement.lesson_teacher_ids[place]
+                if requirement.lesson_teacher_ids is not None
+                else None
+            )
+            found = next(
+                (
+                    lesson for lesson in left
+                    if lesson.day_of_week == pin.day_of_week
+                    and lesson.start_time == pin.start_time
+                    and lesson.end_time == pin.end_time
+                    and (pin.room_id is None or lesson.room_id == pin.room_id)
+                    and (requirement.lesson_teacher_ids is None or lesson.teacher_id == lead)
+                ),
+                None,
+            )
+            if found is None:
+                where = f"day {pin.day_of_week} {pin.start_time[:5]}-{pin.end_time[:5]}"
+                room = f" in room {pin.room_id}" if pin.room_id is not None else ""
+                problems.append(
+                    f"pinned lesson {place} of requirement {requirement.id} is not placed on {where}{room}",
+                )
+            else:
+                left.remove(found)
     return problems
 
 

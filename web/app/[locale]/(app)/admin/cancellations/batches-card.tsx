@@ -108,7 +108,8 @@ export function BatchesCard({
     if (!reversing) return;
     try {
       const outcome = await reverse.mutateAsync(reversing.id);
-      toast.success(t("reversed", { count: outcome.reinstate }));
+      // A lesson carried to its new time is a lesson that came back too (the preview names them apart, the answer counts them together).
+      toast.success(t("reversed", { count: outcome.reinstate + (outcome.relocated?.length ?? 0) }));
       setReversing(null);
     } catch (error) {
       toast.error(publicationErrorText(tErrors, error, tCommon("error")));
@@ -255,6 +256,18 @@ export function BatchesCard({
                   <ul className="list-disc pl-5 text-xs">
                     {plan.removedTemplateMoved.map((row) => (
                       <li key={row.lessonId}>{dayText(row.date)}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {plan.relocated && plan.relocated.length > 0 ? (
+                <div className="space-y-1">
+                  <p>{t("reverseRelocated", { count: plan.relocated.length })}</p>
+                  <ul className="list-disc pl-5 text-xs">
+                    {plan.relocated.map((row) => (
+                      <li key={row.lessonId}>
+                        {dayText(row.from)} → {dayText(row.to)}
+                      </li>
                     ))}
                   </ul>
                 </div>

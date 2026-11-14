@@ -123,6 +123,8 @@ export function useRemoveExam() {
 export interface UnplanResult {
   removed: true;
   skippedRoomTaken?: Array<{ lessonId: string; date: string; roomId: string; by: "LESSON" | "BOOKING" }>;
+  /** Lessons the schedule moved after the exam was laid, carried to their new time that week instead of put back at the old one. */
+  relocated?: Array<{ lessonId: string; from: string; to: string }>;
 }
 
 /** "Ta bort planeringen": the exam goes back to not laid, its lessons come back. */

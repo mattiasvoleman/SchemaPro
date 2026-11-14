@@ -91,8 +91,11 @@ export function ExamsCard({
     try {
       const result = await unplan.mutateAsync(exam.id);
       const held = result?.skippedRoomTaken?.length ?? 0;
+      const relocated = result?.relocated?.length ?? 0;
       // A lesson whose room another lesson or booking holds is not put back: the plan is gone, and the administrator is told what is not.
       if (held > 0) toast.warning(t("unplannedHeld", { name: exam.name, count: held }));
+      // A lesson the schedule has moved since the exam was laid goes to its new time, and the administrator is told that it did.
+      else if (relocated > 0) toast.success(t("unplannedRelocated", { name: exam.name, count: relocated }));
       else toast.success(t("unplanned", { name: exam.name }));
     } catch (error) {
       toast.error(errorText(error));

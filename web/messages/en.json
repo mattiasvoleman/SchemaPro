@@ -4842,6 +4842,13 @@
     "BLOCK_PARTLY_LOCKED_SUMMARY": "{count, plural, one {# block has} other {# blocks have}} lessons locked or placed by hand while the rest of the block is still to be placed, and a block's lessons are placed together.",
     "PLACEMENTS_PROBE_SUMMARY": "No timetable holds every rule with the lessons placed on the timplan where they are. With {count, plural, one {the placed lesson} other {the # placed lessons}} released a timetable was found in {seconds} s, so it is {count, plural, one {that placement} other {those placements}}, below, that the week cannot be laid around. A placed lesson never gives way: move or remove one on its timplanspost and generate again.",
     "PLACED_LESSON_IN_THE_WAY": "{requirement}, placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end} in {room}.",
+    "PLACED_LESSON_IN_THE_WAY_ANY_ROOM": "{requirement}, placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end}, in a room the timetable chooses.",
+    "PLACED_LESSON_OUTSIDE_THE_WEEK": "{requirement} is placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end}, which is not a time of the week the timetable is laid in: the day is not a school day, or the time is outside the school day or between the steps of its time grid. Move the placed lesson.",
+    "PLACED_LESSON_OUTSIDE_FRAME": "{requirement} is placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end}, outside the frame time of its years. Move the placed lesson or change the frame time.",
+    "PLACED_LESSON_MARGINS_PAST_THE_DAY": "{requirement} is placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end}, and from there the minutes its pupils need before and after the lesson, or the margin between lessons its years have, reach past the school day. Move the placed lesson or shorten the margins.",
+    "PLACED_LESSON_IN_A_RAST": "{requirement} is placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end}, across a rast of its years. Move the placed lesson or the rast.",
+    "PLACED_LESSON_ROOM_NOT_ALLOWED": "{requirement} is placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end} in {room}, a room its lessons may not use: of another type, too small, kept for other years, or outside the rooms its subject is locked to. Choose another room for the placed lesson, or leave the room to the timetable.",
+    "PLACED_LESSONS_OF_BLOCK_DIFFER": "The block {block} has a lesson placed for some of its entries and not for others, or at different times: {requirement} and {other}. A block's lessons start together, so place the same lesson of every entry at one time.",
     "PLACEMENTS_REFUSED_SUMMARY": "{count, plural, one {# placed lesson} other {# placed lessons}} on the timplan can no longer stand where {count, plural, one {it is} other {they are}} placed, so the week was not sent. A placed lesson never gives way: move or remove the placement on its timplanspost.",
     "PLACEMENT_CANNOT_STAND": "{requirement}, placed on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} {start}–{end} in {room}: {reason, select, TEACHER {the teacher already teaches {other} then} ROOM {the room is taken by {other} then} GROUP {the class already has {other} then} PUPILS {pupils of the class already have {other} then} AVAILABILITY {the {resource, select, TEACHER {teacher} ROOM {room} other {class}} is reserved then} FRAME {it is outside the frame time of the class's stage} LUNCH {it is on the class's lunch} GRADE_RULE {the time is closed to the class's årskurs} OTHER_SCHOOL {the time is held by {schools}} SCHOOL_DAY {it is outside the week the timetable is laid in, Monday to Friday 08:00–18:00} OVER_DEMAND {the post has no lesson of that length left once its locked lessons are counted} other {it cannot stand there}}.",
     "BLOCK_PARTLY_LOCKED": "{block} has {locked, plural, one {# lesson} other {# lessons}} locked or placed by hand while the rest of it is still to be placed. Unlock the block's lessons and move any moved by hand back with the block, or lock all of them.",
@@ -5784,6 +5791,7 @@
     "reverseReinstate": "{count, plural, one {# lesson is restored} other {# lessons are restored}}.",
     "reverseRoomTaken": "{count, plural, one {# lesson stays cancelled} other {# lessons stay cancelled}}, because the room was booked or given another lesson meanwhile:",
     "reverseTemplateMoved": "{count, plural, one {# lesson is removed} other {# lessons are removed}}, because the timetable has moved the lesson since the cancellation and the week already has it where it runs now:",
+    "reverseRelocated": "{count, plural, one {# lesson moves to its new time} other {# lessons move to their new time}} that week, because the timetable has moved the lesson since the cancellation and the week does not have it there:",
     "takenBy": {
       "LESSON": "another lesson",
       "BOOKING": "a room booking"
@@ -5942,6 +5950,7 @@
     "removeCredits": "{count, plural, one {# credit is removed} other {# credits are removed}}.",
     "removeRoomTaken": "{count, plural, one {# lesson stays cancelled} other {# lessons stay cancelled}}, because the room has been booked or given another lesson meanwhile:",
     "removeTemplateMoved": "{count, plural, one {# lesson is deleted} other {# lessons are deleted}}, because the schedule has moved the lesson since the activity and the week already has it where it is now:",
+    "removeRelocated": "{count, plural, one {# lesson moves to its new time} other {# lessons move to their new time}} that week, because the schedule has moved the lesson since the activity and the week does not have it there:",
     "takenBy": {
       "LESSON": "another lesson",
       "BOOKING": "a room booking"
@@ -9613,6 +9622,7 @@
     "unplanBody": "The lessons are put back, and the replacement lessons and room bookings are removed. The exam becomes not laid and can be planned again. If the families were told about the exam they are told about this too.",
     "unplanned": "The plan of {name} is removed.",
     "unplannedHeld": "The plan of {name} is removed, but {count, plural, one {# lesson stays} other {# lessons stay}} cancelled because another lesson or booking holds the room. Check the lessons in the timetable.",
+    "unplannedRelocated": "The plan of {name} is removed, and {count, plural, one {# lesson was moved to its new time} other {# lessons were moved to their new time}} in the timetable.",
     "removeTitle": "Remove {name}?",
     "removeBody": "The exam is removed. This cannot be undone.",
     "removed": "{name} is removed.",
