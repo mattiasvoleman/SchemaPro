@@ -4786,6 +4786,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         Rast,
         Relaxation,
         ScheduledLesson,
+        ScheduledLunch,
         ScheduleRules,
         SearchOptions,
         SiteTravelTime,
@@ -4883,6 +4884,14 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         # additive (the review of #304, MEDEL-2); an engine without it answers
         # 422 to a request that carries it, which the gateway says as 503.
         "periodOddWeeks",
+        # Klassens måltid per del av läsåret (20270209090000): plan a class's
+        # meal in each part of the year its locks tell apart. Sent beside
+        # periodWeeks and only to a school with a lunch rule, so every other
+        # payload omits it and builds the model it built. An engine older
+        # than this field answers it with a 422 whose error is
+        # extra_forbidden at ['body', 'lunchPerPeriod'], which the gateway
+        # reads as ENGINE_LACKS_PERIODS. See _lunch_parts.
+        "lunchPerPeriod",
     }
     assert _field_names(Relaxation) == {"mode"}
     assert _field_names(Placements) == {"lessons", "requirements"}
@@ -4983,6 +4992,20 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "studentGroupId",
         "dayOfWeek",
         "startTime",
+        # The periods the start is placed for, a mask like every other: only
+        # with lunchPerPeriod, and not sent by the gateway until a meal can be
+        # dated by hand (the engine has it first, as it had periodWeeks).
+        "periods",
+    }
+    # What a meal says of itself in the answer: the periods only on a class and
+    # day whose meals differ, never on the one meal of a class that eats at
+    # one time (ScheduledLunch.periods is omitted wherever it is None).
+    assert _field_names(ScheduledLunch) == {
+        "studentGroupId",
+        "dayOfWeek",
+        "startTime",
+        "endTime",
+        "periods",
     }
     assert _field_names(LunchServing) == {
         "minGradeLevel",

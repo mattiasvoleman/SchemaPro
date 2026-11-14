@@ -266,6 +266,32 @@ def whole_periods(week: Weeks | str | None) -> Weeks | None:
     return None if whole.is_every_week() else whole
 
 
+def part_weeks(periods: Iterable[int], count: int) -> Weeks:
+    """The weeks of these periods of a year cut into `count`, in both parities.
+
+    What a PART of a class's meal stands for (scheduler_solver._lunch_parts):
+    the meal is one for the odd weeks and the even ones of a period, and has
+    its own in each part of the year that its locked lessons tell apart.
+    """
+    bits = 0
+    for period in periods:
+        bits |= 0b11 << (2 * period)
+    return Weeks(bits, count)
+
+
+def within(week: Weeks | str | None, part: Weeks) -> Weeks:
+    """The weeks of `week` that lie in `part`: all of `part` for every week.
+
+    Only for a week that meets the part (`meet`); nothing remains of one that
+    does not, and a row cut by such a week would have no weeks to be posted in.
+    """
+    held = _weeks(week)
+    if held is None:
+        return part
+    periods = max(held.periods, part.periods)
+    return Weeks(held.lifted(periods) & part.lifted(periods), periods)
+
+
 def alternates(weeks: Iterable[Weeks | str | None]) -> bool:
     """Whether any of these runs in some weeks only."""
     return any(runs is not None for runs in weeks)

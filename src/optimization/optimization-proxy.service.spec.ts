@@ -261,6 +261,8 @@ describe('OptimizationProxyService', () => {
        * GENERATE_STALE check passes unless a test says otherwise.
        */
       draftIds = [] as string[],
+      /** Klassens måltid per del av läsåret: each period's stretches (PreparedSchedule.periodStretches). */
+      periodStretches = null as { from: string; to: string }[][] | null,
     } = {},
   ) =>
     (
@@ -278,6 +280,10 @@ describe('OptimizationProxyService', () => {
           headcountByGroup: Map<string, number>,
           draftIds: string[],
           startBasis: null,
+          splitLessons?: undefined,
+          placedRows?: undefined,
+          lockWeeks?: undefined,
+          periodStretches?: { from: string; to: string }[][] | null,
         ) => Promise<unknown>;
       }
     ).persistMasterLessons(
@@ -308,6 +314,10 @@ describe('OptimizationProxyService', () => {
       draftIds,
       // These direct calls have no fetch of their own to read again.
       null,
+      undefined,
+      undefined,
+      undefined,
+      periodStretches,
     );
 
   /**
@@ -686,6 +696,93 @@ describe('OptimizationProxyService', () => {
             isGenerated: true,
           },
         ],
+      });
+    });
+
+    describe('klassens måltid per del av läsåret', () => {
+      /** The autumn, the two weeks between the terms, the spring: a läsår that starts on a Saturday. */
+      const STRETCHES = [
+        [{ from: '2026-08-15', to: '2026-12-20' }],
+        [{ from: '2026-12-21', to: '2027-01-10' }],
+        [{ from: '2027-01-11', to: '2027-06-11' }],
+      ];
+      const part = (startTime: string, endTime: string, periods?: boolean[]): AiEngineLunch => ({
+        ...sitting(),
+        startTime,
+        endTime,
+        ...(periods ? { periods } : {}),
+      });
+      const created = () =>
+        (tx.lunchSitting.createMany.mock.calls as [{ data: Record<string, any>[] }][]).flatMap(([call]) => call.data);
+      const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
+
+      it('writes a class’s two meals of one day as a row for each run of weeks, null at the läsår’s own edges', async () => {
+        await persist(
+          { status: 'OPTIMAL', lessons: [placement()] },
+          {
+            ...oneRequirement(1),
+            lunches: [
+              part('11:30:00', '12:00:00', [true, true, false]),
+              part('11:00:00', '11:30:00', [false, false, true]),
+            ],
+            headcountByGroup: new Map([['g-7a', 24]]),
+            periodStretches: STRETCHES,
+          },
+        );
+        expect(created().map((row) => [row.startTime, row.startDate, row.endDate, row.headcount, row.isGenerated])).toEqual([
+          [new Date('1970-01-01T11:30:00.000Z'), undefined, day('2027-01-10'), 24, true],
+          [new Date('1970-01-01T11:00:00.000Z'), day('2027-01-11'), undefined, 24, true],
+        ]);
+        // And a meal of every week is the row it was: no date keys at all.
+        tx.lunchSitting.createMany.mockClear();
+        await persist(
+          { status: 'OPTIMAL', lessons: [placement()] },
+          { ...oneRequirement(1), lunches: [sitting()], periodStretches: STRETCHES },
+        );
+        expect(Object.keys(created()[0]!).sort()).toEqual(
+          ['academicYearId', 'dayOfWeek', 'endTime', 'headcount', 'isGenerated', 'schoolId', 'startTime', 'studentGroupId'],
+        );
+      });
+
+      it('writes a meal whose periods are apart as a row for each, and deletes only the generated rows first', async () => {
+        await persist(
+          { status: 'OPTIMAL', lessons: [placement()] },
+          {
+            ...oneRequirement(1),
+            lunches: [
+              part('11:30:00', '12:00:00', [true, false, true]),
+              part('11:00:00', '11:30:00', [false, true, false]),
+            ],
+            periodStretches: STRETCHES,
+          },
+        );
+        expect(tx.lunchSitting.deleteMany).toHaveBeenCalledWith({
+          where: { academicYearId: ACADEMIC_YEAR, isGenerated: true },
+        });
+        expect(created().map((row) => [row.startTime.toISOString().slice(11, 16), row.startDate ?? null, row.endDate ?? null])).toEqual([
+          ['11:30', null, day('2026-12-20')],
+          ['11:30', day('2027-01-11'), null],
+          ['11:00', day('2026-12-21'), day('2027-01-10')],
+        ]);
+      });
+
+      it.each([
+        ['masks that leave a period without a meal', [[true, false, false], [false, true, false]], STRETCHES],
+        ['masks that give a period two meals', [[true, true, false], [false, true, true]], STRETCHES],
+        ['masks in a year that has no periods', [[true, false], [false, true]], null],
+        ['masks of another length than the year', [[true, false], [false, true]], STRETCHES],
+      ])('writes nothing of an answer with %s: 502, and the transaction is the one that rolls back', async (_, masks, stretches) => {
+        await expect(
+          persist(
+            { status: 'OPTIMAL', lessons: [placement()] },
+            {
+              ...oneRequirement(1),
+              lunches: [part('11:30:00', '12:00:00', masks[0]), part('11:00:00', '11:30:00', masks[1])],
+              periodStretches: stretches,
+            },
+          ),
+        ).rejects.toMatchObject({ status: 502, response: { code: 'ENGINE_MEALS_INCONSISTENT' } });
+        expect(tx.lunchSitting.createMany).not.toHaveBeenCalled();
       });
     });
 
@@ -2104,6 +2201,9 @@ describe('OptimizationProxyService', () => {
         ['the lengths alone', [['body', 'periodWeeks']]],
         ['a post’s mask alone', [['body', 'requirements', 3, 'periods']]],
         ['a lock’s mask alone', [['body', 'fixedLessons', 0, 'periods']]],
+        // An engine that knows periods and not a meal per period (20270209090000) names the flag or a placed meal's mask.
+        ['the meal per period alone', [['body', 'lunchPerPeriod']]],
+        ['a placed meal’s mask alone', [['body', 'lunchPlacements', 0, 'periods']]],
         ['a released post’s mask alone', [['body', 'placements', 'requirements', 1, 'periods']]],
         // An engine that knows periods and not yet a post's days by period names this alone.
         ['a post’s days by period alone', [['body', 'teacherDayLimits', 0, 'lockedWeekdayPeriods']]],
@@ -2131,6 +2231,8 @@ describe('OptimizationProxyService', () => {
           ['body', 'requirements', 0, 'colour'],
           ['body', 'periodWeeks', 0],
           ['body', 'periodOddWeeks', 0],
+          ['body', 'lunchPerPeriod', 0],
+          ['body', 'requirements', 0, 'lunchPerPeriod'],
           ['body', 'periods'],
           ['body', 'lockedWeekdayPeriods'],
           ['query', 'periodWeeks'],
@@ -4363,6 +4465,151 @@ describe('OptimizationProxyService', () => {
           const { prepared, periods } = await sentPeriods();
           expect(periods).toEqual(new Map([[A1, [true, false]], [A2, [true, false]]]));
           expect(prepared.payload.periodWeeks).toEqual([40, 3]);
+        });
+
+        describe('klassens måltid per del av läsåret: from the periods the fetch read to the rows of LunchSittings', () => {
+          /** The school's own lunch: half an hour in 11:00-12:00, as the engine reads a lunch rule. */
+          const lunchSettings = {
+            lunchEnabled: true,
+            lunchStartTime: new Date('1970-01-01T11:00:00.000Z'),
+            lunchEndTime: new Date('1970-01-01T12:00:00.000Z'),
+            lunchMinutes: 30,
+            diningSeats: null,
+            maxLessonsPerDayPerGroup: null,
+          };
+          /** Two periods: the autumn and the spring's weeks (2026-08-17 to 2027-01-10 and from 2027-02-01), and the weeks between. */
+          const arrangeMealYear = () => {
+            const late = { startDate: day('2027-02-01') };
+            arrangeTerms({ s1: late, s2: late }, { lunchSettings });
+            year();
+          };
+          /** Every lesson on weekday k + 1 as engineByDay places them, and the class's two meals: 11:30 in the first period and 11:00 in the second. */
+          const engineWithMeals = () =>
+            http.post.mockImplementation((_url: string, payload: any) =>
+              of({
+                data: {
+                  requestId: payload.requestId,
+                  status: 'OPTIMAL',
+                  lessons: payload.requirements.flatMap((r: any, k: number) =>
+                    Array.from({ length: r.lessonsPerWeek }, (_, n) => ({
+                      requirementId: r.id,
+                      roomId: payload.rooms[k]?.id ?? null,
+                      dayOfWeek: k + 1,
+                      startTime: `0${8 + n}:00:00`,
+                      endTime: `0${8 + n}:50:00`,
+                    })),
+                  ),
+                  lunches: [
+                    { studentGroupId: payload.groups[0].id, dayOfWeek: 1, startTime: '11:30:00', endTime: '12:00:00', periods: [true, false] },
+                    { studentGroupId: payload.groups[0].id, dayOfWeek: 1, startTime: '11:00:00', endTime: '11:30:00', periods: [false, true] },
+                  ],
+                  conflicts: null,
+                },
+              }),
+            );
+          const rows = () =>
+            (tx.lunchSitting.createMany.mock.calls as [{ data: Record<string, any>[] }][])
+              .flatMap(([call]) => call.data)
+              .map((row) => [row.studentGroupId, row.startTime.toISOString().slice(11, 16), row.startDate ?? null, row.endDate ?? null]);
+          /** The class's meals as the table says them: 11:30 in the autumn and the spring's weeks, 11:00 in the weeks between. */
+          const expectedRows = [
+            [GROUP_ID, '11:30', null, day('2027-01-10')],
+            [GROUP_ID, '11:30', day('2027-02-01'), null],
+            [GROUP_ID, '11:00', day('2027-01-11'), day('2027-01-31')],
+          ];
+
+          it('asks for a meal per period when the school has a lunch rule, and keeps the stretches of each period to date the answer by', async () => {
+            arrangeMealYear();
+            const prepared = await ready();
+            expect(prepared.payload.lunchPerPeriod).toBe(true);
+            expect(prepared.payload.periodWeeks).toEqual([40, 3]);
+            expect(prepared.periodStretches).toEqual([
+              [{ from: '2026-08-17', to: '2027-01-10' }, { from: '2027-02-01', to: '2027-06-11' }],
+              [{ from: '2027-01-11', to: '2027-01-31' }],
+            ]);
+            // A school with rules and no lunch among them (lunch off, a cap on the day) is asked for nothing about a meal.
+            const late = { startDate: day('2027-02-01') };
+            arrangeTerms(
+              { s1: late, s2: late },
+              {
+                lunchSettings: {
+                  lunchEnabled: false,
+                  lunchStartTime: null,
+                  lunchEndTime: null,
+                  lunchMinutes: null,
+                  diningSeats: null,
+                  maxLessonsPerDayPerGroup: 6,
+                },
+              },
+            );
+            year();
+            const without = await ready();
+            expect(without.storedRules).toEqual({ maxLessonsPerDayPerGroup: 6 });
+            expect(without.payload).not.toHaveProperty('lunchPerPeriod');
+            expect(without.periodStretches).not.toBeNull();
+          });
+
+          it('writes the meals of Generera as the rows of the periods the fetch read, and a year without periods as the rows it always wrote', async () => {
+            arrangeMealYear();
+            engineWithMeals();
+
+            await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+            expect(rows()).toEqual(expectedRows);
+            // The year's own bounds are null, not the day the läsår starts: a row dated to it stops covering it when the läsår moves.
+            tx.lunchSitting.createMany.mockClear();
+            http.post.mockClear();
+            arrangeTerms({}, { lunchSettings });
+            year();
+            http.post.mockImplementation((_url: string, payload: any) =>
+              of({
+                data: {
+                  requestId: payload.requestId,
+                  status: 'OPTIMAL',
+                  lessons: payload.requirements.flatMap((r: any, k: number) =>
+                    Array.from({ length: r.lessonsPerWeek }, (_, n) => ({
+                      requirementId: r.id,
+                      roomId: payload.rooms[k]?.id ?? null,
+                      dayOfWeek: k + 1,
+                      startTime: `0${8 + n}:00:00`,
+                      endTime: `0${8 + n}:50:00`,
+                    })),
+                  ),
+                  lunches: [{ studentGroupId: payload.groups[0].id, dayOfWeek: 1, startTime: '11:30:00', endTime: '12:00:00' }],
+                  conflicts: null,
+                },
+              }),
+            );
+            await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+            expect(rows()).toEqual([[GROUP_ID, '11:30', null, null]]);
+          });
+
+          it('writes a stored schemaförslag the same rows when it is applied: the meals keep their periods and the rebuilt fetch dates them', async () => {
+            arrangeMealYear();
+            engineWithMeals();
+            const prepared = await ready();
+            const solution = await service.solveCandidate(prepared, { timeoutMs: 1000 });
+            // The meals a candidate stores carry the real class and the periods they are for.
+            expect(solution.lunches).toEqual([
+              { studentGroupId: GROUP_ID, dayOfWeek: 1, startTime: '11:30:00', endTime: '12:00:00', periods: [true, false] },
+              { studentGroupId: GROUP_ID, dayOfWeek: 1, startTime: '11:00:00', endTime: '11:30:00', periods: [false, true] },
+            ]);
+            tx.masterLesson.deleteMany.mockResolvedValue({ count: 0 });
+            tx.masterLesson.count.mockImplementation(async ({ where }: Query = {}) => (where?.['NOT'] ? 8 : 0));
+
+            await service.applyCandidateWrite(tx as unknown as PrismaClient, {
+              user: testUser({ schoolId: THIS_SCHOOL, userId: 'admin-1' }),
+              prepared,
+              mode: 'DIRECT',
+              lessons: solution.lessons,
+              lunches: solution.lunches,
+              solverStatus: 'OPTIMAL',
+              snapshot: { versions: { snapshotInTransaction: jest.fn().mockResolvedValue({ id: 'version-1' }) }, name: 'Före schemaförslag 1' },
+              after: { source: 'CANDIDATE', runId: 'run-1', ordinal: 1 },
+            });
+
+            expect(rows()).toEqual(expectedRows);
+          });
         });
 
         it('says in dates where in the year a refusal was counted, on a 200 and on a 400', async () => {

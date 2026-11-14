@@ -19,6 +19,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
+import test_period_rules as rules
 import test_periods as periods
 from app.exceptions import InvalidScheduleInputError
 from app.schemas.schedule import ConflictAnalysis, ConflictDetail, OptimizeScheduleRequest, ScheduledLesson
@@ -500,3 +501,64 @@ def test_a_line_some_weeks_have_alike_says_them_with_the_period_filled_in() -> N
     assert line.params["period"] == 0
     assert line.params["periods"] == "0,1"
     assert "parity" not in line.params
+
+
+# ---------------------------------------------------------------------------
+# The class's meal per part of the year (#314) beside a cell no real week is in
+# ---------------------------------------------------------------------------
+
+
+def _meal_settings():
+    """A five-hour day: the lunch window of 11:00 to 12:00 lies inside it."""
+    return periods._settings(hours=5, days="1", SOLVER_PROBE_SECONDS=0)
+
+
+def _class_with_a_lock_of_the_odd_weeks_in_a_period_that_has_none(*, told: bool) -> dict[str, object]:
+    """Period 0 is one even week, period 1 has both parities; two locks fill the class's lunch window.
+
+    The first lock (the window's first half) is the odd weeks' in both
+    periods, the second (its second half) the even weeks' in the first. A
+    class's meal is one for both parities of a period, so a lock of either
+    parity is the period's and the first period would hold both: but it has
+    no odd week, and the lock of the odd weeks is in none of it.
+    """
+    group, teacher = str(uuid4()), str(uuid4())
+    first_half, second_half = ("11:00:00", "11:30:00"), ("11:30:00", "12:00:00")
+    meal = {"lunchStartTime": "11:00:00", "lunchEndTime": "12:00:00", "lunchMinutes": 30}
+    return _payload(
+        [_requirement(group, 2), _requirement(group, 1, periods=[False, True])],
+        rules=meal,
+        lunchPerPeriod=True,
+        fixedLessons=[
+            {**rules._lock(group, 1, *first_half, teacher), "recurrence": "ODD_WEEKS"},
+            {**rules._lock(group, 1, *second_half, teacher), "periods": [True, False], "recurrence": "EVEN_WEEKS"},
+        ],
+        periodWeeks=[1, 21],
+        **({"periodOddWeeks": [0, 11]} if told else {}),
+    )
+
+
+def test_a_lock_of_the_odd_weeks_cuts_no_part_of_the_meal_in_a_period_with_no_odd_week() -> None:
+    """The meal of the first period is the first half hour, where its only real week leaves it.
+
+    The cell of the odd weeks of a period that is one even week is no week: the
+    lock the gateway dated into it runs there in no week, so it leaves the
+    meal of that period nothing to be refused for. Without the gateway's
+    count of the odd weeks the same year is read as both locks being in the
+    period and is refused, as it was before the engine could be told.
+    """
+    told = _class_with_a_lock_of_the_odd_weeks_in_a_period_that_has_none(told=True)
+    response = periods._solve(told, _meal_settings())
+    assert response.status in periods.SOLVED
+    group = told["requirements"][0]["studentGroupId"]
+    assert sorted(
+        (lunch.start_time[:5], lunch.periods)
+        for lunch in response.lunches
+        if str(lunch.student_group_id) == group and lunch.day_of_week == 1
+    ) == [("11:00", (True, False)), ("11:30", (False, True))]
+
+    untold = _class_with_a_lock_of_the_odd_weeks_in_a_period_that_has_none(told=False)
+    with pytest.raises(InvalidScheduleInputError) as refused:
+        periods._solve(untold, _meal_settings())
+    assert refused.value.code == "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK"
+    assert refused.value.params["period"] == 0

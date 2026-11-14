@@ -160,6 +160,7 @@ const PAYLOAD_FIELDS_ALL = [
   'placements',
   'periodWeeks',
   'periodOddWeeks',
+  'lunchPerPeriod',
 ].sort();
 /** The generator's room: the engine's `_field_names(AnonymousRoom)` with the walk on. */
 const ROOM_FIELDS = ['capacity', 'id', 'maxGradeLevel', 'minGradeLevel', 'type'];
@@ -1493,11 +1494,15 @@ describe('AI engine wire contract', () => {
       );
       const reads = lastTx['academicYear']!['findUnique']!.mock.calls as [{ select?: Record<string, unknown> }][];
       expect(reads.map(([read]) => Object.keys(read.select ?? {}).sort().join(','))).toContain('endDate,startDate');
-      expect(Object.keys(payload).sort()).toEqual([...PAYLOAD_FIELDS, 'periodOddWeeks', 'periodWeeks'].sort());
+      expect(Object.keys(payload).sort()).toEqual(
+        [...PAYLOAD_FIELDS, 'periodOddWeeks', 'periodWeeks', 'lunchPerPeriod'].sort(),
+      );
       // The autumn (18 weeks), the three weeks between the terms, the spring (22).
       expect(payload['periodWeeks']).toEqual([18, 3, 22]);
       // Nine odd weeks in the autumn (35 to 51), two between the terms (53 and 1), eleven in the spring (3 to 23).
       expect(payload['periodOddWeeks']).toEqual([9, 2, 11]);
+      // The school has a lunch rule: a meal per part of the year is asked for.
+      expect(payload['lunchPerPeriod']).toBe(true);
       const requirements = payload['requirements'] as Array<Record<string, unknown>>;
       expect(Object.keys(requirements[0]!).sort()).toEqual([...REQUIREMENT_FIELDS, 'periods'].sort());
       expect(requirements[0]!['periods']).toEqual([true, false, false]);
@@ -1525,7 +1530,10 @@ describe('AI engine wire contract', () => {
             endDate: day('2027-06-12'),
           }),
       );
-      expect(Object.keys(payload).sort()).toEqual([...PAYLOAD_FIELDS, 'periodOddWeeks', 'periodWeeks'].sort());
+      // The school has a lunch rule, so a meal per part of the year is asked for beside the periods.
+      expect(Object.keys(payload).sort()).toEqual(
+        [...PAYLOAD_FIELDS, 'periodOddWeeks', 'periodWeeks', 'lunchPerPeriod'].sort(),
+      );
       expect(payload['periodWeeks']).toEqual([1, 43]);
       // Week 33 is odd; weeks 34 to 53 and 1 to 23 hold 22 odd ones (35, 37 … 53 and 1, 3 … 23).
       expect(payload['periodOddWeeks']).toEqual([1, 22]);
@@ -1587,6 +1595,27 @@ describe('AI engine wire contract', () => {
       );
       expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS);
       expect((payload['requirements'] as Array<Record<string, unknown>>)[0]!['periods']).toBeUndefined();
+    });
+
+    it('asks for a meal per period only of a year that has periods and a school that has a lunch rule', async () => {
+      const dated = { recurrence: 'ALL_WEEKS', startDate: null, endDate: day('2026-12-18') };
+      // A lunch the school switched off is no rule at all: the flag would plan nothing.
+      const off = await buildPayload(dated, [], [], (tx) => {
+        year(tx);
+        tx['lunchSetting']!['findUnique']!.mockResolvedValue({
+          lunchEnabled: false,
+          lunchStartTime: new Date(0),
+          lunchEndTime: new Date(0),
+          lunchMinutes: 30,
+          diningSeats: null,
+          maxLessonsPerDayPerGroup: null,
+        });
+      });
+      expect(off['periodWeeks']).toBeDefined();
+      expect('lunchPerPeriod' in off).toBe(false);
+      // No period, no flag: the payload every school without a dated post sends.
+      const plain = await buildPayload({ recurrence: 'ALL_WEEKS', startDate: null, endDate: null }, [], [], year);
+      expect(Object.keys(plain).sort()).toEqual(PAYLOAD_FIELDS);
     });
 
     it('keeps the parity beside the periods', async () => {
