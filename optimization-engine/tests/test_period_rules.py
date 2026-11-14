@@ -113,6 +113,16 @@ def test_a_posts_days_by_period_are_each_set_once_with_the_periods_it_is_held_in
     ])
     assert parity.locked_weekday_periods is not None
     assert [entry.recurrence for entry in parity.locked_weekday_periods] == ["ODD_WEEKS", "EVEN_WEEKS", None]
+    # A mask of ONE period is the year without periods, which a school with A/B-weeks that dates nothing sends
+    # (the review of #320, MEDEL-1): its sets are told apart by parity alone.
+    one = _limit_of([
+        {"weekdays": [1], "periods": [True], "recurrence": "ODD_WEEKS"},
+        {"weekdays": [2], "periods": [True], "recurrence": "EVEN_WEEKS"},
+    ])
+    assert one.locked_weekday_periods is not None
+    assert [(entry.periods, entry.recurrence) for entry in one.locked_weekday_periods] == [
+        ((True,), "ODD_WEEKS"), ((True,), "EVEN_WEEKS"),
+    ]
 
 
 @pytest.mark.parametrize(("held", "said"), [
@@ -122,7 +132,7 @@ def test_a_posts_days_by_period_are_each_set_once_with_the_periods_it_is_held_in
     ([{"weekdays": [1, 1], "periods": [True, True]}], "a weekday twice"),
     ([{"weekdays": [1], "periods": [True, True, True]}, {"weekdays": [], "periods": [True, True]}], "the same length"),
     ([{"weekdays": [1], "periods": [False, False]}, {"weekdays": [], "periods": [True, True]}], "at least one period"),
-    ([{"weekdays": [1], "periods": [True]}], "at least 2"),
+    ([{"weekdays": [1], "periods": []}], "at least 1 item"),
     ([], "at least 1 item"),
     ([{"weekdays": [1], "periods": [True, True], "colour": "red"}], "Extra inputs"),
     ([{"weekdays": [1], "periods": [True, True], "recurrence": "ODD_WEEKS"},
