@@ -7181,6 +7181,7 @@
       "GENERATE_STALE_PARTS": "Det som schemat räknades på ändrades medan körningen pågick: {parts}. Körningen skrev ingenting. Generera igen.",
       "SCHEDULE_BUSY": "Grundschemat skrevs av någon annan samtidigt, så körningen sparades inte. Försök igen om en stund.",
       "ENGINE_LACKS_PERIODS": "Schemamotorn är äldre än resten av tjänsten och kan inte planera poster med datum ännu. Försök igen om några minuter.",
+      "ENGINE_MEALS_INCONSISTENT": "Schemamotorn svarade med lunchtider som inte passar läsårets perioder, så ingenting skrevs. Försök igen, och hör av dig om det upprepas.",
       "CANDIDATES_RUNNING": "Schemaförslag tas fram för läsåret just nu. Generera går att starta när de är klara."
     },
     "page": {

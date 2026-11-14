@@ -291,6 +291,12 @@ export interface AnonymousLunchPlacement {
   dayOfWeek: DayOfWeek;
   /** HH:MM:SS */
   startTime: string;
+  /**
+   * The periods the meal is placed for (a requirement's `periods`); absent is
+   * the whole läsår. Only with `lunchPerPeriod`. Not sent yet: a meal placed
+   * by hand has no dates until the school can write them.
+   */
+  periods?: boolean[];
 }
 
 export interface AnonymousRoom {
@@ -765,6 +771,18 @@ export interface AiEngineScheduleRequest {
    * school that dates no post sends the payload it always sent.
    */
   periodWeeks?: number[];
+  /**
+   * Klassens måltid per del av läsåret (20270209090000): plan a class's meal
+   * in each part of the year its locked lessons tell apart, instead of one
+   * time all year, and answer each meal with the periods it is for
+   * (AiEngineLunch.periods). Sent only beside `periodWeeks` and only when the
+   * school has a lunch rule, so every school without a dated post, and every
+   * school without lunch, sends the payload it always sent. An engine that
+   * predates the field refuses it as an unknown one (refusesPeriods), and
+   * the request is never sent again without it: an answer with two meals for
+   * one class and day is one an older write could not store.
+   */
+  lunchPerPeriod?: boolean;
 }
 
 /**
@@ -997,6 +1015,14 @@ export interface AiEngineLunch {
   startTime: string;
   /** HH:MM:SS */
   endTime: string;
+  /**
+   * The periods of the year this meal is the class's in, as a requirement's
+   * `periods` says them: present only when the class eats at more than one
+   * time that day, then on every meal of its that day, the masks disjoint and
+   * together every period. Absent is the whole läsår, which every answer was
+   * before `lunchPerPeriod`. replaceSittings writes it as dates.
+   */
+  periods?: boolean[];
 }
 
 export interface AiEngineLesson {
