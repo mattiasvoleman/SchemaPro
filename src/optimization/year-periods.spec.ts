@@ -2,7 +2,16 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { LessonRecurrence } from '@prisma/client';
 import { runsOn, weeksCanOverlap } from '../calendar/lesson-recurrence';
-import { MAX_PERIODS, periodSentence, lunchLocksSentence, withLockPeriodDates, withPeriodDates, yearPeriodsOf, type HeldWindow } from './year-periods';
+import {
+  MAX_PERIODS,
+  periodSentence,
+  lunchLocksSentence,
+  weekPeriodsOfUndatedYear,
+  withLockPeriodDates,
+  withPeriodDates,
+  yearPeriodsOf,
+  type HeldWindow,
+} from './year-periods';
 
 const DAY_MS = 86_400_000;
 const day = (value: string): Date => new Date(`${value}T00:00:00.000Z`);
@@ -50,6 +59,19 @@ describe('MAX_PERIODS', () => {
     expect(engine).not.toBeNull();
     expect(MAX_PERIODS).toBe(Number(engine![1]));
     expect(MAX_PERIODS).toBe(53);
+  });
+});
+
+describe('weekPeriodsOfUndatedYear', () => {
+  it('is every week of the läsår in the one period, as many as yearPeriodsOf counts weeks', () => {
+    // The review of #320, MEDEL-1: what a teacher's kept weekdays are read by in a year nothing dates.
+    const one = weekPeriodsOfUndatedYear(YEAR);
+    expect(one).toHaveLength(43);
+    expect(new Set(one)).toEqual(new Set([0]));
+    const dated = yearPeriodsOf(YEAR, [[{ startDate: null, endDate: '2026-12-18' }]])!;
+    expect(dated.weekPeriods).toHaveLength(one.length);
+    // A läsår that starts on a Saturday has its first, incomplete week as a week.
+    expect(weekPeriodsOfUndatedYear({ startDate: '2026-08-15', endDate: '2027-06-12' })).toHaveLength(44);
   });
 });
 

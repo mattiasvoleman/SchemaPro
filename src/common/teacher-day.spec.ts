@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isoWeekNumber, runsOn } from '../calendar/lesson-recurrence';
-import { yearPeriodsOf } from '../optimization/year-periods';
+import { weekPeriodsOfUndatedYear, yearPeriodsOf } from '../optimization/year-periods';
 import fixture from './__fixtures__/teacher-day-cases.json';
 import {
   MAX_TEACHING_DAYS_PER_WEEK_MAX,
@@ -639,6 +639,34 @@ describe('lockedWeekdaySetsByPeriod', () => {
       { weekdays: [1], periods: [true, false, false], recurrence: 'ODD_WEEKS' },
       { weekdays: [3], periods: [false, false, true] },
       { weekdays: [4], periods: [true, false, false], recurrence: 'EVEN_WEEKS' },
+    ]);
+  });
+
+  it('is one period in a year nothing dates: the parity says the sets apart, and nothing else does', () => {
+    // The review of #320, MEDEL-1: a school with A/B-weeks that dates no post has no periods, and its
+    // teacher's odd weeks (a Monday) and even weeks (a Thursday) were held against both sets.
+    const one = weekPeriodsOfUndatedYear(year);
+    expect(one.length).toBe(43);
+    expect(one.every((period) => period === 0)).toBe(true);
+    const alternating = [lesson('o', 1, { recurrence: 'ODD_WEEKS' }), lesson('e', 4, { recurrence: 'EVEN_WEEKS' })];
+    expect(lockedWeekdaySetsByPeriod(alternating, 1, year, one)).toEqual([
+      { weekdays: [1], periods: [true], recurrence: 'ODD_WEEKS' },
+      { weekdays: [4], periods: [true], recurrence: 'EVEN_WEEKS' },
+    ]);
+    // Where the two parities hold the same sets, or the lessons are every week's, the sets say it already.
+    const same = [lesson('o', 1, { recurrence: 'ODD_WEEKS' }), lesson('e', 1, { recurrence: 'EVEN_WEEKS' })];
+    expect(lockedWeekdaySetsByPeriod(same, 1, year, one)).toBeNull();
+    expect(lockedWeekdaySetsByPeriod([lesson('m', 1), lesson('tu', 2)], 2, year, one)).toBeNull();
+    expect(lockedWeekdaySetsByPeriod([], 2, year, one)).toBeNull();
+    // The odd weeks' one day and the even weeks' two: each parity is its own line.
+    const inside = [
+      lesson('o', 1, { recurrence: 'ODD_WEEKS' }),
+      lesson('e', 1, { recurrence: 'EVEN_WEEKS' }),
+      lesson('e2', 2, { recurrence: 'EVEN_WEEKS' }),
+    ];
+    expect(lockedWeekdaySetsByPeriod(inside, 2, year, one)).toEqual([
+      { weekdays: [1], periods: [true], recurrence: 'ODD_WEEKS' },
+      { weekdays: [1, 2], periods: [true], recurrence: 'EVEN_WEEKS' },
     ]);
   });
 

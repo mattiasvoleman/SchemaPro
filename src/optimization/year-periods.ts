@@ -98,6 +98,15 @@ function weeksOfYear(year: YearSpan): { monday: string; sunday: string }[] {
   return weeks;
 }
 
+/**
+ * The läsår as ONE period: the period of each of its weeks, all the first. What a year that nothing
+ * dates is read as, for what is read week by week (a teacher's kept weekdays, which differ by parity
+ * in a school with A/B-weeks whether or not it dates a post: the review of #320, MEDEL-1).
+ */
+export function weekPeriodsOfUndatedYear(year: YearSpan): number[] {
+  return weeksOfYear(year).map(() => 0);
+}
+
 /** Whether some window has a day in the week: ISO days compare as text. */
 const touches = (windows: readonly HeldWindow[], week: { monday: string; sunday: string }): boolean =>
   windows.some(

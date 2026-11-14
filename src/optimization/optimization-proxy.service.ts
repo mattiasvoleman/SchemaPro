@@ -72,6 +72,7 @@ import { lockedWeekdaySets, lockedWeekdaySetsByPeriod, type TeachingLesson, type
 import {
   lunchLocksSentence,
   periodSentence,
+  weekPeriodsOfUndatedYear,
   withLockPeriodDates,
   withPeriodDates,
   yearPeriodsOf,
@@ -4208,23 +4209,25 @@ export class OptimizationProxyService {
      * each period's own (lockedWeekdaySetsByPeriod): a Monday kept in the
      * autumn takes a day of the autumn's weeks and none of the spring's.
      * Sent beside `lockedWeekdays`, which stays what it was, and only for a
-     * teacher whose periods differ — every other limit, and every limit of a
-     * year without periods, is the object it was.
+     * teacher whose periods or whose odd and even weeks differ — every other
+     * limit is the object it was. A year without periods is ONE period, whose
+     * sets are told apart by parity alone (a mask of length one): a school with
+     * A/B-weeks that dates nothing is held to each week's own days as one that
+     * does is (the review of #320, MEDEL-1).
      */
-    const teacherDayLimitsInPeriods: AnonymousTeacherDayLimit[] =
-      yearPeriods && yearSpan
-        ? teacherDayLimits.map((limit) => {
-            const lockedWeekdayPeriods = lockedWeekdaySetsByPeriod(
-              fixedLessonsOf(dayLimitUsers.get(limit.id)!),
-              limit.maxTeachingDaysPerWeek,
-              yearSpan,
-              yearPeriods.weekPeriods,
-            );
-            return lockedWeekdayPeriods
-              ? { ...limit, lockedWeekdayPeriods: lockedWeekdayPeriods as AnonymousTeacherDayLimit['lockedWeekdayPeriods'] }
-              : limit;
-          })
-        : teacherDayLimits;
+    const teacherDayLimitsInPeriods: AnonymousTeacherDayLimit[] = yearSpan
+      ? teacherDayLimits.map((limit) => {
+          const lockedWeekdayPeriods = lockedWeekdaySetsByPeriod(
+            fixedLessonsOf(dayLimitUsers.get(limit.id)!),
+            limit.maxTeachingDaysPerWeek,
+            yearSpan,
+            yearPeriods?.weekPeriods ?? weekPeriodsOfUndatedYear(yearSpan),
+          );
+          return lockedWeekdayPeriods
+            ? { ...limit, lockedWeekdayPeriods: lockedWeekdayPeriods as AnonymousTeacherDayLimit['lockedWeekdayPeriods'] }
+            : limit;
+        })
+      : teacherDayLimits;
     const fixedLessonsInPeriods = inPeriods(fixedLessonsSent, requirements.length);
     const releasedInPeriods = inPeriods(releasedRequirements, requirements.length + fixedLessonsSent.length);
 
@@ -4483,8 +4486,14 @@ export class OptimizationProxyService {
     const carriesSearch = (payload as { search?: unknown }).search !== undefined;
     const carriesRelaxation = (payload as { relaxation?: unknown }).relaxation !== undefined;
     const carriesPlacements = (payload as { placements?: unknown }).placements !== undefined;
-    // Terminer: a payload with a mask always carries the periods' lengths too.
-    const carriesPeriods = (payload as { periodWeeks?: unknown }).periodWeeks !== undefined;
+    // Terminer: a payload with a mask always carries the periods' lengths too. A day limit's sets by
+    // period (and by parity: in a year nothing dates they are a mask of one period, with no lengths) are
+    // as new to an older engine, which refuses them as an unknown field.
+    const carriesPeriods =
+      (payload as { periodWeeks?: unknown }).periodWeeks !== undefined ||
+      ((payload as { teacherDayLimits?: { lockedWeekdayPeriods?: unknown }[] }).teacherDayLimits ?? []).some(
+        (limit) => limit.lockedWeekdayPeriods !== undefined,
+      );
 
     try {
       const response = await firstValueFrom(
