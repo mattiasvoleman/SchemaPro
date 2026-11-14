@@ -4778,6 +4778,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         LunchPlacement,
         LunchServing,
         OptimizeScheduleRequest,
+        PinnedLesson,
         PupilGapCohort,
         PupilGaps,
         FixedLessonMargin,
@@ -5062,7 +5063,14 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         # on one that some period leaves out. See periodWeeks above for why
         # the engine has it first.
         "periods",
+        # Fästa lektioner: the lessons of the requirement held where the
+        # school laid them (app/solver/pins.py). NOTHING SENDS IT YET, and the
+        # gateway's pin of what it sends is therefore unchanged: the engine
+        # has the key first, as it had `periods`, because it answers 422 to
+        # one it does not know.
+        "pinnedLessons",
     }
+    assert _field_names(PinnedLesson) == {"dayOfWeek", "startTime", "endTime", "roomId"}
     # A locked lesson, which no half of the contract pinned until a field was
     # added to it. pupilGroupIds is sent only on a lock whose subject a
     # replacing group replaces, and then REPLACES studentGroupId and

@@ -5277,14 +5277,16 @@ mask, as before.
 same way: its locked lessons (a förlagd post is one) leave it the same STARTS
 on every day (the starts of the lunch window that remain, not the lessons: a
 lock that runs to 12:30 and one that runs to 12:15 leave a window ending at
-12:00 the same starts) and the same meals are placed in them. **A school with a
+12:00 the same starts) and the same meals are placed in them. A pinned lesson
+(§21) cuts the year as a locked one does, by the starts it takes together with
+its pupils' changing minutes (21.3). **A school with a
 dining hall too small for every class at once cuts all its classes by the
 locks of all of them**: the hall is one resource the meals share, so a class
 with no lock of its own can need one time in the autumn and another in the
 spring because another class's locks leave the hall no other way to seat both
 (without this the school was refused though a timetable existed). A hall that
-seats the whole school at once couples nothing. A lesson that is not locked
-cuts nothing: it is laid once and keeps clear of the meal in every week it
+seats the whole school at once couples nothing. A lesson that is neither locked
+nor pinned cuts nothing: it is laid once and keeps clear of the meal in every week it
 runs. Parts are cut per period, never per parity (the meal is one for the odd
 weeks and the even weeks of a period, as a teacher's own lunch is, 19.3), and
 never joined: a class whose locks are alike in every period is one part and
@@ -5405,3 +5407,115 @@ mark, which is parts 3 and 4's worklist) and 490o and 492o in `rls-owner-checks.
 owner held to the post, a school deleted in both orders its cascade can take). Section 116's matrix has a marked full
 administratör as an eleventh principal, and the *Admin areas* probe (`probe-admin-areas.ts`, `ar-i`) shows the codes arrive
 through the adapter as themselves.
+
+## 21. Pinned lessons in the generator ("Fästa lektioner")
+
+A lesson a school lays by hand before Generera has reached the engine as a
+locked lesson, taken off its post (§ on *Förlagda poster*). A lock has to name
+its room, and no proof of an impossible week can name a lock. The engine now
+also takes the same lesson as a **pinned lesson**: a new optional key on a
+requirement, `pinnedLessons`, one place per lesson of the post in the order
+`lessonTeacherIds` has (longest lesson first), each place empty or
+`{dayOfWeek, startTime, endTime, roomId?}`. A pinned lesson stays the post's
+own lesson. The engine holds it at that weekday and start, in that room when
+one is named and in a room it chooses when none is, and it comes back among the
+post's lessons in the answer.
+
+**Nothing sends the key yet.** This release is the engine's half. No
+migration, no setting, and no school's week changes: a request without the key
+builds the model it built and is answered with the bytes it was answered with.
+
+### 21.1 Deploy order
+
+**The engine first**, for the reason §19.1 gives: its request models forbid
+unknown fields, so an engine without the key answers 422 to a run that carries
+one.
+
+1. Merge this release. Verify that `https://<solver-host>/openapi.json` has a
+   schema named `PinnedLesson` and names `pinnedLessons` under
+   `AnonymousRequirement`, and that no schema has been renamed (a name holding
+   `__` is one that was).
+2. A later release makes the gateway send the key. That release is refused
+   by an engine without this one, and says so in its own section.
+
+### 21.2 Rolling back
+
+Safe at any time while nothing sends the key: reverting this release takes the
+key out of the engine and changes no answer. Once a gateway sends it, the
+engine must not be rolled back past this release before that gateway is.
+
+### 21.3 A pinned lesson is held to more than a locked one
+
+A locked lesson is a window the generated lessons steer round. It has no
+years, no subject and no margins of its own, and two locks are never compared.
+A pinned lesson is a lesson of its post, and every rule of the post holds for
+it. For a school this is where the two differ:
+
+- **Refused before the week is laid, with the lesson named:** a pinned lesson
+  outside the school's week or its time grid, outside the frame time of its
+  years, across a rast of its years, or in a room its post may not use (type,
+  size, years, or the rooms its subject is locked to).
+- **Refused by the proof, with the lesson and the rule named:** a pinned
+  lesson that breaks the subject's distribution rule (two pinned on one day
+  under "at most one a day"), the teacher's daily cap or days a week, or the
+  class's daily maximum. A locked lesson is taken as a fact by all four.
+- **Two pinned lessons in each other's way** (one teacher, one class, one
+  room, one hour) are refused with both named. Two locks are not compared.
+- **In a parallel block** a lesson is pinned for every entry of the block or
+  for none, at one time (`PLACED_LESSONS_OF_BLOCK_DIFFER`).
+
+**Where the two are alike: the class's meal (19.7).** A pinned lesson cuts a
+class's läsår into parts as a locked lesson does. Two posts pinned across the
+lunch window, one in the autumn and one in the spring, give the class one meal
+in each term, where a single meal for the year has no room in either. What a
+pinned lesson takes from the meal is the lesson with its pupils' changing
+minutes before and after, which a lock does not have, so two terms can differ
+in those minutes alone. Unlike a lock's hour, the pinned lesson's is not taken
+out of the meal's starts before the week is laid: the meal is kept clear of
+it by the rule that keeps it clear of every lesson of the class, so a term
+whose pinned lessons leave the meal no start is refused with those lessons
+named.
+
+A pinned lesson never gives way, in Bästa möjliga schema either.
+
+### 21.4 Operations
+
+- **The lines.** A pinned lesson in the way of a week is named as a förlagd
+  lesson is: `PLACED_LESSON_IN_THE_WAY` with its room, and
+  `PLACED_LESSON_IN_THE_WAY_ANY_ROOM` where the engine chooses the room.
+- **A refused week with a pinned lesson is explained on the model without the
+  objective.** Measured on the högstadium benchmark with 200 lessons pinned
+  and two of them on one hour of a teacher's: the model with the objective
+  named every rule of the week, 668 of 668, and the one without named the two
+  pinned lessons, in 9 s on a loaded machine. A week without a pinned lesson
+  is explained as before.
+- **When the proof names nothing** inside its fifteen seconds, the week is
+  solved once more with every pinned lesson free to move, as it is for the
+  förlagda locks, and a timetable found then names them all.
+- **The start step.** A lesson pinned at 08:05 takes a school that is searched
+  every thirty minutes down to every five, as a lesson locked at 08:05 does.
+- **A pinned room is a room class of its own**, as a locked lesson's room is,
+  and costs the model what that costs.
+- **What pinned lessons cost the search.** Measured in paired runs under the
+  same load, as the time to a first timetable of the satisfaction model. On
+  the högstadium benchmark (423 lessons, two workers): 7.1 s without a pinned
+  lesson, 20 s with 20 of which 10 name a room, 16.6 s with 200 of which 100
+  name a room. On the 250-pupil benchmark (four workers): 3.1 s without,
+  4.7 s with 12, 8.5 s with 120 of which 60 name a room, and 3.6 s with the
+  same 120 and no room named. So a pinned lesson that names its room makes
+  the first timetable 1.5 to 3 times as dear (up to 3.5 times when every one
+  of the 120 names its room), and one that leaves the room to the engine
+  about 1.2 times: the cost is the room's class of its own, not the pin. A
+  locked lesson's room is a class of its own too, and a pinned lesson is not
+  dearer than the same lesson sent as a lock. On the 250-pupil benchmark
+  (paired, four workers, the same 120 lessons) a first timetable took 13 to
+  15 s with every lesson pinned in its room and 36 to 43 s with the lessons
+  sent as locks (7,870 variables against 87,642); on the högstadium benchmark
+  the two were alike (one worker, not paired: 19.9 s pinned and 22.8 s locked
+  with 200 lessons, 34.4 s and 35.6 s with 20). Like for like, with a room
+  named on every pinned lesson, the locks build a model 3.5 to 12 times as
+  large (20 lessons: 31,822 variables as locks, 9,047 as pinned lessons; 200
+  lessons: 133,036 and 10,739). Not measured on the 2,000-pupil benchmark,
+  where a first timetable takes minutes and a factor of two to three is felt
+  in the budget: that is measured with the change that first sends the
+  field.

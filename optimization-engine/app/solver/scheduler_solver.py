@@ -93,6 +93,17 @@ from app.solver.conflict_analyzer import (
     build_conflict_analysis,
     no_core_analysis,
 )
+from app.solver.pins import (
+    PIN_CODES,
+    add_pins,
+    has_pins,
+    meal_starts_taken_by_pins,
+    pinned_room_ids,
+    pinned_start_slots,
+    pins_of,
+    verify_pins,
+    without_pins,
+)
 from app.solver.room_allocator import (
     RoomPlan,
     add_room_allocation,
@@ -1492,6 +1503,9 @@ class SchedulerSolver:
         # starts are the same start: every family below then sees one block
         # lesson where the school sees one.
         self._add_block_constraints(model, registry, decisions, request.requirements)
+        # Fästa lektioner, beside the blocks for the blocks' reason: a pin only
+        # says where a start is. Nothing without a pin (pins.py).
+        add_pins(model, registry, decisions, rooms, self._grid)
         self._add_capacity_constraints(model, registry, decisions, rooms)
         self._add_teacher_no_overlap(model, decisions)
         self._add_group_no_overlap(model, decisions, request.group_conflicts)
@@ -3083,6 +3097,9 @@ class SchedulerSolver:
                     requirement = by_id[requirement_id]
                     if (
                         requirement.lesson_teacher_ids is None
+                        # Fästa lektioner: the probe makes blocks of its own,
+                        # and a block ties place to place (pins.verify_pins).
+                        and requirement.pinned_lessons is None
                         and requirement.id not in taken
                         and requirement not in candidates
                     ):
@@ -3104,6 +3121,7 @@ class SchedulerSolver:
                     requirement in candidates
                     or requirement.id in taken
                     or requirement.lesson_teacher_ids is not None
+                    or requirement.pinned_lessons is not None
                     or key in homes
                     or tuple(requirement.lesson_minutes()) not in shapes
                     or not classes.intersection(sharing.get(key, ()))
@@ -3730,6 +3748,7 @@ class SchedulerSolver:
         window: tuple[int, int, int],
         *,
         coupled: bool = False,
+        taken_by_pins: list[dict[UUID, tuple[object, ...]]] | None = None,
     ) -> dict[UUID, list[tuple[Weeks, dict[tuple[UUID, int], list[tuple[int, int]]], dict[tuple[UUID, int], int]]]]:
         """Klassens måltid per del av läsåret: the parts of the year a class's meal tells apart.
 
@@ -3753,6 +3772,14 @@ class SchedulerSolver:
         the meal in each of them (_post_lunch_rows): it cuts nothing here, so
         a school with ten dated posts has as many parts of the meal as it has
         different ways of being locked, not ten.
+
+        CUT BY A PINNED LESSON, which is a lesson with a known hour as a lock
+        is (`taken_by_pins`, pins.meal_starts_taken_by_pins): the periods are
+        told apart by the meal starts their pinned lessons take as well. Kept
+        beside the locks' starts and never joined with them, because a part
+        carries the locks of ONE of its periods as the part's: a lock in the
+        autumn and a pin on the same hour in the spring are two parts, though
+        they leave the meal the same starts.
 
         PER PERIOD, NEVER PER PARITY, as a teacher's own lunch is
         (whole_periods): the meal is one for the odd weeks and the even ones
@@ -3795,7 +3822,7 @@ class SchedulerSolver:
                 [placement for placement in placements if placement.periods is None or placement.periods[period]],
                 lunch_group_ids,
             ))
-        signatures: dict[UUID, list[tuple[object, object]]] = {group_id: [] for group_id in lunch_group_ids}
+        signatures: dict[UUID, list[tuple[object, ...]]] = {group_id: [] for group_id in lunch_group_ids}
         slots_per_day = self._grid.slots_per_day
         for period in range(periods):
             forbidden_of: dict[UUID, dict[int, tuple[tuple[int, int], ...]]] = defaultdict(dict)
@@ -3813,10 +3840,13 @@ class SchedulerSolver:
             for (group_id, day_index), slot in pins[period].items():
                 pinned_of[group_id][day_index] = slot
             for group_id in lunch_group_ids:
-                signatures[group_id].append((
+                signature: tuple[object, ...] = (
                     tuple(sorted(forbidden_of[group_id].items())),
                     tuple(sorted(pinned_of[group_id].items())),
-                ))
+                )
+                if taken_by_pins is not None:
+                    signature = (*signature, taken_by_pins[period].get(group_id, ()))
+                signatures[group_id].append(signature)
         # What tells two periods apart, for the class itself or, where the hall
         # couples them, for any class: the classes' signatures side by side.
         told_by: dict[UUID, list[object]] = {
@@ -4817,7 +4847,18 @@ class SchedulerSolver:
         keeps_walk = travel_map(
             request, slot_minutes=self._grid.slot_minutes, step=_start_step(request, self._grid),
         ) is not None
-        model, registry, _, _, _ = self._build_model(request, use_assumptions=True)
+        # FÄSTA LEKTIONER: A WEEK WITH A PINNED LESSON IS EXPLAINED WITHOUT THE
+        # OBJECTIVE, on the whole cap. A pin is on a literal so that the proof
+        # can name the pinned lesson in the way, and with the objective it
+        # does not: measured on the högstadium week with 200 lessons pinned and
+        # two of them on one hour of a teacher's, the objective's sufficient
+        # set was every assumption, 668 of 668, and the objective-free one the
+        # two pins, in 9 s. The trade the paragraph above declines is not made
+        # for any other week: one without a pin is explained as it was.
+        pinned = has_pins(request)
+        model, registry, _, _, _ = self._build_model(
+            request, use_assumptions=True, include_objective=not pinned,
+        )
         solver = cp_model.CpSolver()
         # Capped, because the verdict is already in. Measured: a payload phase 1
         # proves INFEASIBLE in under a second can keep this single-threaded
@@ -4828,13 +4869,13 @@ class SchedulerSolver:
         # sooner.
         cap = min(self._settings.solver_max_time_seconds, self.EXPLAIN_CAP_SECONDS)
         solver.parameters.max_time_in_seconds = (
-            min(cap, self.EXPLAIN_WALK_FIRST_SECONDS) if keeps_walk else cap
+            min(cap, self.EXPLAIN_WALK_FIRST_SECONDS) if keeps_walk and not pinned else cap
         )
         conflicts = None
         status = _solve_guarded(
             solver, model, what="the explanation", request_id=request.request_id,
         )
-        if keeps_walk and status != cp_model.INFEASIBLE:
+        if keeps_walk and not pinned and status != cp_model.INFEASIBLE:
             left = cap - solver.wall_time
             if left >= self.MIN_PHASE_SECONDS:
                 model, registry, _, _, _ = self._build_model(
@@ -6363,7 +6404,7 @@ class SchedulerSolver:
         # conservative guess but a wrong one.
         distinguished = collect_distinguished_room_ids(
             request.constraints, request.fixed_lessons,
-        )
+        ) | pinned_room_ids(request.requirements)
         preference_sets = [
             set(preference.room_ids)
             for preference in request.room_preferences
@@ -6469,7 +6510,7 @@ class SchedulerSolver:
             lunch_groups * day_count * (len(request.period_weeks) - 1) * 6
             if request.lunch_per_period
             and request.period_weeks
-            and (request.fixed_lessons or request.lunch_placements)
+            and (request.fixed_lessons or request.lunch_placements or has_pins(request))
             else 0
         )
         # The seat rule's entire variable cost, charged whether or not the lunch
@@ -6648,6 +6689,8 @@ class SchedulerSolver:
             # _add_block_constraints: one literal per block. Its equalities are
             # constraints on starts that exist already, and add no variable.
             + len(_blocks_of(request.requirements))
+            # add_pins: one literal per pinned lesson, as a block has one.
+            + len(pins_of(request.requirements))
             + 2 * len(request.previous_lessons)
             + self._week_vars(request, lessons_by_teacher, lessons_by_group)
             # Placeringsregler: zero without placementRules (placement.py).
@@ -6809,7 +6852,8 @@ class SchedulerSolver:
         classes = build_room_classes(
             [SimpleNamespace(lesson=SimpleNamespace(requirement=r)) for r in request.requirements],
             rooms,
-            collect_distinguished_room_ids(request.constraints, request.fixed_lessons),
+            collect_distinguished_room_ids(request.constraints, request.fixed_lessons)
+            | pinned_room_ids(request.requirements),
             allowed,
             key,
             [
@@ -7161,6 +7205,20 @@ class SchedulerSolver:
         # it would build is INFEASIBLE with nothing to say why. After the
         # per-requirement checks, which name a member's own problem first.
         self._validate_blocks(request)
+
+        # FÄSTA LEKTIONER, after the blocks, whose members have the same
+        # lessons by now: what a pinned lesson's own requirement rules out,
+        # by name and before any model (pins.verify_pins). The domains are the
+        # builder's own, before the week's step.
+        if has_pins(request):
+            verify_pins(
+                request,
+                self._grid,
+                start_domains=self._start_domains,
+                room_allowed=self._room_allowed,
+                locked_rooms=locked_by_requirement,
+                blocks=_blocks_of(request.requirements),
+            )
 
         # A/B-VECKOR: THE COUNTING BELOW IS A REAL WEEK'S, as the verdicts in
         # solve() are: each check runs on each week's request (_week_requests)
@@ -10082,6 +10140,12 @@ class SchedulerSolver:
             return None
         # Every literal free: the fixed part is what no literal stands for.
         model.ClearAssumptions()
+        # But a pinned lesson, which has a literal, is of the fixed part as a
+        # locked one is: held in both models, or the week without the walk
+        # would be asked with the school's hand-laid lessons free to move.
+        held = registry.literals(PIN_CODES)
+        if held:
+            model.AddBoolAnd(held)
         bare = model.Clone()
         model.AddBoolAnd(registry.literals(TRAVEL_CODES.values()))
 
@@ -10591,7 +10655,7 @@ class SchedulerSolver:
         budget and a probe's (docs/DEPLOYMENT.md); the explanation of a proof
         spent part of the budget, and this has what is left of both.
         """
-        if request.placements is None or response.status != "INFEASIBLE":
+        if response.status != "INFEASIBLE" or not self._asks_the_released_week(request, response):
             return response
         deadline = (
             entered
@@ -10605,6 +10669,26 @@ class SchedulerSolver:
         return response.model_copy(update={
             "conflicts": verdict.model_copy(update={"conflicts": [*verdict.conflicts, *kept]}),
         })
+
+    @staticmethod
+    def _asks_the_released_week(
+        request: OptimizeScheduleRequest, response: OptimizeScheduleResponse,
+    ) -> bool:
+        """Whether a refused week is asked once more with its förläggningar released.
+
+        A week with förlagda locks always is, as before: a lock is never in a
+        core. A week with pinned lessons is asked only when the refusal names
+        none of them. A pin IS in a core, and a proof that names the two
+        pinned lessons in each other's way is the answer; the released week
+        would name every förläggning the school has on top of them.
+        """
+        if not has_pins(request):
+            return request.placements is not None
+        named = response.conflicts.conflicts if response.conflicts is not None else []
+        return not any(
+            line.code in ("PLACED_LESSON_IN_THE_WAY", "PLACED_LESSON_IN_THE_WAY_ANY_ROOM")
+            for line in named
+        )
 
     def _refusal_with_placements_named(
         self,
@@ -10630,7 +10714,10 @@ class SchedulerSolver:
         no code (a bug of ours, for a log), probes off, the released week
         refused too — None, and the caller raises the refusal as it was.
         """
-        if request.placements is None or not refusal.code:
+        # A refusal of a pinned lesson by its own name (pins.verify_pins) says
+        # which lesson already, and releasing every förläggning to say it
+        # again would bury the one under all of them.
+        if request.placements is None or not refusal.code or refusal.code.startswith("PLACED_LESSON"):
             return None
         deadline = (
             entered
@@ -10676,14 +10763,17 @@ class SchedulerSolver:
         stands as it was, rather than one invented.
         """
         placements = request.placements
-        if placements is None or not _runs_probes(request):
+        pinned = [pin.line() for pin in pins_of(request.requirements)]
+        if (placements is None and not pinned) or not _runs_probes(request):
             return None
         budget = self._settings.solver_probe_seconds
         if seconds_left is not None:
             budget = min(budget, seconds_left)
         if budget < self.MIN_PHASE_SECONDS:
             return None
-        released = release_placements(request)
+        # The pinned lessons with them (pins.without_pins): to a school a
+        # förläggning is one thing, whichever way it reached the engine.
+        released = without_pins(release_placements(request))
         if request.relaxation is not None:
             released = strip_relaxable(released)
         started = time.perf_counter()
@@ -10702,16 +10792,17 @@ class SchedulerSolver:
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             return None
         locks = {fixed.id: fixed for fixed in request.fixed_lessons}
+        placed = [
+            _placed_lesson_line(locks[lesson.fixed_lesson_id], lesson.requirement_id)
+            for lesson in (placements.lessons if placements is not None else ())
+        ]
         return ConflictAnalysis(
             summary_code="PLACEMENTS_PROBE_SUMMARY",
             summary_params={
-                "count": len(placements.lessons),
+                "count": len(placed) + len(pinned),
                 "seconds": round(time.perf_counter() - started, 1),
             },
-            conflicts=[
-                _placed_lesson_line(locks[lesson.fixed_lesson_id], lesson.requirement_id)
-                for lesson in placements.lessons
-            ],
+            conflicts=[*placed, *pinned],
         )
 
     def _probe_timeout(
@@ -11023,12 +11114,17 @@ class SchedulerSolver:
             # distribution because both are rules of the timplan page, about
             # how a row's lessons may lie.
             out.append(("PROBE_SOLVED_WITHOUT_BLOCKS", _without_blocks(request)))
-        if request.placements is not None:
+        if request.placements is not None or has_pins(request):
             # FÖRLAGDA POSTER, ALL AT ONCE, beside the blocks for the same
             # reason: a rule of the timplan page about where a row's lessons
             # may lie. The förlagda lessons go back to their posts and are free
             # to move; nothing else of the week changes (release_placements).
-            out.append(("PROBE_SOLVED_WITH_PLACEMENTS_RELEASED", release_placements(request)))
+            # The pinned lessons with them, which without_pins leaves alone in
+            # a week that has none.
+            out.append((
+                "PROBE_SOLVED_WITH_PLACEMENTS_RELEASED",
+                without_pins(release_placements(request)),
+            ))
         # THE TEACHERS' OWN TIME IS TWO PROBES AND NEVER ONE, for the reason the
         # lunch below is three: "with the teachers' working time switched off, a
         # timetable was found" is true and useless, because a school cannot
@@ -11792,9 +11888,14 @@ class SchedulerSolver:
             model,
             decisions,
             rooms,
+            # A pinned room too, read off the lessons being built: the same
+            # set the three predictions of this partition read off the request.
             distinguished_room_ids=collect_distinguished_room_ids(
                 constraints, fixed_lessons,
-            ),
+            ) | pinned_room_ids({
+                decision.lesson.requirement.id: decision.lesson.requirement
+                for decision in decisions
+            }.values()),
             room_allowed=allowed,
             profile_key=key,
             preference_sets=preference_sets,
@@ -13738,6 +13839,10 @@ class SchedulerSolver:
                     # resource the classes' meals share (_lunch_parts).
                     coupled=seats is not None
                     and sum(headcount_by_group.get(group_id, 0) for group_id in lunch_group_ids) > seats,
+                    taken_by_pins=meal_starts_taken_by_pins(
+                        decisions, self._grid, periods=lunch_periods, eating=set(lunch_group_ids),
+                        shares_students=shares_students, window=(window_start, window_end, lunch_slots),
+                    ),
                 )
                 if lunch_periods > 0
                 else {}
@@ -14951,6 +15056,15 @@ class SchedulerSolver:
         room_class_of: dict[int, int] = {}
         from types import SimpleNamespace
 
+        # WITHOUT THE PINNED ROOMS (pins.pinned_room_ids), which every other
+        # reading of the room classes has. In the model a pinned room is a
+        # class of its own so that the pin can hold its lesson there; no other
+        # lesson may use fewer rooms for it. Cut by it here, a lesson that may
+        # use A, B and C would read as free to choose between two places, and
+        # a class forced into two places would pass this count and be refused
+        # by the proof instead, without the count's sentence. The coarser
+        # classes are a lower bound of the model's: two lessons forced into
+        # different classes here are in different classes there.
         for room_class in build_room_classes(
             [SimpleNamespace(lesson=SimpleNamespace(requirement=r)) for r in request.requirements],
             rooms,
@@ -16518,6 +16632,13 @@ def _start_step(request: OptimizeScheduleRequest, grid: TimeGrid) -> int:
             values.append(grid.parse_hhmmss(previous.start_time))
         except ValueError:
             continue
+    # Fästa lektioner: `start == a constant`, so the constant is in the gcd as
+    # a hand-placed meal's is, and the pinned lesson is a multiple that stays
+    # where it was when every other start is rounded down (pins.py).
+    pinned = pinned_start_slots(request.requirements, grid)
+    if pinned is None:
+        return 1
+    values.extend(pinned)
     return max(math.gcd(*values), 1)
 
 

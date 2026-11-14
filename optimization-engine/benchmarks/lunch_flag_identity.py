@@ -9,12 +9,13 @@ digests model_identity.py takes (validate, estimate, full, feasible, explain,
 diagnosis, placeable, response, solve).
 
 THE PROMISE (Klassens måltid per del av läsåret, scheduler_solver._lunch_parts):
-a class whose locked lessons and placed meals leave its meal the same STARTS in
-every period is ONE part, builds the variable, the domain and the rows it always
-built, and answers with one meal and no mask. So a payload on which no class has
-starts that differ between periods must be the same under the flag in every
-build; one on which some class has such starts is EXPECTED to differ (it is the
-reason for the field) and is listed, not counted against the promise.
+a class whose locked lessons, pinned lessons and placed meals leave its meal the
+same STARTS in every period is ONE part, builds the variable, the domain and the
+rows it always built, and answers with one meal and no mask. So a payload on
+which no class has starts that differ between periods must be the same under
+the flag in every build; one on which some class has such starts is EXPECTED
+to differ (it is the reason for the field) and is listed, not counted against
+the promise.
 
 WHICH CLASSES HAVE DIFFERING STARTS IS READ FROM THE PAYLOAD ALONE (`classes_in_
 parts`, in minutes, sharing no code with the engine), and NOT from the engine's
@@ -57,14 +58,29 @@ def _minutes(clock: str) -> int:
     return hours * 60 + minutes
 
 
-def classes_in_parts(request: dict[str, Any]) -> int:
-    """How many classes the payload gives different meal starts in different periods: locks and placed meals, in minutes.
+def _up(minutes: int, slot_minutes: int) -> int:
+    return -(-minutes // slot_minutes) * slot_minutes
+
+
+def classes_in_parts(request: dict[str, Any], *, slot_minutes: int = 5) -> int:
+    """How many classes the payload gives different meal starts in different periods: locks, pinned lessons and placed meals, in minutes.
 
     A lock closes the starts s of a meal of m minutes with start - m < s < end;
     what a class has left of the lunch window [first, last] in a period, and the
     meals placed for it, is that period's reading, and a class with two
     different readings is in parts. The payload alone: no engine code, so an
     engine that splits what the starts do not tell apart is seen.
+
+    A PINNED LESSON (`pinnedLessons` on a requirement) is read as a lock is,
+    with two differences that are the engine's own design and not this file's
+    (_lunch_parts, "CUT BY A PINNED LESSON"). What it takes is the lesson AS
+    ITS PUPILS ARE OCCUPIED BY IT: the requirement's minutesBefore before it,
+    and its minutesAfter and its years' changeover after it, each rounded up
+    onto the grid as the engine's lessons are (`slot_minutes`, the one number
+    here that is the engine's configuration). And its starts are a reading OF
+    THEIR OWN beside the locks', never joined with them: a lock in the autumn
+    and a pinned lesson on the same hour in the spring are two parts by
+    design, so a reading that joined them would call that split causeless.
     """
     rules = request["rules"]
     first, last = _minutes(rules["lunchStartTime"]), _minutes(rules["lunchEndTime"]) - rules["lunchMinutes"]
@@ -77,6 +93,7 @@ def classes_in_parts(request: dict[str, Any]) -> int:
         requirement["studentGroupId"] for requirement in request.get("requirements", [])
     }
     closed: dict[tuple[str, int], list[list[tuple[int, int]]]] = {}
+    taken: dict[tuple[str, int], list[list[tuple[int, int]]]] = {}
     placed: dict[tuple[str, int], list[dict[int, int]]] = {}
     for fixed in request.get("fixedLessons", []):
         low = max(_minutes(fixed["startTime"]) - rules["lunchMinutes"] + 1, first)
@@ -89,6 +106,33 @@ def classes_in_parts(request: dict[str, Any]) -> int:
             for period in range(count):
                 if fixed.get("periods") is None or fixed["periods"][period]:
                     per_period[period].append((low, high))
+    for requirement in request.get("requirements", []):
+        pinned = [lesson for lesson in requirement.get("pinnedLessons") or [] if lesson is not None]
+        if not pinned:
+            continue
+        years = (requirement.get("minGradeLevel"), requirement.get("maxGradeLevel"))
+        corridor = max(
+            (
+                frame.get("changeoverMinutes", 0)
+                for frame in request.get("frameTimes", [])
+                if None not in years
+                and not (years[1] < frame["minGradeLevel"] or years[0] > frame["maxGradeLevel"])
+            ),
+            default=0,
+        )
+        before = _up(requirement.get("minutesBefore", 0), slot_minutes)
+        after = _up(requirement.get("minutesAfter", 0), slot_minutes) + _up(corridor, slot_minutes)
+        named = requirement["studentGroupId"]
+        for lesson in pinned:
+            low = max(_minutes(lesson["startTime"]) - before - rules["lunchMinutes"] + 1, first)
+            high = min(_minutes(lesson["endTime"]) + after - 1, last)
+            if low > high:
+                continue
+            for group in {named, *sharing.get(named, ())} & eating:
+                per_period = taken.setdefault((group, lesson["dayOfWeek"]), [[] for _ in range(count)])
+                for period in range(count):
+                    if requirement.get("periods") is None or requirement["periods"][period]:
+                        per_period[period].append((low, high))
     for placement in request.get("lunchPlacements", []):
         per_period_pins = placed.setdefault((placement["studentGroupId"], placement["dayOfWeek"]), [{} for _ in range(count)])
         for period in range(count):
@@ -113,6 +157,9 @@ def classes_in_parts(request: dict[str, Any]) -> int:
                 )),
                 tuple(sorted(
                     (day, pins[period].get(0)) for (name, day), pins in placed.items() if name == group
+                )),
+                tuple(sorted(
+                    (day, merged(per_period[period])) for (name, day), per_period in taken.items() if name == group
                 )),
             )
     return sum(1 for group in eating if len({reading[group][period] for period in range(count)}) > 1)
@@ -169,7 +216,7 @@ def main() -> int:
             seen += 1
             differing = sorted(build for build in set(before) | set(after) if before.get(build) != after.get(build))
             # What the PAYLOAD says (classes_in_parts), and what the engine did with it (`recorded`).
-            by_starts = classes_in_parts(request) > 0
+            by_starts = classes_in_parts(request, slot_minutes=int(record["settings"].get("SLOT_MINUTES", 5))) > 0
             by_engine = any(count > 0 for count in recorded)
             if by_starts and not by_engine:
                 missed += 1

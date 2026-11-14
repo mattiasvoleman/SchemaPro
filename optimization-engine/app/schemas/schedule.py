@@ -111,6 +111,27 @@ class CamelModel(BaseModel):
     )
 
 
+class PinnedLesson(CamelModel):
+    """Fästa lektioner: where one lesson of a requirement is held (app/solver/pins.py).
+
+    A lesson the school laid by hand that is still the requirement's own
+    lesson: it keeps its variable, its room choice and every rule a lesson
+    the engine places has, and starts at this weekday and time. With a room
+    it stands in that room; without one the engine chooses it as for any
+    lesson of the requirement.
+
+    `endTime` IS A CHECK, NOT A CHOICE: it is the start plus the length of
+    the lesson at this place in the list, and an entry that says otherwise is
+    a caller that counted the places wrongly — refused rather than a lesson
+    of the wrong length held where the school laid another.
+    """
+
+    day_of_week: DayOfWeek = Field(alias="dayOfWeek")
+    start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+    end_time: str = Field(alias="endTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+    room_id: UUID4 | None = Field(default=None, alias="roomId")
+
+
 class AnonymousRequirement(CamelModel):
     """Anonymized teaching requirement — UUIDs only, no PII."""
 
@@ -286,6 +307,27 @@ class AnonymousRequirement(CamelModel):
     lesson_teacher_ids: list[UUID4 | None] | None = Field(
         default=None, alias="lessonTeacherIds", max_length=40,
     )
+    #: Fästa lektioner: the lessons of the week the school laid by hand, one
+    #: place per lesson in lesson_minutes() order (longest first) — the order
+    #: lessonTeacherIds has, so on a split post place k is the lesson of the
+    #: teacher that list names at k. None is a lesson the engine places.
+    #:
+    #: A PINNED LESSON IS A LESSON OF THE REQUIREMENT, NOT A LOCK. It is
+    #: counted in lessonsPerWeek, comes back in the answer as the
+    #: requirement's other lessons do, and is held to every rule they are:
+    #: its frame, its rasts, its teacher's day, the subject's distribution.
+    #: A hand-placed lesson sent as a FixedLesson is none of that (it has no
+    #: requirement, no years and no margins), which is why the two are two
+    #: fields and not one. app/solver/pins.py says what the model holds.
+    #:
+    #: OPTIONAL AND ADDITIVE. Absent is a requirement with nothing pinned,
+    #: which is every requirement until a caller pins one; the key is sent
+    #: only on a requirement with a pinned lesson, so a payload without one
+    #: is byte for byte what it was, builds the model it built, and is
+    #: answered with the bytes it was answered with.
+    pinned_lessons: list[PinnedLesson | None] | None = Field(
+        default=None, alias="pinnedLessons", max_length=40,
+    )
     #: Ersättande grupper: the group whose pupils sit this requirement's
     #: lessons, when not all of studentGroupId's do. SvA7 (svenska som
     #: andraspråk) REPLACES 7A's svenska for its members, so 7A's svenska is
@@ -413,6 +455,36 @@ class AnonymousRequirement(CamelModel):
         if len(set(teachers)) < 2:
             msg = "lessonTeacherIds must name two different leads; one lead is teacherId alone."
             raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_pinned_lessons(self) -> AnonymousRequirement:
+        """One place per lesson, something pinned, and each pin as long as its lesson.
+
+        ONE REPRESENTATION PER MEANING, as the lists above have: nothing
+        pinned is the field left out. The length is the one check that a
+        caller's places are the engine's (lesson_minutes(), longest first);
+        whether the school's week can hold the pin is the solver's to say, by
+        name (pins.verify_pins).
+        """
+        pins = self.pinned_lessons
+        if pins is None:
+            return self
+        if len(pins) != self.lessons_per_week:
+            msg = "pinnedLessons must hold exactly lessonsPerWeek places."
+            raise ValueError(msg)
+        if all(pin is None for pin in pins):
+            msg = "pinnedLessons must pin a lesson; nothing pinned is the field left out."
+            raise ValueError(msg)
+        for pin, minutes in zip(pins, self.lesson_minutes()):
+            if pin is None:
+                continue
+            start, end = (
+                int(value[:2]) * 60 + int(value[3:5]) for value in (pin.start_time, pin.end_time)
+            )
+            if end - start != minutes:
+                msg = "a pinned lesson's endTime must be its startTime plus the length of the lesson at its place."
+                raise ValueError(msg)
         return self
 
     def lesson_minutes(self) -> tuple[int, ...]:
