@@ -457,11 +457,16 @@ export function storedLunchesOf(value: unknown): AiEngineLunch[] | null {
     ) {
       return null;
     }
+    const periods = lunch['periods'];
+    if (periods !== undefined && !(Array.isArray(periods) && periods.every((held) => typeof held === 'boolean'))) {
+      return null;
+    }
     lunches.push({
       studentGroupId: lunch['studentGroupId'],
       dayOfWeek: day as DayOfWeek,
       startTime: lunch['startTime'],
       endTime: lunch['endTime'],
+      ...(periods !== undefined ? { periods: periods as boolean[] } : {}),
     });
   }
   return lunches;
@@ -478,13 +483,19 @@ function lessonsForStorage(lessons: readonly CandidateLesson[]): CandidateLesson
   }));
 }
 
-/** The sittings as they are stored: a class, a day, a clock. */
+/**
+ * The sittings as they are stored: a class, a day, a clock, and, for a class
+ * that eats at several times in a day (lunchPerPeriod), the periods each is
+ * for. Without the mask an apply would write two meals of one day as two
+ * rows of the whole läsår, which the table refuses.
+ */
 function lunchesForStorage(lunches: readonly AiEngineLunch[]): AiEngineLunch[] {
   return lunches.map((lunch) => ({
     studentGroupId: lunch.studentGroupId,
     dayOfWeek: lunch.dayOfWeek,
     startTime: lunch.startTime,
     endTime: lunch.endTime,
+    ...(lunch.periods !== undefined ? { periods: [...lunch.periods] } : {}),
   }));
 }
 

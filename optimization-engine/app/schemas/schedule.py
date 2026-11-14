@@ -1666,6 +1666,19 @@ class OptimizeScheduleRequest(CamelModel):
         default=None, alias="periodWeeks", min_length=2, max_length=MAX_PERIODS,
     )
 
+    #: Klassens måltid per del av läsåret (20270209090000): plan a class's
+    #: meal in each part of the year its locked lessons tell apart, instead of
+    #: one time all year. A part is a set of periods whose locks and placed
+    #: meals are the same (scheduler_solver._lunch_parts); a class whose parts
+    #: are all alike has the one meal it always had, and answers exactly as
+    #: before. The gateway sends it only when the year has periods and the
+    #: school has lunch, and an engine that does not know the field refuses
+    #: the request as an unknown one, which the gateway reads as "the engine
+    #: is not updated yet" and never retries without it: a response with
+    #: several meals for one class and day is one an older gateway could not
+    #: write. Needs `periodWeeks`.
+    lunch_per_period: bool = Field(default=False, alias="lunchPerPeriod")
+
     @field_validator("group_conflicts")
     @classmethod
     def drop_self_pairs(
@@ -1730,6 +1743,7 @@ class OptimizeScheduleRequest(CamelModel):
                 *self.requirements,
                 *self.fixed_lessons,
                 *(self.placements.requirements if self.placements is not None else ()),
+                *self.lunch_placements,
             )
             if entry.periods is not None
         ]
@@ -1745,6 +1759,14 @@ class OptimizeScheduleRequest(CamelModel):
             raise ValueError(msg)
         if self.period_weeks is not None and lengths != {len(self.period_weeks)}:
             msg = "periodWeeks must be as long as the periods masks, and needs one."
+            raise ValueError(msg)
+        if self.lunch_per_period and self.period_weeks is None:
+            msg = "lunchPerPeriod needs periodWeeks: a meal per period has no meaning in a year with none."
+            raise ValueError(msg)
+        if not self.lunch_per_period and any(
+            placement.periods is not None for placement in self.lunch_placements
+        ):
+            msg = "a lunchPlacements periods mask needs lunchPerPeriod."
             raise ValueError(msg)
         return self
 
@@ -1827,6 +1849,21 @@ class LunchPlacement(CamelModel):
     student_group_id: UUID4 = Field(alias="studentGroupId")
     day_of_week: DayOfWeek = Field(alias="dayOfWeek")
     start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+    #: The periods of the year this meal is placed for, as AnonymousRequirement.
+    #: periods says them and with the same length: a class may eat at one time
+    #: in the autumn and another in the spring, and the school places each by
+    #: its own weeks. Absent is every period, today's reading exactly. Only
+    #: with `lunchPerPeriod` (OptimizeScheduleRequest.validate_lunch_per_period):
+    #: a meal for some periods that an engine read as every week would be
+    #: pinned where the school did not put it.
+    periods: tuple[bool, ...] | None = Field(
+        default=None, min_length=2, max_length=MAX_PERIODS,
+    )
+
+    @field_validator("periods")
+    @classmethod
+    def validate_periods(cls, value: tuple[bool, ...] | None) -> tuple[bool, ...] | None:
+        return _checked_periods(value)
 
 
 class LunchServing(CamelModel):
@@ -1946,6 +1983,16 @@ class ScheduledLunch(CamelModel):
     day_of_week: DayOfWeek = Field(alias="dayOfWeek")
     start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
     end_time: str = Field(alias="endTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+    #: The periods this meal is the class's in, as a mask over the request's
+    #: periods: set only when the class eats at more than one time that day
+    #: (a request with `lunchPerPeriod` whose locked lessons differ between
+    #: periods), and then on every one of the class's meals that day, the masks
+    #: disjoint and together every period. OMITTED WHEREVER IT IS NONE: a class
+    #: that eats at one time all year, and every response to a request without
+    #: the flag, is the bytes it always was.
+    periods: tuple[bool, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
 
 class ConflictDetail(CamelModel):

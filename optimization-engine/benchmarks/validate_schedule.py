@@ -1277,6 +1277,83 @@ def _validate_week(grid, request, lessons, classes=None) -> list[str]:
     return problems
 
 
+def lunch_problems(grid, request, lessons, lunches) -> list[str]:
+    """The meals of a response, read in each real week of the request (klassens måltid per del).
+
+    Shares no code with the engine and trusts nothing of how the solver read
+    the year: for every period of the request and every class that eats, the
+    meals whose `periods` mask holds the period are exactly one a day, lie
+    inside the lunch window, keep clear of every lesson and lock of the class
+    that runs in the period (either parity, as the meal is one for both), and
+    never seat more pupils at once than the hall has. `validate` asks the
+    year's existence question (a free half hour somewhere); this asks of the
+    MEALS THE ANSWER CHOSE, which is what a school reads off the calendar.
+    """
+    rules = request.rules
+    if rules is None or not (rules.lunch_start_time and rules.lunch_end_time and rules.lunch_minutes):
+        return []
+    problems: list[str] = []
+    lo, hi = _clock(rules.lunch_start_time), _clock(rules.lunch_end_time)
+    need = rules.lunch_minutes
+    requirement_of = {r.id: r for r in request.requirements}
+    eating = (
+        {group.id: group.lunch_headcount for group in request.groups}
+        if request.groups
+        else {r.student_group_id: 0 for r in request.requirements}
+    )
+    periods = len(request.period_weeks) if request.period_weeks else 1
+    for period in range(periods):
+        def runs(entry, period=period) -> bool:
+            return entry.periods is None or entry.periods[period]
+
+        spans: dict[tuple, list[tuple[int, int]]] = defaultdict(list)
+        for lesson in lessons:
+            requirement = requirement_of.get(lesson.requirement_id)
+            if requirement is None or not runs(requirement):
+                continue
+            start = _clock(lesson.start_time)
+            end = _clock(lesson.end_time) if lesson.end_time else start + requirement.minutes_per_lesson
+            spans[(requirement.student_group_id, lesson.day_of_week)].append((start, end))
+        for fixed in request.fixed_lessons:
+            if runs(fixed):
+                spans[(fixed.student_group_id, fixed.day_of_week)].append(
+                    (_clock(fixed.start_time), _clock(fixed.end_time)))
+        seated: dict[tuple, list[tuple[int, int, int]]] = defaultdict(list)
+        for group_id, headcount in eating.items():
+            for day in grid.schedule_days:
+                meals = [
+                    lunch for lunch in lunches
+                    if lunch.student_group_id == group_id and lunch.day_of_week == day
+                    and (lunch.periods is None or lunch.periods[period])
+                ]
+                where = f"group {group_id}, {day}, period {period}"
+                if len(meals) != 1:
+                    problems.append(f"{where}: {len(meals)} meals")
+                    continue
+                start, end = _clock(meals[0].start_time), _clock(meals[0].end_time)
+                if end - start != need or start < lo or end > hi:
+                    problems.append(f"{where}: meal {meals[0].start_time}-{meals[0].end_time} is not {need} minutes inside {lo}-{hi}")
+                for lesson_start, lesson_end in spans[(group_id, day)]:
+                    if start < lesson_end and lesson_start < end:
+                        problems.append(f"{where}: meal {meals[0].start_time}-{meals[0].end_time} overlaps a lesson or lock {lesson_start}-{lesson_end}")
+                seated[day].append((start, end, headcount))
+        if rules.dining_seats is not None:
+            for day, rows in seated.items():
+                for minute in range(lo, hi):
+                    held = sum(count for start, end, count in rows if start <= minute < end)
+                    if held > rules.dining_seats:
+                        problems.append(f"{day}, period {period}: {held} pupils eat at minute {minute}, the hall has {rules.dining_seats}")
+                        break
+    # The masks of one class and day are disjoint and together every period.
+    by_day: dict[tuple, list] = defaultdict(list)
+    for lunch in lunches:
+        by_day[(lunch.student_group_id, lunch.day_of_week)].append(lunch)
+    for (group_id, day), rows in by_day.items():
+        if len(rows) > 1 and any(row.periods is None for row in rows):
+            problems.append(f"group {group_id}, {day}: several meals and one of them has no mask")
+    return problems
+
+
 def main() -> int:
     from app.config import Settings
     from app.solver.scheduler_solver import SchedulerSolver

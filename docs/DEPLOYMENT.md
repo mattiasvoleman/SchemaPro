@@ -5060,41 +5060,36 @@ more strictly than the real weeks:
   (`PART_LIMIT`, `ROW_LIMIT`, `optimization-engine/app/solver/weeks.py`). A
   teacher's or a class's own rows are always cut exactly.
 
-**One of these refuses a timetable that exists, and is a known limit: a
-class's meal** (the review of #300, 2026-11-12; the reading `main` already
-had). It is one start a day all year: `lunches` in the answer has no period,
-and `LunchSittings` holds one row per class and weekday of a läsår. A class
-lock 11:00–11:30 in the autumn and one 11:30–12:00 in the spring, in a
-window 11:00–12:00 for 30 minutes: each term has a break, and Generera
-answers 400 `LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK` ("Låsta lektioner lämnar
-klassen … ingen lunchlucka"). It never lays a timetable that breaks a rule.
-A förlagd post is a lock to the engine, so a post förlagd in the autumn and
-one in the spring, in the same class's lunch window on the same weekday, is
-the same case: the week is refused with each förläggning named and this
-sentence beneath them.
+**One of these refused a timetable that exists: a class's meal** (the review
+of #300, 2026-11-12; the reading `main` already had), until 19.7. The meal was
+one start a day all year: `lunches` in the answer had no period, and
+`LunchSittings` held one row per class and weekday of a läsår. A class lock
+11:00–11:30 in the autumn and one 11:30–12:00 in the spring, in a window
+11:00–12:00 for 30 minutes: each term has a break, and Generera answered 400
+`LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK` ("Låsta lektioner lämnar klassen …
+ingen lunchlucka"). A förlagd post is a lock to the engine, so a post förlagd
+in the autumn and one in the spring, in the same class's lunch window on the
+same weekday, was the same case.
 
-The refusal says what it is. When no one period's locks close the window
-alone, the engine names the periods whose locks take a start of it, in
-parts (`lockPeriods`, "0,1,2,3;4,5": periods whose locks take the same
-starts have commas between them, the parts semicolons, and the first two
-parts are two that close the window between them). A läsår has more periods
-than terms, since every dated post cuts it, so the autumn's lock is in
-several. The gateway reads each part's periods as one run of weeks and adds
-the days of the first two parts (`lockFrom`, `lockTo`, `otherLockFrom`,
-`otherLockTo`, and `lockWeeksElsewhere` for the stretches not written out),
-and the line under the sentence reads: "De låsta lektionerna som tillsammans stänger
-lunchfönstret ligger i olika delar av läsåret: veckorna 17 augusti 2026 –
-20 december 2026 och veckorna 11 januari 2027 – 11 juni 2027. Klassens lunch
-är en och samma tid hela läsåret och måste därför gå fri från låsta
-lektioner i varje del av det." The same code and the same values as before,
-with those beside them; a refusal that one period's locks cause alone
-carries none of them and reads exactly as it did. The way round: move or
-unlock one of the locks.
+That is the reading of a request **without `lunchPerPeriod`** (an engine and a
+gateway that predate 19.7, or a school with no periods or no lunch), and it
+is still exact: the refusal names the periods whose locks take a start of the
+window, in parts (`lockPeriods`, "0,1,2,3;4,5": periods whose locks take the
+same starts have commas between them, the parts semicolons, and the first
+two parts are two that close the window between them), and the gateway reads
+each part's periods as one run of weeks and adds the days of the first two
+parts (`lockFrom`, `lockTo`, `otherLockFrom`, `otherLockTo`, and
+`lockWeeksElsewhere` for the stretches not written out). The way round, then,
+was to move or unlock one of the locks.
+
+With `lunchPerPeriod` (19.7) the meal is planned per part of the year, and the
+refusal is a period's own: it carries `period` (and `periods`, when the weeks
+counted lie in several) and never `lockPeriods`, because it is raised only
+when one period's locks close the window alone.
 
 A meal per period needs dates on `LunchSittings` and
 `PublishedLunchSittings`, an exclusion constraint in place of the unique key,
-and every reader of the tables. The tables and the readers are 19.6; the
-generator does not plan a meal per period yet, so the limit stands.
+and every reader of the tables (19.6), and a planner that lays one (19.7).
 
 ### 19.4 Operations
 
@@ -5171,9 +5166,8 @@ the candidate basis reads it.
 
 The first release of a class's meal per part of the läsår: the tables and
 every reader of them. **Nothing writes a date yet**, so no school sees a
-difference, and the limit in 19.3 stands (the generator still plans one meal
-a day all year). A later release lets Generera lay one meal per part and the
-school date a meal by hand.
+difference. 19.7 lets Generera lay one meal per part; a school dating a meal by
+hand comes after it.
 
 **The migration** `20270209090000_klassens_maltid_har_ett_datum`
 (sha256 `14e0064464ef922dcc5037c38efbdaed81a160b88a6fca27454a456e3bd26b56`).
@@ -5261,6 +5255,93 @@ CHECK), the snapshot's, what each role reads and writes, and the cascades; the
 *Meal per term probe* in CI runs the oracle over the calendar date by date,
 the snapshot, the placement and its race, and the board's reader.
 
+### 19.7 The generator plans a class's meal per part of the läsår
+
+The second release of "Klassens måltid per del av läsåret": Generera lays one
+meal for each part of the year its class's locked lessons tell apart, and
+writes the answer as the dated rows 19.6 made room for. There is **no
+migration**: the tables are 19.6's, and a school that never gets a second
+meal in a day writes exactly the rows it wrote.
+
+**The request.** The gateway sends `lunchPerPeriod: true` beside `periodWeeks`
+when the läsår is cut into periods (a dated post or lock, 19.1) and the school
+has a lunch rule; nothing otherwise, so every school without a dated post, and
+every school without a lunch rule, sends the payload it always sent, byte for
+byte. A hand-placed meal is still a pin on every period (no meal can be dated
+by hand yet). The engine answers each meal with `periods`, a mask over the same
+periods a post's mask is over, **only on a class and day whose meals differ**:
+a class whose parts come to eat at one time is answered with the one meal and no
+mask, as before.
+
+**What a part is.** A group of periods in which the class's meal is held the
+same way: its locked lessons (a förlagd post is one) leave it the same STARTS
+on every day (the starts of the lunch window that remain, not the lessons: a
+lock that runs to 12:30 and one that runs to 12:15 leave a window ending at
+12:00 the same starts) and the same meals are placed in them. **A school with a
+dining hall too small for every class at once cuts all its classes by the
+locks of all of them**: the hall is one resource the meals share, so a class
+with no lock of its own can need one time in the autumn and another in the
+spring because another class's locks leave the hall no other way to seat both
+(without this the school was refused though a timetable existed). A hall that
+seats the whole school at once couples nothing. A lesson that is not locked
+cuts nothing: it is laid once and keeps clear of the meal in every week it
+runs. Parts are cut per period, never per parity (the meal is one for the odd
+weeks and the even weeks of a period, as a teacher's own lunch is, 19.3), and
+never joined: a class whose locks are alike in every period is one part and
+builds the model it built. The model has one start per part and day, the
+class's and the pupils' no-overlap rows read only the weeks of the part, the
+dining hall is counted in each real week, and a soft term (the weight of the
+drift between days) makes the parts eat alike where the locks allow, so a meal
+is split only where a lock forces it. The raster read the meal of every part
+(never a rast before a meal in some week); the pupils' håltimmar are measured
+after the class's first part (a known approximation: only a class with several
+parts and a cohort measured after its meal sees it).
+
+**The answer as rows** (`src/optimization/lunch-parts.ts`). A mask is written
+as one row for each run of neighbouring weeks of its periods (`YearPeriods.
+stretches`), the läsår's own first and last day as NULL, never as the Saturday
+a läsår may start on (the CHECKs want a Monday and a Sunday). The solver's rows
+(`isGenerated`) are replaced as before and a hand-placed row is kept. An answer
+whose masks are not a partition of the periods (a period with no meal or two, a
+mask on a lone meal, a mask in a year without periods) is not written at all:
+502 `ENGINE_MEALS_INCONSISTENT`, and the transaction rolls back. A
+schemaförslag keeps the mask with its meals (`lunches` in the stored candidate),
+so an apply writes the same rows.
+
+**Deploy order** is 19.1's: the engine first, then the API. An engine that
+predates the field refuses `lunchPerPeriod` as an unknown one, which the
+gateway reads as 503 `ENGINE_LACKS_PERIODS` ("Försök igen om några minuter"),
+the same as a post's mask it does not know: never sent again without it, since
+a year laid without it would be the stricter, refused one, unsaid. **Only
+schools with dated posts or locks and a lunch rule are touched.**
+
+**Schemaförslag go stale once.** The key is in the candidate basis (the rules
+part) of exactly those schools, so a schemaförslag solved before the release
+reads as stale after it, as in 19.5, and is solved again. Every other school's
+basis hashes what it did.
+
+**Rolling back** is 19.2's. The gateway alone is safe (the older gateway sends
+no `lunchPerPeriod`, and the engine plans one meal a day all year again: the
+refusal of 19.3 is back, and the rows already written stay readable, since 19.6
+reads them). The engine alone, past this release, fails the runs that carry the
+field with the 503 above.
+
+**Tests.** `optimization-engine/tests/test_lunch_parts.py` (the contract, the
+year the old reading refused, the identity of a class whose locks are alike, the
+period's own refusal, pins by period, the hall counted per week and coupling the
+classes, the validator that checks the answer's meals in every real week:
+`benchmarks/validate_schedule.py`), `src/optimization/lunch-parts.spec.ts` (the
+rows of a mask), `optimization-proxy.service.spec.ts` (from the periods the
+fetch read, through an engine answer with masks, to the rows: in Generera and in
+the apply of a schemaförslag), `schedule-candidates.service.spec.ts` (a stored
+meal keeps its mask) and `ai-engine-contract.spec.ts` (the key). **No CI job
+runs the real engine through Generera**: the *Meal per term probe* (19.6) reads
+the calendar over rows it plants itself and calls no engine. The whole path (a
+real engine, a real Postgres, Generera, the calendar read date by date) was run
+by hand before the release and is not re-run by CI; the engine's own answer is
+checked in every real week by `benchmarks/validate_schedule.lunch_problems`
+inside `test_lunch_parts.py`, and `benchmarks/lunch_flag_identity.py` measures
+that a request whose classes' starts are alike builds the model it built.
 
 ## 20. An administrator who teaches ("Administratör som undervisar", `Users.teaches`)
 

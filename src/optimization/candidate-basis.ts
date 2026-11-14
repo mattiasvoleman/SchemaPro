@@ -69,6 +69,7 @@ export const BASIS_PAYLOAD_FIELDS = [
   'frameTimes',
   'groupConflicts',
   'groups',
+  'lunchPerPeriod',
   'lunchPlacements',
   'lunchServings',
   'periodWeeks',
@@ -170,6 +171,7 @@ export type BasisPayload = Pick<
   | 'frameTimes'
   | 'lunchServings'
   | 'lunchPlacements'
+  | 'lunchPerPeriod'
   | 'rasts'
   | 'roomPreferences'
   | 'teacherWorkRules'
@@ -506,6 +508,12 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
       // Elevernas håltimmar: the switch, as the walk's is, present only when
       // the cohorts were sent. Their content is the rosters' part's.
       ...(payload.pupilGaps !== undefined ? { keepsPupilGapsDown: true } : {}),
+      // Klassens måltid per del av läsåret: the switch the gateway sends when
+      // the year has periods and the school a lunch rule. A run solved with
+      // one meal all year and applied beside a year that plans one per part
+      // (or the other way) answers another question, so it reads as stale,
+      // once, when the key first appears. Present only when sent.
+      ...(payload.lunchPerPeriod === true ? { plansMealPerPeriod: true } : {}),
       // Placeringsregler: the rules the school turned on, the subjects of rule
       // 1 in real ids. A rule turned on, off or changed after a run makes that
       // run stale, which is the truth: it was solved under other rules. Present
