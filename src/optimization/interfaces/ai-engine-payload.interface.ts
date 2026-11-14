@@ -184,15 +184,6 @@ export interface AnonymousRequirement {
 }
 
 /**
- * A group the week concerns, and how many children it brings to lunch.
- *
- * Zero for a teaching group: its students eat with their home class, and
- * counting them again would fill the hall twice over with the same children.
- * Sent as its own list rather than as a field on each requirement, because a
- * class whose lessons are all placed by hand has no requirement left — and it
- * still eats.
- */
-/**
  * One pinned lesson (AnonymousRequirement.pinnedLessons): the weekday and the
  * clock it is held at, and its room when the school chose one. Without a
  * room the engine chooses it as for any lesson of the post. `endTime` is the
@@ -208,6 +199,15 @@ export interface AnonymousPinnedLesson {
   roomId?: string;
 }
 
+/**
+ * A group the week concerns, and how many children it brings to lunch.
+ *
+ * Zero for a teaching group: its students eat with their home class, and
+ * counting them again would fill the hall twice over with the same children.
+ * Sent as its own list rather than as a field on each requirement, because a
+ * class whose lessons are all placed by hand has no requirement left — and it
+ * still eats.
+ */
 export interface AnonymousGroup {
   id: string;
   lunchHeadcount: number;

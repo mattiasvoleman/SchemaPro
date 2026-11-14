@@ -32,6 +32,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from ortools.sat.python import cp_model
 from pydantic import ValidationError
 
 from app.config import Settings
@@ -47,7 +48,7 @@ BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
 if str(BENCHMARKS) not in sys.path:
     sys.path.insert(0, str(BENCHMARKS))
 
-from validate_schedule import validate  # noqa: E402
+from validate_schedule import _pin_problems, validate  # noqa: E402
 
 #: 08:00-12:00, Monday to Friday.
 SHORT_DAY = {"SCHEDULE_DAY_END_MINUTES": 720}
@@ -342,6 +343,27 @@ class TestTheModel:
         assert (2, "08:05") in _starts(response, MATTE)
         assert _problems(payload, response) == []
 
+    def test_a_pin_the_grid_cannot_read_is_the_step_of_one(self) -> None:
+        """As every other source of the step has it: the pin is refused by name before any model is built."""
+        payload = _payload({MATTE: [{**_pin(2, "09:00"), "startTime": "07:00:00", "endTime": "08:00:00"}, None, None]})
+        assert _start_step(_request(payload), SchedulerSolver(_settings())._grid) == 1
+        with pytest.raises(InvalidScheduleInputError) as refused:
+            _solve(payload)
+        assert refused.value.code == "PLACED_LESSON_OUTSIDE_THE_WEEK"
+
+    def test_every_pin_feeds_the_step_and_not_the_first_one(self) -> None:
+        """08:00 on Monday and 09:20 on Tuesday: a step read off the first alone never reaches the second.
+
+        The week would then be refused with the second pin named as in the
+        way, though the timetable exists.
+        """
+        payload = _payload({MATTE: [_pin(1, "08:00"), _pin(2, "09:20"), None]})
+        assert _start_step(_request(payload), SchedulerSolver(_settings())._grid) == 4
+        response = _solve(payload)
+        assert response.status in ("OPTIMAL", "FEASIBLE")
+        assert {(1, "08:00"), (2, "09:20")} <= _starts(response, MATTE)
+        assert _problems(payload, response) == []
+
     def test_a_place_on_a_split_post_is_its_teachers_lesson(self) -> None:
         payload = _payload(
             {MATTE: [None, None, _pin(4, "10:00")]},
@@ -560,6 +582,47 @@ class TestTheRefusalBeforeTheModel:
         ))
         assert refusal.code == "PLACED_LESSONS_OF_BLOCK_DIFFER"
 
+    def test_a_block_is_read_at_every_place_and_not_the_first(self) -> None:
+        """Place 0 pinned nowhere, place 1 on Tuesday in one member and on Wednesday in the other."""
+        block = str(uuid4())
+        posts = {MATTE: {"blockId": block}, MATTE_B: {"blockId": block, "teacherId": BERTIL}}
+        refusal = self._refused(_payload(
+            {MATTE: [None, _pin(2, "09:00"), None], MATTE_B: [None, _pin(3, "09:00"), None]}, posts=posts,
+        ))
+        assert refusal.code == "PLACED_LESSONS_OF_BLOCK_DIFFER"
+
+    def test_a_pins_own_refusal_is_not_asked_again_with_the_förläggningar_released(self) -> None:
+        """A request with förlagda locks AND a pin its frame refuses: the answer is the pin's own refusal.
+
+        A refusal before the model is asked once more with every förläggning
+        released, to say whether they were what stood in the way
+        (_refusal_with_placements_named). A pinned lesson's own refusal names
+        its lesson already, and that question would bury the one under all of
+        them.
+        """
+        lock = str(uuid4())
+        payload = _payload(
+            {MATTE: [_pin(3, "08:00"), None, None]},
+            frameTimes=[{"minGradeLevel": 7, "maxGradeLevel": 7, "startTime": "09:00:00", "endTime": "11:00:00"}],
+            fixedLessons=[{
+                "id": lock, "teacherId": TOVE, "studentGroupId": CLASS_7B, "roomId": R1,
+                "dayOfWeek": 5, "startTime": "10:00:00", "endTime": "11:00:00",
+            }],
+        )
+        requirements: list[dict[str, object]] = payload["requirements"]  # type: ignore[assignment]
+        whole = next(requirement for requirement in requirements if requirement["id"] == MATTE_B)
+        payload["requirements"] = [
+            {**requirement, "lessonsPerWeek": 2} if requirement["id"] == MATTE_B else requirement
+            for requirement in requirements
+        ]
+        payload["placements"] = {
+            "lessons": [{"fixedLessonId": lock, "requirementId": MATTE_B}],
+            "requirements": [whole],
+        }
+        with pytest.raises(InvalidScheduleInputError) as refused:
+            _solve(payload)
+        assert refused.value.code == "PLACED_LESSON_OUTSIDE_FRAME"
+
 
 class TestTheName:
     def test_two_pins_on_one_hour_of_a_class_are_named_and_the_third_is_not(self) -> None:
@@ -715,6 +778,41 @@ class TestTheName:
         assert codes.count(IN_THE_WAY_ANY_ROOM) == 3
         assert "GROUP_DAILY_MAXIMUM_CANNOT_BE_KEPT" in codes
 
+    def test_a_pinned_week_with_the_walk_is_explained_once_and_on_the_whole_cap(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Restid i generatorn explains with the objective first, on a part of the cap. A pinned week does not.
+
+        A week with the walk is explained on the model with the objective for
+        EXPLAIN_WALK_FIRST_SECONDS, and on the one without it when that proved
+        nothing. A week with a pinned lesson is explained on the model without
+        the objective from the start, so it has the whole cap and no second
+        pass. The explaining solve is stood in for by one that proves nothing,
+        which is when a second pass would be made.
+        """
+        norra, sodra = str(uuid4()), str(uuid4())
+        week = _payload(
+            {MATTE: [_pin(1, "08:00", room=R1), _pin(1, "09:00", room=R2), None]},
+            rooms=[
+                {"id": R1, "capacity": 30, "siteId": norra},
+                {"id": R2, "capacity": 30, "siteId": sodra},
+                {"id": R3, "capacity": 30, "siteId": sodra},
+            ],
+            siteTravelTimes=[{"siteAId": norra, "siteBId": sodra, "minutes": 30}],
+        )
+        asked: list[tuple[str, float]] = []
+
+        def proves_nothing(solver: cp_model.CpSolver, _model: object, *, what: str, **_rest: object) -> object:
+            asked.append((what, solver.parameters.max_time_in_seconds))
+            return cp_model.UNKNOWN
+
+        monkeypatch.setattr(scheduler_solver, "_solve_guarded", proves_nothing)
+        solver = SchedulerSolver(_settings())
+        solver._explain_infeasible(_request(week))
+        cap = min(10.0, SchedulerSolver.EXPLAIN_CAP_SECONDS)
+        assert cap > SchedulerSolver.EXPLAIN_WALK_FIRST_SECONDS
+        assert [entry for entry in asked if entry[0].startswith("the explanation")] == [("the explanation", cap)]
+
     def test_a_week_impossible_without_its_pins_names_none_of_them(self) -> None:
         """Tove's six lessons in the four hours of the one day she is in: no pin is why."""
         response = _solve(_payload(
@@ -777,6 +875,42 @@ class TestTheReleasedWeek:
     def test_a_week_without_pins_has_no_such_probe(self) -> None:
         codes = [code for code, _ in SchedulerSolver(_settings())._timeout_relaxations(_request(_payload()))]
         assert "PROBE_SOLVED_WITH_PLACEMENTS_RELEASED" not in codes
+
+
+class TestTheIndependentCheck:
+    """benchmarks/validate_schedule._pin_problems is the judge of the property tests, so it is judged here.
+
+    One lesson handed to it at a time: in the wrong room, with the wrong end,
+    one lesson for two pins, and the wrong teacher's lesson on a split post.
+    """
+
+    def _lesson(self, requirement: str, **given: object) -> ScheduledLesson:
+        return ScheduledLesson(**{  # type: ignore[arg-type]
+            "requirement_id": requirement, "room_id": R1, "day_of_week": 3,
+            "start_time": "10:00:00", "end_time": "11:00:00", **given,
+        })
+
+    def test_a_lesson_in_another_room_than_the_pins_is_a_problem(self) -> None:
+        request = _request(_payload({MATTE: [None, _pin(3, "10:00", room=R2), None]}))
+        assert _pin_problems(request, [self._lesson(MATTE, room_id=R1)])
+        assert not _pin_problems(request, [self._lesson(MATTE, room_id=R2)])
+
+    def test_a_lesson_that_ends_at_another_minute_is_a_problem(self) -> None:
+        request = _request(_payload({MATTE: [None, _pin(3, "10:00"), None]}))
+        assert _pin_problems(request, [self._lesson(MATTE, end_time="10:50:00")])
+        assert not _pin_problems(request, [self._lesson(MATTE)])
+
+    def test_one_lesson_does_not_answer_two_pins(self) -> None:
+        request = _request(_payload({MATTE: [_pin(3, "10:00"), _pin(3, "10:00"), None]}))
+        assert _pin_problems(request, [self._lesson(MATTE)])
+        assert not _pin_problems(request, [self._lesson(MATTE), self._lesson(MATTE, room_id=R2)])
+
+    def test_a_place_on_a_split_post_is_held_to_its_teacher(self) -> None:
+        request = _request(_payload(
+            {MATTE: [None, _pin(3, "10:00"), None]}, posts={MATTE: {"lessonTeacherIds": [TOVE, BERTIL, TOVE]}},
+        ))
+        assert _pin_problems(request, [self._lesson(MATTE, teacher_id=TOVE)])
+        assert not _pin_problems(request, [self._lesson(MATTE, teacher_id=BERTIL)])
 
 
 # ---------------------------------------------------------------------------

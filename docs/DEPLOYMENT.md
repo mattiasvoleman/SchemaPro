@@ -5338,3 +5338,18 @@ A pinned lesson never gives way, in Bästa möjliga schema either.
   every thirty minutes down to every five, as a lesson locked at 08:05 does.
 - **A pinned room is a room class of its own**, as a locked lesson's room is,
   and costs the model what that costs.
+- **What pinned lessons cost the search.** Measured in paired runs under the
+  same load, as the time to a first timetable of the satisfaction model. On
+  the högstadium benchmark (423 lessons, two workers): 7.1 s without a pinned
+  lesson, 20 s with 20 of which 10 name a room, 16.6 s with 200 of which 100
+  name a room. On the 250-pupil benchmark (four workers): 3.1 s without,
+  4.7 s with 12, 8.5 s with 120 of which 60 name a room, and 3.6 s with the
+  same 120 and no room named. So a pinned lesson that names its room makes
+  the first timetable 1.5 to 3 times as dear, and one that leaves the room to
+  the engine about 1.2 times: the cost is the room's class of its own, not
+  the pin. It is the cost a locked lesson's room has, and the same lessons
+  sent as locks build a model 4 to 13 times as large (20 lessons: 31,822
+  variables as locks, 8,237 as pinned lessons; 200 lessons: 133,036 and
+  10,487). Not measured on the 2,000-pupil benchmark, where a first timetable
+  takes minutes and a factor of two to three is felt in the budget: that is
+  measured with the change that first sends the field.
