@@ -5738,7 +5738,7 @@
     "reverseReinstate": "{count, plural, one {# lesson is restored} other {# lessons are restored}}.",
     "reverseRoomTaken": "{count, plural, one {# lesson stays cancelled} other {# lessons stay cancelled}}, because the room was booked or given another lesson meanwhile:",
     "reverseTemplateMoved": "{count, plural, one {# lesson is removed} other {# lessons are removed}}, because the timetable has moved the lesson since the cancellation and the week already has it where it runs now:",
-    "reverseRelocated": "{count, plural, one {# lesson moves} other {# lessons move}} to its new time that week, because the timetable has moved the lesson since the cancellation and the week does not have it there:",
+    "reverseRelocated": "{count, plural, one {# lesson moves to its new time} other {# lessons move to their new time}} that week, because the timetable has moved the lesson since the cancellation and the week does not have it there:",
     "takenBy": {
       "LESSON": "another lesson",
       "BOOKING": "a room booking"
@@ -5897,7 +5897,7 @@
     "removeCredits": "{count, plural, one {# credit is removed} other {# credits are removed}}.",
     "removeRoomTaken": "{count, plural, one {# lesson stays cancelled} other {# lessons stay cancelled}}, because the room has been booked or given another lesson meanwhile:",
     "removeTemplateMoved": "{count, plural, one {# lesson is deleted} other {# lessons are deleted}}, because the schedule has moved the lesson since the activity and the week already has it where it is now:",
-    "removeRelocated": "{count, plural, one {# lesson moves} other {# lessons move}} to its new time that week, because the schedule has moved the lesson since the activity and the week does not have it there:",
+    "removeRelocated": "{count, plural, one {# lesson moves to its new time} other {# lessons move to their new time}} that week, because the schedule has moved the lesson since the activity and the week does not have it there:",
     "takenBy": {
       "LESSON": "another lesson",
       "BOOKING": "a room booking"

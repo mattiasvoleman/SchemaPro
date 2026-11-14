@@ -55,7 +55,8 @@ export function RemoveActivityDialog({
     if (!activity) return;
     try {
       const outcome = await remove.mutateAsync(activity.id);
-      toast.success(t("removed", { count: outcome.reinstate }));
+      // A lesson carried to its new time is back too.
+      toast.success(t("removed", { count: outcome.reinstate + (outcome.relocated?.length ?? 0) }));
       onClose();
     } catch (error) {
       toast.error(errorText(error));

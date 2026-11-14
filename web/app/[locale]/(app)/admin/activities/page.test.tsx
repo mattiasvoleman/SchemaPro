@@ -713,7 +713,8 @@ describe("/admin/activities", () => {
     expect(within(dialog).getByRole("button", { name: "Ta bort aktiviteten" })).toHaveAttribute("data-writes", "DRIFT");
     await user.click(within(dialog).getByRole("button", { name: "Ta bort aktiviteten" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/schedule-activities/a-1/remove"));
-    expect(toast.success).toHaveBeenCalledWith("Aktiviteten togs bort. 58 lektioner är tillbaka.");
+    // The lesson carried to its new time is back too: 58 where they stood, and the one that moved.
+    expect(toast.success).toHaveBeenCalledWith("Aktiviteten togs bort. 59 lektioner är tillbaka.");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 

@@ -241,7 +241,14 @@ describe("/admin/cancellations", () => {
           creditsDeleted: 1,
         };
       }
-      return { reinstate: 330, skippedRoomTaken: [], removedTemplateMoved: [], notReinstatable: 6, creditsDeleted: 1 };
+      return {
+        reinstate: 330,
+        skippedRoomTaken: [],
+        removedTemplateMoved: [],
+        relocated: [{ lessonId: "cl-13", from: "2026-10-21", to: "2026-10-23" }],
+        notReinstatable: 6,
+        creditsDeleted: 1,
+      };
     });
     const user = userEvent.setup();
     renderPage();
@@ -265,6 +272,8 @@ describe("/admin/cancellations", () => {
     expect(dialog).toHaveTextContent("1 tillgodoräknad dag tas bort.");
     await user.click(within(dialog).getByRole("button", { name: "Ta tillbaka" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/cancellation-batches/b-1/reverse"));
+    // The lesson carried to its new time came back too: 330 where they stood and the one that moved, not "330" as if it had not.
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("331 lektioner återställdes."));
     // A batch that sent no digest tells nobody of its reversal, and says nothing about it.
     expect(row).not.toHaveTextContent("Sammanfattning skickad");
   });
