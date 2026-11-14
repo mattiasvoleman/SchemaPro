@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Plus, X } from "lucide-react";
+import { Link } from "@/i18n/navigation";
 import { ApiError } from "@/lib/api";
 import { useRooms } from "@/lib/queries";
 import { isMixed, lengthPartsOf, lessonCountOf } from "@/lib/lesson-lengths";
@@ -730,6 +731,14 @@ function PlacementForm({
         <p>{t("nextGenerate")}</p>
         <p>{t("handMove")}</p>
         <p>{t("neverGivesWay")}</p>
+        <p>
+          <Link
+            href={`/admin/placements?year=${encodeURIComponent(requirement.academicYearId)}&post=${encodeURIComponent(requirement.id)}`}
+            className="underline underline-offset-4"
+          >
+            {t("showInWeek")}
+          </Link>
+        </p>
       </Notice>
 
       <DialogFooter>

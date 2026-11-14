@@ -82,6 +82,8 @@ const QUERY: Record<string, string> = {
   "/admin/reports": "",
   // The active year; ?year= comes from links that pick another.
   "/admin/requirements": "",
+  // The active year; ?post= opens the list on one post, from the link in the Förlägg dialog.
+  "/admin/placements": "",
   "/admin/staffing": "",
   "/admin/timplan/tackning": "",
   // ?guardians= opens one pupil's guardians, from the integration review.

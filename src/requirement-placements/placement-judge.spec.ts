@@ -7,6 +7,7 @@ import { readBoardFacts, type BoardFacts } from '../swaps/board-rules';
 import { CURRENT } from '../year-rollover/projected-rosters';
 import {
   availabilityResourceOf,
+  judgedRowOf,
   judgePlacements,
   type JudgedPlacement,
   type JudgePlacementsInput,
@@ -589,5 +590,47 @@ describe('availabilityResourceOf', () => {
     expect(availabilityResourceOf('The room is unavailable in this slot.')).toBe('ROOM');
     expect(availabilityResourceOf('The student group is unavailable in this slot.')).toBe('GROUP');
     expect(availabilityResourceOf('Something else')).toBe('GROUP');
+  });
+});
+
+describe('judgedRowOf: a row as every judge of one reads it (review of #315, MEDEL-1)', () => {
+  const post = {
+    id: 'req-1',
+    studentGroupId: G7A,
+    subjectId: IDROTT,
+    teacherId: T1,
+    coTeacherId: T2,
+    startDate: new Date('2026-08-24T00:00:00.000Z'),
+    endDate: new Date('2026-12-20T00:00:00.000Z'),
+  };
+  const slot = { dayOfWeek: 3, startMinutes: 600, minutes: 60, roomId: R1, recurrence: 'ODD_WEEKS' as const, teacherId: null };
+
+  it('takes the class, subject, teachers and window from the post and the rest from the slot', () => {
+    expect(judgedRowOf({ ...post, shares: [] }, slot, 'row-1')).toEqual({
+      id: 'row-1',
+      requirementId: 'req-1',
+      studentGroupId: G7A,
+      subjectId: IDROTT,
+      teacherId: T1,
+      coTeacherId: T2,
+      dayOfWeek: 3,
+      startMinutes: 600,
+      minutes: 60,
+      roomId: R1,
+      recurrence: 'ODD_WEEKS',
+      startDate: post.startDate,
+      endDate: post.endDate,
+    });
+  });
+
+  it('is a draft row without an id, and the post\'s teacher is the lesson\'s whoever the slot names, when nothing is shared', () => {
+    expect(judgedRowOf(post, { ...slot, teacherId: 'bo' }).id).toBeNull();
+    expect(judgedRowOf(post, { ...slot, teacherId: 'bo' }).teacherId).toBe(T1);
+  });
+
+  it('takes the row\'s own teacher on a post that shares its lessons', () => {
+    const shared = { ...post, shares: [{ teacherId: 'bo', lessons: 1, minutes: 60 }] };
+    expect(judgedRowOf(shared, { ...slot, teacherId: 'bo' }).teacherId).toBe('bo');
+    expect(judgedRowOf(shared, { ...slot, teacherId: null }).teacherId).toBeNull();
   });
 });

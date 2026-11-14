@@ -1342,6 +1342,22 @@ BEGIN
     (m, 'roller-lasare-hr@example.invalid', 'Roller', 'Läsare HR', 'SCHOOL_ADMIN', 'LASARE', true,  '00000000-0000-4000-8000-000000000116', true, now());
 END $$;
 
+-- The matrix school's eleventh administrator (En administratör som undervisar, 20270212090000): a full administrator
+-- without the mark. Section 116 marks them inside its own transaction (rektor gives the post, then the mark: a mark is
+-- refused without one) and runs them as a principal whose cells must be the full administrator's. Planted without a post
+-- and unmarked, so that no other section meets a second post or a marked person it did not plant. Planted on its own and
+-- only when missing, like the läsare above.
+DO $$
+DECLARE
+  m uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-roller-school');
+BEGIN
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000117') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "hrRead", "authId", "isActive", "updatedAt")
+  VALUES (m, 'roller-full-teaches@example.invalid', 'Roller', 'Full undervisar', 'SCHOOL_ADMIN', 'FULL', false, '00000000-0000-4000-8000-000000000117', true, now());
+END $$;
+
 -- The matrix school's schemabrytande aktivitet (20270101090000, sections
 -- 310–314): the activity that owns the school's 'Roller prao' avbokning, a
 -- lead for its class and the replacement lesson of the day, so section 116
