@@ -97,6 +97,7 @@ from app.solver.pins import (
     PIN_CODES,
     add_pins,
     has_pins,
+    meal_starts_taken_by_pins,
     pinned_room_ids,
     pinned_start_slots,
     pins_of,
@@ -3747,6 +3748,7 @@ class SchedulerSolver:
         window: tuple[int, int, int],
         *,
         coupled: bool = False,
+        taken_by_pins: list[dict[UUID, tuple[object, ...]]] | None = None,
     ) -> dict[UUID, list[tuple[Weeks, dict[tuple[UUID, int], list[tuple[int, int]]], dict[tuple[UUID, int], int]]]]:
         """Klassens måltid per del av läsåret: the parts of the year a class's meal tells apart.
 
@@ -3770,6 +3772,14 @@ class SchedulerSolver:
         the meal in each of them (_post_lunch_rows): it cuts nothing here, so
         a school with ten dated posts has as many parts of the meal as it has
         different ways of being locked, not ten.
+
+        CUT BY A PINNED LESSON, which is a lesson with a known hour as a lock
+        is (`taken_by_pins`, pins.meal_starts_taken_by_pins): the periods are
+        told apart by the meal starts their pinned lessons take as well. Kept
+        beside the locks' starts and never joined with them, because a part
+        carries the locks of ONE of its periods as the part's: a lock in the
+        autumn and a pin on the same hour in the spring are two parts, though
+        they leave the meal the same starts.
 
         PER PERIOD, NEVER PER PARITY, as a teacher's own lunch is
         (whole_periods): the meal is one for the odd weeks and the even ones
@@ -3812,7 +3822,7 @@ class SchedulerSolver:
                 [placement for placement in placements if placement.periods is None or placement.periods[period]],
                 lunch_group_ids,
             ))
-        signatures: dict[UUID, list[tuple[object, object]]] = {group_id: [] for group_id in lunch_group_ids}
+        signatures: dict[UUID, list[tuple[object, ...]]] = {group_id: [] for group_id in lunch_group_ids}
         slots_per_day = self._grid.slots_per_day
         for period in range(periods):
             forbidden_of: dict[UUID, dict[int, tuple[tuple[int, int], ...]]] = defaultdict(dict)
@@ -3830,10 +3840,13 @@ class SchedulerSolver:
             for (group_id, day_index), slot in pins[period].items():
                 pinned_of[group_id][day_index] = slot
             for group_id in lunch_group_ids:
-                signatures[group_id].append((
+                signature: tuple[object, ...] = (
                     tuple(sorted(forbidden_of[group_id].items())),
                     tuple(sorted(pinned_of[group_id].items())),
-                ))
+                )
+                if taken_by_pins is not None:
+                    signature = (*signature, taken_by_pins[period].get(group_id, ()))
+                signatures[group_id].append(signature)
         # What tells two periods apart, for the class itself or, where the hall
         # couples them, for any class: the classes' signatures side by side.
         told_by: dict[UUID, list[object]] = {
@@ -6497,7 +6510,7 @@ class SchedulerSolver:
             lunch_groups * day_count * (len(request.period_weeks) - 1) * 6
             if request.lunch_per_period
             and request.period_weeks
-            and (request.fixed_lessons or request.lunch_placements)
+            and (request.fixed_lessons or request.lunch_placements or has_pins(request))
             else 0
         )
         # The seat rule's entire variable cost, charged whether or not the lunch
@@ -13826,6 +13839,10 @@ class SchedulerSolver:
                     # resource the classes' meals share (_lunch_parts).
                     coupled=seats is not None
                     and sum(headcount_by_group.get(group_id, 0) for group_id in lunch_group_ids) > seats,
+                    taken_by_pins=meal_starts_taken_by_pins(
+                        decisions, self._grid, periods=lunch_periods, eating=set(lunch_group_ids),
+                        shares_students=shares_students, window=(window_start, window_end, lunch_slots),
+                    ),
                 )
                 if lunch_periods > 0
                 else {}

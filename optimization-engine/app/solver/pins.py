@@ -320,6 +320,98 @@ def add_pins(
             ).OnlyEnforceIf(literal)
 
 
+def meal_starts_taken_by_pins(
+    decisions: Iterable[object],
+    grid: TimeGrid,
+    *,
+    periods: int,
+    eating: set[UUID],
+    shares_students: Mapping[UUID, Iterable[UUID]],
+    window: tuple[int, int, int],
+) -> list[dict[UUID, tuple[object, ...]]] | None:
+    """For each period, the meal starts each eating class's pinned lessons take; None when no pin takes one.
+
+    KLASSENS MÅLTID PER DEL AV LÄSÅRET cuts a class's year where its locked
+    lessons hold its meal differently (scheduler_solver._lunch_parts), and
+    leaves it whole for what the class is merely taught: a lesson the engine
+    places stands at one hour and the meal finds the gap beside it. A PINNED
+    LESSON IS A LESSON WITH A KNOWN HOUR, AS A LOCK IS. Two posts pinned across
+    the lunch window, one in the autumn and one in the spring, leave a
+    different gap in each term, and a meal that is one for the year fits
+    neither. So what this returns is one more thing the parts are told apart
+    by.
+
+    IT CUTS, AND IT SUBTRACTS NOTHING. A lock takes its starts out of the
+    meal's domain, because a lock is no interval. A pinned lesson is one: the
+    rows that keep a part's meal clear of the class's lessons hold it
+    (_post_lunch_rows), in the weeks both run, and the pin's own literal is
+    then what a refusal names. A domain cut here would prove the same week
+    impossible without it.
+
+    The window is the one those rows read, pupil_padded_of's: the lesson with
+    the minutes its pupils change before and after it. A class is reached as a
+    lock reaches it: the lesson's own class and every group sharing its pupils.
+    The starts are cut to the ones a meal may take, so a pin that touches no
+    meal start cuts nothing, and two pins that take the same starts are alike
+    wherever they stand.
+    """
+    window_start, window_end, lunch_slots = window
+    earliest, latest = window_start, window_end - lunch_slots
+    taken: list[dict[UUID, dict[int, list[tuple[int, int]]]]] | None = None
+    for decision in decisions:
+        lesson = decision.lesson  # type: ignore[attr-defined]
+        requirement = lesson.requirement
+        held = requirement.pinned_lessons
+        if held is None or held[lesson.lesson_index] is None:
+            continue
+        reached = [
+            group_id
+            for group_id in (
+                requirement.student_group_id,
+                *shares_students.get(requirement.student_group_id, ()),
+            )
+            if group_id in eating
+        ]
+        day_index, start = divmod(
+            slot_of(Pin(requirement, lesson.lesson_index, held[lesson.lesson_index]), grid),
+            grid.slots_per_day,
+        )
+        first = max(start - decision.lead - lunch_slots + 1, earliest)  # type: ignore[attr-defined]
+        last = min(
+            start + decision.duration + decision.trail + decision.changeover - 1,  # type: ignore[attr-defined]
+            latest,
+        )
+        if first > last or not reached:
+            continue
+        if taken is None:
+            taken = [{} for _ in range(periods)]
+        for period in range(periods):
+            if requirement.periods is not None and not requirement.periods[period]:
+                continue
+            for group_id in reached:
+                taken[period].setdefault(group_id, {}).setdefault(day_index, []).append((first, last))
+    if taken is None:
+        return None
+    return [
+        {
+            group_id: tuple(sorted((day_index, _joined(spans)) for day_index, spans in days.items()))
+            for group_id, days in of_period.items()
+        }
+        for of_period in taken
+    ]
+
+
+def _joined(spans: list[tuple[int, int]]) -> tuple[tuple[int, int], ...]:
+    """These inclusive spans of starts as the fewest that say the same, in order."""
+    joined: list[tuple[int, int]] = []
+    for low, high in sorted(spans):
+        if joined and low <= joined[-1][1] + 1:
+            joined[-1] = (joined[-1][0], max(joined[-1][1], high))
+        else:
+            joined.append((low, high))
+    return tuple(joined)
+
+
 def without_pins(request: OptimizeScheduleRequest) -> OptimizeScheduleRequest:
     """The same week with every pinned lesson free to move, or the request itself.
 

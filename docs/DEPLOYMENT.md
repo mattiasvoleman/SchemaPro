@@ -5399,6 +5399,18 @@ it. For a school this is where the two differ:
 - **In a parallel block** a lesson is pinned for every entry of the block or
   for none, at one time (`PLACED_LESSONS_OF_BLOCK_DIFFER`).
 
+**Where the two are alike: the class's meal (19.7).** A pinned lesson cuts a
+class's läsår into parts as a locked lesson does. Two posts pinned across the
+lunch window, one in the autumn and one in the spring, give the class one meal
+in each term, where a single meal for the year has no room in either. What a
+pinned lesson takes from the meal is the lesson with its pupils' changing
+minutes before and after, which a lock does not have, so two terms can differ
+in those minutes alone. Unlike a lock's hour, the pinned lesson's is not taken
+out of the meal's starts before the week is laid: the meal is kept clear of
+it by the rule that keeps it clear of every lesson of the class, so a term
+whose pinned lessons leave the meal no start is refused with those lessons
+named.
+
 A pinned lesson never gives way, in Bästa möjliga schema either.
 
 ### 20.4 Operations

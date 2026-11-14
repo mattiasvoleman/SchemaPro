@@ -16,6 +16,8 @@ names one (app/solver/pins.py). These tests hold what that promise rests on:
    lessons in the way named, and the ones not in the way left out.
 5. THE TWO WAYS. A pinned lesson is stricter than the same lesson sent as a
    lock, never looser: what the pin's way lays, the lock's way lays too.
+6. THE MEAL OF A TERM. Klassens måltid per del av läsåret cuts a class's year
+   where its pinned lessons hold the meal differently, as it does for locks.
 
 THE WEEK. 08:00-12:00, Monday to Friday: four one-hour slots a day. 7A has
 matte with Tove and svenska with Sara, three lessons each; 7B has matte with
@@ -48,7 +50,7 @@ BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
 if str(BENCHMARKS) not in sys.path:
     sys.path.insert(0, str(BENCHMARKS))
 
-from validate_schedule import _pin_problems, validate  # noqa: E402
+from validate_schedule import _pin_problems, lunch_problems, validate  # noqa: E402
 
 #: 08:00-12:00, Monday to Friday.
 SHORT_DAY = {"SCHEDULE_DAY_END_MINUTES": 720}
@@ -192,6 +194,20 @@ def _proto(payload: dict[str, object], *, include_objective: bool) -> bytes:
         return path.read_bytes()
 
 
+#: Klassens måltid: 30 minutes somewhere in 11:00-12:00.
+MEAL = {"lunchStartTime": "11:00:00", "lunchEndTime": "12:00:00", "lunchMinutes": 30}
+AUTUMN, SPRING = [True, False], [False, True]
+
+
+def _lock_of_a_term(group: str, start: str, periods: list[bool], *, minutes: int = 30) -> dict[str, object]:
+    """A locked half hour of a class on Monday, in the periods named."""
+    begins = int(start[:2]) * 60 + int(start[3:])
+    return {
+        "id": str(uuid4()), "studentGroupId": group, "teacherId": str(uuid4()), "dayOfWeek": 1,
+        "startTime": _clock(begins), "endTime": _clock(begins + minutes), "periods": periods,
+    }
+
+
 class TestTheField:
     def test_absent_is_none(self) -> None:
         assert all(r.pinned_lessons is None for r in _request(_payload()).requirements)
@@ -244,16 +260,48 @@ class TestTheField:
 
 class TestTheModel:
     @pytest.mark.parametrize("include_objective", [True, False])
+    @pytest.mark.parametrize("terms", [False, True])
     def test_a_week_without_a_pin_builds_the_model_it_built(
-        self, include_objective: bool, monkeypatch: pytest.MonkeyPatch,
+        self, include_objective: bool, terms: bool, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Every hook this feature has in the solver, taken out: the bytes are the same."""
-        with_hooks = _proto(_payload(), include_objective=include_objective)
+        """Every hook this feature has in the solver, taken out: the bytes are the same.
+
+        `terms` is a year of two terms whose locks cut the class's meal in two
+        (klassens måltid per del av läsåret), where the meal's parts ask the
+        pins what they take.
+        """
+        payload = _payload()
+        if terms:
+            payload = _payload(
+                posts={SVENSKA_B: {"periods": [False, True]}},
+                rules=MEAL, periodWeeks=[20, 20], lunchPerPeriod=True,
+                groups=[
+                    {"id": group, "lunchHeadcount": 20, "minGradeLevel": 7, "maxGradeLevel": 7}
+                    for group in (CLASS_7A, CLASS_7B)
+                ],
+                fixedLessons=[
+                    _lock_of_a_term(CLASS_7A, "11:00", [True, False]),
+                    _lock_of_a_term(CLASS_7A, "11:30", [False, True]),
+                ],
+            )
+        settings = {"SCHEDULE_DAY_END_MINUTES": 780} if terms else {}
+
+        def proto() -> bytes:
+            model, *_ = SchedulerSolver(_settings(**settings))._build_model(
+                _request(payload), use_assumptions=False, include_objective=include_objective,
+            )
+            with tempfile.TemporaryDirectory() as scratch:
+                path = Path(scratch) / "model.pb"
+                assert model.ExportToFile(str(path))
+                return path.read_bytes()
+
+        with_hooks = proto()
         monkeypatch.setattr(scheduler_solver, "add_pins", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(scheduler_solver, "pinned_room_ids", lambda _requirements: set())
         monkeypatch.setattr(scheduler_solver, "pinned_start_slots", lambda *_args: [])
         monkeypatch.setattr(scheduler_solver, "pins_of", lambda _requirements: [])
-        assert _proto(_payload(), include_objective=include_objective) == with_hooks
+        monkeypatch.setattr(scheduler_solver, "meal_starts_taken_by_pins", lambda *_args, **_kwargs: None)
+        assert proto() == with_hooks
 
     def test_a_pinned_lesson_starts_where_it_is_pinned(self) -> None:
         payload = _payload({MATTE: [None, _pin(3, "11:00"), None]})
@@ -1089,3 +1137,226 @@ class TestTheTwoWays:
                 for (post, _place), pin in pins.items()
             ]
             assert validate(SchedulerSolver(_settings())._grid, _request(pinned), [*laid, *held]) != []
+
+
+class TestTheMealOfATerm:
+    """Klassens måltid per del av läsåret, and the lessons a school pinned.
+
+    ONE CLASS, MONDAY, 08:00-13:00, a year of two terms. It eats 30 minutes
+    somewhere in 11:00-12:00 and has two lessons of every week. The posts
+    under test are half an hour each and run one term each.
+
+    With `lunchPerPeriod` a class's year is cut where its LOCKED lessons hold
+    its meal differently, and a class cut so eats at an hour of its own in
+    each part. A pinned lesson is a lesson with a known hour too, so it cuts
+    the same way (pins.meal_starts_taken_by_pins). Read by
+    benchmarks/validate_schedule.lunch_problems, which shares no code with the
+    engine: one meal a day in each period, clear of the class's lessons.
+    """
+
+    GROUP = str(uuid4())
+    ONE_DAY = {"SCHEDULE_DAYS": "1", "SCHEDULE_DAY_END_MINUTES": 780, "SOLVER_PROBE_SECONDS": 0}
+
+    def _post(self, periods: list[bool] | None, pin: dict[str, object] | None, **values: object) -> dict[str, object]:
+        post = _requirement(str(uuid4()), self.GROUP, str(uuid4()), 1, minutesPerLesson=30, **values)
+        if periods is not None:
+            post["periods"] = periods
+        if pin is not None:
+            post["pinnedLessons"] = [pin]
+        return post
+
+    def _year(self, *posts: dict[str, object], locks: list[dict[str, object]] | None = None) -> dict[str, object]:
+        return {
+            "requestId": str(uuid4()),
+            "academicYearId": str(uuid4()),
+            "requirements": [_requirement(str(uuid4()), self.GROUP, str(uuid4()), 2), *posts],
+            "groups": [{"id": self.GROUP, "lunchHeadcount": 20, "minGradeLevel": 7, "maxGradeLevel": 7}],
+            "rooms": [{"id": room, "capacity": 30} for room in (R1, R2, R3)],
+            "rules": MEAL,
+            "fixedLessons": locks or [],
+            "periodWeeks": [20, 20],
+            "lunchPerPeriod": True,
+        }
+
+    def _answer(self, payload: dict[str, object]):
+        return SchedulerSolver(_settings(**self.ONE_DAY)).solve(_request(payload))
+
+    def _meals(self, response) -> list[tuple[str, tuple[bool, ...] | None]]:
+        return sorted(
+            ((lunch.start_time[:5], lunch.periods) for lunch in response.lunches),
+            key=lambda meal: (meal[1] is not None and not meal[1][0], meal[0]),
+        )
+
+    def _read(self, payload: dict[str, object], response) -> list[str]:
+        grid = SchedulerSolver(_settings(**self.ONE_DAY))._grid
+        request = _request(payload)
+        return [
+            *validate(grid, request, response.lessons),
+            *lunch_problems(grid, request, response.lessons, response.lunches),
+        ]
+
+    def test_two_posts_pinned_across_the_meal_one_a_term_get_a_meal_in_each(self) -> None:
+        """11:00-11:30 in the autumn and 11:30-12:00 in the spring: no hour of the year is free, one of each term is."""
+        payload = self._year(
+            self._post(AUTUMN, _pin(1, "11:00", minutes=30)),
+            self._post(SPRING, _pin(1, "11:30", minutes=30)),
+        )
+        response = self._answer(payload)
+        assert response.status in ("OPTIMAL", "FEASIBLE")
+        assert self._meals(response) == [("11:30", (True, False)), ("11:00", (False, True))]
+        assert self._read(payload, response) == []
+
+    def test_the_pinned_year_eats_when_the_locked_year_does(self) -> None:
+        """The same two half hours sent as locks: the meals are the same."""
+        pinned = self._answer(self._year(
+            self._post(AUTUMN, _pin(1, "11:00", minutes=30)),
+            self._post(SPRING, _pin(1, "11:30", minutes=30)),
+        ))
+        locked = self._answer(self._year(
+            self._post(SPRING, None),
+            locks=[
+                _lock_of_a_term(self.GROUP, "11:00", AUTUMN),
+                _lock_of_a_term(self.GROUP, "11:30", SPRING),
+            ],
+        ))
+        assert self._meals(pinned) == self._meals(locked)
+
+    def test_a_post_pinned_in_the_meal_all_year_leaves_the_meal_one(self) -> None:
+        """Every period has the same pin: the year is one part, and the answer has one meal and no mask."""
+        payload = self._year(self._post(None, _pin(1, "11:00", minutes=30)), self._post(SPRING, None))
+        response = self._answer(payload)
+        assert self._meals(response) == [("11:30", None)]
+        assert self._read(payload, response) == []
+
+    def test_pins_that_take_no_meal_start_leave_the_meal_one(self) -> None:
+        """Two posts pinned at different hours of the morning, one a term: nothing of the meal is told apart."""
+        payload = self._year(
+            self._post(AUTUMN, _pin(1, "10:00", minutes=30)),
+            self._post(SPRING, _pin(1, "10:30", minutes=30)),
+        )
+        response = self._answer(payload)
+        assert response.status in ("OPTIMAL", "FEASIBLE")
+        assert [mask for _start, mask in self._meals(response)] == [None]
+        assert self._read(payload, response) == []
+
+    def test_the_minutes_the_pupils_change_cut_the_year_too(self) -> None:
+        """Neither lesson touches the window, their changing does: 20 minutes after one, 20 before the other.
+
+        The autumn's ends 11:00 and its pupils are busy to 11:20; the spring's
+        starts 12:00 and its pupils are busy from 11:40. A meal of the whole
+        year would start at 11:20 or later and end by 11:40. One of each term
+        fits.
+        """
+        payload = self._year(
+            self._post(AUTUMN, _pin(1, "10:30", minutes=30), minutesAfter=20),
+            self._post(SPRING, _pin(1, "12:00", minutes=30), minutesBefore=20),
+        )
+        response = self._answer(payload)
+        assert response.status in ("OPTIMAL", "FEASIBLE")
+        (autumn, autumn_mask), (spring, spring_mask) = self._meals(response)
+        assert (autumn_mask, spring_mask) == ((True, False), (False, True))
+        assert autumn >= "11:20" and spring <= "11:10"
+        assert self._read(payload, response) == []
+
+    def test_a_pin_in_one_term_and_a_lock_on_its_hour_in_the_other_are_two_parts(self) -> None:
+        """Kept apart from the locks' own starts: a part carries the locks of one of its periods as its own.
+
+        The pin is the autumn's and the lock the spring's, on the same half
+        hour. Joined into one part, the part would carry the autumn's locks,
+        which are none, and the meal would be kept off the spring's lock only
+        by what this module reckons a pin takes. Two parts in the model, a
+        meal start in each, and each clear of what its term holds. The answer
+        has one meal: the two parts eat at the same hour, and it says so once.
+        """
+        payload = self._year(
+            self._post(AUTUMN, _pin(1, "11:00", minutes=30)),
+            self._post(SPRING, None),
+            locks=[_lock_of_a_term(self.GROUP, "11:00", SPRING)],
+        )
+        model, *_ = SchedulerSolver(_settings(**self.ONE_DAY))._build_model(
+            _request(payload), use_assumptions=False,
+        )
+        assert len([v for v in model.Proto().variables if v.name.startswith("lunchstart_")]) == 2
+        response = self._answer(payload)
+        assert self._meals(response) == [("11:30", None)]
+        assert self._read(payload, response) == []
+
+    def test_a_pin_of_a_group_cut_from_the_class_cuts_the_class_year(self) -> None:
+        """The class's children sit in the group's lesson: the group's pins hold the class's meal as its own do."""
+        half = str(uuid4())
+        payload = self._year(
+            {**self._post(AUTUMN, _pin(1, "11:00", minutes=30)), "studentGroupId": half},
+            {**self._post(SPRING, _pin(1, "11:30", minutes=30)), "studentGroupId": half},
+        )
+        payload["groupConflicts"] = [[self.GROUP, half]]
+        response = self._answer(payload)
+        assert response.status in ("OPTIMAL", "FEASIBLE")
+        assert self._meals(response) == [("11:30", (True, False)), ("11:00", (False, True))]
+        assert self._read(payload, response) == []
+
+    def test_the_hall_carries_one_class_pins_into_another_class_year(self) -> None:
+        """A hall that seats one class at a time: the class with no pin of its own eats around the one that has them.
+
+        7B's posts are pinned 11:00-11:30 in the autumn and 11:30-12:00 in the
+        spring, so 7B eats at 11:30 and then at 11:00. The hall has room for
+        one class, so the other class eats at 11:00 and then at 11:30, though
+        nothing is pinned or locked for it: its year is cut by what the hall
+        couples it to.
+        """
+        other = str(uuid4())
+        payload = self._year(
+            self._post(AUTUMN, _pin(1, "11:00", minutes=30)),
+            self._post(SPRING, _pin(1, "11:30", minutes=30)),
+        )
+        payload["requirements"].append(_requirement(str(uuid4()), other, str(uuid4()), 2))  # type: ignore[union-attr]
+        payload["groups"].append(  # type: ignore[union-attr]
+            {"id": other, "lunchHeadcount": 20, "minGradeLevel": 7, "maxGradeLevel": 7},
+        )
+        payload["rules"] = {**MEAL, "diningSeats": 20}
+        response = self._answer(payload)
+        assert response.status in ("OPTIMAL", "FEASIBLE")
+        meals = {
+            (str(lunch.student_group_id), lunch.periods): lunch.start_time[:5] for lunch in response.lunches
+        }
+        assert meals == {
+            (self.GROUP, (True, False)): "11:30", (self.GROUP, (False, True)): "11:00",
+            (other, (True, False)): "11:00", (other, (False, True)): "11:30",
+        }
+        assert self._read(payload, response) == []
+
+    def test_two_posts_pinned_onto_the_whole_window_of_one_term_are_named(self) -> None:
+        """Both in the autumn: that term has no half hour, and the refusal names the two pinned lessons."""
+        first, second = (
+            self._post(AUTUMN, _pin(1, "11:00", minutes=30)),
+            self._post(AUTUMN, _pin(1, "11:30", minutes=30)),
+        )
+        response = self._answer(self._year(first, second, self._post(SPRING, None)))
+        assert response.status == "INFEASIBLE"
+        named = {
+            str(requirement_id)
+            for detail in response.conflicts.conflicts
+            if detail.code == IN_THE_WAY_ANY_ROOM
+            for requirement_id in detail.requirement_ids
+        }
+        assert named == {str(first["id"]), str(second["id"])}
+
+    def test_the_estimate_charges_the_parts_pins_can_cut(self) -> None:
+        """An upper bound: the parts' own variables are charged when a pin could cut the year, lock or no lock."""
+        solver = SchedulerSolver(_settings(**self.ONE_DAY))
+        autumn, spring = (
+            self._post(AUTUMN, _pin(1, "11:00", minutes=30)),
+            self._post(SPRING, _pin(1, "11:30", minutes=30)),
+        )
+        payload = self._year(autumn, spring)
+        bare = {
+            **payload,
+            "requirements": [
+                {key: value for key, value in post.items() if key != "pinnedLessons"}
+                for post in payload["requirements"]  # type: ignore[union-attr]
+            ],
+        }
+        estimated = solver._estimate_model_size(_request(payload))
+        # A literal for each pin, and for the one class and day six a period past the first.
+        assert estimated == solver._estimate_model_size(_request(bare)) + 2 + 6
+        model, *_ = solver._build_model(_request(payload), use_assumptions=True)
+        assert len(model.Proto().variables) <= estimated
