@@ -1189,6 +1189,36 @@ def test_the_validator_holds_a_week_to_the_locked_weekdays_of_its_own_period() -
     assert "teaching on 3 days a week" in line and "(period 1)" in line
 
 
+def test_the_validator_holds_a_week_to_the_days_of_its_own_parity() -> None:
+    """benchmarks/validate_schedule.py reads a post's days by parity as the engine does (mutants V01 and V02).
+
+    A post of two days whose locks hold Monday and Tuesday in the odd weeks and Wednesday and Thursday in the
+    even ones, and a lesson of hers on Friday: three days in each, over the post. Each week is over it by ITS
+    OWN locks, so the line of the odd weeks names Monday and Tuesday and the even weeks' Wednesday and Thursday.
+    (The validator says a line once, in the first week that has it: read as every parity's sets in each week,
+    the odd weeks would have both lines and the even weeks none of their own.)
+    """
+    teacher, other = str(uuid4()), str(uuid4())
+    lesson = _requirement(str(uuid4()), 1, teacher=teacher)
+    # Another teacher's post of the odd weeks, in the first period alone: it gives the year its two periods and its parities.
+    alternate = _requirement(str(uuid4()), 1, teacher=other, recurrence="ODD_WEEKS", periods=[True, False])
+    held = [
+        {"weekdays": [1, 2], "periods": [True, True], "recurrence": "ODD_WEEKS"},
+        {"weekdays": [3, 4], "periods": [True, True], "recurrence": "EVEN_WEEKS"},
+    ]
+    payload = _payload(
+        [lesson, alternate],
+        teacherDayLimits=[_limit(teacher, 2, [[1, 2], [3, 4]], held)],
+    )
+    laid = [_laid(lesson, 5, "08:00:00", "09:00:00"), _laid(alternate, 1, "10:00:00", "11:00:00")]
+    problems = [problem for problem in _validate(payload, laid, _settings(5, "1,2,3,4,5")) if "teaching on 3 days" in problem]
+    assert len(problems) == 2
+    odd = next(problem for problem in problems if "weekdays 1, 2" in problem)
+    even = next(problem for problem in problems if "weekdays 3, 4" in problem)
+    assert "udda veckor" in odd
+    assert "jämna veckor" in even
+
+
 def test_the_validator_owes_the_whole_lunch_to_the_minute() -> None:
     """A gap of 25 minutes is no lunch of 30: the validator reads the rule's own figure, with no margin."""
     settings = _settings(5, "1")
