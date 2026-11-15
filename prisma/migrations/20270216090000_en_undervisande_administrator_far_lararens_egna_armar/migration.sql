@@ -38,7 +38,11 @@
 -- (every markable profile writes DRIFT, and an administrator reads every row)
 -- the conversion changes the API's answer for nobody; what it adds is the
 -- PostgREST door, where an administrator has no arm on these tables, and the
--- web pages that read through it.
+-- web pages that read through it. The one profile that does not write
+-- PLANERING, the expedition, gains the teacher's right to write their own
+-- unavailability and working-time rules through the API as well, which is what
+-- the teacher's arm is for (the guard below holds them to the teacher's on an
+-- unavailability a duty blocks).
 --
 -- Five arms that name TEACHER are NOT converted, because the administrator
 -- arm for the same table, the same verb and the same role ("authenticated")

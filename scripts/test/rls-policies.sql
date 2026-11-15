@@ -61402,7 +61402,13 @@ INSERT INTO ta_cases VALUES
        'ok 0', 'TD403', 'ok 1', 'ok 1', 'TD403'),
   (20, 'change the day cap of own working-time rules, PostgREST (an administrator who plans sets it; the rule is not about the role)', 'authenticated',
        $s$UPDATE "TeacherWorkRules" SET "maxTeachingMinutesPerDay" = 360 WHERE "userId" = %1$L$s$,
-       'AR403', 'AR403', 'ok 1', 'ok 1', 'AR403');
+       'AR403', 'AR403', 'ok 1', 'ok 1', 'AR403'),
+  (21, 'insert an absence for a colleague, PostgREST', 'authenticated',
+       $s$INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "createdByUserId") VALUES (%6$L, %2$L, (current_date + 40) + time '00:00', (current_date + 41) + time '00:00', %1$L)$s$,
+       '42501', '42501', '42501', '42501', '42501'),
+  (22, 'change every absence the person may touch, PostgREST (no WHERE: the rows have to pass the arm itself, not only the person''s own select)', 'authenticated',
+       $s$UPDATE "TeacherAbsences" SET "updatedAt" = now()$s$,
+       'ok 0', 'ok #', 'ok 0', 'ok #', 'TA403');
 DO $$
 DECLARE
   c record;
@@ -61624,6 +61630,13 @@ BEGIN
   PERFORM pg_temp.ta_expect('507c the function says REGULAR', app.lesson_teacher_role(l_y2), 'REGULAR');
   PERFORM pg_temp.ta_expect('507c and they change it', pg_temp.ta_try('app_authenticated',
     format($q$UPDATE "LessonSubstituteNotes" SET body = 'ta' WHERE "calendarLessonId" = %L$q$, l_y2)), 'ok 1');
+  -- Somebody else's post for that läsår opens nothing for another person: the full administratör (a post for this year only) is
+  -- marked and stands on that lesson too, and does not read its note while the schemaläggare holds a post for its year.
+  PERFORM pg_temp.ta_a(5001);
+  PERFORM pg_temp.ta_expect('507c the full administratör is marked while the schemaläggare holds the other year''s post', pg_temp.ta_mark(5002, true), 'ok 1');
+  PERFORM pg_temp.ta_a(5002);
+  PERFORM pg_temp.ta_expect('507c a colleague''s post for the lesson''s läsår opens nothing for them', (SELECT string_agg(body, ',' ORDER BY body) FROM "LessonSubstituteNotes"), 'AR notis 2');
+  PERFORM pg_temp.ta_expect('507c the function agrees', coalesce(app.lesson_teacher_role(l_y2), '-'), '-');
   -- Take that post away again (one of two posts goes without ceremony): the lesson is not theirs to read again.
   PERFORM pg_temp.ta_a(5001);
   PERFORM pg_temp.ta_expect('507c the post of the previous year goes', pg_temp.ta_try('app_authenticated',
