@@ -95,11 +95,11 @@ BEGIN
     FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p') AND c.relrowsecurity;
   FOREACH pass IN ARRAY ARRAY['unmarked', 'marked'] LOOP
     IF pass = 'marked' THEN
+      -- Rektor marks the five (each has a post from the fixtures). Written here and not through sn_try, which undoes what it runs.
       PERFORM pg_temp.sn_claim('00000000-0000-4000-8000-000000005001');
       FOR n IN 1 .. 5 LOOP
-        IF pg_temp.sn_try('app_authenticated', format($q$UPDATE "Users" SET teaches = true WHERE "authId" = %L$q$, principals[n][2])) <> 'ok 1' THEN
-          RAISE EXCEPTION 'snapshot: could not mark %', principals[n][1];
-        END IF;
+        UPDATE "Users" SET teaches = true WHERE "authId" = principals[n][2]::uuid;
+        IF NOT FOUND THEN RAISE EXCEPTION 'snapshot: could not mark %', principals[n][1]; END IF;
       END LOOP;
     END IF;
     FOR p IN 1 .. array_length(principals, 1) LOOP
@@ -108,6 +108,10 @@ BEGIN
       me := app.current_user_id();
       school := app.current_school_id();
       IF me IS NULL OR school IS NULL THEN RAISE EXCEPTION 'snapshot: % does not resolve (fixtures?)', principals[p][1]; END IF;
+      -- The mark is what it is said to be: the five who can be marked are, in the second pass, and nobody is in the first.
+      IF app.current_user_teaches() IS DISTINCT FROM (pass = 'marked') THEN
+        RAISE EXCEPTION 'snapshot: % is % in the % pass', principals[p][1], CASE WHEN app.current_user_teaches() THEN 'marked' ELSE 'not marked' END, pass;
+      END IF;
       FOREACH via IN ARRAY ARRAY['app_authenticated', 'authenticated'] LOOP
         FOREACH t IN ARRAY tbls LOOP
           INSERT INTO sn_out VALUES (format('%s|%s|%s|%s|read', principals[p][1], pass, via, t),

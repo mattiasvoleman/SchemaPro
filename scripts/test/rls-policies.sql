@@ -61253,9 +61253,6 @@ BEGIN
         ELSE
           PERFORM pg_temp.ta_expect(format('506a %s marked reads their own %s through PostgREST', n, t), got, oracle);
           -- Not vacuous: every one has a row of each of these, and only the fourth has a cover decision.
-          IF (t = 'TeacherAbsenceCovers') <> (n = 5004) AND oracle <> '0' AND t = 'TeacherAbsenceCovers' THEN
-            RAISE EXCEPTION 'ta 506a: % has % cover decisions of their own', n, oracle;
-          END IF;
           IF t <> 'TeacherAbsenceCovers' AND oracle = '0' THEN RAISE EXCEPTION 'ta 506a: % has no % of their own; fixtures did not run', n, t; END IF;
           IF t = 'TeacherAbsenceCovers' AND (oracle = '0') = (n = 5004) THEN RAISE EXCEPTION 'ta 506a: the cover decisions of % are %', n, oracle; END IF;
           -- Never a colleague's, never another school's.
@@ -61618,8 +61615,8 @@ BEGIN
     format($q$INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (%L, %L, %L, 'LEAD')$q$, school, l_y2, me)), 'ok 1');
   PERFORM pg_temp.ta_expect('507c and read nothing: no post for that lesson''s läsår', (SELECT count(*)::text FROM "LessonSubstituteNotes" WHERE "calendarLessonId" = l_y2), '0');
   PERFORM pg_temp.ta_expect('507c the function says nothing', app.lesson_teacher_role(l_y2), NULL);
-  PERFORM pg_temp.ta_expect('507c and they write none', pg_temp.ta_class(pg_temp.ta_try('app_authenticated',
-    format($q$UPDATE "LessonSubstituteNotes" SET body = 'ta' WHERE "calendarLessonId" = %L$q$, l_y2))), 'admitted');   -- ok 0: nothing to update
+  PERFORM pg_temp.ta_expect('507c and they change none', pg_temp.ta_try('app_authenticated',
+    format($q$UPDATE "LessonSubstituteNotes" SET body = 'ta' WHERE "calendarLessonId" = %L$q$, l_y2)), 'ok 0');
   PERFORM pg_temp.ta_expect('507c … and changed nothing', (SELECT count(*)::text FROM "LessonSubstituteNotes" WHERE body = 'ta'), '0');
   -- The same person and the same lesson, with a post for that läsår: now it is theirs.
   PERFORM pg_temp.ta_a(5001);
@@ -61701,8 +61698,8 @@ BEGIN
   PERFORM pg_temp.ta_expect('507d the second teacher reads their own and the one they cover', (SELECT string_agg(body, ',' ORDER BY body) FROM "LessonSubstituteNotes"), 'AR notis COV,AR notis NONE');
   PERFORM pg_temp.ta_expect('507d is the substitute of the cover lesson', app.lesson_teacher_role(l_cov), 'SUBSTITUTE');
   PERFORM pg_temp.ta_expect('507d and does not write on it', pg_temp.ta_try('app_authenticated', format($q$UPDATE "LessonSubstituteNotes" SET body = 'ta' WHERE "calendarLessonId" = %L$q$, l_cov)), 'ok 0');
-  PERFORM pg_temp.ta_expect('507d the substitute does not insert either', pg_temp.ta_class(pg_temp.ta_try('app_authenticated',
-    format($q$DELETE FROM "LessonSubstituteNotes" WHERE "calendarLessonId" = %L$q$, l_cov))), 'admitted');   -- ok 0
+  PERFORM pg_temp.ta_expect('507d and does not remove it either', pg_temp.ta_try('app_authenticated',
+    format($q$DELETE FROM "LessonSubstituteNotes" WHERE "calendarLessonId" = %L$q$, l_cov)), 'ok 0');
   PERFORM pg_temp.ta_expect('507d and the note is still there', (SELECT body FROM "LessonSubstituteNotes" WHERE "calendarLessonId" = l_cov), 'AR notis COV');
   -- The pupil and the läsare read none, and another school's lesson says nothing to a marked administrator.
   PERFORM pg_temp.ta_a(5020);
