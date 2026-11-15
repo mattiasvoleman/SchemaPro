@@ -2935,6 +2935,14 @@ describe('UsersService', () => {
         expect(tx.user.update).not.toHaveBeenCalled();
       });
 
+      it('asks who decides before what the person is: an expedition marking a teacher is 403, not the 400 a decider would get', async () => {
+        stored = { ...stored, role: UserRole.TEACHER, adminProfile: null, teaches: false };
+        const refused = await refusal(service.update(USER_ID, { teaches: true }, expedition));
+        expect([refused.status, refused.code]).toEqual([403, 'DECISION_NOT_YOURS']);
+        const decider = await refusal(service.update(USER_ID, { teaches: true }, rektor));
+        expect([decider.status, decider.code]).toEqual([400, 'A_TEACHER_TEACHES_ALREADY']);
+      });
+
       it('is refused on a person who is no administrator, a teacher, or a läsare: 400, a code each, and nothing written', async () => {
         const cases: [Record<string, unknown>, string][] = [
           [{ role: UserRole.TEACHER, adminProfile: null, teaches: false }, 'A_TEACHER_TEACHES_ALREADY'],

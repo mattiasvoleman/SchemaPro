@@ -1012,9 +1012,18 @@ describe('teachesRefusal', () => {
     expect(teachesRefusal(make('TE410'))).toEqual({ code: A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS, userId: PERSON, academicYearId: YEAR });
   });
 
-  it('still reads the refusal from the rendered message when the cause is gone, with nobody named', () => {
+  it('still reads the refusal from the rendered message when the cause is gone, with nobody named: a model call and a raw statement alike', () => {
     expect(teachesRefusal(model('TE409', { meta: false }))).toEqual({ code: TEACHES_NEEDS_A_POST, userId: null, academicYearId: null });
     expect(teachesRefusal(model('TE410', { meta: false }))).toEqual({ code: A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS, userId: null, academicYearId: null });
+    // $executeRaw's P2010 renders the same "Code:" in its message ("Raw query failed. Code: `TE409`. Message: …").
+    for (const [state, code] of [['TE409', TEACHES_NEEDS_A_POST], ['TE410', A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS]] as const) {
+      const bare = new Prisma.PrismaClientKnownRequestError(`Raw query failed. Code: \`${state}\`. Message: \`${MESSAGES[state]}\``, {
+        code: 'P2010',
+        clientVersion: Prisma.prismaVersion.client,
+        meta: { code: state, message: MESSAGES[state] },
+      });
+      expect(teachesRefusal(bare)).toEqual({ code, userId: null, academicYearId: null });
+    }
   });
 
   it.each([

@@ -5408,6 +5408,35 @@ owner held to the post, a school deleted in both orders its cascade can take). S
 administratör as an eleventh principal, and the *Admin areas* probe (`probe-admin-areas.ts`, `ar-i`) shows the codes arrive
 through the adapter as themselves.
 
+### 20.5 Part 2, the gateway: it knows the mark (no migration)
+
+The gateway reads `Users.teaches` and uses it; the web and the apps do not yet (parts 5 and 6). **No migration, no change to the
+engine's contract, and nothing changes for anybody the day it ships**: nobody is marked (the production has one administrator and
+none marked), and the mark can be set from now on only by `PATCH /api/v1/users/:id` with `{"teaches": true}`, by rektor or a full
+administrator, on an administrator who has a post.
+
+- **Deploy order.** Part 1's migration is in production already, which this part needs (the API now selects `Users.teaches` on every
+  request: a database without the column answers P2022 for every one). Part 3's arms (the database half of the note to the
+  substitute) is independent of this part and safe in either order, but **merge part 3 first**: the note's route and the lesson
+  view's flags are the gateway's half of it, and until the arms exist the database refuses the note, which is what it does today.
+- **Everything is additive.** Older web and apps ignore the new fields: `teaches` on `GET /users` (what `usePeople()` reads),
+  `GET /users/administrators` and `PATCH /users/:id`'s answer, `teachingAdministrators` on `GET /users/counts`, `fromTeaches` and
+  `toTeaches` on `GET /users/:id/role-changes`. `POST /users` does not take `teaches` (the validation pipe refuses it: create, give a
+  post, then mark), and `PATCH` of a person who is no administrator, a teacher or a läsare is a 400 with its own code.
+- **Four new 409/400 codes reach the client**, all with flat `params`: `TEACHES_NEEDS_A_POST`,
+  `A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS` (from the post's removal, from the läsår's removal, which asks first and answers with a
+  count and ids and no name, and from `PATCH`), and a deadlock against a mark is the existing `WRITE_CONFLICT` ("try again").
+- **The three routes an administrator who teaches may use as the teacher** are written out in `RolesGuard` by `@AsTeacher`, and the
+  route-guards e2e spec holds the list to exactly those and refuses such a person every other teacher-only route: the lesson log's
+  own week (`GET /lesson-logs`), the lessons the person's absence handed over (`GET /lesson-logs/handed-over`) and the note to the
+  substitute (`PUT /lesson-logs/lessons/:id/substitute-note`). The class teacher, the cover request's colleague side, krisläge, mentor
+  and the reporting rate are **not** opened here (the first two by decision 4; the rest are part 4's, with their arms).
+- **"Who teaches" is one answer** (`src/staffing/teaching-staff.ts`, `teacherWhere` and `teachesLike`) at the places that ask it: Skolans
+  dag, an exam's invigilators, an activity's teacher, `lärare.csv`, the import's teacher by e-mail and the label in SS12000 v1 (a
+  teaching administrator is `Lärare` there; the `role` filter of that API is unchanged). The substitute, the suggestions, the cover
+  request's recipients and the pool stay the teachers'.
+- **Rolling back** is reverting the gateway: nothing in the database moves. A mark that has been set stays on the row and does nothing.
+
 ## 21. Pinned lessons in the generator ("Fästa lektioner")
 
 A lesson a school lays by hand before Generera has reached the engine as a
