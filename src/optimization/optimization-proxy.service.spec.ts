@@ -8221,6 +8221,78 @@ describe('OptimizationProxyService', () => {
           });
         });
 
+        describe('the engine’s refusals of a pinned lesson reach the school with their values named', () => {
+          // The seven sentences of B1 (optimization-engine/app/messages.py): the engine names the post, the room and the block in
+          // the ids the payload carried, and the school reads them by the names it gave them.
+          const refusal = (code: string, params: (payload: any) => Record<string, string | number>) =>
+            answerWithConflicts((payload) => ({
+              summary: 'refused',
+              summaryCode: 'CONFLICT_CORE_SUMMARY',
+              summaryParams: {},
+              conflicts: [
+                {
+                  category: 'PLACEMENT',
+                  code,
+                  params: params(payload),
+                  message: 'The engine says it in English.',
+                  requirementIds: [payload.requirements[0].id],
+                  roomIds: [],
+                  constraintIds: [],
+                  resourceIds: [],
+                },
+              ],
+            }));
+          const worldWithNames = () =>
+            arrange({
+              rooms: [
+                { id: ROOM_ID, capacity: 30, type: 'CLASSROOM', name: 'Sporthallen' },
+                { id: 'eeeeeeee-aaaa-4aaa-8aaa-eeeeeeeeeeee', capacity: 30, type: 'CLASSROOM', name: 'Sal 2' },
+              ],
+              groups: [{ id: GROUP_ID, gradeLevel: null, kind: 'CLASS', name: '7A' }],
+              requirements: [requirement({ subject: { requiredRoomTypeId: null, name: 'Idrott och hälsa' }, blockId: undefined })],
+            });
+          const asked = async () => (await service.triggerScheduling(ACADEMIC_YEAR, testUser())).conflicts!.conflicts[0]!;
+          const where = { day: 3, start: '10:00', end: '11:00' };
+
+          it.each([
+            ['PLACED_LESSON_OUTSIDE_THE_WEEK'],
+            ['PLACED_LESSON_OUTSIDE_FRAME'],
+            ['PLACED_LESSON_MARGINS_PAST_THE_DAY'],
+            ['PLACED_LESSON_IN_A_RAST'],
+            ['PLACED_LESSON_IN_THE_WAY_ANY_ROOM'],
+          ])('%s: the post by the school’s name for it, the day and the time as they were', async (code) => {
+            worldWithNames();
+            placed([roomless()]);
+            refusal(code, (payload) => ({ requirement: payload.requirements[0].id, ...where }));
+            const line = await asked();
+            expect(line.code).toBe(code);
+            expect(line.params).toEqual({ requirement: 'Idrott och hälsa för 7A', ...where });
+          });
+
+          it.each([['PLACED_LESSON_IN_THE_WAY'], ['PLACED_LESSON_ROOM_NOT_ALLOWED']])(
+            '%s: the room too, by the name the school gave it',
+            async (code) => {
+              worldWithNames();
+              placed([placement()]);
+              refusal(code, (payload) => ({ requirement: payload.requirements[0].id, room: payload.rooms[0].id, ...where }));
+              const line = await asked();
+              expect(line.params).toEqual({ requirement: 'Idrott och hälsa för 7A', room: 'Sporthallen', ...where });
+            },
+          );
+
+          it('PLACED_LESSONS_OF_BLOCK_DIFFER: the block and both posts by their names', async () => {
+            worldWithNames();
+            placed([roomless()]);
+            refusal('PLACED_LESSONS_OF_BLOCK_DIFFER', (payload) => ({
+              block: payload.requirements[0].id,
+              requirement: payload.requirements[0].id,
+              other: payload.requirements[0].id,
+            }));
+            const line = await asked();
+            expect(line.params).toEqual({ block: 'Idrott och hälsa för 7A', requirement: 'Idrott och hälsa för 7A', other: 'Idrott och hälsa för 7A' });
+          });
+        });
+
         describe('while the solver ran', () => {
           it.each([
             ['the row was given a room', () => [roomless({ roomId: ROOM_ID })]],
