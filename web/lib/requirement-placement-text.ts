@@ -54,7 +54,7 @@ export function verdictSentence(
 }
 
 /**
- * Why a set of rows does not fit the post (LENGTH, COUNT, WEEKS, PAIRS, BLOCK,
+ * Why a set of rows does not fit the post (LENGTH, COUNT, WEEKS, PAIRS, PAIR_ROOM, BLOCK,
  * and Delade lektioner's per-teacher rules: NO_TEACHER, TEACHER,
  * TEACHER_LENGTH, TEACHER_PAIRS, TEACHER_COUNT), or why a change of the post
  * was refused because its rows no longer do (and POST, a change of group or

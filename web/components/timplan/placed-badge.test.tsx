@@ -115,3 +115,24 @@ describe("a shared post's rows say whose lesson each is", () => {
     expect(placementsSummary([row({ teacherId: "t-bo" })], t, (key) => key)).toBe("placements.row:tuesday|10:00|11:00|Simhallen|ODD_WEEKS");
   });
 });
+
+// Salen blir valfri: a förläggning with no room is a lesson the engine places in a room it chooses, and the line says so.
+describe("a row with no room", () => {
+  const anyRoom = { roomId: null, roomName: null, recurrence: "ALL_WEEKS" } as const;
+
+  it("says that the engine chooses the room, where the room's name would stand, in both languages", () => {
+    inLocale("sv", <PlacedBadge rows={[row(anyRoom)]} withRows />);
+    expect(screen.getByText("Förlagd").parentElement).toHaveAttribute("title", "tis 10:00–11:00, Motorn väljer sal");
+    expect(screen.getByText("tis 10:00–11:00, Motorn väljer sal")).toBeInTheDocument();
+  });
+
+  it("says it in English, and keeps the weeks after it", () => {
+    inLocale("en", <PlacedBadge rows={[row({ ...anyRoom, recurrence: "EVEN_WEEKS" })]} />);
+    expect(screen.getByText("Placed").parentElement).toHaveAttribute("title", "tue 10:00–11:00, The engine chooses a room, even weeks");
+  });
+
+  it("asks the page's translator for the words and never writes null into a sentence", () => {
+    const t = (key: string, values?: Record<string, string | number>) => `${key}:${Object.values(values ?? {}).join("|")}`;
+    expect(placementLine(row(anyRoom), t, (key) => key)).toBe("placements.row:tuesday|10:00|11:00|placements.roomAny:|ALL_WEEKS");
+  });
+});

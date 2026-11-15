@@ -23,9 +23,22 @@ import { REQUIREMENTS, ROOMS, TEACHERS } from "./world";
  * Two lessons are placed: Cecilia's on Tuesday and Bo's of 40 minutes on
  * Thursday, both every week. (A pair of odd and even weeks per teacher is the
  * dialog's component test's: components/timplan/placement-dialog.test.tsx.)
+ *
+ * SALEN ÄR VALFRI (a second scenario, NO_ROOM_PLACEMENTS_SCENARIO): a row with
+ * no room is a lesson the engine places in a room it chooses, and the gateway
+ * answers it with roomId and roomName null. The post is Biologi för 7A (two
+ * lessons à 60, nothing shared), and three rows are placed:
+ *
+ *   Tuesday 10:00–11:00, every week     no room
+ *   Thursday 13:15–14:15, odd weeks     no room: half of a pair, which has to have one (PAIR_ROOM),
+ *                                       so the judge's verdict on it does not hold
+ *   Friday 09:00–10:00, even weeks      NO-salen
+ *
+ * A PUT is stored as sent: a roomId that is null, empty or left out is no room.
  */
 
 export const SHARED_PLACEMENTS_SCENARIO = "shared-placements";
+export const NO_ROOM_PLACEMENTS_SCENARIO = "placements-without-room";
 
 /** The post and what the suite makes of it in the browser's read of the table. */
 export const SHARED_POST = REQUIREMENTS.find((row) => row.id === uid(KIND.requirement, 5))!;
@@ -49,8 +62,8 @@ interface Placed {
   startTime: string;
   endTime: string;
   minutes: number;
-  roomId: string;
-  roomName: string;
+  roomId: string | null;
+  roomName: string | null;
   recurrence: "ALL_WEEKS" | "ODD_WEEKS" | "EVEN_WEEKS";
   teacherId: string | null;
 }
@@ -59,6 +72,10 @@ const clock = (minutes: number) =>
   `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 
 const roomNameOf = (roomId: string) => Object.values(ROOMS).find((room) => room.id === roomId)?.name ?? "";
+
+/** The room a PUT row names, or null: the engine chooses it (roomId null, "" or left out). */
+const roomOf = (input: Record<string, unknown>): string | null =>
+  typeof input.roomId === "string" && input.roomId !== "" ? input.roomId : null;
 
 /** One row as the gateway answers it, from the fields a PUT takes. */
 function placed(index: number, requirementId: string, input: Record<string, unknown>): Placed {
@@ -71,8 +88,8 @@ function placed(index: number, requirementId: string, input: Record<string, unkn
     startTime: String(input.startTime),
     endTime: clock(hours * 60 + mins + minutes),
     minutes,
-    roomId: String(input.roomId),
-    roomName: roomNameOf(String(input.roomId)),
+    roomId: roomOf(input),
+    roomName: roomOf(input) === null ? null : roomNameOf(roomOf(input)!),
     recurrence: input.recurrence as Placed["recurrence"],
     // A post that shares nothing is placed without a teacher, and answers none.
     teacherId: typeof input.teacherId === "string" ? input.teacherId : null,
@@ -99,14 +116,32 @@ const SHARED_POST_PLACED: Placed[] = [
   }),
 ];
 
+/** The no-room scenario's post (Biologi för 7A) and its three rows, in the order the gateway answers them (day, then start). */
+export const NO_ROOM_POST = SHARED_POST;
+const NO_ROOM_PLACED: Placed[] = [
+  placed(11, NO_ROOM_POST.id, { dayOfWeek: 2, startTime: "10:00", minutes: 60, recurrence: "ALL_WEEKS" }),
+  placed(12, NO_ROOM_POST.id, { dayOfWeek: 4, startTime: "13:15", minutes: 60, recurrence: "ODD_WEEKS" }),
+  placed(13, NO_ROOM_POST.id, { dayOfWeek: 5, startTime: "09:00", minutes: 60, roomId: ROOMS.lab.id, recurrence: "EVEN_WEEKS" }),
+];
+
 /** The year's placed lessons (GET /teaching-requirements/placements). */
 export const placedInYear = (scenario: string | null): Placed[] =>
-  scenario === SHARED_PLACEMENTS_SCENARIO ? SHARED_POST_PLACED : [];
+  scenario === SHARED_PLACEMENTS_SCENARIO ? SHARED_POST_PLACED : scenario === NO_ROOM_PLACEMENTS_SCENARIO ? NO_ROOM_PLACED : [];
 
-/** One post's rows with a verdict for each, all holding (GET /teaching-requirements/:id/placements). */
+/**
+ * One post's rows with a verdict for each (GET /teaching-requirements/:id/placements): all holding, but in the no-room scenario
+ * the odd half of the pair, which names no room and which the judge refuses for it (PAIR_ROOM).
+ */
 export function placedOf(requirementId: string, scenario: string | null) {
   const rows = placedInYear(scenario).filter((row) => row.requirementId === requirementId);
-  return { placements: rows, verdicts: rows.map((_, index) => ({ index, ok: true })) };
+  return {
+    placements: rows,
+    verdicts: rows.map((row, index) =>
+      scenario === NO_ROOM_PLACEMENTS_SCENARIO && row.recurrence === "ODD_WEEKS" && row.roomId === null
+        ? { index, ok: false, reason: "PAIR_ROOM" }
+        : { index, ok: true },
+    ),
+  };
 }
 
 /** What a PUT stores: the rows it was sent, as the gateway answers them. */

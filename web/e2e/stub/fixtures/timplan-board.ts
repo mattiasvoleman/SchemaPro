@@ -20,9 +20,16 @@ import type { TeachingRequirement } from "../../../lib/types";
  * and one lesson Generera keeps (Matematik 7A, Bo, Monday 08:00–09:00, locked,
  * which answers one of the post's three lessons) and a meal 7A placed by hand
  * on Tuesday 11:00–11:30.
+ *
+ * Salen är valfri: the second scenario is the same week with a fourth row that
+ * names no room (the engine chooses it at every Generera), and the gateway
+ * answers it with roomId and roomName null:
+ *
+ *   Engelska 7A  Anna     Wednesday 09:00–10:00, no room                  holds
  */
 
 export const PLACEMENT_WEEK_SCENARIO = "placement-week";
+export const PLACEMENT_WEEK_ANY_ROOM_SCENARIO = "placement-week-any-room";
 
 const clock = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 
@@ -54,7 +61,7 @@ function partsOf(post: TeachingRequirement, answered: { locked?: number; placed?
 
 const post = (n: number) => REQUIREMENTS.find((entry) => entry.id === uid(KIND.requirement, n))!;
 
-const row = (n: number, requirementId: string, day: number, start: number, minutes: number, roomId: string, over: Record<string, unknown> = {}) => ({
+const row = (n: number, requirementId: string, day: number, start: number, minutes: number, roomId: string | null, over: Record<string, unknown> = {}) => ({
   id: uid(KIND.misc, 800 + n),
   requirementId,
   dayOfWeek: day,
@@ -62,7 +69,7 @@ const row = (n: number, requirementId: string, day: number, start: number, minut
   endTime: clock(start + minutes),
   minutes,
   roomId,
-  roomName: Object.values(ROOMS).find((entry) => entry.id === roomId)?.name ?? "",
+  roomName: roomId === null ? null : (Object.values(ROOMS).find((entry) => entry.id === roomId)?.name ?? ""),
   recurrence: "ALL_WEEKS",
   teacherId: null,
   changedAt: "2026-11-13T08:00:00.000Z",
@@ -83,13 +90,17 @@ const WEEK_ROWS = [
   row(3, post(4).id, 5, 17 * 60, 60, ROOMS.gym.id, { recurrence: "ODD_WEEKS", changedAt: "2026-11-13T08:10:00.000Z" }),
 ];
 
+/** The fourth row of the second scenario: a förläggning that leaves the room to the engine. */
+const ANY_ROOM_ROW = row(4, post(3).id, 3, 9 * 60, 60, null, { changedAt: "2026-11-13T08:20:00.000Z" });
+
 /** The year's board, for the year the world has and for any other (which has no post). */
 export function boardOfYear(yearId: string, scenario: string | null) {
-  const week = scenario === PLACEMENT_WEEK_SCENARIO && yearId === YEAR.id;
+  const anyRoom = scenario === PLACEMENT_WEEK_ANY_ROOM_SCENARIO && yearId === YEAR.id;
+  const week = (scenario === PLACEMENT_WEEK_SCENARIO || anyRoom) && yearId === YEAR.id;
   const posts = yearId === YEAR.id ? REQUIREMENTS.filter((entry) => entry.academicYearId === yearId) : [];
   return {
     academicYearId: yearId,
-    placements: week ? WEEK_ROWS : [],
+    placements: week ? (anyRoom ? [...WEEK_ROWS, ANY_ROOM_ROW] : WEEK_ROWS) : [],
     posts: posts.map((entry) => ({
       id: entry.id,
       studentGroupId: entry.studentGroupId,
@@ -99,7 +110,7 @@ export function boardOfYear(yearId: string, scenario: string | null) {
       startDate: entry.startDate,
       endDate: entry.endDate,
       cannotPlace: entry.blockId ? "BLOCK" : null,
-      parts: partsOf(entry, week ? answeredOf(entry.id) : {}),
+      parts: partsOf(entry, week ? answeredOf(entry.id, anyRoom) : {}),
     })),
     kept: week
       ? [
@@ -139,8 +150,9 @@ export function boardOfYear(yearId: string, scenario: string | null) {
 }
 
 /** What answers the scenario's posts: the row that places one lesson, the kept lesson that covers another. */
-function answeredOf(requirementId: string): { locked?: number; placed?: number } {
+function answeredOf(requirementId: string, anyRoom = false): { locked?: number; placed?: number } {
   if (requirementId === post(1).id) return { placed: 1 };
+  if (anyRoom && requirementId === post(3).id) return { placed: 1 };
   if (requirementId === post(2).id) return { placed: 1, locked: 1 };
   if (requirementId === post(4).id) return { placed: 1 };
   return {};
