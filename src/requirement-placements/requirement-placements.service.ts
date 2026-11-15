@@ -554,11 +554,13 @@ function placementPostOf(post: {
 /**
  * Which of the request's rows a refusal of the rules per teacher is about, for
  * the dialog to say it at that row: the first that names nobody (NO_TEACHER),
- * else the one teacherMisfitOf answers. The post's own rules are about the set
- * and name no row.
+ * else the one teacherMisfitOf answers, and for PAIR_ROOM the first half of a
+ * pair with no room. The post's own other rules are about the set and name no row.
  */
 function fitIndexOf(post: PlacementPost, rows: readonly PlacementSlot[], fit: PlacementFitReason): { index?: number } {
   if (fit === 'NO_TEACHER') return { index: rows.findIndex((row) => row.teacherId === null) };
+  // The first half of a pair that names no room: the dialog says it at that row.
+  if (fit === 'PAIR_ROOM') return { index: rows.findIndex((row) => row.recurrence !== 'ALL_WEEKS' && row.roomId === null) };
   if (fit.startsWith('TEACHER')) {
     const misfit = teacherMisfitOf(post, rows);
     if (misfit) return { index: misfit.index };

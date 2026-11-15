@@ -328,7 +328,7 @@ describe('RequirementPlacementsService', () => {
 
         const refused = setup();
         const result = refused.service.replace(REQ, { placements: [input({ recurrence: 'ODD_WEEKS' }), input({ dayOfWeek: 4, recurrence: 'EVEN_WEEKS', roomId: null })] }, user);
-        await expect(result).rejects.toMatchObject({ response: { code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'PAIR_ROOM' } } });
+        await expect(result).rejects.toMatchObject({ response: { code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'PAIR_ROOM', index: 1 } } });
         await expect(result).rejects.toMatchObject({ response: { message: expect.stringContaining('båda platserna måste ha en sal') } });
         expect(refused.tx['teachingRequirementPlacement']!['deleteMany']).not.toHaveBeenCalled();
       });
