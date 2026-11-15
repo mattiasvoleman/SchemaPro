@@ -34980,6 +34980,9 @@
           },
           "hrRead": {
             "type": "boolean"
+          },
+          "teaches": {
+            "type": "boolean"
           }
         }
       },
