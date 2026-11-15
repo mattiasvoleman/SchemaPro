@@ -961,6 +961,82 @@ describe('AcademicYearsService', () => {
       expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
     });
 
+    // Administratör som lärare (Users.teaches): the post is what the mark rests on. The database's own net is TE410
+    // (RLS 492d); this is the question asked first, with the count, in the one code both answers share.
+    describe('the only post of an administrator who teaches', () => {
+      const A = '7d2f6a1c-3e8b-4d4f-85a9-c7e1d2b3a4c5';
+      const B = '5b0c1f4e-9f3a-4c21-8a53-0d7a8b7d1c11';
+
+      it('is not taken with the year: 409 with the code, a count and the ids, and nothing deleted', async () => {
+        tx.user.count.mockResolvedValue(0);
+        tx.user.findMany.mockResolvedValue([{ id: A }, { id: B }]);
+
+        const refusal = await service.remove(YEAR_ID, testUser()).catch((e) => e);
+
+        expect(refusal).toBeInstanceOf(ConflictException);
+        expect(refusal.getResponse()).toMatchObject({
+          code: 'A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS',
+          params: { administrators: 2, userIds: `${A},${B}` },
+          message: expect.stringContaining('2 administratörer som undervisar'),
+        });
+        expect(tx.academicYear.delete).not.toHaveBeenCalled();
+      });
+
+      it('asks for marked administrators whose only post is this year’s: a post in another year frees the year', async () => {
+        tx.user.count.mockResolvedValue(0);
+        tx.user.findMany.mockResolvedValue([]);
+        tx.academicYear.delete.mockResolvedValue({ id: YEAR_ID });
+
+        await service.remove(YEAR_ID, testUser());
+
+        expect(tx.user.findMany).toHaveBeenCalledWith({
+          where: {
+            role: 'SCHOOL_ADMIN',
+            teaches: true,
+            employments: { some: { academicYearId: YEAR_ID } },
+            NOT: { employments: { some: { academicYearId: { not: YEAR_ID } } } },
+          },
+          select: { id: true },
+          orderBy: { id: 'asc' },
+        });
+        expect(tx.academicYear.delete).toHaveBeenCalled();
+      });
+
+      it('reads no name: a read of a person is the läslogg’s, and a refusal would take its row back with the transaction', async () => {
+        tx.user.count.mockResolvedValue(0);
+        tx.user.findMany.mockResolvedValue([{ id: A }]);
+        const refusal = await service.remove(YEAR_ID, testUser()).catch((e) => e);
+        expect(JSON.stringify(refusal.getResponse())).not.toMatch(/firstName|lastName/);
+        expect((tx.user.findMany.mock.calls[0]![0] as { select: object }).select).toEqual({ id: true });
+      });
+
+      it('keeps the ids within a param’s 200 characters whatever their number: five at most, the count says the rest', async () => {
+        tx.user.count.mockResolvedValue(0);
+        const many = Array.from({ length: 9 }, (_v, i) => ({ id: `${i}0000000-0000-4000-8000-000000000000` }));
+        tx.user.findMany.mockResolvedValue(many);
+        const refusal = await service.remove(YEAR_ID, testUser()).catch((e) => e);
+        const params = (refusal.getResponse() as { params: { administrators: number; userIds: string } }).params;
+        expect(params.administrators).toBe(9);
+        expect(params.userIds.split(',')).toHaveLength(5);
+        expect(params.userIds.length).toBeLessThanOrEqual(200);
+      });
+
+      it('answers the database’s TE410 (a post that appeared after the question) with the same code, never a 500', async () => {
+        tx.user.count.mockResolvedValue(0);
+        tx.user.findMany.mockResolvedValue([]);
+        tx.academicYear.delete.mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError('Database error. Code: `TE410`.', {
+            code: 'P2039',
+            clientVersion: Prisma.prismaVersion.client,
+            meta: { driverAdapterError: { cause: { originalCode: 'TE410', originalMessage: 'A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS: x', detail: `userId=${A} academicYearId=${YEAR_ID}` } } },
+          }),
+        );
+        const refusal = await service.remove(YEAR_ID, testUser()).catch((e) => e);
+        expect(refusal).toBeInstanceOf(ConflictException);
+        expect(refusal.getResponse()).toMatchObject({ code: 'A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS', params: { userId: A, academicYearId: YEAR_ID } });
+      });
+    });
+
     it('deletes no year whose pupils have not moved', async () => {
       tx.user.count.mockResolvedValue(3);
 
