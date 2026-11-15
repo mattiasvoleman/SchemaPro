@@ -213,9 +213,46 @@ export class LessonLogService {
     return role === 'REGULAR' || role === 'SUBSTITUTE' ? role : null;
   }
 
-  private async callerRole(tx: PrismaClient, lessonId: string, user: AuthenticatedUser): Promise<LessonCallerRole> {
-    if (user.role === Role.SCHOOL_ADMIN) return 'ADMIN';
-    return (await this.teacherRole(tx, lessonId)) ?? 'COLLEAGUE';
+  private async callerRole(tx: PrismaClient, lesson: { id: string; date: Date }, user: AuthenticatedUser): Promise<LessonCallerRole> {
+    if (user.role === Role.SCHOOL_ADMIN) {
+      return (await this.teachingAdministratorRole(tx, lesson, user)) ?? 'ADMIN';
+    }
+    return (await this.teacherRole(tx, lesson.id)) ?? 'COLLEAGUE';
+  }
+
+  /**
+   * An administrator who teaches and stands on the lesson, as the lesson's
+   * teacher: REGULAR or SUBSTITUTE, and so the note read and (REGULAR) written.
+   * Null for every other administrator, and for this one where the lesson is
+   * not theirs to teach, which is the view they had (ADMIN).
+   *
+   * Two things must hold, and both are asked of the database where it can
+   * say: that the person stands on the lesson (app.lesson_teacher_role, the
+   * function the note's arms ask, so a lesson the database does not count
+   * them on is not shown as theirs; it answers NULL for an administrator
+   * until the arms that admit a teaching one exist), and that they have a
+   * tjänst for the lesson's läsår (the decision that an administrator cannot
+   * seat themselves on a lesson to read its note: a post for some year is
+   * what Users.teaches asks, the lesson's year is asked here and by the
+   * database's arm). The flags are a hint to the page; the database is the
+   * truth, and refuses what it does not admit.
+   */
+  private async teachingAdministratorRole(
+    tx: PrismaClient,
+    lesson: { id: string; date: Date },
+    user: AuthenticatedUser,
+  ): Promise<LessonTeacherRole | null> {
+    if (user.teaches !== true || !user.userId) return null;
+    const role = await this.teacherRole(tx, lesson.id);
+    if (role === null) return null;
+    const post = await tx.teacherEmployment.findFirst({
+      where: {
+        userId: user.userId,
+        academicYear: { startDate: { lte: lesson.date }, endDate: { gte: lesson.date } },
+      },
+      select: { id: true },
+    });
+    return post ? role : null;
   }
 
   private mayOf(role: LessonCallerRole, user: AuthenticatedUser): LessonLogLessonView['may'] {
@@ -233,7 +270,7 @@ export class LessonLogService {
     return this.prisma.withRls(user, async (tx) => {
       const lesson = await tx.calendarLesson.findUnique({ where: { id: lessonId }, select: LESSON_SELECT });
       if (!lesson) throw lessonNotFound();
-      const role = await this.callerRole(tx, lessonId, user);
+      const role = await this.callerRole(tx, lesson, user);
       const may = this.mayOf(role, user);
       const timezone = await schoolTimezone(tx, schoolId);
       const [log, note] = await Promise.all([

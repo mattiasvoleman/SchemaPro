@@ -2,7 +2,7 @@ import { DiscoveryService, MetadataScanner, Reflector } from '@nestjs/core';
 import { HEADERS_METADATA, METHOD_METADATA, PATH_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { RequestMethod } from '@nestjs/common';
 import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum';
-import { AREA_KEY, type AreaRequirement } from '../src/auth/decorators/area.decorator';
+import { AREA_KEY, AS_TEACHER_KEY, type AreaRequirement } from '../src/auth/decorators/area.decorator';
 import request from 'supertest';
 import { IS_PUBLIC_KEY } from '../src/auth/decorators/public.decorator';
 import { HUVUDMAN_NO_SCHOOL } from '../src/auth/huvudman.guard';
@@ -46,6 +46,8 @@ interface RouteInfo {
   full: string;
   /** @ReadsOnly's reason, on a write verb that only reads (Huvudman). */
   readsOnly: string | undefined;
+  /** @AsTeacher's reason: the route an administrator who teaches may use as the teacher. */
+  asTeacher: string | undefined;
   /** Sets Content-Disposition, or writes the response itself (@Res): what a file route does. */
   writesAFile: boolean;
 }
@@ -85,6 +87,7 @@ describe('Route guard coverage (e2e)', () => {
               headers.some((header) => header.name.toLowerCase() === 'content-disposition') ||
               Object.keys(args).some((key) => key.startsWith(`${RouteParamtypes.RESPONSE}:`)),
             readsOnly: reflector.getAllAndOverride<string | undefined>(READS_ONLY_KEY, [handler, cls]),
+            asTeacher: reflector.getAllAndOverride<string | undefined>(AS_TEACHER_KEY, [handler, cls]),
             controller: cls.name,
             method: name,
             verb: RequestMethod[Reflect.getMetadata(METHOD_METADATA, handler) as RequestMethod],
@@ -242,6 +245,101 @@ describe('Route guard coverage (e2e)', () => {
     }
     // Not a file or a feed of people: the list is printed from the screen, which holds out the protected identities.
     expect(checklists.some((route) => route.writesAFile)).toBe(false);
+  });
+
+  // Administratör som lärare (Users.teaches): a person who is an administrator and teaches may use the teacher's
+  // own routes, one by one. The doors are written out, so that a fourth fails here until it is decided; every
+  // other route that lists TEACHER (and not SCHOOL_ADMIN) is refused such a person, which is the decision that
+  // the class teacher, the cover request's colleague side, krisläge, mentor and the reporting rate are not
+  // opened by the mark in this change (PR 4 does krisläge, mentor and the reporting rate, with their arms).
+  const TEACHING_ADMINISTRATOR_DOORS = [
+    'GET LessonLogController.list',
+    'GET LessonLogController.handedOver',
+    'PUT LessonLogController.putNote',
+  ];
+
+  it("opens exactly three routes to an administrator who teaches, each one the teacher's own that lists TEACHER", () => {
+    const doors = routes.filter((route) => route.asTeacher !== undefined);
+    expect(doors.map((route) => `${route.verb} ${route.controller}.${route.method}`).sort()).toEqual([...TEACHING_ADMINISTRATOR_DOORS].sort());
+    for (const door of doors) {
+      expect(door.roles).toContain('TEACHER');
+      expect(door.asTeacher!.length).toBeGreaterThanOrEqual(20);
+    }
+  });
+
+  it('pins the routes that stay the teachers: the class teacher, the cover colleague side, krisläge, mentor, rapporteringsgrad', () => {
+    const pinned = [
+      ['ClassTeacherController', undefined],
+      ['CoverRequestsTeacherController', undefined],
+      ['CrisisTeacherController', undefined],
+      ['ReportingRateController', 'mine'],
+      ['FamilyController', 'referLeaveRequest'],
+    ] as const;
+    for (const [controller, method] of pinned) {
+      const of = routes.filter((route) => route.controller === controller && (method === undefined || route.method === method));
+      expect([controller, method, of.length > 0]).toEqual([controller, method, true]);
+      for (const route of of) {
+        expect([route.controller, route.method, route.roles, route.asTeacher]).toEqual([route.controller, route.method, ['TEACHER'], undefined]);
+      }
+    }
+  });
+
+  it('refuses an administrator who teaches every route that lists TEACHER and not SCHOOL_ADMIN, but the three doors', async () => {
+    const person = JSON.stringify({
+      authId: '11111111-1111-4111-8111-111111111111',
+      role: 'SCHOOL_ADMIN',
+      userId: '22222222-2222-4222-8222-222222222222',
+      schoolId: '33333333-3333-4333-8333-333333333333',
+      adminProfile: 'REKTOR',
+      hrRead: true,
+      teaches: true,
+    });
+    const uuid = '44444444-4444-4444-8444-444444444444';
+    const teacherOnly = routes.filter(
+      (route) => !route.isPublic && Array.isArray(route.roles) && (route.roles as string[]).includes('TEACHER') && !(route.roles as string[]).includes('SCHOOL_ADMIN'),
+    );
+    // Not vacuous: the teacher's own routes are many, and the doors are among them.
+    expect(teacherOnly.length).toBeGreaterThanOrEqual(18);
+    const wrong: string[] = [];
+    let refused = 0;
+    let admitted = 0;
+    for (const route of teacherOnly) {
+      const url = route.full.replace(/:[A-Za-z0-9_]+(\([^)]*\))?\??/g, uuid);
+      const verb = route.verb.toLowerCase() as 'get' | 'post' | 'put' | 'patch' | 'delete';
+      if (!['get', 'post', 'put', 'patch', 'delete'].includes(verb)) continue;
+      const response = await request(harness.app.getHttpServer())[verb](url).set('x-test-user', person).send({});
+      const door = route.asTeacher !== undefined;
+      const refusedByTheGuard = response.status === 403 && (response.body as { detail?: unknown } | undefined)?.detail === 'You do not have permission to perform this action.';
+      if (door && refusedByTheGuard) wrong.push(`${route.verb} ${route.full} is a door and was refused`);
+      if (!door && !refusedByTheGuard) wrong.push(`${route.verb} ${route.full} answered ${response.status}`);
+      if (door) admitted += 1;
+      else refused += 1;
+    }
+    expect(wrong).toEqual([]);
+    expect(admitted).toBe(TEACHING_ADMINISTRATOR_DOORS.length);
+    expect(refused).toBeGreaterThanOrEqual(15);
+  });
+
+  it('refuses the same administrator without the mark at the three doors, and a teacher keeps them', async () => {
+    const as = (overrides: Record<string, unknown>) =>
+      JSON.stringify({
+        authId: '11111111-1111-4111-8111-111111111111',
+        role: 'SCHOOL_ADMIN',
+        userId: '22222222-2222-4222-8222-222222222222',
+        schoolId: '33333333-3333-4333-8333-333333333333',
+        adminProfile: 'REKTOR',
+        hrRead: true,
+        ...overrides,
+      });
+    const server = harness.app.getHttpServer();
+    const note = '/api/v1/lesson-logs/lessons/44444444-4444-4444-8444-444444444444/substitute-note';
+    for (const principal of [as({}), as({ teaches: false }), as({ adminProfile: 'SCHEMALAGGARE' })]) {
+      const response = await request(server).put(note).set('x-test-user', principal).send({ body: 'x' });
+      expect([response.status, (response.body as { detail?: unknown }).detail]).toEqual([403, 'You do not have permission to perform this action.']);
+    }
+    // The teacher's own route is the teacher's, as it was: the guard lets them through.
+    const teacher = await request(server).put(note).set('x-test-user', as({ role: 'TEACHER', adminProfile: undefined, hrRead: undefined })).send({ body: 'x' });
+    expect((teacher.body as { detail?: unknown }).detail).not.toBe('You do not have permission to perform this action.');
   });
 
   it('keeps the public surface to the health probes, the public viewer and SS12000', () => {

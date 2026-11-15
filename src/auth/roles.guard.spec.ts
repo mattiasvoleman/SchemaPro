@@ -2,7 +2,7 @@ import { ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
 import type { AdminProfile } from '@prisma/client';
-import { AnyAdministrator, Area, Decides } from './decorators/area.decorator';
+import { AnyAdministrator, Area, AsTeacher, Decides } from './decorators/area.decorator';
 import { Roles } from './decorators/roles.decorator';
 import { Role } from './enums/role.enum';
 import type { AuthenticatedUser } from './interfaces/authenticated-user.interface';
@@ -312,5 +312,101 @@ describe('RolesGuard and the huvudman\'s reader', () => {
     const full = { ...user(Role.SCHOOL_ADMIN), adminProfile: 'FULL' as AdminProfile };
     expect(guard.canActivate(routeTo(DevicesController, 'register', full))).toBe(true);
     expect(guard.canActivate(routeTo(OpenController, 'anything', user(Role.TEACHER)))).toBe(true);
+  });
+});
+
+// Administratör som lärare: Users.teaches is a door into the teacher's own
+// routes, one by one, never a role the guard counts.
+describe('RolesGuard and an administrator who teaches', () => {
+  const guard = new RolesGuard(new Reflector());
+
+  @Roles(Role.TEACHER)
+  @Area('DRIFT')
+  class OwnController {
+    /** The teacher's own, and says so. */
+    @AsTeacher("the teacher's own note")
+    putNote(): void {}
+
+    /** Lists TEACHER and no more: the colleague side, which stays the teachers'. */
+    colleague(): void {}
+
+    @Roles(Role.TEACHER, Role.STUDENT)
+    @AsTeacher("the teacher's own week")
+    week(): void {}
+
+    @Roles(Role.SCHOOL_ADMIN, Role.TEACHER)
+    @Area('PLANERING')
+    @AsTeacher('the route lists both, so the area is asked as it was')
+    both(): void {}
+
+    /** Marked, but for administrators alone: there is no teacher's route to come in by. */
+    @Roles(Role.SCHOOL_ADMIN)
+    @Area('PERSONAL')
+    @AsTeacher('marked in error')
+    adminsOnly(): void {}
+  }
+
+  const teaching = (adminProfile: AdminProfile = 'SCHEMALAGGARE', extra: Partial<AuthenticatedUser> = {}): AuthenticatedUser =>
+    ({ ...admin(adminProfile), teaches: true, ...extra }) as AuthenticatedUser;
+
+  it('lets an administrator with the mark through a route that lists TEACHER and says @AsTeacher', () => {
+    expect(guard.canActivate(routeTo(OwnController, 'putNote', teaching(), 'PUT'))).toBe(true);
+    expect(guard.canActivate(routeTo(OwnController, 'week', teaching(), 'GET'))).toBe(true);
+  });
+
+  it('asks no area of the person it lets in as the teacher: a profile without DRIFT is no reason to refuse a note on their own lesson', () => {
+    // No profile writes no area at all; the route's class says @Area('DRIFT') and is not asked.
+    for (const profile of ['REKTOR', 'FULL', 'SCHEMALAGGARE', 'EXPEDITION'] as const) {
+      expect(guard.canActivate(routeTo(OwnController, 'putNote', teaching(profile), 'PUT'))).toBe(true);
+    }
+  });
+
+  it('refuses the same administrator at a TEACHER route that does not say @AsTeacher (fail closed: the colleague side, krisläge, mentor stay the teachers\')', () => {
+    expect(() => guard.canActivate(routeTo(OwnController, 'colleague', teaching(), 'POST'))).toThrow(
+      new ForbiddenException('You do not have permission to perform this action.'),
+    );
+  });
+
+  it('refuses an administrator without the mark, or with it false, at the door as before', () => {
+    expect(() => guard.canActivate(routeTo(OwnController, 'putNote', admin('FULL'), 'PUT'))).toThrow(ForbiddenException);
+    expect(() => guard.canActivate(routeTo(OwnController, 'putNote', teaching('FULL', { teaches: false }), 'PUT'))).toThrow(ForbiddenException);
+    expect(() => guard.canActivate(routeTo(OwnController, 'week', admin('SCHEMALAGGARE'), 'GET'))).toThrow(ForbiddenException);
+  });
+
+  it('never opens a route to the mark on anything but a SCHOOL_ADMIN with a row: not a pupil, a guardian, the huvudman, the reader, a läsare', () => {
+    const marked = (overrides: Partial<AuthenticatedUser>): AuthenticatedUser => ({ ...user(Role.STUDENT), teaches: true, ...overrides }) as AuthenticatedUser;
+    for (const person of [
+      marked({ role: Role.STUDENT }),
+      marked({ role: Role.GUARDIAN }),
+      marked({ role: Role.HUVUDMAN }),
+      marked({ role: Role.SYSTEM_ADMIN }),
+      // A läsare cannot carry the mark (CHECK); a principal that says so is refused all the same.
+      teaching('LASARE'),
+      marked({
+        role: Role.SCHOOL_ADMIN,
+        adminProfile: 'LASARE',
+        huvudman: { id: 'h-1', name: 'Vimmerby kommun', memberId: 'm-1', role: 'PLANERARE', firstName: 'Pia', lastName: 'P' },
+      }),
+    ]) {
+      expect(() => guard.canActivate(routeTo(OwnController, 'putNote', person, 'GET'))).toThrow(ForbiddenException);
+    }
+  });
+
+  it('leaves a route that lists SCHOOL_ADMIN itself exactly as it was: the profile’s area is still asked', () => {
+    // Come in as the administrator, so the area is the administrator's: a planner does not write PERSONAL.
+    expect(refusal(() => guard.canActivate(routeTo(OwnController, 'adminsOnly', teaching('SCHEMALAGGARE'), 'PUT')))).toMatchObject({ code: AREA_NOT_YOURS });
+    expect(refusal(() => guard.canActivate(routeTo(OwnController, 'both', teaching('EXPEDITION'), 'PUT')))).toMatchObject({ code: AREA_NOT_YOURS });
+    expect(guard.canActivate(routeTo(OwnController, 'both', teaching('SCHEMALAGGARE'), 'PUT'))).toBe(true);
+  });
+
+  it('does not lift the huvudman’s reads-only refusal: the reader writes nothing, mark or not', () => {
+    const reader = {
+      authId: 'auth-h',
+      role: Role.SCHOOL_ADMIN,
+      adminProfile: 'LASARE',
+      teaches: true,
+      huvudman: { id: 'h-1', name: 'Vimmerby kommun', memberId: 'm-1', role: 'PLANERARE', firstName: 'Pia', lastName: 'P' },
+    } as AuthenticatedUser;
+    expect(() => guard.canActivate(routeTo(OwnController, 'putNote', reader, 'PUT'))).toThrow(/huvudman|Huvudman|läs/);
   });
 });

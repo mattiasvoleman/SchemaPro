@@ -133,6 +133,57 @@ describe('LessonLogService', () => {
       expect(tx.$queryRaw.mock.calls.some(([statement]) => sqlOf(statement).includes('lesson_teacher_role'))).toBe(false);
     });
 
+    describe('an administrator who teaches (Users.teaches)', () => {
+      const teaching = testUser({ channel: 'WEB', teaches: true });
+      const postOf = (where: unknown) => (where as { where: { userId: string; academicYear: { startDate: { lte: Date }; endDate: { gte: Date } } } }).where;
+
+      it('is the lesson’s teacher on a lesson they stand on, with a tjänst for its läsår: the note read and written', async () => {
+        tx.teacherEmployment.findFirst.mockResolvedValue({ id: 'post' });
+        tx.lessonSubstituteNote.findUnique.mockResolvedValue({ body: 'Planeringen ligger kvar.', updatedAt: EDITED, writtenBy: null });
+        const view = await service.lesson(LESSON, teaching);
+        expect([view.role, view.may]).toEqual(['REGULAR', { writeLog: true, readNote: true, writeNote: true }]);
+        expect(view.note).toEqual({ body: 'Planeringen ligger kvar.', writtenBy: null, updatedAt: EDITED.toISOString() });
+        // The post asked for is theirs, in the year the lesson's day falls in.
+        const where = postOf(tx.teacherEmployment.findFirst.mock.calls[0]![0]);
+        expect(where.userId).toBe(ME);
+        expect(where.academicYear).toEqual({ startDate: { lte: lessonRow.date }, endDate: { gte: lessonRow.date } });
+      });
+
+      it('is the substitute where the database says so: the note read, not written', async () => {
+        teacherRole = 'SUBSTITUTE';
+        tx.teacherEmployment.findFirst.mockResolvedValue({ id: 'post' });
+        const view = await service.lesson(LESSON, teaching);
+        expect([view.role, view.may]).toEqual(['SUBSTITUTE', { writeLog: true, readNote: true, writeNote: false }]);
+      });
+
+      it('is still the administrator without a tjänst for the lesson’s läsår: seating themselves on a lesson opens no note', async () => {
+        tx.teacherEmployment.findFirst.mockResolvedValue(null);
+        tx.lessonSubstituteNote.findUnique.mockResolvedValue({ body: 'hemligt', updatedAt: EDITED, writtenBy: null });
+        const view = await service.lesson(LESSON, teaching);
+        expect([view.role, view.may, view.note]).toEqual(['ADMIN', { writeLog: true, readNote: false, writeNote: false }, null]);
+        expect(tx.lessonSubstituteNote.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('is still the administrator on a lesson the database does not count them on (and until its arms admit them)', async () => {
+        teacherRole = null;
+        tx.teacherEmployment.findFirst.mockResolvedValue({ id: 'post' });
+        const view = await service.lesson(LESSON, teaching);
+        expect([view.role, view.may, view.note]).toEqual(['ADMIN', { writeLog: true, readNote: false, writeNote: false }, null]);
+        // Not even the tjänst is asked about a lesson that is not theirs.
+        expect(tx.teacherEmployment.findFirst).not.toHaveBeenCalled();
+      });
+
+      it('is asked of nobody who does not carry the mark: not a full, a planner or a läsare, even on a lesson with a tjänst', async () => {
+        tx.teacherEmployment.findFirst.mockResolvedValue({ id: 'post' });
+        for (const person of [admin, testUser({ adminProfile: 'SCHEMALAGGARE', teaches: false }), reader]) {
+          const view = await service.lesson(LESSON, person);
+          expect([view.role, view.may.readNote]).toEqual(['ADMIN', false]);
+        }
+        expect(tx.teacherEmployment.findFirst).not.toHaveBeenCalled();
+        expect(tx.$queryRaw.mock.calls.some(([statement]) => sqlOf(statement).includes('lesson_teacher_role'))).toBe(false);
+      });
+    });
+
     it('is a 404 for a lesson the caller cannot read', async () => {
       tx.calendarLesson.findUnique.mockResolvedValue(null);
       await expect(service.lesson(LESSON, teacher)).rejects.toMatchObject({

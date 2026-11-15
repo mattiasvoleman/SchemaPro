@@ -108,7 +108,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       (db) =>
         db.user.findFirst({
           where: { authId: payload.sub },
-          select: { id: true, schoolId: true, role: true, isActive: true, adminProfile: true, hrRead: true },
+          select: { id: true, schoolId: true, role: true, isActive: true, adminProfile: true, hrRead: true, teaches: true },
         }),
       { ...(school ? { school } : {}), ...(closedSchools ? { closedSchools } : {}) },
     );
@@ -122,8 +122,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         role: profile.role as Role,
         userId: profile.id,
         schoolId: profile.schoolId,
-        // Set exactly on an administrator (CHECK Users_a_profile_is_an_administrators).
-        ...(profile.adminProfile ? { adminProfile: profile.adminProfile, hrRead: profile.hrRead } : {}),
+        // Set exactly on an administrator (CHECK Users_a_profile_is_an_administrators);
+        // teaches is held to an administrator's row the same way (CHECK
+        // Users_teaches_is_a_teaching_administrators) and the person is active here, as
+        // app.current_user_teaches() requires. It is a hint to the views, never a right.
+        ...(profile.adminProfile
+          ? { adminProfile: profile.adminProfile, hrRead: profile.hrRead, teaches: profile.teaches === true }
+          : {}),
         ...(schoolAccount ? { schoolAccount } : {}),
         ...(closedSchools ? { closedSchools } : {}),
       };
@@ -148,6 +153,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         schoolId,
         adminProfile: 'LASARE',
         hrRead: false,
+        // The reader has no row and so cannot teach (and a läsare may not, by CHECK).
+        teaches: false,
         huvudman,
         ...(closedSchools ? { closedSchools } : {}),
       };

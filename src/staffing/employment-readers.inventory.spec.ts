@@ -96,6 +96,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     basis: 'POST',
     why: 'whether a pool member has a post at all (STAFF or POOL); a period never removes a post',
   },
+  'src/lesson-log/lesson-log.service.ts': {
+    basis: 'POST',
+    why: 'whether an administrator who teaches (Users.teaches) has a post in the läsår the lesson’s day falls in, which the lesson view asks before it shows them the note (select id only; a period never removes a post)',
+  },
   'src/school-export/lists.ts': {
     basis: 'WRITES',
     why: 'hela skolans data: the teachers file as the importer reads it back, from the base row of the active year, as the page’s export writes it; read by the administrators who decide, who read tjänst % and nedsättning',
