@@ -65,6 +65,35 @@ const HR_READ_PROFILES: readonly AdminProfile[] = ['SCHEMALAGGARE', 'EXPEDITION'
 /** What only rektor or a full administrator does (app.current_user_decides). */
 const decides = (user: AuthenticatedUser): void => assertAdministratorMay(user, { kind: 'decides' });
 
+/** The problem `code` of a mark set on a person who is no administrator. */
+export const TEACHES_NEEDS_AN_ADMINISTRATOR = 'TEACHES_NEEDS_AN_ADMINISTRATOR';
+/** The problem `code` of a mark set on a läsare: a läsare changes nothing and so teaches nothing. */
+export const A_READER_DOES_NOT_TEACH = 'A_READER_DOES_NOT_TEACH';
+/** The problem `code` of a mark set on a teacher: a teacher teaches already. */
+export const A_TEACHER_TEACHES_ALREADY = 'A_TEACHER_TEACHES_ALREADY';
+
+/**
+ * Whether a person with this role and profile may carry Users.teaches, the
+ * mark that an administrator also teaches (migration 20270212090000), judged
+ * for a request that sets it. The three refusals are 400s with a code of their
+ * own, in the order the database holds them: the person is an administrator,
+ * not a läsare (CHECK Users_teaches_is_a_teaching_administrators), and not
+ * already a teacher, which is no CHECK but the point of the mark (a teacher
+ * teaches by their role, and nothing is written). A person with no post is
+ * the database's own refusal, TE409, answered 409 by rethrowPrismaError.
+ */
+function assertMayTeach(role: UserRole, adminProfile: AdminProfile | null): void {
+  if (role === 'TEACHER') {
+    throw new BadRequestException({ message: 'En lärare undervisar redan: markeringen gäller en administratör.', code: A_TEACHER_TEACHES_ALREADY });
+  }
+  if (role !== 'SCHOOL_ADMIN') {
+    throw new BadRequestException({ message: 'Bara en administratör markeras som undervisande.', code: TEACHES_NEEDS_AN_ADMINISTRATOR });
+  }
+  if (adminProfile === 'LASARE') {
+    throw new BadRequestException({ message: 'En läsare ändrar ingenting och undervisar därför inte: ge personen en annan profil först.', code: A_READER_DOES_NOT_TEACH });
+  }
+}
+
 /**
  * The profile and HR-läs a row with `role` is written with: the request's,
  * else what the row had, else FULL for an administrator, as every
@@ -140,11 +169,20 @@ export interface PersonView {
   isActive: boolean;
   studentGroupId: string | null;
   invitedAt: string | null;
+  /**
+   * An administrator who also teaches (Users.teaches). False for everyone else,
+   * and for a teacher, who teaches by their role. As visible as `role` is: the
+   * web's person lists (usePeople) read it to count the person among the
+   * school's teachers.
+   */
+  teaches: boolean;
 }
 
 /** How many people of each role the school has, active or not. Counts only. */
 export interface UserCounts {
   byRole: Record<UserRole, number>;
+  /** How many of the school's administrators teach (Users.teaches): a part of byRole.SCHOOL_ADMIN. */
+  teachingAdministrators: number;
 }
 
 /** Outcome of inviting one person. */
@@ -169,14 +207,16 @@ export interface InvitationResult {
   sharedLogin: boolean;
 }
 
-/** An administrator's profile and HR-läs, as the role chooser reads them. */
+/** An administrator's profile, HR-läs and whether they teach, as the role chooser reads them. */
 export interface AdministratorView {
   id: string;
   adminProfile: AdminProfile;
   hrRead: boolean;
+  /** Users.teaches (20270212090000). */
+  teaches: boolean;
 }
 
-/** One change of a person's role, profile or HR-läs, as /admin/people shows it. */
+/** One change of a person's role, profile, HR-läs or whether they teach, as /admin/people shows it. */
 export interface RoleChangeView {
   id: string;
   fromRole: UserRole | null;
@@ -185,6 +225,14 @@ export interface RoleChangeView {
   toProfile: AdminProfile | null;
   fromHrRead: boolean | null;
   toHrRead: boolean;
+  /**
+   * Users.teaches before and after (20270212090000). `fromTeaches` is null for
+   * the rows that came before the column and for a person's creation, and
+   * `toTeaches` is false for every older row: nothing is filled into a log
+   * after the fact.
+   */
+  fromTeaches: boolean | null;
+  toTeaches: boolean;
   /** Who made it; null for a migration, the seed, or a writer since removed. */
   actorName: string | null;
   createdAt: string;
@@ -251,6 +299,7 @@ export class UsersService {
           isActive: true,
           studentGroupId: true,
           invitedAt: true,
+          teaches: true,
         },
         orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
       });
@@ -265,12 +314,18 @@ export class UsersService {
   /** The dashboard's figures: people per role. Names nobody, so it is not logged. */
   async counts(user: AuthenticatedUser): Promise<UserCounts> {
     requireSchoolId(user);
+    // One statement, as it was: the groups split by the mark, and added up again by role. The mark is true only on an
+    // administrator (CHECK), so the groups that carry it are the teaching administrators.
     const groups = await this.prisma.queryWithRls(user, (db) =>
-      db.user.groupBy({ by: ['role'], _count: { _all: true } }),
+      db.user.groupBy({ by: ['role', 'teaches'], _count: { _all: true } }),
     );
     const byRole: Record<UserRole, number> = { STUDENT: 0, TEACHER: 0, SCHOOL_ADMIN: 0, GUARDIAN: 0 };
-    for (const group of groups) byRole[group.role] = group._count._all;
-    return { byRole };
+    let teachingAdministrators = 0;
+    for (const group of groups) {
+      byRole[group.role] += group._count._all;
+      if (group.role === 'SCHOOL_ADMIN' && group.teaches) teachingAdministrators += group._count._all;
+    }
+    return { byRole, teachingAdministrators };
   }
 
   async create(dto: CreateUserDto, user: AuthenticatedUser): Promise<User> {
@@ -546,9 +601,9 @@ export class UsersService {
         // the role, so a teacher or guardian sitting in a student group is
         // handed the students' read path on that group's lessons.
         const [current] = await tx.$queryRaw<
-          Pick<User, 'role' | 'studentGroupId' | 'pseudonymisedAt' | 'adminProfile' | 'hrRead' | 'isActive' | 'schoolId'>[]
+          Pick<User, 'role' | 'studentGroupId' | 'pseudonymisedAt' | 'adminProfile' | 'hrRead' | 'teaches' | 'isActive' | 'schoolId'>[]
         >`
-          SELECT "role", "studentGroupId", "pseudonymisedAt", "adminProfile", "hrRead", "isActive", "schoolId"
+          SELECT "role", "studentGroupId", "pseudonymisedAt", "adminProfile", "hrRead", "teaches", "isActive", "schoolId"
           FROM "Users"
           WHERE "id" = ${id}::uuid
           FOR NO KEY UPDATE
@@ -581,6 +636,17 @@ export class UsersService {
         ) {
           decides(user);
         }
+        // Users.teaches (20270212090000): the mark that an administrator also teaches. Setting or clearing it is a
+        // decision as the profile is (Users_administrators_are_decided holds the same), asked first; then, for a
+        // request that sets it, the three things the person must be (an administrator, not a läsare, not a teacher
+        // already). The post it rests on is the database's question (TE409, a 409 from rethrowPrismaError). Judged on
+        // the row that results, so a PATCH that makes a teacher an administrator and marks them in one step is judged
+        // as the administrator it makes. A change of role or profile that leaves the mark with nothing to rest on
+        // clears it in the database (Users_a_profile_follows_the_role, logged fromTeaches true, toTeaches false), and
+        // the answer below is the row as the database has it afterwards, not what was sent.
+        const teachesChanged = dto.teaches !== undefined && dto.teaches !== (current.teaches === true);
+        if (teachesChanged) decides(user);
+        if (dto.teaches === true) assertMayTeach(role, profile.adminProfile);
         const stillDecides =
           role === 'SCHOOL_ADMIN' && profileDecides(profile.adminProfile) && (dto.isActive ?? current.isActive);
         if (current.role === 'SCHOOL_ADMIN' && profileDecides(current.adminProfile) && current.isActive && !stillDecides) {
@@ -619,6 +685,9 @@ export class UsersService {
             ...(dto.role !== undefined ? { role: dto.role } : {}),
             ...(profile.adminProfile !== current.adminProfile ? { adminProfile: profile.adminProfile } : {}),
             ...(profile.hrRead !== current.hrRead ? { hrRead: profile.hrRead } : {}),
+            // An UPDATE and never an upsert's create half: the BEFORE INSERT trigger judges the proposed row, which
+            // has no post (prisma-upsert-checks-the-proposed-row).
+            ...(teachesChanged ? { teaches: dto.teaches } : {}),
             ...(dto.firstName !== undefined ? { firstName: dto.firstName } : {}),
             ...(dto.lastName !== undefined ? { lastName: dto.lastName } : {}),
             ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
@@ -668,7 +737,7 @@ export class UsersService {
     const rows = await this.prisma.withRls(user, async (tx) => {
       const found = await tx.user.findMany({
         where: { role: 'SCHOOL_ADMIN' },
-        select: { id: true, adminProfile: true, hrRead: true },
+        select: { id: true, adminProfile: true, hrRead: true, teaches: true },
         orderBy: { id: 'asc' },
       });
       // Each administrator's profile and HR-läs: what they may change and
@@ -677,7 +746,7 @@ export class UsersService {
       await recordRead(tx, 'PEOPLE', found.map((row) => row.id).filter((id) => id !== user.userId), user.channel);
       return found;
     });
-    return rows.map((row) => ({ id: row.id, adminProfile: row.adminProfile ?? 'FULL', hrRead: row.hrRead }));
+    return rows.map((row) => ({ id: row.id, adminProfile: row.adminProfile ?? 'FULL', hrRead: row.hrRead, teaches: row.teaches }));
   }
 
   /**
@@ -710,6 +779,8 @@ export class UsersService {
         toProfile: c.toProfile,
         fromHrRead: c.fromHrRead,
         toHrRead: c.toHrRead,
+        fromTeaches: c.fromTeaches,
+        toTeaches: c.toTeaches,
         actorName: c.actorId ? (names.get(c.actorId) ?? null) : null,
         createdAt: c.createdAt.toISOString(),
       }));

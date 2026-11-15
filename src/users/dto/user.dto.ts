@@ -60,6 +60,11 @@ export class CreateUserDto {
   @IsBoolean()
   hrRead?: boolean;
 
+  // There is no `teaches` here, on purpose. An administrator who teaches is marked on a person who already has a post
+  // (Users.teaches, 20270212090000: the database refuses a mark on a person with none, TE409), so a person is
+  // created, given a post, and then marked with PATCH. The validation pipe forbids properties a DTO does not name,
+  // so a `teaches` sent with a creation is a 400 and not a silent drop.
+
   /**
    * Send the invitation email as part of creating this person.
    *
@@ -132,6 +137,18 @@ export class UpdateUserDto {
   @IsOptional()
   @IsBoolean()
   hrRead?: boolean;
+
+  /**
+   * An administrator who also teaches (Users.teaches): rektor's or a full administrator's to set, and a decision as the
+   * profile is. 400 with a code for a person who is no administrator (TEACHES_NEEDS_AN_ADMINISTRATOR), a teacher
+   * (A_TEACHER_TEACHES_ALREADY) or a läsare (A_READER_DOES_NOT_TEACH); 409 TEACHES_NEEDS_A_POST for a person with no
+   * post, which is made first (PUT .../teacher-employments). `false` takes the mark off. Leaving it out changes
+   * nothing, and a value the person already has is no change and no decision. A change of role or profile that the
+   * mark cannot follow clears it, and the answer is the row as stored afterwards.
+   */
+  @IsOptional()
+  @IsBoolean()
+  teaches?: boolean;
 }
 
 /**

@@ -237,19 +237,20 @@ describe('Administrator profiles and areas (e2e)', () => {
   });
 
   it("answers the school's administrators to the expedition, who may not change them", async () => {
-    harness.tx['user']!['findMany']!.mockResolvedValue([{ id: USER_ID, adminProfile: 'REKTOR', hrRead: false }]);
+    harness.tx['user']!['findMany']!.mockResolvedValue([{ id: USER_ID, adminProfile: 'REKTOR', hrRead: false, teaches: true }]);
     const response = await request(http())
       .get('/api/v1/users/administrators')
       .set('x-test-user', as('EXPEDITION'))
       .expect(200);
-    expect(response.body).toEqual([{ id: USER_ID, adminProfile: 'REKTOR', hrRead: false }]);
+    // Whether they teach (Users.teaches) is as visible as the profile is: the role chooser reads both.
+    expect(response.body).toEqual([{ id: USER_ID, adminProfile: 'REKTOR', hrRead: false, teaches: true }]);
   });
 
   it("answers a person's role history to any administrator", async () => {
     harness.tx['userRoleChange']!['findMany']!.mockResolvedValue([
       {
         id: 'c1', fromRole: 'TEACHER', toRole: 'SCHOOL_ADMIN', fromProfile: null, toProfile: 'SCHEMALAGGARE',
-        fromHrRead: false, toHrRead: false, actorId: null, createdAt: new Date('2026-10-25T08:00:00Z'),
+        fromHrRead: false, toHrRead: false, fromTeaches: null, toTeaches: false, actorId: null, createdAt: new Date('2026-10-25T08:00:00Z'),
       },
     ]);
     const response = await request(http())
@@ -258,11 +259,105 @@ describe('Administrator profiles and areas (e2e)', () => {
       .expect(200);
 
     expect(response.body).toEqual([
-      expect.objectContaining({ toProfile: 'SCHEMALAGGARE', actorName: null, createdAt: '2026-10-25T08:00:00.000Z' }),
+      expect.objectContaining({ toProfile: 'SCHEMALAGGARE', fromTeaches: null, toTeaches: false, actorName: null, createdAt: '2026-10-25T08:00:00.000Z' }),
     ]);
     expect(harness.tx['userRoleChange']!['findMany']).toHaveBeenCalledWith(
       expect.objectContaining({ where: { userId: USER_ID } }),
     );
+  });
+
+  // Administratör som lärare (Users.teaches): the mark is set with a PATCH, which only rektor or a full administrator
+  // makes, and the refusals reach the client as themselves. A unit spec reads getResponse() and sees a nested value
+  // that the filter drops; only a request through the real filter shows what a client gets (the code, flat params).
+  describe('the mark that an administrator teaches, through PATCH /users/:id', () => {
+    const stored = (overrides: Record<string, unknown> = {}) =>
+      harness.tx.$queryRaw.mockResolvedValue([
+        {
+          role: 'SCHOOL_ADMIN', studentGroupId: null, pseudonymisedAt: null, adminProfile: 'SCHEMALAGGARE', hrRead: false,
+          teaches: false, isActive: true, schoolId: '33333333-3333-4333-8333-333333333333', ...overrides,
+        },
+      ]);
+    const patch = (principal: string, body: Record<string, unknown>) =>
+      request(http()).patch(`/api/v1/users/${USER_ID}`).set('x-test-user', principal).send(body);
+
+    // The harness's mocks outlive a test; what these set must not reach the next one.
+    afterEach(() => {
+      harness.tx.$queryRaw.mockResolvedValue([]);
+      for (const [model, method] of [['user', 'update'], ['user', 'count'], ['teacherEmployment', 'delete'], ['academicYear', 'delete']] as const) {
+        harness.tx[model]![method]!.mockReset();
+      }
+      harness.tx['user']!['findMany']!.mockResolvedValue([]);
+    });
+
+    it('is set by rektor with an UPDATE of the mark, and answers the row as stored', async () => {
+      stored();
+      harness.tx['user']!['update']!.mockResolvedValue({ id: USER_ID, role: 'SCHOOL_ADMIN', teaches: true });
+      const response = await patch(as('REKTOR'), { teaches: true }).expect(200);
+      expect(response.body).toMatchObject({ id: USER_ID, teaches: true });
+      expect(harness.tx['user']!['update']).toHaveBeenCalledWith({ where: { id: USER_ID }, data: { teaches: true } });
+    });
+
+    it('is refused to the expedition, which may edit people but does not decide: 403 with the decision’s code, nothing written', async () => {
+      stored();
+      const response = await patch(as('EXPEDITION'), { teaches: true }).expect(403);
+      expect(response.body).toMatchObject({ code: 'DECISION_NOT_YOURS' });
+      expect(harness.tx['user']!['update']).not.toHaveBeenCalled();
+    });
+
+    it('is refused on a teacher with 400 and its own code, which reaches the client', async () => {
+      stored({ role: 'TEACHER', adminProfile: null });
+      const response = await patch(as('REKTOR'), { teaches: true }).expect(400);
+      expect(response.body).toMatchObject({ code: 'A_TEACHER_TEACHES_ALREADY' });
+      expect(harness.tx['user']!['update']).not.toHaveBeenCalled();
+    });
+
+    it('answers a person with no post 409 TEACHES_NEEDS_A_POST with the person in flat params: the trigger’s refusal, as itself', async () => {
+      stored();
+      harness.tx['user']!['update']!.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Database error. Code: `TE409`.', {
+          code: 'P2039',
+          clientVersion: Prisma.prismaVersion.client,
+          meta: { driverAdapterError: { cause: { originalCode: 'TE409', originalMessage: 'TEACHES_NEEDS_A_POST: x', detail: `userId=${USER_ID}` } } },
+        }),
+      );
+      const response = await patch(as('FULL'), { teaches: true }).expect(409);
+      expect(response.body).toMatchObject({ code: 'TEACHES_NEEDS_A_POST', params: { userId: USER_ID } });
+    });
+
+    it('answers a deadlock against the mark 409 WRITE_CONFLICT, which says to try again', async () => {
+      stored();
+      harness.tx['user']!['update']!.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('deadlock', { code: 'P2034', clientVersion: Prisma.prismaVersion.client }),
+      );
+      const response = await patch(as('FULL'), { teaches: true }).expect(409);
+      expect(response.body).toMatchObject({ code: 'WRITE_CONFLICT' });
+    });
+
+    it('is no field of a creation: POST /users with teaches is a 400 from the validation pipe, and nothing is created', async () => {
+      await request(http())
+        .post('/api/v1/users')
+        .set('x-test-user', as('REKTOR'))
+        .send({ role: 'SCHOOL_ADMIN', firstName: 'Ola', lastName: 'Rektor', email: 'ola@skola.se', teaches: true })
+        .expect(400);
+      expect(harness.tx['user']!['create']).not.toHaveBeenCalled();
+    });
+
+    it('stops the removal of a marked person’s last post, and of the läsår that holds it, with the code and flat params', async () => {
+      const refused = new Prisma.PrismaClientKnownRequestError('Database error. Code: `TE410`.', {
+        code: 'P2039',
+        clientVersion: Prisma.prismaVersion.client,
+        meta: { driverAdapterError: { cause: { originalCode: 'TE410', originalMessage: 'A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS: x', detail: `userId=${USER_ID} academicYearId=${YEAR_ID}` } } },
+      });
+      harness.tx['teacherEmployment']!['delete']!.mockRejectedValue(refused);
+      const post = await request(http()).delete(`/api/v1/teacher-employments/${USER_ID}?academicYearId=${YEAR_ID}`).set('x-test-user', as('REKTOR'));
+      expect([post.status, post.body.code, post.body.params]).toEqual([409, 'A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS', { userId: USER_ID, academicYearId: YEAR_ID }]);
+
+      harness.tx['user']!['count']!.mockResolvedValue(0);
+      harness.tx['user']!['findMany']!.mockResolvedValue([{ id: USER_ID }]);
+      const year = await request(http()).delete(`/api/v1/academic-years/${YEAR_ID}`).set('x-test-user', as('REKTOR')).expect(409);
+      expect(year.body).toMatchObject({ code: 'A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS', params: { administrators: 1, userIds: USER_ID } });
+      expect(harness.tx['academicYear']!['delete']).not.toHaveBeenCalled();
+    });
   });
 
   it('hands the posts back without tjänst % to a planner without HR-läs, and with them to one with it', async () => {
