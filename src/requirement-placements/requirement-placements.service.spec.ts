@@ -289,6 +289,51 @@ describe('RequirementPlacementsService', () => {
       expect((call[0]![0] as { data: unknown[] }).data).toHaveLength(2);
     });
 
+    describe('a row with no room (the engine chooses it, 20270213090000)', () => {
+      it('writes it with no room, left out or null alike, asks the school for no room, and judges it against none', async () => {
+        const written = [stored({ id: 'n-1', roomId: null, room: null }), stored({ id: 'n-2', dayOfWeek: 4, roomId: null, room: null })];
+        const { tx, masters, service } = setup({ rows: written });
+        const result = await service.replace(REQ, { placements: [input({ roomId: null }), input({ dayOfWeek: 4, roomId: undefined })] }, user);
+
+        expect(tx['teachingRequirementPlacement']!['createMany']).toHaveBeenCalledWith({
+          data: [
+            { schoolId: SCHOOL, requirementId: REQ, dayOfWeek: 2, startTime: time('10:00'), minutes: 60, roomId: null, recurrence: 'ALL_WEEKS', teacherId: null },
+            { schoolId: SCHOOL, requirementId: REQ, dayOfWeek: 4, startTime: time('10:00'), minutes: 60, roomId: null, recurrence: 'ALL_WEEKS', teacherId: null },
+          ],
+        });
+        // No room to look for, so no room is looked for.
+        expect(tx['room']!['findMany']).not.toHaveBeenCalled();
+        expect(masters.findConflicts.mock.calls.map((call) => (call[3] as { roomId: string | null }).roomId)).toEqual([null, null]);
+        // And answered with no room, and no name.
+        expect(result.placements.map((row) => [row.roomId, row.roomName])).toEqual([[null, null], [null, null]]);
+        expect(result.verdicts.every((verdict) => verdict.ok)).toBe(true);
+      });
+
+      it('asks for the rooms of the rows that have one, and only those', async () => {
+        const { tx, service } = setup({ rooms: [ROOM_1] });
+        await service.replace(REQ, { placements: [input(), input({ dayOfWeek: 4, roomId: null })] }, user);
+        expect(tx['room']!['findMany']).toHaveBeenCalledWith({ where: { id: { in: [ROOM_1] } }, select: { id: true } });
+      });
+
+      it('still refuses a room the school does not have, beside a row with none', async () => {
+        const { tx, service } = setup({ rooms: [ROOM_1] });
+        await expect(service.replace(REQ, { placements: [input({ roomId: null }), input({ dayOfWeek: 4, roomId: ROOM_2 })] }, user)).rejects.toMatchObject({ status: 400 });
+        expect(tx['teachingRequirementPlacement']!['deleteMany']).not.toHaveBeenCalled();
+      });
+
+      it('lets a pair with a room on both halves through, and says PAIR_ROOM about one that has none on a half, with the half’s index', async () => {
+        const ok = setup();
+        await ok.service.replace(REQ, { placements: [input({ recurrence: 'ODD_WEEKS' }), input({ dayOfWeek: 4, recurrence: 'EVEN_WEEKS', roomId: ROOM_2 })] }, user);
+        expect(ok.tx['teachingRequirementPlacement']!['createMany']).toHaveBeenCalledTimes(1);
+
+        const refused = setup();
+        const result = refused.service.replace(REQ, { placements: [input({ recurrence: 'ODD_WEEKS' }), input({ dayOfWeek: 4, recurrence: 'EVEN_WEEKS', roomId: null })] }, user);
+        await expect(result).rejects.toMatchObject({ response: { code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT', params: { reason: 'PAIR_ROOM' } } });
+        await expect(result).rejects.toMatchObject({ response: { message: expect.stringContaining('båda platserna måste ha en sal') } });
+        expect(refused.tx['teachingRequirementPlacement']!['deleteMany']).not.toHaveBeenCalled();
+      });
+    });
+
     it('removes every row on an empty list, judges nothing and reads no classes', async () => {
       const { tx, masters, service } = setup({ rows: [] });
       const result = await service.replace(REQ, { placements: [] }, user);
@@ -320,6 +365,9 @@ describe('RequirementPlacementsService', () => {
         ['PAIRS', {}, [input({ recurrence: 'ODD_WEEKS' })]],
         ['WEEKS', { recurrence: 'EVEN_WEEKS' }, [input({ recurrence: 'ODD_WEEKS' })]],
         ['BLOCK', { blockId: 'b-1' }, [input()]],
+        // A pair is a lesson in two places, and the engine cannot choose the room of half a lesson: both halves name a room.
+        ['PAIR_ROOM', {}, [input({ recurrence: 'ODD_WEEKS' }), input({ dayOfWeek: 4, recurrence: 'EVEN_WEEKS', roomId: null })]],
+        ['PAIR_ROOM', {}, [input({ recurrence: 'ODD_WEEKS', roomId: undefined }), input({ dayOfWeek: 4, recurrence: 'EVEN_WEEKS', roomId: undefined })]],
         // A post that shares nothing names no teacher on a row (the post's teacher is the lesson's).
         ['TEACHER', {}, [input({ teacherId: TEACHER })]],
       ])('%s', async (reason, postOver, placements) => {
@@ -633,6 +681,30 @@ describe('RequirementPlacementsService.boardOfYear', () => {
     expect(masters.findConflicts).not.toHaveBeenCalled();
     expect(rostersOfYear).not.toHaveBeenCalled();
     expect(readBoardFacts).not.toHaveBeenCalled();
+  });
+
+  it('shows a row with no room as one: no room and no name, judged against none, and counted as placed by the school', async () => {
+    const { masters, service } = board({
+      rows: [stored({ id: 'p-1', roomId: null, room: null }), stored({ id: 'p-2', dayOfWeek: 4 })],
+    });
+    const answer = await service.boardOfYear(YEAR, user);
+    expect(answer.placements.map((row) => [row.id, row.roomId, row.roomName])).toEqual([
+      ['p-1', null, null],
+      ['p-2', ROOM_1, 'Simhallen'],
+    ]);
+    expect(answer.placements.every((row) => row.verdict.ok)).toBe(true);
+    expect(masters.findConflicts.mock.calls.map((call) => (call[3] as { roomId: string | null }).roomId)).toEqual([null, ROOM_1]);
+    // Both are lessons the school placed: a pinned one is still placed by hand, though the engine holds it as the post's own.
+    expect(answer.posts[0]!.parts[0]).toMatchObject({ count: 2, placed: 2, left: 0 });
+  });
+
+  it('says PAIR_ROOM for a half of a pair another writer stored with no room, and BLOCK for a row on a post in a block', async () => {
+    const pair = board({
+      rows: [stored({ id: 'p-1', recurrence: 'ODD_WEEKS' }), stored({ id: 'p-2', dayOfWeek: 4, recurrence: 'EVEN_WEEKS', roomId: null, room: null })],
+    });
+    expect((await pair.service.boardOfYear(YEAR, user)).placements.map((row) => row.verdict)).toEqual([{ ok: true }, { ok: false, reason: 'PAIR_ROOM' }]);
+    const block = board({ posts: [boardPost({ blockId: 'b-1' })], rows: [stored({ id: 'p-1', roomId: null, room: null })] });
+    expect((await block.service.boardOfYear(YEAR, user)).placements[0]!.verdict).toEqual({ ok: false, reason: 'BLOCK' });
   });
 
   it('judges every row of the year once, as Generera\'s pre-flight does, and gives each its own verdict', async () => {

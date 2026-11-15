@@ -27,8 +27,14 @@ export class PlacementInputDto {
   @Max(240, { message: 'placements: högst 240 minuter per lektion.' })
   minutes!: number;
 
+  /**
+   * The room the school chose, or left out (or null) to let the engine choose it at every Generera: a förläggning with no
+   * room is sent as a pinned lesson, one with a room as a locked lesson (20270213090000). A pair (odd and even rows of
+   * one length on an every-week post) names its rooms on both rows (PAIR_ROOM, placement-fit.ts).
+   */
+  @IsOptional()
   @IsUUID('4', { message: 'placements: salen anges med sitt id.' })
-  roomId!: string;
+  roomId?: string | null;
 
   @IsEnum(LessonRecurrence, { message: 'placements: veckor är ALL_WEEKS, ODD_WEEKS eller EVEN_WEEKS.' })
   recurrence!: LessonRecurrence;

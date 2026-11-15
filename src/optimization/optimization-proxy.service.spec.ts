@@ -7904,6 +7904,438 @@ describe('OptimizationProxyService', () => {
         expect(withOne.placedRows.map((row) => row.id)).toEqual([PLACED]);
         expect(withOne.keptTimetable.map((lesson) => lesson.id)).toEqual([PLACED]);
       });
+
+      /*
+       * FÖRLÄGGNING UTAN SAL (20270213090000): a row with no room is sent as a pinned lesson of its post, not as a lock
+       * (placed-lessons.ts). The engine's own rules for the key are optimization-engine/app/schemas/schedule.py's
+       * (validate_pinned_lessons): one place per lesson, something pinned, endTime = start + the lesson's length.
+       */
+      describe('a förläggning with no room (a pinned lesson)', () => {
+        const SAL_2 = 'eeeeeeee-aaaa-4aaa-8aaa-eeeeeeeeeeee';
+        const twoRooms = [
+          { id: ROOM_ID, capacity: 30, type: 'CLASSROOM' },
+          { id: SAL_2, capacity: 30, type: 'CLASSROOM' },
+        ];
+        const roomless = (overrides: Record<string, unknown> = {}) => placement({ roomId: null, ...overrides });
+        /**
+         * An engine that does what the real one does with a pin: the pinned lesson at its weekday and start, in the room it
+         * chose (the second one), and every other lesson on a day of its own at 08:00, at its length.
+         */
+        const honoringEngine = (chooseRoom: (payload: any) => string | null = (payload) => payload.rooms[1]?.id ?? payload.rooms[0]?.id ?? null) => {
+          http.post.mockImplementation((_url: string, payload: any) =>
+            of({
+              data: {
+                requestId: payload.requestId,
+                status: 'OPTIMAL',
+                lessons: payload.requirements.flatMap((r: any) =>
+                  Array.from({ length: r.lessonsPerWeek }, (_, k) => {
+                    const pin = r.pinnedLessons?.[k];
+                    const minutes = r.lessonLengths?.[k] ?? r.minutesPerLesson;
+                    const end = (start: number) => `${String(Math.floor((start + minutes) / 60)).padStart(2, '0')}:${String((start + minutes) % 60).padStart(2, '0')}:00`;
+                    return {
+                      requirementId: r.id,
+                      roomId: pin ? chooseRoom(payload) : (payload.rooms[0]?.id ?? null),
+                      dayOfWeek: pin ? pin.dayOfWeek : 1 + (k % 2),
+                      startTime: pin ? pin.startTime : `0${8 + k}:00:00`,
+                      endTime: pin ? pin.endTime : end((8 + k) * 60),
+                      ...(r.lessonTeacherIds ? { teacherId: r.lessonTeacherIds[k] } : {}),
+                    };
+                  }),
+                ),
+                conflicts: null,
+              },
+            }),
+          );
+        };
+        const pinnedOf = (payload: AiEngineScheduleRequest, index = 0) => (payload.requirements[index] as { pinnedLessons?: unknown }).pinnedLessons;
+
+        it('sends no lock, no `placements` and no demand off the post, and says where the lesson is held on the post', async () => {
+          arrange({ rooms: twoRooms });
+          placed([roomless()]);
+          honoringEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          const payload = postedPayload();
+          expect(payload.fixedLessons).toEqual([]);
+          expect(payload).not.toHaveProperty('placements');
+          // The post keeps all three lessons: the pinned one is still the post's own.
+          expect(payload.requirements[0]).toMatchObject({ lessonsPerWeek: 3 });
+          expect(pinnedOf(payload)).toEqual([{ dayOfWeek: 3, startTime: '10:00:00', endTime: '11:00:00' }, null, null]);
+        });
+
+        it('has exactly one place per lesson, in the order the engine reads them, with the length as the end', async () => {
+          // 1 × 80 and 2 × 40, longest first: the pinned 40 is the second place.
+          arrange({ rooms: twoRooms, requirements: [requirement({ lessonsPerWeek: 3, minutesPerLesson: 80, lessonLengths: [80, 40, 40] })] });
+          placed([roomless({ minutes: 40 })]);
+          honoringEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          const post = postedPayload().requirements[0]!;
+          expect(post.lessonLengths).toEqual([80, 40, 40]);
+          expect(pinnedOf(postedPayload())).toEqual([null, { dayOfWeek: 3, startTime: '10:00:00', endTime: '10:40:00' }, null]);
+          expect((pinnedOf(postedPayload()) as unknown[]).length).toBe(post.lessonsPerWeek);
+        });
+
+        it('sends the key only on a post with a pinned lesson: a post beside it, and a school with none, are what they were', async () => {
+          const OTHER_POST = '12121212-aaaa-4aaa-8aaa-121212121212';
+          arrange({ rooms: twoRooms, requirements: [requirement(), requirement({ id: OTHER_POST, subjectId: '23232323-aaaa-4aaa-8aaa-232323232323' })] });
+          placed([roomless()]);
+          honoringEngine();
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+          const withOne = postedPayload();
+          expect(withOne.requirements.filter((post) => 'pinnedLessons' in post)).toHaveLength(1);
+
+          http.post.mockClear();
+          placed([]);
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+          expect(JSON.stringify(postedPayload())).not.toContain('pinnedLessons');
+        });
+
+        it('sends a row with a room as the lock it was, and no pin: the payload byte for byte the one without this change', async () => {
+          arrange({ rooms: twoRooms });
+          placed([placement()]);
+          honoringEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          const payload = postedPayload();
+          expect(JSON.stringify(payload)).not.toContain('pinnedLessons');
+          expect(payload.requirements[0]).toMatchObject({ lessonsPerWeek: 2 });
+          expect(payload.fixedLessons).toHaveLength(1);
+          expect(payload.placements!.lessons).toHaveLength(1);
+        });
+
+        it('does not tell the lesson’s weekday to the post’s locked days (the engine would count it twice)', async () => {
+          arrange({ rooms: twoRooms, requirements: [requirement({ subject: { requiredRoomTypeId: null, maxLessonsPerDay: 1 } })] });
+          placed([roomless()]);
+          honoringEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          const post = postedPayload().requirements[0]!;
+          expect(post).toMatchObject({ lessonsPerWeek: 3, maxLessonsPerDay: 1 });
+          expect(post).not.toHaveProperty('lockedDays');
+          expect(pinnedOf(postedPayload())).toBeDefined();
+        });
+
+        it('does not tell it to the teacher’s locked weekdays either', async () => {
+          // A post with a limit on the days of the teacher the lessons are taught by (the rows the limits are read from).
+          const post = { id: 'post-ulf', userId: TEACHER_ID, maxTeachingDaysPerWeek: 3, maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null };
+          arrange({ rooms: twoRooms, posts: [post] });
+          placed([roomless()]);
+          honoringEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          const limits = (postedPayload() as unknown as { teacherDayLimits?: { lockedWeekdays: number[][] }[] }).teacherDayLimits ?? [];
+          expect(limits).toHaveLength(1);
+          // One set of weekdays for every week, and nothing in it: the lesson is the engine's to count.
+          expect(limits[0]!.lockedWeekdays).toEqual([[]]);
+          // As a lock of the same hour does tell it.
+          http.post.mockClear();
+          placed([placement()]);
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+          const locked = (postedPayload() as unknown as { teacherDayLimits?: { lockedWeekdays: number[][] }[] }).teacherDayLimits ?? [];
+          expect(locked[0]!.lockedWeekdays).toEqual([[3]]);
+        });
+
+        it('gives a post with a lock and a pinned lesson both: the lock off the demand, the pin on a place of what is left, the release without the pin', async () => {
+          arrange({ rooms: twoRooms });
+          placed([placement({ id: 'locked-row', dayOfWeek: 1 }), roomless({ id: 'pinned-row', dayOfWeek: 4 })]);
+          honoringEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          const payload = postedPayload();
+          expect(payload.requirements[0]).toMatchObject({ lessonsPerWeek: 2 });
+          expect(pinnedOf(payload)).toEqual([{ dayOfWeek: 4, startTime: '10:00:00', endTime: '11:00:00' }, null]);
+          expect(payload.fixedLessons).toHaveLength(1);
+          expect(payload.fixedLessons[0]).toMatchObject({ dayOfWeek: 1 });
+          // `placements` names the lock alone, and the released post is the post with all three lessons and no pin.
+          expect(payload.placements!.lessons).toHaveLength(1);
+          expect(payload.placements!.requirements[0]).toMatchObject({ lessonsPerWeek: 3 });
+          expect(payload.placements!.requirements[0]).not.toHaveProperty('pinnedLessons');
+        });
+
+        it('on a post that shares its lessons pins Bo’s lesson at Bo’s place, in lessonTeacherIds’ order', async () => {
+          const BO = '99999999-aaaa-4aaa-8aaa-999999999999';
+          arrange({ rooms: twoRooms, requirements: [requirement({ shares: [{ teacherId: BO, lessons: 1, minutes: 60 }] })] });
+          placed([roomless({ teacherId: BO })]);
+          honoringEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          const post = postedPayload().requirements[0]! as { lessonTeacherIds: string[]; teacherId: string };
+          expect(post.lessonTeacherIds).toHaveLength(3);
+          expect(pinnedOf(postedPayload())).toEqual([null, null, { dayOfWeek: 3, startTime: '10:00:00', endTime: '11:00:00' }]);
+          // The place is Bo's: the third, which is the one place whose teacher is not the lead's.
+          expect(post.lessonTeacherIds[2]).not.toBe(post.teacherId);
+        });
+
+        it('never pins a post in a parallel block: the run is refused by name before the engine, and no request carries the key', async () => {
+          arrange({ rooms: twoRooms, requirements: [requirement({ blockId: 'block-1' })] });
+          placed([roomless()]);
+          honoringEngine();
+
+          const answer = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(http.post).not.toHaveBeenCalled();
+          expect(answer.status).toBe('INFEASIBLE');
+          expect(answer.conflicts!.conflicts).toEqual([expect.objectContaining({ code: 'PLACEMENT_CANNOT_STAND', params: expect.objectContaining({ reason: 'BLOCK' }) })]);
+          expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+        });
+
+        it('refuses a half of a pair with no room by name before the engine: a pair is two locks, and a lock has a room', async () => {
+          arrange({ rooms: twoRooms });
+          placed([placement({ id: 'odd', recurrence: 'ODD_WEEKS' }), roomless({ id: 'even', dayOfWeek: 4, recurrence: 'EVEN_WEEKS' })]);
+          honoringEngine();
+
+          const answer = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(http.post).not.toHaveBeenCalled();
+          const lines = answer.conflicts!.conflicts;
+          expect(lines).toHaveLength(1);
+          expect(lines[0]).toMatchObject({ code: 'PLACEMENT_CANNOT_STAND', params: expect.objectContaining({ reason: 'PAIR_ROOM', day: 4 }) });
+          // The half that has a room stands, and the one that has none names none.
+          expect(lines[0]!.params!['room']).toBe('ANY_ROOM');
+        });
+
+        it('refuses a row no lesson of its length is left for (the post’s locks have it) by name, and sends nothing', async () => {
+          arrange({ rooms: twoRooms, requirements: [requirement({ lessonsPerWeek: 1 })], lockedLessons: [lockedLesson({ dayOfWeek: 2 })] });
+          placed([roomless()]);
+          honoringEngine();
+
+          const answer = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect(http.post).not.toHaveBeenCalled();
+          expect(answer.conflicts!.conflicts).toEqual([expect.objectContaining({ params: expect.objectContaining({ reason: 'OVER_DEMAND', room: 'ANY_ROOM' }) })]);
+        });
+
+        it('judges the row against a week with no room asked: the clash rule is given no room, and the refusal names none', async () => {
+          arrange({
+            rooms: twoRooms,
+            groups: [{ id: GROUP_ID, gradeLevel: null, kind: 'CLASS', name: '7A' }],
+            requirements: [requirement({ subject: { requiredRoomTypeId: null, name: 'Idrott och hälsa' } })],
+          });
+          placed([roomless()]);
+          masters.findConflicts.mockResolvedValue([]);
+          honoringEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          expect((masters.findConflicts.mock.calls[0]![3] as { roomId: string | null }).roomId).toBeNull();
+        });
+
+        it('on a dated post the pin rides on the post, which carries the periods it runs in', async () => {
+          // A post of the autumn (to 18 December) in a läsår from 2026-08-15: the post has periods, and so its pin, which has no mask of its own.
+          arrange({ rooms: twoRooms, requirements: [requirement({ endDate: new Date('2026-12-18T00:00:00.000Z') })] });
+          tx.academicYear.findUnique.mockResolvedValue({ startDate: new Date('2026-08-15T00:00:00.000Z'), endDate: new Date('2027-06-18T00:00:00.000Z') } as never);
+          placed([roomless()]);
+          honoringEngine();
+
+          await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+          const post = postedPayload().requirements[0]! as { periods?: boolean[]; pinnedLessons?: unknown };
+          expect(post.periods).toBeDefined();
+          expect(post.pinnedLessons).toEqual([{ dayOfWeek: 3, startTime: '10:00:00', endTime: '11:00:00' }, null, null]);
+          expect(postedPayload().fixedLessons).toEqual([]);
+        });
+
+        describe('the write', () => {
+          it('writes the lesson that came back for the pin as the förläggning’s: the engine’s room, locked, the run’s own and marked, and the engine’s others as they were', async () => {
+            arrange({ rooms: twoRooms });
+            placed([roomless()]);
+            honoringEngine();
+
+            await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+            const rows = written();
+            expect(rows).toHaveLength(3);
+            expect(rows.filter((row) => row['fromPlacement'] === true)).toEqual([
+              expect.objectContaining({
+                subjectId: SUBJECT_ID,
+                studentGroupId: GROUP_ID,
+                teacherId: TEACHER_ID,
+                roomId: SAL_2,
+                dayOfWeek: 3,
+                startTime: tenAm,
+                endTime: new Date('1970-01-01T11:00:00.000Z'),
+                recurrence: 'ALL_WEEKS',
+                isLocked: true,
+                isGenerated: true,
+                fromPlacement: true,
+              }),
+            ]);
+            // The two the engine laid itself are the engine's: generated, not locked, not marked, in the first room.
+            const others = rows.filter((row) => row['fromPlacement'] === undefined);
+            expect(others).toHaveLength(2);
+            expect(others.every((row) => row['isLocked'] === undefined && row['isGenerated'] === true && row['roomId'] === ROOM_ID)).toBe(true);
+          });
+
+          it('refuses an answer that holds no lesson at the pin (the engine did not do what it was asked), and writes nothing', async () => {
+            arrange({ rooms: twoRooms });
+            placed([roomless()]);
+            // echoEngine puts every lesson on Monday 08:00: the pin on Wednesday 10:00 has no lesson.
+            echoEngine();
+
+            await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({ status: 502 });
+            expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+            expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+          });
+
+          it('knows the pinned lesson of a shared post by its teacher too: Bo’s hour is not the lead’s', async () => {
+            const BO = '99999999-aaaa-4aaa-8aaa-999999999999';
+            arrange({ rooms: twoRooms, requirements: [requirement({ shares: [{ teacherId: BO, lessons: 1, minutes: 60 }] })] });
+            placed([roomless({ teacherId: BO })]);
+            honoringEngine();
+
+            await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+            expect(written().filter((row) => row['fromPlacement'] === true)).toEqual([
+              expect.objectContaining({ teacherId: BO, roomId: SAL_2, dayOfWeek: 3, isLocked: true }),
+            ]);
+          });
+
+          it('a post every lesson of which is pinned is still asked of the engine: a pinned lesson is not a lock, and the room is the engine’s', async () => {
+            arrange({ rooms: twoRooms, requirements: [requirement({ lessonsPerWeek: 1 })] });
+            placed([roomless()]);
+            honoringEngine();
+
+            await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+            expect(http.post).toHaveBeenCalledTimes(1);
+            expect(pinnedOf(postedPayload())).toEqual([{ dayOfWeek: 3, startTime: '10:00:00', endTime: '11:00:00' }]);
+            expect(written()).toEqual([expect.objectContaining({ roomId: SAL_2, fromPlacement: true, isLocked: true })]);
+          });
+
+          it('writes the room the engine chose even when it chose none', async () => {
+            arrange({ rooms: twoRooms });
+            placed([roomless()]);
+            honoringEngine(() => null);
+
+            await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+            expect(written().filter((row) => row['fromPlacement'] === true)).toEqual([expect.objectContaining({ roomId: null, isLocked: true })]);
+          });
+        });
+
+        describe('while the solver ran', () => {
+          it.each([
+            ['the row was given a room', () => [roomless({ roomId: ROOM_ID })]],
+            ['the row was moved', () => [roomless({ dayOfWeek: 4 })]],
+            ['the row was taken away', () => []],
+          ])('refuses the write (GENERATE_STALE) when %s', async (_what, rowsNow) => {
+            arrange({ rooms: twoRooms });
+            tx.teachingRequirementPlacement.findMany
+              .mockResolvedValueOnce([roomless()])
+              .mockResolvedValueOnce(rowsNow())
+              .mockResolvedValue([roomless()]);
+            honoringEngine();
+
+            await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({
+              response: expect.objectContaining({ code: 'GENERATE_STALE' }),
+            });
+            expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+          });
+
+          it('writes when the row is as it was', async () => {
+            arrange({ rooms: twoRooms });
+            placed([roomless()]);
+            honoringEngine();
+
+            await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+            expect(written().filter((row) => row['fromPlacement'] === true)).toHaveLength(1);
+          });
+        });
+
+        describe('an engine that does not know the key', () => {
+          const unknown = () => {
+            const refused = new AxiosError('boom');
+            refused.response = {
+              status: 422,
+              data: {
+                code: 'VALIDATION_ERROR',
+                message: 'Request payload failed schema validation.',
+                details: { errors: [{ type: 'extra_forbidden', loc: ['body', 'requirements', 0, 'pinnedLessons'], msg: 'Extra inputs are not permitted' }] },
+              },
+            } as never;
+            return refused;
+          };
+
+          it('refuses the run in a sentence a school can wait out, sends the week once, and writes nothing', async () => {
+            arrange({ rooms: twoRooms });
+            placed([roomless()]);
+            http.post.mockReturnValue(throwError(() => unknown()));
+
+            const error = await service.triggerScheduling(ACADEMIC_YEAR, testUser()).catch((thrown: unknown) => thrown);
+
+            expect((error as HttpException).getStatus()).toBe(503);
+            expect(bodyOf(error)).toHaveProperty('code', 'ENGINE_LACKS_PINNED_LESSONS');
+            expect(engineMayStillBeSolving(error)).toBe(false);
+            // Never again without the key: that week would put the lesson anywhere, unsaid.
+            expect(http.post).toHaveBeenCalledTimes(1);
+            expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+            expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+          });
+
+          it('is no refusal of a request that carries no pin: the same 422 of another request stays the validation error it is', async () => {
+            arrange({ rooms: twoRooms });
+            placed([]);
+            http.post.mockReturnValue(throwError(() => unknown()));
+
+            const error = await service.triggerScheduling(ACADEMIC_YEAR, testUser()).catch((thrown: unknown) => thrown);
+
+            expect((error as HttpException).getStatus()).toBe(422);
+            expect(bodyOf(error)).not.toHaveProperty('code', 'ENGINE_LACKS_PINNED_LESSONS');
+          });
+        });
+
+        describe('what the candidate and the basis see', () => {
+          type Prepared = Awaited<ReturnType<OptimizationProxyService['prepareSchedule']>>;
+          const prepare = (): Promise<Prepared> =>
+            prisma.withRls(testUser(), (client: never) => service.prepareSchedule(client, ACADEMIC_YEAR, testUser()));
+
+          it('keeps a pinned lesson out of the kept timetable and the coverage, where a lock stands: the answer holds it', async () => {
+            arrange({ rooms: twoRooms });
+            placed([roomless({ id: 'pin' }), placement({ id: 'lock', dayOfWeek: 1 })]);
+            const prepared = await prepare();
+            if (!prepared.ready) throw new Error('expected the fetch to be ready');
+            expect(prepared.placedRows.map((row) => row.id).sort()).toEqual(['lock', 'pin']);
+            expect(prepared.keptTimetable.map((lesson) => lesson.id)).toEqual(['lock']);
+          });
+
+          it('makes the requirements’ part another when the pin moves, or is given a room, or taken away', async () => {
+            arrange({ rooms: twoRooms });
+            const basis = async (rows: unknown[]) => {
+              placed(rows);
+              const prepared = await prepare();
+              if (!prepared.ready) throw new Error('expected the fetch to be ready');
+              return prepared.basisParts.requirements;
+            };
+            const base = await basis([roomless()]);
+            expect(await basis([roomless()])).toBe(base);
+            expect(await basis([roomless({ dayOfWeek: 4 })])).not.toBe(base);
+            expect(await basis([roomless({ startTime: new Date('1970-01-01T10:05:00.000Z') })])).not.toBe(base);
+            expect(await basis([placement()])).not.toBe(base);
+            expect(await basis([])).not.toBe(base);
+          });
+
+          it('tells a pin on Bo’s lesson from a pin on the lead’s: the place is part of what the basis hashes', async () => {
+            const BO = '99999999-aaaa-4aaa-8aaa-999999999999';
+            arrange({ rooms: twoRooms, requirements: [requirement({ shares: [{ teacherId: BO, lessons: 1, minutes: 60 }] })] });
+            const basis = async (rows: unknown[]) => {
+              placed(rows);
+              const prepared = await prepare();
+              if (!prepared.ready) throw new Error('expected the fetch to be ready');
+              return prepared.basisParts.requirements;
+            };
+            expect(await basis([roomless({ teacherId: BO })])).not.toBe(await basis([roomless({ teacherId: TEACHER_ID })]));
+          });
+        });
+      });
     });
 
     describe('lärarnas arbetstid', () => {

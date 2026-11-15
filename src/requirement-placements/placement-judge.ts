@@ -21,6 +21,8 @@ import { insideSchoolDay, placementsFitBesideLocks, sharedPlacementsFitBesideLoc
  * question is not asked the later ones):
  *
  *   SCHOOL_DAY    Monday to Friday, 08:00 to 18:00, on the five-minute grid
+ *   PAIR_ROOM     a half of a pair (odd or even weeks of an every-week post) names no room: a pair is two locks
+ *   BLOCK         the post is in a parallel block, whose lessons are placed together (no row of one member)
  *   OVER_DEMAND   the post's locks already answer the lessons its rows place
  *   TEACHER, ROOM, GROUP, PUPILS, AVAILABILITY
  *                 MasterLessonsService.findConflicts, the clash rule itself
@@ -67,7 +69,14 @@ export type PlacementRefusalReason =
   /** `params.schools`: the other schools by name, "Skola A, Skola B". */
   | 'OTHER_SCHOOL'
   | 'SCHOOL_DAY'
-  | 'OVER_DEMAND';
+  | 'OVER_DEMAND'
+  /**
+   * A half of a pair names no room (20270213090000). Refused at the save by the fit (REQUIREMENT_PLACEMENTS_DO_NOT_FIT,
+   * PAIR_ROOM), so only a row another writer stored reaches the judge with it: Generera's pre-flight and the week say it.
+   */
+  | 'PAIR_ROOM'
+  /** The post is in a parallel block: the database's rule (BLOCK), so only a row stored before the post joined the block. */
+  | 'BLOCK';
 
 export type PlacementParams = Record<string, string | number>;
 
@@ -88,11 +97,25 @@ export interface JudgedPlacement {
   dayOfWeek: number;
   startMinutes: number;
   minutes: number;
-  roomId: string;
+  /**
+   * The room the school chose, or null when it left the room to the engine
+   * (20270213090000). With none the row is held against no room: no room clash,
+   * no room's unavailability and no other school's hold on a room. The teacher,
+   * the class, the pupils, the frame, the lunch, the year's rules and the other
+   * schools' hold on the teacher are asked as before.
+   */
+  roomId: string | null;
   recurrence: LessonRecurrence;
   /** The post's window, which the written lesson carries. */
   startDate: Date | null;
   endDate: Date | null;
+  /**
+   * The row is a half of a pair and names no room (judgedRowOf): a pair is sent as two locks, and a lock has a room.
+   * Absent reads as false, so a row built by hand (the other posts' rows beside) is never asked.
+   */
+  pairWithoutRoom?: boolean;
+  /** The row's post is in a parallel block (judgedRowOf). */
+  inBlock?: boolean;
 }
 
 /** Where a row stands: the part of a förläggning the post does not already say. */
@@ -100,7 +123,8 @@ export interface JudgedSlot {
   dayOfWeek: number;
   startMinutes: number;
   minutes: number;
-  roomId: string;
+  /** Null: the room is the engine's to choose (JudgedPlacement.roomId). */
+  roomId: string | null;
   recurrence: LessonRecurrence;
   /** Whose lesson it is, on a post that shares its lessons; null on every other (teacherOfRow). */
   teacherId: string | null;
@@ -116,6 +140,9 @@ export interface JudgedPost {
   startDate: Date | null;
   endDate: Date | null;
   shares?: readonly LessonShare[] | null;
+  /** The post's weeks and block, for the two questions about the row alone (PAIR_ROOM, BLOCK); absent asks neither. */
+  recurrence?: LessonRecurrence;
+  blockId?: string | null;
 }
 
 /**
@@ -143,6 +170,8 @@ export function judgedRowOf(post: JudgedPost, slot: JudgedSlot, id: string | nul
     recurrence: slot.recurrence,
     startDate: post.startDate,
     endDate: post.endDate,
+    pairWithoutRoom: post.recurrence === 'ALL_WEEKS' && slot.recurrence !== 'ALL_WEEKS' && slot.roomId === null,
+    inBlock: post.blockId !== undefined && post.blockId !== null,
   };
 }
 
@@ -285,6 +314,8 @@ export async function judgePlacements(
   const open: number[] = [];
   rows.forEach((row, index) => {
     if (!insideSchoolDay(row)) refuse(index, 'SCHOOL_DAY');
+    else if (row.pairWithoutRoom) refuse(index, 'PAIR_ROOM');
+    else if (row.inBlock) refuse(index, 'BLOCK');
     else if (overDemand.has(row.requirementId)) refuse(index, 'OVER_DEMAND');
     else open.push(index);
   });
@@ -497,7 +528,8 @@ function holdSchools(holds: readonly OtherSchoolHold[], row: JudgedPlacement): s
   const schools = new Set<string>();
   for (const hold of holds) {
     if (hold.dayOfWeek !== row.dayOfWeek) continue;
-    const mine = hold.resourceKind === 'TEACHER' ? teachers.has(hold.resourceId) : hold.resourceId === row.roomId;
+    // A row with no room stands in no room, so no hold on a room is its own.
+    const mine = hold.resourceKind === 'TEACHER' ? teachers.has(hold.resourceId) : row.roomId !== null && hold.resourceId === row.roomId;
     if (!mine) continue;
     if (!overlaps(row.startMinutes, row.startMinutes + row.minutes, holdMinutes(hold.startTime), holdMinutes(hold.endTime))) continue;
     for (const school of hold.schools) schools.add(school);
