@@ -42,6 +42,26 @@ export function readsHr(user: AuthenticatedUser): boolean {
 }
 
 /**
+ * May the reader read the HR fields of THIS person's post? The reader's own
+ * rule (readsHr) and one more: a person's own post is theirs. A schemaläggare,
+ * an expedition or a läsare without HR-läs does not read other people's tjänst
+ * %, and by the same rule read their own as hidden, which is wrong for an
+ * administrator who teaches (Users.teaches) and has a post of their own, and
+ * for any administrator who has one.
+ *
+ * The own row only, and by the person's id: it opens nothing of anybody
+ * else's, a läsare included, and the huvudman's reader (no row, no id) has no
+ * row to match. Used where a NAMED person's HR is hidden: the post's list,
+ * write and history, and the load report's rows. The places that judge or
+ * count for the reader as a whole (readsHr: the enforcement's wording, the key
+ * figures, the cover and the suggestion pickers' room) stay per reader.
+ */
+export function mayReadHrOf(user: AuthenticatedUser, subjectUserId: string | null | undefined): boolean {
+  if (readsHr(user)) return true;
+  return typeof subjectUserId === 'string' && user.userId !== undefined && user.userId === subjectUserId;
+}
+
+/**
  * The post's HR columns besides the two percentages, which every reader of
  * a post is handed and so are typed apart: SCB's three (20261111090000),
  * deltid in days (maxTeachingDaysPerWeek, 20261123090000) — the most

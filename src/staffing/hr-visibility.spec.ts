@@ -12,6 +12,7 @@ import {
   POST_READ_NULLED,
   hideHr,
   hideHrChanges,
+  mayReadHrOf,
   readsHr,
 } from './hr-visibility';
 
@@ -25,6 +26,37 @@ describe('hr-visibility', () => {
     expect(readsHr(testUser({ adminProfile: 'EXPEDITION' }))).toBe(false);
     // An administrator without a profile reads none, rather than all.
     expect(readsHr(testUser({ adminProfile: undefined }))).toBe(false);
+  });
+
+  // Administratör som lärare: a person's own post is theirs, and nobody else's is opened by it.
+  describe('mayReadHrOf: a person’s own post, and no one else’s', () => {
+    const ME = '22222222-2222-4222-8222-222222222222';
+    const OTHER = '44444444-4444-4444-8444-444444444444';
+    const planner = testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false, userId: ME });
+
+    it('opens an administrator without HR-läs their own post, and not another person’s', () => {
+      expect(readsHr(planner)).toBe(false);
+      expect(mayReadHrOf(planner, ME)).toBe(true);
+      expect(mayReadHrOf(planner, OTHER)).toBe(false);
+      for (const profile of ['EXPEDITION', 'LASARE'] as const) {
+        expect(mayReadHrOf(testUser({ adminProfile: profile, hrRead: false, userId: ME }), ME)).toBe(true);
+        expect(mayReadHrOf(testUser({ adminProfile: profile, hrRead: false, userId: ME }), OTHER)).toBe(false);
+      }
+    });
+
+    it('leaves a reader of HR reading everybody’s, as readsHr does, and a teacher as they were', () => {
+      expect(mayReadHrOf(testUser({ adminProfile: 'REKTOR', userId: ME }), OTHER)).toBe(true);
+      expect(mayReadHrOf(testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: true, userId: ME }), OTHER)).toBe(true);
+      expect(mayReadHrOf(testUser({ role: Role.TEACHER }), OTHER)).toBe(true);
+    });
+
+    it('opens nothing for nobody: no person asked about, and a reader with no row of their own has none to match', () => {
+      expect(mayReadHrOf(planner, null)).toBe(false);
+      expect(mayReadHrOf(planner, undefined)).toBe(false);
+      const huvudmansReader = testUser({ adminProfile: 'LASARE', hrRead: false, userId: undefined });
+      expect(mayReadHrOf(huvudmansReader, undefined)).toBe(false);
+      expect(mayReadHrOf(huvudmansReader, ME)).toBe(false);
+    });
   });
 
   it("answers for administrators only: a teacher's own post is filtered elsewhere", () => {
