@@ -124,7 +124,7 @@ export async function readLists(tx: PrismaClient, schoolId: string): Promise<Sch
       tx.user.findMany({
         where: { schoolId },
         orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
-        select: { id: true, role: true, firstName: true, lastName: true, email: true, phone: true, studentGroupId: true, isActive: true },
+        select: { id: true, role: true, teaches: true, firstName: true, lastName: true, email: true, phone: true, studentGroupId: true, isActive: true },
       }),
       tx.studentGroupMember.findMany({
         where: { schoolId },

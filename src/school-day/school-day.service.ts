@@ -11,6 +11,7 @@ import { coverOn, minutesOfClock, type CoverLoan } from '../sharing/loan-coverag
 import { asDay, dayBounds, dayDate, liftWindow, readPersonDays, schoolTimezone } from '../cover/cover-context';
 import type { Span } from '../cover/cover-rules';
 import { PrismaService } from '../database/prisma.service';
+import { teacherWhere } from '../staffing/teaching-staff';
 import type { FreeQueryDto, GridQueryDto, SchoolDaySettingsDto } from './dto/school-day.dto';
 import { ROOM_RULES, TEACHER_RULES, clipToDay, roomFindings, teacherFreedom, wallClockMinutes, type RoomDay } from './school-day-rules';
 import type {
@@ -127,7 +128,7 @@ export class SchoolDayService {
         this.groupsOn(tx, from, to),
         tx.room.findMany({ select: { id: true, name: true, code: true } }),
         tx.subject.findMany({ select: { id: true, name: true } }),
-        access.grids ? tx.user.findMany({ where: { role: 'TEACHER' }, select: { id: true, firstName: true, lastName: true, isActive: true } }) : Promise.resolve([]),
+        access.grids ? tx.user.findMany({ where: teacherWhere(), select: { id: true, firstName: true, lastName: true, isActive: true } }) : Promise.resolve([]),
       ]);
       const held = access.admin ? new Set<string>() : await this.protectedStaff(tx, access);
 
@@ -192,6 +193,8 @@ export class SchoolDayService {
             date,
             timezone,
             academicYearId: yearOn(years, date),
+            // An occupancy read: whether the person is busy, which does not ask the role. The tag is the teacher's for
+            // a teaching administrator too (the list above is who teaches), and no rule here asks isActiveTeacher.
             known: active.map((teacher) => ({ id: teacher.id, role: 'TEACHER', isActive: true })),
             occupancyOnly: true,
             skipLessons: true,
@@ -284,7 +287,7 @@ export class SchoolDayService {
         return { ...base, teachers: null, rooms: freeRooms, busyTeachers: null, busyRooms: access.admin ? busyRooms : null, poolLeftOut: 0 };
       }
 
-      const teacherRows = await tx.user.findMany({ where: { role: 'TEACHER', isActive: true }, select: { id: true, firstName: true, lastName: true } });
+      const teacherRows = await tx.user.findMany({ where: { ...teacherWhere(), isActive: true }, select: { id: true, firstName: true, lastName: true } });
       const year = await tx.academicYear.findFirst({
         where: { startDate: { lte: dayDate(date) }, endDate: { gte: dayDate(date) } },
         orderBy: [{ isActive: 'desc' }, { startDate: 'desc' }],

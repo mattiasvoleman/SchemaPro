@@ -2845,7 +2845,8 @@ describe('ImportService', () => {
         expect(report).toMatchObject({ created: 1, errors: [] });
         expect(tx.user.findMany).toHaveBeenCalledWith({
           where: {
-            role: 'TEACHER',
+            // A teacher, or an administrator who teaches (Users.teaches): the file names a post's teacher by e-mail.
+            OR: [{ role: 'TEACHER' }, { role: 'SCHOOL_ADMIN', teaches: true }],
             isActive: true,
             email: expect.objectContaining({
               in: ['karin@example.com'],
@@ -2854,6 +2855,15 @@ describe('ImportService', () => {
           },
           select: { id: true, email: true },
         });
+      });
+
+      it('finds an administrator who teaches as the post’s teacher, and says "ingen aktiv lärare" only for the rest', async () => {
+        // The database answers what the where asks: a teaching administrator is in the answer because the where names them.
+        tx.user.findMany.mockResolvedValue([{ id: TEACHER_ID, email: 'rektor@example.com' }]);
+        const report = await run(row({ teacherEmail: 'rektor@example.com' }));
+        expect(report).toMatchObject({ created: 1, errors: [] });
+        const where = (tx.user.findMany.mock.calls.at(-1)![0] as { where: { OR: unknown[] } }).where;
+        expect(where.OR).toContainEqual({ role: 'SCHOOL_ADMIN', teaches: true });
       });
 
       it('resolves teacher and co-teacher addresses written with spaces around them', async () => {

@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { createPrismaMock, createTxMock, testUser, type TxMock } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
+import { teacherWhere } from '../staffing/teaching-staff';
 import { datesOf, MAX_DAYS, SchoolDayService } from './school-day.service';
 import type { TeacherView } from './school-day.types';
 
@@ -484,6 +485,23 @@ describe('SchoolDayService', () => {
       // Åke’s absence is read and so recorded.
       const recorded = tx.$executeRaw.mock.calls.map(([statement]) => JSON.stringify((statement as Statement).values));
       expect(recorded.some((values) => values.includes('STAFF_ABSENCES') && values.includes('t2'))).toBe(true);
+    });
+
+    // Administratör som lärare: "who teaches in the school" is a teacher or an administrator with the mark, in the grid's rows and in
+    // the search for who is free. A teaching administrator is no longer left out of both without a word.
+    it('asks for the school’s teachers as teacherWhere says: a teacher, or an administrator who teaches', async () => {
+      const grid = setup({ users: [] });
+      await grid.service.grid({ from: SUMMER }, admin);
+      expect(model(grid.tx, 'user', 'findMany')).toHaveBeenCalledWith({
+        where: teacherWhere(),
+        select: { id: true, firstName: true, lastName: true, isActive: true },
+      });
+      const free = setup(world);
+      await free.service.free({ date: SUMMER, from: '10:00', to: '11:00' }, admin);
+      expect(model(free.tx, 'user', 'findMany')).toHaveBeenCalledWith({
+        where: { ...teacherWhere(), isActive: true },
+        select: { id: true, firstName: true, lastName: true },
+      });
     });
 
     it('lists the free teachers, a pool member too once a window of theirs holds the interval', async () => {

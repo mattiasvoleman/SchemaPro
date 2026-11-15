@@ -205,6 +205,32 @@ describe('Ss12000Service', () => {
       );
     });
 
+    // Administratör som lärare: the one label this version has says Lärare for a teaching administrator, Personal for
+    // one who does not teach. The `role` filter is the row's own role and is not widened (a teaching administrator is
+    // found under SCHOOL_ADMIN), which is the contract a consumer that filters on it already has.
+    it('labels an administrator who teaches Lärare, and one who does not Personal', async () => {
+      arrangeList('user', 2, [
+        user({ id: 'rektor', role: 'SCHOOL_ADMIN', teaches: true }),
+        user({ id: 'expedition', role: 'SCHOOL_ADMIN', teaches: false }),
+      ]);
+
+      const result = await service.persons(SCHOOL_ID);
+      expect((result.data as Array<{ id: string; personRole: string }>).map((one) => [one.id, one.personRole])).toEqual([
+        ['rektor', 'Lärare'],
+        ['expedition', 'Personal'],
+      ]);
+      expect(tx.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ select: expect.objectContaining({ role: true, teaches: true }) }),
+      );
+    });
+
+    it('does not take the mark on a pupil or a guardian for a teacher', async () => {
+      arrangeList('user', 2, [user({ id: 'p', role: 'STUDENT', teaches: true }), user({ id: 'g', role: 'GUARDIAN', teaches: true })]);
+
+      const result = await service.persons(SCHOOL_ID);
+      expect((result.data as Array<{ personRole: string }>).map((one) => one.personRole)).toEqual(['Elev', 'Vårdnadshavare']);
+    });
+
     it('treats an unknown role as a pupil rather than failing', async () => {
       arrangeList('user', 1, [user({ role: 'SOMETHING_NEW' })]);
 

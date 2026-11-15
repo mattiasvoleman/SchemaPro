@@ -7,6 +7,7 @@ import type { RealtimeService } from '../realtime/realtime.service';
 import { createCreditInTransaction } from '../timplan/timplan-credits.service';
 import { digestAudience, sendDigest } from './cancellation-digest';
 import { tryEnterPublication } from './publish-mode';
+import { teacherWhere } from '../staffing/teaching-staff';
 import type { CreateScheduleActivityDto, ScheduleActivitySelectionDto } from './dto/schedule-activity.dto';
 import {
   ACTIVITY_CREDIT_SUBJECT,
@@ -435,6 +436,14 @@ describe('ScheduleActivitiesService', () => {
       expect(await code(service.preview(selection({ startTime: '08:00', endTime: '12:00' }), user))).toBe('CANCELLATION_CREDIT');
       world.candidates = [];
       expect(await code(service.preview(selection(), user))).toBe('CANCELLATION_CREDIT');
+    });
+
+    it('asks whether a named teacher is one as teacherWhere says: an administrator who teaches is, and counts as an active teacher', async () => {
+      await service.preview(selection({ teachers: [{ studentGroupId: G7A, teacherId: T1 }] }), user).catch(() => undefined);
+      expect(tx.user.findMany).toHaveBeenCalledWith({
+        where: { id: { in: [T1] }, ...teacherWhere(), isActive: true },
+        select: { id: true },
+      });
     });
 
     it('refuses a teacher for a class the activity is not for, and one who is not an active teacher', async () => {

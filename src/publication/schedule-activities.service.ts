@@ -65,6 +65,7 @@ import {
 } from './activity-replacements';
 import { holdRelocated, reapplyInTransaction, relocatedOf, type BatchLessonView } from './cancellation-batches.service';
 import type { CreateScheduleActivityDto, ScheduleActivitySelectionDto } from './dto/schedule-activity.dto';
+import { teacherWhere } from '../staffing/teaching-staff';
 
 export const ACTIVITY_SUBJECT = 'ACTIVITY_SUBJECT';
 export const ACTIVITY_SUBJECT_COUNTS = 'ACTIVITY_SUBJECT_COUNTS';
@@ -993,7 +994,7 @@ export class ScheduleActivitiesService {
 
     // Teachers: only for owners, only for teachers.
     const people = await tx.user.findMany({
-      where: { id: { in: checked.teachers.map((teacher) => teacher.teacherId) }, role: 'TEACHER', isActive: true },
+      where: { id: { in: checked.teachers.map((teacher) => teacher.teacherId) }, ...teacherWhere(), isActive: true },
       select: { id: true },
     });
     const knownTeachers = new Set(people.map((person) => person.id));

@@ -47,6 +47,7 @@ import {
 import { buildRequest, realise, type PlanningExam, type PlanningState, type RealisedPlan } from './exam-request';
 import type { PlanExamsResponse } from './interfaces/exam-engine.interface';
 import type { ApplyExamPlanDto, ApplyItemDto, PlanExamsDto } from './dto/exam.dto';
+import { teacherWhere } from '../staffing/teaching-staff';
 import {
   EXAM_SELECT,
   clearLeftovers,
@@ -297,7 +298,7 @@ export class ExamPlannerService {
     const lessons = await readCancellableLessons(tx, touched, first, last, timezone, now);
     const dates = datesToRead(exams, today);
     const held = await markedIds(tx, schoolId);
-    const teachers = (await tx.user.findMany({ where: { role: 'TEACHER', isActive: true }, select: { id: true } }))
+    const teachers = (await tx.user.findMany({ where: { ...teacherWhere(), isActive: true }, select: { id: true } }))
       .map((teacher) => teacher.id)
       .filter((id) => !held.has(id))
       .sort();
@@ -351,7 +352,7 @@ export class ExamPlannerService {
       const roomIds = [...new Set(plan.placed.flatMap((one) => one.rooms.map((room) => room.roomId)))];
       const [rooms, teachers, minutes] = await Promise.all([
         tx.room.findMany({ where: { id: { in: roomIds } }, select: { id: true, name: true } }),
-        tx.user.findMany({ where: { role: 'TEACHER', isActive: true }, select: { id: true, firstName: true, lastName: true } }),
+        tx.user.findMany({ where: { ...teacherWhere(), isActive: true }, select: { id: true, firstName: true, lastName: true } }),
         watchMinutes(tx, dto.academicYearId),
       ]);
       const held = await markedIds(tx, schoolId);
@@ -483,7 +484,7 @@ export class ExamPlannerService {
     if (new Set(teacherIds).size !== teacherIds.length) throw badExam(EXAM_PLACEMENT, 'En lärare kan inte vaka i två salar.');
     const held = await markedIds(tx, schoolId);
     const pool = new Set(
-      (await tx.user.findMany({ where: { id: { in: teacherIds }, role: 'TEACHER', isActive: true }, select: { id: true } })).map((teacher) => teacher.id),
+      (await tx.user.findMany({ where: { id: { in: teacherIds }, ...teacherWhere(), isActive: true }, select: { id: true } })).map((teacher) => teacher.id),
     );
     for (const id of teacherIds) {
       if (!pool.has(id) || held.has(id)) throw badExam(EXAM_PLACEMENT, 'En vakt finns inte eller får inte vara vakt.');
