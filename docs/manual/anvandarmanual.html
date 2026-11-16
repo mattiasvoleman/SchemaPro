@@ -2742,6 +2742,15 @@
     inte annars.
   </p>
   <p>
+    <strong>Veckan är en andra väg.</strong> Blockets lektioner kan också läggas
+    i <span class="ui">Förlägg i veckan</span> (<em>Ett parallellt blocks
+    lektioner i veckan</em> nedan): där är en lektion av blocket en bricka som
+    dras in i veckan, och den läggs för alla blockets poster på en gång. Dialogen
+    och veckan är två vägar till samma rader. De skriver samma förläggningar med
+    samma regler, och en ändring i den ena syns i den andra. Har någon annan
+    ändrat blocket sedan du läste det sparas ingenting, vilken väg du än tog.
+  </p>
+  <p>
     Du kan förlägga högst så många lektioner av varje längd som blocket har.
     En rad ovanför lektionerna räknar dem, till exempel <em>Blockets lektioner:
     1 lektion à 80 minuter och 2 lektioner à 40 minuter. Förlagda: 2 av
@@ -2759,6 +2768,17 @@
     <em>Sal, eller motorn väljer</em> nedan): vägrar Generera för att utpekade
     salar räknas som olika platser, lämna då salen på
     <span class="ui">Motorn väljer sal</span>.
+  </p>
+  <p>
+    <strong>En post som tas ur blocket och läggs tillbaka.</strong> Tas en post ur
+    blocket och läggs tillbaka innan blockets förläggningar har sparats på nytt
+    kan en sal som angavs för posten förr gälla igen som postens sal, utan att
+    något sägs. Dialogen och veckans kort visar den salen som postens, så du kan
+    se den, och Generera håller lektionen i den. Får postens lektioner inte
+    använda salen säger Generera det och ber dig välja en annan sal eller låta
+    schemat välja. Vill du vara säker på att salarna är som du tror, spara
+    blockets förläggningar en gång till: då ersätts alla rader, och
+    sal-valen blir de som står i dialogen.
   </p>
   <p>
     <strong>Domen.</strong> Varje lektion prövas för varje post i blocket med
@@ -2782,7 +2802,10 @@
     även när den inte håller. Den visas röd, med skälet, när du öppnar dialogen
     igen, och Generera körs inte förrän den håller. Ändrar du lektionens dag,
     tid, längd eller en posts sal är lektionen ny för den posten och prövas, och
-    nekas om den inte håller.
+    nekas om den inte håller. En <em>ny</em> lektion som möter en lektion som
+    fortfarande är röd nekas också, tills den röda har flyttats eller tagits
+    bort: prövningen ser alla lektioner, på båda sidor. Flytta eller ta bort
+    den röda först och lägg sedan den nya.
   </p>
   <p>
     <strong>Blocket kan inte förläggas</strong> om det saknar poster, om en av
@@ -3507,8 +3530,10 @@
     <li><strong>Att lägga</strong> är lektionerna som är kvar, en bricka per
       lektion med post, lärare och längd. Det är samma tal som Generera skickar
       till motorn, så en bricka som är kvar är en lektion motorn annars lägger
-      själv. En post i ett parallellt block, och en lektion som ingen lärare har,
-      har ingen bricka.</li>
+      själv. En post i ett parallellt block har ingen bricka av eget: den läggs
+      med sitt block, som har en bricka för varje lektion det har kvar (se
+      <em>Ett parallellt blocks lektioner i veckan</em> nedan). En lektion som
+      ingen lärare har saknar också bricka.</li>
     <li><strong>Veckan</strong> är måndag till fredag, 08:00 till 18:00, med
       förläggningarna som färgade rutor. En ruta med röd ram håller inte
       längre. En ruta med hänglås och texten <em>i grundschemat</em> är en
@@ -3559,6 +3584,92 @@
     ställe och jämna på ett annat, läggs i dialogen på posten; veckan visar
     båda halvorna med märke och du kan flytta dem var för sig.
   </p>
+  <h4 id="forlagg-blockbricka">Ett parallellt blocks lektioner i veckan</h4>
+  <p>
+    Ett parallellt block (4.2, <em>Förlägg ett parallellt block</em>) läggs i
+    veckan en lektion i taget, och lektionen läggs för alla blockets poster på
+    en gång. Dialogen <span class="ui">Förlägg …</span> på Timplansposter finns
+    kvar: den och veckan är två vägar till samma rader, med samma regler.
+    Varje sparning gäller från nästa Generera.
+  </p>
+  <ul>
+    <li><strong>Brickan.</strong> Under <em>Att lägga</em> har blocket en bricka
+      för varje lektion det har kvar, efter de enskilda posternas, under
+      blockets namn, till exempel <em>Språkval åk 7</em> med brickan
+      <em>60 min, 3 poster</em>. Har blocket lektioner av olika längd, till
+      exempel 80 + 40 minuter, finns en bricka av varje längd, och inte fler än
+      blocket har. Posterna i blocket har ingen bricka av eget: de läggs med
+      blocket. I talet överst räknas en blocklektion en gång, inte en gång per
+      post.</li>
+    <li><strong>Lägga.</strong> På samma tre sätt som en enskild post: dra
+      brickan in i veckan, välj den och peka på en tid, eller välj den med
+      tangentbordet och fyll raden <em>Lägg vald lektion</em>. Raden har
+      <span class="ui">Dag</span> och <span class="ui">Starttid</span> och sedan
+      <span class="ui">Sal per post</span>: ett val för varje post i blocket,
+      med postens ämne och klass som namn. En mening under fälten säger i ord om
+      tiden är ledig, eller vilken post som är i vägen och varför, och
+      <span class="ui">Nästa lediga tid</span> stegar till nästa tid som är
+      ledig för alla poster. Rutan under pekaren i dragningen är grön eller röd
+      på samma sätt som för en post; servern avgör vid släppet, och säger den
+      nej står brickan kvar.</li>
+    <li><strong>Sal per post.</strong> Första valet för varje post är
+      <span class="ui">Motorn väljer sal</span>: motorn väljer då postens sal vid
+      varje Generera, och salen kan bli en annan nästa gång. En sal du anger för
+      posten behålls varje gång. Du kan ange sal för några poster och låta de
+      andra stå kvar. Verktyget föreslår för varje post den sal postens egna
+      lektioner i blocket redan står i, annars en sal som ämnets salsregel
+      pekar ut, annars ingen; salen du valt i filtret föreslås inte, eftersom det
+      vore samma sal åt alla poster. Två poster kan inte ha samma sal samtidigt.</li>
+    <li><strong>Rutan.</strong> En ruta för varje lagd lektion, med blockets
+      namn, under det posternas ämnen (<em>Spanska · Tyska · Franska</em>), hur
+      många poster som valt sal (<em>Motorn väljer sal</em> eller <em>Sal på 2
+      av 3 poster</em>) och märket för veckorna (udda, period), som för en post.
+      En röd ram betyder att någon post inte håller lektionen. Tryck eller Enter
+      öppnar rutan: dag, start och en sal per post kan ändras, domen står för
+      varje post med skälet, och när lektionen sparades senast.</li>
+    <li><strong>Flytta och ta bort.</strong> Dra rutan, flytta den med
+      piltangenterna (upp och ned ett kvart, höger och vänster en dag) eller
+      ändra den i dialogen; salarna följer med lektionen. Längden är blockets och
+      ändras inte här. Flyttar du till en tid som servern vägrar säger meddelandet
+      vilken post som krockar och varför, och rutan står kvar.
+      <span class="ui">Ta bort</span> tar bort lektionen utan fråga, eftersom ett
+      block inte har par, och lektionen är då en bricka igen.</li>
+    <li><strong>Ångra.</strong> <span class="ui">Ångra</span> och
+      <span class="ui">Gör om</span>, eller Ctrl+Z, gäller också blockets
+      lektioner, i samma lista som posternas. Har någon annan ändrat blocket
+      sedan dess nekas steget med ett besked, och listan nollställs. Samma sak
+      gäller en vanlig sparning: har blocket ändrats sedan sidan läste det sparas
+      ingenting, sidan läser om, och du gör om det du ville.</li>
+    <li><strong>En lektion som slutat hålla.</strong> Har blockets lektion
+      slutat hålla för någon post får den ligga kvar, med röd ram. Efter varje
+      sparning säger meddelandet vilka lektioner som fortfarande inte håller och
+      varför, och den röda rutan överst har en rad för varje lektion, med de
+      poster som faller på samma skäl sagda tillsammans. Generera körs inte
+      förrän lektionen håller igen. En ny lektion som möter en röd nekas tills
+      den röda har flyttats eller tagits bort: flytta eller ta bort den röda
+      först.</li>
+    <li><strong>Block som inte kan läggas för hand.</strong> Ett block som följer
+      ett annat blocks tider läggs genom det blocket, ett block utan poster har
+      inget att lägga, och ett block där en post delar sina lektioner mellan
+      lärare kan inte förläggas ännu. Ett sådant block har ingen bricka, och
+      listan <span class="ui">Block</span> under veckan säger varför, med namnet
+      på blocket det följer.</li>
+    <li><strong>Listan Block</strong> under veckan visar varje block med hur
+      många av dess lektioner som är förlagda och hur många som är kvar för
+      Generera, varje lektion med sina salar, om den håller och när den sparades.
+      En post i blocket säger i listan <em>Poster</em> att den läggs
+      tillsammans med blocket, och namnger det. Filtren för klass, lärare och sal
+      gäller blocken: ett block hör till klassen och läraren på någon av sina
+      poster, och till salarna posterna valt för lektionen.</li>
+    <li><strong>Expeditionen och läsbehörigheten</strong> ser blockens rutor och
+      listan men får inga brickor och inga fält: de kan inte lägga, flytta eller
+      ta bort en lektion.</li>
+    <li><strong>Länk till en lektion.</strong> Veckan kan öppnas på en lektion i
+      ett block: adressen pekar ut blocket, dagen och starttiden, och då markeras
+      blockets ruta och tangentbordet flyttas till den, utan att dialogen
+      öppnas. Finns ingen lektion där längre, den har flyttats eller tagits bort,
+      säger sidan det.</li>
+  </ul>
   <h4>Flytta och ta bort</h4>
   <ul>
     <li><strong>Flytta</strong> en ruta genom att dra den, eller med
@@ -3599,7 +3710,10 @@
     inte lektionerna som redan låg på posten. De som står kvar står röda, och
     meddelandet efter sparningen säger vilka och varför; Generera körs inte
     förrän de håller igen. En lektion du flyttar eller lägger som inte håller
-    nekas, med skälet.
+    nekas, med skälet. Det gäller också en ny lektion som möter en som fortfarande
+    är röd: den nekas tills den röda har flyttats eller tagits bort, eftersom
+    prövningen ser alla lektioner på båda sidor, och meddelandet säger det när
+    lektionen i vägen är röd. Flytta eller ta bort den röda först.
   </p>
   <p>
     <strong>Ombyte och dusch.</strong> Har en post minuter före och efter
