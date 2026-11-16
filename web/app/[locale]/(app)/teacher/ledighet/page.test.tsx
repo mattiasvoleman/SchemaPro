@@ -154,6 +154,31 @@ describe("Ledighet for an administrator who teaches", () => {
     expect(screen.queryByText("Vera Vid")).not.toBeInTheDocument();
   });
 
+  it("leaves out a pending request that still waits for a guardian's consent: a teacher's arm asks that it is complete", () => {
+    who.role = "SCHOOL_ADMIN";
+    const waiting = {
+      ...REQUEST,
+      id: "l-8",
+      student: { id: "p-wilma", name: "Wilma Väntar", className: "7A" },
+      consent: { required: true, state: "WAITING", mine: "NOT_ASKED", asked: 2, given: 1, waiting: 1 },
+    };
+    state.inbox = { data: [waiting, REQUEST], isLoading: false, isError: false };
+    renderPage();
+    const list = screen.getByRole("region", { name: "Väntar på ditt beslut" });
+    expect(within(list).getByText("Ella Elev")).toBeInTheDocument();
+    expect(within(list).queryByText("Wilma Väntar")).not.toBeInTheDocument();
+  });
+
+  it("shows a pending request whose consent is complete or not asked for", () => {
+    who.role = "SCHOOL_ADMIN";
+    const given = { ...REQUEST, id: "l-9", student: { id: "p-gunnel", name: "Gunnel Given", className: "7A" }, consent: { required: true, state: "GIVEN", mine: "NOT_ASKED", asked: 2, given: 2, waiting: 0 } };
+    state.inbox = { data: [given, REQUEST], isLoading: false, isError: false };
+    renderPage();
+    const list = screen.getByRole("region", { name: "Väntar på ditt beslut" });
+    expect(within(list).getByText("Gunnel Given")).toBeInTheDocument();
+    expect(within(list).getByText("Ella Elev")).toBeInTheDocument();
+  });
+
   it.each([["APPROVED", "Beviljad"], ["REJECTED", "Avslagen"]])(
     "leaves out on the decided tab %s a request she decided as administrator for a pupil she is not a mentor of",
     async (status, tab) => {
