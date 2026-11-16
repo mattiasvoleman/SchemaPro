@@ -5676,7 +5676,10 @@ administrator), so the migration and the merge change no answer there; RLS secti
   it). They hold: the Postgres version; no alarm open; nobody marked; the `md5(prosrc)` of the ten functions and the `md5` of the
   three arms before and after (below); the md5 of every other function and policy unchanged; that `app.teaches_like` does not exist
   before and has no grant after; the grants and, on 17, MAINTAIN; and the migration row finished and not rolled back. The counts of
-  migration rows and the fingerprint of their names depend on production's own order (set `F04`–`F06`/`E03`–`E04` from its rows).
+  migration rows and the fingerprint of their names depend on production's own order (set `F04`–`F06`/`E03`–`E04` from its rows). The
+  values in the files are those of production's order **after C1** (`20270218090000`, run first): 221 migrations and
+  `20270218090000_ett_block_kan_forlaggas` last before this one (`F04`–`F06`), 222 after (`E03`–`E04`); run in that order the files
+  gave 52 of 52 before and 52 of 52 after on Postgres 17 and 16.
 - **md5(prosrc), before → after:** `reporting_lessons` `a263885d…` → `ec19a5e2…`; `absence_stats_lessons` `2b076764…` → `16826e85…`;
   `leave_mentors` `2e45bf18…` → `a0543c68…`; `absence_watch_mentees` `cb7f4c58…` → `5a5558cf…`; `absence_watch_digest_plan`
   `ee974a4a…` → `efc50076…`; `leave_mine_to_decide` `1526df12…` → `43acb82d…`; `leave_request_taken` `8d94bb7a…` → `a62479a0…`;
