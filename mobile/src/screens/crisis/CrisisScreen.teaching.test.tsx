@@ -291,6 +291,24 @@ describe('Larm for each person (Users.teaches)', () => {
     expect(canPress(tree, SWITCH_TO_MANAGEMENT)).toBe(false);
   });
 
+  // A choice she made while marked must not outlive the mark: the roll call is a route the gateway refuses an administrator who
+  // does not teach, and a screen that kept showing it would ask for it every five seconds.
+  it('does not keep showing the roll call she had moved back to when the mark is taken away', async () => {
+    as('SCHOOL_ADMIN', true);
+    tree = await render();
+    await press(pressable(tree, SWITCH_TO_MANAGEMENT));
+    await press(pressable(tree, SWITCH_TO_ROLL_CALL));
+    expect(rollCall(tree)).toBe(true);
+    const before = gateway.to('GET', '/api/v1/crisis/mine').length;
+
+    as('SCHOOL_ADMIN', false);
+    await rerender(tree);
+    expect(management(tree)).toBe(true);
+    expect(rollCall(tree)).toBe(false);
+    expect(canPress(tree, SWITCH_TO_ROLL_CALL)).toBe(false);
+    expect(gateway.to('GET', '/api/v1/crisis/mine')).toHaveLength(before);
+  });
+
   it.each([['STUDENT'], ['GUARDIAN']])('shows %s nothing of an alarm, marked or not, and asks the gateway nothing', async (role) => {
     for (const teaches of [false, true]) {
       as(role, teaches);

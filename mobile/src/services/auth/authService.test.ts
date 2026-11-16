@@ -949,6 +949,23 @@ describe('the mark that an administrator teaches (Users.teaches)', () => {
     await expect(AuthService.recheckProfile(unmarked)).resolves.toBe(unmarked);
   });
 
+  // The cached mark is read before any routing, so it passes the gate too: the guardian app ends a restored session of an
+  // administrator whatever the cache says of the mark, and so does the recheck.
+  it.each([true, false])('ends an administrator’s session in the guardian app at a start, offline too, and at a recheck (marked: %s)', async (teaches) => {
+    (currentApp as jest.Mock).mockReturnValue('vardnadshavare');
+    supabase({ session: { user: { id: 'auth-1' } }, profile: { id: 'u-1', role: 'SCHOOL_ADMIN', teaches } });
+    stored.mockResolvedValue({ teacherId: 'u-1', role: 'SCHOOL_ADMIN', authId: 'auth-1', teaches });
+    await expect(AuthService.restoreSession()).rejects.toMatchObject({ code: 'USE_SCHOOL_APP' });
+    (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: false, isInternetReachable: false });
+    await expect(AuthService.restoreSession()).rejects.toMatchObject({ code: 'USE_SCHOOL_APP' });
+    (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: true, isInternetReachable: true });
+    stored.mockResolvedValue(null);
+    await expect(AuthService.restoreSession()).rejects.toMatchObject({ code: 'USE_SCHOOL_APP' });
+    stored.mockResolvedValue({ teacherId: 'u-1', role: 'SCHOOL_ADMIN', authId: 'auth-1', teaches });
+    await expect(AuthService.recheckProfile({ isAuthenticated: true, teacherId: 'u-1', role: 'TEACHER', teaches: false })).rejects.toMatchObject({ code: 'USE_SCHOOL_APP' });
+    expect(saved).not.toHaveBeenCalled();
+  });
+
   // Marked or not, the role decides the app: an administrator signs in to Rastra and never to the guardian app.
   it.each([
     ['rastra', true, null],
