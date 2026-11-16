@@ -253,6 +253,7 @@ Run it with:
 | `API_KEY` | the generated `AI_ENGINE_API_KEY` |
 | `ALLOWED_ORIGINS` | the API's origin, e.g. `https://api.yourschool.example` |
 | `SOLVER_MAX_TIME_SECONDS` | `60`: the solve budget in seconds (raise for very large schools). A solve that times out answers after this plus `SOLVER_PROBE_SECONDS` (default `20`). The old `SOLVER_TIMEOUT_SECONDS` is gone: nothing read it. |
+| `SOLVER_EXPLAIN_SHARP_SECONDS` | `10` (default, must be above 0): the share of the 15 s explanation cap that a LARGE refused week (50 lessons or more) gets for its first try, on the model without the objective, before the model with it is tried as the reserve. Raise it if the first try does not finish on this processor (section 23). |
 | `EXAM_SOLVER_MAX_TIME_SECONDS` | `20` (default): the budget of the exam planner (`POST /api/v1/plan-exams`, Provplanering), apart from the generator's. A short budget never refuses: a greedy plan is the floor and the answer from the first instant, so less time means fewer exams placed or a clumsier plan. A request can ask for less and never for more. The API waits 90 s for it. |
 
 The solver needs no database and no PII ever reaches it. Keep it on a private
@@ -5576,7 +5577,7 @@ A pinned lesson never gives way, in Bästa möjliga schema either.
   and two of them on one hour of a teacher's: the model with the objective
   named every rule of the week, 668 of 668, and the one without named the two
   pinned lessons, in 9 s on a loaded machine. A week without a pinned lesson
-  is explained as before.
+  is explained as section 23 says.
 - **When the proof names nothing** inside its fifteen seconds, the week is
   solved once more with every pinned lesson free to move, as it is for the
   förlagda locks, and a timetable found then names them all.
@@ -5724,3 +5725,89 @@ the table in a long transaction): it never waits while it holds a lock, and afte
   one that lays them as locks with their rooms is further, as before. Nothing here moves the Generera budget.
 - **Counting.** `SELECT count(*) FILTER (WHERE "roomId" IS NULL) AS pinned, count(*) AS all_rows FROM
   "TeachingRequirementPlacements"` says how many schools' rows the engine chooses the room for.
+
+  lessons: 133,036 and 10,739). Not measured on the 2,000-pupil benchmark,
+  where a first timetable takes minutes and a factor of two to three is felt
+  in the budget: that is measured with the change that first sends the
+  field.
+
+## 23. The explanation of a refused week ("Förklaringen av en vägran")
+
+A week the engine has proved impossible is explained by a second, single-threaded
+solve with assumptions, capped at 15 s (`EXPLAIN_CAP_SECONDS`), whose sufficient
+assumption set names the rules in the way. Which model that solve runs on decides
+what the school reads, and there is no contract change: the same lines, the same
+codes, fewer of them.
+
+- **A week of 50 lessons or more** (`EXPLAIN_SHARP_FROM_LESSONS`) is explained on the
+  model WITHOUT the objective first, on 10 s of the cap (`SOLVER_EXPLAIN_SHARP_SECONDS`,
+  default 10).
+  The model with the objective answers with every assumption it registered (250 of
+  250 on the engine's own refusals); without it the core is the rule that is the
+  matter. Measured on the benchmark schools: 25 lines for a class of 36 lessons, 45
+  for 72, 105 for 252 and 141 for 360 with the objective, against 1 to 5 lines at
+  every size without it. On the högstadium benchmark (`hogstadium.py
+  --teacher-day-rules --infeasible-days`): 273 lines against 1, the whole solve in
+  5.5 s against 2.0 s. A teacher away four days from a school of 250 pupils, which came back with
+  no cause at all (UNKNOWN at the cap), is named by her four days in 5.5 to 7.4 s.
+- **The model with the objective is the reserve**, on what is left of the cap, when
+  the first try proves nothing in its 10 s or proves the week without resting on any
+  assumption (an empty core: 27 of the 250). A room that is too small is such a
+  cause, and its literal cannot carry it, since the room's size is also the lesson's
+  own room domain; the objective's "all" is how the school has always been told.
+- **A week under 50 lessons is explained as it always was**, with the objective
+  (and on a school with the walk, 5 s with it and then without). The core without
+  the objective is ONE sufficient set: on the suite's small weeks 17 of 202 sharp
+  cores left a second, independent cause unnamed that the full core names, and the
+  tests keep naming them. A small week's full core is complete and readable (66
+  lines at most).
+- **A week with a pinned lesson**, of any size, is explained as section 21 says:
+  without the objective on the whole cap, and no reserve.
+- **What a large week with several causes costs.** It names ONE of them. The
+  core without the objective is one sufficient set, so the school fixes the named
+  cause and is told the next on the next run (1.5 to 6 s a run on the benchmark
+  schools), in place of all of them among 100 to 270 lines. Measured by the
+  review of this change on weeks of two or three independent causes, built by
+  adding rules only: on 32 of 32 random weeks (180 and 252 lessons, two or three
+  teachers away the whole week) exactly one cause is named, and on the högstadium
+  week none of eight combinations (the post, the daily maximum, a teacher away)
+  names every cause. The old full core named them all but did not mark them: on
+  the 250-pupil school 5 of 25 availability lines were the cause. A loop that
+  lifts the core and asks again was tried and left out of this change (one solve
+  per cause, 2.6 s each on the högstadium week); it is a task of its own.
+  The measured verdicts (the daily maximum, the walk and the blocks) run only when
+  their line is IN the core, which on a large week is one sufficient set and not
+  all of them: a large week whose core names something else is not measured for
+  them, and the next run measures them if they are what is left. On a small week
+  and in the reserve the core is the full one and they run as they always did.
+- **Time, and what the window assumes.** A large refusal waits for the model
+  without the objective: 2.6 s in the median and 7.4 s at most on the large
+  weeks measured (0.14 s with the objective), under load 6 to 14, and 1.0 to 2.7
+  times as long at 23 to 29. The cap is the same: the two explaining solves never
+  add up to more than 15 s. The cores themselves were identical between two runs
+  of the same tree.
+  - **The production processor is not measured.** Nothing here says how long the
+    first try takes on it; the numbers are from a shared development machine.
+  - **The 10 s window is narrow on its own benchmark week.** The högstadium week
+    with the walk and a daily maximum of four took 7.0 to 7.9 s on a lightly loaded
+    machine, and did not finish inside 10 s in three of three paired runs at a load
+    above about 10 (UNKNOWN at 9.1 to 10.0 s). The answer is still right, since
+    the reserve then proves the week in 0.1 to 0.3 s, but a school with the walk
+    and a daily maximum waits 5 to 11 s longer than before (22.2 s against 11.7 s in
+    one whole solve; the longest explanation measured was 32.8 s against 22.8 s,
+    most of it the verdicts' own probes on `SOLVER_PROBE_SECONDS`).
+  - **At high load a large week falls back to the full core.** On a shared machine
+    at load 68 to 77 the högstadium week with a post that cannot be held came back
+    with the reserve's 273 and 267 lines, the first try UNKNOWN after 8.7 s and
+    7.0 s, and the whole solve took 18.1 s and 16.9 s against 7.5 s and 9.0 s
+    before. At load 12 it is 1 line in 3.6 s. Never wrong, but the gain is gone
+    and the wait is longer.
+  - **Moving the window without a release.** Set `SOLVER_EXPLAIN_SHARP_SECONDS` on
+    the engine service (a Railway variable, like `SOLVER_PROBE_SECONDS`; the
+    service restarts, no code is deployed). The value is the first try's share of
+    the 15 s cap: raise it on a slower processor (the reserve gets the rest, so
+    leave it at least a second), lower it to give the reserve more. It is
+    logged at start-up (`service_starting`).
+- **Where to look.** `benchmarks/hogstadium.py --teacher-day-rules --infeasible-days`
+  prints the conflict codes of the högstadium week. The measurement and its data are
+  in the session notes (`forklaring-utan-mal.md`).

@@ -56,6 +56,17 @@ class Settings(BaseSettings):
     # the failure path, where a week with no timetable and no explanation is the
     # most expensive outcome the engine can produce.
     solver_probe_seconds: float = Field(default=20.0, alias="SOLVER_PROBE_SECONDS")
+    # The share of the 15-second explanation cap that a LARGE refused week's first
+    # try gets, on the model without the objective, before the model with it is
+    # tried as the reserve (SchedulerSolver._explain_infeasible). A setting and
+    # not a constant because the first try is a measurement of the processor it
+    # runs on: 7.0-7.9 s on the högstadium week with the walk on the development
+    # machine, over 10 s in three of three paired runs when it was busy, and the
+    # production processor is not measured. Raising it (up to the cap) lets the
+    # sharp core finish on a slower one; lowering it gives the reserve more.
+    solver_explain_sharp_seconds: float = Field(
+        default=10.0, alias="SOLVER_EXPLAIN_SHARP_SECONDS", gt=0,
+    )
     # The room optimisation's own budget, apart from the generator's, because
     # the two answer different questions at different prices. A generation is a
     # job a school starts and waits for; the room proposal sits behind a button
