@@ -7588,6 +7588,56 @@ describe('OptimizationProxyService', () => {
         });
       });
 
+      describe('the net behind the judge (review of #328, MEDEL-1: X11 and X12 of the review of #322)', () => {
+        // The judge and pinnedPlacesOf count the same thing (the lessons of the post, by length and teacher), so no input
+        // makes them differ; a judge that lets a row through which the post has no lesson left for is stood in here. The
+        // row is 45 minutes with no room (a pin: a row with a room is a lock and never reaches pinnedPlacesOf) and the post's
+        // lessons are 60: pinnedPlacesOf finds no place for it, and it must be refused by name before the engine is woken,
+        // never sent as a pin that is not there (a lesson the school laid, freed).
+        const judging = (verdictOf: (index: number) => { index: number; ok: boolean; reason?: string }) =>
+          jest.spyOn(placementJudge, 'judgePlacements').mockImplementation(async (_tx, _masters, input) =>
+            input.rows.map((_, index) => verdictOf(index)) as Awaited<ReturnType<typeof placementJudge.judgePlacements>>,
+          );
+
+        it('refuses a row the judge let through and pinnedPlacesOf found no lesson for: OVER_DEMAND, and the engine is not asked', async () => {
+          const spy = judging((index) => ({ index, ok: true }));
+          try {
+            arrange();
+            placed([placement({ minutes: 45, roomId: null })]);
+            echoEngine();
+
+            const answer = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+            expect(http.post).not.toHaveBeenCalled();
+            expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+            expect(answer.conflicts).toMatchObject({
+              summaryCode: 'PLACEMENTS_REFUSED_SUMMARY',
+              conflicts: [expect.objectContaining({ params: expect.objectContaining({ reason: 'OVER_DEMAND' }) })],
+            });
+          } finally {
+            spy.mockRestore();
+          }
+        });
+
+        it('leaves the judge\'s own reason on a row it refused: the net names only a row nobody else has', async () => {
+          const spy = judging((index) => ({ index, ok: false, reason: 'TEACHER' }));
+          try {
+            arrange();
+            placed([placement({ minutes: 45, roomId: null })]);
+            echoEngine();
+
+            const answer = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+            expect(http.post).not.toHaveBeenCalled();
+            expect(answer.conflicts).toMatchObject({
+              conflicts: [expect.objectContaining({ params: expect.objectContaining({ reason: 'TEACHER' }) })],
+            });
+          } finally {
+            spy.mockRestore();
+          }
+        });
+      });
+
       it('takes one lesson off the post for an odd and an even row of one length, each held in its weeks', async () => {
         arrange();
         placed([
