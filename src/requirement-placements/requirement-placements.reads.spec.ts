@@ -101,6 +101,7 @@ function setup(world: { before?: ReturnType<typeof stored>[]; after?: ReturnType
     return world.before ?? [];
   });
   tx['masterLesson']!['findMany']!.mockResolvedValue([]);
+  tx['masterLesson']!['aggregate']!.mockResolvedValue({ _count: { _all: 0 }, _max: { createdAt: null } });
   const named = async ({ where }: { where: { id: { in: string[] } } }) => where.id.in.map((id) => ({ id, name: id }));
   tx['subject']!['findMany']!.mockImplementation(named);
   tx['studentGroup']!['findMany']!.mockImplementation(named);
