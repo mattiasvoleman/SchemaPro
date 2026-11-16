@@ -540,6 +540,21 @@ describe("the verdicts it was given", () => {
     expect(within(row).getByText(/^Spanska för Sp7: verdict\.TEACHER/)).toBeInTheDocument();
   });
 
+  it("says the posts in the order the dialog lists them, whichever order the gateway sent the verdicts in", async () => {
+    state.sentences = { postSaid: "{posts}: {sentence}" };
+    answer(
+      [stored(1)],
+      [
+        { index: 0, requirementId: "r-sp", ok: false, reason: "SCHOOL_DAY" },
+        { index: 0, requirementId: "r-ty", ok: false, reason: "SCHOOL_DAY" },
+        { index: 0, requirementId: "r-fr", ok: false, reason: "SCHOOL_DAY" },
+      ],
+    );
+    await opened();
+
+    expect(within(rowNamed(1)).getByText(/^Tyska för Ty7, Franska för Fr7 och Spanska för Sp7: verdict\.SCHOOL_DAY/)).toBeInTheDocument();
+  });
+
   it("lets go of a verdict once its lesson is changed: it was said of the lesson as it was", async () => {
     answer([stored(1)], [{ index: 0, requirementId: "r-ty", ok: false, reason: "ROOM", params: { ...clash, otherKind: "PLACEMENT" } }]);
     const { user } = await opened();

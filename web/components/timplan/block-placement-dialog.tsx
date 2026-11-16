@@ -309,10 +309,14 @@ function BlockPlacementForm({
       : tp("problemStart", { from: clockOfMinutes(PLACEMENT_DAY_START), to: clockOfMinutes(PLACEMENT_DAY_END) });
   };
 
-  /** The lines a lesson's verdicts say, the posts with the same sentence said together. */
+  /** The lines a lesson's verdicts say, the posts with the same sentence said together, in the order the posts have in the dialog. */
   const linesOf = (verdicts: readonly BlockVerdict[]): LessonLine[] => {
     const byText = new Map<string, string[]>();
-    for (const verdict of verdicts) {
+    const place = (requirementId: string) => members.findIndex((member) => member.id === requirementId);
+    const inOrder = [...verdicts].sort(
+      (a, b) => (place(a.requirementId) + 1 || Infinity) - (place(b.requirementId) + 1 || Infinity),
+    );
+    for (const verdict of inOrder) {
       const text = verdictSentence(tp, verdict.reason, verdict.params);
       byText.set(text, [...(byText.get(text) ?? []), nameOfPost(verdict.requirementId)]);
     }
@@ -522,13 +526,13 @@ function BlockPlacementForm({
                   ) : (
                     // One length in the block: said, not asked.
                     <div className="space-y-1.5">
-                      <p className={labelClassName}>{tp("length")}</p>
+                      <span className={labelClassName}>{tp("length")}</span>
                       <p className="flex h-9 items-center text-sm">{tp("minutes", { minutes: row.minutes })}</p>
                     </div>
                   )}
                   {/* The block's own weeks: the gateway sets them, so they are said and not asked. */}
                   <div className="space-y-1.5">
-                    <p className={labelClassName}>{tp("weeks")}</p>
+                    <span className={labelClassName}>{tp("weeks")}</span>
                     <p className="flex h-9 items-center text-sm">{weeksOf(row.recurrence)}</p>
                   </div>
                 </div>
