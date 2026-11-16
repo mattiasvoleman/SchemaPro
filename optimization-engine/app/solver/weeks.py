@@ -708,7 +708,18 @@ def as_said(week: Weeks, phantom: Weeks | None) -> Weeks | None:
     "the odd weeks of periods 0, 1 and 2", which they do (the review of #320,
     HÖG-1: the refusal every odd week gives was said as the first two days of
     the year). With nothing filled in the two are the same set.
+
+    What is asked is the real weeks, so the cells no real week is in are taken
+    out of `week` first, even where `week` holds them: a group of cells (the
+    cells the same posts run in) can hold the cell no week is in beside the
+    real one, and a set with such a cell in it is neither of the two readings
+    (the review of #320, round 2, LÅG-1).
     """
+    if phantom is not None:
+        periods = max(week.periods, phantom.periods)
+        real = week.lifted(periods) & ~phantom.lifted(periods)
+        if real:
+            week = Weeks(real, periods)
     filled = closed(week, phantom)
     if filled is not None and says_exactly(filled):
         return filled

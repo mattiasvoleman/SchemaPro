@@ -14,6 +14,9 @@ the only week of its period.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -582,6 +585,71 @@ def test_weeks_no_filling_in_makes_say_exactly_are_said_as_they_are() -> None:
     assert as_said(Weeks(0b0111, 2), Weeks(0b0000, 2)) is None
     other = Weeks(0b101000, 3)
     assert said_weeks([odd], [odd, other], _never, phantom) == odd
+
+
+def _cell(period: int, parity: str) -> int:
+    """The bit of one cell: a period's odd cell is the low bit of its pair, its even cell the high one."""
+    return (1 if parity == "odd" else 2) << (2 * period)
+
+
+def test_a_group_holding_the_cell_no_week_is_in_beside_the_real_one_is_said_of_the_real_weeks() -> None:
+    """LÅG-1 of the review of #320, round 2: o_gen.jsonl:193:v0, at the level of its cells.
+
+    Seven periods of 1, 7, 2, 1, 1, 15 and 7 weeks of which 0, 4, 1, 0, 1, 8 and
+    3 are odd. The cells no real week is in are the odd cells of periods 0 and
+    3 (one even week each) and the even cell of period 4 (one odd week). The
+    refusal is given by two groups of cells: the first holds period 3's odd cell
+    beside its even one and period 4's even cell, the second the even cell of
+    period 5. Asked with the cell no week is in left in, the union is neither
+    of the two readings, and the refusal of the even weeks of periods 3 and 5
+    was said as the first cell of the first group: "period 3".
+    """
+    phantom = phantom_cells(SimpleNamespace(period_weeks=[1, 7, 2, 1, 1, 15, 7], period_odd_weeks=[0, 4, 1, 0, 1, 8, 3]))
+    assert phantom == Weeks(_cell(0, "odd") | _cell(3, "odd") | _cell(4, "even"), 7)
+    first = Weeks(_cell(3, "odd") | _cell(3, "even") | _cell(4, "even"), 7)
+    second = Weeks(_cell(5, "even"), 7)
+    together = Weeks(first.bits | second.bits, 7)
+    words = {"period": 3, "periods": "3,5", "parity": "EVEN_WEEKS"}
+    assert not says_exactly(closed(together, phantom))
+    assert not says_exactly(together)
+    assert named(as_said(together, phantom)) == words
+    asked = [first, second, Weeks(_cell(6, "odd"), 7)]
+    assert named(said_weeks([first, second], asked, _never, phantom)) == words
+
+
+def test_the_refusal_of_oracle_case_gen_193_is_said_of_the_even_weeks_of_the_periods_that_give_it() -> None:
+    """The case itself, through the engine's own checks: before the strip it was said as `{period: 3}`."""
+    data = json.loads((Path(__file__).parent / "data" / "phantom_cell_in_a_group_gen193_v0.json").read_text())
+    response, *_ = SchedulerSolver(periods._settings(hours=6, days="1", SOLVER_PROBE_SECONDS=0))._prechecks(
+        _request(data["payload"]),
+    )
+    assert response is not None
+    assert response.conflicts.summary_code == "DEMAND_CLIQUE_HOURS_SHORT"
+    assert {k: v for k, v in response.conflicts.summary_params.items() if k in ("period", "periods", "parity")} == {
+        "period": 3, "periods": "3,5", "parity": "EVEN_WEEKS",
+    }
+
+
+def test_the_cells_no_week_is_in_are_taken_out_before_the_rest_is_filled_in() -> None:
+    """A set holds the empty cell of a period none of its real weeks is in: it is no week of that period.
+
+    Periods 1 and 2 are one week each, the first odd and the second even, so
+    their even and odd cells are no week. The set is period 0 whole, period 1's
+    odd week and period 2's empty cell. Filled in without taking that cell out
+    it holds a stray cell of period 2 and is nothing the words say; taken out
+    and filled in it is "periods 0 and 1".
+    """
+    phantom = Weeks(_cell(1, "even") | _cell(2, "odd"), 3)
+    stray = Weeks(_cell(0, "odd") | _cell(0, "even") | _cell(1, "odd") | _cell(2, "odd"), 3)
+    assert not says_exactly(closed(stray, phantom))
+    assert not says_exactly(Weeks(stray.bits & ~phantom.bits, 3))
+    assert named(as_said(stray, phantom)) == {"period": 0, "periods": "0,1"}
+
+
+def test_a_set_of_nothing_but_cells_no_week_is_in_is_said_as_it_was_and_not_made_empty() -> None:
+    """The strip leaves a set with no real week in it as it is: emptied it would be said as no weeks at all."""
+    phantom = Weeks(0b0100, 2)
+    assert as_said(phantom, phantom) == phantom
 
 
 def test_a_solved_refusal_in_one_parity_of_several_periods_is_said_of_them_all() -> None:
