@@ -62318,3 +62318,1740 @@ BEGIN
   RAISE NOTICE 'gf 499: % checks', current_setting('fl.checks');
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Ett block kan förläggas (20270218090000), sections 500-504: a parallel block (poster whose lessons lie at the same
+-- times, språkval åk 7) can be given a day and a time before Generera. "TeachingBlockPlacements" is ONE lesson of the
+-- block (day, start, length, weeks); "TeachingBlockPlacementRooms" is the room a member chose for it (a member with no
+-- row has its room chosen by the engine). The passformsregel is BP409, which judges the block's whole set after the
+-- statement and locks the block's row first on every path, and a post that leaves its block takes its room rows with it.
+-- The helpers made here have the prefix gb_ (pg_temp functions, made outside any transaction so they outlive the sections'
+-- BEGIN ... ROLLBACK), and every section plants its own rows through the schools' own administrators (the API's role) and
+-- leaves nothing behind.
+--
+--   500  the catalogue: columns, keys with their actions, indexes, CHECKs (and that each refuses what it should), the
+--        triggers (events, columns, WHEN), the four arms of each table, the privileges, row security, the two functions,
+--        and that everything else is as 20270216090000 left it (the post's own function by md5, its three triggers and
+--        arms, the block members' rule TB409)
+--   501  BP409, differentially: every rule (FOLLOWER, EMPTY, SHARES, LENGTH, WEEKS, COUNT, MEMBER, ISOLATION) refuses
+--        what it should and admits what it should, in one statement and in several; a member's change of lessons, a share
+--        written for a member, a block set to follow another; a post that goes into a block is never refused; DELETE and a
+--        move of day or time are never judged. SQLSTATE and DETAIL are read verbatim
+--   502  the keys at work: a room a row names is not removed, a block or a post that goes takes its rows with it, a post
+--        that LEAVES its block (to none, to another, with its friends) takes only its own room rows, and another school's
+--        rows are not reached
+--   503  who reads and who writes: every principal of the matrix school as 466 and 498 ask it, the other school's
+--        administrator, the deactivated one, PostgREST's roles and the service, sync and key-lookup principals
+--   504  what a block's rows do not disturb: the block's and the post's removal, the lesson Generera wrote from a row
+--        (MasterLessons.fromPlacement) which stands when its rows are replaced or removed, the post's own rows and the
+--        BLOCK rule of them, and TB409
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.gb_tick() RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('gb.checks', (coalesce(nullif(current_setting('gb.checks', true), ''), '0')::integer + 1)::text, true);
+$f$;
+CREATE FUNCTION pg_temp.gb_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.gb_tick();
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'gb %: got\n%\nwanted\n%', p_label, p_got, p_want USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+CREATE FUNCTION pg_temp.gb_true(p_label text, p_cond boolean) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.gb_tick();
+  IF p_cond IS NOT TRUE THEN
+    RAISE EXCEPTION 'gb %: not true', p_label USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+CREATE FUNCTION pg_temp.gb_as(p_sub text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', p_sub)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+-- What became of a statement, from its error: a refusal of BP409 is 'BP409 <RULE>' and is read the way the gateway reads
+-- it, the rule FIRST in the message and DETAIL exactly 'blockId=<uuid> reason=<RULE>' (when the block is named, DETAIL
+-- is held to that block); the other families say their reason (FP409, TS409) or their name (TB409); row security is
+-- '42501 rls'; a constraint is its SQLSTATE and its name.
+CREATE FUNCTION pg_temp.gb_verdict(p_state text, p_msg text, p_det text, p_con text, p_block uuid) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  reason text;
+BEGIN
+  IF p_state = 'BP409' THEN
+    reason := substring(p_det FROM 'reason=([A-Z_]+)');
+    RETURN 'BP409 ' || coalesce(reason, '?')
+      || CASE WHEN p_msg LIKE reason || ': %' THEN '' ELSE ' (the message does not start with the reason)' END
+      || CASE WHEN p_block IS NULL OR p_det = format('blockId=%s reason=%s', p_block, reason) THEN '' ELSE ' (DETAIL is not blockId=<the block> reason=<the rule>: ' || p_det || ')' END;
+  ELSIF p_state IN ('FP409', 'TS409') THEN
+    RETURN p_state || ' ' || coalesce(substring(p_det FROM 'reason=([A-Z_]+)'), '?');
+  ELSIF p_state = 'TB409' THEN
+    RETURN 'TB409';
+  ELSIF p_state = '42501' AND p_msg LIKE '%row-level security%' THEN
+    RETURN '42501 rls';
+  ELSIF coalesce(p_con, '') <> '' AND p_state <> '23502' THEN
+    RETURN p_state || ' ' || p_con;
+  END IF;
+  RETURN p_state;
+END $f$;
+-- Runs a statement and says what became of it: 'ok' or the verdict. A failed statement leaves nothing.
+CREATE FUNCTION pg_temp.gb_try(p_stmt text, p_block uuid DEFAULT NULL) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  st text;
+  msg text;
+  det text;
+  con text;
+BEGIN
+  BEGIN
+    EXECUTE p_stmt;
+    RETURN 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL, con = CONSTRAINT_NAME;
+  END;
+  RETURN pg_temp.gb_verdict(st, msg, det, con, p_block);
+END $f$;
+CREATE FUNCTION pg_temp.gb_case(p_label text, p_stmt text, p_want text, p_block uuid DEFAULT NULL) RETURNS void LANGUAGE sql AS $f$
+  SELECT pg_temp.gb_expect(p_label, pg_temp.gb_try(p_stmt, p_block), p_want);
+$f$;
+-- The same, and whatever the statement did is undone either way (the principals' matrix asks each of them with the same row).
+CREATE FUNCTION pg_temp.gb_probe(p_stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  st text;
+  msg text;
+  det text;
+  con text;
+BEGIN
+  BEGIN
+    EXECUTE p_stmt;
+    RAISE EXCEPTION 'gb probe: undone' USING ERRCODE = 'ZB503';
+  EXCEPTION
+    WHEN SQLSTATE 'ZB503' THEN RETURN 'ok';
+    WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL, con = CONSTRAINT_NAME;
+  END;
+  RETURN pg_temp.gb_verdict(st, msg, det, con, NULL);
+END $f$;
+-- The rows a statement touched, undone (an UPDATE or DELETE that row security leaves nothing to touch says 0).
+CREATE FUNCTION pg_temp.gb_probe_rows(p_stmt text) RETURNS bigint LANGUAGE plpgsql AS $f$
+DECLARE n bigint;
+BEGIN
+  BEGIN
+    EXECUTE p_stmt;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RAISE EXCEPTION 'gb probe: undone' USING ERRCODE = 'ZB503';
+  EXCEPTION WHEN SQLSTATE 'ZB503' THEN RETURN n;
+  END;
+END $f$;
+-- The rows a statement touched (kept).
+CREATE FUNCTION pg_temp.gb_rows(p_stmt text) RETURNS bigint LANGUAGE plpgsql AS $f$
+DECLARE n bigint;
+BEGIN
+  EXECUTE p_stmt;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END $f$;
+-- INSERT of placements, each row 'day|HH:MM|minutes|weeks'.
+CREATE FUNCTION pg_temp.gb_ins(p_school uuid, p_block uuid, p_year uuid, VARIADIC p_rows text[]) RETURNS text LANGUAGE sql AS $f$
+  SELECT 'INSERT INTO "TeachingBlockPlacements" ("schoolId", "blockId", "academicYearId", "dayOfWeek", "startTime", minutes, recurrence, "updatedAt") VALUES '
+         || string_agg(format('(%L, %L, %L, %s, %L, %s, %L, now())', p_school, p_block, p_year, split_part(r, '|', 1), split_part(r, '|', 2),
+                              split_part(r, '|', 3), split_part(r, '|', 4)), ', ')
+    FROM unnest(p_rows) r
+$f$;
+-- INSERT of one room row: the placement, the post and the room.
+CREATE FUNCTION pg_temp.gb_room(p_school uuid, p_placement uuid, p_post uuid, p_room uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT format('INSERT INTO "TeachingBlockPlacementRooms" ("schoolId", "placementId", "requirementId", "roomId", "updatedAt") VALUES (%L, %L, %L, %L, now())',
+                p_school, p_placement, p_post, p_room)
+$f$;
+-- The placement of a block on a day (the sections give each of a block's placements a day of its own).
+CREATE FUNCTION pg_temp.gb_pl(p_block uuid, p_day integer) RETURNS uuid LANGUAGE sql AS $f$
+  SELECT id FROM "TeachingBlockPlacements" WHERE "blockId" = p_block AND "dayOfWeek" = p_day;
+$f$;
+CREATE FUNCTION pg_temp.gb_clear(p_block uuid) RETURNS void LANGUAGE sql AS $f$
+  DELETE FROM "TeachingBlockPlacements" WHERE "blockId" = p_block;
+$f$;
+CREATE FUNCTION pg_temp.gb_n(p_block uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT count(*)::text FROM "TeachingBlockPlacements" WHERE "blockId" = p_block;
+$f$;
+-- The room rows of a block's placements.
+CREATE FUNCTION pg_temp.gb_nr(p_block uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT count(*)::text FROM "TeachingBlockPlacementRooms" x JOIN "TeachingBlockPlacements" p ON p.id = x."placementId" WHERE p."blockId" = p_block;
+$f$;
+-- A post's room rows (wherever they are).
+CREATE FUNCTION pg_temp.gb_nrp(p_post uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT count(*)::text FROM "TeachingBlockPlacementRooms" WHERE "requirementId" = p_post;
+$f$;
+-- UPDATE of a post's block.
+CREATE FUNCTION pg_temp.gb_move(p_post uuid, p_block uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT format('UPDATE "TeachingRequirements" SET "blockId" = %L WHERE id = %L', p_block, p_post)
+$f$;
+-- One school's rows, planted as its own administrator: three rooms, a teacher's id, blocks of every shape the sections
+-- need with their posts (each in a subject of its own), a share, and posts that are in no block. Answers the ids.
+--   two  two posts of two lessons of 60 minutes, every week          mix  two posts of two lessons, 80 and 40 minutes
+--   odd  two posts of two lessons, odd weeks                         one  two posts of ONE lesson of 60 minutes
+--   oth  two posts of two lessons of 60 minutes (the other block of the same form: a place to move a post to)
+--   lead / fol  a block and the block that follows its times (the follower has one post of the same form)
+--   shr  two posts, the first of which shares one lesson with a teacher    m15, m240  one post of one lesson of 15 / 240 minutes
+--   empty  no post at all                                            sp1, sp2  posts of the same form as two, in no block
+--   sp3  a post of three lessons (a form the block two does not have)
+CREATE FUNCTION pg_temp.gb_plant(p_sub text, p_side text) RETURNS jsonb LANGUAGE plpgsql AS $f$
+DECLARE
+  school uuid;
+  y uuid;
+  grp uuid;
+  teacher uuid;
+  r1 uuid;
+  r2 uuid;
+  r3 uuid;
+  blocks jsonb := '{}';
+  posts jsonb := '{}';
+  blk uuid;
+  subj uuid;
+  post uuid;
+  b text;
+  spec record;
+BEGIN
+  PERFORM pg_temp.gb_as(p_sub);
+  school := app.current_school_id();
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_may('PLANERING', true) THEN
+    RAISE EXCEPTION 'gb: % is not an administrator who writes PLANERING', p_sub;
+  END IF;
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, "startDate" LIMIT 1;
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = school AND "academicYearId" = y ORDER BY id LIMIT 1;
+  SELECT id INTO teacher FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND "authId" IS NOT NULL ORDER BY "authId" LIMIT 1;
+  IF y IS NULL OR grp IS NULL OR teacher IS NULL THEN
+    RAISE EXCEPTION 'gb: school % lacks a year, a class or a teacher to plant on; fixtures did not run', p_side;
+  END IF;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'gb sal 1 ' || p_side, now()) RETURNING id INTO r1;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'gb sal 2 ' || p_side, now()) RETURNING id INTO r2;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'gb sal 3 ' || p_side, now()) RETURNING id INTO r3;
+  FOREACH b IN ARRAY ARRAY['two', 'mix', 'odd', 'one', 'oth', 'lead', 'fol', 'shr', 'm15', 'm240', 'empty'] LOOP
+    INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt") VALUES (school, y, 'gb ' || b || ' ' || p_side, now()) RETURNING id INTO blk;
+    blocks := blocks || jsonb_build_object(b, blk);
+  END LOOP;
+  FOR spec IN SELECT * FROM (VALUES
+      ('two',  'two1',  'ALL_WEEKS', 2, 60,  '{}'::integer[]),
+      ('two',  'two2',  'ALL_WEEKS', 2, 60,  '{}'),
+      ('mix',  'mix1',  'ALL_WEEKS', 2, 80,  '{80,40}'),
+      ('mix',  'mix2',  'ALL_WEEKS', 2, 80,  '{80,40}'),
+      ('odd',  'odd1',  'ODD_WEEKS', 2, 60,  '{}'),
+      ('odd',  'odd2',  'ODD_WEEKS', 2, 60,  '{}'),
+      ('one',  'one1',  'ALL_WEEKS', 1, 60,  '{}'),
+      ('one',  'one2',  'ALL_WEEKS', 1, 60,  '{}'),
+      ('oth',  'oth1',  'ALL_WEEKS', 2, 60,  '{}'),
+      ('oth',  'oth2',  'ALL_WEEKS', 2, 60,  '{}'),
+      ('lead', 'lead1', 'ALL_WEEKS', 2, 60,  '{}'),
+      ('fol',  'fol1',  'ALL_WEEKS', 2, 60,  '{}'),
+      ('shr',  'shr1',  'ALL_WEEKS', 2, 60,  '{}'),
+      ('shr',  'shr2',  'ALL_WEEKS', 2, 60,  '{}'),
+      ('m15',  'm151',  'ALL_WEEKS', 1, 15,  '{}'),
+      ('m240', 'm2401', 'ALL_WEEKS', 1, 240, '{}'),
+      (NULL,   'sp1',   'ALL_WEEKS', 2, 60,  '{}'),
+      (NULL,   'sp2',   'ALL_WEEKS', 2, 60,  '{}'),
+      (NULL,   'sp3',   'ALL_WEEKS', 3, 60,  '{}')
+    ) v(blk, k, rec, n, mins, lens) LOOP
+    INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt")
+    VALUES (school, 'gb ' || spec.k || ' ' || p_side, 'GB' || upper(spec.k) || upper(p_side), now()) RETURNING id INTO subj;
+    INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "lessonsPerWeek", "minutesPerLesson",
+                                        "lessonLengths", recurrence, "blockId", "updatedAt")
+    VALUES (school, y, subj, grp, spec.n, spec.mins, spec.lens, spec.rec::"LessonRecurrence", (blocks ->> spec.blk)::uuid, now()) RETURNING id INTO post;
+    posts := posts || jsonb_build_object(spec.k, post);
+  END LOOP;
+  -- The follower follows the leader's times; one lesson of the first post of shr is the teacher's.
+  UPDATE "TeachingBlocks" SET "sameTimesAsBlockId" = (blocks ->> 'lead')::uuid WHERE id = (blocks ->> 'fol')::uuid;
+  INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt")
+  VALUES (school, (posts ->> 'shr1')::uuid, teacher, 1, 60, now());
+  RETURN jsonb_build_object('school', school, 'year', y, 'group', grp, 'teacher', teacher, 'room1', r1, 'room2', r2, 'room3', r3,
+                            'blocks', blocks, 'posts', posts, 'admin', p_sub);
+END $f$;
+
+-- ---------------------------------------------------------------------------
+-- Section 500: the catalogue as 20270218090000 wrote it, and that everything else is as 20270216090000 left it.
+--
+-- First what a name, a type, an action or a privilege is, as the catalogue holds it (nothing is planted): a change made
+-- after the migration (a key re-made with another action, an arm moved to PUBLIC, MAINTAIN handed back by a default
+-- privilege, a CHECK dropped) is named here. Then what each CHECK refuses and admits, at its edges, planted as the school's
+-- own administrator.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  tbls constant text[] := ARRAY['TeachingBlockPlacements', 'TeachingBlockPlacementRooms'];
+  t text;
+  tbl regclass;
+  got text;
+  want text;
+  k record;
+  r text;
+  priv text;
+  arm_prefix text;
+BEGIN
+  -- Columns, in order: name, type, nullability and default.
+  SELECT string_agg(format('%s %s %s %s', a.attname, format_type(a.atttypid, a.atttypmod), CASE WHEN a.attnotnull THEN 'NN' ELSE 'N' END,
+                           coalesce(pg_get_expr(d.adbin, d.adrelid), '-')), E'\n' ORDER BY a.attnum) INTO got
+    FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = '"TeachingBlockPlacements"'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+  want := E'id uuid NN gen_random_uuid()\nschoolId uuid NN -\nblockId uuid NN -\nacademicYearId uuid NN -\ndayOfWeek integer NN -\n'
+       || E'startTime time(0) without time zone NN -\nminutes integer NN -\n'
+       || E'recurrence "LessonRecurrence" NN ''ALL_WEEKS''::"LessonRecurrence"\n'
+       || E'createdAt timestamp(6) with time zone NN CURRENT_TIMESTAMP\nupdatedAt timestamp(6) with time zone NN -';
+  PERFORM pg_temp.gb_expect('500 placements: columns', got, want);
+  SELECT string_agg(format('%s %s %s %s', a.attname, format_type(a.atttypid, a.atttypmod), CASE WHEN a.attnotnull THEN 'NN' ELSE 'N' END,
+                           coalesce(pg_get_expr(d.adbin, d.adrelid), '-')), E'\n' ORDER BY a.attnum) INTO got
+    FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = '"TeachingBlockPlacementRooms"'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+  want := E'id uuid NN gen_random_uuid()\nschoolId uuid NN -\nplacementId uuid NN -\nrequirementId uuid NN -\nroomId uuid NN -\n'
+       || E'createdAt timestamp(6) with time zone NN CURRENT_TIMESTAMP\nupdatedAt timestamp(6) with time zone NN -';
+  PERFORM pg_temp.gb_expect('500 room rows: columns', got, want);
+
+  FOREACH t IN ARRAY tbls LOOP
+    tbl := format('public.%I', t)::regclass;
+    PERFORM pg_temp.gb_true('500 ' || t || ' is commented', coalesce(obj_description(tbl, 'pg_class'), '') <> '');
+    PERFORM pg_temp.gb_expect('500 ' || t || ' has no column of its own with a grant', (SELECT count(*) FROM pg_attribute WHERE attrelid = tbl AND attacl IS NOT NULL)::text, '0');
+    PERFORM pg_temp.gb_expect('500 ' || t || ' is a plain table of the public schema, owned as its siblings are',
+      (SELECT format('%s %s %s', c.relkind, n.nspname, (c.relowner = (SELECT relowner FROM pg_class WHERE oid = '"TeachingRequirementPlacements"'::regclass))::text)
+         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = tbl), 'r public true');
+  END LOOP;
+  PERFORM pg_temp.gb_true('500 the placements'' comment says what a row is', coalesce(obj_description('"TeachingBlockPlacements"'::regclass, 'pg_class'), '') LIKE '%fromPlacement%');
+  PERFORM pg_temp.gb_true('500 the room rows'' comment says the engine chooses the rest', coalesce(obj_description('"TeachingBlockPlacementRooms"'::regclass, 'pg_class'), '') LIKE '%engine%');
+
+  -- The keys: the table they name, their columns, and what happens on delete and on update (a = NO ACTION, c = CASCADE),
+  -- MATCH SIMPLE, validated, not deferrable. pg_get_constraintdef leaves NO ACTION out, so the letters are read.
+  FOR k IN SELECT * FROM (VALUES
+      ('TeachingBlockPlacements',     'TeachingBlockPlacements_schoolId_fkey',                        'Schools',                 'schoolId',                       'id',                             'c', 'c'),
+      ('TeachingBlockPlacements',     'TeachingBlockPlacements_blockId_academicYearId_schoolId_fkey', 'TeachingBlocks',          'blockId,academicYearId,schoolId', 'id,academicYearId,schoolId',     'c', 'a'),
+      ('TeachingBlockPlacementRooms', 'TeachingBlockPlacementRooms_schoolId_fkey',                    'Schools',                 'schoolId',                       'id',                             'c', 'c'),
+      ('TeachingBlockPlacementRooms', 'TeachingBlockPlacementRooms_placementId_schoolId_fkey',        'TeachingBlockPlacements', 'placementId,schoolId',           'id,schoolId',                    'c', 'a'),
+      ('TeachingBlockPlacementRooms', 'TeachingBlockPlacementRooms_requirementId_schoolId_fkey',      'TeachingRequirements',    'requirementId,schoolId',         'id,schoolId',                    'c', 'a'),
+      ('TeachingBlockPlacementRooms', 'TeachingBlockPlacementRooms_roomId_schoolId_fkey',             'Rooms',                   'roomId,schoolId',                'id,schoolId',                    'a', 'a')
+    ) v(rel, name, ref, cols, refcols, del, upd) LOOP
+    SELECT format('%s>%s(%s) del %s upd %s %s %s %s',
+                  (SELECT string_agg(a.attname, ',' ORDER BY x.ord) FROM unnest(c.conkey) WITH ORDINALITY x(attnum, ord) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = x.attnum),
+                  c.confrelid::regclass::text,
+                  (SELECT string_agg(a.attname, ',' ORDER BY x.ord) FROM unnest(c.confkey) WITH ORDINALITY x(attnum, ord) JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = x.attnum),
+                  c.confdeltype, c.confupdtype, c.confmatchtype, CASE WHEN c.convalidated THEN 'validated' ELSE 'NOT VALID' END,
+                  CASE WHEN c.condeferrable THEN 'deferrable' ELSE 'immediate' END)
+      INTO got FROM pg_constraint c WHERE c.conrelid = format('public.%I', k.rel)::regclass AND c.conname = k.name AND c.contype = 'f';
+    PERFORM pg_temp.gb_expect('500 key ' || k.name, got,
+      format('%s>"%s"(%s) del %s upd %s s validated immediate', k.cols, k.ref, k.refcols, k.del, k.upd)
+        -- regclass::text quotes a mixed-case name, and leaves a plain one (Schools, Rooms) as it is
+        ::text);
+  END LOOP;
+  PERFORM pg_temp.gb_expect('500 the placements have those two keys and no other', (SELECT count(*) FROM pg_constraint WHERE conrelid = '"TeachingBlockPlacements"'::regclass AND contype = 'f')::text, '2');
+  PERFORM pg_temp.gb_expect('500 the room rows have those four keys and no other', (SELECT count(*) FROM pg_constraint WHERE conrelid = '"TeachingBlockPlacementRooms"'::regclass AND contype = 'f')::text, '4');
+  -- A key to another table holds the school: ("x", "schoolId") onto the parent's ("id", "schoolId") (the block's own key has the
+  -- year between), NO ACTION on update, so a parent moved to another school does not take its children along and a row cannot
+  -- name another school's parent (section 330 asks the same of every key of the schema as the owner).
+  FOR k IN SELECT c.conrelid::regclass::text AS rel, c.conname, c.confupdtype,
+                  (SELECT a.attname FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attnum = c.conkey[cardinality(c.conkey)]) AS last_col,
+                  (SELECT a.attname FROM pg_attribute a WHERE a.attrelid = c.confrelid AND a.attnum = c.confkey[cardinality(c.confkey)]) AS last_ref
+             FROM pg_constraint c WHERE c.conrelid IN ('"TeachingBlockPlacements"'::regclass, '"TeachingBlockPlacementRooms"'::regclass)
+              AND c.contype = 'f' AND c.conname NOT LIKE '%\_schoolId\_fkey' LOOP
+    PERFORM pg_temp.gb_expect('500 ' || k.conname || ' ends on the school, both sides, and does not follow an update', k.last_col || '/' || k.last_ref || '/' || k.confupdtype, 'schoolId/schoolId/a');
+  END LOOP;
+  -- Nothing points at a room row; only the room rows point at a placement.
+  PERFORM pg_temp.gb_expect('500 no key names the room rows', (SELECT count(*) FROM pg_constraint WHERE confrelid = '"TeachingBlockPlacementRooms"'::regclass)::text, '0');
+  PERFORM pg_temp.gb_expect('500 the room rows are the one table that names the placements',
+    (SELECT string_agg(conrelid::regclass::text, ',') FROM pg_constraint WHERE confrelid = '"TeachingBlockPlacements"'::regclass), '"TeachingBlockPlacementRooms"');
+  PERFORM pg_temp.gb_expect('500 MasterLessons has no key to a placement and no placementId',
+    (SELECT count(*) FROM pg_constraint WHERE conrelid = '"MasterLessons"'::regclass AND confrelid IN ('"TeachingBlockPlacements"'::regclass, '"TeachingBlockPlacementRooms"'::regclass))::text
+    || (SELECT count(*) FROM pg_attribute WHERE attrelid = '"MasterLessons"'::regclass AND attname IN ('placementId', 'blockPlacementId') AND NOT attisdropped)::text, '00');
+
+  -- Constraints by kind: a primary key, the keys above, the CHECKs below, and no unique constraint (the unique ones are indexes).
+  PERFORM pg_temp.gb_expect('500 the placements'' constraints by kind',
+    (SELECT string_agg(x.k, ',' ORDER BY x.k) FROM (SELECT contype::text || count(*)::text AS k FROM pg_constraint WHERE conrelid = '"TeachingBlockPlacements"'::regclass GROUP BY contype) x), 'c4,f2,p1');
+  PERFORM pg_temp.gb_expect('500 the room rows'' constraints by kind',
+    (SELECT string_agg(x.k, ',' ORDER BY x.k) FROM (SELECT contype::text || count(*)::text AS k FROM pg_constraint WHERE conrelid = '"TeachingBlockPlacementRooms"'::regclass GROUP BY contype) x), 'f4,p1');
+
+  -- Indexes: their columns, uniqueness and state, and no other.
+  FOR k IN SELECT * FROM (VALUES
+      ('TeachingBlockPlacements',     'TeachingBlockPlacements_pkey',                                   'id',                       true),
+      ('TeachingBlockPlacements',     'TeachingBlockPlacements_id_schoolId_key',                        'id,schoolId',              true),
+      ('TeachingBlockPlacements',     'TeachingBlockPlacements_blockId_idx',                            'blockId',                  false),
+      ('TeachingBlockPlacements',     'TeachingBlockPlacements_academicYearId_idx',                     'academicYearId',           false),
+      ('TeachingBlockPlacements',     'TeachingBlockPlacements_schoolId_idx',                           'schoolId',                 false),
+      ('TeachingBlockPlacementRooms', 'TeachingBlockPlacementRooms_pkey',                               'id',                       true),
+      ('TeachingBlockPlacementRooms', 'TeachingBlockPlacementRooms_id_schoolId_key',                    'id,schoolId',              true),
+      ('TeachingBlockPlacementRooms', 'TeachingBlockPlacementRooms_placementId_requirementId_key',      'placementId,requirementId', true),
+      ('TeachingBlockPlacementRooms', 'TeachingBlockPlacementRooms_requirementId_schoolId_idx',         'requirementId,schoolId',   false),
+      ('TeachingBlockPlacementRooms', 'TeachingBlockPlacementRooms_roomId_schoolId_idx',                'roomId,schoolId',          false),
+      ('TeachingBlockPlacementRooms', 'TeachingBlockPlacementRooms_schoolId_idx',                       'schoolId',                 false)
+    ) v(rel, name, cols, uniq) LOOP
+    SELECT format('%s %s %s %s', (SELECT string_agg(a.attname, ',' ORDER BY x.ord) FROM unnest(i.indkey::int2[]) WITH ORDINALITY x(attnum, ord)
+                                  JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = x.attnum),
+                  CASE WHEN i.indisunique THEN 'unique' ELSE 'plain' END, CASE WHEN i.indisvalid AND i.indisready THEN 'valid' ELSE 'INVALID' END,
+                  CASE WHEN i.indpred IS NULL THEN 'whole' ELSE 'partial' END)
+      INTO got FROM pg_index i WHERE i.indexrelid = to_regclass(format('public.%I', k.name)) AND i.indrelid = format('public.%I', k.rel)::regclass;
+    PERFORM pg_temp.gb_expect('500 index ' || k.name, got, format('%s %s valid whole', k.cols, CASE WHEN k.uniq THEN 'unique' ELSE 'plain' END));
+  END LOOP;
+  PERFORM pg_temp.gb_expect('500 the placements have those five indexes and no other', (SELECT count(*) FROM pg_index WHERE indrelid = '"TeachingBlockPlacements"'::regclass)::text, '5');
+  PERFORM pg_temp.gb_expect('500 the room rows have those six indexes and no other', (SELECT count(*) FROM pg_index WHERE indrelid = '"TeachingBlockPlacementRooms"'::regclass)::text, '6');
+
+  -- The four CHECKs of the placements, by name, validated, each saying what its name says (the deparsed text differs a little
+  -- from one Postgres to the next, so it is the parts that are asked for). The room rows have none: what makes one wrong is
+  -- BP409's MEMBER, and the keys.
+  FOR k IN SELECT * FROM (VALUES
+      ('TeachingBlockPlacements_dayOfWeek_is_a_school_day', ARRAY['%"dayOfWeek" >= 1%', '%"dayOfWeek" <= 5%']),
+      ('TeachingBlockPlacements_minutes_is_sane',           ARRAY['%minutes >= 15%', '%minutes <= 240%', '%minutes % 5) = 0%']),
+      ('TeachingBlockPlacements_startTime_is_on_the_grid',  ARRAY['%EXTRACT(second FROM "startTime") = %', '%EXTRACT(minute FROM "startTime")%', '% % 5) = 0%']),
+      ('TeachingBlockPlacements_inside_the_school_day',     ARRAY['%EXTRACT(epoch FROM "startTime") >= %8 * 3600%', '%minutes * 60%', '%<= %18 * 3600%'])
+    ) v(name, pats) LOOP
+    SELECT CASE WHEN NOT c.convalidated THEN 'NOT VALID'
+                WHEN NOT EXISTS (SELECT 1 FROM unnest(k.pats) pat WHERE pg_get_constraintdef(c.oid) NOT LIKE pat) THEN 'ok'
+                ELSE pg_get_constraintdef(c.oid) END
+      INTO got FROM pg_constraint c WHERE c.conrelid = '"TeachingBlockPlacements"'::regclass AND c.conname = k.name AND c.contype = 'c';
+    PERFORM pg_temp.gb_expect('500 CHECK ' || k.name, got, 'ok');
+  END LOOP;
+  PERFORM pg_temp.gb_expect('500 the room rows have no CHECK', (SELECT count(*) FROM pg_constraint WHERE conrelid = '"TeachingBlockPlacementRooms"'::regclass AND contype = 'c')::text, '0');
+
+  -- Row security: on, and not forced, as the siblings (the definer triggers read past the policies as the owner).
+  FOREACH t IN ARRAY tbls LOOP
+    tbl := format('public.%I', t)::regclass;
+    PERFORM pg_temp.gb_true('500 row security is on in ' || t, (SELECT relrowsecurity FROM pg_class WHERE oid = tbl));
+    PERFORM pg_temp.gb_expect('500 row security is forced in ' || t || ' as on the post''s rows', (SELECT relforcerowsecurity::text FROM pg_class WHERE oid = tbl),
+                              (SELECT relforcerowsecurity::text FROM pg_class WHERE oid = '"TeachingRequirementPlacements"'::regclass));
+    arm_prefix := CASE t WHEN 'TeachingBlockPlacements' THEN 'teaching_block_placements' ELSE 'teaching_block_placement_rooms' END;
+    -- The four arms: names, commands, TO app_authenticated and nobody else, and what each asks.
+    SELECT string_agg(policyname || ' ' || cmd || ' ' || roles::text, '; ' ORDER BY policyname COLLATE "C") INTO got
+      FROM pg_policies WHERE schemaname = 'public' AND tablename = t;
+    PERFORM pg_temp.gb_expect('500 arms of ' || t, got,
+      format('%1$s_admin_delete DELETE {app_authenticated}; %1$s_admin_insert INSERT {app_authenticated}; %1$s_admin_select SELECT {app_authenticated}; %1$s_admin_update UPDATE {app_authenticated}', arm_prefix));
+    FOR k IN SELECT * FROM pg_policies WHERE schemaname = 'public' AND tablename = t LOOP
+      got := coalesce(k.qual, '') || ' ' || coalesce(k.with_check, '');
+      PERFORM pg_temp.gb_true('500 ' || k.policyname || ' keeps to the school', got LIKE '%"schoolId" = ( SELECT app.current_school_id()%');
+      PERFORM pg_temp.gb_true('500 ' || k.policyname || ' is an administrator''s', got LIKE '%current_user_role()%= ''SCHOOL_ADMIN''%');
+      -- No arm names the teacher, so section 494 (the catalogue guard of Users.teaches) has nothing to ask of these tables.
+      PERFORM pg_temp.gb_true('500 ' || k.policyname || ' names no teacher, pupil or guardian', got !~ 'TEACHER|STUDENT|GUARDIAN|current_user_teaches');
+      PERFORM pg_temp.gb_true('500 ' || k.policyname || ' reaches no service or sync principal', got !~ 'current_service_school_id|current_sync_school_id|is_service_key_lookup|current_service_key_id');
+      -- The writes ask the area; the read does not, and an UPDATE asks it in WITH CHECK only (a row lock for a read, section 110).
+      PERFORM pg_temp.gb_expect('500 ' || k.policyname || ' asks PLANERING',
+        (k.cmd <> 'SELECT' AND coalesce(CASE WHEN k.cmd = 'DELETE' THEN k.qual ELSE k.with_check END, '') LIKE '%current_user_may(''PLANERING''::"AdminArea", true)%')::text,
+        (k.cmd <> 'SELECT')::text);
+      PERFORM pg_temp.gb_expect('500 ' || k.policyname || ' asks no area in USING unless it is the delete''s',
+        (coalesce(k.qual, '') LIKE '%current_user_may%')::text, (k.cmd = 'DELETE')::text);
+    END LOOP;
+
+    -- Privileges: the API's role the four, the service role the read, nobody else anything, PUBLIC nothing.
+    SELECT string_agg(g.who || '=' || g.privs, ';' ORDER BY g.who COLLATE "C") INTO got
+      FROM (SELECT coalesce(ro.rolname, 'PUBLIC')::text AS who, string_agg(a.privilege_type, ',' ORDER BY a.privilege_type COLLATE "C") AS privs
+              FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a LEFT JOIN pg_roles ro ON ro.oid = a.grantee
+             WHERE c.oid = tbl AND a.grantee <> c.relowner GROUP BY 1) g;
+    want := 'app_authenticated=DELETE,INSERT,SELECT,UPDATE' || CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN ';service_role=SELECT' ELSE '' END;
+    PERFORM pg_temp.gb_expect('500 who holds what on ' || t || ' (the owner aside)', got, want);
+    FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      FOREACH priv IN ARRAY ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        PERFORM pg_temp.gb_true(format('500 %s holds %s on %s', r, priv, t) || ' (it must not)', NOT has_table_privilege(r, tbl, priv));
+      END LOOP;
+      -- PostgreSQL 17's MAINTAIN (REINDEX, CLUSTER, VACUUM, LOCK) is the owner's alone; 16 has no such privilege.
+      IF current_setting('server_version_num')::int >= 170000 THEN
+        PERFORM pg_temp.gb_true(format('500 %s holds MAINTAIN on %s', r, t) || ' (it must not)', NOT has_table_privilege(r, tbl, 'MAINTAIN'));
+      END IF;
+      IF r IN ('authenticated', 'anon') THEN
+        FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] LOOP
+          PERFORM pg_temp.gb_true(format('500 %s holds %s on a column of %s', r, priv, t) || ' (it must not)', NOT has_any_column_privilege(r, tbl, priv));
+        END LOOP;
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  -- The two functions: definers of the tables' owner with a pinned search path, run by nobody else, commented, and fired
+  -- by exactly the triggers that were meant to.
+  FOR k IN SELECT * FROM (VALUES ('app.teaching_block_placements_fit()'), ('app.teaching_block_placement_rooms_leave()')) v(fn) LOOP
+    PERFORM pg_temp.gb_true('500 ' || k.fn || ' is a definer of the tables'' owner with a pinned search path',
+      (SELECT p.prosecdef AND p.proowner = (SELECT relowner FROM pg_class WHERE oid = '"TeachingBlockPlacements"'::regclass)
+              AND EXISTS (SELECT 1 FROM unnest(p.proconfig) c WHERE c = 'search_path=public, pg_temp')
+         FROM pg_proc p WHERE p.oid = k.fn::regprocedure));
+    PERFORM pg_temp.gb_expect('500 nobody but the owner runs ' || k.fn,
+      (SELECT count(*) FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a WHERE p.oid = k.fn::regprocedure AND a.grantee <> p.proowner)::text, '0');
+    FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      PERFORM pg_temp.gb_true('500 ' || r || ' may not call ' || k.fn, NOT has_function_privilege(r, k.fn, 'EXECUTE'));
+    END LOOP;
+    PERFORM pg_temp.gb_true('500 ' || k.fn || ' is commented', coalesce(obj_description(k.fn::regprocedure, 'pg_proc'), '') <> '');
+  END LOOP;
+  PERFORM pg_temp.gb_true('500 the fit function names its rules in its comment',
+    (SELECT obj_description('app.teaching_block_placements_fit()'::regprocedure, 'pg_proc') LIKE '%BP409%FOLLOWER, EMPTY, SHARES, LENGTH, WEEKS, COUNT, MEMBER%'));
+
+  -- The triggers: AFTER, per row (ROW 1 + INSERT 4 + UPDATE 16), enabled, not deferred, the function they call, the columns an
+  -- UPDATE is asked about, and whether there is a WHEN. The four rules are judged AFTER the statement (not deferred: a refusal at
+  -- COMMIT would reach the gateway as a failed commit).
+  FOR k IN SELECT * FROM (VALUES
+      ('TeachingBlockPlacements_fit',                         '"TeachingBlockPlacements"',     21, 'blockId,minutes,recurrence',                                                   false, 'app.teaching_block_placements_fit()'),
+      ('TeachingBlockPlacementRooms_fit',                     '"TeachingBlockPlacementRooms"', 21, 'placementId,requirementId',                                                    false, 'app.teaching_block_placements_fit()'),
+      ('TeachingRequirements_block_placements_fit',           '"TeachingRequirements"',        17, 'lessonLengths,lessonsPerWeek,minutesPerLesson,recurrence',                     true,  'app.teaching_block_placements_fit()'),
+      ('TeachingRequirementShares_block_placements_fit',      '"TeachingRequirementShares"',   21, 'requirementId',                                                                false, 'app.teaching_block_placements_fit()'),
+      ('TeachingBlocks_placements_fit',                       '"TeachingBlocks"',              17, 'sameTimesAsBlockId',                                                           true,  'app.teaching_block_placements_fit()'),
+      ('TeachingRequirements_block_placement_rooms_leave',    '"TeachingRequirements"',        17, 'blockId',                                                                      true,  'app.teaching_block_placement_rooms_leave()')
+    ) v(name, rel, tgtype, cols, has_when, fn) LOOP
+    SELECT format('%s %s %s %s %s %s', t.tgtype, t.tgenabled, t.tgdeferrable::text, (t.tgfoid = k.fn::regprocedure)::text,
+                  (SELECT string_agg(a.attname, ',' ORDER BY a.attname COLLATE "C") FROM unnest(t.tgattr::int2[]) x(attnum) JOIN pg_attribute a ON a.attrelid = t.tgrelid AND a.attnum = x.attnum),
+                  (t.tgqual IS NOT NULL)::text)
+      INTO got FROM pg_trigger t WHERE t.tgname = k.name AND t.tgrelid = k.rel::regclass AND NOT t.tgisinternal;
+    PERFORM pg_temp.gb_expect('500 trigger ' || k.name, got, format('%s O false true %s %s', k.tgtype, k.cols, k.has_when::text));
+  END LOOP;
+  PERFORM pg_temp.gb_expect('500 the fit function is fired by those five triggers and no other',
+    (SELECT string_agg(tgname, ',' ORDER BY tgname COLLATE "C") FROM pg_trigger WHERE tgfoid = 'app.teaching_block_placements_fit()'::regprocedure AND NOT tgisinternal),
+    'TeachingBlockPlacementRooms_fit,TeachingBlockPlacements_fit,TeachingBlocks_placements_fit,TeachingRequirementShares_block_placements_fit,TeachingRequirements_block_placements_fit');
+  PERFORM pg_temp.gb_expect('500 the leave function is fired by that one trigger and no other',
+    (SELECT string_agg(tgname, ',') FROM pg_trigger WHERE tgfoid = 'app.teaching_block_placement_rooms_leave()'::regprocedure AND NOT tgisinternal), 'TeachingRequirements_block_placement_rooms_leave');
+  -- The WHENs: a member's trigger asks only about a post in a block whose lessons changed; the block's only about a link SET to a
+  -- block (clearing it asks nothing); the leave's only about a post that was in a block and is in another or none.
+  FOR k IN SELECT * FROM (VALUES
+      ('TeachingRequirements_block_placements_fit',        '"TeachingRequirements"', ARRAY['%"blockId" IS NOT NULL%', '%"lessonsPerWeek"%', '%"minutesPerLesson"%', '%"lessonLengths"%', '%recurrence%', '%IS DISTINCT FROM%']),
+      ('TeachingBlocks_placements_fit',                    '"TeachingBlocks"',       ARRAY['%"sameTimesAsBlockId" IS NOT NULL%', '%"sameTimesAsBlockId" IS DISTINCT FROM%']),
+      ('TeachingRequirements_block_placement_rooms_leave', '"TeachingRequirements"', ARRAY['%"blockId" IS NOT NULL%', '%"blockId" IS DISTINCT FROM%'])
+    ) v(name, rel, pats) LOOP
+    SELECT pg_get_triggerdef(t.oid) INTO got FROM pg_trigger t WHERE t.tgname = k.name AND t.tgrelid = k.rel::regclass;
+    PERFORM pg_temp.gb_true('500 the WHEN of ' || k.name || ' says what it should (' || got || ')',
+      NOT EXISTS (SELECT 1 FROM unnest(k.pats) pat WHERE got NOT ILIKE pat));
+  END LOOP;
+  -- The trigger names sort in the order the migration relies on: Postgres fires triggers of one event in name order, and the
+  -- RI_ConstraintTrigger_ ones (the keys' KEY SHARE) before every one of these, so a room row's keys have taken their locks before
+  -- the block's row is asked for. On the posts the block's members rule (TB409) takes its FOR UPDATE on the block first and the
+  -- leave trigger after it; on the shares the block's lock comes before the share's own rule (TS409) locks the post.
+  FOR k IN SELECT * FROM (VALUES ('"TeachingBlockPlacementRooms"', 'TeachingBlockPlacementRooms_fit'), ('"TeachingBlockPlacements"', 'TeachingBlockPlacements_fit')) v(rel, trg) LOOP
+    PERFORM pg_temp.gb_true('500 every key''s check on ' || k.rel || ' sorts, and so fires, before ' || k.trg,
+      (SELECT count(*) > 0 AND bool_and(t.tgname COLLATE "C" < k.trg COLLATE "C")
+         FROM pg_trigger t JOIN pg_constraint c ON c.oid = t.tgconstraint
+        WHERE t.tgrelid = k.rel::regclass AND c.conrelid = t.tgrelid AND c.contype = 'f' AND t.tgisinternal));
+  END LOOP;
+  PERFORM pg_temp.gb_true('500 on the posts TB409 (the block FOR UPDATE) fires before the leave trigger, which fires before the fit',
+    'TeachingRequirements_block_members_agree' COLLATE "C" < 'TeachingRequirements_block_placement_rooms_leave' COLLATE "C"
+    AND 'TeachingRequirements_block_placement_rooms_leave' COLLATE "C" < 'TeachingRequirements_block_placements_fit' COLLATE "C");
+  PERFORM pg_temp.gb_true('500 on the shares the block''s lock comes before the share''s own rule',
+    'TeachingRequirementShares_block_placements_fit' COLLATE "C" < 'TeachingRequirementShares_fit' COLLATE "C");
+
+  -- ---------- Everything else is as 20270216090000 left it ----------
+  -- The post's own function (FP409) is the one 20270208090000 left, byte for byte (md5 of its source, which no later migration
+  -- redefines), and so is the deferred function of the rules per teacher and the block members' rule (TB409, 20261213090000).
+  FOR k IN SELECT * FROM (VALUES
+      ('app.teaching_requirement_placements_fit()',          '86f24518e98f29caa02bdd8f30971202', '20270208090000'),
+      ('app.teaching_requirement_placement_teachers_fit()',  '58875bc882854c6cd4ac496d545e1823', '20270208090000'),
+      ('app.teaching_block_members_agree()',                 'f5ff43116cedfea083817ab47d988e9b', '20261213090000')
+    ) v(fn, md5sum, mig) LOOP
+    PERFORM pg_temp.gb_expect('500 ' || k.fn || ' is the one ' || k.mig || ' left', (SELECT md5(prosrc) FROM pg_proc WHERE oid = k.fn::regprocedure), k.md5sum);
+  END LOOP;
+  PERFORM pg_temp.gb_true('500 the post''s function does not read the block''s tables', (SELECT prosrc !~ 'TeachingBlockPlacement' FROM pg_proc WHERE oid = 'app.teaching_requirement_placements_fit()'::regprocedure));
+  PERFORM pg_temp.gb_true('500 TB409 does not read the block''s tables', (SELECT prosrc !~ 'TeachingBlockPlacement' FROM pg_proc WHERE oid = 'app.teaching_block_members_agree()'::regprocedure));
+  -- The post's three triggers, as 465 and 495 read them: the same events, the same function, deferred where they were.
+  FOR k IN SELECT * FROM (VALUES
+      ('TeachingRequirementPlacements_fit',            '"TeachingRequirementPlacements"', 29, 'O', false, 'app.teaching_requirement_placements_fit()'),
+      ('TeachingRequirementPlacements_teachers_fit',   '"TeachingRequirementPlacements"', 29, 'O', true,  'app.teaching_requirement_placement_teachers_fit()'),
+      ('TeachingRequirements_placements_fit',          '"TeachingRequirements"',          17, 'O', false, 'app.teaching_requirement_placements_fit()'),
+      ('TeachingRequirements_block_members_agree',     '"TeachingRequirements"',          21, 'O', false, 'app.teaching_block_members_agree()')
+    ) v(name, rel, tgtype, enabled, deferred, fn) LOOP
+    SELECT format('%s %s %s %s', t.tgtype, t.tgenabled, t.tgdeferrable::text, (t.tgfoid = k.fn::regprocedure)::text)
+      INTO got FROM pg_trigger t WHERE t.tgname = k.name AND t.tgrelid = k.rel::regclass AND NOT t.tgisinternal;
+    PERFORM pg_temp.gb_expect('500 trigger ' || k.name || ' is as it was', got, format('%s %s %s true', k.tgtype, k.enabled, k.deferred::text));
+  END LOOP;
+  -- ... and the post's arms: still the four, to the API's role, none of them naming the block's tables.
+  PERFORM pg_temp.gb_expect('500 the post''s rows keep their four arms',
+    (SELECT string_agg(policyname || ' ' || cmd || ' ' || roles::text, '; ' ORDER BY policyname COLLATE "C") FROM pg_policies WHERE schemaname = 'public' AND tablename = 'TeachingRequirementPlacements'),
+    'teaching_requirement_placements_admin_delete DELETE {app_authenticated}; teaching_requirement_placements_admin_insert INSERT {app_authenticated}; '
+    || 'teaching_requirement_placements_admin_select SELECT {app_authenticated}; teaching_requirement_placements_admin_update UPDATE {app_authenticated}');
+  PERFORM pg_temp.gb_expect('500 none of them names the block''s tables',
+    (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = 'TeachingRequirementPlacements' AND coalesce(qual, '') || ' ' || coalesce(with_check, '') ~ 'TeachingBlock')::text, '0');
+  -- The post's own table has no key, column or index of the block's: a post still carries "blockId" and the rule BLOCK, and the
+  -- block's lesson is not a row of the post's.
+  PERFORM pg_temp.gb_expect('500 the post''s rows still have no column about a block',
+    (SELECT count(*) FROM pg_attribute WHERE attrelid = '"TeachingRequirementPlacements"'::regclass AND attnum > 0 AND NOT attisdropped AND attname ~ 'block' )::text, '0');
+  PERFORM pg_temp.gb_expect('500 the block''s own table gained no column', (SELECT string_agg(attname, ',' ORDER BY attnum) FROM pg_attribute WHERE attrelid = '"TeachingBlocks"'::regclass AND attnum > 0 AND NOT attisdropped),
+    'id,schoolId,academicYearId,name,createdAt,updatedAt,sameTimesAsBlockId');
+  PERFORM pg_temp.gb_expect('500 the block''s own table gained no index, key or CHECK',
+    (SELECT string_agg(x.k, ',' ORDER BY x.k) FROM (SELECT 'i:' || indexrelid::regclass::text AS k FROM pg_index WHERE indrelid = '"TeachingBlocks"'::regclass
+                                                    UNION ALL SELECT 'c:' || conname FROM pg_constraint WHERE conrelid = '"TeachingBlocks"'::regclass AND contype IN ('c', 'f')) x),
+    (SELECT string_agg(x.k, ',' ORDER BY x.k) FROM (VALUES ('i:"TeachingBlocks_pkey"'), ('i:"TeachingBlocks_id_academicYearId_schoolId_key"'), ('i:"TeachingBlocks_academicYearId_idx"'),
+                                                    ('i:"TeachingBlocks_sameTimesAsBlockId_key"'), ('i:"TeachingBlocks_schoolId_academicYearId_name_key"'),
+                                                    ('c:TeachingBlocks_name_is_sane'), ('c:TeachingBlocks_sameTimesAs_is_another_block'), ('c:TeachingBlocks_academicYearId_schoolId_fkey'),
+                                                    ('c:TeachingBlocks_sameTimesAsBlockId_academicYearId_schoolId_fkey'), ('c:TeachingBlocks_schoolId_fkey')) x(k)));
+  RAISE NOTICE 'gb 500 (the catalogue): % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+
+-- What each CHECK refuses and what it admits, at its edges, as the school's own administrator. A CHECK is judged when the row
+-- is written, before BP409 (an AFTER trigger), so a value outside it says 23514 with the constraint's name whatever the block
+-- is; a value on its edge is admitted (the block has the length, so BP409 has nothing to say). The same by UPDATE.
+BEGIN;
+SELECT set_config('app.test_gb_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  t jsonb;
+  s uuid;
+  y uuid;
+  two uuid;
+  m15 uuid;
+  m240 uuid;
+  c record;
+  one_row uuid;
+  day_check constant text := '23514 TeachingBlockPlacements_dayOfWeek_is_a_school_day';
+  min_check constant text := '23514 TeachingBlockPlacements_minutes_is_sane';
+  grid_check constant text := '23514 TeachingBlockPlacements_startTime_is_on_the_grid';
+  inside_check constant text := '23514 TeachingBlockPlacements_inside_the_school_day';
+BEGIN
+  t := pg_temp.gb_plant(current_setting('app.test_gb_admin_a'), 'a');
+  s := (t ->> 'school')::uuid; y := (t ->> 'year')::uuid;
+  two := (t #>> '{blocks,two}')::uuid; m15 := (t #>> '{blocks,m15}')::uuid; m240 := (t #>> '{blocks,m240}')::uuid;
+
+  -- dayOfWeek: Monday to Friday.
+  FOR c IN SELECT * FROM (VALUES (0, day_check), (6, day_check), (7, day_check), (-1, day_check), (1, 'ok'), (5, 'ok')) v(d, want) LOOP
+    PERFORM pg_temp.gb_case('500 day ' || c.d, pg_temp.gb_ins(s, two, y, c.d || '|09:00|60|ALL_WEEKS'), c.want, two);
+    PERFORM pg_temp.gb_clear(two);
+  END LOOP;
+  -- minutes: 15..240 on the five-minute grid. 45 is sane (it is BP409's LENGTH that refuses it on a block of 60).
+  FOR c IN SELECT * FROM (VALUES (10, min_check), (14, min_check), (62, min_check), (241, min_check), (245, min_check), (0, min_check), (-60, min_check)) v(m, want) LOOP
+    PERFORM pg_temp.gb_case('500 minutes ' || c.m, pg_temp.gb_ins(s, two, y, '1|09:00|' || c.m || '|ALL_WEEKS'), c.want, two);
+  END LOOP;
+  PERFORM pg_temp.gb_case('500 minutes 15 (the edge)', pg_temp.gb_ins(s, m15, y, '1|09:00|15|ALL_WEEKS'), 'ok', m15);
+  PERFORM pg_temp.gb_case('500 minutes 240 (the edge)', pg_temp.gb_ins(s, m240, y, '1|09:00|240|ALL_WEEKS'), 'ok', m240);
+  PERFORM pg_temp.gb_clear(m15);
+  PERFORM pg_temp.gb_clear(m240);
+  PERFORM pg_temp.gb_case('500 minutes 45 is sane, and a length the block has not', pg_temp.gb_ins(s, two, y, '1|09:00|45|ALL_WEEKS'), 'BP409 LENGTH', two);
+  -- startTime: no seconds, a minute divisible by five.
+  FOR c IN SELECT * FROM (VALUES ('08:00:30', grid_check), ('08:03', grid_check), ('08:01', grid_check), ('09:59', grid_check), ('10:00:01', grid_check),
+                                 ('08:00', 'ok'), ('08:05', 'ok'), ('10:55', 'ok')) v(start, want) LOOP
+    PERFORM pg_temp.gb_case('500 start ' || c.start, pg_temp.gb_ins(s, two, y, '1|' || c.start || '|60|ALL_WEEKS'), c.want, two);
+    PERFORM pg_temp.gb_clear(two);
+  END LOOP;
+  -- Inside the engine's day, 08:00 to 18:00, the end counted in seconds (a time plus an interval wraps at midnight).
+  FOR c IN SELECT * FROM (VALUES ('07:55', inside_check), ('07:00', inside_check), ('00:00', inside_check), ('17:05', inside_check), ('17:30', inside_check), ('23:30', inside_check), ('23:00', inside_check),
+                                 ('17:00', 'ok'), ('08:00', 'ok'), ('16:55', 'ok')) v(start, want) LOOP
+    PERFORM pg_temp.gb_case('500 a lesson of 60 minutes at ' || c.start, pg_temp.gb_ins(s, two, y, '1|' || c.start || '|60|ALL_WEEKS'), c.want, two);
+    PERFORM pg_temp.gb_clear(two);
+  END LOOP;
+  PERFORM pg_temp.gb_case('500 a lesson of 240 minutes ends at 18:00 exactly', pg_temp.gb_ins(s, m240, y, '1|14:00|240|ALL_WEEKS'), 'ok', m240);
+  PERFORM pg_temp.gb_clear(m240);
+  PERFORM pg_temp.gb_case('500 a lesson of 240 minutes ends five minutes past 18:00', pg_temp.gb_ins(s, m240, y, '1|14:05|240|ALL_WEEKS'), inside_check, m240);
+  PERFORM pg_temp.gb_case('500 a lesson of 240 minutes that would wrap past midnight', pg_temp.gb_ins(s, m240, y, '1|22:00|240|ALL_WEEKS'), inside_check, m240);
+
+  -- The same by UPDATE of a row that is there.
+  PERFORM pg_temp.gb_case('500 a row to update', pg_temp.gb_ins(s, two, y, '1|09:00|60|ALL_WEEKS'), 'ok', two);
+  SELECT id INTO one_row FROM "TeachingBlockPlacements" WHERE "blockId" = two;
+  FOR c IN SELECT * FROM (VALUES
+      ('"dayOfWeek" = 0', day_check), ('"dayOfWeek" = 6', day_check), ('"dayOfWeek" = 5', 'ok'),
+      ('minutes = 14', min_check), ('minutes = 62', min_check), ('minutes = 241', min_check),
+      ('"startTime" = ''08:03''', grid_check), ('"startTime" = ''08:00:30''', grid_check), ('"startTime" = ''07:55''', inside_check),
+      ('"startTime" = ''17:30''', inside_check), ('"startTime" = ''17:00''', 'ok'),
+      ('"dayOfWeek" = NULL', '23502'), ('"startTime" = NULL', '23502'), ('minutes = NULL', '23502'), ('recurrence = NULL', '23502'), ('"blockId" = NULL', '23502'),
+      ('"startTime" = ''09:00''', 'ok')
+    ) v(setting, want) LOOP
+    PERFORM pg_temp.gb_case('500 UPDATE ' || c.setting, format('UPDATE "TeachingBlockPlacements" SET %s WHERE id = %L', c.setting, one_row), c.want, two);
+  END LOOP;
+  RAISE NOTICE 'gb 500 (the CHECKs): % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 501: BP409, differentially. Every rule refuses what it should and admits what it should, in ONE statement and in
+-- SEVERAL (a block's set is judged after the statement, as a whole: a list written as one INSERT is refused whole, the same
+-- list written row by row is refused at the row that makes it too many), and the refusal says what the gateway reads: the
+-- rule first in the message and DETAIL exactly 'blockId=<the block> reason=<the rule>'.
+-- ---------------------------------------------------------------------------
+
+-- The rows written one statement at a time: the first refusal, or ok. A refused row is not stored and the rows before it are.
+CREATE FUNCTION pg_temp.gb_seq(p_school uuid, p_block uuid, p_year uuid, p_rows text[]) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  r text;
+  v text;
+BEGIN
+  FOREACH r IN ARRAY p_rows LOOP
+    v := pg_temp.gb_try(pg_temp.gb_ins(p_school, p_block, p_year, r), p_block);
+    IF v <> 'ok' THEN RETURN v; END IF;
+  END LOOP;
+  RETURN 'ok';
+END $f$;
+
+BEGIN;
+SELECT set_config('app.test_gb_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  t jsonb;
+  s uuid;
+  y uuid;
+  blk uuid;
+  c record;
+  l text;
+BEGIN
+  t := pg_temp.gb_plant(current_setting('app.test_gb_admin_a'), 'a');
+  s := (t ->> 'school')::uuid; y := (t ->> 'year')::uuid;
+  FOR c IN SELECT * FROM (VALUES
+      -- block, label, rows 'day|start|minutes|weeks', the verdict of the whole list written as one statement and of the first refusal when
+      -- written row by row, and how many rows the row-by-row writing leaves behind
+      ('two',   'two lessons',                                   ARRAY['1|08:00|60|ALL_WEEKS', '2|08:00|60|ALL_WEEKS'],                                        'ok',            2),
+      ('two',   'a third lesson',                                ARRAY['1|08:00|60|ALL_WEEKS', '2|08:00|60|ALL_WEEKS', '3|08:00|60|ALL_WEEKS'],               'BP409 COUNT',   2),
+      ('two',   'a length the block has not',                    ARRAY['1|08:00|45|ALL_WEEKS'],                                                                'BP409 LENGTH',  0),
+      ('two',   'two good ones and one of the wrong length (LENGTH before COUNT)', ARRAY['1|08:00|60|ALL_WEEKS', '2|08:00|60|ALL_WEEKS', '3|08:00|45|ALL_WEEKS'], 'BP409 LENGTH', 2),
+      ('two',   'an odd-week row on an every-week block',        ARRAY['1|08:00|60|ODD_WEEKS'],                                                                'BP409 WEEKS',   0),
+      ('two',   'an even-week row on an every-week block',       ARRAY['1|08:00|60|EVEN_WEEKS'],                                                               'BP409 WEEKS',   0),
+      ('two',   'a pair (odd and even in different places) is not supported for a block', ARRAY['1|08:00|60|ODD_WEEKS', '2|09:00|60|EVEN_WEEKS'],          'BP409 WEEKS',   0),
+      ('two',   'a good row and an odd-week one',                ARRAY['1|08:00|60|ALL_WEEKS', '2|08:00|60|ODD_WEEKS'],                                        'BP409 WEEKS',   1),
+      ('two',   'two good ones and an odd one (WEEKS before COUNT)', ARRAY['1|08:00|60|ALL_WEEKS', '2|08:00|60|ALL_WEEKS', '3|08:00|60|ODD_WEEKS'],           'BP409 WEEKS',   2),
+      ('two',   'a wrong length and wrong weeks (LENGTH before WEEKS)', ARRAY['1|08:00|45|ODD_WEEKS'],                                                        'BP409 LENGTH',  0),
+      ('odd',   'an odd-week row on an odd-week block',          ARRAY['1|08:00|60|ODD_WEEKS'],                                                                'ok',            1),
+      ('odd',   'two odd-week rows',                             ARRAY['1|08:00|60|ODD_WEEKS', '2|08:00|60|ODD_WEEKS'],                                        'ok',            2),
+      ('odd',   'an every-week row on an odd-week block',        ARRAY['1|08:00|60|ALL_WEEKS'],                                                                'BP409 WEEKS',   0),
+      ('odd',   'an even-week row on an odd-week block',         ARRAY['1|08:00|60|EVEN_WEEKS'],                                                               'BP409 WEEKS',   0),
+      ('odd',   'three odd-week rows',                           ARRAY['1|08:00|60|ODD_WEEKS', '2|08:00|60|ODD_WEEKS', '3|08:00|60|ODD_WEEKS'],                'BP409 COUNT',   2),
+      ('mix',   'the two lengths the block has',                 ARRAY['1|08:00|80|ALL_WEEKS', '2|08:00|40|ALL_WEEKS'],                                        'ok',            2),
+      ('mix',   'the long one twice',                            ARRAY['1|08:00|80|ALL_WEEKS', '2|08:00|80|ALL_WEEKS'],                                        'BP409 COUNT',   1),
+      ('mix',   'the short one twice',                           ARRAY['1|08:00|40|ALL_WEEKS', '2|08:00|40|ALL_WEEKS'],                                        'BP409 COUNT',   1),
+      ('mix',   'a length neither of them is',                   ARRAY['1|08:00|60|ALL_WEEKS'],                                                                'BP409 LENGTH',  0),
+      ('mix',   'the long one, the short one, the long one',     ARRAY['1|08:00|80|ALL_WEEKS', '2|08:00|40|ALL_WEEKS', '3|08:00|80|ALL_WEEKS'],                'BP409 COUNT',   2),
+      ('one',   'one lesson',                                    ARRAY['1|08:00|60|ALL_WEEKS'],                                                                'ok',            1),
+      ('one',   'two lessons of a block of one',                 ARRAY['1|08:00|60|ALL_WEEKS', '2|08:00|60|ALL_WEEKS'],                                        'BP409 COUNT',   1),
+      ('m15',   'a lesson of 15 minutes',                        ARRAY['1|08:00|15|ALL_WEEKS'],                                                                'ok',            1),
+      ('m240',  'a lesson of 240 minutes',                       ARRAY['1|08:00|240|ALL_WEEKS'],                                                               'ok',            1),
+      ('oth',   'two lessons (the other block of the same form)', ARRAY['1|08:00|60|ALL_WEEKS', '2|08:00|60|ALL_WEEKS'],                                       'ok',            2),
+      ('empty', 'a row for a block with no member',              ARRAY['1|08:00|60|ALL_WEEKS'],                                                                'BP409 EMPTY',   0),
+      ('empty', 'a row of a length no member has: EMPTY goes first', ARRAY['1|08:00|45|ALL_WEEKS'],                                                            'BP409 EMPTY',   0),
+      ('fol',   'a row for a block that follows another block''s times', ARRAY['1|08:00|60|ALL_WEEKS'],                                                       'BP409 FOLLOWER', 0),
+      ('fol',   'a row of the wrong length: FOLLOWER goes first', ARRAY['1|08:00|45|ALL_WEEKS'],                                                              'BP409 FOLLOWER', 0),
+      ('lead',  'the block that is followed takes its own lessons', ARRAY['1|08:00|60|ALL_WEEKS', '2|08:00|60|ALL_WEEKS'],                                     'ok',            2),
+      ('shr',   'a row for a block where a member shares its lessons', ARRAY['1|08:00|60|ALL_WEEKS'],                                                         'BP409 SHARES',  0),
+      ('shr',   'a row of the wrong length: SHARES goes first',  ARRAY['1|08:00|45|ALL_WEEKS'],                                                                'BP409 SHARES',  0)
+    ) v(blk, label, rows, want, good) LOOP
+    blk := (t #>> ARRAY['blocks', c.blk])::uuid;
+    l := '501 ' || c.blk || ': ' || c.label;
+    -- One statement.
+    PERFORM pg_temp.gb_case(l || ', in one statement', pg_temp.gb_ins(s, blk, y, VARIADIC c.rows), c.want, blk);
+    PERFORM pg_temp.gb_expect(l || ', in one statement: what is stored', pg_temp.gb_n(blk), CASE WHEN c.want = 'ok' THEN cardinality(c.rows)::text ELSE '0' END);
+    PERFORM pg_temp.gb_clear(blk);
+    -- Several: the same verdict, at the row that makes it so.
+    PERFORM pg_temp.gb_expect(l || ', one by one', pg_temp.gb_seq(s, blk, y, c.rows), c.want);
+    PERFORM pg_temp.gb_expect(l || ', one by one: what is stored', pg_temp.gb_n(blk), c.good::text);
+    PERFORM pg_temp.gb_clear(blk);
+  END LOOP;
+
+  -- The rules that need a change of state to be asked the other way: the share that goes, the block that stops following.
+  blk := (t #>> '{blocks,shr}')::uuid;
+  DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = (t #>> '{posts,shr1}')::uuid;
+  PERFORM pg_temp.gb_case('501 shr: once the share is gone a row is admitted', pg_temp.gb_ins(s, blk, y, '1|08:00|60|ALL_WEEKS'), 'ok', blk);
+  blk := (t #>> '{blocks,fol}')::uuid;
+  UPDATE "TeachingBlocks" SET "sameTimesAsBlockId" = NULL WHERE id = blk;
+  PERFORM pg_temp.gb_case('501 fol: once the block follows nobody a row is admitted', pg_temp.gb_ins(s, blk, y, '1|08:00|60|ALL_WEEKS'), 'ok', blk);
+  blk := (t #>> '{blocks,empty}')::uuid;
+  PERFORM pg_temp.gb_case('501 empty: once a post is a member a row is admitted', pg_temp.gb_move((t #>> '{posts,sp1}')::uuid, blk), 'ok');
+  PERFORM pg_temp.gb_case('501 empty: the member has lessons of 2 x 60, so a row is', pg_temp.gb_ins(s, blk, y, '1|08:00|60|ALL_WEEKS'), 'ok', blk);
+  -- What the refusal says, read as the gateway reads it: the rule FIRST in the message, and DETAIL the block and the rule, never a person.
+  blk := (t #>> '{blocks,two}')::uuid;
+  PERFORM pg_temp.gb_case('501 the refusal: COUNT', pg_temp.gb_ins(s, blk, y, '1|08:00|60|ALL_WEEKS', '2|08:00|60|ALL_WEEKS', '3|08:00|60|ALL_WEEKS'), 'BP409 COUNT', blk);
+  RAISE NOTICE 'gb 501a (the rules, in one statement and in several): % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+
+-- MEMBER: a room row names a post of the placement's block. Judged on the room row's INSERT and on its UPDATE of the placement or
+-- the post, in one statement and in several, and a room row for a member of the block is admitted; the room itself is not judged.
+BEGIN;
+SELECT set_config('app.test_gb_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  t jsonb;
+  s uuid;
+  y uuid;
+  two uuid;
+  oth uuid;
+  two1 uuid;
+  two2 uuid;
+  oth1 uuid;
+  sp1 uuid;
+  r1 uuid;
+  r2 uuid;
+  r3 uuid;
+  p1 uuid;
+  p2 uuid;
+  q1 uuid;
+  row_id uuid;
+BEGIN
+  t := pg_temp.gb_plant(current_setting('app.test_gb_admin_a'), 'a');
+  s := (t ->> 'school')::uuid; y := (t ->> 'year')::uuid;
+  two := (t #>> '{blocks,two}')::uuid; oth := (t #>> '{blocks,oth}')::uuid;
+  two1 := (t #>> '{posts,two1}')::uuid; two2 := (t #>> '{posts,two2}')::uuid; oth1 := (t #>> '{posts,oth1}')::uuid; sp1 := (t #>> '{posts,sp1}')::uuid;
+  r1 := (t ->> 'room1')::uuid; r2 := (t ->> 'room2')::uuid; r3 := (t ->> 'room3')::uuid;
+  PERFORM pg_temp.gb_case('501 the two lessons of the block', pg_temp.gb_ins(s, two, y, '1|08:00|60|ALL_WEEKS', '2|09:00|60|ALL_WEEKS'), 'ok', two);
+  PERFORM pg_temp.gb_case('501 and the other block''s one', pg_temp.gb_ins(s, oth, y, '3|08:00|60|ALL_WEEKS'), 'ok', oth);
+  p1 := pg_temp.gb_pl(two, 1); p2 := pg_temp.gb_pl(two, 2); q1 := pg_temp.gb_pl(oth, 3);
+
+  -- The members' own rooms.
+  PERFORM pg_temp.gb_case('501 a room row for the first member', pg_temp.gb_room(s, p1, two1, r1), 'ok', two);
+  PERFORM pg_temp.gb_case('501 a room row for the second member', pg_temp.gb_room(s, p1, two2, r2), 'ok', two);
+  PERFORM pg_temp.gb_expect('501 a member without a row is the engine''s choice: the second placement has none', pg_temp.gb_nr(two), '2');
+  PERFORM pg_temp.gb_case('501 the same post and placement again is one too many for the key', pg_temp.gb_room(s, p1, two1, r3), '23505 TeachingBlockPlacementRooms_placementId_requirementId_key', two);
+  PERFORM pg_temp.gb_case('501 the same room for two members is the room''s own matter (not a rule of the database: two members in one room is for the gateway to say)', pg_temp.gb_room(s, p2, two1, r1), 'ok', two);
+  PERFORM pg_temp.gb_case('501 and for the other member too', pg_temp.gb_room(s, p2, two2, r1), 'ok', two);
+  DELETE FROM "TeachingBlockPlacementRooms";
+  -- A post that is not a member.
+  PERFORM pg_temp.gb_case('501 MEMBER: a post of another block', pg_temp.gb_room(s, p1, oth1, r1), 'BP409 MEMBER', two);
+  PERFORM pg_temp.gb_case('501 MEMBER: a post in no block', pg_temp.gb_room(s, p1, sp1, r1), 'BP409 MEMBER', two);
+  PERFORM pg_temp.gb_case('501 MEMBER: and the other block''s member is a member there', pg_temp.gb_room(s, q1, oth1, r1), 'ok', oth);
+  PERFORM pg_temp.gb_expect('501 neither refused row is stored', pg_temp.gb_nr(two), '0');
+  -- One statement: a member and a non-member together are refused whole.
+  PERFORM pg_temp.gb_case('501 MEMBER: a member and a non-member in one statement',
+    format('INSERT INTO "TeachingBlockPlacementRooms" ("schoolId", "placementId", "requirementId", "roomId", "updatedAt") VALUES (%1$L, %2$L, %3$L, %5$L, now()), (%1$L, %2$L, %4$L, %5$L, now())', s, p1, two1, oth1, r1),
+    'BP409 MEMBER', two);
+  PERFORM pg_temp.gb_expect('501 and none of them is stored', pg_temp.gb_nr(two), '0');
+  PERFORM pg_temp.gb_case('501 both members in one statement',
+    format('INSERT INTO "TeachingBlockPlacementRooms" ("schoolId", "placementId", "requirementId", "roomId", "updatedAt") VALUES (%1$L, %2$L, %3$L, %5$L, now()), (%1$L, %2$L, %4$L, %5$L, now())', s, p1, two1, two2, r1),
+    'ok', two);
+  PERFORM pg_temp.gb_expect('501 and both are stored', pg_temp.gb_nr(two), '2');
+  DELETE FROM "TeachingBlockPlacementRooms";
+
+  -- A placement and its room rows in one statement (a data-modifying CTE): the keys see the placement, and the set is judged once.
+  PERFORM pg_temp.gb_clear(two);
+  PERFORM pg_temp.gb_case('501 a placement and a room row for each member, in one statement',
+    format($q$WITH p AS (INSERT INTO "TeachingBlockPlacements" ("schoolId", "blockId", "academicYearId", "dayOfWeek", "startTime", minutes, "updatedAt") VALUES (%1$L, %2$L, %3$L, 4, '08:00', 60, now()) RETURNING id)
+              INSERT INTO "TeachingBlockPlacementRooms" ("schoolId", "placementId", "requirementId", "roomId", "updatedAt")
+              SELECT %1$L, p.id, r.id, %6$L, now() FROM p, (VALUES (%4$L::uuid), (%5$L::uuid)) r(id)$q$, s, two, y, two1, two2, r1), 'ok', two);
+  PERFORM pg_temp.gb_expect('501 both are stored', pg_temp.gb_n(two) || pg_temp.gb_nr(two), '12');
+  PERFORM pg_temp.gb_clear(two);
+  PERFORM pg_temp.gb_case('501 MEMBER: a placement and a room row for a post that is not a member, in one statement',
+    format($q$WITH p AS (INSERT INTO "TeachingBlockPlacements" ("schoolId", "blockId", "academicYearId", "dayOfWeek", "startTime", minutes, "updatedAt") VALUES (%1$L, %2$L, %3$L, 4, '08:00', 60, now()) RETURNING id)
+              INSERT INTO "TeachingBlockPlacementRooms" ("schoolId", "placementId", "requirementId", "roomId", "updatedAt")
+              SELECT %1$L, p.id, %4$L, %5$L, now() FROM p$q$, s, two, y, oth1, r1), 'BP409 MEMBER', two);
+  PERFORM pg_temp.gb_expect('501 neither is stored', pg_temp.gb_n(two) || pg_temp.gb_nr(two), '00');
+  PERFORM pg_temp.gb_case('501 the two lessons again', pg_temp.gb_ins(s, two, y, '1|08:00|60|ALL_WEEKS', '2|09:00|60|ALL_WEEKS'), 'ok', two);
+  p1 := pg_temp.gb_pl(two, 1); p2 := pg_temp.gb_pl(two, 2);
+
+  -- UPDATE of a room row: of the post, of the placement, of the room.
+  PERFORM pg_temp.gb_case('501 a row for the first member', pg_temp.gb_room(s, p1, two1, r1), 'ok', two);
+  SELECT id INTO row_id FROM "TeachingBlockPlacementRooms" WHERE "placementId" = p1;
+  PERFORM pg_temp.gb_case('501 UPDATE of the room is nobody''s concern (not judged)', format('UPDATE "TeachingBlockPlacementRooms" SET "roomId" = %L WHERE id = %L', r3, row_id), 'ok', two);
+  PERFORM pg_temp.gb_case('501 UPDATE of the room to what it is', format('UPDATE "TeachingBlockPlacementRooms" SET "roomId" = "roomId" WHERE id = %L', row_id), 'ok', two);
+  PERFORM pg_temp.gb_case('501 MEMBER: UPDATE of the post to a post of another block', format('UPDATE "TeachingBlockPlacementRooms" SET "requirementId" = %L WHERE id = %L', oth1, row_id), 'BP409 MEMBER', two);
+  PERFORM pg_temp.gb_case('501 MEMBER: UPDATE of the post to a post in no block', format('UPDATE "TeachingBlockPlacementRooms" SET "requirementId" = %L WHERE id = %L', sp1, row_id), 'BP409 MEMBER', two);
+  PERFORM pg_temp.gb_case('501 UPDATE of the post to the block''s other member', format('UPDATE "TeachingBlockPlacementRooms" SET "requirementId" = %L WHERE id = %L', two2, row_id), 'ok', two);
+  PERFORM pg_temp.gb_case('501 UPDATE of the placement to the block''s other placement', format('UPDATE "TeachingBlockPlacementRooms" SET "placementId" = %L WHERE id = %L', p2, row_id), 'ok', two);
+  PERFORM pg_temp.gb_case('501 MEMBER: UPDATE of the placement to a placement of another block (the block judged is the one it comes to)',
+    format('UPDATE "TeachingBlockPlacementRooms" SET "placementId" = %L WHERE id = %L', q1, row_id), 'BP409 MEMBER', oth);
+  PERFORM pg_temp.gb_case('501 UPDATE of the post to the other block''s member AND the placement to that block''s placement, together',
+    format('UPDATE "TeachingBlockPlacementRooms" SET "placementId" = %L, "requirementId" = %L WHERE id = %L', q1, oth1, row_id), 'ok', oth);
+  PERFORM pg_temp.gb_expect('501 the row is now the other block''s', pg_temp.gb_nr(oth) || pg_temp.gb_nr(two), '10');
+  DELETE FROM "TeachingBlockPlacementRooms";
+
+  -- A placement that moves to another block takes its judgement with it: with room rows for posts that are not members there, MEMBER;
+  -- without, the block that receives it is judged on its lessons (the other block here has one lesson placed and two to give).
+  PERFORM pg_temp.gb_case('501 a row for each member of the first placement', pg_temp.gb_room(s, p1, two1, r1), 'ok', two);
+  PERFORM pg_temp.gb_case('501 MEMBER: the placement moved to another block with its room row', format('UPDATE "TeachingBlockPlacements" SET "blockId" = %L WHERE id = %L', oth, p1), 'BP409 MEMBER', oth);
+  PERFORM pg_temp.gb_case('501 the placement moved to another block without a room row (the second placement has none)', format('UPDATE "TeachingBlockPlacements" SET "blockId" = %L WHERE id = %L', oth, p2), 'ok', oth);
+  PERFORM pg_temp.gb_expect('501 and the other block has two placements now', pg_temp.gb_n(oth), '2');
+  PERFORM pg_temp.gb_case('501 COUNT: and a third placement for it is one too many', pg_temp.gb_ins(s, oth, y, '5|08:00|60|ALL_WEEKS'), 'BP409 COUNT', oth);
+  RAISE NOTICE 'gb 501b (MEMBER): % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+
+-- The changes that put an EXISTING row in question: a member's lessons (the four columns), a share written for a member, a block set to
+-- follow another block's times. Judged on the set as it is after the statement, so the members of a block changed in ONE statement are
+-- judged together; a member changed alone is met by TB409 first (the block's members must agree), which this section only notes.
+BEGIN;
+SELECT set_config('app.test_gb_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  t jsonb;
+  s uuid;
+  y uuid;
+  teacher uuid;
+  two uuid;
+  mix uuid;
+  oth uuid;
+  one uuid;
+  fol uuid;
+  two1 uuid;
+  two2 uuid;
+  oth1 uuid;
+  oth2 uuid;
+  sp1 uuid;
+  sp2 uuid;
+  c record;
+BEGIN
+  t := pg_temp.gb_plant(current_setting('app.test_gb_admin_a'), 'a');
+  s := (t ->> 'school')::uuid; y := (t ->> 'year')::uuid; teacher := (t ->> 'teacher')::uuid;
+  two := (t #>> '{blocks,two}')::uuid; mix := (t #>> '{blocks,mix}')::uuid; oth := (t #>> '{blocks,oth}')::uuid; one := (t #>> '{blocks,one}')::uuid; fol := (t #>> '{blocks,fol}')::uuid;
+  two1 := (t #>> '{posts,two1}')::uuid; two2 := (t #>> '{posts,two2}')::uuid; oth1 := (t #>> '{posts,oth1}')::uuid; oth2 := (t #>> '{posts,oth2}')::uuid;
+  sp1 := (t #>> '{posts,sp1}')::uuid; sp2 := (t #>> '{posts,sp2}')::uuid;
+  PERFORM pg_temp.gb_case('501 the two lessons of two', pg_temp.gb_ins(s, two, y, '1|08:00|60|ALL_WEEKS', '2|09:00|60|ALL_WEEKS'), 'ok', two);
+  PERFORM pg_temp.gb_case('501 and the two of mix, 80 and 40', pg_temp.gb_ins(s, mix, y, '1|08:00|80|ALL_WEEKS', '2|09:00|40|ALL_WEEKS'), 'ok', mix);
+
+  -- The members' lessons, ALL of the block's members in one statement (what setLessons does): judged on the set after it.
+  FOR c IN SELECT * FROM (VALUES
+      ('two', 'lessons raised to three (the two placed still fit)',          '"lessonsPerWeek" = 3',                                                    'ok'),
+      ('two', 'lessons back to two',                                          '"lessonsPerWeek" = 2',                                                    'ok'),
+      ('two', 'lessons lowered to one: two are placed',                       '"lessonsPerWeek" = 1',                                                    'BP409 COUNT'),
+      ('two', 'the length made 45: the placed ones are 60',                   '"minutesPerLesson" = 45',                                                 'BP409 LENGTH'),
+      ('two', 'the length made 90',                                           '"minutesPerLesson" = 90',                                                 'BP409 LENGTH'),
+      ('two', 'the weeks made odd',                                           'recurrence = ''ODD_WEEKS''',                                              'BP409 WEEKS'),
+      ('two', 'the weeks made even',                                          'recurrence = ''EVEN_WEEKS''',                                             'BP409 WEEKS'),
+      ('two', 'the lengths made 60 and 30: one 60 is too few for two placed', '"lessonLengths" = ''{60,30}''',                                           'BP409 COUNT'),
+      ('two', 'three lessons, 60, 60 and 30: the two 60 are there',           '"lessonsPerWeek" = 3, "lessonLengths" = ''{60,60,30}''',                  'ok'),
+      ('two', 'and back to two of 60',                                        '"lessonsPerWeek" = 2, "lessonLengths" = ''{}''',                           'ok'),
+      ('two', 'set to what they are: no change, nothing to judge',            '"lessonsPerWeek" = 2, "minutesPerLesson" = 60, recurrence = ''ALL_WEEKS''', 'ok'),
+      ('mix', 'the lengths kept',                                             '"lessonLengths" = ''{80,40}''',                                           'ok'),
+      ('mix', 'the lengths made 80 and 60: the 40 placed is not there',       '"lessonLengths" = ''{80,60}''',                                           'BP409 LENGTH'),
+      ('mix', 'the lengths made 60 and 40: the 80 placed is not there',       '"minutesPerLesson" = 60, "lessonLengths" = ''{60,40}''',                  'BP409 LENGTH'),
+      ('mix', 'the lengths made 80, 40, 40 (three lessons)',                  '"lessonsPerWeek" = 3, "lessonLengths" = ''{80,40,40}''',                  'ok'),
+      ('oth', 'a block with nothing placed has nothing to fit: lessons to one', '"lessonsPerWeek" = 1',                                                  'ok'),
+      ('oth', 'and the weeks to odd',                                         'recurrence = ''ODD_WEEKS''',                                              'ok')
+    ) v(blk, label, setting, want) LOOP
+    PERFORM pg_temp.gb_case('501 ' || c.blk || ': all members, ' || c.label,
+      format('UPDATE "TeachingRequirements" SET %s WHERE "blockId" = %L', c.setting, (t #>> ARRAY['blocks', c.blk])::uuid), c.want, (t #>> ARRAY['blocks', c.blk])::uuid);
+  END LOOP;
+  UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 2, recurrence = 'ALL_WEEKS' WHERE "blockId" = oth;
+  -- The teacher of the posts is the posts' own business (not one of the four columns), set on both members in one statement.
+  PERFORM pg_temp.gb_case('501 two: the teacher of the posts is nobody''s concern here', format('UPDATE "TeachingRequirements" SET "teacherId" = %L WHERE "blockId" = %L', teacher, two), 'ok', two);
+  UPDATE "TeachingRequirements" SET "teacherId" = NULL WHERE "blockId" = two;
+  -- ... and the same as TWO statements (a member at a time) is TB409's, the block's members must agree, before BP409 is asked.
+  PERFORM pg_temp.gb_case('501 two: one member alone, lessons raised: TB409 (members that differ) comes first',
+    format('UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 3 WHERE id = %L', two1), 'TB409', two);
+  PERFORM pg_temp.gb_case('501 two: one member alone, the length made 45: TB409 too',
+    format('UPDATE "TeachingRequirements" SET "minutesPerLesson" = 45 WHERE id = %L', two1), 'TB409', two);
+  PERFORM pg_temp.gb_case('501 a post in no block: the same change is nobody''s business',
+    format('UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 1, "minutesPerLesson" = 45, recurrence = ''ODD_WEEKS'' WHERE id = %L', sp1), 'ok');
+  -- The block's lessons are any member's: the lowest id is the one read, and TB409 has made them agree.
+  PERFORM pg_temp.gb_expect('501 two: the members agree after all of that', (SELECT count(DISTINCT (r."lessonsPerWeek", r."minutesPerLesson", r."lessonLengths", r.recurrence))::text FROM "TeachingRequirements" r WHERE r."blockId" = two), '1');
+
+  -- A share written for a member. The share's own rules (TS409) are met after the block's: on a post of two lessons one lesson may be the
+  -- teacher's. Written for a member of a block with placements: SHARES; for a block with none, or for a post in no block: nobody's concern.
+  PERFORM pg_temp.gb_case('501 SHARES: a share for a member of a block with placements',
+    format('INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES (%L, %L, %L, 1, 60, now())', s, two1, teacher), 'BP409 SHARES', two);
+  PERFORM pg_temp.gb_case('501 a share for a member of a block with no placement',
+    format('INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES (%L, %L, %L, 1, 60, now())', s, oth1, teacher), 'ok');
+  PERFORM pg_temp.gb_case('501 a share for a post in no block',
+    format('INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES (%L, %L, %L, 1, 60, now())', s, sp2, teacher), 'ok');
+  PERFORM pg_temp.gb_case('501 SHARES: a share moved to a member of a block with placements',
+    format('UPDATE "TeachingRequirementShares" SET "requirementId" = %L WHERE "requirementId" = %L', two2, oth1), 'BP409 SHARES', two);
+  PERFORM pg_temp.gb_case('501 a share moved to another member of a block with none',
+    format('UPDATE "TeachingRequirementShares" SET "requirementId" = %L WHERE "requirementId" = %L', oth2, oth1), 'ok');
+  PERFORM pg_temp.gb_case('501 a share changed in its lessons and teacher only is not the block''s concern (not the column it asks about)',
+    format('UPDATE "TeachingRequirementShares" SET lessons = 1, "teacherId" = NULL WHERE "requirementId" = %L', oth2), 'ok');
+  PERFORM pg_temp.gb_case('501 a share deleted is never judged', format('DELETE FROM "TeachingRequirementShares" WHERE "requirementId" IN (%L, %L)', oth2, sp2), 'ok');
+  PERFORM pg_temp.gb_expect('501 the refused shares left nothing behind', (SELECT count(*) FROM "TeachingRequirementShares" WHERE "requirementId" IN (two1, two2))::text, '0');
+  -- A placement and a share in ONE statement: the whole set is judged after it.
+  PERFORM pg_temp.gb_clear(two);
+  PERFORM pg_temp.gb_case('501 SHARES: a placement and a share for a member, in one statement',
+    format($q$WITH p AS (INSERT INTO "TeachingBlockPlacements" ("schoolId", "blockId", "academicYearId", "dayOfWeek", "startTime", minutes, "updatedAt") VALUES (%1$L, %2$L, %3$L, 4, '08:00', 60, now()) RETURNING id)
+              INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES (%1$L, %4$L, %5$L, 1, 60, now())$q$, s, two, y, two1, teacher),
+    'BP409 SHARES', two);
+  PERFORM pg_temp.gb_expect('501 and neither is stored', pg_temp.gb_n(two) || (SELECT count(*) FROM "TeachingRequirementShares" WHERE "requirementId" = two1)::text, '00');
+  -- The share first, then the placement: the other order, the same verdict, at the placement.
+  PERFORM pg_temp.gb_case('501 a share for a member of a block with none', format('INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES (%L, %L, %L, 1, 60, now())', s, two1, teacher), 'ok');
+  PERFORM pg_temp.gb_case('501 SHARES: and then a placement', pg_temp.gb_ins(s, two, y, '1|08:00|60|ALL_WEEKS'), 'BP409 SHARES', two);
+  DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = two1;
+  PERFORM pg_temp.gb_case('501 the share gone, the placements', pg_temp.gb_ins(s, two, y, '1|08:00|60|ALL_WEEKS', '2|09:00|60|ALL_WEEKS'), 'ok', two);
+
+  -- A block set to follow another block's times. A block that is followed has its own placements; a block that follows has none (FOLLOWER) and
+  -- clearing the link asks nothing. The link is unique per followed block, so the leader is one nobody follows yet (oth, shr).
+  PERFORM pg_temp.gb_case('501 FOLLOWER: a block with placements set to follow another', format('UPDATE "TeachingBlocks" SET "sameTimesAsBlockId" = %L WHERE id = %L', oth, two), 'BP409 FOLLOWER', two);
+  PERFORM pg_temp.gb_expect('501 and it follows nobody', (SELECT ("sameTimesAsBlockId" IS NULL)::text FROM "TeachingBlocks" WHERE id = two), 'true');
+  PERFORM pg_temp.gb_case('501 a block with no placement set to follow another', format('UPDATE "TeachingBlocks" SET "sameTimesAsBlockId" = %L WHERE id = %L', oth, one), 'ok');
+  PERFORM pg_temp.gb_case('501 the block that is followed takes its own placements', pg_temp.gb_ins(s, oth, y, '1|08:00|60|ALL_WEEKS'), 'ok', oth);
+  PERFORM pg_temp.gb_case('501 clearing the link asks nothing', format('UPDATE "TeachingBlocks" SET "sameTimesAsBlockId" = NULL WHERE id = %L', one), 'ok');
+  PERFORM pg_temp.gb_case('501 a block that follows nobody now takes a placement', pg_temp.gb_ins(s, one, y, '2|08:00|60|ALL_WEEKS'), 'ok', one);
+  PERFORM pg_temp.gb_case('501 FOLLOWER: and may not be set to follow again', format('UPDATE "TeachingBlocks" SET "sameTimesAsBlockId" = %L WHERE id = %L', t #>> '{blocks,shr}', one), 'BP409 FOLLOWER', one);
+  PERFORM pg_temp.gb_case('501 the lead of a follower takes its own placements', pg_temp.gb_ins(s, (t #>> '{blocks,lead}')::uuid, y, '1|08:00|60|ALL_WEEKS'), 'ok', (t #>> '{blocks,lead}')::uuid);
+  PERFORM pg_temp.gb_case('501 FOLLOWER: and the follower may not have one', pg_temp.gb_ins(s, fol, y, '1|08:00|60|ALL_WEEKS'), 'BP409 FOLLOWER', fol);
+  PERFORM pg_temp.gb_case('501 a follower with no placement moved to follow another block is admitted', format('UPDATE "TeachingBlocks" SET "sameTimesAsBlockId" = %L WHERE id = %L', t #>> '{blocks,shr}', fol), 'ok');
+  RAISE NOTICE 'gb 501c (lessons, shares, links): % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+
+-- What nothing can make wrong, and so is never judged: MEMBERSHIP (a post that goes into a block has the lesson directly, and the engine
+-- chooses its room; a post that leaves takes its room rows, section 502), a DELETE (only ever leaves fewer rows), and a move of a placement
+-- to another day or hour (nothing the rules read). Asked in a block that is already in a state the rules refuse (no member is left), where
+-- a refusal would show at once, beside the columns that ARE judged.
+BEGIN;
+SELECT set_config('app.test_gb_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  t jsonb;
+  s uuid;
+  y uuid;
+  teacher uuid;
+  two uuid;
+  two1 uuid;
+  two2 uuid;
+  sp1 uuid;
+  sp2 uuid;
+  sp3 uuid;
+  r1 uuid;
+  p1 uuid;
+  p2 uuid;
+BEGIN
+  t := pg_temp.gb_plant(current_setting('app.test_gb_admin_a'), 'a');
+  s := (t ->> 'school')::uuid; y := (t ->> 'year')::uuid; teacher := (t ->> 'teacher')::uuid; r1 := (t ->> 'room1')::uuid;
+  two := (t #>> '{blocks,two}')::uuid; two1 := (t #>> '{posts,two1}')::uuid; two2 := (t #>> '{posts,two2}')::uuid;
+  sp1 := (t #>> '{posts,sp1}')::uuid; sp2 := (t #>> '{posts,sp2}')::uuid; sp3 := (t #>> '{posts,sp3}')::uuid;
+  PERFORM pg_temp.gb_case('501 the two lessons', pg_temp.gb_ins(s, two, y, '1|08:00|60|ALL_WEEKS', '2|09:00|60|ALL_WEEKS'), 'ok', two);
+  p1 := pg_temp.gb_pl(two, 1); p2 := pg_temp.gb_pl(two, 2);
+  PERFORM pg_temp.gb_case('501 a room row for each member of the first', pg_temp.gb_room(s, p1, two1, r1), 'ok', two);
+  PERFORM pg_temp.gb_case('501 ... and the second member', pg_temp.gb_room(s, p1, two2, r1), 'ok', two);
+
+  -- A post goes into a block that has placements and room rows: never refused, and it has the lesson directly (no row of its own).
+  PERFORM pg_temp.gb_case('501 a post of the same form goes into the block', pg_temp.gb_move(sp1, two), 'ok');
+  PERFORM pg_temp.gb_expect('501 it has no room row, and the others keep theirs', pg_temp.gb_nrp(sp1) || '/' || pg_temp.gb_nr(two), '0/2');
+  PERFORM pg_temp.gb_case('501 and may then be given a room for a lesson', pg_temp.gb_room(s, p2, sp1, r1), 'ok', two);
+  PERFORM pg_temp.gb_case('501 a post of another form is TB409''s to refuse (BLOCK_MEMBERS_DIFFER), as it always was', pg_temp.gb_move(sp3, two), 'TB409');
+  -- A post with shares goes into a block that has placements: membership is not refused (the block's rule asks about the set only when a
+  -- row of it is written, and the next write of the block names SHARES); the gateway's own judge reads the shares of a member.
+  PERFORM pg_temp.gb_case('501 a share for a post in no block', format('INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES (%L, %L, %L, 1, 60, now())', s, sp2, teacher), 'ok');
+  PERFORM pg_temp.gb_case('501 a post with a share goes into a block that has placements: membership is never refused', pg_temp.gb_move(sp2, two), 'ok');
+  PERFORM pg_temp.gb_case('501 SHARES: and the block''s next judged write says so', pg_temp.gb_ins(s, two, y, '3|08:00|60|ALL_WEEKS'), 'BP409 SHARES', two);
+  PERFORM pg_temp.gb_case('501 it leaves again', pg_temp.gb_move(sp2, NULL), 'ok');
+  DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = sp2;
+  PERFORM pg_temp.gb_case('501 the post that was given a room leaves (the next section reads what becomes of its row)', pg_temp.gb_move(sp1, NULL), 'ok');
+  PERFORM pg_temp.gb_expect('501 the room row of the post that left went with it', pg_temp.gb_nrp(sp1), '0');
+
+  -- DELETE: of a room row, of a placement, whatever the block's state, and the rows it leaves.
+  PERFORM pg_temp.gb_case('501 DELETE of a room row', format('DELETE FROM "TeachingBlockPlacementRooms" WHERE "placementId" = %L AND "requirementId" = %L', p1, two2), 'ok');
+  -- Both members leave: the block keeps its placements (nothing is refused: a block left with no member is a block Generera sends to nobody).
+  PERFORM pg_temp.gb_case('501 every member leaves the block in one statement', format('UPDATE "TeachingRequirements" SET "blockId" = NULL WHERE "blockId" = %L', two), 'ok');
+  PERFORM pg_temp.gb_expect('501 the block keeps its two placements and has no room row', pg_temp.gb_n(two) || '/' || pg_temp.gb_nr(two), '2/0');
+  -- The block has no member now, which is the state EMPTY refuses to be written in. What is judged and what is not:
+  PERFORM pg_temp.gb_case('501 a move of a placement to another day is not judged', format('UPDATE "TeachingBlockPlacements" SET "dayOfWeek" = 4 WHERE id = %L', p1), 'ok', two);
+  PERFORM pg_temp.gb_case('501 a move to another hour is not judged', format('UPDATE "TeachingBlockPlacements" SET "startTime" = ''13:30'' WHERE id = %L', p1), 'ok', two);
+  PERFORM pg_temp.gb_case('501 a move of both day and hour is not judged', format('UPDATE "TeachingBlockPlacements" SET "dayOfWeek" = 3, "startTime" = ''10:00'' WHERE "blockId" = %L', two), 'ok', two);
+  PERFORM pg_temp.gb_case('501 EMPTY: an UPDATE of the length (to what it is) is judged: UPDATE OF minutes', format('UPDATE "TeachingBlockPlacements" SET minutes = minutes WHERE id = %L', p1), 'BP409 EMPTY', two);
+  PERFORM pg_temp.gb_case('501 EMPTY: an UPDATE of the weeks is judged: UPDATE OF recurrence', format('UPDATE "TeachingBlockPlacements" SET recurrence = recurrence WHERE id = %L', p1), 'BP409 EMPTY', two);
+  PERFORM pg_temp.gb_case('501 EMPTY: an UPDATE of the block is judged: UPDATE OF blockId', format('UPDATE "TeachingBlockPlacements" SET "blockId" = "blockId" WHERE id = %L', p1), 'BP409 EMPTY', two);
+  PERFORM pg_temp.gb_case('501 EMPTY: a new placement is judged', pg_temp.gb_ins(s, two, y, '5|08:00|60|ALL_WEEKS'), 'BP409 EMPTY', two);
+  PERFORM pg_temp.gb_case('501 DELETE of one placement of a block in that state is never judged', format('DELETE FROM "TeachingBlockPlacements" WHERE id = %L', p1), 'ok');
+  PERFORM pg_temp.gb_expect('501 one is left', pg_temp.gb_n(two), '1');
+  -- A member comes back: the rows are met again, and the set is judged on what is written next.
+  PERFORM pg_temp.gb_case('501 a post comes into the block that has a placement and no member', pg_temp.gb_move(two1, two), 'ok');
+  PERFORM pg_temp.gb_case('501 and a second placement is admitted again', pg_temp.gb_ins(s, two, y, '1|08:00|60|ALL_WEEKS'), 'ok', two);
+  PERFORM pg_temp.gb_case('501 COUNT: and a third is one too many', pg_temp.gb_ins(s, two, y, '5|08:00|60|ALL_WEEKS'), 'BP409 COUNT', two);
+  PERFORM pg_temp.gb_case('501 DELETE of every placement of the block', format('DELETE FROM "TeachingBlockPlacements" WHERE "blockId" = %L', two), 'ok');
+  PERFORM pg_temp.gb_expect('501 nothing is left', pg_temp.gb_n(two), '0');
+  RAISE NOTICE 'gb 501d (membership, DELETE, moves): % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+
+-- The isolation levels, against the rows the fixtures planted in the matrix school (committed, so a snapshot has them): a block of its own with
+-- two posts of one lesson of 60 minutes, a placement on Thursday at 13:00 and a room row for the first post. REPEATABLE READ reads the rows after
+-- the lock from its first snapshot, so no lock makes the judgement safe there: every write the rules judge is refused (ISOLATION) rather than
+-- judged on a snapshot that may lack a concurrent row. What is not judged is not refused. SERIALIZABLE aborts one side of the same cycle by
+-- itself, so it is judged like READ COMMITTED.
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+DO $$
+DECLARE
+  roller uuid;
+  blk uuid;
+  y uuid;
+  placement uuid;
+  row_id uuid;
+  post_a uuid;
+  post_b uuid;
+  room uuid;
+  other_block uuid;
+BEGIN
+  PERFORM pg_temp.gb_as('00000000-0000-4000-8000-000000000105');
+  roller := app.current_school_id();
+  SELECT b.id, b."academicYearId" INTO blk, y FROM "TeachingBlocks" b WHERE b."schoolId" = roller AND b.name = 'Roller förlagt block';
+  IF blk IS NULL THEN RAISE EXCEPTION 'gb 501: the matrix school has no förlagt block; the fixtures did not run'; END IF;
+  SELECT id INTO placement FROM "TeachingBlockPlacements" WHERE "blockId" = blk;
+  SELECT x.id, x."requirementId", x."roomId" INTO row_id, post_a, room FROM "TeachingBlockPlacementRooms" x WHERE x."placementId" = placement;
+  SELECT r.id INTO post_b FROM "TeachingRequirements" r WHERE r."blockId" = blk AND r.id <> post_a;
+  SELECT id INTO other_block FROM "TeachingBlocks" WHERE "schoolId" = roller AND name = 'Roller block';
+  PERFORM pg_temp.gb_expect('501 the level', current_setting('transaction_isolation'), 'repeatable read');
+  PERFORM pg_temp.gb_case('501 RR: INSERT of a placement', pg_temp.gb_ins(roller, blk, y, '3|08:00|60|ALL_WEEKS'), 'BP409 ISOLATION', blk);
+  PERFORM pg_temp.gb_case('501 RR: UPDATE of the length', format('UPDATE "TeachingBlockPlacements" SET minutes = minutes WHERE id = %L', placement), 'BP409 ISOLATION', blk);
+  PERFORM pg_temp.gb_case('501 RR: UPDATE of the weeks', format('UPDATE "TeachingBlockPlacements" SET recurrence = recurrence WHERE id = %L', placement), 'BP409 ISOLATION', blk);
+  PERFORM pg_temp.gb_case('501 RR: UPDATE of the block', format('UPDATE "TeachingBlockPlacements" SET "blockId" = "blockId" WHERE id = %L', placement), 'BP409 ISOLATION', blk);
+  PERFORM pg_temp.gb_case('501 RR: INSERT of a room row', pg_temp.gb_room(roller, placement, post_b, room), 'BP409 ISOLATION', blk);
+  PERFORM pg_temp.gb_case('501 RR: UPDATE of a room row''s post', format('UPDATE "TeachingBlockPlacementRooms" SET "requirementId" = "requirementId" WHERE id = %L', row_id), 'BP409 ISOLATION', blk);
+  PERFORM pg_temp.gb_case('501 RR: UPDATE of the members'' lessons (all of them, in one statement)', format('UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 2 WHERE "blockId" = %L', blk), 'BP409 ISOLATION', blk);
+  PERFORM pg_temp.gb_case('501 RR: a share for a member',
+    format('INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES (%L, %L, NULL, 1, 60, now())', roller, post_a), 'BP409 ISOLATION', blk);
+  PERFORM pg_temp.gb_case('501 RR: a block set to follow another', format('UPDATE "TeachingBlocks" SET "sameTimesAsBlockId" = %L WHERE id = %L', other_block, blk), 'BP409 ISOLATION', blk);
+  -- What no rule judges is not refused.
+  PERFORM pg_temp.gb_case('501 RR: UPDATE of a placement''s day (not judged)', format('UPDATE "TeachingBlockPlacements" SET "dayOfWeek" = 3 WHERE id = %L', placement), 'ok', blk);
+  PERFORM pg_temp.gb_case('501 RR: UPDATE of a room row''s room (not judged)', format('UPDATE "TeachingBlockPlacementRooms" SET "roomId" = "roomId" WHERE id = %L', row_id), 'ok', blk);
+  PERFORM pg_temp.gb_case('501 RR: UPDATE of a member''s teacher (not one of the four columns)', format('UPDATE "TeachingRequirements" SET "teacherId" = NULL WHERE "blockId" = %L', blk), 'ok', blk);
+  PERFORM pg_temp.gb_case('501 RR: DELETE of the room row (never judged)', format('DELETE FROM "TeachingBlockPlacementRooms" WHERE id = %L', row_id), 'ok', blk);
+  PERFORM pg_temp.gb_case('501 RR: DELETE of the placement (never judged)', format('DELETE FROM "TeachingBlockPlacements" WHERE id = %L', placement), 'ok', blk);
+  RAISE NOTICE 'gb 501e RR: % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+BEGIN ISOLATION LEVEL SERIALIZABLE;
+DO $$
+DECLARE
+  roller uuid;
+  blk uuid;
+  y uuid;
+  placement uuid;
+  post_a uuid;
+  stranger uuid;
+  room uuid;
+BEGIN
+  PERFORM pg_temp.gb_as('00000000-0000-4000-8000-000000000105');
+  roller := app.current_school_id();
+  SELECT b.id, b."academicYearId" INTO blk, y FROM "TeachingBlocks" b WHERE b."schoolId" = roller AND b.name = 'Roller förlagt block';
+  SELECT id INTO placement FROM "TeachingBlockPlacements" WHERE "blockId" = blk;
+  SELECT x."requirementId", x."roomId" INTO post_a, room FROM "TeachingBlockPlacementRooms" x WHERE x."placementId" = placement;
+  SELECT r.id INTO stranger FROM "TeachingRequirements" r WHERE r."schoolId" = roller AND r."blockId" IS NULL ORDER BY r.id LIMIT 1;
+  PERFORM pg_temp.gb_expect('501 the level', current_setting('transaction_isolation'), 'serializable');
+  PERFORM pg_temp.gb_case('501 SERIALIZABLE: a second lesson of a block of one is judged', pg_temp.gb_ins(roller, blk, y, '3|08:00|60|ALL_WEEKS'), 'BP409 COUNT', blk);
+  PERFORM pg_temp.gb_case('501 SERIALIZABLE: a room row for a post that is not a member is judged', pg_temp.gb_room(roller, placement, stranger, room), 'BP409 MEMBER', blk);
+  PERFORM pg_temp.gb_case('501 SERIALIZABLE: the members'' lessons raised, all of them', format('UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 2 WHERE "blockId" = %L', blk), 'ok', blk);
+  PERFORM pg_temp.gb_case('501 SERIALIZABLE: and their length changed under the placement', format('UPDATE "TeachingRequirements" SET "minutesPerLesson" = 45 WHERE "blockId" = %L', blk), 'BP409 LENGTH', blk);
+  PERFORM pg_temp.gb_case('501 SERIALIZABLE: a placement of another length', format('UPDATE "TeachingBlockPlacements" SET minutes = 45 WHERE id = %L', placement), 'BP409 LENGTH', blk);
+  PERFORM pg_temp.gb_case('501 SERIALIZABLE: a share for a member',
+    format('INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES (%L, %L, NULL, 1, 60, now())', roller, post_a), 'BP409 SHARES', blk);
+  RAISE NOTICE 'gb 501e SERIALIZABLE: % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 502: the keys at work. The room a row names is not removed (NO ACTION), nor is its id changed; a block that goes takes its
+-- placements and their room rows, a placement its room rows, a post its room rows; and a post that LEAVES its block (it is not removed: its
+-- "blockId" changes, to none or to another block) takes ONLY its own room rows, leaving the other posts' rows and the placements. The key of
+-- every table holds the school: another school's rows are not named, and not reached.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_gb_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  t jsonb;
+  s uuid;
+  y uuid;
+  two uuid;
+  oth uuid;
+  two1 uuid;
+  two2 uuid;
+  r1 uuid;
+  r2 uuid;
+  r3 uuid;
+  p1 uuid;
+  p2 uuid;
+  row_a uuid;
+BEGIN
+  t := pg_temp.gb_plant(current_setting('app.test_gb_admin_a'), 'a');
+  s := (t ->> 'school')::uuid; y := (t ->> 'year')::uuid;
+  two := (t #>> '{blocks,two}')::uuid; oth := (t #>> '{blocks,oth}')::uuid;
+  two1 := (t #>> '{posts,two1}')::uuid; two2 := (t #>> '{posts,two2}')::uuid;
+  r1 := (t ->> 'room1')::uuid; r2 := (t ->> 'room2')::uuid; r3 := (t ->> 'room3')::uuid;
+  PERFORM pg_temp.gb_case('502 the two lessons', pg_temp.gb_ins(s, two, y, '1|08:00|60|ALL_WEEKS', '2|09:00|60|ALL_WEEKS'), 'ok', two);
+  p1 := pg_temp.gb_pl(two, 1); p2 := pg_temp.gb_pl(two, 2);
+  PERFORM pg_temp.gb_case('502 the first member''s room on the first lesson', pg_temp.gb_room(s, p1, two1, r1), 'ok', two);
+  PERFORM pg_temp.gb_case('502 the second member''s room on the first lesson', pg_temp.gb_room(s, p1, two2, r2), 'ok', two);
+  PERFORM pg_temp.gb_case('502 the first member''s room on the second lesson', pg_temp.gb_room(s, p2, two1, r1), 'ok', two);
+
+  -- The room: a room a row names is not removed (NO ACTION, 23503 with the key's name), nor does its id change; a room no row names is removed.
+  PERFORM pg_temp.gb_case('502 the room a row names is not removed', format('DELETE FROM "Rooms" WHERE id = %L', r1), '23503 TeachingBlockPlacementRooms_roomId_schoolId_fkey');
+  PERFORM pg_temp.gb_case('502 the other room a row names is not removed either', format('DELETE FROM "Rooms" WHERE id = %L', r2), '23503 TeachingBlockPlacementRooms_roomId_schoolId_fkey');
+  PERFORM pg_temp.gb_case('502 nor is its id changed (ON UPDATE NO ACTION)', format('UPDATE "Rooms" SET id = gen_random_uuid() WHERE id = %L', r1), '23503 TeachingBlockPlacementRooms_roomId_schoolId_fkey');
+  PERFORM pg_temp.gb_case('502 the room no row names is removed', format('DELETE FROM "Rooms" WHERE id = %L', r3), 'ok');
+  PERFORM pg_temp.gb_expect('502 and the rows are all there', pg_temp.gb_nr(two), '3');
+  PERFORM pg_temp.gb_case('502 a room row naming the room that went is refused by the key', pg_temp.gb_room(s, p2, two2, r3), '23503 TeachingBlockPlacementRooms_roomId_schoolId_fkey', two);
+  -- Once no row names the room it goes: the rows that named it are deleted or moved to another room.
+  PERFORM pg_temp.gb_case('502 the rows of the first room move to the second', format('UPDATE "TeachingBlockPlacementRooms" SET "roomId" = %L WHERE "roomId" = %L', r2, r1), 'ok', two);
+  PERFORM pg_temp.gb_case('502 and the first room goes', format('DELETE FROM "Rooms" WHERE id = %L', r1), 'ok');
+  PERFORM pg_temp.gb_expect('502 the rows are left, in the second room', (SELECT count(*) FROM "TeachingBlockPlacementRooms" WHERE "roomId" = r2)::text, '3');
+
+  -- The placement: a placement that goes takes its room rows, and the other's stay.
+  PERFORM pg_temp.gb_case('502 the first placement goes', format('DELETE FROM "TeachingBlockPlacements" WHERE id = %L', p1), 'ok');
+  PERFORM pg_temp.gb_expect('502 its two room rows went with it, the second placement''s stays', pg_temp.gb_nr(two) || '/' || pg_temp.gb_n(two), '1/1');
+  -- The id of a placement that room rows name does not change (NO ACTION).
+  PERFORM pg_temp.gb_case('502 the id of a placement a room row names does not change', format('UPDATE "TeachingBlockPlacements" SET id = gen_random_uuid() WHERE id = %L', p2), '23503 TeachingBlockPlacementRooms_placementId_schoolId_fkey');
+  -- The post: a post that is removed takes its room rows with it, not its placements nor the others' rows.
+  PERFORM pg_temp.gb_case('502 the first placement again, and the room rows of both members', pg_temp.gb_ins(s, two, y, '1|08:00|60|ALL_WEEKS'), 'ok', two);
+  p1 := pg_temp.gb_pl(two, 1);
+  PERFORM pg_temp.gb_case('502 ... the second member on the first', pg_temp.gb_room(s, p1, two2, r2), 'ok', two);
+  PERFORM pg_temp.gb_case('502 ... the first member on the first', pg_temp.gb_room(s, p1, two1, r2), 'ok', two);
+  PERFORM pg_temp.gb_expect('502 three rows (the first member on both lessons, the second on the first), two lessons', pg_temp.gb_nr(two) || '/' || pg_temp.gb_n(two), '3/2');
+  PERFORM pg_temp.gb_case('502 the id of a post a room row names does not change', format('UPDATE "TeachingRequirements" SET id = gen_random_uuid() WHERE id = %L', two1), '23503 TeachingBlockPlacementRooms_requirementId_schoolId_fkey');
+  PERFORM pg_temp.gb_case('502 the first member is removed', format('DELETE FROM "TeachingRequirements" WHERE id = %L', two1), 'ok');
+  PERFORM pg_temp.gb_expect('502 its rows went, the second member''s stays, and both lessons', pg_temp.gb_nrp(two1) || '/' || pg_temp.gb_nrp(two2) || '/' || pg_temp.gb_n(two), '0/1/2');
+  -- The block: a block that is removed takes its placements and their room rows; the posts stay, with no block (the post's own key SETs NULL).
+  PERFORM pg_temp.gb_case('502 the block is removed', format('DELETE FROM "TeachingBlocks" WHERE id = %L', two), 'ok');
+  PERFORM pg_temp.gb_expect('502 its placements and room rows went with it', (SELECT count(*) FROM "TeachingBlockPlacements" WHERE "blockId" = two)::text || '/'
+                            || (SELECT count(*) FROM "TeachingBlockPlacementRooms" WHERE "requirementId" = two2)::text, '0/0');
+  PERFORM pg_temp.gb_expect('502 the post that was a member stays, in no block', (SELECT ("blockId" IS NULL)::text FROM "TeachingRequirements" WHERE id = two2), 'true');
+
+  -- ON UPDATE NO ACTION of the block's own key: a block whose only claim on its id is a placement (its members have left) keeps its id.
+  PERFORM pg_temp.gb_case('502 oth: a placement', pg_temp.gb_ins(s, oth, y, '1|08:00|60|ALL_WEEKS'), 'ok', oth);
+  PERFORM pg_temp.gb_case('502 oth: the members leave, the placement stays', format('UPDATE "TeachingRequirements" SET "blockId" = NULL WHERE "blockId" = %L', oth), 'ok');
+  PERFORM pg_temp.gb_case('502 the id of a block a placement names does not change',
+    format('UPDATE "TeachingBlocks" SET id = gen_random_uuid() WHERE id = %L', oth), '23503 TeachingBlockPlacements_blockId_academicYearId_schoolId_fkey');
+  RAISE NOTICE 'gb 502a (room, placement, post, block): % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+
+-- A post that leaves its block takes its own room rows with it and nothing else: to no block, to another block, together with the others, and
+-- the post that has none. Every other row (the placements, the other posts' room rows, another block's) is the same row afterwards (same ids).
+BEGIN;
+SELECT set_config('app.test_gb_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  t jsonb;
+  s uuid;
+  y uuid;
+  two uuid;
+  oth uuid;
+  two1 uuid;
+  two2 uuid;
+  oth1 uuid;
+  oth2 uuid;
+  sp1 uuid;
+  r1 uuid;
+  r2 uuid;
+  p1 uuid;
+  p2 uuid;
+  q1 uuid;
+  before_ids text;
+  after_ids text;
+  others_before text;
+BEGIN
+  t := pg_temp.gb_plant(current_setting('app.test_gb_admin_a'), 'a');
+  s := (t ->> 'school')::uuid; y := (t ->> 'year')::uuid;
+  two := (t #>> '{blocks,two}')::uuid; oth := (t #>> '{blocks,oth}')::uuid;
+  two1 := (t #>> '{posts,two1}')::uuid; two2 := (t #>> '{posts,two2}')::uuid; oth1 := (t #>> '{posts,oth1}')::uuid; oth2 := (t #>> '{posts,oth2}')::uuid; sp1 := (t #>> '{posts,sp1}')::uuid;
+  r1 := (t ->> 'room1')::uuid; r2 := (t ->> 'room2')::uuid;
+  PERFORM pg_temp.gb_case('502 two: two lessons', pg_temp.gb_ins(s, two, y, '1|08:00|60|ALL_WEEKS', '2|09:00|60|ALL_WEEKS'), 'ok', two);
+  PERFORM pg_temp.gb_case('502 oth: one lesson', pg_temp.gb_ins(s, oth, y, '3|08:00|60|ALL_WEEKS'), 'ok', oth);
+  p1 := pg_temp.gb_pl(two, 1); p2 := pg_temp.gb_pl(two, 2); q1 := pg_temp.gb_pl(oth, 3);
+  -- Both members have a room on both lessons of two (four rows); the other block's members on its lesson (two rows).
+  PERFORM pg_temp.gb_case('502 two: four room rows', format('INSERT INTO "TeachingBlockPlacementRooms" ("schoolId", "placementId", "requirementId", "roomId", "updatedAt") VALUES (%1$L, %2$L, %4$L, %6$L, now()), (%1$L, %2$L, %5$L, %7$L, now()), (%1$L, %3$L, %4$L, %6$L, now()), (%1$L, %3$L, %5$L, %7$L, now())', s, p1, p2, two1, two2, r1, r2), 'ok', two);
+  PERFORM pg_temp.gb_case('502 oth: two room rows', format('INSERT INTO "TeachingBlockPlacementRooms" ("schoolId", "placementId", "requirementId", "roomId", "updatedAt") VALUES (%1$L, %2$L, %3$L, %5$L, now()), (%1$L, %2$L, %4$L, %5$L, now())', s, q1, oth1, oth2, r1), 'ok', oth);
+  PERFORM pg_temp.gb_expect('502 the rows as planted', pg_temp.gb_nr(two) || '/' || pg_temp.gb_nr(oth) || '/' || pg_temp.gb_n(two) || '/' || pg_temp.gb_n(oth), '4/2/2/1');
+
+  -- To no block.
+  SELECT string_agg(id::text, ',' ORDER BY id) INTO before_ids FROM "TeachingBlockPlacementRooms" WHERE "requirementId" <> two1;
+  SELECT string_agg(id::text, ',' ORDER BY id) INTO others_before FROM "TeachingBlockPlacements";
+  PERFORM pg_temp.gb_case('502 the first member leaves its block', pg_temp.gb_move(two1, NULL), 'ok');
+  PERFORM pg_temp.gb_expect('502 its two rows went', pg_temp.gb_nrp(two1), '0');
+  SELECT string_agg(id::text, ',' ORDER BY id) INTO after_ids FROM "TeachingBlockPlacementRooms";
+  PERFORM pg_temp.gb_expect('502 every other room row is the same row (the second member''s two and the other block''s two)', after_ids, before_ids);
+  PERFORM pg_temp.gb_expect('502 both placements of the block and the other block''s are the same rows', (SELECT string_agg(id::text, ',' ORDER BY id) FROM "TeachingBlockPlacements"), others_before);
+  PERFORM pg_temp.gb_expect('502 the second member keeps both of its rows', pg_temp.gb_nrp(two2), '2');
+  PERFORM pg_temp.gb_case('502 it comes back: it has no room row (the engine chooses), and the others keep theirs', pg_temp.gb_move(two1, two), 'ok');
+  PERFORM pg_temp.gb_expect('502 so', pg_temp.gb_nrp(two1) || '/' || pg_temp.gb_nr(two), '0/2');
+  -- A statement that sets the block to what it is changes nothing.
+  PERFORM pg_temp.gb_case('502 the second member''s block set to the block it is in', format('UPDATE "TeachingRequirements" SET "blockId" = "blockId" WHERE id = %L', two2), 'ok');
+  PERFORM pg_temp.gb_expect('502 its rows are still there', pg_temp.gb_nrp(two2), '2');
+
+  -- To ANOTHER block: its rows here go, none is made there, and the block it comes to keeps its own rows.
+  PERFORM pg_temp.gb_case('502 two1 gets its rows back', format('INSERT INTO "TeachingBlockPlacementRooms" ("schoolId", "placementId", "requirementId", "roomId", "updatedAt") VALUES (%1$L, %2$L, %4$L, %5$L, now()), (%1$L, %3$L, %4$L, %5$L, now())', s, p1, p2, two1, r1), 'ok', two);
+  SELECT string_agg(id::text, ',' ORDER BY id) INTO before_ids FROM "TeachingBlockPlacementRooms" WHERE "requirementId" <> two1;
+  PERFORM pg_temp.gb_case('502 the first member moves to the other block (a block that has a placement and room rows of its own)', pg_temp.gb_move(two1, oth), 'ok');
+  PERFORM pg_temp.gb_expect('502 its rows in the old block went, none was made in the new', pg_temp.gb_nrp(two1) || '/' || pg_temp.gb_nr(two) || '/' || pg_temp.gb_nr(oth), '0/2/2');
+  SELECT string_agg(id::text, ',' ORDER BY id) INTO after_ids FROM "TeachingBlockPlacementRooms";
+  PERFORM pg_temp.gb_expect('502 every other room row is the same row', after_ids, before_ids);
+  PERFORM pg_temp.gb_case('502 it is a member of the new block: it may have a room there', pg_temp.gb_room(s, q1, two1, r2), 'ok', oth);
+  PERFORM pg_temp.gb_case('502 BP409 MEMBER: and not of the old block''s placements', pg_temp.gb_room(s, p1, two1, r2), 'BP409 MEMBER', two);
+
+  -- A member of the OTHER block leaves to the first: the rows it had at q1 go and the post's rows elsewhere (two1's) are untouched.
+  PERFORM pg_temp.gb_case('502 a member of the other block moves to the first', pg_temp.gb_move(oth1, two), 'ok');
+  PERFORM pg_temp.gb_expect('502 its row went, the other member''s and two1''s stay', pg_temp.gb_nrp(oth1) || '/' || pg_temp.gb_nrp(oth2) || '/' || pg_temp.gb_nrp(two1), '0/1/1');
+
+  -- Every member of a block leaves in ONE statement: all their rows go, the placements stay.
+  PERFORM pg_temp.gb_case('502 every member of the first block leaves in one statement', format('UPDATE "TeachingRequirements" SET "blockId" = NULL WHERE "blockId" = %L', two), 'ok');
+  PERFORM pg_temp.gb_expect('502 the first block''s rows are all gone, its two placements stay, and the other block''s rows are what they were',
+    pg_temp.gb_nr(two) || '/' || pg_temp.gb_n(two) || '/' || pg_temp.gb_nr(oth) || '/' || pg_temp.gb_n(oth), '0/2/2/1');
+  -- A post with no room row leaves: nothing happens, to anyone.
+  PERFORM pg_temp.gb_case('502 a post that was never given a room joins and leaves', pg_temp.gb_move(sp1, oth), 'ok');
+  PERFORM pg_temp.gb_case('502 ... and leaves', pg_temp.gb_move(sp1, NULL), 'ok');
+  PERFORM pg_temp.gb_expect('502 the other block''s rows are what they were', pg_temp.gb_nr(oth), '2');
+  -- A post that leaves in the same statement as it changes its lessons: its block is none, so nobody judges the lessons, and its rows go.
+  PERFORM pg_temp.gb_case('502 the other block''s second member leaves and changes its lessons in one statement',
+    format('UPDATE "TeachingRequirements" SET "blockId" = NULL, "lessonsPerWeek" = 1, "minutesPerLesson" = 45 WHERE id = %L', oth2), 'ok');
+  PERFORM pg_temp.gb_expect('502 its row went; the block keeps its lesson and the member that stays has its row', pg_temp.gb_nrp(oth2) || '/' || pg_temp.gb_nr(oth) || '/' || pg_temp.gb_n(oth), '0/1/1');
+  RAISE NOTICE 'gb 502b (a post that leaves): % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+
+-- The key of every table holds the school. Two schools, each planted by its own administrator and each with a block's rows; neither
+-- names the other's block, placement, post or room (23503 with the key's name, not row security's refusal), a row written with the other's
+-- schoolId is row security's, and what one removes the other keeps.
+BEGIN;
+SELECT set_config('app.test_gb_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  sides jsonb := '{}';
+  side text;
+  t jsonb;
+  o jsonb;
+  s uuid;
+  y uuid;
+  os uuid;
+  my_block uuid;
+  their_block uuid;
+  my_placement uuid;
+  their_placement uuid;
+  my_row uuid;
+  their_row uuid;
+  my_n bigint;
+  their_n bigint;
+BEGIN
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    t := pg_temp.gb_plant(CASE side WHEN 'a' THEN current_setting('app.test_gb_admin_a') ELSE '00000000-0000-4000-8000-000000000006' END, 'k' || side);
+    s := (t ->> 'school')::uuid; y := (t ->> 'year')::uuid;
+    my_block := (t #>> '{blocks,two}')::uuid;
+    PERFORM pg_temp.gb_case('502 ' || side || ' plants its block''s placement', pg_temp.gb_ins(s, my_block, y, '1|08:00|60|ALL_WEEKS'), 'ok', my_block);
+    my_placement := pg_temp.gb_pl(my_block, 1);
+    PERFORM pg_temp.gb_case('502 ' || side || ' plants its room row', pg_temp.gb_room(s, my_placement, (t #>> '{posts,two1}')::uuid, (t ->> 'room1')::uuid), 'ok', my_block);
+    sides := sides || jsonb_build_object(side, t || jsonb_build_object('placement', my_placement,
+                                                                         'row', (SELECT id FROM "TeachingBlockPlacementRooms" WHERE "placementId" = my_placement)));
+  END LOOP;
+  IF (sides -> 'a' ->> 'school') = (sides -> 'b' ->> 'school') THEN RAISE EXCEPTION 'gb 502: both administrators are in the same school'; END IF;
+
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    t := sides -> side;
+    o := sides -> CASE side WHEN 'a' THEN 'b' ELSE 'a' END;
+    PERFORM pg_temp.gb_as(t ->> 'admin');
+    s := (t ->> 'school')::uuid; y := (t ->> 'year')::uuid; os := (o ->> 'school')::uuid;
+    my_block := (t #>> '{blocks,two}')::uuid; their_block := (o #>> '{blocks,two}')::uuid;
+    my_placement := (t ->> 'placement')::uuid; their_placement := (o ->> 'placement')::uuid;
+    my_row := (t ->> 'row')::uuid;
+    PERFORM pg_temp.gb_expect('502 ' || side || ' reads its own rows and none of the other school''s',
+      (SELECT count(*) FROM "TeachingBlockPlacements" WHERE "schoolId" = s)::text || (SELECT count(*) FROM "TeachingBlockPlacementRooms" WHERE "schoolId" = s)::text
+      || (SELECT count(*) FROM "TeachingBlockPlacements" WHERE "schoolId" = os)::text || (SELECT count(*) FROM "TeachingBlockPlacementRooms" WHERE "schoolId" = os)::text, '1100');
+    -- A row of this school that names the other's block, placement, post or room: the keys hold the school.
+    PERFORM pg_temp.gb_case('502 ' || side || ' a placement in the other school''s block (its year)', pg_temp.gb_ins(s, their_block, (o ->> 'year')::uuid, '2|08:00|60|ALL_WEEKS'), '23503 TeachingBlockPlacements_blockId_academicYearId_schoolId_fkey');
+    PERFORM pg_temp.gb_case('502 ' || side || ' a placement in the other school''s block (its own year)', pg_temp.gb_ins(s, their_block, y, '2|08:00|60|ALL_WEEKS'), '23503 TeachingBlockPlacements_blockId_academicYearId_schoolId_fkey');
+    PERFORM pg_temp.gb_case('502 ' || side || ' a placement in its own block and the other school''s year', pg_temp.gb_ins(s, my_block, (o ->> 'year')::uuid, '2|08:00|60|ALL_WEEKS'), '23503 TeachingBlockPlacements_blockId_academicYearId_schoolId_fkey');
+    PERFORM pg_temp.gb_case('502 ' || side || ' UPDATE of its placement to the other school''s block', format('UPDATE "TeachingBlockPlacements" SET "blockId" = %L WHERE id = %L', their_block, my_placement), '23503 TeachingBlockPlacements_blockId_academicYearId_schoolId_fkey');
+    PERFORM pg_temp.gb_case('502 ' || side || ' a room row on the other school''s placement', pg_temp.gb_room(s, their_placement, (t #>> '{posts,two2}')::uuid, (t ->> 'room1')::uuid), '23503 TeachingBlockPlacementRooms_placementId_schoolId_fkey');
+    PERFORM pg_temp.gb_case('502 ' || side || ' a room row for the other school''s post', pg_temp.gb_room(s, my_placement, (o #>> '{posts,two2}')::uuid, (t ->> 'room1')::uuid), '23503 TeachingBlockPlacementRooms_requirementId_schoolId_fkey');
+    PERFORM pg_temp.gb_case('502 ' || side || ' a room row in the other school''s room', pg_temp.gb_room(s, my_placement, (t #>> '{posts,two2}')::uuid, (o ->> 'room1')::uuid), '23503 TeachingBlockPlacementRooms_roomId_schoolId_fkey');
+    PERFORM pg_temp.gb_case('502 ' || side || ' UPDATE of its room row to the other school''s placement', format('UPDATE "TeachingBlockPlacementRooms" SET "placementId" = %L WHERE id = %L', their_placement, my_row), '23503 TeachingBlockPlacementRooms_placementId_schoolId_fkey');
+    PERFORM pg_temp.gb_case('502 ' || side || ' UPDATE of its room row to the other school''s post', format('UPDATE "TeachingBlockPlacementRooms" SET "requirementId" = %L WHERE id = %L', o #>> '{posts,two2}', my_row), '23503 TeachingBlockPlacementRooms_requirementId_schoolId_fkey');
+    PERFORM pg_temp.gb_case('502 ' || side || ' UPDATE of its room row to the other school''s room', format('UPDATE "TeachingBlockPlacementRooms" SET "roomId" = %L WHERE id = %L', o ->> 'room1', my_row), '23503 TeachingBlockPlacementRooms_roomId_schoolId_fkey');
+    PERFORM pg_temp.gb_case('502 ' || side || ' control: its own block, post, room and year', pg_temp.gb_ins(s, my_block, y, '2|08:00|60|ALL_WEEKS'), 'ok', my_block);
+    PERFORM pg_temp.gb_case('502 ' || side || ' control: its own placement, post and room', pg_temp.gb_room(s, my_placement, (t #>> '{posts,two2}')::uuid, (t ->> 'room2')::uuid), 'ok', my_block);
+    -- A row written with the other school's schoolId is the arm's WITH CHECK (row security), whatever it names.
+    PERFORM pg_temp.gb_case('502 ' || side || ' a placement written for the other school', pg_temp.gb_ins(os, their_block, (o ->> 'year')::uuid, '3|08:00|60|ALL_WEEKS'), '42501 rls');
+    PERFORM pg_temp.gb_case('502 ' || side || ' a room row written for the other school', pg_temp.gb_room(os, their_placement, (o #>> '{posts,two2}')::uuid, (o ->> 'room1')::uuid), '42501 rls');
+    PERFORM pg_temp.gb_case('502 ' || side || ' UPDATE moving its placement to the other school', format('UPDATE "TeachingBlockPlacements" SET "schoolId" = %L', os), '42501 rls');
+    PERFORM pg_temp.gb_case('502 ' || side || ' UPDATE moving its room rows to the other school', format('UPDATE "TeachingBlockPlacementRooms" SET "schoolId" = %L', os), '42501 rls');
+    -- The other school's rows are not reached by name either: an UPDATE or a DELETE of them finds no row.
+    PERFORM pg_temp.gb_expect('502 ' || side || ' UPDATE of the other school''s placement reaches none', pg_temp.gb_rows(format('UPDATE "TeachingBlockPlacements" SET "dayOfWeek" = 3 WHERE id = %L', their_placement))::text, '0');
+    PERFORM pg_temp.gb_expect('502 ' || side || ' DELETE of the other school''s placement reaches none', pg_temp.gb_rows(format('DELETE FROM "TeachingBlockPlacements" WHERE id = %L', their_placement))::text, '0');
+    PERFORM pg_temp.gb_expect('502 ' || side || ' DELETE of the other school''s room row reaches none', pg_temp.gb_rows(format('DELETE FROM "TeachingBlockPlacementRooms" WHERE "placementId" = %L', their_placement))::text, '0');
+  END LOOP;
+
+  -- What one school removes the other keeps: a removes everything of its own (a bulk DELETE reaches only its own rows), b reads its own still.
+  PERFORM pg_temp.gb_as(sides -> 'b' ->> 'admin');
+  SELECT count(*) INTO their_n FROM "TeachingBlockPlacements";
+  PERFORM pg_temp.gb_as(sides -> 'a' ->> 'admin');
+  SELECT count(*) INTO my_n FROM "TeachingBlockPlacements";
+  PERFORM pg_temp.gb_expect('502 a bulk UPDATE reaches only a''s own rows', pg_temp.gb_rows('UPDATE "TeachingBlockPlacements" SET "dayOfWeek" = 3 WHERE "dayOfWeek" <> 3')::text, my_n::text);
+  PERFORM pg_temp.gb_expect('502 a bulk DELETE of the room rows reaches only a''s own rows', pg_temp.gb_rows('DELETE FROM "TeachingBlockPlacementRooms"')::text, '2');
+  PERFORM pg_temp.gb_expect('502 a bulk DELETE of the placements reaches only a''s own rows', pg_temp.gb_rows('DELETE FROM "TeachingBlockPlacements"')::text, my_n::text);
+  PERFORM pg_temp.gb_as(sides -> 'b' ->> 'admin');
+  PERFORM pg_temp.gb_expect('502 b still has its placements and room rows (one of each, and the ones it wrote itself)',
+    (SELECT count(*) FROM "TeachingBlockPlacements")::text || '/' || (SELECT count(*) FROM "TeachingBlockPlacementRooms")::text, their_n::text || '/2');
+  -- A removes its block and posts: nothing of b's goes.
+  PERFORM pg_temp.gb_as(sides -> 'a' ->> 'admin');
+  PERFORM pg_temp.gb_case('502 a removes its blocks', 'DELETE FROM "TeachingBlocks"', 'ok');
+  PERFORM pg_temp.gb_case('502 a removes its posts', 'DELETE FROM "TeachingRequirements"', 'ok');
+  PERFORM pg_temp.gb_as(sides -> 'b' ->> 'admin');
+  PERFORM pg_temp.gb_expect('502 and b has its rows still, and its block and its posts',
+    (SELECT count(*) FROM "TeachingBlockPlacements")::text || '/' || (SELECT count(*) FROM "TeachingBlockPlacementRooms")::text || '/' || (SELECT count(*) FROM "TeachingBlocks" WHERE name LIKE 'gb %')::text || '/'
+    || (SELECT count(*) FROM "TeachingRequirements" WHERE "blockId" IS NOT NULL)::text, their_n::text || '/2/11/16');
+  RAISE NOTICE 'gb 502c (another school): % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 503: who reads and who writes. The school's SCHOOL_ADMIN reads both tables (every profile, the läsare included), and one writes
+-- them who holds PLANERING; a teacher, a pupil and a guardian read nothing and write nothing; another school's administrator and a
+-- deactivated one reach nothing; PostgREST's roles (authenticated, anon) hold no grant; the service role holds the read alone; and no
+-- principal of the service, the sync or the key lookup reads a row (the arms are TO app_authenticated and ask the school's own
+-- administrator). Asked of the rows the fixtures planted in the matrix school, as 466 and 498 ask it of the post's.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  p record;
+  roller uuid;
+  blk uuid;
+  y uuid;
+  placement uuid;
+  row_id uuid;
+  post_a uuid;
+  post_b uuid;
+  room uuid;
+  seen_p bigint;
+  seen_r bigint;
+  v text;
+  n bigint;
+BEGIN
+  PERFORM pg_temp.gb_as('00000000-0000-4000-8000-000000000105');
+  roller := app.current_school_id();
+  SELECT b.id, b."academicYearId" INTO blk, y FROM "TeachingBlocks" b WHERE b."schoolId" = roller AND b.name = 'Roller förlagt block';
+  IF blk IS NULL THEN RAISE EXCEPTION 'gb 503: the matrix school has no förlagt block; the fixtures did not run'; END IF;
+  SELECT id INTO placement FROM "TeachingBlockPlacements" WHERE "blockId" = blk;
+  SELECT x.id, x."requirementId", x."roomId" INTO row_id, post_a, room FROM "TeachingBlockPlacementRooms" x WHERE x."placementId" = placement;
+  SELECT r.id INTO post_b FROM "TeachingRequirements" r WHERE r."blockId" = blk AND r.id <> post_a;
+  IF placement IS NULL OR row_id IS NULL OR post_b IS NULL THEN RAISE EXCEPTION 'gb 503: the matrix school''s förlagt block lacks its placement, room row or second post'; END IF;
+  FOR p IN SELECT * FROM (VALUES
+      -- sub, who, reads, writes (a principal that reads and does not write is refused by the arm, one that does not read finds no row)
+      ('00000000-0000-4000-8000-000000000105', 'FULL',                  1, 1),
+      ('00000000-0000-4000-8000-000000000106', 'REKTOR',                1, 1),
+      ('00000000-0000-4000-8000-000000000107', 'SCHEMALAGGARE',         1, 1),
+      ('00000000-0000-4000-8000-000000000108', 'EXPEDITION',            1, 0),
+      ('00000000-0000-4000-8000-000000000109', 'SCHEMALAGGARE + HR',    1, 1),
+      ('00000000-0000-4000-8000-000000000110', 'EXPEDITION + HR',       1, 0),
+      ('00000000-0000-4000-8000-000000000115', 'LASARE',                1, 0),
+      ('00000000-0000-4000-8000-000000000116', 'LASARE + HR',           1, 0),
+      ('00000000-0000-4000-8000-000000000117', 'FULL (the eleventh)',   1, 1),
+      ('00000000-0000-4000-8000-000000000111', 'a teacher',             0, 0),
+      ('00000000-0000-4000-8000-000000000112', 'a pupil',               0, 0),
+      ('00000000-0000-4000-8000-000000000114', 'the second pupil',      0, 0),
+      ('00000000-0000-4000-8000-000000000113', 'a guardian',            0, 0)
+    ) v(sub, who, reads, writes) LOOP
+    PERFORM pg_temp.gb_as(p.sub);
+    PERFORM pg_temp.gb_expect('503 ' || p.who || ' is in the matrix school', app.current_school_id()::text, roller::text);
+    SELECT count(*) INTO seen_p FROM "TeachingBlockPlacements";
+    SELECT count(*) INTO seen_r FROM "TeachingBlockPlacementRooms";
+    PERFORM pg_temp.gb_expect('503 ' || p.who || ' reads the placement and the room row', seen_p::text || '/' || seen_r::text, p.reads::text || '/' || p.reads::text);
+    PERFORM pg_temp.gb_expect('503 ' || p.who || ' sees only the matrix school''s rows', (SELECT count(*) FROM "TeachingBlockPlacements" WHERE "schoolId" <> roller)::text, '0');
+    -- INSERT: judged by its arm before the trigger could say anything, so those refused say 42501; for those admitted a second lesson of a
+    -- block of one is answered COUNT by BP409, which proves the arm let it through (the room row, a member's, is simply admitted).
+    PERFORM pg_temp.gb_expect('503 ' || p.who || ' INSERT of a placement', pg_temp.gb_probe(pg_temp.gb_ins(roller, blk, y, '3|08:00|60|ALL_WEEKS')), CASE WHEN p.writes = 1 THEN 'BP409 COUNT' ELSE '42501 rls' END);
+    PERFORM pg_temp.gb_expect('503 ' || p.who || ' INSERT of a room row', pg_temp.gb_probe(pg_temp.gb_room(roller, placement, post_b, room)), CASE WHEN p.writes = 1 THEN 'ok' ELSE '42501 rls' END);
+    -- UPDATE: a row the principal cannot read is a row it cannot update (0 rows, no error); one that reads and may not write is refused (the WITH CHECK).
+    IF p.reads = 0 THEN
+      PERFORM pg_temp.gb_expect('503 ' || p.who || ' UPDATE of the placement reaches no row', pg_temp.gb_probe_rows(format('UPDATE "TeachingBlockPlacements" SET "dayOfWeek" = 3 WHERE id = %L', placement))::text, '0');
+      PERFORM pg_temp.gb_expect('503 ' || p.who || ' UPDATE of the room row reaches no row', pg_temp.gb_probe_rows(format('UPDATE "TeachingBlockPlacementRooms" SET "roomId" = "roomId" WHERE id = %L', row_id))::text, '0');
+    ELSE
+      PERFORM pg_temp.gb_expect('503 ' || p.who || ' UPDATE of the placement', pg_temp.gb_probe(format('UPDATE "TeachingBlockPlacements" SET "dayOfWeek" = 3 WHERE id = %L', placement)), CASE WHEN p.writes = 1 THEN 'ok' ELSE '42501 rls' END);
+      PERFORM pg_temp.gb_expect('503 ' || p.who || ' UPDATE of the room row', pg_temp.gb_probe(format('UPDATE "TeachingBlockPlacementRooms" SET "roomId" = "roomId" WHERE id = %L', row_id)), CASE WHEN p.writes = 1 THEN 'ok' ELSE '42501 rls' END);
+    END IF;
+    -- DELETE has only USING, so a refused delete finds no row.
+    PERFORM pg_temp.gb_expect('503 ' || p.who || ' DELETE of the placement', pg_temp.gb_probe_rows(format('DELETE FROM "TeachingBlockPlacements" WHERE id = %L', placement))::text, p.writes::text);
+    PERFORM pg_temp.gb_expect('503 ' || p.who || ' DELETE of the room row', pg_temp.gb_probe_rows(format('DELETE FROM "TeachingBlockPlacementRooms" WHERE id = %L', row_id))::text, p.writes::text);
+    -- A write for a school that is not the principal's is refused by every arm, whoever the principal is.
+    PERFORM pg_temp.gb_expect('503 ' || p.who || ' a placement written for another school', pg_temp.gb_probe(pg_temp.gb_ins(gen_random_uuid(), blk, y, '3|08:00|60|ALL_WEEKS')), CASE WHEN p.writes = 1 THEN '42501 rls' ELSE '42501 rls' END);
+  END LOOP;
+  RAISE NOTICE 'gb 503 (the matrix school): % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+
+-- PostgREST's roles, the service role and the principals that are not a school's administrator. Through PostgREST's door ('authenticated') even
+-- the full administrator reaches nothing: the arms are the API role's alone and the role holds no grant. anon holds none either; the service role
+-- holds the read and nothing more (it bypasses row security, so the grant is all there is between it and the rows, as for the post's rows). The
+-- service principal, the sync principal and the key lookup are settings of the API's role that name no administrator: they read no row and write none.
+BEGIN;
+DO $$
+DECLARE
+  roller uuid;
+  blk uuid;
+  y uuid;
+  placement uuid;
+  row_id uuid;
+  post_b uuid;
+  room uuid;
+  tbl text;
+  principal text;
+  r text;
+  priv text;
+  v text;
+BEGIN
+  PERFORM pg_temp.gb_as('00000000-0000-4000-8000-000000000105');
+  roller := app.current_school_id();
+  SELECT b.id, b."academicYearId" INTO blk, y FROM "TeachingBlocks" b WHERE b."schoolId" = roller AND b.name = 'Roller förlagt block';
+  SELECT id INTO placement FROM "TeachingBlockPlacements" WHERE "blockId" = blk;
+  SELECT x.id, x."roomId" INTO row_id, room FROM "TeachingBlockPlacementRooms" x WHERE x."placementId" = placement;
+  SELECT r.id INTO post_b FROM "TeachingRequirements" r WHERE r."blockId" = blk AND r.id NOT IN (SELECT "requirementId" FROM "TeachingBlockPlacementRooms" WHERE "placementId" = placement);
+
+  -- authenticated: the full administrator, the planner and the läsare, each through PostgREST's role: no grant, so no read and no write.
+  FOREACH principal IN ARRAY ARRAY['00000000-0000-4000-8000-000000000105', '00000000-0000-4000-8000-000000000106', '00000000-0000-4000-8000-000000000107', '00000000-0000-4000-8000-000000000115'] LOOP
+    PERFORM pg_temp.gb_as(principal);
+    SET LOCAL ROLE authenticated;
+    PERFORM pg_temp.gb_expect('503 authenticated is the role', current_user::text, 'authenticated');
+    FOREACH tbl IN ARRAY ARRAY['TeachingBlockPlacements', 'TeachingBlockPlacementRooms'] LOOP
+      PERFORM pg_temp.gb_expect('503 authenticated (' || right(principal, 3) || ') SELECT from ' || tbl, pg_temp.gb_try(format('SELECT count(*) FROM %I', tbl)), '42501');
+      PERFORM pg_temp.gb_expect('503 authenticated (' || right(principal, 3) || ') UPDATE of ' || tbl, pg_temp.gb_try(format('UPDATE %I SET "updatedAt" = now()', tbl)), '42501');
+      PERFORM pg_temp.gb_expect('503 authenticated (' || right(principal, 3) || ') DELETE from ' || tbl, pg_temp.gb_try(format('DELETE FROM %I', tbl)), '42501');
+    END LOOP;
+    PERFORM pg_temp.gb_expect('503 authenticated (' || right(principal, 3) || ') INSERT of a placement', pg_temp.gb_try(pg_temp.gb_ins(roller, blk, y, '3|08:00|60|ALL_WEEKS')), '42501');
+    PERFORM pg_temp.gb_expect('503 authenticated (' || right(principal, 3) || ') INSERT of a room row', pg_temp.gb_try(pg_temp.gb_room(roller, placement, post_b, room)), '42501');
+    PERFORM pg_temp.gb_expect('503 authenticated (' || right(principal, 3) || ') a function of the rules', pg_temp.gb_try('SELECT app.teaching_block_placements_fit()'), '42501');
+    SET LOCAL ROLE app_authenticated;
+  END LOOP;
+  PERFORM pg_temp.gb_expect('503 back as the API''s role', current_user::text, 'app_authenticated');
+
+  -- The roles by their grants (anon and the service role cannot be switched to from here; the catalogue says what they hold).
+  FOREACH tbl IN ARRAY ARRAY['TeachingBlockPlacements', 'TeachingBlockPlacementRooms'] LOOP
+    FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+      CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+      FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        PERFORM pg_temp.gb_true(format('503 %s holds %s on %s', r, priv, tbl) || ' (it must not)', NOT has_table_privilege(r, format('public.%I', tbl), priv));
+      END LOOP;
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+      PERFORM pg_temp.gb_true('503 the service role reads ' || tbl, has_table_privilege('service_role', format('public.%I', tbl), 'SELECT'));
+      FOREACH priv IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+        PERFORM pg_temp.gb_true(format('503 the service role holds %s on %s', priv, tbl) || ' (it must not)', NOT has_table_privilege('service_role', format('public.%I', tbl), priv));
+      END LOOP;
+    END IF;
+    PERFORM pg_temp.gb_true('503 PUBLIC holds nothing on ' || tbl, NOT EXISTS (SELECT 1 FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = format('public.%I', tbl)::regclass AND a.grantee = 0));
+  END LOOP;
+
+  -- The principals that name no administrator, each as the API's role: no row is read, and no write is admitted.
+  FOREACH principal IN ARRAY ARRAY['no principal', 'the service principal', 'the sync principal', 'the key lookup', 'a login that is no one''s'] LOOP
+    PERFORM set_config('request.jwt.claims', CASE principal WHEN 'a login that is no one''s' THEN json_build_object('sub', gen_random_uuid())::text ELSE '' END, true);
+    PERFORM set_config('app.service_school_id', CASE principal WHEN 'the service principal' THEN roller::text ELSE '' END, true);
+    PERFORM set_config('app.sync_school_id', CASE principal WHEN 'the sync principal' THEN roller::text ELSE '' END, true);
+    PERFORM set_config('app.service_key_lookup', CASE principal WHEN 'the key lookup' THEN 'on' ELSE '' END, true);
+    -- The principal is shown to be in effect before its refusals are counted as its own.
+    IF principal = 'the service principal' THEN PERFORM pg_temp.gb_expect('503 the service principal is in effect', app.current_service_school_id()::text, roller::text); END IF;
+    IF principal = 'the key lookup' THEN PERFORM pg_temp.gb_true('503 the key lookup is in effect', app.is_service_key_lookup()); END IF;
+    PERFORM pg_temp.gb_expect('503 ' || principal || ' reads no placement and no room row',
+      (SELECT count(*) FROM "TeachingBlockPlacements")::text || '/' || (SELECT count(*) FROM "TeachingBlockPlacementRooms")::text, '0/0');
+    PERFORM pg_temp.gb_expect('503 ' || principal || ' INSERT of a placement', pg_temp.gb_try(pg_temp.gb_ins(roller, blk, y, '3|08:00|60|ALL_WEEKS')), '42501 rls');
+    PERFORM pg_temp.gb_expect('503 ' || principal || ' INSERT of a room row', pg_temp.gb_try(pg_temp.gb_room(roller, placement, post_b, room)), '42501 rls');
+    PERFORM pg_temp.gb_expect('503 ' || principal || ' UPDATE reaches no row', pg_temp.gb_probe_rows('UPDATE "TeachingBlockPlacements" SET "dayOfWeek" = 3')::text || '/' || pg_temp.gb_probe_rows('UPDATE "TeachingBlockPlacementRooms" SET "roomId" = "roomId"')::text, '0/0');
+    PERFORM pg_temp.gb_expect('503 ' || principal || ' DELETE reaches no row', pg_temp.gb_probe_rows('DELETE FROM "TeachingBlockPlacements"')::text || '/' || pg_temp.gb_probe_rows('DELETE FROM "TeachingBlockPlacementRooms"')::text, '0/0');
+  END LOOP;
+  PERFORM set_config('app.service_school_id', '', true);
+  PERFORM set_config('app.sync_school_id', '', true);
+  PERFORM set_config('app.service_key_lookup', '', true);
+
+  -- The same rows are there for the full administrator, so none of the above was a table found empty.
+  PERFORM pg_temp.gb_as('00000000-0000-4000-8000-000000000105');
+  PERFORM pg_temp.gb_expect('503 the rows are there', (SELECT count(*) FROM "TeachingBlockPlacements" WHERE id = placement)::text || '/' || (SELECT count(*) FROM "TeachingBlockPlacementRooms" WHERE id = row_id)::text, '1/1');
+  RAISE NOTICE 'gb 503 (PostgREST and the principals): % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+
+-- The deactivated administrator and the other school's administrator, against rows they do not own: the school the first belonged to has a
+-- block's rows (planted by its own active administrator), the second is the other school's. Neither reads a row, writes one or reaches one.
+BEGIN;
+SELECT set_config('app.test_gb_admin_a', :'admin_auth_id', true);
+SELECT set_config('app.test_gb_inactive', :'inactive_auth_id', true);
+DO $$
+DECLARE
+  t jsonb;
+  s uuid;
+  y uuid;
+  blk uuid;
+  placement uuid;
+  row_id uuid;
+  post_b uuid;
+  room uuid;
+  matrix_school uuid;
+  principal text;
+  who text;
+  here uuid;
+BEGIN
+  t := pg_temp.gb_plant(current_setting('app.test_gb_admin_a'), 'a');
+  s := (t ->> 'school')::uuid; y := (t ->> 'year')::uuid; blk := (t #>> '{blocks,two}')::uuid;
+  PERFORM pg_temp.gb_case('503 the active administrator plants a placement', pg_temp.gb_ins(s, blk, y, '1|08:00|60|ALL_WEEKS'), 'ok', blk);
+  placement := pg_temp.gb_pl(blk, 1);
+  PERFORM pg_temp.gb_case('503 ... and a room row', pg_temp.gb_room(s, placement, (t #>> '{posts,two1}')::uuid, (t ->> 'room1')::uuid), 'ok', blk);
+  SELECT id INTO row_id FROM "TeachingBlockPlacementRooms" WHERE "placementId" = placement;
+  post_b := (t #>> '{posts,two2}')::uuid; room := (t ->> 'room1')::uuid;
+  PERFORM pg_temp.gb_expect('503 the active administrator reads them', (SELECT count(*) FROM "TeachingBlockPlacements")::text || '/' || (SELECT count(*) FROM "TeachingBlockPlacementRooms")::text, '1/1');
+
+  FOREACH principal IN ARRAY ARRAY[current_setting('app.test_gb_inactive'), '00000000-0000-4000-8000-000000000006', '00000000-0000-4000-8000-000000000105'] LOOP
+    who := CASE principal WHEN current_setting('app.test_gb_inactive') THEN 'the deactivated administrator' WHEN '00000000-0000-4000-8000-000000000006' THEN 'the other school''s administrator' ELSE 'the matrix school''s full administrator' END;
+    PERFORM pg_temp.gb_as(principal);
+    here := app.current_school_id();
+    -- The deactivated one is no principal at all (the lockout of the helpers); the other two are in a school that is not this one.
+    IF principal = current_setting('app.test_gb_inactive') THEN
+      PERFORM pg_temp.gb_true('503 ' || who || ' is in no school', here IS NULL);
+    ELSE
+      PERFORM pg_temp.gb_true('503 ' || who || ' is in a school that is not the one planted on', here IS NOT NULL AND here <> s);
+    END IF;
+    PERFORM pg_temp.gb_expect('503 ' || who || ' reads none of the rows', (SELECT count(*) FROM "TeachingBlockPlacements" WHERE "schoolId" = s)::text || '/' || (SELECT count(*) FROM "TeachingBlockPlacementRooms" WHERE "schoolId" = s)::text, '0/0');
+    PERFORM pg_temp.gb_expect('503 ' || who || ' UPDATE of the placement by id reaches none', pg_temp.gb_probe_rows(format('UPDATE "TeachingBlockPlacements" SET "dayOfWeek" = 3 WHERE id = %L', placement))::text, '0');
+    PERFORM pg_temp.gb_expect('503 ' || who || ' UPDATE of the room row by id reaches none', pg_temp.gb_probe_rows(format('UPDATE "TeachingBlockPlacementRooms" SET "roomId" = "roomId" WHERE id = %L', row_id))::text, '0');
+    PERFORM pg_temp.gb_expect('503 ' || who || ' DELETE of the placement by id reaches none', pg_temp.gb_probe_rows(format('DELETE FROM "TeachingBlockPlacements" WHERE id = %L', placement))::text, '0');
+    PERFORM pg_temp.gb_expect('503 ' || who || ' DELETE of the room row by id reaches none', pg_temp.gb_probe_rows(format('DELETE FROM "TeachingBlockPlacementRooms" WHERE id = %L', row_id))::text, '0');
+    PERFORM pg_temp.gb_expect('503 ' || who || ' a placement written for the school planted on', pg_temp.gb_probe(pg_temp.gb_ins(s, blk, y, '2|08:00|60|ALL_WEEKS')), '42501 rls');
+    PERFORM pg_temp.gb_expect('503 ' || who || ' a room row written for the school planted on', pg_temp.gb_probe(pg_temp.gb_room(s, placement, post_b, room)), '42501 rls');
+  END LOOP;
+  PERFORM pg_temp.gb_as(current_setting('app.test_gb_admin_a'));
+  PERFORM pg_temp.gb_expect('503 and the rows are there for the school''s own administrator', (SELECT count(*) FROM "TeachingBlockPlacements")::text || '/' || (SELECT count(*) FROM "TeachingBlockPlacementRooms")::text, '1/1');
+  RAISE NOTICE 'gb 503 (the deactivated and the other school): % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 504: what a block's rows do not disturb. The lesson Generera wrote from a block's row (MasterLessons.fromPlacement: locked,
+-- generated, marked) stands when the rows are replaced, removed, or the block or a member goes: there is no key to a row, the timplan replaces
+-- the rows whole with new ids. The post's OWN rows (TeachingRequirementPlacements) and the rule BLOCK of them are as they were: a post in a
+-- block still has no row of its own, and a post with one still cannot join. And TB409, the block's members rule, is as it was, with a block
+-- that has placements and without.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_gb_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  t jsonb;
+  s uuid;
+  y uuid;
+  two uuid;
+  oth uuid;
+  two1 uuid;
+  two2 uuid;
+  r1 uuid;
+  r2 uuid;
+  lessons uuid[] := '{}';
+  l uuid;
+  member uuid;
+  p1 uuid;
+  flags text;
+  before_n bigint;
+BEGIN
+  t := pg_temp.gb_plant(current_setting('app.test_gb_admin_a'), 'a');
+  s := (t ->> 'school')::uuid; y := (t ->> 'year')::uuid;
+  two := (t #>> '{blocks,two}')::uuid; oth := (t #>> '{blocks,oth}')::uuid;
+  two1 := (t #>> '{posts,two1}')::uuid; two2 := (t #>> '{posts,two2}')::uuid;
+  r1 := (t ->> 'room1')::uuid; r2 := (t ->> 'room2')::uuid;
+  PERFORM pg_temp.gb_case('504 the block''s two lessons', pg_temp.gb_ins(s, two, y, '1|08:00|60|ALL_WEEKS', '2|09:00|60|ALL_WEEKS'), 'ok', two);
+  p1 := pg_temp.gb_pl(two, 1);
+  PERFORM pg_temp.gb_case('504 and the first member''s room on the first', pg_temp.gb_room(s, p1, two1, r1), 'ok', two);
+  -- A lesson Generera wrote from the block's row for each member: the member's room is its row's or the engine's choice; it is locked, generated and marked.
+  FOREACH member IN ARRAY ARRAY[two1, two2] LOOP
+    INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "roomId", "dayOfWeek", "startTime", "endTime", "isGenerated", "isLocked", "fromPlacement", "updatedAt")
+    SELECT s, y, r."subjectId", r."studentGroupId", CASE WHEN member = two1 THEN r1 ELSE r2 END, 1, '08:00', '09:00', true, true, true, now() FROM "TeachingRequirements" r WHERE r.id = member RETURNING id INTO l;
+    lessons := lessons || l;
+  END LOOP;
+  PERFORM pg_temp.gb_expect('504 the two lessons are written', (SELECT count(*) FROM "MasterLessons" WHERE id = ANY (lessons))::text, '2');
+  before_n := (SELECT count(*) FROM "MasterLessons" WHERE "schoolId" = s);
+  flags := 't t t';
+
+  -- The rows are replaced as a list (the gateway's save): the lessons are not theirs to take with them.
+  PERFORM pg_temp.gb_case('504 the rows are deleted', format('DELETE FROM "TeachingBlockPlacements" WHERE "blockId" = %L', two), 'ok');
+  PERFORM pg_temp.gb_expect('504 the lessons stand when the rows are gone', (SELECT count(*) FROM "MasterLessons" WHERE id = ANY (lessons))::text, '2');
+  PERFORM pg_temp.gb_case('504 the new set, on other days and with a room for the second member', pg_temp.gb_ins(s, two, y, '3|10:00|60|ALL_WEEKS', '4|10:00|60|ALL_WEEKS'), 'ok', two);
+  PERFORM pg_temp.gb_case('504 ... a room row for it', pg_temp.gb_room(s, pg_temp.gb_pl(two, 3), two2, r2), 'ok', two);
+  PERFORM pg_temp.gb_expect('504 the lessons are locked, generated, marked and in their rooms',
+    (SELECT string_agg(format('%s %s %s', "isLocked", "isGenerated", "fromPlacement"), '; ' ORDER BY id) FROM "MasterLessons" WHERE id = ANY (lessons)), flags || '; ' || flags);
+  -- A placement that goes by itself, a member that leaves, and a member that is removed.
+  PERFORM pg_temp.gb_case('504 one placement is deleted', format('DELETE FROM "TeachingBlockPlacements" WHERE id = %L', pg_temp.gb_pl(two, 3)), 'ok');
+  PERFORM pg_temp.gb_case('504 a member leaves its block', pg_temp.gb_move(two1, NULL), 'ok');
+  PERFORM pg_temp.gb_case('504 a member is removed', format('DELETE FROM "TeachingRequirements" WHERE id = %L', two2), 'ok');
+  PERFORM pg_temp.gb_expect('504 the lessons stand', (SELECT count(*) FROM "MasterLessons" WHERE id = ANY (lessons))::text, '2');
+  -- The block goes (the placements with it), and the lessons are what they were.
+  PERFORM pg_temp.gb_case('504 the block is removed', format('DELETE FROM "TeachingBlocks" WHERE id = %L', two), 'ok');
+  PERFORM pg_temp.gb_expect('504 the lessons stand when the block is gone', (SELECT count(*) FROM "MasterLessons" WHERE "schoolId" = s)::text, before_n::text);
+  PERFORM pg_temp.gb_expect('504 and are as they were',
+    (SELECT string_agg(format('%s %s %s', "isLocked", "isGenerated", "fromPlacement"), '; ' ORDER BY id) FROM "MasterLessons" WHERE id = ANY (lessons)), flags || '; ' || flags);
+  PERFORM pg_temp.gb_true('504 no key of MasterLessons names the block''s tables, and none of theirs names it',
+    NOT EXISTS (SELECT 1 FROM pg_constraint WHERE contype = 'f' AND ((conrelid = '"MasterLessons"'::regclass AND confrelid IN ('"TeachingBlockPlacements"'::regclass, '"TeachingBlockPlacementRooms"'::regclass))
+                                                                    OR (confrelid = '"MasterLessons"'::regclass AND conrelid IN ('"TeachingBlockPlacements"'::regclass, '"TeachingBlockPlacementRooms"'::regclass)))));
+  RAISE NOTICE 'gb 504a (the lesson written from a row): % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+
+-- The post's own rows and the rule BLOCK of them, as they were (468): a post in a block has no row of its own; a post that has one cannot join a
+-- block, with the block's placements there or not; a post in no block is judged on its own rows alone, whatever the blocks around it hold.
+BEGIN;
+SELECT set_config('app.test_gb_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  t jsonb;
+  s uuid;
+  y uuid;
+  two uuid;
+  two1 uuid;
+  sp1 uuid;
+  sp2 uuid;
+  r1 uuid;
+  r2 uuid;
+  row_id uuid;
+BEGIN
+  t := pg_temp.gb_plant(current_setting('app.test_gb_admin_a'), 'a');
+  s := (t ->> 'school')::uuid; y := (t ->> 'year')::uuid;
+  two := (t #>> '{blocks,two}')::uuid; two1 := (t #>> '{posts,two1}')::uuid; sp1 := (t #>> '{posts,sp1}')::uuid; sp2 := (t #>> '{posts,sp2}')::uuid;
+  r1 := (t ->> 'room1')::uuid; r2 := (t ->> 'room2')::uuid;
+  -- A member of a block that has no placement.
+  PERFORM pg_temp.gb_case('504 a member of a block with no placement takes no row of its own',
+    format('INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "updatedAt") VALUES (%L, %L, 1, ''08:00'', 60, %L, ''ALL_WEEKS'', now())', s, two1, r1), 'FP409 BLOCK');
+  PERFORM pg_temp.gb_case('504 ... nor one with no room (a pin)',
+    format('INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "updatedAt") VALUES (%L, %L, 1, ''08:00'', 60, NULL, ''ALL_WEEKS'', now())', s, two1), 'FP409 BLOCK');
+  -- The same with the block's placements there.
+  PERFORM pg_temp.gb_case('504 the block''s own lessons', pg_temp.gb_ins(s, two, y, '1|08:00|60|ALL_WEEKS', '2|09:00|60|ALL_WEEKS'), 'ok', two);
+  PERFORM pg_temp.gb_case('504 a member of a block with placements takes no row of its own either',
+    format('INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "updatedAt") VALUES (%L, %L, 3, ''08:00'', 60, %L, ''ALL_WEEKS'', now())', s, two1, r1), 'FP409 BLOCK');
+  PERFORM pg_temp.gb_expect('504 and none is stored', (SELECT count(*) FROM "TeachingRequirementPlacements" WHERE "requirementId" = two1)::text, '0');
+  -- A post with a row of its own cannot join the block, with the block's placements there.
+  PERFORM pg_temp.gb_case('504 a post in no block takes a row of its own',
+    format('INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "updatedAt") VALUES (%L, %L, 3, ''08:00'', 60, %L, ''ALL_WEEKS'', now())', s, sp1, r1), 'ok');
+  PERFORM pg_temp.gb_case('504 FP409 BLOCK: it cannot join the block that has placements', pg_temp.gb_move(sp1, two), 'FP409 BLOCK');
+  PERFORM pg_temp.gb_case('504 nor a block that has none', pg_temp.gb_move(sp1, (t #>> '{blocks,oth}')::uuid), 'FP409 BLOCK');
+  DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = sp1;
+  PERFORM pg_temp.gb_case('504 without its row it can', pg_temp.gb_move(sp1, two), 'ok');
+  PERFORM pg_temp.gb_case('504 and then takes no row of its own',
+    format('INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "updatedAt") VALUES (%L, %L, 3, ''08:00'', 60, %L, ''ALL_WEEKS'', now())', s, sp1, r1), 'FP409 BLOCK');
+  PERFORM pg_temp.gb_case('504 and leaves the block', pg_temp.gb_move(sp1, NULL), 'ok');
+  -- A post in no block, judged on its own rows (FP409), with the block's placements around it.
+  PERFORM pg_temp.gb_case('504 two lessons of a post of two',
+    format('INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "updatedAt") VALUES (%1$L, %2$L, 3, ''08:00'', 60, %3$L, ''ALL_WEEKS'', now()), (%1$L, %2$L, 4, ''08:00'', 60, NULL, ''ALL_WEEKS'', now())', s, sp2, r1), 'ok');
+  PERFORM pg_temp.gb_case('504 FP409 COUNT: a third', format('INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "updatedAt") VALUES (%L, %L, 5, ''08:00'', 60, %L, ''ALL_WEEKS'', now())', s, sp2, r1), 'FP409 COUNT');
+  PERFORM pg_temp.gb_case('504 FP409 LENGTH: a length the post has not', format('UPDATE "TeachingRequirementPlacements" SET minutes = 45 WHERE "requirementId" = %L AND "dayOfWeek" = 3', sp2), 'FP409 LENGTH');
+  PERFORM pg_temp.gb_case('504 FP409 PAIRS: a lone odd-week row', format('UPDATE "TeachingRequirementPlacements" SET recurrence = ''ODD_WEEKS'' WHERE "requirementId" = %L AND "dayOfWeek" = 3', sp2), 'FP409 PAIRS');
+  -- A post's own rows and the block's placements are two tables: what one holds does not move the other.
+  PERFORM pg_temp.gb_case('504 the post''s own rows are deleted', format('DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = %L', sp2), 'ok');
+  PERFORM pg_temp.gb_expect('504 the block''s placements are what they were', pg_temp.gb_n(two), '2');
+  PERFORM pg_temp.gb_case('504 the block''s placements are deleted', format('DELETE FROM "TeachingBlockPlacements" WHERE "blockId" = %L', two), 'ok');
+  PERFORM pg_temp.gb_case('504 a member still takes no row of its own', format('INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "updatedAt") VALUES (%L, %L, 3, ''08:00'', 60, %L, ''ALL_WEEKS'', now())', s, two1, r1), 'FP409 BLOCK');
+  RAISE NOTICE 'gb 504b (the post''s own rows): % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+
+-- TB409 (the block's members must agree) is as it was, with a block that has placements and without: its refusal, its message and its DETAIL.
+BEGIN;
+SELECT set_config('app.test_gb_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  t jsonb;
+  s uuid;
+  y uuid;
+  two uuid;
+  oth uuid;
+  lead uuid;
+  fol uuid;
+  two1 uuid;
+  sp1 uuid;
+  sp3 uuid;
+  lead1 uuid;
+  subj uuid;
+  grp uuid;
+  msg text;
+  det text;
+  st text;
+  blk_txt text;
+BEGIN
+  t := pg_temp.gb_plant(current_setting('app.test_gb_admin_a'), 'a');
+  s := (t ->> 'school')::uuid; y := (t ->> 'year')::uuid; grp := (t ->> 'group')::uuid;
+  two := (t #>> '{blocks,two}')::uuid; oth := (t #>> '{blocks,oth}')::uuid; lead := (t #>> '{blocks,lead}')::uuid; fol := (t #>> '{blocks,fol}')::uuid;
+  two1 := (t #>> '{posts,two1}')::uuid; sp1 := (t #>> '{posts,sp1}')::uuid; sp3 := (t #>> '{posts,sp3}')::uuid; lead1 := (t #>> '{posts,lead1}')::uuid;
+  PERFORM pg_temp.gb_case('504 the block''s own lessons', pg_temp.gb_ins(s, two, y, '1|08:00|60|ALL_WEEKS', '2|09:00|60|ALL_WEEKS'), 'ok', two);
+  PERFORM pg_temp.gb_case('504 the lead''s own lessons (a block that is followed)', pg_temp.gb_ins(s, lead, y, '1|08:00|60|ALL_WEEKS', '2|09:00|60|ALL_WEEKS'), 'ok', lead);
+  FOREACH blk_txt IN ARRAY ARRAY[two::text, oth::text] LOOP
+    -- A post of another form joins: with placements (two) and without (oth), TB409 refuses, as before.
+    PERFORM pg_temp.gb_case('504 a post of three lessons joins block ' || CASE WHEN blk_txt = two::text THEN 'two (placed)' ELSE 'oth (not placed)' END, pg_temp.gb_move(sp3, blk_txt::uuid), 'TB409');
+    BEGIN
+      UPDATE "TeachingRequirements" SET "blockId" = blk_txt::uuid WHERE id = sp3;
+    EXCEPTION WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL;
+      PERFORM pg_temp.gb_expect('504 TB409''s SQLSTATE and message start (' || blk_txt || ')', st || ' ' || left(msg, 20), 'TB409 BLOCK_MEMBERS_DIFFER');
+      PERFORM pg_temp.gb_true('504 TB409''s DETAIL names the block, the post and the other post (' || blk_txt || ')', det ~ '^teachingBlockId=[0-9a-f-]{36} requirementId=[0-9a-f-]{36} otherRequirementId=[0-9a-f-]{36}$');
+    END;
+  END LOOP;
+  -- A new post of the block's own form is a member at once (INSERT with the block): admitted with placements there, never refused by them.
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s, 'gb ny post', 'GBNYA', now()) RETURNING id INTO subj;
+  PERFORM pg_temp.gb_case('504 a new post of the block''s form is a member at once',
+    format('INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "lessonsPerWeek", "minutesPerLesson", "blockId", "updatedAt") VALUES (%L, %L, %L, %L, 2, 60, %L, now())', s, y, subj, grp, two), 'ok');
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s, 'gb ny post två', 'GBNYB', now()) RETURNING id INTO subj;
+  PERFORM pg_temp.gb_case('504 a new post of another form is TB409''s',
+    format('INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "lessonsPerWeek", "minutesPerLesson", "blockId", "updatedAt") VALUES (%L, %L, %L, %L, 5, 60, %L, now())', s, y, subj, grp, two), 'TB409');
+  -- A block on another block's times: the follower's posts and the lead's must have the same lessons (the same-times rule of TB409), which the placements change nothing of.
+  PERFORM pg_temp.gb_case('504 the lead''s post alone changes its lessons: TB409 (the follower''s are other)', format('UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 3 WHERE id = %L', lead1), 'TB409');
+  BEGIN
+    UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 3 WHERE id = lead1;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL;
+    PERFORM pg_temp.gb_true('504 and says it is the same-times rule (sameTimesBlockId in DETAIL)', st = 'TB409' AND msg LIKE '%samma tider%' AND det LIKE '%sameTimesBlockId=%');
+  END;
+  PERFORM pg_temp.gb_case('504 the lead''s and the follower''s posts changed in one statement together: both agree, and the lead''s placements are 60 still: BP409 LENGTH when the length changes',
+    format('UPDATE "TeachingRequirements" SET "minutesPerLesson" = 45 WHERE "blockId" IN (%L, %L)', lead, fol), 'BP409 LENGTH', lead);
+  PERFORM pg_temp.gb_case('504 ... and when only the count changes (the two placed still fit) it is admitted',
+    format('UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 3 WHERE "blockId" IN (%L, %L)', lead, fol), 'ok');
+  RAISE NOTICE 'gb 504c (TB409): % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
