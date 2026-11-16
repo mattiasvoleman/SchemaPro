@@ -6,6 +6,8 @@ import { lockYearForGrundschemaEdit } from '../optimization/regeneration-lock';
 import { readOtherSchoolHolds } from '../optimization/other-school-holds';
 import { readBoardFacts } from '../swaps/board-rules';
 import { rostersOfYear } from '../year-rollover/projected-rosters';
+import { keptMastersWhere } from '../optimization/preserved-lessons';
+import * as placementJudge from './placement-judge';
 import { REQUIREMENT_PLACEMENTS_STALE } from './placement-refusal';
 import { rowsKeyOf } from './placement-rows-key';
 import { RequirementPlacementsService } from './requirement-placements.service';
@@ -286,5 +288,112 @@ describe('rowsKey on the year\'s board', () => {
     expect(keys.get(EMPTY_REQ)).toBe(rowsKeyOf([]));
     // The key the board gives is the key the post's own read gives: a client can mix them.
     expect((await service.listOfPost(REQ, user)).rowsKey).toBe(keys.get(REQ));
+  });
+});
+
+describe('the dialog and the week read what Generera keeps the same way (review of #315, LÅG-6)', () => {
+  const user = testUser();
+  const YEAR_ROW = { isActive: true, predecessorId: null, gradeNumbering: 'NIOARIG' };
+  const OTHER_GROUP = 'g-7b';
+  const OTHER_SUBJECT = 'sub-ma';
+  const CO_TEACHER = '55555555-5555-4555-8555-555555555555';
+
+  /** A lesson Generera keeps, with what the week selects of it and what the judge selects of it. */
+  const keptLesson = (over: Record<string, unknown> = {}) => ({
+    id: 'k-1',
+    dayOfWeek: 2,
+    startTime: time('13:00'),
+    endTime: time('14:00'),
+    studentGroupId: GROUP,
+    subjectId: SUBJECT,
+    teacherId: TEACHER,
+    coTeacherId: null,
+    roomId: ROOM_1,
+    recurrence: 'ALL_WEEKS',
+    startDate: null,
+    endDate: null,
+    isLocked: true,
+    isGenerated: false,
+    subject: { name: SUBJECT },
+    studentGroup: { name: GROUP },
+    extraGroups: [],
+    participants: [],
+    ...over,
+  });
+
+  const boardPost = (over: Record<string, unknown> = {}) => {
+    const { academicYear: _academicYear, schoolId: _schoolId, academicYearId: _year, ...post } = POST;
+    return { ...post, ...over };
+  };
+
+  /** The week and the dialog's read of one post, with the lessons the table holds (whatever the where says: the filter is the code's). */
+  function world(kept: Array<Record<string, unknown>>, post: Record<string, unknown> = {}, rows = [stored({ id: 'p-1' })]) {
+    const made = setup({ before: rows, post: { ...POST, ...post } as never });
+    made.tx['academicYear']!['findUnique']!.mockResolvedValue(YEAR_ROW);
+    made.tx['teachingRequirement']!['findMany']!.mockResolvedValue([boardPost(post)]);
+    made.tx['lunchSitting']!['findMany']!.mockResolvedValue([]);
+    made.tx['masterLesson']!['findMany']!.mockResolvedValue(kept);
+    return made;
+  }
+
+  /** What judgePlacements was handed by the week and by the dialog's read of the same post. */
+  async function askedByBoth(kept: Array<Record<string, unknown>>, post: Record<string, unknown> = {}) {
+    const spy = jest.spyOn(placementJudge, 'judgePlacements');
+    try {
+      const made = world(kept, post);
+      await made.service.boardOfYear(YEAR, user);
+      await made.service.listOfPost(REQ, user);
+      const [week, dialog] = spy.mock.calls.map(([, , asked]) => asked);
+      return { ...made, week: week!, dialog: dialog! };
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it('asks the table for the lessons Generera keeps of the post\'s class and subject, every arm of it, on a read and on a write', async () => {
+    const made = world([]);
+    await made.service.listOfPost(REQ, user);
+    await made.service.replace(REQ, { placements: [input()] }, user);
+    const reads = made.tx['masterLesson']!['findMany']!.mock.calls.map((call) => (call[0] as { where: Record<string, unknown> }).where);
+    const ofThePost = reads.filter((where) => where['studentGroupId'] !== undefined);
+    expect(ofThePost).toHaveLength(2);
+    for (const where of ofThePost) {
+      // A hand-built copy that kept two of the four arms, or dropped the subject, would be another week than Generera's.
+      expect(where).toEqual({ ...keptMastersWhere(YEAR), studentGroupId: GROUP, subjectId: SUBJECT });
+    }
+  });
+
+  it('counts a kept lesson of another class or another subject as nothing the post has, in the week and in the dialog alike', async () => {
+    const lessons = [
+      keptLesson({ id: 'k-own' }),
+      keptLesson({ id: 'k-class', studentGroupId: OTHER_GROUP }),
+      keptLesson({ id: 'k-subject', subjectId: OTHER_SUBJECT }),
+    ];
+    const { week, dialog } = await askedByBoth(lessons);
+    expect(week.demand!.get(REQ)!.lockedMinutes).toEqual([60]);
+    expect(dialog.demand!.get(REQ)!.lockedMinutes).toEqual([60]);
+  });
+
+  it('counts a kept lesson with a second class, named pupils, or a medlärare as the lock it is, as the week does', async () => {
+    const lessons = [
+      keptLesson({ id: 'k-extra', isLocked: false, isGenerated: true, extraGroups: [{ studentGroupId: OTHER_GROUP }] }),
+      keptLesson({ id: 'k-pupils', isLocked: false, isGenerated: true, participants: [{ studentId: 'pupil-1' }] }),
+    ];
+    const { week, dialog } = await askedByBoth(lessons);
+    // The two reads select different extras of the post; what the demand counts with is the locks and the lessons the rows place.
+    const counted = (asked: placementJudge.JudgePlacementsInput) => {
+      const { post: _post, ...rest } = asked.demand!.get(REQ)!;
+      return rest;
+    };
+    expect(counted(week)).toEqual(counted(dialog));
+    expect(counted(dialog)).toMatchObject({ lockedMinutes: [60, 60], placed: [60] });
+  });
+
+  it('judges the week\'s rows with the post\'s medlärare, as the dialog does (a row that left it out would clash with the wrong lessons)', async () => {
+    const { week, dialog } = await askedByBoth([], { coTeacherId: CO_TEACHER });
+    expect(week.rows).toHaveLength(1);
+    expect(week.rows[0]!.coTeacherId).toBe(CO_TEACHER);
+    expect(dialog.rows[0]!.coTeacherId).toBe(CO_TEACHER);
+    expect(week.rows.map((row) => ({ ...row, id: null }))).toEqual(dialog.rows);
   });
 });

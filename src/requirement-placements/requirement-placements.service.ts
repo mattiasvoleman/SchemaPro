@@ -7,7 +7,7 @@ import { requirementPlacementsConflict, rethrowPrismaError } from '../common/uti
 import { requireSchoolId } from '../common/utils/request-context';
 import { parseTimeString, toWallClock } from '../common/utils/time';
 import { PrismaService } from '../database/prisma.service';
-import { lockCoversDemand, type TaughtLesson } from '../optimization/locked-coverage';
+import type { TaughtLesson } from '../optimization/locked-coverage';
 import { judgeDemandOf } from '../optimization/post-demand';
 import { keptMastersWhere } from '../optimization/preserved-lessons';
 import { lockYearForGrundschemaEdit } from '../optimization/regeneration-lock';
@@ -549,26 +549,24 @@ export class RequirementPlacementsService {
 
   /**
    * The lessons the grundschema already answers the post with, each its
-   * minutes and its teacher, the way Generera counts them (lockCoversDemand
-   * over the lessons it keeps). A lesson Generera wrote from a förläggning is
-   * not among them unless somebody has made it a lesson Generera keeps; then
-   * it answers the post, and the rows that place the same lesson are over the
-   * demand.
+   * minutes and its teacher, the way Generera counts them: the lessons it keeps
+   * (keptMastersWhere) of the post's class and subject, and the ones of them that
+   * cover the post's weeks (coveringLocksOf, which the week of förläggningar
+   * counts a post's locks with from the same lessons: review of #315, LÅG-6,
+   * where the dialog's own copy of the filter could drop an arm unseen). A lesson
+   * Generera wrote from a förläggning is not among them unless somebody has made
+   * it a lesson Generera keeps; then it answers the post, and the rows that place
+   * the same lesson are over the demand.
    */
-  private async locksOf(
-    tx: PrismaClient,
-    post: { academicYearId: string; studentGroupId: string; subjectId: string; recurrence: LessonRecurrence; startDate: Date | null; endDate: Date | null },
-  ): Promise<TaughtLesson[]> {
+  private async locksOf(tx: PrismaClient, post: PostRow): Promise<TaughtLesson[]> {
     const lessons = await tx.masterLesson.findMany({
       where: { ...keptMastersWhere(post.academicYearId), studentGroupId: post.studentGroupId, subjectId: post.subjectId },
-      select: { startTime: true, endTime: true, recurrence: true, startDate: true, endDate: true, teacherId: true },
+      select: { studentGroupId: true, subjectId: true, startTime: true, endTime: true, recurrence: true, startDate: true, endDate: true, teacherId: true },
     });
-    return lessons
-      .filter((lesson) => lockCoversDemand(lesson, post))
-      .map((lesson) => ({
-        minutes: minutesOfClock(lesson.endTime) - minutesOfClock(lesson.startTime),
-        teacherId: lesson.teacherId,
-      }));
+    return coveringLocksOf(
+      boardPostShape(post),
+      lessons.map((lesson) => ({ ...lesson, minutes: minutesOfClock(lesson.endTime) - minutesOfClock(lesson.startTime) })),
+    );
   }
 }
 
