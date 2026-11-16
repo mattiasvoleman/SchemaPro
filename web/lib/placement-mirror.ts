@@ -1,11 +1,13 @@
 import {
   buildGroupConflictMap,
+  pupilBufferOf,
   validatePlacement,
   type ConflictHit,
   type GroupConflictMap,
   type LunchOf,
   type Meal,
   type Placement,
+  type PupilBufferMap,
 } from "@/lib/conflicts";
 import type { FrameTime } from "@/lib/frame-times";
 import { buildGradeSpans, type GradeSpan } from "@/lib/grade-span";
@@ -42,6 +44,11 @@ import { timeToMinutes } from "@/lib/utils";
  * src/requirement-placements/__fixtures__/placement-clash-cases.json holds both to
  * that (placement-mirror.contract.test.ts here, the adapter probe there).
  *
+ * THE PUPILS' MINUTES. Ombyte before and dusch after an idrott hold the class's other lessons out of the minutes around it
+ * (the gateway's findConflicts, pupilBuffersOf), so every lesson here carries its (class, subject)'s buffer from the posts
+ * of the week (`buffers`), the lesson being placed as well. Left out, the mirror gave "free" a quarter of an hour the judge
+ * refused (review of #326, MEDEL-3).
+ *
  * NO ROOM, NO ROOM CLASH. A förläggning with no room (the engine chooses it) has
  * roomId null, which validatePlacement does not hold against any room, as the judge
  * does not.
@@ -76,6 +83,25 @@ export interface MirrorContext {
   gradeSpanOf: Map<string, GradeSpan>;
   frames: FrameTime[] | undefined;
   lunchOf: LunchOf;
+  /** (class, subject) → the pupils' minutes before and after its lessons; empty at nearly every school. */
+  buffers: PupilBufferMap;
+}
+
+/**
+ * The buffers of the week's posts, per (class, subject) as the gateway reads them. Where two posts of a class and subject say
+ * different numbers the gateway keeps one of them (which one is not told); the widest here, so that the mirror is never milder.
+ */
+export function bufferMapOfBoard(posts: readonly Pick<BoardPost, "studentGroupId" | "subjectId" | "minutesBefore" | "minutesAfter">[]): PupilBufferMap {
+  const map: PupilBufferMap = new Map();
+  for (const post of posts) {
+    const minutesBefore = post.minutesBefore ?? 0;
+    const minutesAfter = post.minutesAfter ?? 0;
+    if (minutesBefore === 0 && minutesAfter === 0) continue;
+    const key = `${post.studentGroupId}:${post.subjectId}`;
+    const known = map.get(key);
+    map.set(key, known ? { minutesBefore: Math.max(known.minutesBefore, minutesBefore), minutesAfter: Math.max(known.minutesAfter, minutesAfter) } : { minutesBefore, minutesAfter });
+  }
+  return map;
 }
 
 /** The meals the school placed by hand, by `group:weekday`: the only meals a row is held to. */
@@ -97,8 +123,10 @@ export function lunchOfBoard(meals: PlacementBoard["meals"]): LunchOf {
 }
 
 /** A förläggning as a `Placement`: its post's class, subject, teachers and weeks, its own day, time and room. */
-export function placementOfRow(row: BoardPlacement, post: BoardPost | undefined, id: string): Placement {
+export function placementOfRow(row: BoardPlacement, post: BoardPost | undefined, id: string, buffers?: PupilBufferMap): Placement {
+  const buffer = post ? pupilBufferOf(buffers, { studentGroupId: post.studentGroupId, subjectId: post.subjectId }) : undefined;
   return {
+    ...(buffer ?? {}),
     id,
     dayOfWeek: row.dayOfWeek,
     startMinutes: timeToMinutes(row.startTime),
@@ -115,8 +143,11 @@ export function placementOfRow(row: BoardPlacement, post: BoardPost | undefined,
 }
 
 /** A lesson Generera keeps as a `Placement`. The week names no pupil it was opened to, so none is held against (the gateway does). */
-export function placementOfKept(lesson: BoardKept): Placement {
+export function placementOfKept(lesson: BoardKept, buffers?: PupilBufferMap): Placement {
+  // A lesson opened to a second class carries the widest of the classes' rows, as the gateway reads it.
+  const buffer = pupilBufferOf(buffers, lesson);
   return {
+    ...(buffer ?? {}),
     id: keptCardId(lesson.id),
     dayOfWeek: lesson.dayOfWeek,
     startMinutes: timeToMinutes(lesson.startTime),
@@ -143,11 +174,13 @@ export function buildMirror(facts: MirrorFacts): MirrorContext {
     if (list) list.push(row.studentId);
     else membersByGroup.set(row.studentGroupId, [row.studentId]);
   }
+  const buffers = bufferMapOfBoard(facts.board.posts);
   return {
     others: [
-      ...facts.board.kept.map(placementOfKept),
-      ...facts.board.placements.map((row) => placementOfRow(row, postById.get(row.requirementId), placementCardId(facts.keys.get(row.id) ?? row.id))),
+      ...facts.board.kept.map((lesson) => placementOfKept(lesson, buffers)),
+      ...facts.board.placements.map((row) => placementOfRow(row, postById.get(row.requirementId), placementCardId(facts.keys.get(row.id) ?? row.id), buffers)),
     ],
+    buffers,
     constraints: [...(facts.constraints ?? [])],
     studentGroupOf: facts.studentGroupOf,
     groupConflicts: buildGroupConflictMap(facts.studentGroupOf, [...facts.memberships], groups),

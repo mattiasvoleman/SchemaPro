@@ -64,6 +64,12 @@ export interface BoardPost {
   recurrence: PlacementRecurrence;
   startDate: string | null;
   endDate: string | null;
+  /**
+   * The pupils' own minutes before and after a lesson of the post (ombyte, dusch), which the gateway's clash rule holds the
+   * class's other lessons out of and the mirror therefore must (placement-mirror.ts). Absent from an older gateway: none.
+   */
+  minutesBefore?: number;
+  minutesAfter?: number;
   cannotPlace: PostCannotPlace | null;
   parts: BoardPart[];
   /** The key of the post's rows as the gateway holds them: sent back as `baseKey` by a write made on top of them. */

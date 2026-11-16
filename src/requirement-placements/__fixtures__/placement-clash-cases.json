@@ -12,7 +12,7 @@
     "  teachers  [key]                          rooms [key]            subjects [key]",
     "  pupils    [{key, class}]                 a pupil's home class",
     "  groups    [{key, members: [pupil]}]      teaching groups (kind TEACHING_GROUP), whose members are pupils of other classes",
-    "  posts     [{key, class, subject, teacher, coTeacher?, minutes, lessons, recurrence?, startDate?, endDate?, shares?: [{teacher, lessons}]}]   timplansposter (recurrence defaults to ALL_WEEKS)",
+    "  posts     [{key, class, subject, teacher, coTeacher?, minutes, lessons, recurrence?, startDate?, endDate?, minutesBefore?, minutesAfter?, shares?: [{teacher, lessons}]}]   timplansposter (recurrence defaults to ALL_WEEKS; minutesBefore/After are the pupils' ombyte and dusch around the post's lessons, 0 when left out)",
     "  kept      [{class | group, subject, teacher, coTeacher?, room?, day, start, minutes, recurrence?, startDate?, endDate?, extraClasses?: [class], locked?: true}]   lessons Generera keeps",
     "  rows      [{post, day, start, minutes, room?, recurrence?, teacher?}]   förläggningar of the posts, already stored (a pinned one has no room)",
     "  unavailable [{kind: teacher|room|class|grade, key?, grades?: [min, max], day, start, end}]   UNAVAILABLE constraints (a grade rule names grades, not a key)",
@@ -377,6 +377,116 @@
       },
       "candidate": { "post": "P1", "day": 2, "start": "10:00", "minutes": 60, "room": "A1" },
       "verdict": { "ok": false, "reason": "OVER_DEMAND" }
+    },
+    {
+      "name": "the class's own dusch after an idrott runs into its next lesson five minutes after the idrott",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "PI", "class": "7A", "subject": "id", "teacher": "cy", "minutes": 60, "lessons": 1, "minutesBefore": 10, "minutesAfter": 15 }],
+        "kept": [{ "class": "7A", "subject": "sv", "teacher": "bo", "room": "A2", "day": 2, "start": "11:05", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "post": "PI", "day": 2, "start": "10:00", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "GROUP" }
+    },
+    {
+      "name": "the class's next lesson that starts when the dusch is done holds",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "PI", "class": "7A", "subject": "id", "teacher": "cy", "minutes": 60, "lessons": 1, "minutesBefore": 10, "minutesAfter": 15 }],
+        "kept": [{ "class": "7A", "subject": "sv", "teacher": "bo", "room": "A2", "day": 2, "start": "11:15", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "post": "PI", "day": 2, "start": "10:00", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the ombyte before an idrott reaches back into the class's lesson that ended five minutes before it",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "PI", "class": "7A", "subject": "id", "teacher": "cy", "minutes": 60, "lessons": 1, "minutesBefore": 10, "minutesAfter": 15 }],
+        "kept": [{ "class": "7A", "subject": "sv", "teacher": "bo", "room": "A2", "day": 2, "start": "08:55", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "post": "PI", "day": 2, "start": "10:00", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "GROUP" }
+    },
+    {
+      "name": "an idrott between two lessons of the class holds when the ombyte and the dusch are exactly as long as the gaps",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "PI", "class": "7A", "subject": "id", "teacher": "cy", "minutes": 60, "lessons": 1, "minutesBefore": 10, "minutesAfter": 15 }],
+        "kept": [{ "class": "7A", "subject": "sv", "teacher": "bo", "room": "A2", "day": 2, "start": "09:50", "minutes": 60, "locked": true }, { "class": "7A", "subject": "sv", "teacher": "bo", "room": "A2", "day": 2, "start": "12:15", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "post": "PI", "day": 2, "start": "11:00", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a lesson the school keeps has the buffer of its post: the class's lesson five minutes after an idrott it keeps does not hold",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "PI", "class": "7A", "subject": "id", "teacher": "cy", "minutes": 60, "lessons": 1, "minutesBefore": 10, "minutesAfter": 15 }],
+        "kept": [{ "class": "7A", "subject": "id", "teacher": "cy", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "post": "P3", "day": 2, "start": "11:05", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "GROUP" }
+    },
+    {
+      "name": "a lesson the school keeps has the ombyte of its post before it as well",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "PI", "class": "7A", "subject": "id", "teacher": "cy", "minutes": 60, "lessons": 1, "minutesBefore": 10, "minutesAfter": 15 }],
+        "kept": [{ "class": "7A", "subject": "id", "teacher": "cy", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "post": "P3", "day": 2, "start": "08:55", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "GROUP" }
+    },
+    {
+      "name": "the class's lesson that starts when the kept idrott's dusch is done holds",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "PI", "class": "7A", "subject": "id", "teacher": "cy", "minutes": 60, "lessons": 1, "minutesBefore": 10, "minutesAfter": 15 }],
+        "kept": [{ "class": "7A", "subject": "id", "teacher": "cy", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "post": "P3", "day": 2, "start": "11:15", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a förläggning of another post has the buffer of its post: the class's lesson five minutes after it does not hold",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "PI", "class": "7A", "subject": "id", "teacher": "cy", "minutes": 60, "lessons": 1, "minutesBefore": 10, "minutesAfter": 15 }],
+        "rows": [{ "post": "PI", "day": 2, "start": "10:00", "minutes": 60, "room": "A2" }]
+      },
+      "candidate": { "post": "P3", "day": 2, "start": "11:05", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "GROUP" }
+    },
+    {
+      "name": "the class's lesson that starts when a förläggning's dusch is done holds",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "PI", "class": "7A", "subject": "id", "teacher": "cy", "minutes": 60, "lessons": 1, "minutesBefore": 10, "minutesAfter": 15 }],
+        "rows": [{ "post": "PI", "day": 2, "start": "10:00", "minutes": 60, "room": "A2" }]
+      },
+      "candidate": { "post": "P3", "day": 2, "start": "11:15", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "with no minutes on the post a lesson straight after the förläggning holds, as it always did",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "PI", "class": "7A", "subject": "id", "teacher": "cy", "minutes": 60, "lessons": 1 }],
+        "rows": [{ "post": "PI", "day": 2, "start": "10:00", "minutes": 60, "room": "A2" }]
+      },
+      "candidate": { "post": "P3", "day": 2, "start": "11:05", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a kept lesson opened to a second class has the widest buffer of its classes: the second class's next lesson five minutes after it does not hold",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "PJ", "class": "7B", "subject": "id", "teacher": "cy", "minutes": 60, "lessons": 1, "minutesBefore": 10, "minutesAfter": 15 }],
+        "kept": [{ "class": "7B", "subject": "id", "teacher": "cy", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "extraClasses": ["7A"], "locked": true }]
+      },
+      "candidate": { "post": "P3", "day": 2, "start": "11:05", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "GROUP" }
     }
   ]
 }

@@ -1,4 +1,4 @@
-import type { ConflictHit, Placement } from "@/lib/conflicts";
+import { pupilBufferOf, type ConflictHit, type Placement } from "@/lib/conflicts";
 import { mirrorHits, REASON_OF_HIT, type MirrorContext } from "@/lib/placement-mirror";
 import { keptCardId, type BoardPlacement, type BoardPost } from "@/lib/placement-board";
 import type { RoomPreference } from "@/lib/queries";
@@ -85,7 +85,9 @@ function paramsOfHit(context: MirrorContext, hit: ConflictHit, names: OtherNames
   };
 }
 
-const placementOf = (mover: Mover, span: Span): Placement => ({
+const placementOf = (mover: Mover, span: Span, context: MirrorContext): Placement => ({
+  // The lesson's own pupils' minutes: the class's buffer for the subject, as the gateway holds the candidate to it.
+  ...(pupilBufferOf(context.buffers, mover.post) ?? {}),
   id: mover.id,
   dayOfWeek: span.dayOfWeek,
   startMinutes: span.startMinutes,
@@ -103,7 +105,7 @@ const placementOf = (mover: Mover, span: Span): Placement => ({
 /** The first thing in the way of the lesson at this span, in the order the grundschema reports (the booking first, the ramtid and the meal after). */
 export function dropOf(context: MirrorContext, mover: Mover, span: Span, names: OtherNames): Drop {
   if (!insideSchoolDay(span)) return { kind: "DAY" };
-  const hit = mirrorHits(context, placementOf(mover, span)).find((candidate) => REASON_OF_HIT[candidate.kind] !== null);
+  const hit = mirrorHits(context, placementOf(mover, span, context)).find((candidate) => REASON_OF_HIT[candidate.kind] !== null);
   if (!hit) return OK;
   const params = paramsOfHit(context, hit, names);
   return { kind: "CLASH", reason: REASON_OF_HIT[hit.kind]!, ...(params ? { params } : {}) };

@@ -26,7 +26,7 @@ interface World {
   subjects: string[];
   pupils: { key: string; class: string }[];
   groups: { key: string; members: string[] }[];
-  posts: { key: string; class: string; subject: string; teacher: string; coTeacher?: string; minutes: number; lessons: number; recurrence?: string; startDate?: string; endDate?: string; shares?: { teacher: string; lessons: number }[] }[];
+  posts: { key: string; class: string; subject: string; teacher: string; coTeacher?: string; minutes: number; lessons: number; recurrence?: string; startDate?: string; endDate?: string; minutesBefore?: number; minutesAfter?: number; shares?: { teacher: string; lessons: number }[] }[];
   kept: { class?: string; group?: string; subject: string; teacher: string; coTeacher?: string; room?: string; day: number; start: string; minutes: number; recurrence?: string; startDate?: string; endDate?: string; extraClasses?: string[]; locked?: boolean }[];
   rows: { post: string; day: number; start: string; minutes: number; room?: string; recurrence?: string; teacher?: string }[];
   unavailable: { kind: "teacher" | "room" | "class" | "grade"; key?: string; grades?: [number, number]; day: number; start: string; end: string }[];
@@ -72,6 +72,8 @@ function boardOf(world: World): PlacementBoard {
     recurrence: (post.recurrence ?? "ALL_WEEKS") as BoardPost["recurrence"],
     startDate: post.startDate ?? null,
     endDate: post.endDate ?? null,
+    minutesBefore: post.minutesBefore ?? 0,
+    minutesAfter: post.minutesAfter ?? 0,
     cannotPlace: null,
     parts: [
       { teacherId: post.teacher, minutes: post.minutes, count: post.lessons, locked: 0, placed: 0, left: post.lessons, cannotPlace: null },
@@ -197,6 +199,14 @@ describe("the cases", () => {
       // A teaching group that shares pupils with the class is a clash of groups to the mirror and PUPILS to the judge.
       for (const entry of own.filter((candidate) => !candidate.verdict.ok)) expect([rule, ...(rule === "GROUP" ? ["PUPILS"] : [])]).toContain(entry.verdict.reason);
     }
+  });
+
+  it("hold the pupils' minutes around an idrott against the class's other lessons: the candidate's own, a kept lesson's, a förläggning's and a second class's (review of #326, MEDEL-3)", () => {
+    const withBuffer = cases.filter((entry) => (entry.add.posts ?? []).some((post) => (post.minutesBefore ?? 0) > 0 || (post.minutesAfter ?? 0) > 0));
+    expect(withBuffer.length).toBeGreaterThanOrEqual(8);
+    // Each refuses with GROUP, and a case beside it where the minutes are exactly spent holds.
+    expect(withBuffer.filter((entry) => !entry.verdict.ok && entry.verdict.reason === "GROUP").length).toBeGreaterThanOrEqual(5);
+    expect(withBuffer.filter((entry) => entry.verdict.ok).length).toBeGreaterThanOrEqual(3);
   });
 
   it("have a name each and a verdict the judge gave (no case is left on a guess)", () => {

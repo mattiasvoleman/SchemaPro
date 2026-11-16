@@ -49,6 +49,9 @@ interface WorldPost {
   recurrence?: Recurrence;
   startDate?: string;
   endDate?: string;
+  /** The pupils' minutes before and after the post's lessons (TeachingRequirements.minutesBefore/minutesAfter): ombyte and dusch around an idrott. */
+  minutesBefore?: number;
+  minutesAfter?: number;
   shares?: { teacher: string; lessons: number }[];
 }
 interface WorldKept {
@@ -222,8 +225,8 @@ export async function placementMirrorChecks(owner: Client, api: PrismaService, m
     for (const post of world.posts) {
       const id = (
         await one<{ id: string }>(
-          `INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "coTeacherId", "lessonsPerWeek", "minutesPerLesson", recurrence, "startDate", "endDate", "updatedAt")
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::"LessonRecurrence", $10, $11, now()) RETURNING id`,
+          `INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "coTeacherId", "lessonsPerWeek", "minutesPerLesson", recurrence, "startDate", "endDate", "minutesBefore", "minutesAfter", "updatedAt")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::"LessonRecurrence", $10, $11, $12, $13, now()) RETURNING id`,
           [
             school,
             year,
@@ -236,6 +239,8 @@ export async function placementMirrorChecks(owner: Client, api: PrismaService, m
             post.recurrence ?? 'ALL_WEEKS',
             post.startDate ?? null,
             post.endDate ?? null,
+            post.minutesBefore ?? 0,
+            post.minutesAfter ?? 0,
           ],
         )
       ).id;

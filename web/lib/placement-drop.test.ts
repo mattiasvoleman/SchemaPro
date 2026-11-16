@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { BoardKept, BoardPlacement, BoardPost, PlacementBoard } from "./placement-board";
 import { dropOf, insideSchoolDay, minutesOfField, moverOfRow, nextFreeSpot, suggestedRoom, type Mover, type OtherNames } from "./placement-drop";
-import { buildMirror } from "./placement-mirror";
+import { buildMirror, bufferMapOfBoard } from "./placement-mirror";
 import { keyByRowId } from "./placement-rows";
 import type { RoomPreference } from "./queries";
 import type { StudentGroup } from "./types";
@@ -106,6 +106,91 @@ describe("dropOf", () => {
     const ctx = mirrorOf([kept({ teacherId: "x", roomId: "r-a12" })]);
     expect(dropOf(ctx, mover({ roomId: "r-a12" }), spot(600), names)).toMatchObject({ kind: "CLASH", reason: "ROOM" });
     expect(dropOf(ctx, mover({ roomId: null }), spot(600), names)).toEqual({ kind: "OK" });
+  });
+});
+
+describe("the pupils' minutes around an idrott (review of #326, MEDEL-3)", () => {
+  /** Idrott for 7A with ten minutes of ombyte before and fifteen of dusch and ombyte after; the post of its own, and the class's matematik. */
+  const idrott = (over: Partial<BoardPost> = {}) => post({ id: "post-id", subjectId: "s-id", teacherId: "cy", minutesBefore: 10, minutesAfter: 15, ...over });
+  const mirrorWith = (posts: BoardPost[], keptLessons: BoardKept[] = [], rows: BoardPlacement[] = []) => {
+    const board: PlacementBoard = { academicYearId: "y1", placements: rows, posts, kept: keptLessons, meals: [] };
+    return buildMirror({ board, keys: keyByRowId(rows), groups: [group("g-7a"), group("g-7b")], studentGroupOf: new Map(), memberships: [], constraints: [], frames: undefined, academicYearId: "y1" });
+  };
+  const spot = (startMinutes: number, minutes = 60, dayOfWeek = 2) => ({ dayOfWeek, startMinutes, endMinutes: startMinutes + minutes });
+  const at = (clock: string) => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5));
+  /** Another lesson of 7A, with another teacher: only the class's pupils can be in the way. */
+  const lessonOf7A = (from: string, to: string, over: Partial<BoardKept> = {}) => kept({ studentGroupId: "g-7a", subjectId: "s-ma", teacherId: "x", roomId: null, startTime: from, endTime: to, ...over });
+  const row = (over: Partial<BoardPlacement> = {}): BoardPlacement => ({
+    id: "r1", requirementId: "post-id", dayOfWeek: 2, startTime: "10:00", endTime: "11:00", minutes: 60, roomId: null, roomName: null, recurrence: "ALL_WEEKS", teacherId: null, changedAt: "x", verdict: { ok: true }, ...over,
+  });
+  const mathBrick = () => mover({ id: "brick:ma", post: post({ id: "post-ma" }), teacherId: "anna" });
+
+  it("holds the class's other lessons out of the minutes after the lesson being placed, and no longer than that", () => {
+    const ctx = mirrorWith([idrott()], [lessonOf7A("11:05", "12:00")]);
+    const brick = mover({ id: "brick:id", post: idrott(), teacherId: "cy" });
+    expect(dropOf(ctx, brick, spot(at("10:00")), names)).toMatchObject({ kind: "CLASH", reason: "GROUP" });
+    // The pupils are free at 11:15, which is where the other lesson starts when it starts at 11:15.
+    expect(dropOf(mirrorWith([idrott()], [lessonOf7A("11:15", "12:00")]), brick, spot(at("10:00")), names)).toEqual({ kind: "OK" });
+  });
+
+  it("holds them out of the minutes before it, where the other lesson ends", () => {
+    const brick = mover({ id: "brick:id", post: idrott(), teacherId: "cy" });
+    expect(dropOf(mirrorWith([idrott()], [lessonOf7A("08:55", "09:55")]), brick, spot(at("10:00")), names)).toMatchObject({ kind: "CLASH", reason: "GROUP" });
+    expect(dropOf(mirrorWith([idrott()], [lessonOf7A("08:50", "09:50")]), brick, spot(at("10:00")), names)).toEqual({ kind: "OK" });
+  });
+
+  it("holds a lesson placed beside an idrott the gateway keeps out of the idrott's minutes after it", () => {
+    const ctx = mirrorWith([idrott(), post({ id: "post-ma" })], [kept({ studentGroupId: "g-7a", subjectId: "s-id", teacherId: "cy", roomId: null })]);
+    expect(dropOf(ctx, mathBrick(), spot(at("11:05")), names)).toMatchObject({ kind: "CLASH", reason: "GROUP" });
+    expect(dropOf(ctx, mathBrick(), spot(at("11:15")), names)).toEqual({ kind: "OK" });
+    // Ten minutes of ombyte before: the lesson that ends at 09:55 is in them.
+    expect(dropOf(ctx, mathBrick(), spot(at("08:55")), names)).toMatchObject({ kind: "CLASH", reason: "GROUP" });
+    expect(dropOf(ctx, mathBrick(), spot(at("08:50")), names)).toEqual({ kind: "OK" });
+  });
+
+  it("holds it out of a förläggning of another post just the same: the buffer is the post's, whoever has placed it", () => {
+    const ctx = mirrorWith([idrott(), post({ id: "post-ma" })], [], [row()]);
+    expect(dropOf(ctx, mathBrick(), spot(at("11:05")), names)).toMatchObject({ kind: "CLASH", reason: "GROUP" });
+    expect(dropOf(ctx, mathBrick(), spot(at("11:15")), names)).toEqual({ kind: "OK" });
+  });
+
+  it("takes the widest buffer of the classes on a lesson opened to a second class, as the gateway does", () => {
+    // 7B's idrott is kept, opened to 7A; the buffer of 7B's post reaches 7A's lessons through the lesson.
+    const post7b = idrott({ id: "post-id-7b", studentGroupId: "g-7b" });
+    const ctx = mirrorWith([post7b, post({ id: "post-ma" })], [kept({ studentGroupId: "g-7b", extraGroupIds: ["g-7a"], subjectId: "s-id", teacherId: "cy", roomId: null })]);
+    expect(dropOf(ctx, mathBrick(), spot(at("11:05")), names)).toMatchObject({ kind: "CLASH", reason: "GROUP" });
+  });
+
+  it("is what it was where no post names a minute: a lesson straight after the idrott holds", () => {
+    const ctx = mirrorWith([idrott({ minutesBefore: 0, minutesAfter: 0 }), post({ id: "post-ma" })], [kept({ studentGroupId: "g-7a", subjectId: "s-id", teacherId: "cy", roomId: null })]);
+    expect(dropOf(ctx, mathBrick(), spot(at("11:05")), names)).toEqual({ kind: "OK" });
+    expect(ctx.buffers.size).toBe(0);
+  });
+
+  it("is not asked of a lesson of another class or another subject: the buffer is the (class, subject)'s", () => {
+    const ctx = mirrorWith([idrott(), post({ id: "post-sv", studentGroupId: "g-7b", subjectId: "s-sv" })], [kept({ studentGroupId: "g-7a", subjectId: "s-id", teacherId: "cy", roomId: null })]);
+    const other = mover({ id: "brick:sv", post: post({ id: "post-sv", studentGroupId: "g-7b", subjectId: "s-sv" }), teacherId: "anna" });
+    expect(dropOf(ctx, other, spot(at("11:05")), names)).toEqual({ kind: "OK" });
+  });
+
+  it("is skipped over by the next free time: the quarter after the idrott is no time offered", () => {
+    const ctx = mirrorWith([idrott(), post({ id: "post-ma" })], [kept({ studentGroupId: "g-7a", subjectId: "s-id", teacherId: "cy", roomId: null })]);
+    // From 09:00 on the Tuesday: 09:15 to 10:45 overlap the idrott and 11:00 stands in the dusch.
+    expect(nextFreeSpot(ctx, mathBrick(), 60, { dayOfWeek: 2, startMinutes: at("09:00") }, names)).toEqual({ dayOfWeek: 2, startMinutes: at("11:15") });
+    const without = mirrorWith([idrott({ minutesBefore: 0, minutesAfter: 0 }), post({ id: "post-ma" })], [kept({ studentGroupId: "g-7a", subjectId: "s-id", teacherId: "cy", roomId: null })]);
+    expect(nextFreeSpot(without, mathBrick(), 60, { dayOfWeek: 2, startMinutes: at("09:00") }, names)).toEqual({ dayOfWeek: 2, startMinutes: at("11:00") });
+  });
+});
+
+describe("bufferMapOfBoard", () => {
+  it("holds only the posts that name a minute, and the widest of two posts of one class and subject", () => {
+    const map = bufferMapOfBoard([
+      { studentGroupId: "g-7a", subjectId: "s-id", minutesBefore: 10, minutesAfter: 5 },
+      { studentGroupId: "g-7a", subjectId: "s-id", minutesBefore: 0, minutesAfter: 15 },
+      { studentGroupId: "g-7a", subjectId: "s-ma", minutesBefore: 0, minutesAfter: 0 },
+      { studentGroupId: "g-7b", subjectId: "s-ma" },
+    ]);
+    expect([...map]).toEqual([["g-7a:s-id", { minutesBefore: 10, minutesAfter: 15 }]]);
   });
 });
 

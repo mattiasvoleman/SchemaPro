@@ -171,6 +171,9 @@ export function boardOfYear(yearId: string, scenario: string | null) {
       recurrence: entry.recurrence,
       startDate: entry.startDate,
       endDate: entry.endDate,
+      // The pupils' ombyte and dusch around the post's lessons (Idrott 7A has ten before and fifteen after): the gateway's own figures.
+      minutesBefore: entry.minutesBefore,
+      minutesAfter: entry.minutesAfter,
       cannotPlace: entry.blockId ? "BLOCK" : null,
       parts: partsOf(
         entry,
