@@ -56,6 +56,30 @@ function argumentsOf(template: string): string[] {
   return [...names].sort();
 }
 
+/**
+ * WHAT THE WEB WORDS FURTHER THAN THE ENGINE (Förlägg utan sal, 20270213090000). A förläggning that names no room is sent to
+ * Generera with `room = "ANY_ROOM"`, a value that is no room's name, and the engine's catalogue has no sentence for it; the web
+ * chooses its words on it. The reasons the judge gained (PAIR_ROOM, BLOCK) are in the same select, and a refusal to keep the
+ * places of a week ends by saying that rooms the school pinned count as places of their own, which the engine's text cannot
+ * know to say. Each entry is [the web's words, what the engine has in their place]: undone, the English is the engine's again,
+ * so the engine changing its own sentence is still a red test, and the arguments are checked above all the same.
+ */
+const PLACES_TIP =
+  " If the week has placed lessons with a room, it can be the rooms that count as different places: leave the room empty (“The engine chooses a room”) in the Place lessons dialog on the timplan, and the timetable chooses the room.";
+const WEB_WORDS: Record<string, readonly (readonly [string, string])[]> = {
+  PLACEMENT_CANNOT_STAND: [
+    ["{room, select, ANY_ROOM {a room the timetable chooses} other {{room}}}", "{room}"],
+    [
+      " PAIR_ROOM {odd and even weeks of the same length are one lesson in two places, and both places need a room} BLOCK {the post is in a parallel block, so a single placed lesson cannot stay}",
+      "",
+    ],
+  ],
+  PLACEMENT_PLACES_FORCED: [[PLACES_TIP, ""]],
+  PLACES_CANNOT_BE_KEPT: [[PLACES_TIP, ""]],
+};
+const undoneWebWords = (code: string, text: string): string =>
+  (WEB_WORDS[code] ?? []).reduce((undone, [web, engine]) => undone.replace(web, engine), text);
+
 const codes = Object.keys(engineMessages as Messages).sort();
 const swedish = (sv as Messages).engineMessages as Record<string, string>;
 const english = (en as Messages).engineMessages as Record<string, string>;
@@ -79,12 +103,20 @@ describe("every sentence the engine can send", () => {
     expect(argumentsOf(english[code])).toEqual(argumentsOf(fixture));
   });
 
-  it("keeps the English identical to the engine's own", () => {
+  it("keeps the English identical to the engine's own, but for what the web words further (WEB_WORDS)", () => {
     // en.json is the fallback rendered when a code has no translation, and
     // the engine renders the same text for its logs. Two spellings of one
     // sentence is one of them being wrong.
     for (const code of codes) {
-      expect(english[code]).toBe((engineMessages as Record<string, string>)[code]);
+      expect(undoneWebWords(code, english[code]!)).toBe((engineMessages as Record<string, string>)[code]);
+    }
+  });
+
+  it.each(Object.keys(WEB_WORDS))("%s: the web's added words are all there, once each, so this list is not stale", (code) => {
+    // An engine that takes the same words into its catalogue leaves nothing to undo: the entry is then deleted here, and the
+    // sentence is the engine's again.
+    for (const [web] of WEB_WORDS[code]!) {
+      expect(english[code]!.split(web).length - 1, `${code}: "${web.slice(0, 50)}"`).toBe(1);
     }
   });
 });

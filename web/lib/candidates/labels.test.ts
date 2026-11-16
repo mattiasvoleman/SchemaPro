@@ -96,6 +96,14 @@ describe("why a run ended without a batch", () => {
     expect(
       runErrorText(t, engine({}), run("ENGINE_LACKS_PERIODS", "Schemamotorn är äldre än API:t och kan inte planera poster med datum ännu.")),
     ).toBe("runErrors.ENGINE_LACKS_PERIODS");
+    // An engine older than förläggningar without a room (pinned lessons), met by a school that left a room to the engine.
+    expect(
+      runErrorText(
+        t,
+        engine({}),
+        run("ENGINE_LACKS_PINNED_LESSONS", "Schemamotorn är äldre än API:t och kan inte hålla förlagda lektioner utan sal ännu."),
+      ),
+    ).toBe("runErrors.ENGINE_LACKS_PINNED_LESSONS");
     // The engine's 5xx: without the key, the gateway's English reached a Swedish school.
     expect(runErrorText(t, engine({}), run("CANDIDATE_ENGINE_FAILED", "The AI engine returned an error."))).toBe(
       "runErrors.CANDIDATE_ENGINE_FAILED",

@@ -261,12 +261,13 @@ const REQUIREMENT_FIELDS_ALTERNATING = [...REQUIREMENT_FIELDS_REPLACED, 'recurre
 const REQUIREMENT_FIELDS_DATED = [...REQUIREMENT_FIELDS_ALTERNATING, 'periods'].sort();
 
 /*
- * Fästa lektioner: THE ENGINE DECLARES ONE KEY MORE THAN THIS SIDE SENDS.
- * `pinnedLessons` is in test_optimize.py's set and in no set here, because
- * nothing sends it yet: the engine had to know the key first, as it knew
- * `periods` first. The pull request that sends it pins it here, as
- * REQUIREMENT_FIELDS_DATED plus the key, on a post with a pinned lesson.
+ * Fästa lektioner: `pinnedLessons`, the key the engine knew first (#317) and this side sends since förläggning utan sal
+ * (20270213090000), only on a post with a pinned lesson. optimization-engine/tests/test_optimize.py's
+ * `_field_names(AnonymousRequirement)` must equal THIS set, which is every key a post can carry. A place in the list is a
+ * PinnedLesson: the weekday and the clock, never a room in this release (the engine takes one; nothing here names it).
  */
+const REQUIREMENT_FIELDS_PINNED = [...REQUIREMENT_FIELDS_DATED, 'pinnedLessons'].sort();
+const PINNED_LESSON_FIELDS = ['dayOfWeek', 'endTime', 'startTime'];
 
 /** A locked lesson as the engine is told it; `pupilGroupIds` only beside a replacing group. */
 const FIXED_LESSON_FIELDS = ['coTeacherId', 'dayOfWeek', 'endTime', 'extraGroupIds', 'id', 'roomId', 'startTime', 'studentGroupId', 'teacherId'];
@@ -524,6 +525,7 @@ describe('AI engine wire contract', () => {
           minutesPerLesson: number;
           lessonLengths?: number[];
           lessonTeacherIds?: (string | null)[];
+          pinnedLessons?: ({ dayOfWeek: number; startTime: string; endTime: string } | null)[];
         }>;
         const rooms = payload['rooms'] as Array<{ id: string }>;
         const clock = (minutes: number): string =>
@@ -542,6 +544,8 @@ describe('AI engine wire contract', () => {
                 dayOfWeek: 1,
                 startTime: '08:00:00',
                 endTime: clock(480 + minutes),
+                // A pinned lesson comes back where it was held (the real engine's contract: pins.py).
+                ...(requirement.pinnedLessons?.[index] ? requirement.pinnedLessons[index]! : {}),
                 // As the engine answers a shared post: each lesson's own
                 // teacher, the key left out where the list says null.
                 ...(requirement.lessonTeacherIds?.[index] ? { teacherId: requirement.lessonTeacherIds[index] } : {}),
@@ -561,7 +565,9 @@ describe('AI engine wire contract', () => {
     configure(tx);
 
     lastPost = http.post;
-    const proxy = new OptimizationProxyService(prisma as never, http as never, config as never);
+    // Förlagda poster are judged by the hand edit's rule before they are sent; nothing here clashes (the judge's own spec has the rule).
+    const masters = { findConflicts: jest.fn().mockResolvedValue([]) };
+    const proxy = new OptimizationProxyService(prisma as never, http as never, config as never, masters as never);
     if (candidate) {
       const prepared = await proxy.prepareSchedule(tx as never, 'year-1', testUser());
       if (!prepared.ready) throw new Error('The contract world was refused before the engine.');
@@ -1458,6 +1464,36 @@ describe('AI engine wire contract', () => {
         'studentGroupSize', 'subjectId', 'teacherId',
       ],
     );
+  });
+
+  it('names the engine’s whole requirement set with the pinned lessons’ key too', () => {
+    expect(REQUIREMENT_FIELDS_PINNED).toEqual([...REQUIREMENT_FIELDS_DATED, 'pinnedLessons'].sort());
+    expect(REQUIREMENT_FIELDS_PINNED).toHaveLength(REQUIREMENT_FIELDS_DATED.length + 1);
+  });
+
+  it('fästa lektioner: sends `pinnedLessons` on a post with a förläggning with no room, and nothing else of it', async () => {
+    const payload = await buildPayload({ lessonsPerWeek: 2 }, [], [], (tx) => {
+      // What the judge reads of the week (the board's facts); none of it is the contract's.
+      for (const model of ['lunchSitting', 'frameTime', 'lunchServing', 'rast', 'teacherWorkRule', 'teacherEmployment'] as const) {
+        tx[model]!['findMany']!.mockResolvedValue([]);
+      }
+      tx['teachingRequirementPlacement']!['findMany']!.mockResolvedValue([
+        { id: 'p1', requirementId: 'r1', dayOfWeek: 3, startTime: new Date('1970-01-01T10:00:00.000Z'), minutes: 60, roomId: null, recurrence: 'ALL_WEEKS', teacherId: null },
+      ]);
+    });
+    const requirements = payload['requirements'] as Array<Record<string, unknown>>;
+    expect(Object.keys(requirements[0]!).sort()).toEqual([...REQUIREMENT_FIELDS, 'pinnedLessons'].sort());
+    expect(REQUIREMENT_FIELDS_PINNED).toEqual(expect.arrayContaining(Object.keys(requirements[0]!)));
+    const pins = requirements[0]!['pinnedLessons'] as Array<Record<string, unknown> | null>;
+    expect(pins).toHaveLength(requirements[0]!['lessonsPerWeek'] as number);
+    expect(Object.keys(pins[0]!).sort()).toEqual(PINNED_LESSON_FIELDS);
+    expect(pins[1]).toBeNull();
+    // A lesson the post still has, and no lock, and no word of `placements`: the lock path is for a row with a room.
+    expect(requirements[0]!['lessonsPerWeek']).toBe(2);
+    expect(payload['fixedLessons']).toEqual([]);
+    expect(payload).not.toHaveProperty('placements');
+    // Every top-level field is one the basis reads or leaves out by name (candidate-basis.ts), `pinnedLessons` being a piece of a requirement.
+    expect(Object.keys(payload).filter((key) => !(BASIS_PAYLOAD_FIELDS as readonly string[]).includes(key) && !(BASIS_EXCLUDED_FIELDS as readonly string[]).includes(key))).toEqual([]);
   });
 
   it('names the engine’s whole locked-lesson set, the replaced lesson’s, the parity’s and the periods’ keys included', () => {

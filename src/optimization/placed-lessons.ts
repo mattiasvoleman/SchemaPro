@@ -6,6 +6,7 @@ import type { PlacementVerdict } from '../requirement-placements/placement-judge
 import type {
   AiEngineConflictAnalysis,
   AiEngineConflictDetail,
+  AnonymousPinnedLesson,
 } from './interfaces/ai-engine-payload.interface';
 
 /*
@@ -34,6 +35,20 @@ import type {
  *     apply compare with the preserved masters in the database, and it is
  *     written by writeRegeneration beside the engine's lessons.
  *
+ * A FÖRLÄGGNING WITH NO ROOM (20270213090000) IS NOT A LOCK. A lock has to name
+ * its room, and no proof of an impossible week can name a lock. A förläggning
+ * that leaves the room to the engine is sent as a PINNED LESSON on its post
+ * (AnonymousRequirement.pinnedLessons, optimization-engine/app/solver/pins.py):
+ * the post keeps the lesson in its demand, the engine holds it at that weekday
+ * and start in a room it chooses, and holds it to every rule a lesson it places
+ * is held to (the school's rules: a lock is a fact, a pin is not — DEPLOYMENT.md
+ * 21.3). So such a row is no preserved lesson: it is no fixed lesson, it takes
+ * nothing off the post, it tells no weekday to the post's `lockedDays` or the
+ * teacher's `lockedWeekdays` (the engine would count the lesson twice), and
+ * `placements` does not name it. The run writes the lesson the answer holds
+ * for it, with the room the engine chose, locked and marked the same
+ * (writtenFromPins). A row WITH a room is the lock it was, byte for byte.
+ *
  * DELADE LEKTIONER (20270208090000). On a post that shares its lessons a
  * förläggning names its own teacher, and the lock is THAT teacher's: the
  * fixed lesson the engine plans around, the judge's clash, the lesson
@@ -50,7 +65,8 @@ export interface PlacementRead {
   /** TIME(0), midnight UTC. */
   startTime: Date;
   minutes: number;
-  roomId: string;
+  /** Null: the school left the room to the engine (a pinned lesson; 20270213090000). */
+  roomId: string | null;
   recurrence: LessonRecurrence;
   /** As stored: the lesson's teacher on a post that shares its lessons, null on one that shares nothing. */
   teacherId: string | null;
@@ -85,7 +101,11 @@ export interface PlacedLessonRow {
   /** Who teaches it: the förläggning's own teacher on a shared post, else the post's. */
   teacherId: string | null;
   coTeacherId: string | null;
-  roomId: string;
+  /**
+   * The room, null for a pinned lesson: the engine chooses it, and the row is then no preserved lesson (the file's
+   * first paragraphs). Stated by lockedRowsOf and pinnedRowsOf, the only places that tell the two apart.
+   */
+  roomId: string | null;
   dayOfWeek: number;
   startTime: Date;
   endTime: Date;
@@ -153,6 +173,19 @@ export function placedLessonRowsOf(
 }
 
 const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/** A row that names a room, which is sent as the lock it has always been. */
+export type LockedPlacedRow = PlacedLessonRow & { roomId: string };
+
+/** The förläggningar that name a room: locks, and everything the fetch reads of a lock reads them. */
+export function lockedRowsOf(rows: readonly PlacedLessonRow[]): LockedPlacedRow[] {
+  return rows.filter((row): row is LockedPlacedRow => row.roomId !== null);
+}
+
+/** The förläggningar that leave the room to the engine: pinned lessons of their posts. */
+export function pinnedRowsOf(rows: readonly PlacedLessonRow[]): PlacedLessonRow[] {
+  return rows.filter((row) => row.roomId === null);
+}
 
 /** Each post's lessons its förläggningar place, one length each (placedLessonsOf). */
 export function placedMinutesOf(
@@ -231,6 +264,117 @@ export function withoutPlaced(remaining: readonly number[], placed: readonly num
 /** The weekday's clock as HH:MM. */
 const clockOf = (time: Date): string => time.toISOString().slice(11, 16);
 
+/** The clock the payload carries, HH:MM:SS. */
+const payloadClockOf = (time: Date): string => time.toISOString().slice(11, 19);
+
+/**
+ * PINNED LESSONS: where the engine is told to hold lessons of one post
+ * (AnonymousRequirement.pinnedLessons). `lessons` are the lessons the post's
+ * entry SENDS, in the order the entry sends them — longest first, and within a
+ * length the order lessonTeacherIds has — which is the engine's own order
+ * (lesson_minutes(), then lessonTeacherIds[k]), because a place in the list is
+ * a lesson of the entry and nothing else says which. `rows` are the post's
+ * pinned förläggningar (pinnedRowsOf), in the stable order the fetch reads
+ * them.
+ *
+ * Each row takes the first place still free whose lesson is its length, and on
+ * a post that shares its lessons its teacher's: the lesson the school pinned
+ * is the one that teacher teaches, as a förläggning's own teacher is the lock's
+ * (placedTaughtOf). `endTime` is the start and the length of THAT lesson, the
+ * check the engine makes of the gateway's places (it answers 422 to one that
+ * does not hold). A row that finds no place is returned in `unplaced` and
+ * pins nothing: the judge has refused it by name before (OVER_DEMAND, the post
+ * has no lesson of that length left), so this is never reached with one, and
+ * putting it on another length's place would pin a lesson the school did not.
+ *
+ * `places` is undefined when nothing is pinned: the key is sent only on a post
+ * with a pinned lesson, so every other entry is byte for byte what it was, and
+ * the engine refuses a list with none in it.
+ */
+export function pinnedPlacesOf(
+  lessons: readonly TaughtLesson[],
+  rows: readonly PlacedLessonRow[],
+): { places: (AnonymousPinnedLesson | null)[] | undefined; unplaced: PlacedLessonRow[] } {
+  const places: (AnonymousPinnedLesson | null)[] = lessons.map(() => null);
+  const unplaced: PlacedLessonRow[] = [];
+  for (const row of rows) {
+    const at = lessons.findIndex(
+      (lesson, index) =>
+        places[index] === null && lesson.minutes === row.minutes && (!row.ownTeacher || lesson.teacherId === row.teacherId),
+    );
+    if (at < 0) {
+      unplaced.push(row);
+      continue;
+    }
+    places[at] = { dayOfWeek: row.dayOfWeek as AnonymousPinnedLesson['dayOfWeek'], startTime: payloadClockOf(row.startTime), endTime: payloadClockOf(row.endTime) };
+  }
+  return { places: places.some((place) => place !== null) ? places : undefined, unplaced };
+}
+
+/** What a lesson of an answer says of itself, which is what a pinned row is known by (the answer has no lesson index). */
+export interface AnsweredLesson {
+  requirementId: string | null;
+  roomId: string | null;
+  dayOfWeek: number;
+  /** HH:MM:SS from the engine, HH:MM in a stored candidate. */
+  startTime: string;
+  endTime: string;
+  /** Present on a lesson of a post sent with its teachers (resolveLessons). */
+  teacherId?: string | null;
+}
+
+const minutesOfClock = (clock: string): number => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5));
+
+/**
+ * THE LESSON THAT CAME BACK FOR A PINNED ROW. The answer has no lesson index:
+ * a pinned lesson comes back among the post's other lessons, and is known by
+ * the post, the weekday, the start, the length and, on a post that shares its
+ * lessons, the teacher. The engine holds a pin to exactly those, so one is
+ * there for each row or the engine did not do what it was asked.
+ *
+ * Each row takes the first lesson that is its own and none else takes it (a post
+ * cannot hold two lessons of one class at one hour, so two rows of one post
+ * never want the same). The row is returned as the lesson it is written as: its
+ * own weekday, start and length, and THE ROOM THE ENGINE CHOSE, which is what a
+ * pinned row has in place of one. `rest` are the lessons no row claimed, which
+ * are written as the engine's; `missing` the rows the answer holds no lesson
+ * for, which makes the answer one to another request (the write refuses it).
+ */
+export function writtenFromPins<L extends AnsweredLesson>(
+  rows: readonly PlacedLessonRow[],
+  lessons: readonly L[],
+): { rest: L[]; pinned: PlacedLessonRow[]; missing: PlacedLessonRow[] } {
+  const rest = [...lessons];
+  const pinned: PlacedLessonRow[] = [];
+  const missing: PlacedLessonRow[] = [];
+  for (const row of rows) {
+    const start = clockOf(row.startTime);
+    const at = rest.findIndex(
+      (lesson) =>
+        lesson.requirementId === row.requirementId &&
+        lesson.dayOfWeek === row.dayOfWeek &&
+        lesson.startTime.slice(0, 5) === start &&
+        minutesOfClock(lesson.endTime) - minutesOfClock(lesson.startTime) === row.minutes &&
+        (!row.ownTeacher || (lesson.teacherId ?? null) === row.teacherId),
+    );
+    if (at < 0) {
+      missing.push(row);
+      continue;
+    }
+    const [lesson] = rest.splice(at, 1);
+    pinned.push({ ...row, roomId: lesson!.roomId });
+  }
+  return { rest, pinned, missing };
+}
+
+/**
+ * The room a refusal names for a row with none: the one value `room` takes that is
+ * no room's id. The engine's own catalogue says "in {room}" and has no sentence
+ * for a row with no room, so the sentence the page renders chooses its words on
+ * this value (PLACEMENT_CANNOT_STAND, web/messages).
+ */
+export const ANY_ROOM = 'ANY_ROOM';
+
 /**
  * GENERERA'S PRE-FLIGHT REFUSAL: the förläggningar that cannot stand where
  * they are placed, judged at this run (placement-judge.ts) since the week
@@ -251,7 +395,7 @@ export function placementsRefusalOf(
     const row = rows[verdict.index];
     if (!row) return [];
     const requirement = anon.requirement(row.requirementId);
-    const room = anon.room(row.roomId);
+    const room = row.roomId === null ? ANY_ROOM : anon.room(row.roomId);
     const params: Record<string, string | number> = {
       requirement,
       room,
@@ -268,7 +412,7 @@ export function placementsRefusalOf(
         params,
         message: `A placed lesson cannot stand where it is placed (${params.reason}).`,
         requirementIds: [requirement],
-        roomIds: [room],
+        roomIds: row.roomId === null ? [] : [room],
         constraintIds: [],
         resourceIds: [],
       },
@@ -376,7 +520,8 @@ export function placementsKeyOf(
         row.dayOfWeek,
         row.startTime.toISOString(),
         row.minutes,
-        row.roomId,
+        // No room is a row of its own kind (a pinned lesson), and the same row given a room is another week.
+        row.roomId ?? '',
         row.recurrence,
         // Delade lektioner: a förläggning handed to another teacher is a week for another timplan.
         row.teacherId ?? '',

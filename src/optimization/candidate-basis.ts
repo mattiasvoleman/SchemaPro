@@ -360,6 +360,28 @@ export function basisInputsOf(source: BasisSource): BasisInputs {
     ...(requirement.periods !== undefined
       ? { periods: requirement.periods.map((runs) => (runs ? '1' : '0')).join('') }
       : {}),
+    // Fästa lektioner: each pinned lesson with the lesson it is pinned to (its length and its teacher, as the places of
+    // lessonTeacherIds are read), because the digest sorts every array (canonicalJson) and a list of places sorted apart
+    // from their lessons could not tell a pin on Bo's lesson from a pin on the lead's. A string per pin; only on a post
+    // sent with the key, so every other school's part hashes as before. A pin's room, when one is named, in real ids.
+    ...(requirement.pinnedLessons !== undefined
+      ? {
+          pinnedLessons: requirement.pinnedLessons.flatMap((pin, index) =>
+            pin === null
+              ? []
+              : [
+                  [
+                    requirement.lessonLengths?.[index] ?? requirement.minutesPerLesson,
+                    requirement.lessonTeacherIds ? realOrNull(requirement.lessonTeacherIds[index]) : realOrNull(requirement.teacherId),
+                    pin.dayOfWeek,
+                    pin.startTime,
+                    pin.endTime,
+                    pin.roomId === undefined ? null : realOf(pin.roomId),
+                  ].join('|'),
+                ],
+          ),
+        }
+      : {}),
     // Delade lektioner: each lesson's teacher, so shares changed since the
     // run make it stale. As [length, teacher] pairs, because the digest
     // sorts every array (canonicalJson) and a list of teachers sorted

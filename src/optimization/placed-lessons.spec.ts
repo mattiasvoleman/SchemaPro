@@ -1,6 +1,10 @@
 import {
+  ANY_ROOM,
   PLACEMENT_CANNOT_STAND,
   PLACEMENTS_REFUSED_SUMMARY,
+  lockedRowsOf,
+  pinnedPlacesOf,
+  pinnedRowsOf,
   placedLessonRowsOf,
   placedLessonWritesOf,
   placedMinutesOf,
@@ -10,6 +14,8 @@ import {
   storedPlacementsOf,
   withoutPlaced,
   withoutPlacedShared,
+  writtenFromPins,
+  type PlacedLessonRow,
   type PlacedPost,
   type PlacementRead,
 } from './placed-lessons';
@@ -284,5 +290,209 @@ describe('placementsKeyOf', () => {
     const rows = placedLessonRowsOf(stored, new Map([...posts, ...sharedPosts]));
     expect(rows.find((row) => row.id === 'a')!.teacherId).toBe('ulf');
     expect(placementsKeyOf(storedPlacementsOf(rows))).toBe(placementsKeyOf(stored));
+  });
+});
+
+
+/*
+ * FÖRLÄGGNING UTAN SAL (20270213090000): a row with no room is a pinned lesson of its post, no lock.
+ */
+describe('lockedRowsOf and pinnedRowsOf', () => {
+  it('tell a lock (a room) from a pinned lesson (none) and lose no row between them', () => {
+    const rows = placedLessonRowsOf(
+      [read({ id: 'a', roomId: 'hall' }), read({ id: 'b', roomId: null, dayOfWeek: 3 }), read({ id: 'c', roomId: 'gym', dayOfWeek: 4 })],
+      posts,
+    );
+    expect(lockedRowsOf(rows).map((row) => row.id)).toEqual(['a', 'c']);
+    expect(pinnedRowsOf(rows).map((row) => row.id)).toEqual(['b']);
+    expect(lockedRowsOf(rows).length + pinnedRowsOf(rows).length).toBe(rows.length);
+  });
+
+  it('reads a row with no room as a lesson with none, on the post’s window', () => {
+    const [row] = placedLessonRowsOf([read({ roomId: null })], posts);
+    expect(row).toMatchObject({ roomId: null, dayOfWeek: 2, endDate: POST.endDate, ownTeacher: false });
+  });
+});
+
+describe('pinnedPlacesOf', () => {
+  const lessons = (...minutes: number[]) => minutes.map((m) => ({ minutes: m, teacherId: 'ulf' as string | null }));
+  const pinned = (overrides: Partial<PlacementRead> = {}) => placedLessonRowsOf([read({ roomId: null, ...overrides })], posts);
+
+  it('puts a pinned lesson at its length’s place, with the clock the payload carries and its end as start plus length', () => {
+    expect(pinnedPlacesOf(lessons(60, 60), pinned())).toEqual({
+      places: [{ dayOfWeek: 2, startTime: '10:00:00', endTime: '11:00:00' }, null],
+      unplaced: [],
+    });
+  });
+
+  it('takes the place of the row’s own length in the engine’s order, longest first', () => {
+    // 1 × 80 and 2 × 40: a pinned 40 is the second place, not the first.
+    expect(pinnedPlacesOf(lessons(80, 40, 40), pinned({ minutes: 40 })).places).toEqual([
+      null,
+      { dayOfWeek: 2, startTime: '10:00:00', endTime: '10:40:00' },
+      null,
+    ]);
+    expect(pinnedPlacesOf(lessons(80, 40, 40), pinned({ minutes: 80 })).places).toEqual([
+      { dayOfWeek: 2, startTime: '10:00:00', endTime: '11:20:00' },
+      null,
+      null,
+    ]);
+  });
+
+  it('gives two rows of one length two places, in the order the rows come, and none the same place twice', () => {
+    const rows = placedLessonRowsOf(
+      [read({ id: 'a', roomId: null, dayOfWeek: 1 }), read({ id: 'b', roomId: null, dayOfWeek: 3, startTime: at('08:05') })],
+      posts,
+    );
+    expect(pinnedPlacesOf(lessons(60, 60, 60), rows).places).toEqual([
+      { dayOfWeek: 1, startTime: '10:00:00', endTime: '11:00:00' },
+      { dayOfWeek: 3, startTime: '08:05:00', endTime: '09:05:00' },
+      null,
+    ]);
+  });
+
+  it('has exactly as many places as the entry has lessons, null where the engine places the lesson', () => {
+    const { places } = pinnedPlacesOf(lessons(60, 60, 60, 60), pinned());
+    expect(places).toHaveLength(4);
+    expect(places!.filter((place) => place === null)).toHaveLength(3);
+  });
+
+  it('says nothing when nothing is pinned: no key at all, never a list of nulls, which the engine refuses', () => {
+    expect(pinnedPlacesOf(lessons(60, 60), [])).toEqual({ places: undefined, unplaced: [] });
+  });
+
+  it('leaves a row with no lesson of its length unplaced and pins nothing on another length’s place', () => {
+    const row = pinned({ minutes: 45 });
+    expect(pinnedPlacesOf(lessons(60, 60), row)).toEqual({ places: undefined, unplaced: row });
+    // Two rows, one place of the length: the second finds none.
+    const two = placedLessonRowsOf([read({ id: 'a', roomId: null }), read({ id: 'b', roomId: null, dayOfWeek: 4 })], posts);
+    const { places, unplaced } = pinnedPlacesOf(lessons(60, 40), two);
+    expect(places).toEqual([{ dayOfWeek: 2, startTime: '10:00:00', endTime: '11:00:00' }, null]);
+    expect(unplaced.map((row) => row.id)).toEqual(['b']);
+  });
+
+  it('on a shared post takes the place of the row’s own teacher and length, never another teacher’s', () => {
+    const shared = [
+      { minutes: 60, teacherId: 'ulf' as string | null },
+      { minutes: 60, teacherId: 'ulf' as string | null },
+      { minutes: 60, teacherId: 'bo' as string | null },
+    ];
+    const [bo] = placedLessonRowsOf([read({ requirementId: SHARED.id, roomId: null, teacherId: 'bo' })], sharedPosts);
+    expect(pinnedPlacesOf(shared, [bo!]).places).toEqual([null, null, { dayOfWeek: 2, startTime: '10:00:00', endTime: '11:00:00' }]);
+    const [ulf] = placedLessonRowsOf([read({ requirementId: SHARED.id, roomId: null, teacherId: 'ulf' })], sharedPosts);
+    expect(pinnedPlacesOf(shared, [ulf!]).places).toEqual([{ dayOfWeek: 2, startTime: '10:00:00', endTime: '11:00:00' }, null, null]);
+    // Bo has no lesson of 40: his pinned 40 is unplaced, and Ulf's 60s are not taken for it.
+    const [bo40] = placedLessonRowsOf([read({ requirementId: SHARED.id, roomId: null, teacherId: 'bo', minutes: 40 })], sharedPosts);
+    expect(pinnedPlacesOf(shared, [bo40!])).toEqual({ places: undefined, unplaced: [bo40] });
+  });
+
+  it('a lesson nobody teaches is pinned by the row that names nobody', () => {
+    const lessonsOfNobody = [{ minutes: 60, teacherId: null as string | null }, { minutes: 60, teacherId: 'ulf' as string | null }];
+    const [row] = placedLessonRowsOf([read({ requirementId: SHARED.id, roomId: null, teacherId: null })], sharedPosts);
+    expect(pinnedPlacesOf(lessonsOfNobody, [row!]).places).toEqual([{ dayOfWeek: 2, startTime: '10:00:00', endTime: '11:00:00' }, null]);
+  });
+});
+
+describe('writtenFromPins', () => {
+  const pin = (overrides: Partial<PlacementRead> = {}): PlacedLessonRow =>
+    placedLessonRowsOf([read({ roomId: null, ...overrides })], posts)[0]!;
+  const engineLesson = (overrides: Partial<{ requirementId: string | null; roomId: string | null; dayOfWeek: number; startTime: string; endTime: string; teacherId: string | null }> = {}) => ({
+    requirementId: POST.id,
+    roomId: 'sal-9',
+    dayOfWeek: 2,
+    startTime: '10:00:00',
+    endTime: '11:00:00',
+    ...overrides,
+  });
+
+  it('knows the lesson of the answer by post, weekday, start and length, and writes the row with the room the engine chose', () => {
+    const answer = [engineLesson({ dayOfWeek: 1, startTime: '08:00:00', endTime: '09:00:00', roomId: 'sal-1' }), engineLesson()];
+    const { rest, pinned, missing } = writtenFromPins([pin()], answer);
+    expect(missing).toEqual([]);
+    expect(pinned).toHaveLength(1);
+    expect(pinned[0]).toMatchObject({ id: 'row-1', roomId: 'sal-9', dayOfWeek: 2, minutes: 60 });
+    expect(rest).toEqual([answer[0]]);
+  });
+
+  it('reads a stored candidate’s HH:MM as it reads the engine’s HH:MM:SS', () => {
+    const { pinned, missing } = writtenFromPins([pin()], [engineLesson({ startTime: '10:00', endTime: '11:00' })]);
+    expect(missing).toEqual([]);
+    expect(pinned[0]!.roomId).toBe('sal-9');
+  });
+
+  it.each([
+    ['another post', { requirementId: 'other' }],
+    ['another weekday', { dayOfWeek: 3 }],
+    ['another start', { startTime: '10:05:00', endTime: '11:05:00' }],
+    ['another length', { endTime: '10:45:00' }],
+  ])('does not take a lesson of %s for the pinned one: the row is missing from the answer', (_name, change) => {
+    const answer = [engineLesson(change)];
+    const { rest, pinned, missing } = writtenFromPins([pin()], answer);
+    expect(pinned).toEqual([]);
+    expect(missing.map((row) => row.id)).toEqual(['row-1']);
+    expect(rest).toEqual(answer);
+  });
+
+  it('leaves a lesson on the same weekday and start of another post to the engine', () => {
+    const { rest, pinned } = writtenFromPins([pin()], [engineLesson({ requirementId: 'other' }), engineLesson()]);
+    expect(pinned).toHaveLength(1);
+    expect(rest).toEqual([engineLesson({ requirementId: 'other' })]);
+  });
+
+  it('on a shared post takes the lesson of the row’s own teacher, and not a lesson of the same hour of another', () => {
+    const bo = placedLessonRowsOf([read({ requirementId: SHARED.id, roomId: null, teacherId: 'bo' })], sharedPosts)[0]!;
+    const wrong = engineLesson({ requirementId: SHARED.id, teacherId: 'ulf', roomId: 'sal-1' });
+    const right = engineLesson({ requirementId: SHARED.id, teacherId: 'bo', roomId: 'sal-2' });
+    const { pinned, rest, missing } = writtenFromPins([bo], [wrong, right]);
+    expect(missing).toEqual([]);
+    expect(pinned[0]).toMatchObject({ teacherId: 'bo', roomId: 'sal-2' });
+    expect(rest).toEqual([wrong]);
+    expect(writtenFromPins([bo], [wrong]).missing).toHaveLength(1);
+  });
+
+  it('writes a lesson the engine gave no room with none (a room is the engine’s to choose, and it may find none)', () => {
+    expect(writtenFromPins([pin()], [engineLesson({ roomId: null })]).pinned[0]!.roomId).toBeNull();
+  });
+
+  it('gives each of two rows its own lesson and leaves the rest', () => {
+    const rows = placedLessonRowsOf([read({ id: 'a', roomId: null, dayOfWeek: 1 }), read({ id: 'b', roomId: null, dayOfWeek: 3 })], posts);
+    const answer = [engineLesson({ dayOfWeek: 3, roomId: 'sal-3' }), engineLesson({ dayOfWeek: 5 }), engineLesson({ dayOfWeek: 1, roomId: 'sal-1' })];
+    const { pinned, rest, missing } = writtenFromPins(rows, answer);
+    expect(missing).toEqual([]);
+    expect(pinned.map((row) => [row.id, row.roomId])).toEqual([['a', 'sal-1'], ['b', 'sal-3']]);
+    expect(rest).toEqual([answer[1]]);
+  });
+
+  it('is written as a lock marked as the run’s own, in the engine’s room, by the one writer of a förläggning', () => {
+    const { pinned } = writtenFromPins([pin()], [engineLesson()]);
+    expect(placedLessonWritesOf(pinned, new Map([[POST.id, POST]]), { schoolId: 's', academicYearId: 'y' })).toEqual([
+      expect.objectContaining({ roomId: 'sal-9', dayOfWeek: 2, isLocked: true, isGenerated: true, fromPlacement: true, studentGroupId: '7a', subjectId: 'idrott', teacherId: 'ulf' }),
+    ]);
+  });
+});
+
+describe('no room in the refusal and in the key', () => {
+  it('names a refused row with no room as ANY_ROOM, in no room’s id, and lists no room under it', () => {
+    const [row] = placedLessonRowsOf([read({ roomId: null })], posts);
+    const refusal = placementsRefusalOf([row!], [{ index: 0, ok: false, reason: 'TEACHER', params: { className: '7B', subjectName: 'Matematik' } }], {
+      requirement: (id) => `anon-${id}`,
+      room: () => {
+        throw new Error('a row with no room has no room to name');
+      },
+    });
+    expect(refusal!.conflicts[0]).toMatchObject({
+      code: PLACEMENT_CANNOT_STAND,
+      params: { requirement: 'anon-post-7a-idrott', room: ANY_ROOM, day: 2, start: '10:00', end: '11:00', reason: 'TEACHER', other: '7B Matematik' },
+      roomIds: [],
+    });
+  });
+
+  it('reads a row with no room as part of the key, and another key for the same row given a room', () => {
+    const [none] = placedLessonRowsOf([read({ roomId: null })], posts);
+    const [some] = placedLessonRowsOf([read({ roomId: 'hall' })], posts);
+    expect(placementsKeyOf(storedPlacementsOf([none!]))).not.toBe(placementsKeyOf(storedPlacementsOf([some!])));
+    // Stable, and never the word null.
+    expect(placementsKeyOf(storedPlacementsOf([none!]))).toBe(placementsKeyOf(storedPlacementsOf([none!])));
+    expect(placementsKeyOf(storedPlacementsOf([none!]))).not.toContain('null');
   });
 });

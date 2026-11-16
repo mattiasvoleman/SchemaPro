@@ -50,6 +50,12 @@ describe("a verdict", () => {
     expect(verdictSentence(t, "TEACHER", { className: "7B", day: 2 })).toBe("verdict.TEACHER(className=7B,day=2)");
   });
 
+  it("has a sentence of its own for a pair's half with no room and for a post in a block, which carry no values", () => {
+    const known = lookup(["verdict.PAIR_ROOM", "verdict.BLOCK", "verdict.UNKNOWN"]);
+    expect(verdictSentence(known, "PAIR_ROOM")).toBe("verdict.PAIR_ROOM()");
+    expect(verdictSentence(known, "BLOCK", {})).toBe("verdict.BLOCK()");
+  });
+
   it("is said in general words for a reason this build does not know", () => {
     expect(verdictSentence(t, "NEW_RULE", { x: 1 })).toBe("verdict.UNKNOWN()");
     expect(verdictSentence(t, undefined)).toBe("verdict.UNKNOWN()");
@@ -62,10 +68,11 @@ describe("a verdict", () => {
 });
 
 describe("why the rows do not fit the post", () => {
-  const t = lookup(["problem.PAIRS", "problem.UNKNOWN"]);
+  const t = lookup(["problem.PAIRS", "problem.PAIR_ROOM", "problem.UNKNOWN"]);
 
   it("is the sentence of the rule", () => {
     expect(fitSentence(t, "PAIRS")).toBe("problem.PAIRS()");
+    expect(fitSentence(t, "PAIR_ROOM")).toBe("problem.PAIR_ROOM()");
   });
 
   it("is a general one for a rule this build does not know", () => {

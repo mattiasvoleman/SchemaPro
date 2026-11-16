@@ -112,6 +112,7 @@ const names: CardNames = {
   group: (id) => ({ "g-7a": "7A", "g-7b": "7B" })[id],
   teacher: (id) => ({ anna: "A. Ek", bo: "B. Lind" })[id ?? ""],
   room: (id) => ({ "r-a12": "A12" })[id ?? ""],
+  noRoom: "Motorn väljer sal",
   weeks: (lesson) => (lesson.recurrence === "ODD_WEEKS" ? "udda" : null),
   color: (_subject, color) => color ?? "#999999",
   keptNote: "i grundschemat",
@@ -187,6 +188,22 @@ describe("visibleBoard", () => {
     expect(shown.kept).toEqual([]);
     expect(isFiltered({ ...NO_FILTERS, rooms: ["r-b3"] })).toBe(true);
   });
+
+  // Salen blir valfri: a row with no room stands in none, so no room that is picked matches it, and it is there while none is.
+  it("keeps a row with no room while no room is picked, and matches it to none when one is", () => {
+    const anyRoom = board({
+      posts: [post()],
+      placements: [row({ id: "a" }), row({ id: "any", roomId: null, roomName: null })],
+    });
+    expect(visibleBoard(anyRoom, NO_FILTERS).placements.map((entry) => entry.id)).toEqual(["a", "any"]);
+    const picked = visibleBoard(anyRoom, { ...NO_FILTERS, rooms: ["r-a12"] });
+    expect(picked.placements.map((entry) => entry.id)).toEqual(["a"]);
+    // The post stays on the strength of its row in the room, and is gone when it has only the row with none.
+    expect(picked.posts.map((entry) => entry.id)).toEqual(["post-1"]);
+    const onlyAny = board({ posts: [post()], placements: [row({ id: "any", roomId: null, roomName: null })] });
+    expect(visibleBoard(onlyAny, { ...NO_FILTERS, rooms: ["r-a12"] })).toMatchObject({ placements: [], posts: [] });
+    expect(visibleBoard(onlyAny, NO_FILTERS).posts).toHaveLength(1);
+  });
 });
 
 describe("the cards", () => {
@@ -205,6 +222,12 @@ describe("the cards", () => {
       recurrenceNote: "udda",
     });
     expect(card).not.toHaveProperty("locked");
+  });
+
+  it("says in the room's place that the engine chooses it, for a row with no room", () => {
+    const [card] = placementCards([row({ roomId: null, roomName: null })], new Map([["post-1", post()]]), names);
+    expect(card!.room).toBe("Motorn väljer sal");
+    expect(card!.conflicted).toBe(false);
   });
 
   it("takes a shared post's row to its own teacher, and marks one that no longer holds", () => {

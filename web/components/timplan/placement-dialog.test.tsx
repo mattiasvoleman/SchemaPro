@@ -196,8 +196,9 @@ describe("the dialog", () => {
 
     const row = rowNamed(1);
     expect([...select(row, "day").options].map((option) => option.value)).toEqual(["1", "2", "3", "4", "5"]);
+    // The empty choice comes first: the engine chooses the room.
     expect([...select(row, "room").options].map((option) => option.textContent)).toEqual([
-      "roomPlaceholder",
+      "roomAny",
       "Aulan",
       "Gymnastiksalen",
       "Simhallen",
@@ -468,7 +469,7 @@ describe("saving", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["requirementPlacements"] });
   });
 
-  it("asks for a room and a start that fits the school day before it sends, and moves to the first one", async () => {
+  it("asks for a start that fits the school day before it sends, and moves to the first one, and asks for no room", async () => {
     const { user } = await opened();
     await user.click(screen.getByRole("button", { name: "add" }));
     await user.click(screen.getByRole("button", { name: "add" }));
@@ -480,10 +481,11 @@ describe("saving", () => {
     expect(state.put).not.toHaveBeenCalled();
     expect(start).toBeInvalid();
     expect(start.getAttribute("aria-describedby")).toContain(within(first).getByText(/^problemStart/).id);
-    expect(field(first, "room")).toBeInvalid();
-    expect(within(first).getByText("problemRoom")).toBeInTheDocument();
     expect(start).toHaveFocus();
-    expect(within(rowNamed(2)).getByText("problemRoom")).toBeInTheDocument();
+    // The room is the engine's to choose when it is left empty: no row is faulted for it.
+    expect(field(first, "room")).not.toBeInvalid();
+    expect(field(rowNamed(2), "room")).not.toBeInvalid();
+    expect(screen.queryByText("problem.PAIR_ROOM")).toBeNull();
   });
 
   it.each([
@@ -505,11 +507,11 @@ describe("saving", () => {
     const { user } = await opened();
     await user.click(screen.getByRole("button", { name: "add" }));
     await user.click(saveButton());
-    expect(within(rowNamed(1)).getByText("problemRoom")).toBeInTheDocument();
+    expect(within(rowNamed(1)).getByText(/^problemStart/)).toBeInTheDocument();
 
-    await user.selectOptions(field(rowNamed(1), "room"), "room-aula");
+    fireEvent.change(field(rowNamed(1), "start"), { target: { value: "09:05" } });
 
-    expect(within(rowNamed(1)).queryByText("problemRoom")).toBeNull();
+    expect(within(rowNamed(1)).queryByText(/^problemStart/)).toBeNull();
   });
 });
 
@@ -1058,6 +1060,217 @@ describe("a post that shares its lessons between teachers", () => {
       expect(control.labels?.[0]?.textContent).toBe("teacher");
       expect(document.querySelectorAll(`[id="${control.id}"]`)).toHaveLength(1);
     }
+  });
+});
+
+// Salen blir valfri: an empty room is a choice ("Motorn väljer sal"), sent as null, and the engine chooses the room at every
+// Generera. The one row that needs a room is a half of a pair, which is two locks and a lock has a room (PAIR_ROOM).
+describe("the room, which is optional", () => {
+  /** An odd and an even half of one lesson on an every-week post. */
+  const pair = (oddRoom: { roomId: string | null; roomName: string | null }, evenRoom: { roomId: string | null; roomName: string | null }) =>
+    [
+      stored({ recurrence: "ODD_WEEKS", ...oddRoom }),
+      stored({ id: "p2", dayOfWeek: 4, startTime: "13:15", endTime: "14:15", recurrence: "EVEN_WEEKS", ...evenRoom }),
+    ];
+  const noRoom = { roomId: null, roomName: null };
+  const aula = { roomId: "room-aula", roomName: "Aulan" };
+
+  it("is chosen by default on a new row, first in the list, and the hint under it says what it means", async () => {
+    const { user } = await opened();
+    await user.click(screen.getByRole("button", { name: "add" }));
+
+    const room = select(rowNamed(1), "room");
+    expect(room.value).toBe("");
+    expect(room.options[0]).toHaveTextContent("roomAny");
+    expect(room.options[0]!.value).toBe("");
+    expect(room.options[0]!.selected).toBe(true);
+    // The sentence is the field's description, so it is read with it.
+    const hint = within(rowNamed(1)).getByText("roomHint");
+    expect(room.getAttribute("aria-describedby")).toContain(hint.id);
+    expect(room).not.toBeInvalid();
+  });
+
+  it("opens a stored row with no room on the empty choice, and says nothing is wrong with it", async () => {
+    answer([stored({ ...noRoom })]);
+    await opened();
+
+    const row = rowNamed(1);
+    expect(select(row, "room").value).toBe("");
+    expect(select(row, "room").selectedOptions[0]).toHaveTextContent("roomAny");
+    expect(within(row).queryByText(/^verdict\./)).toBeNull();
+    expect(screen.queryByText(/^staleTitle/)).toBeNull();
+  });
+
+  it("sends a row with no room as null, and the same row given a room as that room", async () => {
+    answer([stored({ ...noRoom })]);
+    const { user } = await opened();
+
+    await user.click(saveButton());
+    await waitFor(() => expect(state.put).toHaveBeenCalledTimes(1));
+    expect(state.put.mock.calls[0]![1]).toEqual({
+      placements: [{ dayOfWeek: 2, startTime: "10:00", minutes: 60, roomId: null, recurrence: "ALL_WEEKS" }],
+    });
+
+    await user.selectOptions(field(rowNamed(1), "room"), "room-aula");
+    await user.click(saveButton());
+    await waitFor(() => expect(state.put).toHaveBeenCalledTimes(2));
+    expect(state.put.mock.calls[1]![1].placements[0].roomId).toBe("room-aula");
+  });
+
+  it("sends null when a room that was chosen is taken back to the empty choice", async () => {
+    answer([stored()]);
+    const { user } = await opened();
+
+    await user.selectOptions(field(rowNamed(1), "room"), "");
+    await user.click(saveButton());
+
+    await waitFor(() => expect(state.put).toHaveBeenCalled());
+    expect(state.put.mock.calls[0]![1].placements[0].roomId).toBeNull();
+  });
+
+  it("saves a new row that has only a day and a start, with no room asked for", async () => {
+    const { user, onOpenChange } = await opened();
+    await user.click(screen.getByRole("button", { name: "add" }));
+    fireEvent.change(field(rowNamed(1), "start"), { target: { value: "09:05" } });
+
+    await user.click(saveButton());
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(state.put).toHaveBeenCalledWith("/api/v1/teaching-requirements/r-sl/placements", {
+      placements: [{ dayOfWeek: 1, startTime: "09:05", minutes: 60, roomId: null, recurrence: "ALL_WEEKS" }],
+    });
+  });
+
+  it("does not need a room for a post that runs odd weeks only: its rows are no pair", async () => {
+    answer([stored({ ...noRoom, recurrence: "ODD_WEEKS" })]);
+    const { user } = await opened(post({ recurrence: "ODD_WEEKS", lessonsPerWeek: 1 }));
+
+    await user.click(saveButton());
+
+    await waitFor(() => expect(state.put).toHaveBeenCalled());
+    expect(state.put.mock.calls[0]![1].placements[0]).toMatchObject({ roomId: null, recurrence: "ODD_WEEKS" });
+  });
+
+  describe("a pair of odd and even weeks", () => {
+    it("is refused before it is sent when a half has no room: the sentence stands at that row's room, which gets the focus", async () => {
+      answer(pair(aula, noRoom));
+      const { user } = await opened(post({ lessonsPerWeek: 1 }));
+
+      await user.click(saveButton());
+
+      const second = rowNamed(2);
+      const sentence = within(second).getByText("problem.PAIR_ROOM");
+      expect(state.put).not.toHaveBeenCalled();
+      expect(sentence).toHaveClass("text-destructive");
+      expect(select(second, "room")).toBeInvalid();
+      expect(select(second, "room").getAttribute("aria-describedby")).toContain(sentence.id);
+      expect(select(second, "room")).toHaveFocus();
+      // The half that has its room is not faulted.
+      expect(within(rowNamed(1)).queryByText("problem.PAIR_ROOM")).toBeNull();
+      expect(select(rowNamed(1), "room")).not.toBeInvalid();
+    });
+
+    it("is refused at both rows when neither half has a room, and the first of them gets the focus", async () => {
+      answer(pair(noRoom, noRoom));
+      const { user } = await opened(post({ lessonsPerWeek: 1 }));
+
+      await user.click(saveButton());
+
+      expect(state.put).not.toHaveBeenCalled();
+      expect(within(rowNamed(1)).getByText("problem.PAIR_ROOM")).toBeInTheDocument();
+      expect(within(rowNamed(2)).getByText("problem.PAIR_ROOM")).toBeInTheDocument();
+      expect(select(rowNamed(1), "room")).toHaveFocus();
+    });
+
+    it("lets go of the sentence as soon as the room is chosen, and is then sent with both rooms", async () => {
+      answer(pair(aula, noRoom));
+      const { user, onOpenChange } = await opened(post({ lessonsPerWeek: 1 }));
+      await user.click(saveButton());
+      expect(within(rowNamed(2)).getByText("problem.PAIR_ROOM")).toBeInTheDocument();
+
+      await user.selectOptions(select(rowNamed(2), "room"), "room-sim");
+      expect(within(rowNamed(2)).queryByText("problem.PAIR_ROOM")).toBeNull();
+      await user.click(saveButton());
+
+      await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+      expect(state.put.mock.calls[0]![1].placements.map((placement: { roomId: string }) => placement.roomId)).toEqual(["room-aula", "room-sim"]);
+    });
+
+    it("is refused when a row is changed over to odd weeks with no room, and fine again when it is changed back", async () => {
+      answer([stored({ ...noRoom })]);
+      const { user } = await opened();
+
+      await user.selectOptions(select(rowNamed(1), "weeks"), "ODD_WEEKS");
+      await user.click(saveButton());
+      expect(state.put).not.toHaveBeenCalled();
+      expect(within(rowNamed(1)).getByText("problem.PAIR_ROOM")).toBeInTheDocument();
+
+      await user.selectOptions(select(rowNamed(1), "weeks"), "ALL_WEEKS");
+      await user.click(saveButton());
+      await waitFor(() => expect(state.put).toHaveBeenCalled());
+    });
+
+    it("says at the row the gateway names that a half has no room, and moves to its room", async () => {
+      // The row was changed under the dialog's check, or another writer's: the gateway's own rule.
+      answer([stored({ ...aula, recurrence: "ODD_WEEKS" }), stored({ id: "p2", dayOfWeek: 4, recurrence: "EVEN_WEEKS", ...aula })]);
+      state.put.mockRejectedValue(new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { reason: "PAIR_ROOM", index: 1 }));
+      const { user } = await opened(post({ lessonsPerWeek: 1 }));
+
+      await user.click(saveButton());
+
+      const second = rowNamed(2);
+      const sentence = await within(second).findByText("problem.PAIR_ROOM");
+      expect(sentence).toHaveClass("text-destructive");
+      expect(second.getAttribute("aria-describedby")).toBe(sentence.id);
+      expect(select(second, "room")).toHaveFocus();
+      expect(select(second, "room").getAttribute("aria-describedby")).toContain(sentence.id);
+      expect(within(rowNamed(1)).queryByText("problem.PAIR_ROOM")).toBeNull();
+    });
+
+    it("says it at the top, and moves there, when the gateway names no row", async () => {
+      answer([stored({ ...aula, recurrence: "ODD_WEEKS" }), stored({ id: "p2", dayOfWeek: 4, recurrence: "EVEN_WEEKS", ...aula })]);
+      state.put.mockRejectedValue(new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { reason: "PAIR_ROOM" }));
+      const { user } = await opened(post({ lessonsPerWeek: 1 }));
+
+      await user.click(saveButton());
+
+      const top = (await screen.findByText("problem.PAIR_ROOM")).closest("[tabindex='-1']") as HTMLElement;
+      expect(top).toHaveFocus();
+      expect(within(top).getByText("notSaved")).toBeInTheDocument();
+    });
+
+    it("is said of a stored half with no room, written by someone else, with the judge's verdict on its row", async () => {
+      answer(pair(aula, noRoom), [{ index: 0, ok: true }, { index: 1, ok: false, reason: "PAIR_ROOM" }]);
+      await opened(post({ lessonsPerWeek: 1 }));
+
+      const second = rowNamed(2);
+      const sentence = within(second).getByText(/^verdict\.PAIR_ROOM/);
+      expect(sentence).toHaveClass("text-destructive");
+      expect(select(second, "room")).toBeInvalid();
+      expect(select(second, "room").getAttribute("aria-describedby")).toContain(sentence.id);
+      expect(screen.getByText("staleTitle(1)")).toBeInTheDocument();
+    });
+
+    it("blocks the save of a stored half with no room, and moves to its room, without saying the same sentence twice", async () => {
+      answer(pair(aula, noRoom), [{ index: 0, ok: true }, { index: 1, ok: false, reason: "PAIR_ROOM" }]);
+      const { user } = await opened(post({ lessonsPerWeek: 1 }));
+
+      await user.click(saveButton());
+
+      const second = rowNamed(2);
+      expect(state.put).not.toHaveBeenCalled();
+      expect(select(second, "room")).toHaveFocus();
+      expect(select(second, "room")).toBeInvalid();
+      // The judge's sentence stands at the row; the check of the save adds none beside the field.
+      expect(within(second).getAllByText(/PAIR_ROOM/)).toHaveLength(1);
+    });
+  });
+
+  it("says a stored row in a parallel block (BLOCK) in the verdict's words, at its row", async () => {
+    answer([stored()], [{ index: 0, ok: false, reason: "BLOCK" }]);
+    await opened();
+
+    expect(within(rowNamed(1)).getByText(/^verdict\.BLOCK/)).toHaveClass("text-destructive");
   });
 });
 

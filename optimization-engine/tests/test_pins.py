@@ -43,7 +43,7 @@ from app.exceptions import InvalidScheduleInputError
 from app.main import create_app
 from app.schemas.schedule import OptimizeScheduleRequest, ScheduledLesson
 from app.solver import scheduler_solver
-from app.solver.pins import pins_of, without_pins
+from app.solver.pins import _joined, pins_of, without_pins
 from app.solver.relaxation import HARD_RULES
 from app.solver.scheduler_solver import SchedulerSolver, _start_step
 
@@ -1660,3 +1660,51 @@ class TestTheMealOfATerm:
         assert estimated == solver._estimate_model_size(_request(bare)) + 2 + 6
         model, *_ = solver._build_model(_request(payload), use_assumptions=True)
         assert len(model.Proto().variables) <= estimated
+
+
+class TestJoined:
+    """pins._joined: the fewest inclusive spans of starts that say what the spans say, in order.
+
+    Seams the meal's terms read (meal_starts_taken_by_pins). Each case names the edit that only it
+    fails: the operator mutants of the third review of #317 on lines 408 and 409 of pins.py, which no
+    test here read before (the review's LÅG-1).
+    """
+
+    @pytest.mark.parametrize(
+        ("spans", "joined"),
+        [
+            # One start free between them: two spans (the edit that reads `+ 1` as `+ 2` joins them).
+            ([(0, 3), (5, 8)], ((0, 3), (5, 8))),
+            # Touching: one.
+            ([(0, 3), (4, 8)], ((0, 8),)),
+            # Overlapping: the union starts where the first starts (the edit that reads `[0]` as `[1]`
+            # starts it where the first ended).
+            ([(0, 3), (2, 5)], ((0, 5),)),
+            # In any order.
+            ([(2, 5), (0, 3)], ((0, 5),)),
+            # One inside the other.
+            ([(0, 9), (2, 3)], ((0, 9),)),
+            ([(6, 7), (0, 1), (3, 4)], ((0, 1), (3, 4), (6, 7))),
+        ],
+    )
+    def test_the_fewest_spans_that_say_the_same(self, spans: list[tuple[int, int]], joined: tuple[tuple[int, int], ...]) -> None:
+        assert _joined(spans) == joined
+
+
+class TestTheTermsAPinRunsIn:
+    """Three terms. A half hour at 11:00 runs in terms 1 and 2, and a quarter hour at 11:00 inside its starts in term 1 alone."""
+
+    def test_a_pin_inside_another_pins_starts_adds_no_part(self) -> None:
+        """Terms 1 and 2 leave the meal the same starts, whatever the quarter hour inside does: two parts, not three.
+
+        Read as the terms a pin does NOT run in (pins.py line 389, `not requirement.periods[period]`
+        taken for its opposite), the quarter hour's starts are the ones term 2 has and term 1 has not:
+        three parts.
+        """
+        helper = TestTheMealOfATerm()
+        quarter = helper._post([True, False, False], _pin(1, "11:00", minutes=15))
+        quarter["minutesPerLesson"] = 15
+        payload = helper._year(helper._post([True, True, False], _pin(1, "11:00", minutes=30)), quarter)
+        payload["periodWeeks"] = [20, 20, 20]
+        model, *_ = SchedulerSolver(_settings(**TestTheMealOfATerm.ONE_DAY))._build_model(_request(payload), use_assumptions=False)
+        assert len([v for v in model.Proto().variables if v.name.startswith("lunchstart_")]) == 2

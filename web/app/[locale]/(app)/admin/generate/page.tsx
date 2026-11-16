@@ -489,7 +489,8 @@ export default function GeneratePage() {
    * the run (GENERATE_STALE, which names the parts the write found changed
    * when it read the school again, as the candidates page does for its apply),
    * another write held the year (SCHEDULE_BUSY), the engine is older than
-   * the periods the run carried (ENGINE_LACKS_PERIODS), or it answered meals
+   * the periods the run carried (ENGINE_LACKS_PERIODS) or the lessons a school
+   * pinned without a room (ENGINE_LACKS_PINNED_LESSONS), or it answered meals
    * that do not fit them (ENGINE_MEALS_INCONSISTENT).
    */
   const jobErrorText = (code: string | null, params: Record<string, string | number> | null): string | null =>
@@ -505,11 +506,15 @@ export default function GeneratePage() {
           // posts is sent, in the minutes of a release or after a rollback.
           code === "ENGINE_LACKS_PERIODS"
           ? tCandidates("jobErrors.ENGINE_LACKS_PERIODS")
-          : // Klassens måltid per del av läsåret: the engine's meals are not a
-            // partition of the year's periods, so nothing was written.
-            code === "ENGINE_MEALS_INCONSISTENT"
-            ? tCandidates("jobErrors.ENGINE_MEALS_INCONSISTENT")
-            : null;
+          : // Förläggning utan sal: an engine older than the pinned lessons the
+            // school left the room of, in the minutes of a release.
+            code === "ENGINE_LACKS_PINNED_LESSONS"
+            ? tCandidates("jobErrors.ENGINE_LACKS_PINNED_LESSONS")
+            : // Klassens måltid per del av läsåret: the engine's meals are not a
+              // partition of the year's periods, so nothing was written.
+              code === "ENGINE_MEALS_INCONSISTENT"
+              ? tCandidates("jobErrors.ENGINE_MEALS_INCONSISTENT")
+              : null;
 
   const solverStatus = job?.status === "SUCCEEDED" ? job.solverStatus : null;
   // Both verdicts mean "no timetable came back", but only INFEASIBLE is a

@@ -2480,10 +2480,13 @@ model TeachingRequirementShare {
 /// the teachers stay the post's, read at every Generera. See migration
 /// 20270207090000 and src/requirement-placements.
 ///
-/// Generera sends each as a locked lesson (AnonymousFixedLesson), takes it off
-/// the post's demand the way a covering lock is taken off, and writes it into
-/// the grundschema as a locked lesson marked as Generera's own
-/// (MasterLesson.fromPlacement), which the next Generera writes again.
+/// Generera sends each WITH a room as a locked lesson (AnonymousFixedLesson),
+/// takes it off the post's demand the way a covering lock is taken off, and
+/// writes it into the grundschema as a locked lesson marked as Generera's own
+/// (MasterLesson.fromPlacement), which the next Generera writes again. One
+/// WITHOUT a room (20270213090000) is sent as a pinned lesson of its post
+/// (AnonymousRequirement.pinnedLessons), stays in the post's demand, and is
+/// written the same way, in the room the engine chose.
 /// It never gives way, in Bästa möjliga schema either.
 ///
 /// The rows fit the post by trigger (SQLSTATE FP409 — TP409 is the decided
@@ -2509,9 +2512,12 @@ model TeachingRequirementPlacement {
   /// The lesson's length: one of the post's (by trigger), 15..240 on the
   /// five-minute grid by CHECK.
   minutes       Int
-  /// The room, which is the point: a förläggning without one is a lock the
-  /// engine would leave roomless. NO ACTION on delete (see Room).
-  roomId        String           @db.Uuid
+  /// The room the school chose, or null to leave it to the engine (20270213090000):
+  /// Generera then sends the förläggning as a pinned lesson (pinnedLessons) and
+  /// the run writes the room the engine chose. A pair (odd and even rows of one
+  /// length on an every-week post) names a room on both rows: the gateway holds
+  /// that, the table does not. NO ACTION on delete (see Room).
+  roomId        String?          @db.Uuid
   recurrence    LessonRecurrence @default(ALL_WEEKS)
   /// Delade lektioner (20270208090000): whose lesson it is, on a post that
   /// shares its lessons between teachers — its huvudlärare or a share's
@@ -2525,7 +2531,7 @@ model TeachingRequirementPlacement {
 
   school        School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   requirement   TeachingRequirement @relation(fields: [requirementId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
-  room          Room                @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: NoAction, onUpdate: NoAction)
+  room          Room?               @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: NoAction, onUpdate: NoAction)
   teacher       User?               @relation("RequirementPlacementTeacher", fields: [teacherId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
 
   @@unique([id, schoolId])
