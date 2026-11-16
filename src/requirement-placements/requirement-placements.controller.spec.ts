@@ -26,8 +26,8 @@ describe('RequirementPlacementsController', () => {
     service = {
       listOfYear: jest.fn().mockResolvedValue([]),
       boardOfYear: jest.fn().mockResolvedValue({ academicYearId: YEAR, placements: [], posts: [], kept: [], meals: [] }),
-      listOfPost: jest.fn().mockResolvedValue({ placements: [], verdicts: [] }),
-      replace: jest.fn().mockResolvedValue({ placements: [], verdicts: [] }),
+      listOfPost: jest.fn().mockResolvedValue({ placements: [], verdicts: [], rowsKey: 'e3b0c44298fc1c14' }),
+      replace: jest.fn().mockResolvedValue({ placements: [], verdicts: [], rowsKey: 'e3b0c44298fc1c14' }),
     };
     controller = new RequirementPlacementsController(service as unknown as RequirementPlacementsService);
   });
@@ -44,7 +44,7 @@ describe('RequirementPlacementsController', () => {
     });
 
     it('lists one post\'s rows with their verdicts', async () => {
-      await expect(controller.listOfPost(POST, user)).resolves.toEqual({ placements: [], verdicts: [] });
+      await expect(controller.listOfPost(POST, user)).resolves.toEqual({ placements: [], verdicts: [], rowsKey: 'e3b0c44298fc1c14' });
       expect(service.listOfPost).toHaveBeenCalledWith(POST, user);
     });
 
@@ -132,5 +132,13 @@ describe('ReplacePlacementsDto', () => {
     expect(await errorsOf({ placements: 'x' })).toContain('placements:isArray');
     expect(await errorsOf({ placements: Array.from({ length: MAX_PLACEMENTS_PER_POST + 1 }, () => valid) })).toEqual(['placements:arrayMaxSize']);
     expect(await errorsOf({ placements: Array.from({ length: MAX_PLACEMENTS_PER_POST }, () => valid) })).toEqual([]);
+  });
+
+  it('takes a baseKey as the 16 hex characters the reads give, or none, and refuses anything else', async () => {
+    expect(await errorsOf({ placements: [valid], baseKey: 'e3b0c44298fc1c14' })).toEqual([]);
+    expect(await errorsOf({ placements: [valid] })).toEqual([]);
+    for (const baseKey of ['', 'E3B0C44298FC1C14', 'e3b0c44298fc1c1', 'e3b0c44298fc1c145', 'not-a-key', 12]) {
+      expect(await errorsOf({ placements: [valid], baseKey })).toContain('baseKey:matches');
+    }
   });
 });

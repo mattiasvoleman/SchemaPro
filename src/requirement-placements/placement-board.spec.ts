@@ -4,7 +4,7 @@ import { lessonTeachersOf } from '../common/lesson-shares';
 import { coverLockedLessons, coverLockedSharedLessons } from '../optimization/locked-coverage';
 import { withoutPlaced, withoutPlacedShared } from '../optimization/placed-lessons';
 import {
-  boardPostOf,
+  boardPostOf as boardPostWithKey,
   boardPostShape,
   coveringLocksOf,
   keptViewOf,
@@ -13,6 +13,12 @@ import {
   type KeptForCount,
 } from './placement-board';
 import { placedLessonsOf, placedTaughtOf, type PlacementShape } from './placement-fit';
+import { rowsKeyOf } from './placement-rows-key';
+
+/** The key the post's rows have, which the board only passes along: the count is what these tests are about. */
+const ROWS_KEY = rowsKeyOf([]);
+const boardPostOf = (post: BoardPost, locks: Parameters<typeof boardPostWithKey>[1], rows: readonly PlacementShape[]) =>
+  boardPostWithKey(post, locks, rows, ROWS_KEY);
 
 const ANNA = 'anna';
 const BO = 'bo';
@@ -66,7 +72,16 @@ describe('boardPostOf: what a post has left', () => {
       endDate: null,
       cannotPlace: null,
       parts: [{ teacherId: ANNA, minutes: 60, count: 3, locked: 0, placed: 0, left: 3, cannotPlace: null }],
+      rowsKey: ROWS_KEY,
     });
+  });
+
+  it('passes the key of the post\'s rows along as it was given, and counts nothing from it', () => {
+    const key = rowsKeyOf([
+      { id: 'p-1', requirementId: 'post-1', dayOfWeek: 2, startTime: new Date('1970-01-01T10:00:00.000Z'), minutes: 60, roomId: null, recurrence: 'ALL_WEEKS', teacherId: null },
+    ]);
+    expect(boardPostWithKey(post(), [], [], key).rowsKey).toBe(key);
+    expect(boardPostWithKey(post(), [], [], key).parts).toEqual(boardPostWithKey(post(), [], [], ROWS_KEY).parts);
   });
 
   it('counts a lock first, then each förläggning, and leaves the rest to Generera', () => {

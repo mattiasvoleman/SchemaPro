@@ -68,6 +68,11 @@ export interface BoardPostView {
   /** Why no lesson of the post can be placed, or null when one can. */
   cannotPlace: 'BLOCK' | null;
   parts: BoardPartView[];
+  /**
+   * The key of the post's rows as they stand (rowsKeyOf): sent back as `baseKey` on the PUT, so that a write made on top
+   * of a list somebody has changed since is refused (409 REQUIREMENT_PLACEMENTS_STALE). The same for every post with no rows.
+   */
+  rowsKey: string;
 }
 
 /** What the count reads of a post. */
@@ -126,8 +131,15 @@ export function coveringLocksOf(post: BoardPost, kept: readonly KeptForCount[]):
 /**
  * One post's lessons, counted. `locks` are the covering locks (coveringLocksOf),
  * `rows` the post's förläggningar; the post is read as Generera reads it.
+ * `rowsKey` is the key of the rows as stored (placement-rows-key.ts), which a
+ * write names to say what it is made on top of.
  */
-export function boardPostOf(post: BoardPost, locks: readonly TaughtLesson[], rows: readonly PlacementShape[]): BoardPostView {
+export function boardPostOf(
+  post: BoardPost,
+  locks: readonly TaughtLesson[],
+  rows: readonly PlacementShape[],
+  rowsKey: string,
+): BoardPostView {
   const shared = hasShares(post);
   const demand = demandLeftOf(post, locks, placedByRowsOf(post, rows));
   const all = lessonTeachersOf(post);
@@ -160,6 +172,7 @@ export function boardPostOf(post: BoardPost, locks: readonly TaughtLesson[], row
     endDate: dayOf(post.endDate),
     cannotPlace: post.blockId !== null ? 'BLOCK' : null,
     parts,
+    rowsKey,
   };
 }
 

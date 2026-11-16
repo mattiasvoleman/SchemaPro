@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import request from 'supertest';
 import { Role } from '../src/auth/enums/role.enum';
+import { rowsKeyOf } from '../src/requirement-placements/placement-rows-key';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 
 /**
@@ -234,8 +235,31 @@ describe('Förlagda poster (e2e)', () => {
     it('removes every row on an empty list', async () => {
       placements()['findMany']!.mockResolvedValue([]);
       const response = await put({ placements: [] }).expect(200);
-      expect(response.body).toEqual({ placements: [], verdicts: [] });
+      expect(response.body).toEqual({ placements: [], verdicts: [], rowsKey: rowsKeyOf([]) });
       expect(placements()['createMany']).not.toHaveBeenCalled();
+    });
+
+    describe('on top of what the client read (baseKey)', () => {
+      it('answers the key of the rows it wrote, and writes on a base that holds', async () => {
+        const stored = row();
+        const response = await put({ placements: [body()], baseKey: rowsKeyOf([stored]) }).expect(200);
+        expect(response.body.rowsKey).toBe(rowsKeyOf([stored]));
+        expect(placements()['createMany']).toHaveBeenCalledTimes(1);
+      });
+
+      it('answers a list somebody wrote since with 409, its own code and the post in flat params, which the filter forwards, and writes nothing', async () => {
+        const response = await put({ placements: [body()], baseKey: rowsKeyOf([row({ id: '88888888-8888-4888-8888-888888888888' })]) }).expect(409);
+        expect(response.body.code).toBe('REQUIREMENT_PLACEMENTS_STALE');
+        expect(response.body.params).toEqual({ requirementId: POST_ID });
+        expect(placements()['deleteMany']).not.toHaveBeenCalled();
+        expect(placements()['createMany']).not.toHaveBeenCalled();
+      });
+
+      it('refuses a key that is not the key a read gives, with 400, before it reads anything', async () => {
+        await put({ placements: [body()], baseKey: 'nope' }).expect(400);
+        await put({ placements: [body()], baseKey: 7 }).expect(400);
+        expect(placements()['deleteMany']).not.toHaveBeenCalled();
+      });
     });
 
     it('refuses what the DTO does not allow, writing nothing', async () => {

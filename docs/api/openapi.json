@@ -32512,6 +32512,9 @@
             "items": {
               "$ref": "#/components/schemas/PlacementInputDto"
             }
+          },
+          "baseKey": {
+            "type": "string"
           }
         },
         "required": [

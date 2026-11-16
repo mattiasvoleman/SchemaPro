@@ -40,7 +40,8 @@ import {
   type PlacementRefusalReason,
   type PlacementVerdict,
 } from './placement-judge';
-import { placementRefusedConflict } from './placement-refusal';
+import { placementRefusedConflict, placementsStaleConflict } from './placement-refusal';
+import { rowsKeyOf } from './placement-rows-key';
 
 /** One förlagd lektion as the API states it (the dialog's row and the timplan's märke). */
 export interface RequirementPlacementView {
@@ -71,6 +72,11 @@ export interface PlacementVerdictView {
 export interface RequirementPlacementsResponse {
   placements: RequirementPlacementView[];
   verdicts: PlacementVerdictView[];
+  /**
+   * The key of these rows (rowsKeyOf): what a client sends back as `baseKey` to say that its next write is made on top of
+   * them. After a PUT it is the key of the rows just written, so that a client can chain its writes without reading again.
+   */
+  rowsKey: string;
 }
 
 /** Where a lesson stands, as a request states it or a stored row has it, and whose it is on a shared post. */
@@ -187,6 +193,20 @@ function viewOf(row: StoredView): RequirementPlacementView {
   };
 }
 
+/** A stored row as the key reads it (placement-rows-key.ts): its columns and its id, the start as a time of day. */
+type KeyedRow = Parameters<typeof rowsKeyOf>[0][number];
+
+const keyedOf = (row: StoredView): KeyedRow => ({
+  id: row.id,
+  requirementId: row.requirementId,
+  dayOfWeek: row.dayOfWeek,
+  startTime: row.startTime,
+  minutes: row.minutes,
+  roomId: row.roomId,
+  recurrence: row.recurrence,
+  teacherId: row.teacherId,
+});
+
 const slotOf = (row: StoredView): PlacementSlot => ({
   dayOfWeek: row.dayOfWeek,
   startMinutes: minutesOfClock(row.startTime),
@@ -237,7 +257,7 @@ export class RequirementPlacementsService {
         orderBy: [...VIEW_ORDER],
       });
       const verdicts = await this.judge(tx, user, post, rows.map(slotOf));
-      return { placements: rows.map(viewOf), verdicts };
+      return { placements: rows.map(viewOf), verdicts, rowsKey: rowsKeyOf(rows.map(keyedOf)) };
     });
   }
 
@@ -293,10 +313,14 @@ export class RequirementPlacementsService {
       }));
       const postById = new Map(posts.map((post) => [post.id, post]));
       const slotsOf = new Map<string, PlacementSlot[]>();
+      const keyedOfPost = new Map<string, KeyedRow[]>();
       for (const row of rows) {
         const list = slotsOf.get(row.requirementId);
         if (list) list.push(slotOf(row));
         else slotsOf.set(row.requirementId, [slotOf(row)]);
+        const keyed = keyedOfPost.get(row.requirementId);
+        if (keyed) keyed.push(keyedOf(row));
+        else keyedOfPost.set(row.requirementId, [keyedOf(row)]);
       }
       const locksByPost = new Map(posts.map((post) => [post.id, coveringLocksOf(boardPostShape(post), kept)]));
 
@@ -330,7 +354,9 @@ export class RequirementPlacementsService {
       return {
         academicYearId,
         placements,
-        posts: posts.map((post) => boardPostOf(boardPostShape(post), locksByPost.get(post.id) ?? [], slotsOf.get(post.id) ?? [])),
+        posts: posts.map((post) =>
+          boardPostOf(boardPostShape(post), locksByPost.get(post.id) ?? [], slotsOf.get(post.id) ?? [], rowsKeyOf(keyedOfPost.get(post.id) ?? [])),
+        ),
         kept: kept.map(keptViewOf),
         meals: mealRows.map(mealViewOf),
       };
@@ -379,6 +405,18 @@ export class RequirementPlacementsService {
         // then waits for the post, which a writer holding the post and waiting for the rows closes into a
         // deadlock (review of #298, LÅG-1).
         await lockPostForShares(tx, id);
+        // On top of what the client read (`baseKey`): asked of the rows as they stand NOW, with the post locked and
+        // before anything is deleted. Asked before the lock, two writers who both read the same list would both pass it
+        // and the second would silently replace the first's; asked after it, the second reads what the first committed
+        // (every statement sees the rows committed when it starts) and is refused. A write that gives no key is not asked.
+        if (dto.baseKey !== undefined) {
+          const current = await tx.teachingRequirementPlacement.findMany({
+            where: { requirementId: id },
+            select: VIEW_SELECT,
+            orderBy: [...VIEW_ORDER],
+          });
+          if (rowsKeyOf(current.map(keyedOf)) !== dto.baseKey) throw placementsStaleConflict(id);
+        }
         // The post's rows are replaced as one list: the old ones go and the new ones are one INSERT, so the
         // trigger, which judges the post's rows when each statement is done, sees the whole set (a pair is two
         // rows). Flat createMany, never a nested create (it drops schoolId at runtime).
@@ -405,7 +443,11 @@ export class RequirementPlacementsService {
           select: VIEW_SELECT,
           orderBy: [...VIEW_ORDER],
         });
-        return { placements: written.map(viewOf), verdicts: written.map((_, index) => ({ index, ok: true })) };
+        return {
+          placements: written.map(viewOf),
+          verdicts: written.map((_, index) => ({ index, ok: true })),
+          rowsKey: rowsKeyOf(written.map(keyedOf)),
+        };
       });
     } catch (error) {
       rethrowPrismaError(error);

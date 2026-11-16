@@ -1,5 +1,11 @@
 import type { PlacementRefusalReason } from './placement-judge';
-import { placementRefusalText, placementRefusedConflict, REQUIREMENT_PLACEMENT_REFUSED } from './placement-refusal';
+import {
+  placementRefusalText,
+  placementRefusedConflict,
+  placementsStaleConflict,
+  REQUIREMENT_PLACEMENT_REFUSED,
+  REQUIREMENT_PLACEMENTS_STALE,
+} from './placement-refusal';
 
 const other = { otherKind: 'LESSON', className: '7B', subjectName: 'Matematik', day: 2, start: '10:30', end: '11:30' };
 
@@ -41,5 +47,17 @@ describe('placementRefusedConflict', () => {
   it('carries a reason without figures as index and reason alone', () => {
     const response = placementRefusedConflict({ index: 0, ok: false, reason: 'LUNCH' }).getResponse() as { params: unknown };
     expect(response.params).toEqual({ index: 0, reason: 'LUNCH' });
+  });
+});
+
+describe('placementsStaleConflict', () => {
+  it('is a 409 with its own code and flat params naming the post', () => {
+    const conflict = placementsStaleConflict('post-1');
+    expect(conflict.getStatus()).toBe(409);
+    expect(conflict.getResponse()).toEqual({
+      message: 'Postens förläggningar har ändrats sedan du läste dem. Läs om dem och försök igen.',
+      code: REQUIREMENT_PLACEMENTS_STALE,
+      params: { requirementId: 'post-1' },
+    });
   });
 });
