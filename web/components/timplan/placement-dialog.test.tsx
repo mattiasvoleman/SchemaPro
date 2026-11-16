@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import type { LessonShare } from "@/lib/lesson-shares";
+import { placementsOfKey } from "@/lib/requirement-placements-api";
 import type { TeachingRequirement } from "@/lib/types";
 import sv from "@/messages/sv.json";
 import { PlacementDialog } from "./placement-dialog";
@@ -135,7 +136,7 @@ function renderDialog(requirement: TeachingRequirement = post(), shares?: readon
       />
     </QueryClientProvider>,
   );
-  return { invalidate, onOpenChange, user: userEvent.setup() };
+  return { client, invalidate, onOpenChange, user: userEvent.setup() };
 }
 
 /** The dialog once its rows have been read. */
@@ -544,6 +545,34 @@ describe("on top of what it read (review of #326, MEDEL-1)", () => {
     await user.click(saveButton());
     await waitFor(() => expect(state.put).toHaveBeenCalled());
     expect(state.put.mock.calls[0]![1]).toMatchObject({ baseKey: "0123456789abcdef" });
+  });
+
+  // Review of #326, round 2, MEDEL-1: the focus test above never reads again (the dialog asks for no refetch on focus), so it
+  // cannot tell the key of the form's rows from the key of the latest read. A read made again does (a reconnect, an
+  // invalidation in the tab): the form still holds the rows it opened with, and the new key is another list's.
+  it("sends the key of the rows the form holds also when the read is made again while the dialog is open", async () => {
+    answer([stored()], undefined, "0123456789abcdef");
+    const { client, user } = await opened();
+    // somebody else wrote the post; the read now gives their list and their key
+    state.get.mockResolvedValue({
+      placements: [stored({ id: "p9", dayOfWeek: 4 })],
+      verdicts: [{ index: 0, ok: true }],
+      rowsKey: "fedcba9876543210",
+    });
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: placementsOfKey("r-sl") });
+    });
+    await waitFor(() => expect(state.get.mock.calls.length).toBeGreaterThan(1));
+
+    await user.click(saveButton());
+
+    await waitFor(() => expect(state.put).toHaveBeenCalled());
+    // The form holds Tuesday (what it opened with), not the other's Thursday: the key of the new list on top of those rows
+    // would write over the other's list.
+    expect(state.put.mock.calls[0]![1]).toMatchObject({
+      placements: [{ dayOfWeek: 2, startTime: "10:00" }],
+      baseKey: "0123456789abcdef",
+    });
   });
 
   it("sends none when the read gave none (a gateway older than the key), and the body is what it was", async () => {
