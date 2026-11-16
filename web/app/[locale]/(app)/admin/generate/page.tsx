@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -55,7 +55,15 @@ import {
 } from "@/components/schedule/planning-year";
 import { LunchLocksNote, PeriodNote } from "@/components/schedule/period-note";
 import { CandidatesSection, candidatesHref } from "./candidates-section";
+import { RefusalLink } from "./refusal-link";
+import { placementLinkOfRefusal } from "@/lib/placement-link";
 import { useScheduleCandidates } from "./use-schedule-candidates";
+
+/**
+ * The row before a run ("N lektioner ligger fast") reads the week's board, which nothing on this page needs to draw: fetched
+ * after the first drawing, as the board's own read is, so that it costs the page's first load nothing (A3).
+ */
+const PlacedRow = lazy(() => import("./placed-row").then((module) => ({ default: module.PlacedRow })));
 
 /**
  * How long the gateway counts a PENDING or RUNNING job as running when it
@@ -122,6 +130,8 @@ export default function GeneratePage() {
    * activated is not the one the staffing page opens on by itself, and a
    * proposal applied there would staff the wrong year's rows.
    */
+  /** The läsår a link to the week names: only when it is not the active one, as the grundschema's own link writes it. */
+  const linkYearId = year && !year.isActive ? year.id : null;
   const staffingHref = (section: "unstaffed" | "propose") =>
     `/admin/staffing${year ? `?year=${encodeURIComponent(year.id)}` : ""}#${section}`;
   /*
@@ -717,6 +727,9 @@ export default function GeneratePage() {
                 </span>
               </p>
             ) : null}
+            <Suspense fallback={null}>
+              <PlacedRow yearId={year?.id ?? null} yearIsActive={year?.isActive ?? true} running={isRunning} />
+            </Suspense>
             <Button
               className="w-full sm:w-auto"
               disabled={!canRun || isRunning || candidateRunActive}
@@ -979,6 +992,10 @@ export default function GeneratePage() {
                           })}
                         </p>
                         {/* Terminer: where in the läsår a week was counted, when it was one part of it. */}
+                        <RefusalLink
+                          href={placementLinkOfRefusal(job.errorParams, linkYearId)}
+                          sentence={engineText({ code: job.errorCode, message: job.error, params: job.errorParams })}
+                        />
                         <PeriodNote params={job.errorParams} />
                         {/* Klassens lunch: which parts of the läsår the locks are in, when in several. */}
                         <LunchLocksNote params={job.errorParams} />
@@ -1072,6 +1089,10 @@ export default function GeneratePage() {
                         {/* Foreground, not muted: muted text on the notice's
                             muted surface falls under 4.5:1. */}
                         <p>{engineText(conflict)}</p>
+                        <RefusalLink
+                          href={conflict.category === "PLACEMENT" ? placementLinkOfRefusal(conflict.params, linkYearId) : null}
+                          sentence={engineText(conflict)}
+                        />
                         <LunchLocksNote params={conflict.params} />
                         {conflict.resourceNames && conflict.resourceNames.length > 0 ? (
                           <p className="font-medium">{conflict.resourceNames.join(", ")}</p>

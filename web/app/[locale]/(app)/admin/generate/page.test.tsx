@@ -55,6 +55,9 @@ const state = vi.hoisted(() => ({
   candidates: undefined as unknown,
   /** GET /lunch-settings as useLunchSettings answers: Skolregler, null = none defined. */
   lunch: null as unknown,
+  /** The week's board as the row before a run reads it (A3); undefined = not read, or failed. */
+  placementBoard: undefined as unknown,
+  placementBoardFor: [] as (string | null)[],
 }));
 
 const ACTIVE = {
@@ -115,6 +118,13 @@ vi.mock("@/lib/queries", () => ({
       : { data: state.history, isLoading: false, isError: state.historyFailed, refetch: historyRefetch };
   },
   useLunchSettings: () => ({ data: state.lunch }),
+}));
+
+vi.mock("@/lib/placement-board-queries", () => ({
+  usePlacementBoard: (yearId: string | null) => {
+    state.placementBoardFor.push(yearId);
+    return { data: state.placementBoard };
+  },
 }));
 
 vi.mock("@/lib/staffing-queries", () => ({
@@ -197,6 +207,8 @@ beforeEach(() => {
   state.untranslated = [];
   state.candidates = undefined;
   state.lunch = null;
+  state.placementBoard = undefined;
+  state.placementBoardFor = [];
   state.groups = [
     { id: "g-41", academicYearId: "y-1", name: "4.1", kind: "CLASS", gradeLevel: 4 },
     { id: "g-sl1", academicYearId: "y-1", name: "4sl1", kind: "TEACHING_GROUP", gradeLevel: null },
@@ -1732,6 +1744,206 @@ describe("Schemaförslag beside Generera (design §6)", () => {
           "scheduleCandidates.jobErrors.GENERATE_STALE_PARTS(scheduleCandidates.parts.rules och somethingNew)",
         ),
       ).toBeInTheDocument();
+    });
+  });
+});
+
+
+/*
+ * Förläggningar, back to the week (A3): the row before a run says how many lessons lie fixed and how many of them no longer hold,
+ * and a refusal that names a förläggning links to its card. The links are built from the ids the gateway puts in a line's params
+ * (lib/placement-link.contract.test.ts holds them to the gateway's own lines); here the page is held to what it draws.
+ */
+describe("förläggningar: the way back to the week", () => {
+  const board = (placed: number[], failing = 0, blocks?: unknown) => ({
+    academicYearId: "y-1",
+    posts: placed.map((n, index) => ({ id: `p-${index}`, parts: [{ placed: n }] })),
+    placements: Array.from({ length: Math.max(failing, 1) }, (_, index) => ({ verdict: { ok: index >= failing } })),
+    ...(blocks ? { blocks } : {}),
+  });
+  const line = () => screen.queryByTestId("generate-placed");
+  const runButton = () => screen.getByRole("button", { name: /generate\.run/ });
+  const refusal = (conflicts: unknown[]) => {
+    state.job = {
+      id: "job-p",
+      status: "SUCCEEDED",
+      solverStatus: "INFEASIBLE",
+      conflictSummary: "1 placed lesson(s) can no longer stand.",
+      conflictSummaryCode: "PLACEMENTS_REFUSED_SUMMARY",
+      conflictSummaryParams: { count: 1 },
+      conflicts,
+      createdAt: "2026-11-16T10:00:00.000Z",
+    };
+  };
+  const placementLine = (params: Record<string, string | number>, over: Record<string, unknown> = {}) => ({
+    category: "PLACEMENT",
+    code: "PLACEMENT_CANNOT_STAND",
+    params: { requirement: "Matematik för 7A", room: "A12", day: 3, start: "10:00", end: "11:00", reason: "TEACHER", block: "NO_BLOCK", ...params },
+    message: "A placed lesson cannot stand.",
+    resourceNames: [],
+    ...over,
+  });
+  const hrefOf = (element: HTMLElement) => {
+    const href = element.getAttribute("href")!;
+    return { path: href.split("?")[0], query: Object.fromEntries(new URLSearchParams(href.split("?")[1] ?? "")) };
+  };
+
+  describe("the row before a run", () => {
+    it("says how many lessons lie fixed, with a way to the week for the läsår generated", async () => {
+      state.placementBoard = board([2, 3]);
+      render(<GeneratePage />);
+      const row = await screen.findByTestId("generate-placed");
+      expect(row).toHaveTextContent("generate.placed.fixed(5)");
+      const link = within(row).getByRole("link", { name: "generate.placed.toWeek" });
+      expect(hrefOf(link)).toEqual({ path: "/admin/placements", query: {} });
+      expect(within(row).queryByTestId("generate-placed-failing")).not.toBeInTheDocument();
+      expect(state.placementBoardFor.at(-1)).toBe("y-1");
+    });
+
+    it("names the läsår in the link when it is not the active one, as the grundschema's link does", async () => {
+      state.years = [ACTIVE, NEXT];
+      window.history.replaceState(null, "", "/sv/admin/generate?year=y-2");
+      state.placementBoard = board([1]);
+      render(<GeneratePage />);
+      const row = await screen.findByTestId("generate-placed");
+      expect(hrefOf(within(row).getByRole("link"))).toEqual({ path: "/admin/placements", query: { year: "y-2" } });
+      window.history.replaceState(null, "", "/sv/admin/generate");
+    });
+
+    it("says how many no longer hold, in the week's own sentence, and the run is not held back by it", async () => {
+      const without = render(<GeneratePage />);
+      const wasDisabled = (runButton() as HTMLButtonElement).disabled;
+      without.unmount();
+      state.placementBoard = board([3], 2);
+      render(<GeneratePage />);
+      const row = await screen.findByTestId("generate-placed");
+      expect(within(row).getByTestId("generate-placed-failing")).toHaveTextContent("generate.placed.failing(2)");
+      // A help and never a gate: the button is exactly as enabled as it was with no row at all.
+      expect((runButton() as HTMLButtonElement).disabled).toBe(wasDisabled);
+    });
+
+    it("counts a block's lesson once for each of its rows with a verdict that fails", async () => {
+      state.placementBoard = board([2], 1, [{ rows: [{ verdicts: [{ ok: true }, { ok: false }] }, { verdicts: [{ ok: true }] }] }]);
+      render(<GeneratePage />);
+      expect(await screen.findByTestId("generate-placed-failing")).toHaveTextContent("generate.placed.failing(2)");
+    });
+
+    it("draws nothing with no förläggning: no row, no link", async () => {
+      state.placementBoard = board([0, 0]);
+      render(<GeneratePage />);
+      await waitFor(() => expect(state.placementBoardFor.length).toBeGreaterThan(0));
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(line()).not.toBeInTheDocument();
+    });
+
+    it("draws nothing for a read that failed or has not come, and keeps every other part of the page", async () => {
+      state.placementBoard = undefined;
+      render(<GeneratePage />);
+      await waitFor(() => expect(state.placementBoardFor.length).toBeGreaterThan(0));
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(line()).not.toBeInTheDocument();
+      expect(runButton()).toBeInTheDocument();
+    });
+
+    it("reads nothing for a page with no year yet", async () => {
+      state.years = [];
+      render(<GeneratePage />);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(state.placementBoardFor.filter((id) => id !== null)).toEqual([]);
+      expect(line()).not.toBeInTheDocument();
+    });
+  });
+
+  describe("a refusal that names a förläggning", () => {
+    it("leads with a link to its card under the sentence: the post, the day and the start the gateway says", () => {
+      refusal([placementLine({ postId: "post-1", day: 3, start: "10:00" })]);
+      render(<GeneratePage />);
+      const link = screen.getByRole("link", { name: /generate.placed.refusalLinkLabel/ });
+      expect(link).toHaveTextContent("generate.placed.refusalLink");
+      expect(hrefOf(link)).toEqual({ path: "/admin/placements", query: { post: "post-1", day: "3", start: "10:00" } });
+    });
+
+    it("is named by the sentence it is about: a probe can list a hundred of them", () => {
+      refusal([
+        placementLine({ postId: "post-1", day: 3, start: "10:00" }),
+        placementLine({ postId: "post-2", day: 4, start: "13:00", requirement: "Svenska för 7B" }),
+      ]);
+      render(<GeneratePage />);
+      const links = screen.getAllByRole("link", { name: /generate.placed.refusalLinkLabel/ });
+      expect(links).toHaveLength(2);
+      expect(links[0]!.getAttribute("aria-label")).not.toBe(links[1]!.getAttribute("aria-label"));
+      expect(links[1]!.getAttribute("aria-label")).toContain("engineMessages.PLACEMENT_CANNOT_STAND");
+    });
+
+    it("carries the block for a block's lesson, and the läsår when it is not the active one", () => {
+      state.years = [ACTIVE, NEXT];
+      window.history.replaceState(null, "", "/sv/admin/generate?year=y-2");
+      refusal([placementLine({ postId: "member-1", blockId: "block-1", day: 4, start: "13:15" })]);
+      render(<GeneratePage />);
+      expect(hrefOf(screen.getByRole("link", { name: /generate.placed.refusalLinkLabel/ }))).toEqual({
+        path: "/admin/placements",
+        query: { year: "y-2", post: "member-1", day: "4", start: "13:15", block: "block-1" },
+      });
+      window.history.replaceState(null, "", "/sv/admin/generate");
+    });
+
+    it("draws no link for a line stored before the ids, and nothing else about it changes", () => {
+      refusal([placementLine({})]);
+      render(<GeneratePage />);
+      expect(screen.queryByRole("link", { name: /generate.placed.refusalLinkLabel/ })).not.toBeInTheDocument();
+      expect(screen.getByText(/^engineMessages\.PLACEMENT_CANNOT_STAND\(/)).toBeInTheDocument();
+    });
+
+    it("draws no link for a line of another category, even one that has the ids", () => {
+      refusal([placementLine({ postId: "post-1", day: 3, start: "10:00" }, { category: "AVAILABILITY" })]);
+      render(<GeneratePage />);
+      expect(screen.queryByRole("link", { name: /generate.placed.refusalLinkLabel/ })).not.toBeInTheDocument();
+    });
+
+    it("names the post only when the day is none of the school week (a lesson placed on a Saturday): the list opens on it", () => {
+      refusal([placementLine({ postId: "post-1", day: 6, start: "10:00" })]);
+      render(<GeneratePage />);
+      expect(hrefOf(screen.getByRole("link", { name: /generate.placed.refusalLinkLabel/ }))).toEqual({
+        path: "/admin/placements",
+        query: { post: "post-1" },
+      });
+    });
+
+    it("links a run that failed with the engine's own refusal of a pinned lesson, from the error's params", () => {
+      state.job = {
+        id: "job-e",
+        status: "FAILED",
+        solverStatus: null,
+        lessonsGenerated: 0,
+        conflictSummary: null,
+        conflicts: [],
+        error: "A pinned lesson is outside the frame.",
+        errorCode: "PLACED_LESSON_OUTSIDE_FRAME",
+        errorParams: { requirement: "Idrott för 7A", day: 2, start: "07:00", end: "08:00", postId: "post-9" },
+        createdAt: "2026-11-16T10:00:00.000Z",
+      };
+      render(<GeneratePage />);
+      expect(hrefOf(screen.getByRole("link", { name: /generate.placed.refusalLinkLabel/ }))).toEqual({
+        path: "/admin/placements",
+        query: { post: "post-9", day: "2", start: "07:00" },
+      });
+    });
+
+    it("draws no link under a failed run that names no post", () => {
+      state.job = {
+        id: "job-f",
+        status: "FAILED",
+        solverStatus: null,
+        lessonsGenerated: 0,
+        conflictSummary: null,
+        conflicts: [],
+        error: "No lunch break fits.",
+        errorCode: "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK",
+        errorParams: { group: "4A", minutes: 30 },
+        createdAt: "2026-11-16T10:00:00.000Z",
+      };
+      render(<GeneratePage />);
+      expect(screen.queryByRole("link", { name: /generate.placed.refusalLinkLabel/ })).not.toBeInTheDocument();
     });
   });
 });
