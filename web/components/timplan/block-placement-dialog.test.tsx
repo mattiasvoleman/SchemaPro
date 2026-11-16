@@ -842,12 +842,13 @@ describe("for a screen reader and the keyboard", () => {
   it("starts at the first lesson's first field once the lessons are read, or at the button that adds one when there is none", async () => {
     answer([stored(1)]);
     await opened();
-    expect(field(rowNamed(1), "day")).toHaveFocus();
+    // The focus is set by an effect once the lessons are drawn, one render after the read: waited for, as a loaded machine draws it late.
+    await waitFor(() => expect(field(rowNamed(1), "day")).toHaveFocus());
   });
 
   it("starts at the button that adds a lesson when none is placed", async () => {
     await opened();
-    expect(screen.getByRole("button", { name: "add" })).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole("button", { name: "add" })).toHaveFocus());
   });
 
   it("closes on Escape", async () => {
