@@ -15,9 +15,16 @@
  *   race 4  two placements of a block with ONE lesson are written at once: exactly one is refused (BP409 COUNT), which the rule
  *           of the members (TB409) cannot see for it, since no member changes.
  *
- * Each race is run ten times (RACES_N) and no iteration may end in a deadlock (40P01) or a serialization failure. A last hunt
- * (HUNT_N attempts) runs a member's change of lessons against a share written for the same member, two paths that take the same two
- * locks (the post's row, the block's row) in the opposite order, and reports what it finds.
+ * Each race is run ten times (RACES_N) and no iteration may end in a deadlock (40P01) or a serialization failure.
+ *
+ * Two hunts then ask a question the races do not: do two paths that take the same two rows in the OPPOSITE order deadlock? Each is a tight
+ * loop (HUNT_N attempts) over one planted world, as sessions of the owner with a short deadlock_timeout (the locks are the same whoever
+ * asks; a deadlock is found in 20 ms instead of a second):
+ *
+ *   hunt 1  a member's change of lessons (the post's row, then TB409: the block FOR UPDATE) against a share written for the same member (BP409:
+ *           the block FOR NO KEY UPDATE, then TS409: the post FOR NO KEY UPDATE);
+ *   hunt 2  one post moves from block X to block Y while another moves from Y to X (TB409: the block it comes to FOR UPDATE, then the leave
+ *           trigger: the block it leaves FOR NO KEY UPDATE).
  *
  *   DATABASE_URL='postgresql://app_authenticated:app_authenticated_local@127.0.0.1:5617/schemapro' \
  *   PROBE_OWNER_URL='postgresql://postgres:postgres_local@127.0.0.1:5617/schemapro' \
@@ -43,7 +50,7 @@ import { Client } from 'pg';
 
 const SLUG = 'probe-forlagg-block-lasen';
 const RACES_N = Number(process.env['RACES_N'] ?? 10);
-const HUNT_N = Number(process.env['HUNT_N'] ?? 60);
+const HUNT_N = Number(process.env['HUNT_N'] ?? 300);
 const FIT = 'app.teaching_block_placements_fit()';
 const LEAVE = 'app.teaching_block_placement_rooms_leave()';
 const TB409 = 'app.teaching_block_members_agree()';
@@ -312,6 +319,41 @@ const RACES: Record<string, RaceSpec & { refusalReason?: string; mustRefuseOne: 
 };
 
 // ---------------------------------------------------------------------------
+// The hunts: a tight loop over one world
+// ---------------------------------------------------------------------------
+
+async function bareSide(c: Client, delay: number, sql: string, params: unknown[]): Promise<Outcome> {
+  await sleep(delay);
+  try {
+    await c.query('BEGIN');
+    await c.query(sql, params);
+    await c.query('COMMIT');
+    return { ok: true };
+  } catch (error) {
+    await c.query('ROLLBACK').catch(() => undefined);
+    const e = error as { code?: string; detail?: string; message?: string };
+    return { ok: false, code: e.code, reason: /reason=([A-Z_]+)/.exec(e.detail ?? '')?.[1], message: e.message };
+  }
+}
+
+async function hunt(h1: Client, h2: Client, n: number, a: (i: number) => [string, unknown[]], b: (i: number) => [string, unknown[]], reset: (i: number) => Promise<void>): Promise<Tally> {
+  const t: Tally = { iterations: 0, bad: 0, deadlocks: 0, otherErrors: [], refusals: new Map(), oneRefusal: 0, noRefusal: 0 };
+  for (let i = 0; i < n; i += 1) {
+    // The two statements start within a few milliseconds of each other, in either order.
+    const jitter = Math.floor(Math.random() * 4);
+    const [ra, rb] = await Promise.all([bareSide(h1, i % 3 === 0 ? jitter : 0, ...a(i)), bareSide(h2, i % 3 === 0 ? 0 : jitter, ...b(i))]);
+    t.iterations += 1;
+    for (const r of [ra, rb]) {
+      if (r.ok) continue;
+      if (r.code === '40P01') t.deadlocks += 1;
+      else t.otherErrors.push(`${r.code ?? '?'} ${r.message ?? ''}`.slice(0, 160));
+    }
+    await reset(i);
+  }
+  return t;
+}
+
+// ---------------------------------------------------------------------------
 // The mutants: the functions as the migration made them, with the lock taken out
 // ---------------------------------------------------------------------------
 
@@ -437,22 +479,48 @@ async function main(): Promise<void> {
           return tallyText(t);
         });
       }
-      // The hunt: a member's change of lessons against a share written for the same member. The first path locks the post's row (the UPDATE)
-      // and then the block's (TB409); the second locks the block's row (BP409) and then the post's (the share's own rule, TS409).
-      await check(`hunt: a member's lessons change while a share is written for it, ${HUNT_N} attempts, no deadlock`, async () => {
-        const spec: RaceSpec = {
-          label: 'hunt',
-          plant: (o, c) => plantBlock(o, c, 'hnt', { members: 2, lessons: 3 }),
-          a: (_ctx, w) => async (c) => void (await c.query(`UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 4 WHERE "blockId" = $1`, [w.block])),
-          b: (ctx2, w) => async (c) =>
-            void (await c.query(`INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES ($1, $2, $3, 1, 60, now())`, [ctx2.school, w.posts[0], ctx2.teacher])),
-          bad: async () => false,
-        };
-        const t = await race(owner, ctx, ca, cb, spec, HUNT_N, 0);
-        must(t.deadlocks === 0, `${t.deadlocks} of ${t.iterations} attempts ended in a deadlock (40P01): ${tallyText(t)}`);
-        must(t.otherErrors.length === 0, `an error that is no refusal: ${t.otherErrors.join(' | ')}`);
-        return tallyText(t);
-      });
+      // The hunts. Sessions of the owner with a short deadlock_timeout: the order the rows are locked in is the same whoever asks.
+      const h1 = new Client(pgConfig(process.env['PROBE_OWNER_URL'], 'PROBE_OWNER_URL'));
+      const h2 = new Client(pgConfig(process.env['PROBE_OWNER_URL'], 'PROBE_OWNER_URL'));
+      await Promise.all([h1.connect(), h2.connect()]);
+      try {
+        for (const h of [h1, h2]) await h.query(`SET deadlock_timeout = '20ms'`);
+        await check(`hunt 1: a member's lessons change while a share is written for the same member, ${HUNT_N} attempts, no deadlock`, async () => {
+          const w = await plantBlock(owner, ctx, 'hs', { members: 2, lessons: 3 });
+          const t = await hunt(
+            h1,
+            h2,
+            HUNT_N,
+            (i) => [`UPDATE "TeachingRequirements" SET "lessonsPerWeek" = $1 WHERE "blockId" = $2`, [i % 2 === 0 ? 4 : 3, w.block]],
+            () => [`INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES ($1, $2, $3, 1, 60, now())`, [ctx.school, w.posts[0], ctx.teacher]],
+            async () => void (await owner.query(`DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = ANY ($1::uuid[])`, [w.posts])),
+          );
+          must(t.deadlocks === 0, `${t.deadlocks} of ${t.iterations} attempts ended in a deadlock (40P01): the two paths take the post's row and the block's row in opposite orders`);
+          must(t.otherErrors.length === 0, `an error that is no deadlock: ${t.otherErrors.join(' | ')}`);
+          return `${t.iterations} attempts, no deadlock`;
+        });
+        await check(`hunt 2: two posts swap blocks at once, ${HUNT_N} attempts, no deadlock`, async () => {
+          const x = await plantBlock(owner, ctx, 'sx', { members: 1, lessons: 2 });
+          const y = await plantBlock(owner, ctx, 'sy', { members: 1, lessons: 2 });
+          const move = `UPDATE "TeachingRequirements" SET "blockId" = $1 WHERE id = $2`;
+          const t = await hunt(
+            h1,
+            h2,
+            HUNT_N,
+            () => [move, [y.block, x.posts[0]]],
+            () => [move, [x.block, y.posts[0]]],
+            async () => {
+              await owner.query(move, [x.block, x.posts[0]]);
+              await owner.query(move, [y.block, y.posts[0]]);
+            },
+          );
+          must(t.deadlocks === 0, `${t.deadlocks} of ${t.iterations} attempts ended in a deadlock (40P01): each takes the block it comes to and then the block it leaves, so the two take the two blocks in opposite orders`);
+          must(t.otherErrors.length === 0, `an error that is no deadlock: ${t.otherErrors.join(' | ')}`);
+          return `${t.iterations} attempts, no deadlock`;
+        });
+      } finally {
+        await Promise.all([h1.end(), h2.end()]);
+      }
     }
   } finally {
     await putBack().catch((error: unknown) => {
