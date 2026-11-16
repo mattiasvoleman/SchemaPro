@@ -583,17 +583,25 @@ export async function placementWeekChecks(owner: Client, api: PrismaService, mar
       assert.deepEqual(dialog.get(p11)!.verdicts.map((verdict) => verdict.reason), ['TEACHER'], 'the medlärare\'s lesson is a clash for the dialog');
       assert.deepEqual(board.placements.filter((entry) => entry.requirementId === p11).map((entry) => entry.verdict.reason), ['TEACHER'], 'and for the week');
 
-      // The save asks what the read asks: the same list is refused at its first row, and nothing is written; two rows fit three locks.
+      // The save asks what the read asks: four NEW rows are refused at the first, and nothing is written; two rows fit three locks.
+      // The four rows the post HAS are let stand and each is named (review of #326, MEDEL-2): the locks came after them.
       const before = (await placements.listOfPost(p10, a.users.schema)).rowsKey;
-      const refused = await placements.replace(p10, { placements: fourRows, baseKey: before } as never, a.users.schema).then(
+      const moved = fourRows.map((entry) => ({ ...entry, startTime: '09:05' }));
+      const refused = await placements.replace(p10, { placements: moved, baseKey: before } as never, a.users.schema).then(
         () => null,
         (error: unknown) => error,
       );
-      assert.ok(refused instanceof HttpException && refused.getStatus() === 409, 'the save let four rows through over three locks');
+      assert.ok(refused instanceof HttpException && refused.getStatus() === 409, 'the save let four new rows through over three locks');
       const body = refused.getResponse() as { code?: string; params?: { reason?: string; index?: number } };
       assert.deepEqual([body.code, body.params?.reason, body.params?.index], ['REQUIREMENT_PLACEMENT_REFUSED', 'OVER_DEMAND', 0]);
       assert.equal((await placements.listOfPost(p10, a.users.schema)).rowsKey, before, 'the refused save wrote');
-      const two = await placements.replace(p10, { placements: fourRows.slice(0, 2), baseKey: before } as never, a.users.schema);
+      const letStand = await placements.replace(p10, { placements: fourRows, baseKey: before } as never, a.users.schema);
+      assert.deepEqual(
+        letStand.verdicts.map((verdict) => verdict.reason),
+        ['OVER_DEMAND', 'OVER_DEMAND', 'OVER_DEMAND', 'OVER_DEMAND'],
+        'the four rows the post has were not named in the answer',
+      );
+      const two = await placements.replace(p10, { placements: fourRows.slice(0, 2), baseKey: letStand.rowsKey } as never, a.users.schema);
       assert.deepEqual(two.verdicts, [{ index: 0, ok: true }, { index: 1, ok: true }], 'two rows fit the five lessons beside three locks');
     });
   } finally {

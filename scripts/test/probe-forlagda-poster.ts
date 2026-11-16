@@ -99,7 +99,14 @@
  *         the key of a post with no rows is one for every post; a write with no
  *         key is last-writer-wins as it was (whole lists, never a mixture);
  *   fp-r  a write while Generera holds the year's regeneration lock is 409
- *         SCHEDULE_BUSY, with a key and without, and writes nothing.
+ *         SCHEDULE_BUSY, with a key and without, and writes nothing;
+ *   fp-s  a post with two rows that have stopped holding (the teacher made
+ *         unavailable) is mended one row at a time, the way the week does it
+ *         (review of #326, MEDEL-2): the real judge refuses a NEW row that does
+ *         not hold and lets a row the post has already stand, naming it in the
+ *         answer; a row let stand that another writer has removed before the
+ *         save takes the post's lock is 409 REQUIREMENT_PLACEMENTS_STALE
+ *         (a real second connection holds the lock while it is removed).
  *
  * A step that fails prints its FAIL line and the run goes on; the steps share
  * the world, so a failure early on may take later ones with it. The exit code
@@ -642,7 +649,11 @@ async function run(owner: Client, engine: EngineStub, app: INestApplicationConte
       const verdicts = await dialog();
       assert.equal(verdicts[0]?.ok, false, 'the dialog lets a lunch the school placed pass');
       assert.equal(verdicts[0]?.reason, 'LUNCH');
-      const refusal = await refusalOf(placements.replace(idrottPost, { placements: [placement] } as never, admin));
+      // The row the post has already is let stand and named in the answer (review of #326, MEDEL-2); it is the same row, so the
+      // save is not refused for it. A row put anywhere on the meal is a NEW row, and that is refused.
+      const letStand = await placements.replace(idrottPost, { placements: [placement] } as never, admin);
+      assert.deepEqual(letStand.verdicts, [{ index: 0, ok: false, reason: 'LUNCH' }], 'the row the post has was not named in the answer');
+      const refusal = await refusalOf(placements.replace(idrottPost, { placements: [{ ...placement, startTime: '10:05' }] } as never, admin));
       assert.equal(refusal.getStatus(), 409);
       const body = refusal.getResponse() as { code?: string; params?: Record<string, unknown> };
       assert.equal(body.code, 'REQUIREMENT_PLACEMENT_REFUSED');
@@ -966,6 +977,103 @@ async function run(owner: Client, engine: EngineStub, app: INestApplicationConte
     const done = await put(racePost, listA, read);
     assert.deepEqual(await storedOf(racePost), textOf(listA));
     assert.equal(done.rowsKey, await keyNow(racePost));
+  });
+
+  // -------------------------------------------------------------------------
+  // A post with two rows that have stopped holding (review of #326, MEDEL-2)
+  // -------------------------------------------------------------------------
+  const g7e = await group('FP 7E');
+  const t9 = await person('t9', 'TEACHER');
+  const mendPost = await post(g7e, await subject('FP Samhällskunskap'), t9.id, 3, 60);
+  const wed = { dayOfWeek: 3, startTime: '14:00', minutes: 60, roomId: null, recurrence: 'ALL_WEEKS' as const };
+  const thu = { dayOfWeek: 4, startTime: '14:00', minutes: 60, roomId: null, recurrence: 'ALL_WEEKS' as const };
+  const fri = { dayOfWeek: 5, startTime: '14:00', minutes: 60, roomId: null, recurrence: 'ALL_WEEKS' as const };
+  const verdictsOf = async (): Promise<string[]> => {
+    const answer = await placements.listOfPost(mendPost, admin);
+    return answer.placements.map((row, index) => `${row.dayOfWeek}:${answer.verdicts[index]!.ok ? 'ok' : answer.verdicts[index]!.reason}`);
+  };
+
+  await check('fp-s: two rows that have stopped holding are mended one at a time: a row removed or moved leaves the other named, not refused', async () => {
+    await put(mendPost, [wed, thu, fri]); // all three hold: the teacher is free
+    for (const day of [3, 4]) {
+      await owner.query(
+        `INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, "updatedAt")
+         VALUES ($1, 'TEACHER'::"ConstraintResource", $2, $3, '14:00', '15:00', 'UNAVAILABLE', now())`,
+        [s, t9.id, day],
+      );
+    }
+    assert.deepEqual(await verdictsOf(), ['3:AVAILABILITY', '4:AVAILABILITY', '5:ok'], 'the world: two rows do not hold');
+
+    // Removing the Wednesday row: the Thursday row is still on the post and still does not hold. It was refused before.
+    const removed = await put(mendPost, [thu, fri]);
+    assert.deepEqual(await storedOf(mendPost), textOf([thu, fri]));
+    assert.deepEqual(
+      removed.verdicts.map((verdict, index) => `${removed.placements[index]!.dayOfWeek}:${verdict.ok ? 'ok' : verdict.reason}`),
+      ['4:AVAILABILITY', '5:ok'],
+      'the answer does not name the row that stays',
+    );
+    assert.deepEqual(removed.verdicts[0], { index: 0, ok: false, reason: 'AVAILABILITY', params: { resource: 'TEACHER' } });
+    assert.equal(removed.rowsKey, await keyNow(mendPost));
+
+    // Moving the Friday row beside it (an ordinary change of the post): the Thursday row stays named, the moved one holds.
+    const moved = await put(mendPost, [thu, { ...fri, startTime: '15:00' }]);
+    assert.deepEqual(await verdictsOf(), ['4:AVAILABILITY', '5:ok']);
+    assert.deepEqual(moved.verdicts.map((verdict) => verdict.ok), [false, true]);
+
+    // Removing the other one: nothing left that does not hold.
+    const mended = await put(mendPost, [{ ...fri, startTime: '15:00' }]);
+    assert.deepEqual(mended.verdicts, [{ index: 0, ok: true }]);
+    assert.deepEqual(await storedOf(mendPost), textOf([{ ...fri, startTime: '15:00' }]));
+  });
+
+  await check('fp-s2: a row that is NEW and does not hold is refused at its index, writing nothing, and so is a row moved to a place that does not hold', async () => {
+    const before = await storedOf(mendPost);
+    const keyBefore = await keyNow(mendPost);
+    const friday = { ...fri, startTime: '15:00' };
+    for (const list of [[friday, wed], [{ ...friday, dayOfWeek: 4, startTime: '14:00' }]]) {
+      const outcome = await settle(put(mendPost, list, keyBefore));
+      assert.ok(!outcome.ok, 'a row that does not hold was written');
+      const error = outcome.error;
+      assert.ok(error instanceof HttpException, summarise(error));
+      assert.equal(error.getStatus(), 409);
+      const body = error.getResponse() as { code?: string; params?: { index?: number; reason?: string } };
+      assert.equal(body.code, 'REQUIREMENT_PLACEMENT_REFUSED', summarise(error));
+      assert.equal(body.params?.reason, 'AVAILABILITY');
+      assert.equal(body.params?.index, list.length === 2 ? 1 : 0, 'the refusal names another row than the new one');
+      assert.deepEqual(await storedOf(mendPost), before, 'the refused write changed the rows');
+      assert.equal(await keyNow(mendPost), keyBefore, 'the refused write changed the key');
+    }
+  });
+
+  await check('fp-s3: a row let stand that another writer removes before the save takes the post\'s lock is 409 REQUIREMENT_PLACEMENTS_STALE, and writes nothing', async () => {
+    // The world: Thursday does not hold, and the post has it (stored directly: a save would refuse it as a new row).
+    await owner.query(
+      `INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "updatedAt")
+       VALUES ($1, $2, 4, '14:00', 60, NULL, 'ALL_WEEKS', now())`,
+      [s, mendPost],
+    );
+    assert.deepEqual(await storedOf(mendPost), textOf([thu, { ...fri, startTime: '15:00' }]));
+    // Another connection holds the post's lock and, inside it, removes the Thursday row.
+    const hold = await holder();
+    await hold.query('BEGIN');
+    await hold.query(`SELECT id FROM "TeachingRequirements" WHERE id = $1 FOR NO KEY UPDATE`, [mendPost]);
+    try {
+      // The save: Thursday let stand (it is in the list the post has), Friday moved. Judged, then queued at the lock.
+      const save = settle(put(mendPost, [thu, { ...fri, startTime: '16:00' }]));
+      await untilWaiters(1);
+      await hold.query(`DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = $1 AND "dayOfWeek" = 4`, [mendPost]);
+      await hold.query('COMMIT');
+      staleOf(await save, mendPost);
+    } finally {
+      await hold.query('ROLLBACK').catch(() => undefined);
+      await hold.end();
+    }
+    // Nothing of the save: the Friday row is where it was and Thursday is gone.
+    assert.deepEqual(await storedOf(mendPost), textOf([{ ...fri, startTime: '15:00' }]));
+    // And the same save, made again on what the post has, is a NEW row that does not hold, and is refused as such.
+    const again = await settle(put(mendPost, [thu, { ...fri, startTime: '15:00' }]));
+    assert.ok(!again.ok && again.error instanceof HttpException);
+    assert.equal(((again.error as HttpException).getResponse() as { code?: string }).code, 'REQUIREMENT_PLACEMENT_REFUSED');
   });
 }
 
