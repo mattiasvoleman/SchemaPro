@@ -1,0 +1,382 @@
+{
+  "readme": [
+    "Where the gateway's judge of a förläggning (placement-judge.ts judgePlacements) and the web's mirror of it (web/lib/placement-mirror.ts, the ghost under a drag) must agree.",
+    "Each case is a small world (`base` plus the case's `add`), one candidate row, and the judge's verdict on it. The verdicts are the REAL judge's, run against a real database",
+    "by scripts/test/probe-forlagg-spegel.ts (the adapter probe) and written back here with FORLAGG_SPEGEL_WRITE=1; the web's placement-mirror.contract.test.ts runs the same",
+    "worlds through the mirror. The mirror may be STRICTER than the judge and never milder, for the rules it has: where the judge refuses for TEACHER, ROOM, GROUP,",
+    "AVAILABILITY, FRAME, LUNCH, GRADE_RULE or SCHOOL_DAY the mirror refuses too. A case with `outsideMirror: true` is a rule the mirror does not have (other schools' bookings,",
+    "the post's demand, named pupils): there it is milder by design and the gateway answers at the drop. A case with `mirrorStricter: true` is one where the mirror refuses and the judge does not.",
+    "",
+    "World (names are keys; the database side makes ids of them, the web side uses the keys as ids):",
+    "  classes   [{key, grade}]                 home classes of the year (grade 4..9)",
+    "  teachers  [key]                          rooms [key]            subjects [key]",
+    "  pupils    [{key, class}]                 a pupil's home class",
+    "  groups    [{key, members: [pupil]}]      teaching groups (kind TEACHING_GROUP), whose members are pupils of other classes",
+    "  posts     [{key, class, subject, teacher, coTeacher?, minutes, lessons, recurrence?, startDate?, endDate?, shares?: [{teacher, lessons}]}]   timplansposter (recurrence defaults to ALL_WEEKS)",
+    "  kept      [{class | group, subject, teacher, coTeacher?, room?, day, start, minutes, recurrence?, startDate?, endDate?, extraClasses?: [class], locked?: true}]   lessons Generera keeps",
+    "  rows      [{post, day, start, minutes, room?, recurrence?, teacher?}]   förläggningar of the posts, already stored (a pinned one has no room)",
+    "  unavailable [{kind: teacher|room|class|grade, key?, grades?: [min, max], day, start, end}]   UNAVAILABLE constraints (a grade rule names grades, not a key)",
+    "  frames    [{grades: [min, max], start, end}]                  ramtider for every weekday",
+    "  meals     [{class, day, start, end, generated?: true}]         lunches the school placed by hand; a `generated` one is a meal Generera laid, which the judge does not hold a row to (and the week's board does not carry)",
+    "Candidate: {post, day, start, minutes, room?, recurrence?, teacher?, replaces?}. `replaces` names a `rows` entry (by index) that the candidate is a move of: the stored",
+    "row is not beside it (the PUT replaces the whole list), and the mirror must not hold the lesson against its own old place.",
+    "Verdict: {ok: true} or {ok: false, reason}, the judge's reasons (placement-judge.ts PlacementRefusalReason)."
+  ],
+  "base": {
+    "classes": [
+      { "key": "7A", "grade": 7 },
+      { "key": "7B", "grade": 7 },
+      { "key": "4A", "grade": 4 }
+    ],
+    "teachers": ["anna", "bo", "cy"],
+    "rooms": ["A1", "A2"],
+    "subjects": ["ma", "sv", "id"],
+    "pupils": [],
+    "groups": [],
+    "posts": [
+      { "key": "P1", "class": "7A", "subject": "ma", "teacher": "anna", "minutes": 60, "lessons": 3 },
+      { "key": "P2", "class": "7B", "subject": "sv", "teacher": "bo", "minutes": 60, "lessons": 3 },
+      { "key": "P3", "class": "7A", "subject": "sv", "teacher": "bo", "minutes": 60, "lessons": 3 },
+      { "key": "P4", "class": "4A", "subject": "ma", "teacher": "anna", "minutes": 60, "lessons": 3 }
+    ],
+    "kept": [],
+    "rows": [],
+    "unavailable": [],
+    "frames": [],
+    "meals": []
+  },
+  "cases": [
+    {
+      "name": "an empty week holds a lesson",
+      "rule": "none",
+      "add": {},
+      "candidate": { "post": "P1", "day": 2, "start": "10:00", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the teacher has a lesson Generera keeps then",
+      "rule": "TEACHER",
+      "add": { "kept": [{ "class": "7B", "subject": "id", "teacher": "anna", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "TEACHER" }
+    },
+    {
+      "name": "the teacher's own lesson straight before is no clash (the end of one is the start of the next)",
+      "rule": "TEACHER",
+      "add": { "kept": [{ "class": "7B", "subject": "id", "teacher": "anna", "room": "A2", "day": 2, "start": "09:00", "minutes": 60, "locked": true }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:00", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the teacher has a förläggning of another post then",
+      "rule": "TEACHER",
+      "add": { "rows": [{ "post": "P4", "day": 2, "start": "10:00", "minutes": 60, "room": "A2" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "TEACHER" }
+    },
+    {
+      "name": "the teacher's förläggning of another post with no room is held as well",
+      "rule": "TEACHER",
+      "add": { "rows": [{ "post": "P4", "day": 2, "start": "10:00", "minutes": 60 }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "TEACHER" }
+    },
+    {
+      "name": "the post's own other row is in the way of the teacher too",
+      "rule": "TEACHER",
+      "add": { "rows": [{ "post": "P1", "day": 2, "start": "10:00", "minutes": 60, "room": "A2" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "TEACHER" }
+    },
+    {
+      "name": "a row that is moved is not in its own way",
+      "rule": "TEACHER",
+      "add": { "rows": [{ "post": "P1", "day": 2, "start": "10:00", "minutes": 60, "room": "A1" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:15", "minutes": 60, "room": "A1", "replaces": 0 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the medlärare is busy with a lesson Generera keeps",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "P1", "class": "7A", "subject": "ma", "teacher": "anna", "coTeacher": "cy", "minutes": 60, "lessons": 3 }],
+        "kept": [{ "class": "7B", "subject": "id", "teacher": "cy", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "TEACHER" }
+    },
+    {
+      "name": "the other lesson's medlärare is the post's teacher",
+      "rule": "TEACHER",
+      "add": { "kept": [{ "class": "7B", "subject": "id", "teacher": "bo", "coTeacher": "anna", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "TEACHER" }
+    },
+    {
+      "name": "the room is taken by a lesson Generera keeps",
+      "rule": "ROOM",
+      "add": { "kept": [{ "class": "7B", "subject": "id", "teacher": "cy", "room": "A1", "day": 2, "start": "10:00", "minutes": 60, "locked": true }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "ROOM" }
+    },
+    {
+      "name": "another room is free, and so is no room at all (the engine chooses it)",
+      "rule": "ROOM",
+      "add": { "kept": [{ "class": "7B", "subject": "id", "teacher": "cy", "room": "A1", "day": 2, "start": "10:00", "minutes": 60, "locked": true }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A2" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a förläggning with no room has no room to clash with",
+      "rule": "ROOM",
+      "add": { "kept": [{ "class": "7B", "subject": "id", "teacher": "cy", "room": "A1", "day": 2, "start": "10:00", "minutes": 60, "locked": true }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the room is taken by a förläggning of another post",
+      "rule": "ROOM",
+      "add": { "rows": [{ "post": "P2", "day": 2, "start": "10:00", "minutes": 60, "room": "A1" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "ROOM" }
+    },
+    {
+      "name": "the class has a lesson Generera keeps then",
+      "rule": "GROUP",
+      "add": { "kept": [{ "class": "7A", "subject": "sv", "teacher": "bo", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "GROUP" }
+    },
+    {
+      "name": "a lesson opened to a second class holds that class as well",
+      "rule": "GROUP",
+      "add": { "kept": [{ "class": "7B", "subject": "id", "teacher": "cy", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "extraClasses": ["7A"], "locked": true }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "GROUP" }
+    },
+    {
+      "name": "a teaching group that shares pupils with the class holds the class",
+      "rule": "GROUP",
+      "add": {
+        "pupils": [{ "key": "p1", "class": "7A" }],
+        "groups": [{ "key": "Ma7", "members": ["p1"] }],
+        "kept": [{ "group": "Ma7", "subject": "ma", "teacher": "cy", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "PUPILS" }
+    },
+    {
+      "name": "another class is free at the same time",
+      "rule": "GROUP",
+      "add": { "kept": [{ "class": "7B", "subject": "sv", "teacher": "bo", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "odd and even weeks share a slot, a teacher and a room",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "P1", "class": "7A", "subject": "ma", "teacher": "anna", "minutes": 60, "lessons": 3, "recurrence": "ODD_WEEKS" }],
+        "kept": [{ "class": "7B", "subject": "id", "teacher": "anna", "room": "A1", "day": 2, "start": "10:00", "minutes": 60, "recurrence": "EVEN_WEEKS", "locked": true }]
+      },
+      "candidate": { "post": "P1", "day": 2, "start": "10:00", "minutes": 60, "room": "A1", "recurrence": "ODD_WEEKS" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "odd weeks meet a lesson of every week",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "P1", "class": "7A", "subject": "ma", "teacher": "anna", "minutes": 60, "lessons": 3, "recurrence": "ODD_WEEKS" }],
+        "kept": [{ "class": "7B", "subject": "id", "teacher": "anna", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "post": "P1", "day": 2, "start": "10:00", "minutes": 60, "room": "A1", "recurrence": "ODD_WEEKS" },
+      "verdict": { "ok": false, "reason": "TEACHER" }
+    },
+    {
+      "name": "two lessons whose dates never meet (autumn and spring) share a slot",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "P1", "class": "7A", "subject": "ma", "teacher": "anna", "minutes": 60, "lessons": 3, "startDate": "2027-01-11" }],
+        "kept": [{ "class": "7B", "subject": "id", "teacher": "anna", "room": "A1", "day": 2, "start": "10:00", "minutes": 60, "endDate": "2026-12-18", "locked": true }]
+      },
+      "candidate": { "post": "P1", "day": 2, "start": "10:00", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the teacher is marked as unavailable then",
+      "rule": "AVAILABILITY",
+      "add": { "unavailable": [{ "kind": "teacher", "key": "anna", "day": 2, "start": "10:00", "end": "11:00" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "AVAILABILITY" }
+    },
+    {
+      "name": "the teacher is free right after the unavailable hour",
+      "rule": "AVAILABILITY",
+      "add": { "unavailable": [{ "kind": "teacher", "key": "anna", "day": 2, "start": "10:00", "end": "11:00" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "11:00", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the room is marked as unavailable then, and no room is not",
+      "rule": "AVAILABILITY",
+      "add": { "unavailable": [{ "kind": "room", "key": "A1", "day": 2, "start": "10:00", "end": "11:00" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "AVAILABILITY" }
+    },
+    {
+      "name": "a förläggning with no room is not held to a room's unavailability",
+      "rule": "AVAILABILITY",
+      "add": { "unavailable": [{ "kind": "room", "key": "A1", "day": 2, "start": "10:00", "end": "11:00" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the class is marked as unavailable then",
+      "rule": "AVAILABILITY",
+      "add": { "unavailable": [{ "kind": "class", "key": "7A", "day": 2, "start": "10:00", "end": "11:00" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "AVAILABILITY" }
+    },
+    {
+      "name": "a year rule closes the time for the class's year",
+      "rule": "GRADE_RULE",
+      "add": { "unavailable": [{ "kind": "grade", "grades": [7, 9], "day": 2, "start": "10:00", "end": "11:00" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "GRADE_RULE" }
+    },
+    {
+      "name": "a year rule for other years leaves the class alone",
+      "rule": "GRADE_RULE",
+      "add": { "unavailable": [{ "kind": "grade", "grades": [4, 6], "day": 2, "start": "10:00", "end": "11:00" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the lesson ends after the class's ramtid",
+      "rule": "FRAME",
+      "add": { "frames": [{ "grades": [7, 9], "start": "08:00", "end": "10:30" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:00", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "FRAME" }
+    },
+    {
+      "name": "the lesson inside the ramtid holds",
+      "rule": "FRAME",
+      "add": { "frames": [{ "grades": [7, 9], "start": "08:00", "end": "10:30" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "09:00", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a ramtid for other years leaves the class alone",
+      "rule": "FRAME",
+      "add": { "frames": [{ "grades": [4, 6], "start": "08:00", "end": "10:30" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:00", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the lesson lies on the class's lunch that the school placed by hand",
+      "rule": "LUNCH",
+      "add": { "meals": [{ "class": "7A", "day": 2, "start": "11:00", "end": "11:30" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "LUNCH" }
+    },
+    {
+      "name": "the lesson right after the lunch holds",
+      "rule": "LUNCH",
+      "add": { "meals": [{ "class": "7A", "day": 2, "start": "11:00", "end": "11:30" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "11:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "another class's lunch is no matter",
+      "rule": "LUNCH",
+      "add": { "meals": [{ "class": "7B", "day": 2, "start": "11:00", "end": "11:30" }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the last hour of the school day holds",
+      "rule": "SCHOOL_DAY",
+      "add": {},
+      "candidate": { "post": "P1", "day": 3, "start": "17:00", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a lesson that ends after 18:00 is outside the school day",
+      "rule": "SCHOOL_DAY",
+      "add": {},
+      "candidate": { "post": "P1", "day": 3, "start": "17:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "SCHOOL_DAY" }
+    },
+    {
+      "name": "a lesson off the five-minute grid is outside the school day",
+      "rule": "SCHOOL_DAY",
+      "add": {},
+      "candidate": { "post": "P1", "day": 3, "start": "10:02", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "SCHOOL_DAY" }
+    },
+    {
+      "name": "a shared post's lesson is held to its own teacher: Bo's lesson meets Bo's lesson",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "P1", "class": "7A", "subject": "ma", "teacher": "anna", "minutes": 60, "lessons": 3, "shares": [{ "teacher": "bo", "lessons": 1 }] }],
+        "kept": [{ "class": "7B", "subject": "id", "teacher": "bo", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1", "teacher": "bo" },
+      "verdict": { "ok": false, "reason": "TEACHER" }
+    },
+    {
+      "name": "a shared post's lesson of the huvudlärare is not held to Bo's lesson",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "P1", "class": "7A", "subject": "ma", "teacher": "anna", "minutes": 60, "lessons": 3, "shares": [{ "teacher": "bo", "lessons": 1 }] }],
+        "kept": [{ "class": "7B", "subject": "id", "teacher": "bo", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1", "teacher": "anna" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the medlärare of another post's förläggning is busy",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [
+          { "key": "P5", "class": "7B", "subject": "ma", "teacher": "bo", "coTeacher": "cy", "minutes": 60, "lessons": 3 },
+          { "key": "P6", "class": "4A", "subject": "id", "teacher": "cy", "minutes": 60, "lessons": 3 }
+        ],
+        "rows": [{ "post": "P5", "day": 2, "start": "10:00", "minutes": 60, "room": "A2" }]
+      },
+      "candidate": { "post": "P6", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "TEACHER" }
+    },
+    {
+      "name": "a förläggning of another post whose dates never meet the candidate's shares the slot",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [
+          { "key": "P1", "class": "7A", "subject": "ma", "teacher": "anna", "minutes": 60, "lessons": 3, "startDate": "2027-01-11" },
+          { "key": "P7", "class": "7B", "subject": "id", "teacher": "anna", "minutes": 60, "lessons": 3, "endDate": "2026-12-18" }
+        ],
+        "rows": [{ "post": "P7", "day": 2, "start": "10:00", "minutes": 60, "room": "A1" }]
+      },
+      "candidate": { "post": "P1", "day": 2, "start": "10:00", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a lunch Generera laid is not the school's own: a row is held to the meals placed by hand only",
+      "rule": "LUNCH",
+      "add": { "meals": [{ "class": "7A", "day": 2, "start": "11:00", "end": "11:30", "generated": true }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the post's lessons are all answered by locked lessons (OVER_DEMAND): the mirror knows no demand",
+      "rule": "OVER_DEMAND",
+      "outsideMirror": true,
+      "add": {
+        "posts": [{ "key": "P1", "class": "7A", "subject": "ma", "teacher": "anna", "minutes": 60, "lessons": 1 }],
+        "kept": [{ "class": "7A", "subject": "ma", "teacher": "anna", "room": "A2", "day": 4, "start": "13:00", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "post": "P1", "day": 2, "start": "10:00", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "OVER_DEMAND" }
+    }
+  ]
+}
