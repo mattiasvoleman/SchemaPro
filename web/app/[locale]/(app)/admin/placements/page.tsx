@@ -333,9 +333,13 @@ export default function PlacementsPage() {
   useEffect(() => setRefusal(null), [brickKey, openCard]);
 
   // The week is read again after a write (and when somebody else changes it); a key that is not the one our last write left ends the history.
+  // Not while a write is on its way: a read that was started by the write before it can land after this one has committed and
+  // before its answer has (the week then shows a key that is not yet ours), and that is our own write and nobody else's. The
+  // effect runs again when the write is done, against the week as its answer left it.
   useEffect(() => {
+    if (saving) return;
     if (reconcile(everything)) setMessage({ tone: "problem", text: t("staleHistory") });
-  }, [everything, reconcile, t]);
+  }, [everything, reconcile, saving, t]);
   useEffect(() => {
     history.clear();
     setBrickKey(null);
@@ -474,7 +478,19 @@ export default function PlacementsPage() {
           return false;
         }
         setRefusal(null);
-        setMessage({ tone: "ok", text: `${said} ${t("fromNextGenerate")}` });
+        // A row the post had already that does not hold is let stand by the gateway and named in its answer: said here by name,
+        // as the week's own banner and the row say it, so that the change is not taken for a post that is all right.
+        const failing = result.answer.placements.flatMap((row, index) => {
+          const verdict = result.answer.verdicts[index];
+          return verdict && !verdict.ok ? [{ row, verdict }] : [];
+        });
+        const rows = failing
+          .map(({ row, verdict }) => `${whenText(row.dayOfWeek, minutesOfClock(row.startTime), row.minutes)}: ${verdictSentence(tPlacements, verdict.reason, verdict.params)}`)
+          .join("; ");
+        setMessage({
+          tone: failing.length > 0 ? "problem" : "ok",
+          text: `${said} ${t("fromNextGenerate")}${failing.length > 0 ? ` ${t("stillFailing", { count: failing.length, rows })}` : ""}`,
+        });
         const target = focusOn(keysOfRows(result.answer.placements));
         if (target) setPendingFocus(target);
         return true;

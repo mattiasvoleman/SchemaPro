@@ -444,9 +444,28 @@ function PlacementForm({
     }));
     setSaving(true);
     try {
-      await savePlacements(requirement.id, body);
+      // On top of the rows the dialog read when it opened, so that a list somebody else wrote since (the week, another
+      // administrator) is not written over without a word: the gateway then answers 409 REQUIREMENT_PLACEMENTS_STALE.
+      const answer = await savePlacements(requirement.id, body, read.data?.rowsKey);
       void invalidatePlacements(client);
-      toast.success(t("saved"));
+      // A row that was there already and has stopped holding is let stand, and named: Generera refuses it until it holds again.
+      const failing = answer.placements.flatMap((placement, index) => {
+        const verdict = answer.verdicts[index];
+        return verdict && !verdict.ok ? [{ placement, verdict }] : [];
+      });
+      if (failing.length === 0) toast.success(t("saved"));
+      else {
+        const rowsText = failing.map(({ placement, verdict }) =>
+          t("stillFailing", {
+            day: placement.dayOfWeek,
+            start: placement.startTime,
+            end: clockOfMinutes(minutesOfClock(placement.startTime) + placement.minutes),
+            weeks: placement.recurrence,
+            reason: verdictSentence(t, verdict.reason, verdict.params),
+          }),
+        );
+        toast.warning(`${t("savedStillFailing", { count: failing.length })} ${rowsText.join(" ")}`);
+      }
       onClose();
     } catch (error) {
       const refusal = placementsRefusal(error);
@@ -471,6 +490,10 @@ function PlacementForm({
         }
       } else if (error instanceof ApiError && error.code === "SCHEDULE_BUSY") {
         setTopError(t("busy"));
+        setFocusId(topId);
+      } else if (error instanceof ApiError && error.code === "REQUIREMENT_PLACEMENTS_STALE") {
+        // Somebody wrote the post's rows after this dialog read them: nothing was saved, and the form is made of the old list.
+        setTopError(t("staleList"));
         setFocusId(topId);
       } else {
         setTopError(error instanceof Error ? error.message : tCommon("error"));

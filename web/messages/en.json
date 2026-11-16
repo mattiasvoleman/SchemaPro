@@ -1087,6 +1087,9 @@
       "saved": "The placed lessons are saved. They apply at the next Generate.",
       "notSaved": "The placed lessons were not saved",
       "busy": "The base timetable is being rewritten right now. Try again in a moment.",
+      "staleList": "The placements were not saved: somebody else has changed the post since you opened this. Close the dialog and open it again to see what stands now.",
+      "savedStillFailing": "The placements are saved. {count, plural, one {One placement still does not hold} other {# placements still do not hold}}, and Generate does not run until they do.",
+      "stillFailing": "The placement on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}} {start}–{end}{weeks, select, ODD_WEEKS { (odd weeks)} EVEN_WEEKS { (even weeks)} other {}}: {reason}",
       "editRefused": "The entry was not saved: it has placed lessons that the change does not fit. {reason}",
       "changeFirst": "The entry was not saved. The placed lesson on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}} {start}–{end}{weeks, select, ODD_WEEKS { (odd weeks)} EVEN_WEEKS { (even weeks)} other {}} has to be changed or removed first. {reason}",
       "placementFirst": "The placed lesson on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}} {start}–{end}{weeks, select, ODD_WEEKS { (odd weeks)} EVEN_WEEKS { (even weeks)} other {}} has to be changed or removed first. {reason}",
@@ -2028,7 +2031,8 @@
     "keptHidden": "{count, plural, one {# lesson is fixed in the master timetable.} other {# lessons are fixed in the master timetable.}} They are drawn when you pick a class, a teacher or a room.",
     "brickText": "{teacher} · {minutes} min",
     "brickLabel": "{lesson}, {teacher}, {minutes} min",
-    "otherRowRefused": "The lesson {when} on the same post no longer holds, and nothing is saved until it is put right (move or remove it): {reason}"
+    "otherRowRefused": "The change was not saved: the lesson {when} on the same post would not hold. {reason}",
+    "stillFailing": "{count, plural, one {One lesson on the post still does not hold} other {# lessons on the post still do not hold}}, and Generate does not run until they do: {rows}"
   },
   "roomOptimization": {
     "title": "Optimise rooms",

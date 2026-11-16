@@ -175,11 +175,16 @@ export function usePlacementEditor(academicYearId: string | null) {
       } catch (error) {
         throw new WriteFailure(error, after, changedIndex);
       }
-      push({
-        label,
-        undo: async () => void (await mutateAsync({ postId, list: before, baseKey: ours.current.get(postId) })),
-        redo: async () => void (await mutateAsync({ postId, list: after, baseKey: ours.current.get(postId) })),
-      });
+      // A step is a write too and is refused like one, by a row of the list it puts back as well as by somebody else's write: it
+      // carries the list it sent and no changed row (-1), so that the page says a refusal about a row as being about that row.
+      const step = (list: PlacementInput[]) => async () => {
+        try {
+          await mutateAsync({ postId, list, baseKey: ours.current.get(postId) });
+        } catch (error) {
+          throw new WriteFailure(error, list, -1);
+        }
+      };
+      push({ label, undo: step(before), redo: step(after) });
       return { ok: true, answer, list: after };
     },
     [client, boardKey, mutateAsync, push],

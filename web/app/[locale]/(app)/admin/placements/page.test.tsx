@@ -29,6 +29,8 @@ const state = vi.hoisted(() => ({
   refuse: null as null | ((path: string, body: { placements: unknown[]; baseKey?: string }) => unknown),
   keyCount: 0,
   rowCount: 0,
+  /** The fake PUT lets a row the post already had that does not hold stand, and names it in the answer, as the gateway does (MEDEL-2 of the review of #326). Off: every row of an answer holds. */
+  carryFailing: false,
 }));
 
 const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn() }));
@@ -212,7 +214,26 @@ function fakePut(path: string, body: { placements: Array<Record<string, unknown>
         : entry,
     ),
   };
-  return Promise.resolve({ placements: written, verdicts: written.map((_, index) => ({ index, ok: true })), rowsKey });
+  const sameRow = (a: Record<string, unknown>, b: Record<string, unknown>) =>
+    ["dayOfWeek", "startTime", "minutes", "recurrence"].every((field) => a[field] === b[field]) &&
+    (a["roomId"] ?? null) === (b["roomId"] ?? null) &&
+    (a["teacherId"] ?? null) === (b["teacherId"] ?? null);
+  const unused = current.placements.filter((row) => row.requirementId === postId && !row.verdict.ok);
+  const verdicts = written.map((row, index) => {
+    if (!state.carryFailing) return { index, ok: true };
+    const at = unused.findIndex((was) => sameRow(was as unknown as Record<string, unknown>, row));
+    if (at === -1) return { index, ok: true };
+    const [was] = unused.splice(at, 1);
+    return { index, ...was!.verdict };
+  });
+  state.board = {
+    ...(state.board as PlacementBoard),
+    placements: (state.board as PlacementBoard).placements.map((row) => {
+      const at = written.findIndex((entry) => entry.id === row.id);
+      return at === -1 ? row : { ...row, verdict: verdicts[at] as BoardPlacement["verdict"] };
+    }),
+  };
+  return Promise.resolve({ placements: written, verdicts, rowsKey });
 }
 
 let client: QueryClient;
@@ -233,6 +254,7 @@ beforeEach(() => {
   state.refuse = null;
   state.keyCount = 0;
   state.rowCount = 0;
+  state.carryFailing = false;
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   api.get.mockReset().mockImplementation(async () => {
     if (state.boardMode === "loading") return new Promise(() => undefined);
@@ -1137,6 +1159,118 @@ describe("undo and redo", () => {
     await client.refetchQueries({ queryKey: ["requirementPlacements"] });
     expect(await screen.findByTestId("placement-message")).toHaveTextContent("staleHistory");
     expect(screen.getByRole("button", { name: "undo" })).toBeDisabled();
+  });
+});
+
+describe("a row of the post that does not hold stays (review of #326, MEDEL-2)", () => {
+  it("names it by name when a change is saved beside it, says the change was made, and leaves the week's banner to say it too", async () => {
+    state.carryFailing = true;
+    renderPage();
+    await ready();
+    fireEvent.keyDown(cardOf(ANNA_ROW)!, { key: "ArrowUp" });
+    const message = await screen.findByTestId("placement-message");
+    // The change itself, then the row that stays: its weekday, its time and the gateway's reason.
+    expect(message).toHaveTextContent("moved(");
+    expect(message).toHaveTextContent("stillFailing(1|4 13:00–14:00: verdict.TEACHER");
+    expect(screen.getByText("failingTitle(1)")).toBeInTheDocument();
+    // What it moved is on the board as moved, and the red row is as red as it was.
+    expect(cardOf("post-ma||60|2|09:45|ALL_WEEKS")).toBeInTheDocument();
+  });
+
+  it("says nothing of it when every row holds", async () => {
+    state.carryFailing = true;
+    state.board = board({ placements: [board().placements[0]!] });
+    renderPage();
+    await ready();
+    fireEvent.keyDown(cardOf(ANNA_ROW)!, { key: "ArrowUp" });
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("button", { name: "undo" })).toBeEnabled());
+    expect(screen.queryByTestId("placement-message")).not.toBeInTheDocument();
+    expect(screen.getByTestId("placement-status")).toHaveTextContent("moved(");
+  });
+
+  it("sends the unchanged rows as they were, which is what lets the gateway tell them from the one that changed", async () => {
+    state.carryFailing = true;
+    renderPage();
+    await ready();
+    fireEvent.keyDown(cardOf(ANNA_ROW)!, { key: "ArrowUp" });
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+    const [, body] = lastPut();
+    expect(body.placements).toContainEqual(expect.objectContaining({ dayOfWeek: 4, startTime: "13:00", minutes: 60, recurrence: "ODD_WEEKS", roomId: "r-a12" }));
+    expect(body.placements).toContainEqual(expect.objectContaining({ dayOfWeek: 2, startTime: "09:45" }));
+  });
+});
+
+describe("a step that a row refuses (review of #326, LÅG-4)", () => {
+  it("is said about the row that would not hold, not as 'cannot be placed there': an undo has no there", async () => {
+    renderPage();
+    await ready();
+    fireEvent.keyDown(cardOf(ANNA_ROW)!, { key: "ArrowUp" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "undo" })).toBeEnabled());
+    // The list the undo puts back is [Tuesday 10:00, Thursday 13:00] sorted as the gateway answers; it refuses the second.
+    state.refuse = () => new ApiError(409, "no", "REQUIREMENT_PLACEMENT_REFUSED", { index: 1, reason: "TEACHER", className: "7B", subjectName: "Slöjd", day: 4, start: "13:00", end: "14:00" });
+    await userEvent.click(screen.getByRole("button", { name: "undo" }));
+    const message = await screen.findByTestId("placement-message");
+    expect(message).toHaveTextContent("otherRowRefused(");
+    expect(message).toHaveTextContent("verdict.TEACHER");
+    expect(message).not.toHaveTextContent("cannotStandThere");
+    // Nothing was undone: the step is still there to try again.
+    expect(screen.getByRole("button", { name: "undo" })).toBeEnabled();
+  });
+
+  it("is said the same for a redo", async () => {
+    renderPage();
+    await ready();
+    fireEvent.keyDown(cardOf(ANNA_ROW)!, { key: "ArrowUp" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "undo" })).toBeEnabled());
+    await userEvent.click(screen.getByRole("button", { name: "undo" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "redo" })).toBeEnabled());
+    state.refuse = () => new ApiError(409, "no", "REQUIREMENT_PLACEMENT_REFUSED", { index: 0, reason: "TEACHER" });
+    await userEvent.click(screen.getByRole("button", { name: "redo" }));
+    expect(await screen.findByTestId("placement-message")).toHaveTextContent("otherRowRefused(");
+    expect(screen.getByRole("button", { name: "redo" })).toBeEnabled();
+  });
+});
+
+describe("the history while a write is on its way (review of #326, LÅG-2)", () => {
+  it("does not take a read that overtakes the answer of our own quick second write for somebody else's", async () => {
+    renderPage();
+    await ready();
+    fireEvent.keyDown(cardOf(ANNA_ROW)!, { key: "ArrowUp" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "undo" })).toBeEnabled());
+
+    // The second write commits at once (the fake gateway holds its rows from this moment) but its answer is held back.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    api.put.mockImplementationOnce(async (path: string, body: { placements: Array<Record<string, unknown>>; baseKey?: string }) => {
+      const answer = await fakePut(path, body);
+      await held;
+      return answer;
+    });
+    fireEvent.keyDown(cardOf("post-ma||60|2|09:45|ALL_WEEKS")!, { key: "ArrowUp" });
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(2));
+    // A read of the week now sees the second write's key, which our history does not know yet.
+    await client.refetchQueries({ queryKey: ["requirementPlacements"] });
+    // Given the time to be flagged: what the page makes of the week it has read is an effect of the render after the read.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(screen.queryByTestId("placement-message")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "undo" })).toBeDisabled(); // the write is on its way: nothing is undone meanwhile
+
+    release();
+    await waitFor(() => expect(screen.getByTestId("placement-status")).toHaveTextContent("moved("));
+    // Still no word of somebody else, and both steps can be undone.
+    expect(screen.queryByTestId("placement-message")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "undo" })).toBeEnabled();
+  });
+
+  it("still says it when somebody else wrote the post while ours were done", async () => {
+    renderPage();
+    await ready();
+    fireEvent.keyDown(cardOf(ANNA_ROW)!, { key: "ArrowUp" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "undo" })).toBeEnabled());
+    state.board = { ...(state.board as PlacementBoard), posts: (state.board as PlacementBoard).posts.map((post) => (post.id === "post-ma" ? { ...post, rowsKey: "k555555555555555" } : post)) };
+    await client.refetchQueries({ queryKey: ["requirementPlacements"] });
+    expect(await screen.findByTestId("placement-message")).toHaveTextContent("staleHistory");
   });
 });
 
