@@ -353,7 +353,9 @@ export async function adminAreaChecks(
             [pid],
           );
           if (rows[0]!.n > 0) break;
-          if (early || tries > 500) {
+          // Thirty seconds (3 000 tries of 10 ms): a successful run pays nothing for the wait, only a failure waits it out, and on a host
+          // under load the second connection can need more than the five seconds this had to reach its statement.
+          if (early || tries > 3000) {
             release.resolve();
             await holderSettled;
             const error = await rivalSettled;

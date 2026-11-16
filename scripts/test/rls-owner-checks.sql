@@ -6205,3 +6205,113 @@ BEGIN
   PERFORM pg_temp.tlo_expect('492o and their post with them', (SELECT count(*)::text FROM "TeacherEmployments" WHERE "schoolId" = s), '0');
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 505o on the owner's side: the teacher's own arms, over EVERY row (20270216090000, the owner's side of 505-509).
+--
+-- rls-policies.sql meets only the rows the API's role may see. Here every USING and WITH CHECK of the 16 converted arms is evaluated,
+-- as their owner and with a person's claims, over every row of its table in the database, every school's, and what it admits is
+-- compared with an independent statement of whose a row is (the person's own absence, post, duty, working-time rules,
+-- unavailability, the attendance of a lesson they stand on, the note of a lesson they stand on with a post for its läsår):
+--   * a marked administrator (the full administratör and the expedition, who also owns a cover decision) is admitted by every arm
+--     for some row, and admitted for no row that is not theirs, in any school;
+--   * the same two people not marked are admitted by none, and a teacher (the control) by the same arms as before, theirs alone.
+-- The independent statement of the note's rule is the migration's, written again from the other side: a lesson of the person's
+-- (a row of CalendarLessonTeachers that is not the substitute's, or a cover decision that names them as the absent teacher) whose
+-- group's läsår has a post of theirs.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION pg_temp.tao_expect(label text, got text, want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  IF got IS DISTINCT FROM want THEN
+    RAISE EXCEPTION 'ta %: got %, wanted %', label, coalesce(got, '(null)'), want;
+  END IF;
+END $f$;
+
+BEGIN;
+DO $$
+DECLARE
+  s uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-armar-school');
+  who int;
+  mk text;
+  me uuid;
+  pol record;
+  ex text;
+  which text;
+  n bigint;
+  foreign_n bigint;
+  mine text;
+  admitted jsonb := '{}';
+  key text;
+  arms constant text[] := ARRAY[
+    'attendance_teacher_insert', 'attendance_teacher_update', 'availability_teacher_modify',
+    'lesson_substitute_notes_teacher_delete', 'lesson_substitute_notes_teacher_insert', 'lesson_substitute_notes_teacher_select', 'lesson_substitute_notes_teacher_update',
+    'teacher_absence_covers_own_select', 'teacher_absences_own_insert', 'teacher_absences_own_select', 'teacher_absences_own_update',
+    'teacher_duties_teacher_own_select', 'teacher_employment_logs_teacher_own_select', 'teacher_employment_periods_teacher_own_select',
+    'teacher_employments_teacher_own_select', 'teacher_work_rules_teacher_own'];
+  evaluated int := 0;
+BEGIN
+  IF s IS NULL THEN RAISE EXCEPTION 'ta 505o: rls-armar-school is missing; fixtures did not run'; END IF;
+  -- The owner marks the two (each has a post, from the fixtures) and, for the unmarked pass, does not.
+  FOREACH mk IN ARRAY ARRAY['unmarked', 'marked', 'teacher'] LOOP
+    IF mk = 'marked' THEN
+      PERFORM set_config('request.jwt.claims', '', true);   -- the owner, no person: the writer the guard of the mark lets through
+      UPDATE "Users" SET teaches = true WHERE "schoolId" = s AND "authId" IN ('00000000-0000-4000-8000-000000005002', '00000000-0000-4000-8000-000000005004');
+      PERFORM pg_temp.tao_expect('505o the two are marked', (SELECT count(*)::text FROM "Users" WHERE "schoolId" = s AND teaches), '2');
+    END IF;
+    FOREACH who IN ARRAY (CASE WHEN mk = 'teacher' THEN ARRAY[5010] ELSE ARRAY[5002, 5004] END) LOOP
+      me := (SELECT id FROM "Users" WHERE "schoolId" = s AND "authId" = ('00000000-0000-4000-8000-00000000' || lpad(who::text, 4, '0'))::uuid);
+      PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-00000000' || lpad(who::text, 4, '0'))::text, true);
+      FOR pol IN
+        SELECT p.tablename::text AS tbl, p.policyname::text AS pol, p.qual, p.with_check FROM pg_policies p
+         WHERE p.schemaname = 'public' AND p.policyname = ANY (arms) ORDER BY p.tablename, p.policyname
+      LOOP
+        mine := CASE pol.tbl
+          WHEN 'AttendanceRecords' THEN format($q$EXISTS (SELECT 1 FROM "CalendarLessonTeachers" t WHERE t."calendarLessonId" = "AttendanceRecords"."calendarLessonId" AND t."teacherId" = %L)$q$, me)
+          WHEN 'AvailabilityConstraints' THEN format($q$("userId" = %L AND "resourceType" = 'TEACHER')$q$, me)
+          WHEN 'TeacherAbsenceCovers' THEN format($q$"absentTeacherId" = %L$q$, me)
+          WHEN 'LessonSubstituteNotes' THEN format($q$EXISTS (
+              SELECT 1 FROM "CalendarLessons" l
+                JOIN "StudentGroups" g ON g."id" = l."studentGroupId" AND g."schoolId" = l."schoolId"
+               WHERE l."id" = "LessonSubstituteNotes"."calendarLessonId" AND l."schoolId" = "LessonSubstituteNotes"."schoolId"
+                 AND (EXISTS (SELECT 1 FROM "CalendarLessonTeachers" t WHERE t."calendarLessonId" = l."id" AND t."teacherId" = %1$L AND t."role" <> 'SUBSTITUTE')
+                      OR EXISTS (SELECT 1 FROM "TeacherAbsenceCovers" c WHERE c."calendarLessonId" = l."id" AND c."absentTeacherId" = %1$L))
+                 AND (%2$L = 'teacher' OR EXISTS (SELECT 1 FROM "TeacherEmployments" e WHERE e."userId" = %1$L AND e."academicYearId" = g."academicYearId")))$q$, me, mk)
+          ELSE format($q$"userId" = %L$q$, me)
+        END;
+        FOREACH which IN ARRAY ARRAY['using', 'check'] LOOP
+          ex := CASE which WHEN 'using' THEN pol.qual ELSE pol.with_check END;
+          CONTINUE WHEN ex IS NULL;
+          EXECUTE format('SELECT count(*) FROM %I WHERE (%s)', pol.tbl, ex) INTO n;
+          EXECUTE format('SELECT count(*) FROM %I WHERE (%s) AND NOT (%s)', pol.tbl, ex, mine) INTO foreign_n;
+          evaluated := evaluated + 1;
+          key := who || '/' || mk || '/' || pol.tbl || '.' || pol.pol || '/' || which;
+          IF mk = 'unmarked' AND n <> 0 THEN
+            RAISE EXCEPTION 'ta 505o: % is admitted by % row(s) without the mark', key, n;
+          END IF;
+          IF mk <> 'unmarked' AND foreign_n <> 0 THEN
+            RAISE EXCEPTION 'ta 505o: % admits % row(s) that are not the person''s own, in any school', key, foreign_n;
+          END IF;
+          admitted := admitted || jsonb_build_object(key, n);
+        END LOOP;
+      END LOOP;
+    END LOOP;
+  END LOOP;
+  -- Not vacuous: for every one of the 16 arms and every expression it has, the marked two together are admitted for a row, and so is the teacher.
+  FOR pol IN SELECT p.tablename::text AS tbl, p.policyname::text AS pol, p.qual, p.with_check FROM pg_policies p
+              WHERE p.schemaname = 'public' AND p.policyname = ANY (arms) LOOP
+    FOREACH which IN ARRAY ARRAY['using', 'check'] LOOP
+      CONTINUE WHEN (CASE which WHEN 'using' THEN pol.qual ELSE pol.with_check END) IS NULL;
+      IF coalesce((admitted ->> ('5002/marked/' || pol.tbl || '.' || pol.pol || '/' || which))::bigint, 0)
+         + coalesce((admitted ->> ('5004/marked/' || pol.tbl || '.' || pol.pol || '/' || which))::bigint, 0) = 0 THEN
+        RAISE EXCEPTION 'ta 505o: the marked two are admitted for no row by %.% (%), so its test proves nothing', pol.tbl, pol.pol, which;
+      END IF;
+      IF coalesce((admitted ->> ('5010/teacher/' || pol.tbl || '.' || pol.pol || '/' || which))::bigint, 0) = 0
+         AND pol.pol NOT LIKE 'lesson_substitute_notes_teacher_%' AND pol.pol <> 'teacher_absence_covers_own_select' THEN
+        RAISE EXCEPTION 'ta 505o: the teacher is admitted for no row by %.% (%)', pol.tbl, pol.pol, which;
+      END IF;
+    END LOOP;
+  END LOOP;
+  RAISE NOTICE 'ta 505o: % expressions evaluated over every row of every school: the marked are admitted for their own rows alone, the unmarked for none', evaluated;
+END $$;
+ROLLBACK;

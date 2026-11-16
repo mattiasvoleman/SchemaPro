@@ -5496,6 +5496,72 @@ owner held to the post, a school deleted in both orders its cascade can take). S
 administratör as an eleventh principal, and the *Admin areas* probe (`probe-admin-areas.ts`, `ar-i`) shows the codes arrive
 through the adapter as themselves.
 
+### 20.4 Part 3, the database: the teacher's own arms (20270216090000)
+
+The second database part, and the first that **asks for the mark**. 16 policies on ten tables get `app.current_user_teaches()` in
+OR with the teacher's test; nothing changes for a person who is not marked, and **nobody is marked in production** (one
+administrator, no mark), so a merge changes no answer there. Merge this part **before** part 2 (the gateway): the note to the
+substitute is a slice across both, the database's arm is right without the route, and the route is safe without the arm (the
+database refuses).
+
+- **The arms** (`TO authenticated` unless said; `authenticated` is a role the API's `app_authenticated` is a member of, so these
+  apply through the API and through PostgREST's door alike): `AttendanceRecords` `attendance_teacher_insert`/`_update`,
+  `AvailabilityConstraints` `availability_teacher_modify`, `TeacherAbsences` `teacher_absences_own_insert`/`_select`/`_update`,
+  `TeacherAbsenceCovers` `teacher_absence_covers_own_select`, `TeacherDuties` `teacher_duties_teacher_own_select`,
+  `TeacherEmployments`/`TeacherEmploymentPeriods`/`TeacherEmploymentLogs` `teacher_*_teacher_own_select`, `TeacherWorkRules`
+  `teacher_work_rules_teacher_own`, and, `TO app_authenticated`, the four `lesson_substitute_notes_teacher_*` arms of
+  `LessonSubstituteNotes`. The form is one OR inside the arm's own teacher test, in the arm's own style (an initplan, no new
+  permissive arm, so no new `BitmapOr` on a hot table); RLS section 505b holds each to "main's arm with the mark added" by md5.
+- **What it adds.** Through PostgREST an administrator has no arm on a person's own post, period, log, duty, absence or cover
+  decision; a marked one reads exactly their own, which is what the web pages of "Min undervisning" read. Through the API the
+  answer is unchanged for every profile that writes DRIFT and PLANERING; the one that does not write PLANERING (the expedition)
+  gains the teacher's right to write their own unavailability and working-time rules, which is the arm's purpose. The one place
+  the teacher's arm gives **more** than the administrator's is the note to the substitute (an administrator has none, section
+  232): a marked administrator who stands on a lesson (a `CalendarLessonTeachers` row that is not the substitute's, or the absent
+  teacher of a cover decision on it) **and has a post for the läsår of the lesson's student group** reads, writes, changes and
+  removes it; never as the lesson's substitute (beslut 4). `app.lesson_teacher_role` carries that rule, so the gateway can ask the
+  same function the database asks.
+- **Five teacher arms stay**, because the administrator's arm for the same table, verb and role admits every row they admit
+  (`CancellationBatchCredits`, `PublicationPendingRemovals`, `PublishedLessons`, `TeacherAbsenceReasons` `staff_select`,
+  `TeacherDutySlots` `teacher_duty_slots_teacher_own_select`), and so do seven more policies (lektionsloggens three, where the
+  administrator's DRIFT arm admits every lesson, and `StudentEnrollments`, `SupervisionCovers` ×2 and `SupervisionShifts`, where
+  the administrator's select arm admits every row) and twelve functions that name TEACHER as an enum or a code, or narrow a
+  teacher's own absence (which every markable profile may already edit, so narrowing a marked one would take a right away).
+  Section 494 lists each as `STAYS` with the reason beside it, and a new arm that names TEACHER without asking for the mark
+  fails there.
+- **Three functions change and one is new**, read from the catalogue and edited at named places (each with the number of
+  occurrences it expects; if a body is not as expected the migration stops with nothing changed): `app.lesson_teacher_role`
+  (which asks the new `app.my_post_covers_the_year_of_group(group)`, and only of a marked administrator: a subquery in the
+  function's WHERE is initialised at every call, a teacher's too, and cost +9 % on a read of 151 notes; the call costs +1 %; the
+  new function is called by that one definer function alone and has no grant at all),
+  `app.availability_constraints_keep_duty_blocks` (a marked administrator who does not write PLANERING is held to the teacher's
+  `TD403` on an unavailability a duty blocks) and `app.cover_policy_arm_is_narrow` (it takes the one OR that is the mark as the
+  teacher's test it extends, and refuses every other, as before; the migration re-runs 20261012130000's own guard before it
+  commits, and RLS sections 28g, 112, 128 and 505e hold the rule).
+- **Locks.** `ALTER POLICY` takes ACCESS EXCLUSIVE on its table (measured). The ten tables are locked first, `NOWAIT` and together,
+  in one fixed (alphabetical) order, in a loop that retries every 50 ms for 30 s and holds nothing between tries. If they are not
+  free at once in 30 s the migration stops with nothing changed and says so: Prisma then marks it failed and refuses every later
+  `migrate deploy` (P3009) until `prisma migrate resolve --rolled-back 20270216090000_en_undervisande_administrator_far_lararens_egna_armar`
+  has been run, then deploy again.
+- **Deploy order:** the migration, then the merge. The API before this release is untouched by it (nothing is marked), and the API
+  after it needs nothing of it. **Checks:** `teaches-pr3-data/prod-fore.sql` (61 checks) before and `prod-efter.sql` (69) directly
+  after, in the notes folder of the round's coordinator (`side-session-notes/local_487a7ffc-d4e9-44ea-9a93-ae6556fb4370/`, outside
+  the repository, as part 1's are); they hold the `md5(prosrc)` of the three functions (and the new one's) and the md5 of the USING and WITH CHECK of
+  the 16 policies before and after, that no other function or policy changed, that nobody is marked, the grants and MAINTAIN, and the
+  migration rows. The same numbers are in the pull request.
+- **Rolling back:** nothing reads the arms' answers for a person who is not marked, so they can stay. To remove them, run the
+  edit the other way (each policy's text without the OR, and the three functions from their earlier migrations:
+  20261203090000 for `app.lesson_teacher_role`, 20261022090000 for the duty guard, 20261012130000 for the leak rule; take each
+  one's `CREATE FUNCTION` text, not a copy of this release's).
+- **Tests:** RLS sections 505-509 (the arms are main's with the mark added; the five that stay; the own rows through both roles
+  for each profile, marked and not; the note, its läsår and risk 3; the guards and what stays refused: the pool, klasslärare, a
+  cover request, a class timetable change; every table through both roles equal but for the listed few) and 505o on the owner's
+  side (every arm over every row of every school admits only the person's own); sections 494 (the list with a reason for each
+  `STAYS`, and exactly what may ask for the mark), 493g and 116 updated; `scripts/test/teaches-arms-snapshot.sh` (a snapshot of
+  every table x verb x principal x role on main's schema and the branch's, whose difference is only the marked principals on the
+  converted tables); the bench `scripts/bench/teaches-arms.ts`; and `probe-admin-areas.ts` `ar-j` now waits up to 30 s for the
+  second connection to be seen blocked.
+
 ## 21. Pinned lessons in the generator ("Fästa lektioner")
 
 A lesson a school lays by hand before Generera has reached the engine as a
