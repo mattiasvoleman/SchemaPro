@@ -18,6 +18,17 @@ const PREFIX: Record<UserRole, string> = {
 };
 const items = (role: UserRole) => navForRole(role).flatMap((section) => section.items);
 
+/** The seven pages of "Min undervisning", in the teacher's menu's order (the brief's table, not read from the file under test). */
+const TEACHING_ROWS = [
+  { labelKey: "mySchedule", href: "/teacher" },
+  { labelKey: "myCrisis", href: "/teacher/crisis" },
+  { labelKey: "attendance", href: "/teacher/attendance" },
+  { labelKey: "myStaffing", href: "/teacher/tjanst" },
+  { labelKey: "myAbsence", href: "/teacher/franvaro" },
+  { labelKey: "myLeave", href: "/teacher/ledighet" },
+  { labelKey: "myReporting", href: "/teacher/reporting-rate" },
+];
+
 describe("navForRole", () => {
   it("hands each role its own rows", () => {
     // No row count here: how many rows a role has is its file's to say (a
@@ -30,13 +41,85 @@ describe("navForRole", () => {
     }
   });
 
+  it("hands an administrator who teaches the same menu with one group more, the rows of her own teaching", () => {
+    // The one exception to "rows under the role's prefix": the group "Min
+    // undervisning" is the teacher's pages, /teacher/*, and nothing else is.
+    const marked = navForRole("SCHOOL_ADMIN", true);
+    const group = marked.find((section) => section.labelKey === "myTeaching");
+    expect(group, "the group is in the menu").toBeDefined();
+    expect(group!.items.map((item) => ({ labelKey: item.labelKey, href: item.href }))).toEqual(TEACHING_ROWS);
+    const outside = marked.flatMap((section) =>
+      section.labelKey === "myTeaching"
+        ? []
+        : section.items.filter((item) => !item.href.startsWith(PREFIX.SCHOOL_ADMIN) && item.href !== "/calendar-feed"),
+    );
+    expect(outside.map((item) => item.href)).toEqual([]);
+  });
+
+  it("puts the group second, after the unlabelled one with Översikt, so that it is in reach on a phone", () => {
+    const marked = navForRole("SCHOOL_ADMIN", true);
+    expect(marked[0]!.labelKey).toBeNull();
+    expect(marked[1]!.labelKey).toBe("myTeaching");
+  });
+
+  it("hands an administrator without the mark the menu it always had, byte for byte", () => {
+    const plain = navForRole("SCHOOL_ADMIN");
+    expect(plain.some((section) => section.labelKey === "myTeaching")).toBe(false);
+    // `false` and no argument are the same, and the marked menu is that menu
+    // with the one group put in: nothing else moved, renamed or went.
+    expect(navForRole("SCHOOL_ADMIN", false)).toEqual(plain);
+    const without = navForRole("SCHOOL_ADMIN", true).filter((section) => section.labelKey !== "myTeaching");
+    expect(without).toEqual(plain);
+    expect(plain.map((section) => section.labelKey)).toEqual([null, "basics", ...plain.slice(2).map((section) => section.labelKey)]);
+  });
+
+  it("gives the group to an administrator who teaches and to nobody else", () => {
+    // The mark means something only on an administrator: a teacher, a pupil
+    // and a guardian are handed their menu whatever the argument says.
+    for (const role of ["TEACHER", "STUDENT", "GUARDIAN"] as const) {
+      expect(navForRole(role, true), `${role} with the mark`).toEqual(navForRole(role));
+      expect(navForRole(role, true).some((section) => section.labelKey === "myTeaching")).toBe(false);
+    }
+  });
+
+  it("names the absence row for what an administrator can have, not for the cover shifts she is never asked to take", () => {
+    // The teacher's row is "Vikariepass och frånvaro" (myCover). The pool and
+    // being asked to cover are a teacher's alone (SP409), so the same page is
+    // "Min frånvaro" here, and myCover is nowhere in an administrator's menu.
+    const marked = navForRole("SCHOOL_ADMIN", true).flatMap((section) => section.items);
+    expect(marked.map((item) => item.labelKey)).not.toContain("myCover");
+    expect(marked.find((item) => item.href === "/teacher/franvaro")?.labelKey).toBe("myAbsence");
+    const teachers = navForRole("TEACHER").flatMap((section) => section.items);
+    expect(teachers.find((item) => item.href === "/teacher/franvaro")?.labelKey).toBe("myCover");
+  });
+
+  it("leaves out the pages that are a class teacher's, the pool's and the mentor's whole lists", () => {
+    const marked = navForRole("SCHOOL_ADMIN", true).flatMap((section) => section.items);
+    const hrefs = marked.map((item) => item.href);
+    for (const left of [
+      "/teacher/klass-schema",
+      "/teacher/absence-watch",
+      "/teacher/acknowledgements",
+      "/teacher/checklists",
+      "/teacher/klassbok",
+      "/teacher/school-day",
+      "/teacher/rooms",
+      "/teacher/resources",
+    ]) {
+      expect(hrefs, left).not.toContain(left);
+    }
+    // The calendar feed is in the first group already: not a second row for it.
+    expect(hrefs.filter((href) => href === "/calendar-feed")).toHaveLength(1);
+  });
+
   it("has a name in both languages for every row and every group", () => {
     // The shell looks each key up in the nav namespace; a row whose key is
     // missing renders as the key itself, in the menu of the role that has it.
     for (const messages of [swedish, english]) {
       const nav = messages.nav as Record<string, unknown>;
       for (const role of ROLES) {
-        for (const section of navForRole(role)) {
+        // The administrator's menu twice: with the group "Min undervisning" and without.
+        for (const section of [...navForRole(role), ...(role === "SCHOOL_ADMIN" ? navForRole(role, true) : [])]) {
           if (section.labelKey) expect(typeof nav[section.labelKey], `${role} group ${section.labelKey}`).toBe("string");
           for (const item of section.items) expect(typeof nav[item.labelKey], `${role} row ${item.labelKey}`).toBe("string");
         }
@@ -56,6 +139,16 @@ describe("navForRole", () => {
     const feeds = admin.filter((item) => ["publishing", "calendarFeeds", "scheduleExchange"].includes(item.labelKey));
     expect(feeds).toHaveLength(3);
     expect(new Set(feeds.map((item) => item.icon)).size).toBe(1);
+  });
+
+  it("draws the marked menu's glyphs as elements too, one element per icon however many rows use it", () => {
+    // The group borrows the administrator's icons (CalendarDays, ClipboardCheck,
+    // Scale, UserX): the menu draws each once, and the document names it once.
+    const glyphs = navForRole("SCHOOL_ADMIN", true).flatMap((section) => section.items.map((item) => item.icon));
+    expect(glyphs.every((icon) => isValidElement(icon))).toBe(true);
+    const types = glyphs.map((icon) => (icon as React.ReactElement).type);
+    expect(new Set(glyphs).size).toBe(new Set(types).size);
+    expect(new Set(glyphs).size).toBeLessThan(glyphs.length);
   });
 
   it("builds a menu of its own on every call", () => {
@@ -187,7 +280,11 @@ function sourceFiles(dir: string): string[] {
 
 describe("every row leads somewhere", () => {
   const APP = join(__dirname, "..", "..", "app", "[locale]", "(app)");
-  const rows = ROLES.flatMap((role) => items(role).map((item) => ({ role, ...item })));
+  const rows = [
+    ...ROLES.flatMap((role) => items(role).map((item) => ({ role, ...item }))),
+    // The group "Min undervisning": every row of it is a page that exists too.
+    ...navForRole("SCHOOL_ADMIN", true).flatMap((section) => section.items.map((item) => ({ role: "SCHOOL_ADMIN (teaches)", ...item }))),
+  ];
 
   it("has a page behind every href", () => {
     // A row whose path has no page.tsx is a link to a 404, for the role that

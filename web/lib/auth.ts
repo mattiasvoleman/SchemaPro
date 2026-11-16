@@ -85,6 +85,9 @@ function readerProfile(authId: string, email: string | null, school: MySchool): 
     studentGroupId: null,
     adminProfile: "LASARE",
     hrRead: false,
+    // The läsare has no row of the school's and cannot teach (the gateway
+    // gives her `teaches: false` too).
+    teaches: false,
   };
 }
 
@@ -167,7 +170,7 @@ export const getSession = cache(async (): Promise<SessionInfo | null> => {
   const profileOf = async (client: ServerClient): Promise<Profile | null> => {
     const { data } = await client
       .from("Users")
-      .select("id, authId, schoolId, role, firstName, lastName, email, studentGroupId, adminProfile, hrRead")
+      .select("id, authId, schoolId, role, firstName, lastName, email, studentGroupId, adminProfile, hrRead, teaches")
       .eq("authId", user.id)
       .maybeSingle();
     return (data as Profile | null) ?? null;

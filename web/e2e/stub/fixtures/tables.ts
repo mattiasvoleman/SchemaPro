@@ -1,5 +1,5 @@
 import type { Row, Tables } from "../postgrest";
-import type { SignedInPerson } from "../sessions";
+import { TEACHING_ADMIN, type SignedInPerson } from "../sessions";
 import { CALENDAR_LESSON_TEACHERS_WITH_COVER, CALENDAR_LESSONS_WITH_COVER } from "./cover-world";
 import {
   ABSENCE_REPORTS,
@@ -29,6 +29,7 @@ import {
   MASTER_LESSONS,
   NEXT_YEAR,
   PROFILE_ROWS,
+  TEACHING_ADMIN_LESSON_TEACHERS,
   REQUIREMENTS,
   ROOM_LIST,
   SCHOOL,
@@ -86,7 +87,7 @@ export const tables: Tables = {
   // As this week's cover decisions leave them (cover-world.ts): Bo off his
   // decided lessons, the substitutes on, the självstudier in the note.
   CalendarLessons: withSchool(CALENDAR_LESSONS_WITH_COVER),
-  CalendarLessonTeachers: CALENDAR_LESSON_TEACHERS_WITH_COVER,
+  CalendarLessonTeachers: [...CALENDAR_LESSON_TEACHERS_WITH_COVER, ...TEACHING_ADMIN_LESSON_TEACHERS],
   GuardianStudents: withSchool(GUARDIAN_LINKS),
   StudentGroupMembers: GROUP_MEMBERS,
   AvailabilityConstraints: withSchool(CONSTRAINTS.map((row, index) => ({ ...row, createdAt: `2026-08-1${index}T08:00:00Z` }))),
@@ -144,6 +145,14 @@ function lessonReaches(row: Row, person: SignedInPerson): boolean {
     (weekly?.studentIds ?? []).some((id) => own(person).has(id))
   );
 }
+
+/**
+ * Rows that exist for one person only, hidden from every other reader: the lessons the administrator who teaches
+ * stands on (world.ts TEACHING_ADMIN_LESSON_TEACHERS). The school every other suite reads has none of them.
+ */
+export const privateRows: Partial<Record<string, (row: Row, person: SignedInPerson | null) => boolean>> = {
+  CalendarLessonTeachers: (row, person) => row.teacherId !== TEACHING_ADMIN.userId || person?.userId === TEACHING_ADMIN.userId,
+};
 
 export const rowScopes: Partial<Record<string, (row: Row, person: SignedInPerson) => boolean>> = {
   AbsenceReports: (row, person) => own(person).has(row.studentId as string),

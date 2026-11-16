@@ -109,7 +109,8 @@ function saveSettings(context: GatewayContext): ReportingSettings | Reply {
 
 function mine(context: GatewayContext): MyReportingRate | Reply {
   if (!context.person) return new Reply(401, { message: "Not authenticated." });
-  if (context.person.persona !== "teacher") return new Reply(403, { message: "Forbidden." });
+  // @AsTeacher on the gateway: an administrator who teaches (Users.teaches) is let in as the teacher.
+  if (context.person.persona !== "teacher" && context.person.teaches !== true) return new Reply(403, { message: "Forbidden." });
   const taught = new Set(
     CALENDAR_LESSON_TEACHERS.filter((row) => row.teacherId === context.person!.userId).map((row) => row.calendarLessonId),
   );

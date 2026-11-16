@@ -64,10 +64,10 @@ vi.mock("@/utils/supabase/client", () => ({
 
 // The signed-in person, whose own rows the inbox reads.
 // The words and links of the notices come from the same module (see the note there), so it is the real one but for the profile.
-const who = vi.hoisted(() => ({ role: "TEACHER" as string }));
+const who = vi.hoisted(() => ({ role: "TEACHER" as string, teaches: undefined as boolean | undefined }));
 vi.mock("@/components/profile-context", async (importActual) => ({
   ...(await importActual<typeof import("@/components/profile-context")>()),
-  useProfile: () => ({ profile: { id: "me-1", role: who.role }, school: null }),
+  useProfile: () => ({ profile: { id: "me-1", role: who.role, teaches: who.teaches }, school: null }),
 }));
 
 // next-intl's Link needs the intl provider; an anchor is what it renders.
@@ -164,6 +164,7 @@ const bellButton = () =>
 
 beforeEach(() => {
   who.role = "TEACHER";
+  who.teaches = undefined;
   router.push.mockClear();
   seq = 0;
   supabaseState.selectResults.length = 0;
@@ -512,11 +513,15 @@ describe("NotificationBell inbox", () => {
     // A guardian's sentence is handed the times only: never the kind of alarm, though the notice's meta carries it.
     const guardianText = `crisis.CRISIS_GUARDIAN_AFTER(when=${clock(startedAt)}|end=${clock(endedAt)})`;
 
-    for (const [role, page] of [
-      ["TEACHER", "/teacher/crisis"],
-      ["SCHOOL_ADMIN", "/admin/crisis"],
+    for (const [role, page, teaches] of [
+      ["TEACHER", "/teacher/crisis", undefined],
+      ["SCHOOL_ADMIN", "/admin/crisis", undefined],
+      // Users.teaches: the administrator who teaches is led to the roll call of her own groups.
+      ["SCHOOL_ADMIN", "/admin/crisis", false],
+      ["SCHOOL_ADMIN", "/teacher/crisis", true],
     ] as const) {
       who.role = role;
+      who.teaches = teaches;
       router.push.mockClear();
       supabaseState.selectResults.push(ok(rows));
       const user = userEvent.setup();

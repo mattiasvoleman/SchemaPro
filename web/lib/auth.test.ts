@@ -19,7 +19,9 @@ const state = vi.hoisted(() => {
     cookie: undefined as string | undefined,
     appMetadata: {} as Record<string, unknown>,
     // The profile row PostgREST shows for the school a client names ("" for none).
-    rows: {} as Record<string, { id: string; schoolId: string; role: string } | null>,
+    rows: {} as Record<string, { id: string; schoolId: string; role: string; teaches?: boolean } | null>,
+    // The column list of each read of the Users table, in order.
+    selected: [] as string[],
   };
 });
 
@@ -34,13 +36,16 @@ vi.mock("@/utils/supabase/server", () => ({
   createClient: (_store: unknown, options: { school?: string | null } = {}) => {
     const named = (options.school === undefined ? state.cookie : options.school) ?? "";
     const read = (table: string) => ({
-      select: () => ({
-        eq: (_column: string, value: string) => ({
-          maybeSingle: async () => ({
-            data: table === "Users" ? (state.rows[named] ?? null) : { id: value, name: `school ${value}`, slug: "s", timezone: "Europe/Stockholm" },
+      select: (columns: string) => {
+        if (table === "Users") state.selected.push(columns);
+        return {
+          eq: (_column: string, value: string) => ({
+            maybeSingle: async () => ({
+              data: table === "Users" ? (state.rows[named] ?? null) : { id: value, name: `school ${value}`, slug: "s", timezone: "Europe/Stockholm" },
+            }),
           }),
-        }),
-      }),
+        };
+      },
     });
     return {
       auth: {
@@ -71,6 +76,7 @@ describe("getSession, the login's schools", () => {
     state.cookie = undefined;
     state.appMetadata = { provider: "email" };
     state.rows = { "": row(A), [A]: row(A) };
+    state.selected = [];
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -87,6 +93,25 @@ describe("getSession, the login's schools", () => {
     expect(session?.profile?.schoolId).toBe(A);
     expect(session?.schools).toEqual([]);
     expect(session?.namedSchool).toBeNull();
+  });
+
+  it("reads the mark of an administrator who teaches, and hands it to the page", async () => {
+    // Users.teaches: PostgREST reads the column only if the profile read asks
+    // for it (the select list is the one thing a mock of the table can show),
+    // and getSession hands the row on as it is.
+    state.rows = { "": { ...row(A), role: "SCHOOL_ADMIN", teaches: true } };
+
+    const session = await load();
+
+    expect(state.selected.length).toBeGreaterThan(0);
+    for (const columns of state.selected) expect(columns.split(",").map((column) => column.trim())).toContain("teaches");
+    expect(session?.profile).toMatchObject({ role: "SCHOOL_ADMIN", teaches: true });
+  });
+
+  it("leaves the mark off a profile whose row has none, which the menu reads as not marked", async () => {
+    const session = await load();
+
+    expect(session?.profile?.teaches).toBeUndefined();
   });
 
   it("asks for a marked login's schools, with a deadline, and names the page's school", async () => {
@@ -182,6 +207,8 @@ describe("getSession, the huvudman's reader (Huvudman)", () => {
       role: "SCHOOL_ADMIN",
       adminProfile: "LASARE",
       hrRead: false,
+      // The läsare has no row and never teaches.
+      teaches: false,
       firstName: "Pia",
       lastName: "Planerare",
       studentGroupId: null,

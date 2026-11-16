@@ -6,6 +6,7 @@ import { ADMIN_NAV } from "./admin-nav";
 import { GUARDIAN_NAV } from "./guardian-nav";
 import { STUDENT_NAV } from "./student-nav";
 import { TEACHER_NAV } from "./teacher-nav";
+import { TEACHING_ADMIN_NAV } from "./teaching-admin-nav";
 
 /*
  * The menu of each role, picked by the (app) layout on the server and handed to
@@ -32,12 +33,16 @@ import { TEACHER_NAV } from "./teacher-nav";
  * show as the room left in the log, not as a failure; the phase that crosses
  * it sets `measured` and says what raised it.
  *
- * Which rows a role has is decided here, by role alone (navForRole takes the
- * role and nothing else). A row that depends on more, the school's switches or
- * the administrator's profile, is not a row of these files: the (app) layout
- * decides it, as it does for the pages a profile may not open
- * (closedMenuStyle hides those links with a style rule it writes on the
- * server), or navForRole takes a larger argument first.
+ * Which rows a role has is decided here, by role and one mark (navForRole
+ * takes the role and whether an administrator teaches). A row that depends on
+ * more, the school's switches or the administrator's profile, is not a row of
+ * these files: the (app) layout decides it, as it does for the pages a profile
+ * may not open (closedMenuStyle hides those links with a style rule it writes
+ * on the server), or navForRole takes a larger argument first. The mark was
+ * the first such argument: an administrator who teaches (Users.teaches) has the
+ * group "Min undervisning" (teaching-admin-nav.ts), made here as the menu's
+ * second group and nowhere in the shell, whose chunk has no room for it. An
+ * administrator without the mark is handed the menu byte for byte as before.
  */
 
 /**
@@ -57,13 +62,26 @@ const MENUS: Record<UserRole, NavGroup[]> = {
 };
 
 /**
+ * The administrator's menu with "Min undervisning" as its second group, after
+ * the unlabelled one with Översikt and Kalenderprenumeration: in reach on a
+ * phone without scrolling the menu, as the teacher's menu puts Larm.
+ */
+function withTeaching(menu: NavGroup[]): NavGroup[] {
+  return [...menu.slice(0, 1), TEACHING_ADMIN_NAV, ...menu.slice(1)];
+}
+
+/**
  * The role's menu with each glyph as the element AppShell puts in the row. One
  * element per icon, so that the payload names an icon once however many rows
  * share it (React's server renderer writes an object it has already written as
  * a reference). Built per call and never kept: an element a request has
  * rendered is not for the next one.
+ *
+ * `teaches` is the mark on an administrator (Users.teaches, read strictly as
+ * `profile.teaches === true` by the caller); it adds a group to an
+ * administrator's menu and means nothing for any other role.
  */
-export function navForRole(role: UserRole): NavSection[] {
+export function navForRole(role: UserRole, teaches = false): NavSection[] {
   const glyphs = new Map<LucideIcon, React.ReactElement>();
   const glyph = (Icon: LucideIcon) => {
     let element = glyphs.get(Icon);
@@ -75,7 +93,8 @@ export function navForRole(role: UserRole): NavSection[] {
   };
   // Spread, so that a field a row has beyond the glyph goes to the shell with
   // it and is not dropped here unseen.
-  return MENUS[role].map(({ items, ...group }) => ({
+  const menu = role === "SCHOOL_ADMIN" && teaches ? withTeaching(MENUS[role]) : MENUS[role];
+  return menu.map(({ items, ...group }) => ({
     ...group,
     items: items.map(({ icon, ...entry }) => ({ ...entry, icon: glyph(icon) })),
   }));

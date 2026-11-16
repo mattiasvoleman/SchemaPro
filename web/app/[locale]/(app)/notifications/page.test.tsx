@@ -137,6 +137,55 @@ describe("the choice of what leaves SchemaPro", () => {
   });
 });
 
+/*
+ * An administrator who teaches (Users.teaches) is offered the teacher's three notices besides an
+ * administrator's (the gateway's typesFor): the mentor's LEAVE_REQUESTED, the register's
+ * LESSON_REPORT_REMINDER and the lesson's LESSON_PUPIL_MOVED, which the database writes for a
+ * person it counts as one, so each needs a switch. The page shows what the gateway sends and
+ * labels each by a text of its own (the keys exist in both languages), never as "another notice".
+ */
+describe("an administrator who teaches", () => {
+  const teaching: NotificationPreference[] = [
+    ...staff,
+    { type: "LESSON_PUPIL_MOVED", enabled: true, required: false },
+    { type: "LEAVE_REQUESTED", enabled: true, required: false },
+    { type: "LESSON_REPORT_REMINDER", enabled: true, required: false },
+  ];
+
+  it("sees the three and can switch each off, the whole set going back", async () => {
+    state.role = "SCHOOL_ADMIN";
+    state.types = teaching;
+    const user = userEvent.setup();
+    renderPage();
+    for (const type of ["LESSON_PUPIL_MOVED", "LEAVE_REQUESTED", "LESSON_REPORT_REMINDER"]) {
+      expect(await screen.findByRole("switch", { name: `notificationSettings.types.${type}` })).toBeChecked();
+    }
+    await user.click(screen.getByRole("switch", { name: "notificationSettings.types.LEAVE_REQUESTED" }));
+    await waitFor(() => expect(state.puts).toEqual([{ optOut: ["LEAVE_REQUESTED"] }]));
+  });
+
+  it("is offered none of them without the mark: the list is the gateway's", async () => {
+    state.role = "SCHOOL_ADMIN";
+    state.types = staff;
+    renderPage();
+    await screen.findByRole("switch", { name: "notificationSettings.types.LESSON_SUBSTITUTE_STAFF" });
+    for (const type of ["LESSON_PUPIL_MOVED", "LEAVE_REQUESTED", "LESSON_REPORT_REMINDER"]) {
+      expect(screen.queryByRole("switch", { name: `notificationSettings.types.${type}` })).not.toBeInTheDocument();
+    }
+  });
+});
+
+describe("the three notices of a teaching administrator have texts in both languages", () => {
+  it.each(["sv", "en"] as const)("%s", async (language) => {
+    const messages = (await import(`@/messages/${language}.json`)).default as {
+      notificationSettings: { types: Record<string, string> };
+    };
+    for (const type of ["LESSON_PUPIL_MOVED", "LEAVE_REQUESTED", "LESSON_REPORT_REMINDER"]) {
+      expect(typeof messages.notificationSettings.types[type], type).toBe("string");
+    }
+  });
+});
+
 describe("optOutOf and withChoice", () => {
   it("never names a required type, even one somehow switched off", () => {
     expect(optOutOf([{ type: "ABSENCE_UNREPORTED", enabled: false, required: true }])).toEqual([]);

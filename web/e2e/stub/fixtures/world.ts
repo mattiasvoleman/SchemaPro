@@ -11,7 +11,7 @@ import type {
   TeachingBlock,
   TeachingRequirement,
 } from "../../../lib/types";
-import { EXPEDITION, KIND, MULTI_GUARDIAN, PEOPLE, READER, uid } from "../sessions";
+import { EXPEDITION, KIND, MULTI_GUARDIAN, PEOPLE, READER, TEACHING_ADMIN, uid } from "../sessions";
 import {
   NEXT_YEAR_END,
   NEXT_YEAR_NAME,
@@ -298,6 +298,15 @@ export const PROFILE_ROWS = [
     adminProfile: "EXPEDITION" as const,
     hrRead: false,
   },
+  // The administrator who teaches: a rektor with Users.teaches; only here, so no page lists her.
+  {
+    ...person(TEACHING_ADMIN.userId, "SCHOOL_ADMIN", "Tora", "Tjänsteman", TEACHING_ADMIN.email),
+    authId: TEACHING_ADMIN.authId,
+    schoolId: SCHOOL.id,
+    adminProfile: "REKTOR" as const,
+    hrRead: true,
+    teaches: true,
+  },
 ];
 
 // --- Requirements and the weekly schedule ------------------------------------
@@ -446,6 +455,17 @@ export const CALENDAR_LESSON_TEACHERS = CALENDAR_LESSONS.flatMap((lesson, index)
     rows.push({ id: uid(KIND.misc, 200 + index), calendarLessonId: lesson.id, teacherId: source.coTeacherId, role: "ASSISTANT" });
   }
   return rows;
+});
+
+/**
+ * The lessons the administrator who teaches stands on (TEACHING_ADMIN): two of this week's, Tuesday's English in 7A
+ * and Tuesday's mathematics in 7B, as a second teacher. Their own rows, kept apart from CALENDAR_LESSON_TEACHERS
+ * (which the gateway's fixtures and the other suites read), and served to her alone (tables.ts, server.ts): the school
+ * every other suite sees has no new teacher on any lesson.
+ */
+export const TEACHING_ADMIN_LESSON_TEACHERS = [uid(KIND.masterLesson, 4), uid(KIND.masterLesson, 10)].map((masterLessonId, index) => {
+  const lesson = CALENDAR_LESSONS.find((candidate) => candidate.masterLessonId === masterLessonId)!;
+  return { id: uid(KIND.misc, 400 + index), calendarLessonId: lesson.id, teacherId: TEACHING_ADMIN.userId, role: "ASSISTANT" };
 });
 
 export const byId = <T extends { id: string }>(rows: T[], id: string | null | undefined) =>

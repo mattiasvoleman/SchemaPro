@@ -23,6 +23,7 @@ import {
   SUBJECT_LIST,
   TEACHER_LIST,
   TEACHERS,
+  TEACHING_ADMIN_LESSON_TEACHERS,
 } from "./world";
 
 /**
@@ -36,11 +37,20 @@ import {
  * teachers alone, as the real one does.
  */
 
-function refuse(context: GatewayContext, personas: Persona[]): Reply | null {
+/**
+ * `door` is a route that carries @AsTeacher on the gateway: an administrator who teaches (Users.teaches) is let in
+ * as the teacher, besides the personas the route lists.
+ */
+function refuse(context: GatewayContext, personas: Persona[], door = false): Reply | null {
   if (!context.person) return new Reply(401, { message: "Unauthorized" });
-  if (!personas.includes(context.person.persona)) return new Reply(403, { message: "Forbidden resource" });
+  if (!personas.includes(context.person.persona) && !(door && context.person.teaches === true)) return new Reply(403, { message: "Forbidden resource" });
   return null;
 }
+
+/** Whether this is the administrator who teaches, on a lesson she stands on (app.lesson_teacher_role says REGULAR). */
+const standsOn = (context: GatewayContext, lesson: CalendarLesson) =>
+  context.person!.teaches === true &&
+  TEACHING_ADMIN_LESSON_TEACHERS.some((row) => row.calendarLessonId === lesson.id && row.teacherId === context.person!.userId);
 
 type CalendarLesson = (typeof CALENDAR_LESSONS)[number];
 
@@ -71,7 +81,7 @@ function lessonPage(context: GatewayContext): LessonLogLesson | Reply {
   const lesson = byId(CALENDAR_LESSONS, context.params.id);
   if (!lesson) return new Reply(404, { message: "Lektionen finns inte.", code: "LESSON_NOT_FOUND" });
   const admin = context.person!.persona === "admin";
-  const role = admin ? "ADMIN" : (annasRole(lesson) ?? "COLLEAGUE");
+  const role = standsOn(context, lesson) ? "REGULAR" : admin ? "ADMIN" : (annasRole(lesson) ?? "COLLEAGUE");
   const may = {
     writeLog: admin || role === "REGULAR" || role === "SUBSTITUTE",
     readNote: role === "REGULAR" || role === "SUBSTITUTE",
@@ -112,14 +122,14 @@ function putLog(context: GatewayContext): { log: LessonLogText | null } | Reply 
 }
 
 function putNote(context: GatewayContext): { note: SubstituteNoteText | null } | Reply {
-  const refused = refuse(context, ["teacher"]);
+  const refused = refuse(context, ["teacher"], true);
   if (refused) return refused;
   const body = ((context.body ?? {}) as { body?: string | null }).body?.trim() || null;
   return { note: body ? { body, writtenBy: "Anna Lind", updatedAt: NOW } : null };
 }
 
 function ownLessons(context: GatewayContext): { entries: LessonLogEntry[] } | Reply {
-  const refused = refuse(context, ["student", "teacher"]);
+  const refused = refuse(context, ["student", "teacher"], true);
   if (refused) return refused;
   const from = context.query.get("from") ?? "";
   const to = context.query.get("to") ?? "";
@@ -136,7 +146,9 @@ function ownLessons(context: GatewayContext): { entries: LessonLogEntry[] } | Re
     };
   }
   const onLesson = (lesson: CalendarLesson) =>
-    TEACHER_ROWS.some((row) => row.calendarLessonId === lesson.id && row.teacherId === TEACHERS.anna.id);
+    standsOn(context, lesson) ||
+    (context.person!.persona === "teacher" &&
+      TEACHER_ROWS.some((row) => row.calendarLessonId === lesson.id && row.teacherId === TEACHERS.anna.id));
   return {
     entries: inRange
       .filter((lesson) => onLesson(lesson) && (LESSON_LOGS.has(lesson.id) || SUBSTITUTE_NOTES.has(lesson.id)))
@@ -151,11 +163,13 @@ function ownLessons(context: GatewayContext): { entries: LessonLogEntry[] } | Re
 
 /** The lessons Anna handed over for an absence (none this week: her course day has no decision). */
 function handedOver(context: GatewayContext): { lessons: HandedOverLesson[] } | Reply {
-  const refused = refuse(context, ["teacher"]);
+  const refused = refuse(context, ["teacher"], true);
   if (refused) return refused;
   const from = context.query.get("from") ?? "";
   const to = context.query.get("to") ?? "";
-  const mine = DECISIONS.filter((decision) => ABSENCE_LIST.find((absence) => absence.id === decision.absenceId)?.userId === TEACHERS.anna.id);
+  // Anna's; the administrator who teaches has handed no lesson over.
+  const caller = context.person!.teaches === true ? context.person!.userId : TEACHERS.anna.id;
+  const mine = DECISIONS.filter((decision) => ABSENCE_LIST.find((absence) => absence.id === decision.absenceId)?.userId === caller);
   return {
     lessons: mine.flatMap((decision) => {
       const lesson = byId(CALENDAR_LESSONS, decision.lessonId);
