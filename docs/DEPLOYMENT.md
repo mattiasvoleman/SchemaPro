@@ -5696,7 +5696,7 @@ administrator), so the migration and the merge change no answer there; RLS secti
   section 494 (the list); the adapter probe's `tk-a`…`tk-d` through the real services, the twin test of krisläge first;
   `scripts/test/teaches-pr4-snapshot.sh`; and the bench numbers in the pull request.
 
-### 20.7 Part 5, the web: the group "Min undervisning" (no migration, no gateway change)
+### 20.7 Part 5, the web: the group "Min undervisning" (no migration, no gateway change; the database it reads needs 20270212090000)
 
 The web learns what the gateway and the database have known since parts 2 to 4: **an administrator who teaches** (`Users.teaches`)
 has the teacher's own rows. The rights are the administrator's either way (the view narrows, the right does not).
@@ -5710,10 +5710,13 @@ has the teacher's own rows. The rights are the administrator's either way (the v
   production has no marked person today, so **nobody is shown anything the day this ships**.
 - **What the pages do for her.** `/teacher/franvaro` becomes "Min frånvaro": it no longer asks `GET /cover-requests/mine` (the colleague
   side of the cover request, SP409, answers an administrator 403, and the page drew an error card every minute), and shows her own
-  absences and the lessons she handed over. `/teacher/ledighet` shows her what a mentor is shown (the gateway hands an administrator the school's
-  whole list): the pending applications she is among the deciding mentors of, and on the decided tabs the ones she decided herself,
-  not a pupil's application that rektor decides or decided (read against the real gateway: a teacher mentor is handed exactly that;
-  a teacher's own list is the gateway's, as it was). `/teacher/tjanst` says that her
+  absences and the lessons she handed over. `/teacher/ledighet` narrows the school's whole list that the gateway hands an
+  administrator to what a mentor is shown: the pending applications she is among the deciding mentors of and whose guardians' consent is
+  not still awaited (a teacher's arm asks that it is complete), and on the decided tabs the ones she decided herself for a pupil she is
+  a mentor of. It is a teacher mentor's pending list, read against the real gateway, and on the decided tabs the nearest a page can
+  come: a teacher's decision is written as the mentor's and an administrator's as the administrator's (`decidedAs` ADMIN, also when
+  she decides on this page), so a teacher's own rule (`decidedAs` MENTOR) cannot be copied, and an application she decided as rektor
+  for a pupil of another mentor stays out. A teacher's own list is the gateway's, as it was. `/teacher/tjanst` says that her
   figures are counted from the schedule draft (an administrator reads the draft where a teacher reads the published schedule).
   `/teacher/crisis` has a link to the leadership's view. An alarm's notice in the bell leads her to `/teacher/crisis` instead of
   `/admin/crisis`. Mitt schema, Närvaro, Min rapportering and the lesson page needed no change.
@@ -5727,10 +5730,17 @@ has the teacher's own rows. The rights are the administrator's either way (the v
   there and `toTeaches` is `false`; an audit log is not filled in afterwards). The register's list has a small "undervisar" beside the
   role.
 - **Nothing is run at deploy.** No migration, no engine, no change in any gateway answer (the one line in `src/` is a comment in
-  `crisis.controller.ts`, and the correction of 20.6 above is a sentence). The web is **additive against an older gateway**: `teaches`
-  is optional in every type and `undefined` is false, so a gateway that does not send it shows nobody the group. The only call that
-  needs the gateway of part 2 is the switch's `PATCH` (an older gateway refuses the field).
-- **Deploy order:** none; the web and the API deploy on their own.
+  `crisis.controller.ts`, and the correction of 20.6 above is a sentence). **But the web is not independent of the database:** the
+  session's mark is read from the person's own `Users` row through PostgREST (`web/lib/auth.ts`, the profile read every signed-in
+  request makes, as `hrRead` is), so the database the web reads must hold `Users.teaches` (migration `20270212090000`, in the
+  production's 222 and in every database that has run part 1). Where the column is missing (a preview or an environment that lags)
+  PostgREST answers 42703, the profile read returns nothing and nobody gets past `/no-profile`. There is no column privilege on
+  `Users` in any migration, so the read is the plain table right, as for `hrRead`. "Additive against an older gateway" holds for what
+  the gateway sends: `Person.teaches` and the administrators' `teaches` are optional in the types and `undefined` is false, so an
+  older gateway shows nobody the group in a list. The one call that needs the gateway of part 2 is the switch's `PATCH` (an older
+  gateway refuses the field).
+- **Deploy order:** the migration of part 1 (already run in the production) before the web, as for the rest of the series; otherwise
+  the web and the API deploy on their own.
 - **Rolling back:** revert the pull request. The web keeps nothing (the mark is the database's), and a person who is marked stays
   marked, with the gateway and the database answering as parts 2 to 4 say.
 - **Not in this part:** the planner's pickers and `lärare.csv` (the web's part 5b), the mobile app (part 6) and the handbook (part 7).
