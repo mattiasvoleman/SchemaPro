@@ -6016,6 +6016,22 @@ a 30 s deadline: it never waits while it holds a lock, and after 30 s it stops w
 
 - **Counting.** `SELECT count(*) FROM "TeachingBlockPlacements"` says how many lessons of how many blocks the schools laid;
   `SELECT count(*) FROM "TeachingBlockPlacementRooms"` how many posts chose a room of their own.
+- **What it costs the search.** Measured on the högstadium benchmark (228 posts, 423 lessons, 30 of the posts in 6 blocks; §21.4) as
+  the time to a first timetable of the satisfaction model without the objective, two workers each, the three variants started at
+  once so that they share the machine's load (6 to 18 at the start of each round, never over 24), the lessons taken from a valid
+  timetable of the same week. With **all 45 block lessons** (9 places in 6 blocks) laid: **5.4 s** with no room named, 6.7 s with
+  nothing laid and **91.4 s** with a room named on every post (three rounds: 5.40 to 5.48, 6.70 to 6.77 and 89.6 to 91.5), in 6,780,
+  6,735 and 9,324 variables. With every other place laid (25 lessons in 5 blocks): 4.4 s, 6.8 s and 29.9 s, in 6,760, 6,735 and 9,052
+  variables. **The three rounds of a size followed one search path** (the same number of conflicts in each), so their span is the
+  load and nothing else; eight search seeds were run beside them, and over those the medians were 8.2 s with no room named, 6.9 s with
+  nothing laid and 70.3 s (30 to 110) with rooms for all, and for half of them 8.0 s, 7.0 s and 31.8 s (21 to 41). So a block laid
+  with its rooms left to the engine costs the first timetable about what the same week with nothing laid costs (a median of 1.1
+  times for all the lessons and 0.9 for half; a gain or a loss that survives a change of seed is not there, the ratio per seed
+  running 0.45 to 2.9), and a block laid with a room on every post makes it 4 to 11 times dearer (median over the seeds, 2.0 to 18.5
+  in single seeds) and the model 38 per cent larger: the room's class of its own, as §21.4 says of the post's rows. **Leave the rooms
+  empty unless the school has to say which room.** Measured on one school and one timetable the lessons were taken from, to a first
+  timetable only (no objective), and the span between seeds is wide; it is not measured on the 1,000- and 2,000-pupil benchmarks,
+  which give no first timetable (§22.4).
 - **The places rule, and the way out (§21.4, §22.4).** A pinned room is a room class of its own. Two posts of one block with
   one of two equal rooms each count as two places for a school's places rule, and a week can be refused under a HARD limit
   of one place that was possible with the rooms not named. The way out is the same as for a post's förläggning: leave the
