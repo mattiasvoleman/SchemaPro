@@ -646,6 +646,45 @@ def test_the_cells_no_week_is_in_are_taken_out_before_the_rest_is_filled_in() ->
     assert named(as_said(stray, phantom)) == {"period": 0, "periods": "0,1"}
 
 
+@pytest.mark.parametrize("holds_the_empty_cell", [False, True])
+def test_a_first_group_the_words_cannot_say_is_said_as_its_real_weeks_filled_in_or_as_they_are(
+    holds_the_empty_cell: bool,
+) -> None:
+    """LÅG-2 of the review of #320, round 2: `said_weeks` asks the first group as it asks the whole set.
+
+    The first group is the odd weeks of periods 0 and 1, and period 0 is one
+    odd week (its even cell is no week); the second is the even week of period
+    2, so no words say the two together. Filled in beside period 0's odd week
+    the first group is that period whole beside the odd weeks of period 1,
+    which no words say, and it was said as "period 0": the first two days of
+    the year. As the group is, it is "the odd weeks of periods 0 and 1".
+    """
+    phantom = Weeks(_cell(0, "even"), 3)
+    first = Weeks(_cell(0, "odd") | _cell(1, "odd") | (_cell(0, "even") if holds_the_empty_cell else 0), 3)
+    second = Weeks(_cell(2, "even"), 3)
+    asked = [first, second, Weeks(_cell(1, "even"), 3)]
+    assert as_said(Weeks(first.bits | second.bits, 3), phantom) is None
+    assert not says_exactly(closed(Weeks(_cell(0, "odd") | _cell(1, "odd"), 3), phantom))
+    said = said_weeks([first, second], asked, _never, phantom)
+    assert named(said) == {"period": 0, "periods": "0,1", "parity": "ODD_WEEKS"}
+
+
+def test_a_first_group_the_words_say_once_it_is_filled_in_is_said_filled_in() -> None:
+    """LÅG-2, the other way: the fallback is told which cell is no week, so it fills the first group in where that says it.
+
+    The first group is period 0's odd week (its even cell is no week) beside
+    period 1 whole; filled in that is "periods 0 and 1", which the group
+    as it is is not. The second group is the even week of period 2, so no words
+    say the two together.
+    """
+    phantom = Weeks(_cell(0, "even"), 3)
+    first = Weeks(_cell(0, "odd") | _cell(1, "odd") | _cell(1, "even"), 3)
+    second = Weeks(_cell(2, "even"), 3)
+    assert not says_exactly(first)
+    said = said_weeks([first, second], [first, second, Weeks(_cell(2, "odd"), 3)], _never, phantom)
+    assert named(said) == {"period": 0, "periods": "0,1"}
+
+
 def test_a_set_of_nothing_but_cells_no_week_is_in_is_said_as_it_was_and_not_made_empty() -> None:
     """The strip leaves a set with no real week in it as it is: emptied it would be said as no weeks at all."""
     phantom = Weeks(0b0100, 2)
