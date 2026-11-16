@@ -3,30 +3,33 @@
  *
  * The RLS suite (sections 500-504) reads the rules of BP409 in one session; a lock cannot be seen from one. This probe runs two
  * real connections, each in a transaction of its own, interleaved with a wait, against Postgres, and reads what the committed rows
- * are afterwards. The triggers are judged AFTER the statement and take the block's row FOR NO KEY UPDATE first, on every path:
+ * are afterwards. The rules are judged AFTER the statement and take the block's row FOR NO KEY UPDATE first, on every write of the placements,
+ * the room rows, the members' lessons and the shares (the move of a post takes no lock of its own: TB409 takes the block the post goes to):
  *
  *   race 1  a placement is written for a block while its members' length is changed so that the placement no longer fits: exactly
  *           one of them is refused (BP409 LENGTH) and the block never ends in a set that does not fit;
  *   race 2  a placement is written while a share (a lesson shared between teachers) is written for a member: exactly one is
  *           refused (BP409 SHARES) and the block never ends with both;
- *   race 3  a room row is written for a post while the post LEAVES the block: afterwards no room row is for a post that is not a
- *           member of the placement's block (the leave trigger takes the old block's row first, so it sees the row or the
- *           insert is refused as MEMBER);
+ *   race 3  a room row is written for a post while the post LEAVES the block: no deadlock, the placement is there, and the only room row there
+ *           may be is the post's own, which may be a row for a post that is no longer a member (the leave trigger takes no lock, so it
+ *           cannot see a row that is not committed). That state is counted and tolerated: MEMBER is asked only of a write of the
+ *           placements or the room rows, the gateway and Generera read a block's rooms for members only, and the next save replaces every row;
  *   race 4  two placements of a block with ONE lesson are written at once: exactly one is refused (BP409 COUNT), which the rule
  *           of the members (TB409) cannot see for it, since no member changes.
  *
  * Each race is run ten times (RACES_N) and no iteration may end in a deadlock (40P01) or a serialization failure.
  *
- * Three hunts (and a note) then ask a question the races do not: do two paths that take the same rows in DIFFERENT orders deadlock? The order of every lock is
- * the post's row first and the blocks' rows after it, in id order (the migration's preamble). Each hunt is a tight loop (HUNT_N attempts) over
+ * Three hunts (and a note) then ask a question the races do not: do two paths that take the same rows in DIFFERENT orders deadlock? The order of the locks is
+ * the post's row first and the block's after it (the migration's preamble). Each hunt is a tight loop (HUNT_N attempts) over
  * one planted world, as sessions of the owner with a short deadlock_timeout (the locks are the same whoever asks; a deadlock is found in 20 ms
  * instead of a second):
  *
  *   hunt 1  a member's change of lessons (the post's row, then TB409: the block FOR UPDATE) against a share written for the same member
  *           (the post's row FOR NO KEY UPDATE, then the block's: BP409);
- *   hunt 2  one post moves from block X to block Y while another moves from Y to X (the leave trigger takes both blocks in id order, before TB409);
+ *   hunt 2  one post moves from block X to block Y while another moves from Y to X (only TB409 takes a block for a move; a leave function that took the
+ *           old block as well made the two take the two blocks in opposite orders);
  *   hunt 3  a post moves into a block while a placement is written for that block (the placement's key holds KEY SHARE on the block and asks for
- *           NO KEY UPDATE; the move holds NO KEY UPDATE and TB409 then asks for FOR UPDATE on the same row);
+ *           NO KEY UPDATE; a leave function that took the block it goes to held NO KEY UPDATE while TB409 asked the same row for FOR UPDATE);
  *   note    two posts move into the same block at once (each holds the key's KEY SHARE on it and asks for FOR UPDATE, as TB409 did before this
  *           migration): counted and reported, not judged.
  *
@@ -38,10 +41,10 @@
  * drops the probe's school and, in the mutant run, replaces the functions. Both may point at any database that has the migration.
  *
  * The probe BITES: PROBE_MUTANT=matrix runs each race against the mutant of the function that should lose it (the fit function without
- * its row lock; the leave function without its row lock; both without the lock of TB409 as well, for race 1) and a race that ends in a
- * wrong state at least once in ten "ok"s, one that does not FAILs. Each hunt that the order of the locks makes clean is run against the mutant
- * that takes that order out (the share path without the post's row, the leave function with only the OLD block, the leave trigger named to
- * fire after TB409's) and must find a deadlock. The functions are put back verbatim and md5(prosrc) is compared; the
+ * its row lock; for race 1 also without the lock of TB409) and a race that ends in a wrong state at least once in ten "ok"s, one that does
+ * not FAILs. Each hunt that the order of the locks makes clean is run against the mutant that puts a lock back (the share path without the
+ * post's row; the leave function with a lock on the OLD block, or on both) and must find a deadlock. PROBE_ATTRIBUTE=<mutant> runs the hunts
+ * under one mutant or candidate and only counts. The functions are put back verbatim and md5(prosrc) is compared; the
  * originals are also written to a file in the temp directory, which the next run puts back if this one died on the way.
  *
  * A check that fails prints its FAIL line and the run goes on. The exit code is 1 for any FAIL.
@@ -60,9 +63,9 @@ const HUNT_N = Number(process.env['HUNT_N'] ?? 300);
 const FIT = 'app.teaching_block_placements_fit()';
 const LEAVE = 'app.teaching_block_placement_rooms_leave()';
 const TB409 = 'app.teaching_block_members_agree()';
-const LEAVE_TRIGGER = 'TeachingRequirements_block_leave_takes_rooms';
-/** A name that sorts AFTER TB409's trigger ("..._block_members_agree"): the leave trigger as it was named before the order of the locks was made one. */
-const LATE_LEAVE_TRIGGER = 'TeachingRequirements_block_placement_rooms_leave';
+const LEAVE_TRIGGER = 'TeachingRequirements_block_placement_rooms_leave';
+/** A name that sorts BEFORE TB409's trigger ("..._block_members_agree"): the name the leave trigger had while it took the two blocks of a move. */
+const EARLY_LEAVE_TRIGGER = 'TeachingRequirements_block_leave_takes_rooms';
 const ORIGINALS_FILE = join(tmpdir(), `${SLUG}.originals.sql`);
 
 // ---------------------------------------------------------------------------
@@ -220,6 +223,8 @@ interface Tally {
   oneRefusal: number;
   /** iterations where neither was refused */
   noRefusal: number;
+  /** iterations that ended in the one state a race tolerates (see RaceSpec.observe) */
+  observed: number;
 }
 
 interface RaceSpec {
@@ -229,10 +234,12 @@ interface RaceSpec {
   b: (ctx: Ctx, w: World) => Body;
   /** the committed rows say the block ended in a state the rules refuse */
   bad: (owner: Client, ctx: Ctx, w: World) => Promise<boolean>;
+  /** a state the rules tolerate but that is worth counting (not an error) */
+  observe?: (owner: Client, ctx: Ctx, w: World) => Promise<boolean>;
 }
 
 async function race(owner: Client, ctx: Ctx, ca: Client, cb: Client, spec: RaceSpec, n: number, hold = 120): Promise<Tally> {
-  const t: Tally = { iterations: 0, bad: 0, deadlocks: 0, otherErrors: [], refusals: new Map(), oneRefusal: 0, noRefusal: 0 };
+  const t: Tally = { iterations: 0, bad: 0, deadlocks: 0, otherErrors: [], refusals: new Map(), oneRefusal: 0, noRefusal: 0, observed: 0 };
   for (let i = 0; i < n; i += 1) {
     const w = await spec.plant(owner, ctx);
     // Who starts first alternates; the other starts a little after, inside the first one's open transaction.
@@ -252,12 +259,13 @@ async function race(owner: Client, ctx: Ctx, ca: Client, cb: Client, spec: RaceS
     if (refused === 1) t.oneRefusal += 1;
     if (refused === 0) t.noRefusal += 1;
     if (await spec.bad(owner, ctx, w)) t.bad += 1;
+    if (spec.observe && (await spec.observe(owner, ctx, w))) t.observed += 1;
   }
   return t;
 }
 
 const tallyText = (t: Tally) =>
-  `${t.iterations} runs: ${t.bad} ended wrong, ${t.deadlocks} deadlocks, one refusal in ${t.oneRefusal}, none in ${t.noRefusal}, refusals ${[...t.refusals].map(([k, v]) => `${k} x${v}`).join(', ') || 'none'}`;
+  `${t.iterations} runs: ${t.bad} ended wrong, ${t.deadlocks} deadlocks, one refusal in ${t.oneRefusal}, none in ${t.noRefusal}, refusals ${[...t.refusals].map(([k, v]) => `${k} x${v}`).join(', ') || 'none'}${t.observed ? `, ${t.observed} left a room row for a post that is not a member (tolerated)` : ''}`;
 
 // ---------------------------------------------------------------------------
 // The races
@@ -297,7 +305,10 @@ const RACES: Record<string, RaceSpec & { refusalReason?: string; mustRefuseOne: 
         )
       ).rows[0]!.bad,
   },
-  // 3. A room row is written for a post while the post leaves the block.
+  // 3. A room row is written for a post while the post leaves the block. The leave function takes no lock, so it cannot see a row another
+  //    transaction has not committed: the room row can stay, for a post that is no longer a member. That is the ONE state this race tolerates
+  //    (it is counted): MEMBER is asked only of a write of the placements or the room rows, the gateway and Generera read a block's rooms for its
+  //    members only, and the next save replaces every row. Everything else must hold: no deadlock, the placement is there, no other room row.
   leave: {
     label: 'a room row is written for a post while the post leaves the block',
     mustRefuseOne: false,
@@ -305,15 +316,25 @@ const RACES: Record<string, RaceSpec & { refusalReason?: string; mustRefuseOne: 
     a: (ctx, w) => async (c) =>
       void (await c.query(`INSERT INTO "TeachingBlockPlacementRooms" ("schoolId", "placementId", "requirementId", "roomId", "updatedAt") VALUES ($1, $2, $3, $4, now())`, [ctx.school, w.placement, w.posts[0], ctx.room1])),
     b: (_ctx, w) => async (c) => void (await c.query(`UPDATE "TeachingRequirements" SET "blockId" = NULL WHERE id = $1`, [w.posts[0]])),
-    // A room row for a post that is not a member of the placement's block.
+    // Wrong: the placement gone, or a room row that is not the one for the post that left (the other member's, or two).
     bad: async (owner, _ctx, w) =>
       (
         await owner.query<{ bad: boolean }>(
-          `SELECT EXISTS (SELECT 1 FROM "TeachingBlockPlacementRooms" x JOIN "TeachingBlockPlacements" p ON p.id = x."placementId" JOIN "TeachingRequirements" r ON r.id = x."requirementId"
-                           WHERE p."blockId" = $1 AND r."blockId" IS DISTINCT FROM p."blockId") AS bad`,
-          [w.block],
+          `SELECT (SELECT count(*) FROM "TeachingBlockPlacements" WHERE "blockId" = $1) <> 1
+               OR EXISTS (SELECT 1 FROM "TeachingBlockPlacementRooms" x JOIN "TeachingBlockPlacements" p ON p.id = x."placementId" WHERE p."blockId" = $1 AND x."requirementId" <> $2)
+               OR (SELECT count(*) FROM "TeachingBlockPlacementRooms" x JOIN "TeachingBlockPlacements" p ON p.id = x."placementId" WHERE p."blockId" = $1) > 1 AS bad`,
+          [w.block, w.posts[0]],
         )
       ).rows[0]!.bad,
+    // The tolerated state: a room row for a post that is not a member of the placement's block.
+    observe: async (owner, _ctx, w) =>
+      (
+        await owner.query<{ seen: boolean }>(
+          `SELECT EXISTS (SELECT 1 FROM "TeachingBlockPlacementRooms" x JOIN "TeachingBlockPlacements" p ON p.id = x."placementId" JOIN "TeachingRequirements" r ON r.id = x."requirementId"
+                           WHERE p."blockId" = $1 AND r."blockId" IS DISTINCT FROM p."blockId") AS seen`,
+          [w.block],
+        )
+      ).rows[0]!.seen,
   },
   // 4. Two placements of a block that has ONE lesson.
   count: {
@@ -346,7 +367,7 @@ async function bareSide(c: Client, delay: number, sql: string, params: unknown[]
 }
 
 async function hunt(h1: Client, h2: Client, n: number, a: (i: number) => [string, unknown[]], b: (i: number) => [string, unknown[]], reset: (i: number) => Promise<void>): Promise<Tally> {
-  const t: Tally = { iterations: 0, bad: 0, deadlocks: 0, otherErrors: [], refusals: new Map(), oneRefusal: 0, noRefusal: 0 };
+  const t: Tally = { iterations: 0, bad: 0, deadlocks: 0, otherErrors: [], refusals: new Map(), oneRefusal: 0, noRefusal: 0, observed: 0 };
   for (let i = 0; i < n; i += 1) {
     // The two statements start within a few milliseconds of each other, in either order.
     const jitter = Math.floor(Math.random() * 4);
@@ -475,8 +496,8 @@ async function triggerDef(owner: Client): Promise<string> {
 
 interface Mutant {
   defs: Array<[string, string]>;
-  /** the leave trigger is dropped, and created again under this name when there is one */
-  leaveTrigger?: { newName: string | null };
+  /** the leave trigger is dropped, or dropped and created again under another name */
+  leaveTrigger?: { drop: true } | { newName: string };
 }
 
 function mutate(originals: Record<string, string>, which: string): Mutant {
@@ -487,34 +508,31 @@ function mutate(originals: Record<string, string>, which: string): Mutant {
   // The block's lock in the fit function (not the post's row, which the share path takes before it).
   const noFit = changed(FIT, originals[FIT]!.replace(/(FROM "TeachingBlocks" b[^;]*?)\s+FOR NO KEY UPDATE;/, '$1;'));
   const noSharePostLock = changed(FIT, originals[FIT]!.replace(/(FROM "TeachingRequirements" r\s+WHERE r\."id" = NEW\."requirementId" AND r\."schoolId" = NEW\."schoolId")\s+FOR NO KEY UPDATE;/, '$1;'));
-  const noLeave = changed(LEAVE, originals[LEAVE]!.replace(/\s+FOR NO KEY UPDATE;/, ';'));
-  const leaveOldOnly = changed(LEAVE, originals[LEAVE]!.replace('b."id" IN (OLD."blockId", NEW."blockId")', 'b."id" = OLD."blockId"'));
-  const leaveNoOrder = changed(LEAVE, originals[LEAVE]!.replace(/\s+ORDER BY b\."id"/, ''));
+  // The first two versions of the leave function took a lock; the migration's has none. Put one back, to see what each costs.
+  const leaveLocksOld = changed(LEAVE, originals[LEAVE]!.replace(/BEGIN\n/, `BEGIN\n  PERFORM 1 FROM "TeachingBlocks" b WHERE b."id" = OLD."blockId" AND b."schoolId" = OLD."schoolId" FOR NO KEY UPDATE;\n`));
+  const leaveLocksBoth = changed(
+    LEAVE,
+    originals[LEAVE]!.replace(/BEGIN\n/, `BEGIN\n  PERFORM 1 FROM "TeachingBlocks" b WHERE b."schoolId" = OLD."schoolId" AND b."id" IN (OLD."blockId", NEW."blockId") ORDER BY b."id" FOR NO KEY UPDATE;\n`),
+  );
   // TB409 takes the block FOR UPDATE twice (a change of lessons: the block and the blocks on its times in id order; then the block's name).
   const noTb409 = changed(TB409, originals[TB409]!.replace(/\s+FOR UPDATE;/g, ';'));
   switch (which) {
     case 'fit-lock':
       return { defs: [noFit] };
-    case 'leave-lock':
-      return { defs: [noLeave] };
     case 'fit-lock+tb409-lock':
       return { defs: [noFit, noTb409] };
     case 'shares-post-lock':
       return { defs: [noSharePostLock] };
-    case 'leave-old-only':
-      return { defs: [leaveOldOnly] };
-    case 'leave-no-order-by':
-      return { defs: [leaveNoOrder] };
-    case 'leave-trigger-after-tb409':
-      return { defs: [], leaveTrigger: { newName: LATE_LEAVE_TRIGGER } };
-    case 'leave-for-update':
-      // Not a mutant to lose: a candidate. The leave function with the strength TB409 takes on the block it goes to.
-      return { defs: [changed(LEAVE, originals[LEAVE]!.replace(/\s+FOR NO KEY UPDATE;/, '\n      FOR UPDATE;'))] };
+    case 'leave-locks-old':
+      return { defs: [leaveLocksOld] };
+    case 'leave-locks-both':
+      // Both blocks of a move in id order, as the function did in the version of the migration before this one, and the trigger named to fire BEFORE TB409's.
+      return { defs: [leaveLocksBoth], leaveTrigger: { newName: EARLY_LEAVE_TRIGGER } };
     case 'tb409-no-key-update':
       // Not a mutant to lose: a candidate. TB409 with the strength every other writer of the block takes (it takes FOR UPDATE, which the key's KEY SHARE conflicts with).
       return { defs: [changed(TB409, originals[TB409]!.replace(/\s+FOR UPDATE;/g, '\n        FOR NO KEY UPDATE;'))] };
     case 'leave-trigger-dropped':
-      return { defs: [], leaveTrigger: { newName: null } };
+      return { defs: [], leaveTrigger: { drop: true } };
     default:
       throw new Error(`unknown mutant ${which}`);
   }
@@ -524,13 +542,13 @@ async function install(owner: Client, mutant: Mutant, originalTrigger: string): 
   for (const [, text] of mutant.defs) await owner.query(text);
   if (mutant.leaveTrigger) {
     await owner.query(`DROP TRIGGER "${LEAVE_TRIGGER}" ON "TeachingRequirements"`);
-    if (mutant.leaveTrigger.newName) await owner.query(originalTrigger.replace(`TRIGGER "${LEAVE_TRIGGER}"`, `TRIGGER "${mutant.leaveTrigger.newName}"`));
+    if ('newName' in mutant.leaveTrigger) await owner.query(originalTrigger.replace(`TRIGGER "${LEAVE_TRIGGER}"`, `TRIGGER "${mutant.leaveTrigger.newName}"`));
   }
 }
 
 /** The SQL that puts the leave trigger back whatever state it is in. */
 const triggerRestoreSql = (originalTrigger: string) =>
-  `DROP TRIGGER IF EXISTS "${LATE_LEAVE_TRIGGER}" ON "TeachingRequirements";\nDROP TRIGGER IF EXISTS "${LEAVE_TRIGGER}" ON "TeachingRequirements";\n${originalTrigger};\n`;
+  `DROP TRIGGER IF EXISTS "${EARLY_LEAVE_TRIGGER}" ON "TeachingRequirements";\nDROP TRIGGER IF EXISTS "${LEAVE_TRIGGER}" ON "TeachingRequirements";\n${originalTrigger};\n`;
 
 async function restore(owner: Client, originals: Record<string, string>, expected: Record<string, string>, originalTrigger: string): Promise<void> {
   for (const text of Object.values(originals)) await owner.query(text);
@@ -606,12 +624,10 @@ async function main(): Promise<void> {
         { kind: 'race', name: 'length', mutant: 'fit-lock+tb409-lock', bite: true, text: 'without the block lock of BP409 and of TB409' },
         { kind: 'race', name: 'length', mutant: 'fit-lock', bite: false, text: "without the block lock of BP409 alone: TB409 takes the block FOR UPDATE for a change of lessons, and the placement's key holds KEY SHARE on it, so the two writers are ordered anyway" },
         { kind: 'race', name: 'share', mutant: 'fit-lock', bite: true, text: 'without the block lock of BP409' },
-        { kind: 'race', name: 'leave', mutant: 'leave-lock', bite: true, text: "without the old block's lock in the leave function" },
-        { kind: 'race', name: 'leave', mutant: 'fit-lock', bite: true, text: "without the block lock of BP409 alone: the leave function's lock orders nothing when the insert does not take it" },
         { kind: 'race', name: 'count', mutant: 'fit-lock', bite: true, text: 'without the block lock of BP409' },
         { kind: 'hunt', name: 'shares', mutant: 'shares-post-lock', bite: true, text: "the share path without the post's row lock before the block's" },
-        { kind: 'hunt', name: 'swap', mutant: 'leave-old-only', bite: true, text: 'the leave function takes only the OLD block (as before the order was made one)' },
-        { kind: 'hunt', name: 'swap', mutant: 'leave-trigger-after-tb409', bite: true, text: `the leave trigger named so that it fires after TB409's (${LATE_LEAVE_TRIGGER})` },
+        { kind: 'hunt', name: 'swap', mutant: 'leave-locks-old', bite: true, text: 'the leave function takes the OLD block (as the migration did in its second version)' },
+        { kind: 'hunt', name: 'into', mutant: 'leave-locks-both', bite: true, text: "the leave function takes both blocks of a move in id order, under a trigger name that fires before TB409's (as the migration did in its third version)" },
       ];
       for (const e of matrix) {
         const label = e.kind === 'race' ? RACES[e.name]!.label : HUNTS[e.name]!.label;
@@ -619,7 +635,7 @@ async function main(): Promise<void> {
           await install(owner, mutate(originals!, e.mutant), originalTrigger);
           let t: Tally;
           try {
-            t = e.kind === 'race' ? await race(owner, ctx, ca, cb, RACES[e.name]!, RACES_N) : await HUNTS[e.name]!.run(env, HUNT_N);
+            t = e.kind === 'race' ? await race(owner, ctx, ca, cb, RACES[e.name]!, RACES_N) : await HUNTS[e.name]!.run(env, e.name === 'into' ? HUNT_N * 3 : HUNT_N);
           } finally {
             await restore(owner, originals!, expected!, originalTrigger);
           }
@@ -640,7 +656,8 @@ async function main(): Promise<void> {
             must(t.oneRefusal === t.iterations, `exactly one writer should be refused in every run: ${tallyText(t)}`);
             must([...t.refusals.keys()].every((k) => k === spec.refusalReason), `the refusal should be ${spec.refusalReason}: ${tallyText(t)}`);
           } else {
-            // The room row's writer is refused (MEMBER) when the post has already left, and the post's own move is never refused.
+            // The room row's writer is refused (MEMBER) when the post has already left, and the post's own move is never refused. A room row that
+            // is written while the post leaves and stays is counted (t.observed), not refused: see the race.
             must([...t.refusals.keys()].every((k) => k === 'BP409 MEMBER'), `only MEMBER may be refused: ${tallyText(t)}`);
           }
           return tallyText(t);
