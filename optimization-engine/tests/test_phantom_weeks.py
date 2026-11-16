@@ -723,6 +723,31 @@ def test_a_set_of_nothing_but_cells_no_week_is_in_is_said_as_it_was_and_not_made
     assert as_said(phantom, phantom) == phantom
 
 
+@pytest.mark.parametrize(
+    ("week", "phantom", "parity"),
+    [(0b01, 0b10, "ODD_WEEKS"), (0b10, 0b01, "EVEN_WEEKS")],
+    ids=["odd weeks", "even weeks"],
+)
+def test_the_weeks_of_a_year_not_cut_into_periods_are_said_in_the_periods_the_cells_are_in(
+    week: int, phantom: int, parity: str
+) -> None:
+    """LÅG-2 of the review of #325: `as_said` is asked a set of fewer periods than the cells that no week is in.
+
+    The set is one parity of the year, in one period (`Weeks(0b01, 1)`: the odd weeks), and the year is cut into
+    two, where period 0 is one week of the OTHER parity, so its cell for this one is no week. The set is lifted
+    to the periods of the year, "the odd weeks of both periods", which is what the words say; filled in beside
+    period 0's cell it is that period whole beside the odd weeks of period 1, which they do not. It is not said
+    as "every week" (no word at all) for being a set of one period, and the strip does not raise for the two counts
+    of periods differing (a set cannot be lifted down to fewer periods, so both are lifted up to the larger).
+
+    The gateway does not send such a set: its weeks carry the periods of the year, so only a request
+    built by hand reaches this, and this says what it gives.
+    """
+    said = as_said(Weeks(week, 1), Weeks(phantom, 2))
+    assert said is not None and said.periods == 2
+    assert named(said) == {"period": 0, "periods": "0,1", "parity": parity}
+
+
 def test_a_solved_refusal_in_one_parity_of_several_periods_is_said_of_them_all() -> None:
     request = _request(_five_hours_of_one_parity([1, 3, 4], [1, 2, 2], "ODD_WEEKS", told=True))
     verdict = ConflictAnalysis(
