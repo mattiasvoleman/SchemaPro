@@ -118,6 +118,19 @@
 -- it sees the first snapshot), so a write there is refused (ISOLATION) rather than judged
 -- on a snapshot that may be missing a concurrent row; nothing in the gateway writes in it.
 --
+-- THE ORDER OF EVERY LOCK IS THE POST'S ROW FIRST AND THE BLOCKS' ROWS AFTER IT, IN ID ORDER.
+-- Every writer that holds a post's row and then asks for a block's row (a member's change of
+-- lessons: the UPDATE holds the post, TB409 and this trigger then take the block) would meet a
+-- writer that took the block's row and then the post's (a share written for the member: this
+-- trigger took the block, and the shares' own trigger the post) in a deadlock (40P01), which
+-- two 300-attempt hunts found at 17 and 26 in 300. So the share path takes the post's row
+-- before the block's, as the shares' own trigger does later. And a post that moves from one
+-- block to another holds the post and takes the OLD block (below) while TB409 takes the NEW one:
+-- two posts moving in opposite directions took the two blocks in opposite orders (75 to 101
+-- deadlocks in 300). So the trigger below takes both blocks, in id order, and is named to fire
+-- BEFORE TB409's trigger ("..._block_leave_takes_rooms" sorts before "..._block_members_agree"),
+-- so no other trigger of the move has taken one of them first.
+--
 -- SECURITY DEFINER, owned by the migration owner, so the lock and the reads are the
 -- block's whatever the caller may see.
 --
@@ -125,9 +138,10 @@
 --
 -- "TeachingRequirements"."blockId" changes in three places (the import, the term split,
 -- the block's members), and a room row for a post that is not a member says nothing
--- about anything: it is removed. The trigger takes the OLD block's row first, so a room
--- row another transaction is inserting for this post, while it is still a member, is
--- seen by the delete or the insert is refused as MEMBER.
+-- about anything: it is removed. The trigger takes the OLD block's row and the NEW one's
+-- (when there is one) first, in id order, so a room row another transaction is inserting for
+-- this post, while it is still a member, is seen by the delete or the insert is refused as
+-- MEMBER.
 --
 -- ## Who may read and write
 --
@@ -312,9 +326,13 @@ BEGIN
     block_id := NEW."blockId";
     school_id := NEW."schoolId";
   ELSIF TG_TABLE_NAME = 'TeachingRequirementShares' THEN
+    -- The post's row BEFORE the block's, as every writer that holds a post goes on to the block
+    -- (the preamble: the order of every lock): a member's change of lessons holds the post and
+    -- then takes the block, and this path would otherwise take the block and wait for the post.
     SELECT r."blockId" INTO block_id
       FROM "TeachingRequirements" r
-     WHERE r."id" = NEW."requirementId" AND r."schoolId" = NEW."schoolId";
+     WHERE r."id" = NEW."requirementId" AND r."schoolId" = NEW."schoolId"
+       FOR NO KEY UPDATE;
     school_id := NEW."schoolId";
   ELSE
     block_id := NEW."id";
@@ -475,12 +493,15 @@ CREATE OR REPLACE FUNCTION app.teaching_block_placement_rooms_leave()
 RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 BEGIN
-  -- The block it leaves first, as the fit function takes it: a room row another
-  -- transaction is inserting for this post while it is still a member is then seen
-  -- by the delete below, or is refused there as MEMBER.
+  -- The block it leaves AND the block it goes to, in id order (the preamble: the order of every
+  -- lock), before any other trigger of the move takes one of them: a room row another
+  -- transaction is inserting for this post while it is still a member is then seen by the delete
+  -- below, or is refused there as MEMBER, and two posts that change places never take the two
+  -- blocks in opposite orders. ORDER BY under FOR NO KEY UPDATE locks the rows in that order.
   PERFORM 1
      FROM "TeachingBlocks" b
-    WHERE b."id" = OLD."blockId" AND b."schoolId" = OLD."schoolId"
+    WHERE b."schoolId" = OLD."schoolId" AND b."id" IN (OLD."blockId", NEW."blockId")
+    ORDER BY b."id"
       FOR NO KEY UPDATE;
   DELETE FROM "TeachingBlockPlacementRooms" x
    WHERE x."requirementId" = OLD."id" AND x."schoolId" = OLD."schoolId";
@@ -489,9 +510,11 @@ END;
 $$;
 
 COMMENT ON FUNCTION app.teaching_block_placement_rooms_leave() IS
-  'A timplanspost that leaves its block (blockId changes) loses its rows in TeachingBlockPlacementRooms: its room is the engine''s to choose again. Membership is never refused. Locks the old block row first.';
+  'A timplanspost that leaves its block (blockId changes) loses its rows in TeachingBlockPlacementRooms: its room is the engine''s to choose again. Membership is never refused. Locks the old and the new block row, in id order, before TB409''s trigger takes one of them.';
 
-CREATE TRIGGER "TeachingRequirements_block_placement_rooms_leave"
+-- Named to sort before TB409's "TeachingRequirements_block_members_agree": triggers fire in name order, and this one takes
+-- both blocks of the move, in id order, before that one takes the block the post goes to.
+CREATE TRIGGER "TeachingRequirements_block_leave_takes_rooms"
     AFTER UPDATE OF "blockId"
     ON "TeachingRequirements"
     FOR EACH ROW
