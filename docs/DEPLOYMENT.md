@@ -5543,6 +5543,9 @@ database refuses).
   free at once in 30 s the migration stops with nothing changed and says so: Prisma then marks it failed and refuses every later
   `migrate deploy` (P3009) until `prisma migrate resolve --rolled-back 20270216090000_en_undervisande_administrator_far_lararens_egna_armar`
   has been run, then deploy again.
+- **Run again by hand.** A second run on a migrated database stops at the anchor of `app.lesson_teacher_role` with nothing
+  changed, but one arm converted by hand before a run would get the mark twice (`... OR teaches OR teaches`), which RLS
+  section 505b fails afterwards; the file stays as it is, because its sha256 is the one that ran in production.
 - **Deploy order:** the migration, then the merge. The API before this release is untouched by it (nothing is marked), and the API
   after it needs nothing of it. **Checks:** `teaches-pr3-data/prod-fore.sql` (61 checks) before and `prod-efter.sql` (69) directly
   after, in the notes folder of the round's coordinator (`side-session-notes/local_487a7ffc-d4e9-44ea-9a93-ae6556fb4370/`, outside
