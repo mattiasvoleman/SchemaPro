@@ -4931,6 +4931,104 @@ BEGIN
   INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body, "writtenById") VALUES (s, lcov, 'AR notis COV', adm[4]);
 END $$;
 
+-- ---------------------------------------------------------------------------
+-- Krisläge, mentor och rapporteringsgrad för en markerad administratör (20270219090000; RLS sections 510-514).
+--
+-- A school of its own (RLS sections 110 and 509 count the others): the four administrators who can be marked (…6001 rektor, …6002
+-- full, …6003 schemaläggare, …6004 expedition), a läsare who cannot (…6006), three teachers (…6010, …6011, …6012) and five pupils
+-- in four classes (LA7A: …6021, …6022; LA7B: …6023; LA7C: …6024; LA7D: …6025), each with an enrolment (written by a trigger). The four administrators and
+-- the first two teachers have a post for the active year (a mark needs one). Mentors (MENTORSKAP): rektor and teacher 1 have LA7A,
+-- full and teacher 2 LA7B, schemaläggare LA7C, expedition LA7D. Each of the four administrators and the two teachers stood on one
+-- lesson of LA7A that is over and whose register is not saved (the reporting rate counts them once they teach); teacher 1 on a
+-- second whose register is saved. The school delegates leave of up to 3 school days to the mentor, and two requests are pending
+-- (the pupil of LA7A, the pupil of LA7B). Krisläge: only FULL and REKTOR may start an alarm here (the school narrowed the list),
+-- which is the case the mark is for. Planted on its own, once; the alarms are made in the sections.
+-- ---------------------------------------------------------------------------
+DO $$
+DECLARE
+  s uuid;
+  y uuid;
+  subj uuid;
+  gr uuid[] := '{}';
+  g uuid;
+  adm uuid[] := '{}';
+  who uuid;
+  t1 uuid;
+  t2 uuid;
+  pup uuid;
+  pupils uuid[] := '{}';
+  l uuid;
+  i int;
+  monday date := ((date_trunc('week', current_date) + interval '7 days')::date);
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-larm-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ('RLS Larm', 'rls-larm-school', 'Europe/Stockholm', now()) RETURNING id INTO s;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s, 'Larm i år', current_date - 60, current_date + 300, true, now()) RETURNING id INTO y;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s, 'Larm ämne', 'RLSLA', now()) RETURNING id INTO subj;
+  FOREACH i IN ARRAY ARRAY[1, 2, 3, 4] LOOP
+    INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+    VALUES (s, y, 'LA7' || chr(64 + i), 7, now()) RETURNING id INTO g;
+    gr := gr || g;
+  END LOOP;
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "hrRead", "authId", "isActive", "updatedAt") VALUES
+    (s, 'larm-rektor@example.invalid',  'Larm', 'Rektor',        'SCHOOL_ADMIN', 'REKTOR',        false, '00000000-0000-4000-8000-000000006001', true, now()),
+    (s, 'larm-full@example.invalid',    'Larm', 'Full',          'SCHOOL_ADMIN', 'FULL',          false, '00000000-0000-4000-8000-000000006002', true, now()),
+    (s, 'larm-schema@example.invalid',  'Larm', 'Schemaläggare', 'SCHOOL_ADMIN', 'SCHEMALAGGARE', false, '00000000-0000-4000-8000-000000006003', true, now()),
+    (s, 'larm-exp@example.invalid',     'Larm', 'Expedition',    'SCHOOL_ADMIN', 'EXPEDITION',    false, '00000000-0000-4000-8000-000000006004', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (s, 'larm-lasare@example.invalid', 'Larm', 'Läsare', 'SCHOOL_ADMIN', 'LASARE', '00000000-0000-4000-8000-000000006006', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'larm-t1@example.invalid', 'Larm', 'Lärare Ett', 'TEACHER', '00000000-0000-4000-8000-000000006010', true, now()) RETURNING id INTO t1;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'larm-t2@example.invalid', 'Larm', 'Lärare Två', 'TEACHER', '00000000-0000-4000-8000-000000006011', true, now()) RETURNING id INTO t2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'larm-t3@example.invalid', 'Larm', 'Lärare Tre', 'TEACHER', '00000000-0000-4000-8000-000000006012', true, now());
+  SELECT array_agg(u.id ORDER BY u."authId") INTO adm FROM "Users" u
+   WHERE u."schoolId" = s AND u."authId" IN ('00000000-0000-4000-8000-000000006001', '00000000-0000-4000-8000-000000006002',
+         '00000000-0000-4000-8000-000000006003', '00000000-0000-4000-8000-000000006004');
+
+  -- Five pupils in four classes (a trigger writes each one's enrolment).
+  FOR i IN 1 .. 5 LOOP
+    INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+    VALUES (s, 'larm-p' || i || '@example.invalid', 'Larm', 'Elev ' || i, 'STUDENT', ('00000000-0000-4000-8000-0000000060' || (20 + i))::uuid, true,
+            gr[CASE i WHEN 2 THEN 1 WHEN 3 THEN 2 WHEN 4 THEN 3 WHEN 5 THEN 4 ELSE 1 END], now()) RETURNING id INTO pup;
+    pupils := pupils || pup;
+  END LOOP;
+
+  -- The posts, the mentors and the lessons.
+  FOREACH who IN ARRAY (adm || t1 || t2) LOOP
+    INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt") VALUES (s, who, y, 50, now());
+  END LOOP;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt") VALUES
+    (s, adm[1], y, 'MENTORSKAP', 'Larm mentor 7A rektor', 60, gr[1], now()),
+    (s, t1,     y, 'MENTORSKAP', 'Larm mentor 7A lärare', 60, gr[1], now()),
+    (s, adm[2], y, 'MENTORSKAP', 'Larm mentor 7B full', 60, gr[2], now()),
+    (s, t2,     y, 'MENTORSKAP', 'Larm mentor 7B lärare', 60, gr[2], now()),
+    (s, adm[3], y, 'MENTORSKAP', 'Larm mentor 7C schema', 60, gr[3], now()),
+    (s, adm[4], y, 'MENTORSKAP', 'Larm mentor 7D exp', 60, gr[4], now());
+  FOR i IN 1 .. 6 LOOP
+    INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, note, "updatedAt")
+    VALUES (s, subj, gr[1], current_date - (2 + i), (current_date - (2 + i)) + time '08:00', (current_date - (2 + i)) + time '09:00', 'SCHEDULED', 'LA-' || i, now()) RETURNING id INTO l;
+    INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, l, (adm || t1 || t2)[i], 'LEAD');
+  END LOOP;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, note, "updatedAt")
+  VALUES (s, subj, gr[1], current_date - 9, (current_date - 9) + time '08:00', (current_date - 9) + time '09:00', 'SCHEDULED', 'LA-T1-OK', now()) RETURNING id INTO l;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, l, t1, 'LEAD');
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt") VALUES (s, l, pupils[1], 'PRESENT', now());
+
+  -- Leave: the school lets the mentor decide up to three school days, and two requests wait (next Monday and Tuesday).
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays", reference) VALUES (s, 3, 'Larm');
+  INSERT INTO "LeaveRequests" ("schoolId", "studentId", "requestedById", "startDate", "endDate", reason)
+  VALUES (s, pupils[1], pupils[1], monday, monday + 1, 'Larm ledighet A'), (s, pupils[3], pupils[3], monday, monday + 1, 'Larm ledighet B');
+
+  -- Krisläge: the school narrowed who may start an alarm to full and rektor.
+  INSERT INTO "CrisisSettings" ("schoolId", "startProfiles", "updatedAt") VALUES (s, ARRAY['FULL', 'REKTOR']::"AdminProfile"[], now());
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

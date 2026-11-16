@@ -4148,7 +4148,8 @@ ROLLBACK;
 -- 392o: the two lesson functions are one definition. app.absence_stats_lessons is app.reporting_lessons with the one line
 -- about the teacher, and nothing else: whoever rewrites the one (Elevens lektion för dagen adds a condition about a pupil
 -- moved off a lesson) has to carry it into the other, or the history's reporting rate is not Rapporteringsgradens.
--- Compared as the catalogue holds them, with the comments cut and the white space collapsed.
+-- Compared as the catalogue holds them, with the comments cut and the white space collapsed. Since 20270219090000 "a teacher" is
+-- app.teaches_like(role, mark): a TEACHER, or a SCHOOL_ADMIN who teaches (Users.teaches); the line is still the only difference.
 BEGIN;
 CREATE FUNCTION pg_temp.d6o_norm(p_src text) RETURNS text LANGUAGE sql IMMUTABLE AS $f$
   SELECT btrim(regexp_replace(regexp_replace(p_src, '--[^' || chr(10) || ']*', '', 'g'), '\s+', ' ', 'g'))
@@ -4157,8 +4158,8 @@ DO $$
 DECLARE
   d2 text := pg_temp.d6o_norm((SELECT prosrc FROM pg_proc WHERE oid = 'app.reporting_lessons(uuid, date, date, timestamptz)'::regprocedure));
   d6 text := pg_temp.d6o_norm((SELECT prosrc FROM pg_proc WHERE oid = 'app.absence_stats_lessons(uuid, date, date, timestamptz)'::regprocedure));
-  live constant text := E'AND u."role" = ''TEACHER'' AND u."isActive"';
-  gone constant text := E'AND u."role" = ''TEACHER'' AND NOT EXISTS (SELECT 1 FROM "public"."UserDeactivations" d WHERE d."userId" = u."id" AND d."startsAt" < cl."endsAt" AND (d."endsAt" IS NULL OR cl."endsAt" < d."endsAt"))';
+  live constant text := E'AND app.teaches_like(u."role", u."teaches") AND u."isActive"';
+  gone constant text := E'AND app.teaches_like(u."role", u."teaches") AND NOT EXISTS (SELECT 1 FROM "public"."UserDeactivations" d WHERE d."userId" = u."id" AND d."startsAt" < cl."endsAt" AND (d."endsAt" IS NULL OR cl."endsAt" < d."endsAt"))';
 BEGIN
   PERFORM pg_temp.d6o_expect('392o D2 asks who is a teacher now', ((length(d2) - length(replace(d2, live, ''))) / length(live))::text, '1');
   PERFORM pg_temp.d6o_expect('392o the history asks who was active when the lesson was over, from the periods', ((length(d6) - length(replace(d6, gone, ''))) / length(gone))::text, '1');

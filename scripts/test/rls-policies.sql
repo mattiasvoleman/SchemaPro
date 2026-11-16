@@ -60569,14 +60569,20 @@ ROLLBACK;
 --     until somebody has judged it and written it down; a converted one leaves the list in the migration that converts it
 --     (the entry then fails as stale, which is the reminder to remove it);
 --   * the second column says who judges it. ADMIN_TOO: the text also names SCHOOL_ADMIN (held: both ways, here), which for
---     a policy means the arm already admits an administrator, and for a function only that the word is there. PR4: the arm
---     belongs to the later migration the investigation gave it (krisläge, mentor, kvittens and rapporteringsgrad). OUT:
+--     a policy means the arm already admits an administrator, and for a function only that the word is there. (PR4, the arm
+--     that belonged to the later migration, is gone: PR 4 converted or judged every one.) OUT:
 --     beslut 4 says the arm stays the teacher's alone (klasslärare, vikariepoolen, vikariefrågan: CT400 and SP409 stand).
 --     STAYS: judged by PR 3 and left as it is, and the list of reasons below says why (494b holds that every STAYS entry has a
 --     reason and every reason a STAYS entry). JUDGE: nobody has said yet, and PR3: the arm is PR 3's; none is left of either
---     (PR 3 converted 16 policies and 3 functions, and every other entry that was PR3 or JUDGE is STAYS);
---   * the list of those that DO name current_user_teaches is exactly what PR 3 converted (494d): a new asker is as unjudged as a
---     new TEACHER arm, and a converted one that stopped asking is a lost conversion.
+--     (PR 3 converted 16 policies and 3 functions, and every other entry that was PR3 or JUDGE is STAYS; PR 4 did the same for PR4);
+--   * the list of those that DO ask for the mark (app.current_user_teaches() or, since PR 4, app.teaches_like(role, mark), the
+--     same question of a row) is exactly what PR 3 and PR 4 converted (494d): a new asker is as unjudged as a new TEACHER arm,
+--     and a converted one that stopped asking is a lost conversion.
+--
+-- PR 4 (20270219090000: krisläge, mentor, rapporteringsgrad) converted three insert arms of the teacher's own marks in an alarm and ten
+-- functions, judged 25 policies and app.checklist_taught_ids() as STAYS with a reason (there is no PR4 tag left), and retagged
+-- app.class_teacher_actor and app.cover_request_sender from ADMIN_TOO to OUT (LÅG-1 of review #324: they refuse an administrator,
+-- as beslut 4 says, and 494b now lets an OUT entry name SCHOOL_ADMIN while still holding ADMIN_TOO to a text that names it).
 --
 -- A trap the list names, and 494c holds: app.cover_policy_arm_is_narrow (20261012130000) accepts a cover arm only if its
 -- TEXT matches current_user_role()%= 'TEACHER'::"UserRole", with no OR in it but the one that carries the mark (since PR 3, which
@@ -60587,13 +60593,13 @@ BEGIN;
 CREATE TEMP TABLE tl_want (kind text, name text, owner text) ON COMMIT DROP;
 INSERT INTO tl_want SELECT 'P', v.name, v.owner FROM (VALUES
   -- policies: table.policy
-    ('AbsenceReports.absence_reports_mentor_leave_insert', 'PR4'),
-    ('AbsenceWatchFindings.absence_watch_findings_mentor_select', 'PR4'),
+    ('AbsenceReports.absence_reports_mentor_leave_insert', 'STAYS'),
+    ('AbsenceWatchFindings.absence_watch_findings_mentor_select', 'STAYS'),
     ('AcademicYearTimplans.academic_year_timplans_staff_select', 'ADMIN_TOO'),
-    ('AckReceipts.ack_receipts_teacher_insert', 'PR4'),
-    ('AckReceipts.ack_receipts_teacher_select', 'PR4'),
+    ('AckReceipts.ack_receipts_teacher_insert', 'STAYS'),
+    ('AckReceipts.ack_receipts_teacher_select', 'STAYS'),
     ('AckRequests.ack_requests_staff_insert', 'ADMIN_TOO'),
-    ('AckRequests.ack_requests_teacher_select', 'PR4'),
+    ('AckRequests.ack_requests_teacher_select', 'STAYS'),
     ('AttendanceRecords.attendance_staff_select', 'ADMIN_TOO'),
     ('AvailabilityConstraints.availability_teacher_select', 'ADMIN_TOO'),
     ('CalendarLessonGroups.calendarlessongroups_staff_select', 'ADMIN_TOO'),
@@ -60610,40 +60616,37 @@ INSERT INTO tl_want SELECT 'P', v.name, v.owner FROM (VALUES
     ('ClassTeacherChanges.class_teacher_changes_teacher_update', 'OUT'),
     ('ClassTeacherOpenTimes.class_teacher_open_times_staff_select', 'ADMIN_TOO'),
     ('ClassTeacherSettings.class_teacher_settings_staff_select', 'ADMIN_TOO'),
-    ('ConsentAsks.consent_asks_teacher_insert', 'PR4'),
-    ('ConsentAsks.consent_asks_teacher_select', 'PR4'),
-    ('ConsentEntries.consent_entries_teacher_insert', 'PR4'),
-    ('ConsentEntries.consent_entries_teacher_select', 'PR4'),
-    ('ConsentLists.consent_lists_teacher_insert', 'PR4'),
-    ('ConsentLists.consent_lists_teacher_select', 'PR4'),
+    ('ConsentAsks.consent_asks_teacher_insert', 'STAYS'),
+    ('ConsentAsks.consent_asks_teacher_select', 'STAYS'),
+    ('ConsentEntries.consent_entries_teacher_insert', 'STAYS'),
+    ('ConsentEntries.consent_entries_teacher_select', 'STAYS'),
+    ('ConsentLists.consent_lists_teacher_insert', 'STAYS'),
+    ('ConsentLists.consent_lists_teacher_select', 'STAYS'),
     ('CoverConfirmations.cover_confirmations_substitute_select', 'OUT'),
     ('CoverRequestLessons.cover_request_lessons_recipient_select', 'OUT'),
     ('CoverRequestRecipients.cover_request_recipients_own_decline', 'OUT'),
     ('CoverRequestRecipients.cover_request_recipients_own_select', 'OUT'),
     ('CoverRequests.cover_requests_recipient_select', 'OUT'),
     ('CoverSettings.cover_settings_staff_select', 'OUT'),
-    ('CrisisAlarms.crisis_alarms_teacher_select', 'PR4'),
-    ('CrisisCallTeachers.crisis_call_teachers_teacher_select', 'PR4'),
-    ('CrisisCalls.crisis_calls_teacher_select', 'PR4'),
-    ('CrisisPupils.crisis_pupils_teacher_select', 'PR4'),
-    ('CrisisReports.crisis_reports_teacher_found_insert', 'PR4'),
-    ('CrisisReports.crisis_reports_teacher_found_select', 'PR4'),
-    ('CrisisReports.crisis_reports_teacher_free_insert', 'PR4'),
-    ('CrisisReports.crisis_reports_teacher_insert', 'PR4'),
-    ('CrisisReports.crisis_reports_teacher_own_select', 'PR4'),
-    ('CrisisReports.crisis_reports_teacher_select', 'PR4'),
+    ('CrisisAlarms.crisis_alarms_teacher_select', 'STAYS'),
+    ('CrisisCallTeachers.crisis_call_teachers_teacher_select', 'STAYS'),
+    ('CrisisCalls.crisis_calls_teacher_select', 'STAYS'),
+    ('CrisisPupils.crisis_pupils_teacher_select', 'STAYS'),
+    ('CrisisReports.crisis_reports_teacher_found_select', 'STAYS'),
+    ('CrisisReports.crisis_reports_teacher_own_select', 'STAYS'),
+    ('CrisisReports.crisis_reports_teacher_select', 'STAYS'),
     ('GuardianStudents.guardian_students_staff_select', 'ADMIN_TOO'),
-    ('InstructionProofs.checklist_proofs_teacher_insert', 'PR4'),
-    ('InstructionProofs.checklist_proofs_teacher_select', 'PR4'),
+    ('InstructionProofs.checklist_proofs_teacher_insert', 'STAYS'),
+    ('InstructionProofs.checklist_proofs_teacher_select', 'STAYS'),
     ('InstructionTemplates.checklist_templates_staff_select', 'ADMIN_TOO'),
     ('LeaveDelegationDecisions.leave_delegation_decisions_staff_select', 'ADMIN_TOO'),
-    ('LeaveRequests.leave_requests_mentor_select', 'PR4'),
-    ('LeaveRequests.leave_requests_mentor_update', 'PR4'),
+    ('LeaveRequests.leave_requests_mentor_select', 'STAYS'),
+    ('LeaveRequests.leave_requests_mentor_update', 'STAYS'),
     ('LessonLogs.lesson_logs_staff_select', 'ADMIN_TOO'),
     ('LessonLogs.lesson_logs_teacher_delete', 'STAYS'),
     ('LessonLogs.lesson_logs_teacher_insert', 'STAYS'),
     ('LessonLogs.lesson_logs_teacher_update', 'STAYS'),
-    ('LessonPupilMoves.lesson_pupil_moves_teacher_select', 'PR4'),
+    ('LessonPupilMoves.lesson_pupil_moves_teacher_select', 'STAYS'),
     ('LocalTimplanEntries.local_timplan_entries_staff_select', 'ADMIN_TOO'),
     ('LocalTimplans.local_timplans_staff_select', 'ADMIN_TOO'),
     ('LunchSettings.lunch_settings_staff_select', 'ADMIN_TOO'),
@@ -60654,7 +60657,7 @@ INSERT INTO tl_want SELECT 'P', v.name, v.owner FROM (VALUES
     ('Notifications.notifications_staff_insert', 'ADMIN_TOO'),
     ('PublicationPendingRemovals.publication_pending_removals_staff_select', 'STAYS'),
     ('PublishedLessons.published_lessons_staff_select', 'STAYS'),
-    ('ReportingSettings.reporting_settings_teacher_select', 'PR4'),
+    ('ReportingSettings.reporting_settings_teacher_select', 'STAYS'),
     ('ResourceBookings.resource_bookings_staff_insert', 'ADMIN_TOO'),
     ('ResourceBookings.resource_bookings_staff_select', 'ADMIN_TOO'),
     ('ResourceTypes.resource_types_staff_select', 'ADMIN_TOO'),
@@ -60683,7 +60686,7 @@ INSERT INTO tl_want SELECT 'P', v.name, v.owner FROM (VALUES
     ('SupervisionShifts.supervision_shifts_teacher_own_select', 'STAYS'),
     ('TeacherAbsenceReasons.teacher_absence_reasons_staff_select', 'STAYS'),
     ('TeacherDutySlots.teacher_duty_slots_teacher_own_select', 'STAYS'),
-    ('TeacherReportingDays.reporting_days_teacher_select', 'PR4'),
+    ('TeacherReportingDays.reporting_days_teacher_select', 'STAYS'),
     ('TeacherSubjectQualifications.teacher_subject_qualifications_staff_select', 'ADMIN_TOO'),
     ('TeacherWorkRules.teacher_work_rules_staff_select', 'ADMIN_TOO'),
     ('TeachingBlocks.teaching_blocks_staff_select', 'ADMIN_TOO'),
@@ -60696,14 +60699,9 @@ INSERT INTO tl_want SELECT 'F', v.name, v.owner FROM (VALUES
     ('app.absence_reports_granted_leave_is_decided()', 'ADMIN_TOO'),
     ('app.absence_stats_class_access(p_class uuid)', 'ADMIN_TOO'),
     ('app.absence_stats_classes(p_from date, p_to date)', 'ADMIN_TOO'),
-    ('app.absence_stats_lessons(p_school uuid, p_from date, p_to date, p_now timestamp with time zone)', 'PR4'),
     ('app.absence_stats_pupil_access(p_student uuid)', 'ADMIN_TOO'),
     ('app.absence_stats_window()', 'ADMIN_TOO'),
-    ('app.absence_watch_digest_plan(p_school uuid, p_group "AbsenceWatchGroup", p_start date, p_end date, p_on date)', 'ADMIN_TOO'),
-    ('app.absence_watch_is_mentor_of(p_student uuid)', 'PR4'),
-    ('app.absence_watch_mentees(p_school uuid, p_on date)', 'PR4'),
     ('app.ack_day_limit(p_kind text)', 'ADMIN_TOO'),
-    ('app.ack_mentee_ids()', 'PR4'),
     ('app.ack_open_pairs(p_request uuid)', 'ADMIN_TOO'),
     ('app.ack_receipts_limit()', 'ADMIN_TOO'),
     ('app.ack_status(p_requests uuid[])', 'ADMIN_TOO'),
@@ -60716,9 +60714,9 @@ INSERT INTO tl_want SELECT 'F', v.name, v.owner FROM (VALUES
     ('app.calendar_feeds_follow_the_school()', 'STAYS'),
     ('app.checklist_close_list(p_list uuid)', 'ADMIN_TOO'),
     ('app.checklist_protected_ids(p_ids uuid[])', 'ADMIN_TOO'),
-    ('app.checklist_taught_ids()', 'PR4'),
+    ('app.checklist_taught_ids()', 'STAYS'),
     ('app.checklist_void_proof(p_proof uuid, p_reason text)', 'ADMIN_TOO'),
-    ('app.class_teacher_actor(p_class uuid)', 'ADMIN_TOO'),
+    ('app.class_teacher_actor(p_class uuid)', 'OUT'),
     ('app.class_teacher_appointment_guard()', 'OUT'),
     ('app.class_teacher_calendar_refusal_in(p_school uuid, p_teacher uuid, p_class uuid, p_calendar uuid, p_creating boolean)', 'OUT'),
     ('app.class_teacher_change_guard()', 'ADMIN_TOO'),
@@ -60726,17 +60724,13 @@ INSERT INTO tl_want SELECT 'F', v.name, v.owner FROM (VALUES
     ('app.cover_confirm(p_lesson uuid)', 'OUT'),
     ('app.cover_my_passes(p_from timestamp with time zone, p_to timestamp with time zone)', 'OUT'),
     ('app.cover_recipient_answer_is_narrow()', 'OUT'),
-    ('app.cover_request_sender(p_request uuid)', 'ADMIN_TOO'),
+    ('app.cover_request_sender(p_request uuid)', 'OUT'),
     ('app.crisis_pupil_call(p_alarm uuid, p_student uuid)', 'ADMIN_TOO'),
     ('app.family_lesson_labels(p_school uuid, p_display "TeacherDisplay", p_lesson_ids uuid[], p_without_protected boolean)', 'ADMIN_TOO'),
     ('app.instruction_proofs_stamp()', 'ADMIN_TOO'),
     ('app.leave_consent_facts(p_requests uuid[])', 'ADMIN_TOO'),
-    ('app.leave_mentors(p_school uuid, p_student uuid, p_from date, p_to date)', 'PR4'),
-    ('app.leave_mine_to_decide(p_school uuid, p_student uuid, p_from date, p_to date)', 'PR4'),
     ('app.leave_request_facts(p_requests uuid[])', 'ADMIN_TOO'),
-    ('app.leave_request_taken(p_request uuid)', 'PR4'),
     ('app.leave_requests_tell_new_mentors()', 'ADMIN_TOO'),
-    ('app.lesson_move_is_mentor(p_student uuid, p_on date)', 'PR4'),
     ('app.lesson_move_may(p_student uuid, p_lessons uuid[], p_on date)', 'ADMIN_TOO'),
     ('app.lesson_move_may_correct(p_lesson uuid)', 'ADMIN_TOO'),
     ('app.lesson_pupil_move(p_student uuid, p_from uuid, p_to uuid)', 'ADMIN_TOO'),
@@ -60747,7 +60741,6 @@ INSERT INTO tl_want SELECT 'F', v.name, v.owner FROM (VALUES
     ('app.publication_snapshot_ranges(year uuid)', 'ADMIN_TOO'),
     ('app.push_targets(p_school uuid, p_users uuid[], p_type "NotificationType", p_required boolean)', 'STAYS'),
     ('app.reported_absences(day date)', 'ADMIN_TOO'),
-    ('app.reporting_lessons(p_school uuid, p_from date, p_to date, p_now timestamp with time zone)', 'PR4'),
     ('app.schemavisaren_read(token_hash text, target uuid, on_date date, staff_school uuid)', 'ADMIN_TOO'),
     ('app.school_day_protected_staff()', 'ADMIN_TOO'),
     ('app.shared_teacher_busy(p_from date, p_to date)', 'ADMIN_TOO'),
@@ -60792,7 +60785,26 @@ INSERT INTO tl_why VALUES
   ('F', 'app.teaching_requirement_shares_fit()', 'TEACHER_ON_POST is a reason code of a refusal, not a role'),
   ('F', 'app.timetable_week_days(p_school uuid, p_kind "PublicScopeKind", p_target uuid, p_from date, p_tz text, p_display "TeacherDisplay", p_meals boolean, p_min_size integer)', 'TEACHER there is PublicScopeKind, the kind of timetable asked for, not a role');
 
--- What PR 3 converted: the policies and functions that ask for the mark, and may.
+-- Why each of the 26 that PR 4 (20270219090000) judged and left stays (a policy: the administrator's arm for the same table and verb TO
+-- app_authenticated admits every row it admits, since every markable profile writes DRIFT; 510d holds it structurally and with an answer).
+INSERT INTO tl_why SELECT 'P', v.name, 'the administrator''s crisis_*_admin_select arm admits every alarm, group and pupil of the school, for good: a marked administrator''s view is narrowed by the gateway (CrisisService.mine asks app.crisis_window_open and app.crisis_answers_for), not by the database (beslut 7; 510d, 511)'
+  FROM (VALUES ('CrisisAlarms.crisis_alarms_teacher_select'), ('CrisisCallTeachers.crisis_call_teachers_teacher_select'), ('CrisisCalls.crisis_calls_teacher_select'),
+               ('CrisisPupils.crisis_pupils_teacher_select'), ('CrisisReports.crisis_reports_teacher_found_select'), ('CrisisReports.crisis_reports_teacher_own_select'),
+               ('CrisisReports.crisis_reports_teacher_select')) AS v(name);
+INSERT INTO tl_why SELECT 'P', v.name, 'the administrator''s arm for the same table and verb admits every row of the school this mentor arm admits; "mentor" is converted in app.leave_mentors and its siblings, which is where it is asked (510d, 512)'
+  FROM (VALUES ('AbsenceReports.absence_reports_mentor_leave_insert'), ('AbsenceWatchFindings.absence_watch_findings_mentor_select'), ('AckReceipts.ack_receipts_teacher_insert'),
+               ('AckReceipts.ack_receipts_teacher_select'), ('AckRequests.ack_requests_teacher_select'), ('LeaveRequests.leave_requests_mentor_select'),
+               ('LeaveRequests.leave_requests_mentor_update'), ('LessonPupilMoves.lesson_pupil_moves_teacher_select')) AS v(name);
+INSERT INTO tl_why SELECT 'P', v.name, 'the administrator''s DRIFT arm for the same table and verb does everything this one does (consent and checklist proofs are not in beslut 4; they ask for the mentor''s pupils and the administrator reads and writes them all)'
+  FROM (VALUES ('ConsentAsks.consent_asks_teacher_insert'), ('ConsentAsks.consent_asks_teacher_select'), ('ConsentEntries.consent_entries_teacher_insert'),
+               ('ConsentEntries.consent_entries_teacher_select'), ('ConsentLists.consent_lists_teacher_insert'), ('ConsentLists.consent_lists_teacher_select'),
+               ('InstructionProofs.checklist_proofs_teacher_insert'), ('InstructionProofs.checklist_proofs_teacher_select')) AS v(name);
+INSERT INTO tl_why SELECT 'P', v.name, 'the administrator''s select arm admits every row of the school; mine() reads the teacher''s own days with teacherId named, so nothing is narrowed in the database (510d, 513)'
+  FROM (VALUES ('ReportingSettings.reporting_settings_teacher_select'), ('TeacherReportingDays.reporting_days_teacher_select')) AS v(name);
+INSERT INTO tl_why VALUES
+  ('F', 'app.checklist_taught_ids()', 'the lessons a person teaches, not the mentor or the alarm; no consumer reaches it as an administrator (its arms are STAYS above and the gateway takes the administrator''s branch)');
+
+-- What PR 3 converted (and below, PR 4): the policies and functions that ask for the mark, and may.
 CREATE TEMP TABLE tl_may (kind text, name text) ON COMMIT DROP;
 INSERT INTO tl_may VALUES
   ('P', 'AttendanceRecords.attendance_teacher_insert'), ('P', 'AttendanceRecords.attendance_teacher_update'),
@@ -60806,6 +60818,20 @@ INSERT INTO tl_may VALUES
   ('P', 'TeacherWorkRules.teacher_work_rules_teacher_own'),
   ('F', 'app.availability_constraints_keep_duty_blocks()'), ('F', 'app.cover_policy_arm_is_narrow(p_table text, p_policy text, p_arm text)'),
   ('F', 'app.lesson_teacher_role(p_lesson uuid)');
+-- What PR 4 (20270219090000) converted: three insert arms of the teacher's own marks in an alarm, and ten functions. Five of the functions
+-- ask app.teaches_like of a row (the mentor of a pupil, the lessons of the reporting rate, the digest's recipients), five ask the mark of the caller.
+INSERT INTO tl_may VALUES
+  ('P', 'CrisisReports.crisis_reports_teacher_found_insert'), ('P', 'CrisisReports.crisis_reports_teacher_free_insert'), ('P', 'CrisisReports.crisis_reports_teacher_insert'),
+  ('F', 'app.reporting_lessons(p_school uuid, p_from date, p_to date, p_now timestamp with time zone)'),
+  ('F', 'app.absence_stats_lessons(p_school uuid, p_from date, p_to date, p_now timestamp with time zone)'),
+  ('F', 'app.leave_mentors(p_school uuid, p_student uuid, p_from date, p_to date)'),
+  ('F', 'app.absence_watch_mentees(p_school uuid, p_on date)'),
+  ('F', 'app.absence_watch_digest_plan(p_school uuid, p_group "AbsenceWatchGroup", p_start date, p_end date, p_on date)'),
+  ('F', 'app.leave_mine_to_decide(p_school uuid, p_student uuid, p_from date, p_to date)'),
+  ('F', 'app.leave_request_taken(p_request uuid)'),
+  ('F', 'app.absence_watch_is_mentor_of(p_student uuid)'),
+  ('F', 'app.ack_mentee_ids()'),
+  ('F', 'app.lesson_move_is_mentor(p_student uuid, p_on date)');
 
 CREATE TEMP TABLE tl_have ON COMMIT DROP AS
 SELECT 'P'::text AS kind, tablename::text || '.' || policyname::text AS name,
@@ -60832,27 +60858,27 @@ BEGIN
   -- 494a. The list is the catalogue: nothing new, nothing gone.
   SELECT string_agg(h.kind || ':' || h.name, E'\n  ' ORDER BY h.kind, h.name COLLATE "C") INTO missing
     FROM tl_have h
-   WHERE h.x ~ 'TEACHER' AND h.x !~ 'current_user_teaches'
+   WHERE h.x ~ 'TEACHER' AND h.x !~ 'current_user_teaches|teaches_like'
      AND NOT EXISTS (SELECT 1 FROM tl_want w WHERE w.kind = h.kind AND w.name = h.name);
   IF missing IS NOT NULL THEN
     RAISE EXCEPTION E'tl 494a: names TEACHER and does not ask for the mark, and is not on the list in section 494 (judge each: convert it, or add it with who judges it):\n  %', missing;
   END IF;
   SELECT string_agg(w.kind || ':' || w.name, E'\n  ' ORDER BY w.kind, w.name COLLATE "C") INTO stale
     FROM tl_want w
-   WHERE NOT EXISTS (SELECT 1 FROM tl_have h WHERE w.kind = h.kind AND w.name = h.name AND h.x ~ 'TEACHER' AND h.x !~ 'current_user_teaches');
+   WHERE NOT EXISTS (SELECT 1 FROM tl_have h WHERE w.kind = h.kind AND w.name = h.name AND h.x ~ 'TEACHER' AND h.x !~ 'current_user_teaches|teaches_like');
   IF stale IS NOT NULL THEN
     RAISE EXCEPTION E'tl 494a: on the list in section 494 and no longer an arm that names TEACHER without the mark (converted, renamed or dropped: take it off the list):\n  %', stale;
   END IF;
 
   -- 494b. The tags: a known vocabulary, and ADMIN_TOO exactly where the text names SCHOOL_ADMIN.
   SELECT string_agg(w.name || ' ' || w.owner, E'\n  ' ORDER BY w.name COLLATE "C") INTO strange
-    FROM tl_want w WHERE w.owner NOT IN ('ADMIN_TOO', 'PR3', 'PR4', 'OUT', 'JUDGE', 'STAYS');
+    FROM tl_want w WHERE w.owner NOT IN ('ADMIN_TOO', 'PR3', 'OUT', 'JUDGE', 'STAYS');
   IF strange IS NOT NULL THEN RAISE EXCEPTION E'tl 494b: an entry with an owner nobody knows:\n  %', strange; END IF;
   SELECT string_agg(w.kind || ':' || w.name || ' is ' || w.owner || CASE WHEN h.x ~ 'SCHOOL_ADMIN' THEN ' and names SCHOOL_ADMIN' ELSE ' and does not name SCHOOL_ADMIN' END,
                     E'\n  ' ORDER BY w.name COLLATE "C") INTO inconsistent
     FROM tl_want w JOIN tl_have h ON h.kind = w.kind AND h.name = w.name
-   WHERE (w.owner = 'ADMIN_TOO') <> (h.x ~ 'SCHOOL_ADMIN');
-  IF inconsistent IS NOT NULL THEN RAISE EXCEPTION E'tl 494b: ADMIN_TOO is the text naming SCHOOL_ADMIN, and nothing else:\n  %', inconsistent; END IF;
+   WHERE (w.owner = 'ADMIN_TOO' AND h.x !~ 'SCHOOL_ADMIN') OR (w.owner NOT IN ('ADMIN_TOO', 'OUT') AND h.x ~ 'SCHOOL_ADMIN');
+  IF inconsistent IS NOT NULL THEN RAISE EXCEPTION E'tl 494b: ADMIN_TOO is the text naming SCHOOL_ADMIN (an OUT entry may name it too: the class teacher''s and the cover request''s lookups do, and refuse an administrator), and nothing else is:\n  %', inconsistent; END IF;
   -- Every STAYS entry says why, and a reason belongs to a STAYS entry.
   SELECT string_agg(w.kind || ':' || w.name, E'\n  ' ORDER BY w.kind, w.name COLLATE "C") INTO strange
     FROM tl_want w WHERE w.owner = 'STAYS' AND NOT EXISTS (SELECT 1 FROM tl_why y WHERE y.kind = w.kind AND y.name = w.name AND length(btrim(y.why)) > 20);
@@ -60860,11 +60886,11 @@ BEGIN
   SELECT string_agg(y.kind || ':' || y.name, E'\n  ' ORDER BY y.kind, y.name COLLATE "C") INTO strange
     FROM tl_why y WHERE NOT EXISTS (SELECT 1 FROM tl_want w WHERE w.kind = y.kind AND w.name = y.name AND w.owner = 'STAYS');
   IF strange IS NOT NULL THEN RAISE EXCEPTION E'tl 494b: a reason for an entry that is not STAYS:\n  %', strange; END IF;
-  IF (SELECT count(*) FROM tl_want WHERE owner = 'STAYS') < 24 THEN
-    RAISE EXCEPTION 'tl 494b: PR 3 left 24 entries on STAYS, there are %', (SELECT count(*) FROM tl_want WHERE owner = 'STAYS');
+  IF (SELECT count(*) FROM tl_want WHERE owner = 'STAYS') < 50 THEN
+    RAISE EXCEPTION 'tl 494b: PR 3 left 24 entries on STAYS and PR 4 26 more, there are %', (SELECT count(*) FROM tl_want WHERE owner = 'STAYS');
   END IF;
-  IF EXISTS (SELECT 1 FROM tl_want WHERE owner IN ('PR3', 'JUDGE')) THEN
-    RAISE EXCEPTION 'tl 494b: PR 3 judged every arm that was PR3 or JUDGE, and one is on the list as that again';
+  IF EXISTS (SELECT 1 FROM tl_want WHERE owner IN ('PR3', 'PR4', 'JUDGE')) THEN
+    RAISE EXCEPTION 'tl 494b: PR 3 and PR 4 judged every arm that was PR3, PR4 or JUDGE, and one is on the list as that again';
   END IF;
 
   -- 494c. The trap: the cover arms' narrowness is a match on the arm's text, now with the one OR that is the mark.
@@ -60874,19 +60900,20 @@ BEGIN
     RAISE EXCEPTION 'tl 494c: app.cover_policy_arm_is_narrow no longer matches the cover arms by their TEACHER text, refuses an OR other than the mark''s, and takes the mark''s: change it and the arms together, and say so here. It is %', src;
   END IF;
 
-  -- 494d. Exactly what PR 3 converted asks for the mark, and nothing else does (app.current_user_teaches() itself aside).
+  -- 494d. Exactly what PR 3 and PR 4 converted asks for the mark (app.current_user_teaches() or app.teaches_like), and nothing else does
+  -- (those two functions themselves aside).
   SELECT string_agg(h.kind || ':' || h.name, E'\n  ' ORDER BY h.kind, h.name COLLATE "C") INTO askers
-    FROM tl_have h WHERE h.x ~ 'current_user_teaches' AND h.name <> 'app.current_user_teaches()'
+    FROM tl_have h WHERE h.x ~ 'current_user_teaches|teaches_like' AND h.name NOT IN ('app.current_user_teaches()', 'app.teaches_like(p_role "UserRole", p_teaches boolean)')
      AND NOT EXISTS (SELECT 1 FROM tl_may m WHERE m.kind = h.kind AND m.name = h.name);
   IF askers IS NOT NULL THEN
     RAISE EXCEPTION E'tl 494d: asks for app.current_user_teaches() and is not on the list of those that may (judge it, convert it on purpose, and add it to the list in section 494):\n  %', askers;
   END IF;
   SELECT string_agg(m.kind || ':' || m.name, E'\n  ' ORDER BY m.kind, m.name COLLATE "C") INTO askers
-    FROM tl_may m WHERE NOT EXISTS (SELECT 1 FROM tl_have h WHERE h.kind = m.kind AND h.name = m.name AND h.x ~ 'current_user_teaches');
+    FROM tl_may m WHERE NOT EXISTS (SELECT 1 FROM tl_have h WHERE h.kind = m.kind AND h.name = m.name AND h.x ~ 'current_user_teaches|teaches_like');
   IF askers IS NOT NULL THEN
     RAISE EXCEPTION E'tl 494d: on the list of those that ask for the mark, and does not any more:\n  %', askers;
   END IF;
-  RAISE NOTICE 'tl 494: % arms judged or tagged, % converted ask for the mark', (SELECT count(*) FROM tl_want), (SELECT count(*) FROM tl_may);
+  RAISE NOTICE 'tl 494: % arms judged or tagged, % converted ask for the mark (current_user_teaches or teaches_like)', (SELECT count(*) FROM tl_want), (SELECT count(*) FROM tl_may);
 END $$;
 ROLLBACK;
 
