@@ -655,6 +655,9 @@
     }
   },
   "people": {
+    "teaching": {
+      "mark": "undervisar"
+    },
     "removeHasPassCovers": "Personens rastvaktspass har en inbokad vikarie framåt, första gången {date}. Ångra besluten på vikarietavlan först, så att vikarien får veta det.",
     "title": "Personer",
     "subtitle": "Lärare, elever och administratörer",
@@ -4779,6 +4782,7 @@
       "ROLLOVER_GRADE_ABOVE_12": "{groups} skulle hamna över åk 12 nästa läsår. Välj ett annat utfall för dem."
     },
     "errors": {
+      "A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS": "Läsåret har den enda tjänsten för {administrators, plural, one {en administratör} other {# administratörer}} som undervisar. Ta bort markeringen under Personer, eller lägg en tjänst i ett annat läsår, innan läsåret tas bort.",
       "YEAR_HAS_SUCCESSOR": "Läsåret har redan rullats vidare till {successor}.",
       "YEAR_HAS_SUCCESSOR_UNNAMED": "Läsåret har redan rullats vidare.",
       "ROLLOVER_SOURCE_NOT_ACTIVATED": "Läsåret är inte aktiverat: {pupils, plural, one {# elev väntar} other {# elever väntar}} på att flyttas in i dess klasser. Aktivera det innan det rullas vidare.",
@@ -7182,6 +7186,20 @@
     "hrReadLabel": "HR-läs",
     "hrReadHint": "Får läsa tjänst %, nedsättning och undervisningsdagar per vecka. Rektor och en fullständig administratör läser dem ändå.",
     "roleIsDecision": "Bara rektor eller en fullständig administratör ändrar roller, profiler och HR-läs.",
+    "teaches": {
+      "label": "Undervisar",
+      "hint": "Personen står på lektioner och får lärarens egna sidor och roll i larmet. Rätten som administratör är densamma.",
+      "historyOn": "undervisar nu",
+      "historyOff": "undervisar inte längre",
+      "errors": {
+        "TEACHES_NEEDS_A_POST": "Personen har ingen tjänst för läsåret. Lägg tjänsten först och markera därefter.",
+        "A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS": "Personen är markerad som undervisande, och det här är personens sista tjänst. Ta bort markeringen under Personer först.",
+        "TEACHES_NEEDS_AN_ADMINISTRATOR": "Bara en administratör kan markeras som undervisande.",
+        "A_READER_DOES_NOT_TEACH": "En läsare ändrar ingenting och undervisar därför inte. Ge personen en annan profil först.",
+        "A_TEACHER_TEACHES_ALREADY": "En lärare undervisar redan: markeringen gäller en administratör.",
+        "WRITE_CONFLICT": "Någon annan sparade samtidigt. Försök igen."
+      }
+    },
     "postIsDecision": "Tjänst %, nedsättning och undervisningsdagar skrivs av rektor eller en fullständig administratör.",
     "historyTitle": "Rollhistorik",
     "historyEmpty": "Inga rolländringar sparade.",

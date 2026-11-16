@@ -39,16 +39,30 @@ export function RoleHistory({ userId }: { userId: string }) {
         <ul className="space-y-0.5">
           {data.map((change) => {
             const to = roleText(change.toRole, change.toProfile, change.toHrRead);
-            const what =
-              change.fromRole === null
+            // The mark, said only when it really moved: `fromTeaches` is null for a row written before the mark and
+            // for a creation, and `toTeaches` is false on every such row, so a null "from" says nothing.
+            const teachesNow = change.fromTeaches != null && change.fromTeaches !== change.toTeaches;
+            // A row that moved only the mark is not "Rektor → Rektor": it says the mark and nothing else. Every
+            // other row, older ones included, reads as it always did.
+            const onlyTheMark =
+              teachesNow &&
+              change.fromRole === change.toRole &&
+              change.fromProfile === change.toProfile &&
+              change.fromHrRead === change.toHrRead;
+            const what = onlyTheMark
+              ? null
+              : change.fromRole === null
                 ? t("historyCreated", { to })
                 : t("historyChanged", { from: roleText(change.fromRole, change.fromProfile, change.fromHrRead), to });
+            const said = [what, teachesNow ? t(change.toTeaches ? "teaches.historyOn" : "teaches.historyOff") : null]
+              .filter((part): part is string => part !== null)
+              .join(" · ");
             return (
               <li key={change.id}>
                 <time dateTime={change.createdAt} className="tabular-nums text-muted-foreground">
                   {formatStamp(change.createdAt, school?.timezone ?? "Europe/Stockholm")}
                 </time>{" "}
-                {what}{" "}
+                {said}{" "}
                 <span className="text-muted-foreground">
                   {change.actorName ? t("historyBy", { name: change.actorName }) : t("historyByNobody")}
                 </span>

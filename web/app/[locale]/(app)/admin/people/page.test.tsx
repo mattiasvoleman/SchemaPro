@@ -4,6 +4,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api";
 import PeoplePage from "./page";
 
 /**
@@ -91,9 +92,11 @@ const state = vi.hoisted(() => ({
   guardiansFailed: false,
   /** Roller i skolan: the reader's own profile (undefined reads as full), and the school's administrators. */
   myProfile: undefined as string | undefined,
-  administrators: new Map<string, { id: string; adminProfile: string; hrRead: boolean }>() as
-    | Map<string, { id: string; adminProfile: string; hrRead: boolean }>
+  administrators: new Map<string, { id: string; adminProfile: string; hrRead: boolean; teaches?: boolean }>() as
+    | Map<string, { id: string; adminProfile: string; hrRead: boolean; teaches?: boolean }>
     | undefined,
+  /** Users.teaches: Rita carries the mark in the register's list (GET /users answers with it). */
+  ritaTeaches: false,
   administratorsFailed: false,
   roleChanges: [] as unknown[],
   /** Whether the school has an active guardian, who is what makes the guardians export available. */
@@ -139,7 +142,13 @@ vi.mock("@/lib/work-rule-queries", () => ({
 }));
 
 vi.mock("@/lib/queries", () => ({
-  usePeople: () => ({ data: state.withGuardian ? peopleAndAGuardian : people, isLoading: false }),
+  usePeople: () => {
+    const all = state.withGuardian ? peopleAndAGuardian : people;
+    return {
+      data: state.ritaTeaches ? all.map((one) => (one.id === "a-1" ? { ...one, teaches: true } : one)) : all,
+      isLoading: false,
+    };
+  },
   useGroups: () => ({ data: groups }),
   useGroupMemberships: () => ({ data: memberships }),
   useAcademicYears: () => ({
@@ -171,7 +180,9 @@ vi.mock("@/lib/queries", () => ({
   }),
 }));
 
-vi.mock("@/lib/admin-role-queries", () => ({
+vi.mock("@/lib/admin-role-queries", async (importOriginal) => ({
+  // The codes a refused mark is told by (teachesErrorOf) are the real ones.
+  ...(await importOriginal<typeof import("@/lib/admin-role-queries")>()),
   useAdministrators: () => ({ data: state.administrators, isError: state.administratorsFailed }),
   useRoleChanges: () => ({ data: state.roleChanges, isLoading: false, isError: false }),
 }));
@@ -273,6 +284,7 @@ describe("People page", () => {
     state.myProfile = undefined;
     state.administrators = new Map();
     state.administratorsFailed = false;
+    state.ritaTeaches = false;
     state.roleChanges = [];
     state.withGuardian = false;
     state.marks = [];
@@ -1218,6 +1230,246 @@ describe("People page", () => {
       } finally {
         window.history.replaceState(null, "", "/");
       }
+    });
+
+    describe("Undervisar: an administrator who also teaches (Users.teaches)", () => {
+      const admin = (adminProfile: string, teaches = false) =>
+        new Map([["a-1", { id: "a-1", adminProfile, hrRead: false, teaches }]]);
+
+      it.each(["FULL", "REKTOR", "SCHEMALAGGARE", "EXPEDITION"])("offers the switch on an administrator whose profile is %s", async (profile) => {
+        state.administrators = admin(profile);
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+        await user.click(editButton("Rita Nilsson"));
+        expect(await screen.findByRole("switch", { name: "teaches.label" })).not.toBeChecked();
+        expect(screen.getByText("teaches.hint")).toBeInTheDocument();
+      });
+
+      it("offers none on a läsare, who changes nothing and so teaches nothing", async () => {
+        state.administrators = admin("LASARE");
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+        await user.click(editButton("Rita Nilsson"));
+        await screen.findByRole("combobox", { name: /profileLabel/ });
+        expect(screen.queryByRole("switch", { name: "teaches.label" })).not.toBeInTheDocument();
+      });
+
+      it("offers none on a teacher, a pupil or a guardian", async () => {
+        state.withGuardian = true;
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+        for (const name of ["Karin Ek", "Alma Berg", "Gun Berg"]) {
+          await user.click(editButton(name));
+          await screen.findByRole("dialog");
+          expect(screen.queryByRole("switch", { name: "teaches.label" }), name).not.toBeInTheDocument();
+          await user.click(screen.getByRole("button", { name: "cancel" }));
+        }
+      });
+
+      it("opens on the stored mark, and sends nothing of it when it was not touched", async () => {
+        state.administrators = admin("REKTOR", true);
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+        await user.click(editButton("Rita Nilsson"));
+        expect(await screen.findByRole("switch", { name: "teaches.label" })).toBeChecked();
+        await user.click(screen.getByRole("button", { name: "save" }));
+        expect(updatePerson).toHaveBeenCalledTimes(1);
+        expect(updatePerson.mock.calls[0]![0]).not.toHaveProperty("teaches");
+      });
+
+      it("sends a changed mark in a call of its own, with nothing else in it and after the post", async () => {
+        state.administrators = admin("REKTOR");
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+        await user.click(editButton("Rita Nilsson"));
+        await user.click(await screen.findByRole("switch", { name: "teaches.label" }));
+        // The post is written in the same save: the mark must follow it, not lead.
+        await user.type(screen.getByLabelText(/^employmentPercent/), "100");
+        await user.click(screen.getByRole("button", { name: "save" }));
+
+        expect(updatePerson).toHaveBeenCalledTimes(2);
+        expect(updatePerson.mock.calls[0]![0]).not.toHaveProperty("teaches");
+        expect(updatePerson.mock.calls[1]![0]).toEqual({ id: "a-1", teaches: true });
+        expect(saveEmployment).toHaveBeenCalledTimes(1);
+        const [firstSave] = updatePerson.mock.invocationCallOrder;
+        const [post] = saveEmployment.mock.invocationCallOrder;
+        const second = updatePerson.mock.invocationCallOrder[1]!;
+        expect(firstSave!).toBeLessThan(post!);
+        expect(post!).toBeLessThan(second);
+      });
+
+      it("takes the mark off in the same way, and sends nothing when it is switched on and off again", async () => {
+        state.administrators = admin("REKTOR", true);
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+        await user.click(editButton("Rita Nilsson"));
+        await user.click(await screen.findByRole("switch", { name: "teaches.label" }));
+        await user.click(screen.getByRole("button", { name: "save" }));
+        expect(updatePerson).toHaveBeenLastCalledWith({ id: "a-1", teaches: false });
+
+        updatePerson.mockClear();
+        await user.click(editButton("Rita Nilsson"));
+        const toggle = await screen.findByRole("switch", { name: "teaches.label" });
+        await user.click(toggle);
+        await user.click(toggle);
+        await user.click(screen.getByRole("button", { name: "save" }));
+        expect(updatePerson).toHaveBeenCalledTimes(1);
+        expect(updatePerson.mock.calls[0]![0]).not.toHaveProperty("teaches");
+      });
+
+      it("says a person with no tjänst has to be given one first, in the reader's own words, and keeps the dialog open", async () => {
+        state.administrators = admin("REKTOR");
+        updatePerson
+          .mockResolvedValueOnce(undefined)
+          .mockRejectedValueOnce(new ApiError(409, "En administratör som undervisar har en tjänst…", "TEACHES_NEEDS_A_POST", { userId: "a-1" }));
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+        await user.click(editButton("Rita Nilsson"));
+        await user.click(await screen.findByRole("switch", { name: "teaches.label" }));
+        await user.click(screen.getByRole("button", { name: "save" }));
+
+        expect(toast.error).toHaveBeenCalledWith("teaches.errors.TEACHES_NEEDS_A_POST");
+        // The dialog is still there, and the person and the rest were saved.
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(toast.success).toHaveBeenCalledWith("updated");
+      });
+
+      it.each([
+        ["TEACHES_NEEDS_A_POST", 409],
+        ["A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS", 409],
+        ["TEACHES_NEEDS_AN_ADMINISTRATOR", 400],
+        ["A_READER_DOES_NOT_TEACH", 400],
+        ["A_TEACHER_TEACHES_ALREADY", 400],
+        ["WRITE_CONFLICT", 409],
+      ])("tells %s in a text of its own, never as the gateway's Swedish or as a general failure", async (code, status) => {
+        state.administrators = admin("REKTOR");
+        updatePerson.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new ApiError(status, "Gatewayens svenska mening", code));
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+        await user.click(editButton("Rita Nilsson"));
+        await user.click(await screen.findByRole("switch", { name: "teaches.label" }));
+        await user.click(screen.getByRole("button", { name: "save" }));
+        expect(toast.error).toHaveBeenCalledWith(`teaches.errors.${code}`);
+        expect(toast.error).not.toHaveBeenCalledWith("Gatewayens svenska mening");
+      });
+
+      it("says any other failure as it says it", async () => {
+        state.administrators = admin("REKTOR");
+        updatePerson.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new ApiError(500, "Något gick fel", "SOMETHING_ELSE"));
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+        await user.click(editButton("Rita Nilsson"));
+        await user.click(await screen.findByRole("switch", { name: "teaches.label" }));
+        await user.click(screen.getByRole("button", { name: "save" }));
+        expect(toast.error).toHaveBeenCalledWith("Något gick fel");
+      });
+
+      it("sends no mark for a person who is made a läsare in the same save: the database zeroes it", async () => {
+        state.administrators = admin("REKTOR", true);
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+        await user.click(editButton("Rita Nilsson"));
+        await user.click(await screen.findByRole("combobox", { name: /profileLabel/ }));
+        await user.click(screen.getByRole("option", { name: "profile.LASARE" }));
+        expect(screen.queryByRole("switch", { name: "teaches.label" })).not.toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "save" }));
+        expect(updatePerson).toHaveBeenCalledTimes(1);
+        expect(updatePerson.mock.calls[0]![0]).toMatchObject({ adminProfile: "LASARE" });
+        expect(updatePerson.mock.calls[0]![0]).not.toHaveProperty("teaches");
+      });
+
+      it("locks the switch while the profiles are read: the stored mark is not known", async () => {
+        state.administrators = undefined;
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+        await user.click(editButton("Rita Nilsson"));
+        expect(await screen.findByRole("switch", { name: "teaches.label" })).toBeDisabled();
+        await user.click(screen.getByRole("button", { name: "save" }));
+        expect(updatePerson.mock.calls[0]![0]).not.toHaveProperty("teaches");
+      });
+
+      it("marks a person it creates as an administrator only after the post, and stays on her if the mark is refused", async () => {
+        createPerson.mockResolvedValue({ id: "a-new" });
+        updatePerson.mockRejectedValueOnce(new ApiError(409, "…", "TEACHES_NEEDS_A_POST"));
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+        await user.click(screen.getByRole("button", { name: "addPerson" }));
+        await user.type(await screen.findByLabelText("firstName"), "Nora");
+        await user.type(screen.getByLabelText("lastName"), "Ny");
+        await user.type(screen.getByLabelText("email"), "nora@skolan.se");
+        // The role select is the dialog's first combobox.
+        await user.click(screen.getAllByRole("combobox")[0]!);
+        await user.click(screen.getByRole("option", { name: "SCHOOL_ADMIN" }));
+        await user.click(await screen.findByRole("switch", { name: "teaches.label" }));
+        await user.click(screen.getByRole("button", { name: "save" }));
+
+        // POST /users takes no mark: the person is created, and the mark is a PATCH of its own.
+        expect(createPerson).toHaveBeenCalledTimes(1);
+        expect(createPerson.mock.calls[0]![0]).not.toHaveProperty("teaches");
+        expect(updatePerson).toHaveBeenCalledWith({ id: "a-new", teaches: true });
+        expect(toast.error).toHaveBeenCalledWith("teaches.errors.TEACHES_NEEDS_A_POST");
+        // A second save is of the person just created, not a second person with the same address.
+        updatePerson.mockResolvedValue(undefined);
+        await user.click(screen.getByRole("button", { name: "save" }));
+        expect(createPerson).toHaveBeenCalledTimes(1);
+        expect(updatePerson).toHaveBeenCalledWith(expect.objectContaining({ id: "a-new" }));
+      });
+
+      it("says in the list who teaches, beside the role, and only an administrator", () => {
+        state.ritaTeaches = true;
+        render(<PeoplePage />);
+        const rita = screen.getAllByRole("row").find((row) => row.textContent?.includes("rita@skolan.se"))!;
+        expect(within(rita).getByText("teaching.mark")).toBeInTheDocument();
+        const karin = screen.getAllByRole("row").find((row) => row.textContent?.includes("karin@skolan.se"))!;
+        expect(within(karin).queryByText("teaching.mark")).not.toBeInTheDocument();
+      });
+
+      it("says nothing in the list of an administrator who is not marked", () => {
+        render(<PeoplePage />);
+        expect(screen.queryByText("teaching.mark")).not.toBeInTheDocument();
+      });
+    });
+
+    describe("the role history says the mark when it moved, and nothing for a row that never had one", () => {
+      const row = (extra: Record<string, unknown>) => ({
+        id: "c-1", fromRole: "SCHOOL_ADMIN", toRole: "SCHOOL_ADMIN", fromProfile: "REKTOR", toProfile: "REKTOR",
+        fromHrRead: false, toHrRead: false, actorName: "Rita Nilsson", createdAt: "2026-11-16T08:00:00.000Z", ...extra,
+      });
+      const open = async () => {
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+        await user.click(screen.getByRole("button", { name: /Karin Ek/, expanded: false }));
+        return await screen.findByRole("region", { name: "historyTitle" });
+      };
+
+      it("says 'teaches now' and 'no longer teaches' for a row that moved the mark, and not 'Rektor → Rektor'", async () => {
+        state.roleChanges = [row({ id: "c-2", fromTeaches: false, toTeaches: true }), row({ id: "c-3", fromTeaches: true, toTeaches: false })];
+        const history = await open();
+        const items = within(history).getAllByRole("listitem");
+        expect(items[0]).toHaveTextContent("teaches.historyOn");
+        expect(items[0]).not.toHaveTextContent("historyChanged");
+        expect(items[1]).toHaveTextContent("teaches.historyOff");
+      });
+
+      it("says both when the profile and the mark moved together", async () => {
+        state.roleChanges = [row({ toProfile: "FULL", fromTeaches: false, toTeaches: true })];
+        const items = within(await open()).getAllByRole("listitem");
+        expect(items[0]).toHaveTextContent("historyChanged(profile.REKTOR|profile.FULL)");
+        expect(items[0]).toHaveTextContent("teaches.historyOn");
+      });
+
+      it("writes no 'no longer teaches' for an older row or a creation, whose 'from' is null and 'to' is false", async () => {
+        state.roleChanges = [
+          row({ id: "c-4", fromTeaches: null, toTeaches: false, toProfile: "FULL" }),
+          row({ id: "c-5", fromRole: null, fromProfile: null, fromHrRead: null, fromTeaches: null, toTeaches: false }),
+          // A gateway that does not send the fields at all.
+          row({ id: "c-6", toProfile: "FULL" }),
+        ];
+        const items = within(await open()).getAllByRole("listitem");
+        for (const item of items) expect(item).not.toHaveTextContent("teaches.");
+        expect(items[0]).toHaveTextContent("historyChanged(profile.REKTOR|profile.FULL)");
+        expect(items[1]).toHaveTextContent("historyCreated(profile.REKTOR)");
+      });
     });
 
     it("lists a person's role history in their open row, naming who changed it", async () => {

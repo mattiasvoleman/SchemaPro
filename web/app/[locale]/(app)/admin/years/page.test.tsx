@@ -335,6 +335,42 @@ describe("YearsPage", () => {
     expect(del).toHaveBeenCalledWith("/api/v1/academic-years/y27");
   });
 
+  // Administratör som lärare: the year that holds the only post of an administrator who teaches stays until the
+  // mark is taken off or she has a post in another year. The gateway's sentence is Swedish; the page says it in
+  // the reader's language, with how many, and never the ids it names.
+  it("says why a year cannot go while it holds the only post of administrators who teach, and how many", async () => {
+    post.mockResolvedValue(plan());
+    del.mockRejectedValue(
+      new ApiError(409, "Läsåret har den enda tjänsten för 2 administratörer…", "A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS", {
+        administrators: 2,
+        userIds: "u-1,u-2",
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(within(rowOf("2027/28")).getByRole("button", { name: "Ta bort 2027/28" }));
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Ta bort" }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "Läsåret har den enda tjänsten för 2 administratörer som undervisar. Ta bort markeringen under Personer, eller lägg en tjänst i ett annat läsår, innan läsåret tas bort.",
+      ),
+    );
+  });
+
+  it("says it for one administrator in the singular", async () => {
+    post.mockResolvedValue(plan());
+    del.mockRejectedValue(
+      new ApiError(409, "…", "A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS", { administrators: 1, userIds: "u-1" }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(within(rowOf("2027/28")).getByRole("button", { name: "Ta bort 2027/28" }));
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Ta bort" }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("den enda tjänsten för en administratör som undervisar.")),
+    );
+  });
+
   it("offers delete only for a coming year: a finished one takes its calendar and närvaro with it", () => {
     post.mockResolvedValue(plan());
     renderPage();

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Briefcase } from "lucide-react";
+import { ApiError } from "@/lib/api";
 import { useAcademicYears } from "@/lib/queries";
 import { useTeacherEmploymentActions } from "@/lib/staffing-queries";
 import {
@@ -218,6 +219,12 @@ export function EmploymentCard({
     } catch (error) {
       // The confirmation closes and the form stays as it was.
       setConfirmRemove(false);
+      // The last post of an administrator who teaches (Users.teaches) stays until the mark is taken off: said
+      // in the reader's language, with what to do first, not as the gateway's one Swedish sentence.
+      if (error instanceof ApiError && error.code === "A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS") {
+        toast.error(tAreas("teaches.errors.A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS"));
+        return;
+      }
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
   };

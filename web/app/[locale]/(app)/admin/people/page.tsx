@@ -88,7 +88,7 @@ import { useBulkSelection } from "@/lib/bulk-selection";
 import { BulkSelectionBar, SelectAllCheckbox, SelectRowCheckbox } from "@/components/bulk/bulk-selection";
 import { studentsToCsv, teacherQualificationsToCsv, teachersToCsv } from "@/lib/csv-export";
 import { profileDecides, profileWrites, type AdminProfile } from "@/lib/admin-areas";
-import { useAdministrators } from "@/lib/admin-role-queries";
+import { teachesErrorOf, useAdministrators } from "@/lib/admin-role-queries";
 import { useProfile } from "@/components/profile-context";
 // Roller i skolan's two parts of the page, each fetched when it is shown: the
 // chooser when the dialog's person is an administrator, the history when a
@@ -194,12 +194,15 @@ const PEOPLE_INLINE_ACTIONS = 4;
 /**
  * Who a working-time rule can belong to.
  *
- * STAFF, not TEACHER alone. An undervisande rektor carries SCHOOL_ADMIN in this
- * schema and the timplan names her as freely as anybody else, so she has a last
- * lesson for a night to follow and a day for a lunch to sit in — and the
- * gateway's assertIsStaff admits her for exactly that reason. Offering the rule
- * to TEACHER only would leave her the one member of staff who cannot be given
- * one, through the UI, over a rule the API and the database both accept.
+ * STAFF, not TEACHER alone. An administrator who teaches (the mark
+ * Users.teaches, which this page sets) carries SCHOOL_ADMIN in this schema and
+ * the timplan names her as freely as anybody else, so she has a last lesson for
+ * a night to follow and a day for a lunch to sit in — and the gateway's
+ * assertIsStaff admits her for exactly that reason. Offering the rule to
+ * TEACHER only would leave her the one member of staff who cannot be given one,
+ * through the UI, over a rule the API and the database both accept. The rule is
+ * offered to every administrator, marked or not: a rektor may be named on a
+ * lesson before she is marked, and the mark is a separate decision.
  *
  * A pupil and a guardian teach nothing, so there is no rule to write and no
  * button to draw.
@@ -227,6 +230,12 @@ interface PersonForm {
   hrRead: boolean;
   /** Whether the chooser changed them in this dialog: only then are a known administrator's sent. */
   profileTouched: boolean;
+  /**
+   * An administrator who also teaches (Users.teaches). Sent only when the dialog changed it, and in a call of its
+   * own after the post is written: the database refuses the mark on a person with no tjänst (409 TEACHES_NEEDS_A_POST).
+   */
+  teaches: boolean;
+  teachesTouched: boolean;
 }
 
 const EMPTY_FORM: PersonForm = {
@@ -242,6 +251,8 @@ const EMPTY_FORM: PersonForm = {
   adminProfile: "FULL",
   hrRead: false,
   profileTouched: false,
+  teaches: false,
+  teachesTouched: false,
 };
 
 /**
@@ -423,6 +434,7 @@ export default function PeoplePage() {
   const tStaffing = useTranslations("staffing");
   const tCommon = useTranslations("common");
   const tRoles = useTranslations("roles");
+  const tAreas = useTranslations("adminAreas");
   const tCsvImport = useTranslations("csvImport");
   const { data: people, isLoading, isError } = usePeople();
   /*
@@ -544,6 +556,8 @@ export default function PeoplePage() {
     isActive?: boolean;
     adminProfile?: AdminProfile;
     hrRead?: boolean;
+    /** The mark as an administrator who teaches; its own call, after the post (see submit). */
+    teaches?: boolean;
     /** Opt-in only; see the toggle in the create dialog. */
     sendInvitation?: boolean;
   }>(
@@ -667,6 +681,8 @@ export default function PeoplePage() {
       adminProfile: administrators?.get(person.id)?.adminProfile ?? "FULL",
       hrRead: administrators?.get(person.id)?.hrRead ?? false,
       profileTouched: false,
+      teaches: administrators?.get(person.id)?.teaches === true,
+      teachesTouched: false,
     });
     setDialogOpen(true);
   };
@@ -711,6 +727,16 @@ export default function PeoplePage() {
     decides &&
     form.role === "SCHOOL_ADMIN" &&
     (editing?.role !== "SCHOOL_ADMIN" || (form.profileTouched && !profileUnknown));
+  /*
+   * The mark as an administrator who teaches. What is shown is the stored one until the switch is touched. It is
+   * for an administrator whose profile is not the läsare's (who changes nothing, and so teaches nothing: the
+   * database refuses it and zeroes it), it is sent only when it differs from the stored one and only by somebody who
+   * decides, and never for a person whose stored profile is not known (the switch is locked then).
+   */
+  const storedTeaches = storedProfile?.teaches === true;
+  const shownTeaches = form.teachesTouched ? form.teaches : storedTeaches;
+  const mayTeach = form.role === "SCHOOL_ADMIN" && shownProfile.adminProfile !== "LASARE";
+  const sendsTeaches = decides && mayTeach && !profileUnknown && form.teachesTouched && shownTeaches !== storedTeaches;
 
   const submit = async () => {
     const body = {
@@ -756,6 +782,34 @@ export default function PeoplePage() {
           (stored.signature ?? null) === next.signature;
         if (!unchanged) {
           await employmentActions.save.mutateAsync({ userId, academicYearId: activeYearId, ...next });
+        }
+      }
+      /*
+       * The mark as an administrator who teaches, last and in a call of its own: the database refuses it on a person
+       * with no tjänst for a läsår (TEACHES_NEEDS_A_POST), so the post the dialog may just have written comes first.
+       * The person and the post are saved by now; a refused mark is said in its own words and the dialog stays open,
+       * on the person (a person just created is the one being edited, so that a second save does not create her again).
+       */
+      if (sendsTeaches && userId) {
+        try {
+          await mutations.update.mutateAsync({ id: userId, teaches: shownTeaches });
+        } catch (error) {
+          if (!editing) {
+            setEditing({
+              id: userId,
+              role: form.role,
+              firstName: body.firstName,
+              lastName: body.lastName,
+              email: form.email.trim(),
+              phone: body.phone,
+              isActive: true,
+              invitedAt: null,
+              studentGroupId: body.studentGroupId,
+            });
+          }
+          const refused = teachesErrorOf(error);
+          toast.error(refused ? tAreas(`teaches.errors.${refused}`) : error instanceof Error ? error.message : tCommon("error"));
+          return;
         }
       }
       setDialogOpen(false);
@@ -1143,6 +1197,10 @@ export default function PeoplePage() {
                   <TableCell className="text-muted-foreground">{person.email}</TableCell>
                   <TableCell>
                     <Badge variant="secondary">{tRoles(person.role)}</Badge>
+                    {/* An administrator who also teaches (Users.teaches): a small text beside the role. */}
+                    {person.role === "SCHOOL_ADMIN" && person.teaches === true ? (
+                      <span className="ml-2 text-xs text-muted-foreground">{t("teaching.mark")}</span>
+                    ) : null}
                   </TableCell>
                   <TableCell>
                     {person.studentGroupId ? (
@@ -1303,11 +1361,13 @@ export default function PeoplePage() {
                 <AdminRoleFields
                   adminProfile={shownProfile.adminProfile}
                   hrRead={shownProfile.hrRead}
+                  teaches={shownTeaches}
                   decides={decides}
                   unavailable={
                     profileUnknown ? (administratorsQuery.isError ? "failed" : "loading") : undefined
                   }
                   onChange={(next) => setForm({ ...form, ...next, profileTouched: true })}
+                  onTeachesChange={(teaches) => setForm({ ...form, teaches, teachesTouched: true })}
                 />
               </Suspense>
             ) : null}

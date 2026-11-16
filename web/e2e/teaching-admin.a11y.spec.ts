@@ -107,3 +107,29 @@ test("Larm leads to the leadership's view, and Ledighet shows the pupil she is m
   await expect(page.getByText("Ella Nord").first()).toBeVisible();
   await expect(page.getByText("Ines Vik")).toHaveCount(0);
 });
+
+test("Personer: the switch Undervisar on an administrator, with its explanation, passes axe in the open dialog", async ({ page, context, baseURL }) => {
+  test.slow();
+  await signInAs(context, TEACHING_ADMIN, baseURL!);
+  await freezeClock(page);
+  const misses = watchStubMisses(page);
+  await page.setViewportSize(DESKTOP);
+  await page.goto("/sv/admin/people");
+  await settle(page);
+  await page.getByRole("button", { name: /^Redigera Rut Rektorsson/ }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  // The chooser is its own chunk, fetched when the person is an administrator.
+  const mark = dialog.getByRole("switch", { name: "Undervisar" });
+  await expect(mark).toBeVisible();
+  await expect(mark).not.toBeChecked();
+  await expect(mark).toHaveAccessibleDescription(/lärarens egna sidor och roll i larmet/);
+  await settle(page);
+  expect.soft(misses, MISSES).toEqual([]);
+
+  const results = await scanBothSchemes(page, "people dialog desktop", true);
+  await page.setViewportSize(PHONE);
+  await settle(page);
+  results.push(...(await scanBothSchemes(page, "people dialog phone", true)));
+  expect(results.join("\n"), "WCAG 2.1 AA violations").toBe("");
+});

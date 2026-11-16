@@ -13,16 +13,26 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
  * the profile that reads everything and changes nothing). Shown when the person is
  * an administrator. Only rektor and a full administrator change it; anybody
  * else sees it, disabled, with the sentence that says who does.
+ *
+ * "Undervisar" (Users.teaches) is the mark of an administrator who also
+ * teaches: she stands on lessons and has the teacher's own pages and part in an
+ * alarm, and her rights are the administrator's all the same. It is for every
+ * administrator profile but the läsare, who changes nothing and so teaches
+ * nothing (the database refuses it, and zeroes the mark if the profile becomes
+ * one), and it is rektor's and a full administrator's to set, like the rest.
  */
 export function AdminRoleFields({
   adminProfile,
   hrRead,
+  teaches,
   decides,
   unavailable,
   onChange,
+  onTeachesChange,
 }: {
   adminProfile: AdminProfile;
   hrRead: boolean;
+  teaches: boolean;
   decides: boolean;
   /**
    * The stored profile is not known (still read, or the read failed): the
@@ -30,6 +40,7 @@ export function AdminRoleFields({
    */
   unavailable?: "loading" | "failed";
   onChange: (next: { adminProfile: AdminProfile; hrRead: boolean }) => void;
+  onTeachesChange: (teaches: boolean) => void;
 }) {
   const t = useTranslations("adminAreas");
   const narrow = HR_READ_PROFILES.includes(adminProfile);
@@ -86,6 +97,24 @@ export function AdminRoleFields({
             disabled={locked}
             onCheckedChange={(checked) => onChange({ adminProfile, hrRead: checked })}
             aria-describedby="person-hr-read-hint"
+          />
+        </div>
+      ) : null}
+      {adminProfile !== "LASARE" ? (
+        <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+          <div className="space-y-1">
+            <Label htmlFor="person-teaches">{t("teaches.label")}</Label>
+            <p id="person-teaches-hint" className="text-xs text-muted-foreground">
+              {t("teaches.hint")}
+              {decides ? "" : ` ${t("roleIsDecision")}`}
+            </p>
+          </div>
+          <Switch
+            id="person-teaches"
+            checked={teaches}
+            disabled={locked}
+            onCheckedChange={onTeachesChange}
+            aria-describedby="person-teaches-hint"
           />
         </div>
       ) : null}
