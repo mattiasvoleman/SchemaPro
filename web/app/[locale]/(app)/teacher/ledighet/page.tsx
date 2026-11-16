@@ -12,11 +12,16 @@
 // family's reason, and offers Bevilja, Avslå and Skicka till rektor. The tabs
 // for decided requests show the mentor's own decisions only.
 //
-// An administrator who teaches (Users.teaches) is one of the mentors where she
-// holds MENTORSKAP, and the gateway hands an administrator the school's whole
-// list, not the mentor's: so on this page she is shown the requests that name
-// her among the pupil's mentors, and nothing else of the school's (rektor's own
-// inbox, /admin/leave, has the rest). Her decision is still the administrator's
+// An administrator who teaches (Users.teaches) is a mentor where she holds
+// MENTORSKAP, and the gateway hands an administrator the school's whole list,
+// not the mentor's: so on this page she is shown what a mentor is shown, and
+// nothing else of the school's (rektor's own inbox, /admin/leave, has the
+// rest). What a teacher is handed (read from the real gateway, F6 of the
+// part's notes) is the pending requests she is among the DECIDING mentors of,
+// and on the decided tabs the requests she decided herself; not the ones of
+// her pupils that rektor decides (over the delegation) or decided. So that is
+// the filter here, and not "she is among the pupil's mentors", which shows
+// more than a teacher sees. Her decision is still the administrator's
 // (decidedAs ADMIN). A teacher's list is the gateway's, as it was.
 //
 // A school that has delegated nothing shows that, rather than an empty list:
@@ -62,7 +67,11 @@ export default function TeacherLeavePage() {
   const asked = inbox.data ?? [];
   const requests =
     profile.role === "SCHOOL_ADMIN"
-      ? asked.filter((request) => request.mentors.some((mentor) => mentor.id === profile.id))
+      ? asked.filter((request) =>
+          request.status === "PENDING"
+            ? request.decidingMentors.some((mentor) => mentor.id === profile.id)
+            : request.decidedById === profile.id,
+        )
       : asked;
   // Until the delegation is read, an empty inbox says nothing waits, never
   // that rektor decides everything.

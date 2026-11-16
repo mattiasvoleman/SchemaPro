@@ -93,9 +93,11 @@ beforeEach(() => {
 
 /*
  * An administrator who teaches is handed the school's whole list by the
- * gateway (it is rektor's inbox for her); the page keeps the requests that name
- * her among the pupil's mentors, on all three tabs, and a teacher's list as the
- * gateway narrowed it.
+ * gateway (it is rektor's inbox for her). The page keeps what a mentor is shown
+ * (read from the real gateway): the pending requests she is among the deciding
+ * mentors of, and on the decided tabs the ones she decided herself. A request of
+ * her pupil that rektor decides (over the delegation) or decided is not hers, and
+ * a teacher's list is the gateway's.
  */
 describe("Ledighet for an administrator who teaches", () => {
   const OTHERS = {
@@ -106,8 +108,18 @@ describe("Ledighet for an administrator who teaches", () => {
     mentors: [{ id: "t-cecilia", name: "Cecilia Mentor" }],
     decidingMentors: [{ id: "t-cecilia", name: "Cecilia Mentor" }],
   };
+  /** Her own pupil's request, over the delegation: she is a mentor of the pupil, and rektor decides. */
+  const OVER_THE_DELEGATION = {
+    ...REQUEST,
+    id: "l-3",
+    studentId: "p-sigrid",
+    student: { id: "p-sigrid", name: "Sigrid Senast", className: "7A" },
+    decides: "ADMIN",
+    decidingMentors: [],
+  };
+  const decided = (request: typeof REQUEST, status: string, decidedById: string) => ({ ...request, status, decides: null as null, decidingMentors: [], decidedById });
 
-  it("shows only the requests she is a mentor of, and none of the rest of the school's", () => {
+  it("shows only the pending requests she is a deciding mentor of, and none of the rest of the school's", () => {
     who.role = "SCHOOL_ADMIN";
     state.inbox = { data: [OTHERS, REQUEST], isLoading: false, isError: false };
     renderPage();
@@ -117,15 +129,29 @@ describe("Ledighet for an administrator who teaches", () => {
     expect(screen.queryByRole("button", { name: /Oskar Okänd/ })).not.toBeInTheDocument();
   });
 
-  it.each([["APPROVED"], ["REJECTED"]])("narrows the decided tab %s the same way", async (tab) => {
+  it("leaves out a pupil's request she is a mentor of but rektor decides, as a teacher is not handed it", () => {
     who.role = "SCHOOL_ADMIN";
-    const decided = (request: typeof REQUEST) => ({ ...request, status: tab, decides: null as null });
-    state.inbox = { data: [decided(OTHERS), decided(REQUEST)], isLoading: false, isError: false };
+    state.inbox = { data: [OVER_THE_DELEGATION, REQUEST], isLoading: false, isError: false };
+    renderPage();
+    const list = screen.getByRole("region", { name: "Väntar på ditt beslut" });
+    expect(within(list).getByText("Ella Elev")).toBeInTheDocument();
+    expect(within(list).queryByText("Sigrid Senast")).not.toBeInTheDocument();
+  });
+
+  it.each([["APPROVED", "Beviljad"], ["REJECTED", "Avslagen"]])("shows on the decided tab %s only what she decided herself", async (status, tab) => {
+    who.role = "SCHOOL_ADMIN";
+    state.inbox = {
+      data: [decided(OTHERS, status, "t-cecilia"), decided(REQUEST, status, "t-anna"), decided({ ...REQUEST, id: "l-4", student: { id: "p-vera", name: "Vera Vid", className: "7A" } }, status, "a-rektor")],
+      isLoading: false,
+      isError: false,
+    };
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByRole("tab", { name: tab === "APPROVED" ? "Beviljad" : "Avslagen" }));
+    await user.click(screen.getByRole("tab", { name: tab }));
     expect(screen.getAllByText("Ella Elev").length).toBeGreaterThan(0);
+    // Not another mentor's, and not rektor's decision of her own pupil.
     expect(screen.queryByText("Oskar Okänd")).not.toBeInTheDocument();
+    expect(screen.queryByText("Vera Vid")).not.toBeInTheDocument();
   });
 
   it("says the inbox is empty, not that rektor decides, when none of the school's requests is hers", () => {

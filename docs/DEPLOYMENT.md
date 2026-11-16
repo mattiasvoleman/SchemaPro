@@ -5710,8 +5710,10 @@ has the teacher's own rows. The rights are the administrator's either way (the v
   production has no marked person today, so **nobody is shown anything the day this ships**.
 - **What the pages do for her.** `/teacher/franvaro` becomes "Min frånvaro": it no longer asks `GET /cover-requests/mine` (the colleague
   side of the cover request, SP409, answers an administrator 403, and the page drew an error card every minute), and shows her own
-  absences and the lessons she handed over. `/teacher/ledighet` shows her only the applications where she is among the pupil's mentors
-  (the gateway hands an administrator the school's whole list; a teacher's list is the gateway's). `/teacher/tjanst` says that her
+  absences and the lessons she handed over. `/teacher/ledighet` shows her what a mentor is shown (the gateway hands an administrator the school's
+  whole list): the pending applications she is among the deciding mentors of, and on the decided tabs the ones she decided herself,
+  not a pupil's application that rektor decides or decided (read against the real gateway: a teacher mentor is handed exactly that;
+  a teacher's own list is the gateway's, as it was). `/teacher/tjanst` says that her
   figures are counted from the schedule draft (an administrator reads the draft where a teacher reads the published schedule).
   `/teacher/crisis` has a link to the leadership's view. An alarm's notice in the bell leads her to `/teacher/crisis` instead of
   `/admin/crisis`. Mitt schema, Närvaro, Min rapportering and the lesson page needed no change.

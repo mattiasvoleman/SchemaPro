@@ -153,8 +153,9 @@ function answer(selfReport: boolean) {
   });
 }
 
-function renderPage() {
+function renderPage(seed?: (queryClient: QueryClient) => void) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  seed?.(queryClient);
   return render(
     <QueryClientProvider client={queryClient}>
       <NextIntlClientProvider locale="sv" messages={sv} timeZone="Europe/Stockholm">
@@ -205,6 +206,19 @@ describe("/teacher/franvaro as an administrator who teaches", () => {
     expect(await within(mineSection).findByText("Lektioner du lämnat över")).toBeInTheDocument();
     expect(within(mineSection).getByRole("link", { name: /^Skriv notis till vikarien/ })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Mina vikariepass" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Vikarieförfrågningar" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Historia")).not.toBeInTheDocument();
+  });
+
+  it("draws no questions either from a cache that happens to hold some: they are a teacher's alone", async () => {
+    // The same browser may have been a teacher's before the administrator's sign-in; the cache is keyed by the
+    // route, not by who asked. The page must not draw what the query never asked for in this session.
+    who.role = "SCHOOL_ADMIN";
+    answer(false);
+    renderPage((queryClient) => queryClient.setQueryData(["coverRequestsMine"], { requests: [asked()], passes: [] }));
+    await screen.findByRole("heading", { level: 2, name: "Min frånvaro" });
+    // The section is a lazy chunk (already loaded by this file's import of it): give it the turns it would need.
+    await new Promise((resolve) => setTimeout(resolve, 100));
     expect(screen.queryByRole("heading", { name: "Vikarieförfrågningar" })).not.toBeInTheDocument();
     expect(screen.queryByText("Historia")).not.toBeInTheDocument();
   });

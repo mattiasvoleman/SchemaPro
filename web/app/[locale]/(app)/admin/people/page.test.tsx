@@ -95,8 +95,8 @@ const state = vi.hoisted(() => ({
   administrators: new Map<string, { id: string; adminProfile: string; hrRead: boolean; teaches?: boolean }>() as
     | Map<string, { id: string; adminProfile: string; hrRead: boolean; teaches?: boolean }>
     | undefined,
-  /** Users.teaches: Rita carries the mark in the register's list (GET /users answers with it). */
-  ritaTeaches: false,
+  /** Users.teaches: who carries the mark in the register's list (GET /users answers with it). */
+  marked: [] as string[],
   administratorsFailed: false,
   roleChanges: [] as unknown[],
   /** Whether the school has an active guardian, who is what makes the guardians export available. */
@@ -145,7 +145,7 @@ vi.mock("@/lib/queries", () => ({
   usePeople: () => {
     const all = state.withGuardian ? peopleAndAGuardian : people;
     return {
-      data: state.ritaTeaches ? all.map((one) => (one.id === "a-1" ? { ...one, teaches: true } : one)) : all,
+      data: all.map((one) => (state.marked.includes(one.id) ? { ...one, teaches: true } : one)),
       isLoading: false,
     };
   },
@@ -284,7 +284,7 @@ describe("People page", () => {
     state.myProfile = undefined;
     state.administrators = new Map();
     state.administratorsFailed = false;
-    state.ritaTeaches = false;
+    state.marked = [];
     state.roleChanges = [];
     state.withGuardian = false;
     state.marks = [];
@@ -1364,6 +1364,21 @@ describe("People page", () => {
         expect(toast.error).toHaveBeenCalledWith("Något gick fel");
       });
 
+      it("sends no mark for a person who is made a läsare after the switch was touched: it is hidden, and the database zeroes the mark", async () => {
+        state.administrators = admin("REKTOR");
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+        await user.click(editButton("Rita Nilsson"));
+        await user.click(await screen.findByRole("switch", { name: "teaches.label" }));
+        await user.click(screen.getByRole("combobox", { name: /profileLabel/ }));
+        await user.click(screen.getByRole("option", { name: "profile.LASARE" }));
+        expect(screen.queryByRole("switch", { name: "teaches.label" })).not.toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "save" }));
+        expect(updatePerson).toHaveBeenCalledTimes(1);
+        expect(updatePerson.mock.calls[0]![0]).toMatchObject({ adminProfile: "LASARE" });
+        expect(updatePerson.mock.calls[0]![0]).not.toHaveProperty("teaches");
+      });
+
       it("sends no mark for a person who is made a läsare in the same save: the database zeroes it", async () => {
         state.administrators = admin("REKTOR", true);
         const user = userEvent.setup();
@@ -1416,7 +1431,8 @@ describe("People page", () => {
       });
 
       it("says in the list who teaches, beside the role, and only an administrator", () => {
-        state.ritaTeaches = true;
+        // A teacher with the mark is not a thing the database allows; if a row ever said so, the list would not.
+        state.marked = ["a-1", "t-1"];
         render(<PeoplePage />);
         const rita = screen.getAllByRole("row").find((row) => row.textContent?.includes("rita@skolan.se"))!;
         expect(within(rita).getByText("teaching.mark")).toBeInTheDocument();
