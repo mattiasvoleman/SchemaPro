@@ -5,7 +5,7 @@ import type { SignedInPerson } from "../sessions";
 import { addDays, isoWeekday, stockholmInstant, YEAR_START } from "./calendar";
 import { LEAVE_REQUESTS, SCHOOL_BREAKS, type StoredLeaveRequest } from "./school-days";
 import { DUTIES } from "./staffing-rows";
-import { ADMIN, ALL_PEOPLE, byId, GROUP_LIST, GUARDIAN_LINKS, STUDENT_LIST, YEAR } from "./world";
+import { ADMIN, ALL_PEOPLE, byId, GROUP_LIST, GUARDIAN_LINKS, STUDENT_LIST, STUDENTS, YEAR } from "./world";
 
 /**
  * Ledighet as the gateway answers it since the mentor decides (#142,
@@ -127,6 +127,18 @@ function visible(person: SignedInPerson): StoredLeaveRequest[] {
   return LEAVE_REQUESTS.filter((row) => own.has(row.studentId));
 }
 
+/**
+ * The administrator who teaches (Users.teaches) is one of Ella's mentors, beside Anna: the mentors of a request
+ * name her, which is what /teacher/ledighet narrows an administrator's list on (the gateway hands an
+ * administrator every request of the school). The other pupils' requests stay as they are, so her inbox is
+ * Ella's and not the school's. Added here, in the answer to her alone, and not to DUTIES, which every suite reads.
+ */
+function withMentor(row: LeaveInboxRequest, person: SignedInPerson): LeaveInboxRequest {
+  if (row.studentId !== STUDENTS.ella.id) return row;
+  const me = { id: person.userId, name: "Tora Tjänsteman" };
+  return { ...row, mentors: [...row.mentors, me], decidingMentors: row.decides === "MENTOR" ? [...row.decidingMentors, me] : row.decidingMentors };
+}
+
 export const leaveRoutes: GatewayRoute[] = [
   route("GET", "/api/v1/leave-requests", (context: GatewayContext): LeaveInboxRequest[] | Reply => {
     if (!context.person) return new Reply(401, { message: "Not authenticated." });
@@ -136,7 +148,8 @@ export const leaveRoutes: GatewayRoute[] = [
     return visible(context.person)
       .filter((row) => !status || row.status === status)
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
-      .map((row) => inboxRow(row, family, admin || row.status === "PENDING"));
+      .map((row) => inboxRow(row, family, admin || row.status === "PENDING"))
+      .map((row) => (context.person!.teaches === true ? withMentor(row, context.person!) : row));
   }),
   // Every role in the school reads the policy, since it is what the family's form explains; an
   // administrator who decides saves it. A save is answered and not kept, like the other settings routes, so no

@@ -64181,7 +64181,8 @@ ROLLBACK;
 --        text and nothing else, the new function, who asks for the mark, and why the 26 that stay do (an administrator arm for the
 --        same table and verb, structurally and as an answer);
 --   511  krisläge through the API's role (the tables have no PostgREST door) for each profile that can be marked, in a school that
---        narrowed the start list: the three arms let in the person's own group and "found", and nothing else;
+--        narrowed the start list: the three arms let in the teacher's whole right (the person's own group, "found with me" on another
+--        group's pupil and a free find in an alarm where they have no group), and nothing else;
 --   512  mentor: the eight functions, for a marked administrator with and without MENTORSKAP, unmarked, inactive, and a teacher;
 --   513  rapporteringsgrad: the lessons of the reporting rate and of its history, the nightly count, the reminder and the digest;
 --   514  nothing else changed: the catalogue diff against main's, a snapshot per person and table with and without the mark, and what
@@ -64514,10 +64515,11 @@ ROLLBACK;
 --
 -- The three insert arms of the teacher's own marks carry the mark in OR with the teacher test, and nothing else of them changed: the
 -- person's own group (app.crisis_answers_for) and "found with me" for such a group, and "found" for a person with no group in the alarm
--- (app.crisis_has_no_call_in), each inside the alarm's window. A marked schemaläggare or expedition therefore marks their OWN group
--- although the school's list keeps them from starting an alarm or marking anyone else's (E2: the teacher's right is larger than the
--- administrator profile's here, as it is for the note to the substitute). Never AWAY (that is the administration's), never another
--- group, never starting, ending or sealing an alarm.
+-- (app.crisis_has_no_call_in), each inside the alarm's window. A marked schemaläggare or expedition therefore has the teacher's whole right
+-- in an alarm, not only the own group: a mark on their own group, "found with me" on a pupil of another group and a free find in an
+-- alarm where they have no group, although the school's list keeps them from starting an alarm or marking an administrator's way (E2:
+-- the teacher's right is larger than the administrator profile's here, as it is for the note to the substitute). Never AWAY (that is
+-- the administration's), never to put themselves on a call, never starting, ending or sealing an alarm.
 --
 -- Two alarms, planted by the full administratör the way the gateway does it (an exercise first, then a real alarm; one is not started
 -- beside the other): the exercise D has one group (cd) with teacher 1 and every pupil, so no administrator has a group in it; the
@@ -64639,7 +64641,7 @@ BEGIN
     PERFORM pg_temp.tk_expect('511b ' || p.who || ' is marked (so the difference is not nothing)', pg_temp.tk_val('app_authenticated', 'SELECT app.current_user_teaches()::text'), 'true');
     got := pg_temp.tk511_row(p.n);
     PERFORM pg_temp.tk_expect('511b ' || p.who || ' marked: a1..a7', got, p.marked);
-    -- The mark does not give the list: whoever was kept from starting an alarm still is, so the way the mark helps is the person's own group.
+    -- The mark does not give the list: whoever was kept from starting an alarm still is, so what the mark gives is the teacher's right (own group, "found with me", a free find).
     PERFORM pg_temp.tk_a(p.n);
     PERFORM pg_temp.tk_expect('511b ' || p.who || ' marked: may start an alarm as the list says', pg_temp.tk_val('app_authenticated', 'SELECT app.crisis_may_start()::text'),
       (p.n IN (6001, 6002))::text);
@@ -64667,7 +64669,7 @@ BEGIN
 END $$;
 
 -- 511d. What the mark does not give: starting, ending and sealing an alarm, another group's pupils and the groups' lists stay the administration's,
--- by the school's list. A marked schemaläggare is let in on their own group and nowhere else.
+-- by the school's list. A marked schemaläggare is let in as a teacher is (the own group, "found with me", a free find) and nowhere else.
 DO $$
 DECLARE
   s uuid := (SELECT v FROM tk511 WHERE k = 'school');

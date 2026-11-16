@@ -272,11 +272,14 @@ export function noticeText(entry: NotificationRow, t: NoticeTranslator): string 
 /**
  * The page a notice leads to, or undefined for one that has none of its own.
  * `role` is the reader's (an alarm leads a teacher and an administrator to
- * different pages).
+ * different pages), and `teaches` is an administrator's mark (Users.teaches):
+ * an administrator who teaches is led to the roll call of her own groups, which
+ * is the personal and urgent part of an alarm, with the leadership's view one
+ * link away on that page.
  */
-export function noticeHref(entry: NotificationRow, role?: UserRole): string | undefined {
+export function noticeHref(entry: NotificationRow, role?: UserRole, teaches?: boolean): string | undefined {
   if (entry.type === "CRISIS_ALARM" || entry.type === "CRISIS_ENDED") {
-    return role === "SCHOOL_ADMIN" ? CRISIS_HREF.SCHOOL_ADMIN : CRISIS_HREF.TEACHER;
+    return role === "SCHOOL_ADMIN" && teaches !== true ? CRISIS_HREF.SCHOOL_ADMIN : CRISIS_HREF.TEACHER;
   }
   if (entry.type === "LEAVE_CONSENT_REFUSED" && role) return LEAVE_REFUSED_HREF[role];
   return entry.meta?.reason === "UNANSWERED" ? "/admin/cover" : HREF[entry.type];

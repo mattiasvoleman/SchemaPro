@@ -5664,8 +5664,10 @@ administrator), so the migration and the merge change no answer there; RLS secti
   and holds twelve refusals; `UsersService.update` asks the mentors again when the mark changes (`app.leave_mentors` reads it):
   **marking a person sends one `LEAVE_REQUESTED` notice per pending leave application in the class they mentor**
   (`app.leave_requests_tell_new_mentors()`, the catch-up in `UsersService.update`), written in the transaction of the save and mailed
-  after it, so it cannot be taken back by removing the mark; nobody else is told (the production has no marked person, so none the day
-  this ships);
+  after it, so it cannot be taken back by removing the mark; a deciding mentor of the school, in any class, who has no
+  `LeaveRequestNotices` row for a pending application is told of it as well, since the catch-up (`app.leave_tell_mentors(school, NULL)`)
+  is the school's and not the marked person's (a notice that gallring has removed is written again): it is not "nobody else" who is
+  told (the production has no marked person, so none the day this ships);
   the notification preferences offer a marked administrator `LEAVE_REQUESTED`, `LESSON_REPORT_REMINDER` and `LESSON_PUPIL_MOVED`
   (not `COVER_REQUESTED`: SP409). The class teacher, the cover request's colleague side and the pool stay the teachers' (CT400, SP409).
 - **Deploy order:** the migration, then the merge, **after** every lower stamp that is in the same round (`20270218090000`, C1, is run
@@ -5693,6 +5695,60 @@ administrator), so the migration and the merge change no answer there; RLS secti
   marked, with the start list narrowed; the mentor; the reporting rate; nothing else changed) and 510o/512o/513o on the owner's side;
   section 494 (the list); the adapter probe's `tk-a`…`tk-d` through the real services, the twin test of krisläge first;
   `scripts/test/teaches-pr4-snapshot.sh`; and the bench numbers in the pull request.
+
+### 20.7 Part 5, the web: the group "Min undervisning" (no migration, no gateway change; the database it reads needs 20270212090000)
+
+The web learns what the gateway and the database have known since parts 2 to 4: **an administrator who teaches** (`Users.teaches`)
+has the teacher's own rows. The rights are the administrator's either way (the view narrows, the right does not).
+
+- **What is shown, and to whom.** `Profile.teaches` is read with the session (strictly: `profile.teaches === true`; a profile without
+  the field is not marked, and the huvudman's reader is `false`). Only a marked administrator is handed the group **"Min undervisning"**
+  in her menu, as the **second** group (after Översikt and Kalenderprenumeration): seven rows built from the teacher's menu (Mitt schema,
+  Larm, Närvaro, Min tjänst, **Min frånvaro**, Ledighet, Min rapportering). The group is server data (`teaching-admin-nav.ts`, like the
+  other menus), so no byte of it is in the JavaScript bundle and `AppShell` and `lib/queries.ts` are untouched; the menu of an
+  administrator without the mark is byte for byte what it was, and so are the teacher's, the pupil's and the guardian's. The
+  production has no marked person today, so **nobody is shown anything the day this ships**.
+- **What the pages do for her.** `/teacher/franvaro` becomes "Min frånvaro": it no longer asks `GET /cover-requests/mine` (the colleague
+  side of the cover request, SP409, answers an administrator 403, and the page drew an error card every minute), and shows her own
+  absences and the lessons she handed over. `/teacher/ledighet` narrows the school's whole list that the gateway hands an
+  administrator to what a mentor is shown: the pending applications she is among the deciding mentors of and whose guardians' consent is
+  not still awaited (a teacher's arm asks that it is complete), and on the decided tabs the ones she decided herself for a pupil she is
+  a mentor of. It is a teacher mentor's pending list, read against the real gateway, and on the decided tabs the nearest a page can
+  come: a teacher's decision is written as the mentor's and an administrator's as the administrator's (`decidedAs` ADMIN, also when
+  she decides on this page), so a teacher's own rule (`decidedAs` MENTOR) cannot be copied, and an application she decided as rektor
+  for a pupil of another mentor stays out. A teacher's own list is the gateway's, as it was. `/teacher/tjanst` says that her
+  figures are counted from the schedule draft (an administrator reads the draft where a teacher reads the published schedule).
+  `/teacher/crisis` has a link to the leadership's view. An alarm's notice in the bell leads her to `/teacher/crisis` instead of
+  `/admin/crisis`. Mitt schema, Närvaro, Min rapportering and the lesson page needed no change.
+- **The switch.** `/admin/people` has **Undervisar** on an administrator of any profile but the läsare, for rektor and a full
+  administrator only (the others see it locked with the sentence that says who changes it). It is sent as a `PATCH /users/:id` of its
+  own, after the post the same dialog may have written (`TEACHES_NEEDS_A_POST`), and never as `null`. The six refusals the mark can
+  meet have texts in both languages (`TEACHES_NEEDS_A_POST`, `A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS`,
+  `TEACHES_NEEDS_AN_ADMINISTRATOR`, `A_READER_DOES_NOT_TEACH`, `A_TEACHER_TEACHES_ALREADY`, `WRITE_CONFLICT`), and the last one is
+  also said where a post is removed (`/admin/staffing`) and a läsår is deleted (`/admin/years`). The role history says "undervisar nu"
+  and "undervisar inte längre" when the mark moved, and nothing for a row written before the mark existed (`fromTeaches` is `null`
+  there and `toTeaches` is `false`; an audit log is not filled in afterwards). The register's list has a small "undervisar" beside the
+  role.
+- **Nothing is run at deploy.** No migration, no engine, no change in any gateway answer (the one line in `src/` is a comment in
+  `crisis.controller.ts`, and the correction of 20.6 above is a sentence). **But the web is not independent of the database:** the
+  session's mark is read from the person's own `Users` row through PostgREST (`web/lib/auth.ts`, the profile read every signed-in
+  request makes, as `hrRead` is), so the database the web reads must hold `Users.teaches` (migration `20270212090000`, in the
+  production's 222 and in every database that has run part 1). Where the column is missing (a preview or an environment that lags)
+  PostgREST answers 42703, the profile read returns nothing and nobody gets past `/no-profile`. There is no column privilege on
+  `Users` in any migration, so the read is the plain table right, as for `hrRead`. "Additive against an older gateway" holds for what
+  the gateway sends: `Person.teaches` and the administrators' `teaches` are optional in the types and `undefined` is false, so an
+  older gateway shows nobody the group in a list. The one call that needs the gateway of part 2 is the switch's `PATCH` (an older
+  gateway refuses the field).
+- **Deploy order:** the migration of part 1 (already run in the production) before the web, as for the rest of the series; otherwise
+  the web and the API deploy on their own.
+- **Rolling back:** revert the pull request. The web keeps nothing (the mark is the database's), and a person who is marked stays
+  marked, with the gateway and the database answering as parts 2 to 4 say.
+- **Not in this part:** the planner's pickers and `lärare.csv` (the web's part 5b), the mobile app (part 6) and the handbook (part 7).
+- **Tests:** web unit tests for every page and for the menu (`role-nav.test.tsx` holds the group, its order and that nobody else gets
+  it); `lib/teaching-admin.contract.test.ts` reads the gateway's controllers as text and holds that every route a page of the group
+  calls admits her, that the doors are the route-guards spec's eight, and that the colleague side, the class teacher's and the pool's
+  routes are in no page's table; Playwright (`teaching-admin.a11y.spec.ts`, `teaching-admin.smoke.spec.ts`, a baseline for her menu and
+  a fifth person in the document-size gate) against the stub's marked administrator.
 
 ## 21. Pinned lessons in the generator ("Fästa lektioner")
 

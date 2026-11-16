@@ -21,9 +21,16 @@ import type { MyCover } from "@/lib/cover-request-types";
 
 const MINE = ["coverRequestsMine"] as const;
 
-export function useMyCover() {
+/**
+ * `enabled` is false for an administrator who teaches (Users.teaches) on
+ * /teacher/franvaro: the route is a teacher's alone (SP409, the pool and being
+ * asked to cover), so it answers her 403, and a read that is known to fail
+ * would draw the error card again every minute.
+ */
+export function useMyCover(enabled = true) {
   return useQuery({
     queryKey: MINE,
+    enabled,
     retry: false,
     // No socket reaches a teacher; a push or the bell sends them here, and
     // an open page asks again once a minute for the yes someone else gave.

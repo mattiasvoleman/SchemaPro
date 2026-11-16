@@ -402,6 +402,42 @@ describe("EmploymentCard", () => {
   });
 });
 
+describe("EmploymentCard, the last post of an administrator who teaches (Users.teaches)", () => {
+  it("says in the reader's own words that the mark has to come off first, not the gateway's sentence", async () => {
+    const { toast: sonner } = await import("sonner");
+    const { ApiError } = await import("@/lib/api");
+    remove.mockRejectedValue(
+      new ApiError(409, "Personen är markerad som undervisande, och det här är personens sista tjänst. Ta bort markeringen först.", "A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS", {
+        userId: "t-anna",
+        academicYearId: "y1",
+      }),
+    );
+    const user = userEvent.setup();
+    renderCard({ employment });
+    await user.click(screen.getByRole("button", { name: "editEmployment" }));
+    await user.click(screen.getByRole("button", { name: "removeEmployment" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: /^removeEmploymentTitle/ })).getByRole("button", { name: "removeEmployment" }),
+    );
+    expect(sonner.error).toHaveBeenCalledWith("teaches.errors.A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS");
+    expect(sonner.error).not.toHaveBeenCalledWith(expect.stringContaining("Ta bort markeringen först"));
+  });
+
+  it("says any other refusal as the gateway says it", async () => {
+    const { toast: sonner } = await import("sonner");
+    const { ApiError } = await import("@/lib/api");
+    remove.mockRejectedValue(new ApiError(409, "Tjänsten har en sak kvar", "SOMETHING_ELSE"));
+    const user = userEvent.setup();
+    renderCard({ employment });
+    await user.click(screen.getByRole("button", { name: "editEmployment" }));
+    await user.click(screen.getByRole("button", { name: "removeEmployment" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: /^removeEmploymentTitle/ })).getByRole("button", { name: "removeEmployment" }),
+    );
+    expect(sonner.error).toHaveBeenCalledWith("Tjänsten har en sak kvar");
+  });
+});
+
 describe("EmploymentCard, Roller i skolan", () => {
   afterEach(() => {
     me.adminProfile = undefined;

@@ -64,6 +64,39 @@ describe("the notice of a pupil moved to a parallel lesson for a day (Elevens le
   });
 });
 
+describe("where an alarm leads (Krisläge), and an administrator who teaches (Users.teaches)", () => {
+  const alarm = row("CRISIS_ALARM", { kind: "EVACUATION", mode: "LIVE", startedAt: "2027-01-12T09:14:00.000Z" });
+  const ended = row("CRISIS_ENDED", { kind: "EVACUATION", mode: "LIVE", startedAt: "2027-01-12T09:14:00.000Z", endedAt: "2027-01-12T09:40:00.000Z" });
+
+  it("leads an administrator to the live view, a teacher to the groups, and a reader with no role to the teacher's", () => {
+    for (const entry of [alarm, ended]) {
+      expect(noticeHref(entry, "SCHOOL_ADMIN")).toBe("/admin/crisis");
+      expect(noticeHref(entry, "SCHOOL_ADMIN", false)).toBe("/admin/crisis");
+      expect(noticeHref(entry, "TEACHER")).toBe("/teacher/crisis");
+      expect(noticeHref(entry)).toBe("/teacher/crisis");
+    }
+  });
+
+  it("leads an administrator who teaches to the roll call of her own groups, where the leadership's view is one link away", () => {
+    for (const entry of [alarm, ended]) expect(noticeHref(entry, "SCHOOL_ADMIN", true)).toBe("/teacher/crisis");
+  });
+
+  it("changes nothing of where a teacher, a pupil or a guardian is led by the mark, which only an administrator has", () => {
+    expect(noticeHref(alarm, "TEACHER", true)).toBe("/teacher/crisis");
+    expect(noticeHref(alarm, "TEACHER", false)).toBe("/teacher/crisis");
+  });
+
+  it("leaves a notice that is not an alarm where it was, whatever the mark: a guardian's refusal is the administrator's link", () => {
+    const refused = row("LEAVE_CONSENT_REFUSED", { requestId: "r-1", studentName: "Ada Berg" });
+    expect(noticeHref(refused, "SCHOOL_ADMIN", true)).toBe("/admin/leave?filter=GUARDIAN_DECLINED");
+    expect(noticeHref(refused, "SCHOOL_ADMIN", false)).toBe("/admin/leave?filter=GUARDIAN_DECLINED");
+    // LEAVE_REQUESTED has no link for any role, and the mark does not give it one.
+    const requested = row("LEAVE_REQUESTED", { requestId: "r-1" });
+    expect(noticeHref(requested, "SCHOOL_ADMIN", true)).toBeUndefined();
+    expect(noticeHref(requested, "TEACHER")).toBeUndefined();
+  });
+});
+
 describe("the expedition's notice of days that clash with a lesson (Lokal)", () => {
   // The hirer is not a user and a notice goes on as e-mail and push: if a newer gateway puts a name or a room in the meta, the
   // sentence still must not say it.

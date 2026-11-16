@@ -34,8 +34,10 @@ vi.mock("@/lib/leave-queries", () => ({
     delegate: { mutateAsync: vi.fn(), isPending: false },
   }),
 }));
+/** Who is signed in: the teacher Anna, or the same person as an administrator who teaches (Users.teaches). */
+const who = vi.hoisted(() => ({ role: "TEACHER" as "TEACHER" | "SCHOOL_ADMIN" }));
 vi.mock("@/components/profile-context", () => ({
-  useProfile: () => ({ profile: { id: "t-anna", role: "TEACHER", firstName: "Anna", lastName: "Mentor" }, school: null }),
+  useProfile: () => ({ profile: { id: "t-anna", role: who.role, firstName: "Anna", lastName: "Mentor" }, school: null }),
 }));
 vi.mock("@/lib/retention-queries", () => ({ usePurgedBefore: () => ({ of: () => null }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -84,8 +86,141 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  who.role = "TEACHER";
   state.inbox = { data: [REQUEST], isLoading: false, isError: false };
   state.delegation = { data: { current: DELEGATION, history: [DELEGATION] }, isLoading: false, isError: false };
+});
+
+/*
+ * An administrator who teaches is handed the school's whole list by the
+ * gateway (it is rektor's inbox for her). The page keeps what a mentor is shown
+ * (read from the real gateway): the pending requests she is among the deciding
+ * mentors of, and on the decided tabs the ones she decided herself. A request of
+ * her pupil that rektor decides (over the delegation) or decided is not hers, and
+ * a teacher's list is the gateway's.
+ */
+describe("Ledighet for an administrator who teaches", () => {
+  const OTHERS = {
+    ...REQUEST,
+    id: "l-2",
+    studentId: "p-oskar",
+    student: { id: "p-oskar", name: "Oskar Okänd", className: "9B" },
+    mentors: [{ id: "t-cecilia", name: "Cecilia Mentor" }],
+    decidingMentors: [{ id: "t-cecilia", name: "Cecilia Mentor" }],
+  };
+  /** Her own pupil's request, over the delegation: she is a mentor of the pupil, and rektor decides. */
+  const OVER_THE_DELEGATION = {
+    ...REQUEST,
+    id: "l-3",
+    studentId: "p-sigrid",
+    student: { id: "p-sigrid", name: "Sigrid Senast", className: "7A" },
+    decides: "ADMIN",
+    decidingMentors: [],
+  };
+  const decided = (request: typeof REQUEST, status: string, decidedById: string) => ({ ...request, status, decides: null as null, decidingMentors: [], decidedById });
+
+  it("shows only the pending requests she is a deciding mentor of, and none of the rest of the school's", () => {
+    who.role = "SCHOOL_ADMIN";
+    state.inbox = { data: [OTHERS, REQUEST], isLoading: false, isError: false };
+    renderPage();
+    const list = screen.getByRole("region", { name: "Väntar på ditt beslut" });
+    expect(within(list).getByText("Ella Elev")).toBeInTheDocument();
+    expect(within(list).queryByText("Oskar Okänd")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Oskar Okänd/ })).not.toBeInTheDocument();
+  });
+
+  it("leaves out a pupil's request she is a mentor of but rektor decides, as a teacher is not handed it", () => {
+    who.role = "SCHOOL_ADMIN";
+    state.inbox = { data: [OVER_THE_DELEGATION, REQUEST], isLoading: false, isError: false };
+    renderPage();
+    const list = screen.getByRole("region", { name: "Väntar på ditt beslut" });
+    expect(within(list).getByText("Ella Elev")).toBeInTheDocument();
+    expect(within(list).queryByText("Sigrid Senast")).not.toBeInTheDocument();
+  });
+
+  it.each([["APPROVED", "Beviljad"], ["REJECTED", "Avslagen"]])("shows on the decided tab %s only what she decided herself", async (status, tab) => {
+    who.role = "SCHOOL_ADMIN";
+    state.inbox = {
+      data: [decided(OTHERS, status, "t-cecilia"), decided(REQUEST, status, "t-anna"), decided({ ...REQUEST, id: "l-4", student: { id: "p-vera", name: "Vera Vid", className: "7A" } }, status, "a-rektor")],
+      isLoading: false,
+      isError: false,
+    };
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getByRole("tab", { name: tab }));
+    expect(screen.getAllByText("Ella Elev").length).toBeGreaterThan(0);
+    // Not another mentor's, and not rektor's decision of her own pupil.
+    expect(screen.queryByText("Oskar Okänd")).not.toBeInTheDocument();
+    expect(screen.queryByText("Vera Vid")).not.toBeInTheDocument();
+  });
+
+  it("leaves out a pending request that still waits for a guardian's consent: a teacher's arm asks that it is complete", () => {
+    who.role = "SCHOOL_ADMIN";
+    const waiting = {
+      ...REQUEST,
+      id: "l-8",
+      student: { id: "p-wilma", name: "Wilma Väntar", className: "7A" },
+      consent: { required: true, state: "WAITING", mine: "NOT_ASKED", asked: 2, given: 1, waiting: 1 },
+    };
+    state.inbox = { data: [waiting, REQUEST], isLoading: false, isError: false };
+    renderPage();
+    const list = screen.getByRole("region", { name: "Väntar på ditt beslut" });
+    expect(within(list).getByText("Ella Elev")).toBeInTheDocument();
+    expect(within(list).queryByText("Wilma Väntar")).not.toBeInTheDocument();
+  });
+
+  it("shows a pending request whose consent is complete or not asked for", () => {
+    who.role = "SCHOOL_ADMIN";
+    const given = { ...REQUEST, id: "l-9", student: { id: "p-gunnel", name: "Gunnel Given", className: "7A" }, consent: { required: true, state: "GIVEN", mine: "NOT_ASKED", asked: 2, given: 2, waiting: 0 } };
+    state.inbox = { data: [given, REQUEST], isLoading: false, isError: false };
+    renderPage();
+    const list = screen.getByRole("region", { name: "Väntar på ditt beslut" });
+    expect(within(list).getByText("Gunnel Given")).toBeInTheDocument();
+    expect(within(list).getByText("Ella Elev")).toBeInTheDocument();
+  });
+
+  it.each([["APPROVED", "Beviljad"], ["REJECTED", "Avslagen"]])(
+    "leaves out on the decided tab %s a request she decided as administrator for a pupil she is not a mentor of",
+    async (status, tab) => {
+      // Rektor with the mark decides on /admin/leave when the school delegates nothing: decidedAs ADMIN, decidedById
+      // her own id, for a pupil of any class. A teacher mentor's list holds only her decisions as the mentor, and
+      // hers on this page are written as the administrator's, so "decided by me" alone would show her the school's.
+      who.role = "SCHOOL_ADMIN";
+      state.inbox = {
+        data: [
+          { ...decided(OTHERS, status, "t-anna"), decidedAs: "ADMIN" },
+          { ...decided(REQUEST, status, "t-anna"), decidedAs: "ADMIN" },
+        ],
+        isLoading: false,
+        isError: false,
+      };
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(screen.getByRole("tab", { name: tab }));
+      // Her own pupil's, decided by her as administrator, is hers; Oskar (9B, another mentor's) is not.
+      expect(screen.getAllByText("Ella Elev").length).toBeGreaterThan(0);
+      expect(screen.queryByText("Oskar Okänd")).not.toBeInTheDocument();
+    },
+  );
+
+  it("says the inbox is empty, not that rektor decides, when none of the school's requests is hers", () => {
+    who.role = "SCHOOL_ADMIN";
+    state.inbox = { data: [OTHERS], isLoading: false, isError: false };
+    renderPage();
+    expect(screen.queryByText("Oskar Okänd")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Väntar på ditt beslut" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Rektor beslutar all ledighet/)).not.toBeInTheDocument();
+  });
+
+  it("leaves a teacher's list as the gateway gave it: no second filter on the page", () => {
+    // The gateway narrowed it already (and a decided tab holds the mentor's own decisions, which may
+    // be a pupil she no longer mentors): what it sent is what is shown.
+    state.inbox = { data: [OTHERS, REQUEST], isLoading: false, isError: false };
+    renderPage();
+    const list = screen.getByRole("region", { name: "Väntar på ditt beslut" });
+    expect(within(list).getByText("Oskar Okänd")).toBeInTheDocument();
+    expect(within(list).getByText("Ella Elev")).toBeInTheDocument();
+  });
 });
 
 describe("Ledighet, the mentor's inbox", () => {

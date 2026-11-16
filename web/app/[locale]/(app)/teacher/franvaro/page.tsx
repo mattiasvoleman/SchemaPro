@@ -1,7 +1,11 @@
 "use client";
 
 // /teacher/franvaro — Vikariepass och frånvaro, the teacher's own side of
-// Vikarieplanering.
+// Vikarieplanering. For an administrator who teaches (Users.teaches) it is
+// "Min frånvaro" alone: her absences and the lessons she handed over. The
+// cover shifts, the questions and the pool are a teacher's (SP409: she is never
+// asked to cover), and the route behind them refuses her, so none of them is
+// drawn or asked for.
 //
 // MINA VIKARIEPASS: the lessons this teacher covers in the coming four weeks,
 // read as the teacher reads their week (CalendarLessonTeachers, role
@@ -126,7 +130,9 @@ export default function TeacherCoverPage() {
   // Vikariefrågan: the questions the school asked this teacher, and the passes they hold to confirm.
   const tRequests = useTranslations("coverRequests");
   const tRequestErrors = useTranslations("coverRequests.errors") as unknown as MessageLookup;
-  const { data: mine, isError: mineError } = useMyCover();
+  // An administrator is never asked to cover (SP409): the route answers her 403, so it is not read.
+  const admin = profile.role === "SCHOOL_ADMIN";
+  const { data: mine, isError: mineError } = useMyCover(!admin);
   const confirmPass = useConfirmPass();
   const passOf = useMemo(() => new Map((mine?.passes ?? []).map((pass) => [pass.lessonId, pass])), [mine]);
 
@@ -167,8 +173,8 @@ export default function TeacherCoverPage() {
   return (
     <Page>
       <PageHeader
-        title={t("title")}
-        subtitle={t("subtitle")}
+        title={t(admin ? "teaching.title" : "title")}
+        subtitle={t(admin ? "teaching.subtitle" : "subtitle")}
         actions={
           selfReport ? (
             <Button onClick={() => open(() => setReporting(true))}>
@@ -179,13 +185,13 @@ export default function TeacherCoverPage() {
         }
       />
 
-      {(mine?.requests.length ?? 0) > 0 || mineError ? (
+      {!admin && ((mine?.requests.length ?? 0) > 0 || mineError) ? (
         <Suspense fallback={<Skeleton className="h-24 w-full" />}>
           <CoverRequestsSection requests={mine?.requests ?? []} failed={mineError} />
         </Suspense>
       ) : null}
 
-      <SectionCard id="teacher-covers" title={t("coversTitle")}>
+      {admin ? null : <SectionCard id="teacher-covers" title={t("coversTitle")}>
         {lessonsLoading ? (
           <div aria-busy="true">
             <Skeleton className="h-16 w-full" />
@@ -241,7 +247,7 @@ export default function TeacherCoverPage() {
             })}
           </ul>
         )}
-      </SectionCard>
+      </SectionCard>}
 
       <SectionCard
         id="teacher-absences"

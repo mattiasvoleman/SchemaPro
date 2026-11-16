@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { expect, test } from "@playwright/test";
-import { signIn } from "./signed-in";
-import type { Persona } from "./stub/sessions";
+import { signIn, signInAs } from "./signed-in";
+import { TEACHING_ADMIN, type Persona, type SignedInPerson } from "./stub/sessions";
 
 /**
  * What a signed-in full page load costs in HTML besides the message catalog,
@@ -145,6 +145,8 @@ interface Measured {
   /** What the log calls it. */
   name: string;
   persona: Persona;
+  /** Signed in as this person, for a persona that is one person's alone (TEACHING_ADMIN). */
+  person?: SignedInPerson;
   url: string;
   /** A row of this role's menu that the document must contain, or the fetch is not the page. */
   row: string;
@@ -223,10 +225,35 @@ function floorMessage(name: string, rest: number, measured: number): string {
 // Each test is still its own: a failure of one does not skip the rest.
 test.describe.configure({ mode: "default" });
 
-for (const page of [...PAGES, ...SMALL_MENUS]) {
+/**
+ * The administrator who teaches (Users.teaches): the administrator's menu with
+ * the group "Min undervisning", seven rows that borrow the administrator's
+ * icons. Her own array, as SMALL_MENUS is, so that the lines the phases that
+ * add rows to the administrator's and the teacher's menus edit are not hers.
+ * The unmarked administrator's document is not made larger by it: the group is
+ * built only for a marked one (role-nav.tsx).
+ */
+const TEACHING_ADMIN_MENU: Measured[] = [
+  {
+    name: "teaching administrator",
+    persona: "admin",
+    person: TEACHING_ADMIN,
+    url: "/sv/notifications",
+    row: "/sv/teacher/franvaro",
+    // Set on the part that added the group (the web's part of Administratör som lärare; macOS, production build,
+    // all of the part's messages in): 15 254 B, 295 B over what the administrator's own document was in the same
+    // build (14 959 B), which is the seven rows with their texts and no icon of their own. The administrator's own
+    // `rest` is 6 B over main's 14 953, the teacher's 1 B under and the pupil's and the guardian's 6 B and 7 B over:
+    // the part's messages beside the catalog's gzip, not a row of theirs.
+    measured: 15_254,
+  },
+];
+
+for (const page of [...PAGES, ...SMALL_MENUS, ...TEACHING_ADMIN_MENU]) {
   test(`${page.name} ${page.url}: the document, less the catalog, stays under its ceiling`, async ({ context, baseURL }) => {
     skipUnlessProduction();
-    await signIn(context, page.persona, baseURL!);
+    if (page.person) await signInAs(context, page.person, baseURL!);
+    else await signIn(context, page.persona, baseURL!);
     const response = await context.request.get(page.url);
     expect(response.status(), "the page answers").toBe(200);
     expect(new URL(response.url()).pathname, "and is not a redirect to the login").toBe(page.url);

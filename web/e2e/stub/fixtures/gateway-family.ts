@@ -415,6 +415,8 @@ const OFFERED: Record<Persona, NotificationTypeName[]> = {
   teacher: [...STAFF_NOTICES, "LESSON_PUPIL_MOVED", "ABSENCE_WATCH_DIGEST", "LESSON_REPORT_REMINDER"],
   admin: [...STAFF_NOTICES, "ABSENCE_WATCH_DIGEST", "REPORTING_RATE_DIGEST", "EXTERNAL_BOOKING_CLASH"],
 };
+/** What an administrator who teaches is offered besides an administrator's: the mentor's, the register's and the lesson's. */
+const TEACHING_ADMINISTRATOR_NOTICES: NotificationTypeName[] = ["LESSON_PUPIL_MOVED", "LEAVE_REQUESTED", "LESSON_REPORT_REMINDER"];
 /** Sent whatever is chosen: the unreported absence to a guardian, a cover lesson's withdrawal to staff. */
 const REQUIRED: Record<Persona, NotificationTypeName[]> = {
   guardian: ["ABSENCE_UNREPORTED"],
@@ -434,8 +436,11 @@ function notificationPreferences(context: GatewayContext): { types: Notification
   const refused = refuse(context, ["guardian", "student", "teacher", "admin"]);
   if (refused) return refused;
   const persona = context.person!.persona;
+  // src/notifications/notification-types.ts typesFor: an administrator who teaches (Users.teaches) is
+  // offered the teacher's three besides, the ones the database writes for a person it counts as one.
+  const offered = context.person!.teaches ? [...OFFERED[persona], ...TEACHING_ADMINISTRATOR_NOTICES] : OFFERED[persona];
   return {
-    types: OFFERED[persona].map((type) => {
+    types: offered.map((type) => {
       const required = REQUIRED[persona].includes(type);
       return { type, enabled: required || !OPTED_OUT[persona].includes(type), required };
     }),

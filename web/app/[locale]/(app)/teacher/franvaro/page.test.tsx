@@ -49,8 +49,10 @@ vi.mock("@/utils/supabase/client", () => ({
     },
   }),
 }));
+/** Who is signed in: a teacher, or an administrator who teaches (Users.teaches). */
+const who = vi.hoisted(() => ({ role: "TEACHER" as "TEACHER" | "SCHOOL_ADMIN" }));
 vi.mock("@/components/profile-context", () => ({
-  useProfile: () => ({ profile: { id: "t-me", role: "TEACHER" }, school: { timezone: "Europe/Stockholm" } }),
+  useProfile: () => ({ profile: { id: "t-me", role: who.role }, school: { timezone: "Europe/Stockholm" } }),
 }));
 
 const SOON = new Date(Date.now() + 2 * 86_400_000);
@@ -151,8 +153,9 @@ function answer(selfReport: boolean) {
   });
 }
 
-function renderPage() {
+function renderPage(seed?: (queryClient: QueryClient) => void) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  seed?.(queryClient);
   return render(
     <QueryClientProvider client={queryClient}>
       <NextIntlClientProvider locale="sv" messages={sv} timeZone="Europe/Stockholm">
@@ -167,6 +170,68 @@ beforeEach(() => {
   pool.member = false;
   mine.value = { requests: [], passes: [] };
   mine.fail = false;
+  who.role = "TEACHER";
+});
+
+/*
+ * An administrator who teaches (Users.teaches) has this page as "Min frånvaro".
+ * GET /cover-requests/mine is a teacher's alone (SP409: she is never asked to
+ * cover) and answers her 403, so the page must not ask: a read known to fail
+ * drew the error card again every minute.
+ */
+describe("/teacher/franvaro as an administrator who teaches", () => {
+  it("asks nothing of the cover requests and shows no failure card, however the route would answer", async () => {
+    who.role = "SCHOOL_ADMIN";
+    answer(false);
+    // If it did ask, this is what it would be told.
+    mine.fail = true;
+    renderPage();
+    expect(await screen.findByRole("heading", { level: 1, name: "Min frånvaro" })).toBeInTheDocument();
+    const mineSection = screen.getByRole("heading", { level: 2, name: "Min frånvaro" }).closest("section")!;
+    expect(await within(mineSection).findByText("Sjukdom")).toBeInTheDocument();
+    // The two reads of her own that the doors of the lesson log open to her are still made.
+    const paths = get.mock.calls.map(([path]) => path as string);
+    expect(paths.some((path) => path.startsWith("/api/v1/lesson-logs/handed-over?"))).toBe(true);
+    expect(paths.some((path) => path.startsWith("/api/v1/lesson-logs?"))).toBe(true);
+    expect(paths).not.toContain("/api/v1/cover-requests/mine");
+    expect(screen.queryByText(/kunde inte hämtas/)).not.toBeInTheDocument();
+  });
+
+  it("draws neither the cover shifts nor the questions, and keeps her absence and the lessons she handed over", async () => {
+    who.role = "SCHOOL_ADMIN";
+    answer(false);
+    mine.value = { requests: [asked()], passes: [] };
+    renderPage();
+    const mineSection = (await screen.findByRole("heading", { level: 2, name: "Min frånvaro" })).closest("section")!;
+    expect(await within(mineSection).findByText("Lektioner du lämnat över")).toBeInTheDocument();
+    expect(within(mineSection).getByRole("link", { name: /^Skriv notis till vikarien/ })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Mina vikariepass" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Vikarieförfrågningar" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Historia")).not.toBeInTheDocument();
+  });
+
+  it("draws no questions either from a cache that happens to hold some: they are a teacher's alone", async () => {
+    // The same browser may have been a teacher's before the administrator's sign-in; the cache is keyed by the
+    // route, not by who asked. The page must not draw what the query never asked for in this session.
+    who.role = "SCHOOL_ADMIN";
+    answer(false);
+    renderPage((queryClient) => queryClient.setQueryData(["coverRequestsMine"], { requests: [asked()], passes: [] }));
+    await screen.findByRole("heading", { level: 2, name: "Min frånvaro" });
+    // The section is a lazy chunk (already loaded by this file's import of it): give it the turns it would need.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(screen.queryByRole("heading", { name: "Vikarieförfrågningar" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Historia")).not.toBeInTheDocument();
+  });
+
+  it("leaves a teacher's page as it was: the questions are asked for, the failure is said, the shifts are listed", async () => {
+    answer(false);
+    mine.fail = true;
+    renderPage();
+    expect(await screen.findByRole("heading", { level: 1, name: "Vikariepass och frånvaro" })).toBeInTheDocument();
+    expect(await screen.findByText("Dina vikarieförfrågningar kunde inte hämtas")).toBeInTheDocument();
+    expect(get).toHaveBeenCalledWith("/api/v1/cover-requests/mine");
+    expect(screen.getByRole("heading", { name: "Mina vikariepass" })).toBeInTheDocument();
+  });
 });
 
 describe("/teacher/franvaro", () => {

@@ -62,6 +62,14 @@ export interface Profile {
   adminProfile?: AdminProfile | null;
   /** HR-läs: a schemaläggare or expedition who reads tjänst % and nedsättning. */
   hrRead?: boolean;
+  /**
+   * Users.teaches: an administrator who also teaches (Administratör som
+   * lärare). Optional so a profile built without it reads as it always did,
+   * and read strictly, `teaches === true`: a profile without the field is not
+   * marked. The rights are the administrator's either way; the mark adds the
+   * teacher's own pages (the menu group "Min undervisning").
+   */
+  teaches?: boolean;
 }
 
 /**
@@ -352,6 +360,12 @@ export interface Person {
    */
   invitedAt: string | null;
   studentGroupId: string | null;
+  /**
+   * Users.teaches (GET /users answers with it since the gateway's part 2): an
+   * administrator who also teaches. Optional because a gateway older than the
+   * web does not send it; `undefined` is false.
+   */
+  teaches?: boolean;
 }
 
 /** A parallel block of one läsår: "Språkval åk 7". Its posts carry its id. */

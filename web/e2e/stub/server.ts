@@ -3,7 +3,7 @@ import { read, type Row } from "./postgrest";
 import { whereItThrew, whereToStub } from "./where";
 import { authUser, personForToken, STUB_PORT } from "./sessions";
 import { matchGateway, Reply } from "./gateway-routes";
-import { rowScopes, tables } from "./fixtures/tables";
+import { privateRows, rowScopes, tables } from "./fixtures/tables";
 import { gatewayRoutes } from "./fixtures/gateway";
 
 /**
@@ -135,10 +135,13 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       // RLS, roughly: a pupil or a guardian reads the family tables' own rows.
       const person = personForToken(bearer(request));
       const scope = rowScopes[table];
-      const visible =
+      const scoped =
         scope && person && (person.persona === "student" || person.persona === "guardian")
           ? { ...tables, [table]: (tables[table] as Row[]).filter((row) => scope(row, person)) }
           : tables;
+      // Rows that are one person's alone (the administrator who teaches' lessons), hidden from everybody else.
+      const hidden = privateRows[table];
+      const visible = hidden ? { ...scoped, [table]: (scoped[table] as Row[]).filter((row) => hidden(row, person)) } : scoped;
       const result = read(table, url.searchParams, {
         accept: request.headers.accept,
         range: request.headers.range,

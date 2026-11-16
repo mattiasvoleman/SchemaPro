@@ -1,0 +1,242 @@
+- link "Hoppa till innehållet":
+  - /url: "#main"
+- complementary:
+  - text: Rastra Schema Exempelskolan
+  - navigation "Huvudmeny":
+    - list:
+      - listitem:
+        - link "Översikt":
+          - /url: /sv/admin
+      - listitem:
+        - link "Min kalenderprenumeration":
+          - /url: /sv/calendar-feed
+    - text: Min undervisning
+    - list "Min undervisning":
+      - listitem:
+        - link "Mitt schema":
+          - /url: /sv/teacher
+      - listitem:
+        - link "Larm":
+          - /url: /sv/teacher/crisis
+      - listitem:
+        - link "Närvaro":
+          - /url: /sv/teacher/attendance
+      - listitem:
+        - link "Min tjänst":
+          - /url: /sv/teacher/tjanst
+      - listitem:
+        - link "Min frånvaro":
+          - /url: /sv/teacher/franvaro
+      - listitem:
+        - link "Ledighet":
+          - /url: /sv/teacher/ledighet
+      - listitem:
+        - link "Min rapportering":
+          - /url: /sv/teacher/reporting-rate
+    - text: Grunddata
+    - list "Grunddata":
+      - listitem:
+        - link "Kom igång":
+          - /url: /sv/admin/setup
+      - listitem:
+        - link "Läsår":
+          - /url: /sv/admin/years
+      - listitem:
+        - link "Ämnen":
+          - /url: /sv/admin/subjects
+      - listitem:
+        - link "Salar":
+          - /url: /sv/admin/rooms
+      - listitem:
+        - link "Klasser":
+          - /url: /sv/admin/groups
+      - listitem:
+        - link "Personer":
+          - /url: /sv/admin/people
+    - text: Planering
+    - list "Planering":
+      - listitem:
+        - link "Timplan":
+          - /url: /sv/admin/timplan
+      - listitem:
+        - link "Timplansposter":
+          - /url: /sv/admin/requirements
+      - listitem:
+        - link "Tjänstefördelning":
+          - /url: /sv/admin/staffing
+      - listitem:
+        - link "Tillgänglighet":
+          - /url: /sv/admin/constraints
+      - listitem:
+        - link "Lov och studiedagar":
+          - /url: /sv/admin/breaks
+      - listitem:
+        - link "Ramtider":
+          - /url: /sv/admin/frame-times
+      - listitem:
+        - link "Raster":
+          - /url: /sv/admin/rasts
+      - listitem:
+        - link "Rastvaktsschema":
+          - /url: /sv/admin/supervision
+      - listitem:
+        - link "Lunchsittningar":
+          - /url: /sv/admin/lunch-servings
+      - listitem:
+        - link "Resurser":
+          - /url: /sv/admin/resources
+    - text: Schemaläggning
+    - list "Schemaläggning":
+      - listitem:
+        - link "Generera schema":
+          - /url: /sv/admin/generate
+      - listitem:
+        - link "Grundschema":
+          - /url: /sv/admin/timetable
+      - listitem:
+        - link "Förlägg i veckan":
+          - /url: /sv/admin/placements
+      - listitem:
+        - link "Klasslärare":
+          - /url: /sv/admin/class-teachers
+      - listitem:
+        - link "Luckor och håltimmar":
+          - /url: /sv/admin/gaps
+      - listitem:
+        - link "Publicering":
+          - /url: /sv/admin/publishing
+      - listitem:
+        - link "Schemavisaren":
+          - /url: /sv/admin/schemavisaren
+      - listitem:
+        - link "Kalenderprenumeration":
+          - /url: /sv/admin/calendar-feeds
+      - listitem:
+        - link "Schema som fil":
+          - /url: /sv/admin/schedule-exchange
+    - text: Drift
+    - list "Drift":
+      - listitem:
+        - link "Krisläge":
+          - /url: /sv/admin/crisis
+      - listitem:
+        - link "Skolans dag":
+          - /url: /sv/admin/school-day
+      - listitem:
+        - link "Dagsplanering":
+          - /url: /sv/admin/lessons
+      - listitem:
+        - link "Lärarfrånvaro":
+          - /url: /sv/admin/teacher-absence
+      - listitem:
+        - link "Vikarietavla":
+          - /url: /sv/admin/cover
+      - listitem:
+        - link "Avbokning":
+          - /url: /sv/admin/cancellations
+      - listitem:
+        - link "Aktiviteter":
+          - /url: /sv/admin/activities
+      - listitem:
+        - link "Ledighetsansökningar":
+          - /url: /sv/admin/leave
+      - listitem:
+        - link "Lokalbokningar":
+          - /url: /sv/admin/room-bookings
+      - listitem:
+        - link "Externa bokningar":
+          - /url: /sv/admin/external-bookings
+      - listitem:
+        - link "Utnyttjande":
+          - /url: /sv/admin/utilisation
+      - listitem:
+        - link "Rapporter":
+          - /url: /sv/admin/reports
+      - listitem:
+        - link "Frånvarobevakning":
+          - /url: /sv/admin/absence-watch
+      - listitem:
+        - link "Rapporteringsgrad":
+          - /url: /sv/admin/reporting-rate
+      - listitem:
+        - link "Analys och planering":
+          - /url: /sv/admin/analysis
+      - listitem:
+        - link "Kvittens":
+          - /url: /sv/admin/acknowledgements
+      - listitem:
+        - link "Måltidskollen":
+          - /url: /sv/admin/meals
+      - listitem:
+        - link "Checklistor":
+          - /url: /sv/admin/checklists
+      - listitem:
+        - link "Klassbok":
+          - /url: /sv/admin/klassbok
+    - list:
+      - listitem:
+        - link "Dataskydd":
+          - /url: /sv/admin/dataskydd
+      - listitem:
+        - link "Integrationer":
+          - /url: /sv/admin/integrations
+  - link "Tillgänglighetsredogörelse":
+    - /url: /sv/tillganglighet
+- banner:
+  - button "Språk"
+  - button "Tema"
+  - button "Notiser"
+  - button "Tora Tjänsteman": TT
+- main:
+  - heading "Notiser" [level=1]
+  - paragraph: Välj vad som skickas till dig utanför Rastra Schema
+  - region "E-post och push":
+    - heading "E-post och push" [level=2]
+    - text: Det du slår av skickas inte som e-post eller push. Notisen finns ändå kvar här i Rastra Schema.
+    - list:
+      - listitem:
+        - text: Inställda lektioner
+        - switch "Inställda lektioner" [checked]
+      - listitem:
+        - text: Sammanfattningar av avbokningar
+        - switch "Sammanfattningar av avbokningar" [checked]
+      - listitem:
+        - text: Lektioner som blir av igen
+        - switch "Lektioner som blir av igen"
+      - listitem:
+        - text: Vikarier på mina lektioner
+        - paragraph: Dina egna vikariepass kommer alltid fram, vad du än väljer här.
+        - switch "Vikarier på mina lektioner" [checked]
+      - listitem:
+        - text: Självstudier
+        - switch "Självstudier" [checked]
+      - listitem:
+        - text: Avbokade vikariepass
+        - paragraph: Skickas alltid, så att du inte går till ett pass som inte längre är ditt.
+        - switch "Avbokade vikariepass" [checked] [disabled]
+      - listitem:
+        - text: Byte av sal
+        - switch "Byte av sal"
+      - listitem:
+        - text: Beslut om lokalbokning
+        - switch "Beslut om lokalbokning" [checked]
+      - listitem:
+        - text: Frånvarosammanställning
+        - switch "Frånvarosammanställning" [checked]
+      - listitem:
+        - text: Veckobesked om rapporteringsgrad
+        - switch "Veckobesked om rapporteringsgrad" [checked]
+      - listitem:
+        - text: Externa bokningar som krockar med en lektion
+        - switch "Externa bokningar som krockar med en lektion" [checked]
+      - listitem:
+        - text: Elever som byter lektion för en dag
+        - switch "Elever som byter lektion för en dag" [checked]
+      - listitem:
+        - text: Ledighetsansökningar att besluta om
+        - switch "Ledighetsansökningar att besluta om" [checked]
+      - listitem:
+        - text: Påminnelser om öppna lektioner
+        - switch "Påminnelser om öppna lektioner" [checked]
+- region "Meddelanden alt+T"
+- alert

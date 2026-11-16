@@ -2,11 +2,11 @@ import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import { expectAriaBaseline } from "./aria-baseline";
 import { scanBothSchemes } from "./axe";
-import { freezeClock, settle, signIn, watchStubMisses } from "./signed-in";
+import { freezeClock, settle, signIn, signInAs, watchStubMisses } from "./signed-in";
 import { addDays, THIS_MONDAY } from "./stub/fixtures/calendar";
 import { SHARE_TOKEN } from "./stub/fixtures/gateway-public";
 import { CALENDAR_LESSON_TEACHERS, CALENDAR_LESSONS, GROUPS, TEACHERS, YEAR } from "./stub/fixtures/world";
-import type { Persona } from "./stub/sessions";
+import { TEACHING_ADMIN, type Persona, type SignedInPerson } from "./stub/sessions";
 
 /**
  * What a screen reader is told on the screens each role works in: the
@@ -31,6 +31,12 @@ interface Screen {
   url: string;
   persona: Persona | null;
   /**
+   * Signed in as this person instead of the persona's own, for a screen that
+   * is one person's alone (the administrator who teaches has a menu group the
+   * others do not). The persona is still the one the stub's gateway answers by.
+   */
+  person?: SignedInPerson;
+  /**
    * What to take the tree of: the page's own content, everything (shell
    * included), or a CSS selector for part of it.
    */
@@ -45,6 +51,8 @@ const SCREENS: Screen[] = [
   { name: "public-schemavisaren-ram", url: `/v/${SHARE_TOKEN}/embed?target=${GROUPS.g7A.id}`, persona: null, scope: "body" },
   // The shell once per role, through the one page every role has.
   { name: "admin-notiser", url: "/sv/notifications", persona: "admin", scope: "body" },
+  // The administrator who teaches (Users.teaches): the same shell with the group "Min undervisning" second.
+  { name: "undervisande-admin-notiser", url: "/sv/notifications", persona: "admin", person: TEACHING_ADMIN, scope: "body" },
   { name: "teacher-notiser", url: "/sv/notifications", persona: "teacher", scope: "body" },
   { name: "student-notiser", url: "/sv/notifications", persona: "student", scope: "body" },
   { name: "guardian-notiser", url: "/sv/notifications", persona: "guardian", scope: "body" },
@@ -77,8 +85,9 @@ const SCREENS: Screen[] = [
 const MISSES = "the backend stub could not answer these reads; each says which file to add it to or fix";
 
 /** Opens a screen; the misses it returns keep collecting, for a test that clicks on. */
-async function open(page: Page, screen: Pick<Screen, "url" | "persona">, baseURL: string) {
-  if (screen.persona) await signIn(page.context(), screen.persona, baseURL);
+async function open(page: Page, screen: Pick<Screen, "url" | "persona" | "person">, baseURL: string) {
+  if (screen.person) await signInAs(page.context(), screen.person, baseURL);
+  else if (screen.persona) await signIn(page.context(), screen.persona, baseURL);
   await freezeClock(page);
   const misses = watchStubMisses(page);
   await page.goto(screen.url);

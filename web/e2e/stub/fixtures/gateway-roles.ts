@@ -18,7 +18,7 @@ const adminsOnly = (context: GatewayContext) =>
   !context.person ? unauthorised : context.person.persona === "admin" ? null : new Reply(403, { message: "Forbidden." });
 
 const ADMINISTRATORS: AdministratorProfile[] = ALL_PEOPLE.filter((person) => person.role === "SCHOOL_ADMIN").map(
-  (person) => ({ id: person.id, adminProfile: "FULL", hrRead: false }),
+  (person) => ({ id: person.id, adminProfile: "FULL", hrRead: false, teaches: false }),
 );
 
 export const roleRoutes: GatewayRoute[] = [
@@ -38,6 +38,9 @@ export const roleRoutes: GatewayRoute[] = [
             toProfile: administrator.adminProfile,
             fromHrRead: null,
             toHrRead: administrator.hrRead,
+            // The import wrote it before the mark existed: no "from", and "to" is false, which says nothing.
+            fromTeaches: null,
+            toTeaches: false,
             actorName: null,
             createdAt: NOW,
           },

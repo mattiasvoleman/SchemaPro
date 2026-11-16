@@ -216,6 +216,8 @@
     "activities": "Activities",
     "coverBoard": "Cover board",
     "myCover": "Cover and absence",
+    "myAbsence": "My absence",
+    "myTeaching": "My teaching",
     "basics": "Basic data",
     "label": "Main menu",
     "dataProtection": "Data protection",
@@ -653,6 +655,9 @@
     }
   },
   "people": {
+    "teaching": {
+      "mark": "teaches"
+    },
     "removeHasPassCovers": "The person's break duties have a substitute booked ahead, first on {date}. Undo the decisions on the cover board first, so the substitute is told.",
     "title": "People",
     "subtitle": "Teachers, students and administrators",
@@ -4459,6 +4464,9 @@
     "title": "My workload",
     "subtitle": "Your teacher allocation for the {year} school year",
     "readOnly": "Your allocation is set by the school leadership. If something looks wrong, talk to your principal.",
+    "teaching": {
+      "draftNote": "The figures are counted from the draft timetable, which you see as an administrator. A teacher sees the published one."
+    },
     "employmentAtStart": "{percent} % at the start of the year · {kind}",
     "employmentAtStartReduction": "{percent} % (reduction {reduction} %) at the start of the year · {kind}",
     "periodsTitle": "Your post over the school year",
@@ -4774,6 +4782,7 @@
       "ROLLOVER_GRADE_ABOVE_12": "{groups} would end up above grade 12 next year. Choose another outcome for them."
     },
     "errors": {
+      "A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS": "The school year holds the only post of {administrators, plural, one {one administrator} other {# administrators}} who teach. Take off the mark under People, or add a post in another school year, before the year is removed.",
       "YEAR_HAS_SUCCESSOR": "This year has already been rolled over to {successor}.",
       "YEAR_HAS_SUCCESSOR_UNNAMED": "This year has already been rolled over.",
       "ROLLOVER_SOURCE_NOT_ACTIVATED": "This year is not activated: {pupils, plural, one {# pupil is} other {# pupils are}} waiting to move into its classes. Activate it before rolling it over.",
@@ -6523,6 +6532,10 @@
   "teacherCover": {
     "title": "Cover and absence",
     "subtitle": "Your upcoming covers and your own absence",
+    "teaching": {
+      "title": "My absence",
+      "subtitle": "Your own absence and the lessons you have handed over"
+    },
     "coversTitle": "My covers",
     "coversEmpty": "No covers in the next {weeks} weeks.",
     "noRoom": "No room",
@@ -7173,6 +7186,21 @@
     "hrReadLabel": "HR read",
     "hrReadHint": "May read employment %, reduction and teaching days per week. The principal and a full administrator read them anyway.",
     "roleIsDecision": "Only the principal or a full administrator changes roles, profiles and HR read.",
+    "teaches": {
+      "label": "Teaches",
+      "hint": "The person stands on lessons and gets the teacher's own pages and part in an alarm. The rights as an administrator are the same.",
+      "historyOn": "teaches now",
+      "historyOff": "no longer teaches",
+      "markRefused": "The person was saved, but the teaching mark was refused: {reason}",
+      "errors": {
+        "TEACHES_NEEDS_A_POST": "The person has no post for the school year. Add the post first, then set the mark.",
+        "A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS": "The person is marked as teaching, and this is their last post. Take off the mark under People first.",
+        "TEACHES_NEEDS_AN_ADMINISTRATOR": "Only an administrator can be marked as teaching.",
+        "A_READER_DOES_NOT_TEACH": "A reader changes nothing and so does not teach. Give the person another profile first.",
+        "A_TEACHER_TEACHES_ALREADY": "A teacher teaches already: the mark is for an administrator.",
+        "WRITE_CONFLICT": "Somebody else saved at the same time. Try again."
+      }
+    },
     "postIsDecision": "Employment %, reduction and teaching days are written by the principal or a full administrator.",
     "historyTitle": "Role history",
     "historyEmpty": "No role changes recorded.",
@@ -8835,7 +8863,8 @@
       "loadFailed": "The alarms could not be loaded",
       "loadFailedHint": "You seem to have no contact with the server, and no list is kept on this device. The list is shown as soon as you get contact.",
       "noAlarm": "No alarm is going",
-      "noAlarmBody": "When the school starts an alarm your groups are shown here, and you get a notice."
+      "noAlarmBody": "When the school starts an alarm your groups are shown here, and you get a notice.",
+      "managementView": "Management view"
     }
   },
   "schoolDay": {

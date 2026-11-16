@@ -92,7 +92,7 @@ export default async function AppLayout({
           {style ? <style dangerouslySetInnerHTML={{ __html: style }} /> : null}
           <AppShell
             role={profile.role}
-            sections={navForRole(profile.role)}
+            sections={navForRole(profile.role, profile.teaches === true)}
             userName={`${profile.firstName} ${profile.lastName}`}
             email={profile.email}
             schoolName={

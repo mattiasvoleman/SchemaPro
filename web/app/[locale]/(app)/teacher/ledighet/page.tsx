@@ -12,6 +12,22 @@
 // family's reason, and offers Bevilja, Avslå and Skicka till rektor. The tabs
 // for decided requests show the mentor's own decisions only.
 //
+// An administrator who teaches (Users.teaches) is a mentor where she holds
+// MENTORSKAP, and the gateway hands an administrator the school's whole list,
+// not the mentor's: so on this page she is shown what a mentor is shown, and
+// nothing else of the school's (rektor's own inbox, /admin/leave, has the
+// rest). What a teacher is handed (read from the real gateway, F6 of the
+// part's notes) is the pending requests she is among the DECIDING mentors of,
+// (the teacher's arm asks that the guardians' consent is complete, and the gateway
+// counts the deciding mentors without that, so a request still waiting for a
+// guardian is left out here too) and on the decided tabs the requests she decided herself; not the ones of
+// her pupils that rektor decides (over the delegation) or decided. A teacher's
+// decision is written as the mentor's, and an administrator's as the
+// administrator's (decidedAs ADMIN), whichever page she decides on, so "decided
+// by me" alone would let in every decision she took as rektor, for any pupil of
+// the school: the decided tabs also ask that she is a mentor of the pupil. A
+// teacher's list is the gateway's, as it was.
+//
 // A school that has delegated nothing shows that, rather than an empty list:
 // rektor decides every request there. The delegation is GET
 // /api/v1/leave-delegation's, which a teacher reads too.
@@ -52,7 +68,15 @@ export default function TeacherLeavePage() {
   const actions = useLeaveInboxActions();
   const delegation = delegationQuery.data?.current ?? null;
   const rowOf = useLeaveRows("mentor", delegation, profile.id);
-  const requests = inbox.data ?? [];
+  const asked = inbox.data ?? [];
+  const requests =
+    profile.role === "SCHOOL_ADMIN"
+      ? asked.filter((request) =>
+          request.status === "PENDING"
+            ? request.decidingMentors.some((mentor) => mentor.id === profile.id) && request.consent?.state !== "WAITING"
+            : request.decidedById === profile.id && request.mentors.some((mentor) => mentor.id === profile.id),
+        )
+      : asked;
   // Until the delegation is read, an empty inbox says nothing waits, never
   // that rektor decides everything.
   const delegated = !delegationQuery.data || delegation?.mentorMaxSchoolDays != null;

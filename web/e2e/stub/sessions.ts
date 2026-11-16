@@ -31,6 +31,13 @@ export interface SignedInPerson {
   /** Users.id — the profile row. */
   userId: string;
   email: string;
+  /**
+   * Users.teaches: an administrator who also teaches (Administratör som
+   * lärare). Only TEACHING_ADMIN has it; the stub's gateway answers the doors
+   * that are open to such a person (`@AsTeacher`) for her, and every other
+   * administrator as it always did.
+   */
+  teaches?: boolean;
 }
 
 // Version-4-shaped ids, so nothing that validates a uuid trips on them.
@@ -112,6 +119,26 @@ export const EXPEDITION: SignedInPerson = {
   authId: uid(KIND.auth, 10),
   userId: uid(KIND.user, 3),
   email: "expedition@exempelskolan.example",
+};
+
+/**
+ * An administrator who also teaches (Administratör som lärare): a rektor with
+ * the mark Users.teaches, who stands on lessons and has the group "Min
+ * undervisning" in her menu. The admin's persona, so the stub's gateway
+ * answers her as it answers the administrator, and the doors that are open to a
+ * marked administrator for her (`teaches` below, gateway-roles.ts); her own
+ * Users row (world.ts PROFILE_ROWS) carries the profile and the mark the app
+ * reads. Not one of the school's people (ALL_PEOPLE): no page lists her, so the
+ * other suites see the school they always saw, and her lessons are served to her
+ * only (world.ts, tables.ts rowScopes).
+ */
+export const TEACHING_ADMIN: SignedInPerson = {
+  persona: "admin",
+  role: "SCHOOL_ADMIN",
+  authId: uid(KIND.auth, 11),
+  userId: uid(KIND.user, 4),
+  email: "tora.undervisar@exempelskolan.example",
+  teaches: true,
 };
 
 /**
@@ -204,7 +231,7 @@ export function personForToken(token: string | null | undefined): SignedInPerson
   if (!token) return null;
   try {
     const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()) as { sub?: string };
-    return [...Object.values(PEOPLE), READER, EXPEDITION, MULTI_GUARDIAN, HUVUDMAN_MEMBER, ORPHAN].find((person) => person.authId === payload.sub) ?? null;
+    return [...Object.values(PEOPLE), READER, EXPEDITION, TEACHING_ADMIN, MULTI_GUARDIAN, HUVUDMAN_MEMBER, ORPHAN].find((person) => person.authId === payload.sub) ?? null;
   } catch {
     return null;
   }
