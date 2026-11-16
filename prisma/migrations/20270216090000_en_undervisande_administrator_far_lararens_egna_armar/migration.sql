@@ -77,9 +77,17 @@
 -- word for word, and no post is asked of a TEACHER. The arms also carry the
 -- mark in OR, so a function asked for anybody else is no way in.
 --
--- ## Three functions, read from the catalogue and changed in place
+-- ## Three functions changed in place, and one new
 --
--- * app.lesson_teacher_role: as above.
+-- Read from the catalogue and edited at named places:
+--
+-- * app.lesson_teacher_role: as above. The question "has the person a post
+--   for the läsår of the group" is asked of the new app.my_post_covers_the_
+--   year_of_group, and only of a marked administrator: written as a subquery
+--   inside lesson_teacher_role it is initialised at every call, for a teacher
+--   too (+9 % on a read of 151 notes), and as a call it is reached only when it
+--   is needed (+1 %). The new function is called by that one only, which is
+--   SECURITY DEFINER, so it has no grant at all.
 -- * app.availability_constraints_keep_duty_blocks: a TEACHER is refused
 --   (TD403) when they change or delete an unavailability that a duty blocks
 --   ("the slot is the duty's, and the duty is the admin's"). A marked
@@ -263,6 +271,41 @@ SELECT pg_temp.ta_patch_policy(v.tbl, v.pol, v.cmd, v.roles,
   ) AS v(tbl, pol, cmd, roles);
 
 -- ---------------------------------------------------------------------------
+-- app.my_post_covers_the_year_of_group: the one new function
+-- ---------------------------------------------------------------------------
+
+-- Does the signed-in person have a post for the läsår of the student group? Asked by app.lesson_teacher_role, and by it alone, and only
+-- of a marked administrator: a function call is evaluated when it is reached, where the same question written as a subquery inside
+-- lesson_teacher_role is initialised at every call, for a teacher too (measured: +9 % on 151 calls for a teacher, +1 % with the call).
+-- Called by that function, which is SECURITY DEFINER, it needs no grant: nobody else may call it (the same empty list of grants as the
+-- trigger functions of 20270212090000, and no PUBLIC). The person's id is an initplan, so the unique key on (school, person, year)
+-- is used and the helper does not run once for every post of the school (definer-helpers-in-filters-run-per-row).
+CREATE FUNCTION app.my_post_covers_the_year_of_group(p_group uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM "StudentGroups" g
+      JOIN "TeacherEmployments" e ON e."academicYearId" = g."academicYearId" AND e."schoolId" = g."schoolId"
+     WHERE g."id" = p_group AND e."userId" = (select app.current_user_id())
+  )
+$$;
+
+COMMENT ON FUNCTION app.my_post_covers_the_year_of_group(uuid) IS
+  'Has the signed-in person a post (TeacherEmployments) for the läsår of the student group (20270216090000)? Asked by app.lesson_teacher_role, of a marked administrator, for the läsår of the lesson''s group; no API role calls it.';
+
+DO $$
+DECLARE
+  r text;
+BEGIN
+  REVOKE ALL ON FUNCTION app.my_post_covers_the_year_of_group(uuid) FROM PUBLIC;
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'app_authenticated', 'service_role'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+      EXECUTE format('REVOKE ALL ON FUNCTION app.my_post_covers_the_year_of_group(uuid) FROM %I', r);
+    END IF;
+  END LOOP;
+END
+$$;
+
+-- ---------------------------------------------------------------------------
 -- app.lesson_teacher_role: a marked administrator on the lesson, with a post
 -- for the lesson's läsår
 -- ---------------------------------------------------------------------------
@@ -273,15 +316,7 @@ $o$     AND app.current_user_role() = 'TEACHER'
 $n$     AND (app.current_user_role() = 'TEACHER'
           -- A teaching administrator (20270216090000): the mark, and a post for the läsår of the
           -- lesson's group. A lesson has no year of its own; its student group belongs to one.
-          -- The person's id is read once, as an initplan: me.id is pulled up into the filter as
-          -- app.current_user_id() and then runs once for every post the school has (measured:
-          -- 0.9 ms a call against 0.17 ms, and the unique key on (school, person, year) unused).
-          OR (app.current_user_teaches()
-              AND coalesce((SELECT true FROM "StudentGroups" g
-                              JOIN "TeacherEmployments" e ON e."academicYearId" = g."academicYearId" AND e."schoolId" = g."schoolId"
-                             WHERE g."id" = l."studentGroupId" AND g."schoolId" = l."schoolId"
-                               AND e."userId" = (select app.current_user_id())
-                             LIMIT 1), false)))
+          OR (app.current_user_teaches() AND app.my_post_covers_the_year_of_group(l."studentGroupId")))
      AND me.id IS NOT NULL$n$,
 '1',
 $o$t."role" = 'SUBSTITUTE')

@@ -61075,7 +61075,9 @@ BEGIN
   FOR r IN SELECT * FROM (VALUES
       ('app.lesson_teacher_role(uuid)', true, 's', 'search_path=public, pg_temp', true),
       ('app.availability_constraints_keep_duty_blocks()', true, 'v', 'search_path=public, pg_temp', false),
-      ('app.cover_policy_arm_is_narrow(text, text, text)', false, 'i', 'search_path=pg_catalog', true)) AS v(f, definer, vol, cfg, api) LOOP
+      ('app.cover_policy_arm_is_narrow(text, text, text)', false, 'i', 'search_path=pg_catalog', true),
+      -- The one new function: asked by app.lesson_teacher_role alone (checked below), which is a definer, so nobody else may call it.
+      ('app.my_post_covers_the_year_of_group(uuid)', true, 's', 'search_path=public, pg_temp', false)) AS v(f, definer, vol, cfg, api) LOOP
     IF (SELECT p.prosecdef FROM pg_proc p WHERE p.oid = r.f::regprocedure) <> r.definer
        OR (SELECT p.provolatile::text FROM pg_proc p WHERE p.oid = r.f::regprocedure) <> r.vol
        OR (SELECT array_to_string(p.proconfig, ',') FROM pg_proc p WHERE p.oid = r.f::regprocedure) IS DISTINCT FROM r.cfg THEN
@@ -61093,6 +61095,13 @@ BEGIN
       RAISE EXCEPTION 'ta 505c: somebody but the API''s role may call %', r.f;
     END IF;
   END LOOP;
+  -- Who asks the new function: app.lesson_teacher_role, and nobody else (no other function, no policy).
+  IF (SELECT string_agg(p.oid::regprocedure::text, ', ') FROM pg_proc p
+       WHERE p.pronamespace IN ('app'::regnamespace, 'public'::regnamespace, 'sign_in'::regnamespace) AND p.prosrc LIKE '%my_post_covers_the_year_of_group%'
+         AND p.proname <> 'my_post_covers_the_year_of_group') IS DISTINCT FROM 'app.lesson_teacher_role(uuid)'
+     OR EXISTS (SELECT 1 FROM pg_policy p WHERE (coalesce(pg_get_expr(p.polqual, p.polrelid), '') || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '')) LIKE '%my_post_covers_the_year_of_group%') THEN
+    RAISE EXCEPTION 'ta 505c: app.my_post_covers_the_year_of_group is asked by something other than app.lesson_teacher_role';
+  END IF;
   RAISE NOTICE 'ta 505c: the functions';
 END $$;
 

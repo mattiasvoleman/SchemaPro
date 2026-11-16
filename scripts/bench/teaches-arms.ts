@@ -38,8 +38,12 @@ const MIGRATION = readFileSync(
 );
 
 // A: the same DDL as the migration, with nothing changed: every one of the 16 policies is altered to the text it has, and
-// the three functions are created again from their own text.
+// the three functions are created again from their own text. The migration creates and drops two functions in pg_temp, which
+// brings the session's temporary schema into being (the helpers that pin "public", "pg_temp" as their search path then resolve it);
+// A does the same, so that the two sides differ in the change and not in the session.
 const IDENTITY = `
+CREATE FUNCTION pg_temp.ta_noop() RETURNS void LANGUAGE sql AS 'SELECT';
+DROP FUNCTION pg_temp.ta_noop();
 DO $$
 DECLARE r record; clauses text; fn oid;
 BEGIN
