@@ -1152,6 +1152,8 @@
       "postGone": "en post som inte längre ligger i blocket",
       "otherBlock": "det block det följer",
       "saved": "Blockets förläggningar är sparade. De gäller från nästa Generera.",
+      "savedStillFailing": "Blockets förläggningar är sparade. {count, plural, one {En lektion håller fortfarande inte} other {# lektioner håller fortfarande inte}}, och Generera körs inte förrän de håller igen.",
+      "stillFailing": "Lektionen {day, select, 1 {måndag} 2 {tisdag} 3 {onsdag} 4 {torsdag} 5 {fredag} other {dag {day}}} {start}–{end}{weeks, select, ODD_WEEKS { (udda veckor)} EVEN_WEEKS { (jämna veckor)} other {}}: {lines}",
       "staleTitle": "Blocket har ändrats",
       "staleBody": "Blockets förläggningar har ändrats sedan du öppnade dialogen, av någon annan eller i en annan flik. Ingenting sparades. Läs in blocket igen och gör om ändringen.",
       "reload": "Läs in igen",

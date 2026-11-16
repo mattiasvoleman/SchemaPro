@@ -355,9 +355,28 @@ function BlockPlacementForm({
     }));
     setSaving(true);
     try {
-      await saveBlockPlacements(block.id, body, read.data!.rowsKey);
+      const answer = await saveBlockPlacements(block.id, body, read.data!.rowsKey);
       void invalidateBlockPlacements(client);
-      toast.success(t("saved"));
+      // A lesson the block already had that has stopped holding is let stand, and named in the answer: Generera refuses it until
+      // it holds again, so "saved" alone would be taken for a block that is all right. `index` is the lesson's place in the
+      // ANSWER's list, which is in (day, start) order and not in the order the lessons were sent.
+      const failingLessons = answer.placements.flatMap((placement, index) => {
+        const verdicts = answer.verdicts.filter((verdict) => verdict.index === index && !verdict.ok);
+        return verdicts.length > 0 ? [{ placement, verdicts }] : [];
+      });
+      if (failingLessons.length === 0) toast.success(t("saved"));
+      else {
+        const lessonsText = failingLessons.map(({ placement, verdicts }) =>
+          t("stillFailing", {
+            day: placement.dayOfWeek,
+            start: placement.startTime,
+            end: placement.endTime,
+            weeks: placement.recurrence,
+            lines: linesOf(verdicts).map(lineText).join(" "),
+          }),
+        );
+        toast.warning(`${t("savedStillFailing", { count: failingLessons.length })} ${lessonsText.join(" ")}`);
+      }
       onClose();
     } catch (error) {
       const refusal = blockPlacementsRefusal(error);

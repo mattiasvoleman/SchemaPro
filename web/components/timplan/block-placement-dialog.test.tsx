@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
   get: vi.fn(),
   put: vi.fn(),
   success: vi.fn(),
+  warning: vi.fn(),
   error: vi.fn(),
   rooms: [] as { id: string; name: string }[],
   roomsFailed: false,
@@ -30,7 +31,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 vi.mock("@/lib/queries", () => ({
   useRooms: () => ({ data: state.roomsFailed ? undefined : state.rooms, isError: state.roomsFailed }),
 }));
-vi.mock("sonner", () => ({ toast: { success: state.success, error: state.error } }));
+vi.mock("sonner", () => ({ toast: { success: state.success, warning: state.warning, error: state.error } }));
 // Keys echoed with their values: the sentences are i18n/placements-messages.test.ts's.
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
@@ -138,6 +139,7 @@ beforeEach(() => {
   state.get.mockReset();
   state.put.mockReset().mockResolvedValue({ placements: [], verdicts: [], rowsKey: "key-2", lengths: [80, 40, 40] });
   state.success.mockReset();
+  state.warning.mockReset();
   state.error.mockReset();
   state.roomsFailed = false;
   state.sentences = {};
@@ -489,6 +491,91 @@ describe("saving", () => {
     expect(state.put).toHaveBeenCalledWith("/api/v1/teaching-blocks/b-sv/placements", {
       placements: [{ dayOfWeek: 3, startTime: "09:05", minutes: 80, rooms: [] }],
       baseKey: "the-key-it-read",
+    });
+  });
+
+  describe("what it says once saved (review of #328, round 2, LÅG-1)", () => {
+    const clash = { otherKind: "LESSON", className: "7B", subjectName: "Matematik", day: 2, start: "10:00", end: "11:00" };
+    const saved = (placements: ReturnType<typeof stored>[], verdicts: unknown[]) =>
+      state.put.mockResolvedValue({ placements, verdicts, rowsKey: "key-2", lengths: [80, 40, 40] });
+    const holding = (index: number, ids: string[]) => ids.map((requirementId) => ({ index, requirementId, ok: true }));
+
+    it("warns, once, that a lesson still does not hold, with the lesson's time and the post's name, and does not say saved; the dialog closes as before", async () => {
+      state.sentences = {
+        postSaid: "{posts}: {sentence}",
+        stillFailing: "Lektionen {day} {start}-{end}: {lines}",
+        savedStillFailing: "Sparat, {count} håller inte.",
+      };
+      answer([stored(1)]);
+      saved(
+        [stored(1)],
+        [{ index: 0, requirementId: "r-ty", ok: false, reason: "TEACHER", params: clash }, ...holding(0, ["r-fr", "r-sp"])],
+      );
+      const { user, onOpenChange } = await opened();
+      await user.click(saveButton());
+
+      await waitFor(() => expect(state.warning).toHaveBeenCalledTimes(1));
+      const said = String(state.warning.mock.calls[0]![0]);
+      expect(said).toContain("Sparat, 1 håller inte.");
+      expect(said).toContain("Lektionen 2 10:00-11:20");
+      expect(said).toMatch(/Tyska för Ty7: verdict\.TEACHER/);
+      expect(said).not.toContain("Franska");
+      expect(state.success).not.toHaveBeenCalled();
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it("says the posts that fail for one sentence together, and counts lessons and not posts", async () => {
+      state.sentences = {
+        postSaid: "{posts}: {sentence}",
+        stillFailing: "Lektionen {day} {start}: {lines}",
+        savedStillFailing: "Sparat, {count} håller inte.",
+      };
+      answer([stored(1)]);
+      saved(
+        [stored(1)],
+        [
+          { index: 0, requirementId: "r-ty", ok: false, reason: "SCHOOL_DAY" },
+          { index: 0, requirementId: "r-fr", ok: false, reason: "SCHOOL_DAY" },
+          { index: 0, requirementId: "r-sp", ok: false, reason: "TEACHER", params: clash },
+        ],
+      );
+      const { user } = await opened();
+      await user.click(saveButton());
+
+      await waitFor(() => expect(state.warning).toHaveBeenCalledTimes(1));
+      const said = String(state.warning.mock.calls[0]![0]);
+      expect(said).toContain("Sparat, 1 håller inte.");
+      expect(said).toMatch(/Tyska för Ty7 och Franska för Fr7: verdict\.SCHOOL_DAY/);
+      expect(said).toMatch(/Spanska för Sp7: verdict\.TEACHER/);
+    });
+
+    it("reads a lesson's place in the answer's list, which is in (day, start) order and not in the order that was sent", async () => {
+      state.sentences = { stillFailing: "Lektionen {day} {start}: {lines}", postSaid: "{posts}: {sentence}", savedStillFailing: "Sparat." };
+      answer([stored(1, { dayOfWeek: 4 }), stored(2, { dayOfWeek: 2, startTime: "08:00", endTime: "09:20" })]);
+      // The lesson on Thursday was first in the list that was sent; the answer puts Tuesday first, so index 1 is Thursday's.
+      saved(
+        [stored(1, { dayOfWeek: 2, startTime: "08:00", endTime: "09:20" }), stored(2, { dayOfWeek: 4 })],
+        [...holding(0, ["r-ty", "r-fr", "r-sp"]), { index: 1, requirementId: "r-fr", ok: false, reason: "ROOM", params: clash }, ...holding(1, ["r-ty", "r-sp"])],
+      );
+      const { user } = await opened();
+      await user.click(saveButton());
+
+      await waitFor(() => expect(state.warning).toHaveBeenCalledTimes(1));
+      const said = String(state.warning.mock.calls[0]![0]);
+      expect(said).toContain("Lektionen 4 10:00");
+      expect(said).not.toContain("Lektionen 2");
+      expect(said).toMatch(/Franska för Fr7: verdict\.ROOM/);
+    });
+
+    it("says saved, and warns of nothing, when every lesson holds", async () => {
+      answer([stored(1)]);
+      saved([stored(1)], holding(0, ["r-ty", "r-fr", "r-sp"]));
+      const { user, onOpenChange } = await opened();
+      await user.click(saveButton());
+
+      await waitFor(() => expect(state.success).toHaveBeenCalledTimes(1));
+      expect(state.warning).not.toHaveBeenCalled();
+      expect(onOpenChange).toHaveBeenCalledWith(false);
     });
   });
 

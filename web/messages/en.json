@@ -1152,6 +1152,8 @@
       "postGone": "an entry that is no longer in the block",
       "otherBlock": "the block it follows",
       "saved": "The block's placed lessons are saved. They apply from the next Generate.",
+      "savedStillFailing": "The block's placed lessons are saved. {count, plural, one {One lesson still does not hold} other {# lessons still do not hold}}, and Generate does not run until they do.",
+      "stillFailing": "The lesson on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}} {start}–{end}{weeks, select, ODD_WEEKS { (odd weeks)} EVEN_WEEKS { (even weeks)} other {}}: {lines}",
       "staleTitle": "The block has changed",
       "staleBody": "The block's placed lessons have changed since you opened the dialog, by someone else or in another tab. Nothing was saved. Read the block again and make the change again.",
       "reload": "Read again",
