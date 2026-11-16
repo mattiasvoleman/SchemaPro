@@ -5868,7 +5868,7 @@ codes, fewer of them.
   own room domain; the objective's "all" is how the school has always been told.
   No reserve is run after a solution: when the first try finds a timetable
   (`OPTIMAL` or `FEASIBLE`) the model with the objective has the same hard rules, so
-  it cannot prove the week impossible either, and tried it only spent the rest of the
+  it cannot prove the week impossible either, and trying it only spent the rest of the
   cap (14.6 s on one large week). A reserve that itself finds a timetable proves
   nothing, and the answer stays what the first try left.
 - **A week under 50 lessons is explained as it always was**, with the objective
