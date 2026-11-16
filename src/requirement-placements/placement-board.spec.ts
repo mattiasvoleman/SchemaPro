@@ -30,6 +30,7 @@ const post = (over: Partial<BoardPost> = {}): BoardPost => ({
   studentGroupId: GROUP,
   subjectId: SUBJECT,
   teacherId: ANNA,
+  coTeacherId: null,
   lessonsPerWeek: 3,
   minutesPerLesson: 60,
   lessonLengths: [],
@@ -67,6 +68,7 @@ describe('boardPostOf: what a post has left', () => {
       studentGroupId: GROUP,
       subjectId: SUBJECT,
       teacherId: ANNA,
+      coTeacherId: null,
       recurrence: 'ALL_WEEKS',
       startDate: null,
       endDate: null,
@@ -74,6 +76,10 @@ describe('boardPostOf: what a post has left', () => {
       parts: [{ teacherId: ANNA, minutes: 60, count: 3, locked: 0, placed: 0, left: 3, cannotPlace: null }],
       rowsKey: ROWS_KEY,
     });
+  });
+
+  it('says who the medlärare is, for the page\'s mirror of the clash rule', () => {
+    expect(boardPostOf(post({ coTeacherId: BO }), [], []).coTeacherId).toBe(BO);
   });
 
   it('passes the key of the post\'s rows along as it was given, and counts nothing from it', () => {

@@ -61,6 +61,8 @@ export interface BoardPostView {
   subjectId: string;
   /** The huvudlärare; null when nobody teaches the post. */
   teacherId: string | null;
+  /** The medlärare, who is in the room for every lesson of the post: the page's mirror of the clash rule reads it. */
+  coTeacherId: string | null;
   recurrence: LessonRecurrence;
   /** YYYY-MM-DD, or null: the weeks the post runs, which a förläggning inherits. */
   startDate: string | null;
@@ -81,6 +83,7 @@ export interface BoardPost extends LessonShape {
   studentGroupId: string;
   subjectId: string;
   teacherId: string | null;
+  coTeacherId: string | null;
   recurrence: LessonRecurrence;
   blockId: string | null;
   startDate: Date | null;
@@ -167,6 +170,7 @@ export function boardPostOf(
     studentGroupId: post.studentGroupId,
     subjectId: post.subjectId,
     teacherId: post.teacherId,
+    coTeacherId: post.coTeacherId,
     recurrence: post.recurrence,
     startDate: dayOf(post.startDate),
     endDate: dayOf(post.endDate),
@@ -244,6 +248,7 @@ export function boardPostShape(post: {
   studentGroupId: string;
   subjectId: string;
   teacherId: string | null;
+  coTeacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
   lessonLengths: number[];
@@ -258,6 +263,7 @@ export function boardPostShape(post: {
     studentGroupId: post.studentGroupId,
     subjectId: post.subjectId,
     teacherId: post.teacherId,
+    coTeacherId: post.coTeacherId,
     lessonsPerWeek: post.lessonsPerWeek,
     minutesPerLesson: post.minutesPerLesson,
     lessonLengths: post.lessonLengths,
