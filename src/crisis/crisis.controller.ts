@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { Area, Decides } from '../auth/decorators/area.decorator';
+import { Area, AsTeacher, Decides } from '../auth/decorators/area.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
@@ -85,12 +85,19 @@ export class CrisisAdminController {
 
 /**
  * Krisläge, the teacher's side: the alarms they are to answer in and the
- * groups the timetable gave them, and their marks. A TEACHER's, and nobody
- * else's; what they read is their own groups (row-level security).
+ * groups the timetable gave them, and their marks. A TEACHER's, and an
+ * administrator who teaches (Users.teaches): what a TEACHER reads is their
+ * own groups (row-level security), and what an administrator who teaches
+ * reads is narrowed to the same by the service (an administrator's own arms
+ * admit every alarm and group of the school). What a marked administrator
+ * may write is the database's: the teacher's arms for their own group,
+ * the administrator's arms (and the school's list of who may start an alarm)
+ * for anybody else's.
  */
 @Controller('api/v1/crisis/mine')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.TEACHER)
+@AsTeacher('The alarm roll call of the groups the person answers for: a teaching administrator answers for their own lessons like a teacher.')
 export class CrisisTeacherController {
   constructor(private readonly crisis: CrisisService) {}
 

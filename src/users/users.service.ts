@@ -701,18 +701,20 @@ export class UsersService {
         // inactive already) starts at the day's end, and never later than the period was recorded: a last day is not
         // in the future, and a person named for today is counted to the click, as without a date.
         if (stopsAt !== null) await startPeriodAt(tx, id, stopsAt);
-        // A pupil's class says who their mentors are, and a teacher's role
-        // and isActive whether they are one (app.leave_mentors): a move, a
-        // reactivation or a role change may give a mentor a pending leave
-        // request they were never told of (Mentorns ledighetsbeslut). One
-        // catch-up in this transaction tells them, as the uppdrag's own
-        // writes do. Only a value that changes asks: the People page sends
-        // role and class with every save, and a catch-up re-sends a notice
-        // gallring has removed for a request still pending.
+        // A pupil's class says who their mentors are, and a teacher's role,
+        // isActive and (for an administrator who teaches) the mark say whether
+        // they are one (app.leave_mentors): a move, a reactivation, a role
+        // change or a mark set may give a mentor a pending leave request they
+        // were never told of (Mentorns ledighetsbeslut). One catch-up in this
+        // transaction tells them, as the uppdrag's own writes do. Only a value
+        // that changes asks: the People page sends role, class and the mark
+        // with every save, and a catch-up re-sends a notice gallring has
+        // removed for a request still pending.
         const moved =
           (dto.studentGroupId !== undefined && dto.studentGroupId !== current.studentGroupId) ||
           (dto.isActive !== undefined && dto.isActive !== current.isActive) ||
-          (dto.role !== undefined && dto.role !== current.role);
+          (dto.role !== undefined && dto.role !== current.role) ||
+          teachesChanged;
         if (this.notifications && user.schoolId && moved) {
           await tellNewMentors(this.notifications, tx, user.schoolId);
         }

@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { Area, Decides } from '../auth/decorators/area.decorator';
+import { Area, AsTeacher, Decides } from '../auth/decorators/area.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -210,9 +210,13 @@ export class FamilyController {
     return this.leave.answerConsent(id, dto, user);
   }
 
-  /** The deciding mentor passes a request on to rektor. */
+  /**
+   * The deciding mentor passes a request on to rektor. An administrator who teaches (Users.teaches) and
+   * is a pupil's mentor is a deciding mentor too: the database says whether the request is theirs.
+   */
   @Patch('leave-requests/:id/refer')
   @Roles(Role.TEACHER)
+  @AsTeacher("A mentor passes a leave request on to rektor: a teaching administrator who is the pupil's mentor is a mentor as a teacher is.")
   referLeaveRequest(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser() user: AuthenticatedUser,

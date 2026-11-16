@@ -1571,6 +1571,38 @@ describe('UsersService', () => {
         );
       });
 
+      // Users.teaches (PR 4): app.leave_mentors counts an administrator who teaches as a mentor, so the mark is as much a
+      // mentor's coming and going as the role is. A person marked who already has MENTORSKAP gets the requests that wait.
+      it.each([
+        ['the mark set', { teaches: false }, { teaches: true }],
+        ['the mark taken off', { teaches: true }, { teaches: false }],
+      ])('tells the mentors after %s, in the PATCH’s transaction', async (_what, stored, dto) => {
+        storeUser({ role: UserRole.SCHOOL_ADMIN, adminProfile: 'SCHEMALAGGARE', studentGroupId: null, isActive: true, pseudonymisedAt: null, ...stored });
+        const ranIn = transactionsOf(prisma);
+        const toldIn = ranIn(queryRaw);
+        const writtenIn = ranIn(tx.user.update);
+
+        await service.update(USER_ID, dto, testUser({ adminProfile: 'REKTOR' }));
+
+        expect(tx.user.update).toHaveBeenCalledWith({ where: { id: USER_ID }, data: dto });
+        expect(told()).toHaveLength(1);
+        const at = queryRaw.mock.invocationCallOrder[queryRaw.mock.calls.findIndex((call) => rawSql(call).includes(TELL))]!;
+        expect(at).toBeGreaterThan(tx.user.update.mock.invocationCallOrder[0]!);
+        expect(new Set([...toldIn, ...writtenIn]).size).toBe(1);
+        expect(deliver).toHaveBeenCalledTimes(1);
+      });
+
+      // The People page sends the mark with every save, as it sends the role and the class: a name fix for a person who
+      // teaches must not re-run the catch-up.
+      it('asks nothing of a save that sends the mark it already has', async () => {
+        for (const teaches of [true, false]) {
+          storeUser({ role: UserRole.SCHOOL_ADMIN, adminProfile: 'SCHEMALAGGARE', studentGroupId: null, isActive: true, pseudonymisedAt: null, teaches });
+          await service.update(USER_ID, { firstName: 'Maja', teaches }, testUser({ adminProfile: 'REKTOR' }));
+        }
+        expect(told()).toEqual([]);
+        expect(deliver).not.toHaveBeenCalled();
+      });
+
       it('asks nothing of a PATCH that moves no mentor: names, phone', async () => {
         await service.update(USER_ID, { firstName: 'Maja', lastName: 'Ek', phone: null }, testUser());
         expect(told()).toEqual([]);

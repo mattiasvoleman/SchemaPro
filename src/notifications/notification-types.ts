@@ -136,6 +136,22 @@ export const TYPES_BY_ROLE: Record<ChoosingRole, readonly NotificationKind[]> = 
 };
 
 /**
+ * What an administrator who teaches (Users.teaches) is told besides what an administrator is: the teacher's three
+ * notices for what the person now is, a mentor (LEAVE_REQUESTED), the one a lesson's register is owed to
+ * (LESSON_REPORT_REMINDER) and the lesson's teacher (LESSON_PUPIL_MOVED). The database writes each of them for a
+ * person it counts as one (app.leave_mentors, app.reporting_lessons, the lesson's teachers), so the switch must be
+ * offered, or a notice the person gets is one they cannot turn off. Not COVER_REQUESTED: a teaching administrator is
+ * never asked to cover a colleague (SP409).
+ */
+const TEACHING_ADMINISTRATOR_TYPES: readonly NotificationKind[] = ['LESSON_PUPIL_MOVED', 'LEAVE_REQUESTED', 'LESSON_REPORT_REMINDER'];
+const TYPES_FOR_A_TEACHING_ADMINISTRATOR: readonly NotificationKind[] = [...TYPES_BY_ROLE.SCHOOL_ADMIN, ...TEACHING_ADMINISTRATOR_TYPES];
+
+/** The types a person may choose among: their role's, and for an administrator who teaches the teacher's three besides. */
+export function typesFor(role: ChoosingRole, teaches: boolean | undefined): readonly NotificationKind[] {
+  return role === 'SCHOOL_ADMIN' && teaches === true ? TYPES_FOR_A_TEACHING_ADMINISTRATOR : TYPES_BY_ROLE[role];
+}
+
+/**
  * Shown to the role as "always sent", and refused if chosen:
  *
  *   * ABSENCE_UNREPORTED for a guardian — Skollagen 7 kap. 19 a §: the

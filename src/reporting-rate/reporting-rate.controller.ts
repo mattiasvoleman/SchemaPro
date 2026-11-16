@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Put, Query, UseGuards } from '@nestjs/common';
-import { Area } from '../auth/decorators/area.decorator';
+import { Area, AsTeacher } from '../auth/decorators/area.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
@@ -48,9 +48,13 @@ export class ReportingRateController {
     return this.reportingRate.updateSettings(dto, user);
   }
 
-  /** The teacher's own: lessons waiting for their register, and their share this week, month and läsår. */
+  /**
+   * The teacher's own: lessons waiting for their register, and their share this week, month and läsår.
+   * An administrator who teaches (Users.teaches) has the same page: the database counts them as the lessons' teacher.
+   */
   @Get('mine')
   @Roles(Role.TEACHER)
+  @AsTeacher("A teaching administrator's own lessons waiting for a register, and their own share: the page of a teacher.")
   mine(@CurrentUser() user: AuthenticatedUser): Promise<MyReportingView> {
     return this.reportingRate.mine(user);
   }

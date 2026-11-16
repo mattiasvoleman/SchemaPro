@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import request from 'supertest';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 
@@ -29,6 +30,15 @@ const admin = () => asUser({ role: 'SCHOOL_ADMIN' as never, userId: ADMIN_ID });
 const planner = () => asUser({ role: 'SCHOOL_ADMIN' as never, userId: ADMIN_ID, adminProfile: 'SCHEMALAGGARE' as never });
 const reader = () => asUser({ role: 'SCHOOL_ADMIN' as never, userId: ADMIN_ID, adminProfile: 'LASARE' as never });
 const teacher = () => asUser({ role: 'TEACHER' as never, userId: TEACHER_ID });
+/** An administrator who teaches (Users.teaches) of a profile; the mark is what opens the teacher's routes to them. */
+const teaching = (adminProfile: string, extra: Record<string, unknown> = {}) =>
+  asUser({ role: 'SCHOOL_ADMIN' as never, userId: ADMIN_ID, adminProfile: adminProfile as never, hrRead: false, teaches: true, ...extra });
+/** The SQL of a $queryRaw call, Prisma.sql or tagged template alike. */
+const sqlOf = (args: unknown[]): string => {
+  const [first] = args as [unknown];
+  if (Array.isArray(first)) return (first as string[]).join('?');
+  return ((first as { strings?: string[] }).strings ?? []).join('?');
+};
 const student = () => asUser({ role: 'STUDENT' as never, userId: OTHER_ID });
 const guardian = () => asUser({ role: 'GUARDIAN' as never, userId: OTHER_ID });
 
@@ -114,6 +124,147 @@ describe('Krisläge (e2e)', () => {
       harness.tx.crisisSettings.upsert.mockResolvedValue({ startProfiles: ['EXPEDITION'], notifyGuardiansAfter: true });
       const saved = await send('put', '/api/v1/crisis/settings', admin(), { startProfiles: ['EXPEDITION'], notifyGuardiansAfter: true }).expect(200);
       expect(saved.body).toEqual({ startProfiles: ['EXPEDITION'], notifyGuardiansAfter: true });
+    });
+  });
+
+  // Administratör som lärare (Users.teaches): krisläge's three teacher routes are a door for an administrator who teaches, whatever the
+  // profile writes (the area is not asked), and a handler answers. What the person is shown of the alarms is narrowed by the service to
+  // what the database's functions say a teacher is shown; what they may write is the database's (RLS, sections 510-514). Here: the door,
+  // the round trip to the handler and back, and that the same requests without the mark (or by a reader) are refused as before.
+  describe('an administrator who teaches (Users.teaches)', () => {
+    const PROFILES = ['FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION'];
+    const alarmRow = {
+      id: ALARM,
+      schoolId: '33333333-3333-4333-8333-333333333333',
+      kind: 'EVACUATION',
+      mode: 'LIVE',
+      startedAt: new Date('2027-01-12T09:10:00Z'),
+      startedByUserId: ADMIN_ID,
+      endedAt: null,
+      endedByUserId: null,
+      autoEnded: false,
+      endNote: null,
+      guardiansNotifiedAt: null,
+      listsSealedAt: new Date('2027-01-12T09:10:00Z'),
+    };
+    const callRow = {
+      id: CALL,
+      alarmId: ALARM,
+      calendarLessonId: LESSON,
+      basis: 'NEXT_LESSON',
+      groupName: '7A',
+      subjectName: 'Svenska',
+      roomName: null,
+      lessonStartsAt: new Date('2027-01-12T09:20:00Z'),
+      lessonEndsAt: new Date('2027-01-12T10:05:00Z'),
+      teachers: [{ teacherId: ADMIN_ID, role: 'LEAD', answeredAt: null }],
+      pupils: [{ studentId: PUPIL, priorAbsentSource: null, state: null, stateAt: null, stateByUserId: null }],
+    };
+    /** What the database's functions answer: the alarm is in the window, and the call is one the person answers for. */
+    const databaseAnswers = () =>
+      harness.tx.$queryRaw.mockImplementation(async (...args: unknown[]) => {
+        const sql = sqlOf(args);
+        if (sql.includes('app.crisis_window_open(')) return [{ id: ALARM }];
+        if (sql.includes('app.crisis_answers_for(')) return [{ id: CALL }];
+        return [];
+      });
+
+    it.each(PROFILES)('reads the alarms and groups a %s answers for through GET /crisis/mine, from the handler, narrowed by the database’s own functions', async (profile) => {
+      databaseAnswers();
+      harness.tx.crisisAlarm.findMany.mockResolvedValue([alarmRow]);
+      harness.tx.crisisCall.findMany.mockResolvedValue([callRow]);
+      harness.tx.crisisReport.findMany.mockResolvedValue([]);
+      harness.tx.user.findMany.mockResolvedValue([{ id: PUPIL, firstName: 'Cy', lastName: 'Dal', studentGroup: { name: '7A' } }]);
+      const response = await send('get', '/api/v1/crisis/mine', teaching(profile)).expect(200);
+      expect(response.body.alarms).toHaveLength(1);
+      expect(response.body.alarms[0]).toMatchObject({ id: ALARM, calls: [{ id: CALL, groupName: '7A' }] });
+      // The reads name the alarms and groups the database said, not the school's.
+      expect(harness.tx.crisisAlarm.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: { in: [ALARM] } }) }));
+      expect(harness.tx.crisisCall.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: { in: [CALL] } }) }));
+    });
+
+    it.each(PROFILES)('searches the school’s pupils for a %s through POST /crisis/mine/pupils, the alarm held to the window and their own lists left out', async (profile) => {
+      databaseAnswers();
+      harness.tx.crisisAlarm.findFirst.mockResolvedValue({ id: ALARM });
+      harness.tx.crisisPupil.findMany.mockResolvedValue([{ studentId: PUPIL }]);
+      harness.tx.user.findMany.mockResolvedValue([{ id: OTHER_ID, firstName: 'Anna', lastName: 'Ek', studentGroup: { name: '8B' } }]);
+      const response = await send('post', '/api/v1/crisis/mine/pupils', teaching(profile), { alarmId: ALARM, q: 'anna' }).expect(200);
+      expect(response.body).toEqual([{ studentId: OTHER_ID, firstName: 'Anna', lastName: 'Ek', className: '8B' }]);
+      expect(harness.tx.crisisPupil.findMany).toHaveBeenCalledWith({ where: { alarmId: ALARM, callId: { in: [CALL] } }, select: { studentId: true } });
+      expect(harness.tx.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: { notIn: [PUPIL] } }) }));
+    });
+
+    it('is a 404 with the alarm’s own code for an alarm the database does not count in the window, as for a teacher', async () => {
+      harness.tx.$queryRaw.mockResolvedValue([]);
+      const response = await send('post', '/api/v1/crisis/mine/pupils', teaching('REKTOR'), { alarmId: ALARM, q: 'anna' }).expect(404);
+      expect(codeOf(response)).toBe('CRISIS_ALARM_NOT_FOUND');
+      expect(harness.tx.user.findMany).not.toHaveBeenCalled();
+    });
+
+    it.each(PROFILES)('stores a %s’s mark for a pupil of their own group through POST /crisis/mine/marks (the arm is the database’s, the area is not asked)', async (profile) => {
+      harness.tx.crisisCall.findMany.mockResolvedValue([{ id: CALL, alarmId: ALARM, calendarLessonId: LESSON, alarm: { startedAt: new Date('2027-01-12T09:10:00Z') } }]);
+      harness.tx.crisisPupil.findMany.mockResolvedValue([{ callId: CALL, studentId: PUPIL }]);
+      harness.tx.crisisReport.createMany.mockResolvedValue({ count: 1 });
+      const response = await send('post', '/api/v1/crisis/mine/marks', teaching(profile), { marks: [mark()] }).expect(200);
+      expect(response.body).toEqual({ stored: 1, duplicates: 0, unresolved: [] });
+      expect(harness.tx.crisisReport.createMany).toHaveBeenCalledWith({
+        data: [expect.objectContaining({ id: MARK, callId: CALL, alarmId: ALARM, studentId: PUPIL, state: 'FOUND' })],
+        skipDuplicates: true,
+      });
+    });
+
+    it('answers the database’s refusal of a mark for a group they do not answer for as 403 CRISIS_NOT_YOURS (the administrator’s arm, and the school’s list of who may start)', async () => {
+      harness.tx.crisisCall.findMany.mockResolvedValue([{ id: CALL, alarmId: ALARM, calendarLessonId: LESSON, alarm: { startedAt: new Date('2027-01-12T09:10:00Z') } }]);
+      harness.tx.crisisPupil.findMany.mockResolvedValue([{ callId: CALL, studentId: PUPIL }]);
+      harness.tx.crisisReport.createMany.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('row-level security', {
+          code: 'P2010',
+          clientVersion: 'x',
+          meta: { driverAdapterError: { cause: { originalCode: '42501' } } },
+        }),
+      );
+      const response = await send('post', '/api/v1/crisis/mine/marks', teaching('EXPEDITION'), { marks: [mark()] });
+      expect([response.status, codeOf(response)]).toEqual([403, 'CRISIS_NOT_YOURS']);
+    });
+
+    it('still says only the administration can say a pupil is not in the building: the teacher’s route takes found and withdrawn', async () => {
+      await send('post', '/api/v1/crisis/mine/marks', teaching('FULL'), { marks: [mark({ state: 'AWAY' })] }).expect(400);
+      expect(harness.tx.crisisReport.createMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['get', '/api/v1/crisis/mine', null],
+      ['post', '/api/v1/crisis/mine/pupils', { alarmId: ALARM, q: 'anna' }],
+      ['post', '/api/v1/crisis/mine/marks', { marks: [mark()] }],
+    ] as const)('refuses %s %s without the mark, with it false, and to a läsare, a pupil and a guardian, as before', async (method, url, payload) => {
+      for (const who of [
+        admin(),
+        asUser({ role: 'SCHOOL_ADMIN' as never, userId: ADMIN_ID, teaches: false }),
+        planner(),
+        // A läsare writes nothing, and the mark is held off the profile in the database: the guard does not take it either.
+        teaching('LASARE'),
+        student(),
+        guardian(),
+      ]) {
+        await send(method, url, who, payload).expect(403);
+      }
+      expect(harness.tx.crisisAlarm.findMany).not.toHaveBeenCalled();
+      expect(harness.tx.crisisReport.createMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses the huvudman’s reader, who has no row and so no mark', async () => {
+      const reader = asUser({ role: 'SCHOOL_ADMIN' as never, userId: undefined, huvudman: { huvudmanId: 'h', memberId: 'm' }, teaches: true } as never);
+      await send('get', '/api/v1/crisis/mine', reader).expect(403);
+    });
+
+    it('leaves a teacher’s own read as it was: no question is asked of the database’s functions, and the reads name no alarm or group', async () => {
+      harness.tx.crisisAlarm.findMany.mockResolvedValue([alarmRow]);
+      harness.tx.crisisCall.findMany.mockResolvedValue([callRow]);
+      harness.tx.crisisReport.findMany.mockResolvedValue([]);
+      harness.tx.user.findMany.mockResolvedValue([]);
+      await send('get', '/api/v1/crisis/mine', teacher()).expect(200);
+      expect(harness.tx.$queryRaw).not.toHaveBeenCalled();
+      expect(harness.tx.crisisAlarm.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { schoolId: '33333333-3333-4333-8333-333333333333' } }));
     });
   });
 
