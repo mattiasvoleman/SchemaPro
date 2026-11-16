@@ -1,0 +1,179 @@
+{
+  "lines": [
+    {
+      "name": "preflight",
+      "postId": "11111111-aaaa-4aaa-8aaa-111111111111",
+      "blockId": null,
+      "line": {
+        "category": "PLACEMENT",
+        "code": "PLACEMENT_CANNOT_STAND",
+        "params": {
+          "requirement": "Idrott och hälsa för 7A",
+          "room": "Sporthallen",
+          "day": 3,
+          "start": "10:00",
+          "end": "11:00",
+          "reason": "TEACHER",
+          "other": "8B Matematik",
+          "block": "NO_BLOCK",
+          "postId": "11111111-aaaa-4aaa-8aaa-111111111111"
+        },
+        "message": "A placed lesson cannot stand where it is placed (TEACHER).",
+        "resourceNames": []
+      }
+    },
+    {
+      "name": "preflight-block",
+      "postId": "22222222-aaaa-4aaa-8aaa-222222222222",
+      "blockId": "33333333-aaaa-4aaa-8aaa-333333333333",
+      "line": {
+        "category": "PLACEMENT",
+        "code": "PLACEMENT_CANNOT_STAND",
+        "params": {
+          "requirement": "Franska för 7B",
+          "room": "Sporthallen",
+          "day": 4,
+          "start": "13:15",
+          "end": "14:15",
+          "reason": "TEACHER",
+          "other": "8B Matematik",
+          "block": "Språkval",
+          "postId": "22222222-aaaa-4aaa-8aaa-222222222222",
+          "blockId": "33333333-aaaa-4aaa-8aaa-333333333333"
+        },
+        "message": "A placed lesson cannot stand where it is placed (TEACHER).",
+        "resourceNames": []
+      }
+    },
+    {
+      "name": "preflight-no-room",
+      "postId": "11111111-aaaa-4aaa-8aaa-111111111111",
+      "blockId": null,
+      "line": {
+        "category": "PLACEMENT",
+        "code": "PLACEMENT_CANNOT_STAND",
+        "params": {
+          "requirement": "Idrott och hälsa för 7A",
+          "room": "ANY_ROOM",
+          "day": 3,
+          "start": "10:00",
+          "end": "11:00",
+          "reason": "ROOM",
+          "other": "8B Matematik",
+          "block": "NO_BLOCK",
+          "postId": "11111111-aaaa-4aaa-8aaa-111111111111"
+        },
+        "message": "A placed lesson cannot stand where it is placed (ROOM).",
+        "resourceNames": []
+      }
+    },
+    {
+      "name": "engine-room",
+      "postId": "11111111-aaaa-4aaa-8aaa-111111111111",
+      "blockId": null,
+      "line": {
+        "category": "PLACEMENT",
+        "code": "PLACED_LESSON_IN_THE_WAY",
+        "params": {
+          "requirement": "Idrott och hälsa för 7A",
+          "room": "Sporthallen",
+          "day": 2,
+          "start": "08:30",
+          "end": "09:30",
+          "postId": "11111111-aaaa-4aaa-8aaa-111111111111"
+        },
+        "message": "The engine says it in English.",
+        "resourceNames": []
+      }
+    },
+    {
+      "name": "engine-any-room",
+      "postId": "11111111-aaaa-4aaa-8aaa-111111111111",
+      "blockId": null,
+      "line": {
+        "category": "PLACEMENT",
+        "code": "PLACED_LESSON_IN_THE_WAY_ANY_ROOM",
+        "params": {
+          "requirement": "Idrott och hälsa för 7A",
+          "day": 2,
+          "start": "08:30",
+          "end": "09:30",
+          "postId": "11111111-aaaa-4aaa-8aaa-111111111111"
+        },
+        "message": "The engine says it in English.",
+        "resourceNames": []
+      }
+    },
+    {
+      "name": "probe",
+      "postId": "11111111-aaaa-4aaa-8aaa-111111111111",
+      "blockId": null,
+      "line": {
+        "category": "PLACEMENT",
+        "code": "PLACED_LESSON_IN_THE_WAY",
+        "params": {
+          "requirement": "Idrott och hälsa för 7A",
+          "room": "",
+          "day": 2,
+          "start": "08:30",
+          "end": "09:30",
+          "postId": "11111111-aaaa-4aaa-8aaa-111111111111"
+        },
+        "message": "The engine says it in English.",
+        "resourceNames": []
+      }
+    },
+    {
+      "name": "engine-block-member",
+      "postId": "22222222-aaaa-4aaa-8aaa-222222222222",
+      "blockId": "33333333-aaaa-4aaa-8aaa-333333333333",
+      "line": {
+        "category": "PLACEMENT",
+        "code": "PLACED_LESSON_IN_THE_WAY_ANY_ROOM",
+        "params": {
+          "requirement": "Franska för 7B",
+          "day": 2,
+          "start": "08:30",
+          "end": "09:30",
+          "postId": "22222222-aaaa-4aaa-8aaa-222222222222",
+          "blockId": "33333333-aaaa-4aaa-8aaa-333333333333"
+        },
+        "message": "The engine says it in English.",
+        "resourceNames": []
+      }
+    },
+    {
+      "name": "cause-without-post",
+      "postId": null,
+      "blockId": null,
+      "line": {
+        "category": "PLACEMENT",
+        "code": "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK",
+        "params": {
+          "day": 2,
+          "start": "12:00",
+          "minutes": 30
+        },
+        "message": "The engine says it in English.",
+        "resourceNames": []
+      }
+    },
+    {
+      "name": "other-category",
+      "postId": null,
+      "blockId": null,
+      "line": {
+        "category": "ROOM",
+        "code": "ROOM_CAPACITY_TOO_SMALL",
+        "params": {
+          "requirement": "Idrott och hälsa för 7A",
+          "day": 2,
+          "start": "08:30",
+          "end": "09:30"
+        },
+        "message": "The engine says it in English.",
+        "resourceNames": []
+      }
+    }
+  ]
+}

@@ -1796,6 +1796,47 @@ describe('OptimizationProxyService', () => {
       });
     });
 
+    describe('a refusal of a pinned lesson by its own name, as an error (A3)', () => {
+      const anon = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+      const realPost = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
+      const realBlock = 'cccccccc-3333-4333-8333-cccccccccccc';
+      const refused = (code: string, params: Record<string, string | number>) => {
+        const error = new AxiosError('boom');
+        error.response = { status: 400, data: { message: 'The engine’s own sentence.', details: { code, params } } } as never;
+        return error;
+      };
+      const paramsOf = async (code: string, params: Record<string, string | number>, over: Partial<AnonMaps> = {}) => {
+        http.post.mockReturnValue(throwError(() => refused(code, params)));
+        const error = await call({}, { ...maps(), requirementAnonMap: new Map([[realPost, anon]]), nameById: new Map([[realPost, 'Idrott 7A']]), ...over }).catch(
+          (thrown: unknown) => thrown,
+        );
+        return ((error as HttpException).getResponse() as { params?: Record<string, string | number> }).params;
+      };
+      const where = { requirement: anon, day: 3, start: '10:00', end: '11:00' };
+
+      it.each([
+        ['PLACED_LESSON_OUTSIDE_THE_WEEK'],
+        ['PLACED_LESSON_OUTSIDE_FRAME'],
+        ['PLACED_LESSON_MARGINS_PAST_THE_DAY'],
+        ['PLACED_LESSON_IN_A_RAST'],
+        ['PLACED_LESSON_ROOM_NOT_ALLOWED'],
+      ])('%s: the post\'s own id beside the sentence\'s values, which stay as they were', async (code) => {
+        const params = await paramsOf(code, where);
+        expect(params).toEqual({ ...where, requirement: 'Idrott 7A', postId: realPost });
+      });
+
+      it('says the block too for a post that is in one', async () => {
+        const params = await paramsOf('PLACED_LESSON_IN_A_RAST', where, { blockOfPost: new Map([[realPost, realBlock]]) });
+        expect(params).toMatchObject({ postId: realPost, blockId: realBlock });
+      });
+
+      it('gives no id to any other refusal that names a post, nor to one that names a post this run did not send', async () => {
+        expect(await paramsOf('FRAME_NO_WINDOW_FOR_REQUIREMENT', where)).not.toHaveProperty('postId');
+        expect(await paramsOf('PLACED_LESSONS_OF_BLOCK_DIFFER', { block: anon, requirement: anon, other: anon })).not.toHaveProperty('postId');
+        expect(await paramsOf('PLACED_LESSON_IN_A_RAST', { ...where, requirement: 'dddddddd-4444-4444-8444-dddddddddddd' })).not.toHaveProperty('postId');
+      });
+    });
+
     describe('in a tioårig läsår (SFS 2025:729)', () => {
       /*
        * The payload states every class span in the nioårig numbering the
@@ -8173,6 +8214,8 @@ describe('OptimizationProxyService', () => {
           expect(http.post).not.toHaveBeenCalled();
           expect(answer.status).toBe('INFEASIBLE');
           expect(answer.conflicts!.conflicts).toEqual([expect.objectContaining({ code: 'PLACEMENT_CANNOT_STAND', params: expect.objectContaining({ reason: 'BLOCK' }) })]);
+          // The pre-flight's line says the post and its block as ids too (A3): the link back to the week is built from them.
+          expect(answer.conflicts!.conflicts[0]!.params).toMatchObject({ postId: REQ_ID, blockId: 'block-1' });
           expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
         });
 
@@ -8189,6 +8232,9 @@ describe('OptimizationProxyService', () => {
           expect(lines[0]).toMatchObject({ code: 'PLACEMENT_CANNOT_STAND', params: expect.objectContaining({ reason: 'PAIR_ROOM', day: 4 }) });
           // The half that has a room stands, and the one that has none names none.
           expect(lines[0]!.params!['room']).toBe('ANY_ROOM');
+          // A post of no block: its id only, beside the day and the clock the line already has.
+          expect(lines[0]!.params).toMatchObject({ postId: REQ_ID, day: 4 });
+          expect(lines[0]!.params).not.toHaveProperty('blockId');
         });
 
         it('refuses a row no lesson of its length is left for (the post’s locks have it) by name, and sends nothing', async () => {
@@ -8355,7 +8401,8 @@ describe('OptimizationProxyService', () => {
             refusal(code, (payload) => ({ requirement: payload.requirements[0].id, ...where }));
             const line = await asked();
             expect(line.code).toBe(code);
-            expect(line.params).toEqual({ requirement: 'Idrott och hälsa för 7A', ...where });
+            // The post's own id beside its name: the link back to the week is built from it (A3), after the ids were named.
+            expect(line.params).toEqual({ requirement: 'Idrott och hälsa för 7A', postId: REQ_ID, ...where });
           });
 
           it.each([['PLACED_LESSON_IN_THE_WAY'], ['PLACED_LESSON_ROOM_NOT_ALLOWED']])(
@@ -8365,7 +8412,7 @@ describe('OptimizationProxyService', () => {
               placed([placement()]);
               refusal(code, (payload) => ({ requirement: payload.requirements[0].id, room: payload.rooms[0].id, ...where }));
               const line = await asked();
-              expect(line.params).toEqual({ requirement: 'Idrott och hälsa för 7A', room: 'Sporthallen', ...where });
+              expect(line.params).toEqual({ requirement: 'Idrott och hälsa för 7A', room: 'Sporthallen', postId: REQ_ID, ...where });
             },
           );
 
@@ -8378,7 +8425,70 @@ describe('OptimizationProxyService', () => {
               other: payload.requirements[0].id,
             }));
             const line = await asked();
-            expect(line.params).toEqual({ block: 'Idrott och hälsa för 7A', requirement: 'Idrott och hälsa för 7A', other: 'Idrott och hälsa för 7A' });
+            expect(line.params).toEqual({ block: 'Idrott och hälsa för 7A', requirement: 'Idrott och hälsa för 7A', other: 'Idrott och hälsa för 7A', postId: REQ_ID });
+          });
+
+          describe('which post and block a line is about, for the link back to the week (A3)', () => {
+            const lineWith = (over: Record<string, unknown>) =>
+              answerWithConflicts((payload) => ({
+                summary: 'refused',
+                summaryCode: 'CONFLICT_CORE_SUMMARY',
+                summaryParams: {},
+                conflicts: [
+                  {
+                    category: 'PLACEMENT',
+                    code: 'PLACED_LESSON_IN_THE_WAY_ANY_ROOM',
+                    params: { requirement: payload.requirements[0].id, ...where },
+                    message: 'The engine says it in English.',
+                    requirementIds: [payload.requirements[0].id],
+                    roomIds: [],
+                    constraintIds: [],
+                    resourceIds: [],
+                    ...over,
+                  },
+                ],
+              }));
+
+            it('gives a post in a block the block\'s id too, which is the card to open: a member\'s lesson has none of its own', async () => {
+              arrange({
+                rooms: [{ id: ROOM_ID, capacity: 30, type: 'CLASSROOM', name: 'Sporthallen' }],
+                groups: [{ id: GROUP_ID, gradeLevel: null, kind: 'CLASS', name: '7A' }],
+                requirements: [requirement({ subject: { requiredRoomTypeId: null, name: 'Idrott och hälsa' }, blockId: 'block-1' })],
+              });
+              lineWith({});
+              const line = await asked();
+              expect(line.params).toMatchObject({ postId: REQ_ID, blockId: 'block-1' });
+            });
+
+            it('gives a post that is in no block no blockId at all (not an empty one)', async () => {
+              worldWithNames();
+              lineWith({});
+              const line = await asked();
+              expect(line.params).toHaveProperty('postId', REQ_ID);
+              expect(line.params).not.toHaveProperty('blockId');
+            });
+
+            it('gives a line of any other category neither id: the sentences of the other refusals are unchanged', async () => {
+              worldWithNames();
+              lineWith({ category: 'ROOM', code: 'ROOM_CAPACITY_TOO_SMALL' });
+              const line = await asked();
+              expect(line.params).not.toHaveProperty('postId');
+              expect(line.params).not.toHaveProperty('blockId');
+            });
+
+            it('gives a line that names no post none: a cause the engine raised for the week, not for a förläggning', async () => {
+              worldWithNames();
+              lineWith({ requirementIds: [] });
+              const line = await asked();
+              expect(line.params).not.toHaveProperty('postId');
+            });
+
+            it('gives a line that names an id this run never sent none: nothing is guessed from the sentence', async () => {
+              worldWithNames();
+              lineWith({ requirementIds: ['aaaaaaaa-0000-4000-8000-aaaaaaaaaaaa'] });
+              const line = await asked();
+              expect(line.params).not.toHaveProperty('postId');
+            });
           });
         });
 

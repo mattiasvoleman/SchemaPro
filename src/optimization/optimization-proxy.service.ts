@@ -38,8 +38,10 @@ import {
   placedLessonWritesOf,
   placedMinutesOf,
   placedTaughtByPost,
+  placementIdsOf,
   placementsKeyOf,
   placementsRefusalOf,
+  PIN_REFUSAL_CODES,
   storedPlacementsOf,
   writtenFromPins,
   type PlacedLessonRow,
@@ -246,6 +248,11 @@ export interface AnonMaps {
    * a refusal could name.
    */
   blockAnonMap?: Map<string, string>;
+  /**
+   * A post's real id -> the real id of the block it is a member of, for the link back to the week that a refusal about a
+   * förläggning carries (placementIdsOf). Never sent and never reversed into text. Optional like `blockAnonMap`.
+   */
+  blockOfPost?: Map<string, string>;
   /**
    * And the post a deltid sentence names (TEACHER_WORK_DAYS_*): the post's
    * real id -> its anonymous one, kept and reversed like the work rule's, so
@@ -1574,6 +1581,7 @@ export class OptimizationProxyService {
       constraintAnonMap: data.constraintAnonMap,
       workRuleAnonMap: data.workRuleAnonMap,
       blockAnonMap: data.blockAnonMap,
+      blockOfPost: data.blockOfPost,
       dayLimitAnonMap: data.dayLimitAnonMap,
       dayLimitTeacherIds: data.dayLimitTeacherIds,
       workRuleTeacherIds: data.workRuleTeacherIds,
@@ -2086,6 +2094,12 @@ export class OptimizationProxyService {
     }
   }
 
+  /** The `requirement` a refusal's params name, as the engine said it (an anonymous id), or nothing. */
+  private anonRequirementOf(params: unknown): string | undefined {
+    const value = (params as { requirement?: unknown } | null | undefined)?.requirement;
+    return typeof value === 'string' ? value : undefined;
+  }
+
   /**
    * Every anonymous id of the payload, back to the real one.
    *
@@ -2284,7 +2298,14 @@ export class OptimizationProxyService {
           // no lunch says which parts of the year they are in, where they are
           // in several (the web renders the same from the params).
           message: this.named(detail.message, maps) + lunchLocksSentence(params),
-          params: yearGrades(detail.code, params, maps),
+          params: {
+            ...yearGrades(detail.code, params, maps),
+            // A line about a förläggning says which post (and block) it is, for the link back to the week. AFTER namedParams,
+            // which turns every anonymous id into the school's name for it and would make these two names.
+            ...(detail.category === 'PLACEMENT'
+              ? placementIdsOf(detail.requirementIds[0], realByAnon, maps.blockOfPost)
+              : {}),
+          },
           resourceIds,
           // Only the ones there IS a name for. A teacher is deliberately
           // absent — see nameById — so a reservation about one names the
@@ -2572,6 +2593,8 @@ export class OptimizationProxyService {
     yearPeriods: YearPeriods | null;
     /** Parallella block: the block a refusal names, back to the real one. */
     blockAnonMap: Map<string, string>;
+    /** A post → its block, both real, for a refusal's link back to the week (placementIdsOf). Never sent. */
+    blockOfPost: Map<string, string>;
     /** BLOCK_PARTLY_LOCKED, in anonymous ids, or null to go on. */
     blockRefusal: AiEngineConflictAnalysis | null;
     /** GROUP_CONFLICTS_OVER_ENGINE_LIMIT, or null to go on. */
@@ -4484,6 +4507,7 @@ export class OptimizationProxyService {
       nameById,
       yearPeriods,
       blockAnonMap,
+      blockOfPost: new Map(rawRequirements.flatMap((r): [string, string][] => (r.blockId ? [[r.id, r.blockId]] : []))),
       blockRefusal,
       pairsRefusal: groupConflicts.length > ENGINE_GROUP_CONFLICTS_LIMIT ? groupConflictsRefusal(groupConflicts.length) : null,
       mirrors,
@@ -4782,11 +4806,22 @@ export class OptimizationProxyService {
                   readable && body?.details && typeof body.details.code === 'string'
                     ? {
                         code: body.details.code,
-                        params: yearGrades(
-                          body.details.code,
-                          this.namedParams((body.details.params ?? {}) as Record<string, string | number>, maps),
-                          maps,
-                        ),
+                        params: {
+                          ...yearGrades(
+                            body.details.code,
+                            this.namedParams((body.details.params ?? {}) as Record<string, string | number>, maps),
+                            maps,
+                          ),
+                          // The refusals of a pinned lesson by its own name leave as an error: the link back to the week is built
+                          // from the same two ids as a refusal's line (placementIdsOf), taken from `requirement` before it is named.
+                          ...(PIN_REFUSAL_CODES.has(body.details.code)
+                            ? placementIdsOf(
+                                this.anonRequirementOf(body.details.params),
+                                this.realIdsByAnon(maps),
+                                maps.blockOfPost,
+                              )
+                            : {}),
+                        },
                       }
                     : {};
                 // A pre-flight about a post's days (TEACHER_WORK_DAYS_TOO_FEW_
