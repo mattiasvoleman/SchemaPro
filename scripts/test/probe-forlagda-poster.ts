@@ -1075,6 +1075,39 @@ async function run(owner: Client, engine: EngineStub, app: INestApplicationConte
     assert.ok(!again.ok && again.error instanceof HttpException);
     assert.equal(((again.error as HttpException).getResponse() as { code?: string }).code, 'REQUIREMENT_PLACEMENT_REFUSED');
   });
+
+  await check('fp-s4: TWO rows let stand and another writer removes ONE of them under the lock: STALE, and the removed row is not written back (review of #326, round 2, LÅG-1)', async () => {
+    // fp-s3 has one row that does not hold; "one of them is gone" and "all of them are" are the same there. Here Wednesday and
+    // Thursday both stand and do not hold (stored directly: a save would refuse them as new rows), and Friday is the post's third.
+    for (const day of [3, 4]) {
+      await owner.query(
+        `INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "updatedAt")
+         VALUES ($1, $2, $3, '14:00', 60, NULL, 'ALL_WEEKS', now())`,
+        [s, mendPost, day],
+      );
+    }
+    const friday = { ...fri, startTime: '15:00' };
+    assert.deepEqual(await storedOf(mendPost), textOf([wed, thu, friday]));
+    const keyBefore = await keyNow(mendPost);
+    const hold = await holder();
+    await hold.query('BEGIN');
+    await hold.query(`SELECT id FROM "TeachingRequirements" WHERE id = $1 FOR NO KEY UPDATE`, [mendPost]);
+    try {
+      // The save keeps both rows that do not hold and moves Friday; it is judged (and reads the post's rows) before it waits.
+      const save = settle(put(mendPost, [wed, thu, { ...fri, startTime: '16:00' }]));
+      await untilWaiters(1);
+      // The other writer removes the Wednesday row only: Thursday, the other one the save lets stand, is still there.
+      await hold.query(`DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = $1 AND "dayOfWeek" = 3`, [mendPost]);
+      await hold.query('COMMIT');
+      staleOf(await save, mendPost);
+    } finally {
+      await hold.query('ROLLBACK').catch(() => undefined);
+      await hold.end();
+    }
+    // Nothing of the save: Wednesday is gone and is not written back unjudged, Thursday and Friday are as they were.
+    assert.deepEqual(await storedOf(mendPost), textOf([thu, friday]), 'the removed row was written back, or the save wrote');
+    assert.notEqual(await keyNow(mendPost), keyBefore, 'the other writer\'s removal must show in the key');
+  });
 }
 
 main().then(

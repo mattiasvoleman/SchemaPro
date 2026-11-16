@@ -274,6 +274,8 @@ describe('PUT lets stand the rows the post already has (review of #326, MEDEL-2)
     Promise.resolve(days.includes(candidate.dayOfWeek) ? [{ kind: 'TEACHER', message: 'The teacher is busy.' }] : []);
   const tuesday = () => stored({ id: 'p-1', dayOfWeek: 2 });
   const wednesday = () => stored({ id: 'p-2', dayOfWeek: 3 });
+  /** The post of three lessons a week: two rows that have stopped holding and a third that is new fit it. */
+  const THREE_LESSONS = { ...POST, lessonsPerWeek: 3 };
   const noWrite = (tx: TxMock) => {
     expect(tx['teachingRequirementPlacement']!['deleteMany']).not.toHaveBeenCalled();
     expect(tx['teachingRequirementPlacement']!['createMany']).not.toHaveBeenCalled();
@@ -348,6 +350,37 @@ describe('PUT lets stand the rows the post already has (review of #326, MEDEL-2)
     await expect(refused).rejects.toMatchObject({ response: { code: REQUIREMENT_PLACEMENTS_STALE, params: { requirementId: REQ } } });
     noWrite(tx);
     expect(reads).toBe(2);
+  });
+
+  // Review of #326, round 2, LÅG-1: with one row that does not hold, "one of them is gone" and "all of them are" are the same
+  // thing, and the check after the lock could count either (`some` or `every`). Two rows let stand tell them apart: it is
+  // STALE as soon as ONE of them is not in the post's rows any more, since the save would put that row back unjudged.
+  it.each([
+    ['the first of them is gone', () => [wednesday()]],
+    ['the second of them is gone', () => [tuesday()]],
+    ['both of them are gone', () => []],
+  ])('says STALE when %s after the lock, and writes nothing', async (_what, after) => {
+    const { tx, masters, service } = setup({ before: [tuesday(), wednesday()], post: THREE_LESSONS });
+    masters.findConflicts.mockImplementation(busyOn([2, 3]));
+    let reads = 0;
+    tx['teachingRequirementPlacement']!['findMany']!.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+      where['requirementId'] === REQ ? (++reads === 1 ? [tuesday(), wednesday()] : after()) : [],
+    );
+    // Both rows are in the save and neither holds, and a third that does is new: the save is made if the post's rows are
+    // as they were, and it is not if one of the two is not.
+    const refused = service.replace(REQ, { placements: [input({ dayOfWeek: 2 }), input({ dayOfWeek: 3 }), input({ dayOfWeek: 4 })] }, user);
+    await expect(refused).rejects.toMatchObject({ response: { code: REQUIREMENT_PLACEMENTS_STALE, params: { requirementId: REQ } } });
+    noWrite(tx);
+    expect(reads).toBe(2);
+  });
+
+  it('makes the save when both rows it let stand are still in the post\'s rows after the lock', async () => {
+    const written = [stored({ id: 'n-1', dayOfWeek: 2 }), stored({ id: 'n-2', dayOfWeek: 3 }), stored({ id: 'n-3', dayOfWeek: 4 })];
+    const { tx, masters, service } = setup({ before: [tuesday(), wednesday()], after: written, post: THREE_LESSONS });
+    masters.findConflicts.mockImplementation(busyOn([2, 3]));
+    const answer = await service.replace(REQ, { placements: [input({ dayOfWeek: 2 }), input({ dayOfWeek: 3 }), input({ dayOfWeek: 4 })] }, user);
+    expect(tx['teachingRequirementPlacement']!['createMany']).toHaveBeenCalledTimes(1);
+    expect(answer.verdicts).toEqual([{ index: 0, ok: false, reason: 'TEACHER' }, { index: 1, ok: false, reason: 'TEACHER' }, { index: 2, ok: true }]);
   });
 
   it('reads the post\'s rows once more only when a row is let stand, and a key and a let-stand row share the read after the lock', async () => {
