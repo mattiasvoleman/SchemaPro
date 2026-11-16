@@ -121,6 +121,20 @@ const storedRowOf = (row: RowSelected): StoredBlockRow => ({
 });
 
 /**
+ * A block's stored lessons with the rooms of its members only. A post that left the block at the very moment a room row was being
+ * written for it leaves a row for a post that is not a member (the migration's preamble: nothing refuses it, and nothing may
+ * depend on it): it is no member's room, so it is not read, and the next save of the block replaces every row.
+ */
+function membersRoomsOnly(rows: readonly StoredBlockRow[], members: readonly { id: string }[]): StoredBlockRow[] {
+  const ids = new Set(members.map((member) => member.id));
+  return rows.map((row) => {
+    if (row.rooms.every((room) => ids.has(room.requirementId))) return row;
+    const keep = row.rooms.map((room) => ids.has(room.requirementId));
+    return { ...row, rooms: row.rooms.filter((_, at) => keep[at]), roomNames: row.roomNames.filter((_, at) => keep[at]) };
+  });
+}
+
+/**
  * The year's blocks with their members and their lessons: one read. `onlyPlaced` leaves out the blocks with no lesson
  * (what an ordinary post is judged beside), `except` one block (the block being written, whose rows are the request's).
  */
@@ -149,7 +163,7 @@ export async function loadBlocksOfYear(
     name: block.name,
     sameTimesAsBlockId: block.sameTimesAsBlockId,
     members: block.requirements,
-    rows: block.placements.map(storedRowOf),
+    rows: membersRoomsOnly(block.placements.map(storedRowOf), block.requirements),
   }));
 }
 
@@ -175,7 +189,7 @@ export async function loadBlock(tx: PrismaClient, id: string): Promise<(LoadedBl
     schoolId: block.schoolId,
     sameTimesAsBlockId: block.sameTimesAsBlockId,
     members: block.requirements,
-    rows: block.placements.map(storedRowOf),
+    rows: membersRoomsOnly(block.placements.map(storedRowOf), block.requirements),
   };
 }
 

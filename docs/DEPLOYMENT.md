@@ -5972,7 +5972,7 @@ a 30 s deadline: it never waits while it holds a lock, and after 30 s it stops w
   `DROP TRIGGER "TeachingBlocks_placements_fit" ON "TeachingBlocks"`,
   `DROP TRIGGER "TeachingRequirementShares_block_placements_fit" ON "TeachingRequirementShares"`,
   `DROP TRIGGER "TeachingRequirements_block_placements_fit" ON "TeachingRequirements"`,
-  `DROP TRIGGER "TeachingRequirements_block_leave_takes_rooms" ON "TeachingRequirements"`,
+  `DROP TRIGGER "TeachingRequirements_block_placement_rooms_leave" ON "TeachingRequirements"`,
   `DROP TABLE "TeachingBlockPlacementRooms"`, `DROP TABLE "TeachingBlockPlacements"`,
   `DROP FUNCTION app.teaching_block_placements_fit()`, `DROP FUNCTION app.teaching_block_placement_rooms_leave()`; then
   `prisma migrate resolve --rolled-back 20270218090000_ett_block_kan_forlaggas`. The post's own fit function and triggers

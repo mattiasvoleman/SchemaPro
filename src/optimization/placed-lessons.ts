@@ -258,7 +258,13 @@ export function blockPlacedLessonRowsOf(
       blockId,
       blockFitOf(
         { id: blockId, sameTimesAsBlockId, members: list },
-        own.map((read) => ({ minutes: read.minutes, recurrence: read.recurrence, rooms: read.rooms })),
+        // The rooms of members only: a room row for a post that has left the block is no member's and is not read (the migration's
+        // preamble), so it is not a reason to refuse the run either.
+        own.map((read) => ({
+          minutes: read.minutes,
+          recurrence: read.recurrence,
+          rooms: read.rooms.filter((room) => list.some((member) => member.id === room.requirementId)),
+        })),
       )?.reason ?? null,
     );
   }

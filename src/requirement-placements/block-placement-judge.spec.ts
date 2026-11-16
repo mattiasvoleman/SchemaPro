@@ -649,6 +649,22 @@ describe('loadBlocksOfYear and loadBlock', () => {
       expect(args.select.requirements.orderBy).toEqual({ id: 'asc' });
     });
 
+    it('reads the rooms of the block\u2019s members only: a room row for a post that has left is no member\u2019s and is read by nobody', async () => {
+      const stranger = { requirementId: 'left', roomId: 'room-9', room: { name: 'Sal 9' } };
+      const placements = selected().placements.map((row) => ({ ...row, rooms: [stranger, ...row.rooms] }));
+      const tx = createTxMock();
+      tx['teachingBlock']!['findUnique']!.mockResolvedValue(selected({ placements }));
+      tx['teachingBlock']!['findMany']!.mockResolvedValue([selected({ placements })]);
+
+      const one = await loadBlock(tx as unknown as PrismaClient, 'block-1');
+      const many = await loadBlocksOfYear(tx as unknown as PrismaClient, YEAR);
+
+      for (const block of [one!, many[0]!]) {
+        expect(block.rows[0]!.rooms.map((room) => room.requirementId)).toEqual(['a', 'b']);
+        expect(block.rows[0]!.roomNames).toEqual(['Sal 1', 'Sal 2']);
+      }
+    });
+
     it('selects the same members and lessons as the year\'s read, so that a verdict is the same wherever it is asked', async () => {
       const tx = createTxMock();
       tx['teachingBlock']!['findUnique']!.mockResolvedValue(null);

@@ -639,7 +639,6 @@ describe('blockPlacedLessonRowsOf', () => {
       ['LENGTH', [blockRead({ minutes: 50 })], trio()],
       ['WEEKS', [blockRead({ recurrence: 'ODD_WEEKS' })], trio()],
       ['COUNT', [blockRead({ id: 'bp-1' }), blockRead({ id: 'bp-2', dayOfWeek: 4 }), blockRead({ id: 'bp-3', dayOfWeek: 5 })], trio()],
-      ['MEMBER', [blockRead({ rooms: [{ requirementId: 'stranger', roomId: 'sal-1' }] })], trio()],
       ['SHARES', [blockRead()], [blockMember('m-a', { shares: [{ teacherId: 'bo', lessons: 1, minutes: 60 }] }), blockMember('m-b'), blockMember('m-c')]],
       ['FOLLOWER', [blockRead({ block: { sameTimesAsBlockId: 'block-leader' } })], trio()],
     ] as const)('says %s on every row of the block, and nothing on another block that fits', (rule, reads, members) => {
@@ -653,6 +652,20 @@ describe('blockPlacedLessonRowsOf', () => {
       const ofOther = rows.filter((row) => row.blockId === OTHER_BLOCK);
       expect(ofOther).toHaveLength(2);
       expect(ofOther.every((row) => row.blockFit === null)).toBe(true);
+    });
+
+    it('does not refuse a block for a room row of a post that is not a member: the row is no member\u2019s and is not read (the migration\u2019s preamble)', () => {
+      const stranger = blockRead({ rooms: [{ requirementId: 'stranger', roomId: 'sal-1' }, { requirementId: 'm-a', roomId: 'sal-2' }] });
+
+      const rows = blockPlacedLessonRowsOf([stranger], trio());
+
+      expect(rows.every((row) => row.blockFit === null)).toBe(true);
+      // The member's own room is read and the stranger's is read by nobody.
+      expect(rows.map((row) => [row.requirementId, row.roomId])).toEqual([
+        ['m-a', 'sal-2'],
+        ['m-b', null],
+        ['m-c', null],
+      ]);
     });
 
     it('holds a block of mixed lengths (80 + 40) to its own lengths and counts', () => {
