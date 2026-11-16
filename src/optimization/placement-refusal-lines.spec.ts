@@ -2,9 +2,10 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ConfigService } from '@nestjs/config';
 import type { HttpService } from '@nestjs/axios';
-import type { PrismaService } from '../prisma/prisma.service';
+import type { PrismaService } from '../database/prisma.service';
 import type { AiEngineConflictAnalysis, AiEngineConflictDetail } from './interfaces/ai-engine-payload.interface';
 import { OptimizationProxyService, type AnonMaps } from './optimization-proxy.service';
+import type { PlacementRefusalReason } from '../requirement-placements/placement-judge';
 import { placedLessonRowsOf, placementsRefusalOf, type PlacedPost, type PlacementRead } from './placed-lessons';
 import { conflictView, storedOf } from './stored-conflicts';
 
@@ -105,7 +106,7 @@ function linesOf(): Array<{ name: string; postId: string | null; blockId: string
   const blockRows = placedLessonRowsOf([read(BLOCK_POST_ID, { dayOfWeek: 4, startTime: at('13:15') })], new Map([[BLOCK_POST_ID, post(BLOCK_POST_ID, BLOCK_ID)]])).map(
     (row) => ({ ...row, blockId: BLOCK_ID }),
   );
-  const cannotStand = (all: typeof rows, reason: string): AiEngineConflictAnalysis =>
+  const cannotStand = (all: typeof rows, reason: PlacementRefusalReason): AiEngineConflictAnalysis =>
     placementsRefusalOf(all, [{ index: 0, ok: false, reason, params: { className: '8B', subjectName: 'Matematik' } }], anonOf)!;
   const cases: Array<{ name: string; analysis: AiEngineConflictAnalysis; postId: string | null; blockId: string | null }> = [
     { name: 'preflight', analysis: cannotStand(rows, 'TEACHER'), postId: POST_ID, blockId: null },
@@ -123,7 +124,7 @@ function linesOf(): Array<{ name: string; postId: string | null; blockId: string
     { name: 'engine-block-member', analysis: wrap([engineLine('PLACED_LESSON_IN_THE_WAY_ANY_ROOM', ANON_BLOCK_POST, null)]), postId: BLOCK_POST_ID, blockId: BLOCK_ID },
     // What no link is drawn from: a cause the engine raised for the week (no post), and a line of another category.
     { name: 'cause-without-post', analysis: wrap([engineLine('LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK', ANON_POST, null, { requirementIds: [], params: { day: 2, start: '12:00', minutes: 30 } })]), postId: null, blockId: null },
-    { name: 'other-category', analysis: wrap([engineLine('ROOM_CAPACITY_TOO_SMALL', ANON_POST, null, { category: 'ROOM' })]), postId: null, blockId: null },
+    { name: 'other-category', analysis: wrap([engineLine('ROOM_CAPACITY_TOO_SMALL', ANON_POST, null, { category: 'INSUFFICIENT_RESOURCES' })]), postId: null, blockId: null },
   ];
   const sut = service() as unknown as { realiseConflicts: (a: AiEngineConflictAnalysis, m: AnonMaps) => AiEngineConflictAnalysis };
   return cases.map(({ name, analysis, postId, blockId }) => {

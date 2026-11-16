@@ -163,7 +163,7 @@
       "postId": null,
       "blockId": null,
       "line": {
-        "category": "ROOM",
+        "category": "INSUFFICIENT_RESOURCES",
         "code": "ROOM_CAPACITY_TOO_SMALL",
         "params": {
           "requirement": "Idrott och hälsa för 7A",
