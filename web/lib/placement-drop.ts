@@ -1,6 +1,7 @@
 import { pupilBufferOf, type ConflictHit, type Placement } from "@/lib/conflicts";
+import { blockMemberId } from "@/lib/placement-block-rows";
 import { mirrorHits, REASON_OF_HIT, type MirrorContext } from "@/lib/placement-mirror";
-import { keptCardId, type BoardPlacement, type BoardPost } from "@/lib/placement-board";
+import { keptCardId, type BoardBlock, type BoardBlockRow, type BoardPlacement, type BoardPost } from "@/lib/placement-board";
 import type { RoomPreference } from "@/lib/queries";
 import type { PlacementRecurrence, PlacementRefusalReason } from "@/lib/requirement-placements";
 import { PLACEMENT_DAY_END, PLACEMENT_DAY_START, PLACEMENT_GRID_MINUTES, clockOfMinutes } from "@/lib/requirement-placement-text";
@@ -38,14 +39,16 @@ export interface Span {
  *   KEPT      a lesson Generera keeps: it is changed in the grundschema, not here
  *   LENGTH    a placed lesson's length is the post's; it is not stretched in the week
  *   DAY       outside the school day (Monday to Friday, 08:00 to 18:00, on the five-minute grid)
- *   CLASH     the clash rule's first hit: its reason and the other lesson's figures, as the gateway's sentence takes them
+ *   CLASH     the clash rule's first hit: its reason and the other lesson's figures, as the gateway's sentence takes them;
+ *             for a lesson of a BLOCK also `requirementId`, the post of the block that clashes (as the gateway's
+ *             BLOCK_PLACEMENT_REFUSED names it)
  */
 export type Drop =
   | { kind: "OK" }
   | { kind: "KEPT" }
   | { kind: "LENGTH" }
   | { kind: "DAY" }
-  | { kind: "CLASH"; reason: PlacementRefusalReason; params?: Record<string, string | number> };
+  | { kind: "CLASH"; reason: PlacementRefusalReason; params?: Record<string, string | number>; requirementId?: string };
 
 export const OK: Drop = { kind: "OK" };
 
@@ -69,8 +72,14 @@ export interface OtherNames {
   subject: (id: string) => string | undefined;
 }
 
-function paramsOfHit(context: MirrorContext, hit: ConflictHit, names: OtherNames): Record<string, string | number> | undefined {
-  const other = hit.otherLessonId === undefined ? undefined : context.others.find((placement) => placement.id === hit.otherLessonId);
+function paramsOfHit(
+  context: MirrorContext,
+  hit: ConflictHit,
+  names: OtherNames,
+  /** Lessons that are not in the week yet but are in the way of one another: the other members of a block's lesson. */
+  alsoOthers: readonly Placement[] = [],
+): Record<string, string | number> | undefined {
+  const other = hit.otherLessonId === undefined ? undefined : [...context.others, ...alsoOthers].find((placement) => placement.id === hit.otherLessonId);
   if (!other) return undefined;
   const className = names.group(other.studentGroupId);
   const subjectName = other.subjectId ? names.subject(other.subjectId) : undefined;
@@ -130,6 +139,16 @@ export function nextFreeSpot(
   names: OtherNames,
   stepMinutes = 15,
 ): { dayOfWeek: number; startMinutes: number } | null {
+  return freeSpotAfter((spot) => dropOf(context, mover, spot, names).kind === "OK", minutes, from, stepMinutes);
+}
+
+/** The search itself: forward from `from` by `stepMinutes`, day by day, once round the week, to the first span `free` accepts. */
+function freeSpotAfter(
+  free: (spot: Span) => boolean,
+  minutes: number,
+  from: { dayOfWeek: number; startMinutes: number },
+  stepMinutes: number,
+): { dayOfWeek: number; startMinutes: number } | null {
   const slotsPerDay = Math.floor((PLACEMENT_DAY_END - PLACEMENT_DAY_START - minutes) / stepMinutes) + 1;
   if (slotsPerDay <= 0) return null;
   // Positions in the week: day by day, from the start of the day, on the step.
@@ -140,8 +159,7 @@ export function nextFreeSpot(
     const index = (((first + step) % slots) + slots) % slots;
     const dayOfWeek = Math.floor(index / slotsPerDay) + 1;
     const startMinutes = PLACEMENT_DAY_START + (index % slotsPerDay) * stepMinutes;
-    const spot = { dayOfWeek, startMinutes, endMinutes: startMinutes + minutes };
-    if (dropOf(context, mover, spot, names).kind === "OK") return { dayOfWeek, startMinutes };
+    if (free({ dayOfWeek, startMinutes, endMinutes: startMinutes + minutes })) return { dayOfWeek, startMinutes };
   }
   return null;
 }
@@ -149,6 +167,116 @@ export function nextFreeSpot(
 /** The mover of a förläggning that is moved: its own card id, its post and its row's room, teacher and weeks. */
 export function moverOfRow(id: string, row: Pick<BoardPlacement, "roomId" | "teacherId" | "recurrence">, post: BoardPost): Mover {
   return { id, post, teacherId: row.teacherId ?? post.teacherId, roomId: row.roomId, recurrence: row.recurrence };
+}
+
+/**
+ * A lesson of a parallel block being laid or moved: every post of the block sits it, so the lesson is one `Placement` for each post, at
+ * the same place, with the room THAT post chose for it (none: the engine chooses). The posts are in the id order the gateway judges them
+ * in, which decides which post a refusal names.
+ */
+export interface BlockMover {
+  /** The lesson's card id (a lesson that is moved) or a brick's key. */
+  id: string;
+  blockId: string;
+  recurrence: PlacementRecurrence;
+  members: { post: BoardPost; roomId: string | null }[];
+  /**
+   * The ids, among the week's `others`, of the posts' placements the lesson has now: a lesson that is moved is not in its own way, so
+   * these are held out of the week while the new place is tried (a quarter of an hour's move would otherwise clash with itself). Empty
+   * for a lesson that is laid for the first time. Only this lesson's: the block's other lessons stay in the way.
+   */
+  ownIds: ReadonlySet<string>;
+}
+
+/** The mover of a lesson of a block that is laid for the first time: its posts with the rooms chosen (a post not named has none). */
+export function moverOfBlockBrick(id: string, block: Pick<BoardBlock, "id" | "memberIds" | "recurrence">, posts: ReadonlyMap<string, BoardPost>, rooms: ReadonlyMap<string, string | null>): BlockMover {
+  return {
+    id,
+    blockId: block.id,
+    recurrence: block.recurrence ?? "ALL_WEEKS",
+    members: block.memberIds.flatMap((requirementId) => (posts.has(requirementId) ? [{ post: posts.get(requirementId)!, roomId: rooms.get(requirementId) ?? null }] : [])),
+    ownIds: new Set(),
+  };
+}
+
+/** The mover of a lesson that is moved: its card, its posts and the rooms the row has (or the ones given), and the ids it has in the week. */
+export function moverOfBlockRow(
+  id: string,
+  key: string,
+  block: Pick<BoardBlock, "id" | "memberIds" | "recurrence">,
+  row: Pick<BoardBlockRow, "rooms" | "recurrence">,
+  posts: ReadonlyMap<string, BoardPost>,
+  rooms: ReadonlyMap<string, string | null> = new Map(row.rooms.map((room) => [room.requirementId, room.roomId])),
+): BlockMover {
+  return {
+    ...moverOfBlockBrick(id, block, posts, rooms),
+    recurrence: row.recurrence,
+    ownIds: new Set(block.memberIds.map((requirementId) => blockMemberId(key, requirementId))),
+  };
+}
+
+/**
+ * The first thing in the way of a lesson of a block at this span. Each post's lesson is held against the week (the lesson's own old place
+ * left out) AND against the other posts' lessons at the same place: posts of a block are different teaching groups and stand in no one's
+ * way by being the same lesson, but a teacher, a room or pupils two of them share is a real clash, and so is a class that sits one of
+ * them. The answer names the post that clashes (`requirementId`), the first in the order the gateway judges them.
+ */
+export function dropOfBlock(context: MirrorContext, mover: BlockMover, span: Span, names: OtherNames): Drop {
+  if (!insideSchoolDay(span)) return { kind: "DAY" };
+  const week = mover.ownIds.size === 0 ? context.others : context.others.filter((placement) => placement.id === null || !mover.ownIds.has(placement.id));
+  const candidates = mover.members.map((member) =>
+    placementOf({ id: `${mover.id}:${member.post.id}`, post: member.post, teacherId: member.post.teacherId, roomId: member.roomId, recurrence: mover.recurrence }, span, context),
+  );
+  for (const [at, member] of mover.members.entries()) {
+    const beside = candidates.filter((_, other) => other !== at);
+    const hit = mirrorHits(context, candidates[at]!, [...week, ...beside]).find((candidate) => REASON_OF_HIT[candidate.kind] !== null);
+    if (!hit) continue;
+    const params = paramsOfHit(context, hit, names, beside);
+    return { kind: "CLASH", reason: REASON_OF_HIT[hit.kind]!, ...(params ? { params } : {}), requirementId: member.post.id };
+  }
+  return OK;
+}
+
+/** The next time after `from` on which a lesson of the block stands free for all its posts (as nextFreeSpot, for one post). */
+export function nextFreeSpotOfBlock(
+  context: MirrorContext,
+  mover: BlockMover,
+  minutes: number,
+  from: { dayOfWeek: number; startMinutes: number },
+  names: OtherNames,
+  stepMinutes = 15,
+): { dayOfWeek: number; startMinutes: number } | null {
+  return freeSpotAfter((spot) => dropOfBlock(context, mover, spot, names).kind === "OK", minutes, from, stepMinutes);
+}
+
+/**
+ * The room to offer each post of a block for a lesson: the room the post's own lessons of the block already stand in, else a room its
+ * subject's rule names, else none (the engine chooses it). NEVER the room filter's: that one is a single room, which as every post's
+ * suggestion would be one room for all of them, and a clash between them.
+ */
+export function suggestedBlockRooms(input: {
+  block: Pick<BoardBlock, "memberIds" | "rows">;
+  posts: ReadonlyMap<string, Pick<BoardPost, "subjectId" | "studentGroupId">>;
+  rules: readonly RoomPreference[];
+  /** A class's year, for a rule that holds for some years only. */
+  gradeLevelOf: (studentGroupId: string) => number | null;
+}): Map<string, string | null> {
+  const rooms = new Map<string, string | null>();
+  for (const requirementId of input.block.memberIds) {
+    const post = input.posts.get(requirementId);
+    if (!post) continue;
+    rooms.set(
+      requirementId,
+      suggestedRoom({
+        postRows: input.block.rows.flatMap((row) => row.rooms.filter((room) => room.requirementId === requirementId).map((room) => ({ roomId: room.roomId }))),
+        rules: input.rules,
+        subjectId: post.subjectId,
+        gradeLevel: input.gradeLevelOf(post.studentGroupId),
+        filterRooms: [],
+      }),
+    );
+  }
+  return rooms;
 }
 
 /** `HH:MM` as minutes, or null when it is no time (an empty field). */

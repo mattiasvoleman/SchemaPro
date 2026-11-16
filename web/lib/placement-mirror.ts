@@ -12,10 +12,13 @@ import {
 import type { FrameTime } from "@/lib/frame-times";
 import { buildGradeSpans, type GradeSpan } from "@/lib/grade-span";
 import type { GradeNumbering } from "@/lib/grade-numbering";
+import { blockKeyByRowId, blockMemberId } from "@/lib/placement-block-rows";
 import {
   keptCardId,
   placementCardId,
   teacherOfPlacement,
+  type BoardBlock,
+  type BoardBlockRow,
   type BoardKept,
   type BoardPlacement,
   type BoardPost,
@@ -52,6 +55,12 @@ import { timeToMinutes } from "@/lib/utils";
  * NO ROOM, NO ROOM CLASH. A förläggning with no room (the engine chooses it) has
  * roomId null, which validatePlacement does not hold against any room, as the judge
  * does not.
+ *
+ * THE BLOCKS' LESSONS ARE THERE TOO (board.blocks). The judge reads a block's lessons as neighbours of an ordinary post's
+ * row (besideOf) and judges a block's lesson ONCE PER MEMBER, so the mirror holds each lesson of a block as one `Placement`
+ * per post of the block: the post's class (a teaching group), subject, teachers, window and buffers, the lesson's day, start,
+ * length and weeks, and the room THAT post chose for the lesson or none (a post with no room clashes with no room). A mirror
+ * that left them out was milder than the judge for TEACHER, ROOM and GROUP against every lesson of a block (review of #326).
  *
  * Pure: the lists come in, `Placement`s and hits go out.
  */
@@ -142,6 +151,42 @@ export function placementOfRow(row: BoardPlacement, post: BoardPost | undefined,
   };
 }
 
+/**
+ * One lesson of a block as a `Placement` for each post of the block, named `blockplacement:<key>:<post>`: the card's id and the post, so
+ * that a lesson that is moved can have all its own out of its way at once (placement-drop.ts dropOfBlock).
+ */
+export function placementsOfBlockRow(
+  block: Pick<BoardBlock, "memberIds">,
+  row: Pick<BoardBlockRow, "dayOfWeek" | "startTime" | "endTime" | "recurrence" | "rooms">,
+  posts: ReadonlyMap<string, BoardPost>,
+  key: string,
+  buffers?: PupilBufferMap,
+): Placement[] {
+  return block.memberIds.flatMap((requirementId) => {
+    const post = posts.get(requirementId);
+    if (!post) return [];
+    const buffer = pupilBufferOf(buffers, { studentGroupId: post.studentGroupId, subjectId: post.subjectId });
+    return [
+      {
+        ...(buffer ?? {}),
+        id: blockMemberId(key, requirementId),
+        dayOfWeek: row.dayOfWeek,
+        startMinutes: timeToMinutes(row.startTime),
+        endMinutes: timeToMinutes(row.endTime),
+        teacherId: post.teacherId,
+        coTeacherId: post.coTeacherId,
+        // The post's OWN room for this lesson, never another post's: a post that chose none has none.
+        roomId: row.rooms.find((room) => room.requirementId === requirementId)?.roomId ?? null,
+        studentGroupId: post.studentGroupId,
+        subjectId: post.subjectId,
+        recurrence: row.recurrence,
+        startDate: post.startDate ?? null,
+        endDate: post.endDate ?? null,
+      },
+    ];
+  });
+}
+
 /** A lesson Generera keeps as a `Placement`. The week names no pupil it was opened to, so none is held against (the gateway does). */
 export function placementOfKept(lesson: BoardKept, buffers?: PupilBufferMap): Placement {
   // A lesson opened to a second class carries the widest of the classes' rows, as the gateway reads it.
@@ -175,10 +220,13 @@ export function buildMirror(facts: MirrorFacts): MirrorContext {
     else membersByGroup.set(row.studentGroupId, [row.studentId]);
   }
   const buffers = bufferMapOfBoard(facts.board.posts);
+  const blockKeys = blockKeyByRowId(facts.board.blocks);
   return {
     others: [
       ...facts.board.kept.map((lesson) => placementOfKept(lesson, buffers)),
       ...facts.board.placements.map((row) => placementOfRow(row, postById.get(row.requirementId), placementCardId(facts.keys.get(row.id) ?? row.id), buffers)),
+      // Every lesson of every block, the ones that cannot be placed any more included: the judge reads whatever is stored beside a row.
+      ...facts.board.blocks.flatMap((block) => block.rows.flatMap((row) => placementsOfBlockRow(block, row, postById, blockKeys.get(row.id) ?? row.id, buffers))),
     ],
     buffers,
     constraints: [...(facts.constraints ?? [])],
@@ -190,11 +238,15 @@ export function buildMirror(facts: MirrorFacts): MirrorContext {
   };
 }
 
-/** The hits the grundschema's clash rule gives a lesson at this place, none when the week holds it. `candidate.id` is skipped among the others, so a lesson moved does not clash with where it was. */
-export function mirrorHits(context: MirrorContext, candidate: Placement): ConflictHit[] {
+/**
+ * The hits the grundschema's clash rule gives a lesson at this place, none when the week holds it. `candidate.id` is skipped among the
+ * others, so a lesson moved does not clash with where it was. `others` is the week's unless the caller has a reason to hold the lesson
+ * against another set (a block's lesson, whose own members are not in its way and whose other members are).
+ */
+export function mirrorHits(context: MirrorContext, candidate: Placement, others: readonly Placement[] = context.others): ConflictHit[] {
   return validatePlacement(
     candidate,
-    context.others,
+    others as Placement[],
     context.constraints,
     context.studentGroupOf,
     context.groupConflicts,
