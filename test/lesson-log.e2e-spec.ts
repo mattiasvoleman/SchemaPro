@@ -175,13 +175,13 @@ describe('Lektionslogg (e2e)', () => {
       await request(http()).get('/api/v1/lesson-logs/handed-over?from=2026-10-19&to=2026-10-25').set('x-test-user', teaching('REKTOR')).expect(200);
     });
 
-    it('is shown the lesson as its teacher where the database counts them on it and they have a tjänst for the läsår, else as an administrator', async () => {
-      harness.tx.teacherEmployment.findFirst.mockResolvedValue({ id: 'post' });
+    it('is shown the lesson as its teacher where the database counts them on it, else as an administrator (the tjänst is the database’s to weigh)', async () => {
       const as_teacher = await request(http()).get(`/api/v1/lesson-logs/lessons/${LESSON_ID}`).set('x-test-user', teaching('REKTOR')).expect(200);
       expect(as_teacher.body).toMatchObject({ role: 'REGULAR', may: { writeLog: true, readNote: true, writeNote: true } });
-      harness.tx.teacherEmployment.findFirst.mockResolvedValue(null);
+      role = null;
       const without = await request(http()).get(`/api/v1/lesson-logs/lessons/${LESSON_ID}`).set('x-test-user', teaching('REKTOR')).expect(200);
       expect(without.body).toMatchObject({ role: 'ADMIN', may: { readNote: false, writeNote: false } });
+      expect(harness.tx.teacherEmployment.findFirst).not.toHaveBeenCalled();
     });
 
     it('is not an unmarked administrator: the same requests, with the mark false or absent, are refused as before', async () => {

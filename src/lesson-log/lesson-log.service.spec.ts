@@ -135,46 +135,38 @@ describe('LessonLogService', () => {
 
     describe('an administrator who teaches (Users.teaches)', () => {
       const teaching = testUser({ channel: 'WEB', teaches: true });
-      const postOf = (where: unknown) => (where as { where: { userId: string; academicYear: { startDate: { lte: Date }; endDate: { gte: Date } } } }).where;
 
-      it('is the lesson’s teacher on a lesson they stand on, with a tjänst for its läsår: the note read and written', async () => {
-        tx.teacherEmployment.findFirst.mockResolvedValue({ id: 'post' });
+      // The rule that a marked administrator stands on the lesson with a tjänst for its group's läsår is the database's alone
+      // (app.lesson_teacher_role): the view asks it and nothing else, so the post is never asked here, in a year of this file's own.
+      it('is the lesson’s teacher where the database counts them on it: the note read and written', async () => {
         tx.lessonSubstituteNote.findUnique.mockResolvedValue({ body: 'Planeringen ligger kvar.', updatedAt: EDITED, writtenBy: null });
         const view = await service.lesson(LESSON, teaching);
         expect([view.role, view.may]).toEqual(['REGULAR', { writeLog: true, readNote: true, writeNote: true }]);
         expect(view.note).toEqual({ body: 'Planeringen ligger kvar.', writtenBy: null, updatedAt: EDITED.toISOString() });
-        // The post asked for is theirs, in the year the lesson's day falls in.
-        const where = postOf(tx.teacherEmployment.findFirst.mock.calls[0]![0]);
-        expect(where.userId).toBe(ME);
-        expect(where.academicYear).toEqual({ startDate: { lte: lessonRow.date }, endDate: { gte: lessonRow.date } });
+        // One question, to the function, about this lesson; the tjänst is not asked about a second time.
+        const asked = tx.$queryRaw.mock.calls.filter(([statement]) => sqlOf(statement).includes('lesson_teacher_role'));
+        expect(asked).toHaveLength(1);
+        expect((asked[0]![0] as { values?: unknown[] }).values).toEqual([LESSON]);
+        expect(tx.teacherEmployment.findFirst).not.toHaveBeenCalled();
       });
 
       it('is the substitute where the database says so: the note read, not written', async () => {
         teacherRole = 'SUBSTITUTE';
-        tx.teacherEmployment.findFirst.mockResolvedValue({ id: 'post' });
         const view = await service.lesson(LESSON, teaching);
         expect([view.role, view.may]).toEqual(['SUBSTITUTE', { writeLog: true, readNote: true, writeNote: false }]);
       });
 
-      it('is still the administrator without a tjänst for the lesson’s läsår: seating themselves on a lesson opens no note', async () => {
-        tx.teacherEmployment.findFirst.mockResolvedValue(null);
+      it('is still the administrator where the database does not count them on the lesson: no tjänst for its group’s läsår, not on it, and until its arms admit them', async () => {
+        teacherRole = null;
         tx.lessonSubstituteNote.findUnique.mockResolvedValue({ body: 'hemligt', updatedAt: EDITED, writtenBy: null });
         const view = await service.lesson(LESSON, teaching);
         expect([view.role, view.may, view.note]).toEqual(['ADMIN', { writeLog: true, readNote: false, writeNote: false }, null]);
         expect(tx.lessonSubstituteNote.findUnique).not.toHaveBeenCalled();
-      });
-
-      it('is still the administrator on a lesson the database does not count them on (and until its arms admit them)', async () => {
-        teacherRole = null;
-        tx.teacherEmployment.findFirst.mockResolvedValue({ id: 'post' });
-        const view = await service.lesson(LESSON, teaching);
-        expect([view.role, view.may, view.note]).toEqual(['ADMIN', { writeLog: true, readNote: false, writeNote: false }, null]);
-        // Not even the tjänst is asked about a lesson that is not theirs.
+        // A post of theirs for some year does not make the lesson theirs: the gateway has no second opinion on it.
         expect(tx.teacherEmployment.findFirst).not.toHaveBeenCalled();
       });
 
-      it('is asked of nobody who does not carry the mark: not a full, a planner or a läsare, even on a lesson with a tjänst', async () => {
-        tx.teacherEmployment.findFirst.mockResolvedValue({ id: 'post' });
+      it('is asked of nobody who does not carry the mark: not a full, a planner or a läsare', async () => {
         for (const person of [admin, testUser({ adminProfile: 'SCHEMALAGGARE', teaches: false }), reader]) {
           const view = await service.lesson(LESSON, person);
           expect([view.role, view.may.readNote]).toEqual(['ADMIN', false]);
