@@ -78,6 +78,29 @@
  *         refused NO_TEACHER, and a share given a teacher again through the
  *         PATCH hands the förläggning to them.
  *
+ * TWO WRITERS (A2: `baseKey` on the PUT and `rowsKey` in every answer), on the
+ * pool's own connections, with a third held at the post's row to make the
+ * interleaving the one a lucky timing only sometimes gives (both writers have
+ * judged and are queued at the post's lock; in a server that compared the key
+ * before the lock both would have passed it). A unit spec cannot see this:
+ * the mocked transaction has no other writer.
+ *
+ *   fp-o  two writers who read the same list and write each their own, ten
+ *         rounds started together and ten held at the lock: exactly one wins,
+ *         the other is 409 REQUIREMENT_PLACEMENTS_STALE with flat params
+ *         {requirementId}, the winner's rows stand exactly (nothing of the
+ *         loser's, nothing of the list both read) and its answer's key is the
+ *         key the post has;
+ *   fp-p  the same on a post that has no rows: two who both read the empty
+ *         list and write the first one get one answer each;
+ *   fp-q  a key read before another save is stale after it (even a save of the
+ *         very same list: the ids are new), nothing is written by the refused
+ *         write and the key is unchanged; the key of the last answer chains;
+ *         the key of a post with no rows is one for every post; a write with no
+ *         key is last-writer-wins as it was (whole lists, never a mixture);
+ *   fp-r  a write while Generera holds the year's regeneration lock is 409
+ *         SCHEDULE_BUSY, with a key and without, and writes nothing.
+ *
  * A step that fails prints its FAIL line and the run goes on; the steps share
  * the world, so a failure early on may take later ones with it. The exit code
  * is 1 for any FAIL.
@@ -750,6 +773,199 @@ async function run(owner: Client, engine: EngineStub, app: INestApplicationConte
 
     await requirements.update(sharedPost, { shares: [{ teacherId: t5.id, lessons: 1, minutes: 40 }] } as never, admin);
     assert.deepEqual(await storedTeacher(), [t5.id], 'the share nobody taught was given a teacher, and the förläggning stayed nobody\'s');
+  });
+
+  // -------------------------------------------------------------------------
+  // Two writers (A2): baseKey and rowsKey on the real database, with real connections
+  // -------------------------------------------------------------------------
+  // A class, a teacher and a post of their own: nothing else of the school can clash with the rows these write, so a
+  // refusal here is the stale key's and nothing else's.
+  const g7c = await group('FP 7C');
+  const t7 = await person('t7', 'TEACHER');
+  const historia = await subject('FP Historia');
+  const racePost = await post(g7c, historia, t7.id, 2, 60);
+  // The post that starts empty has its own class and teacher too: two posts of one class and one teacher would clash with each other's rows.
+  const g7d = await group('FP 7D');
+  const t8 = await person('t8', 'TEACHER');
+  const emptyPost = await post(g7d, await subject('FP Geografi'), t8.id, 2, 60);
+  const listA = [
+    { dayOfWeek: 1, startTime: '09:00', minutes: 60, roomId: sal32, recurrence: 'ALL_WEEKS' as const },
+    { dayOfWeek: 3, startTime: '09:00', minutes: 60, roomId: sal32, recurrence: 'ALL_WEEKS' as const },
+  ];
+  const listB = [
+    { dayOfWeek: 2, startTime: '13:00', minutes: 60, roomId: null, recurrence: 'ALL_WEEKS' as const },
+    { dayOfWeek: 4, startTime: '13:00', minutes: 60, roomId: gym, recurrence: 'ALL_WEEKS' as const },
+  ];
+  // The empty post's lists name no room (the engine chooses): its rows must not clash with the race post's rooms.
+  const withoutRoom = (list: typeof listA) => list.map((row) => ({ ...row, roomId: null }));
+  const baseList = [{ dayOfWeek: 5, startTime: '08:00', minutes: 60, roomId: sal32, recurrence: 'ALL_WEEKS' as const }];
+  const storedOf = async (postId: string): Promise<string[]> =>
+    (
+      await all<{ day: number; start: string; minutes: number; roomId: string | null; recurrence: string }>(
+        `SELECT "dayOfWeek" AS day, to_char("startTime", 'HH24:MI') AS start, minutes, "roomId", recurrence::text AS recurrence
+           FROM "TeachingRequirementPlacements" WHERE "requirementId" = $1 ORDER BY "dayOfWeek", "startTime", recurrence`,
+        [postId],
+      )
+    ).map((row) => `${row.day} ${row.start} ${row.minutes} ${row.roomId ?? '-'} ${row.recurrence}`);
+  const textOf = (list: ReadonlyArray<{ dayOfWeek: number; startTime: string; minutes: number; roomId?: string | null; recurrence: string }>): string[] =>
+    list.map((row) => `${row.dayOfWeek} ${row.startTime} ${row.minutes} ${row.roomId ?? '-'} ${row.recurrence}`).sort();
+  type Settled = { ok: true; value: Awaited<ReturnType<typeof placements.replace>> } | { ok: false; error: unknown };
+  const settle = (work: Promise<Awaited<ReturnType<typeof placements.replace>>>): Promise<Settled> =>
+    work.then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+  const put = (postId: string, list: unknown[], baseKey?: string) =>
+    placements.replace(postId, { placements: list, ...(baseKey === undefined ? {} : { baseKey }) } as never, admin);
+  const keyNow = async (postId: string): Promise<string> => (await placements.listOfPost(postId, admin)).rowsKey;
+  const holder = async (): Promise<Client> => {
+    const client = new Client({ connectionString: process.env['PROBE_OWNER_URL'] });
+    await client.connect();
+    return client;
+  };
+  /** Backends of this database that are waiting for a lock right now. */
+  const lockWaiters = async (): Promise<number> =>
+    (await one<{ n: number }>(`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`)).n;
+  const untilWaiters = async (count: number): Promise<void> => {
+    for (let waited = 0; waited < 15_000; waited += 25) {
+      if ((await lockWaiters()) >= count) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`fewer than ${count} backends waited for a lock within 15 s`);
+  };
+  const staleOf = (outcome: Settled, postId: string): void => {
+    assert.ok(!outcome.ok, 'the write was not refused');
+    const error = outcome.error;
+    assert.ok(error instanceof HttpException, `not an HttpException: ${summarise(error)}`);
+    assert.equal(error.getStatus(), 409);
+    const body = error.getResponse() as { code?: string; params?: unknown };
+    assert.equal(body.code, 'REQUIREMENT_PLACEMENTS_STALE', `the 409 is ${summarise(error)}`);
+    assert.deepEqual(body.params, { requirementId: postId }, 'params are not flat {requirementId}');
+  };
+
+  /**
+   * One round of two writers who read the same list and write each their own, started together. `held`: the post's row
+   * is locked by a third connection until both writers stand waiting for it, so that both have judged the list and, in a
+   * server that compares the key before taking the lock, both have passed the comparison; the race is then the one a
+   * lucky timing only sometimes makes.
+   */
+  const round = async (postId: string, held: boolean): Promise<{ winner: 'A' | 'B'; key: string }> => {
+    await put(postId, baseList); // the list both read: written without a key
+    const read = await keyNow(postId);
+    let hold: Client | undefined;
+    if (held) {
+      hold = await holder();
+      await hold.query('BEGIN');
+      await hold.query(`SELECT id FROM "TeachingRequirements" WHERE id = $1 FOR NO KEY UPDATE`, [postId]);
+    }
+    try {
+      const both = Promise.all([settle(put(postId, listA, read)), settle(put(postId, listB, read))]);
+      if (hold) {
+        await untilWaiters(2);
+        await hold.query('COMMIT');
+      }
+      const [a, b] = await both;
+      assert.equal(Number(a.ok) + Number(b.ok), 1, `${Number(a.ok) + Number(b.ok)} of the two writers succeeded (A ${a.ok ? 'ok' : summarise(a.error)}, B ${b.ok ? 'ok' : summarise(b.error)})`);
+      const winner = a.ok ? 'A' : 'B';
+      staleOf(a.ok ? b : a, postId);
+      const won = (a.ok ? a : (b as Settled & { ok: true })) as Settled & { ok: true };
+      // The winner's rows stand exactly, and nothing of the loser's, nor of the list both read.
+      assert.deepEqual(await storedOf(postId), textOf(winner === 'A' ? listA : listB), `the stored rows are not exactly ${winner}'s`);
+      assert.equal(won.value.rowsKey, await keyNow(postId), 'the winner\'s answer key is not the key the post has now');
+      assert.notEqual(won.value.rowsKey, read);
+      return { winner, key: won.value.rowsKey };
+    } finally {
+      if (hold) await hold.query('ROLLBACK').catch(() => undefined);
+      await hold?.end();
+    }
+  };
+
+  await check('fp-o: two writers who read the same list and write at once, ten times each started together and held at the post\'s lock: one wins, the other is 409 REQUIREMENT_PLACEMENTS_STALE, the winner\'s rows stand exactly', async () => {
+    const winners: string[] = [];
+    for (let i = 0; i < 10; i++) winners.push((await round(racePost, false)).winner);
+    for (let i = 0; i < 10; i++) winners.push((await round(racePost, true)).winner);
+    console.log(`     (winners over the 20 rounds: A ${winners.filter((w) => w === 'A').length}, B ${winners.filter((w) => w === 'B').length})`);
+  });
+
+  await check('fp-p: two who read the EMPTY list and write the first rows at once get one answer each: one wins, the other is stale, and the rows are the winner\'s', async () => {
+    for (const held of [false, true, false, true]) {
+      await owner.query(`DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = $1`, [emptyPost]);
+      const read = await keyNow(emptyPost);
+      let hold: Client | undefined;
+      if (held) {
+        hold = await holder();
+        await hold.query('BEGIN');
+        await hold.query(`SELECT id FROM "TeachingRequirements" WHERE id = $1 FOR NO KEY UPDATE`, [emptyPost]);
+      }
+      try {
+        const both = Promise.all([settle(put(emptyPost, withoutRoom(listA), read)), settle(put(emptyPost, withoutRoom(listB), read))]);
+        if (hold) {
+          await untilWaiters(2);
+          await hold.query('COMMIT');
+        }
+        const [a, b] = await both;
+        assert.equal(Number(a.ok) + Number(b.ok), 1, `${Number(a.ok) + Number(b.ok)} writers of the first list succeeded (held ${held})`);
+        staleOf(a.ok ? b : a, emptyPost);
+        assert.deepEqual(await storedOf(emptyPost), textOf(withoutRoom(a.ok ? listA : listB)));
+      } finally {
+        if (hold) await hold.query('ROLLBACK').catch(() => undefined);
+        await hold?.end();
+      }
+    }
+  });
+
+  await check('fp-q: a key read before another writer\'s save is stale after it (409, nothing written), the key of the save before is fresh, and a write without a key is last-writer-wins as it was', async () => {
+    await put(racePost, baseList);
+    const k0 = await keyNow(racePost);
+    const k1 = (await put(racePost, listA, k0)).rowsKey; // chained: the answer's key is the next write's base
+    assert.notEqual(k1, k0);
+    assert.equal(k1, await keyNow(racePost));
+    // Somebody else saves the very same list again: new ids, so the old key is no longer the post's.
+    const k2 = (await put(racePost, listA)).rowsKey;
+    assert.notEqual(k2, k1, 'a save of the same list left the key: the ids are what make it a key of a save');
+    const before = await storedOf(racePost);
+    staleOf(await settle(put(racePost, listB, k1)), racePost);
+    assert.deepEqual(await storedOf(racePost), before, 'the refused write changed the rows');
+    assert.equal(await keyNow(racePost), k2, 'the refused write changed the key');
+    // The fresh key writes, and the chain continues.
+    const k3 = (await put(racePost, listB, k2)).rowsKey;
+    assert.deepEqual(await storedOf(racePost), textOf(listB));
+    const k4 = (await put(racePost, [], k3)).rowsKey; // the empty list on top of the last key
+    assert.deepEqual(await storedOf(racePost), []);
+    await owner.query(`DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = $1`, [emptyPost]);
+    assert.equal(k4, await keyNow(emptyPost), 'the key of a post with no rows is the same for every post');
+    // Without a key nothing is asked: the second of two concurrent writes simply replaces the first, whole.
+    const [x, y] = await Promise.all([settle(put(racePost, listA)), settle(put(racePost, listB))]);
+    assert.ok(x.ok && y.ok, `without a key both writes succeed: ${x.ok ? 'ok' : summarise(x.error)} / ${y.ok ? 'ok' : summarise(y.error)}`);
+    const rows = await storedOf(racePost);
+    assert.ok(JSON.stringify(rows) === JSON.stringify(textOf(listA)) || JSON.stringify(rows) === JSON.stringify(textOf(listB)), `a mixture of the two lists stands: ${JSON.stringify(rows)}`);
+  });
+
+  await check('fp-r: a write while Generera holds the year\'s regeneration lock is 409 SCHEDULE_BUSY with or without a key, writes nothing, and goes through when the lock is released', async () => {
+    await put(racePost, baseList);
+    const read = await keyNow(racePost);
+    const before = await storedOf(racePost);
+    const rewrite = await holder();
+    await rewrite.query('BEGIN');
+    // What Generera's write holds for its whole transaction (lockYearForRegeneration).
+    await rewrite.query(`SELECT pg_advisory_xact_lock(hashtext('grundschema-regenerate'), hashtext($1::uuid::text))`, [year]);
+    try {
+      for (const baseKey of [read, undefined]) {
+        const outcome = await settle(put(racePost, listA, baseKey));
+        assert.ok(!outcome.ok, 'the write went through under a rewrite of the year');
+        const error = outcome.error;
+        assert.ok(error instanceof HttpException, summarise(error));
+        assert.equal(error.getStatus(), 409);
+        assert.equal((error.getResponse() as { code?: string }).code, 'SCHEDULE_BUSY', summarise(error));
+        assert.deepEqual(await storedOf(racePost), before, 'the refused write changed the rows');
+      }
+    } finally {
+      await rewrite.query('ROLLBACK').catch(() => undefined);
+      await rewrite.end();
+    }
+    const done = await put(racePost, listA, read);
+    assert.deepEqual(await storedOf(racePost), textOf(listA));
+    assert.equal(done.rowsKey, await keyNow(racePost));
   });
 }
 
