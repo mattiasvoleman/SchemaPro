@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
   success: vi.fn(),
   warning: vi.fn(),
   invalidates: [] as unknown[][],
+  placement: null as { open: boolean } | null,
 }));
 
 vi.mock("@/utils/supabase/client", () => ({
@@ -40,6 +41,25 @@ vi.mock("@/lib/queries", () => ({
   }),
 }));
 vi.mock("sonner", () => ({ toast: { success: state.success, error: state.error, warning: state.warning } }));
+// Förlägg blocket's own behaviour is block-placement-dialog.test.tsx's; here it is what the block's list handed it.
+vi.mock("@/components/timplan/block-placement-dialog", () => ({
+  BlockPlacementDialog: (props: {
+    open: boolean;
+    block: TeachingBlock | null;
+    members: TeachingRequirement[];
+    followedName?: string | null;
+    onOpenChange: (open: boolean) => void;
+  }) => {
+    state.placement = props;
+    return props.open ? (
+      <div role="dialog" aria-label={`placing:${props.block?.name}`}>
+        <span>{`members:${props.members.map((member) => member.id).join(",")}`}</span>
+        <span>{`follows:${props.followedName ?? "none"}`}</span>
+        <button onClick={() => props.onOpenChange(false)}>close-placement</button>
+      </div>
+    ) : null;
+  },
+}));
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
   useTranslations: () =>
@@ -305,6 +325,52 @@ describe("BlocksHost", () => {
     });
   });
 
+  describe("Förlägg blocket", () => {
+    it("opens the block's dialog with the block and its posts in the order the list shows them", async () => {
+      show([
+        row("r-ty", "g-ty", "s-ty", { blockId: "b-sv" }),
+        row("r-fr", "g-fr", "s-fr", { blockId: "b-sv" }),
+        row("r-ma", "g-7a", "s-ma"),
+      ]);
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      await userEvent.click(await screen.findByRole("button", { name: "placeNamed(Språkval åk 7)" }));
+
+      const dialog = screen.getByRole("dialog", { name: "placing:Språkval åk 7" });
+      // Franska before Tyska: teaching groups first, then by group name (Fr7 before Ty7).
+      expect(dialog).toHaveTextContent("members:r-fr,r-ty");
+      expect(dialog).toHaveTextContent("follows:none");
+      await userEvent.click(within(dialog).getByRole("button", { name: "close-placement" }));
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("names the block a block follows, so the dialog can point at it", async () => {
+      state.blocks = [
+        { id: "b-1", academicYearId: YEAR, name: "Hemkunskap 7A HT", sameTimesAsBlockId: null },
+        { id: "b-2", academicYearId: YEAR, name: "Hemkunskap 7A VT", sameTimesAsBlockId: "b-1" },
+      ];
+      show([row("r-1", "g-ty", "s-ty", { blockId: "b-1" }), row("r-2", "g-fr", "s-ty", { blockId: "b-2" })]);
+
+      await userEvent.click(await screen.findByRole("button", { name: "placeNamed(Hemkunskap 7A VT)" }));
+
+      expect(screen.getByRole("dialog")).toHaveTextContent("follows:Hemkunskap 7A HT");
+    });
+
+    it("is not offered for a block without posts", async () => {
+      show([row("r-ma", "g-7a", "s-ma")]);
+
+      await screen.findByRole("heading", { name: "Språkval åk 7" });
+      expect(screen.queryByRole("button", { name: "placeNamed(Språkval åk 7)" })).not.toBeInTheDocument();
+    });
+
+    it("is marked as a write of Planering like the block's other buttons, so a reader is not offered it", async () => {
+      show([row("r-ty", "g-ty", "s-ty", { blockId: "b-sv" })]);
+
+      const button = await screen.findByRole("button", { name: "placeNamed(Språkval åk 7)" });
+      expect(button.closest("[data-writes]")).toHaveAttribute("data-writes", "PLANERING");
+    });
+  });
+
   it("removes a block after asking, by its name", async () => {
     show([row("r-ty", "g-ty", "s-ty", { blockId: "b-sv" })]);
 
@@ -324,7 +390,12 @@ describe("BlocksHost under Läsbehörighet", () => {
     show([row("r-ty", "g-ty", "s-ty", { blockId: "b-sv" })]);
     await screen.findByRole("heading", { name: "Språkval åk 7" });
     expect(screen.getByRole("button", { name: "new" })).toHaveAttribute("data-writes", "PLANERING");
-    for (const name of ["lessonsNamed(Språkval åk 7)", "editNamed(Språkval åk 7)", "removeNamed(Språkval åk 7)"]) {
+    for (const name of [
+      "lessonsNamed(Språkval åk 7)",
+      "placeNamed(Språkval åk 7)",
+      "editNamed(Språkval åk 7)",
+      "removeNamed(Språkval åk 7)",
+    ]) {
       expect(screen.getByRole("button", { name }).closest("[data-writes]")).toHaveAttribute("data-writes", "PLANERING");
     }
   });

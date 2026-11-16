@@ -59,7 +59,7 @@ function argumentsOf(template: string): string[] {
 /**
  * WHAT THE WEB WORDS FURTHER THAN THE ENGINE (Förlägg utan sal, 20270213090000). A förläggning that names no room is sent to
  * Generera with `room = "ANY_ROOM"`, a value that is no room's name, and the engine's catalogue has no sentence for it; the web
- * chooses its words on it. The reasons the judge gained (PAIR_ROOM, BLOCK) are in the same select, and a refusal to keep the
+ * chooses its words on it. The reasons the judge gained (PAIR_ROOM, BLOCK, and Förlägg blocket's BLOCK_FIT) are in the same select, and a refusal to keep the
  * places of a week ends by saying that rooms the school pinned count as places of their own, which the engine's text cannot
  * know to say. Each entry is [the web's words, what the engine has in their place]: undone, the English is the engine's again,
  * so the engine changing its own sentence is still a red test, and the arguments are checked above all the same.
@@ -70,7 +70,7 @@ const WEB_WORDS: Record<string, readonly (readonly [string, string])[]> = {
   PLACEMENT_CANNOT_STAND: [
     ["{room, select, ANY_ROOM {a room the timetable chooses} other {{room}}}", "{room}"],
     [
-      " PAIR_ROOM {odd and even weeks of the same length are one lesson in two places, and both places need a room} BLOCK {the post is in a parallel block, so a single placed lesson cannot stay}",
+      " PAIR_ROOM {odd and even weeks of the same length are one lesson in two places, and both places need a room} BLOCK {the post is in a parallel block, so a single placed lesson cannot stay} BLOCK_FIT {the block's placed lessons no longer fit the block}",
       "",
     ],
   ],

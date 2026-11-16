@@ -28,6 +28,8 @@ const REASONS = [
   // Salen blir valfri: a half of a pair names no room, and the post is in a parallel block.
   "PAIR_ROOM",
   "BLOCK",
+  // Förlägg blocket: a member's lesson of a block's förläggning, when the block's lessons no longer fit the block (`rule` says which).
+  "BLOCK_FIT",
 ] as const;
 const FIT_REASONS = [
   "LENGTH",
@@ -68,6 +70,7 @@ const PARAMS: Record<(typeof REASONS)[number], Record<string, string | number>> 
   OVER_DEMAND: {},
   PAIR_ROOM: {},
   BLOCK: {},
+  BLOCK_FIT: { rule: "LENGTH" },
 };
 
 describe("a placed lesson that names no room", () => {
@@ -158,7 +161,7 @@ describe("why a row cannot stand", () => {
   });
 
   it("is a sentence for every reason the engine's own refusal carries too", () => {
-    // PLACEMENT_CANNOT_STAND is selected on the same thirteen codes.
+    // PLACEMENT_CANNOT_STAND is selected on the same fourteen codes.
     const engineReasons = Object.keys(sv.requirements.placements.verdict).filter((code) => code !== "UNKNOWN");
     expect(engineReasons.sort()).toEqual([...REASONS].sort());
     for (const catalogue of [sv, en]) {
@@ -440,5 +443,105 @@ describe("the figures of a post in the week of förläggningar", () => {
     expect(enWeek("postFigures", { placed: 1, count: 3, locked: 1, left: 1 })).toBe(
       "1 of 3 lessons placed, 1 fixed in the master timetable, 1 left for Generate.",
     );
+  });
+});
+
+describe("Förlägg blocket as the reader hears and sees it", () => {
+  const svBlock = createTranslator({ locale: "sv", messages: sv, namespace: "requirements.blockPlacements" });
+  const enBlock = createTranslator({ locale: "en", messages: en, namespace: "requirements.blockPlacements" });
+  const svBlocks = createTranslator({ locale: "sv", messages: sv, namespace: "requirements.blocks" });
+  const enBlocks = createTranslator({ locale: "en", messages: en, namespace: "requirements.blocks" });
+  const RULES = ["FOLLOWER", "EMPTY", "SHARES", "LENGTH", "WEEKS", "COUNT", "MEMBER"] as const;
+
+  it("has a sentence for each rule the gateway refuses a block's lessons on, and a general one for a rule it has not heard of", () => {
+    for (const t of [svBlock, enBlock]) {
+      for (const rule of RULES) {
+        const sentence = t(`fit.${rule}`, { other: "Elevens val åk 7" });
+        expect(sentence.trim(), rule).not.toBe("");
+        expect(sentence, rule).not.toMatch(/[{}]/);
+      }
+      expect(t("fit.UNKNOWN").trim()).not.toBe("");
+    }
+    expect(Object.keys(sv.requirements.blockPlacements.fit).sort()).toEqual([...RULES, "UNKNOWN"].sort());
+    expect(Object.keys(en.requirements.blockPlacements.fit).sort()).toEqual([...RULES, "UNKNOWN"].sort());
+  });
+
+  it("points a block that follows another at the block it follows, by name, and says that the lessons it already has can be removed", () => {
+    expect(svBlock("fit.FOLLOWER", { other: "Elevens val åk 7" })).toBe(
+      "Blocket läggs på samma tider som Elevens val åk 7 och förläggs inte själv. Förlägg Elevens val åk 7 i stället, så följer det här med. Förläggningar som redan finns kan tas bort här.",
+    );
+    expect(enBlock("fit.FOLLOWER", { other: "Elevens val åk 7" })).toMatch(/^The block is laid at the same times as Elevens val åk 7.*Place Elevens val åk 7 instead, and this one follows\./);
+    expect(svBlock("fit.SHARES")).toMatch(/delar sina lektioner mellan lärare.*kan inte förläggas ännu/);
+    expect(svBlock("fit.EMPTY")).toMatch(/inga poster/);
+  });
+
+  it("says what an empty room means for a post of the block, and that a change counts from the next Generera", () => {
+    expect(svBlock("roomsHint")).toMatch(/”Motorn väljer sal”.*väljer schemat postens sal vid varje Generera.*kan bli en annan nästa gång.*ange den\.$/);
+    expect(enBlock("roomsHint")).toMatch(/“The engine chooses a room”.*chooses the entry's room at every Generate.*another one next time.*choose it\.$/);
+    expect(svBlock("nextGenerate")).toMatch(/^Ändringen gäller från nästa Generera/);
+    expect(enBlock("nextGenerate")).toMatch(/^The change applies from the next Generate/);
+    expect(svBlock("saved")).toBe("Blockets förläggningar är sparade. De gäller från nästa Generera.");
+  });
+
+  it("says that a placed lesson of a block is changed here and not on the block's card in the base timetable", () => {
+    expect(svBlock("handMove")).toMatch(/går inte att flytta på blockets kort i grundschemat.*Ändra förläggningen här i stället\.$/);
+    expect(enBlock("handMove")).toMatch(/cannot be moved on the block's card in the base timetable.*Change the placement here instead\.$/);
+  });
+
+  it("says that the block has changed since it was read, that nothing was saved, and what to do", () => {
+    expect(svBlock("staleTitle")).toBe("Blocket har ändrats");
+    expect(svBlock("staleBody")).toMatch(/Ingenting sparades\. Läs in blocket igen och gör om ändringen\.$/);
+    expect(enBlock("staleBody")).toMatch(/Nothing was saved\. Read the block again and make the change again\.$/);
+    expect(svBlock("reload")).toBe("Läs in igen");
+  });
+
+  it("counts the block's lessons, and says one lesson in the singular", () => {
+    expect(svBlock("summary", { lessons: "1 lektion à 80 minuter och 2 lektioner à 40 minuter", placed: 2, count: 3 })).toBe(
+      "Blockets lektioner: 1 lektion à 80 minuter och 2 lektioner à 40 minuter. Förlagda: 2 av 3.",
+    );
+    expect(svBlock("addFull", { count: 1 })).toBe("Blocket har 1 lektion i veckan, och alla är förlagda.");
+    expect(svBlock("addFull", { count: 3 })).toBe("Blocket har 3 lektioner i veckan, och alla är förlagda.");
+    expect(enBlock("addFull", { count: 1 })).toBe("The block has 1 lesson a week, and all of them are placed.");
+  });
+
+  it("puts the post a refusal is said of before the sentence", () => {
+    expect(svBlock("postSaid", { posts: "Tyska för Ty7 och Franska för Fr7", sentence: "Läraren har redan en lektion." })).toBe(
+      "Tyska för Ty7 och Franska för Fr7: Läraren har redan en lektion.",
+    );
+    expect(svBlock("roomOf", { post: "Tyska för Ty7" })).toBe("Sal: Tyska för Ty7");
+  });
+
+  it("names the button on the block's row, and the block in it", () => {
+    expect(svBlocks("place")).toBe("Förlägg …");
+    expect(svBlocks("placeNamed", { name: "Språkval åk 7" })).toBe("Förlägg lektionerna i blocket Språkval åk 7");
+    expect(enBlocks("place")).toBe("Place lessons …");
+    expect(enBlocks("placeNamed", { name: "Language choice, year 7" })).toBe("Place the lessons of the block Language choice, year 7");
+  });
+
+  it("says why the lessons of a block no longer fit it, rule by rule, in both languages, and at the post's own dialog sends the reader to the block", () => {
+    for (const rule of [...RULES, "SOMETHING_NEW"]) {
+      for (const t of [svT, enT]) {
+        const sentence = t("verdict.BLOCK_FIT", { rule });
+        expect(sentence, rule).not.toMatch(/[{}]/);
+        expect(sentence, rule).toMatch(/Block|Blocks/);
+      }
+    }
+    expect(svT("verdict.BLOCK_FIT", { rule: "LENGTH" })).toBe(
+      "Blockets förlagda lektioner passar inte längre blocket: en lektion har en längd som blockets poster inte har. Öppna blocket under Block och ändra eller ta bort förläggningarna.",
+    );
+    expect(enT("verdict.BLOCK_FIT", { rule: "SHARES" })).toMatch(/an entry in the block now shares its lessons between teachers/);
+    // The single post's dialog says where the block is placed instead.
+    expect(svT("problem.BLOCK")).toMatch(/Förlägg blocket i stället: öppna Block på sidan och välj Förlägg … vid blocket\.$/);
+    expect(enT("problem.BLOCK")).toMatch(/Place the block instead: open Blocks on the page and choose Place lessons … on the block\.$/);
+    expect(svT("verdict.BLOCK")).toMatch(/förlägg blocket i stället \(Block, Förlägg …\)/);
+    expect(enT("verdict.BLOCK")).toMatch(/place the block instead \(Blocks, Place lessons …\)/);
+  });
+
+  it("says in the engine's refusal that the block's lessons no longer fit the block, in both languages", () => {
+    const where = { requirement: "Tyska för Ty7", day: 2, start: "10:00", end: "11:20", room: "ANY_ROOM", reason: "BLOCK_FIT" };
+    expect(svEngine("PLACEMENT_CANNOT_STAND", where)).toBe(
+      "Tyska för Ty7, förlagd tisdag 10:00–11:20 i en sal som schemat väljer: blockets förlagda lektioner passar inte längre blocket.",
+    );
+    expect(enEngine("PLACEMENT_CANNOT_STAND", where)).toContain("the block's placed lessons no longer fit the block");
   });
 });
