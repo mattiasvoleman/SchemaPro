@@ -52,8 +52,10 @@ export interface RequirementPlacementView {
   /** HH:MM, the start and the length. */
   endTime: string;
   minutes: number;
-  roomId: string;
-  roomName: string;
+  /** Null: the school left the room to the engine, which chooses it at every Generera (20270213090000). */
+  roomId: string | null;
+  /** Null with no room. */
+  roomName: string | null;
   recurrence: LessonRecurrence;
   /** Delade lektioner: whose lesson, on a post that shares its lessons; null on one that shares nothing. */
   teacherId: string | null;
@@ -76,7 +78,8 @@ export interface PlacementSlot {
   dayOfWeek: number;
   startMinutes: number;
   minutes: number;
-  roomId: string;
+  /** Null: the room is the engine's to choose. */
+  roomId: string | null;
   recurrence: LessonRecurrence;
   teacherId: string | null;
 }
@@ -160,10 +163,10 @@ type StoredView = {
   dayOfWeek: number;
   startTime: Date;
   minutes: number;
-  roomId: string;
+  roomId: string | null;
   recurrence: LessonRecurrence;
   teacherId: string | null;
-  room: { name: string };
+  room: { name: string } | null;
 };
 
 const minutesOfClock = (time: Date): number => time.getUTCHours() * 60 + time.getUTCMinutes();
@@ -178,7 +181,7 @@ function viewOf(row: StoredView): RequirementPlacementView {
     endTime: clockText(start + row.minutes),
     minutes: row.minutes,
     roomId: row.roomId,
-    roomName: row.room.name,
+    roomName: row.room?.name ?? null,
     recurrence: row.recurrence,
     teacherId: row.teacherId,
   };
@@ -357,7 +360,7 @@ export class RequirementPlacementsService {
           dayOfWeek: row.dayOfWeek,
           startMinutes: minutesOfClock(parseTimeString(row.startTime)),
           minutes: row.minutes,
-          roomId: row.roomId,
+          roomId: row.roomId ?? null,
           recurrence: row.recurrence,
           teacherId: row.teacherId ?? null,
         }));
@@ -421,7 +424,8 @@ export class RequirementPlacementsService {
    * room reads as absent here, as it does to the foreign key.
    */
   private async assertRoomsExist(tx: PrismaClient, slots: readonly PlacementSlot[]): Promise<void> {
-    const ids = [...new Set(slots.map((slot) => slot.roomId))];
+    // A row with no room asks for none: the engine chooses it (20270213090000).
+    const ids = [...new Set(slots.flatMap((slot) => (slot.roomId === null ? [] : [slot.roomId])))];
     if (ids.length === 0) return;
     const found = new Set((await tx.room.findMany({ where: { id: { in: ids } }, select: { id: true } })).map((room) => room.id));
     if (ids.some((roomId) => !found.has(roomId))) {
@@ -550,11 +554,13 @@ function placementPostOf(post: {
 /**
  * Which of the request's rows a refusal of the rules per teacher is about, for
  * the dialog to say it at that row: the first that names nobody (NO_TEACHER),
- * else the one teacherMisfitOf answers. The post's own rules are about the set
- * and name no row.
+ * else the one teacherMisfitOf answers, and for PAIR_ROOM the first half of a
+ * pair with no room. The post's own other rules are about the set and name no row.
  */
 function fitIndexOf(post: PlacementPost, rows: readonly PlacementSlot[], fit: PlacementFitReason): { index?: number } {
   if (fit === 'NO_TEACHER') return { index: rows.findIndex((row) => row.teacherId === null) };
+  // The first half of a pair that names no room: the dialog says it at that row.
+  if (fit === 'PAIR_ROOM') return { index: rows.findIndex((row) => row.recurrence !== 'ALL_WEEKS' && row.roomId === null) };
   if (fit.startsWith('TEACHER')) {
     const misfit = teacherMisfitOf(post, rows);
     if (misfit) return { index: misfit.index };

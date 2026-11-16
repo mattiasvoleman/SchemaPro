@@ -26,6 +26,10 @@ export function placementRefusalText(reason: PlacementRefusalReason, params?: Pl
       return 'Lektionen ligger utanför skoldagen: måndag till fredag 08:00–18:00, på hel femminutersruta.';
     case 'OVER_DEMAND':
       return 'Postens lektioner är redan lagda av låsta lektioner i grundschemat. Ta bort en förläggning eller lås upp lektionen.';
+    case 'PAIR_ROOM':
+      return 'Udda och jämna veckor av samma längd är en lektion på två platser, och båda platserna måste ha en sal. Välj sal för båda halvorna, eller välj varje vecka och låt motorn välja sal.';
+    case 'BLOCK':
+      return 'Posten ligger i ett parallellt block, som läggs på samma tider för alla poster. En enskild post i ett block kan inte förläggas.';
     case 'TEACHER':
       return `Läraren har redan ${otherText(params)}.`;
     case 'ROOM':

@@ -107,11 +107,12 @@ export default function PlacementsPage() {
         return teacher ? shortName(teacher) : undefined;
       },
       room: (id) => (id ? roomById.get(id)?.name : undefined),
+      noRoom: tPlacements("roomAny"),
       weeks: (lesson) => recurrenceBadge(lesson, tTimetable),
       color: (subjectId, color) => subjectColor(subjectId, color),
       keptNote: t("keptNote"),
     }),
-    [subjectById, groupById, teacherById, roomById, tTimetable, t],
+    [subjectById, groupById, teacherById, roomById, tTimetable, tPlacements, t],
   );
 
   const everything = board.data;
@@ -146,7 +147,7 @@ export default function PlacementsPage() {
   const rowLine = (row: BoardPlacement): string =>
     [
       `${tDays(String(row.dayOfWeek))} ${row.startTime}–${row.endTime}`,
-      row.roomName,
+      row.roomName ?? tPlacements("roomAny"),
       names.weeks({ recurrence: row.recurrence, startDate: postById.get(row.requirementId)?.startDate ?? null, endDate: postById.get(row.requirementId)?.endDate ?? null }),
     ]
       .filter(Boolean)

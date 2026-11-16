@@ -4796,6 +4796,141 @@ BEGIN
   VALUES (m, post, 2, '10:00', 60, room, now());
 END $$;
 
+-- En administratör som undervisar, del 3 (20270216090000, sections 505–509): a school of its own, so that no post is added
+-- to the matrix school (section 110 counts its posts). Five administrators who can be marked (one of each profile, one
+-- of them with HR-läs), a läsare who cannot, two teachers and a pupil. Every administrator and the first teacher has a
+-- post for the active year (a mark needs one; the sections mark inside their own transactions), a period of it, working-
+-- time rules, an unavailability, a duty with a blocked time, and an absence; and every one of them stands on a lesson of
+-- their own with a note to the substitute and attendance on it. Beside them: a lesson of the previous year's group (the
+-- läsår a post does not cover), a lesson where an administrator is only the substitute, one nobody of them stands on, and
+-- a lesson an administrator is the absent teacher of (a cover decision names them). Planted on its own, once.
+DO $$
+DECLARE
+  s uuid;
+  y1 uuid;
+  y2 uuid;
+  subj uuid;
+  g1 uuid;
+  g2 uuid;
+  pupil uuid;
+  t1 uuid;
+  t2 uuid;
+  reason uuid;
+  adm uuid[] := '{}';
+  who uuid;
+  i int;
+  l uuid;
+  lt uuid;
+  lsub uuid;
+  lnone uuid;
+  lcov uuid;
+  ly2 uuid;
+  abs uuid;
+  duty uuid;
+  ac uuid;
+  d int := 1;
+BEGIN
+  IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-armar-school') THEN
+    RETURN;
+  END IF;
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ('RLS Armar', 'rls-armar-school', 'Europe/Stockholm', now()) RETURNING id INTO s;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s, 'Armar i år', current_date - 30, current_date + 300, true, now()) RETURNING id INTO y1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (s, 'Armar förra året', current_date - 400, current_date - 60, false, now()) RETURNING id INTO y2;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s, 'Armar ämne', 'RLSAR', now()) RETURNING id INTO subj;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (s, y1, 'AR7A', 7, now()) RETURNING id INTO g1;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (s, y2, 'AR6A', 6, now()) RETURNING id INTO g2;
+
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "hrRead", "authId", "isActive", "updatedAt") VALUES
+    (s, 'armar-rektor@example.invalid',   'Armar', 'Rektor',        'SCHOOL_ADMIN', 'REKTOR',        false, '00000000-0000-4000-8000-000000005001', true, now()),
+    (s, 'armar-full@example.invalid',     'Armar', 'Full',          'SCHOOL_ADMIN', 'FULL',          false, '00000000-0000-4000-8000-000000005002', true, now()),
+    (s, 'armar-schema@example.invalid',   'Armar', 'Schemaläggare', 'SCHOOL_ADMIN', 'SCHEMALAGGARE', false, '00000000-0000-4000-8000-000000005003', true, now()),
+    (s, 'armar-exp@example.invalid',      'Armar', 'Expedition',    'SCHOOL_ADMIN', 'EXPEDITION',    false, '00000000-0000-4000-8000-000000005004', true, now()),
+    (s, 'armar-schema-hr@example.invalid','Armar', 'Schema HR',     'SCHOOL_ADMIN', 'SCHEMALAGGARE', true,  '00000000-0000-4000-8000-000000005005', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "adminProfile", "authId", "isActive", "updatedAt")
+  VALUES (s, 'armar-lasare@example.invalid', 'Armar', 'Läsare', 'SCHOOL_ADMIN', 'LASARE', '00000000-0000-4000-8000-000000005006', true, now());
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'armar-t1@example.invalid', 'Armar', 'Lärare Ett', 'TEACHER', '00000000-0000-4000-8000-000000005010', true, now()) RETURNING id INTO t1;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'armar-t2@example.invalid', 'Armar', 'Lärare Två', 'TEACHER', '00000000-0000-4000-8000-000000005011', true, now()) RETURNING id INTO t2;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+  VALUES (s, 'armar-pupil@example.invalid', 'Armar', 'Elev', 'STUDENT', '00000000-0000-4000-8000-000000005020', true, g1, now()) RETURNING id INTO pupil;
+
+  SELECT array_agg(u.id ORDER BY u."authId") INTO adm FROM "Users" u
+   WHERE u."schoolId" = s AND u."authId" IN ('00000000-0000-4000-8000-000000005001', '00000000-0000-4000-8000-000000005002',
+         '00000000-0000-4000-8000-000000005003', '00000000-0000-4000-8000-000000005004', '00000000-0000-4000-8000-000000005005');
+  INSERT INTO "TeacherAbsenceReasons" ("schoolId", builtin) VALUES (s, 'SICK') RETURNING id INTO reason;
+  -- Teachers may report their own absence here (the teacher's absence arms ask the switch).
+  INSERT INTO "CoverSettings" ("schoolId", "teacherSelfReport", "updatedAt") VALUES (s, true, now());
+
+  -- The post, a period of it, working-time rules, an unavailability, a duty with its blocked time and an absence, for the first
+  -- teacher and for each of the five administrators; the second teacher has a post only.
+  FOREACH who IN ARRAY (adm || t1) LOOP
+    INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt") VALUES (s, who, y1, 50, now());
+    INSERT INTO "TeacherEmploymentPeriods" ("schoolId", "employmentId", "userId", "academicYearId", "validFrom", "employmentPercent", "updatedAt")
+    SELECT e."schoolId", e.id, e."userId", e."academicYearId", y."startDate" + 14, 40, now()
+      FROM "TeacherEmployments" e JOIN "AcademicYears" y ON y.id = e."academicYearId" WHERE e."schoolId" = s AND e."userId" = who;
+    INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "updatedAt") VALUES (s, who, now());
+    INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+    VALUES (s, 'TEACHER', who, 1, '08:00', '09:00', now());
+    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+    VALUES (s, who, y1, 'RASTVAKT', 'Armar rastvakt', 30, now()) RETURNING id INTO duty;
+    INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+    VALUES (s, 'TEACHER', who, 2, '12:00', '12:30', now()) RETURNING id INTO ac;
+    INSERT INTO "TeacherDutySlots" ("schoolId", "teacherDutyId", "availabilityConstraintId") VALUES (s, duty, ac);
+    INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "reasonId", "createdByUserId", "updatedAt")
+    VALUES (s, who, (current_date + 20) + time '00:00', (current_date + 21) + time '00:00', reason, who, now());
+  END LOOP;
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt") VALUES (s, t2, y1, 60, now());
+
+  -- Lessons: each person's own (LEAD) with a note and the pupil's attendance, then the four odd ones. Different days, so that
+  -- no two lessons of a group overlap.
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s, subj, g1, current_date + d, (current_date + d) + time '07:00', (current_date + d) + time '08:00', 'AR-T', now()) RETURNING id INTO lt;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, lt, t1, 'LEAD');
+  INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body, "writtenById") VALUES (s, lt, 'AR notis T', t1);
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt") VALUES (s, lt, pupil, 'PRESENT', now());
+  FOR i IN 1 .. 5 LOOP
+    d := d + 1;
+    INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+    VALUES (s, subj, g1, current_date + d, (current_date + d) + time '07:00', (current_date + d) + time '08:00', 'AR-' || i, now()) RETURNING id INTO l;
+    INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, l, adm[i], 'LEAD');
+    INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body, "writtenById") VALUES (s, l, 'AR notis ' || i, t1);
+    INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt") VALUES (s, l, pupil, 'PRESENT', now());
+  END LOOP;
+  -- The previous year's group: the second administrator stands on it, and has a post only for this year.
+  d := d + 1;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s, subj, g2, current_date + d, (current_date + d) + time '07:00', (current_date + d) + time '08:00', 'AR-Y2', now()) RETURNING id INTO ly2;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, ly2, adm[2], 'LEAD');
+  INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body, "writtenById") VALUES (s, ly2, 'AR notis Y2', t1);
+  -- The third administrator is only the substitute of one (written by the owner: nothing at the database forbids it).
+  d := d + 1;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s, subj, g1, current_date + d, (current_date + d) + time '07:00', (current_date + d) + time '08:00', 'AR-SUB', now()) RETURNING id INTO lsub;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, lsub, adm[3], 'SUBSTITUTE');
+  INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body, "writtenById") VALUES (s, lsub, 'AR notis SUB', t1);
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt") VALUES (s, lsub, pupil, 'PRESENT', now());
+  -- Nobody of the administrators stands on this one.
+  d := d + 1;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s, subj, g1, current_date + d, (current_date + d) + time '07:00', (current_date + d) + time '08:00', 'AR-NONE', now()) RETURNING id INTO lnone;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, lnone, t2, 'LEAD');
+  INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body, "writtenById") VALUES (s, lnone, 'AR notis NONE', t2);
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt") VALUES (s, lnone, pupil, 'PRESENT', now());
+  -- The fourth administrator is absent, and the cover decision on the lesson names them (their own row was taken off it).
+  d := d + 1;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", note, "updatedAt")
+  VALUES (s, subj, g1, current_date + d, (current_date + d) + time '07:00', (current_date + d) + time '08:00', 'AR-COV', now()) RETURNING id INTO lcov;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, lcov, t2, 'SUBSTITUTE');
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt", "updatedAt")
+  VALUES (s, adm[4], (current_date + d) + time '00:00', (current_date + d + 1) + time '00:00', now()) RETURNING id INTO abs;
+  INSERT INTO "TeacherAbsenceCovers" ("schoolId", "absenceId", "calendarLessonId", "absentTeacherId", decision, "substituteId", "removedTeachers")
+  VALUES (s, abs, lcov, adm[4], 'SUBSTITUTE', t2, jsonb_build_array(jsonb_build_object('teacherId', adm[4], 'role', 'LEAD')));
+  INSERT INTO "LessonSubstituteNotes" ("schoolId", "calendarLessonId", body, "writtenById") VALUES (s, lcov, 'AR notis COV', adm[4]);
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

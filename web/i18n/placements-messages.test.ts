@@ -25,12 +25,16 @@ const REASONS = [
   "OTHER_SCHOOL",
   "SCHOOL_DAY",
   "OVER_DEMAND",
+  // Salen blir valfri: a half of a pair names no room, and the post is in a parallel block.
+  "PAIR_ROOM",
+  "BLOCK",
 ] as const;
 const FIT_REASONS = [
   "LENGTH",
   "COUNT",
   "WEEKS",
   "PAIRS",
+  "PAIR_ROOM",
   "BLOCK",
   "POST",
   // Delade lektioner: the rules per teacher.
@@ -62,7 +66,32 @@ const PARAMS: Record<(typeof REASONS)[number], Record<string, string | number>> 
   OTHER_SCHOOL: { schools: "Östra skolan" },
   SCHOOL_DAY: {},
   OVER_DEMAND: {},
+  PAIR_ROOM: {},
+  BLOCK: {},
 };
+
+describe("a placed lesson that names no room", () => {
+  it("says in the room's place that the engine chooses it, and what the empty choice means", () => {
+    expect(svT("roomAny")).toBe("Motorn väljer sal");
+    expect(enT("roomAny")).toBe("The engine chooses a room");
+    expect(svT("roomHint")).toBe(
+      "Lämnas salen tom väljer schemat sal vid varje Generera, och salen kan bli en annan nästa gång. Vill du ha samma sal varje gång, ange den.",
+    );
+    expect(enT("roomHint")).toMatch(/^If the room is left empty, the timetable chooses a room at every Generate.*another one next time.*choose it\.$/);
+  });
+
+  it("reads as a line when the empty choice stands where the room's name would", () => {
+    const line = { day: "tis", start: "10:00", end: "11:00", room: svT("roomAny") };
+    expect(svT("row", { ...line, weeks: "ODD_WEEKS" })).toBe("tis 10:00–11:00, Motorn väljer sal, udda veckor");
+    expect(enT("row", { ...line, day: "tue", room: enT("roomAny"), weeks: "ALL_WEEKS" })).toBe("tue 10:00–11:00, The engine chooses a room");
+  });
+
+  it("no longer has the word that asked for a room before a row could be saved", () => {
+    expect(sv.requirements.placements).not.toHaveProperty("problemRoom");
+    expect(en.requirements.placements).not.toHaveProperty("problemRoom");
+    expect(sv.requirements.placements).not.toHaveProperty("roomPlaceholder");
+  });
+});
 
 describe("a placed lesson's line", () => {
   const line = { day: "tis", start: "10:00", end: "11:00", room: "Simhallen" };
@@ -129,9 +158,23 @@ describe("why a row cannot stand", () => {
   });
 
   it("is a sentence for every reason the engine's own refusal carries too", () => {
-    // PLACEMENT_CANNOT_STAND is selected on the same eleven codes.
+    // PLACEMENT_CANNOT_STAND is selected on the same thirteen codes.
     const engineReasons = Object.keys(sv.requirements.placements.verdict).filter((code) => code !== "UNKNOWN");
     expect(engineReasons.sort()).toEqual([...REASONS].sort());
+    for (const catalogue of [sv, en]) {
+      const sentence = catalogue.engineMessages.PLACEMENT_CANNOT_STAND;
+      for (const reason of REASONS) expect(sentence, reason).toContain(`${reason} {`);
+    }
+  });
+
+  it("says that a pair needs a room on both halves, and what to do about it, in both languages", () => {
+    expect(svT("verdict.PAIR_ROOM")).toMatch(/båda platserna måste ha en sal.*motorn kan inte välja sal åt en halv lektion.*låt motorn välja sal/);
+    expect(enT("verdict.PAIR_ROOM")).toMatch(/both places need a room.*cannot choose a room for half a lesson.*let the engine choose the room/);
+    // The same words say it before the save and after a refusal: the judge's sentence and the fit's are one.
+    expect(svT("problem.PAIR_ROOM")).toBe(svT("verdict.PAIR_ROOM"));
+    expect(enT("problem.PAIR_ROOM")).toBe(enT("verdict.PAIR_ROOM"));
+    expect(svT("verdict.BLOCK")).toMatch(/parallellt block.*Ta bort förläggningen/);
+    expect(enT("verdict.BLOCK")).toMatch(/parallel block.*Remove the placed lesson/);
   });
 });
 
@@ -293,13 +336,63 @@ describe("the engine's refusals about placed lessons", () => {
     );
   });
 
-  it.each([...REASONS, "SOMETHING_NEW"])("renders %s in both languages without a hole", (reason) => {
-    const values = { ...where, reason, other: "7B Matematik", schools: "Östra skolan", resource: "TEACHER" };
-    for (const engine of [svEngine, enEngine]) {
-      const sentence = engine("PLACEMENT_CANNOT_STAND", values);
-      expect(sentence).not.toMatch(/[{}]/);
-      expect(sentence.endsWith(".")).toBe(true);
+  it.each([...REASONS, "SOMETHING_NEW"])("renders %s in both languages without a hole, in a room and in none", (reason) => {
+    for (const room of [where.room, "ANY_ROOM"]) {
+      const values = { ...where, room, reason, other: "7B Matematik", schools: "Östra skolan", resource: "TEACHER" };
+      for (const engine of [svEngine, enEngine]) {
+        const sentence = engine("PLACEMENT_CANNOT_STAND", values);
+        expect(sentence).not.toMatch(/[{}]/);
+        expect(sentence.endsWith(".")).toBe(true);
+      }
     }
+  });
+
+  // Salen blir valfri: the gateway sends room = "ANY_ROOM", which is no room's name, for a förläggning that names none.
+  it("says that the timetable chooses the room, not a room called ANY_ROOM, for a placed lesson with none", () => {
+    const values = { ...where, room: "ANY_ROOM" };
+    expect(svEngine("PLACEMENT_CANNOT_STAND", { ...values, reason: "TEACHER", other: "7B Matematik" })).toBe(
+      "7A Slöjd, förlagd tisdag 10:00–11:00 i en sal som schemat väljer: läraren har redan 7B Matematik då.",
+    );
+    expect(enEngine("PLACEMENT_CANNOT_STAND", { ...values, reason: "LUNCH" })).toBe(
+      "7A Slöjd, placed on Tuesday 10:00–11:00 in a room the timetable chooses: it is on the class's lunch.",
+    );
+    // A room that is named is still said by name.
+    expect(svEngine("PLACEMENT_CANNOT_STAND", { ...where, reason: "LUNCH" })).toBe("7A Slöjd, förlagd tisdag 10:00–11:00 i Slöjdsalen: tiden ligger på klassens lunch.");
+  });
+
+  it("says the two reasons the judge gained: a half of a pair with no room, and a post in a parallel block", () => {
+    expect(svEngine("PLACEMENT_CANNOT_STAND", { ...where, reason: "PAIR_ROOM" })).toBe(
+      "7A Slöjd, förlagd tisdag 10:00–11:00 i Slöjdsalen: udda och jämna veckor av samma längd är en lektion på två platser, och båda platserna måste ha en sal.",
+    );
+    expect(svEngine("PLACEMENT_CANNOT_STAND", { ...where, reason: "BLOCK" })).toBe(
+      "7A Slöjd, förlagd tisdag 10:00–11:00 i Slöjdsalen: posten ligger i ett parallellt block, så en enskild förläggning kan inte ligga kvar.",
+    );
+    expect(enEngine("PLACEMENT_CANNOT_STAND", { ...where, reason: "PAIR_ROOM" })).toContain("both places need a room");
+    expect(enEngine("PLACEMENT_CANNOT_STAND", { ...where, reason: "BLOCK" })).toContain("parallel block");
+  });
+
+  it("ends the two refusals about the places of a week with the way out of rooms that count as places of their own", () => {
+    // A pinned room is a place of its own to the school's rule (at most one room a day for a class), so two equal rooms A and B
+    // are two places when both are named and one when the engine chooses.
+    const forced = { party: "class", places: 2, kind: "room", limit: 1, days: 3, open: 2 };
+    const kept = { party: "class", limit: 1, kind: "room" };
+    const tip = svEngine("PLACEMENT_PLACES_FORCED", forced);
+    expect(tip).toMatch(/Höj gränsen eller låt lektionerna använda andra salar\. Har veckan förlagda lektioner med sal kan det vara salarna som räknas som olika platser: lämna då salen tom \(”Motorn väljer sal”\) i dialogen Förlägg på timplanen, så väljer schemat sal\.$/);
+    expect(svEngine("PLACES_CANNOT_BE_KEPT", kept)).toMatch(/Har veckan förlagda lektioner med sal.*lämna då salen tom \(”Motorn väljer sal”\).*så väljer schemat sal\.$/);
+    expect(enEngine("PLACEMENT_PLACES_FORCED", forced)).toMatch(/Raise the limit or let the lessons use other rooms\. If the week has placed lessons with a room.*leave the room empty \(“The engine chooses a room”\).*the timetable chooses the room\.$/);
+    expect(enEngine("PLACES_CANNOT_BE_KEPT", kept)).toMatch(/If the week has placed lessons with a room.*leave the room empty/);
+    // The sentence's own words are kept: the tip is added to them.
+    expect(svEngine("PLACES_CANNOT_BE_KEPT", kept)).toMatch(/^Skolreglerna tillåter en klass högst 1 sorts sal per dag/);
+  });
+
+  it("has a sentence of its own for the engine that is older than the pinned lessons, in the run's two places, in both languages", () => {
+    for (const catalogue of [sv, en]) {
+      expect(catalogue.scheduleCandidates.jobErrors.ENGINE_LACKS_PINNED_LESSONS.trim()).not.toBe("");
+      expect(catalogue.scheduleCandidates.runErrors.ENGINE_LACKS_PINNED_LESSONS.trim()).not.toBe("");
+    }
+    expect(sv.scheduleCandidates.jobErrors.ENGINE_LACKS_PINNED_LESSONS).toBe(sv.scheduleCandidates.runErrors.ENGINE_LACKS_PINNED_LESSONS);
+    expect(sv.scheduleCandidates.jobErrors.ENGINE_LACKS_PINNED_LESSONS).toMatch(/förlagda lektioner utan sal.*Försök igen om några minuter\.$/);
+    expect(en.scheduleCandidates.jobErrors.ENGINE_LACKS_PINNED_LESSONS).toMatch(/placed lessons without a room.*Try again in a few minutes\.$/);
   });
 
   it("counts the placed lessons the pre-check refused", () => {

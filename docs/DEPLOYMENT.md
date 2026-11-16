@@ -253,6 +253,7 @@ Run it with:
 | `API_KEY` | the generated `AI_ENGINE_API_KEY` |
 | `ALLOWED_ORIGINS` | the API's origin, e.g. `https://api.yourschool.example` |
 | `SOLVER_MAX_TIME_SECONDS` | `60`: the solve budget in seconds (raise for very large schools). A solve that times out answers after this plus `SOLVER_PROBE_SECONDS` (default `20`). The old `SOLVER_TIMEOUT_SECONDS` is gone: nothing read it. |
+| `SOLVER_EXPLAIN_SHARP_SECONDS` | `10` (default, must be above 0): the share of the 15 s explanation cap that a LARGE refused week (50 lessons or more) gets for its first try, on the model without the objective, before the model with it is tried as the reserve. Raise it if the first try does not finish on this processor (section 23). |
 | `EXAM_SOLVER_MAX_TIME_SECONDS` | `20` (default): the budget of the exam planner (`POST /api/v1/plan-exams`, Provplanering), apart from the generator's. A short budget never refuses: a greedy plan is the floor and the answer from the first instant, so less time means fewer exams placed or a clumsier plan. A request can ask for less and never for more. The API waits 90 s for it. |
 
 The solver needs no database and no PII ever reaches it. Keep it on a private
@@ -5495,6 +5496,72 @@ owner held to the post, a school deleted in both orders its cascade can take). S
 administratör as an eleventh principal, and the *Admin areas* probe (`probe-admin-areas.ts`, `ar-i`) shows the codes arrive
 through the adapter as themselves.
 
+### 20.4 Part 3, the database: the teacher's own arms (20270216090000)
+
+The second database part, and the first that **asks for the mark**. 16 policies on ten tables get `app.current_user_teaches()` in
+OR with the teacher's test; nothing changes for a person who is not marked, and **nobody is marked in production** (one
+administrator, no mark), so a merge changes no answer there. Merge this part **before** part 2 (the gateway): the note to the
+substitute is a slice across both, the database's arm is right without the route, and the route is safe without the arm (the
+database refuses).
+
+- **The arms** (`TO authenticated` unless said; `authenticated` is a role the API's `app_authenticated` is a member of, so these
+  apply through the API and through PostgREST's door alike): `AttendanceRecords` `attendance_teacher_insert`/`_update`,
+  `AvailabilityConstraints` `availability_teacher_modify`, `TeacherAbsences` `teacher_absences_own_insert`/`_select`/`_update`,
+  `TeacherAbsenceCovers` `teacher_absence_covers_own_select`, `TeacherDuties` `teacher_duties_teacher_own_select`,
+  `TeacherEmployments`/`TeacherEmploymentPeriods`/`TeacherEmploymentLogs` `teacher_*_teacher_own_select`, `TeacherWorkRules`
+  `teacher_work_rules_teacher_own`, and, `TO app_authenticated`, the four `lesson_substitute_notes_teacher_*` arms of
+  `LessonSubstituteNotes`. The form is one OR inside the arm's own teacher test, in the arm's own style (an initplan, no new
+  permissive arm, so no new `BitmapOr` on a hot table); RLS section 505b holds each to "main's arm with the mark added" by md5.
+- **What it adds.** Through PostgREST an administrator has no arm on a person's own post, period, log, duty, absence or cover
+  decision; a marked one reads exactly their own, which is what the web pages of "Min undervisning" read. Through the API the
+  answer is unchanged for every profile that writes DRIFT and PLANERING; the one that does not write PLANERING (the expedition)
+  gains the teacher's right to write their own unavailability and working-time rules, which is the arm's purpose. The one place
+  the teacher's arm gives **more** than the administrator's is the note to the substitute (an administrator has none, section
+  232): a marked administrator who stands on a lesson (a `CalendarLessonTeachers` row that is not the substitute's, or the absent
+  teacher of a cover decision on it) **and has a post for the läsår of the lesson's student group** reads, writes, changes and
+  removes it; never as the lesson's substitute (beslut 4). `app.lesson_teacher_role` carries that rule, so the gateway can ask the
+  same function the database asks.
+- **Five teacher arms stay**, because the administrator's arm for the same table, verb and role admits every row they admit
+  (`CancellationBatchCredits`, `PublicationPendingRemovals`, `PublishedLessons`, `TeacherAbsenceReasons` `staff_select`,
+  `TeacherDutySlots` `teacher_duty_slots_teacher_own_select`), and so do seven more policies (lektionsloggens three, where the
+  administrator's DRIFT arm admits every lesson, and `StudentEnrollments`, `SupervisionCovers` ×2 and `SupervisionShifts`, where
+  the administrator's select arm admits every row) and twelve functions that name TEACHER as an enum or a code, or narrow a
+  teacher's own absence (which every markable profile may already edit, so narrowing a marked one would take a right away).
+  Section 494 lists each as `STAYS` with the reason beside it, and a new arm that names TEACHER without asking for the mark
+  fails there.
+- **Three functions change and one is new**, read from the catalogue and edited at named places (each with the number of
+  occurrences it expects; if a body is not as expected the migration stops with nothing changed): `app.lesson_teacher_role`
+  (which asks the new `app.my_post_covers_the_year_of_group(group)`, and only of a marked administrator: a subquery in the
+  function's WHERE is initialised at every call, a teacher's too, and cost +9 % on a read of 151 notes; the call costs +1 %; the
+  new function is called by that one definer function alone and has no grant at all),
+  `app.availability_constraints_keep_duty_blocks` (a marked administrator who does not write PLANERING is held to the teacher's
+  `TD403` on an unavailability a duty blocks) and `app.cover_policy_arm_is_narrow` (it takes the one OR that is the mark as the
+  teacher's test it extends, and refuses every other, as before; the migration re-runs 20261012130000's own guard before it
+  commits, and RLS sections 28g, 112, 128 and 505e hold the rule).
+- **Locks.** `ALTER POLICY` takes ACCESS EXCLUSIVE on its table (measured). The ten tables are locked first, `NOWAIT` and together,
+  in one fixed (alphabetical) order, in a loop that retries every 50 ms for 30 s and holds nothing between tries. If they are not
+  free at once in 30 s the migration stops with nothing changed and says so: Prisma then marks it failed and refuses every later
+  `migrate deploy` (P3009) until `prisma migrate resolve --rolled-back 20270216090000_en_undervisande_administrator_far_lararens_egna_armar`
+  has been run, then deploy again.
+- **Deploy order:** the migration, then the merge. The API before this release is untouched by it (nothing is marked), and the API
+  after it needs nothing of it. **Checks:** `teaches-pr3-data/prod-fore.sql` (61 checks) before and `prod-efter.sql` (69) directly
+  after, in the notes folder of the round's coordinator (`side-session-notes/local_487a7ffc-d4e9-44ea-9a93-ae6556fb4370/`, outside
+  the repository, as part 1's are); they hold the `md5(prosrc)` of the three functions (and the new one's) and the md5 of the USING and WITH CHECK of
+  the 16 policies before and after, that no other function or policy changed, that nobody is marked, the grants and MAINTAIN, and the
+  migration rows. The same numbers are in the pull request.
+- **Rolling back:** nothing reads the arms' answers for a person who is not marked, so they can stay. To remove them, run the
+  edit the other way (each policy's text without the OR, and the three functions from their earlier migrations:
+  20261203090000 for `app.lesson_teacher_role`, 20261022090000 for the duty guard, 20261012130000 for the leak rule; take each
+  one's `CREATE FUNCTION` text, not a copy of this release's).
+- **Tests:** RLS sections 505-509 (the arms are main's with the mark added; the five that stay; the own rows through both roles
+  for each profile, marked and not; the note, its läsår and risk 3; the guards and what stays refused: the pool, klasslärare, a
+  cover request, a class timetable change; every table through both roles equal but for the listed few) and 505o on the owner's
+  side (every arm over every row of every school admits only the person's own); sections 494 (the list with a reason for each
+  `STAYS`, and exactly what may ask for the mark), 493g and 116 updated; `scripts/test/teaches-arms-snapshot.sh` (a snapshot of
+  every table x verb x principal x role on main's schema and the branch's, whose difference is only the marked principals on the
+  converted tables); the bench `scripts/bench/teaches-arms.ts`; and `probe-admin-areas.ts` `ar-j` now waits up to 30 s for the
+  second connection to be seen blocked.
+
 ### 20.5 Part 2, the gateway: it knows the mark (no migration)
 
 The gateway reads `Users.teaches` and uses it; the web and the apps do not yet (parts 5 and 6). **No migration, no change to the
@@ -5503,9 +5570,10 @@ none marked), and the mark can be set from now on only by `PATCH /api/v1/users/:
 administrator, on an administrator who has a post.
 
 - **Deploy order.** Part 1's migration is in production already, which this part needs (the API now selects `Users.teaches` on every
-  request: a database without the column answers P2022 for every one). Part 3's arms (the database half of the note to the
-  substitute) is independent of this part and safe in either order, but **merge part 3 first**: the note's route and the lesson
-  view's flags are the gateway's half of it, and until the arms exist the database refuses the note, which is what it does today.
+  request: a database without the column answers P2022 for every one). Part 3's arms (20.4, the database half of the note to the
+  substitute) are in production too (20270216090000), as this part needs for the note's route and the lesson view's flags, which
+  are the gateway's half of it: without the arms the database refuses the note, and `app.lesson_teacher_role` answers NULL for an
+  administrator, so the view would be the administrator's as before. Nothing else is needed before the merge.
 - **Everything is additive.** Older web and apps ignore the new fields: `teaches` on `GET /users` (what `usePeople()` reads),
   `GET /users/administrators` and `PATCH /users/:id`'s answer, `teachingAdministrators` on `GET /users/counts`, `fromTeaches` and
   `toTeaches` on `GET /users/:id/role-changes`. `POST /users` does not take `teaches` (the validation pipe refuses it: create, give a
@@ -5547,9 +5615,10 @@ own lesson. The engine holds it at that weekday and start, in that room when
 one is named and in a room it chooses when none is, and it comes back among the
 post's lessons in the answer.
 
-**Nothing sends the key yet.** This release is the engine's half. No
-migration, no setting, and no school's week changes: a request without the key
+**Nothing sent the key in this release.** This release was the engine's half. No
+migration, no setting, and no school's week changed: a request without the key
 builds the model it built and is answered with the bytes it was answered with.
+The release that sends it is §22.
 
 ### 21.1 Deploy order
 
@@ -5561,8 +5630,8 @@ one.
    schema named `PinnedLesson` and names `pinnedLessons` under
    `AnonymousRequirement`, and that no schema has been renamed (a name holding
    `__` is one that was).
-2. A later release makes the gateway send the key. That release is refused
-   by an engine without this one, and says so in its own section.
+2. A later release makes the gateway send the key (§22). That release is
+   refused by an engine without this one, and says so in its own section.
 
 ### 21.2 Rolling back
 
@@ -5614,14 +5683,22 @@ A pinned lesson never gives way, in Bästa möjliga schema either.
   and two of them on one hour of a teacher's: the model with the objective
   named every rule of the week, 668 of 668, and the one without named the two
   pinned lessons, in 9 s on a loaded machine. A week without a pinned lesson
-  is explained as before.
+  is explained as section 23 says.
 - **When the proof names nothing** inside its fifteen seconds, the week is
   solved once more with every pinned lesson free to move, as it is for the
   förlagda locks, and a timetable found then names them all.
 - **The start step.** A lesson pinned at 08:05 takes a school that is searched
   every thirty minutes down to every five, as a lesson locked at 08:05 does.
 - **A pinned room is a room class of its own**, as a locked lesson's room is,
-  and costs the model what that costs.
+  and costs the model what that costs. That holds for the school's places rule
+  too (`placementRules.places`, for example at most one room a day for a
+  class), which counts room groups, where two equal classrooms are one: two
+  förläggningar of one class in two equal rooms A and B count as two places,
+  and under a HARD limit of one place the week is refused
+  (`PLACEMENT_PLACES_FORCED` before the model for locks, `PLACES_CANNOT_BE_KEPT`
+  by the proof) although the same timetable with the rooms not named was
+  possible (55 of 1,766 worlds with a HARD limit in the third review of #317,
+  all solved with the rooms left out). §22.4 says how that reaches the school.
 - **What pinned lessons cost the search.** Measured in paired runs under the
   same load, as the time to a first timetable of the satisfaction model. On
   the högstadium benchmark (423 lessons, two workers): 7.1 s without a pinned
@@ -5641,7 +5718,202 @@ A pinned lesson never gives way, in Bästa möjliga schema either.
   with 200 lessons, 34.4 s and 35.6 s with 20). Like for like, with a room
   named on every pinned lesson, the locks build a model 3.5 to 12 times as
   large (20 lessons: 31,822 variables as locks, 9,047 as pinned lessons; 200
+  lessons: 133,036 and 10,739). The 2,000-pupil benchmark is measured with
+  the release that sends the field: §22.4.
+
+## 22. A förläggning with no room: the engine chooses it ("Förläggning utan sal")
+
+A förläggning (`TeachingRequirementPlacements`, one lesson of a post that the school lays by hand before
+Generera) has always had to name its room, and Generera sent it to the engine as a locked lesson (§ on *Förlagda
+poster*). Since §21 the engine can also hold a lesson of a post at a given time and choose the room as for any lesson
+it places. On 2026-11-13 the user decided that the room may be left empty: **a row with no room is sent as a pinned
+lesson, and the engine chooses its room at every Generera**. A row with a room is sent as before, as a lock, byte for
+byte. The dialog on the timplan has "Motorn väljer sal" as its empty choice, and the week of förläggningar
+(`/admin/placements`) shows it on the card.
+
+Migration `20270213090000_forlaggning_utan_sal_motorn_valjer_salen`: `"TeachingRequirementPlacements"."roomId"` becomes
+nullable. Nothing else of the table moves: the key to Rooms (MATCH SIMPLE, NO ACTION) tests nothing for a NULL, and the
+CHECKs, the two fit functions (neither reads the room), the policies and the grants are the same, which the pull
+request shows by md5 of the catalogue before and after (`prod-fore.sql` and `prod-efter.sql`, 30 read-only checks each) and
+RLS sections 495 to 499 hold.
+
+### 22.1 Deploy order
+
+**The migration first, then the merge.** The lock is taken `NOWAIT` in a loop with a 30 s deadline (Generera reads
+the table in a long transaction): it never waits while it holds a lock, and after 30 s it stops with nothing changed
+(`prisma migrate resolve --rolled-back 20270213090000_forlaggning_utan_sal_motorn_valjer_salen`, then deploy again).
+
+1. Run `prod-fore.sql`, then `prisma migrate deploy` from a tree that has the migration, then `prod-efter.sql`: the
+   checks named `..._record_equal_before_and_after` must give the same figure twice, and `roomId` must read nullable.
+   The API that is live meanwhile never names a NULL and every row there has a room, so it is undisturbed.
+2. Merge. The engine and the API deploy together, as always. The engine has had `pinnedLessons` since §21: check that
+   `https://<solver-host>/openapi.json` has a schema named `PinnedLesson`. A gateway that sends the key to an engine
+   without it is answered 422, and the run is refused with `ENGINE_LACKS_PINNED_LESSONS` (503, "try again in a few
+   minutes") and nothing is written: the week is NOT sent again without the key, because the lesson the school pinned
+   would then be laid anywhere without a word.
+3. After: a school with no förläggning without a room sends the payload it always sent (no `pinnedLessons` anywhere).
+
+### 22.2 Rolling back
+
+- **The previous API cannot be brought back while a row with no room exists.** It reads the room's name on every row
+  it returns (`room: { select: { name: true } }`) and stops on a row with none. The column itself does not disturb it:
+  it never writes a NULL. So before the API is rolled back past this release, check
+  `SELECT count(*) FROM "TeachingRequirementPlacements" WHERE "roomId" IS NULL` and give each such row a room (the
+  school, in the dialog) or remove it; the rows come back to the new API unchanged.
+- The migration is rolled back with `ALTER TABLE "TeachingRequirementPlacements" ALTER COLUMN "roomId" SET NOT NULL`,
+  which fails while a row with no room exists, for the same reason; then `prisma migrate resolve --rolled-back`.
+- The engine must not be rolled back past §21 while this gateway is live (`ENGINE_LACKS_PINNED_LESSONS`).
+
+### 22.3 What the gateway does with a row with no room
+
+- **It is no lock.** It is no fixed lesson, it takes nothing off the post's demand (the post keeps the lesson), it adds
+  no weekday to the post's `lockedDays` or the teacher's `lockedWeekdays` (the engine would count the lesson twice),
+  and `placements` does not name it. It is a place in the post's `pinnedLessons`: one place per lesson, in the order
+  `lessonTeacherIds` has (longest first), `null` where the engine places the lesson, `endTime` the start plus the
+  length of the lesson at that place. On a post with periods the pin holds in the post's periods and in no others.
+  A post in a parallel block is never sent a pin (the engine takes a pin in a block for every member or none, and
+  nothing here builds that): such a row is refused by name, `BLOCK`.
+- **A pair needs its rooms.** An odd and an even row of one length on an every-week post are one lesson in two
+  places, and the engine cannot hold half a lesson of an every-week post, so a pair is sent as two locks, and a lock
+  has a room. A pair with no room on a half is refused at the save (409 `REQUIREMENT_PLACEMENTS_DO_NOT_FIT`, rule
+  `PAIR_ROOM`) and by the judge for a row another writer stored (`PAIR_ROOM`). The database does not hold the rule:
+  its fit function is left as it was (RLS section 496 says so), so a writer that does not go through the gateway can
+  store such a pair, and Generera then refuses the week with that row named.
+- **Judged without a room.** No room clash, no room's unavailability and no other school's hold on a room; the
+  teacher, class, pupils, frame time, lunch and year rules and the other schools' hold on the teacher as before.
+  The judge is milder than the engine here (decision 12, §21.3): what the engine refuses and the gateway let
+  through is a refusal that names the lesson and the rule, not an error.
+- **The lesson that comes back** is known by post, weekday, start, length and, on a post that shares its lessons,
+  teacher (the answer has no lesson index). It is written locked, generated and marked `fromPlacement`, **in the room
+  the engine chose**, as a lock's lesson is. Versions, a discarded draft and an apply of a schemaförslag put it back
+  as a förlagd lesson (the flag travels with the row), and a change of its room by hand is refused,
+  `LESSON_IS_PLACED`. The engine may choose another room at the next Generera: that is the meaning of an empty room,
+  and whoever wants the same room every time names it.
+- **Stale and the basis.** A row changed, given a room or taken away while the engine solved is `GENERATE_STALE`
+  (the key reads the room as it is, empty too). The basis a schemaförslag is solved from hashes each pin with the
+  lesson its place belongs to (its length and teacher), so a pin on Bo's lesson and one on the lead's are two
+  different weeks.
+- **An answer without the pinned lesson** is an answer to another request: 502, nothing written.
+
+### 22.4 Operations
+
+- **What a school sees when Generera refuses.** The engine's lines (§21.4) reach the school with their values named
+  back: `PLACED_LESSON_OUTSIDE_THE_WEEK`, `PLACED_LESSON_OUTSIDE_FRAME`, `PLACED_LESSON_MARGINS_PAST_THE_DAY`,
+  `PLACED_LESSON_IN_A_RAST`, `PLACED_LESSON_ROOM_NOT_ALLOWED` and `PLACED_LESSONS_OF_BLOCK_DIFFER` before the model,
+  and `PLACED_LESSON_IN_THE_WAY_ANY_ROOM` (a pin with no room) or `PLACED_LESSON_IN_THE_WAY` (one with) from the
+  proof, each with the post by the school's own name, the weekday and the time (and the room when one is named). The
+  gateway's own pre-flight (`PLACEMENT_CANNOT_STAND`) names a row with no room with `room = ANY_ROOM`, which the page
+  words as "a room the timetable chooses".
+- **The places rule (§21.4).** A school with a HARD limit on places that pins whole weeks with the rooms named can be
+  refused where the same timetable with the rooms not named was possible. The sentence the school reads for
+  `PLACEMENT_PLACES_FORCED` and `PLACES_CANNOT_BE_KEPT` now ends with the way out, and it is this release's: leave the
+  room empty ("Motorn väljer sal") and the engine chooses it, which counts as one group where the rooms named counted as
+  many. A förläggning with no room is never one of the groups.
+- **What it costs the search.** Measured in paired, simultaneous runs (the three variants start at once, so they share
+  the machine's load) of the first timetable of the satisfaction model, on the 500-pupil benchmark (720 lessons, two
+  workers each, the lessons taken from a valid timetable of the same week, three rounds, a load of 24 to 52 on a
+  machine shared with other sessions). With 144 lessons laid: **18.8 s** (median of 17.9 to 62.6) as pinned lessons
+  with no room, which is what this release sends, against 54.9 s (46.2 to 141.6) with nothing laid and **265.6 s**
+  (216.9 to 329.2) with the same 144 lessons as locks with their rooms, the way before this release; the models had
+  10,845, 10,701 and 260,598 variables. With 72 lessons laid: 38.4 s, 121.4 s and 364.9 s, in 10,773, 10,701 and 156,287
+  variables. In every round the pin was the quickest of the three (0.31 to 0.44 of the week with nothing laid), and a
+  lock with its room 5 to 21 times the pin. So a lesson laid with the room left to the engine makes the first timetable
+  no dearer than the same week with nothing laid (in these worlds it is cheaper, because the laid lessons come from a
+  timetable that exists and hand the search a part of it), and the same lesson as a lock with its room dearer by a
+  factor of 2.3 to 6.8 against nothing laid: the room's class of its own, which a lock builds for each lesson (§21.4). This is
+  more than the 1.2 times on the smaller weeks of §21.4, which were pinned from timetables of 250 pupils and a
+  högstadium; no run here was longer than 7 minutes, and the figures move with the load (a round's three variants
+  share it, two rounds apart they do not).
+- **The 2,000-pupil benchmark has no first timetable to take lessons from.** It is a TIMEOUT in `docs/verification-baseline.md`
+  (570 s) and was one here: 603 s at a load of 20 to 50, and the 1,000-pupil school gave none in 300 s (load 40 to 50),
+  so the measurement that was meant for it was made on the largest size that gave a timetable. A school of 2,000 that
+  lays lessons with the room left to the engine is therefore no further from a first timetable than with none laid, and
+  one that lays them as locks with their rooms is further, as before. Nothing here moves the Generera budget.
+- **Counting.** `SELECT count(*) FILTER (WHERE "roomId" IS NULL) AS pinned, count(*) AS all_rows FROM
+  "TeachingRequirementPlacements"` says how many schools' rows the engine chooses the room for.
+
   lessons: 133,036 and 10,739). Not measured on the 2,000-pupil benchmark,
   where a first timetable takes minutes and a factor of two to three is felt
   in the budget: that is measured with the change that first sends the
   field.
+
+## 23. The explanation of a refused week ("Förklaringen av en vägran")
+
+A week the engine has proved impossible is explained by a second, single-threaded
+solve with assumptions, capped at 15 s (`EXPLAIN_CAP_SECONDS`), whose sufficient
+assumption set names the rules in the way. Which model that solve runs on decides
+what the school reads, and there is no contract change: the same lines, the same
+codes, fewer of them.
+
+- **A week of 50 lessons or more** (`EXPLAIN_SHARP_FROM_LESSONS`) is explained on the
+  model WITHOUT the objective first, on 10 s of the cap (`SOLVER_EXPLAIN_SHARP_SECONDS`,
+  default 10).
+  The model with the objective answers with every assumption it registered (250 of
+  250 on the engine's own refusals); without it the core is the rule that is the
+  matter. Measured on the benchmark schools: 25 lines for a class of 36 lessons, 45
+  for 72, 105 for 252 and 141 for 360 with the objective, against 1 to 5 lines at
+  every size without it. On the högstadium benchmark (`hogstadium.py
+  --teacher-day-rules --infeasible-days`): 273 lines against 1, the whole solve in
+  5.5 s against 2.0 s. A teacher away four days from a school of 250 pupils, which came back with
+  no cause at all (UNKNOWN at the cap), is named by her four days in 5.5 to 7.4 s.
+- **The model with the objective is the reserve**, on what is left of the cap, when
+  the first try proves nothing in its 10 s or proves the week without resting on any
+  assumption (an empty core: 27 of the 250). A room that is too small is such a
+  cause, and its literal cannot carry it, since the room's size is also the lesson's
+  own room domain; the objective's "all" is how the school has always been told.
+- **A week under 50 lessons is explained as it always was**, with the objective
+  (and on a school with the walk, 5 s with it and then without). The core without
+  the objective is ONE sufficient set: on the suite's small weeks 17 of 202 sharp
+  cores left a second, independent cause unnamed that the full core names, and the
+  tests keep naming them. A small week's full core is complete and readable (66
+  lines at most).
+- **A week with a pinned lesson**, of any size, is explained as section 21 says:
+  without the objective on the whole cap, and no reserve.
+- **What a large week with several causes costs.** It names ONE of them. The
+  core without the objective is one sufficient set, so the school fixes the named
+  cause and is told the next on the next run (1.5 to 6 s a run on the benchmark
+  schools), in place of all of them among 100 to 270 lines. Measured by the
+  review of this change on weeks of two or three independent causes, built by
+  adding rules only: on 32 of 32 random weeks (180 and 252 lessons, two or three
+  teachers away the whole week) exactly one cause is named, and on the högstadium
+  week none of eight combinations (the post, the daily maximum, a teacher away)
+  names every cause. The old full core named them all but did not mark them: on
+  the 250-pupil school 5 of 25 availability lines were the cause. A loop that
+  lifts the core and asks again was tried and left out of this change (one solve
+  per cause, 2.6 s each on the högstadium week); it is a task of its own.
+  The measured verdicts (the daily maximum, the walk and the blocks) run only when
+  their line is IN the core, which on a large week is one sufficient set and not
+  all of them: a large week whose core names something else is not measured for
+  them, and the next run measures them if they are what is left. On a small week
+  and in the reserve the core is the full one and they run as they always did.
+- **Time, and what the window assumes.** A large refusal waits for the model
+  without the objective: 2.6 s in the median and 7.4 s at most on the large
+  weeks measured (0.14 s with the objective), under load 6 to 14, and 1.0 to 2.7
+  times as long at 23 to 29. The cap is the same: the two explaining solves never
+  add up to more than 15 s. The cores themselves were identical between two runs
+  of the same tree.
+  - **The production processor is not measured.** Nothing here says how long the
+    first try takes on it; the numbers are from a shared development machine.
+  - **The 10 s window is narrow on its own benchmark week.** The högstadium week
+    with the walk and a daily maximum of four took 7.0 to 7.9 s on a lightly loaded
+    machine, and did not finish inside 10 s in three of three paired runs at a load
+    above about 10 (UNKNOWN at 9.1 to 10.0 s). The answer is still right, since
+    the reserve then proves the week in 0.1 to 0.3 s, but a school with the walk
+    and a daily maximum waits 5 to 11 s longer than before (22.2 s against 11.7 s in
+    one whole solve; the longest explanation measured was 32.8 s against 22.8 s,
+    most of it the verdicts' own probes on `SOLVER_PROBE_SECONDS`).
+  - **At high load a large week falls back to the full core.** On a shared machine
+    at load 68 to 77 the högstadium week with a post that cannot be held came back
+    with the reserve's 273 and 267 lines, the first try UNKNOWN after 8.7 s and
+    7.0 s, and the whole solve took 18.1 s and 16.9 s against 7.5 s and 9.0 s
+    before. At load 12 it is 1 line in 3.6 s. Never wrong, but the gain is gone
+    and the wait is longer.
+  - **Moving the window without a release.** Set `SOLVER_EXPLAIN_SHARP_SECONDS` on
+    the engine service (a Railway variable, like `SOLVER_PROBE_SECONDS`; the
+    service restarts, no code is deployed). The value is the first try's share of
+    the 15 s cap: raise it on a slower processor (the reserve gets the rest, so
+    leave it at least a second), lower it to give the reserve more. It is
+    logged at start-up (`service_starting`).
+- **Where to look.** `benchmarks/hogstadium.py --teacher-day-rules --infeasible-days`
+  prints the conflict codes of the högstadium week. The measurement and its data are
+  in the session notes (`forklaring-utan-mal.md`).

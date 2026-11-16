@@ -31935,7 +31935,8 @@
           },
           "roomId": {
             "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "nullable": true
           },
           "recurrence": {
             "type": "string",
@@ -31955,7 +31956,6 @@
           "dayOfWeek",
           "startTime",
           "minutes",
-          "roomId",
           "recurrence"
         ]
       },

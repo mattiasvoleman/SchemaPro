@@ -87,6 +87,44 @@ describe('placementFitOf', () => {
   });
 });
 
+describe('placementFitOf: a pair names its rooms (PAIR_ROOM, 20270213090000)', () => {
+  const at = (minutes: number, recurrence: PlacementShape['recurrence'], roomId: string | null): PlacementShape => ({ minutes, recurrence, teacherId: null, roomId });
+
+  it('lets a pair with a room on both halves fit, and a lesson of every week with none', () => {
+    expect(placementFitOf(post(), [at(60, 'ODD_WEEKS', 'r1'), at(60, 'EVEN_WEEKS', 'r2')])).toBeNull();
+    expect(placementFitOf(post(), [at(60, 'ALL_WEEKS', null), at(60, 'ALL_WEEKS', null), at(60, 'ALL_WEEKS', 'r1')])).toBeNull();
+  });
+
+  it('refuses a pair with one half, or both halves, with no room', () => {
+    expect(placementFitOf(post(), [at(60, 'ODD_WEEKS', 'r1'), at(60, 'EVEN_WEEKS', null)])).toBe('PAIR_ROOM');
+    expect(placementFitOf(post(), [at(60, 'ODD_WEEKS', null), at(60, 'EVEN_WEEKS', 'r1')])).toBe('PAIR_ROOM');
+    expect(placementFitOf(post(), [at(60, 'ODD_WEEKS', null), at(60, 'EVEN_WEEKS', null)])).toBe('PAIR_ROOM');
+    // With a lesson of every week beside it, which is no excuse.
+    expect(placementFitOf(post(), [at(60, 'ALL_WEEKS', null), at(60, 'ODD_WEEKS', null), at(60, 'EVEN_WEEKS', 'r1')])).toBe('PAIR_ROOM');
+  });
+
+  it('says the post’s own rules first: a half with no partner is PAIRS, whatever its room', () => {
+    expect(placementFitOf(post(), [at(60, 'ODD_WEEKS', null)])).toBe('PAIRS');
+    expect(placementFitOf(post(), [at(45, 'ODD_WEEKS', null), at(45, 'EVEN_WEEKS', null)])).toBe('LENGTH');
+    expect(placementFitOf(post({ blockId: 'b' }), [at(60, 'ODD_WEEKS', null), at(60, 'EVEN_WEEKS', null)])).toBe('BLOCK');
+    expect(placementFitOf(post({ lessonsPerWeek: 1 }), [at(60, 'ODD_WEEKS', null), at(60, 'EVEN_WEEKS', null), at(60, 'ODD_WEEKS', 'r1'), at(60, 'EVEN_WEEKS', 'r1')])).toBe('COUNT');
+  });
+
+  it('says it before the rules per teacher', () => {
+    const rows = [{ ...at(60, 'ODD_WEEKS', null), teacherId: null }, { ...at(60, 'EVEN_WEEKS', null), teacherId: null }];
+    expect(placementFitOf(shared(), rows)).toBe('PAIR_ROOM');
+  });
+
+  it('asks nothing of a post of odd or even weeks, whose rows are all its own weeks (a pin like any other)', () => {
+    expect(placementFitOf(post({ recurrence: 'ODD_WEEKS' }), [at(60, 'ODD_WEEKS', null), at(60, 'ODD_WEEKS', null)])).toBeNull();
+  });
+
+  it('asks nothing of a row that has no room to say: a caller with none (a change of the post’s teachers) is not held to it', () => {
+    const rows: PlacementShape[] = [{ minutes: 60, recurrence: 'ODD_WEEKS' }, { minutes: 60, recurrence: 'EVEN_WEEKS' }];
+    expect(placementFitOf(post(), rows)).toBeNull();
+  });
+});
+
 describe('placedLessonsOf', () => {
   it('reads each row of an alternating post as a lesson of its weeks, and nothing of the others', () => {
     expect(placedLessonsOf({ recurrence: 'EVEN_WEEKS' }, [row(60, 'EVEN_WEEKS'), row(60, 'ODD_WEEKS')])).toEqual([60]);

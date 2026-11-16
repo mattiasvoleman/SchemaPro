@@ -3,8 +3,9 @@ import { ApiError, api } from "@/lib/api";
 
 /*
  * Förlagda poster, read and written: the lessons a school has placed on a
- * timplanspost by hand — a day, a start, a room and the weeks it runs — before
- * Generera sends the posts to the engine. The gateway's routes are
+ * timplanspost by hand — a day, a start, a room (or none: the engine chooses it
+ * at every Generera) and the weeks it runs — before Generera sends the posts to
+ * the engine. The gateway's routes are
  * /teaching-requirements/placements (the year, for the mark on the timplan)
  * and /teaching-requirements/:id/placements (one post: its rows and each
  * row's verdict; PUT replaces them).
@@ -30,7 +31,8 @@ export interface PlacementInput {
   startTime: string;
   /** One of the post's lengths. */
   minutes: number;
-  roomId: string;
+  /** Null or left out: the engine chooses the room at every Generera. A pair of odd and even weeks needs a room on both halves. */
+  roomId?: string | null;
   recurrence: PlacementRecurrence;
   /**
    * Delade lektioner: whose lesson it is. Required (not null) on every row of
@@ -48,8 +50,9 @@ export interface RequirementPlacement {
   startTime: string;
   endTime: string;
   minutes: number;
-  roomId: string;
-  roomName: string;
+  /** Null: the school left the room to the engine. */
+  roomId: string | null;
+  roomName: string | null;
   recurrence: PlacementRecurrence;
   /** Null on a post that shares nothing, and on a shared post's lesson whose teacher was deleted since. */
   teacherId: string | null;
@@ -67,7 +70,10 @@ export type PlacementRefusalReason =
   | "GRADE_RULE"
   | "OTHER_SCHOOL"
   | "SCHOOL_DAY"
-  | "OVER_DEMAND";
+  | "OVER_DEMAND"
+  // A half of a pair names no room; the post is in a parallel block (only a row another writer stored reaches the judge with them).
+  | "PAIR_ROOM"
+  | "BLOCK";
 
 /** The judge's verdict on the row at `index`; `reason` and `params` only when it does not hold. */
 export interface PlacementVerdict {
@@ -114,7 +120,7 @@ export function placementsByRequirement(
  *   - FIT: the rows do not fit the post (REQUIREMENT_PLACEMENTS_DO_NOT_FIT),
  *     whether it was the PUT of rows that did not fit it or a change of the
  *     post the rows no longer fit. `reason` is LENGTH, COUNT, WEEKS, PAIRS,
- *     BLOCK or POST, or one of Delade lektioner's: NO_TEACHER, TEACHER,
+ *     PAIR_ROOM (a half of a pair names no room), BLOCK or POST, or one of Delade lektioner's: NO_TEACHER, TEACHER,
  *     TEACHER_LENGTH, TEACHER_PAIRS, TEACHER_COUNT. `params` is what came with
  *     it: from the PUT a per-teacher reason may carry `index`, the row's place
  *     in the list that was sent; from a change of the post's teacher or
