@@ -65,9 +65,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
 const get = api.get as unknown as Mock;
 const post = marksPost as unknown as Mock;
 // Who is signed in: the queue and the list kept on the device are theirs (lib/crisis-queue.ts).
-const who = vi.hoisted(() => ({ id: "t-me" }));
+const who = vi.hoisted(() => ({ id: "t-me", role: "TEACHER" as "TEACHER" | "SCHOOL_ADMIN" }));
 vi.mock("@/components/profile-context", () => ({
-  useProfile: () => ({ profile: { id: who.id, role: "TEACHER" }, school: { timezone: "Europe/Stockholm" } }),
+  useProfile: () => ({ profile: { id: who.id, role: who.role }, school: { timezone: "Europe/Stockholm" } }),
 }));
 // The socket is its own test (lib/use-crisis-realtime.test.tsx); here the page polls.
 vi.mock("@/lib/use-crisis-realtime", () => ({ useCrisisRealtime: () => undefined }));
@@ -130,6 +130,7 @@ const SNAPSHOT_KEY = snapshotKey("t-me");
 beforeEach(() => {
   vi.resetAllMocks();
   who.id = "t-me";
+  who.role = "TEACHER";
   school.pupils = [];
   school.asked = [];
   school.requests = [];
@@ -267,6 +268,39 @@ describe("/teacher/crisis with a network", () => {
     answerWith(mine([], asOf));
     renderPage();
     expect(await screen.findByRole("heading", { level: 2, name: "Inget larm pågår" })).toBeInTheDocument();
+  });
+});
+
+/*
+ * An administrator who teaches has this page for the groups she stands on, and
+ * the leadership's view of the alarm one click away: a marked administrator who
+ * has no group in an alarm is shown the alarm with no groups, and what she then
+ * needs is /admin/crisis.
+ */
+describe("/teacher/crisis as an administrator who teaches", () => {
+  it("links the leadership's view over the alarm, and the roll call is the same", async () => {
+    who.role = "SCHOOL_ADMIN";
+    renderPage();
+    expect(await screen.findByRole("heading", { level: 2, name: "Utrymning" })).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: "Ledningens vy" });
+    expect(link).toHaveAttribute("href", expect.stringMatching(/\/admin\/crisis$/));
+    // Over the first alarm: the header comes before the list of groups.
+    expect(link.compareDocumentPosition(group("7A")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(group("7A")).getByText("Tillsammans med Bo Ek")).toBeInTheDocument();
+  });
+
+  it("links it when no alarm is going and when the list has no group for her", async () => {
+    who.role = "SCHOOL_ADMIN";
+    answerWith(mine([myAlarm([])], asOf));
+    renderPage();
+    expect(await screen.findByText("Du svarar inte för någon grupp i det här larmet.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Ledningens vy" })).toBeInTheDocument();
+  });
+
+  it("gives a teacher no such link: the leadership's view is not hers to open", async () => {
+    renderPage();
+    await screen.findByRole("heading", { level: 2, name: "Utrymning" });
+    expect(screen.queryByRole("link", { name: "Ledningens vy" })).not.toBeInTheDocument();
   });
 });
 

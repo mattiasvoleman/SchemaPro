@@ -12,6 +12,13 @@
 // family's reason, and offers Bevilja, Avslå and Skicka till rektor. The tabs
 // for decided requests show the mentor's own decisions only.
 //
+// An administrator who teaches (Users.teaches) is one of the mentors where she
+// holds MENTORSKAP, and the gateway hands an administrator the school's whole
+// list, not the mentor's: so on this page she is shown the requests that name
+// her among the pupil's mentors, and nothing else of the school's (rektor's own
+// inbox, /admin/leave, has the rest). Her decision is still the administrator's
+// (decidedAs ADMIN). A teacher's list is the gateway's, as it was.
+//
 // A school that has delegated nothing shows that, rather than an empty list:
 // rektor decides every request there. The delegation is GET
 // /api/v1/leave-delegation's, which a teacher reads too.
@@ -52,7 +59,11 @@ export default function TeacherLeavePage() {
   const actions = useLeaveInboxActions();
   const delegation = delegationQuery.data?.current ?? null;
   const rowOf = useLeaveRows("mentor", delegation, profile.id);
-  const requests = inbox.data ?? [];
+  const asked = inbox.data ?? [];
+  const requests =
+    profile.role === "SCHOOL_ADMIN"
+      ? asked.filter((request) => request.mentors.some((mentor) => mentor.id === profile.id))
+      : asked;
   // Until the delegation is read, an empty inbox says nothing waits, never
   // that rektor decides everything.
   const delegated = !delegationQuery.data || delegation?.mentorMaxSchoolDays != null;

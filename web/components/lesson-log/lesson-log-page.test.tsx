@@ -163,6 +163,31 @@ describe("the lesson page", () => {
     expect(screen.queryByRole("link", { name: "Ta närvaro" })).not.toBeInTheDocument();
   });
 
+  // An administrator who teaches (Users.teaches): the gateway asks the database's own rule
+  // (app.lesson_teacher_role), which says REGULAR for a lesson she stands on in a läsår she has a post for,
+  // and ADMIN for every other lesson. The page takes both from `role` and `may`, and nothing from her profile.
+  it("gives an administrator who teaches the lesson's own teacher's page on a lesson she stands on: the note read and written, the register one click away", async () => {
+    get.mockResolvedValue(view({ role: "REGULAR", may: { writeLog: true, readNote: true, writeNote: true } }));
+    const user = userEvent.setup();
+    put.mockResolvedValue({ note: { body: "Nytt", writtenBy: "Rut Rektorsson", updatedAt: "2026-10-20T10:00:00.000Z" } });
+    renderPage();
+    const note = await screen.findByRole("textbox", { name: /^Notis/ });
+    expect(note).toHaveValue("Planeringen ligger i lärplattformen.");
+    expect(screen.getByRole("link", { name: "Ta närvaro" })).toBeInTheDocument();
+    await user.clear(note);
+    await user.type(note, "Nytt");
+    await user.click(screen.getByRole("button", { name: /^Spara notis/ }));
+    expect(put).toHaveBeenCalledWith(`/api/v1/lesson-logs/lessons/${LESSON}/substitute-note`, { body: "Nytt", basis: EDITED });
+  });
+
+  it("gives an administrator on a lesson she does not stand on the log to read, and neither the note nor the register link", async () => {
+    get.mockResolvedValue(view({ role: "ADMIN", may: { writeLog: false, readNote: false, writeNote: false }, note: null }));
+    renderPage();
+    await screen.findByRole("region", { name: "Ämne och läxa" });
+    expect(screen.queryByRole("region", { name: "Notis till vikarien" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Ta närvaro" })).not.toBeInTheDocument();
+  });
+
   it("says a lesson the teacher may not open cannot be shown, and a failed read that it failed", async () => {
     get.mockRejectedValue(new ApiError(404, "Lektionen finns inte.", "LESSON_NOT_FOUND"));
     const { unmount } = renderPage();

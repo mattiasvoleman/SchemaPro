@@ -4461,6 +4461,9 @@
     "title": "My workload",
     "subtitle": "Your teacher allocation for the {year} school year",
     "readOnly": "Your allocation is set by the school leadership. If something looks wrong, talk to your principal.",
+    "teaching": {
+      "draftNote": "The figures are counted from the draft timetable, which you see as an administrator. A teacher sees the published one."
+    },
     "employmentAtStart": "{percent} % at the start of the year · {kind}",
     "employmentAtStartReduction": "{percent} % (reduction {reduction} %) at the start of the year · {kind}",
     "periodsTitle": "Your post over the school year",
@@ -6525,6 +6528,10 @@
   "teacherCover": {
     "title": "Cover and absence",
     "subtitle": "Your upcoming covers and your own absence",
+    "teaching": {
+      "title": "My absence",
+      "subtitle": "Your own absence and the lessons you have handed over"
+    },
     "coversTitle": "My covers",
     "coversEmpty": "No covers in the next {weeks} weeks.",
     "noRoom": "No room",
@@ -8837,7 +8844,8 @@
       "loadFailed": "The alarms could not be loaded",
       "loadFailedHint": "You seem to have no contact with the server, and no list is kept on this device. The list is shown as soon as you get contact.",
       "noAlarm": "No alarm is going",
-      "noAlarmBody": "When the school starts an alarm your groups are shown here, and you get a notice."
+      "noAlarmBody": "When the school starts an alarm your groups are shown here, and you get a notice.",
+      "managementView": "Management view"
     }
   },
   "schoolDay": {

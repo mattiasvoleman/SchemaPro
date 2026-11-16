@@ -4461,6 +4461,9 @@
     "title": "Min tjänst",
     "subtitle": "Din tjänstefördelning för läsåret {year}",
     "readOnly": "Tjänstefördelningen läggs av skolledningen. Ser något fel ut, tala med din rektor.",
+    "teaching": {
+      "draftNote": "Siffrorna räknas ur schemautkastet, som du ser som administratör. En lärare ser det publicerade schemat."
+    },
     "employmentAtStart": "{percent} % vid läsårets start · {kind}",
     "employmentAtStartReduction": "{percent} % (nedsättning {reduction} %) vid läsårets start · {kind}",
     "periodsTitle": "Din tjänst över läsåret",
@@ -6525,6 +6528,10 @@
   "teacherCover": {
     "title": "Vikariepass och frånvaro",
     "subtitle": "Dina kommande vikariepass och din egen frånvaro",
+    "teaching": {
+      "title": "Min frånvaro",
+      "subtitle": "Din egen frånvaro och lektionerna du lämnat över"
+    },
     "coversTitle": "Mina vikariepass",
     "coversEmpty": "Inga vikariepass de närmaste {weeks} veckorna.",
     "noRoom": "Ingen sal",
@@ -8837,7 +8844,8 @@
       "loadFailed": "Larmen kunde inte hämtas",
       "loadFailedHint": "Du verkar sakna kontakt med servern, och ingen lista finns sparad på den här enheten. Listan visas så snart du får kontakt.",
       "noAlarm": "Inget larm pågår",
-      "noAlarmBody": "När skolan startar ett larm visas dina grupper här, och du får en notis."
+      "noAlarmBody": "När skolan startar ett larm visas dina grupper här, och du får en notis.",
+      "managementView": "Ledningens vy"
     }
   },
   "schoolDay": {

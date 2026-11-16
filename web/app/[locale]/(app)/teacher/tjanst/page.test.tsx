@@ -23,8 +23,10 @@ const state = vi.hoisted(() => ({
   dutyArgs: [] as unknown[][],
 }));
 
+/** Who is signed in: a teacher, or an administrator who teaches (Users.teaches). */
+const who = vi.hoisted(() => ({ role: "TEACHER" as "TEACHER" | "SCHOOL_ADMIN" }));
 vi.mock("@/components/profile-context", () => ({
-  useProfile: () => ({ profile: { id: "t-me", role: "TEACHER" } }),
+  useProfile: () => ({ profile: { id: "t-me", role: who.role } }),
 }));
 vi.mock("@/lib/queries", () => ({
   useActiveYear: () => ({ data: state.years, activeYear: state.year, isLoading: state.yearLoading }),
@@ -124,6 +126,7 @@ const duty = (overrides: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
+  who.role = "TEACHER";
   state.year = { id: "y-1", name: "2026/27", isActive: true, predecessorId: null };
   state.years = [state.year];
   state.lastLoad = { data: undefined, isLoading: false, isError: false };
@@ -132,6 +135,38 @@ beforeEach(() => {
   state.duties = { data: [duty()], isLoading: false, isError: false };
   state.loadYear = [];
   state.dutyArgs = [];
+});
+
+/*
+ * An administrator who teaches is handed the school's report, counted from the
+ * draft timetable where a teacher's is counted from the published one
+ * (readGrundschema), so the page says so for her and for nobody else.
+ */
+describe("Min tjänst for an administrator who teaches", () => {
+  it("says that the figures are counted from the schedule draft, over her own tjänst", () => {
+    who.role = "SCHOOL_ADMIN";
+    render(<MyStaffingPage />);
+    expect(screen.getByText("myStaffing.teaching.draftNote")).toBeInTheDocument();
+    // The note is over the tjänst it is about, not over an empty page.
+    expect(screen.getByText(/myStaffing\.target\(1080\)/)).toBeInTheDocument();
+  });
+
+  it("says nothing of a draft to a teacher, whose report is the published schedule's", () => {
+    render(<MyStaffingPage />);
+    expect(screen.queryByText("myStaffing.teaching.draftNote")).not.toBeInTheDocument();
+  });
+
+  it("picks her own row out of the school's, as the page always did", () => {
+    who.role = "SCHOOL_ADMIN";
+    state.load = {
+      data: { teachers: [row({ userId: "t-bo", targetMinutesPerWeek: 555, countedMinutesPerWeek: 444 }), row()] },
+      isLoading: false,
+      isError: false,
+    };
+    render(<MyStaffingPage />);
+    expect(screen.getByText(/myStaffing\.counted\(960\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/myStaffing\.counted\(444\)/)).not.toBeInTheDocument();
+  });
 });
 
 describe("Min tjänst", () => {

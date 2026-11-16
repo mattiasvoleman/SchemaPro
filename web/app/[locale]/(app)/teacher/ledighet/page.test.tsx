@@ -34,8 +34,10 @@ vi.mock("@/lib/leave-queries", () => ({
     delegate: { mutateAsync: vi.fn(), isPending: false },
   }),
 }));
+/** Who is signed in: the teacher Anna, or the same person as an administrator who teaches (Users.teaches). */
+const who = vi.hoisted(() => ({ role: "TEACHER" as "TEACHER" | "SCHOOL_ADMIN" }));
 vi.mock("@/components/profile-context", () => ({
-  useProfile: () => ({ profile: { id: "t-anna", role: "TEACHER", firstName: "Anna", lastName: "Mentor" }, school: null }),
+  useProfile: () => ({ profile: { id: "t-anna", role: who.role, firstName: "Anna", lastName: "Mentor" }, school: null }),
 }));
 vi.mock("@/lib/retention-queries", () => ({ usePurgedBefore: () => ({ of: () => null }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -84,8 +86,66 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  who.role = "TEACHER";
   state.inbox = { data: [REQUEST], isLoading: false, isError: false };
   state.delegation = { data: { current: DELEGATION, history: [DELEGATION] }, isLoading: false, isError: false };
+});
+
+/*
+ * An administrator who teaches is handed the school's whole list by the
+ * gateway (it is rektor's inbox for her); the page keeps the requests that name
+ * her among the pupil's mentors, on all three tabs, and a teacher's list as the
+ * gateway narrowed it.
+ */
+describe("Ledighet for an administrator who teaches", () => {
+  const OTHERS = {
+    ...REQUEST,
+    id: "l-2",
+    studentId: "p-oskar",
+    student: { id: "p-oskar", name: "Oskar Okänd", className: "9B" },
+    mentors: [{ id: "t-cecilia", name: "Cecilia Mentor" }],
+    decidingMentors: [{ id: "t-cecilia", name: "Cecilia Mentor" }],
+  };
+
+  it("shows only the requests she is a mentor of, and none of the rest of the school's", () => {
+    who.role = "SCHOOL_ADMIN";
+    state.inbox = { data: [OTHERS, REQUEST], isLoading: false, isError: false };
+    renderPage();
+    const list = screen.getByRole("region", { name: "Väntar på ditt beslut" });
+    expect(within(list).getByText("Ella Elev")).toBeInTheDocument();
+    expect(within(list).queryByText("Oskar Okänd")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Oskar Okänd/ })).not.toBeInTheDocument();
+  });
+
+  it.each([["APPROVED"], ["REJECTED"]])("narrows the decided tab %s the same way", async (tab) => {
+    who.role = "SCHOOL_ADMIN";
+    const decided = (request: typeof REQUEST) => ({ ...request, status: tab, decides: null as null });
+    state.inbox = { data: [decided(OTHERS), decided(REQUEST)], isLoading: false, isError: false };
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getByRole("tab", { name: tab === "APPROVED" ? "Beviljad" : "Avslagen" }));
+    expect(screen.getAllByText("Ella Elev").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Oskar Okänd")).not.toBeInTheDocument();
+  });
+
+  it("says the inbox is empty, not that rektor decides, when none of the school's requests is hers", () => {
+    who.role = "SCHOOL_ADMIN";
+    state.inbox = { data: [OTHERS], isLoading: false, isError: false };
+    renderPage();
+    expect(screen.queryByText("Oskar Okänd")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Väntar på ditt beslut" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Rektor beslutar all ledighet/)).not.toBeInTheDocument();
+  });
+
+  it("leaves a teacher's list as the gateway gave it: no second filter on the page", () => {
+    // The gateway narrowed it already (and a decided tab holds the mentor's own decisions, which may
+    // be a pupil she no longer mentors): what it sent is what is shown.
+    state.inbox = { data: [OTHERS, REQUEST], isLoading: false, isError: false };
+    renderPage();
+    const list = screen.getByRole("region", { name: "Väntar på ditt beslut" });
+    expect(within(list).getByText("Oskar Okänd")).toBeInTheDocument();
+    expect(within(list).getByText("Ella Elev")).toBeInTheDocument();
+  });
 });
 
 describe("Ledighet, the mentor's inbox", () => {

@@ -28,6 +28,12 @@
 // needs it most, so the page is one piece. The tap targets are 44 px, and the
 // counters are a live region.
 //
+// An administrator who teaches (Users.teaches) has this page too, as the
+// teacher's roll call for the groups she stands on; the alarm's whole picture is
+// the administration's (/admin/crisis), which she is one click from here: a
+// marked administrator with no group in an alarm sees it with no groups, and the
+// view she then needs is the leadership's.
+//
 // Bundle: core tier (170 KB).
 
 import { useTranslations, useLocale } from "next-intl";
@@ -36,6 +42,7 @@ import { FindOther } from "@/components/crisis/find-other";
 import { PupilRow } from "@/components/crisis/pupil-row";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
+import { Link } from "@/i18n/navigation";
 import { useProfile } from "@/components/profile-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -330,7 +337,17 @@ export default function TeacherCrisisPage() {
 
   return (
     <Page width="narrow">
-      <PageHeader title={t("teacher.title")} subtitle={t("teacher.subtitle")} />
+      <PageHeader
+        title={t("teacher.title")}
+        subtitle={t("teacher.subtitle")}
+        actions={
+          profile.role === "SCHOOL_ADMIN" ? (
+            <Button variant="outline" asChild>
+              <Link href="/admin/crisis">{t("teacher.managementView")}</Link>
+            </Button>
+          ) : null
+        }
+      />
 
       {old && asOf ? (
         <Notice

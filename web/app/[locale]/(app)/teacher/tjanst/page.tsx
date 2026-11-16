@@ -9,7 +9,10 @@
 // /teacher-duties answers them with their own uppdrag and 403s a colleague's.
 // The `userId` filter below is for a SCHOOL_ADMIN who teaches and opens this
 // page — they get the whole school's report, and this page is about one
-// person.
+// person. And the report is counted from the draft timetable for an
+// administrator, where a teacher's is counted from the published one
+// (readGrundschema): the page says so for her, in a line over her tjänst, so
+// that the figures are not taken for what a teacher is shown.
 //
 // READ-ONLY on purpose. A post, a behörighet and an uppdrag are set by the
 // skolledning (every write endpoint is @Roles(SCHOOL_ADMIN)), and the page
@@ -165,6 +168,7 @@ export default function MyStaffingPage() {
   return (
     <Page width="narrow">
       {header}
+      {profile.role === "SCHOOL_ADMIN" ? <p className="text-sm text-muted-foreground">{t("teaching.draftNote")}</p> : null}
 
       <SectionCard id="tjanst-employment" title={tStaffing("employmentTitle")} className="text-sm">
         {employment ? (
