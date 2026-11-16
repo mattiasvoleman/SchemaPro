@@ -380,7 +380,7 @@ describe("the engine's refusals about placed lessons", () => {
     const forced = { party: "class", places: 2, kind: "room", limit: 1, days: 3, open: 2 };
     const kept = { party: "class", limit: 1, kind: "room" };
     const tip = svEngine("PLACEMENT_PLACES_FORCED", forced);
-    expect(tip).toMatch(/Höj gränsen eller låt lektionerna använda andra salar\. Har veckan förlagda lektioner med sal kan det vara salarna som räknas som olika platser: lämna då salen tom \(”Motorn väljer sal”\) i dialogen Förlägg på timplanen, så väljer schemat sal\.$/);
+    expect(tip).toMatch(/Höj gränsen eller låt lektionerna använda andra salar\. Har veckan förlagda lektioner med sal kan det vara salarna som räknas som olika platser: lämna då salen tom \(”Motorn väljer sal”\) i dialogen Förlägg på timplanen, på posten eller för ett block under Block, så väljer schemat sal\.$/);
     expect(svEngine("PLACES_CANNOT_BE_KEPT", kept)).toMatch(/Har veckan förlagda lektioner med sal.*lämna då salen tom \(”Motorn väljer sal”\).*så väljer schemat sal\.$/);
     expect(enEngine("PLACEMENT_PLACES_FORCED", forced)).toMatch(/Raise the limit or let the lessons use other rooms\. If the week has placed lessons with a room.*leave the room empty \(“The engine chooses a room”\).*the timetable chooses the room\.$/);
     expect(enEngine("PLACES_CANNOT_BE_KEPT", kept)).toMatch(/If the week has placed lessons with a room.*leave the room empty/);

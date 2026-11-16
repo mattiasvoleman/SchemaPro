@@ -65,7 +65,7 @@ function argumentsOf(template: string): string[] {
  * so the engine changing its own sentence is still a red test, and the arguments are checked above all the same.
  */
 const PLACES_TIP =
-  " If the week has placed lessons with a room, it can be the rooms that count as different places: leave the room empty (“The engine chooses a room”) in the Place lessons dialog on the timplan, and the timetable chooses the room.";
+  " If the week has placed lessons with a room, it can be the rooms that count as different places: leave the room empty (“The engine chooses a room”) in the Place lessons dialog on the timplan, on the entry or for a block under Blocks, and the timetable chooses the room.";
 const WEB_WORDS: Record<string, readonly (readonly [string, string])[]> = {
   PLACEMENT_CANNOT_STAND: [
     ["{room, select, ANY_ROOM {a room the timetable chooses} other {{room}}}", "{room}"],
