@@ -62,7 +62,7 @@
  * holds, which is what runsOn is asked about; times are minutes since
  * midnight.
  */
-import { runsOn } from '../calendar/lesson-recurrence';
+import { isoWeekNumber, runsOn } from '../calendar/lesson-recurrence';
 import { hasStretchRule, overlongStretches, type StretchRule } from './stretch';
 
 /** Bounds shared by the DTOs, the CHECKs (20261123090000) and the engine. */
@@ -456,10 +456,16 @@ export function lockedWeekdaySets(
   return sets.filter((set) => !sets.some((larger) => implies(larger, set))).sort(byWeekdays);
 }
 
-/** A set of weekdays a teacher's kept lessons hold together, and the periods of the läsår some week holds it in. */
+/**
+ * A set of weekdays a teacher's kept lessons hold together, and the periods of the läsår some week holds it in.
+ *
+ * `recurrence` is sent only where a period's odd and even weeks hold other sets, and says which of the two
+ * holds this one: a week is then held against the sets of its own parity. Absent is both, as it always was.
+ */
 export interface LockedWeekdaysInPeriods {
   weekdays: number[];
   periods: boolean[];
+  recurrence?: 'ODD_WEEKS' | 'EVEN_WEEKS';
 }
 
 /**
@@ -495,9 +501,18 @@ export interface LockedWeekdaysInPeriods {
  * Every period is in at least one entry: a period with no kept lesson holds
  * the empty set.
  *
- * The parity is not read here. An odd week's set and an even week's of the
- * same period are both that period's, held in each of its weeks: what the
- * engine did before it knew periods, and still the stricter reading.
+ * THE PARITY, ONLY WHERE THE SETS DIFFER BY IT. A period's odd weeks and its
+ * even ones can hold other sets: a lesson kept on Mondays in the odd weeks and
+ * another on Wednesdays in the even ones. Held against both sets in every week
+ * of the period, as the engine did, the odd weeks are refused a day the even
+ * weeks' lesson takes and the other way round, and a timetable every week of
+ * which exists is refused. So where some period's odd and even sets differ
+ * the sets are sent with the parity that holds them (`recurrence`), and a
+ * week is held against the sets of its own parity. Where no period's do, no
+ * entry carries a parity and the list is the one it was. A period with weeks
+ * of one parity only is read as that parity's sets for both. Inside a period
+ * and a parity a set left out by the rule above stays left out; across the
+ * two parities of a period nothing is left out, since no week holds both.
  */
 export function lockedWeekdaySetsByPeriod(
   lessons: readonly TeachingLesson[],
@@ -507,30 +522,58 @@ export function lockedWeekdaySetsByPeriod(
 ): LockedWeekdaysInPeriods[] | null {
   const taking = lessons.filter((lesson) => lesson.endMinutes > lesson.startMinutes);
   const periods = Math.max(...weekPeriods) + 1;
-  const held: Map<string, number[]>[] = Array.from({ length: periods }, () => new Map<string, number[]>());
+  // The sets of each period's odd weeks and of its even ones, by their weekdays.
+  const held: [Map<string, number[]>, Map<string, number[]>][] = Array.from({ length: periods }, () => [
+    new Map<string, number[]>(),
+    new Map<string, number[]>(),
+  ]);
   const first = mondayOf(parseDay(year.startDate));
   weekPeriods.forEach((period, week) => {
     const monday = addDays(first, 7 * week);
     const days = [...new Set(taking.filter((lesson) => runsInWeek(lesson, monday)).map((lesson) => lesson.dayOfWeek))].sort(
       (a, b) => a - b,
     );
-    held[period]!.set(days.join(','), days);
+    held[period]![isoWeekNumber(monday) % 2 === 1 ? 0 : 1].set(days.join(','), days);
   });
   const implies = (larger: number[], set: number[]) =>
     larger.length > set.length && larger.length <= maxDaysPerWeek && set.every((day) => larger.includes(day));
+  // What a pool holds once a set inside a larger one is left out, and its weekdays' key.
+  const kept = (pool: Map<string, number[]>): number[][] => {
+    const sets = [...pool.values()];
+    return sets.filter((set) => !sets.some((larger) => implies(larger, set)));
+  };
   const entries = new Map<string, LockedWeekdaysInPeriods>();
-  held.forEach((ofPeriod, period) => {
-    const sets = [...ofPeriod.values()];
+  const hold = (sets: number[][], period: number, recurrence?: 'ODD_WEEKS' | 'EVEN_WEEKS') => {
     for (const set of sets) {
-      if (sets.some((larger) => implies(larger, set))) continue;
-      const key = set.join(',');
-      const entry = entries.get(key) ?? { weekdays: set, periods: Array.from({ length: periods }, () => false) };
+      const key = `${recurrence ?? ''}|${set.join(',')}`;
+      const entry =
+        entries.get(key) ??
+        ({ weekdays: set, periods: Array.from({ length: periods }, () => false), ...(recurrence ? { recurrence } : {}) } as LockedWeekdaysInPeriods);
       entry.periods[period] = true;
       entries.set(key, entry);
     }
+  };
+  // Does any period's odd weeks hold other sets than its even weeks? Only a period with weeks of both can
+  // say, and only after what a larger set implies is left out: sets that agree then are the same set.
+  const ofParity = held.map((pair) => [kept(pair[0]), kept(pair[1])] as const);
+  const differs = (pair: readonly [number[][], number[][]]) =>
+    pair[0].length > 0 &&
+    pair[1].length > 0 &&
+    (pair[0].length !== pair[1].length || pair[0].some((set) => !pair[1].some((other) => other.join(',') === set.join(','))));
+  const byParity = ofParity.some(differs);
+  ofParity.forEach((pair, period) => {
+    if (byParity && differs(pair)) {
+      hold(pair[0], period, 'ODD_WEEKS');
+      hold(pair[1], period, 'EVEN_WEEKS');
+    } else {
+      // The same sets in both parities, or weeks of one parity only: one pool, held in every week of the period.
+      hold(kept(new Map([...held[period]![0], ...held[period]![1]])), period);
+    }
   });
-  const sent = [...entries.values()].sort((a, b) => byWeekdays(a.weekdays, b.weekdays));
-  return sent.every((entry) => entry.periods.every(Boolean)) ? null : sent;
+  // A set before the same set held by parity, the odd weeks' before the even weeks'.
+  const rank = (entry: LockedWeekdaysInPeriods) => (entry.recurrence === 'EVEN_WEEKS' ? 2 : entry.recurrence ? 1 : 0);
+  const sent = [...entries.values()].sort((a, b) => byWeekdays(a.weekdays, b.weekdays) || rank(a) - rank(b));
+  return sent.every((entry) => entry.periods.every(Boolean) && !entry.recurrence) ? null : sent;
 }
 
 /** Weekday by weekday, a set before the sets it begins. */

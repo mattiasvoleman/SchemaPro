@@ -257,16 +257,12 @@ MIRRORED = sorted(
     name for name in dir(ab) if name.startswith("test_") and name not in NOT_MIRRORED
 )
 
-#: The two-week tests that a TERM is no longer held by as a parity is, and
-#: the one reading of the two weeks they still hold in. A teacher's own lunch
-#: is one hour for a term's odd weeks and its even ones, and its own hour in
-#: each term (test_period_rules.py): the test's two locks, each in a term of
-#: its own, leave each term its hour, where an odd-week lock and an even-week
-#: lock of one term leave that term none.
-HELD_BY_PARITY_ALONE = {
-    "test_a_teachers_lunch_keeps_clear_of_both_weeks_locks_and_is_refused_by_name":
-        "the odd and the even weeks of one term",
-}
+#: The two-week tests that a TERM is not held by as a parity is, and the one
+#: reading of the two weeks they still hold in. None: a teacher's own lunch is
+#: one hour a period, and a break for each week where her entries in the
+#: window are told apart by parity (weeks.needs_a_part_per_parity), so the
+#: lunch test holds for a term as for a parity.
+HELD_BY_PARITY_ALONE: dict[str, str] = {}
 MIRRORED_AS = [
     (name, weeks)
     for name in MIRRORED
@@ -304,8 +300,8 @@ def _AsPeriods(weeks: dict[str, dict[str, object]]) -> type:  # noqa: N802 - sta
 
 def test_the_mirror_reaches_every_week_test_of_the_two_weeks() -> None:
     assert len(MIRRORED) == 24
-    # Every reading of the two weeks for each, less the four a term is not held by.
-    assert len(MIRRORED_AS) == 24 * len(AS_PERIODS) - 4
+    # Every reading of the two weeks for each.
+    assert len(MIRRORED_AS) == 24 * len(AS_PERIODS)
     assert set(HELD_BY_PARITY_ALONE) <= set(MIRRORED)
     # And it does write periods: a parity in, a mask out.
     request = _AsPeriods(AS_PERIODS["two terms"]).model_validate(

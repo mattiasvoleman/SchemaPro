@@ -802,26 +802,29 @@ def _weeks(request):
             )
             weeks.append((label, request.model_copy(update={
                 "requirements": requirements, "fixed_lessons": fixed_lessons,
-                "teacher_day_limits": _limits_of_period(request, period),
+                "teacher_day_limits": _limits_of_period(request, period, week),
                 "period_weeks": None,
             })))
     return weeks
 
 
-def _limits_of_period(request, period):
+def _limits_of_period(request, period, parity=None):
     """The posts' days as one period's weeks hold them: the sets that period is named for.
 
     `lockedWeekdayPeriods`, where a limit carries it, says for each set of
-    locked weekdays which periods have a week with exactly that set. A week
-    of period p is then held to the sets marked for p, and to no other
-    term's; a limit without it holds every set in every week, as it did.
+    locked weekdays which periods have a week with exactly that set, and in
+    which parity (`recurrence`; none is both). A week of period p in a parity
+    is then held to the sets marked for p and for its parity, and to no other
+    term's or parity's; a limit without it holds every set in every week, as
+    it did.
     """
     if period is None:
         return request.teacher_day_limits
     return [
         limit if limit.locked_weekday_periods is None else limit.model_copy(update={
             "locked_weekdays": [
-                list(entry.weekdays) for entry in limit.locked_weekday_periods if entry.periods[period]
+                list(entry.weekdays) for entry in limit.locked_weekday_periods
+                if entry.periods[period] and (parity is None or entry.recurrence in (None, parity))
             ],
             "locked_weekday_periods": None,
         })
