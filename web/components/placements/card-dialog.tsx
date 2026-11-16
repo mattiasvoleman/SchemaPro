@@ -20,6 +20,8 @@ import { PlaceFields, type PlaceFieldsProps, type PlaceValue } from "@/component
 export interface PlacedCard {
   /** The lesson's key (placement-rows.ts): not a row id, which every save changes. */
   key: string;
+  /** Its post, whose line in the list below the week the dialog can lead to. */
+  postId: string;
   title: string;
   /** "tisdag 10:00–11:00 · Motorn väljer sal · udda". */
   line: string;
@@ -66,6 +68,12 @@ export function CardDialog({ placed, kept, mayWrite, fields, onSave, onRemove, o
               {placed.verdictText}
             </p>
             <p className="text-xs text-muted-foreground">{t("savedAt", { when: placed.savedAt })}</p>
+            {/* To the post's line in the list under the week: everybody's, the läsare's too. */}
+            <Button variant="outline" size="sm" asChild>
+              <a href={`#post-${placed.postId}`} onClick={onClose}>
+                {t("toPost")}
+              </a>
+            </Button>
             {/* Only the school that writes Planering is offered what changes the row; the gateway refuses the rest. */}
             {mayWrite ? (
               <div data-writes="PLANERING" className="space-y-4">

@@ -420,6 +420,8 @@ describe("the week", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByTestId("card-verdict")).toHaveTextContent("verdict.TEACHER");
     expect(dialog).toHaveTextContent("savedAt");
+    // To the post's line in the list, as A1's card detail led there.
+    expect(within(dialog).getByRole("link", { name: "toPost" })).toHaveAttribute("href", "#post-post-ma");
     await userEvent.click(within(dialog).getByRole("button", { name: "close" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await userEvent.click(screen.getByRole("button", { name: /filterGroup/ }));

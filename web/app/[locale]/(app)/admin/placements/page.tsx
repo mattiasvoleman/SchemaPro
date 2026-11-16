@@ -989,6 +989,7 @@ export default function PlacementsPage() {
                   openedRow && openedPost
                     ? {
                         key: openCard,
+                        postId: openedPost.id,
                         title: `${postName(openedPost)} · ${teacherText(teacherOfPlacement(openedRow, openedPost))} · ${openedRow.minutes} min`,
                         line: rowLine(openedRow),
                         verdictText: openedRow.verdict.ok ? t("holds") : verdictSentence(tPlacements, openedRow.verdict.reason, openedRow.verdict.params),
