@@ -354,7 +354,17 @@ describe("the week", () => {
     await ready();
     expect(blockBricks()).toHaveLength(0);
     expect(document.querySelectorAll("[data-lesson-id^='blockplacement:']")).toHaveLength(0);
-    expect(screen.getByTestId("placement-blocks-empty")).toBeInTheDocument();
+    // A year with no block has no list of blocks, and is not told "no blocks".
+    expect(screen.queryByTestId("placement-blocks-empty")).not.toBeInTheDocument();
+    expect(document.getElementById("placement-blocks")).toBeNull();
+  });
+
+  it("says so in the list when every block is hidden by the filters", async () => {
+    renderPage();
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: /filterGroup/ }));
+    await userEvent.click(await screen.findByRole("menuitemcheckbox", { name: "7A" }));
+    expect(await screen.findByTestId("placement-blocks-empty")).toBeInTheDocument();
   });
 });
 

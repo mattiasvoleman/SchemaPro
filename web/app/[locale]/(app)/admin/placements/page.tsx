@@ -1437,32 +1437,34 @@ export default function PlacementsPage() {
             )}
           </SectionCard>
 
-          <SectionCard id="placement-blocks" title={tBlock("sectionTitle")} description={tBlock("sectionDescription")}>
-            {shownBlocks.length === 0 ? (
-              <p className="text-sm text-muted-foreground" data-testid="placement-blocks-empty">
-                {tBlock("noBlocks")}
-              </p>
-            ) : (
-              <ul className="divide-y">
-                {shownBlocks.map((block) => {
-                  const whole = blockById.get(block.id) ?? block;
-                  return (
-                    <li
-                      key={block.id}
-                      id={`block-${block.id}`}
-                      tabIndex={-1}
-                      className="scroll-mt-4 py-3 outline-none [overflow-wrap:anywhere] focus-visible:ring-2 focus-visible:ring-ring"
-                      data-testid="placement-block"
-                    >
-                      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                        <h3 className="min-w-0 break-words text-sm font-semibold">{block.name}</h3>
-                        <span className="min-w-0 break-words text-sm text-muted-foreground">{membersOf(block).map((member) => member.name).join(" · ")}</span>
-                      </div>
-                      <p className="text-sm">{tBlock("blockFigures", { placed: whole.rows.length, count: whole.lengths.length, left: blockLessonsLeft(whole) })}</p>
-                      {block.cannotPlace ? (
-                        <p className="text-sm text-muted-foreground">
-                          {blockFitSentence(tBlockFit, block.cannotPlace, block.followsBlockId ? (blockById.get(block.followsBlockId)?.name ?? tBlockFit("otherBlock")) : tBlockFit("otherBlock"))}
-                        </p>
+          {/* Only a year that has parallel blocks has the list; a school with none (and a gateway that sends none) is not told "no blocks". */}
+          {everything.blocks.length > 0 ? (
+            <SectionCard id="placement-blocks" title={tBlock("sectionTitle")} description={tBlock("sectionDescription")}>
+              {shownBlocks.length === 0 ? (
+                <p className="text-sm text-muted-foreground" data-testid="placement-blocks-empty">
+                  {tBlock("noBlocks")}
+                </p>
+              ) : (
+                <ul className="divide-y">
+                  {shownBlocks.map((block) => {
+                    const whole = blockById.get(block.id) ?? block;
+                    return (
+                      <li
+                        key={block.id}
+                        id={`block-${block.id}`}
+                        tabIndex={-1}
+                        className="scroll-mt-4 py-3 outline-none [overflow-wrap:anywhere] focus-visible:ring-2 focus-visible:ring-ring"
+                        data-testid="placement-block"
+                      >
+                        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                          <h3 className="min-w-0 break-words text-sm font-semibold">{block.name}</h3>
+                          <span className="min-w-0 break-words text-sm text-muted-foreground">{membersOf(block).map((member) => member.name).join(" · ")}</span>
+                        </div>
+                        <p className="text-sm">{tBlock("blockFigures", { placed: whole.rows.length, count: whole.lengths.length, left: blockLessonsLeft(whole) })}</p>
+                        {block.cannotPlace ? (
+                          <p className="text-sm text-muted-foreground">
+                            {blockFitSentence(tBlockFit, block.cannotPlace, block.followsBlockId ? (blockById.get(block.followsBlockId)?.name ?? tBlockFit("otherBlock")) : tBlockFit("otherBlock"))}
+                          </p>
                       ) : null}
                       {block.rows.length > 0 ? (
                         <ul className="mt-2 space-y-1 text-sm">
@@ -1484,6 +1486,7 @@ export default function PlacementsPage() {
               </ul>
             )}
           </SectionCard>
+          ) : null}
 
           {openCard && (openedRow || openedKept || openedLesson) ? (
             <Suspense fallback={null}>
