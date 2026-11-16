@@ -18,6 +18,7 @@ import { translatorFor } from '../../i18n';
 import type { AnswerOutcome, ConfirmOutcome, CoverLesson, MyCoverPass, MyCoverRequest, MyRequestState } from '../../services/coverRequests';
 
 let mockRole = 'TEACHER';
+let mockTeaches = false;
 let mockFocusEffect: (() => void | (() => void)) | null = null;
 
 jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default);
@@ -31,7 +32,7 @@ jest.mock('expo-router', () => ({
   },
 }));
 jest.mock('../../context/AuthContext', () => ({
-  useAuth: () => ({ authState: { isAuthenticated: true, teacherId: 't1', role: mockRole }, isLoading: false }),
+  useAuth: () => ({ authState: { isAuthenticated: true, teacherId: 't1', role: mockRole, teaches: mockTeaches }, isLoading: false }),
 }));
 jest.mock('../../context/LocaleContext', () => {
   // One object, built in the factory: a new t per render would reload the screen without end.
@@ -166,6 +167,7 @@ beforeAll(async () => {
 beforeEach(() => {
   jest.useFakeTimers({ now: new Date('2026-10-13T06:00:00.000Z'), doNotFake: [...REAL_TIMERS] });
   mockRole = 'TEACHER';
+  mockTeaches = false;
   mockFocusEffect = null;
   read([]);
   jest.mocked(answerCoverRequest).mockResolvedValue({ kind: 'ACCEPTED', lessons: 1 });
@@ -470,6 +472,19 @@ describe('CoverRequestsScreen', () => {
       expect(hasText(tree, t('coverRequests.teachersOnly'))).toBe(true);
       expect(fetchMyCover).not.toHaveBeenCalled();
       expect(hasText(tree, 'Ja, jag tar det')).toBe(false);
+    });
+
+    // An administrator who teaches (Users.teaches) is a substitute of nobody: the gateway refuses the colleague
+    // side of cover requests and the pool to them (SP409), so the mark opens neither the tab nor a single read.
+    it('reads nothing and asks nothing of an administrator who teaches either', async () => {
+      mockRole = 'SCHOOL_ADMIN';
+      mockTeaches = true;
+      read([request('r1')], [pass()]);
+      tree = await render();
+      expect(hasText(tree, t('coverRequests.teachersOnly'))).toBe(true);
+      expect(fetchMyCover).not.toHaveBeenCalled();
+      expect(hasText(tree, 'Ja, jag tar det')).toBe(false);
+      expect(hasText(tree, 'Bekräfta')).toBe(false);
     });
   });
 });

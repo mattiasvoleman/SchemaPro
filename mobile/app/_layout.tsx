@@ -60,7 +60,8 @@ function AuthGate(): React.JSX.Element {
 // role has one — except a cover question (COVER_REQUESTED, and its end,
 // COVER_REQUEST_CLOSED), which opens a teacher's Vikarie tab where it is
 // answered, an alarm (CRISIS_ALARM, CRISIS_ENDED), which opens the Larm tab of
-// a teacher or an administrator, a request to confirm a message
+// a teacher or an administrator (an administrator who teaches finds the roll
+// call of their own groups there first), a request to confirm a message
 // (ACK_REQUESTED, and its reminder ACK_REMINDER), which opens a guardian's
 // Meddelanden tab where it is confirmed, and a request for consent to a leave
 // request (LEAVE_CONSENT_REQUESTED, its reminder LEAVE_CONSENT_REMINDER, and
@@ -81,6 +82,7 @@ function PushBridge(): null {
   const router = useRouter();
   const userId = authState.isAuthenticated ? authState.teacherId : null;
   const role = authState.role;
+  const teaches = authState.teaches;
 
   // The alarm's channel is made here too, before the first alarm push can arrive.
   useEffect(() => {
@@ -96,7 +98,7 @@ function PushBridge(): null {
 
   useEffect(() => {
     if (!userId) return;
-    const open = (type: string | null): void => router.push(tapTarget(role, type));
+    const open = (type: string | null): void => router.push(tapTarget(role, type, teaches));
     const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
       forgetTap();
       void handleCrisisPush((response as { notification?: unknown } | null)?.notification);
@@ -116,7 +118,7 @@ function PushBridge(): null {
       subscription.remove();
       arrival.remove();
     };
-  }, [userId, role, router]);
+  }, [userId, role, teaches, router]);
 
   return null;
 }

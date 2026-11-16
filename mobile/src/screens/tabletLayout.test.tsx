@@ -48,7 +48,7 @@ jest.mock('../context/AuthContext', () => {
   const states: Record<string, unknown> = {};
   const value = (role: string) =>
     (states[role] ??= {
-      authState: { isAuthenticated: true, teacherId: 'u1', role },
+      authState: { isAuthenticated: true, teacherId: 'u1', role, teaches: false },
       isLoading: false,
       error: null,
       login: jest.fn(),

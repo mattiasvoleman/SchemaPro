@@ -12,6 +12,11 @@ import type { AppId } from '../../config/appIdentity';
  * A role this build does not know (a future UserRole value) is admitted by
  * neither app: routing it to the staff shell, as the app did before the gate,
  * would hand it screens it may not be meant to see.
+ *
+ * An administrator who teaches (Users.teaches) is still a SCHOOL_ADMIN and
+ * signs in to the same app as every administrator: the mark changes no app and
+ * no start. It changes what the staff shell shows of Larm (alarmViews) and
+ * nothing else (appTabs).
  */
 export type AppRefusal = 'USE_GUARDIAN_APP' | 'USE_SCHOOL_APP' | 'ROLE_NOT_SUPPORTED' | 'APP_NOT_CONFIGURED';
 
@@ -34,6 +39,39 @@ export function homeOf(role: string | null): { group: '(guardian)' | '(student)'
   if (role === 'GUARDIAN') return { group: '(guardian)', home: '/(guardian)/children', notifications: '/(guardian)/notifications' };
   if (role === 'STUDENT') return { group: '(student)', home: '/(student)/schedule', notifications: '/(student)/notifications' };
   return { group: '(app)', home: '/(app)/schedule', notifications: '/(app)/notifications' };
+}
+
+/** The two views of the Larm tab: the roll call of the person's own groups, and the administration's. */
+export type AlarmView = 'ROLL_CALL' | 'MANAGEMENT';
+
+/**
+ * The views of the Larm tab a person has, the one it opens on first. A teacher
+ * counts their own groups; an administrator starts the alarm, watches the
+ * count and ends it; an administrator who teaches (Users.teaches) counts their
+ * own groups FIRST, with a way to the administration's view (beslut 5 of the
+ * investigation: the roll call before the management view), because the gateway
+ * answers both and an alarm is when a teacher is wanted in the room. A student
+ * and a guardian have none.
+ *
+ * Only a mark that is exactly true counts, and only on an administrator: the
+ * database holds it on no one else.
+ */
+export function alarmViews(role: string | null, teaches: boolean): readonly AlarmView[] {
+  if (role === 'TEACHER') return ['ROLL_CALL'];
+  if (role === 'SCHOOL_ADMIN') return teaches === true ? ['ROLL_CALL', 'MANAGEMENT'] : ['MANAGEMENT'];
+  return [];
+}
+
+/**
+ * Which of the staff shell's role-bound tabs a person has. Vikarie (cover
+ * requests) is a teacher's alone: the gateway refuses every route of it to an
+ * administrator, marked or not (SP409: an administrator is never in the
+ * substitute pool or asked as a substitute), so the mark does not open it.
+ * Larm is anyone's who has a view of an alarm. Schema, Närvaro, Notiser and
+ * Inställningar are everyone's in the shell and are not decided here.
+ */
+export function appTabs(role: string | null, teaches: boolean): { readonly cover: boolean; readonly crisis: boolean } {
+  return { cover: role === 'TEACHER', crisis: alarmViews(role, teaches).length > 0 };
 }
 
 /**
@@ -101,18 +139,22 @@ export function leaveConsentTarget(role: string | null, type: string | null): '/
  * What a tap on a push opens. The type is what the gateway put in the push's
  * data (notification-delivery.service: { notificationId, type }); a tap that
  * carries none, or one the role has no screen for, opens the Notiser tab as
- * every tap did before. Only a TEACHER has the Vikarie tab; both kinds of
- * staff have Larm; only a GUARDIAN has Meddelanden, and Ledighet, where a
- * request for consent to a leave request is answered; and a student or a
- * guardian never leaves their own shell.
+ * every tap did before. Only a TEACHER has the Vikarie tab (an administrator
+ * who teaches has not: appTabs); both kinds of staff have Larm, and an
+ * administrator who teaches finds the roll call of their own groups there
+ * first (alarmViews), which is where an alarm push leads them; only a
+ * GUARDIAN has Meddelanden, and Ledighet, where a request for consent to a
+ * leave request is answered; and a student or a guardian never leaves their
+ * own shell. A tap never opens a tab the person does not have.
  */
-export function tapTarget(role: string | null, type: string | null): TapTarget {
+export function tapTarget(role: string | null, type: string | null, teaches: boolean = false): TapTarget {
   const messages = ackTarget(role, type);
   if (messages !== null) return messages;
   const leave = leaveConsentTarget(role, type);
   if (leave !== null) return leave;
-  if (type !== null && (role === 'TEACHER' || role === 'SCHOOL_ADMIN') && CRISIS_ALARM_TYPES.has(type)) return '/(app)/crisis';
-  if (role === 'TEACHER' && type !== null && COVER_QUESTION_TYPES.has(type)) return '/(app)/cover-requests';
+  const tabs = appTabs(role, teaches);
+  if (type !== null && tabs.crisis && CRISIS_ALARM_TYPES.has(type)) return '/(app)/crisis';
+  if (type !== null && tabs.cover && COVER_QUESTION_TYPES.has(type)) return '/(app)/cover-requests';
   return homeOf(role).notifications;
 }
 
