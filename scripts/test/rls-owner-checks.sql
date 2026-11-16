@@ -6315,3 +6315,125 @@ BEGIN
   RAISE NOTICE 'ta 505o: % expressions evaluated over every row of every school: the marked are admitted for their own rows alone, the unmarked for none', evaluated;
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Ett block kan förläggas (20270218090000), section 501o: a room row for a post that is NOT a member, which only the owner can plant (the
+-- triggers are off for the statement, as 490o does it). The API cannot write such a row: MEMBER refuses it. It can still come to be, harmlessly,
+-- when a post leaves at the very moment a room row is written for it by another transaction (the leave function takes no lock, so it does not see the
+-- row, which is not yet committed). What it must not do: MEMBER is asked only of a write of the placements or of the room rows, never of a member's
+-- change of lessons, a share, the block's link to another block's times, or a move; and what MEMBER does refuse (a write of a placement or a room
+-- row while such a row stands) goes away when the rows are replaced, as the gateway's save replaces every row. The helpers have the prefix gbo_.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION pg_temp.gbo_try(stmt text, block uuid DEFAULT NULL) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE st text; msg text; det text; cn text; reason text;
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+    RETURN 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL, cn = CONSTRAINT_NAME;
+  END;
+  IF st = 'BP409' THEN
+    reason := substring(det FROM 'reason=([A-Z_]+)');
+    RETURN 'BP409 ' || coalesce(reason, '?')
+      || CASE WHEN msg LIKE reason || ': %' THEN '' ELSE ' (the message does not start with the reason)' END
+      || CASE WHEN block IS NULL OR det = format('blockId=%s reason=%s', block, reason) THEN '' ELSE ' (DETAIL names another block: ' || det || ')' END;
+  ELSIF st = 'TB409' THEN RETURN 'TB409';
+  ELSIF coalesce(cn, '') <> '' THEN RETURN st || ' ' || cn;
+  END IF;
+  RETURN st;
+END $f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.gbo_expect(label text, got text, want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  IF got IS DISTINCT FROM want THEN
+    RAISE EXCEPTION E'gbo %: got\n%\nwanted\n%', label, coalesce(got, '(null)'), want;
+  END IF;
+  PERFORM set_config('gbo.checks', (coalesce(nullif(current_setting('gbo.checks', true), ''), '0')::integer + 1)::text, true);
+END $f$;
+
+BEGIN;
+DO $$
+DECLARE
+  s uuid;
+  yr uuid;
+  grp uuid;
+  room uuid;
+  blk uuid;
+  lead uuid;
+  m1 uuid;
+  m2 uuid;
+  x uuid;
+  y uuid;
+  p1 uuid;
+  k int := 0;
+  subj uuid;
+
+  alien constant text := $q$INSERT INTO "TeachingBlockPlacementRooms" ("schoolId", "placementId", "requirementId", "roomId", "updatedAt") VALUES (%L, %L, %L, %L, now())$q$;
+BEGIN
+  INSERT INTO "Schools" (name, slug, "updatedAt") VALUES ('gbo', 'gbo-501o', now()) RETURNING id INTO s;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt") VALUES (s, 'gbo 2030/31', '2030-08-15', '2031-06-15', true, now()) RETURNING id INTO yr;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (s, yr, 'gbo 7A', 7, now()) RETURNING id INTO grp;
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (s, 'gbo sal', now()) RETURNING id INTO room;
+  INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt") VALUES (s, yr, 'gbo block', now()) RETURNING id INTO blk;
+  INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt") VALUES (s, yr, 'gbo ledare', now()) RETURNING id INTO lead;
+  -- Two members of the block, and two posts of the same form that are in no block (x: the post a room row will name; y: a post that joins).
+  FOR k IN 1 .. 4 LOOP
+    INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s, 'gbo ' || k, 'GBO' || k, now()) RETURNING id INTO subj;
+    INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "lessonsPerWeek", "minutesPerLesson", "blockId", "updatedAt")
+    VALUES (s, yr, subj, grp, 2, 60, CASE WHEN k <= 2 THEN blk END, now());
+  END LOOP;
+  SELECT id INTO m1 FROM "TeachingRequirements" r WHERE r."schoolId" = s AND r."blockId" = blk ORDER BY r.id LIMIT 1;
+  SELECT id INTO m2 FROM "TeachingRequirements" r WHERE r."schoolId" = s AND r."blockId" = blk AND r.id <> m1;
+  SELECT id INTO x FROM "TeachingRequirements" r WHERE r."schoolId" = s AND r."blockId" IS NULL ORDER BY r.id LIMIT 1;
+  SELECT id INTO y FROM "TeachingRequirements" r WHERE r."schoolId" = s AND r."blockId" IS NULL AND r.id <> x;
+  INSERT INTO "TeachingBlockPlacements" ("schoolId", "blockId", "academicYearId", "dayOfWeek", "startTime", minutes, "updatedAt") VALUES (s, blk, yr, 1, '08:00', 60, now()) RETURNING id INTO p1;
+  PERFORM pg_temp.gbo_expect('501o a room row for a member', pg_temp.gbo_try(format(alien, s, p1, m2, room), blk), 'ok');
+  -- A room row for a post that is not a member, planted with the triggers off.
+  PERFORM set_config('session_replication_role', 'replica', true);
+  PERFORM pg_temp.gbo_expect('501o the alien row is planted', pg_temp.gbo_try(format(alien, s, p1, x, room)), 'ok');
+  PERFORM set_config('session_replication_role', 'origin', true);
+  PERFORM pg_temp.gbo_expect('501o the block holds a room row for a member and one for a post that is not', (SELECT count(*) FROM "TeachingBlockPlacementRooms" WHERE "placementId" = p1)::text, '2');
+
+  -- What MEMBER does not judge: a member's lessons, a share, the block's link, a move.
+  PERFORM pg_temp.gbo_expect('501o the members'' lessons raised, all in one statement', pg_temp.gbo_try(format('UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 3 WHERE "blockId" = %L', blk), blk), 'ok');
+  PERFORM pg_temp.gbo_expect('501o ... and lowered again', pg_temp.gbo_try(format('UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 2 WHERE "blockId" = %L', blk), blk), 'ok');
+  PERFORM pg_temp.gbo_expect('501o ... recurrence set to what it is', pg_temp.gbo_try(format('UPDATE "TeachingRequirements" SET recurrence = recurrence WHERE "blockId" = %L', blk), blk), 'ok');
+  PERFORM pg_temp.gbo_expect('501o the members'' length changed under the placement is LENGTH, not MEMBER', pg_temp.gbo_try(format('UPDATE "TeachingRequirements" SET "minutesPerLesson" = 45 WHERE "blockId" = %L', blk), blk), 'BP409 LENGTH');
+  PERFORM pg_temp.gbo_expect('501o the lessons lowered to one: the one placement fits', pg_temp.gbo_try(format('UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 1 WHERE "blockId" = %L', blk), blk), 'ok');
+  PERFORM pg_temp.gbo_expect('501o ... and raised again', pg_temp.gbo_try(format('UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 2 WHERE "blockId" = %L', blk), blk), 'ok');
+  PERFORM pg_temp.gbo_expect('501o a share for a member is SHARES, not MEMBER',
+    pg_temp.gbo_try(format('INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES (%L, %L, NULL, 1, 60, now())', s, m1), blk), 'BP409 SHARES');
+  PERFORM pg_temp.gbo_expect('501o the block set to follow another block''s times is FOLLOWER, not MEMBER',
+    pg_temp.gbo_try(format('UPDATE "TeachingBlocks" SET "sameTimesAsBlockId" = %L WHERE id = %L', lead, blk), blk), 'BP409 FOLLOWER');
+  PERFORM pg_temp.gbo_expect('501o a member that is not the room row''s post leaves the block', pg_temp.gbo_try(format('UPDATE "TeachingRequirements" SET "blockId" = NULL WHERE id = %L', m1)), 'ok');
+  PERFORM pg_temp.gbo_expect('501o ... its own room rows are none and the other post''s are not touched', (SELECT count(*) FROM "TeachingBlockPlacementRooms" WHERE "placementId" = p1)::text, '2');
+  PERFORM pg_temp.gbo_expect('501o a post joins the block', pg_temp.gbo_try(format('UPDATE "TeachingRequirements" SET "blockId" = %L WHERE id = %L', blk, y)), 'ok');
+  PERFORM pg_temp.gbo_expect('501o the member whose row it is leaves: only its row goes', pg_temp.gbo_try(format('UPDATE "TeachingRequirements" SET "blockId" = NULL WHERE id = %L', m2)), 'ok');
+  PERFORM pg_temp.gbo_expect('501o ... the room row of the post that is not a member stays', (SELECT string_agg("requirementId"::text, ',') FROM "TeachingBlockPlacementRooms" WHERE "placementId" = p1), x::text);
+  PERFORM pg_temp.gbo_expect('501o the members are back', pg_temp.gbo_try(format('UPDATE "TeachingRequirements" SET "blockId" = %L WHERE id = %L', blk, m1)), 'ok');
+  PERFORM pg_temp.gbo_expect('501o ... and the other', pg_temp.gbo_try(format('UPDATE "TeachingRequirements" SET "blockId" = %L WHERE id = %L', blk, m2)), 'ok');
+
+  -- What MEMBER refuses, while a room row for a post that is not a member stands: a write of the placements or of the room rows.
+  PERFORM pg_temp.gbo_expect('501o MEMBER: a second placement', pg_temp.gbo_try(format($q$INSERT INTO "TeachingBlockPlacements" ("schoolId", "blockId", "academicYearId", "dayOfWeek", "startTime", minutes, "updatedAt") VALUES (%L, %L, %L, 2, '08:00', 60, now())$q$, s, blk, yr), blk), 'BP409 MEMBER');
+  PERFORM pg_temp.gbo_expect('501o MEMBER: an UPDATE of a placement''s length (to what it is)', pg_temp.gbo_try(format('UPDATE "TeachingBlockPlacements" SET minutes = minutes WHERE id = %L', p1), blk), 'BP409 MEMBER');
+  PERFORM pg_temp.gbo_expect('501o a move of a placement to another day is not judged', pg_temp.gbo_try(format('UPDATE "TeachingBlockPlacements" SET "dayOfWeek" = 3 WHERE id = %L', p1), blk), 'ok');
+  PERFORM pg_temp.gbo_expect('501o MEMBER: a room row for a member is judged on the whole set too', pg_temp.gbo_try(format(alien, s, p1, m1, room), blk), 'BP409 MEMBER');
+  -- DELETE is never judged, and replacing the rows (the gateway's save) leaves a block that takes its writes again.
+  PERFORM pg_temp.gbo_expect('501o the room row for the post that is not a member is deleted', pg_temp.gbo_try(format('DELETE FROM "TeachingBlockPlacementRooms" WHERE "requirementId" = %L', x), blk), 'ok');
+  PERFORM pg_temp.gbo_expect('501o ... and a second placement is admitted', pg_temp.gbo_try(format($q$INSERT INTO "TeachingBlockPlacements" ("schoolId", "blockId", "academicYearId", "dayOfWeek", "startTime", minutes, "updatedAt") VALUES (%L, %L, %L, 2, '08:00', 60, now())$q$, s, blk, yr), blk), 'ok');
+  PERFORM pg_temp.gbo_expect('501o ... and a room row for a member', pg_temp.gbo_try(format(alien, s, p1, m1, room), blk), 'ok');
+  PERFORM pg_temp.gbo_expect('501o MEMBER: a room row for a post that is not a member is refused as it always was', pg_temp.gbo_try(format(alien, s, p1, x, room), blk), 'BP409 MEMBER');
+  PERFORM pg_temp.gbo_expect('501o MEMBER: and an UPDATE of a room row to such a post', pg_temp.gbo_try(format('UPDATE "TeachingBlockPlacementRooms" SET "requirementId" = %L WHERE "requirementId" = %L', x, m1), blk), 'BP409 MEMBER');
+  -- A row planted again, and the block replaced whole: every placement deleted (its room rows with it) and written again.
+  PERFORM set_config('session_replication_role', 'replica', true);
+  PERFORM pg_temp.gbo_expect('501o the alien row again', pg_temp.gbo_try(format(alien, s, p1, x, room)), 'ok');
+  PERFORM set_config('session_replication_role', 'origin', true);
+  PERFORM pg_temp.gbo_expect('501o MEMBER: the set is refused while it stands', pg_temp.gbo_try(format('UPDATE "TeachingBlockPlacements" SET recurrence = recurrence WHERE id = %L', p1), blk), 'BP409 MEMBER');
+  PERFORM pg_temp.gbo_expect('501o the block''s placements are replaced: all deleted', pg_temp.gbo_try(format('DELETE FROM "TeachingBlockPlacements" WHERE "blockId" = %L', blk), blk), 'ok');
+  PERFORM pg_temp.gbo_expect('501o ... no room row is left', (SELECT count(*) FROM "TeachingBlockPlacementRooms" WHERE "schoolId" = s)::text, '0');
+  PERFORM pg_temp.gbo_expect('501o ... and the new set is written', pg_temp.gbo_try(format($q$INSERT INTO "TeachingBlockPlacements" ("schoolId", "blockId", "academicYearId", "dayOfWeek", "startTime", minutes, "updatedAt") VALUES (%L, %L, %L, 4, '09:00', 60, now()), (%L, %L, %L, 5, '09:00', 60, now())$q$, s, blk, yr, s, blk, yr), blk), 'ok');
+  RAISE NOTICE 'gbo 501o: % checks', current_setting('gbo.checks');
+END $$;
+ROLLBACK;
