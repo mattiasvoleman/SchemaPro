@@ -253,7 +253,7 @@ Run it with:
 | `API_KEY` | the generated `AI_ENGINE_API_KEY` |
 | `ALLOWED_ORIGINS` | the API's origin, e.g. `https://api.yourschool.example` |
 | `SOLVER_MAX_TIME_SECONDS` | `60`: the solve budget in seconds (raise for very large schools). A solve that times out answers after this plus `SOLVER_PROBE_SECONDS` (default `20`). The old `SOLVER_TIMEOUT_SECONDS` is gone: nothing read it. |
-| `SOLVER_EXPLAIN_SHARP_SECONDS` | `10` (default, must be above 0): the share of the 15 s explanation cap that a LARGE refused week (50 lessons or more) gets for its first try, on the model without the objective, before the model with it is tried as the reserve. Raise it if the first try does not finish on this processor (section 23). |
+| `SOLVER_EXPLAIN_SHARP_SECONDS` | `10` (default, must be above 0 and a finite number; the engine does not start on `0`, a negative value or `inf`): the share of the 15 s explanation cap that a LARGE refused week (50 lessons or more) gets for its first try, on the model without the objective, before the model with it is tried as the reserve. Raise it if the first try does not finish on this processor (section 23). |
 | `EXAM_SOLVER_MAX_TIME_SECONDS` | `20` (default): the budget of the exam planner (`POST /api/v1/plan-exams`, Provplanering), apart from the generator's. A short budget never refuses: a greedy plan is the floor and the answer from the first instant, so less time means fewer exams placed or a clumsier plan. A request can ask for less and never for more. The API waits 90 s for it. |
 
 The solver needs no database and no PII ever reaches it. Keep it on a private
@@ -5543,6 +5543,11 @@ database refuses).
   free at once in 30 s the migration stops with nothing changed and says so: Prisma then marks it failed and refuses every later
   `migrate deploy` (P3009) until `prisma migrate resolve --rolled-back 20270216090000_en_undervisande_administrator_far_lararens_egna_armar`
   has been run, then deploy again.
+- **Run again by hand.** A second run on a migrated database stops at `CREATE FUNCTION app.my_post_covers_the_year_of_group`
+  (already exists) and rolls everything back; by then the 16 policy patches have run a second time in the same transaction,
+  which only the rollback undoes (measured on a scratch database: the policies and functions are byte for byte as before). One arm
+  converted by hand before the FIRST run would get the mark twice (`... OR teaches OR teaches`), which RLS section 505b fails
+  afterwards; the file stays as it is, because its sha256 is the one that ran in production.
 - **Deploy order:** the migration, then the merge. The API before this release is untouched by it (nothing is marked), and the API
   after it needs nothing of it. **Checks:** `teaches-pr3-data/prod-fore.sql` (61 checks) before and `prod-efter.sql` (69) directly
   after, in the notes folder of the round's coordinator (`side-session-notes/local_487a7ffc-d4e9-44ea-9a93-ae6556fb4370/`, outside
@@ -5861,6 +5866,11 @@ codes, fewer of them.
   assumption (an empty core: 27 of the 250). A room that is too small is such a
   cause, and its literal cannot carry it, since the room's size is also the lesson's
   own room domain; the objective's "all" is how the school has always been told.
+  No reserve is run after a solution: when the first try finds a timetable
+  (`OPTIMAL` or `FEASIBLE`) the model with the objective has the same hard rules, so
+  it cannot prove the week impossible either, and trying it only spent the rest of the
+  cap (14.6 s on one large week). A reserve that itself finds a timetable proves
+  nothing, and the answer stays what the first try left.
 - **A week under 50 lessons is explained as it always was**, with the objective
   (and on a school with the walk, 5 s with it and then without). The core without
   the objective is ONE sufficient set: on the suite's small weeks 17 of 202 sharp

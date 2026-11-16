@@ -64,8 +64,11 @@ class Settings(BaseSettings):
     # machine, over 10 s in three of three paired runs when it was busy, and the
     # production processor is not measured. Raising it (up to the cap) lets the
     # sharp core finish on a slower one; lowering it gives the reserve more.
+    # Above zero and finite: `inf` would be clipped to the cap and so do no harm,
+    # but it is not a number of seconds, and a setting that is read as one is
+    # refused at start-up (the review of #323, round 2, LÅG-4).
     solver_explain_sharp_seconds: float = Field(
-        default=10.0, alias="SOLVER_EXPLAIN_SHARP_SECONDS", gt=0,
+        default=10.0, alias="SOLVER_EXPLAIN_SHARP_SECONDS", gt=0, allow_inf_nan=False,
     )
     # The room optimisation's own budget, apart from the generator's, because
     # the two answer different questions at different prices. A generation is a

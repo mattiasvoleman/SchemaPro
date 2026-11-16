@@ -1,0 +1,212 @@
+{
+ "_comment": "The review of #320, round 2, LÅG-1: oracle case o_gen.jsonl:193:v0 (seed 8, dated variant 0). Seven periods; period 3 is one even week, period 4 one odd week. The refusal is given by the even weeks of periods 3 and 5, and a group of cells holds period 3's odd cell (no week is in it) beside its even one. A six-hour day, a day a week.",
+ "payload": {
+  "academicYearId": "ca30e18b-1fc6-4457-be49-e6b3df2e0022",
+  "groupConflicts": [
+   [
+    "5c4a6c66-bd1a-407b-9e1a-722f6f29f895",
+    "d1959c89-eda8-49b3-9202-594076a0cae8"
+   ]
+  ],
+  "groups": [
+   {
+    "id": "d1959c89-eda8-49b3-9202-594076a0cae8",
+    "lunchHeadcount": 24,
+    "maxGradeLevel": 7,
+    "minGradeLevel": 7
+   },
+   {
+    "id": "5c4a6c66-bd1a-407b-9e1a-722f6f29f895",
+    "lunchHeadcount": 24,
+    "maxGradeLevel": 7,
+    "minGradeLevel": 7
+   },
+   {
+    "id": "694dffe1-a62e-415b-940a-8b6c83aa8759",
+    "lunchHeadcount": 15,
+    "maxGradeLevel": 7,
+    "minGradeLevel": 7
+   }
+  ],
+  "requestId": "814c16d5-15f6-4d5b-a46e-0e1d9c26b0e0",
+  "requirements": [
+   {
+    "id": "57a5da6a-7984-4bfc-a33c-f6de9efbb2a5",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 90,
+    "recurrence": "ODD_WEEKS",
+    "studentGroupId": "d1959c89-eda8-49b3-9202-594076a0cae8",
+    "studentGroupSize": 15,
+    "subjectId": "c5180300-e21a-49aa-9137-bf8d28e27a21",
+    "teacherId": "88b3f539-a051-4351-9f18-5ad7fadb88fb",
+    "periods": [
+     false,
+     false,
+     false,
+     false,
+     true,
+     true,
+     false
+    ]
+   },
+   {
+    "id": "57f03cf8-6bb7-4fef-b591-c03aee0d128f",
+    "lessonsPerWeek": 2,
+    "minutesPerLesson": 60,
+    "studentGroupId": "d1959c89-eda8-49b3-9202-594076a0cae8",
+    "studentGroupSize": 15,
+    "subjectId": "1a39a284-3561-465a-b558-9b1364b05c19",
+    "teacherId": "c74f25f8-8a96-42c0-a615-dea1a200dfc8",
+    "periods": [
+     false,
+     false,
+     false,
+     true,
+     true,
+     true,
+     false
+    ]
+   },
+   {
+    "coTeacherId": "a4b8bbc5-1ba9-437c-a76a-c599e3bfba23",
+    "id": "0322d358-ed47-444b-b03c-439281894f54",
+    "lessonsPerWeek": 2,
+    "minutesPerLesson": 60,
+    "recurrence": "ODD_WEEKS",
+    "studentGroupId": "d1959c89-eda8-49b3-9202-594076a0cae8",
+    "studentGroupSize": 20,
+    "subjectId": "7e136121-a1ee-400c-a339-ec00d220a815",
+    "teacherId": "88b3f539-a051-4351-9f18-5ad7fadb88fb",
+    "periods": [
+     false,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   },
+   {
+    "id": "1757f63f-a269-41c1-972c-894d5ff21bb8",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 60,
+    "studentGroupId": "d1959c89-eda8-49b3-9202-594076a0cae8",
+    "studentGroupSize": 15,
+    "subjectId": "af3de627-8ac3-466c-b9b9-1734a60865dd",
+    "teacherId": "df899633-18b7-4d61-b429-bffaefa20a21"
+   },
+   {
+    "id": "9f67454a-09ac-4e5f-9ac0-a4d7ca4dfe1d",
+    "lessonsPerWeek": 3,
+    "minutesPerLesson": 60,
+    "studentGroupId": "5c4a6c66-bd1a-407b-9e1a-722f6f29f895",
+    "studentGroupSize": 24,
+    "subjectId": "63da6f34-469e-4655-93bf-5d56d4a9d2a2",
+    "teacherId": "a4b8bbc5-1ba9-437c-a76a-c599e3bfba23"
+   },
+   {
+    "id": "a42d281a-89f6-458d-863b-a400bdcace62",
+    "lessonsPerWeek": 1,
+    "minutesPerLesson": 45,
+    "recurrence": "ODD_WEEKS",
+    "studentGroupId": "5c4a6c66-bd1a-407b-9e1a-722f6f29f895",
+    "studentGroupSize": 24,
+    "subjectId": "242afb43-f8b9-487a-acd0-705bd6880eeb",
+    "teacherId": "df899633-18b7-4d61-b429-bffaefa20a21",
+    "periods": [
+     false,
+     false,
+     true,
+     true,
+     true,
+     false,
+     false
+    ]
+   },
+   {
+    "id": "c4166193-7057-45d7-b836-1b18c73b482c",
+    "lessonsPerWeek": 2,
+    "minutesPerLesson": 60,
+    "studentGroupId": "5c4a6c66-bd1a-407b-9e1a-722f6f29f895",
+    "studentGroupSize": 15,
+    "subjectId": "3aca8c84-cd8e-4b6d-9964-d7c6ec18ac00",
+    "teacherId": "88b3f539-a051-4351-9f18-5ad7fadb88fb"
+   },
+   {
+    "id": "e92bbcaa-ba1c-40cb-9fa7-28db3f8a99e0",
+    "lessonsPerWeek": 2,
+    "minutesPerLesson": 60,
+    "studentGroupId": "694dffe1-a62e-415b-940a-8b6c83aa8759",
+    "studentGroupSize": 15,
+    "subjectId": "7c260352-2eec-4397-b16e-fee01ffe9298",
+    "teacherId": "a4b8bbc5-1ba9-437c-a76a-c599e3bfba23"
+   },
+   {
+    "coTeacherId": "df899633-18b7-4d61-b429-bffaefa20a21",
+    "id": "f9b97eb1-e2bc-4744-b908-83ead2d4f0ea",
+    "lessonsPerWeek": 3,
+    "minutesPerLesson": 90,
+    "recurrence": "EVEN_WEEKS",
+    "studentGroupId": "694dffe1-a62e-415b-940a-8b6c83aa8759",
+    "studentGroupSize": 20,
+    "subjectId": "bbdb52aa-31af-449f-b016-de275dad0e14",
+    "teacherId": "a4b8bbc5-1ba9-437c-a76a-c599e3bfba23",
+    "periods": [
+     false,
+     false,
+     false,
+     false,
+     true,
+     true,
+     true
+    ]
+   },
+   {
+    "id": "9df10182-97c3-46aa-bc81-4e833ef78499",
+    "lessonsPerWeek": 2,
+    "minutesPerLesson": 60,
+    "studentGroupId": "694dffe1-a62e-415b-940a-8b6c83aa8759",
+    "studentGroupSize": 24,
+    "subjectId": "fadfa237-d92c-436a-9679-8973366e15c6",
+    "teacherId": "df899633-18b7-4d61-b429-bffaefa20a21"
+   }
+  ],
+  "rooms": [
+   {
+    "capacity": 25,
+    "id": "8efa3fed-a2fc-4dce-8b10-e6b5c7a72ed3"
+   },
+   {
+    "capacity": 40,
+    "id": "bb49e11f-79fc-4aed-a279-ec4efaacf0d1"
+   },
+   {
+    "capacity": 30,
+    "id": "92e8ed6a-ac33-4076-9f98-4d7848d58e14"
+   },
+   {
+    "capacity": 40,
+    "id": "ca1d28db-a82f-4322-9808-6a6cf085dfdd"
+   }
+  ],
+  "periodWeeks": [
+   1,
+   7,
+   2,
+   1,
+   1,
+   15,
+   7
+  ],
+  "periodOddWeeks": [
+   0,
+   4,
+   1,
+   0,
+   1,
+   8,
+   3
+  ]
+ }
+}
