@@ -62768,19 +62768,28 @@ BEGIN
     END LOOP;
     PERFORM pg_temp.gb_true('500 ' || k.fn || ' is commented', coalesce(obj_description(k.fn::regprocedure, 'pg_proc'), '') <> '');
   END LOOP;
-  -- The lock, read from the source (a single session cannot see a row lock; probe-forlagg-block-lasen.ts proves it between two sessions): the
-  -- fit function takes the block's row FOR NO KEY UPDATE before it judges anything (before the first read of a placement to be counted, of a
-  -- member, of a share), the leave function takes the OLD block's row before it deletes, and neither takes an advisory lock, which would be held
-  -- across the row's own key checks and can deadlock with a caller holding a Users row.
-  PERFORM pg_temp.gb_true('500 the fit function locks the block row FOR NO KEY UPDATE, once, before it judges',
-    (SELECT prosrc ~ 'FROM "TeachingBlocks" b[^;]*FOR NO KEY UPDATE;' AND length(prosrc) - length(replace(prosrc, 'FOR NO KEY UPDATE', '')) = length('FOR NO KEY UPDATE')
-            AND position('FOR NO KEY UPDATE' IN prosrc) < position('IF NOT EXISTS (SELECT 1 FROM "TeachingBlockPlacements"' IN prosrc)
-            AND position('FOR NO KEY UPDATE' IN prosrc) < position('"TeachingRequirementShares"' IN prosrc)
-            AND position('FOR NO KEY UPDATE' IN prosrc) < position('"minutesPerLesson"' IN prosrc)
-       FROM pg_proc WHERE oid = 'app.teaching_block_placements_fit()'::regprocedure));
-  PERFORM pg_temp.gb_true('500 the leave function locks the old block''s row FOR NO KEY UPDATE before it deletes',
-    (SELECT prosrc ~ 'FROM "TeachingBlocks" b[^;]*"id" = OLD."blockId"[^;]*FOR NO KEY UPDATE;' AND position('FOR NO KEY UPDATE' IN prosrc) < position('DELETE FROM' IN prosrc)
-       FROM pg_proc WHERE oid = 'app.teaching_block_placement_rooms_leave()'::regprocedure));
+  -- The order of every lock, read from the source (a single session cannot see a row lock, nor the order two of them are taken in;
+  -- probe-forlagg-block-lasen.ts proves both between two sessions). The post's row first and the blocks' rows after it, in id order:
+  --   the fit function, for a share, takes the POST's row FOR NO KEY UPDATE before the block's (a member's change of lessons holds the post and
+  --   then takes the block; a share that took the block and then the post met it in a deadlock), then the block's row FOR NO KEY UPDATE, once,
+  --   before it judges anything (before the first read of a placement to be counted, of a member, of a share);
+  --   the leave function takes the OLD and the NEW block's rows together, ORDER BY id, FOR NO KEY UPDATE, directly before its DELETE (two posts
+  --   that change places must not take the two blocks in opposite orders), and its trigger sorts before TB409's (below);
+  --   and neither takes an advisory lock, which would be held across the row's own key checks and can deadlock with a caller holding a Users row.
+  -- Read with the comments taken out: a comment may say FOR NO KEY UPDATE too.
+  PERFORM pg_temp.gb_true('500 the fit function takes the post''s row (for a share) and then the block''s row, FOR NO KEY UPDATE, before it judges',
+    (SELECT src ~ 'FROM "TeachingRequirements" r[^;]*"id" = NEW\."requirementId"[^;]*FOR NO KEY UPDATE;'
+            AND src ~ 'FROM "TeachingBlocks" b[^;]*FOR NO KEY UPDATE;'
+            AND length(src) - length(replace(src, 'FOR NO KEY UPDATE', '')) = 2 * length('FOR NO KEY UPDATE')
+            AND position('FOR NO KEY UPDATE' IN src) < position('FROM "TeachingBlocks" b' IN src)
+            AND position('FROM "TeachingBlocks" b' IN src) < position('IF NOT EXISTS (SELECT 1 FROM "TeachingBlockPlacements"' IN src)
+            AND position('FROM "TeachingBlocks" b' IN src) < position('"TeachingRequirementShares"' IN src)
+            AND position('FROM "TeachingBlocks" b' IN src) < position('"minutesPerLesson"' IN src)
+       FROM (SELECT regexp_replace(prosrc, '--[^\n]*', '', 'g') AS src FROM pg_proc WHERE oid = 'app.teaching_block_placements_fit()'::regprocedure) x));
+  PERFORM pg_temp.gb_true('500 the leave function takes the old and the new block''s rows in id order, FOR NO KEY UPDATE, directly before its DELETE',
+    (SELECT src ~ 'FROM "TeachingBlocks" b\s+WHERE b\."schoolId" = OLD\."schoolId" AND b\."id" IN \(OLD\."blockId", NEW\."blockId"\)\s+ORDER BY b\."id"\s+FOR NO KEY UPDATE;\s+DELETE FROM "TeachingBlockPlacementRooms"'
+            AND length(src) - length(replace(src, 'FOR NO KEY UPDATE', '')) = length('FOR NO KEY UPDATE')
+       FROM (SELECT regexp_replace(prosrc, '--[^\n]*', '', 'g') AS src FROM pg_proc WHERE oid = 'app.teaching_block_placement_rooms_leave()'::regprocedure) x));
   PERFORM pg_temp.gb_true('500 neither function takes an advisory lock',
     (SELECT bool_and(prosrc !~* 'pg_(try_)?advisory') FROM pg_proc WHERE oid IN ('app.teaching_block_placements_fit()'::regprocedure, 'app.teaching_block_placement_rooms_leave()'::regprocedure)));
   PERFORM pg_temp.gb_true('500 the fit function names its rules in its comment',
@@ -62795,7 +62804,7 @@ BEGIN
       ('TeachingRequirements_block_placements_fit',           '"TeachingRequirements"',        17, 'lessonLengths,lessonsPerWeek,minutesPerLesson,recurrence',                     true,  'app.teaching_block_placements_fit()'),
       ('TeachingRequirementShares_block_placements_fit',      '"TeachingRequirementShares"',   21, 'requirementId',                                                                false, 'app.teaching_block_placements_fit()'),
       ('TeachingBlocks_placements_fit',                       '"TeachingBlocks"',              17, 'sameTimesAsBlockId',                                                           true,  'app.teaching_block_placements_fit()'),
-      ('TeachingRequirements_block_placement_rooms_leave',    '"TeachingRequirements"',        17, 'blockId',                                                                      true,  'app.teaching_block_placement_rooms_leave()')
+      ('TeachingRequirements_block_leave_takes_rooms',         '"TeachingRequirements"',        17, 'blockId',                                                                      true,  'app.teaching_block_placement_rooms_leave()')
     ) v(name, rel, tgtype, cols, has_when, fn) LOOP
     SELECT format('%s %s %s %s %s %s', t.tgtype, t.tgenabled, t.tgdeferrable::text, (t.tgfoid = k.fn::regprocedure)::text,
                   (SELECT string_agg(a.attname, ',' ORDER BY a.attname COLLATE "C") FROM unnest(t.tgattr::int2[]) x(attnum) JOIN pg_attribute a ON a.attrelid = t.tgrelid AND a.attnum = x.attnum),
@@ -62807,13 +62816,13 @@ BEGIN
     (SELECT string_agg(tgname, ',' ORDER BY tgname COLLATE "C") FROM pg_trigger WHERE tgfoid = 'app.teaching_block_placements_fit()'::regprocedure AND NOT tgisinternal),
     'TeachingBlockPlacementRooms_fit,TeachingBlockPlacements_fit,TeachingBlocks_placements_fit,TeachingRequirementShares_block_placements_fit,TeachingRequirements_block_placements_fit');
   PERFORM pg_temp.gb_expect('500 the leave function is fired by that one trigger and no other',
-    (SELECT string_agg(tgname, ',') FROM pg_trigger WHERE tgfoid = 'app.teaching_block_placement_rooms_leave()'::regprocedure AND NOT tgisinternal), 'TeachingRequirements_block_placement_rooms_leave');
+    (SELECT string_agg(tgname, ',') FROM pg_trigger WHERE tgfoid = 'app.teaching_block_placement_rooms_leave()'::regprocedure AND NOT tgisinternal), 'TeachingRequirements_block_leave_takes_rooms');
   -- The WHENs: a member's trigger asks only about a post in a block whose lessons changed; the block's only about a link SET to a
   -- block (clearing it asks nothing); the leave's only about a post that was in a block and is in another or none.
   FOR k IN SELECT * FROM (VALUES
       ('TeachingRequirements_block_placements_fit',        '"TeachingRequirements"', ARRAY['%"blockId" IS NOT NULL%', '%"lessonsPerWeek"%', '%"minutesPerLesson"%', '%"lessonLengths"%', '%recurrence%', '%IS DISTINCT FROM%']),
       ('TeachingBlocks_placements_fit',                    '"TeachingBlocks"',       ARRAY['%"sameTimesAsBlockId" IS NOT NULL%', '%"sameTimesAsBlockId" IS DISTINCT FROM%']),
-      ('TeachingRequirements_block_placement_rooms_leave', '"TeachingRequirements"', ARRAY['%"blockId" IS NOT NULL%', '%"blockId" IS DISTINCT FROM%'])
+      ('TeachingRequirements_block_leave_takes_rooms', '"TeachingRequirements"', ARRAY['%"blockId" IS NOT NULL%', '%"blockId" IS DISTINCT FROM%'])
     ) v(name, rel, pats) LOOP
     SELECT pg_get_triggerdef(t.oid) INTO got FROM pg_trigger t WHERE t.tgname = k.name AND t.tgrelid = k.rel::regclass;
     PERFORM pg_temp.gb_true('500 the WHEN of ' || k.name || ' says what it should (' || got || ')',
@@ -62821,17 +62830,22 @@ BEGIN
   END LOOP;
   -- The trigger names sort in the order the migration relies on: Postgres fires triggers of one event in name order, and the
   -- RI_ConstraintTrigger_ ones (the keys' KEY SHARE) before every one of these, so a room row's keys have taken their locks before
-  -- the block's row is asked for. On the posts the block's members rule (TB409) takes its FOR UPDATE on the block first and the
-  -- leave trigger after it; on the shares the block's lock comes before the share's own rule (TS409) locks the post.
+  -- the block's row is asked for. On the posts the leave trigger (which takes BOTH blocks of a move, in id order) fires before TB409 (which takes
+  -- the block the post goes to FOR UPDATE), and TB409 before the fit trigger; on the shares the block's lock comes before the share's own rule (TS409).
   FOR k IN SELECT * FROM (VALUES ('"TeachingBlockPlacementRooms"', 'TeachingBlockPlacementRooms_fit'), ('"TeachingBlockPlacements"', 'TeachingBlockPlacements_fit')) v(rel, trg) LOOP
     PERFORM pg_temp.gb_true('500 every key''s check on ' || k.rel || ' sorts, and so fires, before ' || k.trg,
       (SELECT count(*) > 0 AND bool_and(t.tgname COLLATE "C" < k.trg COLLATE "C")
          FROM pg_trigger t JOIN pg_constraint c ON c.oid = t.tgconstraint
         WHERE t.tgrelid = k.rel::regclass AND c.conrelid = t.tgrelid AND c.contype = 'f' AND t.tgisinternal));
   END LOOP;
-  PERFORM pg_temp.gb_true('500 on the posts TB409 (the block FOR UPDATE) fires before the leave trigger, which fires before the fit',
-    'TeachingRequirements_block_members_agree' COLLATE "C" < 'TeachingRequirements_block_placement_rooms_leave' COLLATE "C"
-    AND 'TeachingRequirements_block_placement_rooms_leave' COLLATE "C" < 'TeachingRequirements_block_placements_fit' COLLATE "C");
+  PERFORM pg_temp.gb_true('500 on the posts the leave trigger fires before TB409, which fires before the fit (the names sort in that order)',
+    'TeachingRequirements_block_leave_takes_rooms' COLLATE "C" < 'TeachingRequirements_block_members_agree' COLLATE "C"
+    AND 'TeachingRequirements_block_members_agree' COLLATE "C" < 'TeachingRequirements_block_placements_fit' COLLATE "C");
+  -- ... and the live names are what is compared, so a rename that breaks the order is read here whatever the constants above say.
+  PERFORM pg_temp.gb_true('500 the leave trigger sorts before every other trigger of the post that takes a block''s row',
+    (SELECT bool_and('TeachingRequirements_block_leave_takes_rooms' COLLATE "C" < t.tgname COLLATE "C") FROM pg_trigger t
+      WHERE t.tgrelid = '"TeachingRequirements"'::regclass AND NOT t.tgisinternal AND t.tgname IN ('TeachingRequirements_block_members_agree', 'TeachingRequirements_block_placements_fit'))
+    AND (SELECT t.tgname COLLATE "C" < 'TeachingRequirements_block_members_agree' COLLATE "C" FROM pg_trigger t WHERE t.tgfoid = 'app.teaching_block_placement_rooms_leave()'::regprocedure AND NOT t.tgisinternal));
   PERFORM pg_temp.gb_true('500 on the shares the block''s lock comes before the share''s own rule',
     'TeachingRequirementShares_block_placements_fit' COLLATE "C" < 'TeachingRequirementShares_fit' COLLATE "C");
 
@@ -63568,6 +63582,44 @@ BEGIN
     format('UPDATE "TeachingRequirements" SET "blockId" = NULL, "lessonsPerWeek" = 1, "minutesPerLesson" = 45 WHERE id = %L', oth2), 'ok');
   PERFORM pg_temp.gb_expect('502 its row went; the block keeps its lesson and the member that stays has its row', pg_temp.gb_nrp(oth2) || '/' || pg_temp.gb_nr(oth) || '/' || pg_temp.gb_n(oth), '0/1/1');
   RAISE NOTICE 'gb 502b (a post that leaves): % checks', current_setting('gb.checks');
+END $$;
+ROLLBACK;
+
+-- Two posts change places in ONE statement (the first block's post to the second and the second's to the first): the leave trigger takes the two
+-- blocks of each move in id order, and each of the two posts loses its own room rows and nobody else's; every placement is the same row.
+BEGIN;
+SELECT set_config('app.test_gb_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  t jsonb;
+  s uuid;
+  y uuid;
+  two uuid;
+  oth uuid;
+  two1 uuid;
+  two2 uuid;
+  oth1 uuid;
+  oth2 uuid;
+  r1 uuid;
+  p1 uuid;
+  q1 uuid;
+  placements_before text;
+BEGIN
+  t := pg_temp.gb_plant(current_setting('app.test_gb_admin_a'), 'a');
+  s := (t ->> 'school')::uuid; y := (t ->> 'year')::uuid; r1 := (t ->> 'room1')::uuid;
+  two := (t #>> '{blocks,two}')::uuid; oth := (t #>> '{blocks,oth}')::uuid;
+  two1 := (t #>> '{posts,two1}')::uuid; two2 := (t #>> '{posts,two2}')::uuid; oth1 := (t #>> '{posts,oth1}')::uuid; oth2 := (t #>> '{posts,oth2}')::uuid;
+  PERFORM pg_temp.gb_case('502 two: a lesson', pg_temp.gb_ins(s, two, y, '1|08:00|60|ALL_WEEKS'), 'ok', two);
+  PERFORM pg_temp.gb_case('502 oth: a lesson', pg_temp.gb_ins(s, oth, y, '3|08:00|60|ALL_WEEKS'), 'ok', oth);
+  p1 := pg_temp.gb_pl(two, 1); q1 := pg_temp.gb_pl(oth, 3);
+  PERFORM pg_temp.gb_case('502 every member has a room row', format('INSERT INTO "TeachingBlockPlacementRooms" ("schoolId", "placementId", "requirementId", "roomId", "updatedAt") VALUES (%1$L, %2$L, %4$L, %6$L, now()), (%1$L, %2$L, %5$L, %6$L, now()), (%1$L, %3$L, %7$L, %6$L, now()), (%1$L, %3$L, %8$L, %6$L, now())', s, p1, q1, two1, two2, r1, oth1, oth2), 'ok', two);
+  SELECT string_agg(id::text, ',' ORDER BY id) INTO placements_before FROM "TeachingBlockPlacements";
+  PERFORM pg_temp.gb_case('502 two posts change places in one statement',
+    format('UPDATE "TeachingRequirements" SET "blockId" = CASE id WHEN %1$L THEN %3$L::uuid ELSE %4$L::uuid END WHERE id IN (%1$L, %2$L)', two1, oth1, oth, two), 'ok');
+  PERFORM pg_temp.gb_expect('502 each of the two lost its own room row and the others kept theirs', pg_temp.gb_nrp(two1) || '/' || pg_temp.gb_nrp(oth1) || '/' || pg_temp.gb_nrp(two2) || '/' || pg_temp.gb_nrp(oth2), '0/0/1/1');
+  PERFORM pg_temp.gb_expect('502 the placements are the same rows', (SELECT string_agg(id::text, ',' ORDER BY id) FROM "TeachingBlockPlacements"), placements_before);
+  PERFORM pg_temp.gb_expect('502 and the two are members of each other''s block', (SELECT "blockId" FROM "TeachingRequirements" WHERE id = two1)::text || '/' || (SELECT "blockId" FROM "TeachingRequirements" WHERE id = oth1)::text, oth::text || '/' || two::text);
+  RAISE NOTICE 'gb 502d (two posts change places): % checks', current_setting('gb.checks');
 END $$;
 ROLLBACK;
 
