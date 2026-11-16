@@ -17,6 +17,8 @@ import {
   TIMPLAN_IS_DECIDED,
   WRITE_CONFLICT,
   areaRefusal,
+  blockPlacementsConflict,
+  blockPlacementsRefusal,
   driverAdapterCode,
   decidedTimplanConflict,
   decidedTimplanRefusal,
@@ -1087,5 +1089,110 @@ describe('teachesRefusal', () => {
       }
     }
     expect((answer(model('TE410')) as ConflictException).getResponse()).not.toMatchObject({ code: WRITE_CONFLICT });
+  });
+});
+
+/**
+ * Förlagda block's triggers (migration 20270218090000) as @prisma/adapter-pg hands them over: SQLSTATE BP409, the rule as the
+ * message's first word, DETAIL `blockId=<uuid> reason=<RULE>`.
+ */
+const BLOCK_ID = '7d2f6c9a-1b44-4f0e-9c58-3a1e5d0b2e77';
+const blockPlacementError = (
+  reason: string,
+  options: { meta?: boolean; code?: string } = {},
+): Prisma.PrismaClientKnownRequestError => {
+  const code = options.code ?? 'BP409';
+  const message = `${reason}: en förlagd lektion har en längd som blockets poster inte har`;
+  return new Prisma.PrismaClientKnownRequestError(
+    `\nInvalid \`tx.teachingBlockPlacement.createMany()\` invocation:\n\nDatabase error. Code: \`${code}\`. Message: \`${message}\``,
+    {
+      code: 'P2039',
+      clientVersion: Prisma.prismaVersion.client,
+      meta:
+        options.meta === false
+          ? { modelName: 'TeachingBlockPlacement' }
+          : {
+              modelName: 'TeachingBlockPlacement',
+              driverAdapterError: {
+                name: 'DriverAdapterError',
+                cause: { originalCode: code, originalMessage: message, kind: 'postgres', detail: `blockId=${BLOCK_ID} reason=${reason}` },
+              },
+            },
+    },
+  );
+};
+
+describe('blockPlacementsRefusal', () => {
+  it.each(['FOLLOWER', 'EMPTY', 'SHARES', 'LENGTH', 'WEEKS', 'COUNT', 'MEMBER'])('reads %s and the block off the driver cause', (reason) => {
+    expect(blockPlacementsRefusal(blockPlacementError(reason))).toEqual({ blockId: BLOCK_ID, reason });
+  });
+
+  it('reads the rule off the rendered message when the meta is gone, with no block', () => {
+    expect(blockPlacementsRefusal(blockPlacementError('COUNT', { meta: false }))).toEqual({ blockId: null, reason: 'COUNT' });
+  });
+
+  it('knows a refusal whose rule the gateway has no sentence for (ISOLATION) as this refusal, with no reason', () => {
+    expect(blockPlacementsRefusal(blockPlacementError('ISOLATION'))).toEqual({ blockId: BLOCK_ID, reason: null });
+  });
+
+  it('reads the raw adapter error a failed COMMIT would be', () => {
+    const atCommit = Object.assign(new Error('LENGTH'), {
+      name: 'DriverAdapterError',
+      cause: { originalCode: 'BP409', originalMessage: 'LENGTH: x', kind: 'postgres', detail: `blockId=${BLOCK_ID} reason=LENGTH` },
+    });
+    expect(blockPlacementsRefusal(atCommit)).toEqual({ blockId: BLOCK_ID, reason: 'LENGTH' });
+  });
+
+  it('is not fooled by the post\'s FP409, the decided plan\'s TP409, another database error or a lookalike', () => {
+    expect(blockPlacementsRefusal(blockPlacementError('LENGTH', { code: 'FP409' }))).toBeNull();
+    expect(blockPlacementsRefusal(blockPlacementError('LENGTH', { code: 'TP409' }))).toBeNull();
+    expect(blockPlacementsRefusal(knownError('P2039'))).toBeNull();
+    expect(blockPlacementsRefusal(Object.assign(new Error('Code: `BP409`'), { code: 'P2039' }))).toBeNull();
+    expect(blockPlacementsRefusal(undefined)).toBeNull();
+  });
+
+  it('is left alone by the post\'s reader, as that one is by this', () => {
+    expect(requirementPlacementsRefusal(blockPlacementError('LENGTH'))).toBeNull();
+    expect(blockPlacementsRefusal(placementRefusal('LENGTH'))).toBeNull();
+    expect(decidedTimplanRefusal(blockPlacementError('LENGTH'))).toBeNull();
+  });
+});
+
+describe('blockPlacementsConflict', () => {
+  it.each(['FOLLOWER', 'EMPTY', 'SHARES', 'LENGTH', 'WEEKS', 'COUNT', 'MEMBER'] as const)(
+    'says %s in a sentence and puts the rule in params, where the filter forwards it',
+    (reason) => {
+      const conflict = blockPlacementsConflict(reason, { index: 2, blockId: BLOCK_ID });
+      expect(conflict.getStatus()).toBe(409);
+      const body = conflict.getResponse() as { message: string; code: string; reason: string; params: Record<string, unknown> };
+      expect(body.code).toBe('BLOCK_PLACEMENTS_DO_NOT_FIT');
+      expect(body.reason).toBe(reason);
+      expect(body.params).toEqual({ reason, index: 2, blockId: BLOCK_ID });
+      expect(body.message.length).toBeGreaterThan(20);
+    },
+  );
+
+  it('answers a reason it has no sentence for with the plain one and no params', () => {
+    const body = blockPlacementsConflict(null).getResponse() as { code: string; params?: unknown };
+    expect(body.code).toBe('BLOCK_PLACEMENTS_DO_NOT_FIT');
+    expect(body.params).toBeUndefined();
+  });
+
+  it('is what rethrowPrismaError makes of the trigger\'s refusal, naming the block, and the post\'s refusal stays the post\'s', () => {
+    try {
+      rethrowPrismaError(blockPlacementError('COUNT'));
+      throw new Error('did not throw');
+    } catch (error) {
+      expect((error as ConflictException).getResponse()).toMatchObject({
+        code: 'BLOCK_PLACEMENTS_DO_NOT_FIT',
+        params: { reason: 'COUNT', blockId: BLOCK_ID },
+      });
+    }
+    try {
+      rethrowPrismaError(placementRefusal('COUNT'));
+      throw new Error('did not throw');
+    } catch (error) {
+      expect((error as ConflictException).getResponse()).toMatchObject({ code: 'REQUIREMENT_PLACEMENTS_DO_NOT_FIT' });
+    }
   });
 });

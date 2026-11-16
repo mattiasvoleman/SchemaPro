@@ -274,6 +274,9 @@ model School {
   teachingRequirementShares TeachingRequirementShare[]
   /// Förlagda poster (20270207090000).
   requirementPlacements     TeachingRequirementPlacement[]
+  /// Förlagda block (20270218090000).
+  blockPlacements           TeachingBlockPlacement[]
+  blockPlacementRooms       TeachingBlockPlacementRoom[]
   teachingBlocks          TeachingBlock[]
   masterLessons           MasterLesson[]
   calendarLessons         CalendarLesson[]
@@ -696,6 +699,9 @@ model Room {
   /// Generera. NO ACTION on delete: a room a förläggning names is refused
   /// removal by name (rooms.service.ts) and, past that, by the key.
   requirementPlacements   TeachingRequirementPlacement[]
+  /// Förlagda block (20270218090000): the room a member of a block chose for one
+  /// of the block's lessons. NO ACTION on delete, as the post's.
+  blockPlacementRooms     TeachingBlockPlacementRoom[]
   /// Salslån (20261217090000): this room lent to another school of the
   /// huvudman, and the loans this room stands for at the borrower.
   loansAsOwnerRoom        RoomLoan[]               @relation("RoomLoanRoom")
@@ -2419,6 +2425,10 @@ model TeachingRequirement {
   /// Förlagda poster: the lessons of this post the school placed before
   /// Generera. See TeachingRequirementPlacement.
   placements   TeachingRequirementPlacement[]
+  /// Förlagda block (20270218090000): this post's own room for each lesson its
+  /// block's förläggningar place. CASCADE; a post that leaves its block loses
+  /// them by trigger.
+  blockPlacementRooms TeachingBlockPlacementRoom[]
 
   /// `schoolId` leads the key so the slot a school occupies is its own. Without
   /// it one school's forged row took the (year, group, subject) slot of
@@ -2571,12 +2581,78 @@ model TeachingBlock {
   sameTimesAs  TeachingBlock?        @relation("SameTimes", fields: [sameTimesAsBlockId, academicYearId, schoolId], references: [id, academicYearId, schoolId], onDelete: SetNull, onUpdate: NoAction)
   /// The block on this one's times, if any (the unique index makes it one).
   sameTimes    TeachingBlock[]       @relation("SameTimes")
+  /// Förlagda block (20270218090000): the lessons of this block the school placed.
+  placements   TeachingBlockPlacement[]
 
   @@unique([schoolId, academicYearId, name])
   /// The target TeachingRequirement's block key needs: a block OF ITS OWN YEAR.
   @@unique([id, academicYearId, schoolId])
   @@index([academicYearId])
   @@map("TeachingBlocks")
+}
+
+/// Förlagda block (20270218090000): ONE lesson of a parallel block at a day, a
+/// start, a length that is one of the block's, in the block's weeks, placed by
+/// the school before Generera. Generera sends it as a pinned lesson of every
+/// member (never as a lock) and writes the lessons that come back marked
+/// MasterLesson.fromPlacement. The class, subject and teachers are the posts'.
+/// What fits the block is the database's rule BP409 (BLOCK_PLACEMENTS_DO_NOT_FIT).
+model TeachingBlockPlacement {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String           @db.Uuid
+  blockId        String           @db.Uuid
+  /// Carried because the block's key is (id, academicYearId, schoolId): the year
+  /// is held by the key, and the year's rows are read without a join.
+  academicYearId String           @db.Uuid
+  /// ISO weekday, 1..5 by CHECK: the engine's school week (SCHEDULE_DAYS).
+  dayOfWeek      Int
+  /// On the five-minute grid, and with `minutes` inside 08:00..18:00, by CHECK.
+  startTime      DateTime         @db.Time(0)
+  /// The lesson's length: one of the block's (by trigger), 15..240 on the
+  /// five-minute grid by CHECK.
+  minutes        Int
+  /// The block's weeks (by trigger): pairs of odd and even weeks are not supported.
+  recurrence     LessonRecurrence @default(ALL_WEEKS)
+  createdAt      DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @db.Timestamptz(6)
+
+  school School                       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  block  TeachingBlock                @relation(fields: [blockId, academicYearId, schoolId], references: [id, academicYearId, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  rooms  TeachingBlockPlacementRoom[]
+
+  @@unique([id, schoolId])
+  @@index([blockId])
+  @@index([academicYearId])
+  @@index([schoolId])
+  @@map("TeachingBlockPlacements")
+}
+
+/// Förlagda block (20270218090000): the room a member of a block chose for one of
+/// the block's förläggningar. A member with no row here has its room chosen by
+/// the engine at every Generera (a pinned lesson with no room).
+model TeachingBlockPlacementRoom {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId      String   @db.Uuid
+  placementId   String   @db.Uuid
+  /// A member of the placement's block (by trigger, BP409 MEMBER).
+  requirementId String   @db.Uuid
+  roomId        String   @db.Uuid
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(6)
+
+  school      School                 @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  placement   TeachingBlockPlacement @relation(fields: [placementId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  requirement TeachingRequirement    @relation(fields: [requirementId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  /// NO ACTION on delete: a room a block's lesson names is refused removal by
+  /// name (rooms.service.ts) and, past that, by the key.
+  room        Room                   @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([id, schoolId])
+  @@unique([placementId, requirementId])
+  @@index([requirementId, schoolId])
+  @@index([roomId, schoolId])
+  @@index([schoolId])
+  @@map("TeachingBlockPlacementRooms")
 }
 
 // -----------------------------------------------------------------------------

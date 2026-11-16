@@ -347,6 +347,19 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       'A förläggning is a day, a time and a room the school gave one of a post’s lessons against this year’s ramtider, sittningar and classes; the new year has others, so the post is carried without them and its lessons are placed again where they still must be.',
   },
 
+  // Förlagda block (20270218090000): as a post's förläggning, and for the same reason: a lesson of a block is a day and a time against this
+  // year's ramtider and classes, and the room rows are the members' own choices for it. The block is carried without them.
+  TeachingBlockPlacement: {
+    kind: 'SKIPPED',
+    reason:
+      'A block’s förläggning is a day and a time the school gave one of the block’s lessons against this year’s ramtider, sittningar and classes; the new year has others, so the block is carried without them and its lessons are placed again where they still must be.',
+  },
+  TeachingBlockPlacementRoom: {
+    kind: 'SKIPPED',
+    reason:
+      'A member’s own room for a block’s förläggning goes with the förläggning, which is not carried; the room is the engine’s to choose again.',
+  },
+
   TeachingBlock: {
     kind: 'COPIED',
     step: 'blocks',

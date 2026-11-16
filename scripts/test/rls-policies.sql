@@ -20338,6 +20338,8 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('TeacherReportingDays', '{}', '{}', '{}', '{}'),
   ('TeacherSubjectQualifications', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('TeacherWorkRules', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('TeachingBlockPlacementRooms', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('TeachingBlockPlacements', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('TeachingBlocks', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('TeachingRequirementPlacements', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('TeachingRequirementShares', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
