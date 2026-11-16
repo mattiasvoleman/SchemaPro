@@ -28,7 +28,6 @@ import {
   keptViewOf,
   mealViewOf,
   type BoardPlacementView,
-  type PlacementBoardResponse,
 } from './placement-board';
 import { lockPostForShares } from '../resources/requirement-shares';
 import {
@@ -41,6 +40,8 @@ import {
   type PlacementVerdict,
 } from './placement-judge';
 import { placementRefusedConflict } from './placement-refusal';
+import { boardBlockOf, type PlacementBoardWithBlocks } from './block-placement-board';
+import { besideRowsOfBlocks, judgedRowsOfBlock, loadBlocksOfYear, memberSlotsOfBlock } from './block-placement-judge';
 
 /** One förlagd lektion as the API states it (the dialog's row and the timplan's märke). */
 export interface RequirementPlacementView {
@@ -259,14 +260,14 @@ export class RequirementPlacementsService {
    * the year's rows), and it asks nothing of the caller's own person, so a login
    * with none (the huvudman's reader) is answered in the same shape.
    */
-  async boardOfYear(academicYearId: string, user: AuthenticatedUser): Promise<PlacementBoardResponse> {
+  async boardOfYear(academicYearId: string, user: AuthenticatedUser): Promise<PlacementBoardWithBlocks> {
     return this.prisma.withRls(user, async (tx) => {
       const year = await tx.academicYear.findUnique({
         where: { id: academicYearId },
         select: { isActive: true, predecessorId: true, gradeNumbering: true },
       });
       if (!year) throw new NotFoundException('Läsåret finns inte.');
-      const [posts, rows, keptRows, mealRows] = await Promise.all([
+      const [posts, rows, keptRows, mealRows, blocks] = await Promise.all([
         tx.teachingRequirement.findMany({ where: { academicYearId }, select: BOARD_POST_SELECT, orderBy: { id: 'asc' } }),
         tx.teachingRequirementPlacement.findMany({
           where: { requirement: { academicYearId } },
@@ -285,6 +286,8 @@ export class RequirementPlacementsService {
           select: { id: true, studentGroupId: true, dayOfWeek: true, startTime: true, endTime: true, startDate: true, endDate: true },
           orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
         }),
+        // Förlagda block: every block of the year with its members and lessons (block-placement-judge.ts).
+        loadBlocksOfYear(tx, academicYearId),
       ]);
 
       const kept = keptRows.map((lesson) => ({
@@ -298,18 +301,24 @@ export class RequirementPlacementsService {
         if (list) list.push(slotOf(row));
         else slotsOf.set(row.requirementId, [slotOf(row)]);
       }
+      // A block's lesson is one of each member's lessons placed: the member's count and demand read it so.
+      for (const block of blocks) {
+        for (const [memberId, slots] of memberSlotsOfBlock(block, block.rows)) slotsOf.set(memberId, [...(slotsOf.get(memberId) ?? []), ...slots]);
+      }
       const locksByPost = new Map(posts.map((post) => [post.id, coveringLocksOf(boardPostShape(post), kept)]));
+      const ofBlocks = blocks.map((block) => ({ block, ...judgedRowsOfBlock(block, block.rows) }));
 
       // Every row of the year at once, as Generera's pre-flight judges them, against the lessons it keeps and each other.
       const verdicts: PlacementVerdict[] =
-        rows.length === 0
+        rows.length === 0 && ofBlocks.every((entry) => entry.judged.length === 0)
           ? []
           : await judgePlacements(tx, this.masters, {
               academicYearId,
               schoolId: requireSchoolId(user),
               gradeNumbering: year.gradeNumbering as GradeNumbering,
               basis: await rostersOfYear(tx, user, academicYearId, { isActive: year.isActive, predecessorId: year.predecessorId }),
-              rows: rows.map((row) => judgedRowOf(postById.get(row.requirementId)!, slotOf(row), row.id)),
+              // The posts' rows first, then each block's, one row per lesson and member (judgedRowsOfBlock).
+              rows: [...rows.map((row) => judgedRowOf(postById.get(row.requirementId)!, slotOf(row), row.id)), ...ofBlocks.flatMap((entry) => entry.judged)],
               beside: [],
               demand: new Map(
                 [...slotsOf].map(([postId, slots]) => {
@@ -333,6 +342,11 @@ export class RequirementPlacementsService {
         posts: posts.map((post) => boardPostOf(boardPostShape(post), locksByPost.get(post.id) ?? [], slotsOf.get(post.id) ?? [])),
         kept: kept.map(keptViewOf),
         meals: mealRows.map(mealViewOf),
+        blocks: ofBlocks.map((entry) => {
+          // This block's verdicts: the rows after the posts' and the earlier blocks'.
+          const start = rows.length + ofBlocks.slice(0, ofBlocks.indexOf(entry)).reduce((sum, earlier) => sum + earlier.judged.length, 0);
+          return boardBlockOf(entry.block, verdicts.slice(start, start + entry.judged.length), entry.origins);
+        }),
       };
     });
   }
@@ -464,8 +478,15 @@ export class RequirementPlacementsService {
     });
   }
 
-  /** The year's other posts' förläggningar, as they stand. */
-  private async besideOf(tx: PrismaClient, post: { id: string; academicYearId: string }): Promise<JudgedPlacement[]> {
+  /**
+   * The year's other posts' förläggningar, as they stand, and the lessons of the year's blocks as the rows of their
+   * members (block-placement-judge.ts), `exceptBlockId` left out: the block being written has its own rows.
+   */
+  async besideOf(
+    tx: PrismaClient,
+    post: { id: string; academicYearId: string },
+    exceptBlockId?: string,
+  ): Promise<JudgedPlacement[]> {
     const rows = await tx.teachingRequirementPlacement.findMany({
       where: { requirement: { academicYearId: post.academicYearId }, requirementId: { not: post.id } },
       select: {
@@ -491,7 +512,10 @@ export class RequirementPlacementsService {
       },
       orderBy: [{ requirementId: 'asc' }, { id: 'asc' }],
     });
-    return rows.map(({ requirement: { _count, ...requirement }, ...row }) => ({
+    const ofBlocks = besideRowsOfBlocks(
+      await loadBlocksOfYear(tx, post.academicYearId, { onlyPlaced: true, ...(exceptBlockId ? { except: exceptBlockId } : {}) }),
+    );
+    return [...rows.map(({ requirement: { _count, ...requirement }, ...row }) => ({
       id: row.id,
       requirementId: row.requirementId,
       ...requirement,
@@ -502,7 +526,7 @@ export class RequirementPlacementsService {
       minutes: row.minutes,
       roomId: row.roomId,
       recurrence: row.recurrence,
-    }));
+    })), ...ofBlocks];
   }
 
   /**
@@ -513,7 +537,7 @@ export class RequirementPlacementsService {
    * it answers the post, and the rows that place the same lesson are over the
    * demand.
    */
-  private async locksOf(
+  async locksOf(
     tx: PrismaClient,
     post: { academicYearId: string; studentGroupId: string; subjectId: string; recurrence: LessonRecurrence; startDate: Date | null; endDate: Date | null },
   ): Promise<TaughtLesson[]> {

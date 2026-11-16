@@ -9,6 +9,7 @@ import { keptMastersWhere } from '../optimization/preserved-lessons';
 import { readOtherSchoolHolds, type OtherSchoolHold } from '../optimization/other-school-holds';
 import { windowOf } from '../common/lunch-window';
 import { boardCodeOf, readBoardFacts, type BoardFacts } from '../swaps/board-rules';
+import type { BlockPlacementsRule } from '../common/utils/prisma-errors';
 import type { RosterBasis } from '../year-rollover/projected-rosters';
 import { insideSchoolDay, placementsFitBesideLocks, sharedPlacementsFitBesideLocks, teacherOfRow } from './placement-fit';
 
@@ -23,6 +24,8 @@ import { insideSchoolDay, placementsFitBesideLocks, sharedPlacementsFitBesideLoc
  *   SCHOOL_DAY    Monday to Friday, 08:00 to 18:00, on the five-minute grid
  *   PAIR_ROOM     a half of a pair (odd or even weeks of an every-week post) names no room: a pair is two locks
  *   BLOCK         the post is in a parallel block, whose lessons are placed together (no row of one member)
+ *   BLOCK_FIT     the row is one member's lesson of a block's förläggning (block-placement-judge.ts), and the
+ *                 block's rows no longer fit the block (a membership change left them wrong)
  *   OVER_DEMAND   the post's locks already answer the lessons its rows place
  *   TEACHER, ROOM, GROUP, PUPILS, AVAILABILITY
  *                 MasterLessonsService.findConflicts, the clash rule itself
@@ -75,8 +78,17 @@ export type PlacementRefusalReason =
    * PAIR_ROOM), so only a row another writer stored reaches the judge with it: Generera's pre-flight and the week say it.
    */
   | 'PAIR_ROOM'
-  /** The post is in a parallel block: the database's rule (BLOCK), so only a row stored before the post joined the block. */
-  | 'BLOCK';
+  /**
+   * The post is in a parallel block: the database's rule (BLOCK) for a row of the post's own, so only a row stored before the
+   * post joined the block. A block's own lessons are asked about the block (BLOCK_FIT), and the post's sentence says so.
+   */
+  | 'BLOCK'
+  /**
+   * The row is a member's lesson of a block's förläggning, and the block's lessons do not fit the block (`params.rule`: one of
+   * BP409's, block-placement-fit.ts). The database refuses such a write and every change that would make a stored set wrong,
+   * except a membership change: a post that joins a block with no member left, or leaves it, leaves rows nobody judged.
+   */
+  | 'BLOCK_FIT';
 
 export type PlacementParams = Record<string, string | number>;
 
@@ -116,6 +128,11 @@ export interface JudgedPlacement {
   pairWithoutRoom?: boolean;
   /** The row's post is in a parallel block (judgedRowOf). */
   inBlock?: boolean;
+  /**
+   * The row is a member's lesson of a block's förläggning (block-placement-judge.ts), and this is the rule the block's lessons
+   * break, or null when they fit. Absent reads as a row of a post's own, which is never asked.
+   */
+  blockFit?: BlockPlacementsRule | null;
 }
 
 /** Where a row stands: the part of a förläggning the post does not already say. */
@@ -316,6 +333,7 @@ export async function judgePlacements(
     if (!insideSchoolDay(row)) refuse(index, 'SCHOOL_DAY');
     else if (row.pairWithoutRoom) refuse(index, 'PAIR_ROOM');
     else if (row.inBlock) refuse(index, 'BLOCK');
+    else if (row.blockFit) refuse(index, 'BLOCK_FIT', { rule: row.blockFit });
     else if (overDemand.has(row.requirementId)) refuse(index, 'OVER_DEMAND');
     else open.push(index);
   });
