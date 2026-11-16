@@ -8714,6 +8714,13 @@ function publicationServicesFor(api: PrismaService): { calendar: CalendarService
   return { calendar, publications };
 }
 
+/**
+ * The batches' notifications, told to no one. CancellationBatchesService sends its digest (sendDigest, which adds up what notifyUsers
+ * answers) only for a batch made with `notify: true`, and none of these checks makes one; the stand-in is there so that the service is
+ * built with the three arguments its constructor has (a missing one is TS2554, and an undefined at the first digest).
+ */
+const noNotifications = { notifyUsers: async () => 0 } as unknown as NotificationsService;
+
 async function publicationChecks(owner: Client, api: PrismaService): Promise<void> {
   const school = await givenPublicationSchool(owner);
   const { publications } = publicationServicesFor(api);
@@ -9385,9 +9392,11 @@ async function batchMoveChecks(owner: Client, api: PrismaService): Promise<void>
     { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
     { recipientsForLessons: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
   );
-  const batches = new CancellationBatchesService(api, {
-    notifyLessonsChanged: async () => undefined,
-  } as unknown as RealtimeService);
+  const batches = new CancellationBatchesService(
+    api,
+    { notifyLessonsChanged: async () => undefined } as unknown as RealtimeService,
+    noNotifications,
+  );
   const week = async () =>
     (
       await owner.query(
@@ -9440,7 +9449,7 @@ async function batchMoveDirectChecks(owner: Client, api: PrismaService): Promise
     realtime,
     { recipientsForLessons: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
   );
-  const batches = new CancellationBatchesService(api, realtime);
+  const batches = new CancellationBatchesService(api, realtime, noNotifications);
   const week = async () =>
     (
       await owner.query(
@@ -9628,11 +9637,15 @@ async function batchChecks(owner: Client, api: PrismaService): Promise<void> {
   const school = await givenPublicationSchool(owner, 'avbokning');
   const { publications } = publicationServicesFor(api);
   const broadcast: string[][] = [];
-  const batches = new CancellationBatchesService(api, {
-    notifyLessonsChanged: async (_tx: unknown, ids: readonly string[]) => {
-      broadcast.push([...ids]);
-    },
-  } as unknown as RealtimeService);
+  const batches = new CancellationBatchesService(
+    api,
+    {
+      notifyLessonsChanged: async (_tx: unknown, ids: readonly string[]) => {
+        broadcast.push([...ids]);
+      },
+    } as unknown as RealtimeService,
+    noNotifications,
+  );
   const rows = async (sql: string, params: unknown[] = [school.schoolId]) => (await owner.query(sql, params)).rows;
   const week = {
     academicYearId: school.yearId,
