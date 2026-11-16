@@ -62768,6 +62768,21 @@ BEGIN
     END LOOP;
     PERFORM pg_temp.gb_true('500 ' || k.fn || ' is commented', coalesce(obj_description(k.fn::regprocedure, 'pg_proc'), '') <> '');
   END LOOP;
+  -- The lock, read from the source (a single session cannot see a row lock; probe-forlagg-block-lasen.ts proves it between two sessions): the
+  -- fit function takes the block's row FOR NO KEY UPDATE before it judges anything (before the first read of a placement to be counted, of a
+  -- member, of a share), the leave function takes the OLD block's row before it deletes, and neither takes an advisory lock, which would be held
+  -- across the row's own key checks and can deadlock with a caller holding a Users row.
+  PERFORM pg_temp.gb_true('500 the fit function locks the block row FOR NO KEY UPDATE, once, before it judges',
+    (SELECT prosrc ~ 'FROM "TeachingBlocks" b[^;]*FOR NO KEY UPDATE;' AND length(prosrc) - length(replace(prosrc, 'FOR NO KEY UPDATE', '')) = length('FOR NO KEY UPDATE')
+            AND position('FOR NO KEY UPDATE' IN prosrc) < position('IF NOT EXISTS (SELECT 1 FROM "TeachingBlockPlacements"' IN prosrc)
+            AND position('FOR NO KEY UPDATE' IN prosrc) < position('"TeachingRequirementShares"' IN prosrc)
+            AND position('FOR NO KEY UPDATE' IN prosrc) < position('"minutesPerLesson"' IN prosrc)
+       FROM pg_proc WHERE oid = 'app.teaching_block_placements_fit()'::regprocedure));
+  PERFORM pg_temp.gb_true('500 the leave function locks the old block''s row FOR NO KEY UPDATE before it deletes',
+    (SELECT prosrc ~ 'FROM "TeachingBlocks" b[^;]*"id" = OLD."blockId"[^;]*FOR NO KEY UPDATE;' AND position('FOR NO KEY UPDATE' IN prosrc) < position('DELETE FROM' IN prosrc)
+       FROM pg_proc WHERE oid = 'app.teaching_block_placement_rooms_leave()'::regprocedure));
+  PERFORM pg_temp.gb_true('500 neither function takes an advisory lock',
+    (SELECT bool_and(prosrc !~* 'pg_(try_)?advisory') FROM pg_proc WHERE oid IN ('app.teaching_block_placements_fit()'::regprocedure, 'app.teaching_block_placement_rooms_leave()'::regprocedure)));
   PERFORM pg_temp.gb_true('500 the fit function names its rules in its comment',
     (SELECT obj_description('app.teaching_block_placements_fit()'::regprocedure, 'pg_proc') LIKE '%BP409%FOLLOWER, EMPTY, SHARES, LENGTH, WEEKS, COUNT, MEMBER%'));
 
@@ -63777,6 +63792,17 @@ BEGIN
       FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
         PERFORM pg_temp.gb_true(format('503 %s holds %s on %s', r, priv, tbl) || ' (it must not)', NOT has_table_privilege(r, format('public.%I', tbl), priv));
       END LOOP;
+      -- ... nor on a single column (a column grant is a read or a write the table's own grants do not show).
+      FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] LOOP
+        PERFORM pg_temp.gb_true(format('503 %s holds %s on a column of %s', r, priv, tbl) || ' (it must not)', NOT has_any_column_privilege(r, format('public.%I', tbl), priv));
+      END LOOP;
+    END LOOP;
+    -- The API's role holds the four and nothing more: no TRUNCATE (every school's rows), no REFERENCES, no TRIGGER.
+    FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'] LOOP
+      PERFORM pg_temp.gb_true(format('503 the API''s role holds %s on %s', priv, tbl), has_table_privilege('app_authenticated', format('public.%I', tbl), priv));
+    END LOOP;
+    FOREACH priv IN ARRAY ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      PERFORM pg_temp.gb_true(format('503 the API''s role holds %s on %s', priv, tbl) || ' (it must not)', NOT has_table_privilege('app_authenticated', format('public.%I', tbl), priv));
     END LOOP;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
       PERFORM pg_temp.gb_true('503 the service role reads ' || tbl, has_table_privilege('service_role', format('public.%I', tbl), 'SELECT'));
@@ -63785,6 +63811,13 @@ BEGIN
       END LOOP;
     END IF;
     PERFORM pg_temp.gb_true('503 PUBLIC holds nothing on ' || tbl, NOT EXISTS (SELECT 1 FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = format('public.%I', tbl)::regclass AND a.grantee = 0));
+    -- PostgreSQL 17's MAINTAIN (REINDEX, CLUSTER, VACUUM, LOCK) is the owner's alone, whoever else holds the other privileges.
+    IF current_setting('server_version_num')::int >= 170000 THEN
+      FOREACH r IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated'] LOOP
+        CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+        PERFORM pg_temp.gb_true(format('503 %s holds MAINTAIN on %s', r, tbl) || ' (it must not)', NOT has_table_privilege(r, format('public.%I', tbl), 'MAINTAIN'));
+      END LOOP;
+    END IF;
   END LOOP;
 
   -- The principals that name no administrator, each as the API's role: no row is read, and no write is admitted.
