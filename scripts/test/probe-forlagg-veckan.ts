@@ -417,6 +417,26 @@ export async function placementWeekChecks(owner: Client, api: PrismaService, mar
       const withRows = new Set(after.placements.map((entry) => entry.requirementId));
       assert.equal(sent.payload?.placements?.requirements.length, withRows.size, 'the released week holds the posts with a förläggning, and no other');
       assert.ok(withRows.size > 0 && withRows.size < after.posts.length);
+
+      // A förläggning with no room is a pinned lesson (B2): it takes nothing off the post's demand, so Generera sends the post whole and
+      // the week counts it as laid: what the week says is left, plus the pinned lessons, is what Generera sends (LÅG-3 of #322).
+      await placements.replace(p8, { placements: [row(2, '15:00', 60, null as never)] } as never, a.users.schema);
+      const pinnedWeek = await placements.boardOfYear(a.year, a.users.schema);
+      const pinnedSent = await api.withRls(a.users.schema, (tx) => proxyService.prepareSchedule(tx, a.year, a.users.schema));
+      assert.equal(pinnedSent.ready, true, 'a row with no room holds, and the run goes through');
+      const pinnedLeft = new Map((pinnedSent.demand ?? []).map((entry) => [entry.requirementId, entry.lessonsPerWeek as number]));
+      const pinnedOf = new Map<string, number>(
+        (pinnedSent.payload?.requirements ?? []).map((entry: { id: string; pinnedLessons?: unknown[] }) => [entry.id, (entry.pinnedLessons ?? []).filter((pin) => pin !== null).length] as const),
+      );
+      const pinnedCount = [...pinnedOf.values()].reduce((sum, count) => sum + count, 0);
+      assert.equal(pinnedCount, 1, 'one pinned lesson on the wire: the post with the row that has no room');
+      for (const post of pinnedWeek.posts) {
+        const left = post.parts.reduce((sum, part) => sum + part.left, 0);
+        const laid = post.id === p8 ? 1 : 0;
+        assert.equal(pinnedLeft.get(post.id) ?? 0, left + laid, `the week's left plus its pinned lesson for ${post.id} is what Generera sends`);
+      }
+      const p8Parts = pinnedWeek.posts.find((entry) => entry.id === p8)!.parts;
+      assert.deepEqual([p8Parts.reduce((sum, part) => sum + part.placed, 0), p8Parts.reduce((sum, part) => sum + part.left, 0)], [1, 1]);
     });
   } finally {
     await sweepPlacementWeekSchools(owner, marker);
