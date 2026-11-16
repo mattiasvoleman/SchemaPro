@@ -3472,47 +3472,136 @@
       inte kan ligga någon annanstans.
     </p>
   </div>
-  <h4 id="forlagg-i-veckan">Se förläggningarna i veckan</h4>
+  <h4 id="forlagg-i-veckan">Lägg förläggningarna i veckan</h4>
   <p>
     Menyn har en rad <span class="ui">Förlägg i veckan</span> under
     <span class="ui">Grundschema</span>. Sidan visar årets förläggningar på en
-    gång, före och efter Generera, och är till för att se: förläggningarna
-    skrivs fortfarande i <span class="ui">Förlägg …</span> på posten. Sidan
-    öppnas av alla administratörer, expeditionen och läsbehörigheten också, och
-    har samma läsårsval som grundschemat, så nästa läsår går att granska före
-    aktiveringen.
+    gång, före och efter Generera, och är också stället där man lägger, flyttar
+    och tar bort dem: en lektion du lägger här är exakt den rad som dialogen
+    <span class="ui">Förlägg …</span> på posten skriver, och den gäller från
+    nästa Generera. Inget i grundschemat flyttas när du lägger. Rektor,
+    fullständig administratör och schemaläggare lägger (Planering).
+    Expeditionen och läsbehörigheten öppnar sidan och ser veckan, men ser inga
+    knappar som skriver. Sidan har samma läsårsval som grundschemat, så nästa
+    läsår går att lägga före aktiveringen.
   </p>
   <ul>
     <li><strong>Överst</strong> står hur många förläggningar läsåret har och hur
       många lektioner som är kvar att lägga. Håller en förläggning inte längre
       (läraren byttes, en lektion låstes bredvid, en sal blev upptagen) står den
       i en röd ruta med skälet, samma mening som dialogen ger. Generera körs
-      inte förrän den håller igen eller är borttagen.</li>
+      inte förrän den håller igen eller är borttagen. Pågår en Generera just nu
+      står det överst: ändrar du då skrivs inte dess schema, och ändringen gäller
+      från nästa körning.</li>
+    <li><strong>Att lägga</strong> är lektionerna som är kvar, en bricka per
+      lektion med post, lärare och längd. Det är samma tal som Generera skickar
+      till motorn, så en bricka som är kvar är en lektion motorn annars lägger
+      själv. En post i ett parallellt block, och en lektion som ingen lärare har,
+      har ingen bricka.</li>
     <li><strong>Veckan</strong> är måndag till fredag, 08:00 till 18:00, med
       förläggningarna som färgade rutor. En ruta med röd ram håller inte
       längre. En ruta med hänglås och texten <em>i grundschemat</em> är en
       lektion som Generera lämnar där den är (en handgjord eller låst lektion)
-      och som förläggningarna prövas mot. Välj en klass i filtret för att också
-      se klassens måltider, de du själv lagt, som band. Tryck på en ruta för att
-      läsa den: dag och tid, om den håller, och när postens förläggningar
-      sparades senast.</li>
+      och som förläggningarna prövas mot. De ritas när du valt en klass, en
+      lärare eller en sal, annars skulle en skola som byggt sitt schema för hand
+      få hela veckan full; antalet står under veckan. Välj en klass i filtret
+      för att också se klassens måltider, de du själv lagt, som band.</li>
     <li><strong>Posterna</strong> står under veckan, en rad per timplanspost
       med <em>så många lektioner förlagda, så många fasta i grundschemat, så
-      många kvar för Generera</em>. <em>Kvar</em> är talet som Generera skickar
-      till motorn för posten: samma räkning, så att talet på skärmen inte kan
-      skilja sig från körningen. På en post som delar sina lektioner står talet
-      per lärare. En post i ett parallellt block, och en lektion som ingen
-      lärare har, kan inte förläggas, och raden säger det.</li>
-    <li><strong>Filtren</strong> för klass, lärare och sal gäller veckan och
-      listan. En förläggning hör till klassen på sin post, till lärarens egen
-      lektion på en delad post och till sin sal.</li>
+      många kvar för Generera</em>, och varje förläggning med sitt skäl. På en
+      post som delar sina lektioner står talet per lärare.</li>
+    <li><strong>Filtren</strong> för klass, lärare och sal gäller veckan, listan
+      och brickorna. En förläggning hör till klassen på sin post, till lärarens
+      egen lektion på en delad post och till sin sal.</li>
   </ul>
+  <h4>Lägga en lektion</h4>
+  <p>Tre sätt, som alla slutar i samma sparning:</p>
+  <ul>
+    <li><strong>Dra.</strong> Dra en bricka med musen in i veckan. Rutan under
+      pekaren är grön när tiden är ledig och röd när något är i vägen, och
+      släppet sparar. Släpper du utanför veckan, eller trycker Esc, läggs
+      ingenting.</li>
+    <li><strong>Peka två gånger</strong> (det här är sättet på en telefon, som
+      inte kan dra). Tryck på en bricka, som blir vald, och tryck sedan på en
+      tid i veckan.</li>
+    <li><strong>Tangentbord.</strong> Enter eller mellanslag på en bricka väljer
+      den. Under veckan öppnas raden <em>Lägg vald lektion</em> med fälten
+      <span class="ui">Dag</span>, <span class="ui">Starttid</span> och
+      <span class="ui">Sal</span>. Raden börjar på första lediga tid, och en
+      mening under fälten säger i ord om tiden är ledig eller vad som är i
+      vägen (läses upp av skärmläsare). <span class="ui">Nästa lediga tid</span>
+      stegar till nästa tid utan krock, ett kvart i taget, hela veckan runt,
+      också fram till 18:00. <span class="ui">Lägg</span> sparar, och
+      tangentbordet står då kvar på rutan du lade.</li>
+  </ul>
+  <p>
+    <strong>Sal.</strong> Verktyget föreslår en sal: den postens andra
+    förlagda lektioner står i, annars en sal som ämnets salsregel pekar ut,
+    annars den sal du valt i filtret. Du kan byta före släppet, i raden, och
+    efteråt, i rutans dialog. Lämnar du salen tom, <em>Motorn väljer sal</em>,
+    väljer motorn sal vid varje Generera, och rutan säger det; salen kan då bli
+    en annan nästa gång. Vill du ha samma sal varje gång, ange den.
+  </p>
+  <p>
+    <strong>Veckor.</strong> En ny lektion får postens veckor: varje vecka, eller
+    udda eller jämna veckor på en post som går så. Ett par, udda veckor på ett
+    ställe och jämna på ett annat, läggs i dialogen på posten; veckan visar
+    båda halvorna med märke och du kan flytta dem var för sig.
+  </p>
+  <h4>Flytta och ta bort</h4>
+  <ul>
+    <li><strong>Flytta</strong> en ruta genom att dra den, eller med
+      piltangenterna: upp och ned flyttar ett kvart, höger och vänster en dag.
+      Längden är postens och ändras inte här. Flyttar du till en tid som
+      servern vägrar säger meddelandet varför, och rutan står kvar där den var.</li>
+    <li><strong>Öppna</strong> en ruta med ett tryck eller Enter: dagen,
+      tiden och salen kan ändras, och <span class="ui">Ta bort</span> tar bort
+      lektionen, som då är en bricka igen. Tar du bort en halva av ett par tas
+      båda halvorna bort, eftersom databasen vägrar en ensam halva; du får
+      frågan först.</li>
+    <li>En lektion som <em>ligger fast i grundschemat</em> (hänglåset) flyttas
+      där, inte här: rutans dialog säger det och länkar till
+      <span class="ui">Grundschema</span>.</li>
+    <li><span class="ui">Ångra</span> och <span class="ui">Gör om</span>, eller
+      Ctrl+Z, ångrar de senaste ändringarna, som i grundschemat. Varje steg
+      skriver postens lista som den var. Har någon annan ändrat samma post
+      sedan dess nekas steget med ett besked, och ångra-listan nollställs.</li>
+  </ul>
+  <p>
+    <strong>Två som lägger samtidigt.</strong> Varje sparning bygger på den lista
+    sidan senast läste, och det gäller också dialogen <span class="ui">Förlägg
+    …</span> på Timplansposter, som bygger på listan den läste när du öppnade
+    den. Har en annan administratör ändrat samma post sedan dess sparas
+    ingenting; sidan läser om och meddelandet säger det, och dialogen ber dig
+    stänga och öppna den igen. Gör sedan om det du ville. Du skriver aldrig över
+    någon annans lista på samma post utan att veta om det. Lägger två
+    administratörer samtidigt på <em>olika</em> poster åt samma lärare kan båda
+    sparningarna gå igenom; då står båda lektionerna röda med skälet att läraren
+    har en annan lektion då, och en av dem rättas. Så länge Generera skriver sitt
+    schema nekas en sparning med ett eget besked, och du försöker igen om en
+    stund.
+  </p>
+  <p>
+    <strong>En lektion som slutat hålla.</strong> En post kan ha lektioner som
+    inte längre håller (läraren gjordes otillgänglig en dag, en ramtid kortades).
+    Du kan rätta dem en i taget: servern nekar bara det du lägger eller flyttar,
+    inte lektionerna som redan låg på posten. De som står kvar står röda, och
+    meddelandet efter sparningen säger vilka och varför; Generera körs inte
+    förrän de håller igen. En lektion du flyttar eller lägger som inte håller
+    nekas, med skälet.
+  </p>
+  <p>
+    <strong>Ombyte och dusch.</strong> Har en post minuter före och efter
+    lektionen (idrott) hålls klassens andra lektioner utanför dem, som i
+    grundschemat: en tid som ligger fem minuter efter idrotten är röd, och
+    <span class="ui">Nästa lediga tid</span> hoppar över den.
+  </p>
   <p>
     En förläggning gäller från nästa Generera. Efter en körning står den som en
     låst lektion i grundschemat; veckan visar den ändå där den är förlagd, och
     en förläggning du ändrar efter körningen syns här direkt, medan
-    grundschemat följer med först vid nästa körning. Sidan kan inte ändra
-    något: vill du flytta en förläggning gör du det på posten.
+    grundschemat följer med först vid nästa körning. Varje sparning här slutar
+    med meningen <em>Gäller från nästa Generera.</em>
   </p>
   <h4>Hur en vägran läses</h4>
   <p>

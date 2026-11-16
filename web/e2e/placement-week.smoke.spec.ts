@@ -22,8 +22,9 @@ import { SUBJECTS, TEACHERS } from "./stub/fixtures/world";
  *     line that does not fit, and a half-letter would be a fault; a long line
  *     is shortened with an ellipsis on purpose, and its whole text is on the
  *     card's title);
- *   - the day is drawn to 18:00 (the strips) when nothing else reaches it, and
- *     to the last row when something does.
+ *   - the day is drawn to 18:00 whatever the week holds (the grid is told to,
+ *     dayEndMinutes), and an empty week is drawn too, with its scrolling box
+ *     focusable.
  *
  * The scenario (e2e/stub/fixtures/timplan-board.ts) places three rows (one that
  * does not hold, one on Friday 17:00–18:00), keeps one lesson and one meal.
@@ -97,7 +98,7 @@ function measure(page: Page) {
 
     // The list, the summary, the notice and the legend: each line inside the box that holds it, sideways.
     const boxes = [
-      ...document.querySelectorAll("[data-testid='placement-post'], [data-testid='placement-summary'], #placement-failing, [aria-label='Teckenförklaring'] li, [data-testid='placement-detail'] > div"),
+      ...document.querySelectorAll("[data-testid='placement-post'], [data-testid='placement-summary'], #placement-failing, [aria-label='Teckenförklaring'] li, [role='dialog']"),
     ];
     for (const box of boxes) {
       const outer = box.getBoundingClientRect();
@@ -144,7 +145,7 @@ for (const size of VIEWPORTS) {
       const facts = await measure(page);
       expect(facts.problems, "text measured by its own rectangles").toEqual([]);
       expect(facts.pageScrollsSideways, "the page scrolls sideways").toBe(false);
-      // The Friday row reaches 18:00, so the grid draws to it without help.
+      // No strips any more: the grid itself draws to 18:00.
       expect(facts.dayEnd, "strips for the end of the day").toBe(0);
       expect(facts.hours.at(-1)).toBe("17:00");
       expect(misses, MISSES).toEqual([]);
@@ -163,14 +164,17 @@ for (const size of VIEWPORTS) {
     });
   }
 
-  test(`Förlägg i veckan at ${size.name}: a week with nothing in it is said and not drawn`, async ({ page, baseURL }) => {
+  test(`Förlägg i veckan at ${size.name}: a week with nothing in it is said, and drawn to 18:00 with something to focus`, async ({ page, baseURL }) => {
     const misses = await open(page, baseURL!, size, "light", false);
-    await expect(page.getByText("Inget är förlagt än")).toBeVisible();
+    await expect(page.getByText("Inget är förlagt än").first()).toBeVisible();
     await expect(page.getByTestId("placement-week-empty")).toBeVisible();
     const facts = await measure(page);
     expect(facts.problems).toEqual([]);
     expect(facts.pageScrollsSideways).toBe(false);
     expect(facts.cards).toBe(0);
+    // An empty week is a place to drag into: drawn to 18:00, and its scrolling box takes the keyboard (axe: scrollable-region-focusable).
+    expect(facts.hours.at(-1)).toBe("17:00");
+    await expect(page.locator("#placement-week [tabindex='0']").first()).toBeVisible();
     expect(misses, MISSES).toEqual([]);
   });
 
@@ -184,7 +188,7 @@ for (const size of VIEWPORTS) {
     const facts = await measure(page);
     expect(facts.problems).toEqual([]);
     expect(facts.pageScrollsSideways).toBe(false);
-    expect(facts.dayEnd, "the strips that end the school day").toBe(5);
+    expect(facts.dayEnd, "no strips: the grid draws to 18:00 itself").toBe(0);
     expect(facts.hours.at(-1)).toBe("17:00");
     expect(misses, MISSES).toEqual([]);
   });
@@ -195,7 +199,8 @@ test("Förlägg i veckan: opening a card says its verdict in words, and a class 
   // The row that no longer holds is told in words in the notice, and again when its card is opened.
   await expect(page.getByTestId("failing-row")).toContainText("Läraren har redan");
   await page.locator("[data-lesson-id^='placement:']").nth(1).click();
-  await expect(page.getByTestId("placement-detail")).toContainText("Läraren har redan");
+  await expect(page.getByRole("dialog")).toContainText("Läraren har redan");
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: /Grupper/ }).click();
   await page.getByRole("menuitemcheckbox", { name: "7A", exact: true }).click();
   await expect(page.getByText("Måltid 7A")).toBeVisible();

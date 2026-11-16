@@ -122,8 +122,9 @@ export const PAGE_GATES: Readonly<Record<string, PageGate>> = {
   "/admin/resources": "PLANERING",
   "/admin/generate": "SCHEMALAGGNING",
   "/admin/timetable": "SCHEMALAGGNING",
-  // Förlägg i veckan: reads only. The förläggningar are written in the dialog on Timplansposter (Planering's), so
-  // no area gates this page and every administrator opens it whole, the expedition and the läsare too.
+  // Förlägg i veckan: everyone who may read opens it. Laying, moving and removing a förläggning is Planering's, so the
+  // controls carry data-writes="PLANERING" and are hidden from the profiles that do not write it, and the läsare gets
+  // Läsbehörighetens notice naming the area (NOTICE_AREAS). The expedition and the läsare see the week and open its cards.
   "/admin/placements": null,
   "/admin/gaps": "SCHEMALAGGNING",
   // Schema som fil: the export only reads, the import writes the grundschema and the posts it implies.
@@ -233,6 +234,8 @@ export interface ReadOnlyPage {
 const NOTICE_AREAS: Readonly<Record<string, readonly AdminArea[]>> = {
   "/admin/people": ["PERSONAL", "PLANERING"],
   "/admin/class-teachers": ["SCHEMALAGGNING", "PUBLICERING"],
+  // Förlägg i veckan: the förläggningar are Planering's; the links to Generera and the grundschema are marked with their areas.
+  "/admin/placements": ["PLANERING"],
 };
 
 /**

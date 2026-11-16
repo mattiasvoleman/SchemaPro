@@ -161,6 +161,7 @@ import { elevlistanChecks, sweepElevlistanSchool } from './probe-elevlistan';
 import { massvalChecks, sweepMassvalSchool } from './probe-massatgarder';
 import { sweepTenantKeySchools, tenantKeyChecks } from './probe-tenant-keys';
 import { placementWeekChecks, sweepPlacementWeekSchools } from './probe-forlagg-veckan';
+import { placementMirrorChecks, sweepPlacementMirrorSchools } from './probe-forlagg-spegel';
 import { sweepTeachesGatewaySchool, teachesGatewayChecks } from './probe-teaches-gateway';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import { CoverService } from '../../src/cover/cover.service';
@@ -6133,6 +6134,8 @@ async function runChecks(
   await pagingOrderChecks(owner, api, MARKER, check);
   // Förlägg i veckan: the year's week of förläggningar, as each profile reads it.
   await placementWeekChecks(owner, api, MARKER, check);
+  // Förlägg i veckan: the judge against the contract fixture the web's mirror of it is held to (vv9).
+  await placementMirrorChecks(owner, api, MARKER, check);
   // Administratör som lärare, gatewayens halva: what the gateway makes of the mark and of TE409 and TE410, and the deadlock of a mark.
   await teachesGatewayChecks(owner, api, MARKER, check, open, appUrl);
 }
@@ -6655,6 +6658,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepMassvalSchool(owner, MARKER);
   // Förlägg i veckan's two schools, likewise.
   await sweepPlacementWeekSchools(owner, MARKER);
+  // The contract fixture's schools, likewise.
+  await sweepPlacementMirrorSchools(owner, MARKER);
   // Administratör som lärare, gatewayens halva: its school, likewise.
   await sweepTeachesGatewaySchool(owner, MARKER);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);
@@ -8714,6 +8719,13 @@ function publicationServicesFor(api: PrismaService): { calendar: CalendarService
   return { calendar, publications };
 }
 
+/**
+ * The batches' notifications, told to no one. CancellationBatchesService sends its digest (sendDigest, which adds up what notifyUsers
+ * answers) only for a batch made with `notify: true`, and none of these checks makes one; the stand-in is there so that the service is
+ * built with the three arguments its constructor has (a missing one is TS2554, and an undefined at the first digest).
+ */
+const noNotifications = { notifyUsers: async () => 0 } as unknown as NotificationsService;
+
 async function publicationChecks(owner: Client, api: PrismaService): Promise<void> {
   const school = await givenPublicationSchool(owner);
   const { publications } = publicationServicesFor(api);
@@ -9385,9 +9397,11 @@ async function batchMoveChecks(owner: Client, api: PrismaService): Promise<void>
     { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
     { recipientsForLessons: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
   );
-  const batches = new CancellationBatchesService(api, {
-    notifyLessonsChanged: async () => undefined,
-  } as unknown as RealtimeService);
+  const batches = new CancellationBatchesService(
+    api,
+    { notifyLessonsChanged: async () => undefined } as unknown as RealtimeService,
+    noNotifications,
+  );
   const week = async () =>
     (
       await owner.query(
@@ -9440,7 +9454,7 @@ async function batchMoveDirectChecks(owner: Client, api: PrismaService): Promise
     realtime,
     { recipientsForLessons: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
   );
-  const batches = new CancellationBatchesService(api, realtime);
+  const batches = new CancellationBatchesService(api, realtime, noNotifications);
   const week = async () =>
     (
       await owner.query(
@@ -9628,11 +9642,15 @@ async function batchChecks(owner: Client, api: PrismaService): Promise<void> {
   const school = await givenPublicationSchool(owner, 'avbokning');
   const { publications } = publicationServicesFor(api);
   const broadcast: string[][] = [];
-  const batches = new CancellationBatchesService(api, {
-    notifyLessonsChanged: async (_tx: unknown, ids: readonly string[]) => {
-      broadcast.push([...ids]);
-    },
-  } as unknown as RealtimeService);
+  const batches = new CancellationBatchesService(
+    api,
+    {
+      notifyLessonsChanged: async (_tx: unknown, ids: readonly string[]) => {
+        broadcast.push([...ids]);
+      },
+    } as unknown as RealtimeService,
+    noNotifications,
+  );
   const rows = async (sql: string, params: unknown[] = [school.schoolId]) => (await owner.query(sql, params)).rows;
   const week = {
     academicYearId: school.yearId,

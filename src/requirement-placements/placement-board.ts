@@ -61,13 +61,27 @@ export interface BoardPostView {
   subjectId: string;
   /** The huvudlärare; null when nobody teaches the post. */
   teacherId: string | null;
+  /** The medlärare, who is in the room for every lesson of the post: the page's mirror of the clash rule reads it. */
+  coTeacherId: string | null;
   recurrence: LessonRecurrence;
   /** YYYY-MM-DD, or null: the weeks the post runs, which a förläggning inherits. */
   startDate: string | null;
   endDate: string | null;
+  /**
+   * The pupils' own minutes on either side of the post's lessons (ombyte before idrotten, dusch and ombyte after): the clash
+   * rule holds a class's other lessons out of them (master-lessons.service.ts pupilBuffersOf), so the page's mirror of it
+   * reads them (review of #326, MEDEL-3). 0 and 0 for nearly every post.
+   */
+  minutesBefore: number;
+  minutesAfter: number;
   /** Why no lesson of the post can be placed, or null when one can. */
   cannotPlace: 'BLOCK' | null;
   parts: BoardPartView[];
+  /**
+   * The key of the post's rows as they stand (rowsKeyOf): sent back as `baseKey` on the PUT, so that a write made on top
+   * of a list somebody has changed since is refused (409 REQUIREMENT_PLACEMENTS_STALE). The same for every post with no rows.
+   */
+  rowsKey: string;
 }
 
 /** What the count reads of a post. */
@@ -76,11 +90,15 @@ export interface BoardPost extends LessonShape {
   studentGroupId: string;
   subjectId: string;
   teacherId: string | null;
+  coTeacherId: string | null;
   recurrence: LessonRecurrence;
   blockId: string | null;
   startDate: Date | null;
   endDate: Date | null;
   shares: readonly LessonShare[];
+  /** The pupils' minutes before and after a lesson of the post; absent reads as none. */
+  minutesBefore?: number;
+  minutesAfter?: number;
 }
 
 /** A lesson Generera keeps, as the count reads it. */
@@ -114,7 +132,10 @@ function tally(lessons: readonly TaughtLesson[]): Map<string, number> {
  * teacher: the post's locks as Generera reads them (lockCoversDemand over the
  * lessons it keeps of the post's class and subject).
  */
-export function coveringLocksOf(post: BoardPost, kept: readonly KeptForCount[]): TaughtLesson[] {
+export function coveringLocksOf(
+  post: Pick<BoardPost, 'studentGroupId' | 'subjectId' | 'recurrence' | 'startDate' | 'endDate'>,
+  kept: readonly KeptForCount[],
+): TaughtLesson[] {
   return kept
     .filter(
       (lesson) =>
@@ -126,8 +147,15 @@ export function coveringLocksOf(post: BoardPost, kept: readonly KeptForCount[]):
 /**
  * One post's lessons, counted. `locks` are the covering locks (coveringLocksOf),
  * `rows` the post's förläggningar; the post is read as Generera reads it.
+ * `rowsKey` is the key of the rows as stored (placement-rows-key.ts), which a
+ * write names to say what it is made on top of.
  */
-export function boardPostOf(post: BoardPost, locks: readonly TaughtLesson[], rows: readonly PlacementShape[]): BoardPostView {
+export function boardPostOf(
+  post: BoardPost,
+  locks: readonly TaughtLesson[],
+  rows: readonly PlacementShape[],
+  rowsKey: string,
+): BoardPostView {
   const shared = hasShares(post);
   const demand = demandLeftOf(post, locks, placedByRowsOf(post, rows));
   const all = lessonTeachersOf(post);
@@ -155,11 +183,15 @@ export function boardPostOf(post: BoardPost, locks: readonly TaughtLesson[], row
     studentGroupId: post.studentGroupId,
     subjectId: post.subjectId,
     teacherId: post.teacherId,
+    coTeacherId: post.coTeacherId,
     recurrence: post.recurrence,
     startDate: dayOf(post.startDate),
     endDate: dayOf(post.endDate),
+    minutesBefore: post.minutesBefore ?? 0,
+    minutesAfter: post.minutesAfter ?? 0,
     cannotPlace: post.blockId !== null ? 'BLOCK' : null,
     parts,
+    rowsKey,
   };
 }
 
@@ -231,6 +263,7 @@ export function boardPostShape(post: {
   studentGroupId: string;
   subjectId: string;
   teacherId: string | null;
+  coTeacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
   lessonLengths: number[];
@@ -239,12 +272,15 @@ export function boardPostShape(post: {
   startDate: Date | null;
   endDate: Date | null;
   shares: readonly LessonShare[];
+  minutesBefore?: number;
+  minutesAfter?: number;
 }): BoardPost {
   return {
     id: post.id,
     studentGroupId: post.studentGroupId,
     subjectId: post.subjectId,
     teacherId: post.teacherId,
+    coTeacherId: post.coTeacherId,
     lessonsPerWeek: post.lessonsPerWeek,
     minutesPerLesson: post.minutesPerLesson,
     lessonLengths: post.lessonLengths,
@@ -253,6 +289,8 @@ export function boardPostShape(post: {
     startDate: post.startDate,
     endDate: post.endDate,
     shares: post.shares,
+    ...(post.minutesBefore === undefined ? {} : { minutesBefore: post.minutesBefore }),
+    ...(post.minutesAfter === undefined ? {} : { minutesAfter: post.minutesAfter }),
   };
 }
 

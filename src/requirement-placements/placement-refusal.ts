@@ -54,6 +54,24 @@ export function placementRefusalText(reason: PlacementRefusalReason, params?: Pl
   }
 }
 
+/** The problem `code` of a write that was made on top of a list somebody has changed since (`baseKey`). */
+export const REQUIREMENT_PLACEMENTS_STALE = 'REQUIREMENT_PLACEMENTS_STALE';
+
+/**
+ * The 409 for a PUT whose `baseKey` is not the key of the rows the post has now:
+ * somebody else wrote the post's list after the client read it, and nothing was
+ * written. The client reads the list again and says what it was about to do.
+ * `params` is flat (the exception filter forwards only the code and flat
+ * `params`): the post.
+ */
+export function placementsStaleConflict(requirementId: string): ConflictException {
+  return new ConflictException({
+    message: 'Postens förläggningar har ändrats sedan du läste dem. Läs om dem och försök igen.',
+    code: REQUIREMENT_PLACEMENTS_STALE,
+    params: { requirementId },
+  });
+}
+
 /**
  * The 409 for the first row that does not hold. Everything a client needs is
  * in `params`, flat (the exception filter forwards only the code and flat

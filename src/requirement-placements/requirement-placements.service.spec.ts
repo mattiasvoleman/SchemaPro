@@ -9,6 +9,7 @@ import { readOtherSchoolHolds } from '../optimization/other-school-holds';
 import { readBoardFacts } from '../swaps/board-rules';
 import { rostersOfYear } from '../year-rollover/projected-rosters';
 import * as placementJudge from './placement-judge';
+import { rowsKeyOf } from './placement-rows-key';
 import { RequirementPlacementsService } from './requirement-placements.service';
 
 jest.mock('../year-rollover/projected-rosters', () => ({ rostersOfYear: jest.fn() }));
@@ -176,7 +177,7 @@ describe('RequirementPlacementsService', () => {
 
     it('answers a post with no row without reading the year\'s classes', async () => {
       const { service } = setup();
-      await expect(service.listOfPost(REQ, testUser())).resolves.toEqual({ placements: [], verdicts: [] });
+      await expect(service.listOfPost(REQ, testUser())).resolves.toEqual({ placements: [], verdicts: [], rowsKey: rowsKeyOf([]) });
       expect(rostersOfYear).not.toHaveBeenCalled();
     });
 
@@ -342,7 +343,7 @@ describe('RequirementPlacementsService', () => {
       expect(masters.findConflicts).not.toHaveBeenCalled();
       expect(rostersOfYear).not.toHaveBeenCalled();
       expect(lockYearForGrundschemaEdit).toHaveBeenCalledWith(tx, YEAR);
-      expect(result).toEqual({ placements: [], verdicts: [] });
+      expect(result).toEqual({ placements: [], verdicts: [], rowsKey: rowsKeyOf([]) });
     });
 
     it('answers 404 for an unknown post, taking no lock and writing nothing', async () => {

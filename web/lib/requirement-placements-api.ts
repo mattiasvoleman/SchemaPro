@@ -29,11 +29,21 @@ export function fetchPlacementsOf(requirementId: string): Promise<PlacementsOfRe
  * Replaces the post's rows with these (none removes them all). Resolves with
  * the stored rows and their verdicts; a 409 rejects with an ApiError that
  * placementsRefusal reads, and then nothing was written.
+ *
+ * `baseKey` is the key of the rows the write is made on top of (`rowsKey` in
+ * the week's read and in every answer): given, a list somebody has written
+ * since is refused with 409 REQUIREMENT_PLACEMENTS_STALE and nothing is
+ * written; left out, the list replaces whatever the post holds, as the
+ * dialog's save always did.
  */
-export function savePlacements(requirementId: string, placements: PlacementInput[]): Promise<PlacementsOfRequirement> {
+export function savePlacements(
+  requirementId: string,
+  placements: PlacementInput[],
+  baseKey?: string,
+): Promise<PlacementsOfRequirement> {
   return api.put<PlacementsOfRequirement>(
     `/api/v1/teaching-requirements/${encodeURIComponent(requirementId)}/placements`,
-    { placements },
+    { placements, ...(baseKey !== undefined ? { baseKey } : {}) },
   );
 }
 
