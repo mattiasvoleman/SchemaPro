@@ -6011,11 +6011,30 @@ a 30 s deadline: it never waits while it holds a lock, and after 30 s it stops w
   odd and even weeks in a block (`WEEKS`), and a block that follows another (`FOLLOWER`) cannot be laid. A post that joins a
   block has the lesson at once with its room chosen by the engine; a post that leaves a block takes only its own room row with
   it. Membership is never refused.
+- **A room row that stays behind.** The trigger that removes a post's room rows when it leaves a block takes no lock (a lock there
+  deadlocked against the member check; three hunts of 300 attempts found it, §24.2 lists the trigger). A room row written by a
+  save that read the post as a member can therefore be committed just after the post left, and stays. The gateway and Generera
+  read the room rows of members only, so while the post is outside the block the row is ignored; the next save of the block's
+  lessons replaces every row of the block and it goes. **If the post goes back into the block before that save, the row is the
+  post's room again, without a refusal:** Förlägg blocket shows it as the post's room, Generera holds the lesson in it (or names
+  `PLACED_LESSON_ROOM_NOT_ALLOWED` if the room cannot take the lesson). It takes the race and the move back within one window, and
+  the probe leaves the row in ten of ten runs of the race, so it is a known state and not a rare one. Closing it needs a lock in the
+  leaving trigger, which is what the three hunts removed, so it is not closed here. Found by the review of #328.
 
 ### 24.4 Operations
 
 - **Counting.** `SELECT count(*) FROM "TeachingBlockPlacements"` says how many lessons of how many blocks the schools laid;
   `SELECT count(*) FROM "TeachingBlockPlacementRooms"` how many posts chose a room of their own.
+- **Room rows that stayed behind** (§24.3): rows whose post is no longer a member of the block they are laid for. Normally none.
+  ```sql
+  SELECT r.id, r."requirementId", p."blockId" AS laid_for, q."blockId" AS member_of
+  FROM "TeachingBlockPlacementRooms" r
+  JOIN "TeachingBlockPlacements" p ON p.id = r."placementId" AND p."schoolId" = r."schoolId"
+  JOIN "TeachingRequirements" q ON q.id = r."requirementId" AND q."schoolId" = r."schoolId"
+  WHERE q."blockId" IS DISTINCT FROM p."blockId";
+  ```
+  A school that has one saves the block once more with Förlägg blocket (every row of the block is replaced), or the rows are deleted by
+  `id`. Read the rows before deleting, and only in the school that asked.
 - **What it costs the search.** Measured on the högstadium benchmark (228 posts, 423 lessons, 30 of the posts in 6 blocks; §21.4) as
   the time to a first timetable of the satisfaction model without the objective, two workers each, the three variants started at
   once so that they share the machine's load (6 to 18 at the start of each round, never over 24), the lessons taken from a valid
