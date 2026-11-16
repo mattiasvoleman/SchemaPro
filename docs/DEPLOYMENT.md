@@ -5488,7 +5488,7 @@ A pinned lesson never gives way, in Bästa möjliga schema either.
   and two of them on one hour of a teacher's: the model with the objective
   named every rule of the week, 668 of 668, and the one without named the two
   pinned lessons, in 9 s on a loaded machine. A week without a pinned lesson
-  is explained as before.
+  is explained as section 22 says.
 - **When the proof names nothing** inside its fifteen seconds, the week is
   solved once more with every pinned lesson free to move, as it is for the
   förlagda locks, and a timetable found then names them all.
@@ -5519,3 +5519,47 @@ A pinned lesson never gives way, in Bästa möjliga schema either.
   where a first timetable takes minutes and a factor of two to three is felt
   in the budget: that is measured with the change that first sends the
   field.
+
+## 22. The explanation of a refused week ("Förklaringen av en vägran")
+
+A week the engine has proved impossible is explained by a second, single-threaded
+solve with assumptions, capped at 15 s (`EXPLAIN_CAP_SECONDS`), whose sufficient
+assumption set names the rules in the way. Which model that solve runs on decides
+what the school reads, and there is no contract change: the same lines, the same
+codes, fewer of them.
+
+- **A week of 50 lessons or more** (`EXPLAIN_SHARP_FROM_LESSONS`) is explained on the
+  model WITHOUT the objective first, on 10 s of the cap (`EXPLAIN_SHARP_SECONDS`).
+  The model with the objective answers with every assumption it registered (250 of
+  250 on the engine's own refusals); without it the core is the rule that is the
+  matter. Measured on the benchmark schools: 25 lines for a class of 36 lessons, 45
+  for 72, 105 for 252 and 141 for 360 with the objective, against 1 to 5 lines at
+  every size without it. On the högstadium benchmark (`hogstadium.py
+  --teacher-day-rules --infeasible-days`): 273 lines against 1, the whole solve in
+  5.5 s against 2.0 s. A teacher away four days from a school of 250 pupils, which came back with
+  no cause at all (UNKNOWN at the cap), is named by her four days in 5.5 to 7.4 s.
+- **The model with the objective is the reserve**, on what is left of the cap, when
+  the first try proves nothing in its 10 s or proves the week without resting on any
+  assumption (an empty core: 27 of the 250). A room that is too small is such a
+  cause, and its literal cannot carry it, since the room's size is also the lesson's
+  own room domain; the objective's "all" is how the school has always been told.
+- **A week under 50 lessons is explained as it always was**, with the objective
+  (and on a school with the walk, 5 s with it and then without). The core without
+  the objective is ONE sufficient set: on the suite's small weeks 17 of 202 sharp
+  cores left a second, independent cause unnamed that the full core names, and the
+  tests keep naming them. A small week's full core is complete and readable (66
+  lines at most).
+- **A week with a pinned lesson**, of any size, is explained as section 21 says:
+  without the objective on the whole cap, and no reserve.
+- **What a large week with several causes costs.** It names one of them and the
+  school finds the next on the next run, a few seconds later, in place of both among
+  100 to 270 lines. The daily maximum, the walk and the blocks name their own groups
+  through the measured verdicts as before; a loop that lifts the core and asks again
+  was tried and left out (one solve per cause, 2.6 s each on the högstadium week).
+- **Time.** A large refusal waits for the model without the objective: 2.6 s in the
+  median and 7.4 s at most on the large weeks measured (0.14 s with the objective),
+  under load 6 to 14, and 1.0 to 2.7 times as long at 23 to 29. The cap is the same.
+  The cores themselves were identical between two runs of the same tree.
+- **Where to look.** `benchmarks/hogstadium.py --teacher-day-rules --infeasible-days`
+  prints the conflict codes of the högstadium week. The measurement and its data are
+  in the session notes (`forklaring-utan-mal.md`).
