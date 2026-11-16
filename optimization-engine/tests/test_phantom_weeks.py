@@ -685,6 +685,38 @@ def test_a_first_group_the_words_say_once_it_is_filled_in_is_said_filled_in() ->
     assert named(said) == {"period": 0, "periods": "0,1"}
 
 
+def test_the_first_cell_of_a_group_no_words_say_is_said_with_its_period_filled_in() -> None:
+    """LÅG-1 of the review of #325: the last line of `said_weeks`, the first CELL, fills in its period.
+
+    Period 0 is one odd week (its even cell is no week). The first group is that
+    odd week beside period 1 whole and the even week of period 2, which no words
+    say; the second is the even week of period 3, so no words say the two
+    together either. The first cell is said, and it is period 0 and not "the odd
+    weeks of period 0": the cell no week is in is filled in beside it.
+    """
+    phantom = Weeks(_cell(0, "even"), 4)
+    first = Weeks(_cell(0, "odd") | _cell(1, "odd") | _cell(1, "even") | _cell(2, "even"), 4)
+    second = Weeks(_cell(3, "even"), 4)
+    assert as_said(first, phantom) is None and as_said(Weeks(first.bits | second.bits, 4), phantom) is None
+    said = said_weeks([first, second], [first, second, Weeks(_cell(3, "odd"), 4)], _never, phantom)
+    assert named(said) == {"period": 0}
+
+
+def test_the_first_cell_of_a_group_no_words_say_is_never_the_cell_no_week_is_in() -> None:
+    """LÅG-1 of the review of #325: the cell no week is in can be a group's lowest cell, and is not the one said.
+
+    The group is the same as in the test above, but here it is period 0's ODD
+    cell that no week is in, and it is the lowest cell of the group. What is
+    said is the first REAL cell, the odd weeks of period 1.
+    """
+    phantom = Weeks(_cell(0, "odd"), 4)
+    first = Weeks(_cell(0, "odd") | _cell(1, "odd") | _cell(1, "even") | _cell(2, "even"), 4)
+    second = Weeks(_cell(3, "even"), 4)
+    assert as_said(first, phantom) is None and as_said(Weeks(first.bits | second.bits, 4), phantom) is None
+    said = said_weeks([first, second], [first, second, Weeks(_cell(3, "odd"), 4)], _never, phantom)
+    assert named(said) == {"period": 1, "parity": "ODD_WEEKS"}
+
+
 def test_a_set_of_nothing_but_cells_no_week_is_in_is_said_as_it_was_and_not_made_empty() -> None:
     """The strip leaves a set with no real week in it as it is: emptied it would be said as no weeks at all."""
     phantom = Weeks(0b0100, 2)
