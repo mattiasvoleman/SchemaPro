@@ -520,6 +520,9 @@ export function writtenFromPins<L extends AnsweredLesson>(
  */
 export const ANY_ROOM = 'ANY_ROOM';
 
+/** The value `block` takes for a row that is no block's lesson (see ANY_ROOM). */
+export const NO_BLOCK = 'NO_BLOCK';
+
 /**
  * GENERERA'S PRE-FLIGHT REFUSAL: the förläggningar that cannot stand where
  * they are placed, judged at this run (placement-judge.ts) since the week
@@ -549,8 +552,9 @@ export function placementsRefusalOf(
       end: clockOf(row.endTime),
       reason: verdict.reason ?? 'UNKNOWN',
       ...sentenceParams(verdict.params),
-      // A member's lesson of a block's förläggning is said by the block as well (the web's sentence chooses its words on it).
-      ...(row.blockId !== undefined && anon.block ? { block: anon.block(row.blockId) } : {}),
+      // A member's lesson of a block's förläggning is said by the block as well, and the web's sentence chooses its words on it
+      // (NO_BLOCK: the one value that is no block's name, as ANY_ROOM is no room's: a message's select needs the argument given).
+      block: row.blockId !== undefined && anon.block ? anon.block(row.blockId) : NO_BLOCK,
     };
     return [
       {

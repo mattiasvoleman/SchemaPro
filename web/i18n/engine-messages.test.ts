@@ -69,6 +69,8 @@ const PLACES_TIP =
 const WEB_WORDS: Record<string, readonly (readonly [string, string])[]> = {
   PLACEMENT_CANNOT_STAND: [
     ["{room, select, ANY_ROOM {a room the timetable chooses} other {{room}}}", "{room}"],
+    // A member's lesson of a block's förläggning names the block (Förlägg blocket): `block` is NO_BLOCK for every other row.
+    ["{block, select, NO_BLOCK {} other { (the block {block})}}", ""],
     [
       " PAIR_ROOM {odd and even weeks of the same length are one lesson in two places, and both places need a room} BLOCK {the post is in a parallel block, so a single placed lesson cannot stay} BLOCK_FIT {the block's placed lessons no longer fit the block}",
       "",
@@ -77,6 +79,13 @@ const WEB_WORDS: Record<string, readonly (readonly [string, string])[]> = {
   PLACEMENT_PLACES_FORCED: [[PLACES_TIP, ""]],
   PLACES_CANNOT_BE_KEPT: [[PLACES_TIP, ""]],
 };
+/**
+ * The arguments the web's sentence takes beyond the engine's own, which the gateway sends on the same line (Förlägg blocket: the
+ * block a member's lesson belongs to, NO_BLOCK for any other). The engine's catalogue has no such argument and is not asked to.
+ */
+const WEB_ARGUMENTS: Record<string, readonly string[]> = { PLACEMENT_CANNOT_STAND: ["block"] };
+const argumentsWithWeb = (code: string, engine: string[]): string[] => [...engine, ...(WEB_ARGUMENTS[code] ?? [])].sort();
+
 const undoneWebWords = (code: string, text: string): string =>
   (WEB_WORDS[code] ?? []).reduce((undone, [web, engine]) => undone.replace(web, engine), text);
 
@@ -99,8 +108,8 @@ describe("every sentence the engine can send", () => {
 
   it.each(codes)("%s substitutes exactly the values the engine sends", (code) => {
     const fixture = (engineMessages as Record<string, string>)[code];
-    expect(argumentsOf(swedish[code])).toEqual(argumentsOf(fixture));
-    expect(argumentsOf(english[code])).toEqual(argumentsOf(fixture));
+    expect(argumentsOf(swedish[code])).toEqual(argumentsWithWeb(code, argumentsOf(fixture)));
+    expect(argumentsOf(english[code])).toEqual(argumentsWithWeb(code, argumentsOf(fixture)));
   });
 
   it("keeps the English identical to the engine's own, but for what the web words further (WEB_WORDS)", () => {

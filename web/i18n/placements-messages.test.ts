@@ -325,7 +325,8 @@ describe("the English calls a timplanspost a curriculum entry", () => {
 });
 
 describe("the engine's refusals about placed lessons", () => {
-  const where = { requirement: "7A Slöjd", day: 2, start: "10:00", end: "11:00", room: "Slöjdsalen" };
+  // The gateway sends `block` on every line: NO_BLOCK for a lesson that is no block's (Förlägg blocket), the block's name otherwise.
+  const where = { requirement: "7A Slöjd", day: 2, start: "10:00", end: "11:00", room: "Slöjdsalen", block: "NO_BLOCK" };
 
   it("says each reason a placed lesson cannot stand, in Swedish", () => {
     expect(svEngine("PLACEMENT_CANNOT_STAND", { ...where, reason: "TEACHER", other: "7B Matematik" })).toBe(
@@ -361,6 +362,17 @@ describe("the engine's refusals about placed lessons", () => {
     );
     // A room that is named is still said by name.
     expect(svEngine("PLACEMENT_CANNOT_STAND", { ...where, reason: "LUNCH" })).toBe("7A Slöjd, förlagd tisdag 10:00–11:00 i Slöjdsalen: tiden ligger på klassens lunch.");
+  });
+
+  it("names the block a member's placed lesson belongs to, and says nothing of one for a lesson that is no block's", () => {
+    const lesson = { ...where, room: "ANY_ROOM", reason: "TEACHER", other: "7B Matematik" };
+    expect(svEngine("PLACEMENT_CANNOT_STAND", { ...lesson, block: "Språkval 7" })).toBe(
+      "7A Slöjd, förlagd tisdag 10:00–11:00 i en sal som schemat väljer (blocket Språkval 7): läraren har redan 7B Matematik då.",
+    );
+    expect(enEngine("PLACEMENT_CANNOT_STAND", { ...lesson, block: "Språkval 7" })).toBe(
+      "7A Slöjd, placed on Tuesday 10:00–11:00 in a room the timetable chooses (the block Språkval 7): the teacher already teaches 7B Matematik then.",
+    );
+    expect(svEngine("PLACEMENT_CANNOT_STAND", lesson)).not.toMatch(/blocket/);
   });
 
   it("says the two reasons the judge gained: a half of a pair with no room, and a post in a parallel block", () => {
@@ -538,7 +550,7 @@ describe("Förlägg blocket as the reader hears and sees it", () => {
   });
 
   it("says in the engine's refusal that the block's lessons no longer fit the block, in both languages", () => {
-    const where = { requirement: "Tyska för Ty7", day: 2, start: "10:00", end: "11:20", room: "ANY_ROOM", reason: "BLOCK_FIT" };
+    const where = { requirement: "Tyska för Ty7", day: 2, start: "10:00", end: "11:20", room: "ANY_ROOM", block: "NO_BLOCK", reason: "BLOCK_FIT" };
     expect(svEngine("PLACEMENT_CANNOT_STAND", where)).toBe(
       "Tyska för Ty7, förlagd tisdag 10:00–11:20 i en sal som schemat väljer: blockets förlagda lektioner passar inte längre blocket.",
     );

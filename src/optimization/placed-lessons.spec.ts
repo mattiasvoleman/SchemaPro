@@ -1,5 +1,6 @@
 import {
   ANY_ROOM,
+  NO_BLOCK,
   PLACEMENT_CANNOT_STAND,
   PLACEMENTS_REFUSED_SUMMARY,
   blockPlacedLessonRowsOf,
@@ -206,6 +207,8 @@ describe('placementsRefusalOf', () => {
           reason: 'TEACHER',
           // The lesson it meets, as one phrase; its clock is not the row's.
           other: '8B Matematik',
+          // Not a block's lesson: the value the web's sentence chooses its words on (NO_BLOCK).
+          block: 'NO_BLOCK',
         },
       }),
     ]);
@@ -769,8 +772,7 @@ describe('placementsRefusalOf on a block’s rows', () => {
 
     const refusal = placementsRefusalOf(rows, refusedAll, { ...names, block });
 
-    expect(refusal!.conflicts.map((line) => line.params?.['block'])).toEqual([undefined, `anon-block:${BLOCK}`, `anon-block:${BLOCK}`]);
-    expect(refusal!.conflicts[0]!.params).not.toHaveProperty('block');
+    expect(refusal!.conflicts.map((line) => line.params?.['block'])).toEqual([NO_BLOCK, `anon-block:${BLOCK}`, `anon-block:${BLOCK}`]);
     // Asked of the block rows alone, and of the block's own id.
     expect(block.mock.calls).toEqual([[BLOCK], [BLOCK]]);
   });
@@ -787,10 +789,10 @@ describe('placementsRefusalOf on a block’s rows', () => {
     expect(refusal!.summaryParams).toEqual({ count: 3 });
   });
 
-  it('names no block when the caller gave no namer for one', () => {
+  it('names no block (NO_BLOCK) when the caller gave no namer for one', () => {
     const refusal = placementsRefusalOf(rows, refusedAll, names);
 
-    expect(refusal!.conflicts.every((line) => !('block' in (line.params ?? {})))).toBe(true);
+    expect(refusal!.conflicts.every((line) => line.params?.['block'] === NO_BLOCK)).toBe(true);
   });
 });
 

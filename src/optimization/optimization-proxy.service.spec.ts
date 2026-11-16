@@ -9035,8 +9035,8 @@ describe('OptimizationProxyService', () => {
             expect(http.post).not.toHaveBeenCalled();
             expect(answer.status).toBe('INFEASIBLE');
             expect(answer.conflicts!.conflicts).toEqual([expect.objectContaining({ code: 'PLACEMENT_CANNOT_STAND', params: expect.objectContaining({ reason: 'BLOCK', requirement: 'Franska för 7B' }) })]);
-            // The post's own row is no lesson of the block: the line names no block.
-            expect(answer.conflicts!.conflicts[0]!.params).not.toHaveProperty('block');
+            // The post's own row is no lesson of the block: the line names no block (NO_BLOCK, the value no block's name is).
+            expect(answer.conflicts!.conflicts[0]!.params).toHaveProperty('block', 'NO_BLOCK');
             expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
           });
 
