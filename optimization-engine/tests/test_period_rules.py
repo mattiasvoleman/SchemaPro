@@ -104,6 +104,25 @@ def test_a_posts_days_by_period_are_each_set_once_with_the_periods_it_is_held_in
     _limit_of([{"weekdays": [1], "periods": [True, True]}, {"weekdays": [1, 2], "periods": [False, True]}])
     # And without the field the limit is the one it was.
     assert _limit_of(None).locked_weekday_periods is None
+    # A set may be held in the odd weeks of one period and in both parities of another, and once for each
+    # parity: the odd weeks' Monday and the even weeks' Tuesday of a period that agrees nowhere else.
+    parity = _limit_of([
+        {"weekdays": [1], "periods": [True, True], "recurrence": "ODD_WEEKS"},
+        {"weekdays": [2], "periods": [True, True], "recurrence": "EVEN_WEEKS"},
+        {"weekdays": [1], "periods": [False, True]},
+    ])
+    assert parity.locked_weekday_periods is not None
+    assert [entry.recurrence for entry in parity.locked_weekday_periods] == ["ODD_WEEKS", "EVEN_WEEKS", None]
+    # A mask of ONE period is the year without periods, which a school with A/B-weeks that dates nothing sends
+    # (the review of #320, MEDEL-1): its sets are told apart by parity alone.
+    one = _limit_of([
+        {"weekdays": [1], "periods": [True], "recurrence": "ODD_WEEKS"},
+        {"weekdays": [2], "periods": [True], "recurrence": "EVEN_WEEKS"},
+    ])
+    assert one.locked_weekday_periods is not None
+    assert [(entry.periods, entry.recurrence) for entry in one.locked_weekday_periods] == [
+        ((True,), "ODD_WEEKS"), ((True,), "EVEN_WEEKS"),
+    ]
 
 
 @pytest.mark.parametrize(("held", "said"), [
@@ -113,9 +132,15 @@ def test_a_posts_days_by_period_are_each_set_once_with_the_periods_it_is_held_in
     ([{"weekdays": [1, 1], "periods": [True, True]}], "a weekday twice"),
     ([{"weekdays": [1], "periods": [True, True, True]}, {"weekdays": [], "periods": [True, True]}], "the same length"),
     ([{"weekdays": [1], "periods": [False, False]}, {"weekdays": [], "periods": [True, True]}], "at least one period"),
-    ([{"weekdays": [1], "periods": [True]}], "at least 2"),
+    ([{"weekdays": [1], "periods": []}], "at least 1 item"),
     ([], "at least 1 item"),
-    ([{"weekdays": [1], "periods": [True, True], "recurrence": "ODD_WEEKS"}], "Extra inputs"),
+    ([{"weekdays": [1], "periods": [True, True], "colour": "red"}], "Extra inputs"),
+    ([{"weekdays": [1], "periods": [True, True], "recurrence": "ODD_WEEKS"},
+      {"weekdays": [1], "periods": [True, False], "recurrence": "ODD_WEEKS"}], "one set of weekdays twice"),
+    ([{"weekdays": [1], "periods": [True, True], "recurrence": "ODD_WEEKS"}], "must name a set for every period"),
+    ([{"weekdays": [1], "periods": [True, True], "recurrence": "ODD_WEEKS"},
+      {"weekdays": [2], "periods": [True, False], "recurrence": "EVEN_WEEKS"}], "must name a set for every period"),
+    ([{"weekdays": [1], "periods": [True, True], "recurrence": "SOMETIMES"}], "Input should be"),
 ])
 def test_a_posts_days_by_period_in_any_other_shape_are_refused(held: object, said: str) -> None:
     with pytest.raises(ValidationError, match=said):
@@ -371,21 +396,30 @@ def test_the_lunch_is_still_owed_in_the_weeks_both_lessons_run() -> None:
     assert "TEACHER_LUNCH_HAS_NOWHERE_TO_GO" in _codes(response)
 
 
-def test_the_lunch_is_one_for_the_odd_weeks_and_the_even_ones_as_it_was() -> None:
-    """The parity is not cut: a year without periods builds the break it built (model identity)."""
-    response = _solve(
-        _two_lunches({"recurrence": "ODD_WEEKS"}, {"recurrence": "EVEN_WEEKS"}), _settings(5, "1"),
-    )
+def test_the_lunch_is_each_parity_s_own_where_the_lessons_in_the_window_differ_by_it() -> None:
+    """Review of #302: one lunch for the odd weeks and the even ones refused a timetable every week of which exists.
+
+    An early class here 11-12 in the odd weeks and a late one 12-13 in the
+    even weeks, with the teacher's half hour somewhere in 11-13: the odd weeks
+    eat at 12 and the even weeks at 11 (weeks.needs_a_part_per_parity), where
+    one break clear of both lessons had no half hour. Inside a term too. And
+    when both lessons are in the same weeks they fill the window and there is
+    no lunch in those weeks, as it ever was.
+    """
+    settings = _settings(5, "1")
+    odd, even = {"recurrence": "ODD_WEEKS"}, {"recurrence": "EVEN_WEEKS"}
+    for first, second in (
+        (odd, even),
+        ({**odd, "periods": AUTUMN}, {**even, "periods": AUTUMN}),
+    ):
+        payload = _two_lunches(first, second)
+        response = _solve(payload, settings)
+        assert response.status in SOLVED
+        assert sorted(lesson.start_time for lesson in response.lessons) == ["11:00:00", "12:00:00"]
+        assert _validate(payload, response.lessons, settings) == []
+    response = _solve(_two_lunches(odd, odd), settings)
     assert response.status == "INFEASIBLE"
     assert "TEACHER_LUNCH_HAS_NOWHERE_TO_GO" in _codes(response)
-    # Nor inside a term: the odd and the even weeks of the autumn share its break.
-    response = _solve(
-        _two_lunches(
-            {"recurrence": "ODD_WEEKS", "periods": AUTUMN}, {"recurrence": "EVEN_WEEKS", "periods": AUTUMN},
-        ),
-        _settings(5, "1"),
-    )
-    assert response.status == "INFEASIBLE"
 
 
 def _locked_lunch(
@@ -646,10 +680,11 @@ def test_a_lock_in_each_term_leaves_each_term_its_lunch() -> None:
 def test_the_two_weeks_lunch_test_read_as_two_terms_has_a_timetable() -> None:
     """test_ab_weeks' own school — a lock 11-12 in one week and 12-13 in the other, an hour's lunch in 11-13.
 
-    As odd and even weeks it is refused, on main and here: one break for the
-    two weeks, and no hour clear of both locks. As two terms each has its
-    hour, and the mirror in test_periods.py no longer runs that test for them
-    (HELD_BY_PARITY_ALONE). This is what it finds instead.
+    Two terms each have their hour. So do the odd and the even weeks: a
+    teacher whose locks in the window are told apart by parity has a break
+    for each week (weeks.needs_a_part_per_parity), where main held one break
+    clear of both locks and refused it. The same school as one week's two
+    locks is refused by name.
     """
     teacher = str(uuid4())
     settings = _settings(6, "1")
@@ -669,36 +704,82 @@ def test_the_two_weeks_lunch_test_read_as_two_terms_has_a_timetable() -> None:
     response = _solve(terms, settings)
     assert response.status in SOLVED
     assert _validate(terms, response.lessons, settings) == []
+    parities = school({"recurrence": "ODD_WEEKS"}, {"recurrence": "EVEN_WEEKS"})
+    response = _solve(parities, settings)
+    assert response.status in SOLVED
+    assert _validate(parities, response.lessons, settings) == []
     with pytest.raises(InvalidScheduleInputError) as refused:
-        _solve(school({"recurrence": "ODD_WEEKS"}, {"recurrence": "EVEN_WEEKS"}), settings)
+        _solve(school({"recurrence": "ODD_WEEKS"}, {"recurrence": "ODD_WEEKS"}), settings)
     assert refused.value.code == "TEACHER_LUNCH_LEAVES_NO_START"
     assert "period" not in refused.value.params
 
 
-def test_a_term_of_odd_and_even_locks_is_read_with_both() -> None:
-    """The pre-flight reads a period's locks in both parities, as the model's break does.
+def test_a_term_of_odd_and_even_locks_is_read_week_by_week() -> None:
+    """The pre-flight reads a term's odd weeks and its even ones each on its own, where the model does.
 
-    An odd-week lock and an even-week lock of the spring fill the window
-    between them. The break is one for the spring's two weeks, so the spring
-    has none; read by the week alone each would pass, and the model would be
-    handed an empty domain.
+    An odd-week lock and an even-week lock of the spring that fill the window
+    between them: each week has half of it, and the year is laid (it was
+    refused, with one break for the term's two weeks). Both in the odd weeks
+    of the spring are refused, by name.
     """
     payload = _locked_lunch(SPRING, SPRING)
     payload["fixedLessons"][0]["recurrence"] = "ODD_WEEKS"  # type: ignore[index]
     payload["fixedLessons"][1]["recurrence"] = "EVEN_WEEKS"  # type: ignore[index]
+    settings = _settings(5, "1")
+    SchedulerSolver(settings)._validate_request(OptimizeScheduleRequest.model_validate(payload))
+    response = _solve(payload, settings)
+    assert response.status in SOLVED
+    assert _validate(payload, response.lessons, settings) == []
+    payload["fixedLessons"][1]["recurrence"] = "ODD_WEEKS"  # type: ignore[index]
     refused = _refusal(payload)
     assert (refused.code, refused.params["period"]) == ("TEACHER_LUNCH_LEAVES_NO_START", 1)
 
 
+def test_a_lunch_refused_in_the_odd_weeks_of_the_spring_says_the_spring_and_the_odd_weeks() -> None:
+    """A teacher whose lunch is read per parity is refused for the weeks it is refused in, and says them.
+
+    A lesson of the odd weeks and one of the even weeks (so her entries are
+    told apart by parity), and two locks of the spring's odd weeks that fill
+    the window: the odd weeks of the spring have no lunch, and the autumn's
+    and the spring's even weeks do. The refusal says the period (1) and the
+    parity, which the gateway turns into "the odd weeks"; and a lock of the
+    spring's every week is the spring's in both parities.
+    """
+    teacher = str(uuid4())
+
+    def school(parity: str | None) -> dict[str, object]:
+        return _payload(
+            [_requirement(str(uuid4()), 1, teacher=teacher, recurrence="ODD_WEEKS"),
+             _requirement(str(uuid4()), 1, teacher=teacher, recurrence="EVEN_WEEKS"),
+             _requirement(str(uuid4()), 1, periods=SPRING)],
+            teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, "lunchMinutes": 30,
+                               "lunchStartTime": "11:00:00", "lunchEndTime": "12:00:00"}],
+            fixedLessons=[
+                {**_lock(str(uuid4()), 1, "11:00:00", "11:30:00", teacher, SPRING), **({"recurrence": parity} if parity else {})},
+                {**_lock(str(uuid4()), 1, "11:30:00", "12:00:00", teacher, SPRING), **({"recurrence": parity} if parity else {})},
+            ],
+        )
+
+    refused = _refusal(school("ODD_WEEKS"))
+    assert refused.code == "TEACHER_LUNCH_LEAVES_NO_START"
+    assert (refused.params["period"], refused.params["parity"]) == (1, "ODD_WEEKS")
+    refused = _refusal(school("EVEN_WEEKS"))
+    assert (refused.params["period"], refused.params["parity"]) == (1, "EVEN_WEEKS")
+    # The locks of both parities of the spring close it in each of them: the spring's, in both.
+    refused = _refusal(school(None))
+    assert refused.params["period"] == 1 and "parity" not in refused.params
+
+
 def test_a_week_that_lies_in_two_terms_is_read_one_term_at_a_time() -> None:
-    """The teacher teaches in odd weeks all year; two even-week locks of the SPRING fill the window.
+    """The teacher teaches in odd weeks all year; two locks of the SPRING fill the window.
 
     The odd weeks of the autumn and of the spring hold the same lessons and
-    are one week to the engine, named for both terms. The break is a term's,
-    for its odd weeks and its even ones, so the spring has none — and the
-    week the teacher is read in has to be read for each of its terms, not
-    only the first: the model's break in the spring is kept clear of these
-    locks, and a spring that passed here would be an empty domain there.
+    are one week to the engine, named for both terms. The week the teacher is
+    read in has to be read for each of its terms, not only the first: the
+    model's break in the spring is kept clear of the locks of its odd weeks,
+    and a spring that passed here would be an empty domain there. Locks of the
+    even weeks, when she teaches in the odd ones alone, are no part of her
+    break.
     """
     teacher = str(uuid4())
 
@@ -713,9 +794,19 @@ def test_a_week_that_lies_in_two_terms_is_read_one_term_at_a_time() -> None:
             ],
         )
 
-    refused = _refusal(school(SPRING, SPRING))
+    # Her lessons are of the odd weeks only, so she is owed no break in an even week: two even-week locks
+    # that fill the window are nothing to her, in either term. Locks of the odd weeks are.
+    SchedulerSolver(_settings(5, "1"))._validate_request(OptimizeScheduleRequest.model_validate(school(SPRING, SPRING)))
+    SchedulerSolver(_settings(5, "1"))._validate_request(OptimizeScheduleRequest.model_validate(school(AUTUMN, AUTUMN)))
+
+    def odd(payload: dict[str, object]) -> dict[str, object]:
+        for lock in payload["fixedLessons"]:  # type: ignore[union-attr]
+            lock["recurrence"] = "ODD_WEEKS"
+        return payload
+
+    refused = _refusal(odd(school(SPRING, SPRING)))
     assert (refused.code, refused.params["period"]) == ("TEACHER_LUNCH_LEAVES_NO_START", 1)
-    refused = _refusal(school(AUTUMN, AUTUMN))
+    refused = _refusal(odd(school(AUTUMN, AUTUMN)))
     assert (refused.code, refused.params["period"]) == ("TEACHER_LUNCH_LEAVES_NO_START", 0)
     # One in each term: each term has its half hour, and the year is laid.
     settings = _settings(5, "1")
@@ -1108,6 +1199,36 @@ def test_the_validator_holds_a_week_to_the_locked_weekdays_of_its_own_period() -
     assert "teaching on 3 days a week" in line and "(period 1)" in line
 
 
+def test_the_validator_holds_a_week_to_the_days_of_its_own_parity() -> None:
+    """benchmarks/validate_schedule.py reads a post's days by parity as the engine does (mutants V01 and V02).
+
+    A post of two days whose locks hold Monday and Tuesday in the odd weeks and Wednesday and Thursday in the
+    even ones, and a lesson of hers on Friday: three days in each, over the post. Each week is over it by ITS
+    OWN locks, so the line of the odd weeks names Monday and Tuesday and the even weeks' Wednesday and Thursday.
+    (The validator says a line once, in the first week that has it: read as every parity's sets in each week,
+    the odd weeks would have both lines and the even weeks none of their own.)
+    """
+    teacher, other = str(uuid4()), str(uuid4())
+    lesson = _requirement(str(uuid4()), 1, teacher=teacher)
+    # Another teacher's post of the odd weeks, in the first period alone: it gives the year its two periods and its parities.
+    alternate = _requirement(str(uuid4()), 1, teacher=other, recurrence="ODD_WEEKS", periods=[True, False])
+    held = [
+        {"weekdays": [1, 2], "periods": [True, True], "recurrence": "ODD_WEEKS"},
+        {"weekdays": [3, 4], "periods": [True, True], "recurrence": "EVEN_WEEKS"},
+    ]
+    payload = _payload(
+        [lesson, alternate],
+        teacherDayLimits=[_limit(teacher, 2, [[1, 2], [3, 4]], held)],
+    )
+    laid = [_laid(lesson, 5, "08:00:00", "09:00:00"), _laid(alternate, 1, "10:00:00", "11:00:00")]
+    problems = [problem for problem in _validate(payload, laid, _settings(5, "1,2,3,4,5")) if "teaching on 3 days" in problem]
+    assert len(problems) == 2
+    odd = next(problem for problem in problems if "weekdays 1, 2" in problem)
+    even = next(problem for problem in problems if "weekdays 3, 4" in problem)
+    assert "udda veckor" in odd
+    assert "jämna veckor" in even
+
+
 def test_the_validator_owes_the_whole_lunch_to_the_minute() -> None:
     """A gap of 25 minutes is no lunch of 30: the validator reads the rule's own figure, with no margin."""
     settings = _settings(5, "1")
@@ -1190,18 +1311,98 @@ def test_a_lunch_start_for_each_period_is_built_and_is_in_the_size_estimate() ->
             solver._week_vars(with_lunch, lessons, lessons) - solver._week_vars(without, lessons, lessons)
             == 3 * (count - 1)
         )
-    # Odd and even weeks, no periods: the break it always was, by the name it always had.
-    parities = [{"recurrence": "ODD_WEEKS"}, {"recurrence": "EVEN_WEEKS"}]
     lessons = {UUID(teacher): 4, UUID(group): 4}
-    assert starts(request(True, parities)) == [f"teacherlunch_{teacher}_{day}" for day in range(3)]
-    assert solver._week_vars(request(True, parities), lessons, lessons) == solver._week_vars(
+    # Odd and even weeks, no periods, a lesson of each parity that can take the window: a break of each
+    # parity's, under the one literal, and in the size estimate.
+    parities = [{"recurrence": "ODD_WEEKS"}, {"recurrence": "EVEN_WEEKS"}]
+    assert starts(request(True, parities)) == sorted(
+        f"teacherlunch_{teacher}_{day}_{side}" for day in range(3) for side in ("even", "odd")
+    )
+    assert solver._week_vars(request(True, parities), lessons, lessons) - solver._week_vars(
         request(False, parities), lessons, lessons,
+    ) == 3
+    # Lessons of one parity only are told apart by nothing the odd weeks' do not hold: the break it always
+    # was, by the name it always had.
+    odds = [{"recurrence": "ODD_WEEKS"}, {"recurrence": "ODD_WEEKS"}]
+    assert starts(request(True, odds)) == [f"teacherlunch_{teacher}_{day}" for day in range(3)]
+    assert solver._week_vars(request(True, odds), lessons, lessons) == solver._week_vars(
+        request(False, odds), lessons, lessons,
     )
 
 
-@pytest.mark.parametrize("row_limit", [None, 0])
+def test_only_a_lock_in_the_lunch_window_tells_a_teacher_s_weeks_apart() -> None:
+    """The finer cut is for a teacher whose entries IN THE WINDOW differ by parity, and for no other.
+
+    Her one lesson is of the even weeks. A lock of the odd weeks at 08:00 is
+    nowhere near her lunch, and she is built the break she always had, by the
+    name it always had; the same lock at 11:00, in the window, is a week she
+    owes no break (the odd ones, where she has no lesson) beside one she does,
+    and the break is the even weeks' own.
+    """
+    teacher, group = str(uuid4()), str(uuid4())
+    solver = SchedulerSolver(_settings(5, "1"))
+
+    def names(start: str, end: str, owner: str | None = None) -> list[str]:
+        request = OptimizeScheduleRequest.model_validate(_payload(
+            [_requirement(group, 1, teacher=teacher, recurrence="EVEN_WEEKS")],
+            fixedLessons=[{**_lock(str(uuid4()), 1, start, end, owner or teacher), "recurrence": "ODD_WEEKS"}],
+            teacherWorkRules=[{"id": str(uuid4()), "teacherId": teacher, "lunchMinutes": 30,
+                               "lunchStartTime": "11:00:00", "lunchEndTime": "13:00:00"}],
+        ))
+        model, *_ = solver._build_model(request, use_assumptions=False, include_objective=False)
+        return sorted(v.name for v in model.Proto().variables if v.name.startswith(f"teacherlunch_{teacher}_"))
+
+    assert names("08:00:00", "09:00:00") == [f"teacherlunch_{teacher}_0"]
+    assert names("11:00:00", "12:00:00") == [f"teacherlunch_{teacher}_0_even"]
+    # Another teacher's lock in the window is none of hers.
+    assert names("11:00:00", "12:00:00", owner=str(uuid4())) == [f"teacherlunch_{teacher}_0"]
+
+
+def test_another_teachers_lock_in_the_window_tells_nobody_else_s_weeks_apart_in_the_pre_flight_or_the_estimate() -> None:
+    """The model reads a teacher's own locks (_TeacherWeekLocks.of); the pre-flight and the size estimate are given every lock.
+
+    All three ask `_lunch_needs_a_part_per_parity` of the same teacher, so a
+    lock of somebody else's must be none of her entries in the two that are
+    handed the whole list. Her lesson and her lock are of the even weeks; the
+    other teacher's lock, in her window, is of the odd weeks. Were it hers,
+    the even weeks would no longer hold everything she has there, and she
+    would be cut by parity in the pre-flight and in the estimate where the
+    model does not cut her.
+    """
+    teacher, other, group = str(uuid4()), str(uuid4()), str(uuid4())
+    solver = SchedulerSolver(_settings(5, "1"))
+    rule = {"id": str(uuid4()), "teacherId": teacher, "lunchMinutes": 30,
+            "lunchStartTime": "11:00:00", "lunchEndTime": "13:00:00"}
+
+    def payload(own: tuple[str, str], *, with_other: bool, with_rule: bool = True) -> dict[str, object]:
+        locks = [{**_lock(str(uuid4()), 1, *own, teacher), "recurrence": "EVEN_WEEKS"}]
+        if with_other:
+            locks.append({**_lock(str(uuid4()), 1, "11:00:00", "12:00:00", other), "recurrence": "ODD_WEEKS"})
+        return _payload(
+            [_requirement(group, 1, teacher=teacher, recurrence="EVEN_WEEKS")],
+            teacherWorkRules=[rule] if with_rule else [], fixedLessons=locks,
+        )
+
+    # Her own lock fills the window in the even weeks: refused, and in the same words with the other
+    # teacher's lock beside it as without (the pre-flight reads her per period, as the model does).
+    refused = [_refusal(payload(("11:00:00", "13:00:00"), with_other=with_other)) for with_other in (False, True)]
+    assert refused[0].code == "TEACHER_LUNCH_LEAVES_NO_START"
+    assert (refused[1].code, refused[1].params) == (refused[0].code, refused[0].params)
+    # The size estimate: she has the one break she always had, and the rule adds nothing to it.
+    lessons = {UUID(teacher): 1, UUID(group): 1}
+    sizes = [
+        solver._week_vars(
+            OptimizeScheduleRequest.model_validate(payload(("12:00:00", "13:00:00"), with_other=True, with_rule=with_rule)),
+            lessons, lessons,
+        )
+        for with_rule in (False, True)
+    ]
+    assert sizes[1] == sizes[0]
+
+
+@pytest.mark.parametrize(("row_limit", "by_parity"), [(None, False), (0, False), (None, True)])
 def test_a_teacher_of_nine_periods_has_a_lunch_of_each_and_none_over_two_periods_locks(
-    monkeypatch: pytest.MonkeyPatch, row_limit: int | None,
+    monkeypatch: pytest.MonkeyPatch, row_limit: int | None, by_parity: bool,
 ) -> None:
     """A teacher's breaks are never joined, however many periods the year has (the review of #302, MEDEL-1).
 
@@ -1219,6 +1420,13 @@ def test_a_teacher_of_nine_periods_has_a_lunch_of_each_and_none_over_two_periods
     alone when nothing is said (weeks.ROW_LIMIT), which is read here as
     nothing at all, so that leaving the word out is seen as well as turning
     it.
+
+    The same with a lesson of the odd weeks and one of the even weeks in each
+    period (`by_parity`): the teacher's entries are told apart by parity, so
+    she has a break for each of the eighteen weeks, and they are no more
+    joined than the nine are. (Not with `row_limit` 0: the teacher's own
+    no-overlap is a large row too, and joined it holds eighteen hours on a
+    day of seven.)
     """
     if row_limit is not None:
         monkeypatch.setattr(periods.weeks_module, "ROW_LIMIT", row_limit)
@@ -1232,8 +1440,12 @@ def test_a_teacher_of_nine_periods_has_a_lunch_of_each_and_none_over_two_periods
         def only(period: int) -> list[bool]:
             return [period == other for other in range(count)]
 
+        sides = [{"recurrence": "ODD_WEEKS"}, {"recurrence": "EVEN_WEEKS"}] if by_parity else [{}]
         return _payload(
-            [_requirement(str(uuid4()), 1, teacher=teacher, periods=only(period)) for period in range(count)],
+            [
+                _requirement(str(uuid4()), 1, teacher=teacher, periods=only(period), **side)
+                for period in range(count) for side in sides
+            ],
             teacherWorkRules=[rule],
             fixedLessons=[_lock(str(uuid4()), 1, start, end, teacher, only(period)) for period, start, end in locked],
         )
@@ -1246,7 +1458,7 @@ def test_a_teacher_of_nine_periods_has_a_lunch_of_each_and_none_over_two_periods
     response = _solve(payload, settings)
     assert response.status == "OPTIMAL"
     assert _codes(response) == []
-    assert len(response.lessons) == count
+    assert len(response.lessons) == count * (2 if by_parity else 1)
     # No lesson in the window: each period's free hour is its lunch.
     assert all(lesson.end_time <= "11:00:00" or lesson.start_time >= "13:00:00" for lesson in response.lessons)
     assert _validate(payload, response.lessons, settings) == []
