@@ -162,6 +162,7 @@ const baseBoard = (): PlacementBoard => ({
     },
   ],
   meals: [{ id: "m-1", studentGroupId: "g-7a", dayOfWeek: 2, startTime: "11:00", endTime: "11:30", startDate: null, endDate: null }],
+  blocks: [],
 });
 
 const board = (over: Partial<PlacementBoard> = {}): PlacementBoard => ({ ...baseBoard(), ...over });

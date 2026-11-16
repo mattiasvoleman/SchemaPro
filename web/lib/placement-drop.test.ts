@@ -48,7 +48,7 @@ const kept = (over: Partial<BoardKept> = {}): BoardKept => ({
 const group = (id: string): StudentGroup => ({ id, academicYearId: "y1", name: id, kind: "CLASS", gradeLevel: 7 });
 
 const mirrorOf = (keptLessons: BoardKept[], rows: BoardPlacement[] = []) => {
-  const board: PlacementBoard = { academicYearId: "y1", placements: rows, posts: [post()], kept: keptLessons, meals: [] };
+  const board: PlacementBoard = { academicYearId: "y1", placements: rows, posts: [post()], kept: keptLessons, meals: [], blocks: [] };
   return buildMirror({ board, keys: keyByRowId(rows), groups: [group("g-7a"), group("g-7b")], studentGroupOf: new Map(), memberships: [], constraints: [], frames: undefined, academicYearId: "y1" });
 };
 
@@ -96,7 +96,7 @@ describe("dropOf", () => {
     const rows: BoardPlacement[] = [
       { id: "r1", requirementId: "post-2", dayOfWeek: 2, startTime: "10:00", endTime: "11:00", minutes: 60, roomId: null, roomName: null, recurrence: "ALL_WEEKS", teacherId: null, changedAt: "x", verdict: { ok: true } },
     ];
-    const board: PlacementBoard = { academicYearId: "y1", placements: rows, posts: [post(), post({ id: "post-2", studentGroupId: "g-7b", subjectId: "s-sv" })], kept: [], meals: [] };
+    const board: PlacementBoard = { academicYearId: "y1", placements: rows, posts: [post(), post({ id: "post-2", studentGroupId: "g-7b", subjectId: "s-sv" })], kept: [], meals: [], blocks: [] };
     const ctx = buildMirror({ board, keys: keyByRowId(rows), groups: [group("g-7a"), group("g-7b")], studentGroupOf: new Map(), memberships: [], constraints: [], frames: undefined });
     expect(dropOf(ctx, mover(), spot(600), names)).toMatchObject({ kind: "CLASH", reason: "TEACHER", params: { otherKind: "PLACEMENT", className: "7B", subjectName: "Svenska" } });
     expect(dropOf(ctx, mover(), spot(600), { group: () => undefined, subject: () => undefined })).toEqual({ kind: "CLASH", reason: "TEACHER" });
@@ -113,7 +113,7 @@ describe("the pupils' minutes around an idrott (review of #326, MEDEL-3)", () =>
   /** Idrott for 7A with ten minutes of ombyte before and fifteen of dusch and ombyte after; the post of its own, and the class's matematik. */
   const idrott = (over: Partial<BoardPost> = {}) => post({ id: "post-id", subjectId: "s-id", teacherId: "cy", minutesBefore: 10, minutesAfter: 15, ...over });
   const mirrorWith = (posts: BoardPost[], keptLessons: BoardKept[] = [], rows: BoardPlacement[] = []) => {
-    const board: PlacementBoard = { academicYearId: "y1", placements: rows, posts, kept: keptLessons, meals: [] };
+    const board: PlacementBoard = { academicYearId: "y1", placements: rows, posts, kept: keptLessons, meals: [], blocks: [] };
     return buildMirror({ board, keys: keyByRowId(rows), groups: [group("g-7a"), group("g-7b")], studentGroupOf: new Map(), memberships: [], constraints: [], frames: undefined, academicYearId: "y1" });
   };
   const spot = (startMinutes: number, minutes = 60, dayOfWeek = 2) => ({ dayOfWeek, startMinutes, endMinutes: startMinutes + minutes });

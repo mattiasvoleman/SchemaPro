@@ -65,6 +65,7 @@ const board = (over: Partial<PlacementBoard> = {}): PlacementBoard => ({
   posts: [post(), post({ id: "post-2", rowsKey: "bbbbbbbbbbbbbbbb", parts: [part({ left: 1 })] })],
   kept: [],
   meals: [],
+  blocks: [],
   ...over,
 });
 

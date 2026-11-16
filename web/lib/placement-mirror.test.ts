@@ -97,6 +97,7 @@ function mirror(world: { rows?: BoardPlacement[]; kept?: BoardKept[]; meals?: Bo
     posts: world.posts ?? [post()],
     kept: world.kept ?? [],
     meals: world.meals ?? [],
+    blocks: [],
   };
   return buildMirror({
     board,

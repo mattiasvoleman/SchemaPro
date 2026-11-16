@@ -106,12 +106,57 @@ export interface BoardMeal {
   endDate: string | null;
 }
 
+/** Why none of a block's lessons can be placed: the gateway's BP409 rules that are about the block and not about a lesson. */
+export type BoardBlockCannotPlace = "FOLLOWER" | "EMPTY" | "SHARES";
+
+/** The judge's verdict on one member's row of a block's lesson. */
+export interface BoardBlockVerdict extends BoardVerdict {
+  requirementId: string;
+}
+
+/** One lesson of a parallel block: a day, a start and a length that every post of the block sits, and the rooms the posts chose for it. */
+export interface BoardBlockRow {
+  id: string;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  minutes: number;
+  recurrence: PlacementRecurrence;
+  /** The posts that chose a room of their own for the lesson; a post not named has its room chosen by the engine. */
+  rooms: { requirementId: string; roomId: string; roomName: string }[];
+  /** When the block's list was last saved: every save replaces the whole list. */
+  changedAt: string;
+  /** One per member, the ones that hold as well. */
+  verdicts: BoardBlockVerdict[];
+}
+
+/** A parallel block of the year with the lessons the school has placed on it. */
+export interface BoardBlock {
+  id: string;
+  name: string;
+  /** The block's posts, in id order. */
+  memberIds: string[];
+  /** The block's lesson lengths, longest first, one per lesson. */
+  lengths: number[];
+  /** The block's weeks, which every lesson of it runs; null with no member. */
+  recurrence: PlacementRecurrence | null;
+  /** The block whose times this one takes: it is placed through that block. */
+  followsBlockId: string | null;
+  cannotPlace: BoardBlockCannotPlace | null;
+  /** In (day, start) order, as the gateway keeps them. */
+  rows: BoardBlockRow[];
+  /** The key of `rows` as the gateway holds them: sent back as `baseKey` by a write made on top of them. */
+  rowsKey: string;
+}
+
 export interface PlacementBoard {
   academicYearId: string;
   placements: BoardPlacement[];
   posts: BoardPost[];
   kept: BoardKept[];
   meals: BoardMeal[];
+  /** The year's parallel blocks, placed or not. An older gateway has no such field: the page reads that as no blocks. */
+  blocks: BoardBlock[];
 }
 
 /** The figures of a post, summed over its parts. */

@@ -126,7 +126,7 @@ function boardOf(world: World): PlacementBoard {
     startDate: null,
     endDate: null,
   }));
-  return { academicYearId: "y1", posts, placements, kept, meals };
+  return { academicYearId: "y1", posts, placements, kept, meals, blocks: [] };
 }
 
 function constraintsOf(world: World): AvailabilityConstraint[] {

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { PlacementBoard } from "@/lib/placement-board";
+import type { BoardBlock, PlacementBoard } from "@/lib/placement-board";
 import { REQUIREMENT_PLACEMENTS_KEY } from "@/lib/requirement-placements";
 
 /*
@@ -20,9 +20,12 @@ export function usePlacementBoard(academicYearId: string | null) {
   return useQuery({
     queryKey: placementBoardKey(academicYearId),
     enabled: academicYearId !== null,
-    queryFn: () =>
-      api.get<PlacementBoard>(
+    queryFn: async (): Promise<PlacementBoard> => {
+      const board = await api.get<Omit<PlacementBoard, "blocks"> & { blocks?: BoardBlock[] }>(
         `/api/v1/teaching-requirements/placements/board?academicYearId=${encodeURIComponent(academicYearId!)}`,
-      ),
+      );
+      // A gateway deployed before the blocks were on the board has no such field: no block, nothing to draw.
+      return { ...board, blocks: board.blocks ?? [] };
+    },
   });
 }
