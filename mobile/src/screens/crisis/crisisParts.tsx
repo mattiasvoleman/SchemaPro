@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, View } from 'react-native';
+import { Text, TouchableOpacity, View } from 'react-native';
 import { makeStyles, useAppTheme } from '../../theme/ThemeContext';
 import type { Tone } from '../../theme/tokens';
 import { useI18n } from '../../context/LocaleContext';
@@ -141,7 +141,32 @@ export function CountChips({ counts }: { readonly counts: PupilCounts }): React.
   );
 }
 
-const useStyles = makeStyles(() => ({
+/**
+ * For an administrator who teaches (Users.teaches): the one way between the roll call of her own groups and the
+ * administration's view, in the header of whichever of the two is shown. A button, not a tab: the alarm is
+ * one tab, and which view it opens on is decided where it is shown (CrisisScreen).
+ */
+export function ViewSwitch({ label, hint, onPress }: { readonly label: string; readonly hint: string; readonly onPress: () => void }): React.JSX.Element {
+  const styles = useStyles();
+  return (
+    <TouchableOpacity style={styles.switch} onPress={onPress} accessibilityRole="button" accessibilityLabel={label} accessibilityHint={hint}>
+      <Text style={styles.switchText}>{`${label} ›`}</Text>
+    </TouchableOpacity>
+  );
+}
+
+const useStyles = makeStyles((c) => ({
+  switch: {
+    alignSelf: 'flex-start',
+    minHeight: 48,
+    marginTop: 8,
+    paddingHorizontal: 16,
+    justifyContent: 'center',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: c.primary,
+  },
+  switchText: { color: c.primary, fontSize: 15, fontWeight: '700' },
   banner: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, marginTop: 12 },
   bannerTitle: { fontSize: 22, fontWeight: '800', letterSpacing: 0.2 },
   bannerLine: { fontSize: 14, fontWeight: '600', marginTop: 4, lineHeight: 20 },

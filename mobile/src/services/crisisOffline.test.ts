@@ -293,6 +293,52 @@ describe('handleCrisisPush: a push is put to the gateway before it is believed',
     expect((await readAlarmHint(T0 + 60_000))?.alarmAt).toBe(T0 + 1_000);
   });
 
+  // Administratör som lärare (Users.teaches): the phone of an administrator marked as teaching has a roll call to keep, as a teacher's has.
+  describe('for an administrator who teaches', () => {
+    const marked = { teacherId: 'a-1', role: 'SCHOOL_ADMIN', authId: null, teaches: true };
+
+    it('puts the push to the gateway as for a teacher, and keeps the list it gave for the night the network is gone', async () => {
+      jest.mocked(SecureTokenStore.getTeacherSession).mockResolvedValue(marked);
+      gateway.mine = () => ({ status: 200, body: mineOf([gatewayAlarm('a1', [sevenA()])], at('09:15')) });
+      await expect(handleCrisisPush(sent())).resolves.toBe('GOING');
+      expect(reads()).toBe(1);
+      expect(fake.hint).toEqual({ alarmAt: new Date(T0).toISOString(), endedAt: null });
+      const kept = await readCachedCrisis('a-1');
+      expect(kept?.response.alarms.map((a) => a.id)).toEqual(['a1']);
+    });
+
+    it('believes nothing of a late push whose alarm is over, as for a teacher', async () => {
+      jest.mocked(SecureTokenStore.getTeacherSession).mockResolvedValue(marked);
+      gateway.mine = () => ({ status: 200, body: mineOf([], at('09:15')) });
+      await expect(handleCrisisPush(sent())).resolves.toBe('OVER');
+      expect(await readAlarmHint(T0 + 30_000)).toBeNull();
+    });
+
+    it('keeps no list for an administrator who does not teach, nor for a pupil or a guardian, and asks the gateway nothing for them', async () => {
+      gateway.mine = () => ({ status: 200, body: mineOf([gatewayAlarm('a1', [sevenA()])], at('09:15')) });
+      for (const role of ['SCHOOL_ADMIN', 'STUDENT', 'GUARDIAN']) {
+        for (const teaches of [false, true]) {
+          // A mark on anyone but an administrator is nothing: the database holds none there.
+          if (role === 'SCHOOL_ADMIN' && teaches) continue;
+          resetAlarmHintForTests();
+          jest.mocked(SecureTokenStore.getTeacherSession).mockResolvedValue({ teacherId: `x-${role}`, role, authId: null, teaches });
+          await expect(handleCrisisPush(sent())).resolves.toBe('UNKNOWN');
+          expect(await readCachedCrisis(`x-${role}`)).toBeNull();
+        }
+      }
+      expect(reads()).toBe(0);
+    });
+
+    // The list is kept for whoever is signed in when the answer arrives: a mark taken away in between (the profile read
+    // at a recheck) leaves nothing of the school's alarm on a phone that no longer counts groups.
+    it('keeps nothing when the mark was taken away while the gateway answered', async () => {
+      jest.mocked(SecureTokenStore.getTeacherSession).mockResolvedValueOnce(marked).mockResolvedValueOnce({ ...marked, teaches: false });
+      gateway.mine = () => ({ status: 200, body: mineOf([gatewayAlarm('a1', [sevenA()])], at('09:15')) });
+      await expect(handleCrisisPush(sent())).resolves.toBe('GOING');
+      expect(await readCachedCrisis('a-1')).toBeNull();
+    });
+  });
+
   it('remembers an end at once and asks nothing: it only closes an alarm that began before it', async () => {
     await expect(handleCrisisPush(push('CRISIS_ENDED'))).resolves.toBeNull();
     expect(reads()).toBe(0);

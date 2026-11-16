@@ -63,6 +63,14 @@ export function alarmViews(role: string | null, teaches: boolean): readonly Alar
 }
 
 /**
+ * Whether the person counts their own groups at an alarm, and so has a roll call whose list the phone keeps
+ * for the night the network is gone (services/crisisOffline.ts): a teacher, and an administrator who teaches.
+ */
+export function countsGroups(role: string | null, teaches: boolean): boolean {
+  return alarmViews(role, teaches).includes('ROLL_CALL');
+}
+
+/**
  * Which of the staff shell's role-bound tabs a person has. Vikarie (cover
  * requests) is a teacher's alone: the gateway refuses every route of it to an
  * administrator, marked or not (SP409: an administrator is never in the

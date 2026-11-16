@@ -9,7 +9,7 @@ import { useCrisis } from '../../hooks/useCrisis';
 import { formatTime, formatTimeRange } from '../../i18n/format';
 import { foundHereSorted, foundPlace, pupilName, waitingKey, type AlarmBlock, type FoundHere, type MyCall, type PupilView } from '../../services/crisis';
 import type { CrisisMarkState } from '../../types';
-import { AlarmBanner, CountChips, STATUS_GLYPH, STATUS_TONE, WAITING_GLYPH, ageText, callTitle } from './crisisParts';
+import { AlarmBanner, CountChips, STATUS_GLYPH, STATUS_TONE, ViewSwitch, WAITING_GLYPH, ageText, callTitle } from './crisisParts';
 import { FoundHerePicker } from './FoundHerePicker';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -79,7 +79,11 @@ const canFindElsewhere = (block: AlarmBlock): boolean => !block.local && block.e
 /** Whether a pupil found with the teacher can be taken back: while the alarm is going, and not on a list the phone built. */
 const canRetract = (block: AlarmBlock): boolean => canFindElsewhere(block);
 
-export function CrisisTeacherView({ gutter }: { readonly gutter: number }): React.JSX.Element {
+/**
+ * `toManagement` is given to an administrator who teaches: her own roll call is what Larm opens on, and the
+ * administration's view is one tap away, from this header.
+ */
+export function CrisisTeacherView({ gutter, toManagement }: { readonly gutter: number; readonly toManagement?: () => void }): React.JSX.Element {
   const { colors } = useAppTheme();
   const styles = useStyles();
   const { t } = useI18n();
@@ -107,6 +111,7 @@ export function CrisisTeacherView({ gutter }: { readonly gutter: number }): Reac
         <Text style={styles.headerTitle} accessibilityRole="header">
           {t('crisis.title')}
         </Text>
+        {toManagement ? <ViewSwitch label={t('crisis.switch.toManagement')} hint={t('crisis.switch.toManagementHint')} onPress={toManagement} /> : null}
       </View>
 
       <FlatList<Row>

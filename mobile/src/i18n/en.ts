@@ -523,6 +523,13 @@ export const en: Messages = {
       dismiss: 'Close',
     },
     unavailable: 'The alarm is shown to teachers and administrators.',
+    // An administrator who teaches (Users.teaches) has both views of Larm: her own groups first, the administration's one tap away.
+    switch: {
+      toManagement: 'Management view',
+      toManagementHint: 'Start, follow and end alarms for the whole school',
+      toRollCall: 'My roll call',
+      toRollCallHint: 'Count your own groups',
+    },
     notice: {
       alarm: 'An alarm started {when}. Open the Alarm tab and count your group.',
       alarmDrill: 'A drill started {when}. Open the Alarm tab and count your group.',
