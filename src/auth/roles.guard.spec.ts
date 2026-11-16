@@ -344,6 +344,11 @@ describe('RolesGuard and an administrator who teaches', () => {
     @Area('PERSONAL')
     @AsTeacher('marked in error')
     adminsOnly(): void {}
+
+    /** Marked, but the route lists no TEACHER: there is no teacher's route to come in by here either. */
+    @Roles(Role.STUDENT)
+    @AsTeacher('marked in error: the teacher is not named')
+    pupilsOnly(): void {}
   }
 
   const teaching = (adminProfile: AdminProfile = 'SCHEMALAGGARE', extra: Partial<AuthenticatedUser> = {}): AuthenticatedUser =>
@@ -390,6 +395,29 @@ describe('RolesGuard and an administrator who teaches', () => {
     ]) {
       expect(() => guard.canActivate(routeTo(OwnController, 'putNote', person, 'GET'))).toThrow(ForbiddenException);
     }
+  });
+
+  // The two lines of defence the doc comment of isAdmittedAsTeacher names. Each is held by a principal that the other lines let
+  // through, so that taking the line away is seen: the huvudman's reader with a profile that is no läsare's (the principal the
+  // strategy builds has LASARE and teaches false, so neither is reachable today), and a route that says @AsTeacher without TEACHER.
+  it('refuses the huvudman’s reader on its own account, whatever profile and mark the principal says', () => {
+    const reader = {
+      authId: 'auth-h',
+      role: Role.SCHOOL_ADMIN,
+      adminProfile: 'FULL',
+      teaches: true,
+      huvudman: { id: 'h-1', name: 'Vimmerby kommun', memberId: 'm-1', role: 'PLANERARE', firstName: 'Pia', lastName: 'P' },
+    } as AuthenticatedUser;
+    expect(() => guard.canActivate(routeTo(OwnController, 'putNote', reader, 'GET'))).toThrow(
+      new ForbiddenException('You do not have permission to perform this action.'),
+    );
+    expect(() => guard.canActivate(routeTo(OwnController, 'week', reader, 'GET'))).toThrow(ForbiddenException);
+  });
+
+  it('opens nothing at a route that says @AsTeacher but does not list TEACHER: the decorator is no door without the role', () => {
+    expect(() => guard.canActivate(routeTo(OwnController, 'pupilsOnly', teaching('FULL'), 'GET'))).toThrow(
+      new ForbiddenException('You do not have permission to perform this action.'),
+    );
   });
 
   it('leaves a route that lists SCHOOL_ADMIN itself exactly as it was: the profile’s area is still asked', () => {

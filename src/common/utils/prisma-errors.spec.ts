@@ -1026,6 +1026,24 @@ describe('teachesRefusal', () => {
     }
   });
 
+  it('reads the refusal from the cause first: a message that carries no "Code:" at all still names it, and who', () => {
+    // The primary path (meta.driverAdapterError.cause.originalCode); the rendered message above is only the fallback, so a release
+    // that words its message differently must not lose the refusal, and nothing in the test above would notice if this line went.
+    for (const [state, code, who] of [
+      ['TE409', TEACHES_NEEDS_A_POST, { userId: PERSON, academicYearId: null }],
+      ['TE410', A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS, { userId: PERSON, academicYearId: YEAR }],
+    ] as const) {
+      for (const prismaCode of ['P2039', 'P2010']) {
+        const worded = new Prisma.PrismaClientKnownRequestError('The adapter reported an error that the message does not number.', {
+          code: prismaCode,
+          clientVersion: Prisma.prismaVersion.client,
+          meta: { driverAdapterError: { cause: { originalCode: state, originalMessage: MESSAGES[state], kind: 'postgres', detail: DETAILS[state] } } },
+        });
+        expect(teachesRefusal(worded)).toEqual({ code, ...who });
+      }
+    }
+  });
+
   it.each([
     ['a model call (P2039)', model],
     ['a raw statement (P2010)', raw],
