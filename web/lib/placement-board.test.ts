@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  DAY_END_MINUTES,
   NO_FILTERS,
-  dayEndMarkers,
   isFiltered,
   keptCards,
   mealBands,
+  placementCardId,
   placementCards,
-  reachOf,
   savedAt,
   summaryOf,
   totalsOf,
@@ -44,11 +44,13 @@ const post = (over: Partial<BoardPost> = {}): BoardPost => ({
   studentGroupId: "g-7a",
   subjectId: "s-ma",
   teacherId: "anna",
+  coTeacherId: null,
   recurrence: "ALL_WEEKS",
   startDate: null,
   endDate: null,
   cannotPlace: null,
   parts: [part()],
+  rowsKey: "e3b0c44298fc1c14",
   ...over,
 });
 
@@ -208,9 +210,10 @@ describe("visibleBoard", () => {
 
 describe("the cards", () => {
   it("draws a förläggning with its subject, class and teacher, in its room, with its weeks", () => {
-    const [card] = placementCards([row({ recurrence: "ODD_WEEKS" })], new Map([["post-1", post()]]), names);
+    const [card] = placementCards([row({ recurrence: "ODD_WEEKS" })], new Map([["post-1", post()]]), names, new Map([["row-1", "post-1|||60|2|10:00|ODD_WEEKS"]]));
     expect(card).toMatchObject({
-      id: "placement:row-1",
+      // Named by the lesson (post, teacher, length, place and weeks), not by the row's id: every save gives the rows new ids.
+      id: "placement:post-1|||60|2|10:00|ODD_WEEKS",
       dayOfWeek: 2,
       startMinutes: 600,
       endMinutes: 660,
@@ -225,14 +228,14 @@ describe("the cards", () => {
   });
 
   it("says in the room's place that the engine chooses it, for a row with no room", () => {
-    const [card] = placementCards([row({ roomId: null, roomName: null })], new Map([["post-1", post()]]), names);
+    const [card] = placementCards([row({ roomId: null, roomName: null })], new Map([["post-1", post()]]), names, new Map());
     expect(card!.room).toBe("Motorn väljer sal");
     expect(card!.conflicted).toBe(false);
   });
 
   it("takes a shared post's row to its own teacher, and marks one that no longer holds", () => {
     const shared = post({ parts: [part(), part({ teacherId: "bo", count: 1 })] });
-    const [card] = placementCards([row({ teacherId: "bo", verdict: { ok: false, reason: "ROOM" } })], new Map([["post-1", shared]]), names);
+    const [card] = placementCards([row({ teacherId: "bo", verdict: { ok: false, reason: "ROOM" } })], new Map([["post-1", shared]]), names, new Map());
     expect(card!.subtitle).toBe("7A · B. Lind");
     expect(card!.conflicted).toBe(true);
   });
@@ -255,16 +258,23 @@ describe("the cards", () => {
   });
 });
 
-describe("the end of the day", () => {
-  it("is drawn as a strip on each weekday when nothing else reaches past 17:00", () => {
-    const strips = dayEndMarkers(reachOf([{ endMinutes: 15 * 60 }]), { title: "Skoldagen", line: "slutar 18:00" });
-    expect(strips.map((strip) => strip.dayOfWeek)).toEqual([1, 2, 3, 4, 5]);
-    expect(strips[0]).toMatchObject({ startMinutes: 17 * 60 + 45, endMinutes: 18 * 60, duty: true, relieved: true, title: "Skoldagen", subtitle: "slutar 18:00" });
+describe("a card's name", () => {
+  it("is the lesson's key and stays when the row is saved again with another id", () => {
+    const first = placementCards([row({ id: "row-1" })], new Map([["post-1", post()]]), names, new Map([["row-1", "k"]]))[0]!;
+    const again = placementCards([row({ id: "row-2" })], new Map([["post-1", post()]]), names, new Map([["row-2", "k"]]))[0]!;
+    expect(first.id).toBe(placementCardId("k"));
+    expect(again.id).toBe(first.id);
   });
 
-  it("is not drawn when a lesson already reaches the last hour, and the empty grid has it too", () => {
-    expect(dayEndMarkers(reachOf([{ endMinutes: 17 * 60 + 30 }]), { title: "a", line: "b" })).toEqual([]);
-    expect(dayEndMarkers(reachOf([]), { title: "a", line: "b" })).toHaveLength(5);
+  it("falls back to the row's id when the key is not known, so that no two cards share the empty name", () => {
+    const cards = placementCards([row({ id: "a" }), row({ id: "b" })], new Map([["post-1", post()]]), names, new Map());
+    expect(new Set(cards.map((card) => card.id)).size).toBe(2);
+  });
+});
+
+describe("the end of the day", () => {
+  it("is 18:00, which the grid is told to draw to (dayEndMinutes) as the day of a förläggning ends there", () => {
+    expect(DAY_END_MINUTES).toBe(18 * 60);
   });
 });
 

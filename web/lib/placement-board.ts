@@ -59,11 +59,15 @@ export interface BoardPost {
   studentGroupId: string;
   subjectId: string;
   teacherId: string | null;
+  /** The medlärare, in the room for every lesson of the post. */
+  coTeacherId: string | null;
   recurrence: PlacementRecurrence;
   startDate: string | null;
   endDate: string | null;
   cannotPlace: PostCannotPlace | null;
   parts: BoardPart[];
+  /** The key of the post's rows as the gateway holds them: sent back as `baseKey` by a write made on top of them. */
+  rowsKey: string;
 }
 
 /** A lesson the next Generera keeps, which the rows are held against. Ids only. */
@@ -213,16 +217,26 @@ export interface CardNames {
   keptNote: string;
 }
 
-export const placementCardId = (id: string): string => `placement:${id}`;
+/**
+ * A förläggning's card is named by the lesson (placement-rows.ts: its post, its
+ * teacher, its length and its place), not by its row's id: every save gives the
+ * rows new ids, and a card that held one would be another card after the very
+ * save that moved it.
+ */
+export const placementCardId = (key: string): string => `placement:${key}`;
 export const keptCardId = (id: string): string => `kept:${id}`;
 
 const minutesOfClockText = (clock: string): number => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5));
 
-/** The förläggningar as cards: a red ring on one that no longer holds, no padlock. */
+/**
+ * The förläggningar as cards: a red ring on one that no longer holds, no padlock.
+ * `keys` is each row's key (placement-rows.ts keyByRowId), which the card is named by.
+ */
 export function placementCards(
   rows: readonly BoardPlacement[],
   posts: ReadonlyMap<string, BoardPost>,
   names: CardNames,
+  keys: ReadonlyMap<string, string>,
 ): TimetableLesson[] {
   return rows.map((row) => {
     const post = posts.get(row.requirementId);
@@ -234,7 +248,7 @@ export function placementCards(
       endDate: post?.endDate ?? null,
     });
     return {
-      id: placementCardId(row.id),
+      id: placementCardId(keys.get(row.id) ?? row.id),
       dayOfWeek: row.dayOfWeek,
       startMinutes: minutesOfClockText(row.startTime),
       endMinutes: minutesOfClockText(row.endTime),
@@ -281,38 +295,8 @@ export function mealBands(meals: readonly BoardMeal[], label: (meal: BoardMeal) 
   }));
 }
 
-/** A förläggning's day is 08:00 to 18:00 (placement-fit.ts), and the grid draws to the last hour it holds. */
+/** A förläggning's day is 08:00 to 18:00 (placement-fit.ts): the grid is told to draw to it (dayEndMinutes). */
 export const DAY_END_MINUTES = 18 * 60;
-const MARKER_MINUTES = 15;
-
-/**
- * Strips at the end of the school day, to make the grid draw all of it. An
- * empty grid shows 08–16 and one with lessons ends at the hour of the last of
- * them, while a förläggning's day goes to 18:00. The grid is not changed for
- * this (it is the grundschema's, within a few hundred bytes of its budget), so
- * the day's end is drawn the way the grid draws what it has: as a muted,
- * dashed strip that opens nothing, the last quarter of the day. Needed only
- * when nothing else reaches past 17:00.
- */
-export function dayEndMarkers(reach: number, text: { title: string; line: string }): TimetableLesson[] {
-  if (reach > DAY_END_MINUTES - 60) return [];
-  return [1, 2, 3, 4, 5].map((dayOfWeek) => ({
-    id: `day-end:${dayOfWeek}`,
-    dayOfWeek,
-    startMinutes: DAY_END_MINUTES - MARKER_MINUTES,
-    endMinutes: DAY_END_MINUTES,
-    // The grid says a duty's title to a screen reader only, and its line to the eye.
-    title: text.title,
-    subtitle: text.line,
-    color: "#6b7280",
-    duty: true,
-    relieved: true,
-  }));
-}
-
-/** How far down the day the cards reach: the end of the last of them, in minutes. */
-export const reachOf = (cards: readonly Pick<TimetableLesson, "endMinutes">[]): number =>
-  cards.reduce((end, card) => Math.max(end, card.endMinutes), 0);
 
 /** When a list was saved, as a reader says it: "13 nov. 14:05", in the school's zone. */
 export function savedAt(instant: string, locale: string): string {
