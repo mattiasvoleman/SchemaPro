@@ -9535,11 +9535,9 @@ describe('OptimizationProxyService', () => {
             expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
           });
 
-          // The write trusts the engine for the room of a pin that names one: DESIGN GAP, not a failure of today's engine, which holds
-          // `roomId` (B1). A lesson of the block comes back in another room than the member chose and is written there, in silence: a
-          // lock with a room is written from the row itself, never from the answer. Either refusing the answer or writing the chosen
-          // room would hold the invariant "a member's room is never replaced unsaid"; neither is done.
-          it.failing('never writes a lesson in another room than the member chose for it, whatever the engine answers', async () => {
+          // A pin that names a room is held in that room: a lesson of the block that comes back in another room than the member chose is an
+          // answer to another request (502, nothing written), never written there in silence. Today's engine holds `roomId` (B1).
+          it('never writes a lesson in another room than the member chose for it, whatever the engine answers', async () => {
             world();
             blockPlaced([blockRow({ rooms: [{ requirementId: SPANSKA.post, roomId: ROOM_ID }] })]);
             blockEngine({ room: (payload) => payload.rooms[2].id });
@@ -9562,7 +9560,6 @@ describe('OptimizationProxyService', () => {
           });
         });
 
-        // @@BLOCK-PROXY-SPEC@@
       });
     });
 

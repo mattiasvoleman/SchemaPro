@@ -497,7 +497,10 @@ export function writtenFromPins<L extends AnsweredLesson>(
         lesson.dayOfWeek === row.dayOfWeek &&
         lesson.startTime.slice(0, 5) === start &&
         minutesOfClock(lesson.endTime) - minutesOfClock(lesson.startTime) === row.minutes &&
-        (!row.ownTeacher || (lesson.teacherId ?? null) === row.teacherId),
+        (!row.ownTeacher || (lesson.teacherId ?? null) === row.teacherId) &&
+        // A pin that names a room (a block's lesson with a member's own room) is held in THAT room: an answer in another room is
+        // an answer to another request, not a lesson to write there in silence (a lock with a room is written from the row itself).
+        (row.roomId === null || lesson.roomId === row.roomId),
     );
     if (at < 0) {
       missing.push(row);
