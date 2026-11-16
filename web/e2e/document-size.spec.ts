@@ -241,9 +241,11 @@ const TEACHING_ADMIN_MENU: Measured[] = [
     url: "/sv/notifications",
     row: "/sv/teacher/franvaro",
     // Set on the part that added the group (the web's part of Administratör som lärare; macOS, production build,
-    // before the people page's switch): 15 262 B, 298 B over what the administrator's own document was in the same
-    // build (14 964 B), which is the seven rows with their texts and no icon of their own.
-    measured: 15_262,
+    // all of the part's messages in): 15 254 B, 295 B over what the administrator's own document was in the same
+    // build (14 959 B), which is the seven rows with their texts and no icon of their own. The administrator's own
+    // `rest` is 6 B over main's 14 953, the teacher's 1 B under and the pupil's and the guardian's 6 B and 7 B over:
+    // the part's messages beside the catalog's gzip, not a row of theirs.
+    measured: 15_254,
   },
 ];
 
