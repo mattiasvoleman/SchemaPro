@@ -17,14 +17,18 @@
  *
  * Each race is run ten times (RACES_N) and no iteration may end in a deadlock (40P01) or a serialization failure.
  *
- * Two hunts then ask a question the races do not: do two paths that take the same two rows in the OPPOSITE order deadlock? Each is a tight
- * loop (HUNT_N attempts) over one planted world, as sessions of the owner with a short deadlock_timeout (the locks are the same whoever
- * asks; a deadlock is found in 20 ms instead of a second):
+ * Three hunts (and a note) then ask a question the races do not: do two paths that take the same rows in DIFFERENT orders deadlock? The order of every lock is
+ * the post's row first and the blocks' rows after it, in id order (the migration's preamble). Each hunt is a tight loop (HUNT_N attempts) over
+ * one planted world, as sessions of the owner with a short deadlock_timeout (the locks are the same whoever asks; a deadlock is found in 20 ms
+ * instead of a second):
  *
- *   hunt 1  a member's change of lessons (the post's row, then TB409: the block FOR UPDATE) against a share written for the same member (BP409:
- *           the block FOR NO KEY UPDATE, then TS409: the post FOR NO KEY UPDATE);
- *   hunt 2  one post moves from block X to block Y while another moves from Y to X (TB409: the block it comes to FOR UPDATE, then the leave
- *           trigger: the block it leaves FOR NO KEY UPDATE).
+ *   hunt 1  a member's change of lessons (the post's row, then TB409: the block FOR UPDATE) against a share written for the same member
+ *           (the post's row FOR NO KEY UPDATE, then the block's: BP409);
+ *   hunt 2  one post moves from block X to block Y while another moves from Y to X (the leave trigger takes both blocks in id order, before TB409);
+ *   hunt 3  a post moves into a block while a placement is written for that block (the placement's key holds KEY SHARE on the block and asks for
+ *           NO KEY UPDATE; the move holds NO KEY UPDATE and TB409 then asks for FOR UPDATE on the same row);
+ *   note    two posts move into the same block at once (each holds the key's KEY SHARE on it and asks for FOR UPDATE, as TB409 did before this
+ *           migration): counted and reported, not judged.
  *
  *   DATABASE_URL='postgresql://app_authenticated:app_authenticated_local@127.0.0.1:5617/schemapro' \
  *   PROBE_OWNER_URL='postgresql://postgres:postgres_local@127.0.0.1:5617/schemapro' \
@@ -35,7 +39,9 @@
  *
  * The probe BITES: PROBE_MUTANT=matrix runs each race against the mutant of the function that should lose it (the fit function without
  * its row lock; the leave function without its row lock; both without the lock of TB409 as well, for race 1) and a race that ends in a
- * wrong state at least once in ten "ok"s, one that does not FAILs. The functions are put back verbatim and md5(prosrc) is compared; the
+ * wrong state at least once in ten "ok"s, one that does not FAILs. Each hunt that the order of the locks makes clean is run against the mutant
+ * that takes that order out (the share path without the post's row, the leave function with only the OLD block, the leave trigger named to
+ * fire after TB409's) and must find a deadlock. The functions are put back verbatim and md5(prosrc) is compared; the
  * originals are also written to a file in the temp directory, which the next run puts back if this one died on the way.
  *
  * A check that fails prints its FAIL line and the run goes on. The exit code is 1 for any FAIL.
@@ -54,6 +60,9 @@ const HUNT_N = Number(process.env['HUNT_N'] ?? 300);
 const FIT = 'app.teaching_block_placements_fit()';
 const LEAVE = 'app.teaching_block_placement_rooms_leave()';
 const TB409 = 'app.teaching_block_members_agree()';
+const LEAVE_TRIGGER = 'TeachingRequirements_block_leave_takes_rooms';
+/** A name that sorts AFTER TB409's trigger ("..._block_members_agree"): the leave trigger as it was named before the order of the locks was made one. */
+const LATE_LEAVE_TRIGGER = 'TeachingRequirements_block_placement_rooms_leave';
 const ORIGINALS_FILE = join(tmpdir(), `${SLUG}.originals.sql`);
 
 // ---------------------------------------------------------------------------
@@ -353,11 +362,100 @@ async function hunt(h1: Client, h2: Client, n: number, a: (i: number) => [string
   return t;
 }
 
-// ---------------------------------------------------------------------------
-// The mutants: the functions as the migration made them, with the lock taken out
-// ---------------------------------------------------------------------------
+interface HuntEnv {
+  owner: Client;
+  ctx: Ctx;
+  h1: Client;
+  h2: Client;
+}
 
-const LOCK = /\s+FOR NO KEY UPDATE;/;
+const MOVE = `UPDATE "TeachingRequirements" SET "blockId" = $1 WHERE id = $2`;
+
+/** Each hunt plants its world once and runs a tight loop over it. */
+const HUNTS: Record<string, { label: string; why: string; preexisting?: boolean; run: (e: HuntEnv, n: number) => Promise<Tally> }> = {
+  // 1. A member's change of lessons (the post's row, then the block's) against a share written for the same member.
+  shares: {
+    label: `a member's lessons change while a share is written for the same member`,
+    why: `the two paths take the post's row and the block's row in opposite orders`,
+    run: async ({ owner, ctx, h1, h2 }, n) => {
+      const w = await plantBlock(owner, ctx, 'hs', { members: 2, lessons: 3 });
+      return hunt(
+        h1,
+        h2,
+        n,
+        (i) => [`UPDATE "TeachingRequirements" SET "lessonsPerWeek" = $1 WHERE "blockId" = $2`, [i % 2 === 0 ? 4 : 3, w.block]],
+        () => [`INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES ($1, $2, $3, 1, 60, now())`, [ctx.school, w.posts[0], ctx.teacher]],
+        async () => void (await owner.query(`DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = ANY ($1::uuid[])`, [w.posts])),
+      );
+    },
+  },
+  // 2. Two posts change places between two blocks.
+  swap: {
+    label: 'two posts swap blocks at once',
+    why: `each takes the block it comes to and the block it leaves, and the two take the two blocks in opposite orders`,
+    run: async ({ owner, ctx, h1, h2 }, n) => {
+      const x = await plantBlock(owner, ctx, 'sx', { members: 1, lessons: 2 });
+      const y = await plantBlock(owner, ctx, 'sy', { members: 1, lessons: 2 });
+      return hunt(
+        h1,
+        h2,
+        n,
+        () => [MOVE, [y.block, x.posts[0]]],
+        () => [MOVE, [x.block, y.posts[0]]],
+        async () => {
+          await owner.query(MOVE, [x.block, x.posts[0]]);
+          await owner.query(MOVE, [y.block, y.posts[0]]);
+        },
+      );
+    },
+  },
+  // 3. A post moves INTO a block while a placement is written for that block (the key's KEY SHARE, the block's row NO KEY UPDATE and then FOR UPDATE).
+  into: {
+    label: 'a post moves into a block while a placement is written for it',
+    why: `the placement's key holds KEY SHARE on the block and asks for NO KEY UPDATE, while the move holds NO KEY UPDATE and asks for FOR UPDATE`,
+    run: async ({ owner, ctx, h1, h2 }, n) => {
+      const from = await plantBlock(owner, ctx, 'ia', { members: 1, lessons: 2 });
+      const to = await plantBlock(owner, ctx, 'ib', { members: 1, lessons: 2 });
+      return hunt(
+        h1,
+        h2,
+        n,
+        () => [MOVE, [to.block, from.posts[0]]],
+        () => insertPlacement(ctx, to, 2),
+        async () => {
+          await owner.query(MOVE, [from.block, from.posts[0]]);
+          await owner.query(`DELETE FROM "TeachingBlockPlacements" WHERE "blockId" = $1`, [to.block]);
+        },
+      );
+    },
+  },
+  // 4. Two posts move into the same block at once (TB409 alone makes two KEY SHARE holders wait for each other's FOR UPDATE, before this migration).
+  twoInto: {
+    label: 'two posts move into the same block at once',
+    why: `each holds KEY SHARE on the block (the post's key) and asks for FOR UPDATE (TB409), which TB409 asked of two such posts before this migration too: reported, not judged`,
+    preexisting: true,
+    run: async ({ owner, ctx, h1, h2 }, n) => {
+      const a = await plantBlock(owner, ctx, 'ta', { members: 1, lessons: 2 });
+      const b = await plantBlock(owner, ctx, 'tb', { members: 1, lessons: 2 });
+      const to = await plantBlock(owner, ctx, 'tt', { members: 1, lessons: 2 });
+      return hunt(
+        h1,
+        h2,
+        n,
+        () => [MOVE, [to.block, a.posts[0]]],
+        () => [MOVE, [to.block, b.posts[0]]],
+        async () => {
+          await owner.query(MOVE, [a.block, a.posts[0]]);
+          await owner.query(MOVE, [b.block, b.posts[0]]);
+        },
+      );
+    },
+  },
+};
+
+// ---------------------------------------------------------------------------
+// The mutants: the functions as the migration made them, with a lock or the order of the locks taken out
+// ---------------------------------------------------------------------------
 
 async function definitions(owner: Client): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
@@ -371,35 +469,75 @@ async function md5s(owner: Client): Promise<Record<string, string>> {
   return out;
 }
 
-function mutate(originals: Record<string, string>, which: string): Array<[string, string]> {
-  const changed = (fn: string, text: string) => {
+async function triggerDef(owner: Client): Promise<string> {
+  return (await owner.query<{ d: string }>(`SELECT pg_get_triggerdef(t.oid) AS d FROM pg_trigger t WHERE t.tgname = $1 AND t.tgrelid = '"TeachingRequirements"'::regclass`, [LEAVE_TRIGGER])).rows[0]!.d;
+}
+
+interface Mutant {
+  defs: Array<[string, string]>;
+  /** the leave trigger is dropped, and created again under this name when there is one */
+  leaveTrigger?: { newName: string | null };
+}
+
+function mutate(originals: Record<string, string>, which: string): Mutant {
+  const changed = (fn: string, text: string): [string, string] => {
     if (text === originals[fn]) throw new Error(`the mutant ${which} did not change ${fn}`);
-    return [fn, text] as [string, string];
+    return [fn, text];
   };
-  const noFit = changed(FIT, originals[FIT]!.replace(LOCK, ';'));
+  // The block's lock in the fit function (not the post's row, which the share path takes before it).
+  const noFit = changed(FIT, originals[FIT]!.replace(/(FROM "TeachingBlocks" b[^;]*?)\s+FOR NO KEY UPDATE;/, '$1;'));
+  const noSharePostLock = changed(FIT, originals[FIT]!.replace(/(FROM "TeachingRequirements" r\s+WHERE r\."id" = NEW\."requirementId" AND r\."schoolId" = NEW\."schoolId")\s+FOR NO KEY UPDATE;/, '$1;'));
   const noLeave = changed(LEAVE, originals[LEAVE]!.replace(/\s+FOR NO KEY UPDATE;/, ';'));
+  const leaveOldOnly = changed(LEAVE, originals[LEAVE]!.replace('b."id" IN (OLD."blockId", NEW."blockId")', 'b."id" = OLD."blockId"'));
+  const leaveNoOrder = changed(LEAVE, originals[LEAVE]!.replace(/\s+ORDER BY b\."id"/, ''));
   // TB409 takes the block FOR UPDATE twice (a change of lessons: the block and the blocks on its times in id order; then the block's name).
   const noTb409 = changed(TB409, originals[TB409]!.replace(/\s+FOR UPDATE;/g, ';'));
   switch (which) {
     case 'fit-lock':
-      return [noFit];
+      return { defs: [noFit] };
     case 'leave-lock':
-      return [noLeave];
+      return { defs: [noLeave] };
     case 'fit-lock+tb409-lock':
-      return [noFit, noTb409];
+      return { defs: [noFit, noTb409] };
+    case 'shares-post-lock':
+      return { defs: [noSharePostLock] };
+    case 'leave-old-only':
+      return { defs: [leaveOldOnly] };
+    case 'leave-no-order-by':
+      return { defs: [leaveNoOrder] };
+    case 'leave-trigger-after-tb409':
+      return { defs: [], leaveTrigger: { newName: LATE_LEAVE_TRIGGER } };
+    case 'leave-for-update':
+      // Not a mutant to lose: a candidate. The leave function with the strength TB409 takes on the block it goes to.
+      return { defs: [changed(LEAVE, originals[LEAVE]!.replace(/\s+FOR NO KEY UPDATE;/, '\n      FOR UPDATE;'))] };
+    case 'tb409-no-key-update':
+      // Not a mutant to lose: a candidate. TB409 with the strength every other writer of the block takes (it takes FOR UPDATE, which the key's KEY SHARE conflicts with).
+      return { defs: [changed(TB409, originals[TB409]!.replace(/\s+FOR UPDATE;/g, '\n        FOR NO KEY UPDATE;'))] };
+    case 'leave-trigger-dropped':
+      return { defs: [], leaveTrigger: { newName: null } };
     default:
       throw new Error(`unknown mutant ${which}`);
   }
 }
 
-async function install(owner: Client, defs: Array<[string, string]>): Promise<void> {
-  for (const [, text] of defs) await owner.query(text);
+async function install(owner: Client, mutant: Mutant, originalTrigger: string): Promise<void> {
+  for (const [, text] of mutant.defs) await owner.query(text);
+  if (mutant.leaveTrigger) {
+    await owner.query(`DROP TRIGGER "${LEAVE_TRIGGER}" ON "TeachingRequirements"`);
+    if (mutant.leaveTrigger.newName) await owner.query(originalTrigger.replace(`TRIGGER "${LEAVE_TRIGGER}"`, `TRIGGER "${mutant.leaveTrigger.newName}"`));
+  }
 }
 
-async function restore(owner: Client, originals: Record<string, string>, expected: Record<string, string>): Promise<void> {
+/** The SQL that puts the leave trigger back whatever state it is in. */
+const triggerRestoreSql = (originalTrigger: string) =>
+  `DROP TRIGGER IF EXISTS "${LATE_LEAVE_TRIGGER}" ON "TeachingRequirements";\nDROP TRIGGER IF EXISTS "${LEAVE_TRIGGER}" ON "TeachingRequirements";\n${originalTrigger};\n`;
+
+async function restore(owner: Client, originals: Record<string, string>, expected: Record<string, string>, originalTrigger: string): Promise<void> {
   for (const text of Object.values(originals)) await owner.query(text);
+  await owner.query(triggerRestoreSql(originalTrigger));
   const now = await md5s(owner);
   for (const fn of Object.keys(expected)) must(now[fn] === expected[fn], `${fn} is not the function it was: md5 ${now[fn]} against ${expected[fn]}`);
+  must((await triggerDef(owner)) === originalTrigger, `the leave trigger is not what it was`);
 }
 
 // ---------------------------------------------------------------------------
@@ -412,12 +550,19 @@ async function main(): Promise<void> {
   const ca = new Client(pgConfig(process.env['DATABASE_URL'], 'DATABASE_URL'));
   const cb = new Client(pgConfig(process.env['DATABASE_URL'], 'DATABASE_URL'));
   await Promise.all([owner.connect(), ca.connect(), cb.connect()]);
+  const h1 = new Client(pgConfig(process.env['PROBE_OWNER_URL'], 'PROBE_OWNER_URL'));
+  const h2 = new Client(pgConfig(process.env['PROBE_OWNER_URL'], 'PROBE_OWNER_URL'));
+  await Promise.all([h1.connect(), h2.connect()]);
+  // The hunts' sessions are the owner's with a short deadlock_timeout: the order the rows are locked in is the same whoever asks, and a
+  // deadlock is found in 20 ms instead of a second.
+  for (const h of [h1, h2]) await h.query(`SET deadlock_timeout = '20ms'`);
   let originals: Record<string, string> | null = null;
   let expected: Record<string, string> | null = null;
+  let originalTrigger = '';
   let mutated = false;
   const putBack = async () => {
     if (mutated && originals && expected) {
-      await restore(owner, originals, expected);
+      await restore(owner, originals, expected, originalTrigger);
       if (existsSync(ORIGINALS_FILE)) unlinkSync(ORIGINALS_FILE);
     }
   };
@@ -431,39 +576,61 @@ async function main(): Promise<void> {
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [SLUG]);
     originals = await definitions(owner);
     expected = await md5s(owner);
+    originalTrigger = await triggerDef(owner);
     const ctx = await plantSchool(owner);
+    const env: HuntEnv = { owner, ctx, h1, h2 };
     const version = (await owner.query<{ v: string }>(`SELECT current_setting('server_version') AS v`)).rows[0]!.v;
-    console.log(`Postgres ${version}, ${RACES_N} runs of each race`);
+    console.log(`Postgres ${version}, ${RACES_N} runs of each race, ${HUNT_N} attempts of each hunt`);
 
-    if (process.env['PROBE_MUTANT'] === 'matrix') {
+    if (process.env['PROBE_ATTRIBUTE']) {
+      // Which of the migration's pieces a deadlock comes from: every hunt under one mutant (leave-trigger-dropped, shares-post-lock, ...), counted and not judged.
+      const which = process.env['PROBE_ATTRIBUTE'];
       mutated = true;
-      writeFileSync(ORIGINALS_FILE, Object.values(originals).join('\n'));
+      writeFileSync(ORIGINALS_FILE, `${Object.values(originals).join('\n')}\n${triggerRestoreSql(originalTrigger)}`);
+      for (const [name, spec] of Object.entries(HUNTS)) {
+        await install(owner, mutate(originals, which), originalTrigger);
+        try {
+          const t = await spec.run(env, HUNT_N);
+          console.log(`ok   under ${which}: hunt '${name}' (${spec.label}): ${t.deadlocks} of ${t.iterations} attempts ended in a deadlock${t.otherErrors.length ? `, other errors: ${t.otherErrors.join(' | ')}` : ''}`);
+        } finally {
+          await restore(owner, originals, expected, originalTrigger);
+        }
+      }
+    } else if (process.env['PROBE_MUTANT'] === 'matrix') {
+      mutated = true;
+      writeFileSync(ORIGINALS_FILE, `${Object.values(originals).join('\n')}\n${triggerRestoreSql(originalTrigger)}`);
+      type Entry = { kind: 'race'; name: keyof typeof RACES; mutant: string; bite: boolean; text: string } | { kind: 'hunt'; name: keyof typeof HUNTS; mutant: string; bite: boolean; text: string };
       // Each race against the mutant that should lose it; and the one pair that should NOT bite, because another lock orders the same two writers (race 1 without BP409's lock alone).
-      const matrix: Array<[keyof typeof RACES, string, boolean, string]> = [
-        ['length', 'fit-lock+tb409-lock', true, 'without the block lock of BP409 and of TB409'],
-        ['length', 'fit-lock', false, "without the block lock of BP409 alone: TB409 takes the block FOR UPDATE for a change of lessons, and the placement's key holds KEY SHARE on it, so the two writers are ordered anyway"],
-        ['share', 'fit-lock', true, 'without the block lock of BP409'],
-        ['leave', 'leave-lock', true, "without the old block's lock in the leave function"],
-        ['leave', 'fit-lock', true, "without the block lock of BP409 alone: the leave function's lock orders nothing when the insert does not take it"],
-        ['count', 'fit-lock', true, 'without the block lock of BP409'],
+      // Each hunt against the mutant that takes the one order out that makes it clean.
+      const matrix: Entry[] = [
+        { kind: 'race', name: 'length', mutant: 'fit-lock+tb409-lock', bite: true, text: 'without the block lock of BP409 and of TB409' },
+        { kind: 'race', name: 'length', mutant: 'fit-lock', bite: false, text: "without the block lock of BP409 alone: TB409 takes the block FOR UPDATE for a change of lessons, and the placement's key holds KEY SHARE on it, so the two writers are ordered anyway" },
+        { kind: 'race', name: 'share', mutant: 'fit-lock', bite: true, text: 'without the block lock of BP409' },
+        { kind: 'race', name: 'leave', mutant: 'leave-lock', bite: true, text: "without the old block's lock in the leave function" },
+        { kind: 'race', name: 'leave', mutant: 'fit-lock', bite: true, text: "without the block lock of BP409 alone: the leave function's lock orders nothing when the insert does not take it" },
+        { kind: 'race', name: 'count', mutant: 'fit-lock', bite: true, text: 'without the block lock of BP409' },
+        { kind: 'hunt', name: 'shares', mutant: 'shares-post-lock', bite: true, text: "the share path without the post's row lock before the block's" },
+        { kind: 'hunt', name: 'swap', mutant: 'leave-old-only', bite: true, text: 'the leave function takes only the OLD block (as before the order was made one)' },
+        { kind: 'hunt', name: 'swap', mutant: 'leave-trigger-after-tb409', bite: true, text: `the leave trigger named so that it fires after TB409's (${LATE_LEAVE_TRIGGER})` },
       ];
-      for (const [name, mutant, shouldBite, text] of matrix) {
-        const spec = RACES[name]!;
-        await check(`bites: ${spec.label}, ${text} (${mutant})`, async () => {
-          await install(owner, mutate(originals!, mutant));
+      for (const e of matrix) {
+        const label = e.kind === 'race' ? RACES[e.name]!.label : HUNTS[e.name]!.label;
+        await check(`bites: ${e.kind} '${e.name}': ${label}, ${e.text} (${e.mutant})`, async () => {
+          await install(owner, mutate(originals!, e.mutant), originalTrigger);
           let t: Tally;
           try {
-            t = await race(owner, ctx, ca, cb, spec, RACES_N);
+            t = e.kind === 'race' ? await race(owner, ctx, ca, cb, RACES[e.name]!, RACES_N) : await HUNTS[e.name]!.run(env, HUNT_N);
           } finally {
-            await restore(owner, originals!, expected!);
+            await restore(owner, originals!, expected!, originalTrigger);
           }
-          if (shouldBite) must(t.bad >= 1, `no run of ${t.iterations} ended wrong: the race does not bite this mutant (${tallyText(t)})`);
+          const wrong = e.kind === 'race' ? t.bad : t.deadlocks;
+          if (e.bite) must(wrong >= 1, `no run of ${t.iterations} ended ${e.kind === 'race' ? 'wrong' : 'in a deadlock'}: it does not bite this mutant (${tallyText(t)})`);
           else must(t.bad === 0 && t.deadlocks === 0, `a run ended wrong although another lock orders the writers (${tallyText(t)})`);
-          return `${shouldBite ? 'bites: ' : 'does not bite, as it should not: '}${tallyText(t)}`;
+          return `${e.bite ? 'bites: ' : 'does not bite, as it should not: '}${tallyText(t)}`;
         });
       }
     } else {
-      for (const [name, spec] of Object.entries(RACES)) {
+      for (const [, spec] of Object.entries(RACES)) {
         await check(`${spec.label}: no deadlock and the block never ends wrong`, async () => {
           const t = await race(owner, ctx, ca, cb, spec, RACES_N);
           must(t.deadlocks === 0, `a deadlock: ${tallyText(t)}`);
@@ -479,47 +646,20 @@ async function main(): Promise<void> {
           return tallyText(t);
         });
       }
-      // The hunts. Sessions of the owner with a short deadlock_timeout: the order the rows are locked in is the same whoever asks.
-      const h1 = new Client(pgConfig(process.env['PROBE_OWNER_URL'], 'PROBE_OWNER_URL'));
-      const h2 = new Client(pgConfig(process.env['PROBE_OWNER_URL'], 'PROBE_OWNER_URL'));
-      await Promise.all([h1.connect(), h2.connect()]);
-      try {
-        for (const h of [h1, h2]) await h.query(`SET deadlock_timeout = '20ms'`);
-        await check(`hunt 1: a member's lessons change while a share is written for the same member, ${HUNT_N} attempts, no deadlock`, async () => {
-          const w = await plantBlock(owner, ctx, 'hs', { members: 2, lessons: 3 });
-          const t = await hunt(
-            h1,
-            h2,
-            HUNT_N,
-            (i) => [`UPDATE "TeachingRequirements" SET "lessonsPerWeek" = $1 WHERE "blockId" = $2`, [i % 2 === 0 ? 4 : 3, w.block]],
-            () => [`INSERT INTO "TeachingRequirementShares" ("schoolId", "requirementId", "teacherId", lessons, minutes, "updatedAt") VALUES ($1, $2, $3, 1, 60, now())`, [ctx.school, w.posts[0], ctx.teacher]],
-            async () => void (await owner.query(`DELETE FROM "TeachingRequirementShares" WHERE "requirementId" = ANY ($1::uuid[])`, [w.posts])),
-          );
-          must(t.deadlocks === 0, `${t.deadlocks} of ${t.iterations} attempts ended in a deadlock (40P01): the two paths take the post's row and the block's row in opposite orders`);
+      let n = 0;
+      for (const [name, spec] of Object.entries(HUNTS)) {
+        if (spec.preexisting) {
+          const t = await spec.run(env, HUNT_N);
+          console.log(`note ${spec.label}: ${t.deadlocks} of ${t.iterations} attempts ended in a deadlock (40P01): ${spec.why}`);
+          continue;
+        }
+        n += 1;
+        await check(`hunt ${n}: ${spec.label}, ${HUNT_N} attempts, no deadlock`, async () => {
+          const t = await spec.run(env, HUNT_N);
+          must(t.deadlocks === 0, `${t.deadlocks} of ${t.iterations} attempts ended in a deadlock (40P01): ${spec.why} [${name}]`);
           must(t.otherErrors.length === 0, `an error that is no deadlock: ${t.otherErrors.join(' | ')}`);
           return `${t.iterations} attempts, no deadlock`;
         });
-        await check(`hunt 2: two posts swap blocks at once, ${HUNT_N} attempts, no deadlock`, async () => {
-          const x = await plantBlock(owner, ctx, 'sx', { members: 1, lessons: 2 });
-          const y = await plantBlock(owner, ctx, 'sy', { members: 1, lessons: 2 });
-          const move = `UPDATE "TeachingRequirements" SET "blockId" = $1 WHERE id = $2`;
-          const t = await hunt(
-            h1,
-            h2,
-            HUNT_N,
-            () => [move, [y.block, x.posts[0]]],
-            () => [move, [x.block, y.posts[0]]],
-            async () => {
-              await owner.query(move, [x.block, x.posts[0]]);
-              await owner.query(move, [y.block, y.posts[0]]);
-            },
-          );
-          must(t.deadlocks === 0, `${t.deadlocks} of ${t.iterations} attempts ended in a deadlock (40P01): each takes the block it comes to and then the block it leaves, so the two take the two blocks in opposite orders`);
-          must(t.otherErrors.length === 0, `an error that is no deadlock: ${t.otherErrors.join(' | ')}`);
-          return `${t.iterations} attempts, no deadlock`;
-        });
-      } finally {
-        await Promise.all([h1.end(), h2.end()]);
       }
     }
   } finally {
@@ -528,7 +668,7 @@ async function main(): Promise<void> {
       console.error(`FAIL the functions were not put back: ${summarise(error)}`);
     });
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1`, [SLUG]).catch((error: unknown) => console.error(`the probe's school was not dropped: ${summarise(error)}`));
-    await Promise.all([owner.end(), ca.end(), cb.end()]);
+    await Promise.all([owner.end(), ca.end(), cb.end(), h1.end(), h2.end()]);
   }
   const seconds = Math.round((Date.now() - started) / 100) / 10;
   if (failures > 0) {
