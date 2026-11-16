@@ -4872,11 +4872,16 @@ class SchedulerSolver:
         # the room's size is also the lesson's own domain and not only its
         # literal's — the oversubscribed week that answers INSUFFICIENT_RESOURCES
         # without and ROOM_CAPACITY with.
-        # EXPLAIN_SHARP_SECONDS OF THE CAP, NOT ALL OF IT. The slowest week
-        # measured without the objective is the högstadium week at four lessons
-        # a day with the walk: the objective's core came in 0.1-0.4 s and the
-        # objective-free one in 7.1 s, 9.3 s on a loaded host. Ten seconds is
-        # room for it and keeps five for the reserve.
+        # solver_explain_sharp_seconds (10 s) OF THE CAP, NOT ALL OF IT. The
+        # slowest week measured without the objective is the högstadium week at
+        # four lessons a day with the walk: the objective's core came in 0.1-0.4
+        # s and the objective-free one in 7.0-7.9 s on a lightly loaded
+        # development machine, and in three of three paired runs at a load
+        # above about 10 it did NOT finish inside ten seconds (UNKNOWN at
+        # 9.1-10.0 s), when the reserve answers in 0.1-0.3 s and the whole
+        # explanation takes 5-11 s longer than before. The production
+        # processor is not measured, so the window is a setting and not a
+        # constant. Ten seconds keeps five for the reserve.
         # A SMALL WEEK WHERE THE SCHOOL KEEPS THE WALK, A SECOND TRY WITHOUT IT.
         # Measured on the review's tight week (gentravel.tight(3070), a walk of
         # 40), the objective's assumption solve ran past the 15-second cap and
@@ -4914,7 +4919,7 @@ class SchedulerSolver:
         # sooner.
         cap = min(self._settings.solver_max_time_seconds, self.EXPLAIN_CAP_SECONDS)
         if sharp_first:
-            first = cap if pinned else min(cap, self.EXPLAIN_SHARP_SECONDS)
+            first = cap if pinned else min(cap, self._settings.solver_explain_sharp_seconds)
         else:
             first = min(cap, self.EXPLAIN_WALK_FIRST_SECONDS) if keeps_walk else cap
         solver.parameters.max_time_in_seconds = first
@@ -4940,7 +4945,10 @@ class SchedulerSolver:
                 )
         if status == cp_model.INFEASIBLE:
             conflicts = build_conflict_analysis(solver, registry)
-        if sharp_first and not pinned and (
+        # Not when the first try found a TIMETABLE: the model with the objective
+        # has the same hard rules, so it cannot prove the week impossible
+        # either, and measured it only spent the rest of the cap (14.6 s).
+        if sharp_first and not pinned and status not in (cp_model.OPTIMAL, cp_model.FEASIBLE) and (
             conflicts is None or conflicts.summary_code == "CONFLICT_NO_CORE"
         ):
             left = cap - used
@@ -4954,12 +4962,12 @@ class SchedulerSolver:
                     reserve, model, what="the explanation with the objective",
                     request_id=request.request_id,
                 )
+                # A reserve that proves nothing leaves the first answer: a proof
+                # with no assumption in it, not the lack of one. One that proves
+                # the week with no assumption either is that answer as well, and
+                # replaces a first try that proved nothing.
                 if reserve_status == cp_model.INFEASIBLE:
-                    named = build_conflict_analysis(reserve, registry)
-                    # Nothing from the reserve either: the first answer stands,
-                    # a proof with no assumption in it, not the lack of one.
-                    if conflicts is None or named.summary_code != "CONFLICT_NO_CORE":
-                        conflicts = named
+                    conflicts = build_conflict_analysis(reserve, registry)
         # Before the blocks below: a core the maximum alone filled is a
         # core with nothing to say once its line goes.
         if conflicts is not None:
@@ -5010,10 +5018,9 @@ class SchedulerSolver:
     # _explain_infeasible.
     EXPLAIN_WALK_FIRST_SECONDS = 5.0
     # From this many lessons a week is explained on the model without the
-    # objective first, and that model's share of the cap before the one with it
-    # is tried as the reserve. See _explain_infeasible.
+    # objective first, on Settings.solver_explain_sharp_seconds of the cap before
+    # the model with it is tried as the reserve. See _explain_infeasible.
     EXPLAIN_SHARP_FROM_LESSONS = 50
-    EXPLAIN_SHARP_SECONDS = 10.0
     # Cap on the objective-free build's slice of phase 1. Beyond mid-size
     # schools it stops converging at all (>240s at 1,000 students), so letting
     # it run longer only starves the encoding that does work there.
@@ -9639,14 +9646,20 @@ class SchedulerSolver:
     ) -> ConflictAnalysis:
         """Keep the class daily maximum in a refusal only where it is a cause.
 
-        THE CORE NAMES IT WHATEVER THE CAUSE. CP-SAT's sufficient set on these
-        models is close to all or nothing — the review of #182 found every
+        THE CORE NAMES IT WHATEVER THE CAUSE, on a small week and in the
+        reserve. CP-SAT's sufficient set on a model with the objective is close
+        to all or nothing — the review of #182 found every
         assumption in it in 376 of 376 capped impossible fuzz weeks, and 486 of
         486 on the högstadium week — and nearly every class has more lessons
         than the maximum, so a literal per class put the maximum into nearly
         every refusal. On hogstadium.py --teacher-day-rules --infeasible-days,
         whose cause is a post, it was 18 lines of "Raise Max lessons per day"
         on a week that stays impossible with no maximum at all.
+        A large week is explained without the objective first (see
+        _explain_infeasible), where the core is ONE sufficient set and not all
+        of them: this verdict then runs only when the maximum's line is in it,
+        and a large week whose core names something else is not measured for
+        the maximum at all.
 
         SO IT IS MEASURED, as the blocks are: the week is solved once more
         without the maximum, every other rule in force, on the probe's budget
@@ -10009,10 +10022,13 @@ class SchedulerSolver:
     ) -> ConflictAnalysis:
         """Keep the walk in a refusal only where it is a cause, and name whose.
 
-        THE DAILY MAXIMUM'S VERDICT, for the walk, and for its reason: a core is
-        close to all or nothing on these models, and a literal per teacher,
-        group and pair of groups puts the walk into nearly every refusal of a
-        school that has turned it on, whatever the cause. So it is measured:
+        THE DAILY MAXIMUM'S VERDICT, for the walk, and for its reason: a core
+        with the objective (a small week's, and the reserve's) is close to all
+        or nothing, and a literal per teacher, group and pair of groups puts the
+        walk into nearly every refusal of a school that has turned it on,
+        whatever the cause. A large week's first try has no objective and a
+        core of one sufficient set: this verdict then runs only when the walk's
+        line is in it. So it is measured:
         - The week is solved once more without the walk, every other rule in
           force, on the probe's budget and never more than the solve has left.
           A timetable means the walk is what makes the week impossible

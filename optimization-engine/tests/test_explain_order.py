@@ -13,7 +13,7 @@ unnamed, and the tests that lock the small refusals name every one. So:
 1. A SMALL WEEK (under EXPLAIN_SHARP_FROM_LESSONS) is explained as it was: the
    objective first, and on a walk a second try without it.
 2. A LARGE WEEK's FIRST TRY is the model without the objective, on
-   EXPLAIN_SHARP_SECONDS of the cap, and a core it finds is the answer.
+   solver_explain_sharp_seconds (10 s) of the cap, and a core it finds is the answer.
 3. THE RESERVE is the model with the objective, on what is left of the cap, when
    the first try proves nothing or proves it without resting on an assumption
    (an empty core: the room's size is the lesson's own domain, and a literal does
@@ -33,6 +33,7 @@ from uuid import uuid4
 import pytest
 from ortools.sat.python import cp_model
 
+from app.config import Settings
 from app.schemas.schedule import OptimizeScheduleRequest
 from app.solver import scheduler_solver
 from app.solver.scheduler_solver import SchedulerSolver, no_core_analysis
@@ -41,6 +42,8 @@ from tests import test_pins as tp
 
 FIRST = "the explanation"
 RESERVE = "the explanation with the objective"
+#: The window a large week's first try gets, as the setting has it by default.
+SHARP = tp._settings().solver_explain_sharp_seconds
 
 
 @pytest.fixture
@@ -225,8 +228,8 @@ class TestALargeWeek:
         solver._explain_infeasible(tp._request(_large_tove_away_four_days()))
 
         (_what, given, _status), = _explanations(asked)
-        assert given == SchedulerSolver.EXPLAIN_SHARP_SECONDS
-        assert SchedulerSolver.EXPLAIN_SHARP_SECONDS < SchedulerSolver.EXPLAIN_CAP_SECONDS
+        assert given == SHARP
+        assert SHARP < SchedulerSolver.EXPLAIN_CAP_SECONDS
 
     def test_a_cap_shorter_than_the_first_try_is_the_whole_first_try(
         self, asked: list[tuple[str, float, str]],
@@ -272,7 +275,7 @@ class TestALargeWeek:
         (first, first_given), (reserve, reserve_given) = [
             entry for entry in stood_in if entry[0].startswith(FIRST)
         ]
-        assert (first, first_given) == (FIRST, SchedulerSolver.EXPLAIN_SHARP_SECONDS)
+        assert (first, first_given) == (FIRST, SHARP)
         # What is left of the cap: the first try took no time at all here.
         assert reserve == RESERVE
         assert reserve_given == pytest.approx(SchedulerSolver.EXPLAIN_CAP_SECONDS, abs=0.5)
@@ -340,7 +343,7 @@ class TestALargeWeek:
         (first, first_given), (reserve, reserve_given) = [
             entry for entry in stood_in if entry[0].startswith(FIRST)
         ]
-        assert (first, first_given) == (FIRST, SchedulerSolver.EXPLAIN_SHARP_SECONDS)
+        assert (first, first_given) == (FIRST, SHARP)
         assert reserve == RESERVE
         assert reserve_given == pytest.approx(SchedulerSolver.EXPLAIN_CAP_SECONDS, abs=0.5)
 
@@ -367,3 +370,188 @@ class TestAPinnedWeek:
         assert [(what, given) for what, given, _s in _explanations(asked)] == [
             (FIRST, SchedulerSolver.EXPLAIN_CAP_SECONDS),
         ]
+
+
+def test_the_defaults_are_the_numbers_the_handbook_promises() -> None:
+    """DEPLOYMENT.md section 23 says 10 s and 50 lessons; the other tests compare against the values, not these."""
+    assert Settings(API_KEY="test-api-key-000000000000000000000000").solver_explain_sharp_seconds == 10.0
+    assert SchedulerSolver.EXPLAIN_SHARP_FROM_LESSONS == 50
+    assert SchedulerSolver.EXPLAIN_CAP_SECONDS == 15.0
+    assert SchedulerSolver.EXPLAIN_WALK_FIRST_SECONDS == 5.0
+
+
+class TestTheWindow:
+    def test_is_a_setting_that_moves_the_first_try_without_a_deployment(
+        self, asked: list[tuple[str, float, str]],
+    ) -> None:
+        """SOLVER_EXPLAIN_SHARP_SECONDS: the first measurement of a slower processor is a variable and not a release."""
+        solver = SchedulerSolver(tp._settings(SOLVER_EXPLAIN_SHARP_SECONDS=4.0))
+        solver._explain_infeasible(tp._request(_large_tove_away_four_days()))
+
+        assert _explanations(asked)[0][:2] == (FIRST, 4.0)
+
+    def test_cannot_be_zero(self) -> None:
+        with pytest.raises(ValueError):
+            tp._settings(SOLVER_EXPLAIN_SHARP_SECONDS=0)
+
+    def test_a_first_try_that_found_a_timetable_has_no_reserve(
+        self, monkeypatch: pytest.MonkeyPatch, built: list[bool],
+    ) -> None:
+        """The model with the objective has the same hard rules: it cannot prove a week it found a timetable for."""
+        stood_in: list[tuple[str, float]] = []
+
+        def finds_a_timetable(solver: cp_model.CpSolver, _model: object, *, what: str, **_r: object):
+            stood_in.append((what, solver.parameters.max_time_in_seconds))
+            return cp_model.OPTIMAL
+
+        monkeypatch.setattr(scheduler_solver, "_solve_guarded", finds_a_timetable)
+        response = SchedulerSolver(tp._settings())._explain_infeasible(
+            tp._request(_large_tove_away_four_days()),
+        )
+
+        assert [what for what, _given in stood_in if what.startswith(FIRST)] == [FIRST]
+        assert built == [False]
+        assert response.status == "INFEASIBLE"
+        assert response.conflicts is None
+
+
+class _Clock:
+    """A clock the stand-in solve moves: the first try 'takes' `spent` seconds."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _taking(clock: _Clock, spent: float, given: list[tuple[str, float]]):
+    """A stand-in for the guarded solve that proves nothing and moves `clock` by `spent` for the first try."""
+
+    def solve(solver: cp_model.CpSolver, _model: object, *, what: str, **_rest: object):
+        given.append((what, solver.parameters.max_time_in_seconds))
+        if what == FIRST:
+            clock.now += spent
+        return cp_model.UNKNOWN
+
+    return solve
+
+
+class TestTheTimeTheFirstTryTook:
+    """What the stand-in that takes no time cannot show: the reserve is paid out of the cap, not on top of it."""
+
+    def test_the_reserve_gets_what_the_first_try_left_of_the_cap(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        clock, given = _Clock(), []
+        monkeypatch.setattr(scheduler_solver.time, "monotonic", clock)
+        monkeypatch.setattr(scheduler_solver, "_solve_guarded", _taking(clock, 9.0, given))
+        SchedulerSolver(tp._settings(SOLVER_MAX_TIME_SECONDS=60.0))._explain_infeasible(
+            tp._request(_large_tove_away_four_days()),
+        )
+
+        assert [g for what, g in given if what == RESERVE] == [pytest.approx(6.0, abs=0.01)]
+
+    def test_no_reserve_when_the_first_try_used_the_cap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        clock, given = _Clock(), []
+        monkeypatch.setattr(scheduler_solver.time, "monotonic", clock)
+        monkeypatch.setattr(scheduler_solver, "_solve_guarded", _taking(clock, 14.8, given))
+        SchedulerSolver(tp._settings(SOLVER_MAX_TIME_SECONDS=60.0))._explain_infeasible(
+            tp._request(_large_tove_away_four_days()),
+        )
+
+        assert [what for what, _ in given if what.startswith(FIRST)] == [FIRST]
+
+    def test_the_walks_second_try_gets_what_the_first_left(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A small week with the walk: 4 s of its 5 used, so the second try has 11 s of the 15."""
+        clock, given = _Clock(), []
+        monkeypatch.setattr(scheduler_solver.time, "monotonic", clock)
+        monkeypatch.setattr(scheduler_solver, "_solve_guarded", _taking(clock, 4.0, given))
+        SchedulerSolver(tp._settings(SOLVER_MAX_TIME_SECONDS=60.0))._explain_infeasible(
+            tp._request(_walk_week()),
+        )
+
+        second = [g for what, g in given if what == "the explanation without the objective"]
+        assert second == [pytest.approx(11.0, abs=0.01)]
+
+
+class TestWhatFollowsTheReserve:
+    def test_a_core_from_the_reserve_goes_through_the_verdicts(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The first try proves nothing and the reserve proves the week: its core is read by the daily maximum's verdict."""
+        seen: list[object] = []
+        real_verdict = SchedulerSolver._daily_maximum_verdict
+
+        def spy(self: SchedulerSolver, request: OptimizeScheduleRequest, conflicts: object, **rest: object):
+            seen.append(conflicts)
+            return real_verdict(self, request, conflicts, **rest)
+
+        real = scheduler_solver._solve_guarded
+
+        def first_proves_nothing(solver: cp_model.CpSolver, model: object, *, what: str, **rest: object):
+            return cp_model.UNKNOWN if what == FIRST else real(solver, model, what=what, **rest)
+
+        monkeypatch.setattr(SchedulerSolver, "_daily_maximum_verdict", spy)
+        monkeypatch.setattr(scheduler_solver, "_solve_guarded", first_proves_nothing)
+        response = SchedulerSolver(tp._settings())._explain_infeasible(
+            tp._request(_large_tove_away_four_days()),
+        )
+
+        assert response.conflicts is not None
+        assert response.conflicts.summary_code == "CONFLICT_CORE_SUMMARY"
+        assert len(seen) == 1
+
+    def test_a_reserve_that_proves_the_week_without_an_assumption_is_the_answer_the_first_try_did_not_give(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """First try UNKNOWN, reserve INFEASIBLE with no core: CONFLICT_NO_CORE, a proof, and not no conflicts at all."""
+        real = scheduler_solver._solve_guarded
+
+        def first_proves_nothing(solver: cp_model.CpSolver, model: object, *, what: str, **rest: object):
+            return cp_model.UNKNOWN if what == FIRST else real(solver, model, what=what, **rest)
+
+        monkeypatch.setattr(scheduler_solver, "_solve_guarded", first_proves_nothing)
+        monkeypatch.setattr(
+            scheduler_solver, "build_conflict_analysis", lambda _s, _r: no_core_analysis(),
+        )
+        response = SchedulerSolver(tp._settings())._explain_infeasible(
+            tp._request(_large_tove_away_four_days()),
+        )
+
+        assert response.conflicts is not None
+        assert response.conflicts.summary_code == "CONFLICT_NO_CORE"
+
+
+def test_a_large_week_with_two_causes_names_one_and_the_next_run_the_other() -> None:
+    """What the handbook says and nothing locked: the school fixes the named cause and is told the next on the next run.
+
+    Two teachers away the whole week on a large week: the core without the
+    objective is one sufficient set, so one of them is named (measured by the
+    review of #323: exactly one in 32 of 32 random weeks of two or three
+    teachers, and none of eight högstadium combinations names all). Lifting the
+    named teacher's rows and asking again names the other.
+    """
+
+    def week(away: tuple[str, ...]) -> dict[str, object]:
+        constraints = [tp._away(who, day) for who in away for day in (1, 2, 3, 4, 5)]
+        return _with_lessons(
+            tp._payload(constraints=constraints), SchedulerSolver.EXPLAIN_SHARP_FROM_LESSONS + 3,
+        )
+
+    def named(payload: dict[str, object]) -> set[str]:
+        response = SchedulerSolver(tp._settings())._explain_infeasible(tp._request(payload))
+        assert response.conflicts is not None
+        return {str(rid) for d in response.conflicts.conflicts for rid in d.resource_ids} | {
+            str(cid) for d in response.conflicts.conflicts for cid in d.constraint_ids
+        }
+
+    both = week((tp.TOVE, tp.SARA))
+    first = named(both)
+    ids_tove = {c["id"] for c in both["constraints"] if c["resourceId"] == tp.TOVE}  # type: ignore[index]
+    ids_sara = {c["id"] for c in both["constraints"] if c["resourceId"] == tp.SARA}  # type: ignore[index]
+    named_tove, named_sara = bool(first & ids_tove), bool(first & ids_sara)
+    assert named_tove != named_sara, "exactly one of the two teachers is named"
+    # Whoever was named is fixed: lift that teacher's away rows and ask again.
+    remaining = week((tp.SARA,) if named_tove else (tp.TOVE,))
+    assert named(remaining), "the next run names the other"
