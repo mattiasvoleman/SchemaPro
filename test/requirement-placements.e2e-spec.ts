@@ -304,7 +304,8 @@ describe('Förlagda poster (e2e)', () => {
         },
       ]);
 
-      const response = await put({ placements: [body()] }).expect(409);
+      // A row the post does not have (the stored one starts at 10:00): a new row is judged and refused.
+      const response = await put({ placements: [body({ startTime: '10:15' })] }).expect(409);
 
       expect(response.body.code).toBe('REQUIREMENT_PLACEMENT_REFUSED');
       expect(response.body.params).toEqual({
@@ -319,6 +320,44 @@ describe('Förlagda poster (e2e)', () => {
       });
       expect(JSON.stringify(response.body)).not.toContain('88888888-8888');
       expect(placements()['deleteMany']).not.toHaveBeenCalled();
+    });
+
+    it('lets a row the post has already stand when it no longer holds, and names it in the answer (review of #326, MEDEL-2)', async () => {
+      // The same row as the stored one, and a lesson kept in its room that it clashes with: it stood there before the lesson was kept.
+      givenKept([
+        {
+          id: '99999999-9999-4999-8999-999999999999',
+          dayOfWeek: 2,
+          teacherId: '88888888-8888-4888-8888-888888888888',
+          coTeacherId: null,
+          roomId: ROOM_ID,
+          studentGroupId: '12121212-1212-4121-8121-121212121212',
+          subjectId: 'sub-ma',
+          startTime: wallClock('10:30'),
+          endTime: wallClock('11:30'),
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+          subject: { name: 'Matematik' },
+          studentGroup: { name: '7B' },
+          extraGroups: [],
+          participants: [],
+        },
+      ]);
+
+      const response = await put({ placements: [body()] }).expect(200);
+
+      expect(response.body.verdicts).toEqual([
+        {
+          index: 0,
+          ok: false,
+          reason: 'ROOM',
+          params: { otherKind: 'LESSON', className: '7B', subjectName: 'Matematik', day: 2, start: '10:30', end: '11:30' },
+        },
+      ]);
+      expect(JSON.stringify(response.body)).not.toContain('88888888-8888');
+      expect(placements()['deleteMany']).toHaveBeenCalledTimes(1);
+      expect(placements()['createMany']).toHaveBeenCalledTimes(1);
     });
 
     it('answers the trigger\'s FP409, which no pre-check foresaw, as the same 409 and not a 500', async () => {
