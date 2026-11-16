@@ -61038,11 +61038,13 @@ DECLARE
   r record;
   n int;
 BEGIN
-  -- 505a. Exactly these sixteen policies ask for the mark, and every one of them does.
+  -- 505a. Exactly these sixteen policies ask for the mark, and every one of them does. (The three insert arms of Krisläge that PR 4 added,
+  -- 20270219090000, are the only others; section 510a holds them, and 494d the whole list.)
   SELECT string_agg(c.relname || '.' || p.polname, ', ' ORDER BY c.relname COLLATE "C", p.polname COLLATE "C") INTO bad
     FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid AND c.relnamespace = 'public'::regnamespace
    WHERE (coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '')) LIKE '%current_user_teaches%'
-     AND NOT EXISTS (SELECT 1 FROM ta_arms a WHERE a.tbl = c.relname AND a.pol = p.polname);
+     AND NOT EXISTS (SELECT 1 FROM ta_arms a WHERE a.tbl = c.relname AND a.pol = p.polname)
+     AND NOT (c.relname = 'CrisisReports' AND p.polname IN ('crisis_reports_teacher_insert', 'crisis_reports_teacher_found_insert', 'crisis_reports_teacher_free_insert'));
   IF bad IS NOT NULL THEN RAISE EXCEPTION 'ta 505a: asks for the mark and is not one of the sixteen: %', bad; END IF;
 
   FOR r IN
@@ -62645,7 +62647,7 @@ BEGIN
     RAISE EXCEPTION 'tk 510d: a policy asks app.teaches_like, which only a function that runs as the owner may';
   END IF;
   -- It asks the role and the mark, and nothing else (no table, no setting, no other function).
-  IF (SELECT regexp_replace(prosrc, '\s+', ' ', 'g') FROM pg_proc WHERE oid = f) IS DISTINCT FROM ' SELECT coalesce(p_role = ''TEACHER'' OR (p_role = ''SCHOOL_ADMIN'' AND p_teaches), false) ' THEN
+  IF (SELECT regexp_replace(prosrc, '\s+', ' ', 'g') FROM pg_proc WHERE oid = f) IS DISTINCT FROM ' SELECT (p_role = ''TEACHER'' OR (p_role = ''SCHOOL_ADMIN'' AND p_teaches)) IS TRUE ' THEN
     RAISE EXCEPTION 'tk 510d: app.teaches_like asks something else than the role and the mark';
   END IF;
   RAISE NOTICE 'tk 510d: app.teaches_like is the one new function';

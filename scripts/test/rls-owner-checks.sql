@@ -6320,7 +6320,7 @@ ROLLBACK;
 -- ===========================================================================
 -- Sections 510o-514o: en administratör som undervisar, del 4 (20270219090000), as the owner.
 --
--- What only the owner may call: app.teaches_like (510o), the mentor functions that no role has a grant on (512o: leave_mentors,
+-- What only the owner may call: app.teaches_like (510o), krisläge's window, planted by the owner (511o), the mentor functions that no role has a grant on (512o: leave_mentors,
 -- absence_watch_mentees, absence_watch_digest_plan) and the lessons of the reporting rate and of its history, the night's count and the
 -- reminder (513o). The sections in rls-policies.sql (510-514) ask the rest as the API's role. The cast is rls-fixtures.sql's 'rls-larm-school'.
 -- ===========================================================================
@@ -6390,6 +6390,138 @@ BEGIN
   END;
   IF app.teaches_like('TEACHER', false) IS NOT TRUE THEN RAISE EXCEPTION 'tk 510o-c: the owner cannot call it'; END IF;
   RAISE NOTICE 'tk 510o-c: only the owner calls app.teaches_like';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- 511o: krisläge's window, planted as the owner (20270219090000).
+--
+-- An alarm's start and end are the database's own clock's (a trigger holds them), so an alarm that ended an hour ago cannot be written through
+-- the API's role. The owner plants two, with the triggers put aside for the planting and back for the marks, and the marks are then made through
+-- the API's role: marks are taken for an hour after an alarm ends, and not after, by the teacher's three arms and by the administrator's alike.
+-- The real alarm ended 66 minutes ago and the exercise 54 minutes ago (six minutes from the edge each way, for a clock under load). A marked
+-- schemaläggare who answers for c1 in the real alarm is refused there, own group and "found with me" alike (the second is the arm that asks the
+-- window of the group the pupil is found with), and is let in on the exercise, where they have no group; the full administratör is refused in the
+-- real alarm and let in on the exercise; a teacher is refused on c1 and let in on cd. The cast is rls-fixtures.sql's 'rls-larm-school'.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION pg_temp.tko_expect(label text, got text, want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  IF got IS DISTINCT FROM want THEN
+    RAISE EXCEPTION E'tk %:\n   got      %\n   expected %', label, coalesce(got, '<null>'), want;
+  END IF;
+END $f$;
+
+-- Sign in as the larm school's person …6nnn (the owner may set the claims a door reads).
+CREATE OR REPLACE FUNCTION pg_temp.tko_claim(n int) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-00000000' || lpad(n::text, 4, '0'))::text, true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+END $f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tko_id(n int) RETURNS uuid LANGUAGE sql AS $f$
+  SELECT id FROM "Users" WHERE "authId" = ('00000000-0000-4000-8000-00000000' || lpad(n::text, 4, '0'))::uuid
+$f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tko_who(u uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT right("authId"::text, 4) FROM "Users" WHERE id = u
+$f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tko_school() RETURNS uuid LANGUAGE sql AS $f$
+  SELECT id FROM "Schools" WHERE slug = 'rls-larm-school'
+$f$;
+
+-- Mark (or unmark) …6nnn under the claims of a decider (the full administrator, or the rektor when it is the full administrator that is
+-- marked), and say whether the row went. The claims are cleared after.
+CREATE OR REPLACE FUNCTION pg_temp.tko_mark(n int, v boolean) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE c bigint;
+BEGIN
+  PERFORM pg_temp.tko_claim(CASE WHEN n = 6002 THEN 6001 ELSE 6002 END);
+  UPDATE "Users" SET teaches = v WHERE id = pg_temp.tko_id(n);
+  GET DIAGNOSTICS c = ROW_COUNT;
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF c <> 1 OR (SELECT teaches FROM "Users" WHERE id = pg_temp.tko_id(n)) IS DISTINCT FROM v THEN
+    RAISE EXCEPTION 'tk: the mark of …% was not set to % (% rows)', n, v, c;
+  END IF;
+END $f$;
+
+-- A statement through the API's role with the signed-in person's claims, as 'ok N' or the SQLSTATE it ended with.
+CREATE OR REPLACE FUNCTION pg_temp.tko_try(n int, stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE c bigint;
+BEGIN
+  PERFORM pg_temp.tko_claim(n);
+  SET LOCAL ROLE app_authenticated;
+  EXECUTE stmt;
+  GET DIAGNOSTICS c = ROW_COUNT;
+  RESET ROLE;
+  RETURN 'ok ' || c;
+EXCEPTION WHEN OTHERS THEN
+  RESET ROLE;
+  RETURN SQLSTATE;
+END $f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tko_class(r text) RETURNS text LANGUAGE sql AS $f$
+  SELECT CASE WHEN r LIKE 'ok %' OR r IN ('23505', '23514', '23P01', '23503') THEN 'admitted' WHEN r IN ('42501', 'KL410') THEN 'refused' ELSE r END
+$f$;
+
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.tko_school();
+  full_ uuid := pg_temp.tko_id(6002);
+  t1 uuid := pg_temp.tko_id(6010);
+  sched uuid := pg_temp.tko_id(6003);
+  pa1 uuid := pg_temp.tko_id(6021);
+  pb1 uuid := pg_temp.tko_id(6023);
+  pc1 uuid := pg_temp.tko_id(6024);
+  l uuid; d uuid; c1 uuid; cn uuid; cd uuid;
+  own text; withme text; freefind text;
+BEGIN
+  IF s IS NULL THEN RAISE EXCEPTION 'tk 511o: rls-larm-school is not there (fixtures?)'; END IF;
+  -- Planted with the triggers off (the owner may), put back before anybody marks.
+  SET LOCAL session_replication_role = replica;
+  INSERT INTO "CrisisAlarms" ("schoolId", kind, mode, "startedAt", "startedByUserId", "endedAt", "endedByUserId", "listsSealedAt")
+  VALUES (s, 'EVACUATION', 'LIVE', now() - interval '100 minutes', full_, now() - interval '66 minutes', full_, now() - interval '100 minutes') RETURNING id INTO l;
+  INSERT INTO "CrisisAlarms" ("schoolId", kind, mode, "startedAt", "startedByUserId", "endedAt", "endedByUserId", "listsSealedAt")
+  VALUES (s, 'LOCKDOWN', 'DRILL', now() - interval '90 minutes', full_, now() - interval '54 minutes', full_, now() - interval '90 minutes') RETURNING id INTO d;
+  INSERT INTO "CrisisCalls" ("schoolId", "alarmId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt")
+  VALUES (s, l, 'LESSON', 'LA7A', 'Matematik', now() - interval '130 minutes', now() - interval '70 minutes') RETURNING id INTO c1;
+  INSERT INTO "CrisisCalls" ("schoolId", "alarmId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt")
+  VALUES (s, l, 'NO_LESSON', 'Ej i lektion just nu', 'Ingen lektion pågår', now() - interval '100 minutes', now() - interval '100 minutes') RETURNING id INTO cn;
+  INSERT INTO "CrisisCalls" ("schoolId", "alarmId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt")
+  VALUES (s, d, 'LESSON', 'Larm övning', 'Matematik', now() - interval '120 minutes', now() - interval '60 minutes') RETURNING id INTO cd;
+  INSERT INTO "CrisisCallTeachers" ("schoolId", "callId", "teacherId", role) VALUES (s, c1, t1, 'LEAD'), (s, c1, sched, 'ASSISTANT'), (s, cd, t1, 'LEAD');
+  INSERT INTO "CrisisPupils" ("schoolId", "alarmId", "callId", "studentId") VALUES (s, l, c1, pa1), (s, l, cn, pc1), (s, d, cd, pa1), (s, d, cd, pb1);
+  SET LOCAL session_replication_role = origin;
+
+  PERFORM pg_temp.tko_mark(6003, true);
+  PERFORM pg_temp.tko_claim(6003);
+  PERFORM pg_temp.tko_expect('511o 6003 is marked', app.current_user_teaches()::text, 'true');
+  own := format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'FOUND', now())$q$, s, l, c1, pa1);
+  withme := format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'FOUND', now())$q$, s, l, cn, c1, pc1);
+  freefind := format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'FOUND', now())$q$, s, d, cd, pb1);
+
+  PERFORM pg_temp.tko_expect('511o marked: own group, 66 minutes after the end', pg_temp.tko_class(pg_temp.tko_try(6003, own)), 'refused');
+  PERFORM pg_temp.tko_expect('511o marked: "found with me", 66 minutes after the end', pg_temp.tko_class(pg_temp.tko_try(6003, withme)), 'refused');
+  PERFORM pg_temp.tko_expect('511o marked: "found" with no group in the exercise, 54 minutes after the end', pg_temp.tko_class(pg_temp.tko_try(6003, freefind)), 'admitted');
+  PERFORM pg_temp.tko_expect('511o full: a mark, 66 minutes after the end (the administrator''s arm holds the window too)', pg_temp.tko_class(pg_temp.tko_try(6002, own)), 'refused');
+  PERFORM pg_temp.tko_expect('511o full: a mark, 54 minutes after the end', pg_temp.tko_class(pg_temp.tko_try(6002, freefind)), 'admitted');
+  PERFORM pg_temp.tko_expect('511o teacher: own group c1, 66 minutes after the end', pg_temp.tko_class(pg_temp.tko_try(6010, own)), 'refused');
+  PERFORM pg_temp.tko_expect('511o teacher: own group cd, 54 minutes after the end', pg_temp.tko_class(pg_temp.tko_try(6010, freefind)), 'admitted');
+
+  -- The same with the table's own triggers aside: the BEFORE trigger of CrisisReports refuses a mark for an alarm that ended more than an hour ago
+  -- (KL410) before the policy is asked, so the policies' own window is shown here, with nothing in front of it: 42501 and no other code.
+  ALTER TABLE "CrisisReports" DISABLE TRIGGER USER;
+  PERFORM pg_temp.tko_expect('511o policy only, marked: own group, 66 minutes', pg_temp.tko_try(6003, own), '42501');
+  PERFORM pg_temp.tko_expect('511o policy only, marked: "found with me", 66 minutes', pg_temp.tko_try(6003, withme), '42501');
+  PERFORM pg_temp.tko_expect('511o policy only, marked: "found" with no group, 54 minutes', pg_temp.tko_try(6003, freefind), 'ok 1');
+  PERFORM pg_temp.tko_expect('511o policy only, full: a mark, 66 minutes', pg_temp.tko_try(6002, own), '42501');
+  PERFORM pg_temp.tko_expect('511o policy only, teacher: own group c1, 66 minutes', pg_temp.tko_try(6010, own), '42501');
+  PERFORM pg_temp.tko_expect('511o policy only, teacher: own group cd, 54 minutes', pg_temp.tko_try(6010, freefind), 'ok 1');
+  -- A teacher's "found with me" inside the window (the arm answers for the group they stand on, six minutes from the edge): the exercise has one group, so
+  -- the mark is made on the real alarm's group for a pupil of its own list's neighbour: refused 66 minutes after the end, as above.
+  ALTER TABLE "CrisisReports" ENABLE TRIGGER USER;
+  RAISE NOTICE 'tk 511o: the window, an hour after the end, for the three arms and the administrator''s';
 END $$;
 ROLLBACK;
 

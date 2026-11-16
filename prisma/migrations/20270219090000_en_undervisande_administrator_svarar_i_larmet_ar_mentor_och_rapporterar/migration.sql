@@ -157,10 +157,12 @@ $$;
 -- Does a person with this role and this mark teach like a teacher? A TEACHER does, a SCHOOL_ADMIN who teaches does, nobody else
 -- (a LASARE cannot be marked: a CHECK on Users says so). It is asked of a row, not of the caller (that is app.current_user_teaches());
 -- IMMUTABLE and a plain SELECT so that the planner inlines it into the functions that ask it and no call is left in a plan.
--- A NULL role or mark is no (coalesce). No grant: every function that asks it runs as the owner.
+-- A NULL role or mark is no (IS TRUE). Not a coalesce: wrapped in one, the inlined test is a function of two columns the planner cannot estimate,
+-- and the two lesson functions over four weeks of lessons took +17-25 % (a different join order); as a plain test beside IS TRUE they cost what
+-- they cost before (+1.5 %, within the noise). No grant: every function that asks it runs as the owner.
 CREATE FUNCTION app.teaches_like(p_role "UserRole", p_teaches boolean) RETURNS boolean
 LANGUAGE sql IMMUTABLE AS $$
-  SELECT coalesce(p_role = 'TEACHER' OR (p_role = 'SCHOOL_ADMIN' AND p_teaches), false)
+  SELECT (p_role = 'TEACHER' OR (p_role = 'SCHOOL_ADMIN' AND p_teaches)) IS TRUE
 $$;
 
 COMMENT ON FUNCTION app.teaches_like("UserRole", boolean) IS
