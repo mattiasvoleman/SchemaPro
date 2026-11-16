@@ -1,5 +1,7 @@
 import type { LessonRecurrence } from '@prisma/client';
 import type { LessonShare } from '../common/lesson-shares';
+import type { BlockPlacementsRule } from '../common/utils/prisma-errors';
+import { blockFitOf, type PlacementBlockMember } from '../requirement-placements/block-placement-fit';
 import { placedLessonsOf, placedTaughtOf } from '../requirement-placements/placement-fit';
 import type { TaughtLesson } from './locked-coverage';
 import type { PlacementVerdict } from '../requirement-placements/placement-judge';
@@ -48,6 +50,19 @@ import type {
  * `placements` does not name it. The run writes the lesson the answer holds
  * for it, with the room the engine chose, locked and marked the same
  * (writtenFromPins). A row WITH a room is the lock it was, byte for byte.
+ *
+ * A BLOCK'S FÖRLÄGGNING IS A PINNED LESSON OF EVERY MEMBER, ROOM OR NO ROOM (20270218090000). One lesson of a
+ * parallel block (TeachingBlockPlacement) is read as one row per member (blockPlacedLessonRowsOf), marked
+ * `blockPlacementId`, and it is a pinned lesson even when the member chose a room: a lock inside a block makes the
+ * block partly locked, which Generera refuses (BLOCK_PARTLY_LOCKED, parallel-blocks.ts), and a pin with a room does
+ * the same job. So the marker, and not the room, is what tells a pin from a lock for these rows, and lockedRowsOf and
+ * pinnedRowsOf are the ONLY place that says so: everything that reads "the förläggningar as locks" (the fixed lessons,
+ * what the post is asked for, its locked days, the teacher's weekdays, `placements`, the kept timetable and the
+ * coverage base) reads lockedRowsOf, and a block row is in none of them. The engine holds place k of a block at the same
+ * day and start for every member or for none (PLACED_LESSONS_OF_BLOCK_DIFFER), which the rows' order gives: for each
+ * member the block's lessons in the order (day, start, id of the lesson), so each takes the same place k in its post's
+ * lessons, which are the same for every member (TB409). A block row has no row of its own in the database, so its id is
+ * derived and the staleness key is built from the block's rows themselves (blockPlacementsKeyOf).
  *
  * DELADE LEKTIONER (20270208090000). On a post that shares its lessons a
  * förläggning names its own teacher, and the lock is THAT teacher's: the
@@ -123,6 +138,15 @@ export interface PlacedLessonRow {
   ownTeacher: boolean;
   /** The förläggning's own column, as stored (null on a post that shares nothing): what the staleness key compares. */
   placementTeacherId: string | null;
+  /**
+   * Set on a member's lesson of a block's förläggning (blockPlacementRowsOf): the id of the lesson of the block. Such a row is
+   * a pinned lesson whether or not it has a room (lockedRowsOf, pinnedRowsOf), and it has no row of its own in the database.
+   */
+  blockPlacementId?: string;
+  /** The block, on a block row. */
+  blockId?: string;
+  /** The rule the block's lessons break (block-placement-fit.ts), or null or absent when they fit: asked by the pre-flight. */
+  blockFit?: BlockPlacementsRule | null;
 }
 
 /**
@@ -177,14 +201,124 @@ const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 /** A row that names a room, which is sent as the lock it has always been. */
 export type LockedPlacedRow = PlacedLessonRow & { roomId: string };
 
-/** The förläggningar that name a room: locks, and everything the fetch reads of a lock reads them. */
+/** A member's lesson of a block's förläggning: always a pinned lesson, with a room or not. */
+const isBlockRow = (row: PlacedLessonRow): boolean => row.blockPlacementId !== undefined;
+
+/** The förläggningar that name a room and are no block's lesson: locks, and everything the fetch reads of a lock reads them. */
 export function lockedRowsOf(rows: readonly PlacedLessonRow[]): LockedPlacedRow[] {
-  return rows.filter((row): row is LockedPlacedRow => row.roomId !== null);
+  return rows.filter((row): row is LockedPlacedRow => row.roomId !== null && !isBlockRow(row));
 }
 
-/** The förläggningar that leave the room to the engine: pinned lessons of their posts. */
+/** The förläggningar that are pinned lessons of their posts: those that leave the room to the engine, and every block's lesson. */
 export function pinnedRowsOf(rows: readonly PlacedLessonRow[]): PlacedLessonRow[] {
-  return rows.filter((row) => row.roomId === null);
+  return rows.filter((row) => row.roomId === null || isBlockRow(row));
+}
+
+/** A block's förläggning as the fetch reads it. */
+export interface BlockPlacementRead {
+  id: string;
+  blockId: string;
+  dayOfWeek: number;
+  /** TIME(0), midnight UTC. */
+  startTime: Date;
+  minutes: number;
+  recurrence: LessonRecurrence;
+  /** The block's link to the block whose times it takes (a follower is not placed itself). */
+  block: { sameTimesAsBlockId: string | null };
+  /** The rooms the members chose for this lesson; a member not named has its room chosen by the engine. */
+  rooms: readonly { requirementId: string; roomId: string }[];
+}
+
+/** A member of a block as the fetch reads it: the post's own fields and its lessons. */
+export type BlockMemberPlaced = PlacedPost & PlacementBlockMember & { blockId: string | null };
+
+/**
+ * The block's förläggningar as one pinned lesson of every member: a row per lesson and member, marked
+ * `blockPlacementId` (the file's paragraph on blocks). In the stable order (day, start, id of the lesson) and, for a lesson,
+ * the members in id order, so that grouped by post each member's rows come in the same order and take the same place k
+ * in the post's lessons. A block with no member sends nothing. A block whose lessons do not fit it (blockFitOf: a
+ * membership change left them wrong) carries the rule on its rows, which the pre-flight refuses by name.
+ */
+export function blockPlacedLessonRowsOf(
+  reads: readonly BlockPlacementRead[],
+  members: readonly BlockMemberPlaced[],
+): PlacedLessonRow[] {
+  const byBlock = new Map<string, BlockMemberPlaced[]>();
+  for (const member of members) {
+    if (member.blockId === null) continue;
+    const list = byBlock.get(member.blockId);
+    if (list) list.push(member);
+    else byBlock.set(member.blockId, [member]);
+  }
+  const misfit = new Map<string, BlockPlacementsRule | null>();
+  for (const [blockId, list] of byBlock) {
+    const own = reads.filter((read) => read.blockId === blockId);
+    const sameTimesAsBlockId = own[0]?.block.sameTimesAsBlockId ?? null;
+    misfit.set(
+      blockId,
+      blockFitOf(
+        { id: blockId, sameTimesAsBlockId, members: list },
+        own.map((read) => ({ minutes: read.minutes, recurrence: read.recurrence, rooms: read.rooms })),
+      )?.reason ?? null,
+    );
+  }
+  return [...reads]
+    .sort(
+      (a, b) =>
+        a.dayOfWeek - b.dayOfWeek || a.startTime.getTime() - b.startTime.getTime() || compare(a.id, b.id),
+    )
+    .flatMap((read) =>
+      [...(byBlock.get(read.blockId) ?? [])]
+        .sort((a, b) => compare(a.id, b.id))
+        .map(
+          (post): PlacedLessonRow => ({
+            id: `${read.id}:${post.id}`,
+            requirementId: post.id,
+            subjectId: post.subjectId,
+            studentGroupId: post.studentGroupId,
+            teacherId: post.teacherId,
+            coTeacherId: post.coTeacherId,
+            roomId: read.rooms.find((room) => room.requirementId === post.id)?.roomId ?? null,
+            dayOfWeek: read.dayOfWeek,
+            startTime: read.startTime,
+            endTime: new Date(read.startTime.getTime() + read.minutes * 60_000),
+            recurrence: read.recurrence,
+            startDate: post.startDate,
+            endDate: post.endDate,
+            minutes: read.minutes,
+            extraGroups: [],
+            participants: [],
+            ownTeacher: false,
+            placementTeacherId: null,
+            blockPlacementId: read.id,
+            blockId: read.blockId,
+            blockFit: misfit.get(read.blockId) ?? null,
+          }),
+        ),
+    );
+}
+
+/**
+ * The block's förläggningar as one comparable string, by what a write writes from them: their own ids (which a save
+ * replaces), where and how long, the weeks and the rooms the members chose. Built from the rows themselves, never from
+ * the members' derived rows, whose ids are not in the database. Generera reads them again under the year's lock and
+ * refuses a write (GENERATE_STALE) when they moved while the solver ran.
+ */
+export function blockPlacementsKeyOf(reads: readonly Omit<BlockPlacementRead, 'block'>[]): string {
+  return reads
+    .map((read) =>
+      [
+        read.id,
+        read.blockId,
+        read.dayOfWeek,
+        read.startTime.toISOString(),
+        read.minutes,
+        read.recurrence,
+        ...read.rooms.map((room) => `${room.requirementId}=${room.roomId}`).sort(),
+      ].join('|'),
+    )
+    .sort()
+    .join('\n');
 }
 
 /** Each post's lessons its förläggningar place, one length each (placedLessonsOf). */
@@ -294,6 +428,8 @@ const payloadClockOf = (time: Date): string => time.toISOString().slice(11, 19);
 export function pinnedPlacesOf(
   lessons: readonly TaughtLesson[],
   rows: readonly PlacedLessonRow[],
+  /** A block's lesson with a room says it in the payload's id (pinnedRowsOf: no other pinned row has one). */
+  anonRoom?: (realId: string) => string,
 ): { places: (AnonymousPinnedLesson | null)[] | undefined; unplaced: PlacedLessonRow[] } {
   const places: (AnonymousPinnedLesson | null)[] = lessons.map(() => null);
   const unplaced: PlacedLessonRow[] = [];
@@ -306,7 +442,13 @@ export function pinnedPlacesOf(
       unplaced.push(row);
       continue;
     }
-    places[at] = { dayOfWeek: row.dayOfWeek as AnonymousPinnedLesson['dayOfWeek'], startTime: payloadClockOf(row.startTime), endTime: payloadClockOf(row.endTime) };
+    if (row.roomId !== null && !anonRoom) throw new Error('A pinned lesson with a room needs the payload id of the room (pinnedPlacesOf).');
+    places[at] = {
+      dayOfWeek: row.dayOfWeek as AnonymousPinnedLesson['dayOfWeek'],
+      startTime: payloadClockOf(row.startTime),
+      endTime: payloadClockOf(row.endTime),
+      ...(row.roomId !== null ? { roomId: anonRoom!(row.roomId) } : {}),
+    };
   }
   return { places: places.some((place) => place !== null) ? places : undefined, unplaced };
 }
@@ -387,7 +529,7 @@ export const ANY_ROOM = 'ANY_ROOM';
 export function placementsRefusalOf(
   rows: readonly PlacedLessonRow[],
   verdicts: readonly PlacementVerdict[],
-  anon: { requirement: (realId: string) => string; room: (realId: string) => string },
+  anon: { requirement: (realId: string) => string; room: (realId: string) => string; block?: (realId: string) => string },
 ): AiEngineConflictAnalysis | null {
   const refused = verdicts.filter((verdict) => !verdict.ok);
   if (refused.length === 0) return null;
@@ -404,6 +546,8 @@ export function placementsRefusalOf(
       end: clockOf(row.endTime),
       reason: verdict.reason ?? 'UNKNOWN',
       ...sentenceParams(verdict.params),
+      // A member's lesson of a block's förläggning is said by the block as well (the web's sentence chooses its words on it).
+      ...(row.blockId !== undefined && anon.block ? { block: anon.block(row.blockId) } : {}),
     };
     return [
       {
@@ -533,5 +677,6 @@ export function placementsKeyOf(
 
 /** The förläggningar a run was handed, as the staleness key reads the stored rows: their own teacher column. */
 export function storedPlacementsOf(rows: readonly PlacedLessonRow[]) {
-  return rows.map((row) => ({ ...row, teacherId: row.placementTeacherId }));
+  // A block's lesson has no row of its own in the table the key reads: its own key is blockPlacementsKeyOf's.
+  return rows.filter((row) => !isBlockRow(row)).map((row) => ({ ...row, teacherId: row.placementTeacherId }));
 }
