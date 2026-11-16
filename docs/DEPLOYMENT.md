@@ -5602,6 +5602,70 @@ administrator, on an administrator who has a post.
   substitute pool, and removing them from it alone would give Skolans dag two answers to who teaches. Part 5's page words that.
 - **Rolling back** is reverting the gateway: nothing in the database moves. A mark that has been set stays on the row and does nothing.
 
+### 20.6 Part 4, krisläge, mentor and the reporting rate as the teacher (20270219090000)
+
+The second part that asks for the mark in the database and the first that opens routes for it. A marked administrator is a
+teacher in krisläge (for the groups they answer for), as a mentor (the pupil's mentors, the leave request, the absence watch) and
+in the reporting rate (the lessons they stand on). The right stays the administrator's: no administrator arm is touched, nothing
+an administrator may do is narrowed, and nobody who is not marked gets anything. **Nobody is marked in production** (one
+administrator), so the migration and the merge change no answer there; RLS section 513 shows what happens the day somebody is.
+
+- **The migration** (one file, one transaction): three insert arms on `CrisisReports` (`crisis_reports_teacher_insert`, `_found_insert`,
+  `_free_insert`, all `TO app_authenticated`) get `app.current_user_teaches()` in OR with the teacher's test, so that a marked
+  schemaläggare or expedition marks their **own** group in a school whose start list (`CrisisSettings.startProfiles`) leaves them
+  out; ten functions ask "teaches like a teacher" (one new, `app.teaches_like(role, mark)`, the SQL twin of the gateway's
+  `teachesLike`, inlined into its callers, no grant; written `(role = 'TEACHER' OR (role = 'SCHOOL_ADMIN' AND mark)) IS TRUE` and not
+  as a `coalesce`, which cost the two lesson functions +17–25 % over four weeks of lessons through a different join order). The two lesson functions (`app.reporting_lessons` and
+  `app.absence_stats_lessons`) are replaced with a whole body behind an md5 guard (`20270210090000`'s method: two tests hold their text,
+  `absence-stats-definition.spec.ts` and RLS 392o); the other eight are patched from the catalogue at named places (each with the
+  number of occurrences it expects, and a replacement that already stands in the text stops it, so an arm is never wrapped twice);
+  `app.absence_watch_digest_plan` changes for the MENTOR group's recipients only. 25 policies and `app.checklist_taught_ids()` name
+  TEACHER and **stay**: the administrator's arm for the same table and verb admits every row they admit. For the alarm's seven read
+  arms that is the point: an administrator reads every alarm, group and pupil list of the school, for good, so **the gateway narrows
+  what a marked administrator is shown** (`CrisisService.mine` and `searchPupils` ask `app.crisis_window_open`,
+  `app.crisis_answers_for` and `app.crisis_call_window_open` and read with `id in (…)`), and the database does not. Section 494 holds
+  the list (the `PR4` tag is gone: every entry is converted or `STAYS` with a reason).
+- **Do not run the migration while an alarm is open.** The table it locks is read by the management's live view and written by the
+  phones during an alarm; `prod-fore.sql` has a check that no alarm is open (`CrisisAlarms.endedAt IS NULL` = 0).
+- **Locks.** `ALTER POLICY` takes ACCESS EXCLUSIVE on its table (measured); `CREATE OR REPLACE FUNCTION` takes no table lock. One
+  table, `CrisisReports`, is locked `NOWAIT` in a loop that retries every 50 ms for 30 s and holds nothing between tries (a waiting
+  ACCESS EXCLUSIVE would queue every reader behind it). If it is not free in 30 s the migration stops with nothing changed and says so:
+  Prisma then marks it failed and refuses every later `migrate deploy` (P3009) until
+  `prisma migrate resolve --rolled-back 20270219090000_en_undervisande_administrator_svarar_i_larmet_ar_mentor_och_rapporterar`
+  has been run, then deploy again.
+- **Retroactive, by design.** A person who is marked today has their lessons of the last 90 days counted as held by the night's count
+  (`app.reporting_compute` recomputes 90 days and rewrites rows whose figures changed), those without a saved register as not
+  reported, and the reminder (`app.reporting_remind`) looks back 30 days. The history of the absence statistics stores months it does
+  not recompute, so only an open month is affected. Rektor should know that a newly marked administrator can show an unreported
+  history the first night; the handbook (part 7) says it. RLS 513o has the case as a named test.
+- **The gateway** (no migration; additive): five routes carry `@AsTeacher` (`GET /crisis/mine`, `POST /crisis/mine/pupils`,
+  `POST /crisis/mine/marks`, `GET /reporting-rate/mine`, `PATCH /leave-requests/:id/refer`), so the route-guards spec lists eight doors
+  and holds twelve refusals; `UsersService.update` asks the mentors again when the mark changes (`app.leave_mentors` reads it);
+  the notification preferences offer a marked administrator `LEAVE_REQUESTED`, `LESSON_REPORT_REMINDER` and `LESSON_PUPIL_MOVED`
+  (not `COVER_REQUESTED`: SP409). The class teacher, the cover request's colleague side and the pool stay the teachers' (CT400, SP409).
+- **Deploy order:** the migration, then the merge, **after** every lower stamp that is in the same round (`20270218090000`, C1, is run
+  before this one). A new API against the old database is failsafe (the doors open, the database refuses: 42501 becomes 403
+  `CRISIS_NOT_YOURS`, empty lists); an old API against the new database changes nobody's answer (nobody is marked). No column, no
+  index, no engine contract. **Checks:** `scripts/prod-checks/teaches-pr4-fore.sql` before and `teaches-pr4-efter.sql` directly after
+  (plain `SELECT`s, one row per check with `got`, `expected`, `ok`; in this repository so that this text points at nothing outside
+  it). They hold: the Postgres version; no alarm open; nobody marked; the `md5(prosrc)` of the ten functions and the `md5` of the
+  three arms before and after (below); the md5 of every other function and policy unchanged; that `app.teaches_like` does not exist
+  before and has no grant after; the grants and, on 17, MAINTAIN; and the migration row finished and not rolled back. The counts of
+  migration rows and the fingerprint of their names depend on production's own order (set `F04`–`F06`/`E03`–`E04` from its rows).
+- **md5(prosrc), before → after:** `reporting_lessons` `a263885d…` → `ec19a5e2…`; `absence_stats_lessons` `2b076764…` → `16826e85…`;
+  `leave_mentors` `2e45bf18…` → `a0543c68…`; `absence_watch_mentees` `cb7f4c58…` → `5a5558cf…`; `absence_watch_digest_plan`
+  `ee974a4a…` → `efc50076…`; `leave_mine_to_decide` `1526df12…` → `43acb82d…`; `leave_request_taken` `8d94bb7a…` → `a62479a0…`;
+  `absence_watch_is_mentor_of` `d8db0338…` → `34158631…`; `ack_mentee_ids` `6f643d23…` → `69ff8f3a…`; `lesson_move_is_mentor`
+  `d7ffb0bf…` → `bbde2675…`; `teaches_like` — → `a8f98492…`. A branch that rewrites one of these (a parallel PR) changes the "before":
+  read `md5(prosrc)` on `origin/main` immediately before the merge and compare.
+- **Rolling back:** nothing reads the arms' or the functions' answers for a person who is not marked, so they can stay. To remove them,
+  run the edit the other way (the three arms' text without the OR; the eight patched functions from their earlier migrations'
+  `CREATE FUNCTION` text, and the two lesson functions from `20270112091000`/`20270210090000`; `DROP FUNCTION app.teaches_like` last).
+- **Tests:** RLS sections 510–514 (what the migration wrote; the three arms through the API's role for each profile that can be
+  marked, with the start list narrowed; the mentor; the reporting rate; nothing else changed) and 510o/512o/513o on the owner's side;
+  section 494 (the list); the adapter probe's `tk-a`…`tk-d` through the real services, the twin test of krisläge first;
+  `scripts/test/teaches-pr4-snapshot.sh`; and the bench numbers in the pull request.
+
 ## 21. Pinned lessons in the generator ("Fästa lektioner")
 
 A lesson a school lays by hand before Generera has reached the engine as a
