@@ -2687,7 +2687,8 @@
     ett blocks rader likadant sparas; ändrar den bara några av dem får de raderna
     ett fel som namnger blocket. En post med förlagda lektioner (se
     <em>Förlagda poster</em> nedan) kan inte läggas i ett block, eftersom blocket
-    läggs som en helhet.
+    läggs som en helhet. Vill du bestämma en tid för blockets lektioner
+    förlägger du blocket (se <em>Förlägg ett parallellt block</em> nedan).
   </p>
   <div class="note">
     <span class="label">Vad ett block inte kan</span>
@@ -2723,6 +2724,91 @@
       (5.1) eller lektioner tas bort.
     </p>
   </div>
+  <h4 id="forlagg-block">Förlägg ett parallellt block</h4>
+  <p>
+    Vet du på förhand att blockets lektioner ska ligga en viss dag och tid kan
+    du förlägga blocket innan du genererar, som du förlägger en enskild post
+    (<em>Förlagda poster</em> nedan). Tryck <span class="ui">Block</span>
+    bredvid läsåret och sedan <span class="ui">Förlägg …</span> på blocket.
+    Dialogen heter efter blocket och har en rad för varje förlagd lektion;
+    <span class="ui">Lägg till lektion</span> ger en ny, och
+    <span class="ui">Ta bort</span> på raden tar bort den. En lektion är en
+    tid som alla blockets poster har samtidigt, så raden har
+    <span class="ui">Dag</span> och <span class="ui">Starttid</span>, i
+    femminutersteg, och <span class="ui">Längd</span> när blockets lektioner
+    har olika längd, till exempel 80 + 40 minuter. Blockets veckor står som
+    text på raden: de är blockets och ställs inte in här. Har blockets poster
+    en period, till exempel bara hösten, gäller förläggningen i den perioden och
+    inte annars.
+  </p>
+  <p>
+    Du kan förlägga högst så många lektioner av varje längd som blocket har.
+    En rad ovanför lektionerna räknar dem, till exempel <em>Blockets lektioner:
+    1 lektion à 80 minuter och 2 lektioner à 40 minuter. Förlagda: 2 av
+    3.</em> <span class="ui">Spara</span> ersätter blockets alla förläggningar
+    med raderna i dialogen, och sparar du utan några rader tas de bort.
+  </p>
+  <p>
+    <strong>Sal per post.</strong> Under varje lektion har varje post i blocket
+    ett eget saltfält med postens ämne och klass som namn. Salen är valfri för
+    varje post. Står en post på <span class="ui">Motorn väljer sal</span>, som
+    är första valet, väljer schemat postens sal vid varje Generera, och salen
+    kan bli en annan nästa gång. Vill du ha samma sal varje gång anger du den
+    för den posten. Du kan ange sal för några poster och låta de andra stå
+    kvar. Samma regel om platsgränser som för en enskild post gäller (se
+    <em>Sal, eller motorn väljer</em> nedan): vägrar Generera för att utpekade
+    salar räknas som olika platser, lämna då salen på
+    <span class="ui">Motorn väljer sal</span>.
+  </p>
+  <p>
+    <strong>Domen.</strong> Varje lektion prövas för varje post i blocket med
+    samma regler som en förläggning på en enskild post
+    (<em>Det bedöms när du sparar och vid varje Generera</em> nedan), när du
+    öppnar dialogen och när du sparar. Håller en lektion du lägger eller
+    flyttar inte för någon post sparas ingenting, och dialogen säger vid vilken
+    lektion, för vilken post (med ämne och klass, aldrig en person) och varför,
+    till exempel <em>Spanska för Sp7: Läraren har redan en lektion som Generera
+    behåller: Matematik med 8B, måndag 10:00–11:00.</em> Poster som faller på
+    samma skäl sägs tillsammans. Har någon annan hunnit ändra blockets
+    förläggningar medan dialogen var öppen sparas inget: dialogen säger att
+    blocket har ändrats och erbjuder <span class="ui">Läs in igen</span>, och
+    du gör om ändringen.
+  </p>
+  <p>
+    <strong>En lektion som slutat hålla.</strong> Ett block kan ha lektioner som
+    inte längre håller för en post (läraren gjordes otillgänglig en dag, en
+    ramtid kortades). Du kan rätta dem en i taget: servern nekar bara det du
+    lägger eller flyttar, och en lektion som redan låg på blocket står kvar
+    även när den inte håller. Den visas röd, med skälet, när du öppnar dialogen
+    igen, och Generera körs inte förrän den håller. Ändrar du lektionens dag,
+    tid, längd eller en posts sal är lektionen ny för den posten och prövas, och
+    nekas om den inte håller.
+  </p>
+  <p>
+    <strong>Blocket kan inte förläggas</strong> om det saknar poster, om en av
+    dess poster delar sina lektioner mellan lärare (ge den en lärare först),
+    eller om det ligger på ett annat blocks tider, som efter en terminsvis
+    delning med ett ämne. Det sista blocket förläggs genom det block det
+    följer: förlägg det blocket, så följer det här med och får samma tider i
+    sina veckor. Dialogen säger vilket av fallen det är och namnger det andra
+    blocket, i stället för att låta sparningen misslyckas. Har blocket redan
+    förläggningar som inte längre går att ha kvar listas de och kan tas bort:
+    det är den enda sparning ett sådant block tar. Udda och jämna veckor i par
+    går inte att förlägga för ett block.
+  </p>
+  <p>
+    <strong>Efter Generera.</strong> Att spara ändrar inte grundschemat. Ändringen
+    gäller från nästa Generera, som lägger blockets lektion för varje post på
+    dagen och tiden, med den sal du angett eller en som motorn väljer, och märker
+    den som förlagd. En förlagd blocklektion går inte att flytta på blockets
+    kort i grundschemat: flytten nekas med <em>Lektionen är förlagd på
+    timplanen</em>. Ändra förläggningen här i stället. Att låsa och låsa upp
+    blocket går, och en lektion i blocket som inte är förlagd flyttas som förut.
+    Ett lås på en av blockets lektioner räknas inte som en förläggning:
+    blocket vägras fortfarande när det är delvis låst. En förläggning ger,
+    som en post, aldrig vika. Med Läsbehörighet syns inte
+    <span class="ui">Förlägg …</span>.
+  </p>
   <h4 id="terminsvis-halvklass">Halvklass terminsvis eller på halva terminer</h4>
   <p>
     Slöjd läses ofta så att halva klassen har textilslöjd medan andra halvan
@@ -3311,8 +3397,11 @@
     det gäller: en lektion utan lärare, en lärare som inte har någon lektion på
     posten eller ingen av den längden, ett par vars halvor har olika lärare och
     fler lektioner av en längd hos en lärare än hens del har nekas på samma
-    sätt. En post som ligger i ett parallellt block kan inte förläggas alls:
-    blocket läggs som en helhet. Ta bort blocktillhörigheten först.
+    sätt. En post som ligger i ett parallellt block kan inte förläggas för sig,
+    eftersom blocket läggs som en helhet: förlägg blocket i stället, med
+    <span class="ui">Förlägg …</span> under <span class="ui">Block</span> (4.2,
+    <em>Förlägg ett parallellt block</em>). Dialogen på en sådan post säger
+    det.
   </p>
   <h4>Grundschemat</h4>
   <p>
@@ -3333,7 +3422,8 @@
       ge den en annan sal, lärare eller andra veckor, eller lägga till en klass
       eller elever nekas med <em>Lektionen är förlagd på timplanen</em>, i
       lektionens dialog, i byten och bytkedjor och i klasslärarens schema.
-      Ändra förläggningen på posten i stället. Att låsa upp, låsa eller
+      Ändra förläggningen på posten i stället, eller på blocket om lektionen
+      är en parallell blocklektion (4.2). Att låsa upp, låsa eller
       parkera den går, och nästa Generera skriver den igen där förläggningen
       säger.</li>
     <li>En version som återställs, och ett utkast som kasseras, lägger
@@ -5309,6 +5399,14 @@
     Läser halvorna ett ämne i tur har varje block bara en post, och varje
     lektion är då ett eget kort som tar den andra halvans lektion med sig.
     Kortet parkeras inte. Parkera en lektion i taget, från dess dialog.
+  </p>
+  <p>
+    Är blockets lektioner förlagda (4.2, <em>Förlägg ett parallellt
+    block</em>) går kortet inte att flytta: sidan säger att lektionen är
+    förlagd på timplanen och skrivs om därifrån vid varje Generera, och flyttar
+    inget. Ändra förläggningen med <span class="ui">Förlägg …</span> under
+    <span class="ui">Block</span> på timplansposterna i stället. Att låsa
+    blocket går som vanligt.
   </p>
   <p>
     Klicka på kortet för att se kortets lektioner. Där öppnar

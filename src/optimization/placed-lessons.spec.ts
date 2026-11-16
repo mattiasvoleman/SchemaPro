@@ -1,7 +1,10 @@
 import {
   ANY_ROOM,
+  NO_BLOCK,
   PLACEMENT_CANNOT_STAND,
   PLACEMENTS_REFUSED_SUMMARY,
+  blockPlacedLessonRowsOf,
+  blockPlacementsKeyOf,
   lockedRowsOf,
   pinnedPlacesOf,
   pinnedRowsOf,
@@ -15,6 +18,8 @@ import {
   withoutPlaced,
   withoutPlacedShared,
   writtenFromPins,
+  type BlockMemberPlaced,
+  type BlockPlacementRead,
   type PlacedLessonRow,
   type PlacedPost,
   type PlacementRead,
@@ -202,6 +207,8 @@ describe('placementsRefusalOf', () => {
           reason: 'TEACHER',
           // The lesson it meets, as one phrase; its clock is not the row's.
           other: '8B Matematik',
+          // Not a block's lesson: the value the web's sentence chooses its words on (NO_BLOCK).
+          block: 'NO_BLOCK',
         },
       }),
     ]);
@@ -494,5 +501,531 @@ describe('no room in the refusal and in the key', () => {
     // Stable, and never the word null.
     expect(placementsKeyOf(storedPlacementsOf([none!]))).toBe(placementsKeyOf(storedPlacementsOf([none!])));
     expect(placementsKeyOf(storedPlacementsOf([none!]))).not.toContain('null');
+  });
+});
+
+/*
+ * FÖRLAGDA BLOCK (20270218090000): a block's förläggning is one pinned lesson of every member, with a room or none.
+ * C1 of the grafisk förläggning: the rows (blockPlacedLessonRowsOf), the line between a lock and a pin that now reads
+ * a marker and not the room alone, the room in a pin's place, the key of the block's own rows and the refusal that
+ * names the block.
+ */
+const BLOCK = 'block-sprakval';
+const OTHER_BLOCK = 'block-other';
+
+const blockMember = (id: string, overrides: Partial<BlockMemberPlaced> = {}): BlockMemberPlaced => ({
+  id,
+  subjectId: `subject-${id}`,
+  studentGroupId: `group-${id}`,
+  teacherId: `teacher-${id}`,
+  coTeacherId: null,
+  recurrence: 'ALL_WEEKS',
+  startDate: null,
+  endDate: null,
+  // TB409: every member has the same lessons, here two of an hour.
+  lessonsPerWeek: 2,
+  minutesPerLesson: 60,
+  lessonLengths: [],
+  shares: [],
+  blockId: BLOCK,
+  ...overrides,
+});
+
+const blockRead = (overrides: Partial<BlockPlacementRead> = {}): BlockPlacementRead => ({
+  id: 'bp-1',
+  blockId: BLOCK,
+  dayOfWeek: 3,
+  startTime: at('10:00'),
+  minutes: 60,
+  recurrence: 'ALL_WEEKS',
+  block: { sameTimesAsBlockId: null },
+  rooms: [],
+  ...overrides,
+});
+
+const trio = (overrides: Partial<BlockMemberPlaced> = {}) => ['m-a', 'm-b', 'm-c'].map((id) => blockMember(id, overrides));
+
+describe('blockPlacedLessonRowsOf', () => {
+  it('reads one lesson of a block as one pinned row per member: the derived id, the post’s own fields and the room the member chose', () => {
+    const rows = blockPlacedLessonRowsOf([blockRead({ rooms: [{ requirementId: 'm-b', roomId: 'sal-2' }] })], trio());
+
+    expect(rows.map((row) => row.id)).toEqual(['bp-1:m-a', 'bp-1:m-b', 'bp-1:m-c']);
+    expect(rows.map((row) => row.roomId)).toEqual([null, 'sal-2', null]);
+    expect(rows[0]).toEqual({
+      id: 'bp-1:m-a',
+      requirementId: 'm-a',
+      subjectId: 'subject-m-a',
+      studentGroupId: 'group-m-a',
+      teacherId: 'teacher-m-a',
+      coTeacherId: null,
+      roomId: null,
+      dayOfWeek: 3,
+      startTime: at('10:00'),
+      endTime: at('11:00'),
+      recurrence: 'ALL_WEEKS',
+      startDate: null,
+      endDate: null,
+      minutes: 60,
+      extraGroups: [],
+      participants: [],
+      ownTeacher: false,
+      placementTeacherId: null,
+      blockPlacementId: 'bp-1',
+      blockId: BLOCK,
+      blockFit: null,
+    });
+  });
+
+  it('takes the teacher, the medlärare and the window from each member’s own post, and the weeks from the lesson', () => {
+    const rows = blockPlacedLessonRowsOf(
+      [blockRead({ recurrence: 'ODD_WEEKS', startTime: at('08:05'), minutes: 45 })],
+      [
+        blockMember('m-a', { teacherId: 'ulf', coTeacherId: 'kim', recurrence: 'ODD_WEEKS', minutesPerLesson: 45, endDate: POST.endDate }),
+        blockMember('m-b', { teacherId: null, recurrence: 'ODD_WEEKS', minutesPerLesson: 45, startDate: new Date('2026-08-17T00:00:00.000Z') }),
+      ],
+    );
+
+    expect(rows).toEqual([
+      expect.objectContaining({ requirementId: 'm-a', teacherId: 'ulf', coTeacherId: 'kim', startDate: null, endDate: POST.endDate, recurrence: 'ODD_WEEKS', startTime: at('08:05'), endTime: at('08:50'), minutes: 45, blockFit: null }),
+      expect.objectContaining({ requirementId: 'm-b', teacherId: null, coTeacherId: null, startDate: new Date('2026-08-17T00:00:00.000Z'), endDate: null, recurrence: 'ODD_WEEKS', blockFit: null }),
+    ]);
+    // A member's teacher is the post's own and no förläggning column: nobody's row says a teacher of its own.
+    expect(rows.every((row) => row.ownTeacher === false && row.placementTeacherId === null)).toBe(true);
+  });
+
+  it('orders the lessons by day, start and the lesson’s id, and the members of a lesson by id, whatever order they are given in', () => {
+    const reads = [
+      blockRead({ id: 'bp-d', dayOfWeek: 4 }),
+      blockRead({ id: 'bp-a', dayOfWeek: 3, startTime: at('13:00') }),
+      blockRead({ id: 'bp-z', dayOfWeek: 3, startTime: at('08:00') }),
+      blockRead({ id: 'bp-b', dayOfWeek: 3, startTime: at('08:00') }),
+    ];
+    const four = trio({ lessonsPerWeek: 4 });
+    const expected = ['bp-b', 'bp-z', 'bp-a', 'bp-d'].flatMap((lesson) => ['m-a', 'm-b', 'm-c'].map((member) => `${lesson}:${member}`));
+
+    expect(blockPlacedLessonRowsOf(reads, four).map((row) => row.id)).toEqual(expected);
+    expect(blockPlacedLessonRowsOf([...reads].reverse(), [...four].reverse()).map((row) => row.id)).toEqual(expected);
+  });
+
+  it('gives no row for a block with no member, a post in no block, a block the posts are not in, or no lesson', () => {
+    expect(blockPlacedLessonRowsOf([blockRead()], [])).toEqual([]);
+    expect(blockPlacedLessonRowsOf([blockRead()], trio({ blockId: null }))).toEqual([]);
+    expect(blockPlacedLessonRowsOf([blockRead()], trio({ blockId: OTHER_BLOCK }))).toEqual([]);
+    expect(blockPlacedLessonRowsOf([], trio())).toEqual([]);
+  });
+
+  it('gives each block’s lessons to that block’s members only', () => {
+    const rows = blockPlacedLessonRowsOf(
+      [blockRead(), blockRead({ id: 'bp-x', blockId: OTHER_BLOCK, dayOfWeek: 5 })],
+      [...trio(), blockMember('x-1', { blockId: OTHER_BLOCK }), blockMember('x-2', { blockId: OTHER_BLOCK }), blockMember('loose', { blockId: null })],
+    );
+
+    expect(rows.map((row) => [row.blockId, row.id])).toEqual([
+      [BLOCK, 'bp-1:m-a'],
+      [BLOCK, 'bp-1:m-b'],
+      [BLOCK, 'bp-1:m-c'],
+      [OTHER_BLOCK, 'bp-x:x-1'],
+      [OTHER_BLOCK, 'bp-x:x-2'],
+    ]);
+  });
+
+  describe('a block whose lessons do not fit it (blockFitOf: a membership change left them wrong)', () => {
+    const otherBlock = () => ({
+      reads: [blockRead({ id: 'bp-x', blockId: OTHER_BLOCK, dayOfWeek: 5 })],
+      members: [blockMember('x-1', { blockId: OTHER_BLOCK }), blockMember('x-2', { blockId: OTHER_BLOCK })],
+    });
+
+    it.each([
+      ['LENGTH', [blockRead({ minutes: 50 })], trio()],
+      ['WEEKS', [blockRead({ recurrence: 'ODD_WEEKS' })], trio()],
+      ['COUNT', [blockRead({ id: 'bp-1' }), blockRead({ id: 'bp-2', dayOfWeek: 4 }), blockRead({ id: 'bp-3', dayOfWeek: 5 })], trio()],
+      ['SHARES', [blockRead()], [blockMember('m-a', { shares: [{ teacherId: 'bo', lessons: 1, minutes: 60 }] }), blockMember('m-b'), blockMember('m-c')]],
+      ['FOLLOWER', [blockRead({ block: { sameTimesAsBlockId: 'block-leader' } })], trio()],
+    ] as const)('says %s on every row of the block, and nothing on another block that fits', (rule, reads, members) => {
+      const other = otherBlock();
+
+      const rows = blockPlacedLessonRowsOf([...reads, ...other.reads], [...members, ...other.members]);
+
+      const ofBlock = rows.filter((row) => row.blockId === BLOCK);
+      expect(ofBlock).toHaveLength(reads.length * members.length);
+      expect(ofBlock.every((row) => row.blockFit === rule)).toBe(true);
+      const ofOther = rows.filter((row) => row.blockId === OTHER_BLOCK);
+      expect(ofOther).toHaveLength(2);
+      expect(ofOther.every((row) => row.blockFit === null)).toBe(true);
+    });
+
+    it('does not refuse a block for a room row of a post that is not a member: the row is no member\u2019s and is not read (the migration\u2019s preamble)', () => {
+      const stranger = blockRead({ rooms: [{ requirementId: 'stranger', roomId: 'sal-1' }, { requirementId: 'm-a', roomId: 'sal-2' }] });
+
+      const rows = blockPlacedLessonRowsOf([stranger], trio());
+
+      expect(rows.every((row) => row.blockFit === null)).toBe(true);
+      // The member's own room is read and the stranger's is read by nobody.
+      expect(rows.map((row) => [row.requirementId, row.roomId])).toEqual([
+        ['m-a', 'sal-2'],
+        ['m-b', null],
+        ['m-c', null],
+      ]);
+    });
+
+    it('holds a block of mixed lengths (80 + 40) to its own lengths and counts', () => {
+      const mixed = ['m-a', 'm-b'].map((id) => blockMember(id, { minutesPerLesson: 80, lessonLengths: [80, 40] }));
+      const fits = (minutes: number[]) =>
+        blockPlacedLessonRowsOf(
+          minutes.map((one, index) => blockRead({ id: `bp-${index}`, minutes: one, dayOfWeek: 1 + index })),
+          mixed,
+        ).map((row) => row.blockFit);
+
+      expect(new Set(fits([80, 40]))).toEqual(new Set([null]));
+      expect(new Set(fits([40]))).toEqual(new Set([null]));
+      expect(new Set(fits([80, 80]))).toEqual(new Set(['COUNT']));
+      expect(new Set(fits([40, 40]))).toEqual(new Set(['COUNT']));
+      expect(new Set(fits([60]))).toEqual(new Set(['LENGTH']));
+    });
+  });
+});
+
+describe('lockedRowsOf and pinnedRowsOf on a block’s rows', () => {
+  const ordinary = placedLessonRowsOf(
+    [read({ id: 'with-room', roomId: 'hall' }), read({ id: 'no-room', roomId: null, dayOfWeek: 3 })],
+    posts,
+  );
+  const block = blockPlacedLessonRowsOf(
+    [blockRead({ rooms: [{ requirementId: 'm-a', roomId: 'sal-1' }] })],
+    [blockMember('m-a'), blockMember('m-b')],
+  );
+  const all = [...ordinary, ...block];
+
+  it('never locks a block’s row, with a room or without: a lock inside a block is a partly locked block', () => {
+    expect(block.map((row) => row.roomId)).toEqual(['sal-1', null]);
+    expect(lockedRowsOf(block)).toEqual([]);
+    expect(pinnedRowsOf(block).map((row) => row.id)).toEqual(['bp-1:m-a', 'bp-1:m-b']);
+  });
+
+  it('still locks an ordinary row with a room and pins an ordinary row with none', () => {
+    expect(lockedRowsOf(all).map((row) => row.id)).toEqual(['with-room']);
+    expect(pinnedRowsOf(all).map((row) => row.id)).toEqual(['no-room', 'bp-1:m-a', 'bp-1:m-b']);
+  });
+
+  it('loses no row between them and puts none in both', () => {
+    const locked = lockedRowsOf(all).map((row) => row.id);
+    const pinned = pinnedRowsOf(all).map((row) => row.id);
+    expect([...locked, ...pinned].sort()).toEqual(all.map((row) => row.id).sort());
+    expect(locked.filter((id) => pinned.includes(id))).toEqual([]);
+  });
+});
+
+describe('pinnedPlacesOf with the payload’s id of a room (a block’s pinned lesson)', () => {
+  const rowsOf = (rooms: BlockPlacementRead['rooms'], minutes = 60) =>
+    blockPlacedLessonRowsOf([blockRead({ rooms, minutes })], [blockMember('m-a')]);
+  const lessons = (...minutes: number[]) => minutes.map((one) => ({ minutes: one, teacherId: 'teacher-m-a' as string | null }));
+
+  it('says the room in the payload’s id of it beside the place', () => {
+    const anonRoom = jest.fn((id: string) => `anon:${id}`);
+
+    const { places, unplaced } = pinnedPlacesOf(lessons(60, 60), rowsOf([{ requirementId: 'm-a', roomId: 'sal-1' }]), anonRoom);
+
+    expect(places).toEqual([{ dayOfWeek: 3, startTime: '10:00:00', endTime: '11:00:00', roomId: 'anon:sal-1' }, null]);
+    expect(unplaced).toEqual([]);
+    expect(anonRoom).toHaveBeenCalledTimes(1);
+    expect(anonRoom).toHaveBeenCalledWith('sal-1');
+  });
+
+  it('names no room on a place whose row has none: no roomId key at all, and the room namer is never asked', () => {
+    const anonRoom = jest.fn((id: string) => `anon:${id}`);
+
+    const { places } = pinnedPlacesOf(lessons(60, 60), rowsOf([]), anonRoom);
+
+    expect(Object.keys(places![0]!)).toEqual(['dayOfWeek', 'startTime', 'endTime']);
+    expect(anonRoom).not.toHaveBeenCalled();
+    // And a pin with no room needs no namer at all, as it never did.
+    expect(pinnedPlacesOf(lessons(60, 60), rowsOf([])).places![0]).toEqual({ dayOfWeek: 3, startTime: '10:00:00', endTime: '11:00:00' });
+  });
+
+  it('puts the room on the place of the row’s own length, in the engine’s order (the 40 of 80 + 40 + 40 is the second place)', () => {
+    const { places } = pinnedPlacesOf(lessons(80, 40, 40), rowsOf([{ requirementId: 'm-a', roomId: 'sal-1' }], 40), (id) => `anon:${id}`);
+
+    expect(places).toEqual([null, { dayOfWeek: 3, startTime: '10:00:00', endTime: '10:40:00', roomId: 'anon:sal-1' }, null]);
+  });
+
+  it('throws for a pinned lesson with a room when it is given no way to say the room: a pin must never lose its room unsaid', () => {
+    expect(() => pinnedPlacesOf(lessons(60, 60), rowsOf([{ requirementId: 'm-a', roomId: 'sal-1' }]))).toThrow(/room/);
+  });
+});
+
+describe('storedPlacementsOf with a block placed', () => {
+  const blockRows = blockPlacedLessonRowsOf([blockRead({ rooms: [{ requirementId: 'm-a', roomId: 'sal-1' }] })], [blockMember('m-a'), blockMember('m-b')]);
+  const stored = [read({ id: 'a' }), read({ id: 'b', dayOfWeek: 4, roomId: null })];
+
+  it('leaves a block’s rows out: they have no row of their own in the table the key reads', () => {
+    const rows = [...placedLessonRowsOf(stored, posts), ...blockRows];
+
+    expect(storedPlacementsOf(rows).map((row) => row.id)).toEqual(['a', 'b']);
+  });
+
+  it('keeps the key of the posts’ rows what it was, so a block placed gives no false stale', () => {
+    const rows = [...placedLessonRowsOf(stored, posts), ...blockRows];
+
+    expect(placementsKeyOf(storedPlacementsOf(rows))).toBe(placementsKeyOf(stored));
+    // And a school with only a block placed compares with the table's empty answer.
+    expect(placementsKeyOf(storedPlacementsOf(blockRows))).toBe(placementsKeyOf([]));
+  });
+});
+
+describe('placementsRefusalOf on a block’s rows', () => {
+  const rows = [
+    ...placedLessonRowsOf([read()], posts),
+    ...blockPlacedLessonRowsOf([blockRead({ rooms: [{ requirementId: 'm-a', roomId: 'sal-1' }] })], [blockMember('m-a'), blockMember('m-b')]),
+  ];
+  const refusedAll = rows.map((_, index) => ({ index, ok: false, reason: 'TEACHER' as const }));
+  const names = { requirement: (id: string) => `anon:${id}`, room: (id: string) => `anon:${id}` };
+
+  it('says the block, by the payload’s id of it, on a block’s lines and on no other', () => {
+    const block = jest.fn((id: string) => `anon-block:${id}`);
+
+    const refusal = placementsRefusalOf(rows, refusedAll, { ...names, block });
+
+    expect(refusal!.conflicts.map((line) => line.params?.['block'])).toEqual([NO_BLOCK, `anon-block:${BLOCK}`, `anon-block:${BLOCK}`]);
+    // Asked of the block rows alone, and of the block's own id.
+    expect(block.mock.calls).toEqual([[BLOCK], [BLOCK]]);
+  });
+
+  it('names the room a member chose and ANY_ROOM for one that chose none, as a post’s row does', () => {
+    const refusal = placementsRefusalOf(rows, refusedAll, { ...names, block: (id) => `anon-block:${id}` });
+
+    expect(refusal!.conflicts.map((line) => [line.params?.['requirement'], line.params?.['room'], line.roomIds])).toEqual([
+      [`anon:${POST.id}`, 'anon:hall', ['anon:hall']],
+      ['anon:m-a', 'anon:sal-1', ['anon:sal-1']],
+      ['anon:m-b', ANY_ROOM, []],
+    ]);
+    expect(refusal!.conflicts.every((line) => line.code === PLACEMENT_CANNOT_STAND)).toBe(true);
+    expect(refusal!.summaryParams).toEqual({ count: 3 });
+  });
+
+  it('names no block (NO_BLOCK) when the caller gave no namer for one', () => {
+    const refusal = placementsRefusalOf(rows, refusedAll, names);
+
+    expect(refusal!.conflicts.every((line) => line.params?.['block'] === NO_BLOCK)).toBe(true);
+  });
+});
+
+describe('blockPlacementsKeyOf', () => {
+  const a = blockRead({ id: 'bp-a', rooms: [{ requirementId: 'm-a', roomId: 'sal-1' }, { requirementId: 'm-b', roomId: 'sal-2' }] });
+  const b = blockRead({ id: 'bp-b', dayOfWeek: 4, startTime: at('13:00') });
+
+  it('is one string for one set in any order of the lessons and of the rooms', () => {
+    const reversed = { ...a, rooms: [...a.rooms].reverse() };
+
+    expect(blockPlacementsKeyOf([a, b])).toBe(blockPlacementsKeyOf([b, reversed]));
+  });
+
+  it('says every field a write writes from: the lesson, its block, where, how long, the weeks and the rooms', () => {
+    const base = blockPlacementsKeyOf([a, b]);
+
+    const changed: [string, readonly Omit<BlockPlacementRead, 'block'>[]][] = [
+      ['its own id', [{ ...a, id: 'bp-a2' }, b]],
+      ['its block', [{ ...a, blockId: OTHER_BLOCK }, b]],
+      ['its day', [{ ...a, dayOfWeek: 2 }, b]],
+      ['its start', [{ ...a, startTime: at('10:05') }, b]],
+      ['its length', [{ ...a, minutes: 40 }, b]],
+      ['its weeks', [{ ...a, recurrence: 'EVEN_WEEKS' }, b]],
+      ['a member’s room', [{ ...a, rooms: [{ requirementId: 'm-a', roomId: 'sal-9' }, a.rooms[1]!] }, b]],
+      ['the member a room is for', [{ ...a, rooms: [{ requirementId: 'm-c', roomId: 'sal-1' }, a.rooms[1]!] }, b]],
+      ['a room taken away', [{ ...a, rooms: [a.rooms[0]!] }, b]],
+      ['a room given to another member', [{ ...a, rooms: [...a.rooms, { requirementId: 'm-c', roomId: 'sal-3' }] }, b]],
+      ['a lesson taken away', [a]],
+      ['a lesson added', [a, b, blockRead({ id: 'bp-c', dayOfWeek: 5 })]],
+    ];
+    for (const [what, reads] of changed) {
+      expect([what, blockPlacementsKeyOf(reads) === base]).toEqual([what, false]);
+    }
+  });
+
+  it('is built of the rows themselves: their own ids, and the block a row reads beside them changes nothing', () => {
+    const key = blockPlacementsKeyOf([a, b]);
+
+    expect(key).toContain('bp-a');
+    expect(key).toContain('bp-b');
+    // Nothing derived (a member's row id is the lesson's and the post's) is in it.
+    expect(key).not.toContain('bp-a:');
+    expect(blockPlacementsKeyOf([{ ...a, block: { sameTimesAsBlockId: 'block-leader' } }, b])).toBe(key);
+    expect(blockPlacementsKeyOf([])).toBe('');
+  });
+
+  it('tells a room given to one member from the same room given to another, and two rooms from one', () => {
+    const only = (requirementId: string, roomId: string) => blockPlacementsKeyOf([blockRead({ rooms: [{ requirementId, roomId }] })]);
+
+    expect(only('m-a', 'sal-1')).not.toBe(only('m-b', 'sal-1'));
+    expect(only('m-a', 'sal-1')).not.toBe(only('m-a', 'sal-2'));
+    expect(only('m-a', 'sal-1')).not.toBe(blockPlacementsKeyOf([blockRead()]));
+  });
+});
+
+/*
+ * THE SAME PLACE k AT EVERY MEMBER (PLACED_LESSONS_OF_BLOCK_DIFFER). The engine holds the lessons of a block's members
+ * together by place: the k-th lesson of each member is held with the k-th of the others, and a pinned lesson at place k
+ * of one member and at another place of the next is a refusal of a week that has a timetable. The members' lessons are the
+ * same (TB409), so the rows' order is what gives each lesson of the block one place k at every member.
+ */
+describe('a block’s förläggningar take the same place k at every member (property)', () => {
+  /** mulberry32: a seeded generator, so a failing case is a number to run again. */
+  const seeded = (seed: number) => {
+    let state = seed >>> 0;
+    return () => {
+      state = (state + 0x6d2b79f5) >>> 0;
+      let t = state;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  };
+  const SHAPES: number[][] = [[80, 40], [60, 60, 40], [40, 40, 40], [80, 80, 40], [60, 60], [90, 60, 40, 40], [45, 45, 30], [60], [80, 40, 40], [75, 45]];
+  const STARTS = ['08:00', '08:05', '09:10', '10:00', '13:30'];
+  const anon = (id: string) => `anon:${id}`;
+  const shuffled = <T,>(rand: () => number, list: readonly T[]): T[] => {
+    const out = [...list];
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [out[i], out[j]] = [out[j]!, out[i]!];
+    }
+    return out;
+  };
+
+  interface Case {
+    lengths: number[];
+    members: BlockMemberPlaced[];
+    reads: BlockPlacementRead[];
+  }
+  const caseOf = (seed: number): Case => {
+    const rand = seeded(seed);
+    const lengths = SHAPES[Math.floor(rand() * SHAPES.length)]!;
+    const count = 2 + Math.floor(rand() * 3);
+    const ids = shuffled(rand, ['m-1', 'm-2', 'm-3', 'm-4', 'm-5', 'm-6', 'm-7']).slice(0, count);
+    const distinct = new Set(lengths).size > 1;
+    const members = ids.map((id) =>
+      blockMember(id, {
+        lessonsPerWeek: lengths.length,
+        minutesPerLesson: Math.max(...lengths),
+        lessonLengths: distinct ? [...lengths] : [],
+        // Teachers of their own on every member: who teaches never decides a place.
+        teacherId: `teacher-${Math.floor(rand() * 1000)}`,
+      }),
+    );
+    // 1..N förläggningar, never more of a length than the block has.
+    const chosen: number[] = [];
+    for (const minutes of new Set(lengths)) {
+      const has = lengths.filter((one) => one === minutes).length;
+      for (let n = Math.floor(rand() * (has + 1)); n > 0; n--) chosen.push(minutes);
+    }
+    if (chosen.length === 0) chosen.push(lengths[0]!);
+    const reads = shuffled(rand, chosen).map((minutes, index): BlockPlacementRead => {
+      const rooms = members.filter(() => rand() < 0.4 && rand() < 0.8).map((member) => ({ requirementId: member.id, roomId: `sal-${Math.floor(rand() * 4)}` }));
+      return blockRead({
+        // Ids unrelated to the order they are made in, so the order the rows come in is the rows' own.
+        id: `bp-${Math.floor(rand() * 1e6).toString(36)}-${index}`,
+        dayOfWeek: 1 + Math.floor(rand() * 3),
+        startTime: at(STARTS[Math.floor(rand() * STARTS.length)]!),
+        minutes,
+        rooms: shuffled(rand, rooms),
+      });
+    });
+    return { lengths, members: shuffled(rand, members), reads: shuffled(rand, reads) };
+  };
+  const slotOf = (place: { dayOfWeek: number; startTime: string; endTime: string } | null) =>
+    place === null ? null : [place.dayOfWeek, place.startTime, place.endTime];
+  /** The lessons a member's entry sends, longest first, as remainingLengths gives them. */
+  const lessonsOf = (lengths: readonly number[], teacherId: string | null) =>
+    [...lengths].sort((x, y) => y - x).map((minutes) => ({ minutes, teacherId }));
+  const withoutRoom = <P extends { roomId?: string }>(place: P | null) => (place === null ? null : { ...place, roomId: undefined });
+
+  const CASES = 400;
+
+  it(`holds for ${CASES} seeded blocks of two to four members, mixed lengths and any order of the rows`, () => {
+    const seen = { mixed: 0, ties: 0, rooms: 0, repeated: 0 };
+    for (let seed = 1; seed <= CASES; seed++) {
+      const { lengths, members, reads } = caseOf(seed);
+      const why = `seed ${seed}`;
+      if (new Set(lengths).size > 1) seen.mixed++;
+      if (new Set(reads.map((one) => `${one.dayOfWeek}|${one.startTime.getTime()}`)).size < reads.length) seen.ties++;
+      if (reads.some((one) => one.rooms.length > 0)) seen.rooms++;
+      if (reads.length >= 2 && new Set(reads.map((one) => one.minutes)).size < reads.length) seen.repeated++;
+
+      const rows = blockPlacedLessonRowsOf(reads, members);
+
+      // Every row of a block that fits is for every member, and every lesson is a row of each.
+      expect([why, rows.length]).toEqual([why, reads.length * members.length]);
+      expect([why, rows.every((row) => row.blockFit === null)]).toEqual([why, true]);
+
+      // The places of each member, from the lessons its entry sends.
+      const placesOf = new Map(
+        members.map((member) => {
+          const mine = rows.filter((row) => row.requirementId === member.id);
+          const placed = pinnedPlacesOf(lessonsOf(lengths, member.teacherId), mine, anon);
+          expect([why, member.id, placed.unplaced.length]).toEqual([why, member.id, 0]);
+          return [member.id, { mine, places: placed.places! }] as const;
+        }),
+      );
+
+      const first = [...placesOf.values()][0]!;
+      for (const [id, { places }] of placesOf) {
+        // The same place k, the same day and start, at every member; the lesson's end follows from its place's length.
+        expect([why, id, places.map(slotOf)]).toEqual([why, id, first.places.map(slotOf)]);
+        // Every förläggning got a place, and no place got two.
+        expect([why, id, places.filter((place) => place !== null).length]).toEqual([why, id, reads.length]);
+      }
+
+      // The room goes with its own lesson to its own place: the place a row takes is the first free of its length, in the
+      // rows' order, which an independent count of each length's rows says.
+      for (const { mine, places } of placesOf.values()) {
+        const sent = lessonsOf(lengths, null);
+        const taken = new Map<number, number>();
+        for (const row of mine) {
+          const nth = taken.get(row.minutes) ?? 0;
+          taken.set(row.minutes, nth + 1);
+          const index = sent.flatMap((lesson, position) => (lesson.minutes === row.minutes ? [position] : []))[nth]!;
+          expect([why, row.id, places[index]?.roomId]).toEqual([why, row.id, row.roomId === null ? undefined : anon(row.roomId)]);
+          expect([why, row.id, places[index]?.dayOfWeek]).toEqual([why, row.id, row.dayOfWeek]);
+        }
+      }
+
+      // The rows come in the order (day, start, id of the lesson) for every member.
+      const expectedOrder = [...reads]
+        .sort((x, y) => x.dayOfWeek - y.dayOfWeek || x.startTime.getTime() - y.startTime.getTime() || (x.id < y.id ? -1 : 1))
+        .map((one) => one.id);
+      for (const { mine } of placesOf.values()) {
+        expect([why, mine.map((row) => row.blockPlacementId)]).toEqual([why, expectedOrder]);
+      }
+
+      // The order the lessons and the members are handed over in changes nothing.
+      const rand = seeded(seed + 100_000);
+      expect([why, blockPlacedLessonRowsOf(shuffled(rand, reads), shuffled(rand, members))]).toEqual([why, rows]);
+
+      // Rooms chosen for some members change `roomId` of their places and nothing else: the same places without any room.
+      const bare = blockPlacedLessonRowsOf(
+        reads.map((one) => ({ ...one, rooms: [] })),
+        members,
+      );
+      for (const member of members) {
+        const without = pinnedPlacesOf(lessonsOf(lengths, member.teacherId), bare.filter((row) => row.requirementId === member.id)).places!;
+        expect([why, member.id, placesOf.get(member.id)!.places.map(withoutRoom)]).toEqual([why, member.id, without.map(withoutRoom)]);
+      }
+    }
+    // The generator reaches what the property is about: mixed lengths, rows tied on a day and a start, rooms and a length twice.
+    expect(seen.mixed).toBeGreaterThan(CASES / 2);
+    expect(seen.ties).toBeGreaterThan(10);
+    expect(seen.rooms).toBeGreaterThan(CASES / 4);
+    expect(seen.repeated).toBeGreaterThan(CASES / 5);
+  });
+
+  it('would fail a place k that is not the same: the rows of one member read in another order put a lesson of one length elsewhere', () => {
+    // What the property guards: members that read the block's lessons each in an order of their own. Two lessons of 60.
+    const members = [blockMember('m-a'), blockMember('m-b')];
+    const rows = blockPlacedLessonRowsOf([blockRead({ id: 'bp-1', dayOfWeek: 3 }), blockRead({ id: 'bp-2', dayOfWeek: 4 })], members);
+    const lessons = lessonsOf([60, 60], null);
+
+    const same = members.map((member) => pinnedPlacesOf(lessons, rows.filter((row) => row.requirementId === member.id), anon).places!.map(slotOf));
+    expect(same[0]).toEqual(same[1]);
+    const swapped = pinnedPlacesOf(lessons, [...rows.filter((row) => row.requirementId === 'm-b')].reverse(), anon).places!.map(slotOf);
+    expect(swapped).not.toEqual(same[0]);
   });
 });

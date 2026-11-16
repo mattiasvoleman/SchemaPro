@@ -737,3 +737,69 @@ describe('judgedRowOf: a row as every judge of one reads it (review of #315, MED
     expect(judgedRowOf(shared, { ...slot, teacherId: null }).teacherId).toBeNull();
   });
 });
+
+/*
+ * BLOCK_FIT: a row that is one member's lesson of a block's förläggning (block-placement-judge.ts) carries `blockFit`, the rule the
+ * block's lessons break, or null when they fit. A row of a post's own carries none and is never asked.
+ */
+describe('BLOCK_FIT (a member\'s lesson of a block that does not fit it)', () => {
+  const rules = ['FOLLOWER', 'EMPTY', 'SHARES', 'LENGTH', 'WEEKS', 'COUNT', 'MEMBER'] as const;
+
+  it.each(rules)('refuses a row with the rule %s, naming it in params.rule', async (rule) => {
+    const verdicts = await judge(fakeTx(), [row({ blockFit: rule })]);
+    expect(verdicts).toEqual([{ index: 0, ok: false, reason: 'BLOCK_FIT', params: { rule } }]);
+  });
+
+  it('asks the week nothing of a row it refuses, as for every question about the row alone', async () => {
+    const tx = fakeTx({ kept: [{ id: 'k1', dayOfWeek: 2, teacherId: T1, studentGroupId: G7B, subjectId: MATTE, start: '10:00', end: '11:00' }] });
+    const [verdict] = await judge(tx, [row({ blockFit: 'LENGTH' })]);
+    // The teacher is booked at the same hour, but the row is told what is wrong with the block's lessons, and no read of the week is made.
+    expect(verdict).toEqual({ index: 0, ok: false, reason: 'BLOCK_FIT', params: { rule: 'LENGTH' } });
+    expect(tx['masterLesson']!['findMany']).not.toHaveBeenCalled();
+    expect(readBoardFacts).not.toHaveBeenCalled();
+    expect(readOtherSchoolHolds).not.toHaveBeenCalled();
+  });
+
+  it('leaves a row with no blockFit as it was: absent and null are both a row that is asked nothing', async () => {
+    expect(await judge(fakeTx(), [row()])).toEqual([{ index: 0, ok: true }]);
+    expect(await judge(fakeTx(), [row({ blockFit: null })])).toEqual([{ index: 0, ok: true }]);
+  });
+
+  it('is held to the week like any row when the block\'s lessons fit', async () => {
+    const tx = fakeTx({ kept: [{ id: 'k1', dayOfWeek: 2, teacherId: T1, studentGroupId: G7B, subjectId: MATTE, start: '10:00', end: '11:00' }] });
+    expect((await judge(tx, [row({ blockFit: null })]))[0]).toMatchObject({ ok: false, reason: 'TEACHER' });
+  });
+
+  it('is judged per row: a row of a block that does not fit does not refuse a row beside it that stands on its own', async () => {
+    const verdicts = await judge(fakeTx(), [row({ blockFit: 'COUNT' }), row({ requirementId: 'req-2', dayOfWeek: 4, studentGroupId: G7B, subjectId: MATTE, teacherId: T2, roomId: R2 })]);
+    expect(verdicts.map((verdict) => verdict.reason ?? 'ok')).toEqual(['BLOCK_FIT', 'ok']);
+  });
+
+  describe('where it stands among the questions about the row alone', () => {
+    const demand = new Map([['req-1', { post: { lessonsPerWeek: 1, minutesPerLesson: 60, lessonLengths: [] }, lockedMinutes: [60], placed: [60] }]]);
+
+    it('is after the school day, the half of a pair, and a post in a block', async () => {
+      expect((await judge(fakeTx(), [row({ dayOfWeek: 6, blockFit: 'LENGTH' })]))[0]?.reason).toBe('SCHOOL_DAY');
+      expect((await judge(fakeTx(), [row({ pairWithoutRoom: true, blockFit: 'LENGTH' })]))[0]?.reason).toBe('PAIR_ROOM');
+      expect((await judge(fakeTx(), [row({ inBlock: true, blockFit: 'LENGTH' })]))[0]?.reason).toBe('BLOCK');
+      expect((await judge(fakeTx(), [row({ inBlock: true, blockFit: 'LENGTH' })]))[0]?.params).toBeUndefined();
+    });
+
+    it('is before the post\'s demand: a block that does not fit is told as that, not as the locks of one member', async () => {
+      expect((await judge(fakeTx(), [row({ blockFit: 'COUNT' })], { demand }))[0]).toEqual({
+        index: 0,
+        ok: false,
+        reason: 'BLOCK_FIT',
+        params: { rule: 'COUNT' },
+      });
+      // And the demand is still asked of a row that fits.
+      expect((await judge(fakeTx(), [row({ blockFit: null })], { demand }))[0]?.reason).toBe('OVER_DEMAND');
+    });
+  });
+
+  it('names no person and nothing but the rule: params is flat and short', async () => {
+    const [verdict] = await judge(fakeTx(), [row({ blockFit: 'SHARES' })]);
+    expect(Object.keys(verdict!.params!)).toEqual(['rule']);
+    expect(JSON.stringify(verdict)).not.toContain(T1);
+  });
+});

@@ -19,7 +19,15 @@
  *
  * In all three the English is shown. Untranslated is a poor read; empty is no
  * read at all, and the sentence is the whole value of the response.
+ *
+ * ONE OF THEM IS KNOWN AND IS NOT LEFT TO THE FALLBACK. A refusal of a placed
+ * lesson is stored with the job it refused, and the argument `block` (the block a
+ * member's lesson belongs to) is newer than the oldest of them: a row written
+ * before Förlägg blocket has no `block`, and reads as a lesson of no block.
  */
+const PARAM_DEFAULTS: Record<string, Record<string, string | number>> = {
+  PLACEMENT_CANNOT_STAND: { block: "NO_BLOCK" },
+};
 
 /** The half of next-intl's translator this needs, so a test can pass a stub. */
 export interface MessageLookup {
@@ -39,7 +47,7 @@ export function engineMessage(t: MessageLookup, sentence: EngineMessage): string
   const { code, message, params } = sentence;
   if (!code || !t.has(code)) return message;
   try {
-    return t(code, params ?? {});
+    return t(code, { ...(PARAM_DEFAULTS[code] ?? {}), ...(params ?? {}) });
   } catch {
     // next-intl throws on a missing argument rather than printing a hole.
     // Same answer as an untranslated key: show what the engine said.

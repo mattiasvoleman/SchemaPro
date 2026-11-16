@@ -407,6 +407,39 @@ jobs:
           AI_ENGINE_TIMEOUT_MS: '15000'
         run: npx ts-node --transpile-only scripts/test/probe-forlagda-poster.ts
 
+      # Förlagda block (20270218090000): a parallel block's lesson through the application Nest builds, on this
+      # database as the API role, with the engine on a node:http stub that holds pins. A block of three posts: a
+      # lesson saves with a room for one member and the engine's choice for the others, is read, judged by member and
+      # refused by rule (LENGTH, COUNT, a teacher two members share, a room that is not the school's) with nothing
+      # written; the post's own rule BLOCK stays, at the gateway and in the database; BP409 as the owner (LENGTH,
+      # MEMBER); two writers with one baseKey, ten times: one saves and one is BLOCK_PLACEMENTS_STALE. Generera pins
+      # every member's lesson at the same place k with the one room named and no lock, writes it locked, generated and
+      # fromPlacement, and writes it again; a real lock on a member refuses by name before the engine is woken; a lesson
+      # changed while the solver ran is GENERATE_STALE; a post that joins has the lesson, a post that leaves takes only
+      # its room row; the block card is not moved by hand and the block can be locked; a room a member chose is not
+      # removed. It drops the school it made.
+      - name: Förlagda block probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+          NODE_ENV: test
+          JWT_SECRET: test-secret-not-used-by-the-fake-guard
+          JWT_ISSUER: https://test.invalid/auth/v1
+          AI_ENGINE_API_KEY: test-key
+          AI_ENGINE_TIMEOUT_MS: '15000'
+        run: npx ts-node --transpile-only scripts/test/probe-forlagg-block.ts
+
+      # Förlagda block, the locks (20270218090000): between TWO real sessions, which no single-session test of the RLS suite can see.
+      # Four races, ten times each (a placement against a member's change of length, a share, a post that leaves, and a second
+      # placement: exactly one is refused, none ends in a set that does not fit, none deadlocks), and three hunts of 300 attempts
+      # for deadlocks between two paths that take the post's row and the block's row (a member's lessons against a share; two posts
+      # that change blocks the other way; a post that moves in while a placement is written). The run drops the school it made.
+      - name: Förlagda block lock probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-forlagg-block-lasen.ts
+
       # Hela skolans data (K5, 20270114090000): two schools, each with people,
       # lessons, attendance, absence, leave and notices, and an export ordered
       # at one of them, built by the job as the ordering administrator, stored

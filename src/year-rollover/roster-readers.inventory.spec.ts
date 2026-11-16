@@ -492,11 +492,16 @@ describe('the roster-reader inventory', () => {
       // only and asks for no basis. The year's week of förläggningar judges every
       // row of the year at once (boardOfYear, the page Förlägg i veckan), which
       // is the same question over every post, so it answers the same 409.
+      //
+      // Förlagda block judge a block's lesson as the rows of its members in the same call (judgePlacements), so the block's
+      // view (listOfBlock) and its save (replace) read the same basis and answer the same 409.
       expect(reached.map((entry) => entry.route).sort()).toEqual([
         'AnalysisController.costBasis',
         'AnalysisController.keyFigures',
         'AnalysisController.payrollBasis',
         'AnalysisController.payrollFile',
+        'BlockPlacementsController.listOfBlock',
+        'BlockPlacementsController.replace',
         'CalendarController.publish',
         'CalendarLessonsController.assignSubstitute',
         'CalendarLessonsController.suggestSubstitutes',

@@ -109,14 +109,32 @@ export class RoomsService {
           select: { requirement: { select: { subject: { select: { name: true } }, studentGroup: { select: { name: true } } } } },
           orderBy: { requirementId: 'asc' },
         });
-        if (placed.length > 0) {
+        // Förlagda block (20270218090000): a room a member of a block chose for one of the block's lessons is the same, and the key
+        // from the room row is NO ACTION too. Said by the block's name and the post, so the school knows which block to open.
+        const blockPlaced = await tx.teachingBlockPlacementRoom.findMany({
+          where: { roomId: id },
+          select: {
+            placement: { select: { block: { select: { name: true } } } },
+            requirement: { select: { subject: { select: { name: true } }, studentGroup: { select: { name: true } } } },
+          },
+          orderBy: [{ placementId: 'asc' }, { requirementId: 'asc' }],
+        });
+        if (placed.length > 0 || blockPlaced.length > 0) {
           const posts = [
             ...new Set(placed.map((row) => `${row.requirement.subject.name} ${row.requirement.studentGroup.name}`)),
           ];
-          const shown = posts.slice(0, 5).join(', ');
+          const blocks = [
+            ...new Set(
+              blockPlaced.map(
+                (row) => `blocket ${row.placement.block.name} (${row.requirement.subject.name} ${row.requirement.studentGroup.name})`,
+              ),
+            ),
+          ];
+          const named = [...posts, ...blocks];
+          const shown = named.slice(0, 5).join(', ');
           throw new BadRequestException(
-            `Salen är förlagd för ${shown}${posts.length > 5 ? ` och ${posts.length - 5} till` : ''}. ` +
-              `Ta bort ${posts.length === 1 ? 'förläggningen' : 'förläggningarna'} först.`,
+            `Salen är förlagd för ${shown}${named.length > 5 ? ` och ${named.length - 5} till` : ''}. ` +
+              `Ta bort ${named.length === 1 ? 'förläggningen' : 'förläggningarna'} först.`,
           );
         }
         const orphaned = await tx.roomPreference.findMany({

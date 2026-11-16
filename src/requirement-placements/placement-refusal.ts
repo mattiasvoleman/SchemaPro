@@ -1,4 +1,5 @@
 import { ConflictException } from '@nestjs/common';
+import type { BlockVerdictView } from './block-placement-judge';
 import type { PlacementParams, PlacementRefusalReason, PlacementVerdict } from './placement-judge';
 
 /** The problem `code` of a förläggning that stands where the week does not hold it. */
@@ -29,7 +30,9 @@ export function placementRefusalText(reason: PlacementRefusalReason, params?: Pl
     case 'PAIR_ROOM':
       return 'Udda och jämna veckor av samma längd är en lektion på två platser, och båda platserna måste ha en sal. Välj sal för båda halvorna, eller välj varje vecka och låt motorn välja sal.';
     case 'BLOCK':
-      return 'Posten ligger i ett parallellt block, som läggs på samma tider för alla poster. En enskild post i ett block kan inte förläggas.';
+      return 'Posten ligger i ett parallellt block, som läggs på samma tider för alla poster. En enskild post i ett block kan inte förläggas: förlägg blocket i stället.';
+    case 'BLOCK_FIT':
+      return 'Blockets förlagda lektioner passar inte längre blocket. Öppna blocket och ändra eller ta bort förläggningarna.';
     case 'TEACHER':
       return `Läraren har redan ${otherText(params)}.`;
     case 'ROOM':
@@ -81,5 +84,33 @@ export function placementRefusedConflict(verdict: PlacementVerdict): ConflictExc
     message: `Förläggning ${verdict.index + 1}: ${placementRefusalText(reason, verdict.params)}`,
     code: REQUIREMENT_PLACEMENT_REFUSED,
     params: { index: verdict.index, reason, ...(verdict.params ?? {}) },
+  });
+}
+
+/** The problem `code` of a block's förläggning that stands where the week does not hold it. */
+export const BLOCK_PLACEMENT_REFUSED = 'BLOCK_PLACEMENT_REFUSED';
+
+/** The problem `code` of a save made on a read of the block's lessons that is no longer the stored one. */
+export const BLOCK_PLACEMENTS_STALE = 'BLOCK_PLACEMENTS_STALE';
+
+/**
+ * The 409 for the first lesson of a block that does not hold, said by the member it is found on (`requirementId`: the
+ * dialog names the post's subject and class from its own list): the lesson's place in the request (`index`), the `reason` and
+ * the reason's own figures, flat, which is all the exception filter forwards.
+ */
+export function blockPlacementRefusedConflict(verdict: BlockVerdictView): ConflictException {
+  const reason = verdict.reason ?? 'SCHOOL_DAY';
+  return new ConflictException({
+    message: `Förläggning ${verdict.index + 1}: ${placementRefusalText(reason, verdict.params)}`,
+    code: BLOCK_PLACEMENT_REFUSED,
+    params: { index: verdict.index, requirementId: verdict.requirementId, reason, ...(verdict.params ?? {}) },
+  });
+}
+
+/** The 409 for a save on a stale read: nothing is written, and the client reads the block again. */
+export function blockPlacementsStaleConflict(): ConflictException {
+  return new ConflictException({
+    message: 'Blockets förläggningar har ändrats sedan du läste dem. Läs om blocket och gör om ändringen.',
+    code: BLOCK_PLACEMENTS_STALE,
   });
 }

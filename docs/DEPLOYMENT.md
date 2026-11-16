@@ -5776,8 +5776,8 @@ the table in a long transaction): it never waits while it holds a lock, and afte
   and `placements` does not name it. It is a place in the post's `pinnedLessons`: one place per lesson, in the order
   `lessonTeacherIds` has (longest first), `null` where the engine places the lesson, `endTime` the start plus the
   length of the lesson at that place. On a post with periods the pin holds in the post's periods and in no others.
-  A post in a parallel block is never sent a pin (the engine takes a pin in a block for every member or none, and
-  nothing here builds that): such a row is refused by name, `BLOCK`.
+  A post's OWN row in a parallel block is refused by name, `BLOCK`; a block's lessons are pinned for every member
+  together, with the engine taking a pin in a block for every member or none (§24).
 - **A pair needs its rooms.** An odd and an even row of one length on an every-week post are one lesson in two
   places, and the engine cannot hold half a lesson of an every-week post, so a pair is sent as two locks, and a lock
   has a room. A pair with no room on a half is refused at the save (409 `REQUIREMENT_PLACEMENTS_DO_NOT_FIT`, rule
@@ -5829,18 +5829,19 @@ the table in a long transaction): it never waits while it holds a lock, and afte
   more than the 1.2 times on the smaller weeks of §21.4, which were pinned from timetables of 250 pupils and a
   högstadium; no run here was longer than 7 minutes, and the figures move with the load (a round's three variants
   share it, two rounds apart they do not).
-- **The 2,000-pupil benchmark has no first timetable to take lessons from.** It is a TIMEOUT in `docs/verification-baseline.md`
-  (570 s) and was one here: 603 s at a load of 20 to 50, and the 1,000-pupil school gave none in 300 s (load 40 to 50),
-  so the measurement that was meant for it was made on the largest size that gave a timetable. A school of 2,000 that
-  lays lessons with the room left to the engine is therefore no further from a first timetable than with none laid, and
-  one that lays them as locks with their rooms is further, as before. Nothing here moves the Generera budget.
+- **The 1,000- and 2,000-pupil benchmarks have no first timetable to take lessons from, in any variant.** The 2,000-pupil
+  benchmark is a TIMEOUT in `docs/verification-baseline.md` (570 s) and was one here with nothing laid: 603 s at a load of 20
+  to 50. The 1,000-pupil school gave no first timetable in 300 s either (load 40 to 50), so the measurement that was meant for
+  them was made on the largest size that gave one, 500 pupils. **Nothing was measured on a school of 1,000 or 2,000 with
+  lessons laid, in any form, so this section makes no claim about them**: not that laying lessons with the room left to the
+  engine leaves such a school no further from a first timetable, and not that it leaves it further. What was measured is that
+  the same lessons as locks with their rooms cost the search more than as pinned lessons on every size that gave a timetable
+  and was paired: 265.6 s against 18.8 s on 500 pupils with 144 laid, 36 to 43 s against 13 to 15 s on 250 pupils with 120
+  laid (§21.4), with models of 260,598 and 87,642 variables as locks against 10,845 and 7,870 as pinned lessons. On the
+  högstadium week the two were alike in time (22.8 s as locks against 19.9 s pinned with 200 laid, one worker, not paired; §21.4)
+  and 12 times apart in variables (133,036 against 10,739). Nothing here moves the Generera budget.
 - **Counting.** `SELECT count(*) FILTER (WHERE "roomId" IS NULL) AS pinned, count(*) AS all_rows FROM
   "TeachingRequirementPlacements"` says how many schools' rows the engine chooses the room for.
-
-  lessons: 133,036 and 10,739). Not measured on the 2,000-pupil benchmark,
-  where a first timetable takes minutes and a factor of two to three is felt
-  in the budget: that is measured with the change that first sends the
-  field.
 
 ## 23. The explanation of a refused week ("Förklaringen av en vägran")
 
@@ -5927,3 +5928,150 @@ codes, fewer of them.
 - **Where to look.** `benchmarks/hogstadium.py --teacher-day-rules --infeasible-days`
   prints the conflict codes of the högstadium week. The measurement and its data are
   in the session notes (`forklaring-utan-mal.md`).
+
+## 24. A parallel block's förläggning: "Förlägg blocket" (`TeachingBlockPlacements`)
+
+A parallel block ("Språkval åk 7": Spanska, Tyska and Franska over groups that cut across 7A, 7B and 7C) is timplansposter
+whose lessons are laid at the same times (`TeachingRequirements."blockId"`). Until this release a post in a block could not
+be laid by hand: the database refuses a row of its own on it (`TeachingRequirementPlacements`, rule `BLOCK`) and
+Generera refuses a block with one lock while the rest are still to place (`BLOCK_PARTLY_LOCKED`). Since this release the
+school can lay **a block's lesson** on a day and a time before Generera, from the timplan (**Block → Förlägg blocket**),
+for all the block's posts at once, with a room of its own for each post or none (**"Motorn väljer sal"**, the engine
+chooses it at every Generera). A block may have some of its lessons laid and the rest left to Generera, which a lock
+cannot do. The rule of the single post stays as it was: a post in a block still cannot have a row of its own.
+
+Migration `20270218090000_ett_block_kan_forlaggas`: two new tables, both school-bound with composite keys
+`(x, "schoolId")` and `ON UPDATE NO ACTION` (RLS section 330 holds that):
+
+- `"TeachingBlockPlacements"`: one lesson of the block (day 1 to 5, start, length 15 to 240 minutes on the five-minute
+  grid, 08:00 to 18:00, the block's weeks). It carries `"academicYearId"` because the key to the block is the block's own
+  existing `("id", "academicYearId", "schoolId")`; a new unique index on a table Generera reads in long transactions would
+  have been one more lock to take.
+- `"TeachingBlockPlacementRooms"`: one row for each post of the block that chose a room of its own for a lesson. **A post with
+  no row is a post whose room the engine chooses.** The key to `"Rooms"` is `NO ACTION`: a room a block names is not
+  removed, and `rooms.service.ts` refuses its removal by the block's name and the post.
+
+Four arms of RLS on each table, to `app_authenticated` only: the school's `SCHOOL_ADMIN` reads, and the one who writes
+`PLANERING` writes. No arm for `authenticated`, `anon` or `service_role`, no `MAINTAIN` on Postgres 17. No arm names
+`TEACHER`, so RLS section 494 (the catalogue guard of `Users.teaches`) is untouched. RLS sections 500 to 504 hold all of it.
+
+### 24.1 Deploy order
+
+**The migration first, then the merge.** It takes `SHARE ROW EXCLUSIVE` on `Schools`, `TeachingBlocks`,
+`TeachingRequirements`, `TeachingRequirementShares` and `Rooms` (the keys and the triggers), all five `NOWAIT` in a loop with
+a 30 s deadline: it never waits while it holds a lock, and after 30 s it stops with nothing changed
+(`prisma migrate resolve --rolled-back 20270218090000_ett_block_kan_forlaggas`, then deploy again). Nothing is taken in
+`ACCESS EXCLUSIVE`: no existing column changes.
+
+1. Run `prod-fore.sql`, then `prisma migrate deploy` from a tree that has every applied migration and this one, then
+   `prod-efter.sql`: the checks named `..._record_equal_before_and_after` must give the same figure twice (the old triggers of
+   `TeachingRequirements`, `TeachingRequirementShares` and `TeachingBlocks` are unchanged and exactly the new ones added, and the
+   post's own fit function is the same by `md5`).
+2. Merge. The engine is not touched and keeps `pinnedLessons` (§21): check that `https://<solver-host>/openapi.json` has a
+   schema named `PinnedLesson`. An engine without it answers 422 and the run is refused with
+   `ENGINE_LACKS_PINNED_LESSONS`, nothing written (§22.1).
+3. After: a school with no block placed sends the payload it always sent.
+
+### 24.2 Rolling back
+
+- **The API before this one ignores the new tables.** Rolled back past this release, a block that has lessons laid is laid
+  freely by Generera, **without a word**: the placements are not lost, but they do nothing until the release is back, and
+  nobody is told. Check `SELECT count(*) FROM "TeachingBlockPlacements"` before rolling back and tell the schools that have
+  some.
+- The migration is rolled back in this order (nothing else points at the tables):
+  `DROP TRIGGER "TeachingBlocks_placements_fit" ON "TeachingBlocks"`,
+  `DROP TRIGGER "TeachingRequirementShares_block_placements_fit" ON "TeachingRequirementShares"`,
+  `DROP TRIGGER "TeachingRequirements_block_placements_fit" ON "TeachingRequirements"`,
+  `DROP TRIGGER "TeachingRequirements_block_placement_rooms_leave" ON "TeachingRequirements"`,
+  `DROP TABLE "TeachingBlockPlacementRooms"`, `DROP TABLE "TeachingBlockPlacements"`,
+  `DROP FUNCTION app.teaching_block_placements_fit()`, `DROP FUNCTION app.teaching_block_placement_rooms_leave()`; then
+  `prisma migrate resolve --rolled-back 20270218090000_ett_block_kan_forlaggas`. The post's own fit function and triggers
+  were never touched.
+- The engine is not rolled back past §21 while this gateway is live.
+
+### 24.3 What the gateway does with a block's lesson
+
+- **It is a pinned lesson of every member, never a lock.** A lock inside a block makes the block partly locked, which
+  Generera refuses (`BLOCK_PARTLY_LOCKED`, `judgeBlocks`, untouched), and a pinned lesson with a room does the same job. So
+  each lesson of the block is one row for each member, marked as a block's, and `lockedRowsOf` and `pinnedRowsOf` are
+  the only place that tells a lock from a pin: the fixed lessons, what the post is asked for, its locked days, the teacher's
+  weekdays, `placements`, the kept timetable and the coverage base all read `lockedRowsOf` and see no block row. A block's
+  lesson with a room is sent in `pinnedLessons` with `roomId`, in the payload's anonymous id.
+- **The same place k at every member.** The engine holds place k of a block at one day and start for every member or none
+  (`PLACED_LESSONS_OF_BLOCK_DIFFER`). The members have the same lessons (`TB409`), and the rows are given in the same stable
+  order (day, start, id of the lesson) for every member, so each member's pin lands at the same place k in its post's
+  lessons, which is longest first. A block that is not sent as a block (one member) sends the pin as an ordinary pin.
+- **A block on another block's times is placed through the block it follows.** Its own placements are refused by the
+  database (`BP409`, rule `FOLLOWER`), and the follower's lessons are written at the leader's times beside the answer
+  (`mirrorLessons`), as plain generated lessons with no mark: it is the leader's lessons that are laid and marked.
+- **The lesson that comes back** is known by post, weekday, start and length, and is written locked, generated and marked
+  `fromPlacement`, in the room the engine chose or the one named. A lesson the answer lacks is an answer to another
+  request: 502, nothing written. A block's lesson in the grundschema is changed in the dialog, not on the card: moving the
+  block's card is refused with `LESSON_IS_PLACED`; locking and unlocking the block's lessons is allowed, as it is for a
+  single placed lesson.
+- **Judged as the rows of a post, member by member, in one call.** The members are different teaching groups and do not stand
+  in each other's way; a teacher, a room or a pupil two members share is a real clash and is refused, with the member
+  named (`BLOCK_PLACEMENT_REFUSED`). An ordinary post is judged beside a block's lessons, and a post's demand counts a
+  block's lessons as lessons laid for each member. At Generera the same judge refuses a lesson that cannot stand
+  (`PLACEMENT_CANNOT_STAND`, with the block's name in `params.block`) before the engine is woken.
+- **A save is refused for the rows it new or changed, not for the ones the block has.** A block whose lessons have stopped
+  holding for a member (a teacher made unavailable that day, a frame cut short) has to be mended one lesson at a time, so the
+  save judges every row but refuses only a row that no equal row of the block's stored list stands behind: the row is one
+  member's lesson (day, start, length, weeks and that member's own room), counted and not looked up, as for a post
+  (`placement-unchanged.ts`, `block-placement-unchanged.ts`). A row that is let stand is named in the answer as a verdict that is
+  not ok, at the lesson's place in the list as the block reads it (day, start), and `GET` says the same; Generera refuses it by
+  name as before. Giving one member a room changes that member's row and not the others'. The stored list is the one read
+  after the block's row was taken (`FOR NO KEY UPDATE`), so no second read is asked for as the post's save does.
+- **Stale.** A block's lesson or a room row changed while the engine solved is `GENERATE_STALE`: the key is built from the
+  block's rows themselves, not from the members' derived rows. The basis a schemaförslag is solved from hashes each post's pin
+  with the room in real ids, so a changed block placement makes saved proposals stale by itself.
+- **What the first version does not do.** Blocks with a member that shares its lessons between teachers (`SHARES`), pairs of
+  odd and even weeks in a block (`WEEKS`), and a block that follows another (`FOLLOWER`) cannot be laid. A post that joins a
+  block has the lesson at once with its room chosen by the engine; a post that leaves a block takes only its own room row with
+  it. Membership is never refused.
+- **A room row that stays behind.** The trigger that removes a post's room rows when it leaves a block takes no lock (a lock there
+  deadlocked against the member check; three hunts of 300 attempts found it, §24.2 lists the trigger). A room row written by a
+  save that read the post as a member can therefore be committed just after the post left, and stays. The gateway and Generera
+  read the room rows of members only, so while the post is outside the block the row is ignored; the next save of the block's
+  lessons replaces every row of the block and it goes. **If the post goes back into the block before that save, the row is the
+  post's room again, without a refusal:** Förlägg blocket shows it as the post's room, Generera holds the lesson in it (or names
+  `PLACED_LESSON_ROOM_NOT_ALLOWED` if the room cannot take the lesson). It takes the race and the move back within one window, and
+  the probe leaves the row in ten of ten runs of the race, so it is a known state and not a rare one. Closing it needs a lock in the
+  leaving trigger, which is what the three hunts removed, so it is not closed here. Found by the review of #328.
+
+### 24.4 Operations
+
+- **Counting.** `SELECT count(*) FROM "TeachingBlockPlacements"` says how many lessons of how many blocks the schools laid;
+  `SELECT count(*) FROM "TeachingBlockPlacementRooms"` how many posts chose a room of their own.
+- **Room rows that stayed behind** (§24.3): rows whose post is no longer a member of the block they are laid for. Normally none.
+  ```sql
+  SELECT r.id, r."requirementId", p."blockId" AS laid_for, q."blockId" AS member_of
+  FROM "TeachingBlockPlacementRooms" r
+  JOIN "TeachingBlockPlacements" p ON p.id = r."placementId" AND p."schoolId" = r."schoolId"
+  JOIN "TeachingRequirements" q ON q.id = r."requirementId" AND q."schoolId" = r."schoolId"
+  WHERE q."blockId" IS DISTINCT FROM p."blockId";
+  ```
+  A school that has one saves the block once more with Förlägg blocket (every row of the block is replaced), or the rows are deleted by
+  `id`. Read the rows before deleting, and only in the school that asked.
+- **What it costs the search.** Measured on the högstadium benchmark (228 posts, 423 lessons, 30 of the posts in 6 blocks; §21.4) as
+  the time to a first timetable of the satisfaction model without the objective, two workers each, the three variants started at
+  once so that they share the machine's load (6 to 18 at the start of each round, never over 24), the lessons taken from a valid
+  timetable of the same week. With **all 45 block lessons** (9 places in 6 blocks) laid: **5.4 s** with no room named, 6.7 s with
+  nothing laid and **91.4 s** with a room named on every post (three rounds: 5.40 to 5.48, 6.70 to 6.77 and 89.6 to 91.5), in 6,780,
+  6,735 and 9,324 variables. With every other place laid (25 lessons in 5 blocks): 4.4 s, 6.8 s and 29.9 s, in 6,760, 6,735 and 9,052
+  variables. **The three rounds of a size followed one search path** (the same number of conflicts in each), so their span is the
+  load and nothing else; eight search seeds were run beside them, and over those the medians were 8.2 s with no room named, 6.9 s with
+  nothing laid and 70.3 s (30 to 110) with rooms for all, and for half of them 8.0 s, 7.0 s and 31.8 s (21 to 41). So a block laid
+  with its rooms left to the engine costs the first timetable about what the same week with nothing laid costs (a median of 1.1
+  times for all the lessons and 0.9 for half; a gain or a loss that survives a change of seed is not there, the ratio per seed
+  running 0.45 to 2.9), and a block laid with a room on every post makes it 4 to 11 times dearer (median over the seeds, 2.0 to 18.5
+  in single seeds) and the model 38 per cent larger: the room's class of its own, as §21.4 says of the post's rows. **Leave the rooms
+  empty unless the school has to say which room.** Measured on one school and one timetable the lessons were taken from, to a first
+  timetable only (no objective), and the span between seeds is wide; it is not measured on the 1,000- and 2,000-pupil benchmarks,
+  which give no first timetable (§22.4).
+- **The places rule, and the way out (§21.4, §22.4).** A pinned room is a room class of its own. Two posts of one block with
+  one of two equal rooms each count as two places for a school's places rule, and a week can be refused under a HARD limit
+  of one place that was possible with the rooms not named. The way out is the same as for a post's förläggning: leave the
+  rooms empty ("Motorn väljer sal") and the engine chooses them, which counts as one group.
+- **Locks of the block.** A lesson of a block that somebody locks by hand while the rest is to place is refused as before
+  (`BLOCK_PARTLY_LOCKED`); a block's lesson in the dialog is never a lock.

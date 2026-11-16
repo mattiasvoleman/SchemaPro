@@ -378,6 +378,8 @@ export const GROUP_BELOW: readonly BelowKey<GroupBelowKind>[] = [
   below('TeachingRequirements', 'TeachingRequirementShares', ['requirementId', 'schoolId'], 'CASCADE', onTheLessons),
   // Förlagda poster (20270207090000): the day, time and room given to a post's lessons go with the post.
   below('TeachingRequirements', 'TeachingRequirementPlacements', ['requirementId', 'schoolId'], 'CASCADE', onTheLessons),
+  // Förlagda block (20270218090000): a member's own room for a block's lesson goes with the post.
+  below('TeachingRequirements', 'TeachingBlockPlacementRooms', ['requirementId', 'schoolId'], 'CASCADE', onTheLessons),
   below('TimplanCredits', 'CancellationBatchCredits', ['creditId', 'schoolId'], 'CASCADE', onTheLessons),
   below('AvailabilityConstraints', 'TeacherDutySlots', ['availabilityConstraintId', 'schoolId'], 'CASCADE', onTheLessons),
 ];

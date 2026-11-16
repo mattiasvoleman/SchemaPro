@@ -178,7 +178,8 @@ describe('Förlagda poster (e2e)', () => {
 
       it('is answered on its own route, with the rows judged, the post counted and what the rows are held against', async () => {
         const response = await board().set('x-test-user', admin()).expect(200);
-        expect(Object.keys(response.body).sort()).toEqual(['academicYearId', 'kept', 'meals', 'placements', 'posts']);
+        // `blocks` is Förlagda block's: every block of the year with its lessons, a verdict for each member (block-placement-board.ts).
+        expect(Object.keys(response.body).sort()).toEqual(['academicYearId', 'blocks', 'kept', 'meals', 'placements', 'posts']);
         expect(response.body.placements).toEqual([
           // The lock already answers the post's one lesson, so the row is over the demand: the judge says so, and
           // the count agrees (the row places nothing).

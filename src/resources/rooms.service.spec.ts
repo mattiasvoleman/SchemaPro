@@ -352,6 +352,31 @@ describe('RoomsService', () => {
         expect(tx.roomPreference.findMany).not.toHaveBeenCalled();
       });
 
+      it('names the block and the post when a member of a block chose the room for one of the block\u2019s lessons', async () => {
+        tx.teachingRequirementPlacement.findMany.mockResolvedValue([]);
+        tx.teachingBlockPlacementRoom.findMany.mockResolvedValue([
+          { placement: { block: { name: 'Språkval 7' } }, requirement: { subject: { name: 'Spanska' }, studentGroup: { name: 'Sp7' } } },
+          { placement: { block: { name: 'Språkval 7' } }, requirement: { subject: { name: 'Spanska' }, studentGroup: { name: 'Sp7' } } },
+        ]);
+
+        await expect(service.remove(ROOM_ID, testUser())).rejects.toThrow(
+          new BadRequestException('Salen är förlagd för blocket Språkval 7 (Spanska Sp7). Ta bort förläggningen först.'),
+        );
+        expect(tx.teachingBlockPlacementRoom.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { roomId: ROOM_ID } }));
+        expect(tx.room.delete).not.toHaveBeenCalled();
+      });
+
+      it('names posts and blocks together, posts first', async () => {
+        placed(['Idrott och hälsa', '7A']);
+        tx.teachingBlockPlacementRoom.findMany.mockResolvedValue([
+          { placement: { block: { name: 'Språkval 7' } }, requirement: { subject: { name: 'Tyska' }, studentGroup: { name: 'Ty7' } } },
+        ]);
+
+        await expect(service.remove(ROOM_ID, testUser())).rejects.toThrow(
+          new BadRequestException('Salen är förlagd för Idrott och hälsa 7A, blocket Språkval 7 (Tyska Ty7). Ta bort förläggningarna först.'),
+        );
+      });
+
       it('deletes a room no förläggning names', async () => {
         tx.teachingRequirementPlacement.findMany.mockResolvedValue([]);
         tx.room.delete.mockResolvedValue({ id: ROOM_ID });

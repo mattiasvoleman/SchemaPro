@@ -1,5 +1,5 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { createPrismaMock, createTxMock, testUser, type TxMock } from '../../test/utils/prisma-mock';
 import type { MasterLessonsService } from '../calendar/master-lessons.service';
 import type { PrismaService } from '../database/prisma.service';
@@ -858,5 +858,389 @@ describe('RequirementPlacementsService.boardOfYear', () => {
     const { prisma, service } = board();
     await service.boardOfYear(YEAR, user);
     expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
+  });
+});
+
+/*
+ * FÖRLAGDA BLOCK ON THE POSTS' SIDE (block-placement-judge.ts): a parallel block's lessons are the rows of its members.
+ * An ordinary post is judged beside them (besideOf), and the week of förläggningar lists the blocks of the year with a verdict
+ * for each lesson and member (boardOfYear, `blocks`) and counts a block's lessons as lessons placed for each member.
+ */
+describe('RequirementPlacementsService, förlagda block', () => {
+  const user = testUser();
+  const BLOCK = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const BLOCK_2 = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
+  const MEMBER_A = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001';
+  const MEMBER_B = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000002';
+  const MEMBER_C = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000003';
+  const MEMBER_D = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000004';
+  const YEAR_ROW = { isActive: true, predecessorId: null, gradeNumbering: 'NIOARIG' };
+
+  /** A member post as the block's read and the week's read select it: one lesson of 60, its own class, subject and teacher. */
+  const member = (id: string, over: Record<string, unknown> = {}) => ({
+    id,
+    studentGroupId: `g-${id.slice(-1)}`,
+    subjectId: `sub-${id.slice(-1)}`,
+    teacherId: `t-${id.slice(-1)}`,
+    coTeacherId: null,
+    lessonsPerWeek: 1,
+    minutesPerLesson: 60,
+    lessonLengths: [] as number[],
+    recurrence: 'ALL_WEEKS',
+    blockId: BLOCK,
+    startDate: null,
+    endDate: null,
+    shares: [] as { teacherId: string | null; lessons: number; minutes: number }[],
+    ...over,
+  });
+
+  /** A block as the year's read selects it. */
+  const blockRead = (over: Record<string, unknown> = {}) => ({
+    id: BLOCK,
+    name: 'Språkval åk 7',
+    sameTimesAsBlockId: null,
+    requirements: [member(MEMBER_A), member(MEMBER_B)],
+    placements: [blockLesson('r-1')],
+    ...over,
+  });
+
+  function blockLesson(id: string, over: Record<string, unknown> = {}) {
+    return {
+      id,
+      dayOfWeek: 2,
+      startTime: time('10:00'),
+      minutes: 60,
+      recurrence: 'ALL_WEEKS',
+      updatedAt: new Date('2026-11-16T08:00:00.000Z'),
+      rooms: [] as { requirementId: string; roomId: string; room: { name: string } }[],
+      ...over,
+    };
+  }
+
+  /** The judge's hits: the lessons of the groups named, on the days named, clash with the first lesson beside them. */
+  const clashing = (hits: Array<{ group: string; day: number }>) =>
+    async (
+      _tx: unknown,
+      _basis: unknown,
+      lesson: { studentGroupId: string },
+      candidate: { dayOfWeek: number },
+      options: { against: Array<{ id: string }> },
+    ) =>
+      hits.some((hit) => hit.group === lesson.studentGroupId && hit.day === candidate.dayOfWeek)
+        ? [{ kind: 'TEACHER', message: 'x', masterLessonId: options.against[0]!.id }]
+        : [];
+
+  describe('besideOf: the lessons of the year\'s blocks are rows beside a post', () => {
+    const otherPostRow = {
+      id: 'p-9',
+      requirementId: OTHER_REQ,
+      dayOfWeek: 4,
+      startTime: time('13:00'),
+      minutes: 60,
+      roomId: ROOM_2,
+      recurrence: 'ALL_WEEKS',
+      teacherId: null,
+      requirement: { studentGroupId: 'g-7b', subjectId: 'sub-ma', teacherId: 'T-9', coTeacherId: null, startDate: null, endDate: null, _count: { shares: 0 } },
+    };
+
+    it('lists the other posts\' rows first and then each block lesson as one row per member, with the stored row\'s id and the member\'s own room', async () => {
+      const { tx, service } = setup({ beside: [otherPostRow] });
+      tx['teachingBlock']!['findMany']!.mockResolvedValue([
+        blockRead({ placements: [blockLesson('r-1', { rooms: [{ requirementId: MEMBER_B, roomId: ROOM_2, room: { name: 'Sal 2' } }] })] }),
+      ]);
+      const beside = await service.besideOf(tx as unknown as PrismaClient, { id: REQ, academicYearId: YEAR });
+
+      expect(beside.map((row) => row.id)).toEqual(['p-9', `r-1:${MEMBER_A}`, `r-1:${MEMBER_B}`]);
+      expect(beside[1]).toMatchObject({
+        requirementId: MEMBER_A,
+        studentGroupId: 'g-1',
+        subjectId: 'sub-1',
+        teacherId: 't-1',
+        dayOfWeek: 2,
+        startMinutes: 600,
+        minutes: 60,
+        roomId: null,
+        recurrence: 'ALL_WEEKS',
+        inBlock: false,
+        blockFit: null,
+      });
+      expect(beside[2]).toMatchObject({ requirementId: MEMBER_B, roomId: ROOM_2 });
+    });
+
+    it('is the other posts\' rows alone when the year has no block with a lesson', async () => {
+      const { tx, service } = setup({ beside: [otherPostRow] });
+      const beside = await service.besideOf(tx as unknown as PrismaClient, { id: REQ, academicYearId: YEAR });
+      expect(beside.map((row) => row.id)).toEqual(['p-9']);
+    });
+
+    it('asks only for the blocks that have a lesson, and leaves out the block being written when it is named', async () => {
+      const { tx, service } = setup();
+      await service.besideOf(tx as unknown as PrismaClient, { id: REQ, academicYearId: YEAR });
+      await service.besideOf(tx as unknown as PrismaClient, { id: BLOCK, academicYearId: YEAR }, BLOCK);
+      const wheres = tx['teachingBlock']!['findMany']!.mock.calls.map((call) => (call[0] as { where: unknown }).where);
+      expect(wheres).toEqual([
+        { academicYearId: YEAR, placements: { some: {} } },
+        { academicYearId: YEAR, placements: { some: {} }, id: { not: BLOCK } },
+      ]);
+    });
+
+    it('still leaves out the post itself, whether or not a block is named: the block is judged beside a post as the post is beside the block', async () => {
+      const { tx, service } = setup();
+      await service.besideOf(tx as unknown as PrismaClient, { id: REQ, academicYearId: YEAR });
+      const read = tx['teachingRequirementPlacement']!['findMany']!.mock.calls[0]![0] as { where: Record<string, unknown> };
+      expect(read.where).toEqual({ requirement: { academicYearId: YEAR }, requirementId: { not: REQ } });
+    });
+
+    it('is what a post\'s own rows are read against: the dialog\'s read and save both hold a lesson to a member\'s lesson, naming the member\'s class', async () => {
+      const member7b = member(MEMBER_A, { studentGroupId: 'g-7b', subjectId: 'sub-ma', teacherId: TEACHER });
+      const lesson = blockRead({ requirements: [member7b], placements: [blockLesson('r-1')] });
+
+      const read = setup({ rows: [stored()] });
+      read.tx['teachingBlock']!['findMany']!.mockResolvedValue([lesson]);
+      await read.service.listOfPost(REQ, user);
+      const against = (read.masters.findConflicts.mock.calls[0]![4] as { against: Array<{ id: string }> }).against.map((one) => one.id);
+      expect(against).toEqual([`placement:r-1:${MEMBER_A}`]);
+
+      const save = setup();
+      save.tx['teachingBlock']!['findMany']!.mockResolvedValue([lesson]);
+      save.masters.findConflicts.mockImplementation(clashing([{ group: GROUP, day: 2 }]));
+      await expect(save.service.replace(REQ, { placements: [input()] }, user)).rejects.toMatchObject({
+        status: 409,
+        response: {
+          code: 'REQUIREMENT_PLACEMENT_REFUSED',
+          params: { index: 0, reason: 'TEACHER', otherKind: 'PLACEMENT', className: '7B', subjectName: 'Matematik', day: 2, start: '10:00', end: '11:00' },
+        },
+      });
+      expect(save.tx['teachingRequirementPlacement']!['createMany']).not.toHaveBeenCalled();
+    });
+
+    it('says a block lesson that no longer fits its block by name beside the post\'s own rows, as the block says it itself', async () => {
+      const { tx, service } = setup();
+      tx['teachingBlock']!['findMany']!.mockResolvedValue([blockRead({ placements: [blockLesson('r-1', { minutes: 45 })] })]);
+      const beside = await service.besideOf(tx as unknown as PrismaClient, { id: REQ, academicYearId: YEAR });
+      expect(beside.map((row) => row.blockFit)).toEqual(['LENGTH', 'LENGTH']);
+    });
+  });
+
+  describe('boardOfYear: the field `blocks`', () => {
+    const post = (over: Record<string, unknown> = {}) => {
+      const { academicYear: _academicYear, schoolId: _schoolId, academicYearId: _year, ...rest } = POST;
+      return { ...rest, ...over };
+    };
+
+    function board(world: World & { posts?: Array<Record<string, unknown>>; blocks?: Array<Record<string, unknown>>; meals?: unknown[] } = {}) {
+      const made = setup(world);
+      made.tx['academicYear']!['findUnique']!.mockResolvedValue(YEAR_ROW);
+      made.tx['teachingRequirement']!['findMany']!.mockResolvedValue(world.posts ?? [post()]);
+      made.tx['lunchSitting']!['findMany']!.mockResolvedValue(world.meals ?? []);
+      made.tx['teachingBlock']!['findMany']!.mockResolvedValue(world.blocks ?? []);
+      return made;
+    }
+
+    const memberPosts = [member(MEMBER_A), member(MEMBER_B)];
+
+    it('answers an empty list for a year with no block, and reads the blocks of the year once', async () => {
+      const { tx, service } = board();
+      const answer = await service.boardOfYear(YEAR, user);
+      expect(answer.blocks).toEqual([]);
+      expect(tx['teachingBlock']!['findMany']).toHaveBeenCalledTimes(1);
+      expect((tx['teachingBlock']!['findMany']!.mock.calls[0]![0] as { where: unknown }).where).toEqual({ academicYearId: YEAR });
+    });
+
+    it('lists a block with its members, lengths, weeks and lessons, and a verdict for each member of each lesson', async () => {
+      const { service } = board({
+        posts: memberPosts,
+        blocks: [blockRead({ placements: [blockLesson('r-1', { rooms: [{ requirementId: MEMBER_B, roomId: ROOM_1, room: { name: 'Simhallen' } }] })] })],
+      });
+      const [one] = (await service.boardOfYear(YEAR, user)).blocks;
+      expect(one).toMatchObject({
+        id: BLOCK,
+        name: 'Språkval åk 7',
+        memberIds: [MEMBER_A, MEMBER_B],
+        lengths: [60],
+        recurrence: 'ALL_WEEKS',
+        followsBlockId: null,
+        cannotPlace: null,
+      });
+      expect(one!.rows).toEqual([
+        {
+          id: 'r-1',
+          dayOfWeek: 2,
+          startTime: '10:00',
+          endTime: '11:00',
+          minutes: 60,
+          recurrence: 'ALL_WEEKS',
+          rooms: [{ requirementId: MEMBER_B, roomId: ROOM_1, roomName: 'Simhallen' }],
+          changedAt: '2026-11-16T08:00:00.000Z',
+          verdicts: [
+            { requirementId: MEMBER_A, ok: true },
+            { requirementId: MEMBER_B, ok: true },
+          ],
+        },
+      ]);
+      expect(one!.rowsKey).toMatch(/^[0-9a-f]{32}$/);
+    });
+
+    it('says which member a lesson is refused for, and why, on that lesson', async () => {
+      const two = [member(MEMBER_A, { lessonsPerWeek: 2 }), member(MEMBER_B, { lessonsPerWeek: 2 })];
+      const { masters, service } = board({
+        posts: two,
+        blocks: [blockRead({ requirements: two, placements: [blockLesson('r-1'), blockLesson('r-2', { dayOfWeek: 4, startTime: time('13:30') })] })],
+      });
+      masters.findConflicts.mockImplementation(clashing([{ group: 'g-2', day: 4 }]));
+      const [one] = (await service.boardOfYear(YEAR, user)).blocks;
+      expect(one!.rows[0]!.verdicts).toEqual([
+        { requirementId: MEMBER_A, ok: true },
+        { requirementId: MEMBER_B, ok: true },
+      ]);
+      expect(one!.rows[1]!.verdicts).toEqual([
+        { requirementId: MEMBER_A, ok: true },
+        { requirementId: MEMBER_B, ok: false, reason: 'TEACHER', params: expect.objectContaining({ otherKind: 'PLACEMENT', day: 4, start: '13:30', end: '14:30' }) },
+      ]);
+    });
+
+    it('judges the posts\' rows and the blocks\' rows in ONE call, the posts\' first and one row per lesson and member, beside nothing', async () => {
+      const spy = jest.spyOn(placementJudge, 'judgePlacements');
+      try {
+        const { service, masters } = board({ posts: [post(), ...memberPosts], rows: [stored({ id: 'p-1' })], blocks: [blockRead()] });
+        await service.boardOfYear(YEAR, user);
+        expect(spy).toHaveBeenCalledTimes(1);
+        const asked = spy.mock.calls[0]![2];
+        expect(asked.rows.map((row) => row.id)).toEqual(['p-1', `r-1:${MEMBER_A}`, `r-1:${MEMBER_B}`]);
+        expect(asked.beside).toEqual([]);
+        expect(masters.findConflicts).toHaveBeenCalledTimes(3);
+        expect(rostersOfYear).toHaveBeenCalledTimes(1);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('judges a year whose only förläggningar are a block\'s', async () => {
+      const { masters, service } = board({ posts: memberPosts, blocks: [blockRead()] });
+      await service.boardOfYear(YEAR, user);
+      expect(masters.findConflicts).toHaveBeenCalledTimes(2);
+      expect(rostersOfYear).toHaveBeenCalledTimes(1);
+    });
+
+    it('lists a block with no lesson, which judges nothing and reads no classes', async () => {
+      const { masters, service } = board({ posts: memberPosts, blocks: [blockRead({ placements: [] })] });
+      const answer = await service.boardOfYear(YEAR, user);
+      expect(answer.blocks).toEqual([expect.objectContaining({ id: BLOCK, rows: [], cannotPlace: null })]);
+      expect(masters.findConflicts).not.toHaveBeenCalled();
+      expect(rostersOfYear).not.toHaveBeenCalled();
+      expect(readBoardFacts).not.toHaveBeenCalled();
+    });
+
+    it('gives each block its own verdicts when there are several, after the posts\' rows: a refusal is never read on another block', async () => {
+      const second = blockRead({
+        id: BLOCK_2,
+        name: 'Språkval åk 8',
+        requirements: [member(MEMBER_C, { blockId: BLOCK_2 }), member(MEMBER_D, { blockId: BLOCK_2 })],
+        placements: [blockLesson('r-2', { dayOfWeek: 3 })],
+      });
+      const { masters, service } = board({
+        posts: [post(), ...memberPosts, member(MEMBER_C, { blockId: BLOCK_2 }), member(MEMBER_D, { blockId: BLOCK_2 })],
+        rows: [stored({ id: 'p-1' })],
+        blocks: [blockRead(), second],
+      });
+      // Only the second block's last member is refused.
+      masters.findConflicts.mockImplementation(clashing([{ group: 'g-4', day: 3 }]));
+      const answer = await service.boardOfYear(YEAR, user);
+      expect(answer.placements.map((row) => row.verdict.ok)).toEqual([true]);
+      expect(answer.blocks.map((one) => one.id)).toEqual([BLOCK, BLOCK_2]);
+      expect(answer.blocks[0]!.rows[0]!.verdicts.map((verdict) => verdict.ok)).toEqual([true, true]);
+      expect(answer.blocks[1]!.rows[0]!.verdicts).toEqual([
+        { requirementId: MEMBER_C, ok: true },
+        { requirementId: MEMBER_D, ok: false, reason: 'TEACHER', params: expect.objectContaining({ day: 3 }) },
+      ]);
+      // And the post's own row is not read as a block's: the refusal on the first block would have come from here.
+      expect(answer.placements[0]!.verdict).toEqual({ ok: true });
+    });
+
+    it('does the same for a refusal of the first block, so that the offset of the second is not luck', async () => {
+      const second = blockRead({
+        id: BLOCK_2,
+        requirements: [member(MEMBER_C, { blockId: BLOCK_2 }), member(MEMBER_D, { blockId: BLOCK_2 })],
+        placements: [blockLesson('r-2', { dayOfWeek: 3 })],
+      });
+      const { masters, service } = board({
+        posts: [post(), ...memberPosts, member(MEMBER_C, { blockId: BLOCK_2 }), member(MEMBER_D, { blockId: BLOCK_2 })],
+        rows: [stored({ id: 'p-1' }), stored({ id: 'p-2', dayOfWeek: 5 })],
+        blocks: [blockRead(), second],
+      });
+      masters.findConflicts.mockImplementation(clashing([{ group: 'g-1', day: 2 }, { group: 'g-5', day: 5 }]));
+      const answer = await service.boardOfYear(YEAR, user);
+      expect(answer.blocks[0]!.rows[0]!.verdicts.map((verdict) => [verdict.requirementId, verdict.ok])).toEqual([[MEMBER_A, false], [MEMBER_B, true]]);
+      expect(answer.blocks[1]!.rows[0]!.verdicts.map((verdict) => verdict.ok)).toEqual([true, true]);
+      expect(answer.placements.map((row) => row.verdict.ok)).toEqual([true, true]);
+    });
+
+    it('counts a block\'s lessons as lessons placed for each of its members: the post\'s `placed` and `left`', async () => {
+      const posts = [member(MEMBER_A, { lessonsPerWeek: 2 }), member(MEMBER_B, { lessonsPerWeek: 2 })];
+      const { service } = board({ posts, blocks: [blockRead({ requirements: posts })] });
+      const answer = await service.boardOfYear(YEAR, user);
+      expect(answer.posts.map((one) => one.parts[0])).toEqual([
+        expect.objectContaining({ count: 2, locked: 0, placed: 1, left: 1 }),
+        expect.objectContaining({ count: 2, locked: 0, placed: 1, left: 1 }),
+      ]);
+    });
+
+    it('counts a lesson of an odd-weeks block for a member of odd weeks, and leaves a post of a block with no lesson as it was', async () => {
+      const odd = [member(MEMBER_A, { recurrence: 'ODD_WEEKS' }), member(MEMBER_B, { recurrence: 'ODD_WEEKS' })];
+      const { service } = board({ posts: [...odd, member(MEMBER_C, { blockId: BLOCK_2 })], blocks: [blockRead({ requirements: odd, placements: [blockLesson('r-1', { recurrence: 'ODD_WEEKS' })] }), blockRead({ id: BLOCK_2, requirements: [member(MEMBER_C, { blockId: BLOCK_2 })], placements: [] })] });
+      const answer = await service.boardOfYear(YEAR, user);
+      expect(answer.posts.map((one) => one.parts[0]!.placed)).toEqual([1, 1, 0]);
+      expect(answer.blocks[0]!.recurrence).toBe('ODD_WEEKS');
+    });
+
+    it('adds a block\'s lessons to a member\'s own: a member that is also placed by hand (stored before it joined the block) counts both', async () => {
+      const posts = [member(MEMBER_A, { lessonsPerWeek: 3 }), member(MEMBER_B, { lessonsPerWeek: 3 })];
+      const { service } = board({
+        posts,
+        rows: [stored({ id: 'p-own', requirementId: MEMBER_A, dayOfWeek: 5 })],
+        blocks: [blockRead({ requirements: posts })],
+      });
+      const answer = await service.boardOfYear(YEAR, user);
+      expect(answer.posts.map((one) => one.parts[0]!.placed)).toEqual([2, 1]);
+      // The post's own row is still said to be a row of a post in a block.
+      expect(answer.placements[0]!.verdict).toEqual({ ok: false, reason: 'BLOCK' });
+    });
+
+    it('refuses a member whose locks already answer its lessons the lesson the block places (OVER_DEMAND), by member', async () => {
+      const lock = {
+        id: 'k-1',
+        dayOfWeek: 5,
+        startTime: time('13:00'),
+        endTime: time('14:00'),
+        studentGroupId: 'g-1',
+        subjectId: 'sub-1',
+        teacherId: 't-1',
+        coTeacherId: null,
+        roomId: null,
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        isLocked: true,
+        isGenerated: false,
+        subject: { name: 'Spanska' },
+        studentGroup: { name: '7A' },
+        extraGroups: [],
+        participants: [],
+      };
+      const { service } = board({ posts: memberPosts, kept: [lock], blocks: [blockRead()] });
+      const [one] = (await service.boardOfYear(YEAR, user)).blocks;
+      expect(one!.rows[0]!.verdicts).toEqual([
+        { requirementId: MEMBER_A, ok: false, reason: 'OVER_DEMAND' },
+        { requirementId: MEMBER_B, ok: true },
+      ]);
+    });
+
+    it('says a block that cannot be placed, with the lessons it holds still listed', async () => {
+      const { service } = board({ posts: memberPosts, blocks: [blockRead({ sameTimesAsBlockId: 'leader' })] });
+      const [one] = (await service.boardOfYear(YEAR, user)).blocks;
+      expect(one).toMatchObject({ cannotPlace: 'FOLLOWER', followsBlockId: 'leader' });
+      expect(one!.rows).toHaveLength(1);
+      expect(one!.rows[0]!.verdicts.every((verdict) => !verdict.ok && verdict.reason === 'BLOCK_FIT' && verdict.params?.['rule'] === 'FOLLOWER')).toBe(true);
+    });
   });
 });
