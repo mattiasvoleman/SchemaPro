@@ -273,7 +273,10 @@ export function blockSummaryOf(blocks: readonly Pick<BoardBlock, "cannotPlace" |
  * block once: the number of bricks the reader can lay, and the number Generera would place as lessons, not as rows of posts.
  */
 export function summaryWithBlocks(board: Pick<PlacementBoard, "placements" | "posts" | "blocks">): { rows: number; failing: number; left: number } {
-  const own = summaryOf({ placements: board.placements, posts: board.posts.filter((post) => post.cannotPlace !== "BLOCK") });
+  // Only the posts of a block the board HAS are counted through it: a post that is `BLOCK` with no block on the board (a gateway that sends
+  // no blocks) is counted as it always was.
+  const inBlocks = new Set(board.blocks.flatMap((block) => block.memberIds));
+  const own = summaryOf({ placements: board.placements, posts: board.posts.filter((post) => !(post.cannotPlace === "BLOCK" && inBlocks.has(post.id))) });
   const blocks = blockSummaryOf(board.blocks);
   return { rows: own.rows + blocks.rows, failing: own.failing + blocks.failing, left: own.left + blocks.left };
 }
@@ -357,3 +360,30 @@ export function blockCards(
 
 /** What a block's lessons say as weeks: `ODD_WEEKS`, `EVEN_WEEKS`, or every week when the block runs none of its own (no member). */
 export const weeksOfBlock = (block: Pick<BoardBlock, "recurrence">): PlacementRecurrence => block.recurrence ?? "ALL_WEEKS";
+
+/**
+ * Whether a lesson the gateway named as being in the way is one that has STOPPED HOLDING and was let stand (a post's row or a block's
+ * lesson that is red): a new lesson beside such a lesson is refused until the red one is moved or taken away, because the judge is
+ * symmetric and sees every row. The gateway names the other lesson by its class, subject, day and time, never by an id, so the lesson is
+ * found among the week's red ones by those. Returns where it stands, for the sentence, or null when none of the red ones is it.
+ */
+export function redLessonNamed(
+  board: Pick<PlacementBoard, "placements" | "posts" | "blocks">,
+  named: Record<string, string | number> | undefined,
+  names: { group: (id: string) => string | undefined; subject: (id: string) => string | undefined },
+): { dayOfWeek: number; startTime: string; endTime: string } | null {
+  if (!named || named["otherKind"] !== "PLACEMENT") return null;
+  const postById = new Map(board.posts.map((post) => [post.id, post]));
+  const same = (post: BoardPost | undefined, day: number, start: string, end: string): boolean =>
+    post !== undefined && names.group(post.studentGroupId) === named["className"] && names.subject(post.subjectId) === named["subjectName"] && day === named["day"] && start === named["start"] && end === named["end"];
+  for (const row of board.placements) {
+    if (!row.verdict.ok && same(postById.get(row.requirementId), row.dayOfWeek, row.startTime, row.endTime)) return { dayOfWeek: row.dayOfWeek, startTime: row.startTime, endTime: row.endTime };
+  }
+  for (const block of board.blocks) {
+    for (const row of block.rows) {
+      if (row.verdicts.every((verdict) => verdict.ok)) continue;
+      if (block.memberIds.some((id) => same(postById.get(id), row.dayOfWeek, row.startTime, row.endTime))) return { dayOfWeek: row.dayOfWeek, startTime: row.startTime, endTime: row.endTime };
+    }
+  }
+  return null;
+}

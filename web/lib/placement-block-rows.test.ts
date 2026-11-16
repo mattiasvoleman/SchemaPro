@@ -442,6 +442,10 @@ describe("the figures", () => {
     expect(summary).toEqual({ rows: 1, failing: 1, left: 4 });
   });
 
+  it("counts a post that says it is in a block as before when the board has no such block (a gateway that sends none)", () => {
+    expect(summaryWithBlocks(board({ posts: [member("ty", { parts: [part({ left: 2 })] })], blocks: [] }))).toEqual({ rows: 0, failing: 0, left: 2 });
+  });
+
   it("counts a board of an older gateway with no block as before", () => {
     expect(summaryWithBlocks(board({ posts: [member("ma", { cannotPlace: null, parts: [part({ left: 2 })] })], blocks: [] }))).toEqual({ rows: 0, failing: 0, left: 2 });
   });

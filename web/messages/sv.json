@@ -2073,7 +2073,30 @@
     "brickText": "{teacher} · {minutes} min",
     "brickLabel": "{lesson}, {teacher}, {minutes} min",
     "otherRowRefused": "Ändringen sparades inte: lektionen {when} på samma post skulle inte hålla. {reason}",
-    "stillFailing": "{count, plural, one {En lektion på posten håller fortfarande inte} other {# lektioner på posten håller fortfarande inte}}, och Generera körs inte förrän de håller igen: {rows}"
+    "stillFailing": "{count, plural, one {En lektion på posten håller fortfarande inte} other {# lektioner på posten håller fortfarande inte}}, och Generera körs inte förrän de håller igen: {rows}",
+    "block": {
+      "brickText": "{minutes} min, {count, plural, one {# post} other {# poster}}",
+      "brickLabel": "{block}, {minutes} min, {count, plural, one {# post} other {# poster}}",
+      "cardRooms": "{chosen, plural, =0 {Motorn väljer sal} other {Sal på # av {total} poster}}",
+      "roomsLegend": "Sal per post",
+      "roomsHint": "Låter du en post stå på ”Motorn väljer sal” väljer schemat postens sal vid varje Generera, och salen kan bli en annan nästa gång.",
+      "roomOf": "Sal: {post}",
+      "postSaid": "{posts}: {sentence}",
+      "postGone": "en post som inte längre ligger i blocket",
+      "cannotStandThere": "Kan inte läggas där: {post} kan inte ha lektionen då. {reason}",
+      "cannotMoveThere": "Kan inte flyttas dit: {post} kan inte ha lektionen då. {reason}",
+      "otherRowRefused": "Ändringen sparades inte: blockets lektion {when} skulle inte hålla. {reason}",
+      "meetsRed": "Lektionen som är i vägen, {when}, håller inte längre men får ligga kvar. En ny lektion intill den nekas tills den har flyttats eller tagits bort.",
+      "stale": "Någon annan har ändrat blockets lektioner sedan du läste dem. Inget skrevs, och veckan har lästs om. Gör om det du ville.",
+      "stillFailing": "{count, plural, one {En lektion i blocket håller fortfarande inte} other {# lektioner i blocket håller fortfarande inte}}, och Generera körs inte förrän de håller igen: {rows}",
+      "linkGone": "Blockets lektion ligger inte längre där länken pekar. Den har flyttats eller tagits bort.",
+      "toBlock": "Visa blocket i listan",
+      "memberOf": "Läggs tillsammans med blocket {block}: en lektion av blocket sitter alla dess poster.",
+      "sectionTitle": "Block",
+      "sectionDescription": "Parallella block: en lektion av ett block sitter alla blockets poster samtidigt.",
+      "noBlocks": "Inga block att visa.",
+      "blockFigures": "{placed} av {count, plural, one {# lektion förlagd} other {# lektioner förlagda}}, {left} kvar för Generera."
+    }
   },
   "roomOptimization": {
     "title": "Optimera salar",

@@ -2073,7 +2073,30 @@
     "brickText": "{teacher} · {minutes} min",
     "brickLabel": "{lesson}, {teacher}, {minutes} min",
     "otherRowRefused": "The change was not saved: the lesson {when} on the same post would not hold. {reason}",
-    "stillFailing": "{count, plural, one {One lesson on the post still does not hold} other {# lessons on the post still do not hold}}, and Generate does not run until they do: {rows}"
+    "stillFailing": "{count, plural, one {One lesson on the post still does not hold} other {# lessons on the post still do not hold}}, and Generate does not run until they do: {rows}",
+    "block": {
+      "brickText": "{minutes} min, {count, plural, one {# entry} other {# entries}}",
+      "brickLabel": "{block}, {minutes} min, {count, plural, one {# entry} other {# entries}}",
+      "cardRooms": "{chosen, plural, =0 {The engine chooses the room} other {Room for # of {total} entries}}",
+      "roomsLegend": "Room for each entry",
+      "roomsHint": "If you leave an entry on “The engine chooses the room”, the schedule chooses its room at every Generate, and the room can be another one next time.",
+      "roomOf": "Room: {post}",
+      "postSaid": "{posts}: {sentence}",
+      "postGone": "an entry that is no longer in the block",
+      "cannotStandThere": "Cannot be placed there: {post} cannot have the lesson then. {reason}",
+      "cannotMoveThere": "Cannot be moved there: {post} cannot have the lesson then. {reason}",
+      "otherRowRefused": "The change was not saved: the block's lesson {when} would not hold. {reason}",
+      "meetsRed": "The lesson in the way, {when}, no longer holds but is allowed to stay. A new lesson next to it is refused until it has been moved or removed.",
+      "stale": "Someone else has changed the block's lessons since you read them. Nothing was written, and the week has been read again. Make the change again.",
+      "stillFailing": "{count, plural, one {One lesson in the block still does not hold} other {# lessons in the block still do not hold}}, and Generate does not run until they do: {rows}",
+      "linkGone": "The block's lesson is no longer where the link points. It has been moved or removed.",
+      "toBlock": "Show the block in the list",
+      "memberOf": "Placed together with the block {block}: one lesson of the block is sat by all its entries.",
+      "sectionTitle": "Blocks",
+      "sectionDescription": "Parallel blocks: one lesson of a block is sat by all the block's entries at the same time.",
+      "noBlocks": "No blocks to show.",
+      "blockFigures": "{placed} of {count, plural, one {# lesson placed} other {# lessons placed}}, {left} left for Generate."
+    }
   },
   "roomOptimization": {
     "title": "Optimise rooms",

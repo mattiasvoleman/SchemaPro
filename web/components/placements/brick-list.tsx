@@ -19,9 +19,12 @@ export interface BrickItem {
 }
 
 export interface BrickGroup {
+  /** The post's id, or the block's when `block` is set: what the group is told apart by. */
   postId: string;
-  /** "Matematik 7A". */
+  /** "Matematik 7A", or the block's name. */
   title: string;
+  /** The group is a parallel block's: its bricks are lessons of the block, each for all of its posts. */
+  block?: boolean;
   bricks: BrickItem[];
 }
 
@@ -45,7 +48,7 @@ export function BrickList({ groups, selected, onSelect, onPull }: BrickListProps
   return (
     <ul className="space-y-2" aria-label={t("toLayTitle")}>
       {groups.map((group) => (
-        <li key={group.postId} data-testid="brick-post">
+        <li key={group.postId} data-testid={group.block ? "brick-block" : "brick-post"}>
           <p className="mb-1 break-words text-xs font-semibold">{group.title}</p>
           <div className="flex flex-wrap gap-1.5">
             {group.bricks.map((brick) => (

@@ -216,25 +216,34 @@ export function moverOfBlockRow(
 }
 
 /**
- * The first thing in the way of a lesson of a block at this span. Each post's lesson is held against the week (the lesson's own old place
- * left out) AND against the other posts' lessons at the same place: posts of a block are different teaching groups and stand in no one's
- * way by being the same lesson, but a teacher, a room or pupils two of them share is a real clash, and so is a class that sits one of
- * them. The answer names the post that clashes (`requirementId`), the first in the order the gateway judges them.
+ * Every post of a block that something is in the way of at this span, in the order the gateway judges them, each with the first thing in
+ * the way of it. Each post's lesson is held against the week (the lesson's own old place left out) AND against the other posts' lessons at
+ * the same place: posts of a block are different teaching groups and stand in no one's way by being the same lesson, but a teacher, a room
+ * or pupils two of them share is a real clash, and so is a class that sits one of them. None when the span is outside the school day (that
+ * is the whole lesson's, not a post's) or when nothing is in the way.
  */
-export function dropOfBlock(context: MirrorContext, mover: BlockMover, span: Span, names: OtherNames): Drop {
-  if (!insideSchoolDay(span)) return { kind: "DAY" };
+export function blockClashes(context: MirrorContext, mover: BlockMover, span: Span, names: OtherNames): Extract<Drop, { kind: "CLASH" }>[] {
+  if (!insideSchoolDay(span)) return [];
   const week = mover.ownIds.size === 0 ? context.others : context.others.filter((placement) => placement.id === null || !mover.ownIds.has(placement.id));
   const candidates = mover.members.map((member) =>
     placementOf({ id: `${mover.id}:${member.post.id}`, post: member.post, teacherId: member.post.teacherId, roomId: member.roomId, recurrence: mover.recurrence }, span, context),
   );
-  for (const [at, member] of mover.members.entries()) {
+  return mover.members.flatMap((member, at): Extract<Drop, { kind: "CLASH" }>[] => {
     const beside = candidates.filter((_, other) => other !== at);
     const hit = mirrorHits(context, candidates[at]!, [...week, ...beside]).find((candidate) => REASON_OF_HIT[candidate.kind] !== null);
-    if (!hit) continue;
+    if (!hit) return [];
     const params = paramsOfHit(context, hit, names, beside);
-    return { kind: "CLASH", reason: REASON_OF_HIT[hit.kind]!, ...(params ? { params } : {}), requirementId: member.post.id };
-  }
-  return OK;
+    return [{ kind: "CLASH", reason: REASON_OF_HIT[hit.kind]!, ...(params ? { params } : {}), requirementId: member.post.id }];
+  });
+}
+
+/**
+ * The first thing in the way of a lesson of a block at this span: the school day, else the first post (in the order the gateway judges them)
+ * that something is in the way of, named by `requirementId`.
+ */
+export function dropOfBlock(context: MirrorContext, mover: BlockMover, span: Span, names: OtherNames): Drop {
+  if (!insideSchoolDay(span)) return { kind: "DAY" };
+  return blockClashes(context, mover, span, names)[0] ?? OK;
 }
 
 /** The next time after `from` on which a lesson of the block stands free for all its posts (as nextFreeSpot, for one post). */
