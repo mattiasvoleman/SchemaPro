@@ -90,9 +90,14 @@ export class CrisisAdminController {
  * own groups (row-level security), and what an administrator who teaches
  * reads is narrowed to the same by the service (an administrator's own arms
  * admit every alarm and group of the school). What a marked administrator
- * may write is the database's: the teacher's arms for their own group,
- * the administrator's arms (and the school's list of who may start an alarm)
- * for anybody else's.
+ * may write is the database's, and it is the teacher's whole right in an
+ * alarm: the three teacher arms let the person in on their own group, on
+ * "found with me" for a pupil of another group, and on a free find in an
+ * alarm where they have no group (that row is stamped as the leadership's,
+ * `onBehalf`), also for a schemaläggare or expedition in a school whose start
+ * list keeps them from starting an alarm. Everything else, AWAY, starting,
+ * ending or changing an alarm and putting oneself on a call, is the
+ * administrator's arm and the school's list of who may start.
  */
 @Controller('api/v1/crisis/mine')
 @UseGuards(JwtAuthGuard, RolesGuard)
