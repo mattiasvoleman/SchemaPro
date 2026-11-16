@@ -284,8 +284,14 @@ export default function PlacementsPage() {
     return byPost;
   }, [shown]);
 
-  // Att lägga: a brick per lesson still to lay, of the posts the filters show, grouped by post.
-  const bricks = useMemo(() => (mayWrite ? bricksOf(orderedPosts) : []), [mayWrite, orderedPosts]);
+  // Att lägga: a brick per lesson still to lay, grouped by post. The posts are those the class and teacher filters show, and
+  // NOT narrowed by the room filter: that one keeps the posts that stand in the room, and a lesson is laid in a room it does
+  // not stand in yet (the room picked is what the brick suggests).
+  const bricks = useMemo(() => {
+    if (!mayWrite || !everything) return [];
+    const ofRoom = visibleBoard(everything, { ...filters, rooms: [] }).posts;
+    return bricksOf([...ofRoom].sort((a, b) => compareSwedish(`${groupById.get(a.studentGroupId)?.name ?? ""} ${subjectById.get(a.subjectId)?.name ?? ""}`, `${groupById.get(b.studentGroupId)?.name ?? ""} ${subjectById.get(b.subjectId)?.name ?? ""}`)));
+  }, [mayWrite, everything, filters, groupById, subjectById]);
   const brickGroups: BrickGroup[] = useMemo(() => {
     const groupsOf = new Map<string, BrickGroup>();
     for (const brick of bricks) {
@@ -306,6 +312,18 @@ export default function PlacementsPage() {
   }, [bricks, postById, postName, teacherText, names, t]);
   const brickByKey = useMemo(() => new Map(bricks.map((brick) => [brick.key, brick])), [bricks]);
   const selectedBrick = brickKey ? brickByKey.get(brickKey) : undefined;
+  // Where the fields of a chosen brick start: the first time the week is free for it (searched once per brick, not at every
+  // render), else Monday 08:00.
+  const firstSpot = useMemo((): Spot => {
+    const start = { dayOfWeek: 1, startMinutes: 8 * 60 };
+    const post = selectedBrick ? postById.get(selectedBrick.postId) : undefined;
+    if (!selectedBrick || !post || !mirror) return start;
+    const mover: Mover = { id: selectedBrick.key, post, teacherId: selectedBrick.teacherId ?? post.teacherId, roomId: null, recurrence: post.recurrence };
+    // From a quarter before the day: the first time the search offers is Monday 08:00 itself when it is free.
+    return nextFreeSpot(mirror, mover, selectedBrick.minutes, { dayOfWeek: 1, startMinutes: start.startMinutes - 15 }, otherNames) ?? start;
+    // The brick's key is its identity: a brick re-counted after a write is the same brick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBrick?.key, mirror, postById, otherNames]);
   // A brick that is gone (it was the post's last) is a selection that ends.
   useEffect(() => {
     if (brickKey !== null && everything && !selectedBrick) setBrickKey(null);
@@ -588,24 +606,48 @@ export default function PlacementsPage() {
     [mayWrite, selectedBrick, draft, roomFor, mirror, moverOfBrick, otherNames, place, sentenceOf, t],
   );
 
+  /** A press on a brick that has not moved yet (a click chooses; only a pointer that moves pulls). */
+  const pressed = useRef<(() => void) | null>(null);
+  useEffect(() => () => pressed.current?.(), []);
+
   const pull = useCallback(
     (key: string, event: React.PointerEvent) => {
       const brick = brickByKey.get(key);
       const post = brick ? postById.get(brick.postId) : undefined;
       if (!brick || !post) return;
-      event.preventDefault();
-      gridRef.current?.beginExternalDrag(
-        {
-          id: brick.key,
-          dayOfWeek: 1,
-          startMinutes: 8 * 60,
-          endMinutes: 8 * 60 + brick.minutes,
-          title: names.subject(post.subjectId)?.name ?? "",
-          subtitle: [names.group(post.studentGroupId), names.teacher(brick.teacherId)].filter(Boolean).join(" · "),
-          color: names.color(post.subjectId, names.subject(post.subjectId)?.color),
-        },
-        { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY },
-      );
+      pressed.current?.();
+      const { pointerId, clientX, clientY } = event;
+      // The drag starts when the pointer has moved a few pixels, not at the press: a click that begins a drag at once leaves
+      // the grid holding one when the button comes up before it has attached its listeners (a click from a script does).
+      const stop = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", end);
+        window.removeEventListener("pointercancel", end);
+        pressed.current = null;
+      };
+      const move = (moved: PointerEvent) => {
+        if (moved.pointerId !== pointerId || Math.abs(moved.clientX - clientX) + Math.abs(moved.clientY - clientY) < 5) return;
+        stop();
+        gridRef.current?.beginExternalDrag(
+          {
+            id: brick.key,
+            dayOfWeek: 1,
+            startMinutes: 8 * 60,
+            endMinutes: 8 * 60 + brick.minutes,
+            title: names.subject(post.subjectId)?.name ?? "",
+            subtitle: [names.group(post.studentGroupId), names.teacher(brick.teacherId)].filter(Boolean).join(" · "),
+            color: names.color(post.subjectId, names.subject(post.subjectId)?.color),
+          },
+          { pointerId, clientX: moved.clientX, clientY: moved.clientY },
+        );
+      };
+      const end = (done: PointerEvent) => {
+        if (done.pointerId === pointerId) stop();
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+      pressed.current = stop;
     },
     [brickByKey, postById, names],
   );
@@ -618,14 +660,6 @@ export default function PlacementsPage() {
     if (openCard !== null && everything && !openedRow && !openedKept) setOpenCard(null);
   }, [openCard, everything, openedRow, openedKept]);
 
-  /** Where the fields of a chosen brick start: the first time the week is free for it, else Monday 08:00. */
-  const firstSpotOf = (brick: Brick): Spot => {
-    const mover = moverOfBrick(brick, roomFor(brick));
-    const start = { dayOfWeek: 1, startMinutes: 8 * 60 };
-    // From a quarter before the day: the first time the search offers is Monday 08:00 itself when it is free.
-    return (mirror && mover && nextFreeSpot(mirror, mover, brick.minutes, { dayOfWeek: 1, startMinutes: start.startMinutes - 15 }, otherNames)) || start;
-  };
-
   const lessonOfBrick = (brick: Brick | undefined): string =>
     brick ? t("brickLabel", { lesson: postName(postById.get(brick.postId)), teacher: teacherText(brick.teacherId), minutes: brick.minutes }) : "";
 
@@ -637,8 +671,8 @@ export default function PlacementsPage() {
         if (!step) return;
         setMessage({ tone: "ok", text: `${t(kind === "undo" ? "undone" : "redone", { what: t(step.label === "place" ? "stepPlace" : step.label === "move" ? "stepMove" : "stepRemove") })} ${t("fromNextGenerate")}` });
       } catch (error) {
-        // A step on a post somebody else has changed is refused; the history is no longer ours, and the week is read again.
-        if (writeProblemOf(error) === "STALE") history.clear();
+        // A step on a post somebody else has changed is refused (STALE) and the week is read again; the week it then shows
+        // carries a key that is not our last write's, and that ends the history (reconcile).
         problemFrom(error);
       }
     },
@@ -800,7 +834,7 @@ export default function PlacementsPage() {
                         submitLabel={t("lay")}
                         minutes={selectedBrick.minutes}
                         rooms={roomsList}
-                        initial={{ ...firstSpotOf(selectedBrick), roomId: roomFor(selectedBrick) }}
+                        initial={{ ...firstSpot, roomId: roomFor(selectedBrick) }}
                         refusal={refusal}
                         saving={saving}
                         onValueChange={setDraft}

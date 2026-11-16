@@ -259,6 +259,11 @@ const pinGeometry = () => vi.spyOn(Element.prototype, "getBoundingClientRect").m
 const at = (day: number, hour: number, minute = 0) => ({ clientX: 56 + (day - 1) * 100 + 50, clientY: Math.round(((hour * 60 + minute - 480) * 1.1)) });
 const columns = () => Array.from(document.querySelectorAll<HTMLElement>("[data-writes-inert='SCHEMALAGGNING DRIFT']"));
 const bricks = () => Array.from(document.querySelectorAll<HTMLElement>("[data-brick]"));
+/** Nothing is written: asked after the page has had the time to start a write it should not (a write is a few microtasks away). */
+const noWrite = async () => {
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  expect(api.put).not.toHaveBeenCalled();
+};
 const lastPut = () => api.put.mock.calls.at(-1) as [string, { placements: Array<Record<string, unknown>>; baseKey?: string }];
 
 describe("the figures", () => {
@@ -574,6 +579,9 @@ describe("the states of the read", () => {
     await ready();
     state.boardMode = "error";
     await client.refetchQueries({ queryKey: ["requirementPlacements"] });
+    // The read failed (the cache knows it), and the page has had the time to say so if it were going to.
+    await waitFor(() => expect(client.getQueryState(["requirementPlacements", "board", "y1"])?.status).toBe("error"));
+    await new Promise((resolve) => setTimeout(resolve, 30));
     expect(screen.getByTestId("placement-summary")).toBeInTheDocument();
     expect(screen.queryByText("loadFailed")).not.toBeInTheDocument();
   });
@@ -642,7 +650,7 @@ describe("Att lägga", () => {
     expect(bricks()).toHaveLength(0);
     expect(columns()).toHaveLength(0);
     fireEvent.keyDown(cardOf(ANNA_ROW)!, { key: "ArrowUp" });
-    expect(api.put).not.toHaveBeenCalled();
+    await noWrite();
   });
 
   it("marks the pages it points to for the profile that writes their area (review of #315, LÅG-5)", async () => {
@@ -696,7 +704,7 @@ describe("laying a lesson: press the brick, then a time", () => {
     renderPage();
     await ready();
     fireEvent.click(columns()[1]!, at(2, 14));
-    expect(api.put).not.toHaveBeenCalled();
+    await noWrite();
   });
 
   it("says that a press outside the school day is outside it, and writes nothing", async () => {
@@ -708,7 +716,42 @@ describe("laying a lesson: press the brick, then a time", () => {
     // 17:45 for an hour ends after 18:00.
     fireEvent.click(columns()[0]!, at(1, 17, 45));
     expect(await screen.findByTestId("placement-message")).toHaveTextContent("cannotStandThere(outsideDay)");
-    expect(api.put).not.toHaveBeenCalled();
+    await noWrite();
+  });
+
+  it("closes the row when the lesson is laid, also when the post has more bricks, and leaves none of them chosen", async () => {
+    pinGeometry();
+    state.board = board({
+      posts: [{ ...board().posts[0]!, parts: [{ teacherId: "anna", minutes: 60, count: 3, locked: 0, placed: 0, left: 3, cannotPlace: null }] }],
+      placements: [],
+    });
+    renderPage();
+    await ready();
+    await userEvent.click(bricks()[0]!);
+    await screen.findByTestId("lay-row");
+    fireEvent.click(columns()[3]!, at(4, 15));
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByTestId("lay-row")).not.toBeInTheDocument());
+    // Two bricks are left of the post, and none is pressed.
+    await waitFor(() => expect(bricks()).toHaveLength(2));
+    expect(bricks().every((brick) => brick.getAttribute("aria-pressed") === "false")).toBe(true);
+  });
+
+  it("offers the room the filter picked for a lesson of a post that has none placed there, though the filter hides that post from the list", async () => {
+    state.board = board({
+      posts: [...board().posts, { ...board().posts[0]!, id: "post-en", subjectId: "s-sl", teacherId: "bo", parts: [{ teacherId: "bo", minutes: 60, count: 2, locked: 0, placed: 0, left: 2, cannotPlace: null }], rowsKey: "e3b0c44298fc1c14" }],
+    });
+    renderPage();
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: /filterRoom/ }));
+    await userEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Slöjdsalen" }));
+    await userEvent.keyboard("{Escape}");
+    // The post stands in no room the filter picked, so it is not listed; its lessons are still to lay, and the room is the picked one.
+    expect(screen.queryAllByTestId("placement-post").some((entry) => entry.textContent?.includes("Slöjd 7A"))).toBe(false);
+    const brick = document.querySelector<HTMLElement>("[data-brick^='post-en|bo|60#']")!;
+    await userEvent.click(brick);
+    const row = await screen.findByTestId("lay-row");
+    await waitFor(() => expect(within(row).getByRole("combobox", { name: "room" })).toHaveValue("r-sl"));
   });
 
   it("chooses another brick instead, and none when the chosen one is pressed again", async () => {
@@ -733,6 +776,7 @@ describe("laying a lesson: pull the brick into the week", () => {
     renderPage();
     await ready();
     fireEvent.pointerDown(bricks()[0]!, { pointerId: 1, button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(window, { pointerId: 1, ...at(5, 9, 0) });
     fireEvent.pointerMove(window, { pointerId: 1, ...at(5, 9, 15) });
     fireEvent.pointerUp(window, { pointerId: 1, ...at(5, 9, 15) });
     await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
@@ -747,7 +791,20 @@ describe("laying a lesson: pull the brick into the week", () => {
     fireEvent.pointerDown(bricks()[0]!, { pointerId: 1, button: 0, pointerType: "touch", clientX: 10, clientY: 10 });
     fireEvent.pointerMove(window, { pointerId: 1, ...at(5, 9, 15) });
     fireEvent.pointerUp(window, { pointerId: 1, ...at(5, 9, 15) });
-    expect(api.put).not.toHaveBeenCalled();
+    await noWrite();
+  });
+
+  it("pulls nothing from a press that does not move: a click chooses, and no drag is left holding the grid", async () => {
+    pinGeometry();
+    renderPage();
+    await ready();
+    fireEvent.pointerDown(bricks()[0]!, { pointerId: 1, button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 10, clientY: 10 });
+    // Later pointers over the week, and another button coming up, find no drag to carry out.
+    fireEvent.pointerMove(window, { pointerId: 1, ...at(3, 9) });
+    fireEvent.pointerUp(window, { pointerId: 1, ...at(3, 9) });
+    await noWrite();
+    expect(document.querySelector("[class*='border-dashed']")).not.toBeInTheDocument();
   });
 
   it("lays nothing when it is let go outside the week", async () => {
@@ -756,8 +813,9 @@ describe("laying a lesson: pull the brick into the week", () => {
     await ready();
     fireEvent.pointerDown(bricks()[0]!, { pointerId: 1, button: 0, clientX: 10, clientY: 10 });
     fireEvent.pointerMove(window, { pointerId: 1, ...at(2, 9) });
+    fireEvent.pointerMove(window, { pointerId: 1, ...at(2, 9) });
     fireEvent.pointerUp(window, { pointerId: 1, clientX: 900, clientY: 900 });
-    expect(api.put).not.toHaveBeenCalled();
+    await noWrite();
   });
 
   it("says why a drop cannot be, and writes nothing, when the mirror of the judge refuses it (the teacher has a lesson then)", async () => {
@@ -767,6 +825,7 @@ describe("laying a lesson: pull the brick into the week", () => {
     renderPage();
     await ready();
     fireEvent.pointerDown(bricks()[0]!, { pointerId: 1, button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(window, { pointerId: 1, ...at(3, 10, 15) });
     fireEvent.pointerMove(window, { pointerId: 1, ...at(3, 10, 15) });
     fireEvent.pointerUp(window, { pointerId: 1, ...at(3, 10, 15) });
     expect(await screen.findByTestId("placement-message")).toHaveTextContent("cannotStandThere(verdict.TEACHER(LESSON|7B|Slöjd|3|10:00|11:00))");
@@ -781,6 +840,7 @@ describe("laying a lesson: pull the brick into the week", () => {
     renderPage();
     await ready();
     fireEvent.pointerDown(bricks()[0]!, { pointerId: 1, button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(window, { pointerId: 1, ...at(3, 13, 0) });
     fireEvent.pointerMove(window, { pointerId: 1, ...at(3, 13, 0) });
     fireEvent.pointerUp(window, { pointerId: 1, ...at(3, 13, 0) });
     expect(await screen.findByTestId("placement-message")).toHaveTextContent("cannotStandThere(verdict.ROOM(LESSON|7B|Slöjd|3|13:00|14:00))");
@@ -918,15 +978,17 @@ describe("moving and removing a lesson", () => {
     expect(lastPut()[1].placements[0]).toMatchObject({ dayOfWeek: 4, minutes: 60 });
   });
 
-  it("does not stretch a card: a drag at its foot is refused with the reason, and nothing is written", async () => {
+  it("does not stretch a card: a drag at its foot is refused with the reason, and nothing is written (the longer lesson would stand free)", async () => {
     pinGeometry();
     renderPage();
     await ready();
-    // Grabbed near its bottom edge (the grid's resize grip), and pulled down.
-    fireEvent.pointerDown(cardOf(ANNA_ROW)!, { pointerId: 1, button: 0, clientX: 56 + 150, clientY: 659 });
-    fireEvent.pointerMove(window, { pointerId: 1, clientX: 56 + 150, clientY: 700 });
-    fireEvent.pointerUp(window, { pointerId: 1, clientX: 56 + 150, clientY: 700 });
-    expect(api.put).not.toHaveBeenCalled();
+    // Thursday's card, which nothing stands beside: its foot pulled down is a longer lesson the week would hold, if lengths were free.
+    fireEvent.pointerDown(cardOf(BAD_ROW)!, { pointerId: 1, button: 0, clientX: 56 + 350, clientY: 653 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 56 + 350, clientY: 659 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 56 + 350, clientY: 659 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 56 + 350, clientY: 659 });
+    expect(await screen.findByTestId("placement-message")).toHaveTextContent("cannotMoveThere(lengthCannotChange)");
+    await noWrite();
   });
 
   it("does not move a lesson Generera keeps, and says where it is changed", async () => {
@@ -1010,6 +1072,23 @@ describe("undo and redo", () => {
     await userEvent.click(screen.getByRole("button", { name: "redo" }));
     await waitFor(() => expect(api.put).toHaveBeenCalledTimes(3));
     expect(lastPut()[1].placements[0]).toMatchObject({ startTime: "09:45" });
+  });
+
+  it("cannot be asked for while a write is on its way", async () => {
+    renderPage();
+    await ready();
+    fireEvent.keyDown(cardOf(ANNA_ROW)!, { key: "ArrowUp" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "undo" })).toBeEnabled());
+    // The next write does not answer yet.
+    api.put.mockImplementationOnce(() => new Promise(() => undefined));
+    fireEvent.keyDown(cardOf("post-ma||60|2|09:45|ALL_WEEKS")!, { key: "ArrowUp" });
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("button", { name: "undo" })).toBeDisabled());
+    expect(screen.getByRole("button", { name: "redo" })).toBeDisabled();
+    // And a third change meanwhile is told to wait, and writes nothing.
+    fireEvent.keyDown(cardOf("post-ma||60|2|09:45|ALL_WEEKS")!, { key: "ArrowUp" });
+    expect(await screen.findByTestId("placement-status")).toHaveTextContent("waitSaving");
+    expect(api.put).toHaveBeenCalledTimes(2);
   });
 
   it("is Ctrl+Z, as in the grundschema", async () => {
