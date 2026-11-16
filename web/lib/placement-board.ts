@@ -165,7 +165,9 @@ const picks = (list: readonly string[], id: string | null): boolean => list.leng
  * meals are the classes' and are shown only for a class that is picked
  * (the page draws them as bands, and a band for every class is a wall). A post
  * is shown when its class and a teacher of it are picked, and — when a room is
- * picked — when one of its rows stands in it.
+ * picked — when one of its rows stands in it. A row with no room (the engine
+ * chooses it at every Generera) stands in no room: it is shown while no room is
+ * picked, and matches none that is.
  */
 export function visibleBoard(board: PlacementBoard, filters: BoardFilters): VisibleBoard {
   const postById = new Map(board.posts.map((post) => [post.id, post]));
@@ -202,6 +204,8 @@ export interface CardNames {
   /** "A. Ek". */
   teacher: (id: string | null) => string | undefined;
   room: (id: string | null) => string | undefined;
+  /** Where a förläggning's room stands when it has none: "Motorn väljer sal". */
+  noRoom: string;
   /** The grid's short note for the weeks a lesson runs ("udda", "period"), or null for every week. */
   weeks: (lesson: { recurrence: PlacementRecurrence; startDate: string | null; endDate: string | null }) => string | null;
   color: (subjectId: string, color: string | null | undefined) => string;
@@ -236,7 +240,7 @@ export function placementCards(
       endMinutes: minutesOfClockText(row.endTime),
       title: subject?.name ?? "",
       subtitle: [post ? names.group(post.studentGroupId) : undefined, teacher].filter(Boolean).join(" · "),
-      room: row.roomName,
+      room: row.roomName ?? names.noRoom,
       color: names.color(post?.subjectId ?? "", subject?.color),
       conflicted: !row.verdict.ok,
       ...(note ? { recurrenceNote: note } : {}),

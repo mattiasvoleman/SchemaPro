@@ -79,13 +79,18 @@ import { Notice } from "@/components/ui/notice";
  * shares nothing is exactly what it was: no Lärare field, rows sent without a
  * teacher.
  *
+ * THE ROOM IS OPTIONAL. Its empty choice is "Motorn väljer sal": a row with no room is sent with roomId null, and the engine
+ * chooses the room at every Generera (so it can be another room next time; a row with a room is a lock, and keeps it). The
+ * one place the dialog asks for a room is a pair, below: the engine cannot choose a room for half a lesson.
+ *
  * ODD AND EVEN WEEKS ON A POST OF EVERY WEEK go in pairs: an odd row and an
  * even row of one length are one lesson in two places ("udda veckor tisdag i
  * simhallen, jämna veckor torsdag"). The engine cannot lay half a lesson of an
  * every-week post, so a lone odd row is refused (PAIRS). The dialog says so
  * under the rows, and the add button, once it holds a lone row, adds the
  * other half of that pair. On a shared post a pair is one lesson and so one
- * teacher's (TEACHER_PAIRS): both halves are counted, and added, per teacher.
+ * teacher's (TEACHER_PAIRS): both halves are counted, and added, per teacher. A pair is two locks, and a lock has a room: a half
+ * with none is refused (PAIR_ROOM), said at the row before the save and again when the gateway answers it.
  */
 
 interface RowDraft {
@@ -96,6 +101,7 @@ interface RowDraft {
   minutes: string;
   /** Delade lektioner: whose lesson, or "" when none is chosen (always "" on a post that shares nothing). */
   teacherId: string;
+  /** "" is no room: the engine chooses it at every Generera. */
   roomId: string;
   /** The stored room's name, for a room the list no longer offers. */
   roomName: string | null;
@@ -154,6 +160,10 @@ function loneRow(rows: readonly RowDraft[], postWeeks: PlacementRecurrence): { r
   }
   return null;
 }
+
+/** A row that is half of a pair (odd or even weeks of an every-week post) and has no room. */
+const halfOfPairWithoutRoom = (row: RowDraft, postWeeks: PlacementRecurrence): boolean =>
+  postWeeks === "ALL_WEEKS" && row.recurrence !== "ALL_WEEKS" && row.roomId === "";
 
 export function PlacementDialog({ open, onOpenChange, requirement, name, shares, teacherName }: PlacementDialogProps) {
   const t = useTranslations("requirements.placements");
@@ -273,7 +283,7 @@ function PlacementForm({
         start: placement.startTime,
         minutes: String(placement.minutes),
         teacherId: placement.teacherId ?? "",
-        roomId: placement.roomId,
+        roomId: placement.roomId ?? "",
         roomName: placement.roomName,
         recurrence: placement.recurrence,
         verdict: stored.verdicts.find((verdict) => verdict.index === index) ?? null,
@@ -409,7 +419,8 @@ function PlacementForm({
       const start = startProblem(row);
       if (start) problem.start = start;
       if (shared && !row.teacherId) problem.teacher = t("problemTeacher");
-      if (!row.roomId) problem.room = t("problemRoom");
+      // The one row that needs a room: a half of a pair (the gateway refuses it, PAIR_ROOM); any other may leave it to the engine.
+      if (halfOfPairWithoutRoom(row, postWeeks)) problem.room = fitSentence(t, "PAIR_ROOM");
       if (problem.start || problem.teacher || problem.room) {
         errors[row.key] = problem;
         first ??= problem.start ? id("start", row.key) : problem.teacher ? id("teacher", row.key) : id("room", row.key);
@@ -425,7 +436,8 @@ function PlacementForm({
       dayOfWeek: Number(row.day),
       startTime: row.start,
       minutes: Number(row.minutes),
-      roomId: row.roomId,
+      // No room is sent as null: the engine chooses it.
+      roomId: row.roomId === "" ? null : row.roomId,
       recurrence: row.recurrence,
       // Whose lesson, on a post that shares its lessons; a post that shares nothing sends none.
       ...(shared ? { teacherId: row.teacherId } : {}),
@@ -452,7 +464,7 @@ function PlacementForm({
         const row = typeof refusal.params.index === "number" ? list[refusal.params.index] : undefined;
         if (row) {
           setRefused({ key: row.key, text: fitSentence(t, refusal.reason) });
-          setFocusId(id(shared && refusal.reason.includes("TEACHER") ? "teacher" : "day", row.key));
+          setFocusId(id(refusal.reason === "PAIR_ROOM" ? "room" : shared && refusal.reason.includes("TEACHER") ? "teacher" : "day", row.key));
         } else {
           setTopError(fitSentence(t, refusal.reason));
           setFocusId(topId);
@@ -533,6 +545,8 @@ function PlacementForm({
                     ? fitSentence(t, "NO_TEACHER")
                     : null;
             const rowErrorId = id("error", row.key);
+            // A stored half with no room is already said at the row (the judge's PAIR_ROOM): the save's own check does not say it twice.
+            const roomError = stored?.reason === "PAIR_ROOM" ? undefined : errors.room;
             const end = Number.isFinite(minutesOfClock(row.start))
               ? clockOfMinutes(minutesOfClock(row.start) + Number(row.minutes))
               : null;
@@ -623,14 +637,18 @@ function PlacementForm({
                       </NativeSelect>
                     </div>
                   ) : null}
-                  <FormField id={id("room", row.key)} label={t("room")} error={errors.room}>
+                  <FormField id={id("room", row.key)} label={t("room")} hint={t("roomHint")} error={roomError}>
                     {(control) => (
                       <NativeSelect
                         {...control}
+                        // What the gateway says of the row (a room that clashes, a pair's half with none) is read with the room.
+                        aria-invalid={control["aria-invalid"] ?? (rowError && halfOfPairWithoutRoom(row, postWeeks) ? true : undefined)}
+                        aria-describedby={[control["aria-describedby"], rowError ? rowErrorId : undefined].filter(Boolean).join(" ") || undefined}
                         value={row.roomId}
                         onChange={(event) => update(row.key, { roomId: event.target.value })}
                       >
-                        <option value="">{t("roomPlaceholder")}</option>
+                        {/* The empty choice is a choice: the engine chooses the room at every Generera. */}
+                        <option value="">{t("roomAny")}</option>
                         {rooms.map((room) => (
                           <option key={room.id} value={room.id}>
                             {room.name}

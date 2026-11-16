@@ -75,6 +75,12 @@ export type PlacementFitReason =
   | 'WEEKS'
   /** On an every-week post, odd and even rows of a length do not pair up. */
   | 'PAIRS'
+  /**
+   * A half of a pair (an odd or an even row of an every-week post) names no room. A pair is one lesson in two places, and
+   * the engine cannot hold half a lesson of an every-week post, so a pair is sent as two locks and a lock has a room
+   * (20270213090000). The gateway's rule alone: the database's fit function does not read the room.
+   */
+  | 'PAIR_ROOM'
   /** The post is in a parallel block. */
   | 'BLOCK'
   | TeacherFitReason;
@@ -97,6 +103,11 @@ export interface PlacementShape {
   minutes: number;
   recurrence: LessonRecurrence;
   /**
+   * The room, null when the school left it to the engine. Absent reads as "not asked": a caller that has no room to say
+   * (a change of the post's teachers, followPlacements) is not held to PAIR_ROOM.
+   */
+  roomId?: string | null;
+  /**
    * Whose lesson it is, on a shared post; always null on a post that shares
    * nothing (the post's teacher is the lesson's). Absent reads as null.
    */
@@ -112,6 +123,9 @@ export function placementFitOf(post: PlacementPost, rows: readonly PlacementShap
   if (post.blockId !== null) return 'BLOCK';
   const shape = postShapeFitOf(post, rows);
   if (shape !== null) return shape;
+  // The halves of a pair are locks, and a lock names its room: asked after the pairs are known to pair, so that the school is
+  // told of the missing half before the missing room.
+  if (post.recurrence === 'ALL_WEEKS' && rows.some((row) => row.recurrence !== 'ALL_WEEKS' && row.roomId === null)) return 'PAIR_ROOM';
   // Delade lektioner: a row written on a shared post names its teacher.
   if (hasShares(post) && rows.some((row) => (row.teacherId ?? null) === null)) return 'NO_TEACHER';
   return teacherFitOf(post, rows);

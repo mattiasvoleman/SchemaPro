@@ -98,6 +98,13 @@ describe("a refused write", () => {
     });
   });
 
+  it("is a pair's half that names no room (PAIR_ROOM), with the row when the gateway names it", () => {
+    const named = new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { reason: "PAIR_ROOM", index: 1 });
+    expect(placementsRefusal(named)).toEqual({ kind: "FIT", reason: "PAIR_ROOM", params: { reason: "PAIR_ROOM", index: 1 } });
+    const unnamed = new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", { reason: "PAIR_ROOM" });
+    expect(placementsRefusal(unnamed)).toEqual({ kind: "FIT", reason: "PAIR_ROOM", params: { reason: "PAIR_ROOM" } });
+  });
+
   it("is a post whose change of teacher the placed lessons do not follow, with the placement to change first", () => {
     const params = { reason: "TEACHER", day: 2, start: "10:00", end: "11:00", weeks: "ODD_WEEKS" };
     const error = new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_DO_NOT_FIT", params);

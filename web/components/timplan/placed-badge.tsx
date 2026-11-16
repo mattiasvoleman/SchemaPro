@@ -30,7 +30,8 @@ type Translate = (key: string, values?: Record<string, string | number>) => stri
 type TeacherName = (teacherId: string) => string | null;
 
 /**
- * "tis 10:00–11:00, Simhallen, udda veckor": one placed lesson, for a tooltip and a cell's label. On a shared post
+ * "tis 10:00–11:00, Simhallen, udda veckor": one placed lesson, for a tooltip and a cell's label ("Motorn väljer sal" where the room
+ * would stand when the school left it to the engine). On a shared post
  * the rows are different teachers' lessons and the line says whose ("… (Bo Ek)"); a post that shares nothing places
  * every row as its teacher's, and its line is as it was.
  */
@@ -39,7 +40,7 @@ export function placementLine(row: RequirementPlacement, t: Translate, tCommon: 
     day: DAY_KEYS[row.dayOfWeek] ? tCommon(DAY_KEYS[row.dayOfWeek]!).toLowerCase() : String(row.dayOfWeek),
     start: row.startTime,
     end: row.endTime,
-    room: row.roomName,
+    room: row.roomName ?? t("placements.roomAny"),
     weeks: row.recurrence,
   });
   const name = row.teacherId ? teacherName?.(row.teacherId) : null;

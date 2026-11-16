@@ -57409,12 +57409,13 @@ DECLARE
 BEGIN
   -- Columns, in order: name, type, nullability and default. 20270208090000 added "teacherId" (last: ADD COLUMN),
   -- nullable and with no default; section 470 asks its key, index and comment.
+  -- 20270213090000 made "roomId" nullable (a row with no room is a lesson the engine chooses the room for); sections 495-499 are that migration's.
   SELECT string_agg(format('%s %s %s %s', a.attname, format_type(a.atttypid, a.atttypmod), CASE WHEN a.attnotnull THEN 'NN' ELSE 'N' END,
                            coalesce(pg_get_expr(d.adbin, d.adrelid), '-')), E'\n' ORDER BY a.attnum) INTO got
     FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
    WHERE a.attrelid = tbl AND a.attnum > 0 AND NOT a.attisdropped;
   want := E'id uuid NN gen_random_uuid()\nschoolId uuid NN -\nrequirementId uuid NN -\ndayOfWeek integer NN -\n'
-       || E'startTime time(0) without time zone NN -\nminutes integer NN -\nroomId uuid NN -\n'
+       || E'startTime time(0) without time zone NN -\nminutes integer NN -\nroomId uuid N -\n'
        || E'recurrence "LessonRecurrence" NN ''ALL_WEEKS''::"LessonRecurrence"\n'
        || E'createdAt timestamp(6) with time zone NN CURRENT_TIMESTAMP\nupdatedAt timestamp(6) with time zone NN -\n'
        || E'teacherId uuid N -';
@@ -57760,7 +57761,8 @@ ROLLBACK;
 --
 -- A CHECK is judged when the row is written, before the trigger, so a value outside it says 23514 with the
 -- constraint's name whatever the post is; a value on its edge is admitted (the post here has the length, so the
--- trigger has nothing to say). The same by UPDATE, and the column that has no CHECK to hide behind: a missing room.
+-- trigger has nothing to say). The same by UPDATE, and the column that has no CHECK to hide behind: a missing room, which
+-- since 20270213090000 is a row the engine chooses the room for (sections 495-499) and no longer a 23502.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -57822,8 +57824,11 @@ BEGIN
   PERFORM pg_temp.fl_case('467 14:05 + 240 ends at 18:05', pg_temp.fl_ins(s, p240, r1, r2, '3|14:05|240|1|ALL_WEEKS'), inside_check);
 
   -- No room, no weeks given (the default), and a missing day.
+  -- No room is a row since 20270213090000 (the engine chooses the room; sections 495-499), and the post here takes one lesson,
+  -- so the row is taken away again before the next case writes the post's only lesson.
   PERFORM pg_temp.fl_case('467 no room', format($q$INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "updatedAt")
-                                                  VALUES (%L, %L, 1, '12:00', 60, now())$q$, s, (t #>> '{posts,spare}')::uuid), '23502');
+                                                  VALUES (%L, %L, 1, '12:00', 60, now())$q$, s, (t #>> '{posts,spare}')::uuid), 'ok');
+  PERFORM pg_temp.fl_clear((t #>> '{posts,spare}')::uuid);
   PERFORM pg_temp.fl_case('467 no day', format($q$INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "startTime", minutes, "roomId", "updatedAt")
                                                  VALUES (%L, %L, '12:00', 60, %L, now())$q$, s, (t #>> '{posts,spare}')::uuid, r1), '23502');
   PERFORM pg_temp.fl_case('467 a start of 24:00 is not a time of the day', format($q$INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", "updatedAt")
@@ -57846,7 +57851,9 @@ BEGIN
   PERFORM pg_temp.fl_case('467 UPDATE minutes 62', format($q$UPDATE "TeachingRequirementPlacements" SET minutes = 62 WHERE "requirementId" = %L$q$, one), min_check);
   PERFORM pg_temp.fl_case('467 UPDATE minutes 300', format($q$UPDATE "TeachingRequirementPlacements" SET minutes = 300 WHERE "requirementId" = %L$q$, one), min_check);
   PERFORM pg_temp.fl_case('467 UPDATE minutes 5', format($q$UPDATE "TeachingRequirementPlacements" SET minutes = 5 WHERE "requirementId" = %L$q$, one), min_check);
-  PERFORM pg_temp.fl_case('467 UPDATE a room to nothing', format($q$UPDATE "TeachingRequirementPlacements" SET "roomId" = NULL WHERE "requirementId" = %L$q$, one), '23502');
+  -- A room to nothing is a row the engine chooses the room for (20270213090000), and back again.
+  PERFORM pg_temp.fl_case('467 UPDATE a room to nothing', format($q$UPDATE "TeachingRequirementPlacements" SET "roomId" = NULL WHERE "requirementId" = %L$q$, one), 'ok');
+  PERFORM pg_temp.fl_case('467 UPDATE nothing back to a room', format($q$UPDATE "TeachingRequirementPlacements" SET "roomId" = %L WHERE "requirementId" = %L$q$, r1, one), 'ok');
   -- A start and a length each fine alone but past 18:00 together: the UPDATE of one of them is judged against the other.
   PERFORM pg_temp.fl_case('467 UPDATE start 17:00 again', format($q$UPDATE "TeachingRequirementPlacements" SET "startTime" = '17:00' WHERE "requirementId" = %L$q$, one), 'ok');
   PERFORM pg_temp.fl_case('467 UPDATE minutes so that the lesson ends after 18:00', format($q$UPDATE "TeachingRequirementPlacements" SET minutes = 120 WHERE "requirementId" = %L$q$, one),
@@ -60795,5 +60802,338 @@ BEGIN
     RAISE EXCEPTION E'tl 494d: asks for app.current_user_teaches() and is not on the list of those that may (section 494d is empty until PR 3):\n  %', askers;
   END IF;
   RAISE NOTICE 'tl 494: % arms judged or tagged, none asks for the mark', (SELECT count(*) FROM tl_want);
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Förläggning utan sal (20270213090000), sections 495-499: "TeachingRequirementPlacements"."roomId" is nullable. A row
+-- with no room is a lesson the engine chooses the room for at every Generera (a pinned lesson); a row with a room is a
+-- locked lesson, as before. The helpers of sections 465-474 (fl_) are used for the planting and the verdicts, and the
+-- helpers made here have the prefix gf_.
+--
+--   495  the catalogue: the column is the ONE thing that changed. The two functions are the ones 20270208090000 left
+--        (md5 of the source), and nothing the table's constraints, arms or functions say names the room
+--   496  the trigger, differentially: every refusal it gives a row with a room it gives a row without one, and every row it
+--        admits it admits. A pair with empty halves is admitted by the database (the gateway holds that rule)
+--   497  the key: still ("roomId", "schoolId") -> Rooms, NO ACTION, MATCH SIMPLE: a NULL names no room and no school's
+--        room is named by accident; a room a row names is not removed, one it no longer names is
+--   498  who reads and who writes a row with no room: every principal of the matrix school as 466 asks it of a row with
+--        one, and the other school's administrator, who sees and reaches nothing
+--   499  what a row with no room does not break: the post's removal takes it with it, and a lesson written from it
+--        (locked, generated, fromPlacement, in a room) stands when the rows are replaced
+-- ---------------------------------------------------------------------------
+
+-- INSERT of placements, the room as a token: 1 and 2 are the school's rooms, N is no room.
+CREATE FUNCTION pg_temp.gf_ins(p_school uuid, p_post uuid, p_r1 uuid, p_r2 uuid, VARIADIC p_rows text[]) RETURNS text LANGUAGE sql AS $f$
+  SELECT 'INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "updatedAt") VALUES '
+         || string_agg(format('(%L, %L, %s, %L, %s, %L, %L, now())', p_school, p_post, split_part(r, '|', 1), split_part(r, '|', 2),
+                              split_part(r, '|', 3), CASE split_part(r, '|', 4) WHEN '1' THEN p_r1 WHEN '2' THEN p_r2 ELSE NULL END, split_part(r, '|', 5)), ', ')
+    FROM unnest(p_rows) r
+$f$;
+-- The same rows with every room made another token (the differential's two legs).
+CREATE FUNCTION pg_temp.gf_with_room(p_rows text[], p_token text) RETURNS text[] LANGUAGE sql AS $f$
+  SELECT array_agg(split_part(r, '|', 1) || '|' || split_part(r, '|', 2) || '|' || split_part(r, '|', 3) || '|' || p_token || '|' || split_part(r, '|', 5) ORDER BY ord)
+    FROM unnest(p_rows) WITH ORDINALITY u(r, ord)
+$f$;
+
+-- ---------------------------------------------------------------------------
+-- Section 495: the catalogue.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  tbl constant regclass := '"TeachingRequirementPlacements"'::regclass;
+  got text;
+  k record;
+BEGIN
+  SELECT format('%s %s %s', format_type(a.atttypid, a.atttypmod), CASE WHEN a.attnotnull THEN 'NN' ELSE 'N' END, coalesce(pg_get_expr(d.adbin, d.adrelid), '-'))
+    INTO got FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = tbl AND a.attname = 'roomId' AND NOT a.attisdropped;
+  PERFORM pg_temp.fl_expect('495 roomId is a nullable uuid with no default', got, 'uuid N -');
+  PERFORM pg_temp.fl_true('495 roomId is commented, and says the engine chooses', coalesce(col_description(tbl, (SELECT attnum FROM pg_attribute WHERE attrelid = tbl AND attname = 'roomId')), '') LIKE '%engine%');
+  PERFORM pg_temp.fl_true('495 the table is commented, says no room and still names the teacher (470)', coalesce(obj_description(tbl, 'pg_class'), '') LIKE '%roomId NULL%' AND coalesce(obj_description(tbl, 'pg_class'), '') LIKE '%teacherId%');
+  -- It is the only column that is nullable and was not before: the rest keep what 465 reads (NN, bar teacherId).
+  PERFORM pg_temp.fl_expect('495 the nullable columns are roomId and teacherId and nothing else',
+    (SELECT string_agg(a.attname, ',' ORDER BY a.attname COLLATE "C") FROM pg_attribute a WHERE a.attrelid = tbl AND a.attnum > 0 AND NOT a.attisdropped AND NOT a.attnotnull), 'roomId,teacherId');
+  -- Nothing the table's rules say names the room: not a CHECK, not an arm, not either function. That is why a NULL changes nothing
+  -- of them, and a change that makes one read the room is named here.
+  PERFORM pg_temp.fl_expect('495 no CHECK of the table names the room',
+    (SELECT count(*) FROM pg_constraint c WHERE c.conrelid = tbl AND c.contype = 'c' AND pg_get_constraintdef(c.oid) ~ 'roomId')::text, '0');
+  PERFORM pg_temp.fl_expect('495 no arm of the table names the room',
+    (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = 'TeachingRequirementPlacements' AND coalesce(qual, '') || ' ' || coalesce(with_check, '') ~ 'roomId')::text, '0');
+  FOR k IN SELECT * FROM (VALUES
+      ('app.teaching_requirement_placements_fit()',                 '86f24518e98f29caa02bdd8f30971202'),
+      ('app.teaching_requirement_placement_teachers_fit()',         '58875bc882854c6cd4ac496d545e1823')
+    ) v(fn, md5sum) LOOP
+    PERFORM pg_temp.fl_expect('495 ' || k.fn || ' is the one 20270208090000 left', (SELECT md5(prosrc) FROM pg_proc WHERE oid = k.fn::regprocedure), k.md5sum);
+    PERFORM pg_temp.fl_true('495 ' || k.fn || ' does not read the room', (SELECT prosrc !~ 'roomId' FROM pg_proc WHERE oid = k.fn::regprocedure));
+  END LOOP;
+  -- The key is the one 465 reads (Rooms, NO ACTION both ways), and MATCH SIMPLE is what lets a NULL through: a MATCH FULL key would refuse it.
+  SELECT format('%s %s %s %s', c.confmatchtype, c.confupdtype, c.confdeltype, c.convalidated::text)
+    INTO got FROM pg_constraint c WHERE c.conrelid = tbl AND c.conname = 'TeachingRequirementPlacements_roomId_schoolId_fkey';
+  PERFORM pg_temp.fl_expect('495 the room key is MATCH SIMPLE, NO ACTION both ways, validated', got, 's a a true');
+  RAISE NOTICE 'gf 495: % checks', current_setting('fl.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 496: the trigger, differentially. Each case is written with a room on every row, then with none, and the verdict
+-- must be the same and the wanted one.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_fl_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  t jsonb;
+  s uuid;
+  r1 uuid;
+  r2 uuid;
+  c record;
+  post uuid;
+  with_room text;
+  without_room text;
+  rows_in text[];
+  room_token text;
+BEGIN
+  t := pg_temp.fl_plant(current_setting('app.test_fl_admin_a'), 'g');
+  s := (t ->> 'school')::uuid; r1 := (t ->> 'room1')::uuid; r2 := (t ->> 'room2')::uuid;
+  FOR c IN SELECT * FROM (VALUES
+      -- post, label, rows (room token 1), the verdict a room gives and a lack of one gives alike
+      ('all',   'three lessons',                   ARRAY['1|08:00|60|1|ALL_WEEKS', '2|08:00|60|1|ALL_WEEKS', '3|08:00|60|1|ALL_WEEKS'], 'ok'),
+      ('all',   'a fourth lesson',                 ARRAY['1|08:00|60|1|ALL_WEEKS', '2|08:00|60|1|ALL_WEEKS', '3|08:00|60|1|ALL_WEEKS', '4|08:00|60|1|ALL_WEEKS'], 'FP409 COUNT'),
+      ('all',   'an odd row alone',                ARRAY['1|08:00|60|1|ODD_WEEKS'], 'FP409 PAIRS'),
+      ('all',   'a pair',                          ARRAY['1|08:00|60|1|ODD_WEEKS', '2|09:00|60|1|EVEN_WEEKS'], 'ok'),
+      ('all',   'two pairs and one lesson',        ARRAY['1|08:00|60|1|ODD_WEEKS', '2|09:00|60|1|EVEN_WEEKS', '3|08:00|60|1|ODD_WEEKS', '4|09:00|60|1|EVEN_WEEKS', '5|08:00|60|1|ALL_WEEKS'], 'ok'),
+      ('all',   'two pairs and two lessons',       ARRAY['1|08:00|60|1|ODD_WEEKS', '2|09:00|60|1|EVEN_WEEKS', '3|08:00|60|1|ODD_WEEKS', '4|09:00|60|1|EVEN_WEEKS', '5|08:00|60|1|ALL_WEEKS', '5|10:00|60|1|ALL_WEEKS'], 'FP409 COUNT'),
+      ('all',   'a length the post has not',       ARRAY['1|08:00|45|1|ALL_WEEKS'], 'FP409 LENGTH'),
+      ('odd',   'an odd row on an odd post',       ARRAY['1|08:00|60|1|ODD_WEEKS'], 'ok'),
+      ('odd',   'an even row on an odd post',      ARRAY['1|08:00|60|1|EVEN_WEEKS'], 'FP409 WEEKS'),
+      ('odd',   'an every-week row on an odd post', ARRAY['1|08:00|60|1|ALL_WEEKS'], 'FP409 WEEKS'),
+      ('mixed', 'the two lengths',                 ARRAY['1|08:00|80|1|ALL_WEEKS', '2|08:00|40|1|ALL_WEEKS'], 'ok'),
+      ('mixed', 'the long one twice',              ARRAY['1|08:00|80|1|ALL_WEEKS', '2|08:00|80|1|ALL_WEEKS'], 'FP409 COUNT'),
+      ('block', 'a post in a block',               ARRAY['1|08:00|60|1|ALL_WEEKS'], 'FP409 BLOCK'),
+      ('share', 'a shared post names nobody',      ARRAY['1|08:00|60|1|ALL_WEEKS'], 'FP409 NO_TEACHER'),
+      ('spare', 'one lesson',                      ARRAY['1|08:00|60|1|ALL_WEEKS'], 'ok')
+    ) v(post, label, rows, want) LOOP
+    post := (t #>> ARRAY['posts', c.post])::uuid;
+    rows_in := c.rows;
+    with_room := pg_temp.fl_try(pg_temp.gf_ins(s, post, r1, r2, VARIADIC pg_temp.gf_with_room(rows_in, '1')));
+    PERFORM pg_temp.fl_clear(post);
+    without_room := pg_temp.fl_try(pg_temp.gf_ins(s, post, r1, r2, VARIADIC pg_temp.gf_with_room(rows_in, 'N')));
+    PERFORM pg_temp.fl_expect('496 ' || c.post || ': ' || c.label || ', with a room', with_room, c.want);
+    PERFORM pg_temp.fl_expect('496 ' || c.post || ': ' || c.label || ', with none', without_room, c.want);
+    PERFORM pg_temp.fl_clear(post);
+  END LOOP;
+
+  -- The pair with empty halves, and half of each: the database does not hold the gateway's rule that a pair names its rooms
+  -- (PAIR_ROOM, placement-fit.ts), and a change to that is a change of this migration's promise. A pair is a pair whatever its rooms.
+  post := (t #>> '{posts,all}')::uuid;
+  PERFORM pg_temp.fl_case('496 a pair with no room on either half', pg_temp.gf_ins(s, post, r1, r2, '1|08:00|60|N|ODD_WEEKS', '2|09:00|60|N|EVEN_WEEKS'), 'ok');
+  PERFORM pg_temp.fl_clear(post);
+  PERFORM pg_temp.fl_case('496 a pair with a room on one half only', pg_temp.gf_ins(s, post, r1, r2, '1|08:00|60|1|ODD_WEEKS', '2|09:00|60|N|EVEN_WEEKS'), 'ok');
+  PERFORM pg_temp.fl_clear(post);
+  PERFORM pg_temp.fl_case('496 lessons with a room and lessons without, on one post', pg_temp.gf_ins(s, post, r1, r2, '1|08:00|60|1|ALL_WEEKS', '2|09:00|60|N|ALL_WEEKS', '3|10:00|60|2|ALL_WEEKS'), 'ok');
+  PERFORM pg_temp.fl_expect('496 and all three are stored', pg_temp.fl_n(post), '3');
+  PERFORM pg_temp.fl_expect('496 two of them with a room and one without',
+    (SELECT count(*) FILTER (WHERE "roomId" IS NULL)::text || '/' || count(*) FILTER (WHERE "roomId" IS NOT NULL)::text FROM "TeachingRequirementPlacements" WHERE "requirementId" = post), '1/2');
+  PERFORM pg_temp.fl_clear(post);
+
+  -- A shared post: the rules per teacher (the deferred function, asked for through fd_try) do not look at the room either. The lesson of
+  -- the share's teacher, with a room and without, and a teacher who has no lesson of the post, with a room and without.
+  post := (t #>> '{posts,share}')::uuid;
+  PERFORM pg_temp.fl_expect('496 a shared post: the share''s lesson, no room',
+    pg_temp.fd_try(format($q$INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", "teacherId", "updatedAt") VALUES (%L, %L, 1, '08:00', 60, NULL, %L, now())$q$, s, post, t ->> 'teacher')), 'ok');
+  PERFORM pg_temp.fl_clear(post);
+  PERFORM pg_temp.fl_expect('496 a shared post: the share''s lesson, with a room',
+    pg_temp.fd_try(format($q$INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", "teacherId", "updatedAt") VALUES (%L, %L, 1, '08:00', 60, %L, %L, now())$q$, s, post, r1, t ->> 'teacher')), 'ok');
+  PERFORM pg_temp.fl_clear(post);
+  FOREACH room_token IN ARRAY ARRAY['NULL', quote_literal(r1)] LOOP
+    PERFORM pg_temp.fl_expect('496 a shared post: a teacher with no lesson of it, room ' || CASE WHEN room_token = 'NULL' THEN 'none' ELSE 'named' END,
+      pg_temp.fd_try(format($q$INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", "teacherId", "updatedAt") VALUES (%L, %L, 2, '08:00', 60, %s, %L, now())$q$,
+                            s, post, room_token, (SELECT id FROM "Users" WHERE "schoolId" = s AND role = 'TEACHER' AND id <> (t ->> 'teacher')::uuid ORDER BY id LIMIT 1))),
+      'FP409 TEACHER');
+  END LOOP;
+  RAISE NOTICE 'gf 496: % checks', current_setting('fl.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 497: the key. A NULL names no room; a named one is the school's own and is not removed from under the row.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_fl_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  sides jsonb := '{}';
+  side text;
+  t jsonb;
+  s uuid;
+  post uuid;
+  r1 uuid;
+  r2 uuid;
+  other jsonb;
+  row_id uuid;
+BEGIN
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    t := pg_temp.fl_plant(CASE side WHEN 'a' THEN current_setting('app.test_fl_admin_a') ELSE '00000000-0000-4000-8000-000000000006' END, 'g' || side);
+    sides := sides || jsonb_build_object(side, t);
+  END LOOP;
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    t := sides -> side;
+    other := sides -> CASE side WHEN 'a' THEN 'b' ELSE 'a' END;
+    PERFORM pg_temp.fl_as(t ->> 'admin');
+    s := (t ->> 'school')::uuid; r1 := (t ->> 'room1')::uuid; r2 := (t ->> 'room2')::uuid; post := (t #>> '{posts,spare}')::uuid;
+    PERFORM pg_temp.fl_case('497 ' || side || ' a row with no room', pg_temp.gf_ins(s, post, r1, r2, '1|08:00|60|N|ALL_WEEKS'), 'ok');
+    SELECT id INTO row_id FROM "TeachingRequirementPlacements" WHERE "requirementId" = post;
+    -- A NULL does not make the key's other column loose: the school is still the post's.
+    PERFORM pg_temp.fl_case('497 ' || side || ' with no room, on the other school''s post still refused',
+      pg_temp.gf_ins(s, (other #>> '{posts,spare}')::uuid, r1, r2, '1|08:00|60|N|ALL_WEEKS'), '23503 TeachingRequirementPlacements_requirementId_schoolId_fkey');
+    PERFORM pg_temp.fl_case('497 ' || side || ' the other school''s room is still refused',
+      format($q$UPDATE "TeachingRequirementPlacements" SET "roomId" = %L WHERE id = %L$q$, other ->> 'room1', row_id), '23503 TeachingRequirementPlacements_roomId_schoolId_fkey');
+    PERFORM pg_temp.fl_case('497 ' || side || ' a second lesson of a post of one is COUNT, with a room as without',
+      pg_temp.gf_ins(s, post, r1, r2, '2|08:00|60|1|ALL_WEEKS'), 'FP409 COUNT');
+    -- A room a row names is not removed (NO ACTION, 23503 with the key's name); a room no row names is.
+    PERFORM pg_temp.fl_case('497 ' || side || ' the row names a room', format($q$UPDATE "TeachingRequirementPlacements" SET "roomId" = %L WHERE id = %L$q$, r1, row_id), 'ok');
+    PERFORM pg_temp.fl_case('497 ' || side || ' that room is not removed', format($q$DELETE FROM "Rooms" WHERE id = %L$q$, r1), '23503 TeachingRequirementPlacements_roomId_schoolId_fkey');
+    PERFORM pg_temp.fl_case('497 ' || side || ' the other room, which no row names, is removed', format($q$DELETE FROM "Rooms" WHERE id = %L$q$, r2), 'ok');
+    PERFORM pg_temp.fl_case('497 ' || side || ' the row is left with no room', format($q$UPDATE "TeachingRequirementPlacements" SET "roomId" = NULL WHERE id = %L$q$, row_id), 'ok');
+    PERFORM pg_temp.fl_case('497 ' || side || ' and now the first room goes too', format($q$DELETE FROM "Rooms" WHERE id = %L$q$, r1), 'ok');
+    PERFORM pg_temp.fl_expect('497 ' || side || ' the row stays, with no room', (SELECT ("roomId" IS NULL)::text FROM "TeachingRequirementPlacements" WHERE id = row_id), 'true');
+  END LOOP;
+  RAISE NOTICE 'gf 497: % checks', current_setting('fl.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 498: who reads and who writes a row with no room.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_fl_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  sides jsonb := '{}';
+  side text;
+  t jsonb;
+  o jsonb;
+  mine uuid;
+  theirs uuid;
+  my_row uuid;
+  their_row uuid;
+BEGIN
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    t := pg_temp.fl_plant(CASE side WHEN 'a' THEN current_setting('app.test_fl_admin_a') ELSE '00000000-0000-4000-8000-000000000006' END, 'h' || side);
+    PERFORM pg_temp.fl_case('498 ' || side || ' plants a row with no room',
+      pg_temp.gf_ins((t ->> 'school')::uuid, (t #>> '{posts,all}')::uuid, (t ->> 'room1')::uuid, (t ->> 'room2')::uuid, '1|08:00|60|N|ALL_WEEKS'), 'ok');
+    sides := sides || jsonb_build_object(side, t);
+  END LOOP;
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    t := sides -> side;
+    o := sides -> CASE side WHEN 'a' THEN 'b' ELSE 'a' END;
+    mine := (t ->> 'school')::uuid; theirs := (o ->> 'school')::uuid;
+    PERFORM pg_temp.fl_as(o ->> 'admin');
+    SELECT id INTO their_row FROM "TeachingRequirementPlacements" WHERE "schoolId" = theirs;
+    PERFORM pg_temp.fl_as(t ->> 'admin');
+    SELECT id INTO my_row FROM "TeachingRequirementPlacements" WHERE "schoolId" = mine;
+    PERFORM pg_temp.fl_expect('498 ' || side || ' reads its own row with no room and no other', (SELECT count(*) FROM "TeachingRequirementPlacements")::text, '1');
+    PERFORM pg_temp.fl_expect('498 ' || side || ' the row it reads has no room', (SELECT ("roomId" IS NULL)::text FROM "TeachingRequirementPlacements" WHERE id = my_row), 'true');
+    PERFORM pg_temp.fl_expect('498 ' || side || ' UPDATE of the other school''s row with no room reaches none',
+      pg_temp.fl_rows(format($q$UPDATE "TeachingRequirementPlacements" SET "dayOfWeek" = 3 WHERE id = %L$q$, their_row))::text, '0');
+    PERFORM pg_temp.fl_expect('498 ' || side || ' DELETE of the other school''s row with no room reaches none',
+      pg_temp.fl_rows(format($q$DELETE FROM "TeachingRequirementPlacements" WHERE id = %L$q$, their_row))::text, '0');
+    PERFORM pg_temp.fl_case('498 ' || side || ' a row of the other school with no room is refused by its arm',
+      pg_temp.gf_ins(theirs, (o #>> '{posts,spare}')::uuid, (o ->> 'room1')::uuid, (o ->> 'room2')::uuid, '2|08:00|60|N|ALL_WEEKS'), '42501 rls');
+    PERFORM pg_temp.fl_case('498 ' || side || ' UPDATE moving its row with no room to the other school',
+      format($q$UPDATE "TeachingRequirementPlacements" SET "schoolId" = %L$q$, theirs), '42501 rls');
+  END LOOP;
+  RAISE NOTICE 'gf 498 (two schools): % checks', current_setting('fl.checks');
+END $$;
+ROLLBACK;
+
+BEGIN;
+DO $$
+DECLARE
+  p record;
+  roller uuid;
+  row_id uuid;
+  post uuid;
+  seen bigint;
+BEGIN
+  PERFORM pg_temp.fl_as('00000000-0000-4000-8000-000000000105');
+  roller := app.current_school_id();
+  SELECT id, "requirementId" INTO row_id, post FROM "TeachingRequirementPlacements" WHERE "schoolId" = roller;
+  IF row_id IS NULL THEN RAISE EXCEPTION 'gf 498: the matrix school has no förläggning; the fixtures did not run'; END IF;
+  UPDATE "TeachingRequirementPlacements" SET "roomId" = NULL WHERE id = row_id;
+  FOR p IN SELECT * FROM (VALUES
+      ('00000000-0000-4000-8000-000000000105', 'FULL',          1, 'ok',        'ok',        1),
+      ('00000000-0000-4000-8000-000000000106', 'REKTOR',        1, 'ok',        'ok',        1),
+      ('00000000-0000-4000-8000-000000000107', 'SCHEMALAGGARE', 1, 'ok',        'ok',        1),
+      ('00000000-0000-4000-8000-000000000108', 'EXPEDITION',    1, '42501 rls', '42501 rls', 0),
+      ('00000000-0000-4000-8000-000000000115', 'LASARE',        1, '42501 rls', '42501 rls', 0),
+      ('00000000-0000-4000-8000-000000000111', 'a teacher',     0, '42501 rls', 'ok',        0),
+      ('00000000-0000-4000-8000-000000000112', 'a pupil',       0, '42501 rls', 'ok',        0),
+      ('00000000-0000-4000-8000-000000000113', 'a guardian',    0, '42501 rls', 'ok',        0)
+    ) v(sub, who, reads, ins, upd, del) LOOP
+    PERFORM pg_temp.fl_as(p.sub);
+    SELECT count(*) INTO seen FROM "TeachingRequirementPlacements";
+    PERFORM pg_temp.fl_expect('498 ' || p.who || ' reads the row with no room', seen::text, p.reads::text);
+    -- The post takes one lesson, so an admitted INSERT is answered COUNT by the trigger, which proves the arm let it through.
+    PERFORM pg_temp.fl_case('498 ' || p.who || ' INSERT of a row with no room',
+      pg_temp.gf_ins(roller, post, NULL, NULL, '4|08:00|60|N|ALL_WEEKS'), CASE p.ins WHEN 'ok' THEN 'FP409 COUNT' ELSE p.ins END);
+    IF p.reads = 0 THEN
+      PERFORM pg_temp.fl_expect('498 ' || p.who || ' UPDATE reaches no row',
+        pg_temp.fl_rows(format($q$UPDATE "TeachingRequirementPlacements" SET "dayOfWeek" = 3 WHERE id = %L$q$, row_id))::text, '0');
+    ELSE
+      PERFORM pg_temp.fl_case('498 ' || p.who || ' UPDATE', format($q$UPDATE "TeachingRequirementPlacements" SET "dayOfWeek" = 3 WHERE id = %L$q$, row_id), p.upd);
+    END IF;
+    IF p.del = 1 THEN
+      PERFORM pg_temp.fl_expect('498 ' || p.who || ' DELETE reaches the row', pg_temp.fl_rows(format($q$DELETE FROM "TeachingRequirementPlacements" WHERE id = %L$q$, row_id))::text, '1');
+      PERFORM pg_temp.fl_as('00000000-0000-4000-8000-000000000105');
+      INSERT INTO "TeachingRequirementPlacements" (id, "schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", "updatedAt")
+      VALUES (row_id, roller, post, 2, '10:00', 60, NULL, now());
+    ELSE
+      PERFORM pg_temp.fl_expect('498 ' || p.who || ' DELETE reaches no row',
+        pg_temp.fl_rows(format($q$DELETE FROM "TeachingRequirementPlacements" WHERE id = %L$q$, row_id))::text, '0');
+    END IF;
+  END LOOP;
+  RAISE NOTICE 'gf 498 (the matrix school): % checks', current_setting('fl.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 499: what a row with no room does not break.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_fl_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  t jsonb;
+  s uuid;
+  post uuid;
+  r1 uuid;
+  r2 uuid;
+  lesson uuid;
+BEGIN
+  t := pg_temp.fl_plant(current_setting('app.test_fl_admin_a'), 'gi');
+  s := (t ->> 'school')::uuid; r1 := (t ->> 'room1')::uuid; r2 := (t ->> 'room2')::uuid; post := (t #>> '{posts,all}')::uuid;
+  PERFORM pg_temp.fl_case('499 two rows with no room and one with', pg_temp.gf_ins(s, post, r1, r2, '1|08:00|60|N|ALL_WEEKS', '2|08:00|60|N|ALL_WEEKS', '3|08:00|60|1|ALL_WEEKS'), 'ok');
+  -- A lesson Generera wrote from a row with no room: the room is the engine's choice, so the lesson has one; it is locked, generated and marked.
+  INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "roomId", "dayOfWeek", "startTime", "endTime", "isGenerated", "isLocked", "fromPlacement", "updatedAt")
+  SELECT s, (t ->> 'year')::uuid, r."subjectId", r."studentGroupId", r2, 1, '08:00', '09:00', true, true, true, now()
+    FROM "TeachingRequirements" r WHERE r.id = post RETURNING id INTO lesson;
+  -- The rows are replaced as a list (the gateway's save): the lesson is not theirs to take with them, as 469 holds for a row with a room.
+  DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = post;
+  PERFORM pg_temp.fl_expect('499 the lesson stands when its rows are replaced', (SELECT count(*) FROM "MasterLessons" WHERE id = lesson)::text, '1');
+  PERFORM pg_temp.fl_expect('499 it is locked, generated, marked and in a room',
+    (SELECT format('%s %s %s %s', "isLocked", "isGenerated", "fromPlacement", ("roomId" = r2)) FROM "MasterLessons" WHERE id = lesson), 't t t t');
+  PERFORM pg_temp.fl_case('499 the rows again, with none of them in a room', pg_temp.gf_ins(s, post, r1, r2, '1|08:00|60|N|ALL_WEEKS', '2|08:00|60|N|ALL_WEEKS'), 'ok');
+  -- The post's removal takes its rows with it, whatever their rooms (the key CASCADEs on the post).
+  DELETE FROM "TeachingRequirements" WHERE id = post;
+  PERFORM pg_temp.fl_expect('499 the post took its rows with it', (SELECT count(*) FROM "TeachingRequirementPlacements" WHERE "requirementId" = post)::text, '0');
+  RAISE NOTICE 'gf 499: % checks', current_setting('fl.checks');
 END $$;
 ROLLBACK;

@@ -2424,8 +2424,9 @@
         räknades för veckorna som de var. Kör den igen.</li>
       <li>Under de minuter en ny version av tjänsten rullas ut kan
         genereringen svara att schemamotorn är äldre än resten av tjänsten
-        och inte kan planera poster med datum ännu. Inget är fel i schemat
-        eller i posterna. Försök igen om några minuter.</li>
+        och inte kan planera poster med datum ännu, eller inte kan hålla
+        förlagda lektioner utan sal ännu (4.2). Inget är fel i schemat eller
+        i posterna. Försök igen om några minuter.</li>
     </ul>
     <p>
       Några saker läser genereringen fortfarande strängare än de verkliga
@@ -3135,8 +3136,9 @@
     Ibland vet du på förhand var en lektion ska ligga och att den inte går att
     lägga någon annanstans: simhallen är bokad tisdag kl. 10 och bara då, eller
     slöjdsalen delas med åk 8 ett bestämt pass. Då <strong>förlägger</strong>
-    du lektionen: du anger dag, tid och sal på posten innan du genererar.
-    Generera lägger lektionen där du sagt, och resten av veckan runt den.
+    du lektionen: du anger dag och tid på posten, och en sal om du vill ha en
+    bestämd, innan du genererar. Generera lägger lektionen där du sagt, och
+    resten av veckan runt den.
   </p>
   <p>
     Använd det för lektioner som verkligen är bundna. En förlagd lektion ger
@@ -3160,7 +3162,9 @@
     <li><span class="ui">Längd</span>, bara när posten har lektioner av olika
       längd, till exempel 80 + 40 minuter. Har posten en enda längd är det
       postens. På en delad post erbjuds bara den valda lärarens längder.</li>
-    <li><span class="ui">Sal</span>: en av skolans salar, i bokstavsordning.</li>
+    <li><span class="ui">Sal</span>: en av skolans salar, i bokstavsordning,
+      eller <span class="ui">Motorn väljer sal</span>, som står först i listan
+      och är valet när fältet är tomt (se Sal, eller motorn väljer nedan).</li>
     <li><span class="ui">Veckor</span>: se nedan.</li>
   </ul>
   <p>
@@ -3223,8 +3227,38 @@
     lektion i veckan. En ensam rad med udda veckor sparas inte, eftersom
     motorn inte kan lägga en halv lektion; <span class="ui">Lägg till
     lektion</span> lägger då till den andra halvan av paret åt dig, med samma
-    längd, dag och sal, så att du bara ändrar det som ska skilja sig.
+    längd, dag och sal, så att du bara ändrar det som ska skilja sig. Båda
+    halvorna ska ha en sal (se nedan).
   </p>
+  <p>
+    <strong>Sal, eller motorn väljer.</strong> Salen är valfri. Lämnar du fältet
+    på <span class="ui">Motorn väljer sal</span> väljer schemat sal vid varje
+    Generera, och salen kan bli en annan nästa gång. Vill du ha samma sal
+    varje gång anger du den. Märket i matrisen och veckan skriver
+    <em>Motorn väljer sal</em> där salens namn annars står.
+  </p>
+  <ul>
+    <li><strong>Med sal</strong> är förläggningen ett lås: Generera lägger
+      lektionen på den dagen, den tiden och i den salen.</li>
+    <li><strong>Utan sal</strong> bedömer motorn förläggningen som en lektion
+      den lägger själv, på den dagen och den tiden, i en sal den väljer.
+      Skolans regler gäller den strängt: bryter den en regel vägrar Generera
+      och säger vilken lektion och vilken regel.</li>
+    <li><strong>Ett par</strong> (udda och jämna veckor av samma längd) måste ha
+      sal på båda halvorna, eftersom motorn inte kan välja sal åt en halv
+      lektion. Saknas sal på en halva sparas inte raden, och dialogen säger det
+      vid raden. Vill du att motorn ska välja sal väljer du i stället varje
+      vecka.</li>
+    <li><strong>Platsgränser.</strong> En utpekad sal är en egen salsgrupp
+      också för skolans platsregel, till exempel högst en sal om dagen för en
+      klass: två lika salar A och B räknas som två platser när båda är
+      utpekade, men som en när motorn väljer. Vägrar Generera för att en klass
+      eller lärare har lektioner som bara kan ligga på fler platser än regeln
+      tillåter, och veckan har förlagda lektioner med sal, kan det alltså vara
+      salarna som räknas som olika platser. Lämna då salen tom (<span
+      class="ui">Motorn väljer sal</span>) i dialogen <span class="ui">Förlägg
+      …</span> på timplansposten, så väljer schemat sal.</li>
+  </ul>
   <p>
     Posten får märket <span class="ui">Förlagd</span> i matrisen, med dag, tid
     och sal i en ledtext, och på en delad post också vems lektion varje rad
@@ -3266,13 +3300,14 @@
       <tr><td class="k">Tiden är upptagen av en annan skola</td><td>En lärare som delas med en annan skola är där, eller salen är utlånad dit (2.5). Skolan namnges.</td></tr>
       <tr><td class="k">Lektionen ligger utanför skoldagen</td><td>Måndag till fredag 08:00–18:00, på femminutersrutnätet.</td></tr>
       <tr><td class="k">Posten har ingen lektion av den längden kvar</td><td>Postens låsta lektioner täcker redan lektionen, så förläggningen skulle lägga den två gånger.</td></tr>
+      <tr><td class="k">Udda och jämna veckor … båda platserna måste ha en sal</td><td>En halva av ett par har ingen sal (se Sal, eller motorn väljer). Välj sal för båda halvorna, eller välj varje vecka.</td></tr>
     </tbody>
   </table>
   <p>
     Raderna ska också passa posten. En rad med en längd som posten inte har,
     fler lektioner av en längd än posten har, andra veckor än postens, och
-    udda veckor utan jämna (eller tvärtom) på en post som går varje vecka
-    nekas med regeln som bröts. På en delad post prövas också lärarna, vid raden
+    udda veckor utan jämna (eller tvärtom) eller en halva av ett par utan sal
+    på en post som går varje vecka nekas med regeln som bröts. På en delad post prövas också lärarna, vid raden
     det gäller: en lektion utan lärare, en lärare som inte har någon lektion på
     posten eller ingen av den längden, ett par vars halvor har olika lärare och
     fler lektioner av en längd hos en lärare än hens del har nekas på samma
@@ -3412,13 +3447,16 @@
       sidan säger <em>N förlagda lektioner på timplanen kan inte längre ligga
       där de är förlagda, så veckan skickades inte</em>, följt av en rad för
       varje, till exempel <em>Slöjd för 7A, förlagd tisdag 10:00–11:00 i
-      Slöjdsalen: läraren har redan 7B Matematik då.</em> Skälen är samma som i
-      tabellen ovan. Rätta eller ta bort förläggningen på posten och generera
-      igen.</li>
+      Slöjdsalen: läraren har redan 7B Matematik då.</em> En förläggning utan
+      sal står som <em>i en sal som schemat väljer</em> där salens namn annars
+      står. Skälen är samma som i tabellen ovan. Rätta eller ta bort
+      förläggningen på posten och generera igen.</li>
     <li><strong>I motorn.</strong> Går veckan inte att lägga prövar motorn den
       en gång till, med förläggningarna släppta. Går den då att lägga säger
       vägran det, med tiden det tog, och listar varje förläggning med posten,
-      dagen, tiden och salen. Det betyder att veckan går utan förläggningarna,
+      dagen, tiden och salen (en förläggning utan sal står som <em>i en sal som
+      schemat väljer</em>).
+      Det betyder att veckan går utan förläggningarna,
       inte att en viss förläggning ensam är felet: motorn rapporterar en
       tillräcklig mängd, inte den minsta. Flytta eller ta bort en eller flera,
       och generera igen. Samma prov körs när en körning får slut på tid, och

@@ -57,6 +57,16 @@ describe("one post's placed lessons", () => {
     expect(calls.put).toHaveBeenLastCalledWith("/api/v1/teaching-requirements/r1/placements", { placements: [] });
   });
 
+  it("sends a row with no room as it is: roomId null, which the gateway takes as the engine's to choose", async () => {
+    calls.put.mockResolvedValue({ placements: [], verdicts: [] });
+    const input = { dayOfWeek: 2, startTime: "10:00", minutes: 60, roomId: null, recurrence: "ALL_WEEKS" as const };
+
+    await savePlacements("r1", [input]);
+
+    expect(calls.put).toHaveBeenLastCalledWith("/api/v1/teaching-requirements/r1/placements", { placements: [input] });
+    expect(calls.put.mock.calls[0]![1].placements[0]).toHaveProperty("roomId", null);
+  });
+
   it("keeps each post's read under the prefix a write invalidates", async () => {
     expect(placementsOfKey("r1").slice(0, REQUIREMENT_PLACEMENTS_KEY.length)).toEqual([...REQUIREMENT_PLACEMENTS_KEY]);
 

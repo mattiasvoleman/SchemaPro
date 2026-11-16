@@ -29,6 +29,9 @@ import { demandLeftOf, judgeDemandOf } from './post-demand';
 import { keptMastersWhere, PRESERVED_FROM_REGENERATION } from './preserved-lessons';
 import { requirementName } from '../common/requirement-name';
 import {
+  lockedRowsOf,
+  pinnedPlacesOf,
+  pinnedRowsOf,
   placedLessonRowsOf,
   placedLessonWritesOf,
   placedMinutesOf,
@@ -36,6 +39,7 @@ import {
   placementsKeyOf,
   placementsRefusalOf,
   storedPlacementsOf,
+  writtenFromPins,
   type PlacedLessonRow,
 } from './placed-lessons';
 import { judgedRowOf, judgePlacements, type PlacementDemand } from '../requirement-placements/placement-judge';
@@ -724,7 +728,8 @@ export function engineMayStillBeSolving(error: unknown): boolean {
   if (
     shape.code === ENGINE_LACKS_CANDIDATES ||
     shape.code === ENGINE_LACKS_BEST_EFFORT ||
-    shape.code === ENGINE_LACKS_PERIODS
+    shape.code === ENGINE_LACKS_PERIODS ||
+    shape.code === ENGINE_LACKS_PINNED_LESSONS
   ) {
     return false;
   }
@@ -1169,6 +1174,44 @@ export const ENGINE_LACKS_BEST_EFFORT = 'ENGINE_LACKS_BEST_EFFORT';
  * one, and the school would not be told.
  */
 export const ENGINE_LACKS_PERIODS = 'ENGINE_LACKS_PERIODS';
+
+/**
+ * The engine refuses `pinnedLessons` on a requirement as a field it does not know:
+ * it is older than fästa lektioner (#317), which the gateway that sends the key
+ * (förläggning utan sal, 20270213090000) must follow. A refusal and not a quiet
+ * second attempt without the key: sending the week again without it would lay the
+ * lesson the school pinned wherever the solver liked, and nobody would be told. So
+ * the run stops, nothing is written, and the school is told to try again when the
+ * engine has caught up (DEPLOYMENT.md 22.1: the engine is deployed first, so this is
+ * the minutes between the two).
+ */
+export const ENGINE_LACKS_PINNED_LESSONS = 'ENGINE_LACKS_PINNED_LESSONS';
+
+/**
+ * The engine's refusal of `pinnedLessons` as an unknown field of a requirement:
+ * {type: 'extra_forbidden', loc: ['body', 'requirements', <index>, 'pinnedLessons']}.
+ */
+function refusesPinnedLessons(body: { details?: { errors?: unknown } | null } | null): boolean {
+  const errors = body?.details?.errors;
+  return (
+    Array.isArray(errors) &&
+    errors.some((entry: unknown) => {
+      const { type, loc } = (entry ?? {}) as { type?: unknown; loc?: unknown };
+      return type === 'extra_forbidden' && Array.isArray(loc) && loc[0] === 'body' && loc.length > 2 && loc[loc.length - 1] === 'pinnedLessons';
+    })
+  );
+}
+
+function engineLacksPinnedLessons(): HttpException {
+  return new HttpException(
+    {
+      message:
+        'Schemamotorn är äldre än API:t och kan inte hålla förlagda lektioner utan sal ännu. Försök igen om några minuter.',
+      code: ENGINE_LACKS_PINNED_LESSONS,
+    },
+    HttpStatus.SERVICE_UNAVAILABLE,
+  );
+}
 
 /**
  * The engine answered a meal per period whose masks are not a partition of
@@ -1734,7 +1777,7 @@ export class OptimizationProxyService {
         // Terminer: each fixed lesson's own dates, by the id it was sent
         // under: the kept masters' and the förläggningar's (their posts').
         lockDates: new Map(
-          [...data.preservedRows, ...data.placedRows].flatMap((row) => {
+          [...data.preservedRows, ...lockedRowsOf(data.placedRows)].flatMap((row) => {
             const fixedId = data.fixedIdByLesson.get(row.id);
             return fixedId === undefined
               ? []
@@ -1756,8 +1799,9 @@ export class OptimizationProxyService {
       anonMaps,
       freeDayWishes: data.freeDayWishes,
       consecutiveWishes: data.consecutiveWishes,
-      // The förläggningar too: every candidate writes them where they stand.
-      keptTimetable: [...data.preservedRows, ...data.placedRows].map(
+      // The förläggningar that are locks too: every candidate writes them where they stand. A pinned
+      // lesson (a förläggning with no room) is in the answer, at its time, and is counted there.
+      keptTimetable: [...data.preservedRows, ...lockedRowsOf(data.placedRows)].map(
         (row): TimedLesson => ({
           id: row.id,
           teacherId: row.teacherId,
@@ -1785,7 +1829,7 @@ export class OptimizationProxyService {
       lockWeeks: new Map(data.preservedRows.map((row) => [row.id, weeksKeyOf(row)] as const)),
       periodStretches: data.yearPeriods ? data.yearPeriods.stretches : null,
       coverage: options.coverage
-        ? await this.readCoverageBase(tx, academicYearId, [...data.preservedRows, ...data.placedRows], draftLessons)
+        ? await this.readCoverageBase(tx, academicYearId, [...data.preservedRows, ...lockedRowsOf(data.placedRows)], draftLessons)
         : null,
     };
   }
@@ -2729,11 +2773,30 @@ export class OptimizationProxyService {
     });
     const postById = new Map(rawRequirements.map((r) => [r.id, r]));
     const placedRows = placementReads.length === 0 ? [] : placedLessonRowsOf(placementReads, postById);
-    const placedIds = new Set(placedRows.map((row) => row.id));
-    const placedMinutes = placedMinutesOf(placedRows, postById);
+    /*
+     * A förläggning WITH a room is the lock it has always been; one WITHOUT is a
+     * pinned lesson of its post and is no lock at all (placed-lessons.ts): no
+     * fixed lesson, nothing taken off the post, no weekday told to the post's
+     * `lockedDays` or the teacher's `lockedWeekdays`, no word in `placements`.
+     * Everything below that reads "the förläggningar" as locks reads the first;
+     * the judge, the write and the staleness key read both.
+     */
+    const lockedPlaced = lockedRowsOf(placedRows);
+    const pinnedPlaced = pinnedRowsOf(placedRows);
+    const placedIds = new Set(lockedPlaced.map((row) => row.id));
+    const placedMinutes = placedMinutesOf(lockedPlaced, postById);
     // Delade lektioner: a shared post's förläggningar, each its teacher's lesson.
-    const placedTaught = placedTaughtByPost(placedRows, postById);
-    const preservedLessons = [...keptLessons, ...placedRows];
+    const placedTaught = placedTaughtByPost(lockedPlaced, postById);
+    // What the judge's OVER_DEMAND asks of a post is what ALL its förläggningar place, a pinned lesson too: it takes one of the post's lessons.
+    const judgedMinutes = placedMinutesOf(placedRows, postById);
+    const judgedTaught = placedTaughtByPost(placedRows, postById);
+    const pinnedByPost = new Map<string, PlacedLessonRow[]>();
+    for (const row of pinnedPlaced) {
+      const list = pinnedByPost.get(row.requirementId);
+      if (list) list.push(row);
+      else pinnedByPost.set(row.requirementId, [row]);
+    }
+    const preservedLessons = [...keptLessons, ...lockedPlaced];
     const participantIds = new Set(
       preservedLessons.flatMap((lesson) =>
         (lesson.participants ?? []).map((entry) => entry.studentId),
@@ -3038,6 +3101,8 @@ export class OptimizationProxyService {
     // and its lessons with nothing förlagt, for the engine's released week
     // (AnonymousPlacements).
     const judgeDemandOfPost = new Map<string, PlacementDemand>();
+    // Fästa lektioner: pinned förläggningar no lesson of the post's entry was left for (placed-lessons.ts, pinnedPlacesOf).
+    const unplacedPins: PlacedLessonRow[] = [];
     const releasedOf = new Map<string, number[]>();
     // Delade lektioner: the released lessons' teachers (the released entry's
     // lessonTeacherIds).
@@ -3054,13 +3119,15 @@ export class OptimizationProxyService {
         minutes: lessonMinutes(lesson.startTime, lesson.endTime),
         teacherId: lesson.teacherId ?? null,
       }));
+      // What the post asks of the engine is its lessons less the locks and the förläggningar that are locks; a pinned lesson stays in it.
       const placedOfPost = { minutes: placedMinutes.get(r.id), taught: placedTaught.get(r.id) };
       const demand = demandLeftOf(r, coveringLocks, placedOfPost);
       remainingOf.set(r.id, demand.left.map((lesson) => lesson.minutes));
       // Delade lektioner: the teacher of each lesson left, in remainingOf's order.
       if (demand.shared) teachersLeftOf.set(r.id, demand.left.map((lesson) => lesson.teacherId));
+      const judgedOfPost = { minutes: judgedMinutes.get(r.id), taught: judgedTaught.get(r.id) };
+      if (judgedOfPost.minutes !== undefined) judgeDemandOfPost.set(r.id, judgeDemandOf(r, coveringLocks, judgedOfPost));
       if (demand.placed) {
-        judgeDemandOfPost.set(r.id, judgeDemandOf(r, coveringLocks, placedOfPost));
         releasedOf.set(r.id, demand.afterLocks.map((lesson) => lesson.minutes));
         if (demand.shared) releasedTeachersOf.set(r.id, demand.afterLocks.map((lesson) => lesson.teacherId));
       }
@@ -3217,6 +3284,25 @@ export class OptimizationProxyService {
       // at most the one extra teacher the follower needs (same-times.ts); its
       // teacher place is the list, which `adults` never fills.
       const teachersLeft = teachersOf ?? teachersLeftOf.get(r.id);
+      /*
+       * FÄSTA LEKTIONER: the post's förläggningar with no room, as the places of the lessons this entry sends
+       * (pinnedPlacesOf), in the order the engine reads them. Never on the released form of a post (the engine
+       * releases the pins with the locks and places that form only to explain a refusal), and never on a post
+       * in a parallel block: a block's lessons are pinned for every member or none, which this does not
+       * build (C1), and the judge has refused such a row by name (BLOCK) before the engine is woken.
+       */
+      const pinRows = sent && !r.blockId ? (pinnedByPost.get(r.id) ?? []) : [];
+      const pinned =
+        pinRows.length > 0
+          ? pinnedPlacesOf(
+              remainingLengths.map((minutes, index) => ({
+                minutes,
+                teacherId: teachersLeft ? (teachersLeft[index] ?? null) : null,
+              })),
+              pinRows,
+            )
+          : null;
+      if (pinned) unplacedPins.push(...pinned.unplaced);
       const lessonTeacherIds =
         teachersLeft && new Set(teachersLeft).size > 1
           ? teachersLeft.map((id) => (id === null ? null : anonId(teacherAnonMap, id)))
@@ -3283,6 +3369,8 @@ export class OptimizationProxyService {
             : null,
           coTeacherId: adults.coTeacherId ? anonId(teacherAnonMap, adults.coTeacherId) : null,
           ...(lessonTeacherIds ? { lessonTeacherIds } : {}),
+          // Sent only on a post with a pinned lesson, so every other entry is byte for byte what it was.
+          ...(pinned?.places ? { pinnedLessons: pinned.places } : {}),
         },
       ];
     };
@@ -4241,10 +4329,10 @@ export class OptimizationProxyService {
      * engine is woken, as a partly locked block does.
      */
     const placements: AnonymousPlacements | undefined =
-      placedRows.length === 0
+      lockedPlaced.length === 0
         ? undefined
         : {
-            lessons: placedRows.map((row) => ({
+            lessons: lockedPlaced.map((row) => ({
               fixedLessonId: fixedIdByLesson.get(row.id)!,
               requirementId: anonId(requirementAnonMap, row.requirementId),
             })),
@@ -4276,6 +4364,11 @@ export class OptimizationProxyService {
         beside: [],
         demand: judgeDemandOfPost,
       });
+      // A pinned lesson the post had no lesson of its length left for: refused by name, as OVER_DEMAND does (the judge says it before).
+      for (const row of unplacedPins) {
+        const index = placedRows.indexOf(row);
+        if (index >= 0 && verdicts[index]?.ok) verdicts[index] = { index, ok: false, reason: 'OVER_DEMAND' };
+      }
       placementsRefusal = placementsRefusalOf(placedRows, verdicts, {
         requirement: (realId) => anonId(requirementAnonMap, realId),
         room: (realId) => anonId(roomAnonMap, realId),
@@ -4486,6 +4579,10 @@ export class OptimizationProxyService {
     const carriesSearch = (payload as { search?: unknown }).search !== undefined;
     const carriesRelaxation = (payload as { relaxation?: unknown }).relaxation !== undefined;
     const carriesPlacements = (payload as { placements?: unknown }).placements !== undefined;
+    // Fästa lektioner: a requirement that carries the key. The released forms under `placements` never do.
+    const carriesPins = ((payload as { requirements?: { pinnedLessons?: unknown }[] }).requirements ?? []).some(
+      (requirement) => requirement.pinnedLessons !== undefined,
+    );
     // Terminer: a payload with a mask always carries the periods' lengths too. A day limit's sets by
     // period (and by parity: in a year nothing dates they are a mask of one period, with no lengths) are
     // as new to an older engine, which refuses them as an unknown field.
@@ -4612,6 +4709,14 @@ export class OptimizationProxyService {
                  */
                 if (error.response.status === 422 && carriesRelaxation && refusesField(body, 'relaxation')) {
                   throw engineLacksBestEffort();
+                }
+                /*
+                 * An engine older than fästa lektioner: before the others, because its refusal names the
+                 * key beside whatever else it predates, and the week must not be sent again without a
+                 * pin the school laid (ENGINE_LACKS_PINNED_LESSONS).
+                 */
+                if (error.response.status === 422 && carriesPins && refusesPinnedLessons(body)) {
+                  throw engineLacksPinnedLessons();
                 }
                 /*
                  * And for an engine older than terminer (`periods`,
@@ -5101,8 +5206,31 @@ export class OptimizationProxyService {
       );
     }
 
+    /*
+     * FÄSTA LEKTIONER: the lesson of the answer that is a pinned förläggning's (a
+     * förläggning with no room) is written as that förläggning's — locked, the
+     * run's own and marked — in the room the engine chose, and is no lesson of the
+     * engine's beside it (writtenFromPins). The answer has no lesson index, so it
+     * is known by post, weekday, start, length and teacher. One the answer lacks
+     * means the engine did not hold what it was asked to hold: an answer to
+     * another request, refused as one that does not match the demand is.
+     */
+    const fromPins = writtenFromPins(pinnedRowsOf(input.placed ?? []), input.lessons);
+    if (fromPins.missing.length > 0) {
+      this.logger.error(
+        `Rejected AI engine solution [academicYearId=${academicYearId}, status=${input.solverStatus}, pinnedLessonsMissing=${fromPins.missing.length}]. Timetable left untouched.`,
+      );
+      throw (
+        input.refusals?.mismatch?.() ??
+        new HttpException(
+          'The AI engine returned a solution that does not hold the lessons the school pinned. The existing timetable was left unchanged.',
+          HttpStatus.BAD_GATEWAY,
+        )
+      );
+    }
+
     // Every lesson matched a row above, so every lookup below finds one.
-    const creates = input.lessons.map((lesson) => {
+    const creates = fromPins.rest.map((lesson) => {
       const req = rowById.get(lesson.requirementId as string)!;
       return {
         schoolId,
@@ -5140,7 +5268,10 @@ export class OptimizationProxyService {
     // run's own, stamped from the rows this write reads like the answer's
     // lessons above. A förläggning whose post is gone is a request that no
     // longer stands, refused as a moved draft is.
-    const placedCreates = placedLessonWritesOf(input.placed ?? [], rowById, { schoolId, academicYearId });
+    const placedCreates = placedLessonWritesOf([...lockedRowsOf(input.placed ?? []), ...fromPins.pinned], rowById, {
+      schoolId,
+      academicYearId,
+    });
     if (placedCreates === null) {
       this.logger.warn(
         `Generated timetable not written: a förlagd timplanspost is gone [academicYearId=${academicYearId}].`,

@@ -263,6 +263,87 @@ describe("the week", () => {
   });
 });
 
+// Salen blir valfri: a förläggning with no room is a lesson the engine places in a room it chooses at every Generera.
+describe("a förläggning with no room", () => {
+  const anyRoom = (over: Partial<PlacementBoard["placements"][number]> = {}): PlacementBoard["placements"][number] => ({
+    id: "row-any",
+    requirementId: "post-ma",
+    dayOfWeek: 3,
+    startTime: "09:00",
+    endTime: "10:00",
+    minutes: 60,
+    roomId: null,
+    roomName: null,
+    recurrence: "ALL_WEEKS",
+    teacherId: null,
+    changedAt: "2026-11-13T08:10:00.000Z",
+    verdict: { ok: true },
+    ...over,
+  });
+  const withAnyRoom = (over: Partial<PlacementBoard["placements"][number]> = {}) => {
+    state.board = board({ placements: [...board().placements, anyRoom(over)] });
+  };
+
+  it("says in its line that the engine chooses the room, where the room's name would stand", () => {
+    withAnyRoom();
+    render(<PlacementsPage />);
+
+    const ma = posts().find((entry) => entry.textContent?.includes("Matematik 7A"))!;
+    const rows = within(ma).getAllByTestId("placement-row");
+    expect(rows).toHaveLength(3);
+    expect(rows[2]).toHaveTextContent("3 09:00–10:00 · roomAny");
+    expect(rows[2]).toHaveTextContent("holds");
+    expect(ma.textContent).not.toMatch(/null|undefined/);
+  });
+
+  it("draws its card with the same words in the room's place, and opens it with them", async () => {
+    withAnyRoom();
+    render(<PlacementsPage />);
+
+    const card = document.querySelector("[data-lesson-id='placement:row-any']")!;
+    expect(card).toHaveTextContent("roomAny");
+    await userEvent.click(card);
+    const detail = screen.getByTestId("placement-detail");
+    expect(detail).toHaveTextContent("Matematik · 7A · A. Ek · roomAny");
+    expect(detail).toHaveTextContent("3 09:00–10:00 · roomAny");
+  });
+
+  it("names it in the notice about rows that no longer hold, with the reason the judge gives a pair's half without a room", () => {
+    withAnyRoom({ recurrence: "ODD_WEEKS", verdict: { ok: false, reason: "PAIR_ROOM" } });
+    render(<PlacementsPage />);
+
+    const item = within(screen.getByText("failingTitle(2)").closest('[role="alert"]') as HTMLElement)
+      .getAllByTestId("failing-row")
+      .find((entry) => entry.textContent?.includes("PAIR_ROOM"))!;
+    expect(item).toHaveTextContent("Matematik 7A, 3 09:00–10:00 · roomAny");
+    expect(item).toHaveTextContent("verdict.PAIR_ROOM");
+  });
+
+  it("matches no room that is picked, and is there again when none is", async () => {
+    withAnyRoom();
+    render(<PlacementsPage />);
+    const ma = () => posts().find((entry) => entry.textContent?.includes("Matematik 7A"))!;
+    expect(within(ma()).getAllByTestId("placement-row")).toHaveLength(3);
+
+    await userEvent.click(screen.getByRole("button", { name: /filterRoom/ }));
+    await userEvent.click(await screen.findByRole("menuitemcheckbox", { name: "A12" }));
+    // The two rows in A12 stay; the one the engine places does not stand in A12, in the list or in the week.
+    expect(within(ma()).getAllByTestId("placement-row")).toHaveLength(2);
+    expect(document.querySelector("[data-lesson-id='placement:row-any']")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-lesson-id='placement:row-ma']")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "clearFilters" }));
+    expect(within(ma()).getAllByTestId("placement-row")).toHaveLength(3);
+    expect(document.querySelector("[data-lesson-id='placement:row-any']")).toBeInTheDocument();
+  });
+
+  it("is counted in the year's figures like any other row", () => {
+    withAnyRoom();
+    render(<PlacementsPage />);
+    expect(screen.getByTestId("placement-summary")).toHaveTextContent("summary(3|2)");
+  });
+});
+
 describe("the link from the dialog", () => {
   it("opens the list on the post it names", async () => {
     const scroll = vi.fn();

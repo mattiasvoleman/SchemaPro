@@ -593,6 +593,89 @@ describe('availabilityResourceOf', () => {
   });
 });
 
+describe('a row with no room (20270213090000): the engine chooses it', () => {
+  const kept = (over: Partial<Kept> = {}): Kept => ({
+    id: 'k1',
+    dayOfWeek: 2,
+    teacherId: T2,
+    roomId: R1,
+    studentGroupId: G7B,
+    subjectId: MATTE,
+    start: '10:00',
+    end: '11:00',
+    ...over,
+  });
+
+  it('stands in no room: a lesson in the room the school would have named is no clash', async () => {
+    const [named] = await judge(fakeTx({ kept: [kept()] }), [row()]);
+    expect(named).toMatchObject({ ok: false, reason: 'ROOM' });
+    const [none] = await judge(fakeTx({ kept: [kept()] }), [row({ roomId: null })]);
+    expect(none).toEqual({ index: 0, ok: true });
+  });
+
+  it('two rows with no room at one hour are no room clash (and one teacher or class at one hour still is)', async () => {
+    const rows = [row({ roomId: null, requirementId: 'a', studentGroupId: G7A, teacherId: T1 }), row({ roomId: null, requirementId: 'b', studentGroupId: G7B, teacherId: T2, subjectId: MATTE })];
+    expect((await judge(fakeTx(), rows)).map((verdict) => verdict.ok)).toEqual([true, true]);
+    const sameTeacher = [rows[0]!, { ...rows[1]!, teacherId: T1 }];
+    expect((await judge(fakeTx(), sameTeacher)).map((verdict) => verdict.reason)).toEqual(['TEACHER', 'TEACHER']);
+  });
+
+  it('is still held to the teacher, the class and the weeks of the other lessons', async () => {
+    const [teacher] = await judge(fakeTx({ kept: [kept({ teacherId: T1, roomId: R2 })] }), [row({ roomId: null })]);
+    expect(teacher?.reason).toBe('TEACHER');
+    const [group] = await judge(fakeTx({ kept: [kept({ studentGroupId: G7A, roomId: R2 })] }), [row({ roomId: null })]);
+    expect(group?.reason).toBe('GROUP');
+  });
+
+  it('is not stopped by an unavailable room: it asks for none', async () => {
+    const tx = fakeTx({ constraints: [{ resourceType: 'ROOM', roomId: R1, dayOfWeek: 2, start: '09:00', end: '12:00' }] });
+    expect((await judge(tx, [row({ roomId: null })]))[0]).toEqual({ index: 0, ok: true });
+    expect((await judge(tx, [row()]))[0]).toMatchObject({ ok: false, reason: 'AVAILABILITY', params: { resource: 'ROOM' } });
+  });
+
+  it('is not held by another school’s hold on a room, and still by a hold on its teacher', async () => {
+    const hold = (over: Partial<OtherSchoolHold> = {}): OtherSchoolHold => ({
+      holdId: 'h1',
+      kind: 'ROOM_LENT',
+      resourceKind: 'ROOM',
+      resourceId: R1,
+      dayOfWeek: 2,
+      startTime: '10:00:00',
+      endTime: '11:00:00',
+      schools: ['Östra skolan'],
+      ...over,
+    } as OtherSchoolHold);
+    (readOtherSchoolHolds as jest.Mock).mockResolvedValue({ holds: [hold()] });
+    expect((await judge(fakeTx(), [row({ roomId: null })]))[0]).toEqual({ index: 0, ok: true });
+    (readOtherSchoolHolds as jest.Mock).mockResolvedValue({ holds: [hold({ holdId: 'h2', kind: 'TEACHER_BUSY', resourceKind: 'TEACHER', resourceId: T1, schools: ['Södra skolan'] })] });
+    expect((await judge(fakeTx(), [row({ roomId: null })]))[0]).toEqual({ index: 0, ok: false, reason: 'OTHER_SCHOOL', params: { schools: 'Södra skolan' } });
+  });
+
+  describe('PAIR_ROOM and BLOCK, which the row alone says', () => {
+    it('refuses a half of a pair with no room, before the clash rule is asked', async () => {
+      const tx = fakeTx({ kept: [kept({ teacherId: T1 })] });
+      const [verdict] = await judge(tx, [row({ roomId: null, recurrence: 'ODD_WEEKS', pairWithoutRoom: true })]);
+      expect(verdict).toEqual({ index: 0, ok: false, reason: 'PAIR_ROOM' });
+      expect(readBoardFacts).not.toHaveBeenCalled();
+    });
+
+    it('refuses a row on a post in a block', async () => {
+      expect((await judge(fakeTx(), [row({ inBlock: true })]))[0]).toEqual({ index: 0, ok: false, reason: 'BLOCK' });
+    });
+
+    it('puts the school day before them and them before the post’s demand', async () => {
+      expect((await judge(fakeTx(), [row({ dayOfWeek: 6, pairWithoutRoom: true, inBlock: true })]))[0]?.reason).toBe('SCHOOL_DAY');
+      expect((await judge(fakeTx(), [row({ pairWithoutRoom: true, inBlock: true })]))[0]?.reason).toBe('PAIR_ROOM');
+      const demand = new Map([['req-1', { post: { lessonsPerWeek: 1, minutesPerLesson: 60, lessonLengths: [] }, lockedMinutes: [60], placed: [60] }]]);
+      expect((await judge(fakeTx(), [row({ inBlock: true })], { demand }))[0]?.reason).toBe('BLOCK');
+    });
+
+    it('asks nothing of a row that does not say it (a row built without the post’s weeks and block)', async () => {
+      expect((await judge(fakeTx(), [row({ roomId: null })]))[0]).toEqual({ index: 0, ok: true });
+    });
+  });
+});
+
 describe('judgedRowOf: a row as every judge of one reads it (review of #315, MEDEL-1)', () => {
   const post = {
     id: 'req-1',
@@ -620,7 +703,27 @@ describe('judgedRowOf: a row as every judge of one reads it (review of #315, MED
       recurrence: 'ODD_WEEKS',
       startDate: post.startDate,
       endDate: post.endDate,
+      // A post that says nothing of its weeks and its block is asked neither question.
+      pairWithoutRoom: false,
+      inBlock: false,
     });
+  });
+
+  it('says a row is a half of a pair with no room only on an every-week post, on an odd or even row with no room', () => {
+    const everyWeek = { ...post, recurrence: 'ALL_WEEKS' as const };
+    const half = { ...slot, roomId: null };
+    expect(judgedRowOf(everyWeek, half).pairWithoutRoom).toBe(true);
+    expect(judgedRowOf(everyWeek, { ...half, recurrence: 'EVEN_WEEKS' }).pairWithoutRoom).toBe(true);
+    // With a room, or a lesson of every week, or on a post of odd weeks (whose rows are all its weeks): a lock, or a pin.
+    expect(judgedRowOf(everyWeek, slot).pairWithoutRoom).toBe(false);
+    expect(judgedRowOf(everyWeek, { ...half, recurrence: 'ALL_WEEKS' }).pairWithoutRoom).toBe(false);
+    expect(judgedRowOf({ ...post, recurrence: 'ODD_WEEKS' as const }, half).pairWithoutRoom).toBe(false);
+    expect(judgedRowOf(post, half).pairWithoutRoom).toBe(false);
+  });
+
+  it('says a row is in a block when its post is', () => {
+    expect(judgedRowOf({ ...post, blockId: 'block-1' }, slot).inBlock).toBe(true);
+    expect(judgedRowOf({ ...post, blockId: null }, slot).inBlock).toBe(false);
   });
 
   it('is a draft row without an id, and the post\'s teacher is the lesson\'s whoever the slot names, when nothing is shared', () => {

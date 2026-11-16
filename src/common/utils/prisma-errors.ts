@@ -307,6 +307,7 @@ export type PlacementsRule =
   | 'COUNT'
   | 'WEEKS'
   | 'PAIRS'
+  | 'PAIR_ROOM'
   | 'BLOCK'
   | 'POST'
   | 'NO_TEACHER'
@@ -320,6 +321,7 @@ const PLACEMENT_RULES: readonly PlacementsRule[] = [
   'COUNT',
   'WEEKS',
   'PAIRS',
+  'PAIR_ROOM',
   'BLOCK',
   'POST',
   'NO_TEACHER',
@@ -381,6 +383,9 @@ const PLACEMENT_SENTENCES: Record<PlacementsRule, string> = {
   PAIRS:
     'På en post som går varje vecka är en förläggning varje vecka, eller så förläggs udda och jämna veckor i par av samma längd. ' +
     'Lägg till raden som saknas, eller ta bort den som står ensam.',
+  PAIR_ROOM:
+    'Udda och jämna veckor av samma längd är en lektion på två platser, och båda platserna måste ha en sal: motorn kan inte välja sal ' +
+    'åt en halv lektion. Välj sal för båda halvorna, eller välj varje vecka och låt motorn välja sal.',
   BLOCK:
     'Posten ligger i ett parallellt block, som läggs på samma tider för alla poster. En enskild post i ett block kan inte förläggas. ' +
     'Ta bort förläggningarna, eller ta posten ur blocket.',
