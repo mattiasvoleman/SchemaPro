@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
 import request from 'supertest';
 import { Role } from '../src/auth/enums/role.enum';
-import { rowsKeyOf } from '../src/requirement-placements/placement-rows-key';
+import { rowsKeyOf as keyOfRows } from '../src/requirement-placements/placement-rows-key';
+
+/** The key of rows as the fixture states them (its recurrence is a plain string, the key's type a LessonRecurrence). */
+const rowsKeyOf = (rows: unknown[]) => keyOfRows(rows as Parameters<typeof keyOfRows>[0]);
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 
 /**

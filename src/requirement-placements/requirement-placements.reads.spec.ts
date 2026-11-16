@@ -80,7 +80,7 @@ const input = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const keyOf = (rows: ReturnType<typeof stored>[]) => rowsKeyOf(rows);
+const keyOf = (rows: ReturnType<typeof stored>[]) => rowsKeyOf(rows as Parameters<typeof rowsKeyOf>[0]);
 
 /**
  * The post's rows as the table holds them in turn: `before` until the first write's statements have run, then `after`.
