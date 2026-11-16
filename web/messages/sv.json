@@ -7191,6 +7191,7 @@
       "hint": "Personen står på lektioner och får lärarens egna sidor och roll i larmet. Rätten som administratör är densamma.",
       "historyOn": "undervisar nu",
       "historyOff": "undervisar inte längre",
+      "markRefused": "Personen sparades, men markeringen som undervisande nekades: {reason}",
       "errors": {
         "TEACHES_NEEDS_A_POST": "Personen har ingen tjänst för läsåret. Lägg tjänsten först och markera därefter.",
         "A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS": "Personen är markerad som undervisande, och det här är personens sista tjänst. Ta bort markeringen under Personer först.",

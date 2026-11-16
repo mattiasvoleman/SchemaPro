@@ -7191,6 +7191,7 @@
       "hint": "The person stands on lessons and gets the teacher's own pages and part in an alarm. The rights as an administrator are the same.",
       "historyOn": "teaches now",
       "historyOff": "no longer teaches",
+      "markRefused": "The person was saved, but the teaching mark was refused: {reason}",
       "errors": {
         "TEACHES_NEEDS_A_POST": "The person has no post for the school year. Add the post first, then set the mark.",
         "A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS": "The person is marked as teaching, and this is their last post. Take off the mark under People first.",

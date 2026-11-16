@@ -752,11 +752,18 @@ export default function PeoplePage() {
       // and only when they are chosen (sendsProfile above).
       ...(sendsProfile ? { adminProfile: shownProfile.adminProfile, hrRead: shownProfile.hrRead } : {}),
     };
+    // The one green message of a save. With a mark to send it waits for the mark's answer, so that a refused mark is
+    // one message ("saved, but the mark was refused: why") and not a green "Uppdaterad" followed by a red error.
+    let saved: string | null = null;
+    const said = (message: string) => {
+      if (sendsTeaches) saved = message;
+      else toast.success(message);
+    };
     try {
       let userId = editing?.id ?? null;
       if (editing) {
         await mutations.update.mutateAsync({ id: editing.id, ...body });
-        toast.success(tCommon("updated"));
+        said(tCommon("updated"));
       } else {
         const created = (await mutations.create.mutateAsync({
           ...body,
@@ -764,7 +771,7 @@ export default function PeoplePage() {
           sendInvitation,
         })) as { id?: string } | undefined;
         userId = created?.id ?? null;
-        toast.success(sendInvitation ? t("createdAndInvited") : tCommon("created"));
+        said(sendInvitation ? t("createdAndInvited") : tCommon("created"));
       }
       /*
        * The post, written only when the dialog SAYS something about it. An
@@ -808,12 +815,17 @@ export default function PeoplePage() {
             });
           }
           const refused = teachesErrorOf(error);
-          toast.error(refused ? tAreas(`teaches.errors.${refused}`) : error instanceof Error ? error.message : tCommon("error"));
+          const why = refused ? tAreas(`teaches.errors.${refused}`) : error instanceof Error ? error.message : tCommon("error");
+          toast.error(tAreas("teaches.markRefused", { reason: why }));
           return;
         }
+        if (saved) toast.success(saved);
+        saved = null;
       }
       setDialogOpen(false);
     } catch (error) {
+      // The post failed after the person was saved: the held message is still true, and is said before the error.
+      if (saved) toast.success(saved);
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
   };

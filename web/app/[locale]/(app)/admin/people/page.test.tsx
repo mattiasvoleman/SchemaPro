@@ -1328,9 +1328,35 @@ describe("People page", () => {
         await user.click(await screen.findByRole("switch", { name: "teaches.label" }));
         await user.click(screen.getByRole("button", { name: "save" }));
 
-        expect(toast.error).toHaveBeenCalledWith("teaches.errors.TEACHES_NEEDS_A_POST");
+        // One message, which says that the person was saved and why the mark was not: no green "updated" before it.
+        expect(toast.error).toHaveBeenCalledTimes(1);
+        expect(toast.error).toHaveBeenCalledWith("teaches.markRefused(teaches.errors.TEACHES_NEEDS_A_POST)");
+        expect(toast.success).not.toHaveBeenCalled();
         // The dialog is still there, and the person and the rest were saved.
         expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(updatePerson).toHaveBeenCalledTimes(2);
+      });
+
+      it("says the save once, after the mark was taken, and not before", async () => {
+        state.administrators = admin("REKTOR");
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+        await user.click(editButton("Rita Nilsson"));
+        await user.click(await screen.findByRole("switch", { name: "teaches.label" }));
+        await user.click(screen.getByRole("button", { name: "save" }));
+        expect(toast.success).toHaveBeenCalledTimes(1);
+        expect(toast.success).toHaveBeenCalledWith("updated");
+        expect(toast.error).not.toHaveBeenCalled();
+        // The message comes after the mark's call, not between the two calls.
+        expect(updatePerson.mock.invocationCallOrder[1]!).toBeLessThan(vi.mocked(toast.success).mock.invocationCallOrder[0]!);
+      });
+
+      it("says the save at once when there is no mark to send, as it did", async () => {
+        state.administrators = admin("REKTOR");
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+        await user.click(editButton("Rita Nilsson"));
+        await user.click(await screen.findByRole("button", { name: "save" }));
         expect(toast.success).toHaveBeenCalledWith("updated");
       });
 
@@ -1349,8 +1375,9 @@ describe("People page", () => {
         await user.click(editButton("Rita Nilsson"));
         await user.click(await screen.findByRole("switch", { name: "teaches.label" }));
         await user.click(screen.getByRole("button", { name: "save" }));
-        expect(toast.error).toHaveBeenCalledWith(`teaches.errors.${code}`);
+        expect(toast.error).toHaveBeenCalledWith(`teaches.markRefused(teaches.errors.${code})`);
         expect(toast.error).not.toHaveBeenCalledWith("Gatewayens svenska mening");
+        expect(toast.success).not.toHaveBeenCalled();
       });
 
       it("says any other failure as it says it", async () => {
@@ -1361,7 +1388,9 @@ describe("People page", () => {
         await user.click(editButton("Rita Nilsson"));
         await user.click(await screen.findByRole("switch", { name: "teaches.label" }));
         await user.click(screen.getByRole("button", { name: "save" }));
-        expect(toast.error).toHaveBeenCalledWith("Något gick fel");
+        // Said as it says it, inside the one message that tells the person was saved.
+        expect(toast.error).toHaveBeenCalledWith("teaches.markRefused(Något gick fel)");
+        expect(toast.success).not.toHaveBeenCalled();
       });
 
       it("sends no mark for a person who is made a läsare after the switch was touched: it is hidden, and the database zeroes the mark", async () => {
@@ -1422,7 +1451,9 @@ describe("People page", () => {
         expect(createPerson).toHaveBeenCalledTimes(1);
         expect(createPerson.mock.calls[0]![0]).not.toHaveProperty("teaches");
         expect(updatePerson).toHaveBeenCalledWith({ id: "a-new", teaches: true });
-        expect(toast.error).toHaveBeenCalledWith("teaches.errors.TEACHES_NEEDS_A_POST");
+        expect(toast.error).toHaveBeenCalledWith("teaches.markRefused(teaches.errors.TEACHES_NEEDS_A_POST)");
+        // Created, but not said as done while the mark was refused.
+        expect(toast.success).not.toHaveBeenCalled();
         // A second save is of the person just created, not a second person with the same address.
         updatePerson.mockResolvedValue(undefined);
         await user.click(screen.getByRole("button", { name: "save" }));
