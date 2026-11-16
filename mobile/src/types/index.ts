@@ -102,6 +102,12 @@ export interface AuthState {
   readonly isAuthenticated: boolean;
   readonly teacherId: string | null;
   readonly role: string | null;
+  /**
+   * The administrator is marked as teaching (Users.teaches, read as `=== true`): the person counts their own
+   * groups at an alarm, as a teacher does. False for everyone else, and for a profile cached before the
+   * mark was kept. The mark changes no app and no tab but Larm (services/auth/appGate.ts appTabs).
+   */
+  readonly teaches: boolean;
 }
 
 // ─── Sync ─────────────────────────────────────────────────────────────────────

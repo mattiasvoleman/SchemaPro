@@ -173,7 +173,7 @@ describe('handleCrisisPush: a push is put to the gateway before it is believed',
     // A little after the push: the phone was off for half a minute.
     jest.useFakeTimers({ now: T0 + 30_000, doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'queueMicrotask', 'performance'] });
     gateway.install();
-    jest.mocked(SecureTokenStore.getTeacherSession).mockResolvedValue({ teacherId: 't-1', role: 'TEACHER', authId: null });
+    jest.mocked(SecureTokenStore.getTeacherSession).mockResolvedValue({ teacherId: 't-1', role: 'TEACHER', authId: null, teaches: false });
   });
 
   afterEach(() => {
@@ -285,7 +285,7 @@ describe('handleCrisisPush: a push is put to the gateway before it is believed',
   });
 
   it('asks nothing of the gateway for an administrator’s phone, or one nobody is signed in on, and remembers the push as before', async () => {
-    jest.mocked(SecureTokenStore.getTeacherSession).mockResolvedValueOnce({ teacherId: 'a-1', role: 'SCHOOL_ADMIN', authId: null });
+    jest.mocked(SecureTokenStore.getTeacherSession).mockResolvedValueOnce({ teacherId: 'a-1', role: 'SCHOOL_ADMIN', authId: null, teaches: false });
     await expect(handleCrisisPush(sent())).resolves.toBe('UNKNOWN');
     jest.mocked(SecureTokenStore.getTeacherSession).mockResolvedValueOnce(null);
     await expect(handleCrisisPush(sent(T0 + 1_000))).resolves.toBe('UNKNOWN');

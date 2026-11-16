@@ -24,8 +24,8 @@ import {
 // Authentication via Supabase Auth: e-mail and password, or "Logga in med
 // skolkonto" (Entra ID or Google Workspace, migration 20261020090000).
 //
-// After sign-in the app profile (Users.id + role) is resolved from the tenant
-// `Users` table under RLS and cached in expo-secure-store so that
+// After sign-in the app profile (Users.id + role + teaches) is resolved from the
+// tenant `Users` table under RLS and cached in expo-secure-store so that
 // restoreSession() works offline. The Supabase session itself is persisted by
 // the secure chunked storage adapter in services/supabase.ts.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,9 +38,11 @@ interface LoginCredentials {
 interface ProfileRow {
   readonly id: string;
   readonly role: string;
+  /** Users.teaches, read strictly: only a true is a mark. */
+  readonly teaches: boolean;
 }
 
-const SIGNED_OUT: AuthState = { isAuthenticated: false, teacherId: null, role: null };
+const SIGNED_OUT: AuthState = { isAuthenticated: false, teacherId: null, role: null, teaches: false };
 
 export type AuthErrorCode =
   | 'INVALID_CREDENTIALS'
@@ -129,26 +131,32 @@ async function adoptProfile(userId: string): Promise<AuthState> {
   }
 
   // Cache the profile so restoreSession() works with no connectivity.
-  await SecureTokenStore.saveTeacherSession(profile.id, profile.role, userId);
+  await SecureTokenStore.saveTeacherSession(profile.id, profile.role, userId, profile.teaches);
 
-  return { isAuthenticated: true, teacherId: profile.id, role: profile.role };
+  return { isAuthenticated: true, teacherId: profile.id, role: profile.role, teaches: profile.teaches };
 }
 
+/**
+ * The person's row as the school has it. `teaches` is the mark that an administrator teaches: it is
+ * read as `=== true`, so a row without it (or a null) is not marked, as for the web (lib/auth.ts). The
+ * column is in migration 20270212090000: a database without it answers this read with an error, and
+ * nobody signs in (docs/DEPLOYMENT.md, "Rastra app: the teaching administrator").
+ */
 async function fetchProfile(authId: string): Promise<ProfileRow | null> {
   const { data, error } = await getSupabase()
     .from('Users')
-    .select('id, role')
+    .select('id, role, teaches')
     .eq('authId', authId)
-    .maybeSingle<ProfileRow>();
+    .maybeSingle<{ readonly id: string; readonly role: string; readonly teaches?: boolean | null }>();
   if (error) throw new Error(error.message);
-  return data;
+  return data ? { id: data.id, role: data.role, teaches: data.teaches === true } : null;
 }
 
 /** A cached or fetched profile, through the gate: the state, or the refusal thrown. */
-function admitted(teacherId: string, role: string): AuthState {
+function admitted(teacherId: string, role: string, teaches: boolean): AuthState {
   const refusal = appRefusal(currentApp(), role);
   if (refusal) throw new AuthError(refusal, `The ${role} role signs in to the other app.`);
-  return { isAuthenticated: true, teacherId, role };
+  return { isAuthenticated: true, teacherId, role, teaches };
 }
 
 async function restore(): Promise<AuthState> {
@@ -177,7 +185,9 @@ async function restore(): Promise<AuthState> {
   // a session that ended without the logout button is someone else's. One
   // cached before authId was kept is adopted as the session's.
   const cached = stored && (stored.authId === null || stored.authId === sessionUser) ? stored : null;
-  if (cached && cached.authId === null) await SecureTokenStore.saveTeacherSession(cached.teacherId, cached.role, sessionUser);
+  if (cached && cached.authId === null) {
+    await SecureTokenStore.saveTeacherSession(cached.teacherId, cached.role, sessionUser, cached.teaches === true);
+  }
 
   if (!data.session) {
     // Offline: asked above, or found by supabase-js, which keeps a session
@@ -185,11 +195,12 @@ async function restore(): Promise<AuthState> {
     // retryable fetch error (measured on auth-js 2.110.2). That is a session
     // this device still holds, and the cached profile lets attendance be
     // taken without the network, as it is with a token still inside its hour.
-    return cached ? admitted(cached.teacherId, cached.role) : SIGNED_OUT;
+    return cached ? admitted(cached.teacherId, cached.role, cached.teaches === true) : SIGNED_OUT;
   }
 
-  // The cached role decides, offline too: no request before routing.
-  if (cached) return admitted(cached.teacherId, cached.role);
+  // The cached role decides, offline too: no request before routing. So does the cached mark that an
+  // administrator teaches: a profile cached before it was kept has none, and recheckProfile reads it.
+  if (cached) return admitted(cached.teacherId, cached.role, cached.teaches === true);
 
   // Cache miss (e.g. cleared keychain): resolve the profile online.
   let profile: ProfileRow | null;
@@ -199,8 +210,8 @@ async function restore(): Promise<AuthState> {
     return SIGNED_OUT;
   }
   if (!profile) return SIGNED_OUT;
-  const state = admitted(profile.id, profile.role);
-  await SecureTokenStore.saveTeacherSession(profile.id, profile.role, data.session.user.id);
+  const state = admitted(profile.id, profile.role, profile.teaches);
+  await SecureTokenStore.saveTeacherSession(profile.id, profile.role, data.session.user.id, profile.teaches);
   return state;
 }
 
@@ -395,9 +406,11 @@ export const AuthService = {
    * After a signed-in start, once there is a network: the profile as the
    * school has it now. The role can change under a session (an
    * administrator's edit), and the token says nothing of it (the access-token
-   * hook leaves the claims as they are). A role this app does not admit ends
-   * the session here as at a start; a changed role it admits is cached and
-   * returned. A session that is gone (none stored, or its refresh refused)
+   * hook leaves the claims as they are); nor does it say whether an
+   * administrator is marked as teaching, which the head teacher sets and
+   * takes away the same way. A role this app does not admit ends
+   * the session here as at a start; a changed role or mark it admits is
+   * cached and returned. A session that is gone (none stored, or its refresh refused)
    * ends here as onSessionEnded ends it. Anything it cannot read leaves the
    * session as it is, and so does a recheck that outlived the session it
    * checked: a logout, a sign-in or the server's end while it waited.
@@ -438,13 +451,13 @@ export const AuthService = {
     if (superseded()) return current;
     // No row: deactivated or removed. The gateway refuses it, and the queue
     // banner says so; signing out here would strand unsent attendance.
-    if (!profile || (profile.id === current.teacherId && profile.role === current.role)) return current;
+    if (!profile || (profile.id === current.teacherId && profile.role === current.role && profile.teaches === current.teaches)) return current;
     const refusal = appRefusal(currentApp(), profile.role);
     if (refusal) {
       await endSession('local').catch(() => undefined);
       throw new AuthError(refusal, `The ${profile.role} role signs in to the other app.`);
     }
-    await SecureTokenStore.saveTeacherSession(profile.id, profile.role, data.session.user.id);
-    return { isAuthenticated: true, teacherId: profile.id, role: profile.role };
+    await SecureTokenStore.saveTeacherSession(profile.id, profile.role, data.session.user.id, profile.teaches);
+    return { isAuthenticated: true, teacherId: profile.id, role: profile.role, teaches: profile.teaches };
   },
 } as const;

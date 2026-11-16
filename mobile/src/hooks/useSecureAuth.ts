@@ -21,6 +21,7 @@ const INITIAL_STATE: AuthState = {
   isAuthenticated: false,
   teacherId: null,
   role: null,
+  teaches: false,
 };
 
 /**

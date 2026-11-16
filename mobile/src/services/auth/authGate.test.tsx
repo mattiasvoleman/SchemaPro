@@ -22,7 +22,7 @@ import RootLayout from '../../../app/_layout';
 import { ensureAndroidChannel, foregroundPresentation, forgetTap, startSignedIn, takeLastTap } from '../pushRegistration';
 import { handleCrisisPush } from '../crisisOffline';
 
-type AuthShape = { authState: { isAuthenticated: boolean; teacherId: string | null; role: string | null }; isLoading: boolean };
+type AuthShape = { authState: { isAuthenticated: boolean; teacherId: string | null; role: string | null; teaches: boolean }; isLoading: boolean };
 
 let mockAuth: AuthShape;
 let mockSegments: string[];
@@ -74,8 +74,8 @@ jest.mock('../../theme/ThemeContext', () => ({
   useAppTheme: () => ({ statusBar: 'dark' }),
 }));
 
-const signedIn = (role: string | null): AuthShape => ({ authState: { isAuthenticated: true, teacherId: 'u1', role }, isLoading: false });
-const signedOut: AuthShape = { authState: { isAuthenticated: false, teacherId: null, role: null }, isLoading: false };
+const signedIn = (role: string | null): AuthShape => ({ authState: { isAuthenticated: true, teacherId: 'u1', role, teaches: false }, isLoading: false });
+const signedOut: AuthShape = { authState: { isAuthenticated: false, teacherId: null, role: null, teaches: false }, isLoading: false };
 
 let tree: TestRenderer.ReactTestRenderer | null = null;
 

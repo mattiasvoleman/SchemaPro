@@ -99,7 +99,7 @@ beforeEach(() => {
   mockUuid = 0;
   fetchMock.mockClear();
   respond = okFor;
-  jest.mocked(SecureTokenStore.getTeacherSession).mockResolvedValue({ teacherId: mine, role: 'TEACHER', authId: null });
+  jest.mocked(SecureTokenStore.getTeacherSession).mockResolvedValue({ teacherId: mine, role: 'TEACHER', authId: null, teaches: false });
   jest.mocked(getAccessToken).mockResolvedValue('token');
   jest.mocked(noNetwork).mockResolvedValue(false);
 });
@@ -652,7 +652,7 @@ describe('the queue is the signed-in teacher’s own', () => {
     expect(fake.queue.map((r) => r.id)).toEqual(['theirs-1']);
 
     respond = okFor;
-    jest.mocked(SecureTokenStore.getTeacherSession).mockResolvedValue({ teacherId: colleague, role: 'TEACHER', authId: null });
+    jest.mocked(SecureTokenStore.getTeacherSession).mockResolvedValue({ teacherId: colleague, role: 'TEACHER', authId: null, teaches: false });
     const theirs = await flushCrisisQueue();
     expect(theirs.sent.map((m) => m.id)).toEqual(['theirs-1']);
   });
