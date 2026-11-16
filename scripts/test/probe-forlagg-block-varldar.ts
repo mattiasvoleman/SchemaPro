@@ -506,7 +506,10 @@ async function run(owner: Client, app: INestApplicationContext, started: number)
   const bump = (bucket: Record<string, number>, key: string) => void (bucket[key] = (bucket[key] ?? 0) + 1);
 
   console.log(`blockvärldar seed=${seed} från ${from}, ${only !== null ? `bara värld ${only}` : `${count} världar`}; last ${loadavg()[0]!.toFixed(1)}`);
-  const selfFailures = await selfTest();
+  const selfFailures = await selfTest().catch((error: unknown) => {
+    console.error(`självprovet gick inte att köra (gatewayen eller motorn svarade inte som en fungerande körning): ${summarise(error)}`);
+    return 1;
+  });
   if (selfFailures > 0) {
     console.error(`==> självprovet FAILED: domaren missade ${selfFailures} medvetna fel`);
     return selfFailures;

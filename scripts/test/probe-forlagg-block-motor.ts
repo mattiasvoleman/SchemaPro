@@ -744,7 +744,7 @@ async function run(owner: Client, app: INestApplicationContext, enginePins: bool
         await replace(sc, [slot(2, '10:00', 60, [{ requirementId: spanska.postId, roomId: salar[0]! }])]);
         const original = proxy.callAiEngine.bind(proxy);
         /** Kör Generera och ändrar något MEDAN motorn löser: ändringen skickas direkt efter att anropet gått iväg och är gjord innan svaret kommer. */
-        const duringTheSolve = async (change: () => Promise<void>): Promise<HttpException> => {
+        const duringTheSolve = async (change: () => Promise<void>, options: { engineStillSolving: boolean } = { engineStillSolving: true }): Promise<HttpException> => {
           let landed: 'before' | 'after' | null = null;
           (proxy as unknown as { callAiEngine: typeof proxy.callAiEngine }).callAiEngine = (async (...args: Parameters<typeof proxy.callAiEngine>) => {
             const pending = original(...args);
@@ -759,13 +759,15 @@ async function run(owner: Client, app: INestApplicationContext, enginePins: bool
           }) as typeof proxy.callAiEngine;
           try {
             const refused = await refusalOf(generate());
-            assert.equal(landed, 'before', 'ändringen hann inte före motorns svar: provet säger inget om att motorn löser');
+            // En ändring som är en enda SQL-sats är gjord medan motorn löser. En som går genom tjänsten (lås, läsning, flera satser) kan ta längre tid
+            // än en liten värld, och då har motorn hunnit svara; ändringen är ändå gjord innan gatewayen läser svaret och skriver, och det är det som prövas.
+            if (options.engineStillSolving) assert.equal(landed, 'before', 'ändringen hann inte före motorns svar: provet säger inget om att motorn löser');
             return refused;
           } finally {
             (proxy as unknown as { callAiEngine: typeof proxy.callAiEngine }).callAiEngine = original;
           }
         };
-        const changes: Array<[string, () => Promise<void>, () => Promise<void>]> = [
+        const changes: Array<[string, () => Promise<void>, () => Promise<void>, { engineStillSolving: boolean }?]> = [
           [
             'startTime på blockraden',
             async () => void (await owner.query(`UPDATE "TeachingBlockPlacements" SET "startTime" = '11:00', "updatedAt" = now() WHERE "blockId" = $1`, [sc.blockId])),
@@ -802,16 +804,25 @@ async function run(owner: Client, app: INestApplicationContext, enginePins: bool
               )),
           ],
           [
+            // Nyckeln bygger på radernas egna id:n (blockPlacementsKeyOf), och en sparning ersätter dem: ett lika sparat förlägg medan motorn löser
+            // är därför ett förlägg som rörts, fast basen (det motorn fick) är densamma. Det är den enda ändring som bara nyckeln ser; de andra
+            // ändrar också förslagens bas, som skrivningen jämför en gång till (params.changed = requirements) och som vore vägran även utan nyckeln.
+            'ett lika sparat förlägg (nya id:n, samma innehåll)',
+            async () => void (await replace(sc, [slot(2, '10:00', 60, [{ requirementId: spanska.postId, roomId: salar[0]! }])])),
+            async () => undefined,
+            { engineStillSolving: false },
+          ],
+          [
             'blockraden tas bort',
             async () => void (await owner.query(`DELETE FROM "TeachingBlockPlacements" WHERE "blockId" = $1`, [sc.blockId])),
             async () => void (await replace(sc, [slot(2, '10:00', 60, [{ requirementId: spanska.postId, roomId: salar[0]! }])])),
           ],
         ];
-        for (const [label, change, revert] of changes) {
+        for (const [label, change, revert, options] of changes) {
           const before = await fingerprintWithoutPlacements();
           let refused: HttpException;
           try {
-            refused = await duringTheSolve(change);
+            refused = await duringTheSolve(change, options);
           } finally {
             // Lektionerna jämförs före och efter; förläggningarna är ändrade med flit, så de återställs innan fingeravtrycket jämförs igen.
             await revert();
