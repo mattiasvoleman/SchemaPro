@@ -62343,3 +62343,1080 @@ BEGIN
   RAISE NOTICE 'gf 499: % checks', current_setting('fl.checks');
 END $$;
 ROLLBACK;
+
+-- ===========================================================================
+-- Sections 510-514: en administratör som undervisar, del 4 (20270219090000).
+--
+-- Krisläge, mentor och rapporteringsgrad för en markerad administratör. Three insert arms of the teacher's own marks in an alarm and
+-- ten functions ask for the mark (the caller's, app.current_user_teaches(), or a row's, app.teaches_like(role, mark)); 25 policies and
+-- one function that name TEACHER are NOT converted because the administrator's arm for the same table and verb already admits every
+-- row they admit (and for the alarm's reads that is the point: the gateway narrows a marked administrator's view, the database does not).
+-- Nothing changes for a person who is not marked, in any table, through either role.
+--
+--   510  what the migration wrote: the three arms are main's with the mark added, the ten functions are main's with the changed
+--        text and nothing else, the new function, who asks for the mark, and why the 26 that stay do (an administrator arm for the
+--        same table and verb, structurally and as an answer);
+--   511  krisläge through the API's role (the tables have no PostgREST door) for each profile that can be marked, in a school that
+--        narrowed the start list: the three arms let in the person's own group and "found", and nothing else;
+--   512  mentor: the eight functions, for a marked administrator with and without MENTORSKAP, unmarked, inactive, and a teacher;
+--   513  rapporteringsgrad: the lessons of the reporting rate and of its history, the nightly count, the reminder and the digest;
+--   514  nothing else changed: the catalogue diff against main's, a snapshot per person and table with and without the mark, and what
+--        stays refused a marked administrator.
+--
+-- The cast is rls-fixtures.sql's 'rls-larm-school': …6001 rektor, …6002 full, …6003 schemaläggare, …6004 expedition (each with a
+-- post for the active year, and the mentor of one class), …6006 läsare, …6010/6011 teachers (with posts; the mentors of the first
+-- two classes), …6012 a teacher with nothing, …6021-6025 five pupils in four classes. Every section marks inside its own transaction
+-- and rolls back.
+-- ===========================================================================
+
+CREATE OR REPLACE FUNCTION pg_temp.tk_claim(auth text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+END $f$;
+
+-- Sign in as the larm school's person …6nnn (the authId's last four digits).
+CREATE OR REPLACE FUNCTION pg_temp.tk_a(n int) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.tk_claim('00000000-0000-4000-8000-00000000' || lpad(n::text, 4, '0'));
+END $f$;
+
+-- That person's id (as somebody who reads the school).
+CREATE OR REPLACE FUNCTION pg_temp.tk_id(n int) RETURNS uuid LANGUAGE sql AS $f$
+  SELECT id FROM "Users" WHERE "authId" = ('00000000-0000-4000-8000-00000000' || lpad(n::text, 4, '0'))::uuid
+$f$;
+
+-- A statement as a database role ('app_authenticated' is the API's, 'authenticated' is PostgREST's): 'ok N' with the rows it
+-- touched, or the SQLSTATE it ended with. The role is set inside, so that the caller keeps pg_temp.
+CREATE OR REPLACE FUNCTION pg_temp.tk_try(via text, stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE n bigint;
+BEGIN
+  IF via <> 'app_authenticated' THEN EXECUTE format('SET LOCAL ROLE %I', via); END IF;
+  EXECUTE stmt;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RESET ROLE;
+  RETURN 'ok ' || n;
+EXCEPTION WHEN OTHERS THEN
+  RETURN SQLSTATE;
+END $f$;
+
+-- One value of a query as a database role, or 'E:' and the SQLSTATE.
+CREATE OR REPLACE FUNCTION pg_temp.tk_val(via text, q text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE v text;
+BEGIN
+  IF via <> 'app_authenticated' THEN EXECUTE format('SET LOCAL ROLE %I', via); END IF;
+  EXECUTE q INTO v;
+  RESET ROLE;
+  RETURN v;
+EXCEPTION WHEN OTHERS THEN
+  RETURN 'E:' || SQLSTATE;
+END $f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tk_expect(label text, got text, want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  IF got IS DISTINCT FROM want THEN
+    RAISE EXCEPTION 'tk %: got %, wanted %', label, coalesce(got, '(null)'), want;
+  END IF;
+END $f$;
+
+-- Whether row security let a write through: it did if the row went in, or met a key or a rule of the table's own after it.
+CREATE OR REPLACE FUNCTION pg_temp.tk_class(r text) RETURNS text LANGUAGE sql AS $f$
+  SELECT CASE WHEN r LIKE 'ok %' OR r IN ('23505', '23514', '23P01', '23503', 'KL403', 'KL409', 'KL422') THEN 'admitted' WHEN r = '42501' THEN 'refused' ELSE r END
+$f$;
+
+-- Mark (or unmark) the larm school's person …6nnn, as whoever is signed in (a decider).
+CREATE OR REPLACE FUNCTION pg_temp.tk_mark(n int, v boolean) RETURNS text LANGUAGE sql AS $f$
+  SELECT pg_temp.tk_try('app_authenticated', format($q$UPDATE "Users" SET teaches = %L WHERE id = %L$q$, v, pg_temp.tk_id(n)))
+$f$;
+
+-- ---------------------------------------------------------------------------
+-- Section 510: what the migration wrote.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE TEMP TABLE tk_arms (pol text, c_md5 text) ON COMMIT DROP;
+-- The three insert arms, WITH CHECK, as they were on main 202a4a9e: the md5 of the text with the mark taken out of it.
+INSERT INTO tk_arms VALUES
+  ('crisis_reports_teacher_found_insert', '497ae45ca12da622d79414710b355ed9'),
+  ('crisis_reports_teacher_free_insert', '543314dbfcc6633efbbde9727260ed21'),
+  ('crisis_reports_teacher_insert', 'c1b730f51f0f3c3b84611949274d80a5');
+DO $$
+DECLARE
+  plain constant text := $p$(( SELECT app.current_user_role() AS current_user_role) = 'TEACHER'::"UserRole")$p$;
+  marked constant text := $m$((( SELECT app.current_user_role() AS current_user_role) = 'TEACHER'::"UserRole") OR ( SELECT app.current_user_teaches() AS current_user_teaches))$m$;
+  r record;
+  n int;
+  bad text;
+BEGIN
+  -- 510a. Exactly these three arms of CrisisReports ask for the mark, each once, in the OR beside the teacher test, and each is the arm it was.
+  SELECT string_agg(p.polname, ', ' ORDER BY p.polname COLLATE "C") INTO bad
+    FROM pg_policy p
+   WHERE p.polrelid = '"CrisisReports"'::regclass
+     AND ((coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '')) LIKE '%current_user_teaches%')
+         IS DISTINCT FROM EXISTS (SELECT 1 FROM tk_arms a WHERE a.pol = p.polname);
+  IF bad IS NOT NULL THEN RAISE EXCEPTION 'tk 510a: the mark stands on the three insert arms of the teacher and on no other arm of CrisisReports: wrong at %', bad; END IF;
+  FOR r IN
+    SELECT a.*, p.polcmd, p.polpermissive, p.polqual IS NULL AS no_using,
+           (SELECT string_agg(rolname::text, ',' ORDER BY rolname) FROM pg_roles WHERE oid = ANY (p.polroles)) AS have_roles,
+           pg_get_expr(p.polwithcheck, p.polrelid) AS c
+      FROM tk_arms a LEFT JOIN pg_policy p ON p.polrelid = '"CrisisReports"'::regclass AND p.polname = a.pol
+  LOOP
+    IF r.polcmd IS NULL THEN RAISE EXCEPTION 'tk 510a: % is gone', r.pol; END IF;
+    IF r.polcmd <> 'a' OR r.have_roles IS DISTINCT FROM 'app_authenticated' OR NOT r.polpermissive OR NOT r.no_using THEN
+      RAISE EXCEPTION 'tk 510a: % is %/%/% and not the insert arm for the API role that it was', r.pol, r.polcmd, r.have_roles, r.polpermissive;
+    END IF;
+    n := (length(r.c) - length(replace(r.c, marked, ''))) / length(marked);
+    IF n <> 1 OR (length(r.c) - length(replace(r.c, 'app.current_user_teaches()', ''))) / length('app.current_user_teaches()') <> 1 THEN
+      RAISE EXCEPTION 'tk 510a: % has the mark % times (one, in the OR beside the teacher test)', r.pol, n;
+    END IF;
+    IF md5(replace(r.c, marked, plain)) <> r.c_md5 THEN RAISE EXCEPTION 'tk 510a: % is not main''s arm with the mark added', r.pol; END IF;
+  END LOOP;
+  RAISE NOTICE 'tk 510a: three arms are main''s with the mark added';
+END $$;
+
+-- 510b. What the migration did NOT touch: every other arm of CrisisReports, and the 25 policies that stay with the administrator's arm for the same
+-- table and verb, are their text on main (the md5 of USING and WITH CHECK together); and those administrator arms ask the school, the role and for a
+-- write the administrator's area, and nothing the mark could change.
+CREATE TEMP TABLE tk_stay (tbl text, pol text, cmd "char", roles text, m text, admin_pol text, admin_m text) ON COMMIT DROP;
+INSERT INTO tk_stay VALUES
+  ('CrisisAlarms', 'crisis_alarms_teacher_select', 'r', 'app_authenticated', 'e0298151a18368899dd5107682bd4d16', 'crisis_alarms_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('CrisisCalls', 'crisis_calls_teacher_select', 'r', 'app_authenticated', '20bc01002b58671122bac7eecef22e54', 'crisis_calls_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('CrisisCallTeachers', 'crisis_call_teachers_teacher_select', 'r', 'app_authenticated', 'e6cd770d2213c8434879fc3f9235eb5b', 'crisis_call_teachers_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('CrisisPupils', 'crisis_pupils_teacher_select', 'r', 'app_authenticated', 'e6cd770d2213c8434879fc3f9235eb5b', 'crisis_pupils_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('CrisisReports', 'crisis_reports_teacher_select', 'r', 'app_authenticated', 'e6cd770d2213c8434879fc3f9235eb5b', 'crisis_reports_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('CrisisReports', 'crisis_reports_teacher_found_select', 'r', 'app_authenticated', 'd77705a376af4588b239a6d81a28c797', 'crisis_reports_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('CrisisReports', 'crisis_reports_teacher_own_select', 'r', 'app_authenticated', 'fee374be86e38bb8fb2bc7516c794363', 'crisis_reports_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('LeaveRequests', 'leave_requests_mentor_select', 'r', 'app_authenticated', '46d567ce9b0adc0c6fdb41eed3569cea', 'leave_requests_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('LeaveRequests', 'leave_requests_mentor_update', 'w', 'app_authenticated', 'd29713a15900787b742e8f2d77b1ee7b', 'leave_requests_admin_update', 'c87f69a76ff5d1933d3d0c66febab3ce'),
+  ('AbsenceReports', 'absence_reports_mentor_leave_insert', 'a', 'app_authenticated', 'cad00d0f11bb4157c3620397901d9975', 'absence_reports_admin_insert', '698e8dd7b50c3a30bbac1eb44e21cce9'),
+  ('AbsenceWatchFindings', 'absence_watch_findings_mentor_select', 'r', 'app_authenticated', 'c64be10d09d9fdfcf6ddaea0ccbaf391', 'absence_watch_findings_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('AckReceipts', 'ack_receipts_teacher_select', 'r', 'app_authenticated', '12f0ad29b0e81821980551c9c5b1049b', 'ack_receipts_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('AckReceipts', 'ack_receipts_teacher_insert', 'a', 'app_authenticated', '5858ce5b8ca2b0a8d506b0f690291a87', 'ack_receipts_admin_insert', '481e2c9778e33ec31fa8b600feac4d56'),
+  ('AckRequests', 'ack_requests_teacher_select', 'r', 'app_authenticated', 'fdfc508a42e32d5fa0c49d42055ffbb8', 'ack_requests_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('LessonPupilMoves', 'lesson_pupil_moves_teacher_select', 'r', 'app_authenticated', '67140519550c0f6d4db4f2bfab5748a8', 'lesson_pupil_moves_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('ConsentAsks', 'consent_asks_teacher_insert', 'a', 'app_authenticated', 'dee13fbb570a6dd1d8f5b81aa93f5d57', 'consent_asks_admin_insert', '698e8dd7b50c3a30bbac1eb44e21cce9'),
+  ('ConsentAsks', 'consent_asks_teacher_select', 'r', 'app_authenticated', '8293267f758b029371f975dd969aee51', 'consent_asks_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('ConsentEntries', 'consent_entries_teacher_insert', 'a', 'app_authenticated', 'd38ad50139d87a2fc4572da0e7a9cc97', 'consent_entries_admin_insert', '1a7e02ea8c319219c57584631d7919b7'),
+  ('ConsentEntries', 'consent_entries_teacher_select', 'r', 'app_authenticated', '3996a58a3112b434d1872f8b02b53e75', 'consent_entries_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('ConsentLists', 'consent_lists_teacher_insert', 'a', 'app_authenticated', '28ed19d5936cfb7ce75427c19a82b764', 'consent_lists_admin_insert', '13b365aff5c3985ddcc7cca98a5a7be5'),
+  ('ConsentLists', 'consent_lists_teacher_select', 'r', 'app_authenticated', 'd107657cc84af39b7a47505cbe860e8a', 'consent_lists_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('InstructionProofs', 'checklist_proofs_teacher_insert', 'a', 'app_authenticated', '84570178f80730e8560b60f0617df6ac', 'checklist_proofs_admin_insert', '8e3fc4e34d996762ad3835ca9bcfd706'),
+  ('InstructionProofs', 'checklist_proofs_teacher_select', 'r', 'app_authenticated', '3996a58a3112b434d1872f8b02b53e75', 'checklist_proofs_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('ReportingSettings', 'reporting_settings_teacher_select', 'r', 'app_authenticated', 'fbcaec403a73ea961d7bc71c4cd33af6', 'reporting_settings_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+  ('TeacherReportingDays', 'reporting_days_teacher_select', 'r', 'app_authenticated', '745a9b06a859b413774cba6f0c42647d', 'reporting_days_admin_select', 'd2772076d09a09c3527128976677ffa7');
+DO $$
+DECLARE
+  r record;
+  have record;
+  adm record;
+  bad text := '';
+  txt text;
+BEGIN
+  FOR r IN SELECT * FROM tk_stay ORDER BY tbl, pol LOOP
+    SELECT p.polcmd, md5(coalesce(pg_get_expr(p.polqual, p.polrelid), '') || '|' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '')) AS m,
+           (SELECT string_agg(rolname::text, ',' ORDER BY rolname) FROM pg_roles WHERE oid = ANY (p.polroles)) AS roles,
+           (coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '')) AS txt
+      INTO have FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid AND c.relnamespace = 'public'::regnamespace WHERE c.relname = r.tbl AND p.polname = r.pol;
+    IF NOT FOUND THEN RAISE EXCEPTION 'tk 510b: %.% is gone', r.tbl, r.pol; END IF;
+    IF have.m <> r.m OR have.polcmd <> r.cmd OR have.roles <> r.roles THEN bad := bad || ' ' || r.tbl || '.' || r.pol; END IF;
+    IF have.txt LIKE '%current_user_teaches%' OR have.txt LIKE '%teaches_like%' THEN bad := bad || ' ' || r.tbl || '.' || r.pol || ' (asks for the mark)'; END IF;
+    -- The administrator's arm for the same table and verb, as it was, and plain: the school, the role, the administrator's area for a write.
+    SELECT p.polcmd, md5(coalesce(pg_get_expr(p.polqual, p.polrelid), '') || '|' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '')) AS m,
+           (SELECT string_agg(rolname::text, ',' ORDER BY rolname) FROM pg_roles WHERE oid = ANY (p.polroles)) AS roles,
+           (coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '')) AS txt
+      INTO adm FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid AND c.relnamespace = 'public'::regnamespace WHERE c.relname = r.tbl AND p.polname = r.admin_pol;
+    IF NOT FOUND THEN RAISE EXCEPTION 'tk 510b: the administrator''s arm % on % is gone: the reason % stays is gone with it', r.admin_pol, r.tbl, r.pol; END IF;
+    IF adm.m <> r.admin_m OR adm.roles <> 'app_authenticated' OR adm.polcmd NOT IN (r.cmd, '*') THEN
+      bad := bad || ' ' || r.tbl || '.' || r.admin_pol || ' (not the administrator''s arm it was)';
+    END IF;
+    IF adm.txt NOT LIKE '%( SELECT app.current_user_role() AS current_user_role) = ''SCHOOL_ADMIN''::"UserRole")%'
+       OR adm.txt NOT LIKE '%("schoolId" = ( SELECT app.current_school_id() AS current_school_id))%'
+       OR adm.txt LIKE '%current_user_teaches%' OR adm.txt LIKE '%current_user_id%' OR adm.txt LIKE '%current_user_decides%' THEN
+      bad := bad || ' ' || r.tbl || '.' || r.admin_pol || ' (asks for more than the school and the role, or for the person)';
+    END IF;
+    -- A write asks the administrator's DRIFT area, which every markable profile writes (the läsare is the one that does not, and cannot be marked).
+    IF r.cmd IN ('a', 'w') AND adm.txt NOT LIKE '%current_user_may(''DRIFT''::"AdminArea", true)%' THEN
+      bad := bad || ' ' || r.tbl || '.' || r.admin_pol || ' (a write that does not ask DRIFT)';
+    END IF;
+  END LOOP;
+  IF bad <> '' THEN RAISE EXCEPTION 'tk 510b: changed, or the reason it stays is not there:%', bad; END IF;
+  -- The two arms of CrisisReports that are neither the teacher's nor converted: the administrator's own, untouched.
+  FOR r IN SELECT * FROM (VALUES
+('crisis_reports_admin_insert', '92bad0845e7029055e3d6e80c65457a9'),
+    ('crisis_reports_admin_select', 'd2772076d09a09c3527128976677ffa7')) AS v(pol, m) LOOP
+    IF (SELECT md5(coalesce(pg_get_expr(p.polqual, p.polrelid), '') || '|' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '')) FROM pg_policy p
+         WHERE p.polrelid = '"CrisisReports"'::regclass AND p.polname = r.pol) IS DISTINCT FROM r.m THEN
+      RAISE EXCEPTION 'tk 510b: the administrator''s arm % on CrisisReports is not what it was', r.pol;
+    END IF;
+  END LOOP;
+  RAISE NOTICE 'tk 510b: % arms that stay are as they were, and each administrator arm that is why they stay is plain', (SELECT count(*) FROM tk_stay);
+END $$;
+
+-- 510c. The ten functions are main's with the changed text and nothing else: put the old text back where the new one stands and the md5 of the body is
+-- main's (as it was on main 202a4a9e; the first two are the whole bodies the migration wrote and the others are patched from the catalogue). The new text is
+-- there once, the old one is gone, and each is still the kind of function it was (definer or not, volatility, search path) and still not callable by anybody
+-- it was not.
+CREATE TEMP TABLE tk_fns (fn text, old_text text, new_text text, main_md5 text, definer boolean, vol "char", cfg text) ON COMMIT DROP;
+INSERT INTO tk_fns VALUES
+  ('app.reporting_lessons(uuid, date, date, timestamptz)', $tk0$AND u."role" = 'TEACHER' AND u."isActive"$tk0$, $tk1$AND app.teaches_like(u."role", u."teaches") AND u."isActive"$tk1$, 'a263885deea0dd2f172362d0ed374167', false, 's', ''),
+  ('app.absence_stats_lessons(uuid, date, date, timestamptz)', $tk2$AND u."role" = 'TEACHER' AND NOT EXISTS (SELECT 1 FROM "public"."UserDeactivations" d$tk2$, $tk3$AND app.teaches_like(u."role", u."teaches") AND NOT EXISTS (SELECT 1 FROM "public"."UserDeactivations" d$tk3$, '2b07676420b7d8bc1ddd9cfafa5046a6', false, 's', ''),
+  ('app.leave_mentors(uuid, uuid, date, date)', $tk4$u."isActive" AND u."role" = 'TEACHER'$tk4$, $tk5$u."isActive" AND app.teaches_like(u."role", u."teaches")$tk5$, '2e45bf18324e59a6ca8a5c328bba2e9e', false, 's', ''),
+  ('app.absence_watch_mentees(uuid, date)', $tk6$u."isActive" AND u."role" = 'TEACHER'$tk6$, $tk7$u."isActive" AND app.teaches_like(u."role", u."teaches")$tk7$, 'cb7f4c58bf8dd149dc7fb68116632b6d', false, 's', ''),
+  ('app.absence_watch_digest_plan(uuid, "AbsenceWatchGroup", date, date, date)', $tk8$AND u."role" = CASE p_group WHEN 'MENTOR' THEN 'TEACHER' WHEN 'GUARDIAN' THEN 'GUARDIAN' ELSE 'SCHOOL_ADMIN' END::"UserRole"$tk8$, $tk9$AND CASE p_group
+                       WHEN 'MENTOR' THEN app.teaches_like(u."role", u."teaches")
+                       ELSE u."role" = CASE p_group WHEN 'GUARDIAN' THEN 'GUARDIAN' ELSE 'SCHOOL_ADMIN' END::"UserRole"
+                  END$tk9$, 'ee974a4ac9ab4db8bc3eae0204825e88', true, 's', 'search_path=public, pg_temp'),
+  ('app.leave_mine_to_decide(uuid, uuid, date, date)', $tk10$IF app.current_user_role() IS DISTINCT FROM 'TEACHER' OR p_school IS DISTINCT FROM app.current_school_id() THEN$tk10$, $tk11$IF (app.current_user_role() IS DISTINCT FROM 'TEACHER' AND NOT app.current_user_teaches())
+     OR p_school IS DISTINCT FROM app.current_school_id() THEN$tk11$, '1526df12fce0dde77d0ea7c5f27f71ff', true, 's', 'search_path=public, pg_temp'),
+  ('app.leave_request_taken(uuid)', $tk12$SELECT app.current_user_role() = 'TEACHER'
+       AND app.current_user_id() IN$tk12$, $tk13$SELECT (app.current_user_role() = 'TEACHER' OR app.current_user_teaches())
+       AND app.current_user_id() IN$tk13$, '8d94bb7a92be29cc1229a3c0ff24825c', true, 's', 'search_path=public, pg_temp'),
+  ('app.absence_watch_is_mentor_of(uuid)', $tk14$SELECT app.current_user_role() = 'TEACHER'
+     AND EXISTS ($tk14$, $tk15$SELECT (app.current_user_role() = 'TEACHER' OR app.current_user_teaches())
+     AND EXISTS ($tk15$, 'd8db033889dd9319159d8f0fb34cf6a7', true, 's', 'search_path=public, pg_temp'),
+  ('app.ack_mentee_ids()', $tk16$WHERE app.current_user_role() = 'TEACHER' AND m.mentor_id$tk16$, $tk17$WHERE (app.current_user_role() = 'TEACHER' OR app.current_user_teaches()) AND m.mentor_id$tk17$, '6f643d23517bc260842afbc7f329ff5c', true, 's', 'search_path=public, pg_temp'),
+  ('app.lesson_move_is_mentor(uuid, date)', $tk18$SELECT app.current_user_role()::text = 'TEACHER'
+     AND EXISTS ($tk18$, $tk19$SELECT (app.current_user_role()::text = 'TEACHER' OR app.current_user_teaches())
+     AND EXISTS ($tk19$, 'd7ffb0bafba7e2dd2ceb57454ced9319', true, 's', 'search_path=public, pg_temp');
+DO $$
+DECLARE
+  r record;
+  src text;
+  n int;
+BEGIN
+  FOR r IN SELECT * FROM tk_fns LOOP
+    SELECT p.prosrc INTO src FROM pg_proc p WHERE p.oid = r.fn::regprocedure;
+    n := (length(src) - length(replace(src, r.new_text, ''))) / length(r.new_text);
+    IF n <> 1 THEN RAISE EXCEPTION 'tk 510c: % has the changed text % times, not once', r.fn, n; END IF;
+    IF md5(replace(src, r.new_text, r.old_text)) <> r.main_md5 THEN
+      RAISE EXCEPTION 'tk 510c: % is not main''s body with the one change (md5 of the body with the old text put back is %, main''s was %)', r.fn, md5(replace(src, r.new_text, r.old_text)), r.main_md5;
+    END IF;
+    IF md5(src) = r.main_md5 THEN RAISE EXCEPTION 'tk 510c: % is main''s body: nothing was changed', r.fn; END IF;
+    IF (SELECT p.prosecdef FROM pg_proc p WHERE p.oid = r.fn::regprocedure) <> r.definer
+       OR (SELECT p.provolatile FROM pg_proc p WHERE p.oid = r.fn::regprocedure) <> r.vol
+       OR (SELECT coalesce(array_to_string(p.proconfig, ','), '') FROM pg_proc p WHERE p.oid = r.fn::regprocedure) <> r.cfg THEN
+      RAISE EXCEPTION 'tk 510c: % changed kind (definer, volatility or search path)', r.fn;
+    END IF;
+    IF has_function_privilege('anon', r.fn, 'EXECUTE') OR has_function_privilege('authenticated', r.fn, 'EXECUTE') OR has_function_privilege('service_role', r.fn, 'EXECUTE')
+       OR EXISTS (SELECT 1 FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a WHERE p.oid = r.fn::regprocedure AND a.grantee = 0 AND a.privilege_type = 'EXECUTE') THEN
+      RAISE EXCEPTION 'tk 510c: somebody other than the API''s role may call %', r.fn;
+    END IF;
+  END LOOP;
+  -- The functions that ask the row (the lessons, the mentors' lists and the digest) are the owner's alone, and those that ask the caller are the API role's
+  -- as before; the two lesson functions and the three that ask app.teaches_like are inlined by their callers (no definer, no path of their own).
+  IF EXISTS (SELECT 1 FROM tk_fns f WHERE f.fn ~ '^app\.(reporting_lessons|absence_stats_lessons|leave_mentors|absence_watch_mentees)\(' AND (f.definer OR f.cfg <> '')) THEN
+    RAISE EXCEPTION 'tk 510c: a function that is inlined into its callers has a definer or a path of its own';
+  END IF;
+  IF has_function_privilege('app_authenticated', 'app.leave_mentors(uuid, uuid, date, date)', 'EXECUTE') OR has_function_privilege('app_authenticated', 'app.reporting_lessons(uuid, date, date, timestamptz)', 'EXECUTE')
+     OR has_function_privilege('app_authenticated', 'app.absence_stats_lessons(uuid, date, date, timestamptz)', 'EXECUTE') OR has_function_privilege('app_authenticated', 'app.absence_watch_mentees(uuid, date)', 'EXECUTE')
+     OR has_function_privilege('app_authenticated', 'app.absence_watch_digest_plan(uuid, "AbsenceWatchGroup", date, date, date)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'tk 510c: the API''s role may call a function the owner alone called';
+  END IF;
+  IF NOT (has_function_privilege('app_authenticated', 'app.leave_mine_to_decide(uuid, uuid, date, date)', 'EXECUTE') AND has_function_privilege('app_authenticated', 'app.leave_request_taken(uuid)', 'EXECUTE')
+          AND has_function_privilege('app_authenticated', 'app.absence_watch_is_mentor_of(uuid)', 'EXECUTE') AND has_function_privilege('app_authenticated', 'app.ack_mentee_ids()', 'EXECUTE')
+          AND has_function_privilege('app_authenticated', 'app.lesson_move_is_mentor(uuid, date)', 'EXECUTE')) THEN
+    RAISE EXCEPTION 'tk 510c: the API''s role may not call a function it called';
+  END IF;
+  RAISE NOTICE 'tk 510c: ten functions are main''s with the one change';
+END $$;
+
+-- 510d. The one new function, app.teaches_like(role, mark): what it is (a plain, immutable SQL SELECT the planner inlines, no definer, no path), who may call it
+-- (nobody: every function that asks it runs as the owner), who asks it (the five that ask it of a row, and no policy), and that it asks no more than the role.
+DO $$
+DECLARE
+  f constant regprocedure := 'app.teaches_like("UserRole", boolean)'::regprocedure;
+  p record;
+  askers text;
+BEGIN
+  SELECT p2.prolang, p2.prosecdef, p2.provolatile, p2.proconfig, p2.prokind, p2.proretset, p2.prorettype INTO p FROM pg_proc p2 WHERE p2.oid = f;
+  IF p.prolang <> (SELECT oid FROM pg_language WHERE lanname = 'sql') OR p.prosecdef OR p.provolatile <> 'i' OR p.proconfig IS NOT NULL OR p.prokind <> 'f' OR p.proretset OR p.prorettype <> 'boolean'::regtype THEN
+    RAISE EXCEPTION 'tk 510d: app.teaches_like is not a plain immutable SQL function that returns a boolean (it must be inlinable)';
+  END IF;
+  IF has_function_privilege('app_authenticated', f, 'EXECUTE') OR has_function_privilege('anon', f, 'EXECUTE') OR has_function_privilege('authenticated', f, 'EXECUTE')
+     OR has_function_privilege('service_role', f, 'EXECUTE')
+     OR EXISTS (SELECT 1 FROM pg_proc q, aclexplode(coalesce(q.proacl, acldefault('f', q.proowner))) a WHERE q.oid = f AND a.grantee = 0 AND a.privilege_type = 'EXECUTE') THEN
+    RAISE EXCEPTION 'tk 510d: somebody may call app.teaches_like, which every asker reaches as the owner';
+  END IF;
+  SELECT string_agg(q.oid::regprocedure::text, ', ' ORDER BY q.oid::regprocedure::text COLLATE "C") INTO askers FROM pg_proc q
+   WHERE q.pronamespace IN ('app'::regnamespace, 'public'::regnamespace, 'sign_in'::regnamespace) AND q.prosrc LIKE '%teaches_like%' AND q.oid <> f;
+  IF askers IS DISTINCT FROM 'app.absence_stats_lessons(uuid,date,date,timestamp with time zone), app.absence_watch_digest_plan(uuid,"AbsenceWatchGroup",date,date,date), app.absence_watch_mentees(uuid,date), app.leave_mentors(uuid,uuid,date,date), app.reporting_lessons(uuid,date,date,timestamp with time zone)' THEN
+    RAISE EXCEPTION 'tk 510d: app.teaches_like is asked by % (the five that ask it of a row)', askers;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policy q WHERE (coalesce(pg_get_expr(q.polqual, q.polrelid), '') || coalesce(pg_get_expr(q.polwithcheck, q.polrelid), '')) LIKE '%teaches_like%') THEN
+    RAISE EXCEPTION 'tk 510d: a policy asks app.teaches_like, which only a function that runs as the owner may';
+  END IF;
+  -- It asks the role and the mark, and nothing else (no table, no setting, no other function).
+  IF (SELECT regexp_replace(prosrc, '\s+', ' ', 'g') FROM pg_proc WHERE oid = f) IS DISTINCT FROM ' SELECT coalesce(p_role = ''TEACHER'' OR (p_role = ''SCHOOL_ADMIN'' AND p_teaches), false) ' THEN
+    RAISE EXCEPTION 'tk 510d: app.teaches_like asks something else than the role and the mark';
+  END IF;
+  RAISE NOTICE 'tk 510d: app.teaches_like is the one new function';
+END $$;
+
+-- 510e. What was left alone, by name: the functions the alarm's rules, the start list and the class teacher's and the cover request's lookups are written in
+-- are the text they had on main (a rule the database owns is asked, not copied, and these are the rules a marked administrator is held to).
+DO $$
+DECLARE
+  r record;
+  bad text := '';
+BEGIN
+  FOR r IN SELECT * FROM (VALUES
+('app.checklist_taught_ids()', 'cdefa517b0f3ff27fc7bc1751e8e9dc7'),
+    ('app.class_teacher_actor(uuid)', 'c845b7c66a936807344b8bb425cd8182'),
+    ('app.cover_confirm(uuid)', 'd814e5745350f5ac7f9df353cd4be4a3'),
+    ('app.cover_request_sender(uuid)', '66a0a2e39dbe07e0904a81a33ca9b41c'),
+    ('app.crisis_answers_for(uuid)', 'ece63aaaba29610a7db1f3505326a2f7'),
+    ('app.crisis_call_window_open(uuid)', 'f4e6016e205d6fd71884cdd408535731'),
+    ('app.crisis_has_no_call_in(uuid)', '0e0b9f5b444e0ed60fd12b55c1d158bd'),
+    ('app.crisis_may_start()', '9892a13b3cdf13b9739646f267f1f723'),
+    ('app.crisis_pupil_call(uuid,uuid)', 'dd0dbe90b171bf84a1aef854af701a2d'),
+    ('app.crisis_report_is_stamped()', '567987ec60d14763c2233abc69f3fa3d'),
+    ('app.crisis_window_open(uuid)', 'b9758f8afbea5e3477b0de77c8eb19ef'),
+    ('app.current_user_teaches()', '02763074466cd9a73a168d3cc1bb9fe6')) AS v(fn, m) LOOP
+    IF (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = r.fn::regprocedure) IS DISTINCT FROM r.m THEN bad := bad || ' ' || r.fn; END IF;
+  END LOOP;
+  IF bad <> '' THEN RAISE EXCEPTION 'tk 510e: changed, and the migration was to leave them: %', bad; END IF;
+  -- And not one of them asks for the mark, but app.current_user_teaches() itself (the list in section 494 holds the rest).
+  IF EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid IN ('app.crisis_may_start()'::regprocedure, 'app.class_teacher_actor(uuid)'::regprocedure, 'app.cover_request_sender(uuid)'::regprocedure,
+                                                    'app.cover_confirm(uuid)'::regprocedure, 'app.checklist_taught_ids()'::regprocedure)
+                AND (p.prosrc LIKE '%current_user_teaches%' OR p.prosrc LIKE '%teaches_like%')) THEN
+    RAISE EXCEPTION 'tk 510e: the start list, the class teacher, the cover request or the checklist function asks for the mark';
+  END IF;
+  RAISE NOTICE 'tk 510e: the rules and the colleagues'' lookups are as they were';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 511: krisläge, through the API's role (the six tables have no PostgREST door), for each profile that can be marked, in a
+-- school that narrowed the list of who may start an alarm to full and rektor (rls-larm-school).
+--
+-- The three insert arms of the teacher's own marks carry the mark in OR with the teacher test, and nothing else of them changed: the
+-- person's own group (app.crisis_answers_for) and "found with me" for such a group, and "found" for a person with no group in the alarm
+-- (app.crisis_has_no_call_in), each inside the alarm's window. A marked schemaläggare or expedition therefore marks their OWN group
+-- although the school's list keeps them from starting an alarm or marking anyone else's (E2: the teacher's right is larger than the
+-- administrator profile's here, as it is for the note to the substitute). Never AWAY (that is the administration's), never another
+-- group, never starting, ending or sealing an alarm.
+--
+-- Two alarms, planted by the full administratör the way the gateway does it (an exercise first, then a real alarm; one is not started
+-- beside the other): the exercise D has one group (cd) with teacher 1 and every pupil, so no administrator has a group in it; the
+-- alarm L has c1 (all four administrators and teacher 1 answer for it, pupils A1 and A2), c2 (teacher 2, pupil B1) and cn (nobody,
+-- the pupils of no group: C1 and D1). Seven attempts per person, in this order:
+--   a1 a mark on their own group (c1)       a2 a mark on a group they do not answer for (c2)
+--   a3 "found with me" on c1                a4 "found with me" on c2
+--   a5 "found" in the exercise D            a6 AWAY on c1 (the administration's word)
+--   a7 MISSING on c1
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+CREATE TEMP TABLE tk511 (k text PRIMARY KEY, v uuid) ON COMMIT DROP;
+
+-- The seven attempts of one person, as a string of A (let through) and R (refused with 42501).
+CREATE OR REPLACE FUNCTION pg_temp.tk511_row(n int) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  s uuid := (SELECT v FROM tk511 WHERE k = 'school');
+  l uuid := (SELECT v FROM tk511 WHERE k = 'L');
+  d uuid := (SELECT v FROM tk511 WHERE k = 'D');
+  c1 uuid := (SELECT v FROM tk511 WHERE k = 'c1');
+  c2 uuid := (SELECT v FROM tk511 WHERE k = 'c2');
+  cn uuid := (SELECT v FROM tk511 WHERE k = 'cn');
+  cd uuid := (SELECT v FROM tk511 WHERE k = 'cd');
+  a1 uuid := (SELECT v FROM tk511 WHERE k = 'A1');
+  b1 uuid := (SELECT v FROM tk511 WHERE k = 'B1');
+  c1p uuid := (SELECT v FROM tk511 WHERE k = 'C1');
+  out text := '';
+  stmts text[];
+  i int;
+  r text;
+BEGIN
+  PERFORM pg_temp.tk_a(n);
+  stmts := ARRAY[
+    format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'FOUND', now())$q$, s, l, c1, a1),
+    format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'FOUND', now())$q$, s, l, c2, b1),
+    format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'FOUND', now())$q$, s, l, cn, c1, c1p),
+    format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "foundInCallId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, %L, 'FOUND', now())$q$, s, l, cn, c2, c1p),
+    format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'FOUND', now())$q$, s, d, cd, b1),
+    format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'AWAY', now())$q$, s, l, c1, a1),
+    format($q$INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES (gen_random_uuid(), %L, %L, %L, %L, 'MISSING', now())$q$, s, l, c1, a1)];
+  FOR i IN 1 .. 7 LOOP
+    r := pg_temp.tk_class(pg_temp.tk_try('app_authenticated', stmts[i]));
+    out := out || CASE r WHEN 'admitted' THEN 'A' WHEN 'refused' THEN 'R' ELSE '[' || r || ']' END;
+  END LOOP;
+  RETURN out;
+END $f$;
+
+-- A write that changed nothing: refused outright (42501) or let past no row ('ok 0').
+CREATE OR REPLACE FUNCTION pg_temp.tk511_blocked(r text) RETURNS text LANGUAGE sql AS $f$
+  SELECT CASE WHEN r IN ('42501', 'ok 0') THEN 'blocked' ELSE r END
+$f$;
+
+-- 511a. The alarms, planted by the full administratör.
+DO $$
+DECLARE
+  s uuid;
+  d uuid; l uuid; cd uuid; c1 uuid; c2 uuid; cn uuid;
+  pa1 uuid; pa2 uuid; pb1 uuid; pc1 uuid; pd1 uuid;
+  t1 uuid; t2 uuid;
+  adm uuid[];
+  who uuid;
+BEGIN
+  PERFORM pg_temp.tk_a(6002);
+  s := app.current_school_id();
+  pa1 := pg_temp.tk_id(6021); pa2 := pg_temp.tk_id(6022); pb1 := pg_temp.tk_id(6023); pc1 := pg_temp.tk_id(6024); pd1 := pg_temp.tk_id(6025);
+  t1 := pg_temp.tk_id(6010); t2 := pg_temp.tk_id(6011);
+  adm := ARRAY[pg_temp.tk_id(6001), pg_temp.tk_id(6002), pg_temp.tk_id(6003), pg_temp.tk_id(6004)];
+  IF s IS NULL OR (SELECT slug FROM "Schools" WHERE id = s) IS DISTINCT FROM 'rls-larm-school' THEN
+    RAISE EXCEPTION 'tk 511: the full administratör is not in rls-larm-school; the fixtures did not run';
+  END IF;
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.crisis_may_start() THEN RAISE EXCEPTION 'tk 511: the full administratör may not start an alarm'; END IF;
+  -- The school narrowed the list: it is the case the mark is for.
+  IF (SELECT "startProfiles"::text FROM "CrisisSettings" WHERE "schoolId" = s) IS DISTINCT FROM '{FULL,REKTOR}' THEN
+    RAISE EXCEPTION 'tk 511: the start list of rls-larm-school is not {FULL,REKTOR} (%)', (SELECT "startProfiles"::text FROM "CrisisSettings" WHERE "schoolId" = s);
+  END IF;
+  INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (s, 'LOCKDOWN', 'DRILL') RETURNING id INTO d;
+  INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (s, 'EVACUATION', 'LIVE') RETURNING id INTO l;
+  INSERT INTO "CrisisCalls" ("schoolId", "alarmId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt")
+  VALUES (s, d, 'LESSON', 'Larm övning', 'Matematik', now() - interval '30 minutes', now() + interval '30 minutes') RETURNING id INTO cd;
+  INSERT INTO "CrisisCalls" ("schoolId", "alarmId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt")
+  VALUES (s, l, 'LESSON', 'LA7A', 'Matematik', now() - interval '30 minutes', now() + interval '30 minutes') RETURNING id INTO c1;
+  INSERT INTO "CrisisCalls" ("schoolId", "alarmId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt")
+  VALUES (s, l, 'NEXT_LESSON', 'LA7B', 'Svenska', now() + interval '10 minutes', now() + interval '60 minutes') RETURNING id INTO c2;
+  INSERT INTO "CrisisCalls" ("schoolId", "alarmId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt")
+  VALUES (s, l, 'NO_LESSON', 'Ej i lektion just nu', 'Ingen lektion pågår', now(), now()) RETURNING id INTO cn;
+  INSERT INTO "CrisisCallTeachers" ("schoolId", "callId", "teacherId", role) VALUES (s, cd, t1, 'LEAD'), (s, c1, t1, 'LEAD'), (s, c2, t2, 'LEAD');
+  FOREACH who IN ARRAY adm LOOP
+    INSERT INTO "CrisisCallTeachers" ("schoolId", "callId", "teacherId", role) VALUES (s, c1, who, 'ASSISTANT');
+  END LOOP;
+  INSERT INTO "CrisisPupils" ("schoolId", "alarmId", "callId", "studentId")
+  VALUES (s, d, cd, pa1), (s, d, cd, pa2), (s, d, cd, pb1), (s, d, cd, pc1), (s, d, cd, pd1),
+         (s, l, c1, pa1), (s, l, c1, pa2), (s, l, c2, pb1), (s, l, cn, pc1), (s, l, cn, pd1);
+  UPDATE "CrisisAlarms" SET "listsSealedAt" = now() WHERE id IN (d, l);
+  INSERT INTO tk511 VALUES ('school', s), ('D', d), ('L', l), ('cd', cd), ('c1', c1), ('c2', c2), ('cn', cn),
+    ('A1', pa1), ('A2', pa2), ('B1', pb1), ('C1', pc1), ('D1', pd1);
+  RAISE NOTICE 'tk 511a: an exercise and a real alarm planted, four administrators and a teacher on c1, a colleague on c2, nobody on the pupils of no group';
+END $$;
+
+-- 511b. The seven attempts, per person, unmarked and marked.
+DO $$
+DECLARE
+  p record;
+  got text;
+BEGIN
+  -- The cells where the mark makes the difference are the schemaläggare's and the expedition's: the full administratör and rektor start
+  -- an alarm and mark anyone's group (the administrator's arm), so for them the mark adds nothing and everything is let through before it.
+  FOR p IN SELECT * FROM (VALUES
+      (6001, 'rektor',        'AAAAAAA', 'AAAAAAA'),
+      (6002, 'full',          'AAAAAAA', 'AAAAAAA'),
+      (6003, 'schemaläggare', 'RRRRRRR', 'ARARARA'),
+      (6004, 'expedition',    'RRRRRRR', 'ARARARA')) AS v(n, who, plain, marked) LOOP
+    PERFORM pg_temp.tk_a(6001);
+    got := pg_temp.tk511_row(p.n);
+    PERFORM pg_temp.tk_expect('511b ' || p.who || ' before the mark: a1..a7', got, p.plain);
+    PERFORM pg_temp.tk_a(6001);
+    PERFORM pg_temp.tk_expect('511b ' || p.who || ' is marked by rektor', pg_temp.tk_mark(p.n, true), 'ok 1');
+    PERFORM pg_temp.tk_a(p.n);
+    PERFORM pg_temp.tk_expect('511b ' || p.who || ' is marked (so the difference is not nothing)', pg_temp.tk_val('app_authenticated', 'SELECT app.current_user_teaches()::text'), 'true');
+    got := pg_temp.tk511_row(p.n);
+    PERFORM pg_temp.tk_expect('511b ' || p.who || ' marked: a1..a7', got, p.marked);
+    -- The mark does not give the list: whoever was kept from starting an alarm still is, so the way the mark helps is the person's own group.
+    PERFORM pg_temp.tk_a(p.n);
+    PERFORM pg_temp.tk_expect('511b ' || p.who || ' marked: may start an alarm as the list says', pg_temp.tk_val('app_authenticated', 'SELECT app.crisis_may_start()::text'),
+      (p.n IN (6001, 6002))::text);
+    PERFORM pg_temp.tk_a(6001);
+    PERFORM pg_temp.tk_expect('511b ' || p.who || ' is unmarked again', pg_temp.tk_mark(p.n, false), 'ok 1');
+    PERFORM pg_temp.tk_a(6001);
+    got := pg_temp.tk511_row(p.n);
+    PERFORM pg_temp.tk_expect('511b ' || p.who || ' unmarked again: a1..a7 as before', got, p.plain);
+  END LOOP;
+  RAISE NOTICE 'tk 511b: the four administrators, with and without the mark';
+END $$;
+
+-- 511c. The controls: a teacher on c1 and in the exercise, one on c2 only, one with no group anywhere, the läsare (who cannot be marked).
+DO $$
+BEGIN
+  PERFORM pg_temp.tk_expect('511c teacher 1 (c1 and cd)', pg_temp.tk511_row(6010), 'ARARARA');
+  PERFORM pg_temp.tk_expect('511c teacher 2 (c2 only): c2 and found-with-me on c2, and the free find in the exercise', pg_temp.tk511_row(6011), 'RARAARR');
+  -- A teacher with no group in an alarm says "found" with no group to find the pupil with: for any pupil, on any call (a1, a2, a5), and nothing else.
+  PERFORM pg_temp.tk_expect('511c teacher 3 (no group in either alarm): the free find, for any pupil, and nothing else', pg_temp.tk511_row(6012), 'AARRARR');
+  PERFORM pg_temp.tk_a(6001);
+  PERFORM pg_temp.tk_mark(6006, true);
+  PERFORM pg_temp.tk_expect('511c the läsare is not marked whatever is asked (the database zeroes it)', (SELECT teaches::text FROM "Users" WHERE id = pg_temp.tk_id(6006)), 'false');
+  PERFORM pg_temp.tk_expect('511c the läsare: nothing, marked or not', pg_temp.tk511_row(6006), 'RRRRRRR');
+  RAISE NOTICE 'tk 511c: the controls';
+END $$;
+
+-- 511d. What the mark does not give: starting, ending and sealing an alarm, another group's pupils and the groups' lists stay the administration's,
+-- by the school's list. A marked schemaläggare is let in on their own group and nowhere else.
+DO $$
+DECLARE
+  s uuid := (SELECT v FROM tk511 WHERE k = 'school');
+  l uuid := (SELECT v FROM tk511 WHERE k = 'L');
+  c2 uuid := (SELECT v FROM tk511 WHERE k = 'c2');
+  n int;
+BEGIN
+  PERFORM pg_temp.tk_a(6001);
+  PERFORM pg_temp.tk_mark(6003, true);
+  PERFORM pg_temp.tk_mark(6004, true);
+  FOREACH n IN ARRAY ARRAY[6003, 6004] LOOP
+    PERFORM pg_temp.tk_a(n);
+    PERFORM pg_temp.tk_expect('511d ' || n || ' marked: cannot start an alarm', pg_temp.tk_class(pg_temp.tk_try('app_authenticated',
+      format($q$INSERT INTO "CrisisAlarms" ("schoolId", kind, mode) VALUES (%L, 'LOCKDOWN', 'LIVE')$q$, s))), 'refused');
+    PERFORM pg_temp.tk_expect('511d ' || n || ' marked: cannot end the alarm (no row is theirs to change)', pg_temp.tk511_blocked(pg_temp.tk_try('app_authenticated',
+      format($q$UPDATE "CrisisAlarms" SET "endedAt" = now() WHERE id = %L$q$, l))), 'blocked');
+    PERFORM pg_temp.tk_expect('511d ' || n || ' marked: cannot add a group', pg_temp.tk_class(pg_temp.tk_try('app_authenticated',
+      format($q$INSERT INTO "CrisisCalls" ("schoolId", "alarmId", basis, "groupName", "subjectName", "lessonStartsAt", "lessonEndsAt") VALUES (%L, %L, 'LESSON', 'Ny', 'Bild', now(), now() + interval '1 hour')$q$, s, l))), 'refused');
+    PERFORM pg_temp.tk_expect('511d ' || n || ' marked: cannot change who answers for a group', pg_temp.tk_class(pg_temp.tk_try('app_authenticated',
+      format($q$INSERT INTO "CrisisCallTeachers" ("schoolId", "callId", "teacherId", role) VALUES (%L, %L, %L, 'ASSISTANT')$q$, s, c2, pg_temp.tk_id(n)))), 'refused');
+    PERFORM pg_temp.tk_expect('511d ' || n || ' marked: cannot change the school''s start list', pg_temp.tk511_blocked(pg_temp.tk_try('app_authenticated',
+      format($q$UPDATE "CrisisSettings" SET "startProfiles" = ARRAY['FULL','REKTOR','EXPEDITION']::"AdminProfile"[] WHERE "schoolId" = %L$q$, s))), 'blocked');
+  END LOOP;
+  PERFORM pg_temp.tk_a(6001);
+  PERFORM pg_temp.tk_mark(6003, false);
+  PERFORM pg_temp.tk_mark(6004, false);
+  RAISE NOTICE 'tk 511d: the mark gives no start, no end, no group, no list';
+END $$;
+
+-- 511e. What is read is the same marked or not (the administrator's arm: that is the reason the seven read arms stay, proved by an answer) and is
+-- the whole school's, which is more than a teacher reads of the same alarm: a marked administrator's view is narrowed by the gateway
+-- (CrisisService.mine), never by the database. The control: a teacher reads the window's alarms and the groups they answer for.
+DO $$
+DECLARE
+  tbl text;
+  via text := 'app_authenticated';
+  plain text := '';
+  marked text := '';
+  full_ text := '';
+  teacher text := '';
+BEGIN
+  PERFORM pg_temp.tk_a(6002);
+  FOREACH tbl IN ARRAY ARRAY['CrisisAlarms', 'CrisisCalls', 'CrisisCallTeachers', 'CrisisPupils', 'CrisisReports'] LOOP
+    full_ := full_ || tbl || '=' || pg_temp.tk_val(via, format('SELECT count(*) FROM %I', tbl)) || ' ';
+  END LOOP;
+  PERFORM pg_temp.tk_a(6003);
+  FOREACH tbl IN ARRAY ARRAY['CrisisAlarms', 'CrisisCalls', 'CrisisCallTeachers', 'CrisisPupils', 'CrisisReports'] LOOP
+    plain := plain || tbl || '=' || pg_temp.tk_val(via, format('SELECT count(*) FROM %I', tbl)) || ' ';
+  END LOOP;
+  PERFORM pg_temp.tk_a(6001);
+  PERFORM pg_temp.tk_expect('511e marks the schemaläggare', pg_temp.tk_mark(6003, true), 'ok 1');
+  PERFORM pg_temp.tk_a(6003);
+  PERFORM pg_temp.tk_expect('511e and she is marked', pg_temp.tk_val(via, 'SELECT app.current_user_teaches()::text'), 'true');
+  FOREACH tbl IN ARRAY ARRAY['CrisisAlarms', 'CrisisCalls', 'CrisisCallTeachers', 'CrisisPupils', 'CrisisReports'] LOOP
+    marked := marked || tbl || '=' || pg_temp.tk_val(via, format('SELECT count(*) FROM %I', tbl)) || ' ';
+  END LOOP;
+  PERFORM pg_temp.tk_a(6010);
+  FOREACH tbl IN ARRAY ARRAY['CrisisAlarms', 'CrisisCalls', 'CrisisCallTeachers', 'CrisisPupils', 'CrisisReports'] LOOP
+    teacher := teacher || tbl || '=' || pg_temp.tk_val(via, format('SELECT count(*) FROM %I', tbl)) || ' ';
+  END LOOP;
+  IF plain IS DISTINCT FROM marked OR plain IS DISTINCT FROM full_ OR full_ ~ '=0 ' OR full_ ~ '=E:' THEN
+    RAISE EXCEPTION 'tk 511e: the administrator reads % (the full one %), marked % (the same, and all of it, is what the administrator''s arms say)', plain, full_, marked;
+  END IF;
+  IF teacher = full_ OR teacher !~ 'CrisisAlarms=2 ' THEN
+    RAISE EXCEPTION 'tk 511e: a teacher reads % and the administrator % (the teacher is narrower, which is why the gateway narrows the marked one)', teacher, full_;
+  END IF;
+  RAISE NOTICE 'tk 511e: reads are the administrator''s (%) for the marked as for the unmarked; a teacher reads %', full_, teacher;
+END $$;
+
+-- 511f. Who the mark is put down as (E6, left as it is): a marked administrator who marks through their own group is put down as themself, and one
+-- who says "found" with no group in the alarm is put down as the management (the stamp asks the caller's role, and no group of theirs).
+DO $$
+DECLARE
+  s uuid := (SELECT v FROM tk511 WHERE k = 'school');
+  d uuid := (SELECT v FROM tk511 WHERE k = 'D');
+  l uuid := (SELECT v FROM tk511 WHERE k = 'L');
+  c1 uuid := (SELECT v FROM tk511 WHERE k = 'c1');
+  cd uuid := (SELECT v FROM tk511 WHERE k = 'cd');
+  a2 uuid := (SELECT v FROM tk511 WHERE k = 'A2');
+  b1 uuid := (SELECT v FROM tk511 WHERE k = 'B1');
+  r "CrisisReports";
+BEGIN
+  PERFORM pg_temp.tk_a(6003);
+  -- (marked since 511e)
+  INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES ('c0000000-0000-4000-8000-0000000f5101', s, l, c1, a2, 'FOUND', now());
+  SELECT * INTO r FROM "CrisisReports" WHERE id = 'c0000000-0000-4000-8000-0000000f5101';
+  IF r."byUserId" IS DISTINCT FROM pg_temp.tk_id(6003) OR r."onBehalf" THEN
+    RAISE EXCEPTION 'tk 511f: a marked administrator''s mark on their own group is on behalf of someone, or not in their name (%, %)', r."byUserId", r."onBehalf";
+  END IF;
+  PERFORM pg_temp.tk_a(6001);
+  PERFORM pg_temp.tk_mark(6004, true);
+  PERFORM pg_temp.tk_a(6004);
+  -- 6004 stands on c1 in L, but not on any group in the exercise D: the stamp says the management made the free find, because the function
+  -- asks for the administrator's role (E6: left as it is, and said in the pull request).
+  INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES ('c0000000-0000-4000-8000-0000000f5102', s, d, cd, b1, 'FOUND', now());
+  SELECT * INTO r FROM "CrisisReports" WHERE id = 'c0000000-0000-4000-8000-0000000f5102';
+  IF r."byUserId" IS DISTINCT FROM pg_temp.tk_id(6004) OR NOT r."onBehalf" THEN
+    RAISE EXCEPTION 'tk 511f: the free find of a marked administrator is not put down as the management''s (E6) (%, %)', r."byUserId", r."onBehalf";
+  END IF;
+  -- And a teacher's own free find is the teacher's.
+  PERFORM pg_temp.tk_a(6012);
+  INSERT INTO "CrisisReports" (id, "schoolId", "alarmId", "callId", "studentId", state, at) VALUES ('c0000000-0000-4000-8000-0000000f5103', s, d, cd, b1, 'FOUND', now());
+  SELECT * INTO r FROM "CrisisReports" WHERE id = 'c0000000-0000-4000-8000-0000000f5103';
+  IF r."byUserId" IS DISTINCT FROM pg_temp.tk_id(6012) OR r."onBehalf" THEN
+    RAISE EXCEPTION 'tk 511f: a teacher''s free find is on behalf of the management (%, %)', r."byUserId", r."onBehalf";
+  END IF;
+  RAISE NOTICE 'tk 511f: onBehalf as it was (E6)';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 512: mentor, through the API's role (20270219090000).
+--
+-- "The mentor of a pupil" is asked of the CALLER by five definer functions the API's role may run (app.leave_mine_to_decide, and
+-- with it app.leave_request_refer; app.leave_request_taken; app.absence_watch_is_mentor_of; app.ack_mentee_ids;
+-- app.lesson_move_is_mentor), and of a ROW by three the API's role may not (app.leave_mentors, app.absence_watch_mentees,
+-- app.absence_watch_digest_plan: section 512o asks them as the owner). A marked administrator with a MENTORSKAP duty is a mentor in
+-- all eight, exactly as a teacher with the same duty; a marked one without the duty, an unmarked one with it, and a person who
+-- teaches nobody's class are not. The right is still the administrator's: the arms that stay (the mentor's arms on LeaveRequests and
+-- the others, section 494 STAYS) admit a marked administrator exactly what they admitted before, which is the administrator's whole
+-- school, and the teacher what the teacher's own arm gives.
+--
+--   512a  who is a mentor, by what the five functions say of each person (the teacher beside them as the control), before and after the
+--         mark, with and without the duty, and with the mark taken away again;
+--   512b  the läsare cannot be marked, and no administrator is anything but what the mark makes them;
+--   512c  refer, the one door that opens: the marked deciding mentor refers a pending request once; an unmarked administrator with the
+--         same duty, a marked one who is not the pupil's mentor, and a second try do not; a teacher beside them is unchanged;
+--   512d  the view is not narrowed in the database: what a marked administrator reads of LeaveRequests is what an unmarked one reads.
+--
+-- The cast is rls-fixtures.sql's 'rls-larm-school' (…6001 rektor, mentor of 7A beside teacher …6010; …6002 full, mentor of 7B beside
+-- teacher …6011; …6003 schemaläggare, mentor of 7C; …6004 expedition, mentor of 7D; …6006 läsare; …6012 a teacher with no class).
+-- Two requests wait, one for a pupil of 7A (request A) and one for a pupil of 7B (request B); the school lets the mentor decide up to
+-- three school days. Marks are made and taken inside the transaction, which is rolled back.
+-- ---------------------------------------------------------------------------
+
+-- What the five functions say of person …6nnn, as that person: can they decide request A, can they decide request B, is request A
+-- "taken" (somebody else's to decide), are they the mentor of the pupil of 7A, of the pupil of 7B, how many mentees have they, and is
+-- the pupil of 7A theirs for a lesson move today. The ids are read once (as somebody who reads the school) into settings.
+CREATE OR REPLACE FUNCTION pg_temp.tk5_ask(n int) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  mon date := (date_trunc('week', current_date) + interval '7 days')::date;
+  s uuid;
+BEGIN
+  PERFORM pg_temp.tk_a(n);
+  s := app.current_school_id();
+  RETURN 'decideA=' || CASE WHEN app.leave_mine_to_decide(s, current_setting('app.tk5_pa')::uuid, mon, mon + 1) THEN 't' ELSE 'f' END
+      || ' decideB=' || CASE WHEN app.leave_mine_to_decide(s, current_setting('app.tk5_pb')::uuid, mon, mon + 1) THEN 't' ELSE 'f' END
+      || ' takenA=' || CASE WHEN app.leave_request_taken(current_setting('app.tk5_ra')::uuid) THEN 't' ELSE 'f' END
+      || ' mentorA=' || CASE WHEN app.absence_watch_is_mentor_of(current_setting('app.tk5_pa')::uuid) THEN 't' ELSE 'f' END
+      || ' mentorB=' || CASE WHEN app.absence_watch_is_mentor_of(current_setting('app.tk5_pb')::uuid) THEN 't' ELSE 'f' END
+      || ' mentees=' || cardinality(app.ack_mentee_ids())
+      || ' moveA=' || CASE WHEN app.lesson_move_is_mentor(current_setting('app.tk5_pa')::uuid, current_date) THEN 't' ELSE 'f' END;
+END $f$;
+
+-- What the same person reads of the school's leave requests.
+CREATE OR REPLACE FUNCTION pg_temp.tk5_reads(n int) RETURNS bigint LANGUAGE plpgsql AS $f$
+DECLARE c bigint;
+BEGIN
+  PERFORM pg_temp.tk_a(n);
+  SELECT count(*) INTO c FROM "LeaveRequests";
+  RETURN c;
+END $f$;
+
+BEGIN;
+DO $$
+DECLARE
+  none constant text := 'decideA=f decideB=f takenA=f mentorA=f mentorB=f mentees=0 moveA=f';
+  teacher_a text;
+  teacher_b text;
+  got text;
+  r text;
+  mon date := (date_trunc('week', current_date) + interval '7 days')::date;
+BEGIN
+  -- Who the pupils and the requests are, as somebody who reads the school (a full administrator).
+  PERFORM pg_temp.tk_a(6002);
+  IF app.current_school_id() IS NULL OR (SELECT slug FROM "Schools" WHERE id = app.current_school_id()) IS DISTINCT FROM 'rls-larm-school' THEN
+    RAISE EXCEPTION 'tk 512: the full administrator is not in rls-larm-school; fixtures did not run';
+  END IF;
+  PERFORM set_config('app.tk5_pa', pg_temp.tk_id(6021)::text, true);
+  PERFORM set_config('app.tk5_pb', pg_temp.tk_id(6023)::text, true);
+  PERFORM set_config('app.tk5_ra', (SELECT id::text FROM "LeaveRequests" WHERE "studentId" = pg_temp.tk_id(6021)), true);
+  PERFORM set_config('app.tk5_rb', (SELECT id::text FROM "LeaveRequests" WHERE "studentId" = pg_temp.tk_id(6023)), true);
+  IF current_setting('app.tk5_ra') = '' OR current_setting('app.tk5_rb') = '' THEN
+    RAISE EXCEPTION 'tk 512: the two pending leave requests of the fixture are not there';
+  END IF;
+  -- The duties the cast stands on: each administrator has their one MENTORSKAP, the teachers theirs, the teacher with no class none.
+  PERFORM pg_temp.tk_expect('512 the duties of the cast',
+    (SELECT string_agg(right(u."authId"::text, 4) || '=' || (SELECT count(*) FROM "TeacherDuties" d WHERE d."userId" = u.id AND d.kind = 'MENTORSKAP'), ',' ORDER BY u."authId")
+       FROM "Users" u WHERE u."authId" IN ('00000000-0000-4000-8000-000000006001', '00000000-0000-4000-8000-000000006002', '00000000-0000-4000-8000-000000006003',
+                                           '00000000-0000-4000-8000-000000006004', '00000000-0000-4000-8000-000000006010', '00000000-0000-4000-8000-000000006011',
+                                           '00000000-0000-4000-8000-000000006012')),
+    '6001=1,6002=1,6003=1,6004=1,6010=1,6011=1,6012=0');
+  PERFORM pg_temp.tk_expect('512 nobody of the administrators is marked to begin with',
+    (SELECT count(*)::text FROM "Users" WHERE "schoolId" = app.current_school_id() AND teaches), '0');
+
+  -- 512a. The teachers are the control: the mentor of 7A decides request A and is the mentor of its pupil, the mentor of 7B is B's,
+  -- and a teacher with no class is nothing.
+  teacher_a := pg_temp.tk5_ask(6010);
+  teacher_b := pg_temp.tk5_ask(6011);
+  PERFORM pg_temp.tk_expect('512a the mentor of 7A, a teacher', teacher_a, 'decideA=t decideB=f takenA=f mentorA=t mentorB=f mentees=2 moveA=t');
+  PERFORM pg_temp.tk_expect('512a the mentor of 7B, a teacher', teacher_b, 'decideA=f decideB=t takenA=f mentorA=f mentorB=t mentees=1 moveA=f');
+  PERFORM pg_temp.tk_expect('512a a teacher with no class', pg_temp.tk5_ask(6012), none);
+
+  -- Unmarked, an administrator with a duty is nothing of the sort (as before the mark existed): the duty alone does not make a mentor.
+  FOREACH r IN ARRAY ARRAY['6001', '6002', '6003', '6004'] LOOP
+    PERFORM pg_temp.tk_expect('512a unmarked ' || r, pg_temp.tk5_ask(r::int), none);
+  END LOOP;
+
+  -- Marked, the mentor of 7A (rektor) is asked exactly what the teacher who mentors the same class is asked; the mentor of 7B (full)
+  -- what theirs is. Marked by a decider (the other one); the mark is on, which the first assertion shows.
+  PERFORM pg_temp.tk_a(6002);
+  PERFORM pg_temp.tk_expect('512a rektor is marked', pg_temp.tk_mark(6001, true), 'ok 1');
+  PERFORM pg_temp.tk_a(6001);
+  PERFORM pg_temp.tk_expect('512a the mark is on', app.current_user_teaches()::text, 'true');
+  PERFORM pg_temp.tk_expect('512a a marked mentor of 7A is a teacher mentor of 7A', pg_temp.tk5_ask(6001), teacher_a);
+  PERFORM pg_temp.tk_expect('512a and the unmarked ones beside them are still nothing', pg_temp.tk5_ask(6002), none);
+  PERFORM pg_temp.tk_expect('512a full is marked', pg_temp.tk_mark(6002, true), 'ok 1');
+  PERFORM pg_temp.tk_expect('512a a marked mentor of 7B is a teacher mentor of 7B', pg_temp.tk5_ask(6002), teacher_b);
+  PERFORM pg_temp.tk_a(6001);
+  PERFORM pg_temp.tk_expect('512a schemaläggare is marked', pg_temp.tk_mark(6003, true), 'ok 1');
+  PERFORM pg_temp.tk_expect('512a expedition is marked', pg_temp.tk_mark(6004, true), 'ok 1');
+  PERFORM pg_temp.tk_expect('512a the mentor of 7C, marked, has one mentee and decides nothing of A or B',
+    pg_temp.tk5_ask(6003), 'decideA=f decideB=f takenA=f mentorA=f mentorB=f mentees=1 moveA=f');
+  PERFORM pg_temp.tk_expect('512a the mentor of 7D, marked, likewise',
+    pg_temp.tk5_ask(6004), 'decideA=f decideB=f takenA=f mentorA=f mentorB=f mentees=1 moveA=f');
+  -- The teachers beside them are exactly as they were.
+  PERFORM pg_temp.tk_expect('512a the teacher of 7A, unchanged by a colleague''s mark', pg_temp.tk5_ask(6010), teacher_a);
+  PERFORM pg_temp.tk_expect('512a the teacher of 7B, unchanged', pg_temp.tk5_ask(6011), teacher_b);
+
+  -- Marked and with no duty: nothing. The duty of the schemaläggare goes (an administrator's own write), the mark stays.
+  PERFORM pg_temp.tk_a(6001);
+  PERFORM pg_temp.tk_expect('512a the duty of 7C goes',
+    pg_temp.tk_try('app_authenticated', format($q$DELETE FROM "TeacherDuties" WHERE "userId" = %L AND kind = 'MENTORSKAP'$q$, pg_temp.tk_id(6003))), 'ok 1');
+  PERFORM pg_temp.tk_a(6003);
+  PERFORM pg_temp.tk_expect('512a still marked', app.current_user_teaches()::text, 'true');
+  PERFORM pg_temp.tk_expect('512a marked, with no duty, is no mentor', pg_temp.tk5_ask(6003), none);
+
+  -- The mark taken away: the duty is not enough (rektor, who still has the duty of 7A).
+  PERFORM pg_temp.tk_a(6002);
+  PERFORM pg_temp.tk_expect('512a rektor is unmarked', pg_temp.tk_mark(6001, false), 'ok 1');
+  PERFORM pg_temp.tk_a(6001);
+  PERFORM pg_temp.tk_expect('512a the mark is off', app.current_user_teaches()::text, 'false');
+  PERFORM pg_temp.tk_expect('512a unmarked again, the duty alone makes no mentor', pg_temp.tk5_ask(6001), none);
+  PERFORM pg_temp.tk_a(6002);
+  PERFORM pg_temp.tk_expect('512a rektor is marked again', pg_temp.tk_mark(6001, true), 'ok 1');
+  PERFORM pg_temp.tk_expect('512a and is a mentor again', pg_temp.tk5_ask(6001), teacher_a);
+
+  -- 512b. The läsare cannot be marked, and is nobody's mentor whatever is written.
+  PERFORM pg_temp.tk_a(6002);
+  -- The write is let through and the database zeroes the mark (a trigger: a läsare writes nothing, so cannot teach; section 506b).
+  got := pg_temp.tk_mark(6006, true);
+  PERFORM pg_temp.tk_expect('512b the write to the läsare is either refused or zeroed', (got IN ('ok 1', '23514', '42501', 'TE409', 'TE403'))::text, 'true');
+  PERFORM pg_temp.tk_expect('512b the läsare is not marked', (SELECT teaches::text FROM "Users" WHERE id = pg_temp.tk_id(6006)), 'false');
+  PERFORM pg_temp.tk_expect('512b the läsare is no mentor', pg_temp.tk5_ask(6006), none);
+
+  -- 512d. While both requests still wait. The view is not narrowed in the database (beslut 7): the administrator's arm admits the whole school, marked or not, and the
+  -- teacher's own arm what the mentor sees. (That is why the mentor arms are on 494's STAYS list.)
+  PERFORM pg_temp.tk_expect('512d a marked administrator reads both requests', pg_temp.tk5_reads(6001)::text, '2');
+  PERFORM pg_temp.tk_expect('512d a marked administrator who mentors another class, as well', pg_temp.tk5_reads(6003)::text, '2');
+  PERFORM pg_temp.tk_a(6002);
+  PERFORM pg_temp.tk_expect('512d rektor is unmarked for the comparison', pg_temp.tk_mark(6001, false), 'ok 1');
+  PERFORM pg_temp.tk_expect('512d an unmarked administrator reads the same', pg_temp.tk5_reads(6001)::text, '2');
+  PERFORM pg_temp.tk_expect('512d the teacher of 7A reads her class''s request only', pg_temp.tk5_reads(6010)::text, '1');
+  PERFORM pg_temp.tk_expect('512d the teacher of 7B likewise', pg_temp.tk5_reads(6011)::text, '1');
+  PERFORM pg_temp.tk_expect('512d a teacher with no class reads none', pg_temp.tk5_reads(6012)::text, '0');
+  PERFORM pg_temp.tk_a(6002);
+  PERFORM pg_temp.tk_expect('512d rektor is marked again for the refer', pg_temp.tk_mark(6001, true), 'ok 1');
+
+  -- 512c. Refer. Request A (7A): rektor, marked, is a deciding mentor beside the teacher. An unmarked administrator, a marked one
+  -- who is not the pupil's mentor (the mentor of 7B refers nothing of 7A), and a teacher who is not its mentor refer nothing.
+  PERFORM pg_temp.tk_a(6003);
+  PERFORM pg_temp.tk_expect('512c a marked person who mentors no one of 7A cannot refer A', app.leave_request_refer(current_setting('app.tk5_ra')::uuid)::text, 'false');
+  PERFORM pg_temp.tk_a(6012);
+  PERFORM pg_temp.tk_expect('512c a teacher with no class cannot refer A', app.leave_request_refer(current_setting('app.tk5_ra')::uuid)::text, 'false');
+  PERFORM pg_temp.tk_a(6002);
+  PERFORM pg_temp.tk_expect('512c the mentor of 7B, marked, cannot refer a request of 7A', app.leave_request_refer(current_setting('app.tk5_ra')::uuid)::text, 'false');
+  PERFORM pg_temp.tk_expect('512c nothing was referred', (SELECT count(*)::text FROM "LeaveRequests" WHERE "referredAt" IS NOT NULL), '0');
+  -- Unmarked: rektor loses the mark and may not refer.
+  PERFORM pg_temp.tk_expect('512c rektor is unmarked for the refusal', pg_temp.tk_mark(6001, false), 'ok 1');
+  PERFORM pg_temp.tk_a(6001);
+  PERFORM pg_temp.tk_expect('512c an unmarked administrator with the duty cannot refer A', app.leave_request_refer(current_setting('app.tk5_ra')::uuid)::text, 'false');
+  PERFORM pg_temp.tk_a(6002);
+  PERFORM pg_temp.tk_expect('512c nothing was referred by the unmarked', (SELECT count(*)::text FROM "LeaveRequests" WHERE "referredAt" IS NOT NULL), '0');
+  PERFORM pg_temp.tk_expect('512c rektor is marked once more', pg_temp.tk_mark(6001, true), 'ok 1');
+  -- The marked mentor refers, once.
+  PERFORM pg_temp.tk_a(6001);
+  PERFORM pg_temp.tk_expect('512c the marked deciding mentor refers A', app.leave_request_refer(current_setting('app.tk5_ra')::uuid)::text, 'true');
+  PERFORM pg_temp.tk_expect('512c and A is referred, by them', (SELECT "referredById"::text FROM "LeaveRequests" WHERE id = current_setting('app.tk5_ra')::uuid), pg_temp.tk_id(6001)::text);
+  PERFORM pg_temp.tk_expect('512c and by nobody else', (SELECT count(*)::text FROM "LeaveRequests" WHERE "referredAt" IS NOT NULL), '1');
+  PERFORM pg_temp.tk_expect('512c a second refer is no refer', app.leave_request_refer(current_setting('app.tk5_ra')::uuid)::text, 'false');
+  -- After the refer the request is somebody else's (the rektor's): taken, for the marked mentor and the teacher alike.
+  PERFORM pg_temp.tk_expect('512c A is taken for the marked mentor', substring(pg_temp.tk5_ask(6001) from 'takenA=.'), 'takenA=t');
+  PERFORM pg_temp.tk_expect('512c and for the teacher mentor', substring(pg_temp.tk5_ask(6010) from 'takenA=.'), 'takenA=t');
+  PERFORM pg_temp.tk_a(6010);
+  PERFORM pg_temp.tk_expect('512c the teacher cannot refer it either now', app.leave_request_refer(current_setting('app.tk5_ra')::uuid)::text, 'false');
+  -- The teacher beside them refers request B as before, and the marked mentor of 7B then finds it referred.
+  PERFORM pg_temp.tk_a(6011);
+  PERFORM pg_temp.tk_expect('512c the teacher refers B, as before', app.leave_request_refer(current_setting('app.tk5_rb')::uuid)::text, 'true');
+  PERFORM pg_temp.tk_a(6002);
+  PERFORM pg_temp.tk_expect('512c and the marked mentor of 7B has nothing left to refer', app.leave_request_refer(current_setting('app.tk5_rb')::uuid)::text, 'false');
+
+  RAISE NOTICE 'tk 512: the mentor, through the API''s role';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 513: rapporteringsgrad, through the API's role (20270219090000).
+--
+-- app.reporting_lessons (the lessons a person is to report) and app.absence_stats_lessons (the same, for the history) count a person's
+-- lessons if they teach like a teacher: a TEACHER, or an administrator whose mark is set (app.teaches_like). Three things the API's role
+-- may run stand on it: the teacher's own list of open lessons (app.reporting_open_lessons), the night's count (app.reporting_compute),
+-- and what an administrator reads of the days (the arms that stay). What the owner alone may run, the lessons themselves, the reminder,
+-- the digest, the retroactivity and the history's month, is in 513o.
+--
+--   513a  the list of open lessons: an unmarked administrator has none however many lessons they stand on; marked, they have their own,
+--         exactly one each, and the teacher beside them is as before; the days asked for bound it; the mark taken away empties it;
+--   513b  the night's count: the marked person's days are written (held, reported) and counted among the teachers, and removed when the
+--         mark is taken away and the night counts again; a register saved on a lesson makes it reported;
+--   513c  the view is not narrowed in the database (beslut 7): what a marked administrator reads of the stored days is what an unmarked
+--         one reads (the whole school's), and a teacher reads her own.
+--
+-- The cast is rls-fixtures.sql's 'rls-larm-school': …6001 rektor, …6002 full, …6003 schemaläggare, …6004 expedition each stand on one
+-- lesson of 7A that is over and has no saved register (LA-1 … LA-4, three to six days ago); teacher …6010 on LA-5 and on LA-T1-OK whose
+-- register is saved; teacher …6011 on LA-6. Marks are made and taken inside the transaction, which is rolled back.
+-- ---------------------------------------------------------------------------
+
+-- The open lessons of person …6nnn as that person: 'count:day,day'. p_days is how far back the list reaches.
+CREATE OR REPLACE FUNCTION pg_temp.tk5_open(n int, p_days int) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE r text;
+BEGIN
+  PERFORM pg_temp.tk_a(n);
+  SELECT count(*) || ':' || coalesce(string_agg((current_date - o.day)::text, ',' ORDER BY o.day DESC), '')
+    INTO r FROM app.reporting_open_lessons(p_days) o;
+  RETURN r;
+END $f$;
+
+-- The night's count for the larm school up to yesterday, as 'written/removed/teachers/held/reported', run as the full administrator.
+CREATE OR REPLACE FUNCTION pg_temp.tk5_night() RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE r text;
+BEGIN
+  PERFORM pg_temp.tk_a(6002);
+  SELECT c.written || '/' || c.removed || '/' || c.teachers || '/' || c.held || '/' || c.reported
+    INTO r FROM app.reporting_compute(app.current_school_id(), current_date - 1) c;
+  RETURN r;
+END $f$;
+
+-- What person …6nnn reads of the stored days: 'rows' and the days of one named person (their last four digits).
+CREATE OR REPLACE FUNCTION pg_temp.tk5_days(n int) RETURNS bigint LANGUAGE plpgsql AS $f$
+DECLARE c bigint;
+BEGIN
+  PERFORM pg_temp.tk_a(n);
+  SELECT count(*) INTO c FROM "TeacherReportingDays";
+  RETURN c;
+END $f$;
+
+BEGIN;
+DO $$
+DECLARE
+  who text;
+BEGIN
+  PERFORM pg_temp.tk_a(6002);
+  IF app.current_school_id() IS NULL OR (SELECT slug FROM "Schools" WHERE id = app.current_school_id()) IS DISTINCT FROM 'rls-larm-school' THEN
+    RAISE EXCEPTION 'tk 513: the full administrator is not in rls-larm-school; fixtures did not run';
+  END IF;
+  PERFORM pg_temp.tk_expect('513 nobody of the school is marked to begin with', (SELECT count(*)::text FROM "Users" WHERE "schoolId" = app.current_school_id() AND teaches), '0');
+  -- The lessons the cast stands on: four administrators, two teachers (one of them twice), and the saved register on one of them.
+  PERFORM pg_temp.tk_expect('513 the lessons of the cast',
+    (SELECT string_agg(cl.note || '=' || right(u."authId"::text, 4) || ':' || (current_date - cl.date), ',' ORDER BY cl.note COLLATE "C")
+       FROM "CalendarLessons" cl JOIN "CalendarLessonTeachers" t ON t."calendarLessonId" = cl.id JOIN "Users" u ON u.id = t."teacherId"
+      WHERE cl.note LIKE 'LA-%'),
+    'LA-1=6001:3,LA-2=6002:4,LA-3=6003:5,LA-4=6004:6,LA-5=6010:7,LA-6=6011:8,LA-T1-OK=6010:9');
+  PERFORM pg_temp.tk_expect('513 and a register is saved on the one',
+    (SELECT count(*)::text FROM "AttendanceRecords" a JOIN "CalendarLessons" cl ON cl.id = a."calendarLessonId" WHERE cl.note = 'LA-T1-OK'), '1');
+
+  -- 513a. The open lessons. Before the mark, an administrator has none; the teachers have the lessons they have not reported
+  -- (the one with the saved register is not open).
+  FOREACH who IN ARRAY ARRAY['6001', '6002', '6003', '6004'] LOOP
+    PERFORM pg_temp.tk_expect('513a unmarked ' || who || ' has no open lessons', pg_temp.tk5_open(who::int, 30), '0:');
+  END LOOP;
+  PERFORM pg_temp.tk_expect('513a the teacher of LA-5 has it open, and not the one with the saved register', pg_temp.tk5_open(6010, 30), '1:7');
+  PERFORM pg_temp.tk_expect('513a the teacher of LA-6 has it open', pg_temp.tk5_open(6011, 30), '1:8');
+  PERFORM pg_temp.tk_expect('513a a teacher with no lesson has none', pg_temp.tk5_open(6012, 30), '0:');
+
+  PERFORM pg_temp.tk_a(6002);
+  PERFORM pg_temp.tk_expect('513a rektor is marked', pg_temp.tk_mark(6001, true), 'ok 1');
+  PERFORM pg_temp.tk_expect('513a schemaläggare is marked', pg_temp.tk_mark(6003, true), 'ok 1');
+  PERFORM pg_temp.tk_expect('513a expedition is marked', pg_temp.tk_mark(6004, true), 'ok 1');
+  PERFORM pg_temp.tk_a(6001);
+  PERFORM pg_temp.tk_expect('513a full is marked', pg_temp.tk_mark(6002, true), 'ok 1');
+  PERFORM pg_temp.tk_a(6001);
+  PERFORM pg_temp.tk_expect('513a the mark is on', app.current_user_teaches()::text, 'true');
+  PERFORM pg_temp.tk_expect('513a marked rektor has her one lesson, three days ago', pg_temp.tk5_open(6001, 30), '1:3');
+  PERFORM pg_temp.tk_expect('513a marked full has hers', pg_temp.tk5_open(6002, 30), '1:4');
+  PERFORM pg_temp.tk_expect('513a marked schemaläggare has hers', pg_temp.tk5_open(6003, 30), '1:5');
+  PERFORM pg_temp.tk_expect('513a marked expedition has hers', pg_temp.tk5_open(6004, 30), '1:6');
+  PERFORM pg_temp.tk_expect('513a the teachers are as they were', pg_temp.tk5_open(6010, 30) || ' ' || pg_temp.tk5_open(6011, 30), '1:7 1:8');
+  -- What a row says: the subject, the class and that it is late (the limit is two days, and the lesson was three days ago).
+  PERFORM pg_temp.tk_a(6001);
+  PERFORM pg_temp.tk_expect('513a the lesson is the one of 7A, and late',
+    (SELECT o.subject_name || '/' || o.group_name || '/' || o.overdue FROM app.reporting_open_lessons(30) o), 'Larm ämne/LA7A/true');
+  -- The days asked for bound the list: two days back reaches nothing of a lesson three days ago, three days reach it.
+  PERFORM pg_temp.tk_expect('513a two days back: nothing', pg_temp.tk5_open(6001, 2), '0:');
+  PERFORM pg_temp.tk_expect('513a three days back: the lesson', pg_temp.tk5_open(6001, 3), '1:3');
+  -- The register saved on it makes it reported: no longer open (as the teacher's own lesson with a saved register never was).
+  PERFORM pg_temp.tk_a(6002);
+  PERFORM pg_temp.tk_expect('513a a saved register on the rektor''s lesson',
+    pg_temp.tk_try('app_authenticated', $q$INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
+                                           SELECT cl."schoolId", cl.id, (SELECT id FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000006021'), 'PRESENT', now()
+                                             FROM "CalendarLessons" cl WHERE cl.note = 'LA-1'$q$), 'ok 1');
+  PERFORM pg_temp.tk_expect('513a reported, no longer open', pg_temp.tk5_open(6001, 30), '0:');
+  -- The mark taken away: full has no open lessons any more (the lesson is still there; it is nobody's to report).
+  PERFORM pg_temp.tk_a(6001);
+  PERFORM pg_temp.tk_expect('513a full is unmarked', pg_temp.tk_mark(6002, false), 'ok 1');
+  PERFORM pg_temp.tk_expect('513a unmarked again: nothing open', pg_temp.tk5_open(6002, 30), '0:');
+  PERFORM pg_temp.tk_expect('513a and the lesson is still there',
+    (SELECT count(*)::text FROM "CalendarLessonTeachers" t JOIN "CalendarLessons" cl ON cl.id = t."calendarLessonId" WHERE cl.note = 'LA-2' AND t."teacherId" = pg_temp.tk_id(6002)), '1');
+  PERFORM pg_temp.tk_expect('513a full is marked again', pg_temp.tk_mark(6002, true), 'ok 1');
+  PERFORM pg_temp.tk_expect('513a and has the lesson open again', pg_temp.tk5_open(6002, 30), '1:4');
+
+  -- 513b. The night's count. Held lessons, by person and day: the teachers' three (LA-5, LA-6 and LA-T1-OK) and the marked people's
+  -- four (LA-2, LA-3, LA-4 and LA-1, whose register was saved a moment ago): seven, two of them reported (the teacher's saved register and the rektor's).
+  PERFORM pg_temp.tk_expect('513b the night counts the marked and the teachers',
+    pg_temp.tk5_night(), '7/0/6/7/2');
+  PERFORM pg_temp.tk_a(6002);
+  PERFORM pg_temp.tk_expect('513b the marked rektor has a day, with her lesson held and reported (a register is saved)',
+    (SELECT d.held || '/' || d.reported FROM "TeacherReportingDays" d WHERE d."teacherId" = pg_temp.tk_id(6001)), '1/1');
+  PERFORM pg_temp.tk_expect('513b the marked schemaläggare has hers, held and not reported',
+    (SELECT d.held || '/' || d.reported FROM "TeacherReportingDays" d WHERE d."teacherId" = pg_temp.tk_id(6003)), '1/0');
+  PERFORM pg_temp.tk_expect('513b the days are the people''s, one each',
+    (SELECT string_agg(right(u."authId"::text, 4) || ':' || (current_date - d.day), ',' ORDER BY u."authId", d.day)
+       FROM "TeacherReportingDays" d JOIN "Users" u ON u.id = d."teacherId"),
+    '6001:3,6002:4,6003:5,6004:6,6010:9,6010:7,6011:8');
+  PERFORM pg_temp.tk_expect('513b a second night changes nothing', pg_temp.tk5_night(), '0/0/6/7/2');
+
+  -- The mark taken away from the schemaläggare: the next night removes her day and counts one teacher fewer.
+  PERFORM pg_temp.tk_a(6001);
+  PERFORM pg_temp.tk_expect('513b schemaläggare is unmarked', pg_temp.tk_mark(6003, false), 'ok 1');
+  PERFORM pg_temp.tk_expect('513b the next night removes her day and counts one fewer', pg_temp.tk5_night(), '0/1/5/6/2');
+  PERFORM pg_temp.tk_a(6002);
+  PERFORM pg_temp.tk_expect('513b and she has no day', (SELECT count(*)::text FROM "TeacherReportingDays" d WHERE d."teacherId" = pg_temp.tk_id(6003)), '0');
+  PERFORM pg_temp.tk_expect('513b the others'' days are as they were',
+    (SELECT string_agg(right(u."authId"::text, 4), ',' ORDER BY u."authId", d.day) FROM "TeacherReportingDays" d JOIN "Users" u ON u.id = d."teacherId"),
+    '6001,6002,6004,6010,6010,6011');
+
+  -- 513c. The stored days are not narrowed in the database: an administrator reads the school's (marked or not), a teacher her own.
+  PERFORM pg_temp.tk_expect('513c a marked administrator reads all six days', pg_temp.tk5_days(6001)::text, '6');
+  PERFORM pg_temp.tk_expect('513c an unmarked one (schemaläggare, just unmarked) reads the same', pg_temp.tk5_days(6003)::text, '6');
+  PERFORM pg_temp.tk_expect('513c the teacher of LA-5 and LA-T1-OK reads her two days', pg_temp.tk5_days(6010)::text, '2');
+  PERFORM pg_temp.tk_expect('513c the teacher of LA-6 reads her one', pg_temp.tk5_days(6011)::text, '1');
+  PERFORM pg_temp.tk_expect('513c a teacher with no lesson reads none', pg_temp.tk5_days(6012)::text, '0');
+  RAISE NOTICE 'tk 513: the rapporteringsgrad, through the API''s role';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 514: nothing else changed, and what stays refused a marked administrator.
+--
+--   514a  the administration's own arms of Krisläge (every policy on the six tables that is not a teacher's: the settings, starting,
+--         ending and sealing an alarm, the groups, their teachers and pupils, the administration's marks) are the text they had on main:
+--         the md5 of USING and WITH CHECK together. A marked administrator starts nothing the school's list does not let them start;
+--   514b  app.crisis_may_start() is what the list says, marked or not: the full administratör and rektor may, the schemaläggare and the
+--         expedition (kept off the list of the larm school) may not, with the mark and without it (511b/511d hold the writes);
+--   514c  beslut 4 stands: a marked administrator is no member of the substitute pool (SP409), no klasslärare (CT400), says no yes to a
+--         cover request (CR404), writes no change of a class timetable, and the two lookups that name the class teacher and the cover
+--         request's sender answer them as they answered an unmarked one: refused (CT403, CR404). They are tagged OUT in section 494;
+--   514d  nobody is marked when a section starts (the earlier ones rolled their marks back), in the larm school and in the matrix school
+--         whose principal of sections 116 and 493g is a full administratör (rights that do not change: she decides, and starts alarms),
+--         so that "nothing changed" is a statement about a marked person and not about nobody.
+--
+-- What changed in the catalogue between main and this branch is exactly the three arms, the ten functions, the new function and the
+-- migration's row: scripts/test/teaches-pr4-snapshot.sh shows the answers for every table and verb with and without the mark, and
+-- docs/DEPLOYMENT.md 20.6 the md5 of everything else, before and after.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+BEGIN
+  PERFORM pg_temp.tk_a(6002);
+  PERFORM pg_temp.tk_expect('514d (first, before any mark of this section) nobody of the larm school is marked', (SELECT count(*)::text FROM "Users" WHERE teaches), '0');
+  PERFORM pg_temp.tk_expect('514d the larm school has marked nobody and has people', (SELECT (count(*) > 8)::text FROM "Users"), 'true');
+  PERFORM pg_temp.tk_claim('00000000-0000-4000-8000-000000000105');
+  PERFORM pg_temp.tk_expect('514d the matrix school''s principal is a full administratör', (SELECT "adminProfile"::text FROM "Users" WHERE id = app.current_user_id()), 'FULL');
+  PERFORM pg_temp.tk_expect('514d (first, before any mark of this section) nobody of the matrix school is marked', (SELECT count(*)::text FROM "Users" WHERE teaches), '0');
+  PERFORM pg_temp.tk_expect('514d and she may start an alarm and decides (sections 116 and 493g hold what she is let do)', pg_temp.tk_val('app_authenticated', 'SELECT (app.crisis_may_start() AND app.current_user_decides())::text'), 'true');
+  RAISE NOTICE 'tk 514d: nobody is marked, so "nothing changed" is not about nobody';
+END $$;
+DO $$
+DECLARE
+  r record;
+  bad text := '';
+BEGIN
+  FOR r IN SELECT * FROM (VALUES
+    ('CrisisAlarms', 'crisis_alarms_admin_insert', '74dc434ff1a279c7d9bacbd6488f806a'),
+    ('CrisisAlarms', 'crisis_alarms_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+    ('CrisisAlarms', 'crisis_alarms_admin_update', 'e5042ebc2b289e3fbbe642ec21fef528'),
+    ('CrisisCalls', 'crisis_calls_admin_insert', '169b18502a9d4b1f544c5ba27b9cc8bb'),
+    ('CrisisCalls', 'crisis_calls_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+    ('CrisisPupils', 'crisis_pupils_admin_insert', '169b18502a9d4b1f544c5ba27b9cc8bb'),
+    ('CrisisPupils', 'crisis_pupils_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+    ('CrisisReports', 'crisis_reports_admin_insert', '92bad0845e7029055e3d6e80c65457a9'),
+    ('CrisisReports', 'crisis_reports_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+    ('CrisisSettings', 'crisis_settings_admin_insert', '9e51e72324edd33aaa916886a850023f'),
+    ('CrisisSettings', 'crisis_settings_admin_select', 'd2772076d09a09c3527128976677ffa7'),
+    ('CrisisSettings', 'crisis_settings_admin_update', '36a84dd9e1a8b35cf0273ed68cf2aff8')) AS v(tbl, pol, m) LOOP
+    IF (SELECT md5(coalesce(pg_get_expr(p.polqual, p.polrelid), '') || '|' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), ''))
+          FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid AND c.relnamespace = 'public'::regnamespace WHERE c.relname = r.tbl AND p.polname = r.pol) IS DISTINCT FROM r.m THEN
+      bad := bad || ' ' || r.tbl || '.' || r.pol;
+    END IF;
+  END LOOP;
+  IF bad <> '' THEN RAISE EXCEPTION 'tk 514a: the administration''s arms of Krisläge changed, or are gone:%', bad; END IF;
+  IF EXISTS (SELECT 1 FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid AND c.relnamespace = 'public'::regnamespace
+              WHERE c.relname IN ('CrisisSettings','CrisisAlarms','CrisisCalls','CrisisCallTeachers','CrisisPupils','CrisisReports') AND p.polname NOT LIKE '%teacher%'
+                AND (coalesce(pg_get_expr(p.polqual, p.polrelid), '') || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '')) LIKE '%current_user_teaches%') THEN
+    RAISE EXCEPTION 'tk 514a: an administration arm of Krisläge asks for the mark';
+  END IF;
+  RAISE NOTICE 'tk 514a: % administration arms of Krisläge are as they were', 12;
+END $$;
+
+DO $$
+DECLARE
+  n int;
+  mk text;
+BEGIN
+  FOREACH mk IN ARRAY ARRAY['unmarked', 'marked'] LOOP
+    FOR n IN SELECT unnest(ARRAY[6001, 6002, 6003, 6004]) LOOP
+      PERFORM pg_temp.tk_a(6001);
+      IF mk = 'marked' THEN PERFORM pg_temp.tk_expect('514b mark', pg_temp.tk_mark(n, true), 'ok 1'); ELSE PERFORM pg_temp.tk_expect('514b unmark', pg_temp.tk_mark(n, false), 'ok 1'); END IF;
+      PERFORM pg_temp.tk_a(n);
+      PERFORM pg_temp.tk_expect('514b ' || n || ' is ' || mk, pg_temp.tk_val('app_authenticated', 'SELECT app.current_user_teaches()::text'), (mk = 'marked')::text);
+      PERFORM pg_temp.tk_expect('514b …' || n || ' ' || mk || ': may start an alarm as the list says', pg_temp.tk_val('app_authenticated', 'SELECT app.crisis_may_start()::text'), (n IN (6001, 6002))::text);
+    END LOOP;
+  END LOOP;
+  PERFORM pg_temp.tk_a(6001);
+  FOR n IN SELECT unnest(ARRAY[6001, 6002, 6003, 6004]) LOOP PERFORM pg_temp.tk_mark(n, false); END LOOP;
+  RAISE NOTICE 'tk 514b: the start list is the school''s, marked or not';
+END $$;
+
+DO $$
+DECLARE
+  school uuid;
+  y1 uuid;
+  g1 uuid;
+  n int;
+  actor text;
+  sender text;
+BEGIN
+  PERFORM pg_temp.tk_a(6001);
+  school := app.current_school_id();
+  y1 := (SELECT id FROM "AcademicYears" WHERE "schoolId" = school AND "isActive");
+  g1 := (SELECT id FROM "StudentGroups" WHERE "schoolId" = school AND name = 'LA7A');
+  IF y1 IS NULL OR g1 IS NULL THEN RAISE EXCEPTION 'tk 514c: the fixture year or class did not resolve'; END IF;
+  FOR n IN SELECT unnest(ARRAY[6002, 6003, 6004]) LOOP PERFORM pg_temp.tk_expect('514c mark ' || n, pg_temp.tk_mark(n, true), 'ok 1'); END LOOP;
+  FOR n IN SELECT unnest(ARRAY[6002, 6003, 6004]) LOOP
+    PERFORM pg_temp.tk_a(6001);
+    PERFORM pg_temp.tk_expect('514c …' || n || ' in the substitute pool', pg_temp.tk_try('app_authenticated',
+      format($q$INSERT INTO "SubstitutePoolMembers" ("schoolId", "userId") VALUES (%L, %L)$q$, school, pg_temp.tk_id(n))), 'SP409');
+    PERFORM pg_temp.tk_expect('514c …' || n || ' as klasslärare', pg_temp.tk_try('app_authenticated',
+      format($q$INSERT INTO "ClassTeacherAppointments" ("schoolId", "academicYearId", "studentGroupId", "userId") VALUES (%L, %L, %L, %L)$q$, school, y1, g1, pg_temp.tk_id(n))), 'CT400');
+    PERFORM pg_temp.tk_a(n);
+    PERFORM pg_temp.tk_expect('514c …' || n || ' says yes to a cover request', pg_temp.tk_val('app_authenticated', format('SELECT app.cover_confirm(%L)::text', gen_random_uuid())), 'E:CR404');
+    -- Refused by the guard on the table (CT400: the author is no klasslärare) or, were it not there, by the policy (42501: no arm for them).
+    PERFORM pg_temp.tk_expect('514c …' || n || ' writes a change of a class timetable',
+      (pg_temp.tk_try('app_authenticated', format($q$INSERT INTO "ClassTeacherChanges" ("schoolId", "academicYearId", "studentGroupId", "authorId", kind, status, "baseVersion", "baseSnapshot") VALUES (%L, %L, %L, %L, 'OCCASION_CANCEL', 'DRAFT', 'tk', '{}'::jsonb)$q$, school, y1, g1, pg_temp.tk_id(n))) IN ('CT400', '42501'))::text, 'true');
+    -- The two lookups answer the marked administrator as they answer anybody who is not the class teacher or the cover request's colleague.
+    actor := pg_temp.tk_val('app_authenticated', format('SELECT app.class_teacher_actor(%L)::text', g1));
+    sender := pg_temp.tk_val('app_authenticated', format('SELECT app.cover_request_sender(%L)::text', gen_random_uuid()));
+    PERFORM pg_temp.tk_expect('514c …' || n || ' is no class teacher''s actor', actor, 'E:CT403');
+    PERFORM pg_temp.tk_expect('514c …' || n || ' is no cover request''s sender', sender, 'E:CR404');
+  END LOOP;
+  -- A teacher is held to them too (the same codes: nothing is appointed): the marked administrator is no more let in than one.
+  PERFORM pg_temp.tk_a(6010);
+  PERFORM pg_temp.tk_expect('514c a teacher is no class teacher''s actor either', pg_temp.tk_val('app_authenticated', format('SELECT app.class_teacher_actor(%L)::text', g1)), 'E:CT403');
+  RAISE NOTICE 'tk 514c: the pool, klasslärare, a cover request, a class timetable change and the two lookups stay refused a marked administrator';
+END $$;
+
+ROLLBACK;

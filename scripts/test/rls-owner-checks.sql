@@ -6316,3 +6316,647 @@ BEGIN
   RAISE NOTICE 'ta 505o: % expressions evaluated over every row of every school: the marked are admitted for their own rows alone, the unmarked for none', evaluated;
 END $$;
 ROLLBACK;
+
+-- ===========================================================================
+-- Sections 510o-514o: en administratör som undervisar, del 4 (20270219090000), as the owner.
+--
+-- What only the owner may call: app.teaches_like (510o), the mentor functions that no role has a grant on (512o: leave_mentors,
+-- absence_watch_mentees, absence_watch_digest_plan) and the lessons of the reporting rate and of its history, the night's count and the
+-- reminder (513o). The sections in rls-policies.sql (510-514) ask the rest as the API's role. The cast is rls-fixtures.sql's 'rls-larm-school'.
+-- ===========================================================================
+
+-- ---------------------------------------------------------------------------
+-- 510o: app.teaches_like(role, mark), the row-level twin of app.current_user_teaches() (20270219090000), as the owner (it has no grant).
+--
+--   510o-a  its truth table, over every role the enum has and every value of the mark: true for a TEACHER whatever the mark says (a teacher
+--           has none to ask), true for a SCHOOL_ADMIN whose mark is true, false for every other pair, and false for a NULL;
+--   510o-b  it is inlined: in the plan of each of the four invoker functions that ask it (the two lesson functions, the mentor of a pupil and
+--           the mentor's pupils) no call to it is left and the test is the one expression over the columns of Users, so a lesson or a mentor
+--           costs what it cost before;
+--   510o-c  the API's role may not call it, and the owner may.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  r text;
+  m text;
+  got boolean;
+  want boolean;
+  checked int := 0;
+  plan text;
+  fn text;
+BEGIN
+  FOR r IN SELECT unnest(enum_range(NULL::"UserRole"))::text LOOP
+    FOREACH m IN ARRAY ARRAY['true', 'false', 'null'] LOOP
+      EXECUTE format('SELECT app.teaches_like(%L::"UserRole", %s::boolean)', r, m) INTO got;
+      want := (r = 'TEACHER') OR (r = 'SCHOOL_ADMIN' AND m = 'true');
+      IF got IS DISTINCT FROM want THEN RAISE EXCEPTION 'tk 510o-a: app.teaches_like(%, %) is %, wanted %', r, m, got, want; END IF;
+      checked := checked + 1;
+    END LOOP;
+  END LOOP;
+  IF app.teaches_like(NULL, true) IS DISTINCT FROM false OR app.teaches_like(NULL, NULL) IS DISTINCT FROM false OR app.teaches_like('SCHOOL_ADMIN', NULL) IS DISTINCT FROM false THEN
+    RAISE EXCEPTION 'tk 510o-a: a NULL is not a no';
+  END IF;
+  IF checked < 12 THEN RAISE EXCEPTION 'tk 510o-a: the enum has % values of role', checked / 3; END IF;
+  RAISE NOTICE 'tk 510o-a: app.teaches_like over % roles and three values of the mark', checked / 3;
+
+  FOREACH fn IN ARRAY ARRAY[
+      $q$SELECT * FROM app.reporting_lessons('00000000-0000-4000-8000-000000000001'::uuid, '2026-01-01', '2026-12-31', timestamptz '2026-12-31 00:00+00')$q$,
+      $q$SELECT * FROM app.absence_stats_lessons('00000000-0000-4000-8000-000000000001'::uuid, '2026-01-01', '2026-12-31', timestamptz '2026-12-31 00:00+00')$q$,
+      $q$SELECT * FROM app.leave_mentors('00000000-0000-4000-8000-000000000001'::uuid, '00000000-0000-4000-8000-000000000002'::uuid, '2026-01-01', '2026-12-31')$q$,
+      $q$SELECT * FROM app.absence_watch_mentees('00000000-0000-4000-8000-000000000001'::uuid, '2026-06-01')$q$] LOOP
+    plan := '';
+    FOR r IN EXECUTE 'EXPLAIN (VERBOSE, COSTS OFF) ' || fn LOOP plan := plan || r || E'\n'; END LOOP;
+    IF plan ~ 'teaches_like' OR plan ~ 'Function Scan' THEN
+      RAISE EXCEPTION E'tk 510o-b: a call is left in the plan of %:\n%', left(fn, 60), plan;
+    END IF;
+    IF plan !~ 'u\.teaches' OR plan !~ 'SCHOOL_ADMIN' THEN
+      RAISE EXCEPTION E'tk 510o-b: the plan of % does not ask the role and the mark of Users:\n%', left(fn, 60), plan;
+    END IF;
+  END LOOP;
+  RAISE NOTICE 'tk 510o-b: the four invoker functions are inlined, the test is an expression over Users';
+END $$;
+
+DO $$
+BEGIN
+  BEGIN
+    SET LOCAL ROLE app_authenticated;
+    PERFORM app.teaches_like('TEACHER', false);
+    RESET ROLE;
+    RAISE EXCEPTION 'tk 510o-c: the API''s role called app.teaches_like';
+  EXCEPTION WHEN insufficient_privilege THEN
+    RESET ROLE;
+  END;
+  IF app.teaches_like('TEACHER', false) IS NOT TRUE THEN RAISE EXCEPTION 'tk 510o-c: the owner cannot call it'; END IF;
+  RAISE NOTICE 'tk 510o-c: only the owner calls app.teaches_like';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- 512o: mentor, the three functions only the owner may run (20270219090000).
+--
+-- app.leave_mentors (who is told of a leave request, who is a deciding mentor), app.absence_watch_mentees (the mentor's pupils in
+-- Frånvarobevakningen) and app.absence_watch_digest_plan (the recipients of the weekly digest) ask "is this PERSON a mentor" of a ROW,
+-- through app.teaches_like(role, mark), and are the owner's alone (the definer functions the API's role runs call them). 512 in
+-- rls-policies.sql asks the five definer functions as the signed-in person; here are the three, and what follows from them:
+--
+--   512o-a  leave_mentors: a marked administrator with a MENTORSKAP duty of the pupil's class is one of its mentors beside the teacher;
+--           without the duty, unmarked, or inactive they are not; a marked one of another class is not; the mark taken away puts them
+--           out again; the läsare cannot be one;
+--   512o-b  absence_watch_mentees: the same pairs, pupil by pupil, for the four profiles that can be marked;
+--   512o-c  absence_watch_digest_plan, all four groups: the MENTOR group's recipients are the teachers and the marked mentors, and the
+--           other three (REKTOR, KANSLI, GUARDIAN) are as they were before the mark and after it. A marked rektor who mentors is in two
+--           plans, the rektor's and the mentor's (a choice, said in the pull request);
+--   512o-d  the notice: a person who becomes a mentor while a request waits is told of it by the catch-up the gateway runs when the mark
+--           changes (app.leave_tell_mentors), once, and the teacher who was told at the request is not told again.
+--
+-- The cast is rls-fixtures.sql's 'rls-larm-school', as in 512. Marks are made under the claims of a decider and taken inside the
+-- transaction, which is rolled back.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION pg_temp.tko_expect(label text, got text, want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  IF got IS DISTINCT FROM want THEN
+    RAISE EXCEPTION E'tk %:\n   got      %\n   expected %', label, coalesce(got, '<null>'), want;
+  END IF;
+END $f$;
+
+-- Sign in as the larm school's person …6nnn (the owner may set the claims a door reads).
+CREATE OR REPLACE FUNCTION pg_temp.tko_claim(n int) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-00000000' || lpad(n::text, 4, '0'))::text, true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+END $f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tko_id(n int) RETURNS uuid LANGUAGE sql AS $f$
+  SELECT id FROM "Users" WHERE "authId" = ('00000000-0000-4000-8000-00000000' || lpad(n::text, 4, '0'))::uuid
+$f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tko_who(u uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT right("authId"::text, 4) FROM "Users" WHERE id = u
+$f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tko_school() RETURNS uuid LANGUAGE sql AS $f$
+  SELECT id FROM "Schools" WHERE slug = 'rls-larm-school'
+$f$;
+
+-- Mark (or unmark) …6nnn under the claims of a decider (the full administrator, or the rektor when it is the full administrator that is
+-- marked), and say whether the row went. The claims are cleared after.
+CREATE OR REPLACE FUNCTION pg_temp.tko_mark(n int, v boolean) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE c bigint;
+BEGIN
+  PERFORM pg_temp.tko_claim(CASE WHEN n = 6002 THEN 6001 ELSE 6002 END);
+  UPDATE "Users" SET teaches = v WHERE id = pg_temp.tko_id(n);
+  GET DIAGNOSTICS c = ROW_COUNT;
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF c <> 1 OR (SELECT teaches FROM "Users" WHERE id = pg_temp.tko_id(n)) IS DISTINCT FROM v THEN
+    RAISE EXCEPTION 'tk: the mark of …% was not set to % (% rows)', n, v, c;
+  END IF;
+END $f$;
+
+-- The mentors of a pupil (…6nnn) for next Monday and Tuesday, as the last four digits of their logins.
+CREATE OR REPLACE FUNCTION pg_temp.tko_mentors(pupil int) RETURNS text LANGUAGE sql AS $f$
+  SELECT coalesce(string_agg(pg_temp.tko_who(m.id), ',' ORDER BY pg_temp.tko_who(m.id)), '')
+    FROM app.leave_mentors(pg_temp.tko_school(), pg_temp.tko_id(pupil),
+                           (date_trunc('week', current_date) + interval '7 days')::date, (date_trunc('week', current_date) + interval '8 days')::date) m(id)
+$f$;
+
+-- The pairs 'mentor>pupil' of Frånvarobevakningen today, for the larm school.
+CREATE OR REPLACE FUNCTION pg_temp.tko_mentees() RETURNS text LANGUAGE sql AS $f$
+  SELECT coalesce(string_agg(pg_temp.tko_who(m.mentor_id) || '>' || pg_temp.tko_who(m.student_id), ',' ORDER BY pg_temp.tko_who(m.mentor_id), pg_temp.tko_who(m.student_id)), '')
+    FROM app.absence_watch_mentees(pg_temp.tko_school(), current_date) m
+$f$;
+
+-- One group's digest plan for the last seven days: 'recipient=open/crossed/pupils', by recipient.
+CREATE OR REPLACE FUNCTION pg_temp.tko_plan(grp text) RETURNS text LANGUAGE sql AS $f$
+  SELECT coalesce(string_agg(pg_temp.tko_who(p.user_id) || '=' || p.open_n || '/' || p.crossed_n || '/' || cardinality(p.student_ids), ',' ORDER BY pg_temp.tko_who(p.user_id)), '')
+    FROM app.absence_watch_digest_plan(pg_temp.tko_school(), grp::"AbsenceWatchGroup", current_date - 6, current_date, current_date) p
+$f$;
+
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.tko_school();
+  lim uuid;
+  g text;
+  p int;
+  guardian uuid;
+  plan_mentor text;
+  plan_rektor text;
+  plan_kansli text;
+  plan_guardian text;
+  req uuid;
+  told text;
+  n bigint;
+BEGIN
+  IF s IS NULL THEN RAISE EXCEPTION 'tk 512o: rls-larm-school is not there; fixtures did not run'; END IF;
+  PERFORM pg_temp.tko_expect('512o nobody of the school is marked to begin with', (SELECT count(*)::text FROM "Users" WHERE "schoolId" = s AND teaches), '0');
+
+  -- 512o-a. leave_mentors. The teachers of 7A and 7B and the duties are the control; the administrators who hold the other duties are no mentors
+  -- of these pupils whatever the mark.
+  PERFORM pg_temp.tko_expect('512o-a 7A, unmarked: the teacher only', pg_temp.tko_mentors(6021), '6010');
+  PERFORM pg_temp.tko_expect('512o-a 7A, the other pupil', pg_temp.tko_mentors(6022), '6010');
+  PERFORM pg_temp.tko_expect('512o-a 7B, unmarked: the teacher only', pg_temp.tko_mentors(6023), '6011');
+  PERFORM pg_temp.tko_expect('512o-a 7C, unmarked: nobody (an administrator with the duty is no mentor)', pg_temp.tko_mentors(6024), '');
+  PERFORM pg_temp.tko_expect('512o-a 7D, unmarked: nobody', pg_temp.tko_mentors(6025), '');
+
+  PERFORM pg_temp.tko_mark(6001, true);
+  PERFORM pg_temp.tko_expect('512o-a 7A, rektor marked: the teacher and the marked mentor', pg_temp.tko_mentors(6021), '6001,6010');
+  PERFORM pg_temp.tko_expect('512o-a 7A, both pupils of the class', pg_temp.tko_mentors(6022), '6001,6010');
+  PERFORM pg_temp.tko_expect('512o-a 7B is not changed by it', pg_temp.tko_mentors(6023), '6011');
+  PERFORM pg_temp.tko_expect('512o-a 7C is not changed by it', pg_temp.tko_mentors(6024), '');
+
+  PERFORM pg_temp.tko_mark(6003, true);
+  PERFORM pg_temp.tko_expect('512o-a 7C, schemaläggare marked: the marked mentor', pg_temp.tko_mentors(6024), '6003');
+  PERFORM pg_temp.tko_expect('512o-a and nobody else of 7A through it', pg_temp.tko_mentors(6021), '6001,6010');
+  PERFORM pg_temp.tko_mark(6002, true);
+  PERFORM pg_temp.tko_expect('512o-a 7B, full marked: the teacher and the marked mentor', pg_temp.tko_mentors(6023), '6002,6011');
+  PERFORM pg_temp.tko_mark(6004, true);
+  PERFORM pg_temp.tko_expect('512o-a 7D, expedition marked: the marked mentor', pg_temp.tko_mentors(6025), '6004');
+
+  -- Marked and with no duty of the class: nothing (the duty of 7C goes, the mark stays).
+  DELETE FROM "TeacherDuties" WHERE "userId" = pg_temp.tko_id(6003) AND kind = 'MENTORSKAP';
+  PERFORM pg_temp.tko_expect('512o-a marked, with no duty: no mentor', pg_temp.tko_mentors(6024), '');
+  PERFORM pg_temp.tko_expect('512o-a and still marked', (SELECT teaches::text FROM "Users" WHERE id = pg_temp.tko_id(6003)), 'true');
+
+  -- Inactive: not a mentor, marked or not (isActive); active again, they are.
+  UPDATE "Users" SET "isActive" = false WHERE id = pg_temp.tko_id(6001);
+  PERFORM pg_temp.tko_expect('512o-a inactive and marked: still marked', (SELECT teaches::text FROM "Users" WHERE id = pg_temp.tko_id(6001)), 'true');
+  PERFORM pg_temp.tko_expect('512o-a inactive and marked: no mentor', pg_temp.tko_mentors(6021), '6010');
+  UPDATE "Users" SET "isActive" = true WHERE id = pg_temp.tko_id(6001);
+  PERFORM pg_temp.tko_expect('512o-a active again: a mentor again', pg_temp.tko_mentors(6021), '6001,6010');
+
+  -- The mark taken away: out, with the duty still there.
+  PERFORM pg_temp.tko_mark(6001, false);
+  PERFORM pg_temp.tko_expect('512o-a unmarked again: the teacher only', pg_temp.tko_mentors(6021), '6010');
+  PERFORM pg_temp.tko_expect('512o-a and the duty is still there', (SELECT count(*)::text FROM "TeacherDuties" WHERE "userId" = pg_temp.tko_id(6001) AND kind = 'MENTORSKAP'), '1');
+
+  -- The läsare: no duty, and a mark that cannot stand (zeroed): never a mentor of anyone.
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt")
+  SELECT s, pg_temp.tko_id(6006), y.id, 'MENTORSKAP', 'Larm mentor läsare', 60, (SELECT id FROM "StudentGroups" WHERE "schoolId" = s AND name = 'LA7A'), now()
+    FROM "AcademicYears" y WHERE y."schoolId" = s AND y."isActive";
+  PERFORM pg_temp.tko_claim(6002);
+  UPDATE "Users" SET teaches = true WHERE id = pg_temp.tko_id(6006);
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM pg_temp.tko_expect('512o-a the läsare''s mark is zeroed', (SELECT teaches::text FROM "Users" WHERE id = pg_temp.tko_id(6006)), 'false');
+  PERFORM pg_temp.tko_expect('512o-a the läsare with a duty is no mentor of 7A', pg_temp.tko_mentors(6021), '6010');
+  DELETE FROM "TeacherDuties" WHERE "userId" = pg_temp.tko_id(6006);
+
+  -- 512o-b. absence_watch_mentees: the pairs, for pupils today. Teachers first, then the administrators one mark at a time.
+  PERFORM pg_temp.tko_mark(6001, false);
+  PERFORM pg_temp.tko_mark(6002, false);
+  PERFORM pg_temp.tko_mark(6004, false);
+  PERFORM pg_temp.tko_mark(6003, false);
+  PERFORM pg_temp.tko_expect('512o-b unmarked: the teachers'' pupils only', pg_temp.tko_mentees(), '6010>6021,6010>6022,6011>6023');
+  PERFORM pg_temp.tko_mark(6001, true);
+  PERFORM pg_temp.tko_expect('512o-b rektor marked: her two pupils join', pg_temp.tko_mentees(), '6001>6021,6001>6022,6010>6021,6010>6022,6011>6023');
+  PERFORM pg_temp.tko_mark(6002, true);
+  PERFORM pg_temp.tko_mark(6004, true);
+  PERFORM pg_temp.tko_expect('512o-b full and expedition marked as well', pg_temp.tko_mentees(),
+    '6001>6021,6001>6022,6002>6023,6004>6025,6010>6021,6010>6022,6011>6023');
+  PERFORM pg_temp.tko_mark(6001, false);
+  PERFORM pg_temp.tko_expect('512o-b rektor unmarked again: her pupils go', pg_temp.tko_mentees(), '6002>6023,6004>6025,6010>6021,6010>6022,6011>6023');
+  UPDATE "Users" SET "isActive" = false WHERE id = pg_temp.tko_id(6004);
+  PERFORM pg_temp.tko_expect('512o-b the inactive one is no mentor of 7D', pg_temp.tko_mentees(), '6002>6023,6010>6021,6010>6022,6011>6023');
+  UPDATE "Users" SET "isActive" = true WHERE id = pg_temp.tko_id(6004);
+  PERFORM pg_temp.tko_expect('512o-b and is one again', pg_temp.tko_mentees(), '6002>6023,6004>6025,6010>6021,6010>6022,6011>6023');
+  PERFORM pg_temp.tko_mark(6002, false);
+  PERFORM pg_temp.tko_mark(6004, false);
+
+  -- 512o-c. absence_watch_digest_plan. Planted as the owner: one limit for each group, an open finding in each group for the pupil of 7A
+  -- (…6021) and the pupil of 7B (…6023), and a guardian of the first. The plan is asked for the last seven days.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (s, 'larm-guardian@example.invalid', 'Larm', 'Vårdnadshavare', 'GUARDIAN', '00000000-0000-4000-8000-000000006030', true, now()) RETURNING id INTO guardian;
+  INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId") VALUES (s, guardian, pg_temp.tko_id(6021));
+  FOREACH g IN ARRAY ARRAY['MENTOR', 'REKTOR', 'KANSLI', 'GUARDIAN'] LOOP
+    INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays") VALUES (s, g::"AbsenceWatchGroup", 'CONSECUTIVE', 'ALL', 3) RETURNING id INTO lim;
+    FOREACH p IN ARRAY ARRAY[6021, 6023] LOOP
+      INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, "consecutiveDays", "firstCrossedOn", "lastSeenOn", "streakDays")
+      VALUES (s, pg_temp.tko_id(p), lim, g::"AbsenceWatchGroup", 'CONSECUTIVE', 'ALL', 3, current_date - 4, current_date - 1, 4);
+    END LOOP;
+  END LOOP;
+
+  PERFORM pg_temp.tko_mark(6001, false);
+  plan_mentor := pg_temp.tko_plan('MENTOR');
+  plan_rektor := pg_temp.tko_plan('REKTOR');
+  plan_kansli := pg_temp.tko_plan('KANSLI');
+  plan_guardian := pg_temp.tko_plan('GUARDIAN');
+  PERFORM pg_temp.tko_expect('512o-c unmarked: the MENTOR group is the two teachers', plan_mentor, '6010=1/1/1,6011=1/1/1');
+  PERFORM pg_temp.tko_expect('512o-c the REKTOR group is rektor and the full administrator, both pupils', plan_rektor, '6001=2/2/2,6002=2/2/2');
+  PERFORM pg_temp.tko_expect('512o-c the KANSLI group is the expedition', plan_kansli, '6004=2/2/2');
+  PERFORM pg_temp.tko_expect('512o-c the GUARDIAN group is the guardian', plan_guardian, '6030=1/1/1');
+
+  PERFORM pg_temp.tko_mark(6001, true);
+  PERFORM pg_temp.tko_expect('512o-c rektor marked: the MENTOR group gains her', pg_temp.tko_plan('MENTOR'), '6001=1/1/1,6010=1/1/1,6011=1/1/1');
+  PERFORM pg_temp.tko_expect('512o-c and she is in the REKTOR group too, as before (two digests, the pull request says so)', pg_temp.tko_plan('REKTOR'), plan_rektor);
+  PERFORM pg_temp.tko_mark(6002, true);
+  PERFORM pg_temp.tko_mark(6003, true);
+  PERFORM pg_temp.tko_mark(6004, true);
+  PERFORM pg_temp.tko_expect('512o-c all four marked: the MENTOR group has the two marked with a finding (7C and 7D have none) and the teachers',
+    pg_temp.tko_plan('MENTOR'), '6001=1/1/1,6002=1/1/1,6010=1/1/1,6011=1/1/1');
+  PERFORM pg_temp.tko_expect('512o-c the REKTOR group is as it was', pg_temp.tko_plan('REKTOR'), plan_rektor);
+  PERFORM pg_temp.tko_expect('512o-c the KANSLI group is as it was', pg_temp.tko_plan('KANSLI'), plan_kansli);
+  PERFORM pg_temp.tko_expect('512o-c the GUARDIAN group is as it was', pg_temp.tko_plan('GUARDIAN'), plan_guardian);
+  -- A marked one who does not mentor the pupils with findings is in no plan, and neither is an inactive marked one.
+  UPDATE "Users" SET "isActive" = false WHERE id = pg_temp.tko_id(6001);
+  PERFORM pg_temp.tko_expect('512o-c inactive: out of the MENTOR group', pg_temp.tko_plan('MENTOR'), '6002=1/1/1,6010=1/1/1,6011=1/1/1');
+  PERFORM pg_temp.tko_expect('512o-c and out of the REKTOR group (isActive, as before)', pg_temp.tko_plan('REKTOR'), '6002=2/2/2');
+  UPDATE "Users" SET "isActive" = true WHERE id = pg_temp.tko_id(6001);
+  PERFORM pg_temp.tko_mark(6001, false);
+  PERFORM pg_temp.tko_expect('512o-c rektor unmarked: out of the MENTOR group again', pg_temp.tko_plan('MENTOR'), '6002=1/1/1,6010=1/1/1,6011=1/1/1');
+  PERFORM pg_temp.tko_expect('512o-c and still in the REKTOR group', pg_temp.tko_plan('REKTOR'), plan_rektor);
+  -- The digest's own isActive guard on the recipient (the line the other three groups share with the mentors): an inactive guardian is no
+  -- recipient (the guardian's scope has no check of its own, so this is what holds it), and the plan is as it was for the others.
+  UPDATE "Users" SET "isActive" = false WHERE id = guardian;
+  PERFORM pg_temp.tko_expect('512o-c an inactive guardian gets no digest', pg_temp.tko_plan('GUARDIAN'), '');
+  UPDATE "Users" SET "isActive" = true WHERE id = guardian;
+  PERFORM pg_temp.tko_expect('512o-c and an active one does', pg_temp.tko_plan('GUARDIAN'), plan_guardian);
+
+  -- 512o-d. The notice. Both teachers were told of their request when it came (the trigger of the fixture's insert). A person who becomes a
+  -- mentor while it waits is told once by the catch-up; nobody is told twice; an administrator with the duty who is not marked is not told.
+  req := (SELECT id FROM "LeaveRequests" WHERE "studentId" = pg_temp.tko_id(6021));
+  PERFORM pg_temp.tko_mark(6001, false);
+  PERFORM pg_temp.tko_mark(6002, false);
+  PERFORM pg_temp.tko_mark(6003, false);
+  PERFORM pg_temp.tko_mark(6004, false);
+  PERFORM pg_temp.tko_expect('512o-d the teacher of 7A was told at the request, and nobody else',
+    (SELECT coalesce(string_agg(pg_temp.tko_who(n."userId"), ',' ORDER BY pg_temp.tko_who(n."userId")), '') FROM "LeaveRequestNotices" n WHERE n."leaveRequestId" = req), '6010');
+  told := (SELECT coalesce(string_agg(pg_temp.tko_who(t."userId"), ','), '') FROM app.leave_tell_mentors(s, req) t);
+  PERFORM pg_temp.tko_expect('512o-d the catch-up tells no one while no one is marked (the teacher was told, the rektor is no mentor)', told, '');
+  PERFORM pg_temp.tko_mark(6001, true);
+  PERFORM pg_temp.tko_mark(6004, true);
+  told := (SELECT coalesce(string_agg(pg_temp.tko_who(t."userId") || ':' || (t.meta ->> 'leaveRequestId' = req::text), ','), '') FROM app.leave_tell_mentors(s, req) t);
+  PERFORM pg_temp.tko_expect('512o-d the catch-up tells the marked mentor of the pupil, and only them (not the marked mentor of 7D, not the teacher again)', told, '6001:true');
+  SELECT count(*) INTO n FROM "Notifications" nt WHERE nt."userId" = pg_temp.tko_id(6001) AND nt.type = 'LEAVE_REQUESTED';
+  PERFORM pg_temp.tko_expect('512o-d and a LEAVE_REQUESTED notification is written to them', n::text, '1');
+  told := (SELECT coalesce(string_agg(pg_temp.tko_who(t."userId"), ','), '') FROM app.leave_tell_mentors(s, req) t);
+  PERFORM pg_temp.tko_expect('512o-d a second catch-up tells no one', told, '');
+  SELECT count(*) INTO n FROM "Notifications" nt WHERE nt."userId" = pg_temp.tko_id(6001) AND nt.type = 'LEAVE_REQUESTED';
+  PERFORM pg_temp.tko_expect('512o-d and writes no second notification', n::text, '1');
+  RAISE NOTICE 'tk 512o: the three owner functions of the mentor';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- 513o: rapporteringsgrad, what only the owner may run (20270219090000).
+--
+-- app.reporting_lessons (D2: the lessons a person is to report, asked for who is a teacher NOW and active) and app.absence_stats_lessons
+-- (the history's: asked for who was active when the lesson was over, from UserDeactivations) are the owner's alone; they are inlined
+-- into the definer functions the API's role runs. Both ask app.teaches_like(role, mark) since 20270219090000, and are otherwise one
+-- text (392o holds that). 513 in rls-policies.sql runs the open list and the night's count through the API's role; here are the
+-- functions themselves and the rest of what stands on them:
+--
+--   513o-a  the two lesson functions count a marked administrator's lessons, and not an unmarked one's, a läsare's (who cannot be marked)
+--           or, for D2, an inactive one's; the history keeps a lesson that was over before the person left; a teacher is unchanged;
+--   513o-b  RETROACTIVITY, one named test: a person who is marked today has their last 90 days' lessons counted the first night
+--           (app.reporting_compute rewrites 90 days), a lesson older than that is not, and the reminder looks back at most 30 days and
+--           not before the day the switch was turned on (the pull request and the handbook say so); the mark taken away removes the days
+--           again the night after;
+--   513o-c  the reminder: a marked administrator is reminded of an unreported lesson, once, like a teacher; an unmarked one never is;
+--   513o-d  the digest: the rektor's sum counts the marked person's lessons as the teacher's, and the marked person is not a recipient
+--           unless they already were (rektor and full are; schemaläggare and expedition are not);
+--   513o-e  the history's month (app.absence_stats_month): a marked administrator's lessons are held lessons of the month, and not
+--           an unmarked one's, and the month asked again follows the mark.
+--
+-- The cast is rls-fixtures.sql's 'rls-larm-school', as in 512 and 513. Everything is planted and marked inside its own transaction,
+-- which is rolled back.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION pg_temp.tko_expect(label text, got text, want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  IF got IS DISTINCT FROM want THEN
+    RAISE EXCEPTION E'tk %:\n   got      %\n   expected %', label, coalesce(got, '<null>'), want;
+  END IF;
+END $f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tko_claim(n int) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-00000000' || lpad(n::text, 4, '0'))::text, true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+END $f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tko_id(n int) RETURNS uuid LANGUAGE sql AS $f$
+  SELECT id FROM "Users" WHERE "authId" = ('00000000-0000-4000-8000-00000000' || lpad(n::text, 4, '0'))::uuid
+$f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tko_who(u uuid) RETURNS text LANGUAGE sql AS $f$
+  SELECT right("authId"::text, 4) FROM "Users" WHERE id = u
+$f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tko_school() RETURNS uuid LANGUAGE sql AS $f$
+  SELECT id FROM "Schools" WHERE slug = 'rls-larm-school'
+$f$;
+
+CREATE OR REPLACE FUNCTION pg_temp.tko_mark(n int, v boolean) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE c bigint;
+BEGIN
+  PERFORM pg_temp.tko_claim(CASE WHEN n = 6002 THEN 6001 ELSE 6002 END);
+  UPDATE "Users" SET teaches = v WHERE id = pg_temp.tko_id(n);
+  GET DIAGNOSTICS c = ROW_COUNT;
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF c <> 1 OR (SELECT teaches FROM "Users" WHERE id = pg_temp.tko_id(n)) IS DISTINCT FROM v THEN
+    RAISE EXCEPTION 'tk: the mark of …% was not set to % (% rows)', n, v, c;
+  END IF;
+END $f$;
+
+-- The lessons 'LA-…' of the last thirty days that one of the two lesson functions counts, as 'note=person:o' (open) or ':r' (reported).
+CREATE OR REPLACE FUNCTION pg_temp.tko_lessons(which text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE r text;
+BEGIN
+  IF which = 'reporting' THEN
+    SELECT coalesce(string_agg(cl.note || '=' || pg_temp.tko_who(l.teacher_id) || ':' || CASE WHEN l.reported THEN 'r' ELSE 'o' END, ',' ORDER BY cl.note COLLATE "C"), '')
+      INTO r FROM app.reporting_lessons(pg_temp.tko_school(), current_date - 30, current_date, clock_timestamp()) l
+      JOIN "CalendarLessons" cl ON cl.id = l.lesson_id WHERE cl.note LIKE 'LA-%';
+  ELSE
+    SELECT coalesce(string_agg(cl.note || '=' || pg_temp.tko_who(l.teacher_id) || ':' || CASE WHEN l.reported THEN 'r' ELSE 'o' END, ',' ORDER BY cl.note COLLATE "C"), '')
+      INTO r FROM app.absence_stats_lessons(pg_temp.tko_school(), current_date - 30, current_date, clock_timestamp()) l
+      JOIN "CalendarLessons" cl ON cl.id = l.lesson_id WHERE cl.note LIKE 'LA-%';
+  END IF;
+  RETURN r;
+END $f$;
+
+-- A lesson of the first class, held (and over) on p_day, with one teacher, planted as the owner. A school day's own time of day.
+CREATE OR REPLACE FUNCTION pg_temp.tko_lesson(p_note text, p_day date, p_hour int, p_teacher int) RETURNS uuid LANGUAGE plpgsql AS $f$
+DECLARE
+  l uuid;
+  s uuid := pg_temp.tko_school();
+  starts timestamptz := (p_day + make_time(p_hour, 0, 0)) AT TIME ZONE 'Europe/Stockholm';
+BEGIN
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, note, "updatedAt")
+  VALUES (s, (SELECT id FROM "Subjects" WHERE "schoolId" = s AND code = 'RLSLA'), (SELECT id FROM "StudentGroups" WHERE "schoolId" = s AND name = 'LA7A'),
+          p_day, starts, starts + interval '50 minutes', 'SCHEDULED', p_note, now()) RETURNING id INTO l;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, l, pg_temp.tko_id(p_teacher), 'LEAD');
+  RETURN l;
+END $f$;
+
+-- The days (as days ago) a person has stored, nearest first.
+CREATE OR REPLACE FUNCTION pg_temp.tko_days(n int) RETURNS text LANGUAGE sql AS $f$
+  SELECT coalesce(string_agg((current_date - d.day)::text, ',' ORDER BY d.day DESC), '') FROM "TeacherReportingDays" d WHERE d."teacherId" = pg_temp.tko_id(n)
+$f$;
+
+-- 513o-a. The two lesson functions.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.tko_school();
+  base constant text := 'LA-5=6010:o,LA-6=6011:o,LA-T1-OK=6010:r';
+  l uuid;
+BEGIN
+  IF s IS NULL THEN RAISE EXCEPTION 'tk 513o: rls-larm-school is not there; fixtures did not run'; END IF;
+  PERFORM pg_temp.tko_expect('513o-a nobody of the school is marked to begin with', (SELECT count(*)::text FROM "Users" WHERE "schoolId" = s AND teaches), '0');
+  -- Unmarked: the two functions count the teachers' lessons and nobody else's (the four administrators stand on one each).
+  PERFORM pg_temp.tko_expect('513o-a D2, unmarked: the teachers'' lessons only', pg_temp.tko_lessons('reporting'), base);
+  PERFORM pg_temp.tko_expect('513o-a the history, unmarked: the same', pg_temp.tko_lessons('history'), base);
+  PERFORM pg_temp.tko_expect('513o-a four administrators stand on a lesson each',
+    (SELECT count(*)::text FROM "CalendarLessonTeachers" t JOIN "Users" u ON u.id = t."teacherId" WHERE t."schoolId" = s AND u.role = 'SCHOOL_ADMIN'), '4');
+
+  PERFORM pg_temp.tko_mark(6001, true);
+  PERFORM pg_temp.tko_expect('513o-a D2, rektor marked: her lesson counts, open', pg_temp.tko_lessons('reporting'), 'LA-1=6001:o,' || base);
+  PERFORM pg_temp.tko_expect('513o-a the history: the same', pg_temp.tko_lessons('history'), 'LA-1=6001:o,' || base);
+  PERFORM pg_temp.tko_mark(6002, true);
+  PERFORM pg_temp.tko_mark(6003, true);
+  PERFORM pg_temp.tko_mark(6004, true);
+  PERFORM pg_temp.tko_expect('513o-a D2, all four marked', pg_temp.tko_lessons('reporting'),
+    'LA-1=6001:o,LA-2=6002:o,LA-3=6003:o,LA-4=6004:o,' || base);
+  PERFORM pg_temp.tko_expect('513o-a the history, all four marked', pg_temp.tko_lessons('history'),
+    'LA-1=6001:o,LA-2=6002:o,LA-3=6003:o,LA-4=6004:o,' || base);
+
+  -- A saved register makes the marked person's lesson reported, as it makes a teacher's.
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
+  SELECT s, cl.id, pg_temp.tko_id(6021), 'PRESENT', now() FROM "CalendarLessons" cl WHERE cl.note = 'LA-1' AND cl."schoolId" = s;
+  PERFORM pg_temp.tko_expect('513o-a a saved register: reported', pg_temp.tko_lessons('reporting'),
+    'LA-1=6001:r,LA-2=6002:o,LA-3=6003:o,LA-4=6004:o,' || base);
+  PERFORM pg_temp.tko_expect('513o-a and in the history', pg_temp.tko_lessons('history'),
+    'LA-1=6001:r,LA-2=6002:o,LA-3=6003:o,LA-4=6004:o,' || base);
+
+  -- The mark taken away: the lesson is nobody's to report (it stays on the timetable).
+  PERFORM pg_temp.tko_mark(6002, false);
+  PERFORM pg_temp.tko_expect('513o-a full unmarked: LA-2 is nobody''s', pg_temp.tko_lessons('reporting'),
+    'LA-1=6001:r,LA-3=6003:o,LA-4=6004:o,' || base);
+  PERFORM pg_temp.tko_expect('513o-a also in the history', pg_temp.tko_lessons('history'),
+    'LA-1=6001:r,LA-3=6003:o,LA-4=6004:o,' || base);
+  PERFORM pg_temp.tko_expect('513o-a and LA-2 is still on the timetable with her',
+    (SELECT count(*)::text FROM "CalendarLessonTeachers" t JOIN "CalendarLessons" cl ON cl.id = t."calendarLessonId" WHERE cl.note = 'LA-2' AND t."teacherId" = pg_temp.tko_id(6002)), '1');
+
+  -- An inactive marked person: D2 asks who is active (isActive), the history who was active when the lesson was over (the periods): a
+  -- lesson that was over before they left counts in the history and not in D2.
+  UPDATE "Users" SET "isActive" = false WHERE id = pg_temp.tko_id(6003);
+  PERFORM pg_temp.tko_expect('513o-a inactive and still marked', (SELECT teaches::text FROM "Users" WHERE id = pg_temp.tko_id(6003)), 'true');
+  PERFORM pg_temp.tko_expect('513o-a D2: an inactive marked person''s lesson is not counted', pg_temp.tko_lessons('reporting'),
+    'LA-1=6001:r,LA-4=6004:o,' || base);
+  PERFORM pg_temp.tko_expect('513o-a the history: a lesson over before they left is still theirs', pg_temp.tko_lessons('history'),
+    'LA-1=6001:r,LA-3=6003:o,LA-4=6004:o,' || base);
+  UPDATE "Users" SET "isActive" = true WHERE id = pg_temp.tko_id(6003);
+
+  -- A läsare on a lesson: the mark cannot stand, so the lesson is nobody's (and a row that says teaches is zeroed first).
+  l := pg_temp.tko_lesson('LA-X', current_date - 10, 10, 6006);
+  PERFORM pg_temp.tko_claim(6002);
+  UPDATE "Users" SET teaches = true WHERE id = pg_temp.tko_id(6006);
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM pg_temp.tko_expect('513o-a the läsare''s mark is zeroed', (SELECT teaches::text FROM "Users" WHERE id = pg_temp.tko_id(6006)), 'false');
+  PERFORM pg_temp.tko_expect('513o-a the läsare''s lesson is not counted by D2', (SELECT count(*)::text FROM app.reporting_lessons(s, current_date - 30, current_date, clock_timestamp()) r WHERE r.lesson_id = l), '0');
+  PERFORM pg_temp.tko_expect('513o-a nor by the history', (SELECT count(*)::text FROM app.absence_stats_lessons(s, current_date - 30, current_date, clock_timestamp()) r WHERE r.lesson_id = l), '0');
+  -- A pupil or a guardian listed on a lesson: no, as before.
+  UPDATE "CalendarLessonTeachers" SET "teacherId" = pg_temp.tko_id(6021) WHERE "calendarLessonId" = l;
+  PERFORM pg_temp.tko_expect('513o-a a pupil on a lesson counts for nobody', (SELECT count(*)::text FROM app.reporting_lessons(s, current_date - 30, current_date, clock_timestamp()) r WHERE r.lesson_id = l), '0');
+  RAISE NOTICE 'tk 513o-a: the two lesson functions';
+END $$;
+ROLLBACK;
+
+-- 513o-b and 513o-c. RETROACTIVITY, the night's count and the reminder, as one story. The school turned the reminders on sixty days ago (the
+-- switch's date is the trigger's, so the row is written with the triggers off); rektor is marked today and has stood on lessons for months.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.tko_school();
+  today_ date := current_date;
+  pday date := current_date + CASE extract(isodow FROM current_date) WHEN 6 THEN 2 WHEN 7 THEN 1 ELSE 0 END;
+  r text;
+  led int;
+BEGIN
+  IF s IS NULL THEN RAISE EXCEPTION 'tk 513o: rls-larm-school is not there; fixtures did not run'; END IF;
+  -- Rektor's lessons from before today: 3 days ago (the fixture's LA-1), 25, 35, 80 and 95 days ago.
+  PERFORM pg_temp.tko_lesson('LA-R25', today_ - 25, 8, 6001);
+  PERFORM pg_temp.tko_lesson('LA-R35', today_ - 35, 8, 6001);
+  PERFORM pg_temp.tko_lesson('LA-R80', today_ - 80, 8, 6001);
+  PERFORM pg_temp.tko_lesson('LA-R95', today_ - 95, 8, 6001);
+  PERFORM set_config('session_replication_role', 'replica', true);
+  INSERT INTO "ReportingSettings" ("schoolId", "teacherReminders", "teacherRemindersOn", "rektorDigest", "rektorDigestOn", "updatedAt")
+  VALUES (s, true, today_ - 60, false, NULL, now());
+  PERFORM set_config('session_replication_role', 'origin', true);
+
+  -- The night before the mark: the teachers' days only.
+  PERFORM pg_temp.tko_expect('513o-b unmarked: the night writes the three days of the teachers',
+    (SELECT written || '/' || removed || '/' || teachers || '/' || held || '/' || reported FROM app.reporting_compute(s, today_ - 1)), '3/0/2/3/1');
+  PERFORM pg_temp.tko_expect('513o-b rektor has no day', pg_temp.tko_days(6001), '');
+
+  -- The first night after the mark: the 90 days up to and including yesterday are rewritten, so the lessons of the last 90 days count as
+  -- held (and, with no saved register, as not reported): 3, 25, 35 and 80 days ago. The one 95 days ago is before the window.
+  PERFORM pg_temp.tko_mark(6001, true);
+  PERFORM pg_temp.tko_expect('513o-b marked: the first night writes her four days',
+    (SELECT written || '/' || removed || '/' || teachers || '/' || held || '/' || reported FROM app.reporting_compute(s, today_ - 1)), '4/0/3/7/1');
+  PERFORM pg_temp.tko_expect('513o-b they are 3, 25, 35 and 80 days ago (RETROACTIVITY: the mark counts what she taught before it)', pg_temp.tko_days(6001), '3,25,35,80');
+  PERFORM pg_temp.tko_expect('513o-b none of them reported (no register saved)',
+    (SELECT sum(d.reported)::text FROM "TeacherReportingDays" d WHERE d."teacherId" = pg_temp.tko_id(6001)), '0');
+  PERFORM pg_temp.tko_expect('513o-b a second night changes nothing',
+    (SELECT written || '/' || removed FROM app.reporting_compute(s, today_ - 1)), '0/0');
+
+  -- 513o-c. The reminder: looks back at most 30 days and not before the switch was turned on (sixty days ago here), and not at a lesson
+  -- less than two days old (the limit): the teachers are reminded of their unreported lesson, rektor of two (25 and 3 days ago), once.
+  PERFORM pg_temp.tko_expect('513o-c the reminders of the day: the teachers and the marked rektor (two lessons, not the 35 or 80 days old)',
+    (SELECT string_agg(pg_temp.tko_who(r.user_id) || '=' || (r.meta ->> 'count') || '/' || (r.meta ->> 'limitDays'), ',' ORDER BY pg_temp.tko_who(r.user_id)) FROM app.reporting_remind(s, pday) r),
+    '6001=2/2,6010=1/2,6011=1/2');
+  PERFORM pg_temp.tko_expect('513o-c a LESSON_REPORT_REMINDER notification is written to the marked rektor',
+    (SELECT count(*)::text FROM "Notifications" n WHERE n."userId" = pg_temp.tko_id(6001) AND n.type = 'LESSON_REPORT_REMINDER'), '1');
+  PERFORM pg_temp.tko_expect('513o-c and to nobody who is no teacher and unmarked',
+    (SELECT count(*)::text FROM "Notifications" n WHERE n."userId" IN (pg_temp.tko_id(6002), pg_temp.tko_id(6003), pg_temp.tko_id(6004)) AND n.type = 'LESSON_REPORT_REMINDER'), '0');
+  PERFORM pg_temp.tko_expect('513o-c the ledger holds one row for each of the four lessons reminded of',
+    (SELECT count(*)::text FROM "ReportingReminders" x WHERE x."schoolId" = s), '4');
+  PERFORM pg_temp.tko_expect('513o-c a second pass reminds nobody again', (SELECT count(*)::text FROM app.reporting_remind(s, pday)), '0');
+
+  -- The mark taken away: the days go the night after, and the history before the first night is final in the other direction (they were
+  -- inside the window, so they are removed).
+  PERFORM pg_temp.tko_mark(6001, false);
+  PERFORM pg_temp.tko_expect('513o-b unmarked: the next night removes her four days',
+    (SELECT written || '/' || removed || '/' || teachers || '/' || held FROM app.reporting_compute(s, today_ - 1)), '0/4/2/3');
+  PERFORM pg_temp.tko_expect('513o-b and she has none', pg_temp.tko_days(6001), '');
+  RAISE NOTICE 'tk 513o-b/c: retroactivity and the reminder';
+END $$;
+ROLLBACK;
+
+-- 513o-d. The digest of a week well in the past (so that no lesson of the fixture is in it): teacher 1 held a lesson on its Tuesday and rektor on
+-- its Wednesday. The sum of the week counts the marked rektor as a teacher, and the notice goes to rektor and full (the two profiles that
+-- receive it), never to a marked schemaläggare or expedition.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.tko_school();
+  p_start date := date_trunc('week', current_date)::date - 28;
+  p_end date;
+  who text;
+BEGIN
+  IF s IS NULL THEN RAISE EXCEPTION 'tk 513o: rls-larm-school is not there; fixtures did not run'; END IF;
+  p_end := p_start + 6;
+  PERFORM pg_temp.tko_lesson('DG-T1', p_start + 1, 8, 6010);
+  PERFORM pg_temp.tko_lesson('DG-R', p_start + 2, 8, 6001);
+  PERFORM pg_temp.tko_lesson('DG-3', p_start + 3, 8, 6003);
+  PERFORM set_config('session_replication_role', 'replica', true);
+  INSERT INTO "ReportingSettings" ("schoolId", "teacherReminders", "teacherRemindersOn", "rektorDigest", "rektorDigestOn", "updatedAt")
+  VALUES (s, false, NULL, true, current_date - 60, now());
+  PERFORM set_config('session_replication_role', 'origin', true);
+
+  PERFORM app.reporting_compute(s, p_end);
+  PERFORM pg_temp.tko_expect('513o-d unmarked: only the teacher''s lesson is in the week',
+    (SELECT coalesce(sum(d.held), 0) || '/' || count(DISTINCT d."teacherId") FROM "TeacherReportingDays" d WHERE d."schoolId" = s AND d.day BETWEEN p_start AND p_end), '1/1');
+  PERFORM pg_temp.tko_expect('513o-d the notice goes to rektor and full, with the teacher''s lesson',
+    (SELECT string_agg(pg_temp.tko_who(r.user_id) || '=' || (r.meta ->> 'held') || '/' || (r.meta ->> 'reported') || '/' || (r.meta ->> 'teachers'), ',' ORDER BY pg_temp.tko_who(r.user_id))
+       FROM app.reporting_digest(s, p_start, p_end) r), '6001=1/0/1,6002=1/0/1');
+
+  -- The same week again, with rektor and the schemaläggare marked: the sum counts their lessons (a week's ledger row is the first one's,
+  -- so it and the notices go and the week is asked for again).
+  DELETE FROM "ReportingDigests" WHERE "schoolId" = s;
+  DELETE FROM "Notifications" WHERE "schoolId" = s AND type = 'REPORTING_RATE_DIGEST';
+  PERFORM pg_temp.tko_mark(6001, true);
+  PERFORM pg_temp.tko_mark(6003, true);
+  PERFORM pg_temp.tko_expect('513o-d the night after the marks counts their days',
+    (SELECT written || '/' || removed || '/' || teachers FROM app.reporting_compute(s, p_end)), '2/0/3');
+  PERFORM pg_temp.tko_expect('513o-d the week now has three lessons of three teachers',
+    (SELECT sum(d.held) || '/' || count(DISTINCT d."teacherId") FROM "TeacherReportingDays" d WHERE d."schoolId" = s AND d.day BETWEEN p_start AND p_end), '3/3');
+  PERFORM pg_temp.tko_expect('513o-d the digest counts them, and goes to the same two (the marked schemaläggare is no recipient, the marked rektor already was)',
+    (SELECT string_agg(pg_temp.tko_who(r.user_id) || '=' || (r.meta ->> 'held') || '/' || (r.meta ->> 'reported') || '/' || (r.meta ->> 'teachers'), ',' ORDER BY pg_temp.tko_who(r.user_id))
+       FROM app.reporting_digest(s, p_start, p_end) r), '6001=3/0/3,6002=3/0/3');
+  PERFORM pg_temp.tko_expect('513o-d the ledger says two recipients', (SELECT string_agg("recipients" || '/' || teachers || '/' || held, ',') FROM "ReportingDigests" WHERE "schoolId" = s), '2/3/3');
+  FOREACH who IN ARRAY ARRAY['6003', '6004', '6010'] LOOP
+    PERFORM pg_temp.tko_expect('513o-d ' || who || ' is sent no digest',
+      (SELECT count(*)::text FROM "Notifications" n WHERE n."userId" = pg_temp.tko_id(who::int) AND n.type = 'REPORTING_RATE_DIGEST'), '0');
+  END LOOP;
+  RAISE NOTICE 'tk 513o-d: the digest';
+END $$;
+ROLLBACK;
+
+-- 513o-e. The history's month (D6). A month well in the past, with the pupils' enrolments moved back to the start of the year (a trigger writes
+-- them on the day the fixture was made, and the school row of a month asks for five pupils enrolled in it). Teacher 1, rektor and the
+-- schemaläggare each held one lesson in it.
+BEGIN;
+DO $$
+DECLARE
+  s uuid := pg_temp.tko_school();
+  m_first date := date_trunc('month', current_date - 40)::date;
+  m_last date := (date_trunc('month', current_date - 40) + interval '1 month')::date - 1;
+  row_ text;
+BEGIN
+  IF s IS NULL THEN RAISE EXCEPTION 'tk 513o: rls-larm-school is not there; fixtures did not run'; END IF;
+  PERFORM set_config('session_replication_role', 'replica', true);
+  UPDATE "StudentEnrollments" SET "validFrom" = current_date - 120 WHERE "schoolId" = s;
+  PERFORM set_config('session_replication_role', 'origin', true);
+  PERFORM pg_temp.tko_lesson('LA-H1', m_first + 9, 8, 6010);
+  PERFORM pg_temp.tko_lesson('LA-H2', m_first + 10, 8, 6001);
+  PERFORM pg_temp.tko_lesson('LA-H3', m_first + 11, 8, 6003);
+  -- A saved register on the rektor's lesson.
+  INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
+  SELECT s, cl.id, pg_temp.tko_id(6021), 'PRESENT', now() FROM "CalendarLessons" cl WHERE cl.note = 'LA-H2' AND cl."schoolId" = s;
+
+  PERFORM app.absence_stats_month(s, m_first, m_last);
+  SELECT a."lessonsHeld" || '/' || a."lessonsReported" INTO row_ FROM "AbsenceStatsMonths" a WHERE a."schoolId" = s AND a."studentGroupId" IS NULL AND a."month" = m_first;
+  PERFORM pg_temp.tko_expect('513o-e unmarked: the month holds the teacher''s lesson only', row_, '1/0');
+
+  PERFORM pg_temp.tko_mark(6001, true);
+  PERFORM app.absence_stats_month(s, m_first, m_last);
+  SELECT a."lessonsHeld" || '/' || a."lessonsReported" INTO row_ FROM "AbsenceStatsMonths" a WHERE a."schoolId" = s AND a."studentGroupId" IS NULL AND a."month" = m_first;
+  PERFORM pg_temp.tko_expect('513o-e rektor marked: her lesson is held and reported (a register is saved), the schemaläggare''s is not counted', row_, '2/1');
+
+  PERFORM pg_temp.tko_mark(6003, true);
+  PERFORM app.absence_stats_month(s, m_first, m_last);
+  SELECT a."lessonsHeld" || '/' || a."lessonsReported" INTO row_ FROM "AbsenceStatsMonths" a WHERE a."schoolId" = s AND a."studentGroupId" IS NULL AND a."month" = m_first;
+  PERFORM pg_temp.tko_expect('513o-e both marked: three lessons held, one reported', row_, '3/1');
+
+  -- Asked again after the mark is taken away the same month is counted as it is then (what D6's job asks of an open month; it does not
+  -- ask for a month it has stored, which is why a person marked today does not change a closed month of the history).
+  PERFORM pg_temp.tko_mark(6003, false);
+  PERFORM app.absence_stats_month(s, m_first, m_last);
+  SELECT a."lessonsHeld" || '/' || a."lessonsReported" INTO row_ FROM "AbsenceStatsMonths" a WHERE a."schoolId" = s AND a."studentGroupId" IS NULL AND a."month" = m_first;
+  PERFORM pg_temp.tko_expect('513o-e the schemaläggare unmarked, the month asked again: hers is gone', row_, '2/1');
+  RAISE NOTICE 'tk 513o-e: the history''s month';
+END $$;
+ROLLBACK;
