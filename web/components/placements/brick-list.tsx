@@ -53,6 +53,9 @@ export function BrickList({ groups, selected, onSelect, onPull }: BrickListProps
                 key={brick.key}
                 type="button"
                 data-brick={brick.key}
+                // The post, which the heading above the bricks says to the eye, is in the name too: a screen reader lands on a
+                // brick from the keyboard, not on its heading. The visible text is inside the name (WCAG 2.5.3).
+                aria-label={`${group.title}, ${brick.text}`}
                 aria-pressed={selected === brick.key}
                 onPointerDown={(event) => {
                   // A finger scrolls the list; only a mouse or a pen pulls (a tap chooses).

@@ -2029,7 +2029,8 @@
     "pairConfirm": "{lesson} is one lesson in two places, odd and even weeks, so both halves are removed: {rows}.",
     "keptHidden": "{count, plural, one {# lesson is fixed in the master timetable.} other {# lessons are fixed in the master timetable.}} They are drawn when you pick a class, a teacher or a room.",
     "brickText": "{teacher} · {minutes} min",
-    "brickLabel": "{lesson}, {teacher}, {minutes} min"
+    "brickLabel": "{lesson}, {teacher}, {minutes} min",
+    "otherRowRefused": "The lesson {when} on the same post no longer holds, and nothing is saved until it is put right (move or remove it): {reason}"
   },
   "roomOptimization": {
     "title": "Optimise rooms",

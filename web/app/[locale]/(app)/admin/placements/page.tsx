@@ -60,7 +60,7 @@ import {
   type RowEdit,
   type Spot,
 } from "@/lib/placement-rows";
-import { usePlacementEditor, writeProblemOf } from "@/lib/placement-write";
+import { WriteFailure, usePlacementEditor, writeProblemOf } from "@/lib/placement-write";
 import {
   useConstraints,
   useFrameTimes,
@@ -431,16 +431,31 @@ export default function PlacementsPage() {
         setMessage({ tone: "problem", text: tPlacements("busy") });
         return;
       }
-      const refused = placementsRefusal(error);
+      const failure = error instanceof WriteFailure ? error : null;
+      const cause = failure ? failure.reason : error;
+      const refused = placementsRefusal(cause);
       if (refused) {
         const sentence = refused.kind === "ROW" ? verdictSentence(tPlacements, refused.reason, refused.params) : fitSentence(tPlacements, refused.reason);
+        // The gateway judges every row of the post, so the row it names may be another than the one that was changed (a row that
+        // no longer holds refuses every change of the post): then it is said about that row, and the change waits for it.
+        const ofRow = refused.kind === "ROW" ? refused : null;
+        const named = ofRow && failure ? failure.list[ofRow.index] : undefined;
+        if (ofRow && named && ofRow.index !== failure!.changedIndex) {
+          setMessage({
+            tone: "problem",
+            text: t("otherRowRefused", { when: whenText(named.dayOfWeek, minutesOfClock(named.startTime), named.minutes), reason: sentence }),
+          });
+          return;
+        }
         setRefusal(sentence);
         setMessage({ tone: "problem", text: t("cannotStandThere", { reason: sentence }) });
         return;
       }
-      setMessage({ tone: "problem", text: `${t("notSaved")} ${error instanceof ApiError || error instanceof Error ? error.message : ""}`.trim() });
+      const cannot = cause instanceof ApiError || cause instanceof Error ? cause.message : "";
+      setMessage({ tone: "problem", text: `${t("notSaved")} ${cannot}`.trim() });
     },
-    [board, t, tPlacements],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [board, t, tPlacements, tDays],
   );
 
   /** One change to one post: written, said, and the keyboard left on what changed. */

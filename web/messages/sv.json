@@ -2029,7 +2029,8 @@
     "pairConfirm": "{lesson} är en lektion på två platser, udda och jämna veckor, så båda halvorna tas bort: {rows}.",
     "keptHidden": "{count, plural, one {# lektion ligger fast i grundschemat.} other {# lektioner ligger fast i grundschemat.}} De ritas när du väljer en klass, en lärare eller en sal.",
     "brickText": "{teacher} · {minutes} min",
-    "brickLabel": "{lesson}, {teacher}, {minutes} min"
+    "brickLabel": "{lesson}, {teacher}, {minutes} min",
+    "otherRowRefused": "Lektionen {when} på samma post håller inte längre, och ingenting sparas förrän den är rättad (flytta eller ta bort den): {reason}"
   },
   "roomOptimization": {
     "title": "Optimera salar",

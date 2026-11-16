@@ -6,7 +6,7 @@ import { ApiError } from "./api";
 import type { BoardPart, BoardPlacement, BoardPost, PlacementBoard } from "./placement-board";
 import { placementBoardKey } from "./placement-board-queries";
 import { keysOfRows } from "./placement-rows";
-import { patchBoard, usePlacementEditor, writeProblemOf } from "./placement-write";
+import { WriteFailure, patchBoard, usePlacementEditor, writeProblemOf } from "./placement-write";
 import type { PlacementsOfRequirement, RequirementPlacement } from "./requirement-placements";
 
 const save = vi.hoisted(() => vi.fn());
@@ -141,6 +141,10 @@ describe("what a failed write is", () => {
     expect(writeProblemOf(new ApiError(409, "x", "REQUIREMENT_PLACEMENT_REFUSED"))).toBe("OTHER");
     expect(writeProblemOf(new ApiError(500, "x", "REQUIREMENT_PLACEMENTS_STALE"))).toBe("OTHER");
     expect(writeProblemOf(new Error("x"))).toBe("OTHER");
+    // A refused write comes wrapped with the list that was sent: it is the same problem.
+    expect(writeProblemOf(new WriteFailure(new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_STALE"), [], 0))).toBe("STALE");
+    expect(writeProblemOf(new WriteFailure(new ApiError(409, "x", "SCHEDULE_BUSY"), [], -1))).toBe("BUSY");
+    expect(writeProblemOf(new WriteFailure(new Error("x"), [], 0))).toBe("OTHER");
   });
 });
 
@@ -215,6 +219,25 @@ describe("usePlacementEditor", () => {
     expect(save.mock.calls[2]![1]).toEqual([{ dayOfWeek: 5, startTime: "10:00", minutes: 60, roomId: "r-a12", recurrence: "ALL_WEEKS" }]);
   });
 
+  it("says with the refusal which list was sent and where the changed lesson stood in it, so that a refusal about another row can be told", async () => {
+    save.mockRejectedValue(new ApiError(409, "no", "REQUIREMENT_PLACEMENT_REFUSED", { index: 1, reason: "TEACHER" }));
+    const { result } = renderHook(() => usePlacementEditor("y1"), { wrapper });
+    let failure: unknown;
+    await act(async () => {
+      failure = await result.current
+        .change("post-1", { kind: "move", key: firstRowKey(), to: { dayOfWeek: 3, startMinutes: 540 } }, "move")
+        .catch((error: unknown) => error);
+    });
+    expect(failure).toBeInstanceOf(WriteFailure);
+    expect((failure as WriteFailure).changedIndex).toBe(0);
+    expect((failure as WriteFailure).list).toEqual([{ dayOfWeek: 3, startTime: "09:00", minutes: 60, roomId: "r-a12", recurrence: "ALL_WEEKS" }]);
+    // A removal has no lesson left in the list.
+    await act(async () => {
+      failure = await result.current.change("post-1", { kind: "remove", keys: [firstRowKey()] }, "remove").catch((error: unknown) => error);
+    });
+    expect((failure as WriteFailure).changedIndex).toBe(-1);
+  });
+
   it("refuses to change a lesson the week no longer has, and writes nothing", async () => {
     const { result } = renderHook(() => usePlacementEditor("y1"), { wrapper });
     let outcome: Awaited<ReturnType<typeof result.current.change>>;
@@ -231,7 +254,7 @@ describe("usePlacementEditor", () => {
     await act(async () => {
       await expect(
         result.current.change("post-1", { kind: "add", input: { dayOfWeek: 4, startTime: "10:00", minutes: 60, roomId: null, recurrence: "ALL_WEEKS" } }, "place"),
-      ).rejects.toBeInstanceOf(ApiError);
+      ).rejects.toBeInstanceOf(WriteFailure);
     });
     expect(result.current.history.canUndo).toBe(false);
     expect(cached()).toEqual(board());

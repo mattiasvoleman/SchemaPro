@@ -594,6 +594,8 @@ describe("Att lägga", () => {
     expect(bricks().map((brick) => brick.textContent)).toEqual(["brickText(A. Ek|60)"]);
     expect(bricks()[0]).toHaveAttribute("data-brick", "post-ma|anna|60#1");
     expect(screen.getByTestId("brick-post")).toHaveTextContent("Matematik 7A");
+    // The name a screen reader gives it holds the post, the teacher and the length (the visible text is in it).
+    expect(screen.getByRole("button", { name: "Matematik 7A, brickText(A. Ek|60)" })).toBe(bricks()[0]);
   });
 
   it("has one brick per lesson of a post that shares its lessons, each with its teacher", async () => {
@@ -1144,6 +1146,24 @@ describe("a post somebody else has written", () => {
     fireEvent.keyDown(cardOf(ANNA_ROW)!, { key: "ArrowUp" });
     await waitFor(() => expect(api.put).toHaveBeenCalledTimes(2));
     expect(lastPut()[1].baseKey).toBe("k777777777777777");
+  });
+
+  it("says about the OTHER row when the gateway names one: a row that no longer holds refuses every change of its post", async () => {
+    // Thursday's row (the second of the post's list) does not hold: the gateway names it for a move of Tuesday's.
+    state.refuse = () => new ApiError(409, "no", "REQUIREMENT_PLACEMENT_REFUSED", { index: 1, reason: "TEACHER", className: "7B", subjectName: "Slöjd", day: 4, start: "13:00", end: "14:00" });
+    renderPage();
+    await ready();
+    fireEvent.keyDown(cardOf(ANNA_ROW)!, { key: "ArrowUp" });
+    expect(await screen.findByTestId("placement-message")).toHaveTextContent("otherRowRefused(4 13:00–14:00|verdict.TEACHER");
+    expect(screen.getByTestId("placement-message")).not.toHaveTextContent("cannotMoveThere");
+  });
+
+  it("says it about the lesson that was changed when the gateway names that one", async () => {
+    state.refuse = () => new ApiError(409, "no", "REQUIREMENT_PLACEMENT_REFUSED", { index: 0, reason: "TEACHER" });
+    renderPage();
+    await ready();
+    fireEvent.keyDown(cardOf(ANNA_ROW)!, { key: "ArrowUp" });
+    expect(await screen.findByTestId("placement-message")).toHaveTextContent("cannotStandThere(verdict.TEACHER");
   });
 
   it("says that Generera is writing, in the dialog's own sentence, when the grundschema is being rewritten", async () => {

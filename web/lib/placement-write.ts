@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import { placementBoardKey } from "@/lib/placement-board-queries";
 import type { BoardPlacement, BoardPost, PlacementBoard } from "@/lib/placement-board";
-import { baseKeyOf, inputOf, listAfter, rowsOfPost, type RowEdit } from "@/lib/placement-rows";
+import { baseKeyOf, inputOf, keysOfRows, listAfter, rowsOfPost, type RowEdit } from "@/lib/placement-rows";
 import type { PlacementInput, PlacementsOfRequirement } from "@/lib/requirement-placements";
 import { invalidatePlacements, savePlacements } from "@/lib/requirement-placements-api";
 import { useScheduleHistory } from "@/lib/use-schedule-history";
@@ -99,10 +99,28 @@ export function patchBoard(board: PlacementBoard, postId: string, answer: Placem
   };
 }
 
+/**
+ * A write that did not go through, with what the page needs to say why: the list that was sent (the gateway names a refused
+ * row by its place in it) and where in it the lesson the reader changed is (-1: a removal, which has none left). The gateway
+ * judges EVERY row of a post at every write, so a row that no longer holds refuses a change of another row, and the sentence
+ * is about that row and not about the one the reader moved.
+ */
+export class WriteFailure extends Error {
+  constructor(
+    public readonly reason: unknown,
+    public readonly list: readonly PlacementInput[],
+    public readonly changedIndex: number,
+  ) {
+    super(reason instanceof Error ? reason.message : "Förläggningarna sparades inte.");
+    this.name = "WriteFailure";
+  }
+}
+
 /** What a refused or failed write is, for the page to say it: somebody else wrote the post, Generera is writing, or something else. */
 export type WriteProblem = "STALE" | "BUSY" | "OTHER";
 
-export function writeProblemOf(error: unknown): WriteProblem {
+export function writeProblemOf(failure: unknown): WriteProblem {
+  const error = failure instanceof WriteFailure ? failure.reason : failure;
   if (error instanceof ApiError && error.status === 409) {
     if (error.code === "REQUIREMENT_PLACEMENTS_STALE") return "STALE";
     if (error.code === "SCHEDULE_BUSY") return "BUSY";
@@ -139,8 +157,8 @@ export function usePlacementEditor(academicYearId: string | null) {
   /**
    * One change to one post: its whole list with the change made, on top of the key
    * the week holds, and a step on the history that puts the list back (and forward
-   * again). Rejects with the ApiError of a refused write; nothing is then written
-   * and the history is untouched.
+   * again). Rejects with a WriteFailure holding the ApiError of a refused write;
+   * nothing is then written and the history is untouched.
    */
   const change = useCallback(
     async (postId: string, edit: RowEdit, label: string): Promise<ChangeResult> => {
@@ -150,7 +168,13 @@ export function usePlacementEditor(academicYearId: string | null) {
       const before = rows.map(inputOf);
       const after = listAfter(rows, edit);
       if (after === null) return { ok: false, gone: true };
-      const answer = await mutateAsync({ postId, list: after, baseKey: baseKeyOf(board, postId) });
+      const changedIndex = edit.kind === "add" ? after.length - 1 : edit.kind === "move" ? keysOfRows(rows).indexOf(edit.key) : -1;
+      let answer: PlacementsOfRequirement;
+      try {
+        answer = await mutateAsync({ postId, list: after, baseKey: baseKeyOf(board, postId) });
+      } catch (error) {
+        throw new WriteFailure(error, after, changedIndex);
+      }
       push({
         label,
         undo: async () => void (await mutateAsync({ postId, list: before, baseKey: ours.current.get(postId) })),
