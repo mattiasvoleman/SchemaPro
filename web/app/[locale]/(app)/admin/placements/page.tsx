@@ -131,7 +131,8 @@ export default function PlacementsPage() {
   const { profile } = useProfile();
   const readOnly = useReadOnly();
   // Planering's: the profiles that write a förläggning. What the others see is the week, read.
-  const mayWrite = !readOnly && profileWrites(profile.adminProfile, "PLANERING");
+  // A profile built without one is the full administrator's, as the layout reads it (app/[locale]/(app)/layout.tsx).
+  const mayWrite = !readOnly && profileWrites(profile.adminProfile === undefined ? "FULL" : profile.adminProfile, "PLANERING");
 
   const { year, active, successor, choose, rosters, rostersFailed } = usePlanningYear();
   const board = usePlacementBoard(year?.id ?? null);

@@ -135,7 +135,7 @@ export function PlaceFields({ submitLabel, minutes, rooms, initial, sentenceOf, 
           </NativeSelect>
         </FormField>
       </div>
-      <p role="status" aria-live="polite" className="text-sm" data-testid="place-verdict">
+      <p role="status" aria-live="polite" className="text-sm [overflow-wrap:anywhere]" data-testid="place-verdict">
         {said}
       </p>
       <div className="flex flex-wrap gap-2">

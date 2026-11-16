@@ -644,6 +644,13 @@ describe("Att lägga", () => {
     expect(api.put).not.toHaveBeenCalled();
   });
 
+  it("is offered to an administrator whose profile carries no profile, whom the layout reads as the full administrator", async () => {
+    state.adminProfile = undefined as unknown as string;
+    renderPage();
+    await ready();
+    expect(bricks()).toHaveLength(1);
+  });
+
   it("is not offered to a reader either, whose keyboard has no way in (Läsbehörighet)", async () => {
     state.adminProfile = "LASARE";
     state.readOnly = true;

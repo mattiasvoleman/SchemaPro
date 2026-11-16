@@ -56,13 +56,13 @@ export function CardDialog({ placed, kept, mayWrite, fields, onSave, onRemove, o
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{placed?.line ?? kept?.line}</DialogDescription>
+          <DialogTitle className="[overflow-wrap:anywhere]">{title}</DialogTitle>
+          <DialogDescription className="[overflow-wrap:anywhere]">{placed?.line ?? kept?.line}</DialogDescription>
         </DialogHeader>
 
         {placed ? (
           <div className="space-y-4">
-            <p className="text-sm" data-testid="card-verdict">
+            <p className="text-sm [overflow-wrap:anywhere]" data-testid="card-verdict">
               {placed.verdictText}
             </p>
             <p className="text-xs text-muted-foreground">{t("savedAt", { when: placed.savedAt })}</p>
@@ -100,7 +100,7 @@ export function CardDialog({ placed, kept, mayWrite, fields, onSave, onRemove, o
           </div>
         ) : kept ? (
           <div className="space-y-3">
-            <p className="text-sm">{kept.note}</p>
+            <p className="text-sm [overflow-wrap:anywhere]">{kept.note}</p>
             {/* A page that is the schemaläggare's: shown to the profile that writes Schemaläggning, hidden from the rest. */}
             <Button variant="outline" size="sm" asChild data-writes="SCHEMALAGGNING">
               <Link href="/admin/timetable">{t("toTimetable")}</Link>
