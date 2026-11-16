@@ -5832,11 +5832,6 @@ the table in a long transaction): it never waits while it holds a lock, and afte
 - **Counting.** `SELECT count(*) FILTER (WHERE "roomId" IS NULL) AS pinned, count(*) AS all_rows FROM
   "TeachingRequirementPlacements"` says how many schools' rows the engine chooses the room for.
 
-  lessons: 133,036 and 10,739). Not measured on the 2,000-pupil benchmark,
-  where a first timetable takes minutes and a factor of two to three is felt
-  in the budget: that is measured with the change that first sends the
-  field.
-
 ## 23. The explanation of a refused week ("Förklaringen av en vägran")
 
 A week the engine has proved impossible is explained by a second, single-threaded
