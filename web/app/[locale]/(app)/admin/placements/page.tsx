@@ -1161,7 +1161,7 @@ export default function PlacementsPage() {
                   ))}
                   {/* A lesson of a block is one line, the posts that fail for one sentence said together. */}
                   {failingBlockLessons.map(({ block, row }) => (
-                    <li key={row.id} data-testid="failing-row">
+                    <li key={row.id} className="[overflow-wrap:anywhere]" data-testid="failing-row">
                       <span className="font-medium">
                         {block.name}, {blockRowLine(block, row)}
                       </span>
@@ -1222,11 +1222,14 @@ export default function PlacementsPage() {
           {message ? (
             message.tone === "problem" ? (
               <div data-testid="placement-message">
-                <Notice tone="destructive">{message.text}</Notice>
+                {/* A block's name can be one long word: the message breaks inside it at 320 px rather than leave its box. */}
+                <Notice tone="destructive">
+                  <span className="[overflow-wrap:anywhere]">{message.text}</span>
+                </Notice>
               </div>
             ) : null
           ) : null}
-          <p role="status" aria-live="polite" className={cn("text-sm", message?.tone === "ok" ? "" : "sr-only")} data-testid="placement-status">
+          <p role="status" aria-live="polite" className={cn("text-sm [overflow-wrap:anywhere]", message?.tone === "ok" ? "" : "sr-only")} data-testid="placement-status">
             {message?.tone === "ok" ? message.text : saving ? t("saving") : ""}
           </p>
           {linkGone ? (
@@ -1371,7 +1374,7 @@ export default function PlacementsPage() {
                       key={post.id}
                       id={`post-${post.id}`}
                       tabIndex={-1}
-                      className="scroll-mt-4 py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="scroll-mt-4 py-3 outline-none [overflow-wrap:anywhere] focus-visible:ring-2 focus-visible:ring-ring"
                       data-testid="placement-post"
                     >
                       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -1448,7 +1451,7 @@ export default function PlacementsPage() {
                       key={block.id}
                       id={`block-${block.id}`}
                       tabIndex={-1}
-                      className="scroll-mt-4 py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="scroll-mt-4 py-3 outline-none [overflow-wrap:anywhere] focus-visible:ring-2 focus-visible:ring-ring"
                       data-testid="placement-block"
                     >
                       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">

@@ -1,6 +1,7 @@
 import { uid, KIND } from "../sessions";
 import { Reply } from "../gateway-routes";
-import { REQUIREMENTS, ROOMS, SUBJECTS, TEACHERS, YEAR } from "./world";
+import { BLOCK_POST_IDS, blockWeekBoard, isBlockWeekScenario } from "./timplan-block-placements";
+import { GROUPS, REQUIREMENTS, ROOMS, SUBJECTS, TEACHERS, YEAR } from "./world";
 import type { TeachingRequirement } from "../../../lib/types";
 
 /**
@@ -39,6 +40,11 @@ import type { TeachingRequirement } from "../../../lib/types";
  *   placement-write-refuse:<id>   refuses every write for the last row (REQUIREMENT_PLACEMENT_REFUSED, TEACHER)
  *   placement-write-stale:<id>    answers the first write of a post with 409 REQUIREMENT_PLACEMENTS_STALE, as if somebody
  *                                 else had written it first, and takes the next (made on top of the key it then reads)
+ *
+ * Förlägg i veckan, the blocks (C2): the board has a `blocks` field (an older gateway has none, and the world's other scenarios keep it empty, so
+ * that the baselines of the page do not move). A scenario that starts with placement-block-week is the same kind of small gateway for the world's
+ * block "Språkval åk 7" (timplan-block-placements.ts says which scenarios there are): the block, its lessons, its key, and its two posts counted
+ * from the lessons it holds; one lesson Generera keeps (Cecilia, Wednesday 10:00–11:00) so that a drop has something to meet.
  */
 
 export const PLACEMENT_WEEK_SCENARIO = "placement-week";
@@ -155,6 +161,10 @@ function placedByRows(entry: TeachingRequirement, rows: readonly Row[]): number 
 
 /** The year's board, for the year the world has and for any other (which has no post). */
 export function boardOfYear(yearId: string, scenario: string | null) {
+  return yearId === YEAR.id && isBlockWeekScenario(scenario) ? blockWeekOfYear(yearId, scenario) : plainBoardOfYear(yearId, scenario);
+}
+
+function plainBoardOfYear(yearId: string, scenario: string | null) {
   const anyRoom = scenario === PLACEMENT_WEEK_ANY_ROOM_SCENARIO && yearId === YEAR.id;
   const remembered = yearId === YEAR.id && isWriteScenario(scenario) ? writtenOf(scenario) : null;
   const week = remembered !== null || ((scenario === PLACEMENT_WEEK_SCENARIO || anyRoom) && yearId === YEAR.id);
@@ -219,6 +229,53 @@ export function boardOfYear(yearId: string, scenario: string | null) {
           },
         ]
       : [],
+    // The world's other scenarios keep the blocks off the board, so that the page's baselines are what they were.
+    blocks: [] as ReturnType<typeof blockWeekBoard>["blocks"],
+  };
+}
+
+/**
+ * The board of a block-week scenario: the year's posts counted with nothing placed of their own, the block with the lessons the scenario holds, its two
+ * posts' parts counted from those lessons (a lesson of the block answers one lesson of each post, of its length), and one lesson Generera keeps: Cecilia's,
+ * on Wednesday 10:00–11:00, which a drop of the block's lesson there meets.
+ */
+function blockWeekOfYear(yearId: string, scenario: string) {
+  const base = plainBoardOfYear(yearId, null);
+  const { blocks, rows } = blockWeekBoard(scenario);
+  const members = new Set(BLOCK_POST_IDS.slice(0, 2));
+  return {
+    ...base,
+    posts: base.posts.map((entry) =>
+      members.has(entry.id)
+        ? {
+            ...entry,
+            parts: entry.parts.map((part) => {
+              const placed = rows.filter((lesson) => lesson.minutes === part.minutes).length;
+              return { ...part, placed, left: Math.max(0, part.count - placed) };
+            }),
+          }
+        : entry,
+    ),
+    kept: [
+      {
+        id: uid(KIND.masterLesson, 801),
+        dayOfWeek: 3,
+        startTime: "10:00",
+        endTime: "11:00",
+        studentGroupId: GROUPS.g7B.id,
+        extraGroupIds: [],
+        subjectId: SUBJECTS.ma.id,
+        teacherId: TEACHERS.cecilia.id,
+        coTeacherId: null,
+        roomId: ROOMS.r102.id,
+        recurrence: "ALL_WEEKS",
+        startDate: null,
+        endDate: null,
+        locked: true,
+        generated: false,
+      },
+    ],
+    blocks,
   };
 }
 

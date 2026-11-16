@@ -1,7 +1,7 @@
 import { Reply, route, type GatewayRoute } from "../gateway-routes";
 import { plannedClassPupils, plannedCoverage, teachingTimeCard } from "./timplan-coverage";
 import { placedInYear, placedOf, placementsStored, SHARED_PLACEMENTS_SCENARIO, SHARED_POST_SHARES } from "./timplan-placements";
-import { BLOCK, blockPlacementsOf, blockPlacementsStored } from "./timplan-block-placements";
+import { BLOCK, blockPlacementsOf, blockPlacementsStored, blockWeekRead, blockWeekWrite, isBlockWeekScenario } from "./timplan-block-placements";
 import { boardOfYear, writePlacements } from "./timplan-board";
 import { NATIONAL_TIMPLANS } from "./timplan-national";
 import { CHECKS, CREDITS, PLAN_LIST, PLANS, YEAR_TIMPLANS } from "./timplan-plans";
@@ -101,12 +101,14 @@ export const timplanRoutes: GatewayRoute[] = [
     if (!person) return new Reply(401, { message: "Inte inloggad." });
     if (person.role !== "SCHOOL_ADMIN") return new Reply(403, { message: "Åtkomst nekad." });
     if (params.id !== BLOCK.id) return notFound("Blocket");
-    return blockPlacementsOf(scenario);
+    // Förlägg i veckan, blocken: a scenario that starts with placement-block-week remembers its writes (timplan-block-placements.ts).
+    return isBlockWeekScenario(scenario) ? blockWeekRead(scenario) : blockPlacementsOf(scenario);
   }),
   route("PUT", "/api/v1/teaching-blocks/:id/placements", ({ person, params, body, scenario }) => {
     if (!person) return new Reply(401, { message: "Inte inloggad." });
     if (person.role !== "SCHOOL_ADMIN") return new Reply(403, { message: "Åtkomst nekad." });
     if (params.id !== BLOCK.id) return notFound("Blocket");
+    if (isBlockWeekScenario(scenario)) return blockWeekWrite(body, scenario);
     const stored = blockPlacementsStored(body, scenario);
     return stored.status === 200 ? stored.body : new Reply(stored.status, stored.body);
   }),
