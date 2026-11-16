@@ -6014,6 +6014,14 @@ a 30 s deadline: it never waits while it holds a lock, and after 30 s it stops w
   named (`BLOCK_PLACEMENT_REFUSED`). An ordinary post is judged beside a block's lessons, and a post's demand counts a
   block's lessons as lessons laid for each member. At Generera the same judge refuses a lesson that cannot stand
   (`PLACEMENT_CANNOT_STAND`, with the block's name in `params.block`) before the engine is woken.
+- **A save is refused for the rows it new or changed, not for the ones the block has.** A block whose lessons have stopped
+  holding for a member (a teacher made unavailable that day, a frame cut short) has to be mended one lesson at a time, so the
+  save judges every row but refuses only a row that no equal row of the block's stored list stands behind: the row is one
+  member's lesson (day, start, length, weeks and that member's own room), counted and not looked up, as for a post
+  (`placement-unchanged.ts`, `block-placement-unchanged.ts`). A row that is let stand is named in the answer as a verdict that is
+  not ok, at the lesson's place in the list as the block reads it (day, start), and `GET` says the same; Generera refuses it by
+  name as before. Giving one member a room changes that member's row and not the others'. The stored list is the one read
+  after the block's row was taken (`FOR NO KEY UPDATE`), so no second read is asked for as the post's save does.
 - **Stale.** A block's lesson or a room row changed while the engine solved is `GENERATE_STALE`: the key is built from the
   block's rows themselves, not from the members' derived rows. The basis a schemaförslag is solved from hashes each post's pin
   with the room in real ids, so a changed block placement makes saved proposals stale by itself.

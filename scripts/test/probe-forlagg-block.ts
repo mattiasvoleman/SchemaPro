@@ -22,8 +22,8 @@
  *         placement row, one room row, a verdict ok for each of the three members, a rowsKey, the block's lengths;
  *   fb-b  the read and the week's board say the same, and a member's count reads the block's lesson as placed (placed 1, left 1);
  *   fb-c  refusals, each writing nothing: a length the block has none of (LENGTH, at its index), a third lesson of 60 (COUNT),
- *         a lesson the members' week cannot hold because two members share a teacher (BLOCK_PLACEMENT_REFUSED, with the member
- *         named), and a room that is not the school's (400);
+ *         a new lesson the members' week cannot hold because two members share a teacher (BLOCK_PLACEMENT_REFUSED, with the
+ *         member named), and a room that is not the school's (400);
  *   fb-d  the post's own rule stays: a row of Spanska's own in the block is refused REQUIREMENT_PLACEMENTS_DO_NOT_FIT BLOCK, at
  *         the gateway and, as the owner, by the database (FP409);
  *   fb-e  the database's own rule, as the owner: a lesson of 50 minutes is refused BP409 LENGTH, and a room row for a post that is
@@ -40,7 +40,10 @@
  *   fb-l  a post that joins the block has the lesson at once, its room chosen by the engine, and is written too;
  *   fb-m  a post that leaves the block takes only its own room row, the block's lessons and the others' rows stay;
  *   fb-n  the placed block card is not moved by hand (LESSON_IS_PLACED), and the block can still be locked and unlocked;
- *   fb-o  a room a member chose is not removed, and the refusal names the block.
+ *   fb-o  a room a member chose is not removed, and the refusal names the block;
+ *   fb-p  a block whose two lessons both stopped holding is mended one lesson at a time (the lesson the block has stands, named
+ *         red in the answer and in the read), a new or changed lesson that does not hold is still refused, and Generera refuses
+ *         the standing one by name before the engine is woken (review of #326 in #328).
  *
  * A step that fails prints its FAIL line and the run goes on; the steps share the world, so a failure early on may take later ones
  * with it. The exit code is 1 for any FAIL. Independent of what earlier CI steps left in the database: it works in a school of its
@@ -439,10 +442,11 @@ async function run(owner: Client, engine: EngineStub, app: INestApplicationConte
     );
     assert.equal(paramsOf(tooMany)['reason'], 'COUNT');
     assert.equal(paramsOf(tooMany)['index'], 2);
-    // Two members that share a teacher cannot sit the same lesson: Tyska is handed to Spanska's teacher.
+    // Two members that share a teacher cannot sit the same lesson: Tyska is handed to Spanska's teacher. The lesson is a NEW one
+    // (Wednesday): the Tuesday the block has already would stand, named red, as a row the block has (fb-p).
     await owner.query(`UPDATE "TeachingRequirements" SET "teacherId" = $2 WHERE id = $1`, [tyska, teachers[0]!.id]);
     try {
-      const clash = await refusalOf(blocks.replace(blockId, { placements: [tuesday()] } as never, admin));
+      const clash = await refusalOf(blocks.replace(blockId, { placements: [tuesday({ dayOfWeek: 3 })] } as never, admin));
       assert.equal(codeOf(clash), 'BLOCK_PLACEMENT_REFUSED');
       assert.equal(paramsOf(clash)['reason'], 'TEACHER');
       assert.ok([spanska, tyska].includes(String(paramsOf(clash)['requirementId'])), 'the member the clash is found on is named');
@@ -649,6 +653,67 @@ async function run(owner: Client, engine: EngineStub, app: INestApplicationConte
     assert.equal(error.getStatus(), 400);
     assert.ok(JSON.stringify(error.getResponse()).includes('FB Språkval 7'), summarise(error));
     assert.equal((await all(`SELECT id FROM "Rooms" WHERE id = $1`, [sal1])).length, 1);
+  });
+
+  await check('fb-p: a block whose two lessons stopped holding is mended one lesson at a time; a new or changed lesson that does not hold is still refused', async () => {
+    await clearBlock();
+    // The lessons the earlier steps' Generera wrote are locked lessons of the grundschema that answer the posts' lessons: gone, so that
+    // the two lessons below are what the posts have.
+    await owner.query(`DELETE FROM "MasterLessons" WHERE "academicYearId" = $1`, [year]);
+    const wednesday = { dayOfWeek: 3, startTime: '10:00', minutes: 60, rooms: [] };
+    const thursday = { dayOfWeek: 4, startTime: '13:30', minutes: 60, rooms: [] };
+    const friday = { dayOfWeek: 5, startTime: '09:00', minutes: 60, rooms: [] };
+    const saved = await blocks.replace(blockId, { placements: [wednesday, thursday] } as never, admin);
+    assert.ok(saved.verdicts.every((verdict) => verdict.ok), 'both lessons hold when they are saved');
+    // Tyska's teacher is given a lesson of another class (kept as it is) at both times: both of the block's lessons stop holding for Tyska.
+    const locks: string[] = [];
+    for (const [day, from, to] of [[3, '10:00', '11:00'], [4, '13:30', '14:30']] as const) {
+      locks.push(
+        (
+          await one<{ id: string }>(
+            `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "roomId", "dayOfWeek", "startTime", "endTime", "isLocked", "isGenerated", "updatedAt")
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, false, now()) RETURNING id`,
+            [s, year, subjects[3], groups[3], teachers[1]!.id, sal3, day, from, to],
+          )
+        ).id,
+      );
+    }
+    const redOf = (verdicts: { index: number; requirementId: string; ok: boolean; reason?: string }[]) =>
+      verdicts.filter((verdict) => !verdict.ok).map((verdict) => [verdict.index, verdict.requirementId, verdict.reason]);
+    try {
+      const read = await blocks.listOfBlock(blockId, admin);
+      assert.deepEqual(redOf(read.verdicts), [[0, tyska, 'TEACHER'], [1, tyska, 'TEACHER']], 'the read names both');
+
+      // Moving Thursday's lesson to Friday: Wednesday's, red as it was, stands and is named at its place in the answer.
+      const mended = await blocks.replace(blockId, { placements: [friday, wednesday], baseKey: read.rowsKey } as never, admin);
+      assert.deepEqual(mended.placements.map((row) => row.dayOfWeek), [3, 5], 'the lessons come back by day');
+      assert.deepEqual(redOf(mended.verdicts), [[0, tyska, 'TEACHER']], 'Wednesday stands and is named; Friday holds');
+      assert.deepEqual(redOf((await blocks.listOfBlock(blockId, admin)).verdicts), redOf(mended.verdicts), 'the read says what the answer said');
+      assert.equal((await storedRows()).length, 2);
+
+      // A new lesson that does not hold is refused, though a red one stands in the same request; so is a changed one.
+      const before = await fingerprint();
+      const added = await refusalOf(blocks.replace(blockId, { placements: [wednesday, thursday] } as never, admin));
+      assert.equal(codeOf(added), 'BLOCK_PLACEMENT_REFUSED');
+      assert.deepEqual([paramsOf(added)['index'], paramsOf(added)['requirementId'], paramsOf(added)['reason']], [1, tyska, 'TEACHER']);
+      const moved = await refusalOf(blocks.replace(blockId, { placements: [{ ...wednesday, startTime: '10:05' }, friday] } as never, admin));
+      assert.equal(codeOf(moved), 'BLOCK_PLACEMENT_REFUSED');
+      assert.deepEqual([paramsOf(moved)['index'], paramsOf(moved)['requirementId']], [0, tyska]);
+      assert.equal(await fingerprint(), before, 'nothing was written');
+
+      // Generera refuses the one that stands, by name, before the engine is woken.
+      const mark = engine.calls.length;
+      const refused = await generate();
+      assert.equal(engine.calls.length, mark, 'the engine was not woken');
+      assert.equal(refused.status, 'INFEASIBLE');
+      assert.ok(JSON.stringify(refused.conflicts).includes('PLACEMENT_CANNOT_STAND'), `refused as ${JSON.stringify(refused.conflicts).slice(0, 200)}`);
+    } finally {
+      await owner.query(`DELETE FROM "MasterLessons" WHERE id = ANY($1::uuid[])`, [locks]);
+    }
+    // With the lock gone the same list holds, and every verdict is ok.
+    const clean = await blocks.replace(blockId, { placements: [friday, wednesday] } as never, admin);
+    assert.ok(clean.verdicts.every((verdict) => verdict.ok));
+    await clearBlock();
   });
 }
 

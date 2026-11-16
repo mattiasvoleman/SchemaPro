@@ -2764,14 +2764,25 @@
     <strong>Domen.</strong> Varje lektion prövas för varje post i blocket med
     samma regler som en förläggning på en enskild post
     (<em>Det bedöms när du sparar och vid varje Generera</em> nedan), när du
-    öppnar dialogen och när du sparar. Håller den inte för någon post sparas
-    ingenting, och dialogen säger vid vilken lektion, för vilken post (med ämne
-    och klass, aldrig en person) och varför, till exempel <em>Spanska för Sp7:
-    Läraren har redan en lektion som Generera behåller: Matematik med 8B,
-    måndag 10:00–11:00.</em> Poster som faller på samma skäl sägs tillsammans.
-    Har någon annan hunnit ändra blockets förläggningar medan dialogen var
-    öppen sparas inget: dialogen säger att blocket har ändrats och erbjuder
-    <span class="ui">Läs in igen</span>, och du gör om ändringen.
+    öppnar dialogen och när du sparar. Håller en lektion du lägger eller
+    flyttar inte för någon post sparas ingenting, och dialogen säger vid vilken
+    lektion, för vilken post (med ämne och klass, aldrig en person) och varför,
+    till exempel <em>Spanska för Sp7: Läraren har redan en lektion som Generera
+    behåller: Matematik med 8B, måndag 10:00–11:00.</em> Poster som faller på
+    samma skäl sägs tillsammans. Har någon annan hunnit ändra blockets
+    förläggningar medan dialogen var öppen sparas inget: dialogen säger att
+    blocket har ändrats och erbjuder <span class="ui">Läs in igen</span>, och
+    du gör om ändringen.
+  </p>
+  <p>
+    <strong>En lektion som slutat hålla.</strong> Ett block kan ha lektioner som
+    inte längre håller för en post (läraren gjordes otillgänglig en dag, en
+    ramtid kortades). Du kan rätta dem en i taget: servern nekar bara det du
+    lägger eller flyttar, och en lektion som redan låg på blocket står kvar
+    även när den inte håller. Den visas röd, med skälet, när du öppnar dialogen
+    igen, och Generera körs inte förrän den håller. Ändrar du lektionens dag,
+    tid, längd eller en posts sal är lektionen ny för den posten och prövas, och
+    nekas om den inte håller.
   </p>
   <p>
     <strong>Blocket kan inte förläggas</strong> om det saknar poster, om en av
