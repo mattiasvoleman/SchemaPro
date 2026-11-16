@@ -398,6 +398,22 @@ class TestTheWindow:
         with pytest.raises(ValueError):
             tp._settings(SOLVER_EXPLAIN_SHARP_SECONDS=0)
 
+    @pytest.mark.parametrize("value", [-1, "-1", float("inf"), "inf", "-inf", float("nan"), "nan"])
+    def test_cannot_be_negative_or_not_a_number_of_seconds(self, value: object) -> None:
+        """An environment variable is a string: `inf` and `nan` parse as floats, so they are refused as the number is.
+
+        `inf` is clipped to the cap and does no harm, but it is not a window
+        (the review of #323, round 2, LÅG-4): the engine does not start on it,
+        as it does not on 0.
+        """
+        with pytest.raises(ValueError):
+            tp._settings(SOLVER_EXPLAIN_SHARP_SECONDS=value)
+
+    @pytest.mark.parametrize("value", [0.001, "4", 15, 100, "1e9"])
+    def test_any_finite_number_above_zero_is_read_as_it_is(self, value: object) -> None:
+        """Above the cap is still a window: the first try is then the cap, as `min(cap, window)` has it."""
+        assert tp._settings(SOLVER_EXPLAIN_SHARP_SECONDS=value).solver_explain_sharp_seconds == float(value)
+
     @pytest.mark.parametrize("found", [cp_model.OPTIMAL, cp_model.FEASIBLE], ids=["optimal", "feasible"])
     def test_a_first_try_that_found_a_timetable_has_no_reserve(
         self, monkeypatch: pytest.MonkeyPatch, built: list[bool], found: int,

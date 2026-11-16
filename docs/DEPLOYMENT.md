@@ -253,7 +253,7 @@ Run it with:
 | `API_KEY` | the generated `AI_ENGINE_API_KEY` |
 | `ALLOWED_ORIGINS` | the API's origin, e.g. `https://api.yourschool.example` |
 | `SOLVER_MAX_TIME_SECONDS` | `60`: the solve budget in seconds (raise for very large schools). A solve that times out answers after this plus `SOLVER_PROBE_SECONDS` (default `20`). The old `SOLVER_TIMEOUT_SECONDS` is gone: nothing read it. |
-| `SOLVER_EXPLAIN_SHARP_SECONDS` | `10` (default, must be above 0): the share of the 15 s explanation cap that a LARGE refused week (50 lessons or more) gets for its first try, on the model without the objective, before the model with it is tried as the reserve. Raise it if the first try does not finish on this processor (section 23). |
+| `SOLVER_EXPLAIN_SHARP_SECONDS` | `10` (default, must be above 0 and a finite number; the engine does not start on `0`, a negative value or `inf`): the share of the 15 s explanation cap that a LARGE refused week (50 lessons or more) gets for its first try, on the model without the objective, before the model with it is tried as the reserve. Raise it if the first try does not finish on this processor (section 23). |
 | `EXAM_SOLVER_MAX_TIME_SECONDS` | `20` (default): the budget of the exam planner (`POST /api/v1/plan-exams`, Provplanering), apart from the generator's. A short budget never refuses: a greedy plan is the floor and the answer from the first instant, so less time means fewer exams placed or a clumsier plan. A request can ask for less and never for more. The API waits 90 s for it. |
 
 The solver needs no database and no PII ever reaches it. Keep it on a private
