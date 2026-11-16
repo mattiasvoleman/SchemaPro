@@ -19,10 +19,12 @@
 // rest). What a teacher is handed (read from the real gateway, F6 of the
 // part's notes) is the pending requests she is among the DECIDING mentors of,
 // and on the decided tabs the requests she decided herself; not the ones of
-// her pupils that rektor decides (over the delegation) or decided. So that is
-// the filter here, and not "she is among the pupil's mentors", which shows
-// more than a teacher sees. Her decision is still the administrator's
-// (decidedAs ADMIN). A teacher's list is the gateway's, as it was.
+// her pupils that rektor decides (over the delegation) or decided. A teacher's
+// decision is written as the mentor's, and an administrator's as the
+// administrator's (decidedAs ADMIN), whichever page she decides on, so "decided
+// by me" alone would let in every decision she took as rektor, for any pupil of
+// the school: the decided tabs also ask that she is a mentor of the pupil. A
+// teacher's list is the gateway's, as it was.
 //
 // A school that has delegated nothing shows that, rather than an empty list:
 // rektor decides every request there. The delegation is GET
@@ -70,7 +72,7 @@ export default function TeacherLeavePage() {
       ? asked.filter((request) =>
           request.status === "PENDING"
             ? request.decidingMentors.some((mentor) => mentor.id === profile.id)
-            : request.decidedById === profile.id,
+            : request.decidedById === profile.id && request.mentors.some((mentor) => mentor.id === profile.id),
         )
       : asked;
   // Until the delegation is read, an empty inbox says nothing waits, never

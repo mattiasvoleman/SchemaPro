@@ -154,6 +154,30 @@ describe("Ledighet for an administrator who teaches", () => {
     expect(screen.queryByText("Vera Vid")).not.toBeInTheDocument();
   });
 
+  it.each([["APPROVED", "Beviljad"], ["REJECTED", "Avslagen"]])(
+    "leaves out on the decided tab %s a request she decided as administrator for a pupil she is not a mentor of",
+    async (status, tab) => {
+      // Rektor with the mark decides on /admin/leave when the school delegates nothing: decidedAs ADMIN, decidedById
+      // her own id, for a pupil of any class. A teacher mentor's list holds only her decisions as the mentor, and
+      // hers on this page are written as the administrator's, so "decided by me" alone would show her the school's.
+      who.role = "SCHOOL_ADMIN";
+      state.inbox = {
+        data: [
+          { ...decided(OTHERS, status, "t-anna"), decidedAs: "ADMIN" },
+          { ...decided(REQUEST, status, "t-anna"), decidedAs: "ADMIN" },
+        ],
+        isLoading: false,
+        isError: false,
+      };
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(screen.getByRole("tab", { name: tab }));
+      // Her own pupil's, decided by her as administrator, is hers; Oskar (9B, another mentor's) is not.
+      expect(screen.getAllByText("Ella Elev").length).toBeGreaterThan(0);
+      expect(screen.queryByText("Oskar Okänd")).not.toBeInTheDocument();
+    },
+  );
+
   it("says the inbox is empty, not that rektor decides, when none of the school's requests is hers", () => {
     who.role = "SCHOOL_ADMIN";
     state.inbox = { data: [OTHERS], isLoading: false, isError: false };
