@@ -46,6 +46,11 @@ describe("placementLinkOf", () => {
     }
   });
 
+  it("names the block only with the day and the start it is a lesson of: a block with a day that is no place on the week is the post alone", () => {
+    expect(query(placementLinkOf({ postId: "p", blockId: "b", day: 6, start: "10:00" }))).toEqual({ post: "p" });
+    expect(query(placementLinkOf({ postId: "p", blockId: "b", day: 2, start: null }))).toEqual({ post: "p" });
+  });
+
   it("never names a block without a post", () => {
     expect(placementLinkOf({ blockId: "b", day: 3, start: "10:00" })).toBe("/admin/placements");
   });

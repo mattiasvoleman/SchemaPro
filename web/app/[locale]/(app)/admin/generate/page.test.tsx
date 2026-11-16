@@ -1811,15 +1811,17 @@ describe("förläggningar: the way back to the week", () => {
     });
 
     it("says how many no longer hold, in the week's own sentence, and the run is not held back by it", async () => {
+      // Every other prerequisite met, so that the button's state is a thing the row could change.
+      state.people.push({ ...pupil("t-1", "g-41"), role: "TEACHER", studentGroupId: null });
       const without = render(<GeneratePage />);
-      const wasDisabled = (runButton() as HTMLButtonElement).disabled;
+      expect(runButton()).toBeEnabled();
       without.unmount();
       state.placementBoard = board([3], 2);
       render(<GeneratePage />);
       const row = await screen.findByTestId("generate-placed");
       expect(within(row).getByTestId("generate-placed-failing")).toHaveTextContent("generate.placed.failing(2)");
-      // A help and never a gate: the button is exactly as enabled as it was with no row at all.
-      expect((runButton() as HTMLButtonElement).disabled).toBe(wasDisabled);
+      // A help and never a gate: the button is as enabled as it was with no row at all.
+      expect(runButton()).toBeEnabled();
     });
 
     it("counts a block's lesson once for each of its rows with a verdict that fails", async () => {
@@ -1837,12 +1839,13 @@ describe("förläggningar: the way back to the week", () => {
     });
 
     it("draws nothing for a read that failed or has not come, and keeps every other part of the page", async () => {
+      state.people.push({ ...pupil("t-1", "g-41"), role: "TEACHER", studentGroupId: null });
       state.placementBoard = undefined;
       render(<GeneratePage />);
       await waitFor(() => expect(state.placementBoardFor.length).toBeGreaterThan(0));
       await new Promise((resolve) => setTimeout(resolve, 30));
       expect(line()).not.toBeInTheDocument();
-      expect(runButton()).toBeInTheDocument();
+      expect(runButton()).toBeEnabled();
     });
 
     it("reads nothing for a page with no year yet", async () => {

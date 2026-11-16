@@ -291,6 +291,12 @@ export async function placementBackChecks(owner: Client, api: PrismaService, mar
           [entry.requirementId, entry.roomId, entry.dayOfWeek, entry.startTime, entry.minutes, entry.recurrence],
         );
       }
+      // What the engine places on its own is written beside them (generated, never locked, never marked): the count is the placed lessons only.
+      await owner.query(
+        `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", recurrence, "isGenerated", "isLocked", "fromPlacement", "updatedAt")
+         SELECT r."schoolId", r."academicYearId", r."subjectId", r."studentGroupId", r."teacherId", 4, '15:00', '16:00', 'ALL_WEEKS', true, false, false, now() FROM "TeachingRequirements" r WHERE r.id = ANY($1::uuid[])`,
+        [[pMa, pSv]],
+      );
       return rows.length;
     };
     const timetable = async () => (await placements.boardOfYear(year, admin)).timetable;
