@@ -5423,9 +5423,17 @@ administrator, on an administrator who has a post.
   `GET /users/administrators` and `PATCH /users/:id`'s answer, `teachingAdministrators` on `GET /users/counts`, `fromTeaches` and
   `toTeaches` on `GET /users/:id/role-changes`. `POST /users` does not take `teaches` (the validation pipe refuses it: create, give a
   post, then mark), and `PATCH` of a person who is no administrator, a teacher or a läsare is a 400 with its own code.
-- **Four new 409/400 codes reach the client**, all with flat `params`: `TEACHES_NEEDS_A_POST`,
-  `A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS` (from the post's removal, from the läsår's removal, which asks first and answers with a
-  count and ids and no name, and from `PATCH`), and a deadlock against a mark is the existing `WRITE_CONFLICT` ("try again").
+- **Five new codes reach the client, and one existing one gains a case.** The two 409s, `TEACHES_NEEDS_A_POST` and
+  `A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS`, carry flat `params` where the refusal names them (`userId`, `academicYearId`; both are
+  strings). The last one comes from the post's removal, from `PATCH`, and from the läsår's removal, which asks first and answers with
+  `administrators` as a count and `userIds` as a comma-separated string of at most five ids, and no name. The three 400s of
+  `PATCH /users/:id` carry **no** `params`, only their code: `TEACHES_NEEDS_AN_ADMINISTRATOR` (the person is neither an
+  administrator nor a teacher), `A_READER_DOES_NOT_TEACH` (a läsare) and `A_TEACHER_TEACHES_ALREADY` (a teacher is that already). A
+  deadlock against a mark is the existing `WRITE_CONFLICT` ("try again").
+- **The lesson view has no rule of its own for an administrator who teaches.** It asks `app.lesson_teacher_role` and shows what that
+  answers (REGULAR: the note read and written; NULL: the administrator's view as before). Whether the person stands on the lesson
+  and has a post for the läsår of the lesson's group is that function's, part 3's, and nothing else in the gateway asks it again, so
+  the view and the note's arms cannot disagree about a lesson dated outside its group's läsår.
 - **The three routes an administrator who teaches may use as the teacher** are written out in `RolesGuard` by `@AsTeacher`, and the
   route-guards e2e spec holds the list to exactly those and refuses such a person every other teacher-only route: the lesson log's
   own week (`GET /lesson-logs`), the lessons the person's absence handed over (`GET /lesson-logs/handed-over`) and the note to the
@@ -5434,7 +5442,9 @@ administrator, on an administrator who has a post.
 - **"Who teaches" is one answer** (`src/staffing/teaching-staff.ts`, `teacherWhere` and `teachesLike`) at the places that ask it: Skolans
   dag, an exam's invigilators, an activity's teacher, `lärare.csv`, the import's teacher by e-mail and the label in SS12000 v1 (a
   teaching administrator is `Lärare` there; the `role` filter of that API is unchanged). The substitute, the suggestions, the cover
-  request's recipients and the pool stay the teachers'.
+  request's recipients and the pool stay the teachers'. `GET /school-day/free` ("who is free") answers the same "who teaches", so a free
+  administrator who teaches is listed there beside the free teachers; it is the page's search for who has nothing on, not the
+  substitute pool, and removing them from it alone would give Skolans dag two answers to who teaches. Part 5's page words that.
 - **Rolling back** is reverting the gateway: nothing in the database moves. A mark that has been set stays on the row and does nothing.
 
 ## 21. Pinned lessons in the generator ("Fästa lektioner")
