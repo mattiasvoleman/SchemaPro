@@ -29,7 +29,9 @@ from app.solver.weeks import (
     each_week,
     half_weeks,
     meet,
+    cells_of,
     named,
+    needs_a_part_per_parity,
     share,
     tag,
     week_parts,
@@ -556,3 +558,101 @@ def test_masks_without_figures_weigh_every_period_alike() -> None:
     request = _request(fixed=[_entry(periods=[True, False, True, False])])
     assert year_of(request) == [1, 1, 1, 1]
     assert share(Weeks(0b00000011, 4), year_of(request)) == 2
+
+
+# ---------------------------------------------------------------------------
+# A row for each parity, only where one row for both would be stricter
+# ---------------------------------------------------------------------------
+
+
+def test_the_cells_of_a_year_are_each_periods_odd_weeks_and_its_even_ones() -> None:
+    assert cells_of(1) == [(ODD_WEEKS, EVEN_WEEKS)]
+    assert cells_of(3) == [
+        (Weeks(0b000001, 3), Weeks(0b000010, 3)),
+        (Weeks(0b000100, 3), Weeks(0b001000, 3)),
+        (Weeks(0b010000, 3), Weeks(0b100000, 3)),
+    ]
+
+
+def test_a_period_needs_a_part_per_parity_only_when_no_owed_week_holds_every_entry() -> None:
+    # An odd lock and an even lesson: neither week holds both.
+    assert needs_a_part_per_parity([("lock", ODD_WEEKS), ("lesson", EVEN_WEEKS)], [None]) is True
+    # An odd lock and a lesson every week: the odd weeks hold both, and a break clear of them is clear of the even weeks'.
+    assert needs_a_part_per_parity([("lock", ODD_WEEKS), ("lesson", None)], [None]) is False
+    # Lessons of the even weeks only: the odd weeks owe no break, so the odd lock is nothing the even weeks hold.
+    assert needs_a_part_per_parity([("lock", ODD_WEEKS)], [EVEN_WEEKS]) is True
+    # What runs every week is the same in both, and nothing at all needs nothing.
+    assert needs_a_part_per_parity([("lock", None)], [ODD_WEEKS]) is False
+    assert needs_a_part_per_parity([], [None]) is False
+    assert needs_a_part_per_parity([("lock", ODD_WEEKS)], []) is False
+    # The gateway's names stand for the weeks they are.
+    assert needs_a_part_per_parity([("lock", "ODD_WEEKS"), ("lesson", "EVEN_WEEKS")], [None]) is True
+
+
+def test_a_period_is_read_by_its_own_weeks_and_not_by_another_periods() -> None:
+    autumn, spring = Weeks(0b0011, 2), Weeks(0b1100, 2)
+    odd_autumn, even_spring = Weeks(0b0001, 2), Weeks(0b1000, 2)
+    # An odd lock in the autumn and an even lesson in the spring are never in one period: the autumn's
+    # odd weeks hold the lock and the spring's even weeks the lesson, and each holds all there is.
+    assert needs_a_part_per_parity([("lock", odd_autumn), ("lesson", even_spring)], [autumn, spring]) is False
+    # Both in the autumn, with a lesson in each parity of it: the odd weeks hold the lock, the even ones the lesson.
+    assert needs_a_part_per_parity([("lock", odd_autumn), ("lesson", Weeks(0b0010, 2))], [autumn]) is True
+    # The spring's lock is the spring's: in the autumn it is no entry of the period at all, and in the spring
+    # the odd weeks hold all there is.
+    assert needs_a_part_per_parity([("lock", Weeks(0b0100, 2))], [autumn]) is False
+    assert needs_a_part_per_parity([("lock", Weeks(0b0100, 2))], [spring]) is False
+    # ... until the spring's even weeks hold a lesson of their own, with the odd lock and no lesson of the odd weeks.
+    assert needs_a_part_per_parity([("lock", Weeks(0b0100, 2))], [Weeks(0b1000, 2)]) is True
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_one_break_for_both_parities_is_never_stricter_where_no_part_per_parity_is_needed(seed: int) -> None:
+    """COMPLETENESS, by brute force: where the predicate says no, one break holds exactly when each week's own does.
+
+    Small worlds: up to three periods, up to four entries each with a parity
+    and a mask of its own, three slots in the lunch window and a break of one.
+    For every way to put each entry in a slot, one break for a period's two
+    weeks is clear of every entry of both, and a break for each owed week is
+    clear of that week's. Where the two differ the predicate must be true:
+    saying no is what leaves a school with the one break.
+    """
+    rng = random.Random(seed)
+    periods = rng.choice([1, 2, 3])
+    count = rng.randint(1, 4)
+    entries = []
+    for key in range(count):
+        parity = rng.choice([None, ODD, EVEN])
+        mask = None if periods == 1 or rng.random() < 0.4 else [rng.random() < 0.5 for _ in range(periods)]
+        if mask is not None and not any(mask):
+            mask[rng.randrange(periods)] = True
+        entries.append((key, SimpleNamespace(recurrence=parity, periods=mask)))
+    lessons = [
+        SimpleNamespace(recurrence=rng.choice([None, ODD, EVEN]), periods=None if periods == 1 else [True] * (periods - 1) + [rng.random() < 0.5])
+        for _ in range(rng.randint(1, 2))
+    ]
+    held = [(key, weeks_of(entry)) for key, entry in entries]
+    owed = [weeks_of(lesson) for lesson in lessons]
+    needed = needs_a_part_per_parity(held, owed)
+    levels = max([runs.periods for _, runs in held if runs is not None] + [runs.periods for runs in owed if runs is not None] + [1])
+    slots = 3
+    for placed in _slots(count, slots):
+        for odd, even in cells_of(levels):
+            owed_here = [cell for cell in (odd, even) if any(meet(runs, cell) for runs in owed)]
+            if not owed_here:
+                continue
+            taken = {
+                cell: {placed[key] for key, runs in held if meet(runs, cell)} for cell in (odd, even)
+            }
+            both = len(taken[odd] | taken[even]) < slots
+            each = all(len(taken[cell]) < slots for cell in owed_here)
+            if both != each:
+                assert needed, (seed, placed)
+
+
+def _slots(count: int, slots: int):  # type: ignore[no-untyped-def]
+    if count == 0:
+        yield ()
+        return
+    for rest in _slots(count - 1, slots):
+        for slot in range(slots):
+            yield (*rest, slot)

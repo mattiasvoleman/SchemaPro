@@ -105,7 +105,10 @@ from app.schemas.schedule import (
     ScheduledLesson,
 )
 from app.solver.refusals import of_line
-from app.solver.weeks import WEEK_WORDS, Weeks, each_week, meet, named, says_exactly, together, weeks_of
+from app.solver.weeks import (
+    WEEK_WORDS, Weeks, as_said, closed, each_week, meet, named, only_phantom, phantom_cells,
+    together, weeks_of,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -378,11 +381,19 @@ def _held_weekdays(limit: AnonymousTeacherDayLimit, week: Weeks | None) -> set[f
 
 
 def _weeks_of(request: OptimizeScheduleRequest) -> tuple[Weeks | None, ...]:
-    """The weeks the request's lessons and locks tell apart: one, every week, for a school with none."""
-    return each_week([
-        *(weeks_of(requirement) for requirement in request.requirements),
-        *(weeks_of(fixed) for fixed in request.fixed_lessons),
-    ])
+    """The weeks the request's lessons and locks tell apart: one, every week, for a school with none.
+
+    Not the cells that no real week is in (weeks.phantom_cells): a deviation
+    is a breach of a week the school has.
+    """
+    phantom = phantom_cells(request)
+    return tuple(
+        week for week in each_week([
+            *(weeks_of(requirement) for requirement in request.requirements),
+            *(weeks_of(fixed) for fixed in request.fixed_lessons),
+        ])
+        if not only_phantom(week, phantom)
+    )
 
 
 def deviations_of(
@@ -467,12 +478,12 @@ def _cap_deviations(
                         "taught": generated + locked_minutes,
                         "over": over,
                         "needed": generated + locked_minutes,
-                        **named(week),
+                        **named(closed(week, phantom_cells(request))),
                     },
                     requirement_ids=list(dict.fromkeys(on_day[(teacher, day)])),
                     resource_ids=[rule.id],
                 )))
-    return _worst_week(found, ("rule", "day"), _weeks_of(request))
+    return _worst_week(found, ("rule", "day"), _weeks_of(request), phantom_cells(request))
 
 
 def _work_day_deviations(
@@ -531,7 +542,7 @@ def _work_day_deviations(
                     "taught": len(set(generated) | held),
                     "over": over,
                     "needed": len(set(generated) | held),
-                    **named(week),
+                    **named(closed(week, phantom_cells(request))),
                 },
                 requirement_ids=list(dict.fromkeys(
                     requirement
@@ -540,7 +551,7 @@ def _work_day_deviations(
                 )),
                 resource_ids=[limit.id],
             )))
-    return _worst_week(found, ("limit",), _weeks_of(request))
+    return _worst_week(found, ("limit",), _weeks_of(request), phantom_cells(request))
 
 
 def _distribution_deviations(
@@ -659,6 +670,7 @@ def _worst_week(
     found: list[tuple[Weeks | None, ConflictDetail]],
     key: tuple[str, ...],
     weeks: tuple[Weeks | None, ...],
+    phantom: Weeks | None = None,
 ) -> list[ConflictDetail]:
     """One line per rule (and day), the week that breaks it by most.
 
@@ -695,8 +707,8 @@ def _worst_week(
         if len(alike) == len(weeks):
             detail = detail.model_copy(update={"params": _unnamed(detail)})
         elif len(alike) > 1:
-            said = together([week for week in alike if week is not None])
-            if says_exactly(said):
+            said = as_said(together([week for week in alike if week is not None]), phantom)
+            if said is not None:
                 detail = detail.model_copy(update={"params": {**_unnamed(detail), **named(said)}})
         out.append(detail)
     return out
