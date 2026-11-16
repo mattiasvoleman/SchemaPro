@@ -471,6 +471,12 @@ describe('BlockPlacementsService', () => {
         expect(tx['teachingBlockPlacement']!['deleteMany']).not.toHaveBeenCalled();
       });
 
+      it('says the first lesson as number 1 when it is the one that names a member\'s room twice', async () => {
+        const { service } = setup();
+        const refused = service.replace(BLOCK, dto([input({ rooms: [{ requirementId: B, roomId: ROOM_1 }, { requirementId: B, roomId: ROOM_1 }] })]), user);
+        await expect(refused).rejects.toMatchObject({ status: 400, response: { message: 'placements: förläggning 1 anger två salar för en post.' } });
+      });
+
       it('refuses a room the school does not have (another school\'s room reads as absent), and writes nothing', async () => {
         const { tx, masters, service } = setup({ rooms: [ROOM_1] });
         const refused = service.replace(BLOCK, dto([input({ rooms: [{ requirementId: A, roomId: ROOM_2 }] })]), user);
@@ -647,6 +653,24 @@ describe('BlockPlacementsService', () => {
         const rooms = tx['teachingBlockPlacementRoom']!['createMany']!.mock.invocationCallOrder[0]!;
         expect(remove).toBeLessThan(insert);
         expect(insert).toBeLessThan(rooms);
+      });
+
+      it('names each lesson\'s room rows by that lesson\'s id, not the first lesson\'s: a room named only on a later lesson, and on every lesson', async () => {
+        const later = setup({ members: [memberRow(A, { lessonsPerWeek: 3 }), memberRow(B, { lessonsPerWeek: 3 }), memberRow(C, { lessonsPerWeek: 3 })] });
+        await later.service.replace(
+          BLOCK,
+          dto([input(), input({ dayOfWeek: 3, rooms: [{ requirementId: B, roomId: ROOM_2 }] }), input({ dayOfWeek: 4, rooms: [{ requirementId: A, roomId: ROOM_1 }, { requirementId: B, roomId: ROOM_1 }] })]),
+          user,
+        );
+        const ids = (later.tx['teachingBlockPlacement']!['createMany']!.mock.calls[0]![0] as { data: Array<{ id: string }> }).data.map((row) => row.id);
+        expect(new Set(ids).size).toBe(3);
+        expect(later.tx['teachingBlockPlacementRoom']!['createMany']).toHaveBeenCalledWith({
+          data: [
+            { schoolId: SCHOOL, placementId: ids[1], requirementId: B, roomId: ROOM_2 },
+            { schoolId: SCHOOL, placementId: ids[2], requirementId: A, roomId: ROOM_1 },
+            { schoolId: SCHOOL, placementId: ids[2], requirementId: B, roomId: ROOM_1 },
+          ],
+        });
       });
 
       it('never writes a nested create: a plain row carries no `rooms`, and no single create is used', async () => {

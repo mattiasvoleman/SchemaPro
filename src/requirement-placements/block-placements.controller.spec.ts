@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { BadRequestException, ForbiddenException, ParseUUIDPipe, RequestMethod } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, ParseUUIDPipe, RequestMethod, ValidationPipe } from '@nestjs/common';
 import { METHOD_METADATA, PATH_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { Reflector } from '@nestjs/core';
 import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
@@ -214,6 +214,11 @@ describe('ReplaceBlockPlacementsDto', () => {
     expect(await errorsOf({})).toContain('placements:isArray');
   });
 
+  it('holds a block to 40 lessons and a lesson to 40 rooms, the figures the dialog and the answer are sized for', () => {
+    expect(MAX_PLACEMENTS_PER_BLOCK).toBe(40);
+    expect(MAX_ROOMS_PER_BLOCK_LESSON).toBe(40);
+  });
+
   it('refuses more lessons than a block holds, and takes exactly that many', async () => {
     expect(await errorsOf({ placements: Array.from({ length: MAX_PLACEMENTS_PER_BLOCK + 1 }, () => valid) })).toEqual(['placements:arrayMaxSize']);
     expect(await errorsOf({ placements: Array.from({ length: MAX_PLACEMENTS_PER_BLOCK }, () => valid) })).toEqual([]);
@@ -252,5 +257,51 @@ describe('ReplaceBlockPlacementsDto', () => {
     it('refuses a key that is no text', async () => {
       expect(await errorsOf({ placements: [], baseKey: 12 })).toEqual(['baseKey:matches']);
     });
+  });
+});
+
+/*
+ * Through the pipe the app runs every body through (app.module.ts: whitelist, forbidNonWhitelisted, transform, no implicit
+ * conversion), because a DTO that validates on its own can still be refused here, or let a field through that the service then reads.
+ */
+describe('ReplaceBlockPlacementsDto through the app\'s ValidationPipe', () => {
+  const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true, transformOptions: { enableImplicitConversion: false } });
+  const through = (body: unknown) => pipe.transform(body, { type: 'body', metatype: ReplaceBlockPlacementsDto });
+  const lesson = { dayOfWeek: 2, startTime: '10:00', minutes: 60, rooms: [{ requirementId: MEMBER, roomId: ROOM }] };
+
+  it('lets the body the dialog sends through, as instances of the DTO with the rooms nested', async () => {
+    const body = (await through({ placements: [lesson], baseKey: '0123456789abcdef0123456789abcdef' })) as ReplaceBlockPlacementsDto;
+    expect(body).toBeInstanceOf(ReplaceBlockPlacementsDto);
+    expect(body.placements).toHaveLength(1);
+    expect(body.placements[0]!.rooms![0]).toEqual({ requirementId: MEMBER, roomId: ROOM });
+    expect(body.baseKey).toBe('0123456789abcdef0123456789abcdef');
+  });
+
+  it('lets an empty list through: it removes every lesson', async () => {
+    await expect(through({ placements: [] })).resolves.toMatchObject({ placements: [] });
+  });
+
+  it('refuses weeks in a lesson (400): the weeks are the block\'s, and the service must never read them from the request', async () => {
+    await expect(through({ placements: [{ ...lesson, recurrence: 'ODD_WEEKS' }] })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('refuses a single room (roomId) on a lesson, which is the post\'s dialog and not the block\'s: rooms are per member', async () => {
+    await expect(through({ placements: [{ dayOfWeek: 2, startTime: '10:00', minutes: 60, roomId: ROOM }] })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('refuses a field it does not know on a lesson, on a room and on the body', async () => {
+    await expect(through({ placements: [{ ...lesson, teacherId: MEMBER }] })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(through({ placements: [{ ...lesson, rooms: [{ requirementId: MEMBER, roomId: ROOM, note: 'x' }] }] })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(through({ placements: [], blockId: BLOCK })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('does not convert text to numbers: a day and a length sent as text are refused', async () => {
+    await expect(through({ placements: [{ ...lesson, dayOfWeek: '2' }] })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(through({ placements: [{ ...lesson, minutes: '60' }] })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('says the refused field in the message, with the Swedish sentence of the DTO', async () => {
+    const refused = (await through({ placements: [{ ...lesson, startTime: '9:00' }] }).catch((error: BadRequestException) => error)) as BadRequestException;
+    expect(JSON.stringify(refused.getResponse())).toContain('placements: starttiden anges som HH:MM.');
   });
 });
