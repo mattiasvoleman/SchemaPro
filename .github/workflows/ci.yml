@@ -440,6 +440,18 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-forlagg-block-lasen.ts
 
+      # Förlagda block, veckan (C2): what the week's page does to a block, through the real services as the API's role: one PUT of the
+      # block's whole list per change, each on the key the answer before it gave (no read between), an undo that is a PUT on the key
+      # our last write left (somebody else's write after ours makes it 409 BLOCK_PLACEMENTS_STALE), the rooms a lesson carries, two
+      # writers of the first lesson on the one empty key (six rounds: one saves), SCHEDULE_BUSY under Generera's lock, and the
+      # indexes the page has to map (a verdict's index is a place in the answer's lessons, a refusal's a place in the list sent).
+      # A block whose lessons stopped holding is mended one at a time. The run drops the school it made.
+      - name: Förlagda block, veckan probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-forlagg-block-veckan.ts
+
       # Hela skolans data (K5, 20270114090000): two schools, each with people,
       # lessons, attendance, absence, leave and notices, and an export ordered
       # at one of them, built by the job as the ordering administrator, stored

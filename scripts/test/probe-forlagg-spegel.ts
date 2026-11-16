@@ -17,6 +17,14 @@
  *        refusal's (index 0), and a refusal at any later index is a mistake of the world (the post's own stored
  *        rows clash with something else), not an answer. A candidate that is let through is then taken away.
  *
+ *        A BLOCK's lesson (C2, the week's blockbricka) is a candidate of its own kind: the world then has `blocks`, parallel
+ *        blocks whose members are posts of teaching groups and whose already placed lessons are stored directly (so that a
+ *        lesson that no longer holds can be stored); the candidate is one lesson of the block, asked of
+ *        BlockPlacementsService.replace (PUT /teaching-blocks/:id/placements) FIRST in the list, so that the verdict is the
+ *        first refused lesson's, and the verdict carries which member (`post`) the judge named. The posts' ids are made from
+ *        the case's number and the post's place in the world, so the judge's order of the members (by id) is the world's
+ *        order of the posts and the member it names first is the same at every run.
+ *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
 import { strict as assert } from 'node:assert';
@@ -31,6 +39,7 @@ import { MasterLessonsService } from '../../src/calendar/master-lessons.service'
 import type { PrismaService } from '../../src/database/prisma.service';
 import type { NotificationsService } from '../../src/notifications/notifications.service';
 import type { RealtimeService } from '../../src/realtime/realtime.service';
+import { BlockPlacementsService } from '../../src/requirement-placements/block-placements.service';
 import { RequirementPlacementsService } from '../../src/requirement-placements/requirement-placements.service';
 
 type Check = (label: string, body: () => Promise<void>) => Promise<void>;
@@ -40,7 +49,9 @@ const FIXTURE = join(__dirname, '../../src/requirement-placements/__fixtures__/p
 type Recurrence = 'ALL_WEEKS' | 'ODD_WEEKS' | 'EVEN_WEEKS';
 interface WorldPost {
   key: string;
-  class: string;
+  /** The post is taught to a class or to a teaching group: exactly one of the two. */
+  class?: string;
+  group?: string;
   subject: string;
   teacher: string;
   coTeacher?: string;
@@ -53,6 +64,17 @@ interface WorldPost {
   minutesBefore?: number;
   minutesAfter?: number;
   shares?: { teacher: string; lessons: number }[];
+  /** A post whose lessons are not all one length, longest first: lessons is lengths.length and minutes lengths[0]. */
+  lengths?: number[];
+  /** The key of the block the post is a member of. */
+  block?: string;
+}
+interface WorldBlock {
+  key: string;
+  /** The members, by post key. */
+  posts: string[];
+  /** The lessons the block already has, stored as they stand: `rooms` is a member's room by post key and room key. */
+  lessons: { day: number; start: string; minutes: number; rooms?: Record<string, string> }[];
 }
 interface WorldKept {
   class?: string;
@@ -92,8 +114,11 @@ interface World {
   unavailable: { kind: 'teacher' | 'room' | 'class' | 'grade'; key?: string; grades?: [number, number]; day: number; start: string; end: string }[];
   frames: { grades: [number, number]; start: string; end: string }[];
   meals: { class: string; day: number; start: string; end: string; generated?: boolean }[];
+  blocks: WorldBlock[];
 }
-interface Candidate {
+/** A row of a post (the PUT on the post's path), or one lesson of a block (the PUT on the block's path). */
+type Candidate = PostCandidate | BlockCandidate;
+interface PostCandidate {
   post: string;
   day: number;
   start: string;
@@ -103,7 +128,19 @@ interface Candidate {
   teacher?: string;
   replaces?: number;
 }
-type Verdict = { ok: true } | { ok: false; reason: string };
+interface BlockCandidate {
+  block: string;
+  day: number;
+  start: string;
+  minutes: number;
+  /** A member's room by post key and room key; a member left out has none (the engine chooses). */
+  rooms?: Record<string, string>;
+  /** The stored lesson of the block (index into its `lessons`) that this is a move of. */
+  replaces?: number;
+}
+const isBlockCandidate = (candidate: Candidate): candidate is BlockCandidate => 'block' in candidate;
+/** `post` is the member the judge named first, for a block's lesson. */
+type Verdict = { ok: true } | { ok: false; reason: string; post?: string };
 interface Case {
   name: string;
   rule: string;
@@ -134,6 +171,13 @@ export function worldOf(base: World, add: Partial<World>): World {
         if (at === -1) world.posts.push(post);
         else world.posts[at] = post;
       }
+    } else if (name === 'blocks') {
+      // A block of the same key replaces the base's (its lessons are the case's), like a post.
+      for (const block of value as WorldBlock[]) {
+        const at = world.blocks.findIndex((entry) => entry.key === block.key);
+        if (at === -1) world.blocks.push(block);
+        else world.blocks[at] = block;
+      }
     } else {
       (world[name] as unknown[]).push(...value);
     }
@@ -149,7 +193,9 @@ export function withVerdicts(text: string, verdicts: Verdict[]): string {
   const tail = text.slice(casesAt).replace(/"verdict": \{[^}]*\}/g, () => {
     const verdict = verdicts[next++];
     assert.ok(verdict, 'more verdict lines than cases');
-    return verdict.ok ? '"verdict": { "ok": true }' : `"verdict": { "ok": false, "reason": "${verdict.reason}" }`;
+    return verdict.ok
+      ? '"verdict": { "ok": true }'
+      : `"verdict": { "ok": false, "reason": "${verdict.reason}"${verdict.post ? `, "post": "${verdict.post}"` : ''} }`;
   });
   assert.equal(next, verdicts.length, 'fewer verdict lines than cases');
   return text.slice(0, casesAt) + tail;
@@ -163,6 +209,7 @@ export async function placementMirrorChecks(owner: Client, api: PrismaService, m
   const realtime = { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService;
   const masters = new MasterLessonsService(api, realtime, {} as NotificationsService);
   const placements = new RequirementPlacementsService(api, masters);
+  const blockPlacements = new BlockPlacementsService(api, masters, placements);
 
   /** The world of one case in a school of its own, and the verdict the PUT gives the candidate. */
   const judgeCase = async (index: number, one_case: Case): Promise<Verdict> => {
@@ -221,26 +268,41 @@ export async function placementMirrorChecks(owner: Client, api: PrismaService, m
       assert.ok(key !== undefined && map.has(key), `${one_case.name}: the world names no ${what} "${key}"`);
       return map.get(key)!;
     };
+    // The blocks first: a member names its block. (A block's lessons are stored after the posts, below.)
+    const blocks = new Map<string, string>();
+    for (const block of world.blocks) {
+      blocks.set(
+        block.key,
+        (await one<{ id: string }>(`INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt") VALUES ($1, $2, $3, now()) RETURNING id`, [school, year, block.key])).id,
+      );
+    }
+    // The ids of the posts are made from the case's number and the post's place in the world: the judge reads a block's members in
+    // id order, so the member it names first is then the first of the world's posts that fails, at every run.
+    const postId = (at: number): string => `c2${index.toString(16).padStart(6, '0')}-0000-4000-8000-${at.toString(16).padStart(12, '0')}`;
     const posts = new Map<string, string>();
-    for (const post of world.posts) {
+    for (const [at, post] of world.posts.entries()) {
+      assert.ok((post.class === undefined) !== (post.group === undefined), `${one_case.name}: post ${post.key} is taught to a class or to a group, not both and not neither`);
       const id = (
         await one<{ id: string }>(
-          `INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "coTeacherId", "lessonsPerWeek", "minutesPerLesson", recurrence, "startDate", "endDate", "minutesBefore", "minutesAfter", "updatedAt")
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::"LessonRecurrence", $10, $11, $12, $13, now()) RETURNING id`,
+          `INSERT INTO "TeachingRequirements" (id, "schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "coTeacherId", "lessonsPerWeek", "minutesPerLesson", "lessonLengths", recurrence, "startDate", "endDate", "minutesBefore", "minutesAfter", "blockId", "updatedAt")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::int[], $11::"LessonRecurrence", $12, $13, $14, $15, $16, now()) RETURNING id`,
           [
+            postId(at),
             school,
             year,
             idOf(subjects, post.subject, 'subject'),
-            idOf(classes, post.class, 'class'),
+            post.group !== undefined ? idOf(groups, post.group, 'group') : idOf(classes, post.class, 'class'),
             idOf(teachers, post.teacher, 'teacher'),
             post.coTeacher ? idOf(teachers, post.coTeacher, 'teacher') : null,
-            post.lessons,
-            post.minutes,
+            post.lengths ? post.lengths.length : post.lessons,
+            post.lengths ? post.lengths[0] : post.minutes,
+            post.lengths ?? [],
             post.recurrence ?? 'ALL_WEEKS',
             post.startDate ?? null,
             post.endDate ?? null,
             post.minutesBefore ?? 0,
             post.minutesAfter ?? 0,
+            post.block ? idOf(blocks, post.block, 'block') : null,
           ],
         )
       ).id;
@@ -290,6 +352,26 @@ export async function placementMirrorChecks(owner: Client, api: PrismaService, m
         [school, idOf(posts, row.post, 'post'), row.day, row.start, row.minutes, row.room ? idOf(rooms, row.room, 'room') : null, row.recurrence ?? 'ALL_WEEKS', row.teacher ? idOf(teachers, row.teacher, 'teacher') : null],
       );
     }
+    // The lessons the blocks already have, stored directly (a lesson that no longer holds can be stored): in the members' weeks, with
+    // the room each member chose. BP409 holds them to the block's shape (length, count, members), nothing else.
+    const storedBlockLessons = new Map<string, WorldBlock['lessons']>();
+    for (const block of world.blocks) {
+      storedBlockLessons.set(block.key, block.lessons);
+      const first = world.posts.find((post) => block.posts.includes(post.key));
+      for (const lesson of block.lessons) {
+        const stored = await one<{ id: string }>(
+          `INSERT INTO "TeachingBlockPlacements" ("schoolId", "blockId", "academicYearId", "dayOfWeek", "startTime", minutes, recurrence, "updatedAt")
+           VALUES ($1, $2, $3, $4, $5, $6, $7::"LessonRecurrence", now()) RETURNING id`,
+          [school, idOf(blocks, block.key, 'block'), year, lesson.day, lesson.start, lesson.minutes, first?.recurrence ?? 'ALL_WEEKS'],
+        );
+        for (const [postKey, roomKey] of Object.entries(lesson.rooms ?? {})) {
+          await owner.query(
+            `INSERT INTO "TeachingBlockPlacementRooms" ("schoolId", "placementId", "requirementId", "roomId", "updatedAt") VALUES ($1, $2, $3, $4, now())`,
+            [school, stored.id, idOf(posts, postKey, 'post'), idOf(rooms, roomKey, 'room')],
+          );
+        }
+      }
+    }
     for (const rule of world.unavailable) {
       const resource = { teacher: 'TEACHER', room: 'ROOM', class: 'STUDENT_GROUP', grade: 'GRADE_LEVEL' }[rule.kind];
       await owner.query(
@@ -322,9 +404,37 @@ export async function placementMirrorChecks(owner: Client, api: PrismaService, m
       );
     }
 
-    // The list the PUT is given: the candidate first, then the post's own stored rows except the one the candidate moves.
     const candidate = one_case.candidate;
-    const postId = idOf(posts, candidate.post, 'post');
+    if (isBlockCandidate(candidate)) {
+      // The list the PUT is given: the candidate first, then the block's other stored lessons (not the one the candidate moves).
+      const blockId = idOf(blocks, candidate.block, 'block');
+      const lessonOf = (lesson: { day: number; start: string; minutes: number; rooms?: Record<string, string> }) => ({
+        dayOfWeek: lesson.day,
+        startTime: lesson.start,
+        minutes: lesson.minutes,
+        rooms: Object.entries(lesson.rooms ?? {}).map(([postKey, roomKey]) => ({ requirementId: idOf(posts, postKey, 'post'), roomId: idOf(rooms, roomKey, 'room') })),
+      });
+      const own = (storedBlockLessons.get(candidate.block) ?? []).filter((_, at) => at !== candidate.replaces);
+      const wantedLessons = [lessonOf(candidate), ...own.map(lessonOf)];
+      const postKeyOf = (id: string): string => [...posts].find(([, value]) => value === id)?.[0] ?? `(${id})`;
+      try {
+        await blockPlacements.replace(blockId, { placements: wantedLessons } as never, caller);
+        return { ok: true };
+      } catch (error) {
+        if (error instanceof HttpException && error.getStatus() === 409) {
+          const body = error.getResponse() as { code?: string; params?: { reason?: string; index?: number; requirementId?: string } };
+          if (body.code === 'BLOCK_PLACEMENT_REFUSED') {
+            assert.equal(body.params?.index, 0, `${one_case.name}: the PUT refused lesson ${body.params?.index}, not the candidate: the world's own lessons clash with something else`);
+            return { ok: false, reason: String(body.params?.reason), post: postKeyOf(String(body.params?.requirementId)) };
+          }
+          assert.fail(`${one_case.name}: a mistake of the world, the block's PUT is refused as ${body.code} ${JSON.stringify(body.params)}`);
+        }
+        assert.fail(`${one_case.name}: the block's PUT failed with ${error instanceof Error ? `${error.constructor.name} ${JSON.stringify(error.message).slice(0, 200)}` : String(error)}`);
+      }
+    }
+
+    // The list the PUT is given: the candidate first, then the post's own stored rows except the one the candidate moves.
+    const postsId = idOf(posts, candidate.post, 'post');
     const input = (row: { day: number; start: string; minutes: number; room?: string; recurrence?: Recurrence; teacher?: string }) => ({
       dayOfWeek: row.day,
       startTime: row.start,
@@ -336,7 +446,7 @@ export async function placementMirrorChecks(owner: Client, api: PrismaService, m
     const ownRows = world.rows.filter((row, at) => row.post === candidate.post && at !== candidate.replaces);
     const wanted = [input(candidate), ...ownRows.map(input)];
     try {
-      await placements.replace(postId, { placements: wanted } as never, caller);
+      await placements.replace(postsId, { placements: wanted } as never, caller);
       return { ok: true };
     } catch (error) {
       if (error instanceof HttpException && error.getStatus() === 409) {
