@@ -5441,8 +5441,11 @@ database refuses).
   teacher's own absence (which every markable profile may already edit, so narrowing a marked one would take a right away).
   Section 494 lists each as `STAYS` with the reason beside it, and a new arm that names TEACHER without asking for the mark
   fails there.
-- **Three functions change**, read from the catalogue and edited at named places (each with the number of occurrences it
-  expects; if a body is not as expected the migration stops with nothing changed): `app.lesson_teacher_role`,
+- **Three functions change and one is new**, read from the catalogue and edited at named places (each with the number of
+  occurrences it expects; if a body is not as expected the migration stops with nothing changed): `app.lesson_teacher_role`
+  (which asks the new `app.my_post_covers_the_year_of_group(group)`, and only of a marked administrator: a subquery in the
+  function's WHERE is initialised at every call, a teacher's too, and cost +9 % on a read of 151 notes; the call costs +1 %; the
+  new function is called by that one definer function alone and has no grant at all),
   `app.availability_constraints_keep_duty_blocks` (a marked administrator who does not write PLANERING is held to the teacher's
   `TD403` on an unavailability a duty blocks) and `app.cover_policy_arm_is_narrow` (it takes the one OR that is the mark as the
   teacher's test it extends, and refuses every other, as before; the migration re-runs 20261012130000's own guard before it
@@ -5453,10 +5456,10 @@ database refuses).
   `migrate deploy` (P3009) until `prisma migrate resolve --rolled-back 20270216090000_en_undervisande_administrator_far_lararens_egna_armar`
   has been run, then deploy again.
 - **Deploy order:** the migration, then the merge. The API before this release is untouched by it (nothing is marked), and the API
-  after it needs nothing of it. **Checks:** `teaches-pr3-data/prod-fore.sql` (60 checks) before and `prod-efter.sql` (65) directly
+  after it needs nothing of it. **Checks:** `teaches-pr3-data/prod-fore.sql` (61 checks) before and `prod-efter.sql` (69) directly
   after, in the notes folder of the round's coordinator (`side-session-notes/local_487a7ffc-d4e9-44ea-9a93-ae6556fb4370/`, outside
-  the repository, as part 1's are); they hold the `md5(prosrc)` of the three functions and the md5 of the USING and WITH CHECK of the
-  16 policies before and after, that no other function or policy changed, that nobody is marked, the grants and MAINTAIN, and the
+  the repository, as part 1's are); they hold the `md5(prosrc)` of the three functions (and the new one's) and the md5 of the USING and WITH CHECK of
+  the 16 policies before and after, that no other function or policy changed, that nobody is marked, the grants and MAINTAIN, and the
   migration rows. The same numbers are in the pull request.
 - **Rolling back:** nothing reads the arms' answers for a person who is not marked, so they can stay. To remove them, run the
   edit the other way (each policy's text without the OR, and the three functions from their earlier migrations:
