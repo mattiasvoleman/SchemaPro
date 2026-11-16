@@ -610,6 +610,8 @@ describe("moving and taking away a lesson of a block", () => {
     expect(lastPut()[1].baseKey).toBe("bk000000000000001");
     await waitFor(() => expect(blockBricks().map((brick) => brick.dataset["brick"])).toEqual(["block:b-sv|60#1", "block:b-sv|60#2"]));
     expect(screen.getByTestId("placement-status")).toHaveTextContent("removed(Språkval åk 7) fromNextGenerate");
+    // The keyboard goes to the brick the lesson became, not to the card that is gone.
+    await waitFor(() => expect(document.activeElement).toBe(document.querySelector("[data-brick^='block:b-sv|60#']")));
   });
 
   it("keeps another lesson's rooms when one lesson is moved: every other lesson goes back as it is", async () => {

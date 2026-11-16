@@ -970,6 +970,20 @@
       },
       "candidate": { "post": "P1", "day": 2, "start": "11:15", "minutes": 60, "room": "A2" },
       "verdict": { "ok": true }
+    },
+    {
+      "name": "a room that passes from one member to another when the lesson is moved a quarter of an hour is free",
+      "rule": "ROOM",
+      "add": { "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:15", "minutes": 60, "rooms": { "MT": "A1" }, "replaces": 0 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the twin of the move: the same room for another member in a NEW lesson a quarter of an hour after the stored one is refused (the stored lesson stays in the way)",
+      "rule": "TEACHER",
+      "add": { "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:15", "minutes": 60, "rooms": { "MT": "A1" } },
+      "verdict": { "ok": false, "reason": "TEACHER", "post": "MS" }
     }
   ]
 }
