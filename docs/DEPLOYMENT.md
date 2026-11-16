@@ -6218,3 +6218,106 @@ a 30 s deadline: it never waits while it holds a lock, and after 30 s it stops w
   rooms empty ("Motorn väljer sal") and the engine chooses them, which counts as one group.
 - **Locks of the block.** A lesson of a block that somebody locks by hand while the rest is to place is refused as before
   (`BLOCK_PARTLY_LOCKED`); a block's lesson in the dialog is never a lock.
+
+## 25. The job's doors answer no login ("Dörrvakten")
+
+Six `SECURITY DEFINER` functions in the schema `app` that the API's role may run are not for a person: they are the door of
+something that runs with no login, a background job or the SS12000 sync's and an integration key's principal. A job opens its
+transaction with `withDeliveryService` and sets no claims; every login sets them. Four of the six asked whether the session
+**resolved to a person** (`app.current_user_id() IS NOT NULL`), which is not the same as a login: the huvudman's reader and the
+municipality's administrator have claims and no `Users` row, and for them the guard let go. The two meal doors had no guard at
+all. Section 10, note (6), holds the same lesson for the three doors of Kvittens (20270202090000); the reviews of #289 and #279 named
+these six.
+
+What a login with no person row could do, measured as `app_authenticated` on real rows:
+
+- `app.cover_requests_settle` closed every school's expired cover request and handed back the sender's `authId` and profile.
+- `app.crisis_settle` ended every school's alarm that had stood open longer than it can (12 hours, 3 for an exercise).
+- `app.leave_requests_tell_new_mentors` and `app.ss12000_source_secrets` have a door for a person and one for the sync's or an
+  integration key's principal. A login with no person row got nothing alone, but was let into the principal's branch when the
+  principal's own setting stood beside its claims, which no gateway route does. It was handed the school's owed leave notices
+  (and the notices were written), and the ciphertexts of a source's secrets.
+- `app.meal_letter` and `app.meal_letter_schools` answered anybody with a login, a teacher at another school included: the
+  school's kitchen address and the day's counts, and the list of schools with the letter on.
+
+No gateway route reaches a door with a login: the jobs run them in `withDeliveryService`, the sync and the key in
+`withSyncPrincipal` and `withServicePrincipal` (no claims), and the person's door in an ordinary request. This is defence in
+depth, and the gateway is not changed.
+
+Migration `20270220090000_jobbens_dorrar_svarar_inte_en_inloggning_utan_personrad`: six `CREATE OR REPLACE FUNCTION` and six
+`COMMENT ON FUNCTION`. **No table, no grant, no new object.** The guard is the one `app.ack_remind_request` got in
+20270202090000: no claims (`request.jwt.claims`) and no lone subject setting (`request.jwt.claim.sub`), an empty string read as
+none (a pooled connection reads `''` after another request's transaction, not `NULL`). Each door keeps its own answer:
+
+| Door | What it does now |
+|---|---|
+| `cover_requests_settle`, `crisis_settle` | refuse every login (`CR403`, `KL403`), as they refused a person; the job's door (no claims) goes |
+| `leave_requests_tell_new_mentors` | the person's branch is unchanged; the principal's branch lets in a session with no login only |
+| `ss12000_source_secrets` | the sync reads with no login beside it; a login beside the sync's setting is refused (`SS403`), as a person always was; the administrator is unchanged |
+| `meal_letter`, `meal_letter_schools` | `NULL` and no rows for a login. They stay `LANGUAGE sql` with the guard as a condition of the query, so the plan is the one it was (a `plpgsql` function is planned differently after five calls, and the job asks for the list every second minute) |
+
+`md5(prosrc)` of the six, before and after (the bodies differ by the guard and nothing else; language, volatility,
+`SECURITY DEFINER`, `search_path` and `jit = off` of the meal doors, owner and ACL are the same, `CREATE OR REPLACE` keeps owner
+and ACL):
+
+| Function | Before | After |
+|---|---|---|
+| `app.cover_requests_settle` | `4abfa824fd204376ba82929f62c90a96` | `8b8cc3e8b34179d90746aa1fc038694f` |
+| `app.crisis_settle` | `7674b1cf4892beaba5f48926b8da17a0` | `df2d2c9d74b0245233de7b67c4b5c78f` |
+| `app.leave_requests_tell_new_mentors` | `a75dd0895a688871a0654c8c4f97f3cf` | `3a42a387791b438d815432064bf82e80` |
+| `app.ss12000_source_secrets` | `4ca02603ce4956cf53c4a00296e6a3c9` | `b820ebf456539d236b1bc4fea0e729bc` |
+| `app.meal_letter` | `2a5d90dedca1516969347a06d216e87b` | `ceb84a1e99239a88f75064e6f15463f3` |
+| `app.meal_letter_schools` | `f117f51aaf39fe038a4b516dbd82a367` | `d30fffeb44fbaa9ac84ffcca38145914` |
+
+### 25.1 Deploy order
+
+**The migration first, then the merge.** The file writes and alters no table. It takes `ShareUpdateExclusive` on the six
+functions' own rows in `pg_proc` and, for the two `LANGUAGE sql` meal doors (checked when they are created), `ACCESS SHARE` on
+`KitchenSettings`, `Schools` and `CalendarLunches` until it commits: that blocks only an `ACCESS EXCLUSIVE` `ALTER TABLE`, which
+no request takes. Measured on PostgreSQL 17: the file runs in 0.13 s beside a door held open, and the doors answer in 0.14 s
+while the file's transaction is open.
+
+1. Run `prod-fore.sql`, then `prisma migrate deploy` from a tree that has every applied migration and this one (the file's
+   `_prisma_migrations` checksum is its sha256, which `prod-efter.sql` holds), then `prod-efter.sql`. The checks named
+   `..._record_equal_before_and_after` must give the same figure twice. A `prosrc` row of `prod-fore.sql` that is not ok means
+   another change has rewritten one of the six since this file was made: stop, and build the migration on the body production
+   has (two migrations that replace one function drop each other's change without a git conflict, so the later one is rebuilt on
+   the earlier one's body).
+2. Merge. Nothing in the gateway or the engine changed, and the jobs go on as they were: they set no claims, so the guard is open
+   for them. An API released before this one runs against the new database and the other way round without a difference.
+3. After: the next tick of the cover job (every 5 minutes), the crisis job (every 15) and the meal letter job (every 2) log as
+   before; `JobRuns` has no failed row for them.
+
+### 25.2 Rolling back
+
+- Nothing is written to a table, so there is no data to put back. The migration is one transaction: if it stops, nothing
+  applied, and `prisma migrate resolve --rolled-back 20270220090000_jobbens_dorrar_svarar_inte_en_inloggning_utan_personrad`
+  lets the next deploy try again.
+- To put the old doors back (which reopens the gap), write a new migration that runs `CREATE OR REPLACE FUNCTION` with the old
+  bodies. They are in the files that wrote them, and `md5(prosrc)` of each must equal the "Before" column above:
+  `app.cover_requests_settle` in 20270102091000, `app.crisis_settle` in 20270113091000, `app.leave_requests_tell_new_mentors` and
+  `app.ss12000_source_secrets` in 20261212090300, `app.meal_letter` and `app.meal_letter_schools` in 20270123090000 (with
+  their `COMMENT ON FUNCTION`). Copy the whole statement, language and settings included, because `CREATE OR REPLACE` resets
+  whatever it does not repeat. Do not edit the migration after it has run: its checksum is in production's
+  `_prisma_migrations`.
+
+### 25.3 What is not done here
+
+- **The tjänsteprincipalerna.** The guard asks for a login; it does not ask for no principal. `cover_requests_settle` and
+  `crisis_settle` do not refuse a session that carries only a principal's setting and no claims (the same boundary as #289, its
+  U-2). No gateway route calls the doors with a principal.
+- **The other job functions** (`app.absence_stats_*`, `app.gallring_*`, `app.reporting_*` and the like) take a school id as an
+  argument and have no principal check at all (the review of #282, U-1). They are a review of their own, not this migration.
+- **Reading the setting without `missing_ok`** (`current_setting('request.jwt.claims')`) is caught by the text of each door in
+  RLS sections 515 to 519, and by the adapter probe's new connection, but by no behaviour in the suite, which has set the
+  setting before the section runs (#289's U-3).
+
+### 25.4 Operations
+
+- RLS sections 515 to 519 (and 515o to 519o in `rls-owner-checks.sql`) hold it: the guard's text in every door, the rights
+  unchanged (`app_authenticated` runs the six, `authenticated` and `anon` none), what each door answers under every setting a
+  session can carry, and, with rows planted as the owner, that the job's door does its work while no login does: a cover
+  request that ran out is settled and its sender named, an alarm that stood too long is ended, a leave notice is written, a
+  source's secret is read, and a kitchen letter is handed over.
+- After a release that rewrites one of the six, run `prod-fore.sql` of that release: the `prosrc` row of the function it
+  rewrites is the one that must equal the "After" column above.

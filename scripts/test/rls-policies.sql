@@ -65245,3 +65245,269 @@ BEGIN
   RAISE NOTICE 'tk 514c: the pool, klasslärare, a cover request, a class timetable change and the two lookups stay refused a marked administrator';
 END $$;
 ROLLBACK;
+
+-- ===========================================================================
+-- Dörrvakten (20270220090000): sections 515–519 (och 515o–519o i rls-owner-checks.sql).
+--
+-- Sex SECURITY DEFINER-funktioner som API-rollen får köra är till för det som körs utan inloggning: jobben, synkens och
+-- integrationsnyckelns principal. En inloggning är inte detsamma som en person: huvudmannens läsare och kommunadministratören
+-- har claims men ingen Users-rad, och app.current_user_id() är NULL för dem. De fyra som vaktade på personraden
+-- (cover_requests_settle, crisis_settle, och principalgrenarna i leave_requests_tell_new_mentors och ss12000_source_secrets)
+-- släppte igenom dem, och måltidsbrevets två dörrar hade ingen vakt alls. Vakten är nu den som app.ack_remind_request fick
+-- i 20270202090000 (450): inga claims och ingen ensam subjektsinställning, en tom sträng räknad som ingenting.
+--
+--   515  app.cover_requests_settle      nekar (CR403) varje inloggning, och jobbets dörr (inga claims) går
+--   516  app.crisis_settle              nekar (KL403) varje inloggning, och jobbets dörr går
+--   517  app.leave_requests_tell_new_mentors   personens dörr är kvar; principalgrenen släpper bara in en session utan inloggning
+--   518  app.ss12000_source_secrets     en synk läser utan någons inloggning; skolans administratör är kvar
+--   519  app.meal_letter, app.meal_letter_schools   svarar ingenting åt en inloggning
+--
+-- Här, som API-rollen och utan rader: vaktens text i varje dörr, rättigheterna oförändrade, och vad varje dörr svarar under
+-- varje inställning en session kan bära (en tom sträng efter en annan begärans transaktion, claims som {}, null, bara en
+-- roll, bara ett subjekt) och som huvudmannens läsare, kommunadministratören och en person. Ägarsidan (515o–519o) planterar
+-- raderna och visar att dörren gör sitt arbete för jobbet medan ingen inloggning gör det.
+-- ===========================================================================
+
+CREATE FUNCTION pg_temp.dv_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'dörrvakt %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $f$;
+
+-- Ett värde ur en sats, eller dess SQLSTATE som 'E:<kod>': en nekning är också ett svar att jämföra.
+CREATE FUNCTION pg_temp.dv_val(p_sql text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  got text;
+BEGIN
+  BEGIN
+    EXECUTE p_sql INTO got;
+    RETURN coalesce(got, 'NULL');
+  EXCEPTION WHEN OTHERS THEN
+    RETURN 'E:' || SQLSTATE;
+  END;
+END $f$;
+
+-- En dörrs kropp utan kommentarer och med varje följd av blanka tecken som ett mellanslag.
+CREATE FUNCTION pg_temp.dv_src(p_door text) RETURNS text LANGUAGE sql AS $f$
+  SELECT btrim(regexp_replace(regexp_replace((SELECT p.prosrc FROM pg_proc p WHERE p.oid = p_door::regprocedure), '--[^\n]*', '', 'g'), '\s+', ' ', 'g'))
+$f$;
+
+-- En sats under varje inställning en session kan bära, och som tre riktiga inloggningar. p_want är ett uttryck per slag av
+-- session (en regex mot svaret): 'door' är jobbets (inga claims; en tom sträng är det en poolad anslutning läser efter någon
+-- annans transaktion), 'login' varje inloggning, 'person' en person med Users-rad (annars som 'login') och 'blank' claims som
+-- ' ' (annars som 'login'). p_sync och p_service sätter synkens och integrationsnyckelns principal bredvid sessionen, och
+-- p_person är den person (authId) som 'person' är.
+CREATE FUNCTION pg_temp.dv_shapes(p_label text, p_sql text, p_want jsonb, p_sync text DEFAULT '', p_service text DEFAULT '',
+                                   p_person text DEFAULT '00000000-0000-4000-8000-000000000115') RETURNS void
+LANGUAGE plpgsql AS $f$
+DECLARE
+  roller uuid;
+  shape text[];
+  kind text;
+  got text;
+  want text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000115')::text, true);
+  roller := app.current_school_id();
+  IF roller IS NULL THEN RAISE EXCEPTION 'dörrvakt %: the roller school did not resolve', p_label; END IF;
+  FOREACH shape SLICE 1 IN ARRAY ARRAY[
+    ARRAY['', '', '', 'door', 'no claims'],
+    ARRAY[' ', '', '', 'blank', 'claims of one space'],
+    ARRAY['{}', '', '', 'login', 'claims {}'],
+    ARRAY['null', '', '', 'login', 'claims null'],
+    ARRAY['{"role":"authenticated"}', '', '', 'login', 'claims with a role only'],
+    ARRAY['', 'fe000000-0000-4000-8000-000000000260', '', 'login', 'a lone subject setting'],
+    ARRAY['{"sub":"fe000000-0000-4000-8000-000000000260","role":"authenticated"}', 'fe000000-0000-4000-8000-000000000260', '', 'login', 'claims and a subject'],
+    ARRAY['{"sub":"fe000000-0000-4000-8000-000000000260","role":"authenticated"}', '', roller::text, 'login', 'the huvudman''s reader at the roller school'],
+    ARRAY['{"sub":"fe000000-0000-4000-8000-000000000261","role":"authenticated"}', '', '', 'login', 'the kommunadministratör, no school chosen'],
+    ARRAY[json_build_object('sub', p_person, 'role', 'authenticated')::text, '', '', 'person', 'a person with a Users row']
+  ] LOOP
+    kind := shape[4];
+    want := coalesce(p_want ->> kind, CASE WHEN kind IN ('blank', 'person') THEN p_want ->> 'login' END);
+    IF want IS NULL THEN RAISE EXCEPTION 'dörrvakt %: no expectation for a session of kind %', p_label, kind; END IF;
+    PERFORM set_config('request.jwt.claims', shape[1], true);
+    PERFORM set_config('request.jwt.claim.sub', shape[2], true);
+    PERFORM set_config('app.chosen_school_id', shape[3], true);
+    PERFORM set_config('app.sync_school_id', p_sync, true);
+    PERFORM set_config('app.service_school_id', p_service, true);
+    got := pg_temp.dv_val(p_sql);
+    IF got !~ want THEN
+      RAISE EXCEPTION 'dörrvakt %: % (claims [%], subject [%], school [%], sync [%], service [%]) answered [%], not [%]',
+        p_label, shape[5], shape[1], shape[2], shape[3], p_sync, p_service, got, want;
+    END IF;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  PERFORM set_config('app.chosen_school_id', '', true);
+  PERFORM set_config('app.sync_school_id', '', true);
+  PERFORM set_config('app.service_school_id', '', true);
+END $f$;
+
+-- Rättigheterna är de som dörrarna alltid haft: API-rollen kör dem, PostgREST-rollerna gör det inte.
+CREATE FUNCTION pg_temp.dv_acl(p_door text) RETURNS text LANGUAGE sql AS $f$
+  SELECT has_function_privilege('app_authenticated', p_door::regprocedure, 'EXECUTE')::text || '/' ||
+         has_function_privilege('authenticated', p_door::regprocedure, 'EXECUTE')::text || '/' ||
+         has_function_privilege('anon', p_door::regprocedure, 'EXECUTE')::text
+$f$;
+
+-- ---------------------------------------------------------------------------
+-- Section 515: app.cover_requests_settle är jobbets dörr och nekar varje inloggning, också en som inte är en person.
+--
+-- Förut vaktade den på personraden (app.current_user_id() IS NOT NULL) och släppte igenom huvudmannens läsare och
+-- kommunadministratören: den stängde varje skolas förfallna vikarieförfrågningar och gav tillbaka avsändarens authId och
+-- profil. Vakten är nu app.ack_remind_request:s villkor, med den nekning (CR403) som dörren alltid haft.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  door constant text := 'app.cover_requests_settle()';
+  guard constant text := $g$IF nullif(current_setting('request.jwt.claims', true), '') IS NOT NULL OR nullif(current_setting('request.jwt.claim.sub', true), '') IS NOT NULL THEN RAISE EXCEPTION 'COVER_REQUEST_SETTLING_IS_THE_JOBS' USING ERRCODE = 'CR403'; END IF;$g$;
+BEGIN
+  -- Vaktens text: första satsen i dörren. En vakt som frågar efter personraden, tappar en av de två inställningarna, binder
+  -- dem med AND, läser en tom sträng som en inloggning, läser inställningen utan missing_ok eller är borta nekas här vid namn.
+  IF NOT starts_with(substring(pg_temp.dv_src(door) FROM 'BEGIN (.*)$'), guard) THEN
+    RAISE EXCEPTION 'dörrvakt 515: the first statement of % is not the door''s guard', door;
+  END IF;
+  PERFORM pg_temp.dv_expect('515 rights', pg_temp.dv_acl(door), 'true/false/false');
+  PERFORM pg_temp.dv_shapes('515', 'SELECT count(*)::text FROM app.cover_requests_settle()',
+                            '{"door": "^[0-9]+$", "login": "^E:CR403$"}'::jsonb);
+  RAISE NOTICE 'dörrvakt 515: the guard, the rights and every setting, for app.cover_requests_settle';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 516: app.crisis_settle, på samma sätt (KL403).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  door constant text := 'app.crisis_settle()';
+  guard constant text := $g$IF nullif(current_setting('request.jwt.claims', true), '') IS NOT NULL OR nullif(current_setting('request.jwt.claim.sub', true), '') IS NOT NULL THEN RAISE EXCEPTION 'CRISIS_SETTLE_IS_THE_JOBS' USING ERRCODE = 'KL403'; END IF;$g$;
+BEGIN
+  IF NOT starts_with(substring(pg_temp.dv_src(door) FROM 'BEGIN (.*)$'), guard) THEN
+    RAISE EXCEPTION 'dörrvakt 516: the first statement of % is not the door''s guard', door;
+  END IF;
+  PERFORM pg_temp.dv_expect('516 rights', pg_temp.dv_acl(door), 'true/false/false');
+  PERFORM pg_temp.dv_shapes('516', 'SELECT app.crisis_settle()::text', '{"door": "^[0-9]+$", "login": "^E:KL403$"}'::jsonb);
+  RAISE NOTICE 'dörrvakt 516: the guard, the rights and every setting, for app.crisis_settle';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 517: app.leave_requests_tell_new_mentors har två dörrar. Personens (skolans lärare och administratör med personrad)
+-- är oförändrad. Det andra, för det som körs utan inloggning (synkens och integrationsnyckelns principal), släppte förut in en
+-- inloggning utan personrad bredvid principalens inställning; det släpper nu bara in en session utan inloggning. Allt här utan
+-- rader: ett svar är antalet notiser dörren skrev, eller koden den nekade med. En inloggning får 0. (Claims som ' ' kastar
+-- 22P02 redan i personkontrollen, före och efter: app.current_user_id() läser dem som JSON.)
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  door constant text := 'app.leave_requests_tell_new_mentors()';
+  branch constant text := $g$ELSIF nullif(current_setting('request.jwt.claims', true), '') IS NULL AND nullif(current_setting('request.jwt.claim.sub', true), '') IS NULL AND (v_sync IS NULL OR v_service IS NULL) THEN v_school := coalesce(v_sync, v_service); END IF;$g$;
+  src text := pg_temp.dv_src(door);
+  roller uuid;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000115')::text, true);
+  roller := app.current_school_id();
+  -- Principalgrenens text. Personens gren (en person med Users-rad, utan principal, som lärare eller administratör) står kvar.
+  IF position(branch IN src) = 0 THEN
+    RAISE EXCEPTION 'dörrvakt 517: the principal branch of % does not ask for a session with no login', door;
+  END IF;
+  IF position($g$IF app.current_user_id() IS NOT NULL THEN IF v_sync IS NULL AND v_service IS NULL AND coalesce(app.current_user_role() IN ('TEACHER', 'SCHOOL_ADMIN'), false) THEN v_school := app.current_school_id(); END IF;$g$ IN src) = 0 THEN
+    RAISE EXCEPTION 'dörrvakt 517: the person''s branch of % is not as it was', door;
+  END IF;
+  PERFORM pg_temp.dv_expect('517 rights', pg_temp.dv_acl(door), 'true/false/false');
+  -- Bredvid synkens principal, och bredvid integrationsnyckelns: jobbets dörr (inga claims) går, varje inloggning får ingenting.
+  PERFORM pg_temp.dv_shapes('517 beside the sync principal', 'SELECT count(*)::text FROM app.leave_requests_tell_new_mentors()',
+                            '{"door": "^[0-9]+$", "login": "^0$", "blank": "^E:22P02$"}'::jsonb, roller::text, '');
+  PERFORM pg_temp.dv_shapes('517 beside the integration key''s principal', 'SELECT count(*)::text FROM app.leave_requests_tell_new_mentors()',
+                            '{"door": "^[0-9]+$", "login": "^0$", "blank": "^E:22P02$"}'::jsonb, '', roller::text);
+  -- Båda principalerna på en gång är ingen dörr (en huvudmansnyckel öppen för en skola är ingen principal här).
+  PERFORM pg_temp.dv_shapes('517 beside both principals', 'SELECT count(*)::text FROM app.leave_requests_tell_new_mentors()',
+                            '{"door": "^0$", "login": "^0$", "blank": "^E:22P02$"}'::jsonb, roller::text, roller::text);
+  -- Utan någon principal: ingen skola att svara för, utom för personens egen dörr.
+  PERFORM pg_temp.dv_shapes('517 no principal', 'SELECT count(*)::text FROM app.leave_requests_tell_new_mentors()',
+                            '{"door": "^0$", "login": "^0$", "blank": "^E:22P02$", "person": "^[0-9]+$"}'::jsonb);
+  RAISE NOTICE 'dörrvakt 517: the principal branch asks for no login, the person''s door is as it was';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 518: app.ss12000_source_secrets läses av skolans synk (principalen, ingen inloggning bredvid) eller skolans
+-- administratör med rätt till integrationerna. En inloggning bredvid synkens inställning nekas (SS403), som en person alltid
+-- nekats; huvudmannens läsare och kommunadministratören läser inga hemligheter, med eller utan den. Utan rader: ett svar är
+-- antalet chiffertexter (0 för en källa som inte finns) eller koden dörren nekade med.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  door constant text := 'app.ss12000_source_secrets(uuid)';
+  branch constant text := $g$IF sync IS NOT NULL THEN IF nullif(current_setting('request.jwt.claims', true), '') IS NOT NULL OR nullif(current_setting('request.jwt.claim.sub', true), '') IS NOT NULL THEN RAISE EXCEPTION 'SS12000_SECRET_REFUSED: en synk läser hemligheterna utan någons inloggning' USING ERRCODE = 'SS403'; END IF; school := sync;$g$;
+  src text := pg_temp.dv_src(door);
+  roller uuid;
+  ask constant text := 'SELECT count(*)::text FROM app.ss12000_source_secrets(gen_random_uuid())';
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000115')::text, true);
+  roller := app.current_school_id();
+  IF position(branch IN src) = 0 THEN
+    RAISE EXCEPTION 'dörrvakt 518: the sync branch of % does not refuse every login', door;
+  END IF;
+  PERFORM pg_temp.dv_expect('518 rights', pg_temp.dv_acl(door), 'true/false/false');
+  -- Bredvid synkens principal: jobbet (inga claims) läser, varje inloggning nekas.
+  PERFORM pg_temp.dv_shapes('518 beside the sync principal', ask,
+                            '{"door": "^0$", "login": "^E:SS403$"}'::jsonb, roller::text, '');
+  -- Bredvid integrationsnyckelns principal: ingen läser, med eller utan inloggning (en tjänsteprincipal läser inga hemligheter).
+  PERFORM pg_temp.dv_shapes('518 beside the integration key''s principal', ask,
+                            '{"door": "^E:SS403$", "login": "^E:SS403$", "blank": "^E:(SS403|22P02)$"}'::jsonb, '', roller::text);
+  -- Utan principal: bara skolans administratör läser (här en källa som inte finns, så 0); jobbet och varje annan inloggning nekas.
+  PERFORM pg_temp.dv_shapes('518 no principal', ask,
+                            '{"door": "^E:SS403$", "login": "^E:SS403$", "blank": "^E:22P02$", "person": "^0$"}'::jsonb,
+                            '', '', '00000000-0000-4000-8000-000000000950');
+  RAISE NOTICE 'dörrvakt 518: a sync reads with no login beside it, an administrator reads, nobody else does';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 519: app.meal_letter och app.meal_letter_schools hade ingen vakt: vilken inloggning som helst fick skolans köksadress
+-- och dagens tal, och listan på skolorna med brevet på. De är kvar LANGUAGE sql (planen är den samma), med vakten som ett
+-- villkor i frågan. Här planterar skolans administratör brevet (så att det finns något att få), och varje session frågar.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  cond constant text := $g$nullif(current_setting('request.jwt.claims', true), '') IS NULL AND nullif(current_setting('request.jwt.claim.sub', true), '') IS NULL$g$;
+  school uuid;
+BEGIN
+  IF position(cond IN pg_temp.dv_src('app.meal_letter(uuid, date)')) = 0 THEN
+    RAISE EXCEPTION 'dörrvakt 519: app.meal_letter does not ask for a session with no login';
+  END IF;
+  IF position(cond IN pg_temp.dv_src('app.meal_letter_schools(timestamp with time zone, integer)')) = 0 THEN
+    RAISE EXCEPTION 'dörrvakt 519: app.meal_letter_schools does not ask for a session with no login';
+  END IF;
+  PERFORM pg_temp.dv_expect('519 rights of the letter', pg_temp.dv_acl('app.meal_letter(uuid, date)'), 'true/false/false');
+  PERFORM pg_temp.dv_expect('519 rights of the list', pg_temp.dv_acl('app.meal_letter_schools(timestamp with time zone, integer)'), 'true/false/false');
+  -- Skolans administratör (på rls-ledighet) sätter brevet på: en tid och en adress.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000950')::text, true);
+  school := app.current_school_id();
+  INSERT INTO "KitchenSettings" ("schoolId", "cutoffTime", "letterEnabled", "kitchenEmail")
+  VALUES (school, '08:30', true, 'kok@example.invalid')
+  ON CONFLICT ("schoolId") DO UPDATE SET "cutoffTime" = '08:30', "letterEnabled" = true, "kitchenEmail" = 'kok@example.invalid';
+  PERFORM pg_temp.dv_expect('519 the letter is on for the administrator',
+                            (SELECT "kitchenEmail" FROM "KitchenSettings" WHERE "schoolId" = school), 'kok@example.invalid');
+  -- Jobbets dörr får adressen; varje inloggning, också en person, får NULL.
+  PERFORM pg_temp.dv_shapes('519 the letter', format($q$SELECT coalesce(app.meal_letter(%L, current_date) ->> 'email', 'NULL')$q$, school),
+                            '{"door": "^kok@example.invalid$", "login": "^NULL$"}'::jsonb);
+  -- Skolorna: jobbets dörr svarar utan fel, varje inloggning får ingen skola (listan är tom också för jobbet här: ingen lunch är
+  -- planterad; 519o har en).
+  PERFORM pg_temp.dv_shapes('519 the list', 'SELECT count(*)::text FROM app.meal_letter_schools(now(), 100000)',
+                            '{"door": "^[0-9]+$", "login": "^0$"}'::jsonb);
+  RAISE NOTICE 'dörrvakt 519: the letter and the list answer the job and no login';
+END $$;
+ROLLBACK;

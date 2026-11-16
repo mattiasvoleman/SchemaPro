@@ -7214,3 +7214,298 @@ BEGIN
   RAISE NOTICE 'tk 513o-e: the history''s month';
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Dörrvakten (20270220090000), ägarsidan: 515o–519o. Sektionerna 515–519 i rls-policies.sql håller vaktens text, rättigheterna
+-- och svaret under varje inställning utan rader. Här planterar ägaren raderna, så att dörren har något att göra, och visar
+-- två saker för var och en av de sex dörrarna: att jobbets dörr (inga claims) gör sitt arbete, och att ingen inloggning gör
+-- det, huvudmannens läsare och kommunadministratören lika lite som en person eller en session som bara bär en inställning.
+-- Ett svar är dörrens svar, ett lodrätt streck och vad som hände med raderna; en nekning är 'E:<kod>'. Varje scenario körs i
+-- en egen rullad transaktion, så att en dörr som stänger en rad inte tar den från nästa inloggning. Allt rullas tillbaka.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.dv_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'dörrvakt %: got\n%\nwanted\n%', p_label, p_got, p_want;
+  END IF;
+END $f$;
+
+-- Ett anrop som en viss session, i en egen rullad transaktion; svaret är dörrens (eller 'E:<kod>'), och p_effect, om den ges,
+-- läses efteråt som ägaren: ' | ' och dess värde.
+CREATE FUNCTION pg_temp.dv_scn(p_sql text, p_effect text DEFAULT NULL, p_claims text DEFAULT '', p_sub text DEFAULT '', p_chosen text DEFAULT '',
+                               p_sync text DEFAULT '', p_service text DEFAULT '') RETURNS text
+LANGUAGE plpgsql AS $f$
+DECLARE
+  got text;
+  eff text := '';
+BEGIN
+  BEGIN
+    PERFORM set_config('request.jwt.claims', p_claims, true);
+    PERFORM set_config('request.jwt.claim.sub', p_sub, true);
+    PERFORM set_config('app.chosen_school_id', p_chosen, true);
+    PERFORM set_config('app.sync_school_id', p_sync, true);
+    PERFORM set_config('app.service_school_id', p_service, true);
+    BEGIN
+      EXECUTE p_sql INTO got;
+      got := coalesce(got, 'NULL');
+    EXCEPTION WHEN OTHERS THEN
+      got := 'E:' || SQLSTATE;
+    END;
+    IF p_effect IS NOT NULL THEN EXECUTE p_effect INTO eff; END IF;
+    RAISE EXCEPTION 'rollback' USING ERRCODE = 'TF999';
+  EXCEPTION WHEN SQLSTATE 'TF999' THEN NULL;
+  END;
+  RETURN got || CASE WHEN p_effect IS NULL THEN '' ELSE ' | ' || eff END;
+END $f$;
+
+-- De inloggningar som inte är en person med Users-rad: huvudmannens läsare vid p_roller-skolan, kommunadministratören utan skola
+-- och de inställningar en session kan bära (claims som {}, null, bara en roll, ett ensamt subjekt, claims och subjekt). 'blank'
+-- är claims av ett enda mellanslag, som app.current_user_id() läser som JSON och därför kastar 22P02 för.
+CREATE FUNCTION pg_temp.dv_logins(p_roller text) RETURNS TABLE (label text, claims text, sub text, chosen text, blank boolean)
+LANGUAGE sql AS $f$
+  SELECT * FROM (VALUES
+    ('the huvudman''s reader at the roller school', '{"sub":"fe000000-0000-4000-8000-000000000260","role":"authenticated"}', '', p_roller, false),
+    ('the kommunadministratör, no school chosen', '{"sub":"fe000000-0000-4000-8000-000000000261","role":"authenticated"}', '', '', false),
+    ('claims {}', '{}', '', '', false),
+    ('claims null', 'null', '', '', false),
+    ('claims with a role only', '{"role":"authenticated"}', '', '', false),
+    ('a lone subject setting', '', 'fe000000-0000-4000-8000-000000000260', '', false),
+    ('claims and a subject', '{"sub":"fe000000-0000-4000-8000-000000000260","role":"authenticated"}', 'fe000000-0000-4000-8000-000000000260', '', false),
+    ('claims of one space', ' ', '', '', true)
+  ) AS v(label, claims, sub, chosen, blank)
+$f$;
+
+-- ---------------------------------------------------------------------------
+-- 515o: app.cover_requests_settle. En vikarieförfrågan hos primärskolan har gått ut. Jobbets dörr stänger den och svarar med
+-- vem som skickade den (authId och profil, för aviseringen). Ingen inloggning stänger den: varje en nekas (CR403) och
+-- förfrågan står kvar OPEN.
+-- ---------------------------------------------------------------------------
+BEGIN;
+DO $$
+DECLARE
+  ps uuid := (SELECT id FROM "Schools" WHERE slug <> 'rls-fixture-school' ORDER BY "createdAt" LIMIT 1);
+  roller uuid := (SELECT "schoolId" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000115');
+  me uuid; me_auth text; me_profile text; t1 uuid; t2 uuid;
+  l uuid; a uuid; r uuid;
+  asks text; sees text; w record;
+BEGIN
+  SELECT u.id, u."authId"::text, u."adminProfile"::text INTO me, me_auth, me_profile FROM "Users" u
+   WHERE u."schoolId" = ps AND u.role = 'SCHOOL_ADMIN' AND u."isActive" AND u."authId" IS NOT NULL
+     AND 'DRIFT' = ANY (app.admin_profile_writes(u."adminProfile")) ORDER BY u."authId" LIMIT 1;
+  SELECT id INTO t1 FROM "Users" WHERE "schoolId" = ps AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1;
+  SELECT id INTO t2 FROM "Users" WHERE "schoolId" = ps AND role = 'TEACHER' AND "isActive" AND id <> t1 ORDER BY "authId" LIMIT 1;
+  IF me IS NULL OR t1 IS NULL OR t2 IS NULL OR roller IS NULL THEN RAISE EXCEPTION 'dörrvakt 515o: the fixture people did not resolve'; END IF;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (ps, (SELECT id FROM "Subjects" WHERE "schoolId" = ps ORDER BY id LIMIT 1),
+          (SELECT id FROM "StudentGroups" WHERE "schoolId" = ps ORDER BY id LIMIT 1),
+          DATE '2097-03-01', timestamptz '2097-03-01 08:00 UTC', timestamptz '2097-03-01 09:00 UTC', now()) RETURNING id INTO l;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (ps, l, t1, 'LEAD');
+  INSERT INTO "TeacherAbsences" ("schoolId", "userId", "startsAt", "endsAt")
+  VALUES (ps, t1, timestamptz '2097-02-28 00:00 UTC', timestamptz '2097-03-05 00:00 UTC') RETURNING id INTO a;
+  INSERT INTO "CoverRequests" ("schoolId", "requestedByUserId", "expiresAt") VALUES (ps, me, now() + interval '1 second') RETURNING id INTO r;
+  INSERT INTO "CoverRequestLessons" ("schoolId", "requestId", "absenceId", "calendarLessonId") VALUES (ps, r, a, l);
+  INSERT INTO "CoverRequestRecipients" ("schoolId", "requestId", "userId") VALUES (ps, r, t2);
+  PERFORM pg_sleep(1.3);   -- tiden är ute enligt databasens klocka
+  asks := format($q$SELECT count(*)::text || ' ' || coalesce(string_agg(s."outcome" || ':' || (s."senderAuthId" = %L::uuid)::text || ':' || s."senderProfile"::text, ',' ORDER BY s."requestId"), '-') AS a
+                      FROM app.cover_requests_settle() s WHERE s."requestId" = %L$q$, me_auth, r);
+  sees := format($q$SELECT status::text FROM "CoverRequests" WHERE id = %L$q$, r);
+
+  -- Jobbets dörr: inga claims, eller de tomma strängar en poolad anslutning läser efter någon annans transaktion.
+  PERFORM pg_temp.dv_expect('515o the door settles the request and names its sender', pg_temp.dv_scn(asks, sees), '1 EXPIRED:true:' || me_profile || ' | EXPIRED');
+  -- Ingen inloggning: förfrågan står kvar, och inga rader ges.
+  FOR w IN SELECT * FROM pg_temp.dv_logins(roller::text) LOOP
+    PERFORM pg_temp.dv_expect('515o ' || w.label, pg_temp.dv_scn(asks, sees, w.claims, w.sub, w.chosen), 'E:CR403 | OPEN');
+  END LOOP;
+  PERFORM pg_temp.dv_expect('515o the administrator who sent it', pg_temp.dv_scn(asks, sees, json_build_object('sub', me_auth)::text), 'E:CR403 | OPEN');
+  PERFORM pg_temp.dv_expect('515o the administrator who sent it, as a lone subject setting', pg_temp.dv_scn(asks, sees, '', me_auth), 'E:CR403 | OPEN');
+  -- Dörren gör hela sitt arbete för jobbet: förfrågan är stängd och står inte kvar i nästa pass.
+  PERFORM pg_temp.dv_expect('515o the request is settled by the door and not again',
+                            pg_temp.dv_scn(format($q$SELECT x.a || '/' || y.b
+                                                      FROM (%s) x,
+                                                           LATERAL (SELECT count(*)::text AS b FROM app.cover_requests_settle() s2 WHERE s2."requestId" = %L) y$q$, asks, r), sees),
+                            '1 EXPIRED:true:' || me_profile || '/0 | EXPIRED');
+  RAISE NOTICE 'dörrvakt 515o: the door settles a request for the job, and no login does';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- 516o: app.crisis_settle. Två larm har stått öppna längre än de kan (ett skarpt i 13 timmar, en övning i 4) och ett skarpt har
+-- stått i en timme. Jobbets dörr avslutar de två (autoEnded), och svarar med alla skolors antal: det är det som gör att en
+-- inloggning inte ska få fråga. Ingen inloggning avslutar något: KL403, och alla tre står öppna.
+-- ---------------------------------------------------------------------------
+BEGIN;
+DO $$
+DECLARE
+  ps uuid := (SELECT id FROM "Schools" WHERE slug <> 'rls-fixture-school' ORDER BY "createdAt" LIMIT 1);
+  roller uuid := (SELECT "schoolId" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000115');
+  led uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-ledighet');
+  -- En övning i taget per skola: skolan får vara en som inte har någon öppen (fixturernas egen gamla står hos en annan).
+  drill_school uuid := (SELECT s.id FROM "Schools" s WHERE s.id NOT IN (SELECT "schoolId" FROM "CrisisAlarms" WHERE "endedAt" IS NULL AND mode = 'DRILL')
+                           ORDER BY s.slug COLLATE "C" LIMIT 1);
+  me uuid; me_auth text; rut uuid;
+  a1 uuid; a2 uuid; a3 uuid;
+  due bigint;
+  asks text; sees text; w record;
+BEGIN
+  SELECT u.id, u."authId"::text INTO me, me_auth FROM "Users" u
+   WHERE u."schoolId" = ps AND u.role = 'SCHOOL_ADMIN' AND u."isActive" AND u."authId" IS NOT NULL ORDER BY u."authId" LIMIT 1;
+  SELECT id INTO rut FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000950';
+  IF me IS NULL OR rut IS NULL OR roller IS NULL OR led IS NULL THEN RAISE EXCEPTION 'dörrvakt 516o: the fixture people did not resolve'; END IF;
+  INSERT INTO "CrisisAlarms" ("schoolId", kind, mode, "startedAt", "startedByUserId", "listsSealedAt")
+  VALUES (ps, 'EVACUATION', 'LIVE', now() - interval '13 hours', me, now() - interval '13 hours') RETURNING id INTO a1;
+  INSERT INTO "CrisisAlarms" ("schoolId", kind, mode, "startedAt", "startedByUserId", "listsSealedAt")
+  VALUES (drill_school, 'EVACUATION', 'DRILL', now() - interval '4 hours', NULL, now() - interval '4 hours') RETURNING id INTO a2;
+  INSERT INTO "CrisisAlarms" ("schoolId", kind, mode, "startedAt", "startedByUserId", "listsSealedAt")
+  VALUES (led, 'EVACUATION', 'LIVE', now() - interval '1 hour', rut, now() - interval '1 hour') RETURNING id INTO a3;
+  -- Hur många som står öppna längre än de kan i hela databasen (fixturernas egna gamla larm hör till dem).
+  SELECT count(*) INTO due FROM "CrisisAlarms" x
+   WHERE x."endedAt" IS NULL AND x."startedAt" < clock_timestamp() - CASE x."mode" WHEN 'LIVE' THEN interval '12 hours' ELSE interval '3 hours' END;
+  asks := 'SELECT app.crisis_settle()::text';
+  sees := format($q$SELECT string_agg(CASE WHEN x."endedAt" IS NULL THEN 'open' ELSE 'ended' END || CASE WHEN x."autoEnded" THEN '+auto' ELSE '' END, ',' ORDER BY x."startedAt")
+                      FROM "CrisisAlarms" x WHERE x.id IN (%L, %L, %L)$q$, a1, a2, a3);
+
+  PERFORM pg_temp.dv_expect('516o the door ends the two that stood too long, and not the third',
+                            pg_temp.dv_scn(asks, sees), due || ' | ended+auto,ended+auto,open');
+  FOR w IN SELECT * FROM pg_temp.dv_logins(roller::text) LOOP
+    PERFORM pg_temp.dv_expect('516o ' || w.label, pg_temp.dv_scn(asks, sees, w.claims, w.sub, w.chosen), 'E:KL403 | open,open,open');
+  END LOOP;
+  PERFORM pg_temp.dv_expect('516o the administrator', pg_temp.dv_scn(asks, sees, json_build_object('sub', me_auth)::text), 'E:KL403 | open,open,open');
+  PERFORM pg_temp.dv_expect('516o the administrator, as a lone subject setting', pg_temp.dv_scn(asks, sees, '', me_auth), 'E:KL403 | open,open,open');
+  IF due < 2 THEN RAISE EXCEPTION 'dörrvakt 516o: the door was asked to end % alarms, not at least the two planted', due; END IF;
+  RAISE NOTICE 'dörrvakt 516o: the door ends alarms for the job (% in all), and no login does', due;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- 517o: app.leave_requests_tell_new_mentors. Skolan på rls-ledighet delegerar till mentorn först nu, så fixturens tidigare
+-- ansökan (Gustavs) är skyldig Cecilia en notis. Dörrarna för det som körs utan inloggning (synkens principal, integrations-
+-- nyckelns) och personens egen (skolans lärare) skriver den. Ingen inloggning utan personrad gör det, inte heller bredvid en
+-- principalinställning: det var luckan. Svaret är antalet notiser dörren gav, och vad som hände är antalet skrivna för ansökan.
+-- ---------------------------------------------------------------------------
+BEGIN;
+DO $$
+DECLARE
+  led uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-ledighet');
+  roller uuid := (SELECT "schoolId" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000115');
+  req uuid; asks text; sees text; w record;
+  anna constant text := '00000000-0000-4000-8000-000000000951';
+  p text;
+BEGIN
+  IF led IS NULL OR roller IS NULL THEN RAISE EXCEPTION 'dörrvakt 517o: the fixture schools did not resolve'; END IF;
+  INSERT INTO "LeaveDelegationDecisions" ("schoolId", "mentorMaxSchoolDays") VALUES (led, 3);
+  SELECT id INTO req FROM "LeaveRequests" WHERE "schoolId" = led AND reason = 'rls fixture tidigare';
+  IF req IS NULL THEN RAISE EXCEPTION 'dörrvakt 517o: the fixture''s earlier request is missing'; END IF;
+  asks := 'SELECT count(*)::text FROM app.leave_requests_tell_new_mentors()';
+  sees := format($q$SELECT count(*)::text FROM "Notifications" WHERE "schoolId" = %L AND type::text = 'LEAVE_REQUESTED' AND meta ->> 'leaveRequestId' = %L$q$, led, req);
+
+  -- De tre dörrar som finns: synkens principal och integrationsnyckelns (inga claims, eller de tomma strängar en poolad
+  -- anslutning läser), och personen med Users-rad (skolans lärare).
+  PERFORM pg_temp.dv_expect('517o the sync principal tells the mentor', pg_temp.dv_scn(asks, sees, '', '', '', led::text), '1 | 1');
+  PERFORM pg_temp.dv_expect('517o the integration key''s principal tells the mentor', pg_temp.dv_scn(asks, sees, '', '', '', '', led::text), '1 | 1');
+  PERFORM pg_temp.dv_expect('517o a member of the staff tells the mentor', pg_temp.dv_scn(asks, sees, json_build_object('sub', anna)::text), '1 | 1');
+  -- Ingen inloggning utan personrad, med eller utan en principalinställning bredvid.
+  FOR w IN SELECT * FROM pg_temp.dv_logins(roller::text) LOOP
+    PERFORM pg_temp.dv_expect('517o ' || w.label, pg_temp.dv_scn(asks, sees, w.claims, w.sub, w.chosen),
+                              CASE WHEN w.blank THEN 'E:22P02 | 0' ELSE '0 | 0' END);
+    PERFORM pg_temp.dv_expect('517o ' || w.label || ', beside the sync principal', pg_temp.dv_scn(asks, sees, w.claims, w.sub, w.chosen, led::text),
+                              CASE WHEN w.blank THEN 'E:22P02 | 0' ELSE '0 | 0' END);
+    PERFORM pg_temp.dv_expect('517o ' || w.label || ', beside the integration key''s principal', pg_temp.dv_scn(asks, sees, w.claims, w.sub, w.chosen, '', led::text),
+                              CASE WHEN w.blank THEN 'E:22P02 | 0' ELSE '0 | 0' END);
+  END LOOP;
+  -- En person bredvid en principal är ingen av dörrarna (och har aldrig varit det), och de två principalerna tillsammans inte heller.
+  PERFORM pg_temp.dv_expect('517o a member of the staff beside the sync principal', pg_temp.dv_scn(asks, sees, json_build_object('sub', anna)::text, '', '', led::text), '0 | 0');
+  PERFORM pg_temp.dv_expect('517o both principals at once', pg_temp.dv_scn(asks, sees, '', '', '', led::text, led::text), '0 | 0');
+  PERFORM pg_temp.dv_expect('517o no principal and no login', pg_temp.dv_scn(asks, sees), '0 | 0');
+  -- Notisen skrivs en gång: dörren som skrev den svarar noll nästa gång.
+  p := pg_temp.dv_scn($q$SELECT x.a::text || '/' || y.b::text
+                           FROM (SELECT count(*) AS a FROM app.leave_requests_tell_new_mentors()) x,
+                                LATERAL (SELECT count(*) AS b FROM app.leave_requests_tell_new_mentors()) y$q$, sees, '', '', '', led::text);
+  PERFORM pg_temp.dv_expect('517o the notice is written once', p, '1/0 | 1');
+  RAISE NOTICE 'dörrvakt 517o: the principals and a member of the staff tell the mentor, no login without a person does';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- 518o: app.ss12000_source_secrets. En källa med en hemlighet hos rls-ledighet. Synkens principal (inga claims) och skolans
+-- administratör läser den; ingen annan inloggning gör det, och bredvid synkens inställning nekas varje inloggning (SS403),
+-- också en utan personrad. Det var luckan: den släppte in huvudmannens läsare där.
+-- ---------------------------------------------------------------------------
+BEGIN;
+DO $$
+DECLARE
+  led uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-ledighet');
+  roller uuid := (SELECT "schoolId" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000115');
+  src uuid; asks text; w record;
+  rut constant text := '00000000-0000-4000-8000-000000000950';
+  anna constant text := '00000000-0000-4000-8000-000000000951';
+BEGIN
+  IF led IS NULL OR roller IS NULL THEN RAISE EXCEPTION 'dörrvakt 518o: the fixture schools did not resolve'; END IF;
+  INSERT INTO "Ss12000Sources" ("schoolId", name, "baseUrl", "authKind", "tokenUrl", "clientId", "organisationIds")
+  VALUES (led, 'dv 518', 'https://api.ist.example/ss12000v2-api/source/SE00100/v2.0', 'OAUTH2_CLIENT_CREDENTIALS',
+          'https://skolid.example/connect/token', 'dv518', ARRAY['aaaaaaaa-0000-4000-8000-000000000030']::uuid[]) RETURNING id INTO src;
+  INSERT INTO "Ss12000SourceSecrets" ("sourceId", "schoolId", kind, ciphertext, iv, "authTag", "keyId")
+  VALUES (src, led, 'CLIENT_SECRET', '\x0102030405'::bytea, decode(repeat('00', 12), 'hex'), decode(repeat('00', 16), 'hex'), 'abcdef0123456789');
+  asks := format($q$SELECT count(*)::text FROM app.ss12000_source_secrets(%L)$q$, src);
+
+  -- De två dörrarna: synkens principal utan inloggning, och skolans administratör.
+  PERFORM pg_temp.dv_expect('518o the sync principal reads the secret', pg_temp.dv_scn(asks, NULL, '', '', '', led::text), '1');
+  PERFORM pg_temp.dv_expect('518o the school''s administrator reads the secret', pg_temp.dv_scn(asks, NULL, json_build_object('sub', rut)::text), '1');
+  -- Ingen annan: en lärare på skolan, och varje inloggning utan personrad.
+  PERFORM pg_temp.dv_expect('518o a teacher at the school reads nothing', pg_temp.dv_scn(asks, NULL, json_build_object('sub', anna)::text), 'E:SS403');
+  FOR w IN SELECT * FROM pg_temp.dv_logins(roller::text) LOOP
+    PERFORM pg_temp.dv_expect('518o ' || w.label, pg_temp.dv_scn(asks, NULL, w.claims, w.sub, w.chosen), CASE WHEN w.blank THEN 'E:22P02' ELSE 'E:SS403' END);
+    -- Bredvid synkens principal, och bredvid integrationsnyckelns: nekad (blanka claims nekas av vakten, som kommer före JSON-läsningen).
+    PERFORM pg_temp.dv_expect('518o ' || w.label || ', beside the sync principal', pg_temp.dv_scn(asks, NULL, w.claims, w.sub, w.chosen, led::text), 'E:SS403');
+    PERFORM pg_temp.dv_expect('518o ' || w.label || ', beside the integration key''s principal', pg_temp.dv_scn(asks, NULL, w.claims, w.sub, w.chosen, '', led::text), 'E:SS403');
+  END LOOP;
+  PERFORM pg_temp.dv_expect('518o the administrator beside the sync principal', pg_temp.dv_scn(asks, NULL, json_build_object('sub', rut)::text, '', '', led::text), 'E:SS403');
+  PERFORM pg_temp.dv_expect('518o the integration key''s principal alone', pg_temp.dv_scn(asks, NULL, '', '', '', '', led::text), 'E:SS403');
+  PERFORM pg_temp.dv_expect('518o no principal and no login', pg_temp.dv_scn(asks), 'E:SS403');
+  RAISE NOTICE 'dörrvakt 518o: the sync principal and the administrator read, no login without a person does';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- 519o: app.meal_letter och app.meal_letter_schools. Primärskolan har brevet på (08:30, en köksadress) och en lunch i dag.
+-- Jobbets dörr får listan med skolan i och brevet med adressen. Varje inloggning får ingenting: inte huvudmannens läsare, inte
+-- skolans administratör och inte en lärare på en annan skola (det var luckan: de fick köksadressen och dagens tal).
+-- ---------------------------------------------------------------------------
+BEGIN;
+DO $$
+DECLARE
+  ps uuid := (SELECT id FROM "Schools" WHERE slug <> 'rls-fixture-school' ORDER BY "createdAt" LIMIT 1);
+  roller uuid := (SELECT "schoolId" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000115');
+  me_auth text;
+  tz text;
+  at_ text;
+  list_ text; letter_ text; w record;
+  anna constant text := '00000000-0000-4000-8000-000000000951';   -- lärare på en annan skola (rls-ledighet)
+BEGIN
+  SELECT u."authId"::text INTO me_auth FROM "Users" u
+   WHERE u."schoolId" = ps AND u.role = 'SCHOOL_ADMIN' AND u."isActive" AND u."authId" IS NOT NULL ORDER BY u."authId" LIMIT 1;
+  SELECT "timezone" INTO tz FROM "Schools" WHERE id = ps;
+  IF me_auth IS NULL OR roller IS NULL THEN RAISE EXCEPTION 'dörrvakt 519o: the fixture people did not resolve'; END IF;
+  INSERT INTO "KitchenSettings" ("schoolId", "cutoffTime", "letterEnabled", "kitchenEmail") VALUES (ps, '08:30', true, 'kok@example.invalid')
+    ON CONFLICT ("schoolId") DO UPDATE SET "cutoffTime" = '08:30', "letterEnabled" = true, "kitchenEmail" = 'kok@example.invalid';
+  INSERT INTO "CalendarLunches" ("schoolId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  SELECT ps, g.id, current_date, (current_date + time '11:00') AT TIME ZONE tz, (current_date + time '11:30') AT TIME ZONE tz, now()
+    FROM "StudentGroups" g WHERE g."schoolId" = ps ORDER BY g.id LIMIT 1;
+  at_ := ((current_date + time '08:40') AT TIME ZONE tz)::text;   -- tio minuter efter brytpunkten, i skolans egen tid
+  list_ := format($q$SELECT coalesce(bool_or(s.id = %L)::text, 'false') FROM app.meal_letter_schools(%L::timestamptz, 180) s(id)$q$, ps, at_);
+  letter_ := format($q$SELECT coalesce(app.meal_letter(%L, current_date) ->> 'email', 'NULL')$q$, ps);
+
+  PERFORM pg_temp.dv_expect('519o the door lists the school whose letter is due', pg_temp.dv_scn(list_), 'true');
+  PERFORM pg_temp.dv_expect('519o the door hands over the letter', pg_temp.dv_scn(letter_), 'kok@example.invalid');
+  FOR w IN SELECT * FROM pg_temp.dv_logins(roller::text) LOOP
+    PERFORM pg_temp.dv_expect('519o the list: ' || w.label, pg_temp.dv_scn(list_, NULL, w.claims, w.sub, w.chosen), 'false');
+    PERFORM pg_temp.dv_expect('519o the letter: ' || w.label, pg_temp.dv_scn(letter_, NULL, w.claims, w.sub, w.chosen), 'NULL');
+  END LOOP;
+  PERFORM pg_temp.dv_expect('519o the list: the school''s administrator', pg_temp.dv_scn(list_, NULL, json_build_object('sub', me_auth)::text), 'false');
+  PERFORM pg_temp.dv_expect('519o the letter: the school''s administrator', pg_temp.dv_scn(letter_, NULL, json_build_object('sub', me_auth)::text), 'NULL');
+  PERFORM pg_temp.dv_expect('519o the list: a teacher at another school', pg_temp.dv_scn(list_, NULL, json_build_object('sub', anna)::text), 'false');
+  PERFORM pg_temp.dv_expect('519o the letter: a teacher at another school', pg_temp.dv_scn(letter_, NULL, json_build_object('sub', anna)::text), 'NULL');
+  PERFORM pg_temp.dv_expect('519o the letter: a teacher at another school, as a lone subject setting', pg_temp.dv_scn(letter_, NULL, '', anna), 'NULL');
+  RAISE NOTICE 'dörrvakt 519o: the job gets the list and the letter, no login does';
+END $$;
+ROLLBACK;
