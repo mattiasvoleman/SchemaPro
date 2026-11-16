@@ -267,6 +267,135 @@ describe('PUT without a baseKey is what it was', () => {
   });
 });
 
+describe('PUT lets stand the rows the post already has (review of #326, MEDEL-2)', () => {
+  const user = testUser({ schoolId: 'the-callers-school' });
+  /** The teacher is busy on Tuesday (day 2) and Wednesday (day 3): a row there does not hold. */
+  const busyOn = (days: number[]) => (_tx: unknown, _basis: unknown, _lesson: unknown, candidate: { dayOfWeek: number }) =>
+    Promise.resolve(days.includes(candidate.dayOfWeek) ? [{ kind: 'TEACHER', message: 'The teacher is busy.' }] : []);
+  const tuesday = () => stored({ id: 'p-1', dayOfWeek: 2 });
+  const wednesday = () => stored({ id: 'p-2', dayOfWeek: 3 });
+  const noWrite = (tx: TxMock) => {
+    expect(tx['teachingRequirementPlacement']!['deleteMany']).not.toHaveBeenCalled();
+    expect(tx['teachingRequirementPlacement']!['createMany']).not.toHaveBeenCalled();
+  };
+
+  it('removes one of two rows that have stopped holding, and names the one left (it was refused for the other before)', async () => {
+    const { tx, masters, service } = setup({ before: [tuesday(), wednesday()], after: [stored({ id: 'n-1', dayOfWeek: 3 })] });
+    masters.findConflicts.mockImplementation(busyOn([2, 3]));
+    const answer = await service.replace(REQ, { placements: [input({ dayOfWeek: 3 })] }, user);
+    expect(tx['teachingRequirementPlacement']!['deleteMany']).toHaveBeenCalledTimes(1);
+    expect(answer.placements.map((row) => row.dayOfWeek)).toEqual([3]);
+    expect(answer.verdicts).toEqual([{ index: 0, ok: false, reason: 'TEACHER' }]);
+  });
+
+  it('moves one of two rows that have stopped holding to a place that holds: the moved row is ok, the other is named', async () => {
+    const written = [stored({ id: 'n-1', dayOfWeek: 3 }), stored({ id: 'n-2', dayOfWeek: 4 })];
+    const { service, masters } = setup({ before: [tuesday(), wednesday()], after: written });
+    masters.findConflicts.mockImplementation(busyOn([2, 3]));
+    const answer = await service.replace(REQ, { placements: [input({ dayOfWeek: 4 }), input({ dayOfWeek: 3 })] }, user);
+    // The answer has the rows by day: Wednesday first, then Thursday; the verdict follows the row, not its place in the request.
+    expect(answer.placements.map((row) => row.dayOfWeek)).toEqual([3, 4]);
+    expect(answer.verdicts).toEqual([{ index: 0, ok: false, reason: 'TEACHER' }, { index: 1, ok: true }]);
+  });
+
+  it('still refuses a row it is given that does not hold, with its index in the request, and writes nothing', async () => {
+    const { tx, masters, service } = setup({ before: [tuesday()] });
+    masters.findConflicts.mockImplementation(busyOn([2, 3]));
+    const refused = service.replace(REQ, { placements: [input({ dayOfWeek: 2 }), input({ dayOfWeek: 3 })] }, user);
+    await expect(refused).rejects.toBeInstanceOf(ConflictException);
+    await expect(refused).rejects.toMatchObject({ response: { code: 'REQUIREMENT_PLACEMENT_REFUSED', params: { index: 1, reason: 'TEACHER' } } });
+    noWrite(tx);
+  });
+
+  it('refuses a row that is moved to another place that does not hold, though the place it left did not either', async () => {
+    const { tx, masters, service } = setup({ before: [tuesday()] });
+    masters.findConflicts.mockImplementation(busyOn([2, 3]));
+    await expect(service.replace(REQ, { placements: [input({ dayOfWeek: 3 })] }, user)).rejects.toMatchObject({
+      response: { code: 'REQUIREMENT_PLACEMENT_REFUSED', params: { index: 0 } },
+    });
+    noWrite(tx);
+  });
+
+  it('is the same row only when every column is the same: the room and the start count (the post allows one length and every week)', async () => {
+    for (const changed of [{ roomId: null }, { startTime: '10:05' }]) {
+      const { tx, masters, service } = setup({ before: [tuesday()] });
+      masters.findConflicts.mockImplementation(busyOn([2]));
+      await expect(service.replace(REQ, { placements: [input({ dayOfWeek: 2, ...changed })] }, user)).rejects.toMatchObject({
+        response: { code: 'REQUIREMENT_PLACEMENT_REFUSED', params: { index: 0 } },
+      });
+      noWrite(tx);
+    }
+  });
+
+  it('counts the rows: two equal rows against one the post has are one it has and one it is given', async () => {
+    const { tx, masters, service } = setup({ before: [tuesday()] });
+    masters.findConflicts.mockImplementation(busyOn([2]));
+    await expect(service.replace(REQ, { placements: [input({ dayOfWeek: 2 }), input({ dayOfWeek: 2 })] }, user)).rejects.toMatchObject({
+      response: { code: 'REQUIREMENT_PLACEMENT_REFUSED', params: { index: 1 } },
+    });
+    noWrite(tx);
+  });
+
+  it('asks the post\'s own rows again with the post locked, and says STALE when a row it let stand is not in them any more', async () => {
+    const { tx, masters, service } = setup({ before: [tuesday()] });
+    masters.findConflicts.mockImplementation(busyOn([2]));
+    // Somebody removed the row between the first read and the lock: the save puts it back unjudged, so it is not made.
+    let reads = 0;
+    tx['teachingRequirementPlacement']!['findMany']!.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+      where['requirementId'] === REQ ? (++reads === 1 ? [tuesday()] : []) : [],
+    );
+    const refused = service.replace(REQ, { placements: [input({ dayOfWeek: 2 })] }, user);
+    await expect(refused).rejects.toMatchObject({ response: { code: REQUIREMENT_PLACEMENTS_STALE, params: { requirementId: REQ } } });
+    noWrite(tx);
+    expect(reads).toBe(2);
+  });
+
+  it('reads the post\'s rows once more only when a row is let stand, and a key and a let-stand row share the read after the lock', async () => {
+    const plain = setup({ before: [tuesday()], after: [stored({ id: 'n-1', dayOfWeek: 4 })] });
+    plain.masters.findConflicts.mockImplementation(busyOn([2]));
+    await plain.service.replace(REQ, { placements: [input({ dayOfWeek: 4 })] }, user);
+    // Nothing failing in the request: the answer's read only.
+    expect(ownReads(plain.tx)).toHaveLength(1);
+
+    const keyed = setup({ before: [tuesday()], after: [stored({ id: 'n-1', dayOfWeek: 2 })] });
+    keyed.masters.findConflicts.mockImplementation(busyOn([2]));
+    await keyed.service.replace(REQ, { placements: [input({ dayOfWeek: 2 })], baseKey: keyOf([tuesday()]) }, user);
+    // The read that finds the row (before the lock), the one after the lock that is the key's and the let-stand row's, the answer's.
+    expect(ownReads(keyed.tx)).toHaveLength(3);
+    const reads = ownReads(keyed.tx);
+    expect(reads[0]!.order).toBeLessThan(postLockOrder(keyed.tx));
+    expect(reads[1]!.order).toBeGreaterThan(postLockOrder(keyed.tx));
+  });
+
+  it('is judged as before when no row is let stand: a list of new rows that all hold is written, and the answer says ok', async () => {
+    const { service, masters } = setup({ before: [], after: [stored({ id: 'n-1', dayOfWeek: 4 })] });
+    masters.findConflicts.mockImplementation(busyOn([2, 3]));
+    const answer = await service.replace(REQ, { placements: [input({ dayOfWeek: 4 })] }, user);
+    expect(answer.verdicts).toEqual([{ index: 0, ok: true }]);
+  });
+});
+
+describe('locksOf takes the shape a block member has, and not a whole post row (the seam to #328)', () => {
+  it('reads the covering locks of a class and subject over what it is given: class, subject, weeks, window and year', async () => {
+    const { tx, service } = setup({ before: [] });
+    tx['masterLesson']!['findMany']!.mockResolvedValue([
+      { studentGroupId: GROUP, subjectId: SUBJECT, startTime: time('10:00'), endTime: time('11:00'), recurrence: 'ALL_WEEKS', startDate: null, endDate: null, teacherId: TEACHER },
+      // The post runs odd weeks only here: a lock of every week covers it, one of even weeks does not.
+      { studentGroupId: GROUP, subjectId: SUBJECT, startTime: time('13:00'), endTime: time('14:30'), recurrence: 'EVEN_WEEKS', startDate: null, endDate: null, teacherId: TEACHER },
+    ]);
+    // What a member of a block carries (C1's BlockPlacementsService): no id, no school, no shares; and the year beside it.
+    const member = { studentGroupId: GROUP, subjectId: SUBJECT, recurrence: 'ODD_WEEKS' as const, startDate: null, endDate: null, academicYearId: YEAR };
+    const locks = await service.locksOf(tx as never, member);
+    expect(locks).toEqual([]);
+    const everyWeek = await service.locksOf(tx as never, { ...member, recurrence: 'ALL_WEEKS' });
+    expect(everyWeek).toEqual([{ minutes: 60, teacherId: TEACHER }]);
+    // It asks the table for the lessons Generera keeps of the year, of this class and subject.
+    expect(tx['masterLesson']!['findMany']).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ ...keptMastersWhere(YEAR), studentGroupId: GROUP, subjectId: SUBJECT }) }),
+    );
+  });
+});
+
 describe('rowsKey on the year\'s board', () => {
   const user = testUser();
   const YEAR_ROW = { isActive: true, predecessorId: null, gradeNumbering: 'NIOARIG' };
@@ -288,6 +417,25 @@ describe('rowsKey on the year\'s board', () => {
     expect(keys.get(EMPTY_REQ)).toBe(rowsKeyOf([]));
     // The key the board gives is the key the post's own read gives: a client can mix them.
     expect((await service.listOfPost(REQ, user)).rowsKey).toBe(keys.get(REQ));
+  });
+
+  it('gives every post the pupils\' minutes before and after its lessons, which the page\'s mirror of the clash rule holds a class out of (review of #326, MEDEL-3)', async () => {
+    const { tx, service } = setup({ before: [] });
+    tx['academicYear']!['findUnique']!.mockResolvedValue(YEAR_ROW);
+    tx['teachingRequirement']!['findMany']!.mockResolvedValue([
+      boardPost({ minutesBefore: 10, minutesAfter: 15 }),
+      boardPost({ id: EMPTY_REQ, subjectId: 'sub-ma', minutesBefore: 0, minutesAfter: 0 }),
+    ]);
+    tx['lunchSitting']!['findMany']!.mockResolvedValue([]);
+    const answer = await service.boardOfYear(YEAR, user);
+    expect(answer.posts.map((post) => [post.id, post.minutesBefore, post.minutesAfter])).toEqual([
+      [REQ, 10, 15],
+      [EMPTY_REQ, 0, 0],
+    ]);
+    // The week asks the table for them: a post's select that leaves them out would read as none.
+    expect(tx['teachingRequirement']!['findMany']).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ minutesBefore: true, minutesAfter: true }) }),
+    );
   });
 });
 

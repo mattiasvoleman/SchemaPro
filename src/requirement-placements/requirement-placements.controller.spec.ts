@@ -137,8 +137,14 @@ describe('ReplacePlacementsDto', () => {
   it('takes a baseKey as the 16 hex characters the reads give, or none, and refuses anything else', async () => {
     expect(await errorsOf({ placements: [valid], baseKey: 'e3b0c44298fc1c14' })).toEqual([]);
     expect(await errorsOf({ placements: [valid] })).toEqual([]);
-    for (const baseKey of ['', 'E3B0C44298FC1C14', 'e3b0c44298fc1c1', 'e3b0c44298fc1c145', 'not-a-key', 12]) {
+    for (const baseKey of ['', 'E3B0C44298FC1C14', 'e3b0c44298fc1c1', 'e3b0c44298fc1c145', 'not-a-key', 12, null]) {
       expect(await errorsOf({ placements: [valid], baseKey })).toContain('baseKey:matches');
     }
+  });
+
+  it('refuses a null baseKey as a mistake of the form: it is no key, and not a key that no longer holds (review of #326, LÅG-3)', async () => {
+    // `IsOptional` lets null by, and the service asked the rows for a key and answered 409 REQUIREMENT_PLACEMENTS_STALE.
+    expect(await errorsOf({ placements: [valid], baseKey: null })).toEqual(['baseKey:matches']);
+    expect(await errorsOf({ placements: [valid], baseKey: undefined })).toEqual([]);
   });
 });

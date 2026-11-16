@@ -261,6 +261,8 @@ describe('Förlagda poster (e2e)', () => {
       it('refuses a key that is not the key a read gives, with 400, before it reads anything', async () => {
         await put({ placements: [body()], baseKey: 'nope' }).expect(400);
         await put({ placements: [body()], baseKey: 7 }).expect(400);
+        // Null is no key either: a form error, and not a key that no longer holds (409).
+        await put({ placements: [body()], baseKey: null }).expect(400);
         expect(placements()['deleteMany']).not.toHaveBeenCalled();
       });
     });

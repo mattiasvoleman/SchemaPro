@@ -72,10 +72,18 @@ describe('boardPostOf: what a post has left', () => {
       recurrence: 'ALL_WEEKS',
       startDate: null,
       endDate: null,
+      minutesBefore: 0,
+      minutesAfter: 0,
       cannotPlace: null,
       parts: [{ teacherId: ANNA, minutes: 60, count: 3, locked: 0, placed: 0, left: 3, cannotPlace: null }],
       rowsKey: ROWS_KEY,
     });
+  });
+
+  it('says the pupils\' minutes before and after the post\'s lessons, which the clash rule holds the class\'s other lessons out of (review of #326, MEDEL-3)', () => {
+    expect(boardPostOf(post({ minutesBefore: 10, minutesAfter: 15 }), [], [])).toMatchObject({ minutesBefore: 10, minutesAfter: 15 });
+    // A post whose shape names none has none: the lessons of a block member and the old callers read as before.
+    expect(boardPostOf(post(), [], [])).toMatchObject({ minutesBefore: 0, minutesAfter: 0 });
   });
 
   it('says who the medlärare is, for the page\'s mirror of the clash rule', () => {

@@ -1,6 +1,6 @@
 import { LessonRecurrence } from '@prisma/client';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsEnum, IsInt, IsOptional, IsUUID, Matches, Max, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsEnum, IsInt, IsOptional, IsUUID, Matches, Max, Min, ValidateIf, ValidateNested } from 'class-validator';
 import { ROWS_KEY_PATTERN } from '../placement-rows-key';
 
 /** The most förläggningar one post can hold: its lessons a week, odd and even in pairs, with room to spare. */
@@ -65,7 +65,8 @@ export class ReplacePlacementsDto {
    * post has once the post is locked, and a list that was written in between is refused with 409
    * REQUIREMENT_PLACEMENTS_STALE and nothing written.
    */
-  @IsOptional()
+  // Left out (undefined) it is not asked; given as null it is a mistake of the form, not a key that no longer holds (review of #326, LÅG-3).
+  @ValidateIf((_, value) => value !== undefined)
   @Matches(ROWS_KEY_PATTERN, { message: 'baseKey: nyckeln är den som postens läsning gav.' })
   baseKey?: string;
 }

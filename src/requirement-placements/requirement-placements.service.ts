@@ -28,6 +28,7 @@ import {
   keptViewOf,
   mealViewOf,
   type BoardPlacementView,
+  type BoardPost,
   type PlacementBoardResponse,
 } from './placement-board';
 import { lockPostForShares } from '../resources/requirement-shares';
@@ -42,6 +43,7 @@ import {
 } from './placement-judge';
 import { placementRefusedConflict, placementsStaleConflict } from './placement-refusal';
 import { rowsKeyOf } from './placement-rows-key';
+import { sentIndexOf, unchangedOf } from './placement-unchanged';
 
 /** One förlagd lektion as the API states it (the dialog's row and the timplan's märke). */
 export interface RequirementPlacementView {
@@ -139,6 +141,8 @@ const BOARD_POST_SELECT = {
   blockId: true,
   startDate: true,
   endDate: true,
+  minutesBefore: true,
+  minutesAfter: true,
   shares: { select: { teacherId: true, lessons: true, minutes: true } },
 } as const;
 
@@ -367,8 +371,12 @@ export class RequirementPlacementsService {
    * Replaces the post's förläggningar with the request's list (empty removes
    * them). Refused with 409, and nothing written, for the first of: rows that
    * do not fit the post (REQUIREMENT_PLACEMENTS_DO_NOT_FIT, with the rule),
-   * and the first row the week does not hold (REQUIREMENT_PLACEMENT_REFUSED,
-   * with its index in the request, the reason and what it clashes with).
+   * and the first NEW or CHANGED row the week does not hold
+   * (REQUIREMENT_PLACEMENT_REFUSED, with its index in the request, the reason
+   * and what it clashes with). A row the post has already is not refused when
+   * it has stopped holding: it is let stand and named in the answer's verdicts
+   * (placement-unchanged.ts), so that a post with two such rows can be mended
+   * one row at a time.
    *
    * Written beside other grundschema edits and never inside a rewrite of the
    * year (the year's edit lock, 409 SCHEDULE_BUSY), so that it cannot land in
@@ -397,8 +405,19 @@ export class RequirementPlacementsService {
         if (fit !== null) throw requirementPlacementsConflict(fit, fitIndexOf(shape, wanted, fit));
 
         const verdicts = await this.judge(tx, user, post, wanted);
-        const refused = verdicts.find((verdict) => !verdict.ok);
-        if (refused) throw placementRefusedConflict(refused);
+        // Refused for the rows the save puts there, not for the ones the post already has: a post whose rows have stopped
+        // holding is mended one row at a time, and the rows still not holding are said in the answer (placement-unchanged.ts).
+        const failing = verdicts.filter((verdict) => !verdict.ok);
+        if (failing.length > 0) {
+          const stored = await tx.teachingRequirementPlacement.findMany({
+            where: { requirementId: id },
+            select: VIEW_SELECT,
+            orderBy: [...VIEW_ORDER],
+          });
+          const unchanged = unchangedOf(wanted, stored.map(slotOf));
+          const refused = failing.find((verdict) => !unchanged[verdict.index]);
+          if (refused) throw placementRefusedConflict(refused);
+        }
 
         // The post's row first, as every other writer of its förläggningar takes it (the PATCH, the staffing
         // proposal and the import hold it and then move the rows): DELETE first locks the rows and the trigger
@@ -409,13 +428,19 @@ export class RequirementPlacementsService {
         // before anything is deleted. Asked before the lock, two writers who both read the same list would both pass it
         // and the second would silently replace the first's; asked after it, the second reads what the first committed
         // (every statement sees the rows committed when it starts) and is refused. A write that gives no key is not asked.
-        if (dto.baseKey !== undefined) {
+        if (dto.baseKey !== undefined || failing.length > 0) {
           const current = await tx.teachingRequirementPlacement.findMany({
             where: { requirementId: id },
             select: VIEW_SELECT,
             orderBy: [...VIEW_ORDER],
           });
-          if (rowsKeyOf(current.map(keyedOf)) !== dto.baseKey) throw placementsStaleConflict(id);
+          if (dto.baseKey !== undefined && rowsKeyOf(current.map(keyedOf)) !== dto.baseKey) throw placementsStaleConflict(id);
+          // A row let stand because the post had it must be in the list the post has now, locked: if somebody wrote the post
+          // between that read and this lock the row was never judged as a new one, and the client reads the post again.
+          if (failing.length > 0) {
+            const now = unchangedOf(wanted, current.map(slotOf));
+            if (failing.some((verdict) => !now[verdict.index])) throw placementsStaleConflict(id);
+          }
         }
         // The post's rows are replaced as one list: the old ones go and the new ones are one INSERT, so the
         // trigger, which judges the post's rows when each statement is done, sees the whole set (a pair is two
@@ -443,9 +468,16 @@ export class RequirementPlacementsService {
           select: VIEW_SELECT,
           orderBy: [...VIEW_ORDER],
         });
+        // The rows let stand that still do not hold are named (a verdict that is not ok), at the place the answer has them.
+        const sent = sentIndexOf(written.map(slotOf), wanted);
         return {
           placements: written.map(viewOf),
-          verdicts: written.map((_, index) => ({ index, ok: true })),
+          verdicts: written.map((_, index): PlacementVerdictView => {
+            const verdict = verdicts[sent[index] ?? -1];
+            return verdict && !verdict.ok
+              ? { index, ok: false, ...(verdict.reason ? { reason: verdict.reason } : {}), ...(verdict.params ? { params: verdict.params } : {}) }
+              : { index, ok: true };
+          }),
           rowsKey: rowsKeyOf(written.map(keyedOf)),
         };
       });
@@ -558,13 +590,16 @@ export class RequirementPlacementsService {
    * it a lesson Generera keeps; then it answers the post, and the rows that place
    * the same lesson are over the demand.
    */
-  private async locksOf(tx: PrismaClient, post: PostRow): Promise<TaughtLesson[]> {
+  async locksOf(
+    tx: PrismaClient,
+    post: Pick<BoardPost, 'studentGroupId' | 'subjectId' | 'recurrence' | 'startDate' | 'endDate'> & { academicYearId: string },
+  ): Promise<TaughtLesson[]> {
     const lessons = await tx.masterLesson.findMany({
       where: { ...keptMastersWhere(post.academicYearId), studentGroupId: post.studentGroupId, subjectId: post.subjectId },
       select: { studentGroupId: true, subjectId: true, startTime: true, endTime: true, recurrence: true, startDate: true, endDate: true, teacherId: true },
     });
     return coveringLocksOf(
-      boardPostShape(post),
+      post,
       lessons.map((lesson) => ({ ...lesson, minutes: minutesOfClock(lesson.endTime) - minutesOfClock(lesson.startTime) })),
     );
   }
