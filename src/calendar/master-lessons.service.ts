@@ -1095,6 +1095,8 @@ export class MasterLessonsService {
       const select = {
         ...LESSON_SELECT,
         isGenerated: true,
+        // Förlagda block: a card whose lessons a run wrote from a block's förläggning is not moved (below).
+        fromPlacement: true,
         subject: { select: { name: true } },
         studentGroup: { select: { name: true } },
         school: {
@@ -1131,6 +1133,11 @@ export class MasterLessonsService {
           code: NOT_A_BLOCK_CARD,
         });
       if (lessons.some((lesson) => lesson.academicYearId !== leader.academicYearId)) throw notACard();
+      // FÖRLAGDA BLOCK: a lesson Generera wrote from a block's förläggning (fromPlacement) is the förläggning's, and the next
+      // Generera writes it again at the block's day and start. Moved by hand, the card would be put back without a word; refused
+      // before anything is written, as one placed lesson's move is (assertPlacedLessonStands). Locking and unlocking the block
+      // (lockBlock) change nothing of that and are allowed, as they are for a single placed lesson.
+      if (lessons.some((lesson) => lesson.fromPlacement)) throw lessonIsPlaced();
       const slotOf = (lesson: (typeof lessons)[number]): BlockSlot => ({
         dayOfWeek: lesson.dayOfWeek,
         startTime: toHHMM(lesson.startTime),
@@ -2914,13 +2921,16 @@ function assertPlacedLessonStands(
     day(candidate.endDate) === day(lesson.endDate) &&
     sameSet(candidate.extraGroupIds, lesson.extraGroups.map((entry) => entry.studentGroupId).filter((id) => id !== lesson.studentGroupId)) &&
     sameSet(candidate.studentIds, lesson.participants.map((entry) => entry.studentId));
-  if (!stands) {
-    throw new ConflictException({
-      message:
-        'Lektionen är förlagd på timplanen och skrivs om därifrån vid varje Generera. Ändra förläggningen på timplansposten i stället.',
-      code: LESSON_IS_PLACED,
-    });
-  }
+  if (!stands) throw lessonIsPlaced();
+}
+
+/** The 409 for an edit that would move or change a förlagd lesson: a post's own or a block's. */
+function lessonIsPlaced(): ConflictException {
+  return new ConflictException({
+    message:
+      'Lektionen är förlagd på timplanen och skrivs om därifrån vid varje Generera. Ändra förläggningen på timplansposten, eller för ett parallellt block på blocket, i stället.',
+    code: LESSON_IS_PLACED,
+  });
 }
 
 const LESSON_SELECT = {
