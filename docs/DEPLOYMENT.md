@@ -5562,6 +5562,46 @@ database refuses).
   converted tables); the bench `scripts/bench/teaches-arms.ts`; and `probe-admin-areas.ts` `ar-j` now waits up to 30 s for the
   second connection to be seen blocked.
 
+### 20.5 Part 2, the gateway: it knows the mark (no migration)
+
+The gateway reads `Users.teaches` and uses it; the web and the apps do not yet (parts 5 and 6). **No migration, no change to the
+engine's contract, and nothing changes for anybody the day it ships**: nobody is marked (the production has one administrator and
+none marked), and the mark can be set from now on only by `PATCH /api/v1/users/:id` with `{"teaches": true}`, by rektor or a full
+administrator, on an administrator who has a post.
+
+- **Deploy order.** Part 1's migration is in production already, which this part needs (the API now selects `Users.teaches` on every
+  request: a database without the column answers P2022 for every one). Part 3's arms (20.4, the database half of the note to the
+  substitute) are in production too (20270216090000), as this part needs for the note's route and the lesson view's flags, which
+  are the gateway's half of it: without the arms the database refuses the note, and `app.lesson_teacher_role` answers NULL for an
+  administrator, so the view would be the administrator's as before. Nothing else is needed before the merge.
+- **Everything is additive.** Older web and apps ignore the new fields: `teaches` on `GET /users` (what `usePeople()` reads),
+  `GET /users/administrators` and `PATCH /users/:id`'s answer, `teachingAdministrators` on `GET /users/counts`, `fromTeaches` and
+  `toTeaches` on `GET /users/:id/role-changes`. `POST /users` does not take `teaches` (the validation pipe refuses it: create, give a
+  post, then mark), and `PATCH` of a person who is no administrator, a teacher or a läsare is a 400 with its own code.
+- **Five new codes reach the client, and one existing one gains a case.** The two 409s, `TEACHES_NEEDS_A_POST` and
+  `A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS`, carry flat `params` where the refusal names them (`userId`, `academicYearId`; both are
+  strings). The last one comes from the post's removal, from `PATCH`, and from the läsår's removal, which asks first and answers with
+  `administrators` as a count and `userIds` as a comma-separated string of at most five ids, and no name. The three 400s of
+  `PATCH /users/:id` carry **no** `params`, only their code: `TEACHES_NEEDS_AN_ADMINISTRATOR` (the person is neither an
+  administrator nor a teacher), `A_READER_DOES_NOT_TEACH` (a läsare) and `A_TEACHER_TEACHES_ALREADY` (a teacher is that already). A
+  deadlock against a mark is the existing `WRITE_CONFLICT` ("try again").
+- **The lesson view has no rule of its own for an administrator who teaches.** It asks `app.lesson_teacher_role` and shows what that
+  answers (REGULAR: the note read and written; NULL: the administrator's view as before). Whether the person stands on the lesson
+  and has a post for the läsår of the lesson's group is that function's, part 3's, and nothing else in the gateway asks it again, so
+  the view and the note's arms cannot disagree about a lesson dated outside its group's läsår.
+- **The three routes an administrator who teaches may use as the teacher** are written out in `RolesGuard` by `@AsTeacher`, and the
+  route-guards e2e spec holds the list to exactly those and refuses such a person every other teacher-only route: the lesson log's
+  own week (`GET /lesson-logs`), the lessons the person's absence handed over (`GET /lesson-logs/handed-over`) and the note to the
+  substitute (`PUT /lesson-logs/lessons/:id/substitute-note`). The class teacher, the cover request's colleague side, krisläge, mentor
+  and the reporting rate are **not** opened here (the first two by decision 4; the rest are part 4's, with their arms).
+- **"Who teaches" is one answer** (`src/staffing/teaching-staff.ts`, `teacherWhere` and `teachesLike`) at the places that ask it: Skolans
+  dag, an exam's invigilators, an activity's teacher, `lärare.csv`, the import's teacher by e-mail and the label in SS12000 v1 (a
+  teaching administrator is `Lärare` there; the `role` filter of that API is unchanged). The substitute, the suggestions, the cover
+  request's recipients and the pool stay the teachers'. `GET /school-day/free` ("who is free") answers the same "who teaches", so a free
+  administrator who teaches is listed there beside the free teachers; it is the page's search for who has nothing on, not the
+  substitute pool, and removing them from it alone would give Skolans dag two answers to who teaches. Part 5's page words that.
+- **Rolling back** is reverting the gateway: nothing in the database moves. A mark that has been set stays on the row and does nothing.
+
 ## 21. Pinned lessons in the generator ("Fästa lektioner")
 
 A lesson a school lays by hand before Generera has reached the engine as a

@@ -9,6 +9,7 @@ import { createCreditInTransaction } from '../timplan/timplan-credits.service';
 import type { ApplyExamPlanDto, ApplyItemDto } from './dto/exam.dto';
 import { ExamPlannerService } from './exam-planner.service';
 import type { ExamRow } from './exams.service';
+import { teacherWhere } from '../staffing/teaching-staff';
 import type { PlanExamsResponse } from './interfaces/exam-engine.interface';
 
 jest.mock('../cover/cover-context', () => ({
@@ -269,6 +270,9 @@ describe('ExamPlannerService', () => {
       // The pool the engine sees is t1 and t3: the marked teacher is not in it, whoever the engine would have picked.
       expect(payload.teachers).toHaveLength(2);
       expect(JSON.stringify(proposal)).not.toContain('T2 Lärare');
+      // The pool is who teaches, an administrator who teaches included, and active.
+      expect(tx.user.findMany).toHaveBeenCalledWith({ where: { ...teacherWhere(), isActive: true }, select: { id: true } });
+      expect(tx.user.findMany).toHaveBeenCalledWith({ where: { ...teacherWhere(), isActive: true }, select: { id: true, firstName: true, lastName: true } });
     });
 
     it('asks for no more exams than the engine takes in one request', async () => {
@@ -367,6 +371,8 @@ describe('ExamPlannerService', () => {
     it('makes the exam an activity with its credit, booking, sitting, invigilators and room', async () => {
       const result = await service.apply(dto(), user);
       expect(result).toEqual({ outcomes: [{ examId: 'e1', ok: true, activityId: 'act-new' }], applied: 1, failed: 0 });
+      // The invigilators asked for are checked against who teaches, an administrator who teaches among them.
+      expect(tx.user.findMany).toHaveBeenCalledWith({ where: { id: { in: ['t2'] }, ...teacherWhere(), isActive: true }, select: { id: true } });
 
       expect(activities.createWithin).toHaveBeenCalledWith(
         tx,

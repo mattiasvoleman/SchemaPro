@@ -22,7 +22,7 @@ import type {
 } from './dto/teacher-employment.dto';
 import { diffLogEntry, type LogChange } from './employment-log-diff';
 import { postStretches } from './employment-periods';
-import { hideHr, hideHrChanges, readsHr } from './hr-visibility';
+import { hideHr, hideHrChanges, mayReadHrOf } from './hr-visibility';
 
 /** One version of a tjänst, as the Historik card and a protokoll cite it. */
 export interface TeacherHistoryEntry {
@@ -214,7 +214,8 @@ export class TeacherEmploymentsService {
     // (20261123090000), the limit on teaching in a row (20261218090000), a
     // note, a column nobody has argued in: the empty version left behind
     // would still say, by being there, that something HR moved on that date.
-    const hr = readsHr(user);
+    // The person's own history is theirs to read whole (mayReadHrOf), whatever the profile.
+    const hr = mayReadHrOf(user, userId);
     const shown = (hr ? rows : rows.filter((row) => row.entity !== 'PERIOD'))
       .map((row) => {
         const changes = diffLogEntry(row.entity, row.before, row.after);
@@ -270,8 +271,12 @@ export class TeacherEmploymentsService {
       return found;
     });
     // Tjänst % and nedsättning for rektor, full and HR-läs only (hr-visibility.ts).
-    const posts = rows.map(toEmploymentResponse);
-    return readsHr(user) ? posts : (posts.map(hideHr) as unknown as TeacherEmploymentResponse[]);
+    // A person's own post is theirs whole, whatever their profile (mayReadHrOf); everybody else's is hidden to a
+    // reader without HR-läs, row by row.
+    return rows.map((row) => {
+      const post = toEmploymentResponse(row);
+      return mayReadHrOf(user, row.userId) ? post : (hideHr(post) as unknown as TeacherEmploymentResponse);
+    });
   }
 
   /**
@@ -310,7 +315,7 @@ export class TeacherEmploymentsService {
         // Only one who decides writes a post, and every decider reads HR
         // data; masked all the same, so the answer can never say more than
         // the list would to the same reader.
-        return readsHr(user) ? answer : (hideHr(answer) as unknown as TeacherEmploymentResponse);
+        return mayReadHrOf(user, userId) ? answer : (hideHr(answer) as unknown as TeacherEmploymentResponse);
       });
     } catch (error) {
       rethrowEmploymentError(error, dto, academicYearId);

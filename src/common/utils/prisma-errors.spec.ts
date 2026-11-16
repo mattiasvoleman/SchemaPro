@@ -9,6 +9,8 @@ import {
   ROLLOVER_GROUP_IS_LINKED,
   ROLLOVER_LINK_IS_FIXED,
   ROLLOVER_LINK_MISMATCH,
+  A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS,
+  TEACHES_NEEDS_A_POST,
   TEACHER_DUTY_BLOCK_IS_THE_ADMINS,
   TEACHER_DUTY_BLOCK_MISMATCH,
   TIMPLAN_IN_USE,
@@ -26,6 +28,8 @@ import {
   rethrowPrismaError,
   rolloverLinkRefusal,
   teacherDutyBlockRefusal,
+  teachesRefusal,
+  teachesRefusalException,
   teachingBlockRefusal,
   timplanInUseConflict,
 } from './prisma-errors';
@@ -947,5 +951,141 @@ describe('rethrowPrismaError and Förlagda poster', () => {
   it('keeps the decided plan\'s TP409 a decided plan', () => {
     const conflict = thrown(triggerRefusal('Grundskolan 2024')) as ConflictException;
     expect(conflict.getResponse()).toMatchObject({ code: TIMPLAN_IS_DECIDED });
+  });
+});
+
+/**
+ * Administratör som lärare (Users.teaches, 20270212090000): the two triggers' own SQLSTATEs, as
+ * @prisma/adapter-pg hands them over, in the three shapes provat in the adapter probe (ar-i): a model call
+ * (P2039), $queryRaw / $executeRaw (P2010) and a failed COMMIT (the adapter's DriverAdapterError).
+ */
+describe('teachesRefusal', () => {
+  const PERSON = '7d2f6a1c-3e8b-4d4f-85a9-c7e1d2b3a4c5';
+  const YEAR = '0c1f4e5b-3a9f-4c21-8a53-0d7a8b7d1c11';
+  const MESSAGES = {
+    TE409: 'TEACHES_NEEDS_A_POST: en administratör som undervisar har en tjänst för ett läsår, skapa tjänsten först',
+    TE410: 'A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS: en administratör som undervisar behåller sin sista tjänst, ta bort markeringen först',
+  } as const;
+  const DETAILS = { TE409: `userId=${PERSON}`, TE410: `userId=${PERSON} academicYearId=${YEAR}` } as const;
+
+  /** A model call: P2039, the SQLSTATE under the cause. */
+  const model = (state: 'TE409' | 'TE410', options: { meta?: boolean } = {}) =>
+    new Prisma.PrismaClientKnownRequestError(`Database error. Code: \`${state}\`. Message: \`${MESSAGES[state]}\``, {
+      code: 'P2039',
+      clientVersion: Prisma.prismaVersion.client,
+      meta:
+        options.meta === false
+          ? { modelName: 'User' }
+          : {
+              modelName: 'User',
+              driverAdapterError: { cause: { originalCode: state, originalMessage: MESSAGES[state], kind: 'postgres', detail: DETAILS[state] } },
+            },
+    });
+  /** $queryRaw / $executeRaw: P2010 ("Raw query failed"), the same cause. */
+  const raw = (state: 'TE409' | 'TE410') =>
+    new Prisma.PrismaClientKnownRequestError(`Raw query failed. Code: \`${state}\`. Message: \`${MESSAGES[state]}\``, {
+      code: 'P2010',
+      clientVersion: Prisma.prismaVersion.client,
+      meta: { driverAdapterError: { cause: { originalCode: state, originalMessage: MESSAGES[state], kind: 'postgres', detail: DETAILS[state] } } },
+    });
+  /** A failed COMMIT: Prisma 7.10 rejects with the adapter's own error, the driver's fields under cause. */
+  const atCommit = (state: 'TE409' | 'TE410') =>
+    Object.assign(new Error('DriverAdapterError'), {
+      name: 'DriverAdapterError',
+      cause: { originalCode: state, originalMessage: MESSAGES[state], kind: 'postgres', detail: DETAILS[state] },
+    });
+  const answer = (error: unknown) => {
+    try {
+      rethrowPrismaError(error);
+    } catch (thrown) {
+      return thrown;
+    }
+    return undefined;
+  };
+
+  it.each([
+    ['a model call (P2039)', model],
+    ['a raw statement (P2010)', raw],
+    ['a failed COMMIT', atCommit],
+  ])('reads TE409 and TE410 as themselves from %s, with the person and the year', (_shape, make) => {
+    expect(teachesRefusal(make('TE409'))).toEqual({ code: TEACHES_NEEDS_A_POST, userId: PERSON, academicYearId: null });
+    expect(teachesRefusal(make('TE410'))).toEqual({ code: A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS, userId: PERSON, academicYearId: YEAR });
+  });
+
+  it('still reads the refusal from the rendered message when the cause is gone, with nobody named: a model call and a raw statement alike', () => {
+    expect(teachesRefusal(model('TE409', { meta: false }))).toEqual({ code: TEACHES_NEEDS_A_POST, userId: null, academicYearId: null });
+    expect(teachesRefusal(model('TE410', { meta: false }))).toEqual({ code: A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS, userId: null, academicYearId: null });
+    // $executeRaw's P2010 renders the same "Code:" in its message ("Raw query failed. Code: `TE409`. Message: …").
+    for (const [state, code] of [['TE409', TEACHES_NEEDS_A_POST], ['TE410', A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS]] as const) {
+      const bare = new Prisma.PrismaClientKnownRequestError(`Raw query failed. Code: \`${state}\`. Message: \`${MESSAGES[state]}\``, {
+        code: 'P2010',
+        clientVersion: Prisma.prismaVersion.client,
+        meta: { code: state, message: MESSAGES[state] },
+      });
+      expect(teachesRefusal(bare)).toEqual({ code, userId: null, academicYearId: null });
+    }
+  });
+
+  it('reads the refusal from the cause first: a message that carries no "Code:" at all still names it, and who', () => {
+    // The primary path (meta.driverAdapterError.cause.originalCode); the rendered message above is only the fallback, so a release
+    // that words its message differently must not lose the refusal, and nothing in the test above would notice if this line went.
+    for (const [state, code, who] of [
+      ['TE409', TEACHES_NEEDS_A_POST, { userId: PERSON, academicYearId: null }],
+      ['TE410', A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS, { userId: PERSON, academicYearId: YEAR }],
+    ] as const) {
+      for (const prismaCode of ['P2039', 'P2010']) {
+        const worded = new Prisma.PrismaClientKnownRequestError('The adapter reported an error that the message does not number.', {
+          code: prismaCode,
+          clientVersion: Prisma.prismaVersion.client,
+          meta: { driverAdapterError: { cause: { originalCode: state, originalMessage: MESSAGES[state], kind: 'postgres', detail: DETAILS[state] } } },
+        });
+        expect(teachesRefusal(worded)).toEqual({ code, ...who });
+      }
+    }
+  });
+
+  it.each([
+    ['a model call (P2039)', model],
+    ['a raw statement (P2010)', raw],
+    ['a failed COMMIT', atCommit],
+  ])('is a 409 with its own code and flat params through rethrowPrismaError, from %s: never a 500', (_shape, make) => {
+    for (const [state, code, params] of [
+      ['TE409', TEACHES_NEEDS_A_POST, { userId: PERSON }],
+      ['TE410', A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS, { userId: PERSON, academicYearId: YEAR }],
+    ] as const) {
+      const thrown = answer(make(state));
+      expect(thrown).toBeInstanceOf(ConflictException);
+      const body = (thrown as ConflictException).getResponse() as { code: string; message: string; params: Record<string, unknown> };
+      expect(body.code).toBe(code);
+      expect(body.params).toEqual(params);
+      // Flat scalars only: a nested value would never reach the client.
+      for (const value of Object.values(body.params)) expect(typeof value).toBe('string');
+      expect(body.message).toMatch(/markera|markeringen/);
+    }
+  });
+
+  it('names nobody in the 409 when the refusal did not say who', () => {
+    const body = (teachesRefusalException({ code: TEACHES_NEEDS_A_POST, userId: null, academicYearId: null }).getResponse() as Record<string, unknown>);
+    expect(body).not.toHaveProperty('params');
+  });
+
+  it('is not any other refusal: another trigger’s code, a lock timeout and a plain error are left as they came', () => {
+    expect(teachesRefusal(driverError('AR403', 'x'))).toBeNull();
+    expect(teachesRefusal(driverError('TE400', 'x'))).toBeNull();
+    expect(teachesRefusal(commitError('55P03', 'postgres'))).toBeNull();
+    expect(teachesRefusal(new Error('Code: `TE409`'))).toBeNull();
+    expect(teachesRefusal(knownError('P2025'))).toBeNull();
+    const timeout = commitError('55P03', 'postgres');
+    expect(answer(timeout)).toBe(timeout);
+  });
+
+  // The two refusals and a deadlock arrive the same three ways, and only the deadlock is a "try again".
+  it('keeps a deadlock a write conflict in the three shapes the refusals use, and the refusals no write conflict', () => {
+    for (const code of ['40P01', '40001']) {
+      for (const error of [driverError(code, 'deadlock detected'), commitError(code, 'TransactionWriteConflict'), knownError('P2034')]) {
+        expect((answer(error) as ConflictException).getResponse()).toMatchObject({ code: WRITE_CONFLICT });
+      }
+    }
+    expect((answer(model('TE410')) as ConflictException).getResponse()).not.toMatchObject({ code: WRITE_CONFLICT });
   });
 });

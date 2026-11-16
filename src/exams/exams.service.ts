@@ -9,6 +9,7 @@ import { asDay, clock, day } from '../publication/cancellation-core';
 import { badExam, conflictingExam, EXAM_GROUPS, EXAM_IS_PLANNED, EXAM_REPLACEMENT_SUBJECT_COUNTS, EXAM_ROOM, EXAM_SUBJECT, EXAM_WINDOW, missingExam } from './exam-errors';
 import { datesBetween, isCalendarDate } from './exam-plan';
 import type { CreateExamDto, ExamDescriptionDto, ExamSettingsDto } from './dto/exam.dto';
+import { teacherWhere } from '../staffing/teaching-staff';
 
 /** The school's decisions, as a page reads them. */
 export interface ExamSettingsView {
@@ -311,7 +312,7 @@ export class ExamsService {
     return this.prisma.withRls(user, async (tx) => {
       const held = await markedIds(tx, schoolId);
       const [teachers, minutes] = await Promise.all([
-        tx.user.findMany({ where: { role: 'TEACHER', isActive: true }, select: { id: true, firstName: true, lastName: true } }),
+        tx.user.findMany({ where: { ...teacherWhere(), isActive: true }, select: { id: true, firstName: true, lastName: true } }),
         watchMinutes(tx, academicYearId),
       ]);
       return teachers

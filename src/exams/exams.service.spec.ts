@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { createPrismaMock, createTxMock, testUser, type TxMock } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
+import { teacherWhere } from '../staffing/teaching-staff';
 import type { ExamDescriptionDto } from './dto/exam.dto';
 import { ExamsService, clearLeftovers, isPlanned, versionIs, viewsOf, watchMinutes, type ExamRow } from './exams.service';
 
@@ -334,6 +335,11 @@ describe('ExamsService', () => {
       ]);
       // A marked teacher is on no list, and not counted as missing.
       expect(JSON.stringify(rows)).not.toContain('Skyddad');
+      // Whom a school may ask to keep watch: a teacher, and an administrator who teaches (the school decides; the default is yes).
+      expect(tx.user.findMany).toHaveBeenCalledWith({
+        where: { ...teacherWhere(), isActive: true },
+        select: { id: true, firstName: true, lastName: true },
+      });
     });
   });
 });

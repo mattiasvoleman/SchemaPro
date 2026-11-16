@@ -13,7 +13,7 @@ import {
   profileWrites,
   writersOf,
 } from './admin-areas';
-import { AREA_KEY, type AreaRequirement } from './decorators/area.decorator';
+import { AREA_KEY, AS_TEACHER_KEY, type AreaRequirement } from './decorators/area.decorator';
 import { HUVUDMAN_ROUTE_KEY, READS_ONLY_KEY, huvudmanReadsOnly } from './huvudman-reader';
 import { ROLES_KEY } from './decorators/roles.decorator';
 import { Role } from './enums/role.enum';
@@ -85,6 +85,12 @@ export class RolesGuard implements CanActivate {
     }
 
     if (!requiredRoles.includes(user.role)) {
+      // An administrator who teaches, at a route that is the teacher's own
+      // and says so: let in as the teacher, with no area asked (acting as
+      // the teacher is not an area). Anything else is the 403 it was.
+      if (this.isAdmittedAsTeacher(context, user, requiredRoles)) {
+        return true;
+      }
       throw new ForbiddenException(
         'You do not have permission to perform this action.',
       );
@@ -101,6 +107,22 @@ export class RolesGuard implements CanActivate {
     }
 
     return true;
+  }
+
+  /**
+   * Whether an administrator who teaches comes in as the teacher: the route
+   * lists TEACHER and carries @AsTeacher, and the person is a SCHOOL_ADMIN
+   * with the mark. Not the huvudman's reader (no row, so no mark), and not a
+   * läsare (the database holds the mark off the profile; this is the second
+   * line), which is why neither is asked of the mark alone.
+   */
+  private isAdmittedAsTeacher(context: ExecutionContext, user: AuthenticatedUser, requiredRoles: Role[]): boolean {
+    if (user.role !== Role.SCHOOL_ADMIN || user.teaches !== true) return false;
+    if (user.huvudman !== undefined || user.adminProfile === 'LASARE') return false;
+    if (!requiredRoles.includes(Role.TEACHER)) return false;
+    return (
+      this.reflector.getAllAndOverride<string | undefined>(AS_TEACHER_KEY, [context.getHandler(), context.getClass()]) !== undefined
+    );
   }
 }
 

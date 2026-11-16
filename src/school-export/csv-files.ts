@@ -30,6 +30,7 @@
 
 import type { LessonRecurrence, TeacherContractKind, TeacherDutyKind, TeacherQualificationKind } from '@prisma/client';
 import { isMixed, lengthPartsOf, type LessonShape } from '../common/lesson-lengths';
+import { teachesLike } from '../staffing/teaching-staff';
 import { serializeCsv } from './csv-writer';
 
 interface CsvFile {
@@ -242,6 +243,12 @@ export function teachersToCsv(
   people: {
     id?: string;
     role: string;
+    /**
+     * An administrator who teaches (Users.teaches) is a teacher of the file. The gateway's copy leads the web's here
+     * until web/lib/csv-export.ts follows (the web's lärare.csv page, PR 5): a school with a marked person writes the
+     * person on this file and not on the page's, which is why the shared cases hold no such person.
+     */
+    teaches?: boolean | null;
     firstName: string;
     lastName: string;
     email: string;
@@ -260,7 +267,7 @@ export function teachersToCsv(
   return serializeCsv(
     CSV_TEMPLATES.teachers.headers,
     people
-      .filter((person) => person.role === 'TEACHER' && isActivePerson(person))
+      .filter((person) => teachesLike(person) && isActivePerson(person))
       .map((person) => {
         const found = person.id !== undefined ? employmentOf?.(person.id) : undefined;
         const post = found && found.employmentPercent !== null ? found : undefined;

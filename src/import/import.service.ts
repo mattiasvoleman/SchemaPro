@@ -72,6 +72,7 @@ import type {
 } from './dto/import.dto';
 import { dutyIdentity } from '../staffing/duty-identity';
 import { readsHr } from '../staffing/hr-visibility';
+import { teacherWhere } from '../staffing/teaching-staff';
 
 /**
  * Everything a timplan row states about a requirement — that is, every column
@@ -1872,7 +1873,8 @@ export class ImportService {
           ? []
           : await tx.user.findMany({
               where: {
-                role: 'TEACHER',
+                // A teaching administrator is found as a teacher is: the file names a post's teacher by e-mail.
+                ...teacherWhere(),
                 isActive: true,
                 email: { in: emails, mode: 'insensitive' },
               },

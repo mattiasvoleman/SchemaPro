@@ -141,6 +141,59 @@ describe('Lektionslogg (e2e)', () => {
     expect(harness.tx.lessonSubstituteNote.update).not.toHaveBeenCalled();
   });
 
+  // Administratör som lärare (Users.teaches): the three routes that are the teacher's own let in an administrator who teaches, and
+  // only one: the mark is the door, an unmarked administrator is refused as above. What the person may do on a lesson is the
+  // database's (app.lesson_teacher_role and the arms that ask it), which the gateway's own checks stand in front of.
+  describe('an administrator who teaches (Users.teaches)', () => {
+    const teaching = (adminProfile: string) => as('SCHOOL_ADMIN', { adminProfile, hrRead: false, teaches: true });
+
+    it('writes the note to the substitute on a lesson the database counts them on, whatever the profile writes (the area is not asked)', async () => {
+      for (const adminProfile of ['FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION']) {
+        const saved = await request(http())
+          .put(`/api/v1/lesson-logs/lessons/${LESSON_ID}/substitute-note`)
+          .set('x-test-user', teaching(adminProfile))
+          .send({ body: 'Läs högt', basis: null })
+          .expect(200);
+        expect(saved.body).toMatchObject({ note: { body: 'Läs högt' } });
+      }
+      expect(harness.tx.lessonSubstituteNote.create).toHaveBeenCalledTimes(4);
+    });
+
+    it('is refused the note where the database does not count them on the lesson: 403 with the note’s own code, nothing written', async () => {
+      role = null;
+      const refused = await request(http())
+        .put(`/api/v1/lesson-logs/lessons/${LESSON_ID}/substitute-note`)
+        .set('x-test-user', teaching('SCHEMALAGGARE'))
+        .send({ body: 'x' })
+        .expect(403);
+      expect(refused.body).toMatchObject({ code: 'SUBSTITUTE_NOTE_NOT_YOURS' });
+      expect(harness.tx.lessonSubstituteNote.create).not.toHaveBeenCalled();
+    });
+
+    it('reads their own week and the lessons their absence handed over, as the teacher does', async () => {
+      await request(http()).get('/api/v1/lesson-logs?from=2026-10-19&to=2026-10-25').set('x-test-user', teaching('REKTOR')).expect(200);
+      await request(http()).get('/api/v1/lesson-logs/handed-over?from=2026-10-19&to=2026-10-25').set('x-test-user', teaching('REKTOR')).expect(200);
+    });
+
+    it('is shown the lesson as its teacher where the database counts them on it, else as an administrator (the tjänst is the database’s to weigh)', async () => {
+      const as_teacher = await request(http()).get(`/api/v1/lesson-logs/lessons/${LESSON_ID}`).set('x-test-user', teaching('REKTOR')).expect(200);
+      expect(as_teacher.body).toMatchObject({ role: 'REGULAR', may: { writeLog: true, readNote: true, writeNote: true } });
+      role = null;
+      const without = await request(http()).get(`/api/v1/lesson-logs/lessons/${LESSON_ID}`).set('x-test-user', teaching('REKTOR')).expect(200);
+      expect(without.body).toMatchObject({ role: 'ADMIN', may: { readNote: false, writeNote: false } });
+      expect(harness.tx.teacherEmployment.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('is not an unmarked administrator: the same requests, with the mark false or absent, are refused as before', async () => {
+      for (const extra of [{ teaches: false }, {}]) {
+        const principal = as('SCHOOL_ADMIN', { adminProfile: 'REKTOR', hrRead: false, ...extra });
+        await request(http()).put(`/api/v1/lesson-logs/lessons/${LESSON_ID}/substitute-note`).set('x-test-user', principal).send({ body: 'x' }).expect(403);
+        await request(http()).get('/api/v1/lesson-logs?from=2026-10-19&to=2026-10-25').set('x-test-user', principal).expect(403);
+        await request(http()).get('/api/v1/lesson-logs/handed-over?from=2026-10-19&to=2026-10-25').set('x-test-user', principal).expect(403);
+      }
+    });
+  });
+
   it('lists the caller’s own lessons for a pupil and a teacher, not for a guardian or an administrator, and refuses a bad range', async () => {
     for (const who of ['STUDENT', 'TEACHER']) {
       await request(http()).get('/api/v1/lesson-logs?from=2026-10-19&to=2026-10-25').set('x-test-user', as(who)).expect(200);

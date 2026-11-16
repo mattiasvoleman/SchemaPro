@@ -38,6 +38,18 @@ export interface AuthenticatedUser {
   /** HR-läs: may read tjänst % and nedsättning (with a deciding profile). */
   hrRead?: boolean;
   /**
+   * An administrator who also teaches (Users.teaches, set by rektor or a full
+   * administrator): read from Users beside hrRead, so on an administrator's
+   * row alone, and false for the huvudman's reader. Never a right in itself:
+   * the person keeps the administrator's rights (the view narrows, the right
+   * does not). It adds the teacher's own views and the routes that say
+   * @AsTeacher, and counts the person among "who teaches" (teacherWhere,
+   * src/staffing/teaching-staff.ts). The principals Role.HUVUDMAN and
+   * Role.SYSTEM_ADMIN never carry it. Absent is false: an older stub, or a
+   * token's principal built before the field existed.
+   */
+  teaches?: boolean;
+  /**
    * The school account this session signed in with, when it signed in with
    * one and nothing else (src/auth/school-account.ts). Read from metadata the
    * person can rewrite, so it is a self-lockout check and never a permission.

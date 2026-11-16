@@ -24,7 +24,7 @@ import type { StaffingDeliveredQueryDto } from './dto/staffing-delivered.dto';
 import { suggestTeachers, type TeacherSuggestions } from './suggest-teachers';
 import { readLastYearTeachersOf } from './last-year-teachers';
 import { readActiveStaffIds } from './staff-candidates';
-import { hideHr, readsHr } from './hr-visibility';
+import { hideHr, mayReadHrOf, readsHr } from './hr-visibility';
 import { hasTravel, readSiteMap } from '../common/site-travel';
 import { travelLoad, type TeacherTravel } from './travel-load';
 import type { TeacherSupervision } from '../supervision/supervision-load';
@@ -170,10 +170,12 @@ export class StaffingLoadService {
       // HR-läs only; so too the post's stretches, which say when and how it
       // changes. The target in minutes stays: it is what tjänstefördelning is
       // done against.
+      // A person's own row is their own (mayReadHrOf): an administrator who teaches and has no HR-läs reads their
+      // own tjänst whole and nobody else's. `hrHidden` stays true, for the rows that are.
       return {
         ...response,
         hrHidden: true,
-        teachers: response.teachers.map((row) => ({
+        teachers: response.teachers.map((row) => mayReadHrOf(user, row.userId) ? row : ({
           ...row,
           employment: row.employment ? (hideHr(row.employment) as unknown as typeof row.employment) : null,
           subjects: row.subjects.map((subject) => ({ ...subject, percentOfEmployment: null })),

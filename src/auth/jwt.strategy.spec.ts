@@ -278,12 +278,41 @@ describe('JwtStrategy', () => {
         schoolId: SCHOOL_ID,
         adminProfile: 'SCHEMALAGGARE',
         hrRead: true,
+        teaches: false,
       });
 
       tx.user.findFirst.mockResolvedValue(activeProfile({ adminProfile: null, hrRead: false }));
       const teacher = await strategy.validate(NO_SCHOOL, payload());
       expect(teacher).not.toHaveProperty('adminProfile');
       expect(teacher).not.toHaveProperty('hrRead');
+      expect(teacher).not.toHaveProperty('teaches');
+    });
+
+    // Administratör som lärare: the mark is read beside hrRead, on an administrator's row alone.
+    it('carries the mark of an administrator who teaches, false for one who does not, and on no other role', async () => {
+      tx.user.findFirst.mockResolvedValue(
+        activeProfile({ role: 'SCHOOL_ADMIN', adminProfile: 'REKTOR', hrRead: false, teaches: true }),
+      );
+      await expect(strategy.validate(NO_SCHOOL, payload())).resolves.toMatchObject({
+        role: 'SCHOOL_ADMIN',
+        adminProfile: 'REKTOR',
+        teaches: true,
+      });
+      // A row read before the column was selected, or by a mock that omits it, is not a teacher.
+      tx.user.findFirst.mockResolvedValue(activeProfile({ role: 'SCHOOL_ADMIN', adminProfile: 'FULL', hrRead: false }));
+      await expect(strategy.validate(NO_SCHOOL, payload())).resolves.toMatchObject({ teaches: false });
+      // A teacher teaches by their role, never by the mark: the field is not theirs, even if a row said so.
+      tx.user.findFirst.mockResolvedValue(activeProfile({ adminProfile: null, hrRead: false, teaches: true }));
+      expect(await strategy.validate(NO_SCHOOL, payload())).not.toHaveProperty('teaches');
+    });
+
+    it('does not carry the mark past an inactive person: they are refused before it is read', async () => {
+      tx.user.findFirst.mockResolvedValue(
+        activeProfile({ role: 'SCHOOL_ADMIN', adminProfile: 'REKTOR', hrRead: false, teaches: true, isActive: false }),
+      );
+      const outcome = await strategy.validate(NO_SCHOOL, payload()).catch((error: unknown) => error);
+      expect(outcome).not.toHaveProperty('teaches');
+      expect(outcome).toBeInstanceOf(Error);
     });
 
     it('names the school account a school-account session signed in with, and nothing for a password', async () => {
@@ -331,7 +360,7 @@ describe('JwtStrategy', () => {
       expect(prisma.withSystemTransaction).not.toHaveBeenCalled();
       expect(tx.user.findFirst).toHaveBeenCalledWith({
         where: { authId: AUTH_ID },
-        select: { id: true, schoolId: true, role: true, isActive: true, adminProfile: true, hrRead: true },
+        select: { id: true, schoolId: true, role: true, isActive: true, adminProfile: true, hrRead: true, teaches: true },
       });
     });
 
@@ -394,6 +423,7 @@ describe('JwtStrategy', () => {
             schoolId: OTHER_SCHOOL,
             adminProfile: 'LASARE',
             hrRead: false,
+            teaches: false,
             huvudman: {
               id: READER.huvudman_id,
               name: READER.huvudman_name,

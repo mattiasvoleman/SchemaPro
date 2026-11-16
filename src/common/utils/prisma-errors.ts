@@ -68,6 +68,12 @@ import { TIOARIG_TOO_EARLY } from '../grade-numbering';
  * refusal may arrive as a failed COMMIT, which is read the same way. See
  * requirementPlacementsRefusal.
  *
+ * An administrator who teaches (Users.teaches, migration 20270212090000) has two
+ * refusals of its own: TE409, a mark set on a person with no post, and TE410, the
+ * last post of a marked person removed or moved. Each is a 409 with its own code
+ * and the person named in `params`, whichever writer met it: the users PATCH, the
+ * post's removal, a läsår's removal. See teachesRefusal.
+ *
  * The Halvklasser triggers (migration 20261113090000) answer SQLSTATE HC409
  * with a reason token, each a 409 of the same name, and a pupil placed in
  * both halves of one class meets the unique index
@@ -78,6 +84,10 @@ export function rethrowPrismaError(error: unknown): never {
   const area = areaRefusal(error);
   if (area) {
     throw areaRefusalException(area);
+  }
+  const teaches = teachesRefusal(error);
+  if (teaches) {
+    throw teachesRefusalException(teaches);
   }
   const decided = decidedTimplanRefusal(error);
   if (decided) {
@@ -1106,4 +1116,91 @@ export function areaRefusal(error: unknown): AreaRefusal | null {
 
 export function areaRefusalException(refusal: AreaRefusal): ForbiddenException {
   return new ForbiddenException({ message: refusal.message, code: refusal.code });
+}
+
+/** The problem `code` of a mark set on a person who has no post (SQLSTATE TE409). */
+export const TEACHES_NEEDS_A_POST = 'TEACHES_NEEDS_A_POST';
+/** The problem `code` of the last post of a marked person removed or moved (SQLSTATE TE410). */
+export const A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS = 'A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS';
+
+/** What the two triggers of Users.teaches (migration 20270212090000) name. */
+export interface TeachesRefusal {
+  code: typeof TEACHES_NEEDS_A_POST | typeof A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS;
+  /** DETAIL userId=<uuid>. */
+  userId: string | null;
+  /** DETAIL academicYearId=<uuid>, on TE410 only: the year of the post that was to go. */
+  academicYearId: string | null;
+}
+
+const TEACHES_CODES: Readonly<Record<string, TeachesRefusal['code']>> = {
+  TE409: TEACHES_NEEDS_A_POST,
+  TE410: A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS,
+};
+
+/**
+ * Recognises the refusals of the teaching administrator's two triggers, and
+ * reads whom they name. Both are SQLSTATEs Postgres does not define, so they
+ * come through @prisma/adapter-pg as themselves in three shapes, all provat in
+ * scripts/test/prisma-adapter-probe.ts (ar-i):
+ *
+ *   - a model call (update, delete): P2039, the SQLSTATE in
+ *     meta.driverAdapterError.cause.originalCode, "Code: `TE409`" in the
+ *     rendered message as the fallback for an adapter release that stops
+ *     carrying the cause;
+ *   - $queryRaw / $executeRaw: P2010, the same cause (adapter-raw-refusals-
+ *     are-p2010: a reader of the rendered "Code:" alone misses this one);
+ *   - a COMMIT that fails: the adapter's own DriverAdapterError, no code and no
+ *     meta, the SQLSTATE under `cause` (driverAdapterCode).
+ *
+ * The triggers are statement-time, so the COMMIT shape is not met today; it is
+ * read all the same, as isWriteConflict reads it, so that a trigger made
+ * deferred later answers the same 409 and not a 500.
+ */
+export function teachesRefusal(error: unknown): TeachesRefusal | null {
+  const atCommit = driverAdapterCode(error);
+  if (atCommit !== undefined) {
+    const code = TEACHES_CODES[atCommit];
+    if (!code) return null;
+    const cause = (error as { cause?: DriverCause }).cause;
+    return teachesNamed(code, typeof cause?.detail === 'string' ? cause.detail : '');
+  }
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
+  const cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)?.driverAdapterError?.cause;
+  const original = typeof cause?.originalCode === 'string' ? cause.originalCode : null;
+  const byMeta = original !== null ? TEACHES_CODES[original] : undefined;
+  const byMessage =
+    error.code === 'P2039' || error.code === 'P2010'
+      ? Object.entries(TEACHES_CODES).find(([state]) => error.message.includes(`Code: \`${state}\``))?.[1]
+      : undefined;
+  const code = byMeta ?? byMessage;
+  if (!code) return null;
+  return teachesNamed(code, typeof cause?.detail === 'string' ? cause.detail : '');
+}
+
+function teachesNamed(code: TeachesRefusal['code'], detail: string): TeachesRefusal {
+  return {
+    code,
+    userId: /(?:^| )userId=([0-9a-f-]{36})/i.exec(detail)?.[1] ?? null,
+    academicYearId: /(?:^| )academicYearId=([0-9a-f-]{36})/i.exec(detail)?.[1] ?? null,
+  };
+}
+
+/**
+ * The 409 for a mark the database would not take or a post it would not let
+ * go. The sentence says what to do first, and `params` carries the person (and
+ * the post's year) as flat strings: a nested value never reaches the client
+ * (problem-json-forwards-only-code-and-flat-params).
+ */
+export function teachesRefusalException(refusal: TeachesRefusal): ConflictException {
+  const params: Record<string, string> = {};
+  if (refusal.userId) params['userId'] = refusal.userId;
+  if (refusal.academicYearId) params['academicYearId'] = refusal.academicYearId;
+  return new ConflictException({
+    message:
+      refusal.code === TEACHES_NEEDS_A_POST
+        ? 'En administratör som undervisar har en tjänst för ett läsår, och personen har ingen. Lägg tjänsten först och markera därefter.'
+        : 'Personen är markerad som undervisande, och det här är personens sista tjänst. Ta bort markeringen först.',
+    code: refusal.code,
+    ...(Object.keys(params).length > 0 ? { params } : {}),
+  });
 }

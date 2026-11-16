@@ -44,7 +44,13 @@ export class SchoolDayController {
     return this.schoolDay.grid(query, user);
   }
 
-  /** Who and what is free over an interval of a date, by the rules the Vikarietavla uses. Limited as the grid is. */
+  /**
+   * Who and what is free over an interval of a date, by the rules the Vikarietavla uses. Limited as the grid is.
+   * "Who" is who teaches in the school, as the grid's rows say it, so an administrator who teaches (Users.teaches) is
+   * listed here when they have nothing on. This is not the substitute pool: the pool, the suggestions and the cover
+   * request stay the teachers' (Administratör som lärare, beslut 4), and a free administrator who teaches is refused
+   * as a substitute where a free teacher is asked. The page that shows the list says so in its own text (part 5).
+   */
   @Get('free')
   @UseGuards(SchoolDayThrottlerGuard)
   @Throttle({ default: PER_ADDRESS })

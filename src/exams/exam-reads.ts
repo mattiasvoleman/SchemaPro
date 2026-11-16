@@ -153,6 +153,8 @@ export async function readTeacherDays(
       date,
       timezone,
       academicYearId,
+      // An occupancy read (is the person busy), which never asks the role: the tag is the teacher's for a teaching
+      // administrator too, whom the caller's list of invigilators (teacherWhere) may hold. Not the cover rules' INACTIVE.
       known: teacherIds.map((id) => ({ id, role: 'TEACHER', isActive: true })),
       occupancyOnly: true,
     });

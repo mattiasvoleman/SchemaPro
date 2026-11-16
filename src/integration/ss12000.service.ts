@@ -8,6 +8,7 @@ import { holdTheSchoolsPeople } from '../common/lock-order';
 import { keptByOf, lessonPupils, replacedSubjectOf, replacingBySubject, yearsOf } from '../common/replacing-groups';
 import { readGrundschema, type PublishedMaster } from '../publication/published-grundschema';
 import { dayOf } from '../staffing/duty-dates';
+import { teachesLike } from '../staffing/teaching-staff';
 import { dutyEmploymentSelect, dutySegments, toSs12000Duties, type DutyPeriod, type Ss12000Duty } from './ss12000-duties';
 
 /**
@@ -116,6 +117,7 @@ export class Ss12000Service {
           select: {
             id: true,
             role: true,
+            teaches: true,
             firstName: true,
             lastName: true,
             email: true,
@@ -150,14 +152,16 @@ export class Ss12000Service {
           familyName: user.lastName,
           eduPersonPrincipalNames: [user.email],
           enabled: user.isActive,
-          personRole:
-            user.role === 'SCHOOL_ADMIN'
+          // An administrator who teaches is the school's teacher as well as its staff: the one label this version has
+          // says Lärare for them. The `role` filter above is the row's own role and is unchanged (they are found
+          // under SCHOOL_ADMIN), so a consumer that filters on TEACHER does not meet them.
+          personRole: teachesLike(user)
+            ? 'Lärare'
+            : user.role === 'SCHOOL_ADMIN'
               ? 'Personal'
-              : user.role === 'TEACHER'
-                ? 'Lärare'
-                : user.role === 'GUARDIAN'
-                  ? 'Vårdnadshavare'
-                  : 'Elev',
+              : user.role === 'GUARDIAN'
+                ? 'Vårdnadshavare'
+                : 'Elev',
           enrolments: user.studentGroupId
             ? [{ groupId: user.studentGroupId }]
             : [],

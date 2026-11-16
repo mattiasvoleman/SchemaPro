@@ -51,11 +51,12 @@ describe('GET /api/v1/users', () => {
 
   it('counts people per role with every role present, and records nothing: a count names nobody', async () => {
     tx.user.groupBy = jest.fn().mockResolvedValue([
-      { role: 'STUDENT', _count: { _all: 412 } },
-      { role: 'TEACHER', _count: { _all: 38 } },
+      { role: 'STUDENT', teaches: false, _count: { _all: 412 } },
+      { role: 'TEACHER', teaches: false, _count: { _all: 38 } },
     ]);
     await expect(service().counts(testUser())).resolves.toEqual({
       byRole: { STUDENT: 412, TEACHER: 38, SCHOOL_ADMIN: 0, GUARDIAN: 0 },
+      teachingAdministrators: 0,
     });
     expect(prisma.queryWithRls).toHaveBeenCalledTimes(1);
     expect(recordedReads(tx)).toEqual([]);

@@ -214,8 +214,37 @@ export class LessonLogService {
   }
 
   private async callerRole(tx: PrismaClient, lessonId: string, user: AuthenticatedUser): Promise<LessonCallerRole> {
-    if (user.role === Role.SCHOOL_ADMIN) return 'ADMIN';
+    if (user.role === Role.SCHOOL_ADMIN) {
+      return (await this.teachingAdministratorRole(tx, lessonId, user)) ?? 'ADMIN';
+    }
     return (await this.teacherRole(tx, lessonId)) ?? 'COLLEAGUE';
+  }
+
+  /**
+   * An administrator who teaches and stands on the lesson, as the lesson's
+   * teacher: the note read and (REGULAR) written. Null for every other
+   * administrator, and for this one where the lesson is not theirs to teach,
+   * which is the view they had (ADMIN).
+   *
+   * The rule is the database's and stands in one place: app.lesson_teacher_role
+   * answers REGULAR for a marked administrator who stands on the lesson and has
+   * a tjänst for the läsår of the lesson's group (StudentGroups.academicYearId),
+   * and NULL otherwise, so the post is not asked here a second time, with a
+   * year of this file's own (the lesson's day) that could differ from the
+   * function's in a lesson dated outside its group's läsår. The mark is read
+   * here only so that no other administrator costs a round trip: a function
+   * that answers NULL for them would give the same ADMIN. Until the arms of
+   * Users.teaches (20270216090000) exist the function answers NULL for every
+   * administrator, and the view is the one they had. The flags are a hint to
+   * the page; the database is the truth, and refuses what it does not admit.
+   */
+  private async teachingAdministratorRole(
+    tx: PrismaClient,
+    lessonId: string,
+    user: AuthenticatedUser,
+  ): Promise<LessonTeacherRole | null> {
+    if (user.teaches !== true) return null;
+    return this.teacherRole(tx, lessonId);
   }
 
   private mayOf(role: LessonCallerRole, user: AuthenticatedUser): LessonLogLessonView['may'] {
@@ -233,7 +262,7 @@ export class LessonLogService {
     return this.prisma.withRls(user, async (tx) => {
       const lesson = await tx.calendarLesson.findUnique({ where: { id: lessonId }, select: LESSON_SELECT });
       if (!lesson) throw lessonNotFound();
-      const role = await this.callerRole(tx, lessonId, user);
+      const role = await this.callerRole(tx, lesson.id, user);
       const may = this.mayOf(role, user);
       const timezone = await schoolTimezone(tx, schoolId);
       const [log, note] = await Promise.all([

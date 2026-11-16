@@ -385,6 +385,20 @@ describe('StaffingLoadService', () => {
     });
   });
 
+  // Administratör som lärare: the reader's own row in the report is their own (mayReadHrOf), the others' stay hidden.
+  it('hands a planner without HR-läs their own row of the report whole, and hides the rows of everybody else', async () => {
+    tx.teacherEmployment.findMany.mockResolvedValue([
+      { id: 'emp-me', userId: ME, employmentPercent: new Prisma.Decimal('40.000'), reductionPercent: new Prisma.Decimal('0.000'), contractKind: 'FERIE', teachingTargetMinutesPerWeek: null, signature: 'ME' },
+      { id: 'emp-co', userId: COLLEAGUE, employmentPercent: new Prisma.Decimal('90.000'), reductionPercent: new Prisma.Decimal('0.000'), contractKind: 'FERIE', teachingTargetMinutesPerWeek: null, signature: 'CO' },
+    ]);
+    const report = await service.load(YEAR_ID, 'planned', testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
+    const row = (userId: string) => report.teachers.find((one) => one.userId === userId);
+    // The viewer's row whole, the colleague's hidden.
+    expect(row(ME)?.employment).toMatchObject({ employmentPercent: 40 });
+    expect(row(COLLEAGUE)?.employment).toMatchObject({ employmentPercent: null, hrHidden: true });
+    expect(report.hrHidden).toBe(true);
+  });
+
   it('leaves tjänst %, the stretches and the year figures read off them out for a planner without HR-läs (Roller i skolan)', async () => {
     tx.teacherEmployment.findMany.mockResolvedValue([
       {
@@ -413,7 +427,8 @@ describe('StaffingLoadService', () => {
     expect(mine(full).periods.length).toBeGreaterThan(1);
     expect(mine(full).annual.regulatedHoursPerYear).not.toBeNull();
 
-    const hidden = await service.load(YEAR_ID, 'planned', testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
+    // A planner who is not the person: the viewer's own row is their own (mayReadHrOf), below.
+    const hidden = await service.load(YEAR_ID, 'planned', testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false, userId: COLLEAGUE }));
     expect(hidden.hrHidden).toBe(true);
     expect(mine(hidden)).toMatchObject({
       employment: { employmentPercent: null, reductionPercent: null, hrHidden: true },
@@ -458,7 +473,7 @@ describe('StaffingLoadService', () => {
     const employmentOf = (report: Awaited<ReturnType<StaffingLoadService['load']>>) =>
       report.teachers.find((row) => row.userId === ME)!.employment as Record<string, unknown> | null;
 
-    const hidden = employmentOf(await service.load(YEAR_ID, 'planned', testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false })));
+    const hidden = employmentOf(await service.load(YEAR_ID, 'planned', testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false, userId: COLLEAGUE })));
     expect(hidden).toMatchObject({ hrHidden: true });
     expect(hidden!['maxTeachingDaysPerWeek'] ?? null).toBeNull();
     expect(hidden).not.toHaveProperty('maxTeachingDaysPerWeek');

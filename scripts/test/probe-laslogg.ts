@@ -225,7 +225,7 @@ export async function lasloggChecks(owner: Client, api: PrismaService, marker: s
       assert.equal(people.length, 5);
       const [listed] = await log(`"actorId" = $2 AND kind = 'PEOPLE'`, [admin.id]);
       assert.deepEqual(listed?.subjectIds, sorted(teacher.id, pupil.id, classmate.id, guardian.id), 'the people list recorded the admin or left someone out');
-      assert.deepEqual(await users.counts(asAdmin), { byRole: { STUDENT: 2, TEACHER: 1, SCHOOL_ADMIN: 1, GUARDIAN: 1 } });
+      assert.deepEqual(await users.counts(asAdmin), { byRole: { STUDENT: 2, TEACHER: 1, SCHOOL_ADMIN: 1, GUARDIAN: 1 }, teachingAdministrators: 0 });
       assert.equal((await log(`"actorId" = $2`, [admin.id])).length, 1, 'the counts were recorded');
     });
 

@@ -137,6 +137,22 @@ describe('TeacherEmploymentsService', () => {
       expect(shown).not.toHaveProperty('hrHidden');
     });
 
+    // Administratör som lärare: a planner, an expedition or a läsare without HR-läs reads their OWN post whole, and
+    // nobody else's. The rule is the person's, so it holds in a list of posts row by row.
+    it('hands a reader without HR-läs their own post whole and hides every other, in one list', async () => {
+      const ME_ID = testUser().userId!;
+      tx.teacherEmployment.findMany.mockResolvedValue([
+        storedRow({ id: 'emp-me', userId: ME_ID, employmentPercent: new Prisma.Decimal('40.000'), note: 'min nedsättning' }),
+        storedRow({ id: 'emp-other', userId: COLLEAGUE, note: 'annans nedsättning' }),
+      ]);
+      for (const profile of ['SCHEMALAGGARE', 'EXPEDITION', 'LASARE'] as const) {
+        const [mine, theirs] = await service.list(YEAR_ID, testUser({ adminProfile: profile, hrRead: false }));
+        expect(mine).toMatchObject({ userId: ME_ID, employmentPercent: 40, note: 'min nedsättning' });
+        expect(mine).not.toHaveProperty('hrHidden');
+        expect(theirs).toMatchObject({ userId: COLLEAGUE, employmentPercent: null, reductionPercent: null, note: null, hrHidden: true });
+      }
+    });
+
     it('leaves deltid in days out for a planner without HR-läs, and hands it to one with it (20261123090000)', async () => {
       tx.teacherEmployment.findMany.mockResolvedValue([storedRow({ maxTeachingDaysPerWeek: 4 })]);
       const [hidden] = await service.list(YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
@@ -700,6 +716,29 @@ describe('TeacherEmploymentsService', () => {
       expect(tx.teacherEmployment.delete).toHaveBeenCalledWith({ where: KEY });
     });
 
+    // Administratör som lärare (Users.teaches): the last post of a marked person is not removed (TE410, the trigger on
+    // TeacherEmployments). The gateway has no question of its own to ask first: the refusal is the answer, in its own code.
+    it('answers the database’s refusal of a marked person’s last post with a 409 of its own, not a 500', async () => {
+      const PERSON = '7d2f6a1c-3e8b-4d4f-85a9-c7e1d2b3a4c5';
+      tx.teacherEmployment.delete.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Database error. Code: `TE410`.', {
+          code: 'P2039',
+          clientVersion: Prisma.prismaVersion.client,
+          meta: {
+            driverAdapterError: {
+              cause: { originalCode: 'TE410', originalMessage: 'A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS: x', detail: `userId=${PERSON} academicYearId=${YEAR_ID}` },
+            },
+          },
+        }),
+      );
+      const refusal = await service.remove(COLLEAGUE, YEAR_ID, testUser()).catch((e) => e);
+      expect(refusal).toBeInstanceOf(ConflictException);
+      expect(refusal.getResponse()).toMatchObject({
+        code: 'A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS',
+        params: { userId: PERSON, academicYearId: YEAR_ID },
+      });
+    });
+
     it('404s a row RLS hides', async () => {
       tx.teacherEmployment.delete.mockRejectedValue(
         new Prisma.PrismaClientKnownRequestError('gone', {
@@ -807,6 +846,22 @@ describe('TeacherEmploymentsService', () => {
       // The update moved the grad alone: its changes do not carry the Från, the entry does.
       expect(answer.entries[1]!.changes).toEqual([{ field: 'employmentPercent', before: 80, after: 75 }]);
       expect(answer.entries[2]).not.toHaveProperty('periodFrom');
+    });
+
+    it('hands a reader without HR-läs the whole history of their own post, the periods’ versions and the percentages’ values', async () => {
+      const ME_ID = testUser().userId!;
+      const period = { id: 'per-1', employmentId: 'emp-1', validFrom: '2026-11-01', validTo: null, employmentPercent: 80, reductionPercent: 0 };
+      tx.teacherEmploymentLog.findMany.mockResolvedValue([
+        logRow(3, { entity: 'PERIOD', entityId: 'per-1', action: 'CREATE', before: null, after: period }),
+        logRow(2),
+      ]);
+      const own = await service.history(ME_ID, YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
+      expect(own.entries.map((entry) => entry.entity)).toEqual(['PERIOD', 'EMPLOYMENT']);
+      expect(own.entries.map((entry) => entry.version)).toEqual([3, 2]);
+      expect(own.entries[1]!.changes).not.toEqual([{ field: 'employmentPercent', before: null, after: null, hrHidden: true }]);
+      // Somebody else's, by the same reader, is as it was.
+      const other = await service.history(COLLEAGUE, YEAR_ID, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
+      expect(other.entries.map((entry) => entry.entity)).toEqual(['EMPLOYMENT']);
     });
 
     it("leaves a period's versions out for a planner without HR-läs, and the post's percentages' values", async () => {

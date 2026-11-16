@@ -256,6 +256,18 @@ describe('CoverRequestsService', () => {
       expect(await codeOf(service.create(dto({ recipientIds: [ABSENT] }), admin))).toBe('COVER_REQUEST_RECIPIENT_INVALID');
     });
 
+    // Administratör som lärare, beslut 4: the colleague side of the cover request stays the teachers' (SP409, CR404 and
+    // the doors that ask TEACHER stay in the database), so a teaching administrator is no recipient. The lookup asks for
+    // role TEACHER and nothing wider, which is what keeps the person out of every list this service builds.
+    it('does not ask an administrator who teaches: the recipients are looked up as TEACHER only', async () => {
+      const MARKED = '99999999-9999-4999-8999-999999999999';
+      tx.user.findMany.mockResolvedValue([]);
+      expect(await codeOf(service.create(dto({ recipientIds: [MARKED] }), admin))).toBe('COVER_REQUEST_RECIPIENT_INVALID');
+      expect(tx.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: { in: [MARKED] }, role: 'TEACHER', isActive: true } }),
+      );
+    });
+
     it('does not ask a colleague the hard rules of cover would not put in front of the class, and names who and why', async () => {
       days.set(BO, freeDay(BO, { dailyCapMinutes: 30 }));
       const body = await bodyOf(service.create(dto(), admin));

@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Put, Query, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { Area } from '../auth/decorators/area.decorator';
+import { Area, AsTeacher } from '../auth/decorators/area.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
@@ -39,7 +39,11 @@ import {
  * A guardian reads the log in the family's week (GET family/schedule). An
  * administrator's write of a log is DRIFT's, as the calendar's. The note is
  * the lesson's own teacher's to write and its teachers' to read; no
- * administrator does either (the cover board says that one exists).
+ * administrator does either (the cover board says that one exists), except
+ * one who teaches (Users.teaches) and stands on the lesson: the three routes
+ * that are the teacher's own say @AsTeacher, which lets that person in as the
+ * teacher and nobody else, and the database decides the note itself
+ * (app.lesson_teacher_role and the arms that ask it).
  */
 @Controller('api/v1/lesson-logs')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -52,6 +56,7 @@ export class LessonLogController {
 
   @Get()
   @Roles(Role.STUDENT, Role.TEACHER)
+  @AsTeacher("the teacher's own week: the logs and notes of the lessons the caller stands on, read-only and by the caller's own id")
   list(@Query() query: LessonLogRangeQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<{ entries: LessonLogEntry[] }> {
     return this.logs.listForCaller(query, user);
   }
@@ -59,6 +64,7 @@ export class LessonLogController {
   /** The lessons the calling teacher handed over for an absence, so they can still leave the note. */
   @Get('handed-over')
   @Roles(Role.TEACHER)
+  @AsTeacher("the lessons the caller's own absence handed over, by the caller's own id: the way back to the note")
   handedOver(@Query() query: LessonLogRangeQueryDto, @CurrentUser() user: AuthenticatedUser): Promise<{ lessons: HandedOverLesson[] }> {
     return this.logs.handedOver(query, user);
   }
@@ -92,6 +98,7 @@ export class LessonLogController {
 
   @Put('lessons/:id/substitute-note')
   @Roles(Role.TEACHER)
+  @AsTeacher("the note to the substitute is the lesson's own teacher's: the database says whether the caller is, and refuses the rest")
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   putNote(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,

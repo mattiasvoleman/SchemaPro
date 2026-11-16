@@ -725,6 +725,9 @@ describe('CalendarLessonsService', () => {
       ['unknown', null],
       ['inactive', { id: SUB_ID, role: 'TEACHER', isActive: false }],
       ['non-teacher', { id: SUB_ID, role: 'STUDENT', isActive: true }],
+      // Administratör som lärare, beslut 4: being a substitute is not a thing the mark opens (a rektor or a planner as
+      // vikarie is a question of who does the work, and the pool refuses them too: SP409). Pinned as a decision.
+      ['teaching administrator', { id: SUB_ID, role: 'SCHOOL_ADMIN', teaches: true, isActive: true }],
     ])('rejects an %s substitute', async (_label, substitute) => {
       arrangeAssign();
       tx.user.findUnique.mockResolvedValue(substitute);
@@ -1622,6 +1625,8 @@ describe('CalendarLessonsService', () => {
       expect(tx.teachingRequirement.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { subjectId: SUBJECT_ID } }),
       );
+      // Exactly TEACHER, and not teacherWhere(): a teaching administrator is no suggestion (Administratör som lärare,
+      // beslut 4, the cover steps stay the teachers').
       expect(tx.user.findMany).toHaveBeenCalledWith({
         where: {
           id: { in: [PRIMARY_ID, OTHER_ID, CO_ID] },

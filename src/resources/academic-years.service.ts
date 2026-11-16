@@ -6,7 +6,7 @@ import { tellNewMentors } from '../family/leave-notices';
 import { NotificationsService } from '../notifications/notifications.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { TIOARIG_FROM, TIOARIG_TOO_EARLY } from '../common/grade-numbering';
-import { rethrowPrismaError } from '../common/utils/prisma-errors';
+import { A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS, rethrowPrismaError } from '../common/utils/prisma-errors';
 import { parseDateString } from '../common/utils/time';
 import { attachDefaultTimplans, type YearTimplanRow } from '../timplan/year-timplans';
 import type {
@@ -203,6 +203,32 @@ export class AcademicYearsService {
               '. Flytta eleverna, eller aktivera ett annat läsår som tar över dem, innan läsåret tas bort.',
             code: YEAR_HAS_HOME_PUPILS,
             params: { pupils, inactive },
+          });
+        }
+        // A year that holds the only post of an administrator who teaches (Users.teaches) is not removed: the post
+        // is what the mark rests on, and the database refuses the cascade that would take it (TE410,
+        // TeacherEmployments_a_teaching_administrator_keeps_a_post), which rethrowPrismaError below answers with the
+        // same code. Asked first, as the pupils are, so that the answer says how many and which. Ids and a count,
+        // no names: reading a name is a read of a person that the läslogg records, and an answer that is thrown
+        // takes its own log row back with the transaction.
+        const sole = await tx.user.findMany({
+          where: {
+            role: 'SCHOOL_ADMIN',
+            teaches: true,
+            employments: { some: { academicYearId: id } },
+            NOT: { employments: { some: { academicYearId: { not: id } } } },
+          },
+          select: { id: true },
+          orderBy: { id: 'asc' },
+        });
+        if (sole.length > 0) {
+          throw new ConflictException({
+            message:
+              `Läsåret har den enda tjänsten för ${sole.length} ${sole.length === 1 ? 'administratör' : 'administratörer'} som undervisar. ` +
+              'Ta bort markeringen under Personer, eller lägg en tjänst i ett annat läsår, innan läsåret tas bort.',
+            code: A_TEACHING_ADMINISTRATORS_LAST_POST_STAYS,
+            // Five ids fit a param of at most 200 characters; the count says how many there are.
+            params: { administrators: sole.length, userIds: sole.slice(0, 5).map((row) => row.id).join(',') },
           });
         }
         // The year's lessons are not taken here. AcademicYears_a_lessons_go_first (20270120090000) deletes them
