@@ -27,13 +27,17 @@ are benchmarks/hogstadium.py and benchmarks/solve_2000_students.py.
 
 from __future__ import annotations
 
+import json
+import logging
 from collections.abc import Iterator
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 from ortools.sat.python import cp_model
 
 from app.config import Settings
+from app.main import create_app
 from app.schemas.schedule import OptimizeScheduleRequest
 from app.solver import scheduler_solver
 from app.solver.scheduler_solver import SchedulerSolver, no_core_analysis
@@ -394,15 +398,21 @@ class TestTheWindow:
         with pytest.raises(ValueError):
             tp._settings(SOLVER_EXPLAIN_SHARP_SECONDS=0)
 
+    @pytest.mark.parametrize("found", [cp_model.OPTIMAL, cp_model.FEASIBLE], ids=["optimal", "feasible"])
     def test_a_first_try_that_found_a_timetable_has_no_reserve(
-        self, monkeypatch: pytest.MonkeyPatch, built: list[bool],
+        self, monkeypatch: pytest.MonkeyPatch, built: list[bool], found: int,
     ) -> None:
-        """The model with the objective has the same hard rules: it cannot prove a week it found a timetable for."""
+        """The model with the objective has the same hard rules: it cannot prove a week it found a timetable for.
+
+        OPTIMAL and FEASIBLE are the same fact here (the review of #323, round 2,
+        LÅG-1): a timetable exists, and the reserve would only spend what is
+        left of the cap on a week it cannot prove.
+        """
         stood_in: list[tuple[str, float]] = []
 
         def finds_a_timetable(solver: cp_model.CpSolver, _model: object, *, what: str, **_r: object):
             stood_in.append((what, solver.parameters.max_time_in_seconds))
-            return cp_model.OPTIMAL
+            return found
 
         monkeypatch.setattr(scheduler_solver, "_solve_guarded", finds_a_timetable)
         response = SchedulerSolver(tp._settings())._explain_infeasible(
@@ -413,6 +423,42 @@ class TestTheWindow:
         assert built == [False]
         assert response.status == "INFEASIBLE"
         assert response.conflicts is None
+
+    def test_a_reserve_that_finds_a_timetable_proves_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The first try runs out of time and the reserve finds a timetable: the week is NOT proved without an assumption.
+
+        A reserve that proves the week with no assumption in it replaces the first
+        answer as CONFLICT_NO_CORE; one that found a timetable has proved nothing,
+        and the answer stays what the first try left, which here is none (the
+        review of #323, round 2, LÅG-1).
+        """
+        def first_runs_out(solver: cp_model.CpSolver, _model: object, *, what: str, **_r: object):
+            return cp_model.UNKNOWN if what == FIRST else cp_model.OPTIMAL
+
+        monkeypatch.setattr(scheduler_solver, "_solve_guarded", first_runs_out)
+        response = SchedulerSolver(tp._settings())._explain_infeasible(tp._request(_large_tove_away_four_days()))
+
+        assert response.status == "INFEASIBLE"
+        assert response.conflicts is None
+
+    def test_is_logged_at_start_up_beside_the_probe_s_own(self, caplog: pytest.LogCaptureFixture) -> None:
+        """DEPLOYMENT 23 says the value in force is in `service_starting`, as the first line of the log answers it.
+
+        Each figure is different here, so a line that shows the probe's seconds
+        in the window's place, or none, is not what the handbook promises (the
+        review of #323, round 2, LÅG-1).
+        """
+        with caplog.at_level(logging.INFO):
+            with TestClient(create_app(tp._settings(SOLVER_EXPLAIN_SHARP_SECONDS=7.0, SOLVER_PROBE_SECONDS=3.0))):
+                pass
+        starting = []
+        for record in caplog.records:
+            message = record.getMessage()
+            if message.startswith("{") and json.loads(message).get("event") == "service_starting":
+                starting.append(json.loads(message))
+        assert starting, "start-up must log service_starting"
+        assert starting[0]["solver_explain_sharp_seconds"] == 7.0
+        assert starting[0]["solver_probe_seconds"] == 3.0
 
 
 class _Clock:

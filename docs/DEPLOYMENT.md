@@ -5861,6 +5861,11 @@ codes, fewer of them.
   assumption (an empty core: 27 of the 250). A room that is too small is such a
   cause, and its literal cannot carry it, since the room's size is also the lesson's
   own room domain; the objective's "all" is how the school has always been told.
+  No reserve is run after a solution: when the first try finds a timetable
+  (`OPTIMAL` or `FEASIBLE`) the model with the objective has the same hard rules, so
+  it cannot prove the week impossible either, and tried it only spent the rest of the
+  cap (14.6 s on one large week). A reserve that itself finds a timetable proves
+  nothing, and the answer stays what the first try left.
 - **A week under 50 lessons is explained as it always was**, with the objective
   (and on a school with the walk, 5 s with it and then without). The core without
   the objective is ONE sufficient set: on the suite's small weeks 17 of 202 sharp
