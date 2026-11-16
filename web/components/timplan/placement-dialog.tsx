@@ -264,6 +264,12 @@ function PlacementForm({
   });
 
   const [rows, setRows] = useState<RowDraft[] | null>(null);
+  /**
+   * The key of the list the form was made from. The read can be made again while the dialog is open (a reconnect, an
+   * invalidation in the tab), and its key is then another list's: sent on top of the rows the form still holds, it would
+   * write somebody else's change over without the 409 (review of #326, round 2, MEDEL-1).
+   */
+  const [openedKey, setOpenedKey] = useState<string | undefined>(undefined);
   const [nextKey, setNextKey] = useState(1);
   /** A row the gateway refused on save, by its key, and what it said. */
   const [refused, setRefused] = useState<{ key: number; text: string } | null>(null);
@@ -276,6 +282,7 @@ function PlacementForm({
   useEffect(() => {
     if (rows !== null || !read.data) return;
     const stored: PlacementsOfRequirement = read.data;
+    setOpenedKey(stored.rowsKey);
     setRows(
       stored.placements.map((placement, index) => ({
         key: index + 1,
@@ -444,9 +451,29 @@ function PlacementForm({
     }));
     setSaving(true);
     try {
-      await savePlacements(requirement.id, body);
+      // On top of the rows the form was made of (the key it took from that read, not the latest read's), so that a list
+      // somebody else wrote since (the week, another administrator) is not written over without a word: the gateway then
+      // answers 409 REQUIREMENT_PLACEMENTS_STALE.
+      const answer = await savePlacements(requirement.id, body, openedKey);
       void invalidatePlacements(client);
-      toast.success(t("saved"));
+      // A row that was there already and has stopped holding is let stand, and named: Generera refuses it until it holds again.
+      const failing = answer.placements.flatMap((placement, index) => {
+        const verdict = answer.verdicts[index];
+        return verdict && !verdict.ok ? [{ placement, verdict }] : [];
+      });
+      if (failing.length === 0) toast.success(t("saved"));
+      else {
+        const rowsText = failing.map(({ placement, verdict }) =>
+          t("stillFailing", {
+            day: placement.dayOfWeek,
+            start: placement.startTime,
+            end: clockOfMinutes(minutesOfClock(placement.startTime) + placement.minutes),
+            weeks: placement.recurrence,
+            reason: verdictSentence(t, verdict.reason, verdict.params),
+          }),
+        );
+        toast.warning(`${t("savedStillFailing", { count: failing.length })} ${rowsText.join(" ")}`);
+      }
       onClose();
     } catch (error) {
       const refusal = placementsRefusal(error);
@@ -471,6 +498,10 @@ function PlacementForm({
         }
       } else if (error instanceof ApiError && error.code === "SCHEDULE_BUSY") {
         setTopError(t("busy"));
+        setFocusId(topId);
+      } else if (error instanceof ApiError && error.code === "REQUIREMENT_PLACEMENTS_STALE") {
+        // Somebody wrote the post's rows after this dialog read them: nothing was saved, and the form is made of the old list.
+        setTopError(t("staleList"));
         setFocusId(topId);
       } else {
         setTopError(error instanceof Error ? error.message : tCommon("error"));

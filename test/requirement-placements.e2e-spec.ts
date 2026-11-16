@@ -1,6 +1,10 @@
 import { Prisma } from '@prisma/client';
 import request from 'supertest';
 import { Role } from '../src/auth/enums/role.enum';
+import { rowsKeyOf as keyOfRows } from '../src/requirement-placements/placement-rows-key';
+
+/** The key of rows as the fixture states them (its recurrence is a plain string, the key's type a LessonRecurrence). */
+const rowsKeyOf = (rows: unknown[]) => keyOfRows(rows as Parameters<typeof keyOfRows>[0]);
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 
 /**
@@ -234,8 +238,33 @@ describe('Förlagda poster (e2e)', () => {
     it('removes every row on an empty list', async () => {
       placements()['findMany']!.mockResolvedValue([]);
       const response = await put({ placements: [] }).expect(200);
-      expect(response.body).toEqual({ placements: [], verdicts: [] });
+      expect(response.body).toEqual({ placements: [], verdicts: [], rowsKey: rowsKeyOf([]) });
       expect(placements()['createMany']).not.toHaveBeenCalled();
+    });
+
+    describe('on top of what the client read (baseKey)', () => {
+      it('answers the key of the rows it wrote, and writes on a base that holds', async () => {
+        const stored = row();
+        const response = await put({ placements: [body()], baseKey: rowsKeyOf([stored]) }).expect(200);
+        expect(response.body.rowsKey).toBe(rowsKeyOf([stored]));
+        expect(placements()['createMany']).toHaveBeenCalledTimes(1);
+      });
+
+      it('answers a list somebody wrote since with 409, its own code and the post in flat params, which the filter forwards, and writes nothing', async () => {
+        const response = await put({ placements: [body()], baseKey: rowsKeyOf([row({ id: '88888888-8888-4888-8888-888888888888' })]) }).expect(409);
+        expect(response.body.code).toBe('REQUIREMENT_PLACEMENTS_STALE');
+        expect(response.body.params).toEqual({ requirementId: POST_ID });
+        expect(placements()['deleteMany']).not.toHaveBeenCalled();
+        expect(placements()['createMany']).not.toHaveBeenCalled();
+      });
+
+      it('refuses a key that is not the key a read gives, with 400, before it reads anything', async () => {
+        await put({ placements: [body()], baseKey: 'nope' }).expect(400);
+        await put({ placements: [body()], baseKey: 7 }).expect(400);
+        // Null is no key either: a form error, and not a key that no longer holds (409).
+        await put({ placements: [body()], baseKey: null }).expect(400);
+        expect(placements()['deleteMany']).not.toHaveBeenCalled();
+      });
     });
 
     it('refuses what the DTO does not allow, writing nothing', async () => {
@@ -275,7 +304,8 @@ describe('Förlagda poster (e2e)', () => {
         },
       ]);
 
-      const response = await put({ placements: [body()] }).expect(409);
+      // A row the post does not have (the stored one starts at 10:00): a new row is judged and refused.
+      const response = await put({ placements: [body({ startTime: '10:15' })] }).expect(409);
 
       expect(response.body.code).toBe('REQUIREMENT_PLACEMENT_REFUSED');
       expect(response.body.params).toEqual({
@@ -290,6 +320,44 @@ describe('Förlagda poster (e2e)', () => {
       });
       expect(JSON.stringify(response.body)).not.toContain('88888888-8888');
       expect(placements()['deleteMany']).not.toHaveBeenCalled();
+    });
+
+    it('lets a row the post has already stand when it no longer holds, and names it in the answer (review of #326, MEDEL-2)', async () => {
+      // The same row as the stored one, and a lesson kept in its room that it clashes with: it stood there before the lesson was kept.
+      givenKept([
+        {
+          id: '99999999-9999-4999-8999-999999999999',
+          dayOfWeek: 2,
+          teacherId: '88888888-8888-4888-8888-888888888888',
+          coTeacherId: null,
+          roomId: ROOM_ID,
+          studentGroupId: '12121212-1212-4121-8121-121212121212',
+          subjectId: 'sub-ma',
+          startTime: wallClock('10:30'),
+          endTime: wallClock('11:30'),
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+          subject: { name: 'Matematik' },
+          studentGroup: { name: '7B' },
+          extraGroups: [],
+          participants: [],
+        },
+      ]);
+
+      const response = await put({ placements: [body()] }).expect(200);
+
+      expect(response.body.verdicts).toEqual([
+        {
+          index: 0,
+          ok: false,
+          reason: 'ROOM',
+          params: { otherKind: 'LESSON', className: '7B', subjectName: 'Matematik', day: 2, start: '10:30', end: '11:30' },
+        },
+      ]);
+      expect(JSON.stringify(response.body)).not.toContain('88888888-8888');
+      expect(placements()['deleteMany']).toHaveBeenCalledTimes(1);
+      expect(placements()['createMany']).toHaveBeenCalledTimes(1);
     });
 
     it('answers the trigger\'s FP409, which no pre-check foresaw, as the same 409 and not a 500', async () => {

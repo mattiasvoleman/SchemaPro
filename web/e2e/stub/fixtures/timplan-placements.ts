@@ -141,6 +141,8 @@ export function placedOf(requirementId: string, scenario: string | null) {
         ? { index, ok: false, reason: "PAIR_ROOM" }
         : { index, ok: true },
     ),
+    // The key of these rows (every post with none has the same); the dialog does not read it.
+    rowsKey: rows.length === 0 ? "e3b0c44298fc1c14" : "k000000000000007",
   };
 }
 
@@ -148,5 +150,5 @@ export function placedOf(requirementId: string, scenario: string | null) {
 export function placementsStored(requirementId: string, body: unknown) {
   const sent = (body as { placements?: Record<string, unknown>[] } | undefined)?.placements ?? [];
   const rows = sent.map((input, index) => placed(index + 1, requirementId, input));
-  return { placements: rows, verdicts: rows.map((_, index) => ({ index, ok: true })) };
+  return { placements: rows, verdicts: rows.map((_, index) => ({ index, ok: true })), rowsKey: rows.length === 0 ? "e3b0c44298fc1c14" : "k000000000000008" };
 }

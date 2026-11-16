@@ -4,7 +4,6 @@ import { askForScenario, freezeClock, settle, signIn, watchStubMisses } from "./
 import { PLACEMENT_WEEK_ANY_ROOM_SCENARIO } from "./stub/fixtures/timplan-board";
 import { NO_ROOM_PLACEMENTS_SCENARIO } from "./stub/fixtures/timplan-placements";
 import { ROOMS } from "./stub/fixtures/world";
-import { KIND, uid } from "./stub/sessions";
 
 /**
  * Salen är valfri: where the dialog Förlägg's room field and the week's lines stand when a förläggning leaves the room to
@@ -251,7 +250,7 @@ async function openWeek(page: Page, baseURL: string, size: { width: number; heig
 function weekFacts(page: Page) {
   return page.evaluate(() => {
     const problems: string[] = [];
-    for (const item of document.querySelectorAll("[data-testid='placement-row'], [data-testid='placement-detail'] > div")) {
+    for (const item of document.querySelectorAll("[data-testid='placement-row'], [role='dialog'] h2, [role='dialog'] p")) {
       const outer = item.getBoundingClientRect();
       const range = document.createRange();
       range.selectNodeContents(item);
@@ -279,9 +278,10 @@ for (const size of VIEWPORTS) {
       await expect(post.getByTestId("placement-row")).toContainText("Motorn väljer sal");
       await expect(post.getByTestId("placement-row")).not.toContainText("null");
 
-      // Its card opens on the same words (the card itself may drop the line when the hour is short).
-      await page.locator(`[data-lesson-id='placement:${uid(KIND.misc, 804)}']`).click();
-      await expect(page.getByTestId("placement-detail")).toContainText("Motorn väljer sal");
+      // Its card opens on the same words (the card itself may drop the line when the hour is short). A card is named by its
+      // lesson (post, teacher, length, place and weeks), not by its row's id: Wednesday 09:00, every week.
+      await page.locator("[data-lesson-id$='|3|09:00|ALL_WEEKS']").click();
+      await expect(page.getByRole("dialog")).toContainText("Motorn väljer sal");
 
       const facts = await weekFacts(page);
       expect(facts.problems, "text measured by its own rectangles").toEqual([]);

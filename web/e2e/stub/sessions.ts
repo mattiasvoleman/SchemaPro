@@ -102,6 +102,19 @@ export const READER: SignedInPerson = {
 };
 
 /**
+ * An expedition (Roller i skolan): an administrator whose profile writes Drift and Personal and no more, so it reads
+ * the planning pages without the controls that write them. The admin's persona, as READER is; its own Users row
+ * (world.ts PROFILE_ROWS) carries the profile the app reads.
+ */
+export const EXPEDITION: SignedInPerson = {
+  persona: "admin",
+  role: "SCHOOL_ADMIN",
+  authId: uid(KIND.auth, 10),
+  userId: uid(KIND.user, 3),
+  email: "expedition@exempelskolan.example",
+};
+
+/**
  * Flera skolor per inloggning: a guardian with children at two schools. At
  * the fixture school she is Sara, with Sara's row and children; her other
  * school is Granskolan (world.ts SECOND_SCHOOL), where she has one child. A
@@ -191,7 +204,7 @@ export function personForToken(token: string | null | undefined): SignedInPerson
   if (!token) return null;
   try {
     const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()) as { sub?: string };
-    return [...Object.values(PEOPLE), READER, MULTI_GUARDIAN, HUVUDMAN_MEMBER, ORPHAN].find((person) => person.authId === payload.sub) ?? null;
+    return [...Object.values(PEOPLE), READER, EXPEDITION, MULTI_GUARDIAN, HUVUDMAN_MEMBER, ORPHAN].find((person) => person.authId === payload.sub) ?? null;
   } catch {
     return null;
   }

@@ -161,6 +161,7 @@ import { elevlistanChecks, sweepElevlistanSchool } from './probe-elevlistan';
 import { massvalChecks, sweepMassvalSchool } from './probe-massatgarder';
 import { sweepTenantKeySchools, tenantKeyChecks } from './probe-tenant-keys';
 import { placementWeekChecks, sweepPlacementWeekSchools } from './probe-forlagg-veckan';
+import { placementMirrorChecks, sweepPlacementMirrorSchools } from './probe-forlagg-spegel';
 import { sweepTeachesGatewaySchool, teachesGatewayChecks } from './probe-teaches-gateway';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import { CoverService } from '../../src/cover/cover.service';
@@ -6133,6 +6134,8 @@ async function runChecks(
   await pagingOrderChecks(owner, api, MARKER, check);
   // Förlägg i veckan: the year's week of förläggningar, as each profile reads it.
   await placementWeekChecks(owner, api, MARKER, check);
+  // Förlägg i veckan: the judge against the contract fixture the web's mirror of it is held to (vv9).
+  await placementMirrorChecks(owner, api, MARKER, check);
   // Administratör som lärare, gatewayens halva: what the gateway makes of the mark and of TE409 and TE410, and the deadlock of a mark.
   await teachesGatewayChecks(owner, api, MARKER, check, open, appUrl);
 }
@@ -6655,6 +6658,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepMassvalSchool(owner, MARKER);
   // Förlägg i veckan's two schools, likewise.
   await sweepPlacementWeekSchools(owner, MARKER);
+  // The contract fixture's schools, likewise.
+  await sweepPlacementMirrorSchools(owner, MARKER);
   // Administratör som lärare, gatewayens halva: its school, likewise.
   await sweepTeachesGatewaySchool(owner, MARKER);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);

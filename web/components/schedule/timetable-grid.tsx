@@ -137,6 +137,16 @@ interface TimetableGridProps {
   /** Click on an empty slot (create-lesson affordance). */
   onSlotClick?: (dayOfWeek: number, startMinutes: number) => void;
   /**
+   * The day the grid draws at least to, in minutes since midnight (18 * 60 for
+   * Förlägg i veckan, whose day is 08:00 to 18:00). The grid ends at the hour of
+   * its last lesson and shows 08–16 when it holds none, which is the grundschema's
+   * week and leaves nothing to drag a lesson into at 17:00. Absent, the grid is
+   * what it always was. A grid that holds nothing to focus is itself focusable, so
+   * that a scrolling box with no lesson in it is still reachable (axe,
+   * scrollable-region-focusable).
+   */
+  dayEndMinutes?: number;
+  /**
    * Stripes drawn behind the lessons — the lunch each class was given.
    *
    * Not lessons, and not passed as lessons: layoutDay applies ONE laneCount to
@@ -294,6 +304,7 @@ function TimetableGridInner({
   selectedIds,
   onToggleSelect,
   onSlotClick,
+  dayEndMinutes: drawnToMinutes,
   onBandMove,
   onBandRemove,
   bands,
@@ -378,12 +389,13 @@ function TimetableGridInner({
       ...lessons.map((l) => l.endMinutes),
       ...(bands ?? []).map((b) => b.endMinutes),
     ];
-    if (starts.length === 0) return { startHour: 8, endHour: 16 };
+    const drawnTo = Math.ceil((drawnToMinutes ?? 0) / 60);
+    if (starts.length === 0) return { startHour: 8, endHour: Math.max(16, drawnTo) };
     return {
       startHour: Math.min(8, Math.floor(Math.min(...starts) / 60)),
-      endHour: Math.max(16, Math.ceil(Math.max(...ends) / 60)),
+      endHour: Math.max(16, drawnTo, Math.ceil(Math.max(...ends) / 60)),
     };
-  }, [lessons, bands]);
+  }, [lessons, bands, drawnToMinutes]);
 
   /** The most common lesson length, which is what the grid is measured for. */
   const pxPerMinute = useMemo(() => {
@@ -819,6 +831,7 @@ function TimetableGridInner({
 
   return (
     <div
+      tabIndex={drawnToMinutes !== undefined && !lessons.some((lesson) => !lesson.duty) ? 0 : undefined}
       className={cn(
         "overflow-x-auto rounded-lg border bg-card",
         (draggingId || bandDraggingId) && "select-none",

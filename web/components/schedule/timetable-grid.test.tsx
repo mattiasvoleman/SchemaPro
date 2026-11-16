@@ -1515,3 +1515,46 @@ describe("TimetableGrid for a profile that does not write the grundschema (Läsb
     expect(container.querySelector("[data-writes-inert], [data-writes]")).toBeNull();
   });
 });
+
+describe("TimetableGrid dayEndMinutes (Förlägg i veckan: a day that is 08:00 to 18:00)", () => {
+  it("draws the day to its end whatever the lessons hold, the empty grid too", () => {
+    const { rerender } = render(<TimetableGrid lessons={[]} dayEndMinutes={18 * 60} />);
+    // The default window is 08–16 and labels up to 15:00; drawn to 18:00 it labels up to 17:00.
+    expect(screen.getByText("17:00")).toBeInTheDocument();
+    expect(screen.queryByText("18:00")).not.toBeInTheDocument();
+    rerender(<TimetableGrid lessons={[makeLesson({ startMinutes: 12 * 60, endMinutes: 13 * 60 })]} dayEndMinutes={18 * 60} />);
+    expect(screen.getByText("17:00")).toBeInTheDocument();
+  });
+
+  it("never draws a day shorter than the lessons it holds, and is the grid it always was without the property", () => {
+    const { rerender } = render(<TimetableGrid lessons={[makeLesson({ startMinutes: 17 * 60, endMinutes: 19 * 60 })]} dayEndMinutes={18 * 60} />);
+    expect(screen.getByText("18:00")).toBeInTheDocument();
+    rerender(<TimetableGrid lessons={[]} />);
+    expect(screen.queryByText("17:00")).not.toBeInTheDocument();
+    expect(screen.getByText("15:00")).toBeInTheDocument();
+  });
+
+  it("makes a scrolling box that holds no lesson focusable (axe: scrollable-region-focusable), and leaves other grids' boxes alone", () => {
+    const { container, rerender } = render(<TimetableGrid lessons={[]} dayEndMinutes={18 * 60} />);
+    expect(container.querySelector(".overflow-x-auto")).toHaveAttribute("tabindex", "0");
+    // With a lesson the lesson's own button is what a keyboard reaches.
+    rerender(<TimetableGrid lessons={[makeLesson()]} dayEndMinutes={18 * 60} />);
+    expect(container.querySelector(".overflow-x-auto")).not.toHaveAttribute("tabindex");
+    // The grundschema's grid, which never passes the property, gets no new tab stop.
+    rerender(<TimetableGrid lessons={[]} />);
+    expect(container.querySelector(".overflow-x-auto")).not.toHaveAttribute("tabindex");
+  });
+
+  it("moves a lesson to the last hour of the drawn day: the arrow keys clamp at 18:00, and at the lesson's own hour without the property", () => {
+    const late = makeLesson({ startMinutes: 16 * 60, endMinutes: 17 * 60 });
+    const onLessonChange = vi.fn();
+    const { rerender } = render(<TimetableGrid lessons={[late]} dayEndMinutes={18 * 60} editable onLessonChange={onLessonChange} />);
+    fireEvent.keyDown(screen.getByRole("button", { name: /Math/ }), { key: "ArrowDown" });
+    expect(onLessonChange).toHaveBeenCalledWith("math-mon", { dayOfWeek: 1, startMinutes: 16 * 60 + 15, endMinutes: 17 * 60 + 15 });
+    onLessonChange.mockClear();
+    // The grundschema's grid ends at the hour of the last lesson: nowhere further to go.
+    rerender(<TimetableGrid lessons={[late]} editable onLessonChange={onLessonChange} />);
+    fireEvent.keyDown(screen.getByRole("button", { name: /Math/ }), { key: "ArrowDown" });
+    expect(onLessonChange).not.toHaveBeenCalled();
+  });
+});

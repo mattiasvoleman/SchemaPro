@@ -78,6 +78,36 @@
  *         refused NO_TEACHER, and a share given a teacher again through the
  *         PATCH hands the förläggning to them.
  *
+ * TWO WRITERS (A2: `baseKey` on the PUT and `rowsKey` in every answer), on the
+ * pool's own connections, with a third held at the post's row to make the
+ * interleaving the one a lucky timing only sometimes gives (both writers have
+ * judged and are queued at the post's lock; in a server that compared the key
+ * before the lock both would have passed it). A unit spec cannot see this:
+ * the mocked transaction has no other writer.
+ *
+ *   fp-o  two writers who read the same list and write each their own, ten
+ *         rounds started together and ten held at the lock: exactly one wins,
+ *         the other is 409 REQUIREMENT_PLACEMENTS_STALE with flat params
+ *         {requirementId}, the winner's rows stand exactly (nothing of the
+ *         loser's, nothing of the list both read) and its answer's key is the
+ *         key the post has;
+ *   fp-p  the same on a post that has no rows: two who both read the empty
+ *         list and write the first one get one answer each;
+ *   fp-q  a key read before another save is stale after it (even a save of the
+ *         very same list: the ids are new), nothing is written by the refused
+ *         write and the key is unchanged; the key of the last answer chains;
+ *         the key of a post with no rows is one for every post; a write with no
+ *         key is last-writer-wins as it was (whole lists, never a mixture);
+ *   fp-r  a write while Generera holds the year's regeneration lock is 409
+ *         SCHEDULE_BUSY, with a key and without, and writes nothing;
+ *   fp-s  a post with two rows that have stopped holding (the teacher made
+ *         unavailable) is mended one row at a time, the way the week does it
+ *         (review of #326, MEDEL-2): the real judge refuses a NEW row that does
+ *         not hold and lets a row the post has already stand, naming it in the
+ *         answer; a row let stand that another writer has removed before the
+ *         save takes the post's lock is 409 REQUIREMENT_PLACEMENTS_STALE
+ *         (a real second connection holds the lock while it is removed).
+ *
  * A step that fails prints its FAIL line and the run goes on; the steps share
  * the world, so a failure early on may take later ones with it. The exit code
  * is 1 for any FAIL.
@@ -619,7 +649,11 @@ async function run(owner: Client, engine: EngineStub, app: INestApplicationConte
       const verdicts = await dialog();
       assert.equal(verdicts[0]?.ok, false, 'the dialog lets a lunch the school placed pass');
       assert.equal(verdicts[0]?.reason, 'LUNCH');
-      const refusal = await refusalOf(placements.replace(idrottPost, { placements: [placement] } as never, admin));
+      // The row the post has already is let stand and named in the answer (review of #326, MEDEL-2); it is the same row, so the
+      // save is not refused for it. A row put anywhere on the meal is a NEW row, and that is refused.
+      const letStand = await placements.replace(idrottPost, { placements: [placement] } as never, admin);
+      assert.deepEqual(letStand.verdicts, [{ index: 0, ok: false, reason: 'LUNCH' }], 'the row the post has was not named in the answer');
+      const refusal = await refusalOf(placements.replace(idrottPost, { placements: [{ ...placement, startTime: '10:05' }] } as never, admin));
       assert.equal(refusal.getStatus(), 409);
       const body = refusal.getResponse() as { code?: string; params?: Record<string, unknown> };
       assert.equal(body.code, 'REQUIREMENT_PLACEMENT_REFUSED');
@@ -750,6 +784,329 @@ async function run(owner: Client, engine: EngineStub, app: INestApplicationConte
 
     await requirements.update(sharedPost, { shares: [{ teacherId: t5.id, lessons: 1, minutes: 40 }] } as never, admin);
     assert.deepEqual(await storedTeacher(), [t5.id], 'the share nobody taught was given a teacher, and the förläggning stayed nobody\'s');
+  });
+
+  // -------------------------------------------------------------------------
+  // Two writers (A2): baseKey and rowsKey on the real database, with real connections
+  // -------------------------------------------------------------------------
+  // A class, a teacher and a post of their own: nothing else of the school can clash with the rows these write, so a
+  // refusal here is the stale key's and nothing else's.
+  const g7c = await group('FP 7C');
+  const t7 = await person('t7', 'TEACHER');
+  const historia = await subject('FP Historia');
+  const racePost = await post(g7c, historia, t7.id, 2, 60);
+  // The post that starts empty has its own class and teacher too: two posts of one class and one teacher would clash with each other's rows.
+  const g7d = await group('FP 7D');
+  const t8 = await person('t8', 'TEACHER');
+  const emptyPost = await post(g7d, await subject('FP Geografi'), t8.id, 2, 60);
+  const listA = [
+    { dayOfWeek: 1, startTime: '09:00', minutes: 60, roomId: sal32, recurrence: 'ALL_WEEKS' as const },
+    { dayOfWeek: 3, startTime: '09:00', minutes: 60, roomId: sal32, recurrence: 'ALL_WEEKS' as const },
+  ];
+  const listB = [
+    { dayOfWeek: 2, startTime: '13:00', minutes: 60, roomId: null, recurrence: 'ALL_WEEKS' as const },
+    { dayOfWeek: 4, startTime: '13:00', minutes: 60, roomId: gym, recurrence: 'ALL_WEEKS' as const },
+  ];
+  // The empty post's lists name no room (the engine chooses): its rows must not clash with the race post's rooms.
+  const withoutRoom = (list: typeof listA) => list.map((row) => ({ ...row, roomId: null }));
+  const baseList = [{ dayOfWeek: 5, startTime: '08:00', minutes: 60, roomId: sal32, recurrence: 'ALL_WEEKS' as const }];
+  const storedOf = async (postId: string): Promise<string[]> =>
+    (
+      await all<{ day: number; start: string; minutes: number; roomId: string | null; recurrence: string }>(
+        `SELECT "dayOfWeek" AS day, to_char("startTime", 'HH24:MI') AS start, minutes, "roomId", recurrence::text AS recurrence
+           FROM "TeachingRequirementPlacements" WHERE "requirementId" = $1 ORDER BY "dayOfWeek", "startTime", recurrence`,
+        [postId],
+      )
+    ).map((row) => `${row.day} ${row.start} ${row.minutes} ${row.roomId ?? '-'} ${row.recurrence}`);
+  const textOf = (list: ReadonlyArray<{ dayOfWeek: number; startTime: string; minutes: number; roomId?: string | null; recurrence: string }>): string[] =>
+    list.map((row) => `${row.dayOfWeek} ${row.startTime} ${row.minutes} ${row.roomId ?? '-'} ${row.recurrence}`).sort();
+  type Settled = { ok: true; value: Awaited<ReturnType<typeof placements.replace>> } | { ok: false; error: unknown };
+  const settle = (work: Promise<Awaited<ReturnType<typeof placements.replace>>>): Promise<Settled> =>
+    work.then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+  const put = (postId: string, list: unknown[], baseKey?: string) =>
+    placements.replace(postId, { placements: list, ...(baseKey === undefined ? {} : { baseKey }) } as never, admin);
+  const keyNow = async (postId: string): Promise<string> => (await placements.listOfPost(postId, admin)).rowsKey;
+  const holder = async (): Promise<Client> => {
+    const client = new Client({ connectionString: process.env['PROBE_OWNER_URL'] });
+    await client.connect();
+    return client;
+  };
+  /** Backends of this database that are waiting for a lock right now. */
+  const lockWaiters = async (): Promise<number> =>
+    (await one<{ n: number }>(`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`)).n;
+  const untilWaiters = async (count: number): Promise<void> => {
+    for (let waited = 0; waited < 15_000; waited += 25) {
+      if ((await lockWaiters()) >= count) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`fewer than ${count} backends waited for a lock within 15 s`);
+  };
+  const staleOf = (outcome: Settled, postId: string): void => {
+    assert.ok(!outcome.ok, 'the write was not refused');
+    const error = outcome.error;
+    assert.ok(error instanceof HttpException, `not an HttpException: ${summarise(error)}`);
+    assert.equal(error.getStatus(), 409);
+    const body = error.getResponse() as { code?: string; params?: unknown };
+    assert.equal(body.code, 'REQUIREMENT_PLACEMENTS_STALE', `the 409 is ${summarise(error)}`);
+    assert.deepEqual(body.params, { requirementId: postId }, 'params are not flat {requirementId}');
+  };
+
+  /**
+   * One round of two writers who read the same list and write each their own, started together. `held`: the post's row
+   * is locked by a third connection until both writers stand waiting for it, so that both have judged the list and, in a
+   * server that compares the key before taking the lock, both have passed the comparison; the race is then the one a
+   * lucky timing only sometimes makes.
+   */
+  const round = async (postId: string, held: boolean): Promise<{ winner: 'A' | 'B'; key: string }> => {
+    await put(postId, baseList); // the list both read: written without a key
+    const read = await keyNow(postId);
+    let hold: Client | undefined;
+    if (held) {
+      hold = await holder();
+      await hold.query('BEGIN');
+      await hold.query(`SELECT id FROM "TeachingRequirements" WHERE id = $1 FOR NO KEY UPDATE`, [postId]);
+    }
+    try {
+      const both = Promise.all([settle(put(postId, listA, read)), settle(put(postId, listB, read))]);
+      if (hold) {
+        await untilWaiters(2);
+        await hold.query('COMMIT');
+      }
+      const [a, b] = await both;
+      assert.equal(Number(a.ok) + Number(b.ok), 1, `${Number(a.ok) + Number(b.ok)} of the two writers succeeded (A ${a.ok ? 'ok' : summarise(a.error)}, B ${b.ok ? 'ok' : summarise(b.error)})`);
+      const winner = a.ok ? 'A' : 'B';
+      staleOf(a.ok ? b : a, postId);
+      const won = (a.ok ? a : (b as Settled & { ok: true })) as Settled & { ok: true };
+      // The winner's rows stand exactly, and nothing of the loser's, nor of the list both read.
+      assert.deepEqual(await storedOf(postId), textOf(winner === 'A' ? listA : listB), `the stored rows are not exactly ${winner}'s`);
+      assert.equal(won.value.rowsKey, await keyNow(postId), 'the winner\'s answer key is not the key the post has now');
+      assert.notEqual(won.value.rowsKey, read);
+      return { winner, key: won.value.rowsKey };
+    } finally {
+      if (hold) await hold.query('ROLLBACK').catch(() => undefined);
+      await hold?.end();
+    }
+  };
+
+  await check('fp-o: two writers who read the same list and write at once, ten times each started together and held at the post\'s lock: one wins, the other is 409 REQUIREMENT_PLACEMENTS_STALE, the winner\'s rows stand exactly', async () => {
+    const winners: string[] = [];
+    for (let i = 0; i < 10; i++) winners.push((await round(racePost, false)).winner);
+    for (let i = 0; i < 10; i++) winners.push((await round(racePost, true)).winner);
+    console.log(`     (winners over the 20 rounds: A ${winners.filter((w) => w === 'A').length}, B ${winners.filter((w) => w === 'B').length})`);
+  });
+
+  await check('fp-p: two who read the EMPTY list and write the first rows at once get one answer each: one wins, the other is stale, and the rows are the winner\'s', async () => {
+    for (const held of [false, true, false, true]) {
+      await owner.query(`DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = $1`, [emptyPost]);
+      const read = await keyNow(emptyPost);
+      let hold: Client | undefined;
+      if (held) {
+        hold = await holder();
+        await hold.query('BEGIN');
+        await hold.query(`SELECT id FROM "TeachingRequirements" WHERE id = $1 FOR NO KEY UPDATE`, [emptyPost]);
+      }
+      try {
+        const both = Promise.all([settle(put(emptyPost, withoutRoom(listA), read)), settle(put(emptyPost, withoutRoom(listB), read))]);
+        if (hold) {
+          await untilWaiters(2);
+          await hold.query('COMMIT');
+        }
+        const [a, b] = await both;
+        assert.equal(Number(a.ok) + Number(b.ok), 1, `${Number(a.ok) + Number(b.ok)} writers of the first list succeeded (held ${held})`);
+        staleOf(a.ok ? b : a, emptyPost);
+        assert.deepEqual(await storedOf(emptyPost), textOf(withoutRoom(a.ok ? listA : listB)));
+      } finally {
+        if (hold) await hold.query('ROLLBACK').catch(() => undefined);
+        await hold?.end();
+      }
+    }
+  });
+
+  await check('fp-q: a key read before another writer\'s save is stale after it (409, nothing written), the key of the save before is fresh, and a write without a key is last-writer-wins as it was', async () => {
+    await put(racePost, baseList);
+    const k0 = await keyNow(racePost);
+    const k1 = (await put(racePost, listA, k0)).rowsKey; // chained: the answer's key is the next write's base
+    assert.notEqual(k1, k0);
+    assert.equal(k1, await keyNow(racePost));
+    // Somebody else saves the very same list again: new ids, so the old key is no longer the post's.
+    const k2 = (await put(racePost, listA)).rowsKey;
+    assert.notEqual(k2, k1, 'a save of the same list left the key: the ids are what make it a key of a save');
+    const before = await storedOf(racePost);
+    staleOf(await settle(put(racePost, listB, k1)), racePost);
+    assert.deepEqual(await storedOf(racePost), before, 'the refused write changed the rows');
+    assert.equal(await keyNow(racePost), k2, 'the refused write changed the key');
+    // The fresh key writes, and the chain continues.
+    const k3 = (await put(racePost, listB, k2)).rowsKey;
+    assert.deepEqual(await storedOf(racePost), textOf(listB));
+    const k4 = (await put(racePost, [], k3)).rowsKey; // the empty list on top of the last key
+    assert.deepEqual(await storedOf(racePost), []);
+    await owner.query(`DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = $1`, [emptyPost]);
+    assert.equal(k4, await keyNow(emptyPost), 'the key of a post with no rows is the same for every post');
+    // Without a key nothing is asked: the second of two concurrent writes simply replaces the first, whole.
+    const [x, y] = await Promise.all([settle(put(racePost, listA)), settle(put(racePost, listB))]);
+    assert.ok(x.ok && y.ok, `without a key both writes succeed: ${x.ok ? 'ok' : summarise(x.error)} / ${y.ok ? 'ok' : summarise(y.error)}`);
+    const rows = await storedOf(racePost);
+    assert.ok(JSON.stringify(rows) === JSON.stringify(textOf(listA)) || JSON.stringify(rows) === JSON.stringify(textOf(listB)), `a mixture of the two lists stands: ${JSON.stringify(rows)}`);
+  });
+
+  await check('fp-r: a write while Generera holds the year\'s regeneration lock is 409 SCHEDULE_BUSY with or without a key, writes nothing, and goes through when the lock is released', async () => {
+    await put(racePost, baseList);
+    const read = await keyNow(racePost);
+    const before = await storedOf(racePost);
+    const rewrite = await holder();
+    await rewrite.query('BEGIN');
+    // What Generera's write holds for its whole transaction (lockYearForRegeneration).
+    await rewrite.query(`SELECT pg_advisory_xact_lock(hashtext('grundschema-regenerate'), hashtext($1::uuid::text))`, [year]);
+    try {
+      for (const baseKey of [read, undefined]) {
+        const outcome = await settle(put(racePost, listA, baseKey));
+        assert.ok(!outcome.ok, 'the write went through under a rewrite of the year');
+        const error = outcome.error;
+        assert.ok(error instanceof HttpException, summarise(error));
+        assert.equal(error.getStatus(), 409);
+        assert.equal((error.getResponse() as { code?: string }).code, 'SCHEDULE_BUSY', summarise(error));
+        assert.deepEqual(await storedOf(racePost), before, 'the refused write changed the rows');
+      }
+    } finally {
+      await rewrite.query('ROLLBACK').catch(() => undefined);
+      await rewrite.end();
+    }
+    const done = await put(racePost, listA, read);
+    assert.deepEqual(await storedOf(racePost), textOf(listA));
+    assert.equal(done.rowsKey, await keyNow(racePost));
+  });
+
+  // -------------------------------------------------------------------------
+  // A post with two rows that have stopped holding (review of #326, MEDEL-2)
+  // -------------------------------------------------------------------------
+  const g7e = await group('FP 7E');
+  const t9 = await person('t9', 'TEACHER');
+  const mendPost = await post(g7e, await subject('FP Samhällskunskap'), t9.id, 3, 60);
+  const wed = { dayOfWeek: 3, startTime: '14:00', minutes: 60, roomId: null, recurrence: 'ALL_WEEKS' as const };
+  const thu = { dayOfWeek: 4, startTime: '14:00', minutes: 60, roomId: null, recurrence: 'ALL_WEEKS' as const };
+  const fri = { dayOfWeek: 5, startTime: '14:00', minutes: 60, roomId: null, recurrence: 'ALL_WEEKS' as const };
+  const verdictsOf = async (): Promise<string[]> => {
+    const answer = await placements.listOfPost(mendPost, admin);
+    return answer.placements.map((row, index) => `${row.dayOfWeek}:${answer.verdicts[index]!.ok ? 'ok' : answer.verdicts[index]!.reason}`);
+  };
+
+  await check('fp-s: two rows that have stopped holding are mended one at a time: a row removed or moved leaves the other named, not refused', async () => {
+    await put(mendPost, [wed, thu, fri]); // all three hold: the teacher is free
+    for (const day of [3, 4]) {
+      await owner.query(
+        `INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, "updatedAt")
+         VALUES ($1, 'TEACHER'::"ConstraintResource", $2, $3, '14:00', '15:00', 'UNAVAILABLE', now())`,
+        [s, t9.id, day],
+      );
+    }
+    assert.deepEqual(await verdictsOf(), ['3:AVAILABILITY', '4:AVAILABILITY', '5:ok'], 'the world: two rows do not hold');
+
+    // Removing the Wednesday row: the Thursday row is still on the post and still does not hold. It was refused before.
+    const removed = await put(mendPost, [thu, fri]);
+    assert.deepEqual(await storedOf(mendPost), textOf([thu, fri]));
+    assert.deepEqual(
+      removed.verdicts.map((verdict, index) => `${removed.placements[index]!.dayOfWeek}:${verdict.ok ? 'ok' : verdict.reason}`),
+      ['4:AVAILABILITY', '5:ok'],
+      'the answer does not name the row that stays',
+    );
+    assert.deepEqual(removed.verdicts[0], { index: 0, ok: false, reason: 'AVAILABILITY', params: { resource: 'TEACHER' } });
+    assert.equal(removed.rowsKey, await keyNow(mendPost));
+
+    // Moving the Friday row beside it (an ordinary change of the post): the Thursday row stays named, the moved one holds.
+    const moved = await put(mendPost, [thu, { ...fri, startTime: '15:00' }]);
+    assert.deepEqual(await verdictsOf(), ['4:AVAILABILITY', '5:ok']);
+    assert.deepEqual(moved.verdicts.map((verdict) => verdict.ok), [false, true]);
+
+    // Removing the other one: nothing left that does not hold.
+    const mended = await put(mendPost, [{ ...fri, startTime: '15:00' }]);
+    assert.deepEqual(mended.verdicts, [{ index: 0, ok: true }]);
+    assert.deepEqual(await storedOf(mendPost), textOf([{ ...fri, startTime: '15:00' }]));
+  });
+
+  await check('fp-s2: a row that is NEW and does not hold is refused at its index, writing nothing, and so is a row moved to a place that does not hold', async () => {
+    const before = await storedOf(mendPost);
+    const keyBefore = await keyNow(mendPost);
+    const friday = { ...fri, startTime: '15:00' };
+    for (const list of [[friday, wed], [{ ...friday, dayOfWeek: 4, startTime: '14:00' }]]) {
+      const outcome = await settle(put(mendPost, list, keyBefore));
+      assert.ok(!outcome.ok, 'a row that does not hold was written');
+      const error = outcome.error;
+      assert.ok(error instanceof HttpException, summarise(error));
+      assert.equal(error.getStatus(), 409);
+      const body = error.getResponse() as { code?: string; params?: { index?: number; reason?: string } };
+      assert.equal(body.code, 'REQUIREMENT_PLACEMENT_REFUSED', summarise(error));
+      assert.equal(body.params?.reason, 'AVAILABILITY');
+      assert.equal(body.params?.index, list.length === 2 ? 1 : 0, 'the refusal names another row than the new one');
+      assert.deepEqual(await storedOf(mendPost), before, 'the refused write changed the rows');
+      assert.equal(await keyNow(mendPost), keyBefore, 'the refused write changed the key');
+    }
+  });
+
+  await check('fp-s3: a row let stand that another writer removes before the save takes the post\'s lock is 409 REQUIREMENT_PLACEMENTS_STALE, and writes nothing', async () => {
+    // The world: Thursday does not hold, and the post has it (stored directly: a save would refuse it as a new row).
+    await owner.query(
+      `INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "updatedAt")
+       VALUES ($1, $2, 4, '14:00', 60, NULL, 'ALL_WEEKS', now())`,
+      [s, mendPost],
+    );
+    assert.deepEqual(await storedOf(mendPost), textOf([thu, { ...fri, startTime: '15:00' }]));
+    // Another connection holds the post's lock and, inside it, removes the Thursday row.
+    const hold = await holder();
+    await hold.query('BEGIN');
+    await hold.query(`SELECT id FROM "TeachingRequirements" WHERE id = $1 FOR NO KEY UPDATE`, [mendPost]);
+    try {
+      // The save: Thursday let stand (it is in the list the post has), Friday moved. Judged, then queued at the lock.
+      const save = settle(put(mendPost, [thu, { ...fri, startTime: '16:00' }]));
+      await untilWaiters(1);
+      await hold.query(`DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = $1 AND "dayOfWeek" = 4`, [mendPost]);
+      await hold.query('COMMIT');
+      staleOf(await save, mendPost);
+    } finally {
+      await hold.query('ROLLBACK').catch(() => undefined);
+      await hold.end();
+    }
+    // Nothing of the save: the Friday row is where it was and Thursday is gone.
+    assert.deepEqual(await storedOf(mendPost), textOf([{ ...fri, startTime: '15:00' }]));
+    // And the same save, made again on what the post has, is a NEW row that does not hold, and is refused as such.
+    const again = await settle(put(mendPost, [thu, { ...fri, startTime: '15:00' }]));
+    assert.ok(!again.ok && again.error instanceof HttpException);
+    assert.equal(((again.error as HttpException).getResponse() as { code?: string }).code, 'REQUIREMENT_PLACEMENT_REFUSED');
+  });
+
+  await check('fp-s4: TWO rows let stand and another writer removes ONE of them under the lock: STALE, and the removed row is not written back (review of #326, round 2, LÅG-1)', async () => {
+    // fp-s3 has one row that does not hold; "one of them is gone" and "all of them are" are the same there. Here Wednesday and
+    // Thursday both stand and do not hold (stored directly: a save would refuse them as new rows), and Friday is the post's third.
+    for (const day of [3, 4]) {
+      await owner.query(
+        `INSERT INTO "TeachingRequirementPlacements" ("schoolId", "requirementId", "dayOfWeek", "startTime", minutes, "roomId", recurrence, "updatedAt")
+         VALUES ($1, $2, $3, '14:00', 60, NULL, 'ALL_WEEKS', now())`,
+        [s, mendPost, day],
+      );
+    }
+    const friday = { ...fri, startTime: '15:00' };
+    assert.deepEqual(await storedOf(mendPost), textOf([wed, thu, friday]));
+    const keyBefore = await keyNow(mendPost);
+    const hold = await holder();
+    await hold.query('BEGIN');
+    await hold.query(`SELECT id FROM "TeachingRequirements" WHERE id = $1 FOR NO KEY UPDATE`, [mendPost]);
+    try {
+      // The save keeps both rows that do not hold and moves Friday; it is judged (and reads the post's rows) before it waits.
+      const save = settle(put(mendPost, [wed, thu, { ...fri, startTime: '16:00' }]));
+      await untilWaiters(1);
+      // The other writer removes the Wednesday row only: Thursday, the other one the save lets stand, is still there.
+      await hold.query(`DELETE FROM "TeachingRequirementPlacements" WHERE "requirementId" = $1 AND "dayOfWeek" = 3`, [mendPost]);
+      await hold.query('COMMIT');
+      staleOf(await save, mendPost);
+    } finally {
+      await hold.query('ROLLBACK').catch(() => undefined);
+      await hold.end();
+    }
+    // Nothing of the save: Wednesday is gone and is not written back unjudged, Thursday and Friday are as they were.
+    assert.deepEqual(await storedOf(mendPost), textOf([thu, friday]), 'the removed row was written back, or the save wrote');
+    assert.notEqual(await keyNow(mendPost), keyBefore, 'the other writer\'s removal must show in the key');
   });
 }
 

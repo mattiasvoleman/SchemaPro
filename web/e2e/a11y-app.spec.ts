@@ -85,10 +85,11 @@ const WRITE_VERBS =
 
 /**
  * The open pages (gate null) that still carry the area notice for a läsare, because they hold
- * controls of several areas (NOTICE_AREAS in lib/admin-areas.ts): Personer, and Klasslärare, whose
+ * controls of several areas (NOTICE_AREAS in lib/admin-areas.ts): Personer, Klasslärare, and
+ * Förlägg i veckan (the förläggningar are Planering's, the links beside them other areas'), whose
  * menu row marks it current and so shows the notice.
  */
-const NOTICE_PAGES = ["/admin/people", "/admin/class-teachers"];
+const NOTICE_PAGES = ["/admin/people", "/admin/class-teachers", "/admin/placements"];
 
 /** Reading controls whose names begin with a write verb: `page` as on disk, `name` the control's. */
 const READ_CONTROLS: Array<{ page: string; name: RegExp; reason: string }> = [];
