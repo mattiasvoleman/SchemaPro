@@ -323,6 +323,25 @@ describe("a room for each post", () => {
     expect(state.put.mock.calls[0]![1].placements[0].rooms).toEqual([]);
   });
 
+  it("offers the engine's choice as a choice a reader can make from the list: an option that is not hidden, and chosen by what it says (review of #328, LÅG-2)", async () => {
+    answer([stored(1, { rooms: [{ requirementId: "r-ty", roomId: "room-aula", roomName: "Aulan" }] })]);
+    const { user } = await opened();
+    const select = roomOf(rowNamed(1), "r-ty");
+
+    // Found as a reader finds it (by role, which leaves out what is hidden), never by its text or its value alone: a `hidden` option
+    // keeps both and is not offered by a browser's list, so a post whose room was chosen could not go back to the engine's choice.
+    const any = within(select).getByRole("option", { name: "roomAny" });
+    expect(any).toBeVisible();
+    expect(any).not.toHaveAttribute("hidden");
+    expect(select.value).toBe("room-aula");
+
+    await user.selectOptions(select, any);
+
+    expect(select.value).toBe("");
+    expect(within(select).getByRole("option", { name: "roomAny", selected: true })).toBe(any);
+    expect(within(roomOf(rowNamed(1), "r-fr")).getByRole("option", { name: "roomAny", selected: true })).toBeVisible();
+  });
+
   it("sends each post's room in the order the posts are listed, whichever was chosen first", async () => {
     answer([stored(1)]);
     const { user } = await opened();
@@ -336,6 +355,26 @@ describe("a room for each post", () => {
       { requirementId: "r-ty", roomId: "room-gym" },
       { requirementId: "r-sp", roomId: "room-sim" },
     ]);
+  });
+});
+
+describe("a name of one long word (review of #328, LÅG-2)", () => {
+  // jsdom has no layout, so what is held here is that the words that can be long are allowed to break inside the word; where they
+  // stand at 320 px is e2e/block-placement.smoke.spec.ts's, measured in a browser.
+  const LONG = "Språkvalsblockförårskursenmedmodernaspråkochannatval";
+
+  it("lets the title, the labels and the sentences about a lesson break inside a word", async () => {
+    answer([stored(1)], MEMBERS.map((member) => ({ index: 0, requirementId: member.id, ok: false, reason: "TEACHER" })));
+    await opened({ block: { ...BLOCK, name: LONG } });
+
+    const title = screen.getByRole("heading", { name: `title(${LONG})` });
+    expect(title).toHaveClass("break-words");
+    const row = rowNamed(1);
+    // Every label of a lesson (the day, the length, the start and the rooms) is allowed to break inside a word.
+    expect(row.className).toContain("[&_label]:break-words");
+    expect(within(row).getAllByText(/^(day|start|length|roomOf\(.*\))$/).length).toBeGreaterThan(0);
+    for (const sentence of row.querySelectorAll("p.text-destructive")) expect(sentence).toHaveClass("break-words");
+    expect(row.querySelectorAll("p.text-destructive").length).toBeGreaterThan(0);
   });
 });
 

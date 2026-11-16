@@ -127,9 +127,12 @@ export function BlockPlacementDialog({ open, onOpenChange, block, members, label
   const [reads, setReads] = useState(0);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      {/* The dialog is a grid, and a grid's one column is as wide as its widest word unless it may be narrower: a name of one long word
+            would widen the whole dialog past the screen at 320 px, whatever the words below it are allowed to do. */}
+      <DialogContent className="grid-cols-[minmax(0,1fr)] sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{t("title", { block: block?.name ?? "" })}</DialogTitle>
+          {/* A block's name can be one long word (a compound, a code): it breaks inside the word at 320 px rather than leave the dialog. */}
+          <DialogTitle className="break-words">{t("title", { block: block?.name ?? "" })}</DialogTitle>
           <DialogDescription>{t("description")}</DialogDescription>
         </DialogHeader>
         {block ? (
@@ -465,7 +468,9 @@ function BlockPlacementForm({
             return (
               <fieldset
                 key={row.key}
-                className="space-y-3 rounded-md border p-3"
+                // A fieldset is as wide as its longest word unless told it may be narrower (min-width: min-content in the browser's own
+                // style): min-w-0 lets a name of one long word break at the lesson's edge instead of widening the lesson past the dialog.
+                className="min-w-0 space-y-3 rounded-md border p-3 [&_label]:break-words"
                 aria-describedby={lessonErrorText.length > 0 ? rowErrorId : undefined}
               >
                 <legend className="px-1 text-sm font-medium">{tp("rowTitle", { n: index + 1 })}</legend>
@@ -579,7 +584,7 @@ function BlockPlacementForm({
                 {lessonErrorText.length > 0 ? (
                   <div id={rowErrorId} className="space-y-1">
                     {lessonErrorText.map((text) => (
-                      <p key={text} className="text-sm text-destructive">
+                      <p key={text} className="break-words text-sm text-destructive">
                         {text}
                       </p>
                     ))}

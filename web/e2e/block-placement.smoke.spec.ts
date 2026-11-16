@@ -50,6 +50,10 @@ const POST_NAMES = [
   "Moderna språk för Moderna språk spanska 7–9",
   "Moderna språk för 7B",
 ];
+/** Names that are one long word, with no space to break at (a compound, a code): the block's, and the class the third post is read in. */
+const LONG_BLOCK = "Språkvalsblockförårskursenmedmodernaspråkochannatval";
+const LONG_CLASS = "Sjundeårskursensklassförspråkvalsgruppernasomläserfranska";
+
 /** The posts' ids (the fixture lists them by id: spanska 11, franska 13, the third 14). */
 const [SPANSKA, FRANSKA, TREDJE] = BLOCK_POST_IDS as [string, string, string];
 
@@ -72,15 +76,36 @@ async function addTheThirdPost(page: Page) {
   });
 }
 
-/** The browser's read of the blocks, with the world's block taking the times of another block (a block that follows). */
-async function makeTheBlockFollow(page: Page) {
+/**
+ * The browser's read of the blocks, with the world's block taking the times of another block (a block that follows) and/or
+ * another name. One route for both: a route fetches the network and does not hand on to another.
+ */
+async function rewriteTheBlocks(page: Page, change: { follows?: boolean; name?: string }) {
   await page.route(`${STUB_ORIGIN}/rest/v1/TeachingBlocks*`, async (route) => {
     const response = await route.fetch();
     if (!(response.headers()["content-type"] ?? "").includes("json")) return route.fulfill({ response });
     const rows = (await response.json()) as { id: string }[];
     const other = { ...BLOCK, id: "00000000-0000-4000-8000-000000000999", name: "Elevens val åk 7", sameTimesAsBlockId: null };
-    const followers = rows.map((row) => (row.id === BLOCK.id ? { ...row, sameTimesAsBlockId: other.id } : row));
-    await route.fulfill({ response, body: JSON.stringify([...followers, other]) });
+    const changed = rows.map((row) =>
+      row.id === BLOCK.id
+        ? { ...row, ...(change.name ? { name: change.name } : {}), ...(change.follows ? { sameTimesAsBlockId: other.id } : {}) }
+        : row,
+    );
+    await route.fulfill({ response, body: JSON.stringify(change.follows ? [...changed, other] : changed) });
+  });
+}
+
+/** The browser's read of the groups, with the class of the third post named by one long word. */
+async function nameTheClassOfTheThirdPost(page: Page, name: string) {
+  await page.route(`${STUB_ORIGIN}/rest/v1/StudentGroups*`, async (route) => {
+    const response = await route.fetch();
+    if (!(response.headers()["content-type"] ?? "").includes("json")) return route.fulfill({ response });
+    const rows = (await response.json()) as { id?: string }[] | unknown;
+    if (!Array.isArray(rows)) return route.fulfill({ response });
+    await route.fulfill({
+      response,
+      body: JSON.stringify(rows.map((row: { id?: string }) => (row.id === THIRD_POST.studentGroupId ? { ...row, name } : row))),
+    });
   });
 }
 
@@ -89,22 +114,24 @@ async function openDialog(
   baseURL: string,
   size: { width: number; height: number },
   scheme: (typeof SCHEMES)[number],
-  options: { scenario?: string; follows?: boolean } = {},
+  options: { scenario?: string; follows?: boolean; blockName?: string; thirdClassName?: string } = {},
 ) {
   await signIn(page.context(), "admin", baseURL);
   await freezeClock(page);
   await askForScenario(page, options.scenario ?? BLOCK_PLACEMENTS_SCENARIO);
   const misses = watchStubMisses(page);
   await addTheThirdPost(page);
-  if (options.follows) await makeTheBlockFollow(page);
+  if (options.follows || options.blockName) await rewriteTheBlocks(page, { follows: options.follows, name: options.blockName });
+  if (options.thirdClassName) await nameTheClassOfTheThirdPost(page, options.thirdClassName);
   await page.setViewportSize(size);
   await page.goto(REQUIREMENTS);
   await settle(page);
   await setScheme(page, scheme, true);
   await page.getByRole("button", { name: "Block", exact: true }).click();
-  const opener = page.getByRole("button", { name: "Förlägg lektionerna i blocket Språkval åk 7" });
+  const blockName = options.blockName ?? "Språkval åk 7";
+  const opener = page.getByRole("button", { name: `Förlägg lektionerna i blocket ${blockName}` });
   await opener.click();
-  const dialog = await settled(page.getByRole("dialog", { name: /^Förlägg blocket Språkval åk 7/ }));
+  const dialog = await settled(page.getByRole("dialog", { name: new RegExp(`^Förlägg blocket ${blockName}`) }));
   // What the dialog says once the block has been read.
   await expect(dialog.getByText(/^Blockets lektioner:/).or(dialog.getByText(/förläggs inte själv|inga poster/))).toBeVisible();
   return { dialog, misses, opener };
@@ -192,7 +219,7 @@ function layout(dialog: Locator) {
 
 type Layout = Awaited<ReturnType<typeof layout>>;
 
-function expectInFlow(facts: Layout, where: string, rows: number) {
+function expectInFlow(facts: Layout, where: string, rows: number, only: { dialog?: true } = {}) {
   const inside = (box: { left: number; right: number }, outer: { left: number; right: number }) =>
     box.left >= outer.left - EPS && box.right <= outer.right + EPS;
   const apart = (a: { top: number; bottom: number; left: number; right: number }, b: typeof a) =>
@@ -222,7 +249,8 @@ function expectInFlow(facts: Layout, where: string, rows: number) {
     expect(text.left, `${where}: "${text.what}" starts inside the dialog`).toBeGreaterThanOrEqual(facts.dialog.left - EPS);
   }
   expect(facts.scrollsSideways, `${where}: the dialog does not scroll sideways`).toBe(false);
-  expect(facts.pageScrollsSideways, `${where}: the page does not scroll sideways`).toBe(false);
+  // `only.dialog`: the page behind is not what is asked (it shows the same names in its own cards, which are that page's to wrap).
+  if (!only.dialog) expect(facts.pageScrollsSideways, `${where}: the page does not scroll sideways`).toBe(false);
 }
 
 for (const size of VIEWPORTS) {
@@ -291,6 +319,46 @@ test("Förlägg blocket at 320×700 in a wide font: the rooms, the verdicts and 
   await page.addStyleTag({ content: WIDE_FONT });
 
   expectInFlow(await layout(dialog), "wide font", 2);
+  expect(misses, MISSES).toEqual([]);
+});
+
+for (const size of VIEWPORTS.slice(0, 2)) {
+  test(`Förlägg blocket at ${size.name} with names that are one long word: the title and the room labels break inside the word and stay inside the dialog (review of #328, LÅG-2)`, async ({
+    page,
+    baseURL,
+  }) => {
+    const { dialog, misses } = await openDialog(page, baseURL!, size, "light", {
+      scenario: BLOCK_PLACEMENTS_VERDICTS_SCENARIO,
+      blockName: LONG_BLOCK,
+      thirdClassName: LONG_CLASS,
+    });
+
+    // The names are what the dialog is named and labelled by: the long words are there, whole, to be read and heard.
+    await expect(dialog.getByRole("heading", { name: `Förlägg blocket ${LONG_BLOCK}` })).toBeVisible();
+    await expect(row(dialog, 1).getByLabel(`Sal: Moderna språk för ${LONG_CLASS}`, { exact: true })).toBeVisible();
+    // The sentences that name the posts (the second lesson's refusal) carry the long class too.
+    await expect(row(dialog, 2).getByText(new RegExp(`Moderna språk för ${LONG_CLASS}: `))).toBeVisible();
+
+    expectInFlow(await layout(dialog), `${size.name}, one long word`, 2, { dialog: true });
+    expect(misses, MISSES).toEqual([]);
+  });
+}
+
+test("Förlägg blocket: a post's room goes back to the engine's choice from the list the browser shows, which offers it (review of #328, LÅG-2)", async ({
+  page,
+  baseURL,
+}) => {
+  const { dialog, misses } = await openDialog(page, baseURL!, { width: 1280, height: 800 }, "light");
+
+  const franska = roomOf(dialog, 1, 0);
+  await expect(franska.locator("option:checked")).toHaveText(ROOMS.lab.name);
+  // A browser lists what is not hidden. An empty choice with `hidden` stays in the markup and in its text, and a reader who chose a room
+  // could not go back to the engine's choice but by removing the lesson: so it is asked for as a reader finds it (by role: what a browser hides is not an option of the list), not by its text.
+  await expect(franska.getByRole("option", { name: "Motorn väljer sal" })).toHaveCount(1);
+  await franska.selectOption({ label: "Motorn väljer sal" });
+  await expect(franska.locator("option:checked")).toHaveText("Motorn väljer sal");
+  await franska.selectOption({ label: ROOMS.r101.name });
+  await expect(franska.locator("option:checked")).toHaveText(ROOMS.r101.name);
   expect(misses, MISSES).toEqual([]);
 });
 
