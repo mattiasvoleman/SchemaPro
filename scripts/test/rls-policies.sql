@@ -64641,7 +64641,7 @@ BEGIN
     PERFORM pg_temp.tk_expect('511b ' || p.who || ' is marked (so the difference is not nothing)', pg_temp.tk_val('app_authenticated', 'SELECT app.current_user_teaches()::text'), 'true');
     got := pg_temp.tk511_row(p.n);
     PERFORM pg_temp.tk_expect('511b ' || p.who || ' marked: a1..a7', got, p.marked);
-    -- The mark does not give the list: whoever was kept from starting an alarm still is, so the way the mark helps is the person's own group.
+    -- The mark does not give the list: whoever was kept from starting an alarm still is, so what the mark gives is the teacher's right (own group, "found with me", a free find).
     PERFORM pg_temp.tk_a(p.n);
     PERFORM pg_temp.tk_expect('511b ' || p.who || ' marked: may start an alarm as the list says', pg_temp.tk_val('app_authenticated', 'SELECT app.crisis_may_start()::text'),
       (p.n IN (6001, 6002))::text);

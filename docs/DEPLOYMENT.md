@@ -5664,10 +5664,10 @@ administrator), so the migration and the merge change no answer there; RLS secti
   and holds twelve refusals; `UsersService.update` asks the mentors again when the mark changes (`app.leave_mentors` reads it):
   **marking a person sends one `LEAVE_REQUESTED` notice per pending leave application in the class they mentor**
   (`app.leave_requests_tell_new_mentors()`, the catch-up in `UsersService.update`), written in the transaction of the save and mailed
-  after it, so it cannot be taken back by removing the mark; a mentor of that class who has no notice of a pending application yet is told of it
-  as well, since the catch-up writes one for every deciding mentor without a `LeaveRequestNotices` row, not only for the person just
-  marked (a notice that gallring has removed is written again): it is not "nobody else" who is told (the production has no marked
-  person, so none the day this ships);
+  after it, so it cannot be taken back by removing the mark; a deciding mentor of the school, in any class, who has no
+  `LeaveRequestNotices` row for a pending application is told of it as well, since the catch-up (`app.leave_tell_mentors(school, NULL)`)
+  is the school's and not the marked person's (a notice that gallring has removed is written again): it is not "nobody else" who is
+  told (the production has no marked person, so none the day this ships);
   the notification preferences offer a marked administrator `LEAVE_REQUESTED`, `LESSON_REPORT_REMINDER` and `LESSON_PUPIL_MOVED`
   (not `COVER_REQUESTED`: SP409). The class teacher, the cover request's colleague side and the pool stay the teachers' (CT400, SP409).
 - **Deploy order:** the migration, then the merge, **after** every lower stamp that is in the same round (`20270218090000`, C1, is run
