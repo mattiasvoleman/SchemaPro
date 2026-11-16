@@ -59,24 +59,33 @@ function argumentsOf(template: string): string[] {
 /**
  * WHAT THE WEB WORDS FURTHER THAN THE ENGINE (Förlägg utan sal, 20270213090000). A förläggning that names no room is sent to
  * Generera with `room = "ANY_ROOM"`, a value that is no room's name, and the engine's catalogue has no sentence for it; the web
- * chooses its words on it. The reasons the judge gained (PAIR_ROOM, BLOCK) are in the same select, and a refusal to keep the
+ * chooses its words on it. The reasons the judge gained (PAIR_ROOM, BLOCK, and Förlägg blocket's BLOCK_FIT) are in the same select, and a refusal to keep the
  * places of a week ends by saying that rooms the school pinned count as places of their own, which the engine's text cannot
  * know to say. Each entry is [the web's words, what the engine has in their place]: undone, the English is the engine's again,
  * so the engine changing its own sentence is still a red test, and the arguments are checked above all the same.
  */
 const PLACES_TIP =
-  " If the week has placed lessons with a room, it can be the rooms that count as different places: leave the room empty (“The engine chooses a room”) in the Place lessons dialog on the timplan, and the timetable chooses the room.";
+  " If the week has placed lessons with a room, it can be the rooms that count as different places: leave the room empty (“The engine chooses a room”) in the Place lessons dialog on the timplan, on the entry or for a block under Blocks, and the timetable chooses the room.";
 const WEB_WORDS: Record<string, readonly (readonly [string, string])[]> = {
   PLACEMENT_CANNOT_STAND: [
     ["{room, select, ANY_ROOM {a room the timetable chooses} other {{room}}}", "{room}"],
+    // A member's lesson of a block's förläggning names the block (Förlägg blocket): `block` is NO_BLOCK for every other row.
+    ["{block, select, NO_BLOCK {} other { (the block {block})}}", ""],
     [
-      " PAIR_ROOM {odd and even weeks of the same length are one lesson in two places, and both places need a room} BLOCK {the post is in a parallel block, so a single placed lesson cannot stay}",
+      " PAIR_ROOM {odd and even weeks of the same length are one lesson in two places, and both places need a room} BLOCK {the post is in a parallel block, so a single placed lesson cannot stay} BLOCK_FIT {the block's placed lessons no longer fit the block}",
       "",
     ],
   ],
   PLACEMENT_PLACES_FORCED: [[PLACES_TIP, ""]],
   PLACES_CANNOT_BE_KEPT: [[PLACES_TIP, ""]],
 };
+/**
+ * The arguments the web's sentence takes beyond the engine's own, which the gateway sends on the same line (Förlägg blocket: the
+ * block a member's lesson belongs to, NO_BLOCK for any other). The engine's catalogue has no such argument and is not asked to.
+ */
+const WEB_ARGUMENTS: Record<string, readonly string[]> = { PLACEMENT_CANNOT_STAND: ["block"] };
+const argumentsWithWeb = (code: string, engine: string[]): string[] => [...engine, ...(WEB_ARGUMENTS[code] ?? [])].sort();
+
 const undoneWebWords = (code: string, text: string): string =>
   (WEB_WORDS[code] ?? []).reduce((undone, [web, engine]) => undone.replace(web, engine), text);
 
@@ -99,8 +108,8 @@ describe("every sentence the engine can send", () => {
 
   it.each(codes)("%s substitutes exactly the values the engine sends", (code) => {
     const fixture = (engineMessages as Record<string, string>)[code];
-    expect(argumentsOf(swedish[code])).toEqual(argumentsOf(fixture));
-    expect(argumentsOf(english[code])).toEqual(argumentsOf(fixture));
+    expect(argumentsOf(swedish[code])).toEqual(argumentsWithWeb(code, argumentsOf(fixture)));
+    expect(argumentsOf(english[code])).toEqual(argumentsWithWeb(code, argumentsOf(fixture)));
   });
 
   it("keeps the English identical to the engine's own, but for what the web words further (WEB_WORDS)", () => {

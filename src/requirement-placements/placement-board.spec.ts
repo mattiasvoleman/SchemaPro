@@ -4,7 +4,7 @@ import { lessonTeachersOf } from '../common/lesson-shares';
 import { coverLockedLessons, coverLockedSharedLessons } from '../optimization/locked-coverage';
 import { withoutPlaced, withoutPlacedShared } from '../optimization/placed-lessons';
 import {
-  boardPostOf,
+  boardPostOf as boardPostWithKey,
   boardPostShape,
   coveringLocksOf,
   keptViewOf,
@@ -13,6 +13,12 @@ import {
   type KeptForCount,
 } from './placement-board';
 import { placedLessonsOf, placedTaughtOf, type PlacementShape } from './placement-fit';
+import { rowsKeyOf } from './placement-rows-key';
+
+/** The key the post's rows have, which the board only passes along: the count is what these tests are about. */
+const ROWS_KEY = rowsKeyOf([]);
+const boardPostOf = (post: BoardPost, locks: Parameters<typeof boardPostWithKey>[1], rows: readonly PlacementShape[]) =>
+  boardPostWithKey(post, locks, rows, ROWS_KEY);
 
 const ANNA = 'anna';
 const BO = 'bo';
@@ -24,6 +30,7 @@ const post = (over: Partial<BoardPost> = {}): BoardPost => ({
   studentGroupId: GROUP,
   subjectId: SUBJECT,
   teacherId: ANNA,
+  coTeacherId: null,
   lessonsPerWeek: 3,
   minutesPerLesson: 60,
   lessonLengths: [],
@@ -61,12 +68,34 @@ describe('boardPostOf: what a post has left', () => {
       studentGroupId: GROUP,
       subjectId: SUBJECT,
       teacherId: ANNA,
+      coTeacherId: null,
       recurrence: 'ALL_WEEKS',
       startDate: null,
       endDate: null,
+      minutesBefore: 0,
+      minutesAfter: 0,
       cannotPlace: null,
       parts: [{ teacherId: ANNA, minutes: 60, count: 3, locked: 0, placed: 0, left: 3, cannotPlace: null }],
+      rowsKey: ROWS_KEY,
     });
+  });
+
+  it('says the pupils\' minutes before and after the post\'s lessons, which the clash rule holds the class\'s other lessons out of (review of #326, MEDEL-3)', () => {
+    expect(boardPostOf(post({ minutesBefore: 10, minutesAfter: 15 }), [], [])).toMatchObject({ minutesBefore: 10, minutesAfter: 15 });
+    // A post whose shape names none has none: the lessons of a block member and the old callers read as before.
+    expect(boardPostOf(post(), [], [])).toMatchObject({ minutesBefore: 0, minutesAfter: 0 });
+  });
+
+  it('says who the medlärare is, for the page\'s mirror of the clash rule', () => {
+    expect(boardPostOf(post({ coTeacherId: BO }), [], []).coTeacherId).toBe(BO);
+  });
+
+  it('passes the key of the post\'s rows along as it was given, and counts nothing from it', () => {
+    const key = rowsKeyOf([
+      { id: 'p-1', requirementId: 'post-1', dayOfWeek: 2, startTime: new Date('1970-01-01T10:00:00.000Z'), minutes: 60, roomId: null, recurrence: 'ALL_WEEKS', teacherId: null },
+    ]);
+    expect(boardPostWithKey(post(), [], [], key).rowsKey).toBe(key);
+    expect(boardPostWithKey(post(), [], [], key).parts).toEqual(boardPostWithKey(post(), [], [], ROWS_KEY).parts);
   });
 
   it('counts a lock first, then each förläggning, and leaves the rest to Generera', () => {

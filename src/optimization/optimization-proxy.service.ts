@@ -32,6 +32,8 @@ import {
   lockedRowsOf,
   pinnedPlacesOf,
   pinnedRowsOf,
+  blockPlacedLessonRowsOf,
+  blockPlacementsKeyOf,
   placedLessonRowsOf,
   placedLessonWritesOf,
   placedMinutesOf,
@@ -591,6 +593,8 @@ export interface PreparedSchedule {
   draftLessons: DraftLesson[];
   /** Förlagda poster: the förläggningar as this fetch read them, which every write writes again. */
   placedRows: PlacedLessonRow[];
+  /** Förlagda block: the block's förläggningar as this fetch read them, built from the rows themselves (blockPlacementsKeyOf). */
+  blockPlacementsKey: string;
   /**
    * Terminer: each preserved master's weeks as this fetch read them, by its id
    * (weeksKeyOf): its parity and its dates, which are what the engine was told
@@ -1471,6 +1475,7 @@ export class OptimizationProxyService {
           prepared.placedRows,
           prepared.lockWeeks,
           prepared.periodStretches,
+          prepared.blockPlacementsKey,
         ),
       );
     } catch (error) {
@@ -1826,6 +1831,7 @@ export class OptimizationProxyService {
       draftIds: sortedIds(draftRows.map((row) => row.id)),
       draftLessons,
       placedRows: data.placedRows,
+      blockPlacementsKey: data.blockPlacementsKey,
       lockWeeks: new Map(data.preservedRows.map((row) => [row.id, weeksKeyOf(row)] as const)),
       periodStretches: data.yearPeriods ? data.yearPeriods.stretches : null,
       coverage: options.coverage
@@ -2528,6 +2534,8 @@ export class OptimizationProxyService {
     placementsRefusal: AiEngineConflictAnalysis | null;
     /** The förläggningar as locks, for the write (placed-lessons.ts). */
     placedRows: PlacedLessonRow[];
+    /** Förlagda block: the block's förläggningar as this fetch read them (blockPlacementsKeyOf), which the write compares. */
+    blockPlacementsKey: string;
     /** The buildings the rooms name, real name -> token; empty unless a building limit was sent. Nothing in an answer names one. */
     buildingAnonMap: Map<string, string>;
     /** A lock's payload id by its own: the cohorts name locks by it. */
@@ -2772,7 +2780,30 @@ export class OptimizationProxyService {
       },
     });
     const postById = new Map(rawRequirements.map((r) => [r.id, r]));
-    const placedRows = placementReads.length === 0 ? [] : placedLessonRowsOf(placementReads, postById);
+    /*
+     * FÖRLAGDA BLOCK (20270218090000): each lesson of a block the school placed is a pinned lesson of every member, with the room
+     * the member chose or none (placed-lessons.ts, blockPlacedLessonRowsOf). Never a lock: a lock in a block is refused as a partly
+     * locked block. Read beside the posts' rows, and everything below that reads "the förläggningar as locks" reads lockedRowsOf,
+     * which leaves a block row out. A school with no block placed reads one empty answer and sends the payload it always sent.
+     */
+    const blockPlacementReads = await tx.teachingBlockPlacement.findMany({
+      where: { academicYearId },
+      select: {
+        id: true,
+        blockId: true,
+        dayOfWeek: true,
+        startTime: true,
+        minutes: true,
+        recurrence: true,
+        block: { select: { sameTimesAsBlockId: true } },
+        rooms: { select: { requirementId: true, roomId: true } },
+      },
+    });
+    const placedRows = [
+      ...(placementReads.length === 0 ? [] : placedLessonRowsOf(placementReads, postById)),
+      ...(blockPlacementReads.length === 0 ? [] : blockPlacedLessonRowsOf(blockPlacementReads, rawRequirements)),
+    ];
+    const blockPlacementsKey = blockPlacementsKeyOf(blockPlacementReads);
     /*
      * A förläggning WITH a room is the lock it has always been; one WITHOUT is a
      * pinned lesson of its post and is no lock at all (placed-lessons.ts): no
@@ -3287,11 +3318,13 @@ export class OptimizationProxyService {
       /*
        * FÄSTA LEKTIONER: the post's förläggningar with no room, as the places of the lessons this entry sends
        * (pinnedPlacesOf), in the order the engine reads them. Never on the released form of a post (the engine
-       * releases the pins with the locks and places that form only to explain a refusal), and never on a post
-       * in a parallel block: a block's lessons are pinned for every member or none, which this does not
-       * build (C1), and the judge has refused such a row by name (BLOCK) before the engine is woken.
+       * releases the pins with the locks and places that form only to explain a refusal). A post in a parallel
+       * block has its block's lessons here, one for each lesson of the block, in the same order for every member and
+       * so at the same place k in every member's lessons, which is what the engine asks of a block (PLACED_LESSONS_OF_BLOCK_DIFFER);
+       * a row of the post's own in a block is refused by name (BLOCK) before the engine is woken. A block that is not
+       * sent as a block (one member) sends them as the pins they are.
        */
-      const pinRows = sent && !r.blockId ? (pinnedByPost.get(r.id) ?? []) : [];
+      const pinRows = sent ? (pinnedByPost.get(r.id) ?? []) : [];
       const pinned =
         pinRows.length > 0
           ? pinnedPlacesOf(
@@ -3300,6 +3333,7 @@ export class OptimizationProxyService {
                 teacherId: teachersLeft ? (teachersLeft[index] ?? null) : null,
               })),
               pinRows,
+              (roomId) => anonId(roomAnonMap, roomId),
             )
           : null;
       if (pinned) unplacedPins.push(...pinned.unplaced);
@@ -4347,20 +4381,21 @@ export class OptimizationProxyService {
         gradeNumbering: numbering,
         basis,
         // Each row as every judge of one reads it (judgedRowOf), from its post and its own slot.
-        rows: placedRows.map((row) =>
-          judgedRowOf(
-            postById.get(row.requirementId)!,
-            {
-              dayOfWeek: row.dayOfWeek,
-              startMinutes: clockMinutes(row.startTime),
-              minutes: row.minutes,
-              roomId: row.roomId,
-              recurrence: row.recurrence,
-              teacherId: row.placementTeacherId,
-            },
-            row.id,
-          ),
-        ),
+        rows: placedRows.map((row) => {
+          const slot = {
+            dayOfWeek: row.dayOfWeek,
+            startMinutes: clockMinutes(row.startTime),
+            minutes: row.minutes,
+            roomId: row.roomId,
+            recurrence: row.recurrence,
+            teacherId: row.placementTeacherId,
+          };
+          // A member's lesson of a block's förläggning is read as the lesson of a post in no block (the judge refuses a
+          // row of a post's own in a block), asked whether the block's lessons still fit it (block-placement-judge.ts).
+          return row.blockPlacementId !== undefined
+            ? { ...judgedRowOf({ ...postById.get(row.requirementId)!, blockId: null }, slot, row.id), blockFit: row.blockFit ?? null }
+            : judgedRowOf(postById.get(row.requirementId)!, slot, row.id);
+        }),
         beside: [],
         demand: judgeDemandOfPost,
       });
@@ -4372,6 +4407,7 @@ export class OptimizationProxyService {
       placementsRefusal = placementsRefusalOf(placedRows, verdicts, {
         requirement: (realId) => anonId(requirementAnonMap, realId),
         room: (realId) => anonId(roomAnonMap, realId),
+        block: (realId) => anonId(blockAnonMap, realId),
       });
     }
 
@@ -4430,6 +4466,7 @@ export class OptimizationProxyService {
       placements,
       placementsRefusal,
       placedRows,
+      blockPlacementsKey,
       buildingAnonMap,
       fixedIdByLesson,
       siteAnonMap,
@@ -4885,6 +4922,8 @@ export class OptimizationProxyService {
     lockWeeks: ReadonlyMap<string, string> = new Map(),
     /** Klassens måltid per del av läsåret: PreparedSchedule.periodStretches. */
     periodStretches: PeriodStretch[][] | null = null,
+    /** Förlagda block: PreparedSchedule.blockPlacementsKey; null for a caller with no fetch of its own. */
+    blockPlacementsKey: string | null = null,
   ): Promise<TimedLesson[] | null> {
     // The type says it, and a caller that is not typed (a probe, a script) must
     // not read the missing argument as "no basis": loud, before anything is
@@ -4951,6 +4990,28 @@ export class OptimizationProxyService {
           `Generated timetable not written: a förläggning changed while the solver ran [academicYearId=${academicYearId}].`,
         );
         throw generateStale();
+      }
+      // And a block's förläggningar, and the rooms its members chose for them: built from the rows themselves, since a
+      // member's lesson of a block has no row of its own (blockPlacementsKeyOf).
+      if (blockPlacementsKey !== null) {
+        const blockPlacementsNow = await tx.teachingBlockPlacement.findMany({
+          where: { academicYearId },
+          select: {
+            id: true,
+            blockId: true,
+            dayOfWeek: true,
+            startTime: true,
+            minutes: true,
+            recurrence: true,
+            rooms: { select: { requirementId: true, roomId: true } },
+          },
+        });
+        if (blockPlacementsKeyOf(blockPlacementsNow) !== blockPlacementsKey) {
+          this.logger.warn(
+            `Generated timetable not written: a block's förläggning changed while the solver ran [academicYearId=${academicYearId}].`,
+          );
+          throw generateStale();
+        }
       }
 
       // Terminer: and the preserved lessons' weeks. The engine held each

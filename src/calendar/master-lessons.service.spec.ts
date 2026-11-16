@@ -5261,6 +5261,21 @@ describe('MasterLessonsService', () => {
           testUser(),
         );
 
+      it('refuses a card whose lessons a run wrote from a block\u2019s förläggning (LESSON_IS_PLACED), before anything is written', async () => {
+        // One member's lesson is enough: the card is the block's, which the next Generera writes again at its day and start.
+        arrangeCard([tyska(), franskaLesson({ fromPlacement: true })]);
+
+        await expect(move()).rejects.toMatchObject({ response: expect.objectContaining({ code: 'LESSON_IS_PLACED' }) });
+        expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
+        expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
+        expect(realtime.notifyMasterTimetableChanged).not.toHaveBeenCalled();
+        // The same card not written from a förläggning moves as it always did.
+        tx.masterLesson.findMany.mockReset();
+        arrangeCard([tyska({ fromPlacement: false }), franskaLesson({ fromPlacement: false })]);
+        await expect(move()).resolves.toBeDefined();
+        expect(tx.masterLesson.updateMany).toHaveBeenCalledTimes(1);
+      });
+
       it('moves every member in one statement held to the slot it was read in, and leaves the owner be', async () => {
         arrangeCard([tyska(), franskaLesson()]);
 
@@ -6046,6 +6061,37 @@ describe('MasterLessonsService', () => {
         });
         expect(result).toEqual({ blockId: BLOCK_ID, isLocked: true, lessonIds: [LESSON_ID, OTHER_LESSON_ID], parked: 1 });
         expect(tx.scheduleChangeLog.create).toHaveBeenCalledTimes(2);
+      });
+
+      it('locks and unlocks the lessons a run wrote from a block’s förläggning, as it does a single placed lesson (a lock moves nothing)', async () => {
+        // Förlagda block: the card is not moved by hand (moveBlockCard), but a lock changes no slot and the next Generera writes the
+        // lesson again either way, so the block's lock is allowed.
+        const placed = (overrides: Row = {}) => ({ fromPlacement: true, isGenerated: true, ...overrides });
+        tx.teachingBlock.findUnique.mockResolvedValue({
+          id: BLOCK_ID,
+          schoolId: SCHOOL_ID,
+          academicYearId: YEAR_ID,
+          requirements: [
+            { studentGroupId: GROUP_ID, subjectId: SUBJECT_ID },
+            { studentGroupId: FR_GROUP, subjectId: FR_SUBJECT },
+          ],
+          sameTimesAs: null,
+          sameTimes: [],
+        });
+        tx.masterLesson.findMany.mockImplementation(
+          answerRows([
+            lessonRecord(placed({ isLocked: false })),
+            lessonRecord(placed({ id: FR_LESSON, studentGroupId: FR_GROUP, subjectId: FR_SUBJECT, isLocked: false })),
+          ]),
+        );
+
+        const locked = await service.lockBlock({ blockId: BLOCK_ID, isLocked: true }, testUser());
+
+        expect(locked.lessonIds).toEqual([LESSON_ID, FR_LESSON]);
+        expect(tx.masterLesson.updateMany).toHaveBeenCalledWith({
+          where: { id: { in: [LESSON_ID, FR_LESSON] } },
+          data: { isLocked: true },
+        });
       });
 
       it('unlocks only the lessons an undo names, and refuses one that is not the block’s', async () => {

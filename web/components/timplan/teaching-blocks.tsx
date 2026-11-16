@@ -19,6 +19,10 @@
 // block with REQUIREMENT_IN_ANOTHER_BLOCK — both in the toast, in the
 // gateway's own Swedish. The posts, groups and subjects are the page's.
 //
+// FÖRLÄGG. A block's lessons can be placed before Generera (day, start, and a
+// room per post or none: block-placement-dialog.tsx, which this file imports,
+// so /admin/requirements does not carry it either).
+//
 // ÄNDRA LEKTIONER. A member's lessons cannot change on its own — the trigger
 // refuses the first member against the others — so the block has its own
 // lessons dialog: the cell dialog's two fields and extra lengths, sent as one
@@ -54,6 +58,7 @@ import { refusalText, staffingRefusal, warningText } from "@/lib/staffing-warnin
 import { sharesRefusal } from "@/lib/requirement-shares";
 import { placementsRefusal } from "@/lib/requirement-placements";
 import type { StaffingWarning, TeachingBlock, TeachingRequirement } from "@/lib/types";
+import { BlockPlacementDialog } from "@/components/timplan/block-placement-dialog";
 import { LessonLengthsFields } from "@/components/timplan/lesson-lengths-fields";
 import { EXTRA_ROW_GRID } from "@/components/timplan/lesson-lengths-grid";
 import { useLengthsInWords } from "@/components/timplan/use-lengths-in-words";
@@ -198,6 +203,8 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
   const [removing, setRemoving] = useState<TeachingBlock | null>(null);
   const [lessons, setLessons] = useState<LessonsDraft | null>(null);
   const [lessonsRefusal, setLessonsRefusal] = useState<string | null>(null);
+  // Förlägg blocket: the block whose lessons are being placed.
+  const [placing, setPlacing] = useState<TeachingBlock | null>(null);
 
   const groupById = useMemo(() => new Map(groups.map((group) => [group.id, group])), [groups]);
   const subjectName = useMemo(() => new Map(subjects.map((subject) => [subject.id, subject.name])), [subjects]);
@@ -357,7 +364,7 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
               <li key={block.id} className="space-y-2 py-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="font-medium">{block.name}</h3>
-                  {/* Lektioner, Redigera and Ta bort each write the block (teaching-blocks.controller.ts @Area). */}
+                  {/* Lektioner, Förlägg, Redigera and Ta bort each write the block (teaching-blocks.controller.ts @Area). */}
                   <div data-writes="PLANERING" className="flex flex-wrap gap-2">
                     {members.length > 0 ? (
                       <Button
@@ -367,6 +374,16 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
                         onClick={() => openLessons(block)}
                       >
                         {t("lessons")}
+                      </Button>
+                    ) : null}
+                    {members.length > 0 ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        aria-label={t("placeNamed", { name: block.name })}
+                        onClick={() => setPlacing(block)}
+                      >
+                        {t("place")}
                       </Button>
                     ) : null}
                     <Button
@@ -561,6 +578,15 @@ export function BlocksHost({ academicYearId, requirements, groups, subjects }: B
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <BlockPlacementDialog
+        open={placing !== null}
+        onOpenChange={(next) => !next && setPlacing(null)}
+        block={placing}
+        members={placing ? membersOf(placing.id) : []}
+        label={label}
+        followedName={placing?.sameTimesAsBlockId ? (blockName.get(placing.sameTimesAsBlockId) ?? null) : null}
+      />
 
       <ConfirmDialog
         open={removing !== null}

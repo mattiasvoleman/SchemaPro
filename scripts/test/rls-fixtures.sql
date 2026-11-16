@@ -4796,6 +4796,46 @@ BEGIN
   VALUES (m, post, 2, '10:00', 60, room, now());
 END $$;
 
+-- The matrix school's rows for Ett block kan förläggas (20270218090000), so the role matrix (section 116) has a row of
+-- each of the two tables to probe. A block of its own ('Roller förlagt block', not the empty 'Roller block' above, which
+-- other sections may fill) with two posts of their own subjects, one lesson of 60 minutes each: a placement on Thursday at
+-- 13:00 (a block's lesson, every week) and a room row for the first post only (the second post's room is the engine's
+-- choice). Written by the owner, once, and guarded by the subject it creates, as the block above.
+DO $$
+DECLARE
+  m uuid;
+  yr uuid;
+  grp uuid;
+  room uuid;
+  blk uuid;
+  subj_a uuid;
+  subj_b uuid;
+  post_a uuid;
+  placement uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "Subjects" WHERE "schoolId" = m AND code = 'RLSBA') THEN
+    RETURN;
+  END IF;
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = m AND "isActive";
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = m AND name = 'Roller 7A';
+  SELECT id INTO room FROM "Rooms" WHERE "schoolId" = m AND name = 'Roller 1';
+  IF yr IS NULL OR grp IS NULL OR room IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the matrix school lacks the year, class or room for a block''s förläggning';
+  END IF;
+  INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt") VALUES (m, yr, 'Roller förlagt block', now()) RETURNING id INTO blk;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (m, 'Roller blockpost A', 'RLSBA', now()) RETURNING id INTO subj_a;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (m, 'Roller blockpost B', 'RLSBB', now()) RETURNING id INTO subj_b;
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "lessonsPerWeek", "minutesPerLesson", "blockId", "updatedAt")
+  VALUES (m, yr, subj_a, grp, 1, 60, blk, now()) RETURNING id INTO post_a;
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "lessonsPerWeek", "minutesPerLesson", "blockId", "updatedAt")
+  VALUES (m, yr, subj_b, grp, 1, 60, blk, now());
+  INSERT INTO "TeachingBlockPlacements" ("schoolId", "blockId", "academicYearId", "dayOfWeek", "startTime", minutes, "updatedAt")
+  VALUES (m, blk, yr, 4, '13:00', 60, now()) RETURNING id INTO placement;
+  INSERT INTO "TeachingBlockPlacementRooms" ("schoolId", "placementId", "requirementId", "roomId", "updatedAt")
+  VALUES (m, placement, post_a, room, now());
+END $$;
+
 -- En administratör som undervisar, del 3 (20270216090000, sections 505–509): a school of its own, so that no post is added
 -- to the matrix school (section 110 counts its posts). Five administrators who can be marked (one of each profile, one
 -- of them with HR-läs), a läsare who cannot, two teachers and a pupil. Every administrator and the first teacher has a

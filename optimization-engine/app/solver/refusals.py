@@ -35,7 +35,7 @@ from typing import TypeVar
 
 from app.exceptions import InvalidScheduleInputError
 from app.schemas.schedule import ConflictAnalysis, ConflictDetail
-from app.solver.weeks import WEEK_WORDS, Weeks, as_said, closed, says_exactly, share, together
+from app.solver.weeks import WEEK_WORDS, Weeks, as_said, closed, share, together
 
 R = TypeVar("R")
 
@@ -131,7 +131,10 @@ def said_weeks(
         return said
     first = held[0]
     real = first.bits if phantom is None else first.bits & ~phantom.lifted(first.periods)
-    group = closed(Weeks(real, first.periods), phantom)
-    if says_exactly(group):
+    # The group is read as the whole set is: its real weeks, filled in or as they are (weeks.as_said), and not
+    # filled in first, which for a group holding one period's odd week beside the odd weeks of others says
+    # "period 0" where the words say "the odd weeks of periods 0 and 1" (the review of #320, round 2, LÅG-2).
+    group = as_said(Weeks(real, first.periods), phantom)
+    if group is not None:
         return group
     return closed(Weeks(real & -real, first.periods), phantom)

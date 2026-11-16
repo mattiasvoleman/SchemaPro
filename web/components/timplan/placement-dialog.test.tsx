@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import type { LessonShare } from "@/lib/lesson-shares";
+import { placementsOfKey } from "@/lib/requirement-placements-api";
 import type { TeachingRequirement } from "@/lib/types";
 import sv from "@/messages/sv.json";
 import { PlacementDialog } from "./placement-dialog";
@@ -19,6 +20,7 @@ const state = vi.hoisted(() => ({
   get: vi.fn(),
   put: vi.fn(),
   success: vi.fn(),
+  warning: vi.fn(),
   error: vi.fn(),
   readOnly: false,
   rooms: [] as { id: string; name: string }[],
@@ -39,7 +41,7 @@ vi.mock("@/components/profile-context", () => ({ useReadOnly: () => state.readOn
 vi.mock("@/i18n/navigation", () => ({
   Link: ({ children, ...rest }: { children: React.ReactNode }) => <a {...rest}>{children}</a>,
 }));
-vi.mock("sonner", () => ({ toast: { success: state.success, error: state.error } }));
+vi.mock("sonner", () => ({ toast: { success: state.success, warning: state.warning, error: state.error } }));
 // Keys echoed with their values: the sentences are i18n/placements-messages.test.ts's.
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
@@ -91,11 +93,15 @@ const stored = (extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-/** The GET: the rows and a verdict for each, all holding unless a test says. */
-function answer(placements: ReturnType<typeof stored>[], verdicts?: unknown[]) {
+/**
+ * The GET: the rows and a verdict for each, all holding unless a test says. It gives no `rowsKey` unless a test says, which is
+ * what a gateway older than the key answers: the dialog then asks nothing of a key.
+ */
+function answer(placements: ReturnType<typeof stored>[], verdicts?: unknown[], rowsKey?: string) {
   state.get.mockResolvedValue({
     placements,
     verdicts: verdicts ?? placements.map((_, index) => ({ index, ok: true })),
+    ...(rowsKey === undefined ? {} : { rowsKey }),
   });
 }
 
@@ -130,7 +136,7 @@ function renderDialog(requirement: TeachingRequirement = post(), shares?: readon
       />
     </QueryClientProvider>,
   );
-  return { invalidate, onOpenChange, user: userEvent.setup() };
+  return { client, invalidate, onOpenChange, user: userEvent.setup() };
 }
 
 /** The dialog once its rows have been read. */
@@ -150,8 +156,9 @@ const select = (row: HTMLElement, label: string) => within(row).getByLabelText(l
 
 beforeEach(() => {
   state.get.mockReset();
-  state.put.mockReset().mockResolvedValue({ placements: [], verdicts: [] });
+  state.put.mockReset().mockResolvedValue({ placements: [], verdicts: [], rowsKey: "0123456789abcdef" });
   state.success.mockReset();
+  state.warning.mockReset();
   state.error.mockReset();
   state.readOnly = false;
   state.roomsFailed = false;
@@ -512,6 +519,125 @@ describe("saving", () => {
     fireEvent.change(field(rowNamed(1), "start"), { target: { value: "09:05" } });
 
     expect(within(rowNamed(1)).queryByText(/^problemStart/)).toBeNull();
+  });
+});
+
+describe("on top of what it read (review of #326, MEDEL-1)", () => {
+  it("sends the key of the rows it read as baseKey, so that a list written since is not written over", async () => {
+    answer([stored()], undefined, "0123456789abcdef");
+    const { user, onOpenChange } = await opened();
+
+    await user.selectOptions(field(rowNamed(1), "day"), "3");
+    await user.click(saveButton());
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(state.put).toHaveBeenCalledWith("/api/v1/teaching-requirements/r-sl/placements", {
+      placements: [{ dayOfWeek: 3, startTime: "10:00", minutes: 60, roomId: "room-sim", recurrence: "ALL_WEEKS" }],
+      baseKey: "0123456789abcdef",
+    });
+  });
+
+  it("sends the key it opened with, not a later one: it reads once, and a refocus of the window does not read again", async () => {
+    answer([stored()], undefined, "0123456789abcdef");
+    const { user } = await opened();
+    state.get.mockResolvedValue({ placements: [], verdicts: [], rowsKey: "fedcba9876543210" });
+    window.dispatchEvent(new Event("focus"));
+    await user.click(saveButton());
+    await waitFor(() => expect(state.put).toHaveBeenCalled());
+    expect(state.put.mock.calls[0]![1]).toMatchObject({ baseKey: "0123456789abcdef" });
+  });
+
+  // Review of #326, round 2, MEDEL-1: the focus test above never reads again (the dialog asks for no refetch on focus), so it
+  // cannot tell the key of the form's rows from the key of the latest read. A read made again does (a reconnect, an
+  // invalidation in the tab): the form still holds the rows it opened with, and the new key is another list's.
+  it("sends the key of the rows the form holds also when the read is made again while the dialog is open", async () => {
+    answer([stored()], undefined, "0123456789abcdef");
+    const { client, user } = await opened();
+    // somebody else wrote the post; the read now gives their list and their key
+    state.get.mockResolvedValue({
+      placements: [stored({ id: "p9", dayOfWeek: 4 })],
+      verdicts: [{ index: 0, ok: true }],
+      rowsKey: "fedcba9876543210",
+    });
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: placementsOfKey("r-sl") });
+    });
+    await waitFor(() => expect(state.get.mock.calls.length).toBeGreaterThan(1));
+
+    await user.click(saveButton());
+
+    await waitFor(() => expect(state.put).toHaveBeenCalled());
+    // The form holds Tuesday (what it opened with), not the other's Thursday: the key of the new list on top of those rows
+    // would write over the other's list.
+    expect(state.put.mock.calls[0]![1]).toMatchObject({
+      placements: [{ dayOfWeek: 2, startTime: "10:00" }],
+      baseKey: "0123456789abcdef",
+    });
+  });
+
+  it("sends none when the read gave none (a gateway older than the key), and the body is what it was", async () => {
+    answer([stored()]);
+    const { user, onOpenChange } = await opened();
+    await user.click(saveButton());
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(Object.keys(state.put.mock.calls[0]![1] as object)).toEqual(["placements"]);
+  });
+
+  it("says in its own words that somebody else has written the post since, at the top, and saves and closes nothing", async () => {
+    answer([stored()], undefined, "0123456789abcdef");
+    state.put.mockRejectedValue(new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_STALE", { requirementId: "r-sl" }));
+    const { user, onOpenChange } = await opened();
+
+    await user.click(saveButton());
+
+    const top = (await screen.findByText("staleList")).closest("[tabindex='-1']") as HTMLElement;
+    expect(top).toHaveFocus();
+    expect(within(top).getByText("notSaved")).toBeInTheDocument();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(state.success).not.toHaveBeenCalled();
+    expect(state.warning).not.toHaveBeenCalled();
+  });
+});
+
+describe("a save that leaves a row that does not hold (review of #326, MEDEL-2)", () => {
+  it("says so by name in a warning, row by row, and does not say that all is well", async () => {
+    answer([stored({ id: "p1" }), stored({ id: "p2", dayOfWeek: 4, startTime: "13:00", endTime: "14:00", recurrence: "ODD_WEEKS" })], undefined, "0123456789abcdef");
+    state.put.mockResolvedValue({
+      placements: [stored({ id: "n1" }), stored({ id: "n2", dayOfWeek: 4, startTime: "13:00", endTime: "14:00", recurrence: "ODD_WEEKS" })],
+      verdicts: [
+        { index: 0, ok: true },
+        { index: 1, ok: false, reason: "AVAILABILITY", params: { resource: "TEACHER" } },
+      ],
+      rowsKey: "aaaaaaaaaaaaaaaa",
+    });
+    const { user, onOpenChange } = await opened();
+
+    await user.click(saveButton());
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(state.success).not.toHaveBeenCalled();
+    expect(state.warning).toHaveBeenCalledTimes(1);
+    const said = state.warning.mock.calls[0]![0] as string;
+    expect(said).toContain("savedStillFailing(1)");
+    // The row that does not hold: its weekday, its time, its weeks and the gateway's reason.
+    expect(said).toContain("stillFailing(4|13:00|14:00|ODD_WEEKS|verdict.AVAILABILITY(TEACHER))");
+    expect(said).not.toContain("stillFailing(2|");
+  });
+
+  it("counts every row that does not hold", async () => {
+    answer([stored(), stored({ id: "p2", dayOfWeek: 3 })], undefined, "0123456789abcdef");
+    state.put.mockResolvedValue({
+      placements: [stored({ id: "n1" }), stored({ id: "n2", dayOfWeek: 3 })],
+      verdicts: [
+        { index: 0, ok: false, reason: "TEACHER" },
+        { index: 1, ok: false, reason: "TEACHER" },
+      ],
+      rowsKey: "aaaaaaaaaaaaaaaa",
+    });
+    const { user, onOpenChange } = await opened();
+    await user.click(saveButton());
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(state.warning.mock.calls[0]![0] as string).toContain("savedStillFailing(2)");
   });
 });
 

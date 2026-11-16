@@ -68,6 +68,11 @@ import { TIOARIG_TOO_EARLY } from '../grade-numbering';
  * refusal may arrive as a failed COMMIT, which is read the same way. See
  * requirementPlacementsRefusal.
  *
+ * Förlagda block's triggers (migration 20270218090000) answer SQLSTATE BP409 when a parallel
+ * block's förläggningar would not fit the block (or the block, a member or a share would no
+ * longer fit them), and that is the 409 BLOCK_PLACEMENTS_DO_NOT_FIT with the rule broken,
+ * whichever writer met it. See blockPlacementsRefusal.
+ *
  * An administrator who teaches (Users.teaches, migration 20270212090000) has two
  * refusals of its own: TE409, a mark set on a person with no post, and TE410, the
  * last post of a marked person removed or moved. Each is a 409 with its own code
@@ -118,6 +123,13 @@ export function rethrowPrismaError(error: unknown): never {
     throw requirementPlacementsConflict(
       placements.reason,
       placements.requirementId !== null ? { requirementId: placements.requirementId } : {},
+    );
+  }
+  const blockPlacements = blockPlacementsRefusal(error);
+  if (blockPlacements) {
+    throw blockPlacementsConflict(
+      blockPlacements.reason,
+      blockPlacements.blockId !== null ? { blockId: blockPlacements.blockId } : {},
     );
   }
   const half = classHalfRefusal(error);
@@ -488,6 +500,96 @@ export function requirementPlacementsConflict(
             ...(at.requirementId !== undefined ? { requirementId: at.requirementId } : {}),
             ...(at.unstaffed ? { unstaffed: 1 } : {}),
             ...(at.startsSharing && reason === 'TEACHER' ? { starts: 1 } : {}),
+          },
+        }
+      : {}),
+  });
+}
+
+/** The problem `code` of a parallel block whose förläggningar do not fit it. */
+export const BLOCK_PLACEMENTS_DO_NOT_FIT = 'BLOCK_PLACEMENTS_DO_NOT_FIT';
+
+/**
+ * The rule a write of a block's förläggningar broke: block-placement-fit.ts's, and the same seven
+ * the trigger of migration 20270218090000 judges (it also has ISOLATION, which the gateway has no
+ * sentence for).
+ */
+export type BlockPlacementsRule = 'FOLLOWER' | 'EMPTY' | 'SHARES' | 'LENGTH' | 'WEEKS' | 'COUNT' | 'MEMBER';
+
+const BLOCK_PLACEMENT_RULES: readonly BlockPlacementsRule[] = ['FOLLOWER', 'EMPTY', 'SHARES', 'LENGTH', 'WEEKS', 'COUNT', 'MEMBER'];
+
+/**
+ * Recognises Förlagda block's trigger refusal, as requirementPlacementsRefusal does FP409: SQLSTATE
+ * BP409 (taken by nothing else), the rule as the message's first word and DETAIL
+ * `blockId=<uuid> reason=<RULE>`: ids and the rule, never a person. The driver's cause when the
+ * adapter carries it, the rendered message otherwise. A reason the gateway has no sentence for
+ * (ISOLATION) is still this refusal, with `reason` null.
+ */
+export function blockPlacementsRefusal(error: unknown): { blockId: string | null; reason: BlockPlacementsRule | null } | null {
+  let cause: DriverCause | undefined;
+  let rendered = '';
+  if (driverAdapterCode(error) === 'BP409') {
+    cause = (error as { cause?: DriverCause }).cause;
+  } else {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
+    cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)?.driverAdapterError?.cause;
+    const byMeta = cause?.originalCode === 'BP409';
+    const byMessage = error.code === 'P2039' && error.message.includes('Code: `BP409`');
+    if (!byMeta && !byMessage) return null;
+    rendered = error.message;
+  }
+  const text =
+    typeof cause?.originalMessage === 'string'
+      ? cause.originalMessage
+      : (/Message: `([\s\S]*)`/.exec(rendered)?.[1] ?? rendered);
+  const detail = typeof cause?.detail === 'string' ? cause.detail : '';
+  const token = /reason=([A-Z_]+)/.exec(detail)?.[1] ?? /^([A-Z_]+):/.exec(text)?.[1] ?? null;
+  return {
+    blockId: /blockId=([0-9a-f-]{36})/i.exec(detail)?.[1] ?? null,
+    reason: BLOCK_PLACEMENT_RULES.includes(token as BlockPlacementsRule) ? (token as BlockPlacementsRule) : null,
+  };
+}
+
+const BLOCK_PLACEMENT_SENTENCES: Record<BlockPlacementsRule, string> = {
+  FOLLOWER:
+    'Blocket följer ett annat blocks tider och förläggs inte själv. Förlägg det block det följer, så följer det här med.',
+  EMPTY: 'Blocket har inga poster som kan sitta lektionen. Lägg posterna i blocket först, eller ta bort förläggningen.',
+  SHARES:
+    'En post i blocket delar sina lektioner mellan lärare, och ett sådant block kan inte förläggas ännu. ' +
+    'Ta bort förläggningarna, eller ge posten sina lektioner hos en lärare.',
+  LENGTH:
+    'En förlagd lektion har en längd som blockets poster inte har. Ange en av blockets lektionslängder, eller ta bort förläggningen.',
+  WEEKS:
+    'En förlagd lektion går andra veckor än blockets. Ett block förläggs i sina egna veckor, och udda och jämna veckor i par stöds inte för block.',
+  COUNT:
+    'Fler lektioner av en längd är förlagda än blocket har. Ta bort en förläggning, eller ge blockets poster fler lektioner.',
+  MEMBER: 'En sal är vald för en post som inte ligger i blocket. Välj sal bara för blockets poster.',
+};
+
+/**
+ * The 409 for förläggningar that do not fit their block: the rule in a sentence that says what to
+ * change, and the rule as `reason` in `params`, which the exception filter forwards (it drops every
+ * other key and anything not flat). `index` is the lesson's place in a PUT's list, and `blockId`
+ * the block the trigger names, so that a write of many blocks can say which.
+ */
+export function blockPlacementsConflict(
+  reason: BlockPlacementsRule | null,
+  at: { index?: number; blockId?: string; requirementId?: string } = {},
+): ConflictException {
+  return new ConflictException({
+    message:
+      reason === null
+        ? 'Förläggningarna passar inte blocket. Ändra förläggningarna eller blocket.'
+        : BLOCK_PLACEMENT_SENTENCES[reason],
+    code: BLOCK_PLACEMENTS_DO_NOT_FIT,
+    ...(reason !== null
+      ? {
+          reason,
+          params: {
+            reason,
+            ...(at.index !== undefined ? { index: at.index } : {}),
+            ...(at.blockId !== undefined ? { blockId: at.blockId } : {}),
+            ...(at.requirementId !== undefined ? { requirementId: at.requirementId } : {}),
           },
         }
       : {}),

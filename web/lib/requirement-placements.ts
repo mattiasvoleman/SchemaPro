@@ -87,6 +87,8 @@ export interface PlacementVerdict {
 export interface PlacementsOfRequirement {
   placements: RequirementPlacement[];
   verdicts: PlacementVerdict[];
+  /** The key of these rows: what the next write on top of them sends as `baseKey`. */
+  rowsKey: string;
 }
 
 /** The year's placed lessons, for the mark on the timplan. */

@@ -11,7 +11,7 @@ import type {
   TeachingBlock,
   TeachingRequirement,
 } from "../../../lib/types";
-import { KIND, MULTI_GUARDIAN, PEOPLE, READER, uid } from "../sessions";
+import { EXPEDITION, KIND, MULTI_GUARDIAN, PEOPLE, READER, uid } from "../sessions";
 import {
   NEXT_YEAR_END,
   NEXT_YEAR_NAME,
@@ -288,6 +288,14 @@ export const PROFILE_ROWS = [
     authId: READER.authId,
     schoolId: SCHOOL.id,
     adminProfile: "LASARE" as const,
+    hrRead: false,
+  },
+  // The expedition: writes Drift and Personal, reads the rest; only here, so no page lists it.
+  {
+    ...person(EXPEDITION.userId, "SCHOOL_ADMIN", "Ebba", "Expedition", EXPEDITION.email),
+    authId: EXPEDITION.authId,
+    schoolId: SCHOOL.id,
+    adminProfile: "EXPEDITION" as const,
     hrRead: false,
   },
 ];

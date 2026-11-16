@@ -173,7 +173,7 @@ describe("the läsare (Läsbehörighet)", () => {
   it("opens every other admin page read-only, each named by its area, Personer by the register and planering", () => {
     const pages = readOnlyPages("LASARE");
     const expected = Object.entries(PAGE_GATES)
-      .filter(([path, gate]) => gate !== "DECIDES" && (gate !== null || path === "/admin/people" || path === "/admin/class-teachers"))
+      .filter(([path, gate]) => gate !== "DECIDES" && (gate !== null || path === "/admin/people" || path === "/admin/class-teachers" || path === "/admin/placements"))
       .map(([path]) => path)
       .sort();
     expect(pages.map((page) => page.path).sort()).toEqual(expected);
@@ -181,6 +181,8 @@ describe("the läsare (Läsbehörighet)", () => {
     expect(pages.find((page) => page.path === "/admin/people")?.areas).toEqual(["PERSONAL", "PLANERING"]);
     // Klasslärare: the appointments and open hours are Schemaläggning's, the option and the publishing Publicering's.
     expect(pages.find((page) => page.path === "/admin/class-teachers")?.areas).toEqual(["SCHEMALAGGNING", "PUBLICERING"]);
+    // Förlägg i veckan: the förläggningar laid, moved and removed in it are Planering's.
+    expect(pages.find((page) => page.path === "/admin/placements")?.areas).toEqual(["PLANERING"]);
     expect(pages.find((page) => page.path === "/admin/timetable")?.areas).toEqual(["SCHEMALAGGNING"]);
     expect(pages.find((page) => page.path === "/admin/calendar-feeds")?.areas).toEqual(["PUBLICERING"]);
     expect(pages.find((page) => page.path === "/admin/schemavisaren")?.areas).toEqual(["PUBLICERING"]);

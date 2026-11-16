@@ -32,7 +32,18 @@
  *        post whose lock is a lesson with a second class, a post nothing
  *        keeps, and a post with no row; and what the week says is left for a
  *        post is what Generera then sends the engine (review of #315,
- *        MEDEL-1: the two used to build that input by hand, each its own).
+ *        MEDEL-1: the two used to build that input by hand, each its own);
+ *   vv7  A2's key (`rowsKey`): the week gives every post the key its own read
+ *        gives and the key is the hash of the stored rows (one constant for a
+ *        post with none); a PUT answers the key the next read gives; a PUT on a
+ *        key read before another save is 409 REQUIREMENT_PLACEMENTS_STALE and
+ *        writes nothing;
+ *   vv8  the dialog (its read and its save) and the week read what Generera
+ *        keeps the same way (review of #315, LÅG-6): a post beside a hand-made
+ *        lock, a lesson kept for a second class and one kept for a named pupil
+ *        (and not the class's other subject, nor the subject of another
+ *        class) is counted and judged alike by both, and a post with a
+ *        medlärare is judged with the medlärare's lessons by both.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -417,6 +428,201 @@ export async function placementWeekChecks(owner: Client, api: PrismaService, mar
       const withRows = new Set(after.placements.map((entry) => entry.requirementId));
       assert.equal(sent.payload?.placements?.requirements.length, withRows.size, 'the released week holds the posts with a förläggning, and no other');
       assert.ok(withRows.size > 0 && withRows.size < after.posts.length);
+
+      // A förläggning with no room is a pinned lesson (B2): it takes nothing off the post's demand, so Generera sends the post whole and
+      // the week counts it as laid: what the week says is left, plus the pinned lessons, is what Generera sends (LÅG-3 of #322).
+      await placements.replace(p8, { placements: [row(2, '15:00', 60, null as never)] } as never, a.users.schema);
+      const pinnedWeek = await placements.boardOfYear(a.year, a.users.schema);
+      const pinnedSent = await api.withRls(a.users.schema, (tx) => proxyService.prepareSchedule(tx, a.year, a.users.schema));
+      assert.equal(pinnedSent.ready, true, 'a row with no room holds, and the run goes through');
+      const pinnedLeft = new Map((pinnedSent.demand ?? []).map((entry) => [entry.requirementId, entry.lessonsPerWeek as number]));
+      const pinnedOf = new Map<string, number>(
+        (pinnedSent.payload?.requirements ?? []).map((entry: { id: string; pinnedLessons?: unknown[] }) => [entry.id, (entry.pinnedLessons ?? []).filter((pin) => pin !== null).length] as const),
+      );
+      const pinnedCount = [...pinnedOf.values()].reduce((sum, count) => sum + count, 0);
+      assert.equal(pinnedCount, 1, 'one pinned lesson on the wire: the post with the row that has no room');
+      for (const post of pinnedWeek.posts) {
+        const left = post.parts.reduce((sum, part) => sum + part.left, 0);
+        const laid = post.id === p8 ? 1 : 0;
+        assert.equal(pinnedLeft.get(post.id) ?? 0, left + laid, `the week's left plus its pinned lesson for ${post.id} is what Generera sends`);
+      }
+      const p8Parts = pinnedWeek.posts.find((entry) => entry.id === p8)!.parts;
+      assert.deepEqual([p8Parts.reduce((sum, part) => sum + part.placed, 0), p8Parts.reduce((sum, part) => sum + part.left, 0)], [1, 1]);
+    });
+    await check('(vv7) rowsKey: the week gives each post the key GET :id/placements gives (one constant for a post with no row), the key is the hash of the stored rows, a PUT answers the key the next read gives, and a key read before another save is stale', async () => {
+      const { rowsKeyOf } = await import('../../src/requirement-placements/placement-rows-key');
+      const { HttpException } = await import('@nestjs/common');
+      /** Every post's key in the week is the key of its own read and the hash of its stored rows, the constant for a post with none. */
+      const keysHold = async (): Promise<Awaited<ReturnType<RequirementPlacementsService['boardOfYear']>>> => {
+        const week = await placements.boardOfYear(a.year, a.users.schema);
+        const withRows = new Set(week.placements.map((entry) => entry.requirementId));
+        assert.ok(withRows.size >= 3 && week.posts.length > withRows.size, `${withRows.size} posts with rows of ${week.posts.length}: the check needs both kinds`);
+        for (const post of week.posts) {
+          const dialog = await placements.listOfPost(post.id, a.users.schema);
+          assert.equal(post.rowsKey, dialog.rowsKey, `the week's key of ${post.id} is not the key of its own read`);
+          // The key as it is made, from the rows as the table stores them (their ids, the start as a time of day).
+          const stored = await owner.query<{ id: string; requirementId: string; dayOfWeek: number; startTime: Date; minutes: number; roomId: string | null; recurrence: 'ALL_WEEKS'; teacherId: string | null }>(
+            `SELECT id, "requirementId", "dayOfWeek", ("startTime"::text)::time AS "startTime", minutes, "roomId", recurrence::text AS recurrence, "teacherId" FROM "TeachingRequirementPlacements" WHERE "requirementId" = $1`,
+            [post.id],
+          );
+          const expected = rowsKeyOf(stored.rows.map((row) => ({ ...row, startTime: new Date(`1970-01-01T${String(row.startTime)}.000Z`) })));
+          assert.equal(post.rowsKey, expected, `the key of ${post.id} is not the hash of its ${stored.rows.length} stored row(s), ids included`);
+          assert.equal(withRows.has(post.id), post.rowsKey !== rowsKeyOf([]), `${post.id}: ${withRows.has(post.id) ? 'a post with rows has the constant of an empty one' : 'a post with no row has a key of its own'}`);
+        }
+        return week;
+      };
+      const board = await keysHold();
+      assert.deepEqual(await placements.boardOfYear(a.year, a.users.expedition), board, 'the expedition is told other keys');
+
+      // A write on top of the key just read, its answer's key is the next read's (and the week's), and a write on the key before is stale.
+      const before = board.posts.find((entry) => entry.id === p1)!.rowsKey;
+      const first = await placements.replace(p1, { placements: [row(2, '10:00', 60, a.r1)], baseKey: before } as never, a.users.schema);
+      assert.notEqual(first.rowsKey, before, 'a save left the key (new ids are what make it one of a save)');
+      assert.equal(first.rowsKey, (await placements.listOfPost(p1, a.users.schema)).rowsKey);
+      assert.equal((await placements.boardOfYear(a.year, a.users.schema)).posts.find((entry) => entry.id === p1)!.rowsKey, first.rowsKey);
+      const rowsBefore = JSON.stringify((await placements.listOfPost(p1, a.users.schema)).placements);
+      const stale = await placements.replace(p1, { placements: [row(3, '10:00', 60, a.r1)], baseKey: before } as never, a.users.schema).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      assert.ok(stale instanceof HttpException && stale.getStatus() === 409, 'a key read before the save was let through');
+      assert.deepEqual(stale.getResponse(), {
+        message: 'Postens förläggningar har ändrats sedan du läste dem. Läs om dem och försök igen.',
+        code: 'REQUIREMENT_PLACEMENTS_STALE',
+        params: { requirementId: p1 },
+      });
+      assert.equal(JSON.stringify((await placements.listOfPost(p1, a.users.schema)).placements), rowsBefore, 'the refused write changed the rows');
+      // The chain: the answer's key is the next write's base; the empty list on top of it leaves the constant.
+      const emptied = await placements.replace(p1, { placements: [], baseKey: first.rowsKey } as never, a.users.schema);
+      assert.equal(emptied.rowsKey, rowsKeyOf([]));
+      assert.equal((await placements.boardOfYear(a.year, a.users.schema)).posts.find((entry) => entry.id === p1)!.rowsKey, rowsKeyOf([]));
+      // A post of two rows (the second row of a list is another statement of the key than the first), then back to one.
+      const two = await placements.replace(p1, { placements: [row(2, '10:00', 60, a.r1), row(4, '10:00', 60, a.r1)], baseKey: emptied.rowsKey } as never, a.users.schema);
+      assert.equal(two.placements.length, 2);
+      await keysHold();
+      await placements.replace(p1, { placements: [row(2, '10:00', 60, a.r1)], baseKey: two.rowsKey } as never, a.users.schema);
+    });
+
+    await check('(vv8) a post beside lessons Generera keeps because of a second class or named pupils, and one with a medlärare: the dialog (the read and the save) and the week judge it alike', async () => {
+      const { HttpException } = await import('@nestjs/common');
+      const judgeModule = (await import('../../src/requirement-placements/placement-judge')) as unknown as {
+        judgePlacements: (...args: unknown[]) => Promise<PlacementVerdict[]>;
+      };
+      const teacher = async (label: string) => {
+        const created = await one<{ id: string }>(
+          `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt") VALUES ($1, $2, $3, 'Veckan', 'TEACHER', $4, true, now()) RETURNING id`,
+          [a.school, `${marker}-veckan-a-${label}@example.invalid`, label, randomUUID()],
+        );
+        return created.id;
+      };
+      const groupNamed = async (name: string) =>
+        (await one<{ id: string }>(`INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt") VALUES ($1, $2, $3, 'CLASS', 7, now()) RETURNING id`, [a.school, a.year, name])).id;
+      const subjectNamed = async (name: string) =>
+        (await one<{ id: string }>(`INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES ($1, $2, now()) RETURNING id`, [a.school, name])).id;
+      const kept = async (subjectId: string, groupId: string, teacherId: string, day: number, start: string, end: string, locked: boolean, generated: boolean) =>
+        (
+          await one<{ id: string }>(
+            `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "roomId", "dayOfWeek", "startTime", "endTime", "isLocked", "isGenerated", "updatedAt")
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now()) RETURNING id`,
+            [a.school, a.year, subjectId, groupId, teacherId, a.r2, day, start, end, locked, generated],
+          )
+        ).id;
+
+      const t10 = await teacher('t10');
+      const t11 = await teacher('t11');
+      const co = await teacher('co');
+      const g7d = await groupNamed('VK 7D');
+      const g7e = await groupNamed('VK 7E');
+      const [engelska, samhall, geografi] = [await subjectNamed('VK Engelska'), await subjectNamed('VK Samhällskunskap'), await subjectNamed('VK Geografi')];
+      // P10: five lessons of 60 and four förläggningar, laid first; the lessons Generera keeps are planted after, as the week moves under rows.
+      const p10 = await a.post(g7d, samhall, t10, 5, 60);
+      const fourRows = [row(1, '09:00', 60, a.r1), row(2, '09:00', 60, a.r1), row(3, '09:00', 60, a.r1), row(4, '09:00', 60, a.r1)];
+      await placements.replace(p10, { placements: fourRows } as never, a.users.schema);
+      // P11: a post whose medlärare is `co`, one row; `co` is planted in another class at that time after the row is saved.
+      const p11 = await a.post(g7e, engelska, t11, 3, 60);
+      await owner.query(`UPDATE "TeachingRequirements" SET "coTeacherId" = $1 WHERE id = $2`, [co, p11]);
+      await placements.replace(p11, { placements: [row(2, '08:00', 60, a.r1)] } as never, a.users.schema);
+
+      // The three lessons Generera keeps that answer P10's lessons: hand-made and locked; written by a run and kept for a second class;
+      // written by a run and kept for a named pupil. And two it must not count: another subject of the class, and the subject of another class.
+      await kept(samhall, g7d, t10, 1, '13:00', '14:00', true, false);
+      const withClass = await kept(samhall, g7d, t10, 2, '13:00', '14:00', false, true);
+      await owner.query(`INSERT INTO "MasterLessonGroups" ("schoolId", "masterLessonId", "studentGroupId") VALUES ($1, $2, $3)`, [a.school, withClass, a.g7a]);
+      const withPupil = await kept(samhall, g7d, t10, 3, '13:00', '14:00', false, true);
+      await owner.query(`INSERT INTO "MasterLessonStudents" ("schoolId", "masterLessonId", "studentId") VALUES ($1, $2, $3)`, [a.school, withPupil, a.pupil.id]);
+      await kept(geografi, g7d, t10, 4, '13:00', '14:00', true, false);
+      await kept(samhall, a.g7a, t10, 5, '13:00', '14:00', true, false);
+      // `co` teaches another class at the time of P11's row (the medlärare is in the room for every lesson).
+      await kept(geografi, g7e, co, 2, '08:30', '09:30', true, false);
+
+      const original = judgeModule.judgePlacements;
+      type Asked = { tag: string; input: JudgePlacementsInput; verdicts: PlacementVerdict[] };
+      const asked: Asked[] = [];
+      let tag = '';
+      judgeModule.judgePlacements = async (...args: unknown[]) => {
+        const verdicts = await original(...args);
+        asked.push({ tag, input: args[2] as JudgePlacementsInput, verdicts });
+        return verdicts;
+      };
+      let board: Awaited<ReturnType<RequirementPlacementsService['boardOfYear']>>;
+      const dialog = new Map<string, Awaited<ReturnType<RequirementPlacementsService['listOfPost']>>>();
+      try {
+        tag = 'week';
+        board = await placements.boardOfYear(a.year, a.users.schema);
+        for (const postId of [p10, p11]) {
+          tag = `dialog-${postId}`;
+          dialog.set(postId, await placements.listOfPost(postId, a.users.schema));
+        }
+      } finally {
+        judgeModule.judgePlacements = original;
+      }
+      const week = asked.find((entry) => entry.tag === 'week')!;
+      const demandOf = (entry: Asked, postId: string) => {
+        const demand = entry.input.demand!.get(postId)!;
+        return { lockedMinutes: demand.lockedMinutes, placed: demand.placed, taught: demand.taught ?? null };
+      };
+      for (const postId of [p10, p11]) {
+        const theirs = asked.find((entry) => entry.tag === `dialog-${postId}`)!;
+        const weekRows = week.input.rows.map((judged, at) => ({ judged, verdict: week.verdicts[at]! })).filter((entry) => entry.judged.requirementId === postId);
+        assert.deepEqual(
+          weekRows.map((entry) => ({ ...entry.judged, id: null })),
+          theirs.input.rows,
+          `the week judges ${postId}'s rows as the dialog does (day, start, room, teacher, medlärare, window)`,
+        );
+        assert.deepEqual(demandOf(week, postId), demandOf(theirs, postId), `the week and the dialog count ${postId}'s locks and placed lessons alike`);
+        assert.deepEqual(
+          board.placements.filter((entry) => entry.requirementId === postId).map((entry) => entry.verdict),
+          dialog.get(postId)!.verdicts.map(({ index: _index, ...verdict }) => verdict),
+          `the week and the dialog give ${postId} the same verdicts`,
+        );
+      }
+      // In absolute terms, so that the two cannot drift together: three locks answer three of the five lessons, four rows
+      // are then over the demand; the medlärare's lesson refuses P11's row as a clash of the teacher.
+      assert.deepEqual(demandOf(week, p10), { lockedMinutes: [60, 60, 60], placed: [60, 60, 60, 60], taught: null }, 'the locks are the hand-made one, the one with a second class and the one with a pupil: not the other subject, not the other class');
+      assert.deepEqual(dialog.get(p10)!.verdicts.map((verdict) => verdict.reason), ['OVER_DEMAND', 'OVER_DEMAND', 'OVER_DEMAND', 'OVER_DEMAND']);
+      assert.deepEqual(dialog.get(p11)!.verdicts.map((verdict) => verdict.reason), ['TEACHER'], 'the medlärare\'s lesson is a clash for the dialog');
+      assert.deepEqual(board.placements.filter((entry) => entry.requirementId === p11).map((entry) => entry.verdict.reason), ['TEACHER'], 'and for the week');
+
+      // The save asks what the read asks: four NEW rows are refused at the first, and nothing is written; two rows fit three locks.
+      // The four rows the post HAS are let stand and each is named (review of #326, MEDEL-2): the locks came after them.
+      const before = (await placements.listOfPost(p10, a.users.schema)).rowsKey;
+      const moved = fourRows.map((entry) => ({ ...entry, startTime: '09:05' }));
+      const refused = await placements.replace(p10, { placements: moved, baseKey: before } as never, a.users.schema).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      assert.ok(refused instanceof HttpException && refused.getStatus() === 409, 'the save let four new rows through over three locks');
+      const body = refused.getResponse() as { code?: string; params?: { reason?: string; index?: number } };
+      assert.deepEqual([body.code, body.params?.reason, body.params?.index], ['REQUIREMENT_PLACEMENT_REFUSED', 'OVER_DEMAND', 0]);
+      assert.equal((await placements.listOfPost(p10, a.users.schema)).rowsKey, before, 'the refused save wrote');
+      const letStand = await placements.replace(p10, { placements: fourRows, baseKey: before } as never, a.users.schema);
+      assert.deepEqual(
+        letStand.verdicts.map((verdict) => verdict.reason),
+        ['OVER_DEMAND', 'OVER_DEMAND', 'OVER_DEMAND', 'OVER_DEMAND'],
+        'the four rows the post has were not named in the answer',
+      );
+      const two = await placements.replace(p10, { placements: fourRows.slice(0, 2), baseKey: letStand.rowsKey } as never, a.users.schema);
+      assert.deepEqual(two.verdicts, [{ index: 0, ok: true }, { index: 1, ok: true }], 'two rows fit the five lessons beside three locks');
     });
   } finally {
     await sweepPlacementWeekSchools(owner, marker);

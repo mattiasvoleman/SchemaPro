@@ -288,6 +288,9 @@ describe('the rollover registry', () => {
       'ClassTeacherChange',
       // Förlagda poster (20270207090000): a post's day, time and room belong to the year they were given against.
       'TeachingRequirementPlacement',
+      // Förlagda block (20270218090000): a block's lesson and each member's room for it belong to the year they were given against.
+      'TeachingBlockPlacement',
+      'TeachingBlockPlacementRoom',
     ];
     expect(
       createHash('sha256')

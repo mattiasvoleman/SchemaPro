@@ -37,6 +37,9 @@
       "name": "AvailabilityConstraints"
     },
     {
+      "name": "BlockPlacements"
+    },
+    {
       "name": "Calendar"
     },
     {
@@ -25184,6 +25187,117 @@
         }
       }
     },
+    "/api/v1/teaching-blocks/{id}/placements": {
+      "get": {
+        "tags": [
+          "BlockPlacements"
+        ],
+        "operationId": "BlockPlacementsController_listOfBlock",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      },
+      "put": {
+        "tags": [
+          "BlockPlacements"
+        ],
+        "operationId": "BlockPlacementsController_replace",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplaceBlockPlacementsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "PLANERING"
+          ]
+        }
+      }
+    },
     "/api/v1/teaching-requirements": {
       "post": {
         "tags": [
@@ -27671,6 +27785,53 @@
         "required": [
           "studentId",
           "status"
+        ]
+      },
+      "BlockPlacementInputDto": {
+        "type": "object",
+        "properties": {
+          "dayOfWeek": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "startTime": {
+            "type": "string",
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+          },
+          "minutes": {
+            "type": "number",
+            "minimum": 15,
+            "maximum": 240
+          },
+          "rooms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BlockRoomInputDto"
+            }
+          }
+        },
+        "required": [
+          "dayOfWeek",
+          "startTime",
+          "minutes"
+        ]
+      },
+      "BlockRoomInputDto": {
+        "type": "object",
+        "properties": {
+          "requirementId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "roomId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "requirementId",
+          "roomId"
         ]
       },
       "BulkDeleteDto": {
@@ -32490,6 +32651,24 @@
           "locale"
         ]
       },
+      "ReplaceBlockPlacementsDto": {
+        "type": "object",
+        "properties": {
+          "placements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BlockPlacementInputDto"
+            }
+          },
+          "baseKey": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          }
+        },
+        "required": [
+          "placements"
+        ]
+      },
       "ReplaceLocalTimplanEntriesDto": {
         "type": "object",
         "properties": {
@@ -32512,6 +32691,9 @@
             "items": {
               "$ref": "#/components/schemas/PlacementInputDto"
             }
+          },
+          "baseKey": {
+            "type": "string"
           }
         },
         "required": [
