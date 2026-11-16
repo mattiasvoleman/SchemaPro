@@ -28,6 +28,7 @@ import {
   type BlockVerdictView,
   type LoadedBlock,
 } from './block-placement-judge';
+import { blockRowKeyOf, sentLessonsOf, unchangedRowsOfBlock } from './block-placement-unchanged';
 import type { ReplaceBlockPlacementsDto } from './dto/block-placements.dto';
 import { clockText, judgePlacements, type JudgedPlacement } from './placement-judge';
 import { blockPlacementRefusedConflict, blockPlacementsStaleConflict } from './placement-refusal';
@@ -79,7 +80,9 @@ export class BlockPlacementsService {
    * written, for the first of: a read that is not the stored one (BLOCK_PLACEMENTS_STALE, when `baseKey` is
    * given), lessons that do not fit the block (BLOCK_PLACEMENTS_DO_NOT_FIT, with the rule and the lesson), and
    * the first lesson of the first member the week does not hold (BLOCK_PLACEMENT_REFUSED, with the lesson's
-   * index, the reason and the member).
+   * index, the reason and the member). A row the block has already, equal for that member, is not refused when it
+   * has stopped holding: it stays and the answer names it (a verdict that is not ok), so that a block with two such
+   * lessons can be mended one at a time.
    *
    * Written beside other grundschema edits and never inside a rewrite of the year (the year's edit lock, 409
    * SCHEDULE_BUSY), as a post's förläggningar are. Changing a lesson moves nothing in the grundschema; it counts
@@ -116,8 +119,15 @@ export class BlockPlacementsService {
         }
 
         const { verdicts } = await this.judge(tx, user, block, wanted);
-        const refused = verdicts.find((verdict) => !verdict.ok);
-        if (refused) throw blockPlacementRefusedConflict(refused);
+        // Refused for the rows the save puts there, not for the ones the block already has: a block whose lessons have
+        // stopped holding is mended one lesson at a time, and the rows still not holding are said in the answer
+        // (block-placement-unchanged.ts). The rows the block has are the ones read above, after its row was taken.
+        const failing = verdicts.filter((verdict) => !verdict.ok);
+        if (failing.length > 0) {
+          const unchanged = unchangedRowsOfBlock(block.members, wanted, block.rows);
+          const refused = failing.find((verdict) => !unchanged.has(blockRowKeyOf(verdict.index, verdict.requirementId)));
+          if (refused) throw blockPlacementRefusedConflict(refused);
+        }
 
         // The block's rows are replaced as one list: the old ones go (their room rows with them) and the new ones are one
         // INSERT, so the trigger, which judges the block's rows when each statement is done, sees the whole set. Flat
@@ -148,13 +158,23 @@ export class BlockPlacementsService {
           if (roomRows.length > 0) await tx.teachingBlockPlacementRoom.createMany({ data: roomRows });
         }
         const written = await this.blockOf(tx, id);
+        // The rows let stand that still do not hold are named (a verdict that is not ok), at the place the answer has them.
+        const sent = sentLessonsOf(written.rows, wanted);
+        const standing = new Map(failing.map((verdict) => [blockRowKeyOf(verdict.index, verdict.requirementId), verdict] as const));
         return {
           placements: written.rows.map((row) => blockPlacementViewOf(id, row)),
-          verdicts: judgedRowsOfBlock(written, written.rows).origins.map((origin) => ({
-            index: origin.index,
-            requirementId: origin.requirementId,
-            ok: true,
-          })),
+          verdicts: judgedRowsOfBlock(written, written.rows).origins.map((origin): BlockVerdictView => {
+            const verdict = standing.get(blockRowKeyOf(sent[origin.index] ?? -1, origin.requirementId));
+            return verdict
+              ? {
+                  index: origin.index,
+                  requirementId: origin.requirementId,
+                  ok: false,
+                  ...(verdict.reason ? { reason: verdict.reason } : {}),
+                  ...(verdict.params ? { params: verdict.params } : {}),
+                }
+              : { index: origin.index, requirementId: origin.requirementId, ok: true };
+          }),
           rowsKey: blockRowsKeyOf(written.rows),
           lengths: blockLengthsOf(written),
         };

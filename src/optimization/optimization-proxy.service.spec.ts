@@ -8998,6 +8998,26 @@ describe('OptimizationProxyService', () => {
             expect(answer.conflicts!.conflicts.map((line) => line.params!['requirement'])).toEqual(['Franska för 7B', 'Tyska för 7C']);
           });
 
+          it('names each of two lessons that cannot stand, by its day and hour: what a block is left with when two of its lessons stopped holding (review of #326 in #328)', async () => {
+            world();
+            // The block save lets a lesson stand that it already had (block-placement-unchanged.ts), so a block can hold two red ones.
+            blockPlaced([blockRow(), blockRow({ id: '88888888-aaaa-4aaa-8aaa-888888888802', dayOfWeek: 4 })]);
+            blockEngine();
+            masters.findConflicts.mockImplementation(async (_client: unknown, _basis: unknown, post: { studentGroupId: string }) =>
+              post.studentGroupId === FRANSKA.group ? [{ kind: 'TEACHER', message: 'Teacher already teaches.' }] : [],
+            );
+
+            const answer = await refusedLine();
+
+            expect(http.post).not.toHaveBeenCalled();
+            expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+            expect(answer.conflicts).toMatchObject({ summaryCode: 'PLACEMENTS_REFUSED_SUMMARY', summaryParams: { count: 2 } });
+            expect(answer.conflicts!.conflicts.map((line) => [line.params!['day'], line.params!['start'], line.params!['requirement'], line.params!['block']])).toEqual([
+              [3, '10:00', 'Franska för 7B', NAME_OF_BLOCK],
+              [4, '10:00', 'Franska för 7B', NAME_OF_BLOCK],
+            ]);
+          });
+
           it('refuses a lesson that no longer fits the block, by the rule and not by a clash: a member that now shares its lessons', async () => {
             world({ arrangement: { requirements: MEMBERS.map((member, index) => requirement({ id: member.post, subjectId: member.subject, studentGroupId: member.group, teacherId: member.teacher, lessonsPerWeek: 2, blockId: BLOCK, subject: { requiredRoomTypeId: null, name: member.subjectName }, ...(index === 0 ? { shares: [{ teacherId: 'bo', lessons: 1, minutes: 60 }] } : {}) })) } });
             blockPlaced([blockRow()]);

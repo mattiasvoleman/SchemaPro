@@ -133,7 +133,9 @@ function setup(world: World = {}) {
     state.reads++;
     if (world.block === null) return null;
     if (world.goneAfterLock && state.reads >= 2) return null;
-    const rows = world.rowsAfterLock !== undefined && state.reads === 2 ? world.rowsAfterLock : state.rows;
+    const read = world.rowsAfterLock !== undefined && state.reads === 2 ? world.rowsAfterLock : state.rows;
+    // As the database reads them (BLOCK_ROW_ORDER): by day and start, so a lesson comes back where the block has it, not where it was sent.
+    const rows = [...read].sort((x, y) => x.dayOfWeek - y.dayOfWeek || x.startTime.getTime() - y.startTime.getTime() || (x.id < y.id ? -1 : 1));
     return {
       id: BLOCK,
       name: 'Språkval åk 7',
@@ -730,6 +732,146 @@ describe('BlockPlacementsService', () => {
         const again = await first.service.listOfBlock(BLOCK, user);
         expect(again.rowsKey).toBe(answer.rowsKey);
         await expect(first.service.replace(BLOCK, dto([input({ dayOfWeek: 3 })], answer.rowsKey), user)).resolves.toBeDefined();
+      });
+    });
+
+    describe('a block whose lessons have stopped holding (review of #326 in #328: a row the block has already is let stand)', () => {
+      /** The member B's teacher is busy on Tuesday and on Thursday: the block's lessons on those days do not hold for B. */
+      const busyTueAndThu = () => clashing([{ group: 'g-2', day: 2 }, { group: 'g-2', day: 4 }]);
+      const tuesday = () => storedRow('old-tue');
+      const thursday = () => storedRow('old-thu', { dayOfWeek: 4, startTime: time('13:30') });
+      const thursdayInput = () => input({ dayOfWeek: 4, startTime: '13:30' });
+
+      it('mends the block one lesson at a time: moving one of two red lessons is not refused for the other, which the answer names', async () => {
+        const { masters, tx, service } = setup({ rows: [tuesday(), thursday()] });
+        masters.findConflicts.mockImplementation(busyTueAndThu());
+
+        // Thursday's lesson moves to Wednesday, where B's teacher is free; Tuesday's stays, red for B as it was.
+        const answer = await service.replace(BLOCK, dto([input(), input({ dayOfWeek: 3 })]), user);
+
+        expect(tx['teachingBlockPlacement']!['createMany']).toHaveBeenCalledTimes(1);
+        expect(answer.placements.map((row) => row.dayOfWeek)).toEqual([2, 3]);
+        expect(answer.verdicts).toEqual([
+          { index: 0, requirementId: A, ok: true },
+          expect.objectContaining({ index: 0, requirementId: B, ok: false, reason: 'TEACHER' }),
+          { index: 0, requirementId: C, ok: true },
+          { index: 1, requirementId: A, ok: true },
+          { index: 1, requirementId: B, ok: true },
+          { index: 1, requirementId: C, ok: true },
+        ]);
+      });
+
+      it('lets both red lessons stay while a new one is added, names both where the answer has them, and a read of the block names the same', async () => {
+        // Three lessons a week each, so that the block has room for a third.
+        const { masters, service } = setup({
+          members: [A, B, C].map((id) => memberRow(id, { lessonsPerWeek: 3 })),
+          rows: [tuesday(), thursday()],
+        });
+        masters.findConflicts.mockImplementation(busyTueAndThu());
+
+        const answer = await service.replace(BLOCK, dto([thursdayInput(), input(), input({ dayOfWeek: 3 })]), user);
+
+        expect(answer.placements.map((row) => row.dayOfWeek)).toEqual([2, 3, 4]);
+        expect(answer.verdicts.filter((verdict) => !verdict.ok).map((verdict) => [verdict.index, verdict.requirementId, verdict.reason])).toEqual([
+          [0, B, 'TEACHER'],
+          [2, B, 'TEACHER'],
+        ]);
+        // Carried to the lesson's place in the answer (Thursday is sent first and comes back third), and the same as the read says.
+        const again = await service.listOfBlock(BLOCK, user);
+        expect(again.verdicts.map(({ index, requirementId, ok, reason }) => ({ index, requirementId, ok, reason }))).toEqual(
+          answer.verdicts.map(({ index, requirementId, ok, reason }) => ({ index, requirementId, ok, reason })),
+        );
+      });
+
+      it('carries the reason and the other lesson of a let-stand row into the answer, as the read says them', async () => {
+        const { masters, service } = setup({ rows: [thursday()] });
+        masters.findConflicts.mockImplementation(clashing([{ group: 'g-2', day: 4 }]));
+
+        const answer = await service.replace(BLOCK, dto([thursdayInput()]), user);
+
+        const red = answer.verdicts.find((verdict) => !verdict.ok)!;
+        const read = (await service.listOfBlock(BLOCK, user)).verdicts.find((verdict) => !verdict.ok)!;
+        expect(red).toEqual(read);
+        expect(red).toMatchObject({ index: 0, requirementId: B, reason: 'TEACHER', params: { day: 4, start: '13:30', end: '14:30' } });
+      });
+
+      it('still refuses a NEW lesson that does not hold, and names it, though an unchanged red one stands before it in the request', async () => {
+        const { masters, tx, service } = setup({ rows: [thursday()] });
+        masters.findConflicts.mockImplementation(busyTueAndThu());
+
+        const refused = service.replace(BLOCK, dto([thursdayInput(), input()]), user);
+
+        await expect(refused).rejects.toMatchObject({
+          status: 409,
+          response: { code: 'BLOCK_PLACEMENT_REFUSED', params: { index: 1, requirementId: B, reason: 'TEACHER' } },
+        });
+        expect(tx['teachingBlockPlacement']!['deleteMany']).not.toHaveBeenCalled();
+        expect(tx['teachingBlockPlacement']!['createMany']).not.toHaveBeenCalled();
+      });
+
+      it('still refuses a CHANGED lesson that does not hold: a lesson moved within its day is a new row', async () => {
+        const { masters, tx, service } = setup({ rows: [thursday()] });
+        masters.findConflicts.mockImplementation(busyTueAndThu());
+
+        const refused = service.replace(BLOCK, dto([input({ dayOfWeek: 4, startTime: '14:00' })]), user);
+
+        await expect(refused).rejects.toMatchObject({ response: { code: 'BLOCK_PLACEMENT_REFUSED', params: { index: 0, requirementId: B } } });
+        expect(tx['teachingBlockPlacement']!['createMany']).not.toHaveBeenCalled();
+      });
+
+      it('still refuses a lesson that moved to another day at the same hour: Tuesday 13:30 is a row the block does not have', async () => {
+        const { masters, service } = setup({ rows: [thursday()] });
+        masters.findConflicts.mockImplementation(busyTueAndThu());
+
+        // B is busy on Tuesdays as on Thursdays, so the moved lesson is red, and it is not Thursday's.
+        await expect(service.replace(BLOCK, dto([input({ dayOfWeek: 2, startTime: '13:30' })]), user)).rejects.toMatchObject({
+          response: { code: 'BLOCK_PLACEMENT_REFUSED', params: { index: 0, requirementId: B } },
+        });
+      });
+
+      it('holds a member\'s room as part of its row: the same lesson in another room is a changed row for that member', async () => {
+        const inRoom = (roomId: string) => ({ requirementId: B, roomId, room: { name: 'Sal' } });
+        const world = () => setup({ rows: [storedRow('old-tue', { rooms: [inRoom(ROOM_1)] })] });
+        const same = world();
+        same.masters.findConflicts.mockImplementation(clashing([{ group: 'g-2', day: 2 }]));
+        await expect(same.service.replace(BLOCK, dto([input({ rooms: [{ requirementId: B, roomId: ROOM_1 }] })]), user)).resolves.toBeDefined();
+
+        const other = world();
+        other.masters.findConflicts.mockImplementation(clashing([{ group: 'g-2', day: 2 }]));
+        await expect(other.service.replace(BLOCK, dto([input({ rooms: [{ requirementId: B, roomId: ROOM_2 }] })]), user)).rejects.toMatchObject({
+          response: { code: 'BLOCK_PLACEMENT_REFUSED', params: { index: 0, requirementId: B } },
+        });
+        const none = world();
+        none.masters.findConflicts.mockImplementation(clashing([{ group: 'g-2', day: 2 }]));
+        await expect(none.service.replace(BLOCK, dto([input()]), user)).rejects.toMatchObject({
+          response: { code: 'BLOCK_PLACEMENT_REFUSED', params: { index: 0, requirementId: B } },
+        });
+      });
+
+      it('holds each member\'s row on its own: a lesson changed for one member leaves the red row of another, which it did not change, standing', async () => {
+        const { masters, service } = setup({
+          rows: [storedRow('old-tue', { rooms: [{ requirementId: A, roomId: ROOM_1, room: { name: 'Sal 1' } }] })],
+        });
+        // A is red on Tuesday as it was; the save gives B a room, which is green.
+        masters.findConflicts.mockImplementation(clashing([{ group: 'g-1', day: 2 }]));
+
+        const answer = await service.replace(
+          BLOCK,
+          dto([input({ rooms: [{ requirementId: A, roomId: ROOM_1 }, { requirementId: B, roomId: ROOM_2 }] })]),
+          user,
+        );
+
+        expect(answer.verdicts.map((verdict) => [verdict.requirementId, verdict.ok])).toEqual([[A, false], [B, true], [C, true]]);
+      });
+
+      it('refuses nothing when the save removes every lesson, though the block has red ones: nothing is judged', async () => {
+        const { masters, service } = setup({ rows: [tuesday(), thursday()] });
+        masters.findConflicts.mockImplementation(busyTueAndThu());
+
+        const answer = await service.replace(BLOCK, dto([]), user);
+
+        expect(answer.placements).toEqual([]);
+        expect(masters.findConflicts).not.toHaveBeenCalled();
       });
     });
 
