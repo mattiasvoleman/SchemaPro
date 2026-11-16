@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { recordRead } from '../access-log/access-log';
+import { Role } from '../auth/enums/role.enum';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { calendarLessonRosters, type CalendarRosterLesson } from '../calendar/lesson-roster';
 import { isWriteConflict, writeConflict } from '../common/utils/prisma-errors';
@@ -650,19 +651,52 @@ export class CrisisService {
   // ---------------------------------------------------------------------------
 
   /**
+   * What an administrator who teaches (Users.teaches) is shown of krisläge as a teacher: the alarms in the window
+   * and, in them, the groups the person answers for. A teacher is narrowed to exactly this by row-level security
+   * (crisis_alarms_teacher_select, crisis_calls_teacher_select), but an administrator's own arms admit every alarm and
+   * every group of the school, for good, so the narrowing is asked of the database's own functions here
+   * (app.crisis_window_open, app.crisis_answers_for, app.crisis_call_window_open) and not worked out again: the window
+   * and who answers for a group are the database's rules, the same ones a teacher is held to. The call query starts
+   * from the alarms of the window only to keep it off the school's whole history; the functions are the judge.
+   * `onlyAlarmId` asks about one alarm (the search for pupils). Never asked for a teacher: their arms are the filter.
+   */
+  private async teachersView(tx: PrismaClient, schoolId: string, onlyAlarmId?: string): Promise<{ alarmIds: string[]; callIds: string[] }> {
+    const alarms = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT a."id" FROM "CrisisAlarms" a
+       WHERE a."schoolId" = ${schoolId}::uuid
+         ${onlyAlarmId ? Prisma.sql`AND a."id" = ${onlyAlarmId}::uuid` : Prisma.empty}
+         AND app.crisis_window_open(a."id")`);
+    const alarmIds = alarms.map((row) => row.id);
+    if (alarmIds.length === 0) return { alarmIds, callIds: [] };
+    const calls = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT c."id" FROM "CrisisCalls" c
+       WHERE c."schoolId" = ${schoolId}::uuid
+         AND c."alarmId" = ANY (${alarmIds}::uuid[])
+         AND app.crisis_answers_for(c."id")
+         AND app.crisis_call_window_open(c."id")`);
+    return { alarmIds, callIds: calls.map((row) => row.id) };
+  }
+
+  /**
    * The alarms a teacher is to answer in and their groups: what the phone
    * shows and keeps for offline. Row-level security hands a teacher the
    * alarms that are open (or ended within the hour) and the calls they answer
-   * for, so this reads without naming either.
+   * for, so this reads without naming either. An administrator who teaches
+   * is handed the same by asking the database (teachersView): an
+   * administrator's own arms would show the whole school, always.
    */
   async mine(user: AuthenticatedUser): Promise<MyCrisisResponse> {
     const schoolId = requireSchoolId(user);
     const me = requireUserId(user);
     return this.prisma.withRls(user, async (tx) => {
-      const alarms = await tx.crisisAlarm.findMany({ where: { schoolId }, orderBy: [{ startedAt: 'desc' }, { id: 'desc' }] });
+      const view = user.role === Role.SCHOOL_ADMIN ? await this.teachersView(tx, schoolId) : null;
+      const alarms = await tx.crisisAlarm.findMany({
+        where: view ? { schoolId, id: { in: view.alarmIds } } : { schoolId },
+        orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
+      });
       const rows = alarms.length
         ? await tx.crisisCall.findMany({
-            where: { schoolId, alarmId: { in: alarms.map((alarm) => alarm.id) } },
+            where: view ? { schoolId, alarmId: { in: alarms.map((alarm) => alarm.id) }, id: { in: view.callIds } } : { schoolId, alarmId: { in: alarms.map((alarm) => alarm.id) } },
             include: CALL_INCLUDE,
             orderBy: [{ lessonStartsAt: 'asc' }, { groupName: 'asc' }, { id: 'asc' }],
           })
@@ -760,10 +794,17 @@ export class CrisisService {
     const schoolId = requireSchoolId(user);
     const words = q.split(/\s+/).filter((word) => word.length > 0).slice(0, 4);
     return this.prisma.withRls(user, async (tx) => {
+      // An administrator who teaches is held to a teacher's view by the database's own functions (teachersView): the
+      // alarm must be in the window, and the lists left out are the groups they answer for, not the whole alarm's.
+      const view = user.role === Role.SCHOOL_ADMIN ? await this.teachersView(tx, schoolId, alarmId) : null;
       // The alarm must be one this teacher may read (the window), and the lists they answer for are left out.
-      const alarm = await tx.crisisAlarm.findFirst({ where: { id: alarmId, schoolId }, select: { id: true } });
+      const alarm = view && view.alarmIds.length === 0 ? null : await tx.crisisAlarm.findFirst({ where: { id: alarmId, schoolId }, select: { id: true } });
       if (!alarm) throw notFound();
-      const mine = await tx.crisisPupil.findMany({ where: { alarmId }, select: { studentId: true } });
+      const mine = view
+        ? view.callIds.length
+          ? await tx.crisisPupil.findMany({ where: { alarmId, callId: { in: view.callIds } }, select: { studentId: true } })
+          : []
+        : await tx.crisisPupil.findMany({ where: { alarmId }, select: { studentId: true } });
       const rows = await tx.user.findMany({
         where: {
           schoolId,

@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import request from 'supertest';
+import { rawSql } from './utils/locking-read';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 
 /**
@@ -270,13 +271,19 @@ describe('Administrator profiles and areas (e2e)', () => {
   // makes, and the refusals reach the client as themselves. A unit spec reads getResponse() and sees a nested value
   // that the filter drops; only a request through the real filter shows what a client gets (the code, flat params).
   describe('the mark that an administrator teaches, through PATCH /users/:id', () => {
+    // The mark changes who is a mentor (app.leave_mentors), so a PATCH that changes it asks the database to tell the mentors of the
+    // requests they have not been told of (PR 4): that statement answers nothing, and every other raw statement the stored row.
     const stored = (overrides: Record<string, unknown> = {}) =>
-      harness.tx.$queryRaw.mockResolvedValue([
-        {
-          role: 'SCHOOL_ADMIN', studentGroupId: null, pseudonymisedAt: null, adminProfile: 'SCHEMALAGGARE', hrRead: false,
-          teaches: false, isActive: true, schoolId: '33333333-3333-4333-8333-333333333333', ...overrides,
-        },
-      ]);
+      harness.tx.$queryRaw.mockImplementation(async (...call: unknown[]) =>
+        rawSql(call).includes('app.leave_requests_tell_new_mentors()')
+          ? []
+          : [
+              {
+                role: 'SCHOOL_ADMIN', studentGroupId: null, pseudonymisedAt: null, adminProfile: 'SCHEMALAGGARE', hrRead: false,
+                teaches: false, isActive: true, schoolId: '33333333-3333-4333-8333-333333333333', ...overrides,
+              },
+            ],
+      );
     const patch = (principal: string, body: Record<string, unknown>) =>
       request(http()).patch(`/api/v1/users/${USER_ID}`).set('x-test-user', principal).send(body);
 
@@ -295,6 +302,8 @@ describe('Administrator profiles and areas (e2e)', () => {
       const response = await patch(as('REKTOR'), { teaches: true }).expect(200);
       expect(response.body).toMatchObject({ id: USER_ID, teaches: true });
       expect(harness.tx['user']!['update']).toHaveBeenCalledWith({ where: { id: USER_ID }, data: { teaches: true } });
+      // The mark is a mentor's coming (app.leave_mentors), so the requests waiting for a mentor nobody told are asked after the write.
+      expect(harness.tx.$queryRaw.mock.calls.some((call) => rawSql(call).includes('app.leave_requests_tell_new_mentors()'))).toBe(true);
     });
 
     it('is refused to the expedition, which may edit people but does not decide: 403 with the decision’s code, nothing written', async () => {

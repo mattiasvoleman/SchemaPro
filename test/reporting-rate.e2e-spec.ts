@@ -283,4 +283,48 @@ describe('/api/v1/reporting-rate (e2e)', () => {
       expect(wheres.every((where) => where.teacherId === '66666666-6666-4666-8666-666666666666')).toBe(true);
     });
   });
+
+  // Administratör som lärare (Users.teaches): the teacher's own page is a door for an administrator who teaches, whatever the profile
+  // writes; the database counts them as the teacher of the lessons they stand on (app.reporting_lessons, RLS sections 510-514), and the
+  // page reads their own days and nothing else. The mark gives no administrator's right: the school's figures and the switches are
+  // asked as before.
+  describe('an administrator who teaches (Users.teaches)', () => {
+    const ME = '22222222-2222-4222-8222-222222222222';
+    const teaching = (adminProfile: string, extra: Record<string, unknown> = {}) =>
+      asUser({ adminProfile: adminProfile as never, userId: ME, teaches: true, ...extra });
+
+    it.each(WRITING_PROFILES)('answers a %s’s own page from the handler, as the teacher’s, on their own days alone', async (adminProfile) => {
+      harness.tx['reportingSetting']!['findUnique']!.mockResolvedValue({ openAfterDays: 3 });
+      const response = await http().get('/api/v1/reporting-rate/mine').set('x-test-user', teaching(adminProfile)).expect(200);
+      expect(response.body).toMatchObject({
+        openAfterDays: 3,
+        open: [{ lessonId: '55555555-5555-4555-8555-555555555555', groupName: '7A', overdue: true }],
+        week: { held: 10, reported: 8 },
+      });
+      const wheres = harness.tx['teacherReportingDay']!['aggregate']!.mock.calls.map(([args]) => (args as { where: { teacherId: string } }).where);
+      expect(wheres.length).toBeGreaterThan(0);
+      expect(wheres.every((where) => where.teacherId === ME)).toBe(true);
+      expect(harness.tx['teacherReportingDay']!['groupBy']).not.toHaveBeenCalled();
+      expect(harness.tx.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['no mark', asUser({ userId: ME })],
+      ['the mark false', asUser({ userId: ME, teaches: false })],
+      ['a schemaläggare with no mark', asUser({ userId: ME, adminProfile: 'SCHEMALAGGARE' as never })],
+      ['the mark and a läsare’s profile (the database holds the mark off a läsare; this is the second line)', teaching('LASARE')],
+    ])('refuses the page to %s, reading nothing', async (_who, principal) => {
+      await http().get('/api/v1/reporting-rate/mine').set('x-test-user', principal).expect(403);
+      expect(harness.tx['teacherReportingDay']!['aggregate']).not.toHaveBeenCalled();
+      expect(harness.tx.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('gives the mark no administrator’s right: the switches stay a Drift profile’s, and the school’s figures the administrator’s own route', async () => {
+      const refused = await http().put('/api/v1/reporting-rate/settings').set('x-test-user', teaching('LASARE')).send({ teacherReminders: true }).expect(403);
+      expect(refused.body.code).toBe('AREA_NOT_YOURS');
+      expect(harness.tx['reportingSetting']!['upsert']).not.toHaveBeenCalled();
+      // A teacher, marked or not, never reads the school's: the route says SCHOOL_ADMIN and carries no door.
+      await http().get('/api/v1/reporting-rate').set('x-test-user', asUser({ role: 'TEACHER' as never, teaches: true })).expect(403);
+    });
+  });
 });

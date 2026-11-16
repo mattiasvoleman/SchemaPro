@@ -4,7 +4,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
 import { PrismaService } from '../database/prisma.service';
 import type { NotificationPreferencesDto } from './dto/notification-preferences.dto';
-import { REQUIRED_BY_ROLE, TYPES_BY_ROLE, isChoosingRole } from './notification-types';
+import { REQUIRED_BY_ROLE, isChoosingRole, typesFor } from './notification-types';
 import type { NotificationKind } from './notifications.service';
 
 export interface NotificationPreference {
@@ -33,18 +33,19 @@ export class NotificationPreferencesService {
     // Huvudman: the huvudman's reader has no row at the school, so nothing to
     // be told and nothing opted out of; the page reads, and saving is
     // refused (RolesGuard, HUVUDMAN_READS_ONLY).
-    if (user.huvudman && !user.userId) return { types: this.listFor(user.role, new Set()) };
+    if (user.huvudman && !user.userId) return { types: this.listFor(user.role, new Set(), user.teaches) };
     const userId = requireUserId(user);
     const rows = await this.prisma.queryWithRls(user, (db) =>
       db.notificationOptOut.findMany({ where: { userId }, select: { type: true } }),
     );
-    return { types: this.listFor(user.role, new Set((rows ?? []).map((row) => row.type as NotificationKind))) };
+    return { types: this.listFor(user.role, new Set((rows ?? []).map((row) => row.type as NotificationKind)), user.teaches) };
   }
 
   async put(dto: NotificationPreferencesDto, user: AuthenticatedUser): Promise<{ types: NotificationPreference[] }> {
     const userId = requireUserId(user);
     const schoolId = requireSchoolId(user);
-    const offered = isChoosingRole(user.role) ? TYPES_BY_ROLE[user.role] : [];
+    // An administrator who teaches (Users.teaches) is offered the teacher's three notices besides their own.
+    const offered = isChoosingRole(user.role) ? typesFor(user.role, user.teaches) : [];
     const required = isChoosingRole(user.role) ? REQUIRED_BY_ROLE[user.role] : new Set<NotificationKind>();
     for (const type of dto.optOut as NotificationKind[]) {
       if (required.has(type)) {
@@ -71,13 +72,13 @@ export class NotificationPreferencesService {
         });
       }
     });
-    return { types: this.listFor(user.role, new Set(chosen)) };
+    return { types: this.listFor(user.role, new Set(chosen), user.teaches) };
   }
 
-  private listFor(role: string, optedOut: ReadonlySet<NotificationKind>): NotificationPreference[] {
+  private listFor(role: string, optedOut: ReadonlySet<NotificationKind>, teaches: boolean | undefined): NotificationPreference[] {
     if (!isChoosingRole(role)) return [];
     const required = REQUIRED_BY_ROLE[role];
-    return TYPES_BY_ROLE[role].map((type) => ({
+    return typesFor(role, teaches).map((type) => ({
       type,
       enabled: required.has(type) || !optedOut.has(type),
       required: required.has(type),

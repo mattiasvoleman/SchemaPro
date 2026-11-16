@@ -6,7 +6,7 @@ import {
   NOTIFICATION_TYPE_REQUIRED,
   NotificationPreferencesService,
 } from './notification-preferences.service';
-import { TYPES_BY_ROLE, deliveredRegardless, isChoosingRole } from './notification-types';
+import { TYPES_BY_ROLE, deliveredRegardless, isChoosingRole, typesFor } from './notification-types';
 
 const USER = '22222222-2222-4222-8222-222222222222';
 const SCHOOL = '33333333-3333-4333-8333-333333333333';
@@ -110,6 +110,56 @@ describe('NotificationPreferencesService', () => {
     expect(error).toBeInstanceOf(BadRequestException);
     expect((error as BadRequestException).getResponse()).toMatchObject({ code, params: { type } });
     expect(prisma.withRls).not.toHaveBeenCalled();
+  });
+
+  // Administratör som lärare (Users.teaches): the database writes the teacher's three notices for a person it counts as one,
+  // so the switches are offered to that person, and to nobody else: not to an administrator who does not teach, not COVER_REQUESTED.
+  describe('an administrator who teaches (Users.teaches)', () => {
+    const THREE = ['LESSON_PUPIL_MOVED', 'LEAVE_REQUESTED', 'LESSON_REPORT_REMINDER'];
+    const teaching = (teaches: boolean | undefined) =>
+      testUser({ role: 'SCHOOL_ADMIN' as never, userId: USER, schoolId: SCHOOL, ...(teaches === undefined ? {} : { teaches }) });
+
+    it('is offered the administrator’s types and the teacher’s three, in that order, and not the cover request, which is never theirs (SP409)', () => {
+      expect(typesFor('SCHOOL_ADMIN', true)).toEqual([...TYPES_BY_ROLE.SCHOOL_ADMIN, ...THREE]);
+      expect(typesFor('SCHOOL_ADMIN', true)).not.toContain('COVER_REQUESTED');
+      // Every other combination is the role's own list, the same array: the mark is read for an administrator only.
+      expect(typesFor('SCHOOL_ADMIN', false)).toBe(TYPES_BY_ROLE.SCHOOL_ADMIN);
+      expect(typesFor('SCHOOL_ADMIN', undefined)).toBe(TYPES_BY_ROLE.SCHOOL_ADMIN);
+      expect(typesFor('TEACHER', true)).toBe(TYPES_BY_ROLE.TEACHER);
+      expect(typesFor('GUARDIAN', true)).toBe(TYPES_BY_ROLE.GUARDIAN);
+      expect(typesFor('STUDENT', true)).toBe(TYPES_BY_ROLE.STUDENT);
+      // The three are the teacher's: not an invention here.
+      for (const type of THREE) expect(TYPES_BY_ROLE.TEACHER).toContain(type);
+    });
+
+    it('lists the three, on, beside the administrator’s own, and the required ones as an administrator’s', async () => {
+      const { types } = await service.get(teaching(true));
+      expect(types.map((t) => t.type)).toEqual([...TYPES_BY_ROLE.SCHOOL_ADMIN, ...THREE]);
+      expect(types.filter((t) => THREE.includes(t.type)).every((t) => t.enabled && !t.required)).toBe(true);
+      expect(types.filter((t) => t.required).map((t) => t.type)).toEqual(['LESSON_COVER_WITHDRAWN', 'SUPERVISION_COVER', 'SUPERVISION_COVER_WITHDRAWN']);
+      // Not marked: the list as it was.
+      const plain = await service.get(teaching(false));
+      expect(plain.types.map((t) => t.type)).toEqual(TYPES_BY_ROLE.SCHOOL_ADMIN);
+    });
+
+    it('may turn the three off, and the answer says so', async () => {
+      const chosen = ['LEAVE_REQUESTED', 'LESSON_REPORT_REMINDER', 'LESSON_PUPIL_MOVED'];
+      const result = await service.put({ optOut: chosen }, teaching(true));
+      expect(tx.notificationOptOut.createMany).toHaveBeenCalledWith({ data: chosen.map((type) => ({ userId: USER, schoolId: SCHOOL, type })) });
+      expect(result.types.filter((t) => THREE.includes(t.type)).map((t) => t.enabled)).toEqual([false, false, false]);
+    });
+
+    it.each([
+      ['an administrator who does not teach', false, 'LEAVE_REQUESTED'],
+      ['an administrator with no mark in their principal', undefined, 'LESSON_REPORT_REMINDER'],
+      ['an administrator who does not teach', false, 'LESSON_PUPIL_MOVED'],
+      ['an administrator who teaches', true, 'COVER_REQUESTED'],
+    ])('refuses %s choosing %s as not offered, writing nothing', async (_who, teaches, type) => {
+      const error = await service.put({ optOut: [type] }, teaching(teaches)).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getResponse()).toMatchObject({ code: NOTIFICATION_TYPE_NOT_OFFERED, params: { type } });
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
   });
 
   it('knows which notices are delivered regardless', () => {

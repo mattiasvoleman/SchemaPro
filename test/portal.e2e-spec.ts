@@ -222,6 +222,47 @@ describe('Portal and platform surfaces (e2e)', () => {
       expect(harness.tx['leaveRequest']!['findUnique']).not.toHaveBeenCalled();
     });
 
+    // Administratör som lärare (Users.teaches): "passing a request on to rektor" is a mentor's, and a marked administrator who is the
+    // pupil's mentor (app.leave_mentors) is one; the route lets the mark in and the database says whether the request is theirs.
+    describe('an administrator who teaches (Users.teaches)', () => {
+      const teaching = (adminProfile: string, extra: Record<string, unknown> = {}) =>
+        asUser({ adminProfile: adminProfile as never, teaches: true, ...extra });
+      const refer = (principal: string) => request(http()).patch(`/api/v1/leave-requests/${RECORD_ID}/refer`).set('x-test-user', principal);
+      // The raw statements are stubbed here and must not outlive the block: deleting the stub gives the mock its default back.
+      afterEach(() => {
+        Reflect.deleteProperty(harness.tx, '$queryRaw');
+      });
+
+      it.each(['FULL', 'REKTOR', 'SCHEMALAGGARE', 'EXPEDITION'])('passes a pending request on for a %s, from the handler: the database says it was theirs', async (profile) => {
+        harness.tx['leaveRequest']!['findUnique']!.mockResolvedValue({ status: 'PENDING' });
+        harness.tx.$queryRaw.mockResolvedValue([{ referred: true }]);
+        const response = await refer(teaching(profile)).expect(200);
+        expect(response.body).toEqual({ id: RECORD_ID, referred: true });
+        expect(harness.tx['leaveRequest']!['findUnique']).toHaveBeenCalledWith({ where: { id: RECORD_ID }, select: { status: true } });
+      });
+
+      it('is a 409 when the database says it is no longer theirs to pass on, a 404 when it never was, and a 409 when it is decided', async () => {
+        // The request is not found in their transaction: theirs and taken (a co-mentor, rektor or the family withdrew it), or not theirs.
+        harness.tx['leaveRequest']!['findUnique']!.mockResolvedValue(null);
+        harness.tx.$queryRaw.mockResolvedValue([{ taken: true }]);
+        await refer(teaching('REKTOR')).expect(409);
+        harness.tx.$queryRaw.mockResolvedValue([{ taken: false }]);
+        await refer(teaching('REKTOR')).expect(404);
+        harness.tx['leaveRequest']!['findUnique']!.mockResolvedValue({ status: 'APPROVED' });
+        await refer(teaching('REKTOR')).expect(409);
+        harness.tx['leaveRequest']!['findUnique']!.mockResolvedValue({ status: 'PENDING' });
+        harness.tx.$queryRaw.mockResolvedValue([{ referred: false }]);
+        await refer(teaching('REKTOR')).expect(409);
+      });
+
+      it('is refused to the same administrator without the mark, with it false and as a läsare, and nothing is read', async () => {
+        for (const principal of [admin(), asUser({ teaches: false }), asUser({ adminProfile: 'SCHEMALAGGARE' as never }), teaching('LASARE')]) {
+          await refer(principal).expect(403);
+        }
+        expect(harness.tx['leaveRequest']!['findUnique']).not.toHaveBeenCalled();
+      });
+    });
+
     it('lets rektor record a delegation of 1 to 10 skoldagar, or none, and nothing else', async () => {
       harness.tx['leaveDelegationDecision']!['create']!.mockResolvedValue({
         mentorMaxSchoolDays: 3,

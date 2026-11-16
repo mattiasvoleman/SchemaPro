@@ -22,6 +22,12 @@ const MARK = '99999999-9999-4999-8999-999999999999';
 
 const admin = testUser({ role: Role.SCHOOL_ADMIN, userId: ADMIN, schoolId: SCHOOL, adminProfile: 'FULL' });
 const teacher = testUser({ role: Role.TEACHER, userId: TEACHER, schoolId: SCHOOL });
+/** An administrator who teaches (Users.teaches): reads krisläge as a teacher does, through the teacher's route. */
+const teachingAdmin = testUser({ role: Role.SCHOOL_ADMIN, userId: ADMIN, schoolId: SCHOOL, adminProfile: 'REKTOR', teaches: true });
+
+/** The SQL text of a $queryRaw call (Prisma.sql), with its values as '?'. */
+const sqlText = (call: unknown[]): string => ((call[0] as { strings: string[] }).strings ?? []).join('?');
+const sqlValues = (call: unknown[]): unknown[] => (call[0] as { values: unknown[] }).values ?? [];
 
 const sqlError = (state: string) =>
   new Prisma.PrismaClientKnownRequestError('refused', {
@@ -508,6 +514,72 @@ describe('CrisisService', () => {
       // The call is complete: the second pupil has a mark, the first was absent before and needs none.
       expect(mine.completedAt).toBe('2027-01-12T09:12:00.000Z');
       expect(new Date(result.asOf).getTime()).toBeGreaterThan(0);
+      // A teacher's view is what row-level security hands them: the service asks the database nothing extra and names no alarm or group.
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+      expect(tx.crisisAlarm.findMany).toHaveBeenCalledWith({ where: { schoolId: SCHOOL }, orderBy: [{ startedAt: 'desc' }, { id: 'desc' }] });
+      expect(tx.crisisCall.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { schoolId: SCHOOL, alarmId: { in: [ALARM] } } }));
+    });
+
+    // Administratör som lärare (Users.teaches): an administrator's own arms admit every alarm and group of the school, for good,
+    // so the teacher's view is asked of the database's functions and the reads name what they answered.
+    describe('for an administrator who teaches', () => {
+      const callRow = () => ({
+        id: CALL,
+        alarmId: ALARM,
+        calendarLessonId: LESSON,
+        basis: 'NEXT_LESSON',
+        groupName: '7A',
+        subjectName: 'Svenska',
+        roomName: null,
+        lessonStartsAt: new Date('2027-01-12T09:20:00Z'),
+        lessonEndsAt: new Date('2027-01-12T10:05:00Z'),
+        teachers: [{ teacherId: ADMIN, role: 'LEAD', answeredAt: null }],
+        pupils: [{ studentId: PUPIL, priorAbsentSource: null, state: null, stateAt: null, stateByUserId: null }],
+      });
+
+      it('asks the database which alarms are in the window and which groups they answer for, and reads only those', async () => {
+        tx.$queryRaw.mockResolvedValueOnce([{ id: ALARM }]).mockResolvedValueOnce([{ id: CALL }]);
+        tx.crisisAlarm.findMany.mockResolvedValue([alarmRow()]);
+        tx.crisisCall.findMany.mockResolvedValue([callRow()]);
+        tx.crisisReport.findMany.mockResolvedValue([]);
+        tx.user.findMany.mockResolvedValue([{ id: ADMIN, firstName: 'Rut', lastName: 'Rektor', studentGroup: null }, { id: PUPIL, firstName: 'Zeb', lastName: 'Öst', studentGroup: { name: '7A' } }]);
+
+        const result = await service.mine(teachingAdmin);
+
+        // The window and the answer are the database's: its functions are asked, nothing is computed from a date here.
+        const [alarms, calls] = tx.$queryRaw.mock.calls as unknown[][];
+        expect(sqlText(alarms!)).toContain('app.crisis_window_open(a."id")');
+        expect(sqlText(alarms!)).not.toMatch(/interval|now\(\)|endedAt/);
+        expect(sqlText(calls!)).toContain('app.crisis_answers_for(c."id")');
+        expect(sqlText(calls!)).toContain('app.crisis_call_window_open(c."id")');
+        expect(sqlValues(calls!)).toContain(SCHOOL);
+        expect(tx.crisisAlarm.findMany).toHaveBeenCalledWith({ where: { schoolId: SCHOOL, id: { in: [ALARM] } }, orderBy: [{ startedAt: 'desc' }, { id: 'desc' }] });
+        expect(tx.crisisCall.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { schoolId: SCHOOL, alarmId: { in: [ALARM] }, id: { in: [CALL] } } }),
+        );
+        expect(result.alarms).toHaveLength(1);
+        expect(result.alarms[0]!.calls.map((call) => call.id)).toEqual([CALL]);
+      });
+
+      it('names an alarm of the window with no group of theirs, with no calls, and an alarm outside the window not at all', async () => {
+        tx.$queryRaw.mockResolvedValueOnce([{ id: ALARM }]).mockResolvedValueOnce([]);
+        tx.crisisAlarm.findMany.mockResolvedValue([alarmRow()]);
+        tx.crisisCall.findMany.mockResolvedValue([]);
+        tx.crisisReport.findMany.mockResolvedValue([]);
+        tx.user.findMany.mockResolvedValue([]);
+        const result = await service.mine(teachingAdmin);
+        expect(result.alarms.map((alarm) => [alarm.id, alarm.calls])).toEqual([[ALARM, []]]);
+        expect(tx.crisisCall.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { schoolId: SCHOOL, alarmId: { in: [ALARM] }, id: { in: [] } } }));
+
+        // Nothing in the window: the alarms are asked by an empty list, and no group is looked for.
+        jest.clearAllMocks();
+        tx.$queryRaw.mockResolvedValueOnce([]);
+        tx.crisisAlarm.findMany.mockResolvedValue([]);
+        expect((await service.mine(teachingAdmin)).alarms).toEqual([]);
+        expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+        expect(tx.crisisAlarm.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { schoolId: SCHOOL, id: { in: [] } } }));
+        expect(tx.crisisCall.findMany).not.toHaveBeenCalled();
+      });
     });
   });
 
@@ -522,6 +594,46 @@ describe('CrisisService', () => {
       expect(query.where).toMatchObject({ schoolId: SCHOOL, role: 'STUDENT', isActive: true, id: { notIn: [PUPIL] } });
       expect(query.where.AND).toHaveLength(2); // one clause per word
       expect(query.take).toBe(25);
+      // A teacher's lists are what row-level security hands them: nothing extra is asked of the database, and no group is named.
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+      expect(tx.crisisPupil.findMany).toHaveBeenCalledWith({ where: { alarmId: ALARM }, select: { studentId: true } });
+    });
+
+    describe('for an administrator who teaches (Users.teaches)', () => {
+      it('leaves out the groups they answer for in the alarm, not every pupil of the alarm (an administrator reads them all), and finds the rest', async () => {
+        tx.$queryRaw.mockResolvedValueOnce([{ id: ALARM }]).mockResolvedValueOnce([{ id: CALL }]);
+        tx.crisisAlarm.findFirst.mockResolvedValue({ id: ALARM });
+        tx.crisisPupil.findMany.mockResolvedValue([{ studentId: PUPIL }]);
+        tx.user.findMany.mockResolvedValue([{ id: PUPIL3, firstName: 'Cy', lastName: 'Dal', studentGroup: { name: '8B' } }]);
+
+        const found = await service.searchPupils(ALARM, 'cy', teachingAdmin);
+
+        expect(found).toEqual([{ studentId: PUPIL3, firstName: 'Cy', lastName: 'Dal', className: '8B' }]);
+        const [alarms, calls] = tx.$queryRaw.mock.calls as unknown[][];
+        expect(sqlText(alarms!)).toContain('app.crisis_window_open(a."id")');
+        expect(sqlValues(alarms!)).toEqual([SCHOOL, ALARM]);
+        expect(sqlText(calls!)).toContain('app.crisis_answers_for(c."id")');
+        expect(tx.crisisPupil.findMany).toHaveBeenCalledWith({ where: { alarmId: ALARM, callId: { in: [CALL] } }, select: { studentId: true } });
+        const query = tx.user.findMany.mock.calls[0]![0] as { where: { id: { notIn: string[] } } };
+        expect(query.where.id).toEqual({ notIn: [PUPIL] });
+      });
+
+      it('leaves out nobody when they answer for no group in the alarm, so that the whole school is there to find, and asks no list', async () => {
+        tx.$queryRaw.mockResolvedValueOnce([{ id: ALARM }]).mockResolvedValueOnce([]);
+        tx.crisisAlarm.findFirst.mockResolvedValue({ id: ALARM });
+        tx.user.findMany.mockResolvedValue([]);
+        await service.searchPupils(ALARM, 'cy', teachingAdmin);
+        expect(tx.crisisPupil.findMany).not.toHaveBeenCalled();
+        expect((tx.user.findMany.mock.calls[0]![0] as { where: { id: unknown } }).where.id).toEqual({ notIn: [] });
+      });
+
+      it('is a 404 for an alarm outside the window, as for a teacher, and reads no pupil', async () => {
+        tx.$queryRaw.mockResolvedValueOnce([]);
+        expect(await code(service.searchPupils(ALARM, 'cy', teachingAdmin))).toBe('CRISIS_ALARM_NOT_FOUND');
+        expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+        expect(tx.user.findMany).not.toHaveBeenCalled();
+        expect(tx.crisisPupil.findMany).not.toHaveBeenCalled();
+      });
     });
 
     it('is a 404 for an alarm the teacher may not read', async () => {

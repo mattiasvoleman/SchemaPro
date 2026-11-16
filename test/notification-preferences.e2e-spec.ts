@@ -56,6 +56,41 @@ describe('notification preferences (e2e)', () => {
     expect(harness.tx.notificationOptOut.deleteMany).not.toHaveBeenCalled();
   });
 
+  // Administratör som lärare (Users.teaches): the teacher's three notices are the person's to turn off, and the cover request is not
+  // theirs to receive (SP409). Whether the switch is offered is the principal's mark, the one the guard reads from the login.
+  describe('an administrator who teaches (Users.teaches)', () => {
+    const THREE = ['LESSON_PUPIL_MOVED', 'LEAVE_REQUESTED', 'LESSON_REPORT_REMINDER'];
+    const admin = (extra: Record<string, unknown>) => asUser({ role: 'SCHOOL_ADMIN' as never, userId: ME, schoolId: SCHOOL, adminProfile: 'REKTOR' as never, ...extra });
+    const typesOf = (body: { types: Array<{ type: string }> }) => body.types.map((t) => t.type);
+
+    it('sees the three beside the administrator’s own, and an unmarked administrator does not', async () => {
+      const marked = await request(http()).get('/api/v1/notification-preferences').set('x-test-user', admin({ teaches: true })).expect(200);
+      for (const type of THREE) expect(typesOf(marked.body)).toContain(type);
+      expect(typesOf(marked.body)).not.toContain('COVER_REQUESTED');
+      for (const extra of [{ teaches: false }, {}]) {
+        const plain = await request(http()).get('/api/v1/notification-preferences').set('x-test-user', admin(extra)).expect(200);
+        for (const type of THREE) expect(typesOf(plain.body)).not.toContain(type);
+      }
+    });
+
+    it('turns the three off and gets the answer back with them off', async () => {
+      const put = await request(http()).put('/api/v1/notification-preferences').set('x-test-user', admin({ teaches: true })).send({ optOut: THREE }).expect(200);
+      expect(put.body.types.filter((t: { type: string }) => THREE.includes(t.type)).map((t: { enabled: boolean }) => t.enabled)).toEqual([false, false, false]);
+      expect(harness.tx.notificationOptOut.createMany).toHaveBeenCalledWith({ data: THREE.map((type) => ({ userId: ME, schoolId: SCHOOL, type })) });
+    });
+
+    it.each([
+      ['an administrator who does not teach', { teaches: false }, 'LEAVE_REQUESTED'],
+      ['an administrator who does not teach', {}, 'LESSON_REPORT_REMINDER'],
+      ['an administrator who does not teach', { teaches: false }, 'LESSON_PUPIL_MOVED'],
+      ['an administrator who teaches', { teaches: true }, 'COVER_REQUESTED'],
+    ])('refuses %s choosing %s: 400 NOTIFICATION_TYPE_NOT_OFFERED, writing nothing', async (_who, extra, type) => {
+      const response = await request(http()).put('/api/v1/notification-preferences').set('x-test-user', admin(extra)).send({ optOut: [type] }).expect(400);
+      expect(response.body.code).toBe('NOTIFICATION_TYPE_NOT_OFFERED');
+      expect(harness.tx.notificationOptOut.deleteMany).not.toHaveBeenCalled();
+    });
+  });
+
   it.each([
     ['an unknown type', { optOut: ['LUNCH'] }],
     ['a type twice', { optOut: ['LESSON_CANCELLED', 'LESSON_CANCELLED'] }],

@@ -163,6 +163,7 @@ import { sweepTenantKeySchools, tenantKeyChecks } from './probe-tenant-keys';
 import { placementWeekChecks, sweepPlacementWeekSchools } from './probe-forlagg-veckan';
 import { placementMirrorChecks, sweepPlacementMirrorSchools } from './probe-forlagg-spegel';
 import { sweepTeachesGatewaySchool, teachesGatewayChecks } from './probe-teaches-gateway';
+import { sweepTeachesPr4School, teachesPr4Checks } from './probe-teaches-pr4';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import { CoverService } from '../../src/cover/cover.service';
 import { TeacherAbsencesService } from '../../src/cover/teacher-absences.service';
@@ -6138,6 +6139,8 @@ async function runChecks(
   await placementMirrorChecks(owner, api, MARKER, check);
   // Administratör som lärare, gatewayens halva: what the gateway makes of the mark and of TE409 and TE410, and the deadlock of a mark.
   await teachesGatewayChecks(owner, api, MARKER, check, open, appUrl);
+  // Administratör som lärare, del 4: krisläge, mentor och rapporteringsgrad som lärare, genom de riktiga tjänsterna.
+  await teachesPr4Checks(owner, api, MARKER, check);
 }
 
 
@@ -6662,6 +6665,7 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepPlacementMirrorSchools(owner, MARKER);
   // Administratör som lärare, gatewayens halva: its school, likewise.
   await sweepTeachesGatewaySchool(owner, MARKER);
+  await sweepTeachesPr4School(owner, MARKER);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);
   // Lärarens dag's school, whole, likewise.
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-lararensdag'`, [MARKER]);
