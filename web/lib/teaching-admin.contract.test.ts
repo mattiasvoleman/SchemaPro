@@ -3,6 +3,7 @@ import { join } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { TEACHING_ADMIN_ROWS } from "@/components/layout/teaching-admin-nav";
+import { ApiLiterals } from "./api-literals";
 
 /**
  * The seam between "Min undervisning" and the gateway (Administratör som lärare,
@@ -27,6 +28,13 @@ import { TEACHING_ADMIN_ROWS } from "@/components/layout/teaching-admin-nav";
  *
  * And the other way: each route of the table is one the web asks for, so a row
  * cannot outlive the call it vouches for.
+ *
+ * And the third way, from the page to the table (LÅG-3 of the review of #329):
+ * every `/api/v1/` route the code of a page can name, found by reading the page's
+ * imports with the compiler (lib/api-literals.ts), is in the table or is said, with
+ * a reason, not to be called for her (NOT_CALLED_FOR_HER). A hook that starts asking
+ * for a colleague's route, or any route the table does not know, fails here: the
+ * table is no longer only what somebody remembered to write.
  */
 
 const ROOT = join(__dirname, "..", "..");
@@ -95,7 +103,14 @@ type Call = readonly [verb: string, path: string];
  * membership) is not here: it is the database's arms, proved in the RLS suite.
  */
 const PAGES: Record<string, { files: string[]; calls: Call[] }> = {
-  "/teacher": { files: ["src/supervision/supervision.controller.ts"], calls: [["GET", "api/v1/supervision/week"]] },
+  "/teacher": {
+    files: ["src/supervision/supervision.controller.ts", "src/publication/print.controller.ts"],
+    calls: [
+      ["GET", "api/v1/supervision/week"],
+      // The print button's "which week does this timetable hold" (components/timetable-sheet/print-week-button.tsx).
+      ["GET", "api/v1/timetable-validity"],
+    ],
+  },
   "/teacher/crisis": {
     files: ["src/crisis/crisis.controller.ts"],
     calls: [
@@ -122,22 +137,34 @@ const PAGES: Record<string, { files: string[]; calls: Call[] }> = {
     ],
   },
   "/teacher/franvaro": {
-    files: ["src/lesson-log/lesson-log.controller.ts", "src/cover/cover.controller.ts"],
+    files: ["src/lesson-log/lesson-log.controller.ts", "src/cover/cover.controller.ts", "src/gallring/gallring.controller.ts"],
     calls: [
       ["GET", "api/v1/lesson-logs"],
       ["GET", "api/v1/lesson-logs/handed-over"],
       ["GET", "api/v1/teacher-absences"],
       ["GET", "api/v1/teacher-absence-reasons"],
       ["GET", "api/v1/cover/settings"],
+      // Her own absence: registered, ended and withdrawn through the dialogs the page shares with Lärarfrånvaro.
+      ["POST", "api/v1/teacher-absences"],
+      ["PATCH", "api/v1/teacher-absences/:id"],
+      ["POST", "api/v1/teacher-absences/:id/end"],
+      ["POST", "api/v1/teacher-absences/:id/withdraw"],
+      // The pool's windows, in the section only a teacher is drawn (below); the routes admit both roles.
+      ["GET", "api/v1/cover/availability"],
+      ["POST", "api/v1/cover/availability"],
+      ["DELETE", "api/v1/cover/availability/:id"],
+      ["GET", "api/v1/retention/purged-before"],
     ],
   },
   "/teacher/ledighet": {
-    files: ["src/family/family.controller.ts"],
+    files: ["src/family/family.controller.ts", "src/gallring/gallring.controller.ts"],
     calls: [
       ["GET", "api/v1/leave-requests"],
       ["GET", "api/v1/leave-delegation"],
+      ["POST", "api/v1/leave-delegation"],
       ["PATCH", "api/v1/leave-requests/:id/decide"],
       ["PATCH", "api/v1/leave-requests/:id/refer"],
+      ["GET", "api/v1/retention/purged-before"],
     ],
   },
   "/teacher/reporting-rate": { files: ["src/reporting-rate/reporting-rate.controller.ts"], calls: [["GET", "api/v1/reporting-rate/mine"]] },
@@ -156,6 +183,45 @@ const PAGES: Record<string, { files: string[]; calls: Call[] }> = {
       ["PUT", "api/v1/notification-preferences"],
     ],
   },
+};
+
+/**
+ * The page files of each entry of PAGES (the App Router pages the group's rows open), from which the walker
+ * reads the imports. `/teacher/attendance` is two pages: the list and a lesson's.
+ */
+const APP = "app/[locale]/(app)";
+const PAGE_FILES: Record<string, string[]> = {
+  "/teacher": [`${APP}/teacher/page.tsx`],
+  "/teacher/crisis": [`${APP}/teacher/crisis/page.tsx`],
+  "/teacher/attendance": [`${APP}/teacher/attendance/page.tsx`, `${APP}/teacher/attendance/[lessonId]/page.tsx`],
+  "/teacher/tjanst": [`${APP}/teacher/tjanst/page.tsx`],
+  "/teacher/franvaro": [`${APP}/teacher/franvaro/page.tsx`],
+  "/teacher/ledighet": [`${APP}/teacher/ledighet/page.tsx`],
+  "/teacher/reporting-rate": [`${APP}/teacher/reporting-rate/page.tsx`],
+  "/teacher/lektion/[lessonId]": [`${APP}/teacher/lektion/[lessonId]/page.tsx`],
+  "/notifications": [`${APP}/notifications/page.tsx`],
+};
+
+/**
+ * Routes a page's code names and does not call for an administrator who teaches, each with the reason. A
+ * route here is a teacher's alone (SP409, the colleague side of a cover request): the page imports the hook, and
+ * the mark keeps the hook switched off or the card undrawn. Each one is found in the page's imports (a stale
+ * row fails) and is in no table.
+ */
+const NOT_CALLED_FOR_HER: Record<string, { paths: string[]; why: string }[]> = {
+  "/teacher/franvaro": [
+    {
+      paths: [
+        "api/v1/cover-requests/mine",
+        "api/v1/cover-requests/:id/accept",
+        "api/v1/cover-requests/:id/decline",
+        "api/v1/cover-requests/lessons/:lessonId/confirm",
+      ],
+      why:
+        "the colleague side of a cover request (SP409): useMyCover(!admin) is off for an administrator and the cards that answer or " +
+        "confirm are not drawn for her (franvaro/page.tsx; page.test.tsx holds that no /cover-requests/mine is asked and no error card is drawn)",
+    },
+  ],
 };
 
 /** The routes a teacher keeps for herself, whatever the mark: no page of the group calls them. */
@@ -298,5 +364,58 @@ describe("the group's rows are pages the table knows", () => {
       ({ mySchedule: "/teacher", myCrisis: "/teacher/crisis", attendance: "/teacher/attendance", myStaffing: "/teacher/tjanst", myCover: "/teacher/franvaro", myLeave: "/teacher/ledighet", myReporting: "/teacher/reporting-rate" })[key],
     );
     for (const href of rows) expect(hrefs.has(href), href).toBe(true);
+  });
+});
+
+describe("every route the code of a page can name is in the table, or is said not to be called for her", () => {
+  const reader = new ApiLiterals(WEB);
+  const segments = (path: string) => path.split("/");
+  const alike = (a: string, b: string) => a === b || a.startsWith(":") || b.startsWith(":");
+  /** The same route, `:id` of the gateway and `:p` of a template hole alike. */
+  const sameRoute = (a: string, b: string) => segments(a).length === segments(b).length && segments(a).every((part, at) => alike(part, segments(b)[at]!));
+  /** `base` is the front of `path`: a constant kept apart from the end appended to it (`const PATH = "/api/v1/crisis"`). */
+  const frontOf = (base: string, path: string) => segments(base).length < segments(path).length && segments(base).every((part, at) => alike(part, segments(path)[at]!));
+
+  for (const [page, { files, calls }] of Object.entries(PAGES)) {
+    it(`${page}`, () => {
+      const literals = reader.reach(PAGE_FILES[page]!);
+      expect(literals.length, `the walker reads the imports of ${page}`).toBeGreaterThan(0);
+      const excepted = (path: string) => (NOT_CALLED_FOR_HER[page] ?? []).some((row) => row.paths.some((listed) => sameRoute(listed, path)));
+      const unexplained = literals.filter(
+        (literal) => !calls.some((call) => sameRoute(call[1], literal.path) || frontOf(literal.path, call[1])) && !excepted(literal.path),
+      );
+      expect(
+        unexplained.map((literal) => `/${literal.path} in ${literal.file} (${literal.name})`),
+        `a route the code of ${page} can name is in neither its table nor NOT_CALLED_FOR_HER`,
+      ).toEqual([]);
+
+      // And a route the table vouches for is admitted in every verb the web writes it in: the walker sees
+      // paths, so every route of the controllers with that path has to admit her.
+      const routes = files.flatMap(gatewayRoutes);
+      for (const literal of literals.filter((each) => calls.some((call) => sameRoute(call[1], each.path)))) {
+        for (const route of routes.filter((each) => sameRoute(each.path, literal.path))) {
+          const admitted = route.roles?.includes("SCHOOL_ADMIN") === true || route.asTeacher;
+          expect(admitted, `${route.verb} /${route.path} (${route.controller}.${route.method}), written in ${literal.file} (${literal.name}), lists ${JSON.stringify(route.roles)}`).toBe(true);
+        }
+      }
+    });
+  }
+
+  it("holds every exception to a route the page's imports do name, and to none of the table's", () => {
+    for (const [page, rows] of Object.entries(NOT_CALLED_FOR_HER)) {
+      const literals = reader.reach(PAGE_FILES[page]!);
+      for (const row of rows) {
+        expect(row.why.length, `${page} says why`).toBeGreaterThan(40);
+        for (const path of row.paths) {
+          expect(literals.some((literal) => sameRoute(literal.path, path)), `${page}: /${path} is named in its imports`).toBe(true);
+          expect(PAGES[page]!.calls.some((call) => sameRoute(call[1], path)), `${page}: /${path} is in its table too`).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("finds the colleague side where /teacher/franvaro imports it, so that the exception is a fact and not a hope", () => {
+    const paths = reader.reach(PAGE_FILES["/teacher/franvaro"]!).map((literal) => literal.path);
+    expect(paths.some((path) => sameRoute(path, "api/v1/cover-requests/mine"))).toBe(true);
   });
 });
