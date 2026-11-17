@@ -903,3 +903,71 @@ describe("the link that names a lesson of a block", () => {
     expect(cardOf(TUESDAY)).not.toHaveClass("outline-2");
   });
 });
+
+/* ------------------------------------------------------------------------------------------------------------------------------------------ */
+/* Prov för mutanter som överlevde (granskning av #331): längden på ett blockkort, brickor under salsfiltret, utkastets salar vid dragning, markeringen som slutar, brickan som väljs bort. */
+/* ------------------------------------------------------------------------------------------------------------------------------------------ */
+describe("what hand mutants of the week's block code left untested", () => {
+  it("a block's card is not stretched: a drag at its foot is refused with the reason, and nothing is written", async () => {
+    pinGeometry();
+    renderPage();
+    await ready();
+    // Tuesday's card, which nothing stands beside: its foot pulled down is a longer lesson the week would hold, if lengths were free.
+    fireEvent.pointerDown(cardOf(TUESDAY)!, { pointerId: 1, button: 0, clientX: 56 + 150, clientY: 653 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 56 + 150, clientY: 659 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 56 + 150, clientY: 659 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 56 + 150, clientY: 659 });
+    expect(await screen.findByTestId("placement-message")).toHaveTextContent("cannotMoveThere(lengthCannotChange)");
+    await noWrite();
+  });
+
+  it("the bricks are counted over the class and teacher filters and NOT over the room filter (a lesson laid in another room is still a lesson that is laid)", async () => {
+    state.board = board({ blocks: [theBlock({ lengths: [60, 60, 60], rows: [lesson({ id: "a" }), lesson({ id: "b", rooms: [], dayOfWeek: 4 })] })] });
+    renderPage();
+    await ready();
+    expect(blockBricks()).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: /filterRoom/ }));
+    await userEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Tyska-salen" }));
+    await waitFor(() => expect(cardOf(`${TUESDAY}`)).toBeInTheDocument());
+    // One lesson of the block is left whatever room is picked; a filter that counted only the lessons in the room would offer two.
+    expect(blockBricks()).toHaveLength(1);
+  });
+
+  it("a chosen brick that is pulled into the week is laid with the rooms the fields hold, not with the suggestion", async () => {
+    pinGeometry();
+    renderPage();
+    await ready();
+    await userEvent.click(blockBricks()[0]!);
+    const row = await screen.findByTestId("lay-row");
+    await userEvent.selectOptions(await within(row).findByRole("combobox", { name: "block.roomOf(Spanska Sp7)" }), "r-a12");
+    pullBlockBrick(at(5, 9, 15));
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+    expect(lastPut()[1].placements.at(-1)).toEqual({ dayOfWeek: 5, startTime: "09:15", minutes: 60, rooms: [{ requirementId: "m-sp", roomId: "r-a12" }, TY_ROOM] });
+  });
+
+  it("the card an address marked is no longer marked when another card is opened", async () => {
+    window.history.replaceState(null, "", "/sv/admin/placements?post=m-sp&day=2&start=08:00&block=b-sv");
+    state.board = board({ blocks: [theBlock({ rows: [lesson({ id: "a" }), lesson({ id: "b", dayOfWeek: 4, startTime: "13:00", endTime: "14:00" })] })] });
+    renderPage();
+    await ready();
+    await waitFor(() => expect(cardOf(TUESDAY)).toHaveClass("outline-2"));
+    await userEvent.click(cardOf("b-sv|60|4|13:00|ALL_WEEKS")!);
+    await screen.findByRole("dialog");
+    expect(cardOf(TUESDAY)).not.toHaveClass("outline-2");
+  });
+
+  it("the brick that was laid is no longer the chosen one, and the row for it is gone, also when the block has another lesson of the same length left", async () => {
+    pinGeometry();
+    state.board = board({ blocks: [theBlock({ rows: [] })] });
+    renderPage();
+    await ready();
+    await userEvent.click(blockBricks()[0]!);
+    await screen.findByTestId("lay-row");
+    fireEvent.click(columns()[0]!, at(1, 9));
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(cardOf("b-sv|60|1|09:00|ALL_WEEKS")).toBeInTheDocument());
+    // One more lesson of 60 minutes is left (a brick again named #1), but it was not chosen.
+    expect(blockBricks()).toHaveLength(1);
+    expect(screen.queryByTestId("lay-row")).not.toBeInTheDocument();
+  });
+});
