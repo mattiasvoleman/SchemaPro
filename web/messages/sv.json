@@ -2175,6 +2175,8 @@
       "refuses": "Generera kommer att vägra veckan på grund av detta.",
       "standsAnyway": "Lektionen är sparad. Generera vägrar inte veckan för just det här, men kan vägra den av något annat.",
       "hold": "Bokad på {schools}",
+      "holdLent": "Utlånad till {schools}",
+      "holdBorrowed": "Lånad från {schools}, ledig bara i lånets tider",
       "day": "{day, select, 1 {måndag} 2 {tisdag} 3 {onsdag} 4 {torsdag} 5 {fredag} other {dag {day}}}",
       "UNKNOWN": "Veckan har en varning om lektionen som den här versionen inte kan beskriva.",
       "TEACHER_DAY_TOO_LONG": "Läraren undervisar {minutes} min på {day}, över taket på {cap} min.",

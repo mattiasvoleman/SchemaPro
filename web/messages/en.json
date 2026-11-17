@@ -2175,6 +2175,8 @@
       "refuses": "Generate will refuse the week because of this.",
       "standsAnyway": "The lesson is saved. Generate will not refuse the week for this alone, but it may still refuse it for something else.",
       "hold": "Booked at {schools}",
+      "holdLent": "Lent to {schools}",
+      "holdBorrowed": "Borrowed from {schools}, free only in the loan's times",
       "day": "{day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}}",
       "UNKNOWN": "The week has a warning about the lesson that this version cannot describe.",
       "TEACHER_DAY_TOO_LONG": "The teacher teaches {minutes} min on {day}, over the cap of {cap} min.",

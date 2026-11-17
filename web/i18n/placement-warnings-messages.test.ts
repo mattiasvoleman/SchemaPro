@@ -74,6 +74,16 @@ describe("placementWeek.warnings", () => {
     expect(t("en")("hold", { schools: "East School" })).toBe("Booked at East School");
   });
 
+  it("says a lent room as lent and a borrowed one as borrowed, free only in the loan's times, in both languages (review of #339, LÅG-3: the band of a borrowed room covers every hour outside the loan)", () => {
+    expect(t("sv")("holdLent", { schools: "Norra skolan" })).toBe("Utlånad till Norra skolan");
+    expect(t("sv")("holdBorrowed", { schools: "Roller skola" })).toBe("Lånad från Roller skola, ledig bara i lånets tider");
+    expect(t("en")("holdLent", { schools: "North School" })).toBe("Lent to North School");
+    expect(t("en")("holdBorrowed", { schools: "Roller School" })).toBe("Borrowed from Roller School, free only in the loan's times");
+    for (const locale of ["sv", "en"] as const) {
+      expect(t(locale)("holdBorrowed", { schools: "X" })).not.toBe(t(locale)("hold", { schools: "X" }));
+    }
+  });
+
   it("explains both marks in the legend, and names them as the cards do", () => {
     expect(t("sv")("legend")).toContain("Märket Varning");
     expect(t("sv")("legend")).toContain("Märket Vägrar");

@@ -205,7 +205,8 @@ describe("the other schools' bands", () => {
     schools: ["Östra skolan"],
     ...over,
   });
-  const label = (schools: readonly string[]) => `Bokad på ${schools.join(" och ")}`;
+  const label = (schools: readonly string[], kind?: BoardHold["kind"]) =>
+    `${kind === "ROOM_LENT" ? "Utlånad till" : kind === "ROOM_BORROWED" ? "Lånad från" : "Bokad på"} ${schools.join(" och ")}`;
   const none = { teachers: [] as string[], rooms: [] as string[] };
 
   it("draws a band for a hold on a teacher who is picked, with the schools' names", () => {
@@ -218,14 +219,28 @@ describe("the other schools' bands", () => {
     // A teacher the Östra skolan holds and a room the Norra skolan holds, the same weekday and hour, and both picked: one band, both names.
     const teacher = hold({ schools: ["Östra skolan"] });
     const room = hold({ kind: "ROOM_BORROWED", resourceKind: "ROOM", resourceId: "r-gym", schools: ["Norra skolan"] });
+    // Two kinds at one time: the sentence that is true of both, which is the generic one.
     expect(heldBands([teacher, room], { teachers: ["anna"], rooms: ["r-gym"] }, label)).toEqual([
       { id: "hold:3|780|870", dayOfWeek: 3, startMinutes: 780, endMinutes: 870, label: "Bokad på Norra skolan och Östra skolan" },
     ]);
   });
 
+  it("says a lent room and a borrowed one as what they are, and not as booked (review of #339, LÅG-3)", () => {
+    // ROOM_BORROWED is every hour OUTSIDE the loan's times, so a band "booked at the owner" over most of the week would be wrong; the id stays as it was.
+    const lent = hold({ kind: "ROOM_LENT", resourceKind: "ROOM", resourceId: "r-gym", schools: ["Norra skolan"] });
+    const borrowed = hold({ kind: "ROOM_BORROWED", resourceKind: "ROOM", resourceId: "r-sal", startTime: "08:00", endTime: "13:00", schools: ["Roller skola"] });
+    const bands = heldBands([lent, borrowed], { ...none, rooms: ["r-gym", "r-sal"] }, label);
+    expect(bands.map((band) => [band.id, band.label])).toEqual([
+      ["hold:3|780|870", "Utlånad till Norra skolan"],
+      ["hold:3|480|780", "Lånad från Roller skola"],
+    ]);
+    // A band says the kind its holds have in common: the same kind from two schools is still that kind.
+    expect(heldBands([lent, { ...lent, schools: ["Södra skolan"] }], { ...none, rooms: ["r-gym"] }, label).map((band) => band.label)).toEqual(["Utlånad till Norra skolan och Södra skolan"]);
+  });
+
   it("draws a band for a hold on a room that is picked, and for no other", () => {
     const room = hold({ kind: "ROOM_LENT", resourceKind: "ROOM", resourceId: "r-gym", startTime: "09:00", endTime: "10:00", schools: ["Norra skolan"] });
-    expect(heldBands([room], { ...none, rooms: ["r-gym"] }, label).map((band) => band.label)).toEqual(["Bokad på Norra skolan"]);
+    expect(heldBands([room], { ...none, rooms: ["r-gym"] }, label).map((band) => band.label)).toEqual(["Utlånad till Norra skolan"]);
     // A teacher filter does not pick a room and a room filter does not pick a teacher, even by the same id.
     expect(heldBands([room], { ...none, teachers: ["r-gym"] }, label)).toEqual([]);
     expect(heldBands([hold()], { ...none, rooms: ["anna"] }, label)).toEqual([]);
