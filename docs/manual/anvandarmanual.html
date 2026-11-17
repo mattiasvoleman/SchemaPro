@@ -41,6 +41,7 @@
       <li><span>2.3 Flera skolor med en inloggning</span><span class="dots"></span><span class="pg" data-pg="s23"></span></li>
       <li><span>2.4 Huvudmannen och dess skolor</span><span class="dots"></span><span class="pg" data-pg="s24"></span></li>
       <li><span>2.5 Delade lokaler och lärare</span><span class="dots"></span><span class="pg" data-pg="s25"></span></li>
+      <li><span>2.6 En administratör som undervisar</span><span class="dots"></span><span class="pg" data-pg="s26"></span></li>
     </ol>
     <li><span>3 · Fas 1 — Kom igång</span><span class="dots"></span><span class="pg" data-pg="ch3"></span></li>
     <ol>
@@ -289,7 +290,8 @@
   <p>
     <strong>Besluten</strong> fattas av rektor och en fullständig
     administratör: vem som är administratör, med vilken profil och med eller
-    utan HR-läs; tjänstgöringsgrad och nedsättning, också tjänstens perioder,
+    utan HR-läs, och om en administratör också undervisar (2.6);
+    tjänstgöringsgrad och nedsättning, också tjänstens perioder,
     och att föra tjänsterna vidare till nästa läsår; att delegera beslut om
     kortare ledighet till mentorerna; att dela elevernas närvaro och frånvaro
     med integrationer (7.3); dataskydd och gallring; och läsloggen, som visar
@@ -616,6 +618,222 @@
       under samma huvudman syns det igen.
     </p>
   </div>
+
+  <h3 id="s26"><span class="num">2.6</span>En administratör som undervisar</h3>
+  <p>
+    En rektor eller schemaläggare undervisar ofta själv. I Rastra Schema är hen
+    ändå en administratör: en person, en inloggning och en roll. Det som skiljer
+    hen från en administratör som inte undervisar är en markering,
+    <span class="ui">Undervisar</span>, som rektor eller en fullständig
+    administratör sätter på personen. Med markeringen räknas hen som lärare på
+    de ställen som beskrivs här, och på inget annat. Rättigheterna smalnar inte,
+    och de blir större bara där det står här, till exempel anteckningen till
+    vikarien på hens egna lektioner och markeringarna i ett larm: se
+    <em>Rätten är administratörens</em> nedan.
+  </p>
+
+  <h4>Sätt markeringen</h4>
+  <p>
+    Markeringen sätts i personens dialog under
+    <span class="path">Grunddata › Personer</span>, med reglaget
+    <span class="ui">Undervisar</span> under administratörsprofilen (3.5). I
+    personlistan står <em>undervisar</em> bredvid rollen, och
+    <span class="ui">Rollhistorik</span> skriver <em>undervisar nu</em> eller
+    <em>undervisar inte längre</em> när markeringen ändras, med när och av vem.
+  </p>
+  <ul>
+    <li><strong>Rektor och en fullständig administratör sätter den.</strong> Att
+      ändra markeringen är ett beslut, som profilen och HR-läs (2.2). Andra
+      administratörer ser reglaget men kan inte ändra det.</li>
+    <li><strong>Personen måste ha en tjänst.</strong> Lägg tjänsten först
+      (<span class="ui">Tjänst (%)</span> i samma dialog, eller kortet
+      <span class="ui">Anställning</span> i Tjänstefördelning, 4.3) och markera
+      därefter; dialogen skriver tjänsten före markeringen. Det räcker med en
+      tjänst för något läsår i skolan. Nekas markeringen sparas resten av
+      dialogen ändå, och Rastra Schema säger att markeringen nekades och varför.</li>
+    <li><strong>Inte på profilen Läsare.</strong> En läsare ändrar ingenting och
+      undervisar därför inte, så reglaget visas inte för en läsare. Byter en
+      markerad person till Läsare, eller slutar vara administratör, nollas
+      markeringen, och Rollhistorik skriver det.</li>
+  </ul>
+
+  <h4>Vad markeringen ger</h4>
+  <p>
+    Hen får lärarens egna sidor och lärarens roll på några ställen. Sidorna
+    visar hens egna rader och inte skolans.
+  </p>
+  <p>
+    <strong>I webben</strong> får hen gruppen
+    <span class="ui">Min undervisning</span> som menyns andra grupp, efter
+    Översikt och Min kalenderprenumeration. Menyn byts vid nästa sidladdning
+    efter att markeringen satts
+    eller tagits bort. Gruppen har sju sidor, med samma namn som lärarens egna
+    utom <span class="ui">Min frånvaro</span>, som heter
+    <span class="ui">Vikariepass och frånvaro</span> hos en lärare:
+  </p>
+  <table>
+    <thead><tr><th style="width:24%">Sida</th><th>Vad hen ser och gör</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Mitt schema</td><td>Hens egna lektioner. Öppnar hen en lektion läser och skriver hen anteckningen till vikarien, om hen står på lektionen och har en tjänst för gruppens läsår. Ingen annan administratör läser den (6.11).</td></tr>
+      <tr><td class="k">Larm</td><td>Uppropet för hens grupper när skolan startar ett larm, och länken <span class="ui">Ledningens vy</span> till Krisläge (6.14).</td></tr>
+      <tr><td class="k">Närvaro</td><td>Närvaroregistrering för hens lektioner (6.6).</td></tr>
+      <tr><td class="k">Min tjänst</td><td>Hens egen tjänst, bara att läsa. Siffrorna räknas ur schemautkastet, som en administratör ser; en lärare ser det publicerade schemat. Sidan säger det.</td></tr>
+      <tr><td class="k">Min frånvaro</td><td>Hens egna frånvaroanmälningar och de lektioner hen lämnat över. <span class="ui">Anmäl frånvaro</span> finns bara om skolan låter lärare anmäla sin egen frånvaro (6.2). Inga vikariepass och inga vikariefrågor: se <em>Vad markeringen inte ger</em>.</td></tr>
+      <tr><td class="k">Ledighet</td><td>Ledighetsansökningar som hen beslutar som mentor (nedan och 6.7).</td></tr>
+      <tr><td class="k">Min rapportering</td><td>Hens egna lektioner som väntar på register, och hens andel (6.13).</td></tr>
+    </tbody>
+  </table>
+  <p>
+    <strong>I appen</strong> har hen samma flikar som varje administratör. Det
+    som ändras är fliken <span class="ui">Larm</span>: den öppnar på hens eget
+    upprop, med grupperna hen svarar för, och knappen
+    <span class="ui">Ledningens vy</span> i rubriken ligger ett tryck bort
+    (starta, följ och avsluta larm för hela skolan). Därifrån leder
+    <span class="ui">Mitt upprop</span> tillbaka. Larm öppnar på uppropet varje
+    gång fliken visas och varje gång appen kommer fram, också medan inget larm
+    pågår: den som styrde en övning ska inte mötas av ledningens vy vid nästa,
+    skarpa larm. Telefonen sparar uppropets lista när larmnotisen kommer, som en
+    lärares, så att uppropet går att göra också utan nät, och en notis om ett
+    larm leder hen till uppropet, i webben och i appen. Fliken
+    <span class="ui">Vikarie</span> är lärarnas och finns inte för hen. En
+    markering som sätts eller tas bort når telefonen när appen nästa gång öppnas
+    med nät. En äldre version av appen känner inte markeringen och visar
+    ledningens vy ensam i Larm, som förut.
+  </p>
+  <p>
+    <strong>I krisläget</strong> (6.14) markerar hen som en lärare gör, också i
+    en skola som smalnat av vilka profiler som får starta larm: grupperna hen
+    svarar för och de elever hen hittar. Att starta, avsluta och ändra ett larm
+    och att markera åt en grupp som ledningen är administratörens som förut,
+    enligt skolans startlista. Protokollet är en logg: en markering tas inte
+    bort, den ersätts av en senare.
+  </p>
+  <p>
+    <strong>Som mentor.</strong> Har hen uppdraget <em>Mentorskap</em> för en
+    klass (Tjänstefördelning, 4.3) är hen mentor på samma sätt som en lärare:
+    för ledighetsansökningar som rektor delegerat till mentorn (6.7) och för
+    frånvarobevakningens mentorssammanställning (6.12). För kvittens (6.16) och
+    för att flytta en elev mellan två lektioner en dag (6.1) ger mentorskapet
+    hen inget som hens profil inte redan ger: en administratör med Drift
+    gör båda för vilken elev som helst. Ansökningarna som
+    väntar på hen ligger under
+    <span class="path">Min undervisning › Ledighet</span>, och hen får notisen
+    <em>Ny ledighetsansökan</em>. Sidan visar det en lärare ser: de väntande
+    ansökningar som ligger hos hen som mentor och de beslut hen själv fattat för
+    sina mentorselever. Rektors inkorg,
+    <span class="ui">Ledighetsansökningar</span>, läser hen som administratör
+    som förut. Beslutet hen fattar sparas som en administratörs beslut och inte
+    som mentorns. Är hen rektor eller fullständig administratör och dessutom
+    mentor får hen två sammanställningar från frånvarobevakningen: en som
+    rektor, med alla elever, och en som mentor, med de egna.
+  </p>
+  <p>
+    <strong>I rapporteringsgraden</strong> (6.13) räknas hens lektioner som en
+    lärares. Hen får en rad i tabellen, räknas i skolans siffra, ser sin egen
+    andel under <span class="ui">Min rapportering</span> och får påminnelsen om
+    öppna lektioner om skolan har slagit på den.
+  </p>
+  <div class="note">
+    <span class="label">Räkningen gäller bakåt</span>
+    <p>
+      Första natten efter att markeringen satts räknas hens lektioner de
+      senaste 90 dagarna som hållna lektioner. De där inget register är sparat
+      räknas som öppna och drar ner skolans siffra, och påminnelsen om öppna
+      lektioner kan ta med lektioner upp till 30 dagar tillbaka. Säg det till
+      personen innan du sätter markeringen.
+    </p>
+  </div>
+  <p>
+    <strong>Under Notiser</strong> (6.10) kan hen välja bort tre av de notiser
+    som en lärare har och en administratör inte har:
+    <em>Ledighetsansökningar att besluta om</em>,
+    <em>Elever som byter lektion för en dag</em> och
+    <em>Påminnelser om öppna lektioner</em>. Notisen om en vikariefråga
+    erbjuds inte.
+  </p>
+  <p>
+    <strong>På andra ställen</strong> står hen som lärare på en rad i
+    Skolans dag (6.15) och räknas bland de lediga när hen inte har en lektion,
+    kan vara provvakt och lärare på en aktivitet, och står som
+    <em>Lärare</em> i Rastra Schemas eget SS12000-format (7.3).
+  </p>
+
+  <h4>Vad markeringen inte ger</h4>
+  <p>
+    Tre saker stannar hos lärarna: att bli tillfrågad om ett vikariepass
+    (<span class="ui">Fråga kollegor</span>, 6.3), att stå i vikariepoolen (6.4)
+    och att vara klasslärare (6.19). Det är ett val och inget förbiseende: ett
+    vikariepass är en fråga om hur skolans arbete fördelas och följer inte av att
+    man undervisar, och en klasslärare utses av en administratör åt en lärare.
+  </p>
+  <p>
+    Hen föreslås därför inte som vikarie på Vikarietavlan, får inga
+    vikariefrågor, kan inte läggas in i poolen eller utses till klasslärare, och
+    Min frånvaro visar bara hens egen frånvaro. Står hen bland de lediga i
+    Skolans dag är det den frågan som besvaras, vem som inte har något att göra:
+    hen kan ändå inte tillsättas som vikarie.
+  </p>
+
+  <h4>När markeringen tas bort</h4>
+  <p>Ta bort markeringen med samma reglage. Då gäller följande.</p>
+  <ul>
+    <li><strong>Hen kan inte ta bort sin sista tjänst medan markeringen
+      står.</strong> Rastra Schema säger att det är personens sista tjänst och
+      ber dig ta bort markeringen under Personer först. Samma gäller ett läsår
+      som skulle ta personens enda tjänst med sig när det tas bort (8.1).</li>
+    <li><strong>Mentorerna räknas om.</strong> Ändras markeringen räknar Rastra
+      Schema om vilka mentorer som ska besluta de väntande
+      ledighetsansökningarna och skickar den notis som saknas. Sätts markeringen
+      på en mentor får hen notisen för varje väntande ansökan i klassen som ligger
+      hos mentorn (6.7), och en
+      annan mentor som sedan tidigare saknade sin notis för en väntande ansökan
+      får den också. En notis som redan skickats tas inte tillbaka när
+      markeringen tas bort.</li>
+    <li><strong>Hen står kvar</strong> på de lektioner och poster hen redan är
+      lagd på, och rättigheterna som administratör är oförändrade. Det som
+      slutar är lärarens vyer och roller: Min undervisning försvinner ur menyn,
+      Larm i appen visar ledningens vy ensam, hen räknas inte längre som mentor
+      (en ansökan som väntade på hen väntar på rektor om klassen inte har en
+      annan mentor, 6.7), och hens dagar tas bort ur rapporteringsgraden vid
+      nästa natts körning.</li>
+    <li><strong>Det som redan är skrivet står kvar.</strong> Markeringarna hen
+      gjort i ett larm och registren hen sparat tas inte bort.</li>
+    <li><strong>En inaktiv person</strong> räknas inte som undervisande, men
+      markeringen står kvar och gäller igen om personen blir aktiv.</li>
+  </ul>
+
+  <div class="note">
+    <span class="label">Rätten är administratörens</span>
+    <p>
+      Markeringen smalnar vyn men inte rätten. Min undervisning visar hens egna
+      lektioner, elever och uppgifter, men hen har kvar allt hens profil ändrar
+      och läser, också elevernas uppgifter i hela skolan (se rutan
+      <em>Viktigt</em> i 2.2). Rastra Schema har ingen växel som tillfälligt gör
+      hen till bara lärare. En schemaläggare utan HR-läs ser sin egen
+      tjänstgöringsgrad under Min tjänst men inte någon annans. Vill skolan ge
+      någon enbart lärarens rätt ska personen vara lärare i Rastra Schema, inte
+      administratör med markering.
+    </p>
+  </div>
+
+  <div class="note">
+    <span class="label">Väljarna och lärarfilen</span>
+    <p>
+      Hur en markerad administratör väljs som lärare i Generera, på timplanen
+      och i förläggningen, och hur hen kommer med i lärarfilen
+      <em>larare.csv</em>, beskrivs här när den delen av webben är byggd.
+    </p>
+  </div>
+  <!--
+    5b (väljarna och larare.csv) fyller i anteckningen "Väljarna och
+    lärarfilen" ovan: byt dess text mot meningarna om vad som gäller när en
+    markerad administratör väljs som lärare, och ta bort meningen om att det
+    beskrivs senare. Korsreferenser hör hemma i 3.6 (larare.csv),
+    4.3 (Tjänstefördelning) och 5.2 (Generera). Förläggningens kapitel (4.2)
+    skrivs av D1 och D2: lägg inga meningar där utan att samordna med dem.
+    2.6 ska fortsätta att säga att hen är en administratör med lärarens vyer,
+    inte en lärare.
+  -->
 </section>
 
 <!-- ============================ 3 ============================ -->
@@ -1274,7 +1492,8 @@
     och de kan inte heller ändra, bjuda in eller ta bort en administratör.
     Varje ändring av roll, profil eller HR-läs sparas. Fäll ut personens rad
     för att se <span class="ui">Rollhistorik</span>: vad som ändrades, när och
-    av vem.
+    av vem. Samma dialog har reglaget <span class="ui">Undervisar</span> för en
+    administratör som också undervisar (2.6).
   </p>
   <p id="skyddad-identitet">
     <strong>Skyddad identitet.</strong> Fäll ut personens rad för att se om
@@ -7049,7 +7268,8 @@
     Med delegering hamnar en ansökan hos mentorn när den gäller högst så många
     skoldagar och eleven har en mentor de dagarna: en lärare med uppdraget
     <em>Mentorskap</em> för elevens klass, inom uppdragets Från och Till
-    (Tjänstefördelning). Mentorn får notisen <em>Ny ledighetsansökan</em> och
+    (Tjänstefördelning), eller en administratör som undervisar och har
+    uppdraget (2.6). Mentorn får notisen <em>Ny ledighetsansökan</em> och
     beslutar under <span class="path">Ledighet</span>. Övriga ansökningar visas
     under <span class="ui">Väntar på rektor</span>, med skälet: fler skoldagar
     än delegeringen, ingen mentor de dagarna, eller att mentorn har skickat
@@ -7436,14 +7656,16 @@
     <thead><tr><th style="width:28%">Text</th><th>Skrivs av</th><th style="width:34%">Läses av</th></tr></thead>
     <tbody>
       <tr><td class="k">Ämne och läxa</td><td>Lektionens lärare och dess vikarie. Ämnet är en rad på högst 200 tecken, läxan högst 1 000.</td><td>Eleverna på lektionen och deras vårdnadshavare, skolans lärare och administratörer, och klassboken.</td></tr>
-      <tr><td class="k">Notis till vikarien</td><td>Lektionens egen lärare, också när hen är borta och vikarien redan är bokad. Högst 2 000 tecken.</td><td>Lektionens lärare och den som vikarierar på den. Aldrig skolans administratörer, vilken profil de än har, och aldrig eleverna eller vårdnadshavarna. På vikarietavlan ser administratören att det finns en notis, inte vad den säger.</td></tr>
+      <tr><td class="k">Notis till vikarien</td><td>Lektionens egen lärare, också när hen är borta och vikarien redan är bokad. Högst 2 000 tecken.</td><td>Lektionens lärare, också en administratör som undervisar (2.6), och den som vikarierar på den. Aldrig andra administratörer, vilken profil de än har, och aldrig eleverna eller vårdnadshavarna. På vikarietavlan ser administratören att det finns en notis, inte vad den säger.</td></tr>
     </tbody>
   </table>
   <p>
     Lektionens egen lärare är den som står på den publicerade lektionen, som
     lärare eller medlärare, eller den frånvarande som ett beslut på
     vikarietavlan gällde. En lärare som bara står i grundschemat, till exempel
-    i ett utkast som inte är publicerat, är det inte. Bokas en vikarie utan att
+    i ett utkast som inte är publicerat, är det inte. En administratör som
+    undervisar (2.6) är det, om hen står på lektionen och har en tjänst för
+    gruppens läsår. Bokas en vikarie utan att
     någon frånvaro är registrerad tar vikarien lärarens plats på lektionen och
     läraren kommer inte längre åt notisen. Lektionsloggen är ingen
     meddelandefunktion. Ingen kan svara på en
@@ -7475,8 +7697,10 @@
     för eleverna och vårdnadshavarna. Har läraren ändrat texten sedan du
     öppnade klassboken tas ingenting bort, och klassboken visar i stället den
     nya texten. Läsaren ser klassboken men inte knappen. En notis till
-    vikarien kan ingen administratör ta bort, eftersom ingen administratör
-    läser den. Den försvinner med lektionen.
+    vikarien kan ingen administratör ta bort här, eftersom klassboken inte visar
+    den och ingen annan administratör läser den. En administratör som
+    undervisar och står på lektionen ändrar eller tar bort sin egen på
+    lektionens sida, som en lärare gör (2.6). Den försvinner med lektionen.
   </p>
   <h4>När en lektion försvinner</h4>
   <p>
@@ -7590,7 +7814,7 @@
   <table>
     <thead><tr><th style="width:22%">Mottagargrupp</th><th>Vem som får den</th><th style="width:34%">Vad den gäller</th></tr></thead>
     <tbody>
-      <tr><td class="k">Mentor</td><td>Lärare som har mentorskap för elevens klass i dag, enligt uppdraget under <span class="path">Personer</span></td><td>Mentorns egna elever</td></tr>
+      <tr><td class="k">Mentor</td><td>Lärare som har mentorskap för elevens klass i dag, enligt uppdraget under <span class="path">Personer</span>, och en administratör som undervisar och har uppdraget (2.6)</td><td>Mentorns egna elever</td></tr>
       <tr><td class="k">Rektor</td><td>Administratörer med profilen Rektor eller Fullständig</td><td>Alla elever</td></tr>
       <tr><td class="k">Kansli</td><td>Administratörer med profilen Expedition</td><td>Alla elever</td></tr>
       <tr><td class="k">Vårdnadshavare</td><td>Elevens vårdnadshavare</td><td>Det egna barnet</td></tr>
@@ -7645,7 +7869,7 @@
   <ul>
     <li><strong>Räkningen börjar första natten</strong> efter att Rastra har uppdaterats för skolan, och den är på för alla skolor: den går inte att slå av för en enskild skola. Den första körningen räknar de senaste 90 dagarna, så sidan har historik redan första morgonen.</li>
     <li><strong>Varje lärares andel ser</strong> rektor, fullständig administratör, expedition, schemaläggare och läsare, alltså alla administratörsprofiler. Varje sådan läsning skrivs i skolans läslogg (7.4).</li>
-    <li><strong>Läraren ser sin egen</strong> andel och sina öppna lektioner (4.6 i lärarmanualen), och ingen annan lärares. Elever och vårdnadshavare ser ingenting.</li>
+    <li><strong>Läraren ser sin egen</strong> andel och sina öppna lektioner (4.6 i lärarmanualen), och ingen annan lärares. En administratör som undervisar ser sin egen andel under <span class="ui">Min rapportering</span> (2.6), och som administratör varje lärares andel, enligt punkten ovan. Elever och vårdnadshavare ser ingenting.</li>
     <li><strong>Påminnelserna och veckobeskedet</strong> är det enda skolan slår på, i inställningarna längst ner. De är avstängda tills dess, och ingen får någon notis av räkningen i sig. Inställningarna ändrar rektor, fullständig administratör, schemaläggare och expedition.</li>
   </ul>
 
@@ -7663,7 +7887,7 @@
     <li><strong>En vikarie</strong> räknas för de lektioner den tagit. Läraren som var frånvarande räknas inte för dem, för vikarien har ersatt läraren på lektionen.</li>
     <li><strong>En lärare som själv är frånvarande</strong> när lektionen går räknas inte för den. En lektion som ingen tagit beslut om ligger kvar på den frånvarande, som inte kan ha tagit närvaro.</li>
     <li>Är flera lärare på samma lektion hör registret till lektionen: när en av dem sparat det är lektionen rapporterad för alla.</li>
-    <li><strong>Bara aktiva lärare räknas.</strong> En lärare som slutat, och en administratör som står på en lektion, får ingen rad och drar inte ner skolans siffra.</li>
+    <li><strong>Bara aktiva lärare räknas.</strong> En lärare som slutat, och en administratör som står på en lektion utan att vara markerad som undervisande (2.6), får ingen rad och drar inte ner skolans siffra. En administratör som undervisar räknas som en lärare, också bakåt i de 90 dagarna första natten efter att markeringen satts.</li>
     <li><strong>En lektion som ingen elev kan få en markering på räknas inte</strong>: varken som hållen, som öppen eller som rapporterad, eftersom läraren inte kan göra något åt den. Listan är registrets egen: klassens elever, grupperna som är lagda på lektionen och deras medlemmar, och elever som lektionen namnger. Klassen räknas både som den är nu och som den var lektionens dag (klasshistoriken). Läsårsaktiveringen flyttar varje elev till nästa års klass och tömmer förra årets, och ett läsårs andel ändras inte av det: lektionerna räknas som de gjorde när eleverna satt kvar. Medlemmar i en undervisningsgrupp och elever som lektionen namnger räknas som de är registrerade, även om eleven har slutat sedan dess. Har ett register redan sparats på lektionen räknas den som rapporterad, vad listan än blivit sedan.</li>
     <li>Lov, helger och veckor utan en enda hållen lektion har ingen grad. De syns som tomma i stället för som noll procent.</li>
     <li>Andelen är dagens lektioner i skolans datum. Sommartid ändrar ingenting: en vecka är sju kalenderdagar.</li>
@@ -7769,7 +7993,9 @@
     ett larm. Databasen håller samma regel, så ett fel i en sida kan inte ge en
     annan roll rätten. Under samma inställningar väljer skolan om
     <strong>vårdnadshavarna får veta efteråt</strong> att ett skarpt larm har
-    varit (se nedan). Förvalet är nej.
+    varit (se nedan). Förvalet är nej. En administratör som också undervisar
+    (2.6) har dessutom ett eget upprop för grupperna hen svarar för, som en
+    lärare, vid sidan av den rätt hens profil ger.
   </p>
 
   <h4>Starta, och vad som händer då</h4>
