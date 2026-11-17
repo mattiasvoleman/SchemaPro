@@ -8,6 +8,7 @@ import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { useProfile, useReadOnly } from "@/components/profile-context";
 import { BrickList, type BrickGroup } from "@/components/placements/brick-list";
+import { SinceRunNote } from "@/components/placements/since-run-note";
 import { FilterPicker } from "@/components/schedule/filter-picker";
 import { PlanningYearPicker, ProjectedRostersBanner } from "@/components/schedule/planning-year";
 import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
@@ -46,6 +47,7 @@ import {
   type CardNames,
 } from "@/lib/placement-board";
 import { usePlacementBoard } from "@/lib/placement-board-queries";
+import { usePlacementLinkTarget } from "@/lib/use-placement-link-target";
 import { dropOf, moverOfRow, nextFreeSpot, suggestedRoom, type Drop, type Mover, type OtherNames } from "@/lib/placement-drop";
 import { buildMirror } from "@/lib/placement-mirror";
 import {
@@ -201,6 +203,8 @@ export default function PlacementsPage() {
   const summary = useMemo(() => (everything ? summaryOf(everything) : null), [everything]);
   // Every row of the year by key: a card is named by the lesson, and the keys are made over all of the rows so that a filter changes none.
   const keys = useMemo(() => keyByRowId(everything?.placements ?? []), [everything]);
+  // The card an address from Generera or the grundschema names (?post=&day=&start=), marked and given the keyboard.
+  const { markedCard, missing } = usePlacementLinkTarget(everything?.placements, keys, openCard);
   const rowByCard = useMemo(
     () => new Map((everything?.placements ?? []).map((row) => [placementCardId(keys.get(row.id) ?? row.id), row])),
     [everything, keys],
@@ -756,6 +760,8 @@ export default function PlacementsPage() {
             </div>
           ) : null}
 
+          <SinceRunNote board={everything} jobs={jobsQuery.data} running={running} missing={missing} />
+
           <p role="status" className="text-sm" data-testid="placement-summary">
             {t("summary", { rows: summary.rows, left: summary.left })}
           </p>
@@ -905,7 +911,7 @@ export default function PlacementsPage() {
                       dayEndMinutes={DAY_END_MINUTES}
                       editable={mayWrite}
                       onLessonClick={(lesson) => setOpenCard(lesson.id)}
-                      selectedIds={openCard ? new Set([openCard]) : undefined}
+                      selectedIds={openCard || markedCard ? new Set([openCard, markedCard].filter((id): id is string => id !== null)) : undefined}
                       validateChange={validateChange}
                       // Let go outside the week: nothing is laid (the grid would otherwise take the last place it was over).
                       onDropOutside={() => undefined}

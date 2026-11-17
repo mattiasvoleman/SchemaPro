@@ -12,6 +12,7 @@ import type { SchoolUnit } from "../../../lib/school-units";
 import type { AcademicYear, LunchSettings, YearRosters } from "../../../lib/types";
 import { KIND, uid } from "../sessions";
 import { addDays, stockholmInstant, TODAY } from "./calendar";
+import { backCaseOf } from "./placement-back";
 import { ADMIN, MASTER_LESSONS, NEXT_CLASSES, ROOM_LIST, ROOM_TYPES, ROOMS, SCHOOL, STUDENT_LIST, SUBJECTS, TEACHERS, YEAR } from "./world";
 
 /**
@@ -216,11 +217,57 @@ const YEAR_JOBS: OptimizationJob[] = [
   },
 ];
 
-/** Next year has never been generated. */
-export const optimizationJobsFor = (academicYearId: string | null): OptimizationJob[] =>
-  academicYearId === YEAR.id ? YEAR_JOBS : [];
+/**
+ * A run refused before the engine because förläggningar no longer stand where they are placed (A3): each line is as the gateway
+ * stores it now, with the post's own id (`postId`, and `blockId` for a block's lesson) beside the day and the clock. The first
+ * names Matematik 7A's lesson on Thursday 13:15, which the week holds; the second a lesson on Wednesday 09:00 that was moved
+ * since the run (the week no longer has it); the third a block's lesson; the fourth was stored before the ids and has no link.
+ */
+const refusedLine = (extra: Record<string, string | number>, over: Record<string, unknown> = {}) => ({
+  category: "PLACEMENT",
+  code: "PLACEMENT_CANNOT_STAND",
+  params: { requirement: "Matematik för 7A", room: "Sal 101", day: 4, start: "13:15", end: "14:15", reason: "TEACHER", other: "7B Matematik", block: "NO_BLOCK", ...extra },
+  message: "A placed lesson cannot stand where it is placed (TEACHER).",
+  resourceNames: [],
+  ...over,
+});
+const PLACEMENT_REFUSAL_JOB: OptimizationJob = {
+  id: uid(KIND.misc, 9015),
+  status: "SUCCEEDED",
+  solverStatus: "INFEASIBLE",
+  lessonsGenerated: 0,
+  conflictSummary: "4 placed lesson(s) on the timplan can no longer stand where they are placed, so the week was not sent.",
+  conflictSummaryCode: "PLACEMENTS_REFUSED_SUMMARY",
+  conflictSummaryParams: { count: 4 },
+  conflictSummaryNames: [],
+  conflicts: [
+    refusedLine({ postId: uid(KIND.requirement, 2) }),
+    refusedLine({ postId: uid(KIND.requirement, 1), day: 3, start: "09:00", end: "10:00", requirement: "Svenska för 7A", room: "Gymnastiksalen" }),
+    refusedLine({ postId: uid(KIND.requirement, 3), blockId: uid(KIND.misc, 9701), day: 2, start: "08:00", end: "09:00", requirement: "Franska för 7B", block: "Språkval åk 7" }),
+    refusedLine({ day: 5, start: "14:00", end: "15:00", requirement: "Svenska för 7C", room: "Sal 102" }),
+  ],
+  notes: [],
+  error: null,
+  errorCode: null,
+  errorParams: null,
+  errorNames: [],
+  createdAt: ago(0, "07:30"),
+  finishedAt: ago(0, "07:30"),
+};
 
-export const OPTIMIZATION_JOBS = YEAR_JOBS;
+/**
+ * Next year has never been generated. A scenario of the way back to the week (placement-back.ts) holds a run of its own: none for
+ * the first schema still to come, the refused one above on top of this year's runs for a refusal.
+ */
+export const optimizationJobsFor = (academicYearId: string | null, scenario: string | null = null): OptimizationJob[] => {
+  if (academicYearId !== YEAR.id) return [];
+  const asked = backCaseOf(scenario);
+  if (asked === "noschema") return [];
+  return asked === "refusal" ? [PLACEMENT_REFUSAL_JOB, ...YEAR_JOBS] : YEAR_JOBS;
+};
+
+/** Every run the stub can answer by id: this year's, and the refused one a way-back scenario lists first (optimizationJobsFor). */
+export const OPTIMIZATION_JOBS = [...YEAR_JOBS, PLACEMENT_REFUSAL_JOB];
 
 // --- Dataskydd och gallring -------------------------------------------------------
 

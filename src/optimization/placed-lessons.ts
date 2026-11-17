@@ -605,6 +605,48 @@ function sentenceParams(params: PlacementVerdict['params']): Record<string, stri
   return out;
 }
 
+/**
+ * THE TWO IDS A LINK BACK TO THE WEEK IS BUILT FROM (grafisk förläggning, A3).
+ *
+ * A refusal about a förläggning is stored with its sentence and its params, and
+ * its ids are the payload's anonymous ones, "meaningless once the run is over".
+ * A link to the card that must be moved needs the post's own id and, for a
+ * block's lesson, the block's: the page finds the card among the week's rows by
+ * post, day and start, and the block's card by block. Said as two flat scalars
+ * in `params`, which the stored refusal, its view and the web's ConflictDetail
+ * already carry and no catalogue sentence reads.
+ *
+ * `requirement` is the payload's id for the post (the pre-flight's and the
+ * engine's own lines both name it so), turned back through `realByAnon`; a
+ * post in a block has the block's, which is the card to open: a member's lesson
+ * has no card of its own. Absent when the id is not one this run sent (a line
+ * the engine made up, a refusal with no post), and the page then draws no link.
+ */
+export function placementIdsOf(
+  anonRequirement: string | undefined,
+  realByAnon: ReadonlyMap<string, string>,
+  blockOfPost: ReadonlyMap<string, string> | undefined,
+): { postId?: string; blockId?: string } {
+  const postId = anonRequirement === undefined ? undefined : realByAnon.get(anonRequirement);
+  if (postId === undefined) return {};
+  const blockId = blockOfPost?.get(postId);
+  return blockId === undefined ? { postId } : { postId, blockId };
+}
+
+/**
+ * The engine's refusals of a pinned lesson by its own name, raised before any model (pins.verify_pins): the five that say where
+ * the lesson is (day and clock) and carry `requirement`. They leave as an error and not as a line of a refusal, so they get the
+ * ids by the same function, from `requirement` in their params.
+ * PLACED_LESSONS_OF_BLOCK_DIFFER says no day and is not here.
+ */
+export const PIN_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  'PLACED_LESSON_OUTSIDE_THE_WEEK',
+  'PLACED_LESSON_OUTSIDE_FRAME',
+  'PLACED_LESSON_MARGINS_PAST_THE_DAY',
+  'PLACED_LESSON_IN_A_RAST',
+  'PLACED_LESSON_ROOM_NOT_ALLOWED',
+]);
+
 /** The pre-flight's codes, in the engine's catalogue (app/messages.py). */
 export const PLACEMENTS_REFUSED_SUMMARY = 'PLACEMENTS_REFUSED_SUMMARY';
 export const PLACEMENT_CANNOT_STAND = 'PLACEMENT_CANNOT_STAND';
