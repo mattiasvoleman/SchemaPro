@@ -37,11 +37,11 @@ describe("placementWeek.warnings", () => {
     expect(t("en")("said", { count: 3, sentences: "One. Two. Three." })).toBe("3 warnings: One. Two. Three.");
   });
 
-  it("says what a refusal means, and what the lack of one means, as the plan words them", () => {
+  it("says what a refusal means, and what the lack of one means: that the warning does not stop Generera, and no more (the gateway promises nothing the other way)", () => {
     expect(t("sv")("refuses")).toBe("Generera kommer att vägra veckan på grund av detta.");
-    expect(t("sv")("standsAnyway")).toBe("Lektionen är sparad, och Generera tar den som den ligger.");
+    expect(t("sv")("standsAnyway")).toBe("Lektionen är sparad, och den här varningen stoppar inte Generera.");
     expect(t("en")("refuses")).toBe("Generate will refuse the week because of this.");
-    expect(t("en")("standsAnyway")).toBe("The lesson is saved, and Generate takes it as it lies.");
+    expect(t("en")("standsAnyway")).toBe("The lesson is saved, and this warning does not stop Generate.");
   });
 
   it("marks the card with a sign AND a word, so that it is never a colour alone, and with a stronger word for a refusal", () => {

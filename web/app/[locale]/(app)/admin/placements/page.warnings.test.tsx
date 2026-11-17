@@ -473,7 +473,7 @@ describe("a card opened", () => {
     expect(within(dialog).getByTestId("card-verdict")).toHaveTextContent("holds");
     const lines = within(dialog).getAllByTestId("placement-warning");
     expect(lines).toHaveLength(2);
-    // A warning that does not refuse says that the lesson is saved and taken as it lies; one that refuses says Generera will refuse the week.
+    // A warning that does not refuse says that the lesson is saved and that the warning does not stop Generera; one that refuses says Generera will refuse the week.
     expect(lines[0]).toHaveTextContent("warnings.TEACHER_DAY_TOO_LONG(warnings.day(2)|470|420) warnings.standsAnyway");
     expect(lines[1]).toHaveTextContent("warnings.CLASS_HAS_NO_LUNCH(warnings.day(2)|10:30|13:00|30) warnings.refuses");
     expect(lines[1]).not.toHaveTextContent("warnings.standsAnyway");

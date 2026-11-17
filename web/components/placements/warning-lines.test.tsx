@@ -33,7 +33,7 @@ describe("the lines of what the week says of a lesson", () => {
     expect(screen.getByTestId("placement-warning")).toHaveTextContent("Klassen får ingen lunch. refuses");
   });
 
-  it("says that the lesson is saved and taken as it lies after a warning that does not refuse, in the dialog only", () => {
+  it("says that the lesson is saved and that the warning does not stop Generera after a warning that does not refuse, in the dialog only", () => {
     const { rerender } = render(<WarningLines items={[STANDS]} />);
     expect(screen.getByTestId("placement-warning")).toHaveTextContent(/^label Läraren undervisar länge\.$/);
     rerender(<WarningLines items={[STANDS]} dialog />);

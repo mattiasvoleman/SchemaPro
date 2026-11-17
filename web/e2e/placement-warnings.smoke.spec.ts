@@ -15,7 +15,7 @@ import { EXPEDITION, KIND, READER, STUB_ORIGIN, uid } from "./stub/sessions";
  *   - a card with a warning has a mark in its header, in words ("Varning", "Vägrar" where Generera will refuse the week), the whole of it drawn, and its
  *     accessible name carries the sentences, so that the reader who tabs through the week hears them without opening anything;
  *   - the list under the week says each warning once for a post, with the word and, after one that refuses, what that means; the card's dialog says
- *     each warning and, for one that does not refuse, that the lesson is saved and taken as it lies;
+ *     each warning and, for one that does not refuse, that the lesson is saved and that the warning does not stop Generera;
  *   - a save reads its warnings out in the page's polite status, and the card the keyboard goes to has the mark the moment it is focused;
  *   - the other schools' bands for a teacher or a room that is picked, in words, and none for one that is not;
  *   - at 320 px, 375 px and 1280 px, in both themes, with a wide font and a long room type: no line of the list, the status or the dialog reaches past its
@@ -175,7 +175,7 @@ test.describe("the lists", () => {
     await expect(dialog).toBeVisible();
     await expect(dialog.getByTestId("card-verdict")).toHaveText("Håller.");
     await expect(dialog.getByTestId("placement-warning")).toHaveCount(2);
-    await expect(dialog.getByTestId("placement-warning").first()).toContainText("Lektionen är sparad, och Generera tar den som den ligger.");
+    await expect(dialog.getByTestId("placement-warning").first()).toContainText("Lektionen är sparad, och den här varningen stoppar inte Generera.");
     await page.keyboard.press("Escape");
     await matematik(page).click();
     await expect(page.getByRole("dialog").getByTestId("placement-warning").first()).toContainText("Generera kommer att vägra veckan på grund av detta.");
