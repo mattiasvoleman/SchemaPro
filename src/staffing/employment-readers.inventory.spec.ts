@@ -192,6 +192,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     basis: 'POST',
     why: 'a hand edit counts the year’s posts with a day limit (a _count in a read it already makes) and reads the days of those it warns about; a period never states them',
   },
+  'src/requirement-placements/placement-warning-reads.ts': {
+    basis: 'POST',
+    why: 'the week of förläggningar warns of a teacher’s day (D1) and reads the days and the limit for teaching in a row of the posts of the teachers whose rows it warns about, as a hand edit does; no figure of the post (percent, reduction, target) and no period',
+  },
   'src/swaps/swap-snapshot.ts': {
     basis: 'POST',
     why: 'Byten och flyttar reads the days and the limit for teaching in a row of the posts of the teachers who teach a placed lesson, to count the breaches a swap makes or mends; no figure of the post (percent, reduction, target) and no period',
@@ -321,6 +325,10 @@ const DAYS_READERS: Record<string, { use: DaysUse; why: string }> = {
   'src/calendar/master-lessons.service.ts': {
     use: 'WORDS',
     why: 'the hand edit’s TEACHER_WEEK_TOO_MANY_DAYS and TEACHER_CONSECUTIVE_TOO_LONG warnings: the figures with readsHr, the *_HIDDEN code otherwise',
+  },
+  'src/requirement-placements/placement-warning-reads.ts': {
+    use: 'WORDS',
+    why: 'the week of förläggningar’s TEACHER_WEEK_TOO_MANY_DAYS and TEACHER_STRETCH_TOO_LONG warnings: the figures with readsHr, the *_HIDDEN code otherwise; the read of the posts is a row in the läslogg (EMPLOYMENT), also for the hidden wording',
   },
   'src/swaps/swap-snapshot.ts': {
     use: 'WORDS',
