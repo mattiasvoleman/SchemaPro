@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { useProfile, useReadOnly } from "@/components/profile-context";
 import { BrickList, type BrickGroup } from "@/components/placements/brick-list";
 import { SinceRunNote } from "@/components/placements/since-run-note";
+import { WarningLines } from "@/components/placements/warning-lines";
 import { FilterPicker } from "@/components/schedule/filter-picker";
 import { PlanningYearPicker, ProjectedRostersBanner } from "@/components/schedule/planning-year";
 import {
@@ -71,6 +72,7 @@ import {
 import { usePlacementBoard } from "@/lib/placement-board-queries";
 import { canBePair, heldHalfCardId, otherHalf, partKeyOfBrick, type Half, type WeeksChoice } from "@/lib/placement-pair-key";
 import { usePlacementLinkTarget } from "@/lib/use-placement-link-target";
+import { usePlacementWarnings } from "@/lib/use-placement-warnings";
 import {
   dropOf,
   dropOfBlock,
@@ -297,6 +299,8 @@ export default function PlacementsPage() {
     [everything, blockKeys],
   );
   const shownBlocks = useMemo(() => (everything ? visibleBlocks(everything, filters) : []), [everything, filters]);
+  // What the fixed week says of a row without refusing it, and the other schools' hold on a picked teacher or room (D1).
+  const warned = usePlacementWarnings({ board: everything, filters, keys, blockKeys, saving });
   const yearWeeks = useMemo(() => (year && weekTools ? weekTools.weeksOfYear(year.startDate, year.endDate) : []), [year, weekTools]);
   // One week picked: the cards that run that week. The lists, the bricks, the figures and the mirror stay the year's (lib/placement-week-view.ts).
   const viewed = useMemo(
@@ -354,6 +358,8 @@ export default function PlacementsPage() {
     () => (viewed ? mealBands(viewed.meals, (meal) => t("meal", { group: groupById.get(meal.studentGroupId)?.name ?? "" })) : []),
     [viewed, groupById, t],
   );
+  const markedCards = useMemo(() => warned.mark(cards), [warned.mark, cards]);
+  const allBands = useMemo(() => [...bands, ...warned.heldBands], [bands, warned.heldBands]);
 
   const postName = useCallback(
     (post: BoardPost | undefined): string =>
@@ -759,6 +765,7 @@ export default function PlacementsPage() {
           tone: failing.length > 0 ? "problem" : "ok",
           text: `${said} ${t("fromNextGenerate")}${failing.length > 0 ? ` ${t("stillFailing", { count: failing.length, rows })}` : ""}`,
         });
+        warned.say(result.answer.warnings);
         const target = focusOn(keysOfRows(result.answer.placements));
         if (target) setPendingFocus(target);
         return true;
@@ -767,7 +774,7 @@ export default function PlacementsPage() {
         return false;
       }
     },
-    [saving, editor, board, problemFrom, t],
+    [saving, editor, board, problemFrom, t, warned.say],
   );
 
   /** The card whose key is the lesson's after the change: of equal ones, the last. */
@@ -910,6 +917,7 @@ export default function PlacementsPage() {
           tone: failing.length > 0 ? "problem" : "ok",
           text: `${said} ${t("fromNextGenerate")}${failing.length > 0 ? ` ${tBlock("stillFailing", { count: failing.length, rows: lessons })}` : ""}`,
         });
+        void warned.sayBlock(blockId, () => board.refetch({ cancelRefetch: false }));
         const target = focusOn(keysOfBlockRows(blockId, result.answer.placements));
         if (target) setPendingFocus(target);
         return true;
@@ -919,7 +927,7 @@ export default function PlacementsPage() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [saving, editor, board, problemFrom, blockById, t, tBlock],
+    [saving, editor, board, problemFrom, blockById, t, tBlock, warned.sayBlock],
   );
 
   const choicesOf = (rooms: ReadonlyMap<string, string | null>): BlockRoomChoice[] =>
@@ -1375,6 +1383,7 @@ export default function PlacementsPage() {
           ) : null}
           <p role="status" aria-live="polite" className={cn("text-sm [overflow-wrap:anywhere]", message?.tone === "ok" ? "" : "sr-only")} data-testid="placement-status">
             {message?.tone === "ok" ? message.text : saving ? t("saving") : ""}
+            {warned.said ? <span> {warned.said}</span> : null}
           </p>
           {linkGone ? (
             <p role="status" className="text-sm text-muted-foreground" data-testid="placement-link-gone">
@@ -1417,6 +1426,7 @@ export default function PlacementsPage() {
                   <li>{t("legendPlaced")}</li>
                   <li>{t("legendKept")}</li>
                   <li>{t("legendFailing")}</li>
+                  {warned.legend ? <li>{warned.legend}</li> : null}
                 </ul>
                 {selectedBrick && mayWrite ? (
                   <div data-writes="PLANERING" className="mb-3 space-y-2 rounded-md border p-3" data-testid="lay-row">
@@ -1511,8 +1521,8 @@ export default function PlacementsPage() {
                     ) : null}
                     <TimetableGrid
                       ref={gridRef}
-                      lessons={cards}
-                      bands={bands}
+                      lessons={markedCards}
+                      bands={allBands}
                       dayEndMinutes={DAY_END_MINUTES}
                       dates={week && weekTools ? weekTools.datesOfWeek(week) : undefined}
                       editable={mayWrite}
@@ -1599,6 +1609,7 @@ export default function PlacementsPage() {
                           ))}
                         </ul>
                       ) : null}
+                      <WarningLines items={warned.ofRows(rows.map((row) => row.id))} />
                       {rows.length > 0 ? (
                         <p className="mt-1 text-xs text-muted-foreground">
                           {t("savedAt", { when: savedAt([...rows.map((row) => row.changedAt)].sort().at(-1)!, locale) })}
@@ -1657,6 +1668,7 @@ export default function PlacementsPage() {
                           ))}
                         </ul>
                       ) : null}
+                      <WarningLines items={warned.ofRows(block.rows.map((row) => row.id))} />
                       {block.rows.length > 0 ? (
                         <p className="mt-1 text-xs text-muted-foreground">{t("savedAt", { when: savedAt([...block.rows.map((row) => row.changedAt)].sort().at(-1)!, locale) })}</p>
                       ) : null}
@@ -1683,6 +1695,7 @@ export default function PlacementsPage() {
                         line: rowLine(openedRow),
                         verdictText: openedRow.verdict.ok ? t("holds") : verdictSentence(tPlacements, openedRow.verdict.reason, openedRow.verdict.params),
                         savedAt: savedAt(openedRow.changedAt, locale),
+                        warnings: warned.ofCard(openCard),
                         minutes: openedRow.minutes,
                         initial: { dayOfWeek: openedRow.dayOfWeek, startMinutes: minutesOfClock(openedRow.startTime), roomId: openedRow.roomId },
                         pair: (() => {
@@ -1705,6 +1718,7 @@ export default function PlacementsPage() {
                         line: blockRowLine(openedLesson.block, openedLesson.row),
                         verdictLines: openedLesson.row.verdicts.some((verdict) => !verdict.ok) ? linesOf(openedLesson.block, openedLesson.row.verdicts) : [t("holds")],
                         savedAt: savedAt(openedLesson.row.changedAt, locale),
+                        warnings: warned.ofCard(openCard),
                         minutes: openedLesson.row.minutes,
                         initial: {
                           dayOfWeek: openedLesson.row.dayOfWeek,

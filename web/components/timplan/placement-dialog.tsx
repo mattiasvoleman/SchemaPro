@@ -32,6 +32,7 @@ import {
   minutesOfClock,
   verdictSentence,
 } from "@/lib/requirement-placement-text";
+import { itemsOfWarnings, sentenceOfWarning, sentencesOf } from "@/lib/placement-warnings";
 import { sortByName } from "@/lib/sorting";
 import type { TeachingRequirement } from "@/lib/types";
 import { useReadOnly } from "@/components/profile-context";
@@ -203,6 +204,7 @@ function PlacementForm({
   const t = useTranslations("requirements.placements");
   const tDays = useTranslations("days");
   const tCommon = useTranslations("common");
+  const tWarn = useTranslations("placementWeek.warnings");
   const client = useQueryClient();
   const readOnly = useReadOnly();
   const uid = useId();
@@ -461,7 +463,11 @@ function PlacementForm({
         const verdict = answer.verdicts[index];
         return verdict && !verdict.ok ? [{ placement, verdict }] : [];
       });
-      if (failing.length === 0) toast.success(t("saved"));
+      // What the week the school has fixed says of the rows now written (D1): never a refusal, but said, with whether Generera will refuse because of it.
+      const warnings = itemsOfWarnings(answer.warnings, (warning) => sentenceOfWarning(tWarn, warning));
+      const said = warnings.length === 0 ? "" : ` ${tWarn("said", { count: warnings.length, sentences: sentencesOf(warnings, tWarn("refuses")) })}`;
+      if (failing.length === 0 && warnings.length === 0) toast.success(t("saved"));
+      else if (failing.length === 0) toast.warning(`${t("saved")}${said}`);
       else {
         const rowsText = failing.map(({ placement, verdict }) =>
           t("stillFailing", {
@@ -472,7 +478,7 @@ function PlacementForm({
             reason: verdictSentence(t, verdict.reason, verdict.params),
           }),
         );
-        toast.warning(`${t("savedStillFailing", { count: failing.length })} ${rowsText.join(" ")}`);
+        toast.warning(`${t("savedStillFailing", { count: failing.length })} ${rowsText.join(" ")}${said}`);
       }
       onClose();
     } catch (error) {

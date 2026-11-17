@@ -2,6 +2,7 @@ import type { TimetableBand, TimetableLesson } from "@/components/schedule/timet
 import type {
   PlacementRecurrence,
   PlacementRefusalReason,
+  PlacementWarning,
   RequirementPlacement,
 } from "@/lib/requirement-placements";
 
@@ -149,6 +150,20 @@ export interface BoardBlock {
   rowsKey: string;
 }
 
+/** One hold of another school on a teacher or a room of this one: drawn as a band in the week for a teacher or a room that is picked. */
+export interface BoardHold {
+  kind: "TEACHER_BUSY" | "ROOM_LENT" | "ROOM_BORROWED";
+  resourceKind: "TEACHER" | "ROOM";
+  /** This school's own teacher or room. */
+  resourceId: string;
+  dayOfWeek: number;
+  /** HH:MM. */
+  startTime: string;
+  endTime: string;
+  /** The other schools by name. */
+  schools: string[];
+}
+
 export interface PlacementBoard {
   academicYearId: string;
   /** What the grundschema holds of the förläggningar, as Generera last wrote it; absent from a gateway before A3. */
@@ -159,6 +174,10 @@ export interface PlacementBoard {
   meals: BoardMeal[];
   /** The year's parallel blocks, placed or not. An older gateway has no such field: the page reads that as no blocks. */
   blocks: BoardBlock[];
+  /** What the fixed week says of each row, a post's or a block's lesson's, by the row's id in this same answer. An older gateway has none. */
+  warnings?: PlacementWarning[];
+  /** The other schools' hold on this school's teachers and rooms. An older gateway has none. */
+  holds?: BoardHold[];
 }
 
 /** The figures of a post, summed over its parts. */

@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { BlockPlaceFields, type BlockPlaceFieldsProps, type BlockPlaceValue } from "@/components/placements/block-place-fields";
 import { PlaceFields, type PlaceFieldsProps, type PlaceValue } from "@/components/placements/place-fields";
+import { WarningLines } from "@/components/placements/warning-lines";
+import type { WarningItem } from "@/lib/placement-warnings";
 
 /*
  * A card of the week, opened (a press, or Enter on it): what it is, and for the
@@ -35,6 +37,8 @@ export interface PlacedCard {
   initial: PlaceValue;
   /** A half of a pair: removing it removes both, and the school is asked first. */
   pair: string | null;
+  /** What the week says of the lesson without refusing it (D1), each with what it means for Generera. */
+  warnings?: readonly WarningItem[];
 }
 
 /** A lesson of a parallel block, opened. */
@@ -53,6 +57,7 @@ export interface PlacedBlockCard {
   initial: BlockPlaceValue;
   /** The block's posts, as they are asked for a room. */
   members: ReadonlyArray<{ id: string; name: string }>;
+  warnings?: readonly WarningItem[];
 }
 
 export interface KeptCard {
@@ -93,6 +98,7 @@ export function CardDialog({ placed, kept, block, mayWrite, fields, blockFields,
             <p className="text-sm [overflow-wrap:anywhere]" data-testid="card-verdict">
               {placed.verdictText}
             </p>
+            <WarningLines items={placed.warnings ?? []} dialog />
             <p className="text-xs text-muted-foreground">{t("savedAt", { when: placed.savedAt })}</p>
             {/* To the post's line in the list under the week: everybody's, the läsare's too. */}
             <Button variant="outline" size="sm" asChild>
@@ -141,6 +147,7 @@ export function CardDialog({ placed, kept, block, mayWrite, fields, blockFields,
                 </p>
               ))}
             </div>
+            <WarningLines items={block.warnings ?? []} dialog />
             <p className="text-xs text-muted-foreground">{t("savedAt", { when: block.savedAt })}</p>
             {/* To the block's line in the list under the week: everybody's, the läsare's too. */}
             <Button variant="outline" size="sm" asChild>

@@ -89,6 +89,11 @@ export function patchBoard(board: PlacementBoard, postId: string, answer: Placem
   const before = board.placements.filter((row) => row.requirementId === postId);
   return {
     ...board,
+    // The post's warnings are named by the ids of the rows it had, which are gone: the answer's, named by the ids of the rows it wrote, take
+    // their place at once (the card the keyboard goes to says its warning when it is focused), and the week's own read corrects the others'.
+    ...(board.warnings !== undefined || answer.warnings !== undefined
+      ? { warnings: [...(board.warnings ?? []).filter((warning) => warning.requirementId !== postId || warning.blockId !== undefined), ...(answer.warnings ?? [])] }
+      : {}),
     // The rows of the other posts as they were, then this post's in the order the gateway answered them (day, start, weeks).
     placements: [...board.placements.filter((row) => row.requirementId !== postId), ...written],
     posts: board.posts.map((post) => {

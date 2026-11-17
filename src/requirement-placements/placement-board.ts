@@ -1,3 +1,4 @@
+import type { PlacementWarningView } from './placement-warnings';
 import type { LessonRecurrence } from '@prisma/client';
 import { lockCoversDemand, type TaughtLesson } from '../optimization/locked-coverage';
 import { demandLeftOf } from '../optimization/post-demand';
@@ -270,6 +271,27 @@ export interface PlacementBoardResponse {
   posts: BoardPostView[];
   kept: BoardKeptView[];
   meals: BoardMealView[];
+  /**
+   * What the week the school has fixed says about each förläggning, post rows and block lessons alike
+   * (placement-warnings.ts). Additive: an older web ignores it. A warning never refused a save.
+   */
+  warnings: PlacementWarningView[];
+  /** The other schools' hold on this school's teachers and rooms, which a row is judged against (OTHER_SCHOOL). Additive. */
+  holds: BoardHoldView[];
+}
+
+/** One hold of another school on a teacher or a room of this one, as a band in the week. */
+export interface BoardHoldView {
+  kind: 'TEACHER_BUSY' | 'ROOM_LENT' | 'ROOM_BORROWED';
+  resourceKind: 'TEACHER' | 'ROOM';
+  /** This school's own Users row or room. */
+  resourceId: string;
+  dayOfWeek: number;
+  /** HH:MM. */
+  startTime: string;
+  endTime: string;
+  /** The other schools by name, in name order: the sentence a refusal for it gives names the same. */
+  schools: string[];
 }
 
 /** What the count reads of a post row, from the service's select. */
