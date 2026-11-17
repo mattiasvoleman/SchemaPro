@@ -6701,7 +6701,7 @@ $f$;
 -- the functions asked here count in: not current_date, which is the day before it between 22:00 or 23:00 and midnight UTC. The fixture plants
 -- its lessons from the same day (rls-fixtures.sql), so "three days ago" stays three days ago for both.
 CREATE OR REPLACE FUNCTION pg_temp.tko_today() RETURNS date LANGUAGE sql AS $f$
-  SELECT (now() AT TIME ZONE sc.timezone)::date FROM "Schools" sc WHERE sc.id = pg_temp.tko_school()
+  SELECT (sc."createdAt" AT TIME ZONE sc.timezone)::date FROM "Schools" sc WHERE sc.id = pg_temp.tko_school()
 $f$;
 
 -- Mark (or unmark) …6nnn under the claims of a decider (the full administrator, or the rektor when it is the full administrator that is
@@ -6955,7 +6955,7 @@ $f$;
 -- the functions asked here count in: not current_date, which is the day before it between 22:00 or 23:00 and midnight UTC. The fixture plants
 -- its lessons from the same day (rls-fixtures.sql), so "three days ago" stays three days ago for both.
 CREATE OR REPLACE FUNCTION pg_temp.tko_today() RETURNS date LANGUAGE sql AS $f$
-  SELECT (now() AT TIME ZONE sc.timezone)::date FROM "Schools" sc WHERE sc.id = pg_temp.tko_school()
+  SELECT (sc."createdAt" AT TIME ZONE sc.timezone)::date FROM "Schools" sc WHERE sc.id = pg_temp.tko_school()
 $f$;
 
 CREATE OR REPLACE FUNCTION pg_temp.tko_mark(n int, v boolean) RETURNS void LANGUAGE plpgsql AS $f$
