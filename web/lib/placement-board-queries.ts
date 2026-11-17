@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { BoardBlock, PlacementBoard } from "@/lib/placement-board";
-import { REQUIREMENT_PLACEMENTS_KEY } from "@/lib/requirement-placements";
+import type { BoardBlock, BoardHold, PlacementBoard } from "@/lib/placement-board";
+import { REQUIREMENT_PLACEMENTS_KEY, type PlacementWarning } from "@/lib/requirement-placements";
 
 /*
  * The year's week of förläggningar, read (GET /teaching-requirements/
@@ -21,11 +21,11 @@ export function usePlacementBoard(academicYearId: string | null) {
     queryKey: placementBoardKey(academicYearId),
     enabled: academicYearId !== null,
     queryFn: async (): Promise<PlacementBoard> => {
-      const board = await api.get<Omit<PlacementBoard, "blocks"> & { blocks?: BoardBlock[] }>(
-        `/api/v1/teaching-requirements/placements/board?academicYearId=${encodeURIComponent(academicYearId!)}`,
-      );
-      // A gateway deployed before the blocks were on the board has no such field: no block, nothing to draw.
-      return { ...board, blocks: board.blocks ?? [] };
+      const board = await api.get<
+        Omit<PlacementBoard, "blocks" | "warnings" | "holds"> & { blocks?: BoardBlock[]; warnings?: PlacementWarning[]; holds?: BoardHold[] }
+      >(`/api/v1/teaching-requirements/placements/board?academicYearId=${encodeURIComponent(academicYearId!)}`);
+      // A gateway deployed before the blocks, the warnings or the holds were on the board has no such field: none, nothing to draw.
+      return { ...board, blocks: board.blocks ?? [], warnings: board.warnings ?? [], holds: board.holds ?? [] };
     },
   });
 }

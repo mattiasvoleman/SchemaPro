@@ -9,7 +9,7 @@ import type { BoardBlock, BoardBlockRow, BoardPart, BoardPlacement, BoardPost, P
 import { placementBoardKey } from "./placement-board-queries";
 import { keysOfRows } from "./placement-rows";
 import { WriteFailure, patchBoard, usePlacementEditor, writeProblemOf } from "./placement-write";
-import type { PlacementsOfRequirement, RequirementPlacement } from "./requirement-placements";
+import type { PlacementWarning, PlacementsOfRequirement, RequirementPlacement } from "./requirement-placements";
 
 const save = vi.hoisted(() => vi.fn());
 const saveBlock = vi.hoisted(() => vi.fn());
@@ -139,6 +139,43 @@ describe("patchBoard", () => {
       ["anna", 0, 2],
       ["bo", 1, 0],
     ]);
+  });
+});
+
+describe("patchBoard, the warnings (D1)", () => {
+  const warn = (rowId: string, requirementId: string, over: Partial<PlacementWarning> = {}): PlacementWarning => ({
+    code: "TEACHER_DAY_TOO_LONG",
+    refuses: false,
+    params: { day: 2, minutes: 470, cap: 420 },
+    rowId,
+    requirementId,
+    ...over,
+  });
+
+  it("puts the answer's warnings, named by the ids of the rows it wrote, in place of the post's old ones, whose rows are gone", () => {
+    const before = board({ warnings: [warn("row-1", "post-1"), warn("other", "post-2")] });
+    const answer: PlacementsOfRequirement = { ...answerOf([stored({ id: "n-1" })], "cccccccccccccccc"), warnings: [warn("n-1", "post-1", { code: "CLASS_HAS_NO_LUNCH", refuses: true })] };
+    const patched = patchBoard(before, "post-1", answer, "now");
+    expect(patched.warnings!.map((entry) => [entry.rowId, entry.code])).toEqual([
+      ["other", "TEACHER_DAY_TOO_LONG"],
+      ["n-1", "CLASS_HAS_NO_LUNCH"],
+    ]);
+  });
+
+  it("drops the post's old warnings when the answer has none, and keeps the other posts' and a block's lesson's", () => {
+    const before = board({ warnings: [warn("row-1", "post-1"), warn("other", "post-2"), warn("lesson-1", "post-1", { blockId: "block-1" })] });
+    const patched = patchBoard(before, "post-1", answerOf([stored({ id: "n-1" })], "cccccccccccccccc"), "now");
+    expect(patched.warnings!.map((entry) => entry.rowId)).toEqual(["other", "lesson-1"]);
+  });
+
+  it("gives a week from a gateway without warnings, and an answer without, no warnings field of its own", () => {
+    const patched = patchBoard(board(), "post-1", answerOf([stored({ id: "n-1" })], "cccccccccccccccc"), "now");
+    expect("warnings" in patched).toBe(false);
+  });
+
+  it("takes the answer's warnings into a week that had none", () => {
+    const answer: PlacementsOfRequirement = { ...answerOf([stored({ id: "n-1" })], "cccccccccccccccc"), warnings: [warn("n-1", "post-1")] };
+    expect(patchBoard(board(), "post-1", answer, "now").warnings).toEqual([warn("n-1", "post-1")]);
   });
 });
 
