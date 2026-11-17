@@ -332,6 +332,44 @@ describe('Larm for each person (Users.teaches)', () => {
     expect(asked()).toEqual([MINE]);
   });
 
+  // The way between her two views is in the header, and the header is drawn before the first read has answered: at one bar of
+  // signal, or a gateway under the load of every phone in the school reading at once, the read is a while, and that is when the
+  // administration's view (starting the alarm) is wanted.
+  it('lets her reach the administration’s view while her roll call is still being read', async () => {
+    as('SCHOOL_ADMIN', true);
+    gateway.mine = () => new Promise(() => undefined); // a request held in the air
+    tree = await render();
+    expect(tree.root.findAll((n) => isHostOf(n, 'ActivityIndicator')).length).toBeGreaterThan(0);
+    expect(canPress(tree, SWITCH_TO_MANAGEMENT)).toBe(true);
+    await press(pressable(tree, SWITCH_TO_MANAGEMENT));
+    expect(management(tree)).toBe(true);
+  });
+
+  it('lets her go back to her roll call while the administration’s first read is still going', async () => {
+    as('SCHOOL_ADMIN', true);
+    tree = await render();
+    gateway.alarms = () => new Promise(() => undefined);
+    await press(pressable(tree, SWITCH_TO_MANAGEMENT));
+    expect(management(tree)).toBe(false);
+    expect(tree.root.findAll((n) => isHostOf(n, 'ActivityIndicator')).length).toBeGreaterThan(0);
+    expect(canPress(tree, SWITCH_TO_ROLL_CALL)).toBe(true);
+    await press(pressable(tree, SWITCH_TO_ROLL_CALL));
+    expect(rollCall(tree)).toBe(true);
+  });
+
+  it('draws no header of its own while it loads for a teacher or an administrator who does not teach: the same spinner as before', async () => {
+    for (const [role, teaches] of [['TEACHER', false], ['SCHOOL_ADMIN', false]] as const) {
+      as(role, teaches);
+      gateway.mine = () => new Promise(() => undefined);
+      gateway.alarms = () => new Promise(() => undefined);
+      tree = await render();
+      expect(tree.root.findAll((n) => isHostOf(n, 'ActivityIndicator')).length).toBeGreaterThan(0);
+      expect(texts(tree)).toEqual([]);
+      await act(async () => tree?.unmount());
+      tree = null;
+    }
+  });
+
   it('asks the gateway for nothing under the cover requests, whichever view she is in', async () => {
     as('SCHOOL_ADMIN', true);
     tree = await render();

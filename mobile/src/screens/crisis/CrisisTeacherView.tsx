@@ -96,6 +96,15 @@ export function CrisisTeacherView({ gutter, toManagement }: { readonly gutter: n
   if (state.isLoading) {
     return (
       <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
+        {/* The way to the administration's view is there before the first read has answered: it may be a while at one bar of signal. */}
+        {toManagement ? (
+          <View style={[styles.header, { paddingHorizontal: gutter }]}>
+            <Text style={styles.headerTitle} accessibilityRole="header">
+              {t('crisis.title')}
+            </Text>
+            <ViewSwitch label={t('crisis.switch.toManagement')} hint={t('crisis.switch.toManagementHint')} onPress={toManagement} />
+          </View>
+        ) : null}
         <View style={styles.center}>
           <ActivityIndicator size="large" color={colors.primary} />
         </View>

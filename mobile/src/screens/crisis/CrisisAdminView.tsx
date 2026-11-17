@@ -66,6 +66,15 @@ export function CrisisAdminView({ gutter, toRollCall }: { readonly gutter: numbe
   if (state.isLoading) {
     return (
       <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
+        {/* The way back to her roll call is there before the first read has answered. */}
+        {toRollCall ? (
+          <View style={[styles.header, { paddingHorizontal: gutter }]}>
+            <Text style={styles.headerTitle} accessibilityRole="header">
+              {t('crisis.title')}
+            </Text>
+            <ViewSwitch label={t('crisis.switch.toRollCall')} hint={t('crisis.switch.toRollCallHint')} onPress={toRollCall} />
+          </View>
+        ) : null}
         <View style={styles.center}>
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
