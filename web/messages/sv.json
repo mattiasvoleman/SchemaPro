@@ -2138,8 +2138,7 @@
       "cannotPair": "Paret kan inte läggas: {reason}",
       "weeksOdd": "udda veckor",
       "weeksEven": "jämna veckor",
-      "movedHalf": "Flyttade halvan till {when}.",
-      "heldLabel": "Halv lektion, inte sparad: {lesson}, {weeks}, {when}"
+      "movedHalf": "Flyttade halvan till {when}."
     },
     "weeks": {
       "label": "Vecka",
@@ -2149,12 +2148,12 @@
       "ht": "Höstterminen (HT)",
       "vt": "Vårterminen (VT)",
       "option": "v. {week} · {from}–{to} · {parity}",
-      "odd": "udda (A)",
-      "even": "jämna (B)",
+      "odd": "udda",
+      "even": "jämn",
       "shown": "Visar vecka {week}, {from}–{to}, {parity}. Lektioner som inte går den veckan visas inte.",
       "shownAll": "Visar alla veckor. En lektion som bara går udda eller jämna veckor, eller en del av läsåret, har ett märke.",
       "followed": "Visar nu vecka {week} ({parity}), för den andra halvan.",
-      "hint": "Udda veckor är A-veckor och jämna veckor B-veckor, efter veckonummer (ISO 8601)."
+      "hint": "Udda och jämna veckor räknas efter veckonummer (ISO 8601), som överallt i appen."
     },
     "note": {
       "odd": "udda",

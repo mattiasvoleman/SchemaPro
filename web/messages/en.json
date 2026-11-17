@@ -2138,8 +2138,7 @@
       "cannotPair": "The pair cannot be placed: {reason}",
       "weeksOdd": "odd weeks",
       "weeksEven": "even weeks",
-      "movedHalf": "Moved the half to {when}.",
-      "heldLabel": "Half lesson, not saved: {lesson}, {weeks}, {when}"
+      "movedHalf": "Moved the half to {when}."
     },
     "weeks": {
       "label": "Week",
@@ -2149,12 +2148,12 @@
       "ht": "Autumn term (HT)",
       "vt": "Spring term (VT)",
       "option": "wk {week} · {from}–{to} · {parity}",
-      "odd": "odd (A)",
-      "even": "even (B)",
+      "odd": "odd",
+      "even": "even",
       "shown": "Showing week {week}, {from}–{to}, {parity}. Lessons that do not run that week are not shown.",
       "shownAll": "Showing all weeks. A lesson that runs only odd or even weeks, or only part of the school year, has a mark.",
       "followed": "Now showing week {week} ({parity}), for the other half.",
-      "hint": "Odd weeks are A weeks and even weeks are B weeks, by week number (ISO 8601)."
+      "hint": "Odd and even weeks are counted by week number (ISO 8601), as everywhere else in the app."
     },
     "note": {
       "odd": "odd",
