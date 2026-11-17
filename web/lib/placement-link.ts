@@ -69,12 +69,16 @@ export function linkTargetOf(search: string): PlacementLinkTarget | null {
   return { postId, blockId: query.get("block") || null, day: Number(day), start };
 }
 
-/** The row an address names: the first on the post, the day and the start (two alike are one lesson twice, and the first is the card without a number). */
-export function markedRowOf<R extends { requirementId: string; dayOfWeek: number; startTime: string }>(
+/**
+ * The row an address names: on the post, the day and the start. Two alike are one lesson twice, or the two halves of a pair (odd and
+ * even weeks at one time), which the address cannot tell apart: the one the judge says no to is the one a refusal is about, else the first.
+ */
+export function markedRowOf<R extends { requirementId: string; dayOfWeek: number; startTime: string; verdict?: { ok: boolean } }>(
   rows: readonly R[],
   target: PlacementLinkTarget,
 ): R | undefined {
-  return rows.find((row) => row.requirementId === target.postId && row.dayOfWeek === target.day && row.startTime.slice(0, 5) === target.start);
+  const named = rows.filter((row) => row.requirementId === target.postId && row.dayOfWeek === target.day && row.startTime.slice(0, 5) === target.start);
+  return named.find((row) => row.verdict?.ok === false) ?? named[0];
 }
 
 /**

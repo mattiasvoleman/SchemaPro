@@ -141,6 +141,17 @@ describe("markedRowOf", () => {
     expect(markedRowOf([row({ id: "bo", teacherId: "bo" })], target)?.id).toBe("bo");
   });
 
+  it("takes the one the judge says no to of two alike: a refusal about one half of a pair is about that half, and the address cannot tell the halves apart", () => {
+    type VerdictRow = ReturnType<typeof row> & { verdict: { ok: boolean } };
+    const withVerdict = (over: Parameters<typeof row>[0], ok: boolean): VerdictRow => ({ ...row(over), verdict: { ok } });
+    const halves = [withVerdict({ id: "odd", recurrence: "ODD_WEEKS" } as never, true), withVerdict({ id: "even", recurrence: "EVEN_WEEKS" } as never, false)];
+    expect(markedRowOf(halves, target)?.id).toBe("even");
+    // Both holding, or both failing: the first, as before; and rows with no verdict (a board read by an older reader) the first too.
+    expect(markedRowOf([withVerdict({ id: "a" }, true), withVerdict({ id: "b" }, true)], target)?.id).toBe("a");
+    expect(markedRowOf([withVerdict({ id: "a" }, false), withVerdict({ id: "b" }, false)], target)?.id).toBe("a");
+    expect(markedRowOf([row({ id: "a" }), row({ id: "b" })], target)?.id).toBe("a");
+  });
+
   it("takes the first of two alike, which is the card without a number (#2 is the second)", () => {
     const rows = [row({ id: "first" }), row({ id: "second" })];
     const keys = keysOfRows(rows);

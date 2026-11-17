@@ -20,7 +20,7 @@ import { linkTargetOf, markedRowOf, type PlacementLinkTarget } from "@/lib/place
 const GIVE_UP_MS = 3000;
 
 export function usePlacementLinkTarget(
-  rows: readonly { id: string; requirementId: string; dayOfWeek: number; startTime: string }[] | undefined,
+  rows: readonly { id: string; requirementId: string; dayOfWeek: number; startTime: string; verdict?: { ok: boolean } }[] | undefined,
   keys: ReadonlyMap<string, string>,
   openCard: string | null,
 ): { markedCard: string | null; missing: boolean } {
