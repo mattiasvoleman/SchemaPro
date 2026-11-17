@@ -37,11 +37,26 @@ describe("placementWeek.warnings", () => {
     expect(t("en")("said", { count: 3, sentences: "One. Two. Three." })).toBe("3 warnings: One. Two. Three.");
   });
 
-  it("says what a refusal means, and what the lack of one means: that the warning does not stop Generera, and no more (the gateway promises nothing the other way)", () => {
+  it("says what a refusal means, and what the lack of one means: that this reason does not make Generera refuse, and no more (the gateway promises nothing the other way)", () => {
     expect(t("sv")("refuses")).toBe("Generera kommer att vägra veckan på grund av detta.");
-    expect(t("sv")("standsAnyway")).toBe("Lektionen är sparad, och den här varningen stoppar inte Generera.");
+    expect(t("sv")("standsAnyway")).toBe("Lektionen är sparad. Generera vägrar inte veckan för just det här, men kan vägra den av något annat.");
     expect(t("en")("refuses")).toBe("Generate will refuse the week because of this.");
-    expect(t("en")("standsAnyway")).toBe("The lesson is saved, and this warning does not stop Generate.");
+    expect(t("en")("standsAnyway")).toBe("The lesson is saved. Generate will not refuse the week for this alone, but it may still refuse it for something else.");
+  });
+
+  it("promises no more for a warning that does not refuse than the gateway does: `refuses: false` is no evidence of a refusal, not a promise that Generera runs (review of #339, LÅG-5)", () => {
+    // The gateway's contract (placement-warnings.ts): "false is not a promise that it will not (the engine may find another reason),
+    // only that this one does not stop it". The card's dialog and the legend are the two places that say it to the reader.
+    for (const [locale, key, unwanted, wanted] of [
+      ["sv", "standsAnyway", /stoppar inte Generera/, /något annat/],
+      ["sv", "legend", /stoppar inte Generera/, /något annat/],
+      ["en", "standsAnyway", /does not stop Generate/, /something else/],
+      ["en", "legend", /does not stop Generate/, /something else/],
+    ] as const) {
+      const text = t(locale)(key);
+      expect(text, `${locale} ${key}`).not.toMatch(unwanted);
+      expect(text, `${locale} ${key}`).toMatch(wanted);
+    }
   });
 
   it("marks the card with a sign AND a word, so that it is never a colour alone, and with a stronger word for a refusal", () => {

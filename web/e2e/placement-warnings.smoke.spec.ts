@@ -175,7 +175,7 @@ test.describe("the lists", () => {
     await expect(dialog).toBeVisible();
     await expect(dialog.getByTestId("card-verdict")).toHaveText("Håller.");
     await expect(dialog.getByTestId("placement-warning")).toHaveCount(2);
-    await expect(dialog.getByTestId("placement-warning").first()).toContainText("Lektionen är sparad, och den här varningen stoppar inte Generera.");
+    await expect(dialog.getByTestId("placement-warning").first()).toContainText("Lektionen är sparad. Generera vägrar inte veckan för just det här, men kan vägra den av något annat.");
     await page.keyboard.press("Escape");
     await matematik(page).click();
     await expect(page.getByRole("dialog").getByTestId("placement-warning").first()).toContainText("Generera kommer att vägra veckan på grund av detta.");

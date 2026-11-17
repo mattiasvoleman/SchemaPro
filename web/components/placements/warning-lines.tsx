@@ -8,7 +8,8 @@ import type { WarningItem } from "@/lib/placement-warnings";
  * What the week says of a post's lessons without refusing them (D1): a line per warning, an icon AND the word "Varning" so that it is
  * never a colour alone, and after a warning that refuses what that means (Generera will refuse the week). The lines are the page's
  * (use-placement-warnings.ts): in the list under the week, once per post, and in a card's dialog, where a warning that does not refuse
- * says that the lesson is saved and that the warning does not stop Generera (and no more: the gateway promises nothing of what Generera will do).
+ * says that the lesson is saved and that Generera does not refuse the week for this reason, but may for another (and no more: the gateway's
+ * `refuses: false` is no evidence of a refusal, not a promise that Generera runs).
  */
 export function WarningLines({ items, dialog = false }: { items: readonly WarningItem[]; dialog?: boolean }) {
   const t = useTranslations("placementWeek.warnings");
