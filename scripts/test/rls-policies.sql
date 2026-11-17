@@ -64807,10 +64807,12 @@ ROLLBACK;
 
 -- What the five functions say of person …6nnn, as that person: can they decide request A, can they decide request B, is request A
 -- "taken" (somebody else's to decide), are they the mentor of the pupil of 7A, of the pupil of 7B, how many mentees have they, and is
--- the pupil of 7A theirs for a lesson move today. The ids are read once (as somebody who reads the school) into settings.
+-- the pupil of 7A theirs for a lesson move today. The ids and the days of the requests are read once (as somebody who reads the school) into
+-- settings. "Today" is the school's (app.school_today()), as in the functions it is asked of: the pupils' enrolments are written from the
+-- school's day, and between 22:00 or 23:00 and midnight UTC that is the day after current_date, when the pupil is not yet in the class on it.
 CREATE OR REPLACE FUNCTION pg_temp.tk5_ask(n int) RETURNS text LANGUAGE plpgsql AS $f$
 DECLARE
-  mon date := (date_trunc('week', current_date) + interval '7 days')::date;
+  mon date := current_setting('app.tk5_mon')::date;
   s uuid;
 BEGIN
   PERFORM pg_temp.tk_a(n);
@@ -64821,7 +64823,7 @@ BEGIN
       || ' mentorA=' || CASE WHEN app.absence_watch_is_mentor_of(current_setting('app.tk5_pa')::uuid) THEN 't' ELSE 'f' END
       || ' mentorB=' || CASE WHEN app.absence_watch_is_mentor_of(current_setting('app.tk5_pb')::uuid) THEN 't' ELSE 'f' END
       || ' mentees=' || cardinality(app.ack_mentee_ids())
-      || ' moveA=' || CASE WHEN app.lesson_move_is_mentor(current_setting('app.tk5_pa')::uuid, current_date) THEN 't' ELSE 'f' END;
+      || ' moveA=' || CASE WHEN app.lesson_move_is_mentor(current_setting('app.tk5_pa')::uuid, app.school_today()) THEN 't' ELSE 'f' END;
 END $f$;
 
 -- What the same person reads of the school's leave requests.
@@ -64841,7 +64843,6 @@ DECLARE
   teacher_b text;
   got text;
   r text;
-  mon date := (date_trunc('week', current_date) + interval '7 days')::date;
 BEGIN
   -- Who the pupils and the requests are, as somebody who reads the school (a full administrator).
   PERFORM pg_temp.tk_a(6002);
@@ -64852,7 +64853,9 @@ BEGIN
   PERFORM set_config('app.tk5_pb', pg_temp.tk_id(6023)::text, true);
   PERFORM set_config('app.tk5_ra', (SELECT id::text FROM "LeaveRequests" WHERE "studentId" = pg_temp.tk_id(6021)), true);
   PERFORM set_config('app.tk5_rb', (SELECT id::text FROM "LeaveRequests" WHERE "studentId" = pg_temp.tk_id(6023)), true);
-  IF current_setting('app.tk5_ra') = '' OR current_setting('app.tk5_rb') = '' THEN
+  -- The first day of the requests is the fixture's own (the Monday after the school's day when it was planted), not a Monday counted again here.
+  PERFORM set_config('app.tk5_mon', (SELECT "startDate"::text FROM "LeaveRequests" WHERE id = current_setting('app.tk5_ra')::uuid), true);
+  IF current_setting('app.tk5_ra') = '' OR current_setting('app.tk5_rb') = '' OR current_setting('app.tk5_mon') = '' THEN
     RAISE EXCEPTION 'tk 512: the two pending leave requests of the fixture are not there';
   END IF;
   -- The duties the cast stands on: each administrator has their one MENTORSKAP, the teachers theirs, the teacher with no class none.
@@ -64996,23 +64999,24 @@ ROLLBACK;
 -- register is saved; teacher …6011 on LA-6. Marks are made and taken inside the transaction, which is rolled back.
 -- ---------------------------------------------------------------------------
 
--- The open lessons of person …6nnn as that person: 'count:day,day'. p_days is how far back the list reaches.
+-- The open lessons of person …6nnn as that person: 'count:day,day', the days counted back from the school's day (app.school_today(), which the list
+-- itself reaches back from; current_date is the day before it between 22:00 or 23:00 and midnight UTC). p_days is how far back the list reaches.
 CREATE OR REPLACE FUNCTION pg_temp.tk5_open(n int, p_days int) RETURNS text LANGUAGE plpgsql AS $f$
 DECLARE r text;
 BEGIN
   PERFORM pg_temp.tk_a(n);
-  SELECT count(*) || ':' || coalesce(string_agg((current_date - o.day)::text, ',' ORDER BY o.day DESC), '')
+  SELECT count(*) || ':' || coalesce(string_agg((app.school_today() - o.day)::text, ',' ORDER BY o.day DESC), '')
     INTO r FROM app.reporting_open_lessons(p_days) o;
   RETURN r;
 END $f$;
 
--- The night's count for the larm school up to yesterday, as 'written/removed/teachers/held/reported', run as the full administrator.
+-- The night's count for the larm school up to yesterday (the school's), as 'written/removed/teachers/held/reported', run as the full administrator.
 CREATE OR REPLACE FUNCTION pg_temp.tk5_night() RETURNS text LANGUAGE plpgsql AS $f$
 DECLARE r text;
 BEGIN
   PERFORM pg_temp.tk_a(6002);
   SELECT c.written || '/' || c.removed || '/' || c.teachers || '/' || c.held || '/' || c.reported
-    INTO r FROM app.reporting_compute(app.current_school_id(), current_date - 1) c;
+    INTO r FROM app.reporting_compute(app.current_school_id(), app.school_today() - 1) c;
   RETURN r;
 END $f$;
 
@@ -65037,7 +65041,7 @@ BEGIN
   PERFORM pg_temp.tk_expect('513 nobody of the school is marked to begin with', (SELECT count(*)::text FROM "Users" WHERE "schoolId" = app.current_school_id() AND teaches), '0');
   -- The lessons the cast stands on: four administrators, two teachers (one of them twice), and the saved register on one of them.
   PERFORM pg_temp.tk_expect('513 the lessons of the cast',
-    (SELECT string_agg(cl.note || '=' || right(u."authId"::text, 4) || ':' || (current_date - cl.date), ',' ORDER BY cl.note COLLATE "C")
+    (SELECT string_agg(cl.note || '=' || right(u."authId"::text, 4) || ':' || (app.school_today() - cl.date), ',' ORDER BY cl.note COLLATE "C")
        FROM "CalendarLessons" cl JOIN "CalendarLessonTeachers" t ON t."calendarLessonId" = cl.id JOIN "Users" u ON u.id = t."teacherId"
       WHERE cl.note LIKE 'LA-%'),
     'LA-1=6001:3,LA-2=6002:4,LA-3=6003:5,LA-4=6004:6,LA-5=6010:7,LA-6=6011:8,LA-T1-OK=6010:9');
@@ -65099,7 +65103,7 @@ BEGIN
   PERFORM pg_temp.tk_expect('513b the marked schemaläggare has hers, held and not reported',
     (SELECT d.held || '/' || d.reported FROM "TeacherReportingDays" d WHERE d."teacherId" = pg_temp.tk_id(6003)), '1/0');
   PERFORM pg_temp.tk_expect('513b the days are the people''s, one each',
-    (SELECT string_agg(right(u."authId"::text, 4) || ':' || (current_date - d.day), ',' ORDER BY u."authId", d.day)
+    (SELECT string_agg(right(u."authId"::text, 4) || ':' || (app.school_today() - d.day), ',' ORDER BY u."authId", d.day)
        FROM "TeacherReportingDays" d JOIN "Users" u ON u.id = d."teacherId"),
     '6001:3,6002:4,6003:5,6004:6,6010:9,6010:7,6011:8');
   PERFORM pg_temp.tk_expect('513b a second night changes nothing', pg_temp.tk5_night(), '0/0/6/7/2');

@@ -6695,6 +6695,13 @@ CREATE OR REPLACE FUNCTION pg_temp.tko_school() RETURNS uuid LANGUAGE sql AS $f$
   SELECT id FROM "Schools" WHERE slug = 'rls-larm-school'
 $f$;
 
+-- The larm school's own day, (now() AT TIME ZONE Schools.timezone)::date, which is the day its pupils' enrolments are written from and the one
+-- the functions asked here count in: not current_date, which is the day before it between 22:00 or 23:00 and midnight UTC. The fixture plants
+-- its lessons from the same day (rls-fixtures.sql), so "three days ago" stays three days ago for both.
+CREATE OR REPLACE FUNCTION pg_temp.tko_today() RETURNS date LANGUAGE sql AS $f$
+  SELECT (now() AT TIME ZONE sc.timezone)::date FROM "Schools" sc WHERE sc.id = pg_temp.tko_school()
+$f$;
+
 -- Mark (or unmark) …6nnn under the claims of a decider (the full administrator, or the rektor when it is the full administrator that is
 -- marked), and say whether the row went. The claims are cleared after.
 CREATE OR REPLACE FUNCTION pg_temp.tko_mark(n int, v boolean) RETURNS void LANGUAGE plpgsql AS $f$
@@ -6713,19 +6720,19 @@ END $f$;
 CREATE OR REPLACE FUNCTION pg_temp.tko_mentors(pupil int) RETURNS text LANGUAGE sql AS $f$
   SELECT coalesce(string_agg(pg_temp.tko_who(m.id), ',' ORDER BY pg_temp.tko_who(m.id)), '')
     FROM app.leave_mentors(pg_temp.tko_school(), pg_temp.tko_id(pupil),
-                           (date_trunc('week', current_date) + interval '7 days')::date, (date_trunc('week', current_date) + interval '8 days')::date) m(id)
+                           (date_trunc('week', pg_temp.tko_today()) + interval '7 days')::date, (date_trunc('week', pg_temp.tko_today()) + interval '8 days')::date) m(id)
 $f$;
 
 -- The pairs 'mentor>pupil' of Frånvarobevakningen today, for the larm school.
 CREATE OR REPLACE FUNCTION pg_temp.tko_mentees() RETURNS text LANGUAGE sql AS $f$
   SELECT coalesce(string_agg(pg_temp.tko_who(m.mentor_id) || '>' || pg_temp.tko_who(m.student_id), ',' ORDER BY pg_temp.tko_who(m.mentor_id), pg_temp.tko_who(m.student_id)), '')
-    FROM app.absence_watch_mentees(pg_temp.tko_school(), current_date) m
+    FROM app.absence_watch_mentees(pg_temp.tko_school(), pg_temp.tko_today()) m
 $f$;
 
 -- One group's digest plan for the last seven days: 'recipient=open/crossed/pupils', by recipient.
 CREATE OR REPLACE FUNCTION pg_temp.tko_plan(grp text) RETURNS text LANGUAGE sql AS $f$
   SELECT coalesce(string_agg(pg_temp.tko_who(p.user_id) || '=' || p.open_n || '/' || p.crossed_n || '/' || cardinality(p.student_ids), ',' ORDER BY pg_temp.tko_who(p.user_id)), '')
-    FROM app.absence_watch_digest_plan(pg_temp.tko_school(), grp::"AbsenceWatchGroup", current_date - 6, current_date, current_date) p
+    FROM app.absence_watch_digest_plan(pg_temp.tko_school(), grp::"AbsenceWatchGroup", pg_temp.tko_today() - 6, pg_temp.tko_today(), pg_temp.tko_today()) p
 $f$;
 
 BEGIN;
@@ -6827,7 +6834,7 @@ BEGIN
     INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays") VALUES (s, g::"AbsenceWatchGroup", 'CONSECUTIVE', 'ALL', 3) RETURNING id INTO lim;
     FOREACH p IN ARRAY ARRAY[6021, 6023] LOOP
       INSERT INTO "AbsenceWatchFindings" ("schoolId", "studentId", "limitId", "recipientGroup", kind, basis, "consecutiveDays", "firstCrossedOn", "lastSeenOn", "streakDays")
-      VALUES (s, pg_temp.tko_id(p), lim, g::"AbsenceWatchGroup", 'CONSECUTIVE', 'ALL', 3, current_date - 4, current_date - 1, 4);
+      VALUES (s, pg_temp.tko_id(p), lim, g::"AbsenceWatchGroup", 'CONSECUTIVE', 'ALL', 3, pg_temp.tko_today() - 4, pg_temp.tko_today() - 1, 4);
     END LOOP;
   END LOOP;
 
@@ -6942,6 +6949,13 @@ CREATE OR REPLACE FUNCTION pg_temp.tko_school() RETURNS uuid LANGUAGE sql AS $f$
   SELECT id FROM "Schools" WHERE slug = 'rls-larm-school'
 $f$;
 
+-- The larm school's own day, (now() AT TIME ZONE Schools.timezone)::date, which is the day its pupils' enrolments are written from and the one
+-- the functions asked here count in: not current_date, which is the day before it between 22:00 or 23:00 and midnight UTC. The fixture plants
+-- its lessons from the same day (rls-fixtures.sql), so "three days ago" stays three days ago for both.
+CREATE OR REPLACE FUNCTION pg_temp.tko_today() RETURNS date LANGUAGE sql AS $f$
+  SELECT (now() AT TIME ZONE sc.timezone)::date FROM "Schools" sc WHERE sc.id = pg_temp.tko_school()
+$f$;
+
 CREATE OR REPLACE FUNCTION pg_temp.tko_mark(n int, v boolean) RETURNS void LANGUAGE plpgsql AS $f$
 DECLARE c bigint;
 BEGIN
@@ -6960,11 +6974,11 @@ DECLARE r text;
 BEGIN
   IF which = 'reporting' THEN
     SELECT coalesce(string_agg(cl.note || '=' || pg_temp.tko_who(l.teacher_id) || ':' || CASE WHEN l.reported THEN 'r' ELSE 'o' END, ',' ORDER BY cl.note COLLATE "C"), '')
-      INTO r FROM app.reporting_lessons(pg_temp.tko_school(), current_date - 30, current_date, clock_timestamp()) l
+      INTO r FROM app.reporting_lessons(pg_temp.tko_school(), pg_temp.tko_today() - 30, pg_temp.tko_today(), clock_timestamp()) l
       JOIN "CalendarLessons" cl ON cl.id = l.lesson_id WHERE cl.note LIKE 'LA-%';
   ELSE
     SELECT coalesce(string_agg(cl.note || '=' || pg_temp.tko_who(l.teacher_id) || ':' || CASE WHEN l.reported THEN 'r' ELSE 'o' END, ',' ORDER BY cl.note COLLATE "C"), '')
-      INTO r FROM app.absence_stats_lessons(pg_temp.tko_school(), current_date - 30, current_date, clock_timestamp()) l
+      INTO r FROM app.absence_stats_lessons(pg_temp.tko_school(), pg_temp.tko_today() - 30, pg_temp.tko_today(), clock_timestamp()) l
       JOIN "CalendarLessons" cl ON cl.id = l.lesson_id WHERE cl.note LIKE 'LA-%';
   END IF;
   RETURN r;
@@ -6986,7 +7000,7 @@ END $f$;
 
 -- The days (as days ago) a person has stored, nearest first.
 CREATE OR REPLACE FUNCTION pg_temp.tko_days(n int) RETURNS text LANGUAGE sql AS $f$
-  SELECT coalesce(string_agg((current_date - d.day)::text, ',' ORDER BY d.day DESC), '') FROM "TeacherReportingDays" d WHERE d."teacherId" = pg_temp.tko_id(n)
+  SELECT coalesce(string_agg((pg_temp.tko_today() - d.day)::text, ',' ORDER BY d.day DESC), '') FROM "TeacherReportingDays" d WHERE d."teacherId" = pg_temp.tko_id(n)
 $f$;
 
 -- 513o-a. The two lesson functions.
@@ -7044,16 +7058,16 @@ BEGIN
   UPDATE "Users" SET "isActive" = true WHERE id = pg_temp.tko_id(6003);
 
   -- A läsare on a lesson: the mark cannot stand, so the lesson is nobody's (and a row that says teaches is zeroed first).
-  l := pg_temp.tko_lesson('LA-X', current_date - 10, 10, 6006);
+  l := pg_temp.tko_lesson('LA-X', pg_temp.tko_today() - 10, 10, 6006);
   PERFORM pg_temp.tko_claim(6002);
   UPDATE "Users" SET teaches = true WHERE id = pg_temp.tko_id(6006);
   PERFORM set_config('request.jwt.claims', '', true);
   PERFORM pg_temp.tko_expect('513o-a the läsare''s mark is zeroed', (SELECT teaches::text FROM "Users" WHERE id = pg_temp.tko_id(6006)), 'false');
-  PERFORM pg_temp.tko_expect('513o-a the läsare''s lesson is not counted by D2', (SELECT count(*)::text FROM app.reporting_lessons(s, current_date - 30, current_date, clock_timestamp()) r WHERE r.lesson_id = l), '0');
-  PERFORM pg_temp.tko_expect('513o-a nor by the history', (SELECT count(*)::text FROM app.absence_stats_lessons(s, current_date - 30, current_date, clock_timestamp()) r WHERE r.lesson_id = l), '0');
+  PERFORM pg_temp.tko_expect('513o-a the läsare''s lesson is not counted by D2', (SELECT count(*)::text FROM app.reporting_lessons(s, pg_temp.tko_today() - 30, pg_temp.tko_today(), clock_timestamp()) r WHERE r.lesson_id = l), '0');
+  PERFORM pg_temp.tko_expect('513o-a nor by the history', (SELECT count(*)::text FROM app.absence_stats_lessons(s, pg_temp.tko_today() - 30, pg_temp.tko_today(), clock_timestamp()) r WHERE r.lesson_id = l), '0');
   -- A pupil or a guardian listed on a lesson: no, as before.
   UPDATE "CalendarLessonTeachers" SET "teacherId" = pg_temp.tko_id(6021) WHERE "calendarLessonId" = l;
-  PERFORM pg_temp.tko_expect('513o-a a pupil on a lesson counts for nobody', (SELECT count(*)::text FROM app.reporting_lessons(s, current_date - 30, current_date, clock_timestamp()) r WHERE r.lesson_id = l), '0');
+  PERFORM pg_temp.tko_expect('513o-a a pupil on a lesson counts for nobody', (SELECT count(*)::text FROM app.reporting_lessons(s, pg_temp.tko_today() - 30, pg_temp.tko_today(), clock_timestamp()) r WHERE r.lesson_id = l), '0');
   RAISE NOTICE 'tk 513o-a: the two lesson functions';
 END $$;
 ROLLBACK;
@@ -7064,8 +7078,8 @@ BEGIN;
 DO $$
 DECLARE
   s uuid := pg_temp.tko_school();
-  today_ date := current_date;
-  pday date := current_date + CASE extract(isodow FROM current_date) WHEN 6 THEN 2 WHEN 7 THEN 1 ELSE 0 END;
+  today_ date := pg_temp.tko_today();
+  pday date := pg_temp.tko_today() + CASE extract(isodow FROM pg_temp.tko_today()) WHEN 6 THEN 2 WHEN 7 THEN 1 ELSE 0 END;
   r text;
   led int;
 BEGIN
@@ -7126,7 +7140,7 @@ BEGIN;
 DO $$
 DECLARE
   s uuid := pg_temp.tko_school();
-  p_start date := date_trunc('week', current_date)::date - 28;
+  p_start date := date_trunc('week', pg_temp.tko_today())::date - 28;
   p_end date;
   who text;
 BEGIN
@@ -7137,7 +7151,7 @@ BEGIN
   PERFORM pg_temp.tko_lesson('DG-3', p_start + 3, 8, 6003);
   PERFORM set_config('session_replication_role', 'replica', true);
   INSERT INTO "ReportingSettings" ("schoolId", "teacherReminders", "teacherRemindersOn", "rektorDigest", "rektorDigestOn", "updatedAt")
-  VALUES (s, false, NULL, true, current_date - 60, now());
+  VALUES (s, false, NULL, true, pg_temp.tko_today() - 60, now());
   PERFORM set_config('session_replication_role', 'origin', true);
 
   PERFORM app.reporting_compute(s, p_end);
@@ -7176,13 +7190,13 @@ BEGIN;
 DO $$
 DECLARE
   s uuid := pg_temp.tko_school();
-  m_first date := date_trunc('month', current_date - 40)::date;
-  m_last date := (date_trunc('month', current_date - 40) + interval '1 month')::date - 1;
+  m_first date := date_trunc('month', pg_temp.tko_today() - 40)::date;
+  m_last date := (date_trunc('month', pg_temp.tko_today() - 40) + interval '1 month')::date - 1;
   row_ text;
 BEGIN
   IF s IS NULL THEN RAISE EXCEPTION 'tk 513o: rls-larm-school is not there; fixtures did not run'; END IF;
   PERFORM set_config('session_replication_role', 'replica', true);
-  UPDATE "StudentEnrollments" SET "validFrom" = current_date - 120 WHERE "schoolId" = s;
+  UPDATE "StudentEnrollments" SET "validFrom" = pg_temp.tko_today() - 120 WHERE "schoolId" = s;
   PERFORM set_config('session_replication_role', 'origin', true);
   PERFORM pg_temp.tko_lesson('LA-H1', m_first + 9, 8, 6010);
   PERFORM pg_temp.tko_lesson('LA-H2', m_first + 10, 8, 6001);

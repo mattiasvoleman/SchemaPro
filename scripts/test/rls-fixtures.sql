@@ -4983,6 +4983,11 @@ END $$;
 -- second whose register is saved. The school delegates leave of up to 3 school days to the mentor, and two requests are pending
 -- (the pupil of LA7A, the pupil of LA7B). Krisläge: only FULL and REKTOR may start an alarm here (the school narrowed the list),
 -- which is the case the mark is for. Planted on its own, once; the alarms are made in the sections.
+--
+-- Every date here counts from the school's own day, (now() AT TIME ZONE Schools.timezone)::date, not from current_date. The pupils' enrolments are
+-- written from that day (app.student_enrollments_follow_the_class), and the functions the sections ask (the mentor, the open lessons) count in it
+-- too. Between 22:00 or 23:00 and midnight UTC the school is already on the next day: a pupil is not yet in the class on the UTC date, and a
+-- lesson planted three days before the UTC date lies four days back for the school (the Database job went red that way on 2026-11-16 at 23:36 UTC).
 -- ---------------------------------------------------------------------------
 DO $$
 DECLARE
@@ -4999,14 +5004,18 @@ DECLARE
   pupils uuid[] := '{}';
   l uuid;
   i int;
-  monday date := ((date_trunc('week', current_date) + interval '7 days')::date);
+  today date;
+  monday date;
 BEGIN
   IF EXISTS (SELECT 1 FROM "Schools" WHERE slug = 'rls-larm-school') THEN
     RETURN;
   END IF;
   INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ('RLS Larm', 'rls-larm-school', 'Europe/Stockholm', now()) RETURNING id INTO s;
+  -- The school's own day, as the enrolment trigger counts it; the Monday after it opens the next calendar week there.
+  SELECT (now() AT TIME ZONE sc.timezone)::date INTO today FROM "Schools" sc WHERE sc.id = s;
+  monday := (date_trunc('week', today::timestamp) + interval '7 days')::date;
   INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
-  VALUES (s, 'Larm i år', current_date - 60, current_date + 300, true, now()) RETURNING id INTO y;
+  VALUES (s, 'Larm i år', today - 60, today + 300, true, now()) RETURNING id INTO y;
   INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (s, 'Larm ämne', 'RLSLA', now()) RETURNING id INTO subj;
   FOREACH i IN ARRAY ARRAY[1, 2, 3, 4] LOOP
     INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
@@ -5052,11 +5061,11 @@ BEGIN
     (s, adm[4], y, 'MENTORSKAP', 'Larm mentor 7D exp', 60, gr[4], now());
   FOR i IN 1 .. 6 LOOP
     INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, note, "updatedAt")
-    VALUES (s, subj, gr[1], current_date - (2 + i), (current_date - (2 + i)) + time '08:00', (current_date - (2 + i)) + time '09:00', 'SCHEDULED', 'LA-' || i, now()) RETURNING id INTO l;
+    VALUES (s, subj, gr[1], today - (2 + i), (today - (2 + i)) + time '08:00', (today - (2 + i)) + time '09:00', 'SCHEDULED', 'LA-' || i, now()) RETURNING id INTO l;
     INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, l, (adm || t1 || t2)[i], 'LEAD');
   END LOOP;
   INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, note, "updatedAt")
-  VALUES (s, subj, gr[1], current_date - 9, (current_date - 9) + time '08:00', (current_date - 9) + time '09:00', 'SCHEDULED', 'LA-T1-OK', now()) RETURNING id INTO l;
+  VALUES (s, subj, gr[1], today - 9, (today - 9) + time '08:00', (today - 9) + time '09:00', 'SCHEDULED', 'LA-T1-OK', now()) RETURNING id INTO l;
   INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES (s, l, t1, 'LEAD');
   INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt") VALUES (s, l, pupils[1], 'PRESENT', now());
 
