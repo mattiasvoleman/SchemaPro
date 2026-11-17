@@ -1409,6 +1409,39 @@ describe('StaffingProposalService.propose, an administrator who is not marked as
     expect(open.assignments.find((a) => a.requirementId === R_MA8)).toBeUndefined();
   });
 
+  it('counts a post she leads as hers when every row may move too, and not as one whose teacher has left', async () => {
+    const rows = withOffice();
+    rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!['teacherId'] = OFFICE;
+    const { service } = setup(rows);
+    const proposal = await service.propose(ask({ onlyUnstaffed: false }), admin());
+    expect(proposal.counts).toMatchObject({ vacated: 1 }); // Eva's, and not hers
+  });
+
+  it('leaves a post alone that an administrator with no post and no mark leads, also when every row may move: nobody knows her room', async () => {
+    // Production today: no one is marked, and a rektor without a registered post has no target. A row she leads is
+    // fixed whatever the dialog asks, as for a teacher without a target (untargetedLead), so "bara obemannade" off
+    // does not hand her post to whoever has room.
+    const rows = withOffice({ post: false });
+    rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!['teacherId'] = OFFICE;
+    const { service, sent } = setup(rows);
+    const proposal = await service.propose(ask({ onlyUnstaffed: false }), admin());
+    const payload = sent()[0]!;
+    expect(sentRow(payload, R_MA8, rows['teachingRequirement']!)).toMatchObject({
+      fixed: true,
+      currentTeacherId: payload.teachers[0]!.id,
+    });
+    expect(proposal.assignments.find((a) => a.requirementId === R_MA8)).toBeUndefined();
+  });
+
+  it('sends her as the co-teacher of a row she shares: she is staff, so the class counts her as already there', async () => {
+    const rows = withOffice();
+    rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!['coTeacherId'] = OFFICE;
+    const { service, sent } = setup(rows);
+    await service.propose(ask(), admin());
+    const payload = sent()[0]!;
+    expect(sentRow(payload, R_MA8, rows['teachingRequirement']!)).toMatchObject({ coTeacherId: payload.teachers[0]!.id });
+  });
+
   it('leaves her out of who may take a row under respect, so a row only she is qualified for has nobody', async () => {
     const rows = withOffice();
     rows['teacherSubjectQualification'] = [ANNA, OFFICE].map((userId) => ({

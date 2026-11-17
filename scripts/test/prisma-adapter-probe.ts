@@ -7577,7 +7577,7 @@ async function coverChecks(owner: Client, api: PrismaService, open: (url: string
       assert.ok(before.staffIds.includes(school.s1.id) && before.candidateIds.includes(school.s1.id));
       // An administrator without Users.teaches is staff (she can lead a post, so one she leads is not vacated) and is
       // offered nothing: staffIds hold her, candidateIds do not.
-      assert.ok(before.staffIds.includes(school.admin.userId) && !before.candidateIds.includes(school.admin.userId));
+      assert.ok(before.staffIds.includes(school.admin.userId!) && !before.candidateIds.includes(school.admin.userId!));
       // One who teaches is both, read through the real column and row security. Made and removed here, so that the
       // checks after this one, which count the school's administrators, see the school as it was.
       const marked = (

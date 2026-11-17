@@ -1,6 +1,12 @@
 import type { PrismaClient } from '@prisma/client';
 import { teachesLike } from './teaching-staff';
 
+/** The two lists readActiveStaff answers with, each in id order. */
+export interface ActiveStaff {
+  staffIds: string[];
+  candidateIds: string[];
+}
+
 /**
  * The school's active staff in a läsår, in id order, in the two senses the
  * staffing proposal and the per-row picker need apart:
@@ -32,11 +38,6 @@ import { teachesLike } from './teaching-staff';
  * on purpose: a row read without it is not a teaching administrator
  * (teaching-staff.ts), and staff-candidates.spec.ts holds the select.
  */
-export interface ActiveStaff {
-  staffIds: string[];
-  candidateIds: string[];
-}
-
 export async function readActiveStaff(tx: PrismaClient, academicYearId: string): Promise<ActiveStaff> {
   const staff = await tx.user.findMany({
     where: {

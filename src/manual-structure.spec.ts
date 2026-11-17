@@ -74,12 +74,15 @@ function problemsOf(raw: string): string[] {
   for (const page of pages) if (!ids.includes(page)) problems.push(`data-pg "${page}" has no heading with that id`);
   for (const link of links) if (!ids.includes(link)) problems.push(`the link #${link} has no target`);
 
-  const headings = [...raw.matchAll(/<h3 id="([^"]+)">([\s\S]*?)<\/h3>/g)].map((m) => ({
+  // As build-pdf.mjs finds a heading (deriveAnchors): an <h3> with an id among any attributes, and a contents entry
+  // with whitespace between its tags. A label is read as a heading's text is, so a heading with &amp; in it reads the
+  // same in both places.
+  const headings = [...raw.matchAll(/<h3\b[^>]*?\sid="([^"]+)"[^>]*>([\s\S]*?)<\/h3>/g)].map((m) => ({
     id: m[1]!,
     text: flat(m[2]!).replace(/^(\d+\.\d+)/, '$1 '),
   }));
-  const contents = [...raw.matchAll(/<li><span>([^<]*)<\/span><span class="dots"><\/span><span class="pg" data-pg="([^"]+)"/g)].map((m) => ({
-    label: m[1]!.replace(/\s+/g, ' ').trim(),
+  const contents = [...raw.matchAll(/<li>\s*<span>([^<]*)<\/span>\s*<span class="dots"><\/span>\s*<span class="pg" data-pg="([^"]+)"/g)].map((m) => ({
+    label: flat(m[1]!),
     id: m[2]!,
   }));
   const listed = contents.filter((entry) => headings.some((heading) => heading.id === entry.id));
@@ -91,7 +94,7 @@ function problemsOf(raw: string): string[] {
     if (entry.label !== heading.text) problems.push(`the contents say "${entry.label}" where the heading says "${heading.text}"`);
   }
 
-  const numbers = new Set([...raw.matchAll(/<h3 id="[^"]+"><span class="num">(\d+\.\d+)<\/span>/g)].map((m) => m[1]));
+  const numbers = new Set([...raw.matchAll(/<h3\b[^>]*>\s*<span class="num">(\d+\.\d+)<\/span>/g)].map((m) => m[1]));
   for (const group of flat(raw).matchAll(/\(([^()]*)\)/g)) {
     if (!/^\d{1,2}\.\d{1,2}(?:\s*(?:,|och|–|-)\s*\d{1,2}\.\d{1,2})*$/.test(group[1]!)) continue;
     for (const reference of group[1]!.match(/\d{1,2}\.\d{1,2}/g)!) {
@@ -117,6 +120,19 @@ describe('the check finds what it is for', () => {
 
   it('finds nothing in a document that holds together', () => {
     expect(problemsOf(document('<p>en <a href="#s12">länk</a><br></p><!-- <div> i en kommentar -->'))).toEqual([]);
+  });
+
+  // What a hand edit may do without breaking anything the build or the reader depends on.
+  it('finds nothing in a heading with a class, in either place, nor in one with &amp; in its text', () => {
+    const entries = toc(['1.1 Ett', 's11'], ['1.2 Två &amp; tre', 's12']);
+    const classed = `${entries}<section><h3 class="x" id="s11"><span class="num">1.1</span>Ett</h3><p>se (1.2).</p>` +
+      '<h3 id="s12" class="y"><span class="num">1.2</span>Två &amp; tre</h3></section>';
+    expect(problemsOf(classed)).toEqual([]);
+  });
+
+  it('finds nothing in a contents entry written over several lines', () => {
+    const entries = '<ol><li>\n  <span>1.1 Ett</span>\n  <span class="dots"></span>\n  <span class="pg" data-pg="s11"></span>\n</li></ol>';
+    expect(problemsOf(`${entries}<h3 id="s11"><span class="num">1.1</span>Ett</h3>`)).toEqual([]);
   });
 
   const faults: Array<[string, string]> = [
