@@ -583,6 +583,16 @@ describe("useMasterLessons", () => {
     expect(queryClient.getQueryData(["masterLessons", "y-1"])).toEqual(result.current.data);
   });
 
+  it("asks for the column that says a lesson was written from a förläggning: the grundschema's mark and its refusal of a drag read nothing else", async () => {
+    stubTable("MasterLessons", ok([]));
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useMasterLessons("y-1"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const [[columns]] = argsFor("MasterLessons", "select") as [[string]];
+    expect(columns.split(", ")).toContain("fromPlacement");
+  });
+
   it("does not query until an academic year is selected", () => {
     const { wrapper } = createHarness();
     const { result } = renderHook(() => useMasterLessons(null), { wrapper });
