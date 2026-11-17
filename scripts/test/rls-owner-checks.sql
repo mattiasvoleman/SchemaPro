@@ -1065,22 +1065,24 @@ BEGIN
   -- chosen as they are, whatever the lessons of those days look like now, and counts the days from the cutoff
   -- on. Without a decision it counts them all again.
   cutoff := (today - interval '2 months')::date;
+  -- The days below are read and written for this school only: the other school's fixture holds a day (2026-09-15, rls-fixtures.sql), which
+  -- cutoff - 10 meets on 2026-11-25.
   DELETE FROM "TeacherReportingDays" WHERE "schoolId" = school;
   DELETE FROM "CalendarLessons" WHERE "schoolId" = school AND date >= '2026-09-01';
   INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES (school, t1, cutoff - 10, 1, 1);
   PERFORM pg_temp.rgo_lesson(school, cutoff - 10, 8, ARRAY[t1]);       -- its register is long gone
   PERFORM pg_temp.rgo_lesson(school, cutoff + 1, 8, ARRAY[t1]);        -- inside what is kept
   PERFORM pg_temp.rgo_expect('346o without a decision', (SELECT written || '/' || removed FROM app.reporting_compute(school, today - 1)), '2/0');
-  PERFORM pg_temp.rgo_expect('346o without a decision, the old day', (SELECT reported || '/' || held FROM "TeacherReportingDays" WHERE day = cutoff - 10), '0/1');
-  UPDATE "TeacherReportingDays" SET held = 1, reported = 1 WHERE day = cutoff - 10;
-  DELETE FROM "TeacherReportingDays" WHERE day = cutoff + 1;
+  PERFORM pg_temp.rgo_expect('346o without a decision, the old day', (SELECT reported || '/' || held FROM "TeacherReportingDays" WHERE "schoolId" = school AND day = cutoff - 10), '0/1');
+  UPDATE "TeacherReportingDays" SET held = 1, reported = 1 WHERE "schoolId" = school AND day = cutoff - 10;
+  DELETE FROM "TeacherReportingDays" WHERE "schoolId" = school AND day = cutoff + 1;
   ALTER TABLE "RetentionDecisions" DISABLE TRIGGER "RetentionDecisions_stamped";
   INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months, reference, "decidedById", "decidedAt")
   VALUES (school, 'ATTENDANCE', 'PURGE_AFTER', 2, 'RG 346', admin, now() - interval '2 days');
   ALTER TABLE "RetentionDecisions" ENABLE TRIGGER "RetentionDecisions_stamped";
   PERFORM pg_temp.rgo_expect('346o with a decision', (SELECT written || '/' || removed FROM app.reporting_compute(school, today - 1)), '1/0');
-  PERFORM pg_temp.rgo_expect('346o with a decision, the old day', (SELECT reported || '/' || held FROM "TeacherReportingDays" WHERE day = cutoff - 10), '1/1');
-  PERFORM pg_temp.rgo_expect('346o with a decision, the kept day', (SELECT reported || '/' || held FROM "TeacherReportingDays" WHERE day = cutoff + 1), '0/1');
+  PERFORM pg_temp.rgo_expect('346o with a decision, the old day', (SELECT reported || '/' || held FROM "TeacherReportingDays" WHERE "schoolId" = school AND day = cutoff - 10), '1/1');
+  PERFORM pg_temp.rgo_expect('346o with a decision, the kept day', (SELECT reported || '/' || held FROM "TeacherReportingDays" WHERE "schoolId" = school AND day = cutoff + 1), '0/1');
   -- A day inside the window with no lesson is still removed under the decision.
   INSERT INTO "TeacherReportingDays" ("schoolId", "teacherId", day, held, reported) VALUES (school, t2, cutoff + 5, 2, 2);
   PERFORM pg_temp.rgo_expect('346o with a decision, a day with no lesson', (SELECT written || '/' || removed FROM app.reporting_compute(school, today - 1)), '0/1');
