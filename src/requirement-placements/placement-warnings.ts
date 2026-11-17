@@ -340,6 +340,8 @@ export interface RoomFacts {
   typeOfSubject: ReadonlyMap<string, string | null>;
   /** The name of each type, for the sentence. */
   nameOfType: ReadonlyMap<string, string>;
+  /** The types with a room that takes several lessons at once (Placeringsregler, rule 3): not counted, since one lesson to a room is no longer the engine's count. */
+  shareable?: ReadonlySet<string>;
 }
 
 /**
@@ -354,12 +356,17 @@ export function noRoomWarningsOf(items: readonly FixedItem[], facts: RoomFacts):
   const warnings: WarningsByRow = new Map();
   const typeOfItem = (item: FixedItem): string | null =>
     item.roomId === null ? (item.pin ? (facts.typeOfSubject.get(item.subjectId) ?? null) : null) : (facts.typeOfRoom.get(item.roomId) ?? null);
-  const types = new Set(items.filter((item) => item.pin && item.row !== null).map(typeOfItem).filter((type): type is string => type !== null));
+  const types = new Set(
+    items
+      .filter((item) => item.pin && item.roomId === null && item.row !== null)
+      .map(typeOfItem)
+      .filter((type): type is string => type !== null && !(facts.shareable?.has(type) ?? false)),
+  );
   for (const type of types) {
     const holding = items.filter((item) => typeOfItem(item) === type);
     const rooms = facts.roomsOfType.get(type) ?? 0;
     for (const week of weeksOf(holding)) {
-      for (const pin of week.filter((item) => item.pin && item.row !== null)) {
+      for (const pin of week.filter((item) => item.pin && item.roomId === null && item.row !== null)) {
         const against = week.filter((item) => item.dayOfWeek === pin.dayOfWeek && item.startMinutes < pin.endMinutes && pin.startMinutes < item.endMinutes);
         // The most lessons at one moment inside the pin's own lesson: the busiest start among the pin and those that overlap it.
         const moments = [pin.startMinutes, ...against.map((item) => item.startMinutes).filter((start) => start > pin.startMinutes && start < pin.endMinutes)];

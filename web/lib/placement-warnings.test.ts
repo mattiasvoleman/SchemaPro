@@ -214,6 +214,15 @@ describe("the other schools' bands", () => {
     ]);
   });
 
+  it("makes two holds at one time one band that names every school, in name order", () => {
+    // A teacher the Östra skolan holds and a room the Norra skolan holds, the same weekday and hour, and both picked: one band, both names.
+    const teacher = hold({ schools: ["Östra skolan"] });
+    const room = hold({ kind: "ROOM_BORROWED", resourceKind: "ROOM", resourceId: "r-gym", schools: ["Norra skolan"] });
+    expect(heldBands([teacher, room], { teachers: ["anna"], rooms: ["r-gym"] }, label)).toEqual([
+      { id: "hold:3|780|870", dayOfWeek: 3, startMinutes: 780, endMinutes: 870, label: "Bokad på Norra skolan och Östra skolan" },
+    ]);
+  });
+
   it("draws a band for a hold on a room that is picked, and for no other", () => {
     const room = hold({ kind: "ROOM_LENT", resourceKind: "ROOM", resourceId: "r-gym", startTime: "09:00", endTime: "10:00", schools: ["Norra skolan"] });
     expect(heldBands([room], { ...none, rooms: ["r-gym"] }, label).map((band) => band.label)).toEqual(["Bokad på Norra skolan"]);

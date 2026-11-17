@@ -80,9 +80,19 @@ const minutesOfTime = (time: Date): number => time.getUTCHours() * 60 + time.get
 const dayOf = (date: Date | null): string | null => (date ? date.toISOString().slice(0, 10) : null);
 const present = (ids: Iterable<string | null>): string[] => [...new Set([...ids].filter((id): id is string => id !== null))];
 
+/**
+ * A förläggning is a PIN to the engine, a lesson it places itself at the time it is given and holds to the school's rules, when
+ * it has no room (B2) and when it is a lesson of a parallel block, with the member's room or without: a block's lesson is never a
+ * lock (a lock in a block is refused as partly locked), the engine pins it, and a pinned lesson with a room is held to the
+ * teacher's cap and days like any lesson it places (measured against the real engine: two block lessons with rooms on a day over
+ * the teacher's cap are refused as TEACHER_DAILY_CAP_CANNOT_BE_KEPT). `blockFit` is set on the rows block-placement-judge.ts
+ * gives the judge and on no other.
+ */
+const isPin = (row: JudgedPlacement): boolean => row.roomId === null || row.blockFit !== undefined;
+
 const itemOfRow = (row: JudgedPlacement, index: number | null): FixedItem => ({
   row: index,
-  pin: row.roomId === null,
+  pin: isPin(row),
   teacherIds: present([row.teacherId, row.coTeacherId]),
   groupIds: [row.studentGroupId],
   subjectId: row.subjectId,
@@ -168,7 +178,7 @@ export async function placementWarnings(tx: PrismaClient, user: AuthenticatedUse
   const rowGroups = present(rows.map((row) => row.studentGroupId));
   const setting = await tx.lunchSetting.findUnique({
     where: { schoolId },
-    select: { lunchEnabled: true, lunchStartTime: true, lunchEndTime: true, lunchMinutes: true },
+    select: { lunchEnabled: true, lunchStartTime: true, lunchEndTime: true, lunchMinutes: true, placementSharedMode: true },
   });
   if (setting?.lunchEnabled) {
     const classes = new Set((await tx.studentGroup.findMany({ where: { id: { in: rowGroups }, kind: 'CLASS' }, select: { id: true } })).map((group) => group.id));
@@ -197,19 +207,29 @@ export async function placementWarnings(tx: PrismaClient, user: AuthenticatedUse
       select: { id: true, requiredRoomTypeId: true },
     });
     if (subjects.length > 0) {
-      const allRooms = await tx.room.findMany({ select: { id: true, roomTypeId: true, roomType: { select: { name: true } } } });
+      const allRooms = await tx.room.findMany({
+        select: { id: true, roomTypeId: true, capacity: true, canBeShared: true, roomType: { select: { name: true } } },
+      });
       const roomsOfType = new Map<string, number>();
       const nameOfType = new Map<string, string>();
+      // Placeringsregler, rule 3: while it is on (SOFT or HARD), a room marked shareable that has a capacity takes several lessons at
+      // once, so the engine can put a pin beside a lesson in it, and a count of one lesson to a room is no longer the engine's. A type
+      // with such a room is not counted at all, which leaves the warning quieter than the engine (measured: a lock and a pin in one
+      // shareable room at one hour are laid, OPTIMAL, under both SOFT and HARD).
+      const sharing = setting?.placementSharedMode === 'SOFT' || setting?.placementSharedMode === 'HARD';
+      const shareable = new Set<string>();
       for (const room of allRooms) {
         if (room.roomTypeId === null) continue;
         roomsOfType.set(room.roomTypeId, (roomsOfType.get(room.roomTypeId) ?? 0) + 1);
         if (room.roomType) nameOfType.set(room.roomTypeId, room.roomType.name);
+        if (sharing && room.canBeShared === true && room.capacity !== null && room.capacity > 0) shareable.add(room.roomTypeId);
       }
       rooms = {
         typeOfRoom: new Map(allRooms.map((room) => [room.id, room.roomTypeId])),
         roomsOfType,
         typeOfSubject: new Map(subjects.map((subject) => [subject.id, subject.requiredRoomTypeId])),
         nameOfType,
+        shareable,
       };
     }
   }

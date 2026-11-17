@@ -141,6 +141,8 @@ interface World {
   kept: (lesson: { group: string; subject: string; teacher: string; room: string; dayOfWeek: number; start: string; end: string }) => Promise<void>;
   meal: (group: string, dayOfWeek: number, start: string, end: string) => Promise<void>;
   posts: Map<string, string>;
+  /** A service of the app, for the cases that write what the harness has no helper for (a block). */
+  resolve: <T>(token: abstract new (...args: never[]) => T) => T;
   /** The warnings each lay answered with, by post key. */
   answered: Map<string, Array<{ code: string; refuses: boolean; params?: unknown }>>;
 }
@@ -192,6 +194,7 @@ async function run(owner: Client, app: import('@nestjs/common').INestApplication
       one,
       query,
       posts,
+      resolve,
       answered,
       group: async (name) =>
         (await one<{ id: string }>(`INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt") VALUES ($1, $2, $3, 'CLASS', 7, now()) RETURNING id`, [s, year, name])).id,
@@ -416,6 +419,88 @@ async function run(owner: Client, app: import('@nestjs/common').INestApplication
     { name: 'sal: två fästa lektioner samma timme och en sal: båda varnas, och motorn vägrar', build: (w) => slojd(w, { rooms: 1, second: 'PIN', secondStart: '09:00', firstIsPin: true }), warns: [['P1', 'NO_ROOM_FREE', true], ['P2', 'NO_ROOM_FREE', true]], generera: 'REFUSES', because: /PLACED_LESSON_IN_THE_WAY_ANY_ROOM/ },
   );
 
+  // ------------------------------------------------------------------ en sal som tar flera lektioner (Placeringsregler, regel 3)
+  /** Pupils in a class, so that a shareable room has headcounts to share its capacity by. */
+  const pupils = async (w: World, group: string, count: number) => {
+    for (let n = 0; n < count; n += 1) {
+      await w.query(
+        `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+         VALUES ($1, $2, $3, 'Elev', 'STUDENT', $4, true, $5, now())`,
+        [w.school, `${SLUG}-${randomUUID()}@example.invalid`, `e${n}`, randomUUID(), group],
+      );
+    }
+  };
+  const sharedSlojd = async (w: World, rule: 'OFF' | 'SOFT' | 'HARD') => {
+    await w.query(
+      `INSERT INTO "LunchSettings" ("schoolId", "lunchEnabled", "lunchStartTime", "lunchEndTime", "lunchMinutes", "placementSharedMode", "updatedAt")
+       VALUES ($1, false, '10:30', '13:00', 30, $2::"PlacementRuleMode", now())`,
+      [w.school, rule],
+    );
+    const slojdType = await w.roomType('Slöjdsal');
+    const classType = await w.roomType('Klassrum');
+    const slojdRoom = await w.room('Slöjd 1', slojdType);
+    await w.room('K1', classType);
+    await w.query(`UPDATE "Rooms" SET "canBeShared" = true WHERE id = $1`, [slojdRoom]);
+    const slojd = await w.subject('Slöjd', slojdType);
+    const other = await w.subject('Matematik', classType);
+    const [anna, bo, cy] = [await w.teacher('Anna'), await w.teacher('Bo'), await w.teacher('Cy')];
+    const [g1, g2, g3] = [await w.group('7A'), await w.group('7B'), await w.group('7C')];
+    for (const group of [g1, g2]) await pupils(w, group, 8);
+    await pupils(w, g3, 4);
+    await w.post('F', g3, other, cy);
+    await w.post('P1', g1, slojd, anna);
+    await w.post('P2', g2, slojd, bo);
+    await w.lay('P1', [{ dayOfWeek: 1, startTime: '09:00', minutes: 60, roomId: slojdRoom }]);
+    await w.lay('P2', [{ dayOfWeek: 1, startTime: '09:00', minutes: 60, roomId: null }]);
+  };
+  cases.push(
+    { name: 'sal: slöjdsalen är delbar och regel 3 är på (SOFT): ett lås och en fäst lektion samma timme får plats i den, ingen varning, och motorn lägger veckan', build: (w) => sharedSlojd(w, 'SOFT'), warns: [], generera: 'SOLVES' },
+    { name: 'sal: samma med regel 3 HARD (åtta och åtta elever i en sal för trettio)', build: (w) => sharedSlojd(w, 'HARD'), warns: [], generera: 'SOLVES' },
+    { name: 'sal: samma med regel 3 avstängd: salen är en för en, varnar att Generera vägrar, och motorn vägrar', build: (w) => sharedSlojd(w, 'OFF'), warns: [['P2', 'NO_ROOM_FREE', true]], generera: 'REFUSES', because: /PLACED_LESSON_IN_THE_WAY_ANY_ROOM/ },
+  );
+
+  // ------------------------------------------------------------------ ett blocks lektion med medlemmens sal är en fäst lektion, aldrig ett lås
+  const blockOverCap = async (w: World, cap: number) => {
+    const { BlockPlacementsService } = await import('../../src/requirement-placements/block-placements.service');
+    const c = await classroomsOf(w);
+    const [anna, bo, cy] = [await w.teacher('Anna'), await w.teacher('Bo'), await w.teacher('Cy')];
+    const [g1, g2, g3] = [await w.group('7A'), await w.group('7B'), await w.group('7C')];
+    for (const group of [g1, g2, g3]) await pupils(w, group, 6);
+    await free(w, c, g3, cy, 45);
+    await w.cap(anna, cap);
+    const blockId = (await w.one<{ id: string }>(`INSERT INTO "TeachingBlocks" ("schoolId", "academicYearId", name, "updatedAt") VALUES ($1, $2, 'Språkval', now()) RETURNING id`, [w.school, w.year])).id;
+    const member = async (key: string, group: string, subject: string, teacher: string) => {
+      const id = (
+        await w.one<{ id: string }>(
+          `INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "lessonsPerWeek", "minutesPerLesson", "blockId", "updatedAt")
+           VALUES ($1, $2, $3, $4, $5, 2, 60, $6, now()) RETURNING id`,
+          [w.school, w.year, subject, group, teacher, blockId],
+        )
+      ).id;
+      w.posts.set(key, id);
+      return id;
+    };
+    const first = await member('M1', g1, c.subject, anna);
+    const second = await member('M2', g2, c.subject2, bo);
+    // Two lessons of the block on Monday, each member in a room of its own: Anna teaches two hours that day.
+    const rooms = [{ requirementId: first, roomId: c.rooms[0]! }, { requirementId: second, roomId: c.rooms[1]! }];
+    await w.resolve(BlockPlacementsService).replace(
+      blockId,
+      { placements: [{ dayOfWeek: 1, startTime: '08:00', minutes: 60, rooms }, { dayOfWeek: 1, startTime: '09:00', minutes: 60, rooms }] } as never,
+      w.admin,
+    );
+  };
+  cases.push(
+    {
+      name: 'block: två av blockets lektioner med salar en måndag mot lärarens tak på 60: varnar att Generera vägrar (blockets lektion är en fäst lektion, aldrig ett lås), och motorn vägrar av taket',
+      build: (w) => blockOverCap(w, 60),
+      warns: [['M1', 'TEACHER_DAY_TOO_LONG', true], ['M1', 'TEACHER_DAY_TOO_LONG', true]],
+      generera: 'REFUSES',
+      because: /TEACHER_DAILY_CAP_CANNOT_BE_KEPT/,
+    },
+    { name: 'block: samma två lektioner mot taket 120 varnar inte, och motorn lägger veckan', build: (w) => blockOverCap(w, 120), warns: [], generera: 'SOLVES' },
+  );
+
   // ------------------------------------------------------------------ udda och jämna veckor, och lektioner som Generera bevarar
   const oddEven = async (w: World, cap: number) => {
     const c = await classroomsOf(w);
@@ -461,7 +546,8 @@ async function run(owner: Client, app: import('@nestjs/common').INestApplication
       // The answer to the post's own read says the same words as the board, at its own rows.
       for (const [key, id] of w.posts) {
         const read = await placements.listOfPost(id, w.admin);
-        const onBoard = board.warnings.filter((warning) => warning.requirementId === id).map((warning) => [warning.code, warning.refuses, JSON.stringify(warning.params ?? null)]).sort();
+        // A block's lesson is the block's row on the board, not a row of the post's own read.
+        const onBoard = board.warnings.filter((warning) => warning.requirementId === id && warning.blockId === undefined).map((warning) => [warning.code, warning.refuses, JSON.stringify(warning.params ?? null)]).sort();
         const ofPost = read.warnings.map((warning) => [warning.code, warning.refuses, JSON.stringify(warning.params ?? null)]).sort();
         assert.deepEqual(ofPost, onBoard, `the read of ${key} and the board say different things`);
         for (const warning of read.warnings) assert.ok(read.placements.some((row) => row.id === warning.rowId), `a warning of ${key} names a row the answer does not have`);

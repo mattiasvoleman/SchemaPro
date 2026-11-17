@@ -102,10 +102,10 @@ interface World {
   /** D1: the teachers' caps, the posts' limits, the school's lunch, the subjects that need a room type, and every room with its type. */
   workRules?: Array<{ userId: string; maxTeachingMinutesPerDay: number | null }>;
   limits?: Array<{ userId: string; maxTeachingDaysPerWeek: number | null; maxConsecutiveTeachingMinutes: number | null; consecutiveBreakMinutes: number | null }>;
-  lunch?: { lunchEnabled: boolean; lunchStartTime: Date; lunchEndTime: Date; lunchMinutes: number } | null;
+  lunch?: { lunchEnabled: boolean; lunchStartTime: Date; lunchEndTime: Date; lunchMinutes: number; placementSharedMode?: 'OFF' | 'SOFT' | 'HARD' } | null;
   classes?: string[];
   needsType?: Record<string, string>;
-  everyRoom?: Array<{ id: string; roomTypeId: string | null; roomType: { name: string } | null }>;
+  everyRoom?: Array<{ id: string; roomTypeId: string | null; roomType: { name: string } | null; capacity?: number | null; canBeShared?: boolean }>;
   /** The lessons the grundschema has from a förläggning: how many, and when the newest was written. */
   written?: { count: number; at: Date | null };
 }
@@ -913,6 +913,31 @@ describe('RequirementPlacementsService.boardOfYear', () => {
       expect(warnings).toEqual([{ rowId: 'p-1', requirementId: REQ, code: 'NO_ROOM_FREE', refuses: true, params: { day: 2, start: '08:00', end: '09:00', roomType: 'Slöjdsal' } }]);
     });
 
+    describe('a room that takes several lessons at once (Placeringsregler, rule 3)', () => {
+      const TYPE = 'type-slojd';
+      const off = { lunchEnabled: false, lunchStartTime: time('10:30'), lunchEndTime: time('13:00'), lunchMinutes: 30 };
+      const world = (rule: 'OFF' | 'SOFT' | 'HARD', room: { capacity?: number | null; canBeShared?: boolean }) => ({
+        rows: [stored({ id: 'p-1', roomId: null, room: null, startTime: time('08:00') })],
+        kept: [keptLesson({ id: 'k-s', startTime: time('08:00'), endTime: time('09:00'), roomId: ROOM_2 })],
+        needsType: { [SUBJECT]: TYPE },
+        lunch: { ...off, placementSharedMode: rule },
+        everyRoom: [{ id: ROOM_2, roomTypeId: TYPE, roomType: { name: 'Slöjdsal' }, ...room }],
+      });
+      const said = async (rule: 'OFF' | 'SOFT' | 'HARD', room: { capacity?: number | null; canBeShared?: boolean }) =>
+        (await board(world(rule, room)).service.boardOfYear(YEAR, user)).warnings.map((warning) => warning.code);
+
+      it('does not say that a pin has no room of the type free when the only room of it is shareable and the rule is on: the engine lays them in one room', async () => {
+        for (const rule of ['SOFT', 'HARD'] as const) expect(await said(rule, { capacity: 30, canBeShared: true })).toEqual([]);
+      });
+
+      it('says it as before when the rule is off, the room is not marked, or the room has no capacity to share under', async () => {
+        expect(await said('OFF', { capacity: 30, canBeShared: true })).toEqual(['NO_ROOM_FREE']);
+        expect(await said('SOFT', { capacity: 30, canBeShared: false })).toEqual(['NO_ROOM_FREE']);
+        expect(await said('SOFT', { capacity: null, canBeShared: true })).toEqual(['NO_ROOM_FREE']);
+        expect(await said('SOFT', { capacity: 0, canBeShared: true })).toEqual(['NO_ROOM_FREE']);
+      });
+    });
+
     it('asks only the groups that eat: a teaching group that is no class has no lunch to lose', async () => {
       const lunch = { lunchEnabled: true, lunchStartTime: time('10:30'), lunchEndTime: time('13:00'), lunchMinutes: 30 };
       const rows = [stored({ id: 'p-1', startTime: time('10:30'), minutes: 150, roomId: ROOM_1 })];
@@ -1428,9 +1453,10 @@ describe('RequirementPlacementsService, förlagda block', () => {
       const { tx, service } = board({ posts: memberPosts, kept: [keptHour], blocks: [blockRead({ placements: [withRoom] })] });
       tx['teacherWorkRule']!['findMany']!.mockResolvedValue([{ userId: 't-1', maxTeachingMinutesPerDay: 90 }]);
       const answer = await service.boardOfYear(YEAR, user);
-      // A lesson with the member's room is a lock to the engine: the week is the school's own, and Generera takes it.
+      // A block's lesson is a pinned lesson to the engine even with the member's room (never a lock: a lock in a block is refused as
+      // partly locked), so the cap it breaks is one Generera refuses (measured against the real engine: TEACHER_DAILY_CAP_CANNOT_BE_KEPT).
       expect(answer.warnings).toEqual([
-        { rowId: 'r-1', requirementId: MEMBER_A, blockId: BLOCK, code: 'TEACHER_DAY_TOO_LONG', refuses: false, params: { day: 2, minutes: 120, cap: 90 } },
+        { rowId: 'r-1', requirementId: MEMBER_A, blockId: BLOCK, code: 'TEACHER_DAY_TOO_LONG', refuses: true, params: { day: 2, minutes: 120, cap: 90 } },
       ]);
       // The lesson of member B (another teacher, no rule) says nothing.
       expect(answer.warnings.some((warning) => warning.requirementId === MEMBER_B)).toBe(false);
@@ -1574,5 +1600,26 @@ describe('RequirementPlacementsService: warnings on a save and a read of one pos
     expect(tx['masterLesson']!['findMany']).toHaveBeenCalledTimes(3);
     const arms = (tx['masterLesson']!['findMany']!.mock.calls[2]![0] as { where: { AND: [unknown, { OR: unknown[] }] } }).where.AND[1].OR;
     expect(arms).toEqual([{ teacherId: { in: [TEACHER] } }, { coTeacherId: { in: [TEACHER] } }]);
+  });
+
+  it('asks the kept lessons of the classes that eat by the class and by the groups a lesson is opened to, and those in a room of a needed type', async () => {
+    const lunch = { lunchEnabled: true, lunchStartTime: time('10:30'), lunchEndTime: time('13:00'), lunchMinutes: 30 };
+    const { tx, service } = setup({
+      lunch,
+      classes: [GROUP],
+      rows: [stored({ id: 'p-1', roomId: null, room: null, startTime: time('10:30') })],
+      needsType: { [SUBJECT]: 'type-slojd' },
+      everyRoom: [{ id: ROOM_2, roomTypeId: 'type-slojd', roomType: { name: 'Slöjdsal' } }],
+    });
+    await service.listOfPost(REQ, user);
+    // The mock answers every kept lesson whatever is asked, so the arms themselves are what is held: a lesson that names the class
+    // only as an extra group, or sits in a room of the needed type, is read for the warnings because of them.
+    const calls = tx['masterLesson']!['findMany']!.mock.calls;
+    const arms = (calls[calls.length - 1]![0] as { where: { AND: [unknown, { OR: unknown[] }] } }).where.AND[1].OR;
+    expect(arms).toEqual([
+      { studentGroupId: { in: [GROUP] } },
+      { extraGroups: { some: { studentGroupId: { in: [GROUP] } } } },
+      { roomId: { in: [ROOM_2] } },
+    ]);
   });
 });

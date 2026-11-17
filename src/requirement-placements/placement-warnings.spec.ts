@@ -215,6 +215,13 @@ describe("classLunchWarningsOf: the class's lunch over its own fixed lessons", (
     expect(run([lesson(at(10, 55), at(13), { row: 0 })]).size).toBe(1);
   });
 
+  it('asks the one start of a window exactly as long as the break, and warns when a lesson takes it', () => {
+    // A window of thirty minutes for a break of thirty has one start, its first; the last start is the first.
+    const tight: LunchRule = { startMinutes: at(11), endMinutes: at(11, 30), minutes: 30 };
+    expect(classLunchWarningsOf([lesson(at(10, 30), at(11, 15), { row: 0 })], tight, classes, [], year).size).toBe(1);
+    expect(classLunchWarningsOf([lesson(at(10, 30), at(11), { row: 0 })], tight, classes, [], year).size).toBe(0);
+  });
+
   it('finds a start off the quarter hour: the slot grid is five minutes', () => {
     // A lesson to 11:05 and the next from 11:35: the thirty minutes between them start at 11:05, which only a grid of five finds.
     expect(run([lesson(at(10, 30), at(11, 5), { row: 0 }), lesson(at(11, 35), at(13))]).size).toBe(0);
@@ -370,6 +377,12 @@ describe('noRoomWarningsOf: a pin with no room of its kind free', () => {
 
   it('asks a lesson with a room nothing: the judge has said whether the room is free', () => {
     expect(noRoomWarningsOf([inRoom('sal1', { row: 0 }), inRoom('sal2'), inRoom('sal1')], facts).size).toBe(0);
+  });
+
+  it('asks a pinned lesson that has its room (a block’s lesson) nothing either, and counts it as holding that room', () => {
+    const blocks = item({ row: 0, pin: true, roomId: 'sal1', subjectId: 'slojd', dayOfWeek: 3, startMinutes: at(9), endMinutes: at(10) });
+    // The block's lesson in sal1, a lock in sal2, and a pin with no room: only the pin has none left.
+    expect([...noRoomWarningsOf([blocks, inRoom('sal2'), pin(1)], facts).keys()]).toEqual([1]);
   });
 });
 
