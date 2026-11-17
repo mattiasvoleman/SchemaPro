@@ -198,6 +198,13 @@ describe("classLunchWarningsOf: the class's lunch over its own fixed lessons", (
     expect(run([lesson(at(10, 55), at(13), { row: 0 })]).size).toBe(1);
   });
 
+  it('finds a start off the quarter hour: the slot grid is five minutes', () => {
+    // A lesson to 11:05 and the next from 11:35: the thirty minutes between them start at 11:05, which only a grid of five finds.
+    expect(run([lesson(at(10, 30), at(11, 5), { row: 0 }), lesson(at(11, 35), at(13))]).size).toBe(0);
+    // Twenty-five minutes between them is not thirty.
+    expect(run([lesson(at(10, 30), at(11, 5), { row: 0 }), lesson(at(11, 30), at(13))]).size).toBe(1);
+  });
+
   it('counts the lessons Generera keeps beside the rows, and an extra group the lesson was opened to', () => {
     const kept = lesson(at(10, 30), at(12, 0), { groupIds: ['7B', '7A'], roomId: 'r2' });
     expect(run([kept, lesson(at(12, 0), at(13), { row: 0 })]).size).toBe(1);
@@ -272,6 +279,11 @@ describe('mealsCover', () => {
     expect(mealsCover([meal('2026-09-01', null)], '2026-08-17', '2027-06-11')).toBe(false);
     expect(mealsCover([meal(null, '2027-06-10')], '2026-08-17', '2027-06-11')).toBe(false);
     expect(mealsCover([], '2026-08-17', '2027-06-11')).toBe(false);
+  });
+  it('holds a stretch whose last day is the last day of the meal', () => {
+    expect(mealsCover([meal(null, '2027-06-11')], '2026-08-17', '2027-06-11')).toBe(true);
+    expect(mealsCover([meal('2026-08-17', '2027-06-11')], '2026-08-17', '2027-06-11')).toBe(true);
+    expect(mealsCover([meal('2026-08-18', '2027-06-11')], '2026-08-17', '2027-06-11')).toBe(false);
   });
   it('is not fooled by overlapping meals or by one inside another', () => {
     expect(mealsCover([meal(null, '2026-12-20'), meal('2026-10-01', '2026-12-10'), meal('2026-12-15', null)], '2026-08-17', '2027-06-11')).toBe(true);

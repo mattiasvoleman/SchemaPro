@@ -912,6 +912,29 @@ describe('RequirementPlacementsService.boardOfYear', () => {
       expect(warnings).toEqual([{ rowId: 'p-1', requirementId: REQ, code: 'NO_ROOM_FREE', refuses: true, params: { day: 2, start: '08:00', end: '09:00', roomType: 'Slöjdsal' } }]);
     });
 
+    it('asks only the groups that eat: a teaching group that is no class has no lunch to lose', async () => {
+      const lunch = { lunchEnabled: true, lunchStartTime: time('10:30'), lunchEndTime: time('13:00'), lunchMinutes: 30 };
+      const rows = [stored({ id: 'p-1', startTime: time('10:30'), minutes: 150, roomId: ROOM_1 })];
+      const { tx, service } = board({ rows, lunch, classes: [] });
+      expect((await service.boardOfYear(YEAR, user)).warnings).toEqual([]);
+      expect(tx['studentGroup']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: [GROUP] }, kind: 'CLASS' } }));
+    });
+
+    it('reads the meals the school placed by hand once, for the board, and asks the database for none of its own', async () => {
+      const lunch = { lunchEnabled: true, lunchStartTime: time('10:30'), lunchEndTime: time('13:00'), lunchMinutes: 30 };
+      const { tx, service } = board({ rows: [stored({ id: 'p-1', startTime: time('10:30'), minutes: 150, roomId: ROOM_1 })], lunch, classes: [GROUP] });
+      await service.boardOfYear(YEAR, user);
+      expect(tx['lunchSitting']!['findMany']).toHaveBeenCalledTimes(1);
+    });
+
+    it('asks no room of a row with no room whose subject needs no type, and asks the subjects only for a room type', async () => {
+      const { tx, service } = board({ rows: [stored({ id: 'p-1', roomId: null, room: null })] });
+      expect((await service.boardOfYear(YEAR, user)).warnings).toEqual([]);
+      expect(tx['room']!['findMany']).not.toHaveBeenCalled();
+      const asked = tx['subject']!['findMany']!.mock.calls.map((call) => (call[0] as { where: { requiredRoomTypeId?: unknown } }).where.requiredRoomTypeId);
+      expect(asked).toContainEqual({ not: null });
+    });
+
     it('says a class that has no lunch left, and is quiet when the school has the lunch off', async () => {
       const lunch = { lunchEnabled: true, lunchStartTime: time('10:30'), lunchEndTime: time('13:00'), lunchMinutes: 30 };
       const rows = [stored({ id: 'p-1', startTime: time('10:30'), minutes: 150, roomId: ROOM_1 })];
@@ -1477,6 +1500,26 @@ describe('RequirementPlacementsService: warnings on a save and a read of one pos
     await service.listOfPost(REQ, user);
     // The judge's two reads (the day's lessons and the post's locks), and none for the warnings.
     expect(tx['masterLesson']!['findMany']).toHaveBeenCalledTimes(2);
+  });
+
+  it('counts the year’s other posts’ förläggningar as part of the week: a row of another post for the same teacher joins the day', async () => {
+    const beside = [
+      {
+        id: 'p-9',
+        requirementId: OTHER_REQ,
+        dayOfWeek: 2,
+        startTime: time('08:00'),
+        minutes: 60,
+        roomId: ROOM_2,
+        recurrence: 'ALL_WEEKS',
+        teacherId: null,
+        requirement: { studentGroupId: 'g-7b', subjectId: 'sub-ma', teacherId: TEACHER, coTeacherId: null, startDate: null, endDate: null, _count: { shares: 0 } },
+      },
+    ];
+    const { service } = setup({ beside, workRules: CAP_90, rows: [stored({ id: 'p-1', startTime: time('10:00') })] });
+    const read = await service.listOfPost(REQ, user);
+    // Two hours on Tuesday, one of them the other post’s: the warning is about the post’s own row, which is the only one in this answer.
+    expect(read.warnings).toEqual([{ rowId: 'p-1', requirementId: REQ, ...OVER }]);
   });
 
   it('asks the kept lessons of the ruled teachers only when a rule is there', async () => {
