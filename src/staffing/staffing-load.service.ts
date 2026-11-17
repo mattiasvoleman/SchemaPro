@@ -23,7 +23,7 @@ import { addDays } from '../common/year-rollover';
 import type { StaffingDeliveredQueryDto } from './dto/staffing-delivered.dto';
 import { suggestTeachers, type TeacherSuggestions } from './suggest-teachers';
 import { readLastYearTeachersOf } from './last-year-teachers';
-import { readActiveStaffIds } from './staff-candidates';
+import { readActiveStaff } from './staff-candidates';
 import { hideHr, mayReadHrOf, readsHr } from './hr-visibility';
 import { hasTravel, readSiteMap } from '../common/site-travel';
 import { travelLoad, type TeacherTravel } from './travel-load';
@@ -393,10 +393,12 @@ export class StaffingLoadService {
    * this row's charge: room left AFTER taking it, which the web words as
    * "kvar efter raden" to keep it apart from the dialog's "kvar" (today's).
    *
-   * Candidates are the school's ACTIVE staff, TEACHER and SCHOOL_ADMIN alike:
-   * a teaching rektor is assigned rows here, as the requirement's teacherId
-   * already allows. The requirement is read first and answers 404 when RLS
-   * hides it, as every other route names a foreign id.
+   * Candidates are the school's ACTIVE teachers and the administrators who
+   * teach (Users.teaches): a teaching rektor is assigned rows here once
+   * marked. An administrator without the mark is staff but no candidate
+   * (staff-candidates.ts), so she is not ranked. The requirement is read
+   * first and answers 404 when RLS hides it, as every other route names a
+   * foreign id.
    *
    * CONTINUITY. When the row's group has a predecessor (StudentGroup
    * .predecessorId, set by the year rollover), one more plain read names who
@@ -424,9 +426,9 @@ export class StaffingLoadService {
       if (!requirement) {
         throw new NotFoundException('The requested record does not exist.');
       }
-      const [{ input: yearInput }, staffIds] = await Promise.all([
+      const [{ input: yearInput }, staff] = await Promise.all([
         this.readInput(tx, requirement.academicYearId, user),
-        readActiveStaffIds(tx, requirement.academicYearId),
+        readActiveStaff(tx, requirement.academicYearId),
       ]);
       const predecessorId = requirement.studentGroup.predecessorId;
       const lastYear = predecessorId
@@ -447,7 +449,7 @@ export class StaffingLoadService {
       const answer = suggestTeachers(
         yearInput,
         requirementId,
-        staffIds,
+        staff.candidateIds,
         lastYear,
         readsHr(user),
         shareMinutes === null ? null : { minutes: shareMinutes },
