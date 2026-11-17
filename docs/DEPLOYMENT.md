@@ -6249,7 +6249,9 @@ mark adds one view and takes nothing away.
   recheck. The huvudman's reader has no row at a school and signs in to no school's app (`NO_PROFILE`), as before.
 - **The database the app reads must hold `Users.teaches`: migration `20270212090000`** (part 1; in the production's 222 and in every
   database that has run part 1). Where the column is missing (a preview or an environment that lags) PostgREST answers 42703, the
-  profile read fails and **nobody signs in** (the login screen says "LOGIN_FAILED", not a missing column). Check
+  profile read fails and **nobody signs in**, in **either** app (Rastra vårdnadshavare reads the profile with the same code, although
+  it has no use for the mark; the login screen says "LOGIN_FAILED", not a missing column). A phone that already holds a cached profile
+  restores it without the read, and a recheck that fails leaves the session as it is. Check
   `SELECT 1 FROM "_prisma_migrations" WHERE migration_name LIKE '20270212090000%'` before an app build points at a database.
 - **Older apps behave as today** (risk 9 of the investigation). An app built before this part does not select the column and ignores
   the field: a marked administrator sees the administration's view in Larm alone and her phone keeps no roll call list, exactly as

@@ -140,7 +140,7 @@ async function adoptProfile(userId: string): Promise<AuthState> {
  * The person's row as the school has it. `teaches` is the mark that an administrator teaches: it is
  * read as `=== true`, so a row without it (or a null) is not marked, as for the web (lib/auth.ts). The
  * column is in migration 20270212090000: a database without it answers this read with an error, and
- * nobody signs in (docs/DEPLOYMENT.md, "Rastra app: the teaching administrator").
+ * nobody signs in, in either app (docs/DEPLOYMENT.md, "The Rastra app and an administrator who teaches").
  */
 async function fetchProfile(authId: string): Promise<ProfileRow | null> {
   const { data, error } = await getSupabase()
