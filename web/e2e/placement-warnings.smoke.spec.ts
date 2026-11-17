@@ -204,19 +204,20 @@ test.describe("a save", () => {
 });
 
 test.describe("the other schools' bands", () => {
-  test("are drawn for a teacher or a room that is picked, with the schools by name, and for no other", async ({ page, baseURL }) => {
+  test("are drawn for a teacher that is picked, with the school by name, and for no other: nothing is drawn until one is picked", async ({ page, baseURL }) => {
     const { misses } = await open(page, baseURL!);
     await expect(page.getByText(/Bokad på/)).toHaveCount(0);
-    await page.getByRole("button", { name: /Lärare/ }).click();
+    await page.getByRole("button", { name: "Lärare", exact: true }).click();
     await page.getByRole("menuitemcheckbox", { name: "Anna Lind", exact: true }).click();
     await page.keyboard.press("Escape");
     // Anna's hold, not Bo's.
     await expect(page.getByText("Bokad på Östra skolan", { exact: true })).toBeVisible();
     await expect(page.getByText(/Södra skolan/)).toHaveCount(0);
-    await page.getByRole("button", { name: /Lärare/ }).click();
-    await page.getByRole("menuitemcheckbox", { name: "Anna Lind", exact: true }).click();
-    await page.keyboard.press("Escape");
-    await expect(page.getByText(/Bokad på/)).toHaveCount(0);
+    expect(misses, MISSES).toEqual([]);
+  });
+
+  test("are drawn for a room that is picked, with both schools by name, behind the cards and taking no pointer", async ({ page, baseURL }) => {
+    const { misses } = await open(page, baseURL!);
     await page.getByRole("button", { name: "Salar", exact: true }).click();
     await page.getByRole("menuitemcheckbox", { name: "NO-salen", exact: true }).click();
     await page.keyboard.press("Escape");
@@ -280,7 +281,7 @@ test.describe("axe", () => {
 
   test("the administrator, with the other schools' bands drawn: no violation in either theme", async ({ page, baseURL }) => {
     const { misses } = await open(page, baseURL!, { size: { width: 375, height: 812 } });
-    await page.getByRole("button", { name: /Lärare/ }).click();
+    await page.getByRole("button", { name: "Lärare", exact: true }).click();
     await page.getByRole("menuitemcheckbox", { name: "Anna Lind", exact: true }).click();
     await page.keyboard.press("Escape");
     await expect(page.getByText("Bokad på Östra skolan", { exact: true })).toBeVisible();
