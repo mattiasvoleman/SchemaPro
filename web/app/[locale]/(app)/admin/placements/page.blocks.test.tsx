@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import type { BoardBlock, BoardBlockRow, PlacementBoard } from "@/lib/placement-board";
+import { placementLinkOf } from "@/lib/placement-link";
 import PlacementsPage from "./page";
 
 /**
@@ -869,6 +870,19 @@ describe("the link that names a lesson of a block", () => {
     await ready();
     await waitFor(() => expect(document.activeElement).toBe(cardOf(TUESDAY)));
     expect(cardOf(TUESDAY)).toHaveClass("outline-2");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("placement-link-gone")).not.toBeInTheDocument();
+  });
+
+  it("marks the block's card from the very address Generera's \"Visa i veckan\" builds for a block's row (A3's LÅG-5): the post is the member, the block rides along", async () => {
+    // The same builder the Generera page uses for a refusal that names a block's lesson (placement-link.ts), not an address written by hand here.
+    const href = placementLinkOf({ yearId: null, postId: "m-sp", blockId: "b-sv", day: 2, start: "08:00" });
+    window.history.replaceState(null, "", `/sv${href}`);
+    renderPage();
+    await ready();
+    await waitFor(() => expect(document.activeElement).toBe(cardOf(TUESDAY)));
+    expect(cardOf(TUESDAY)).toHaveClass("outline-2");
+    // The post's own card hook (A3) has nothing to mark for a member (it has no rows) and says nothing is missing.
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.queryByTestId("placement-link-gone")).not.toBeInTheDocument();
   });
