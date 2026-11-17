@@ -470,6 +470,27 @@ jobs:
           PROBE_NO_ENGINE: '1'
         run: npx ts-node --transpile-only scripts/test/probe-forlagg-varningar.ts
 
+      # Ett par i veckan (D2): en lektion av en post som går varje vecka, lagd på två platser (udda veckor här, jämna veckor där).
+      # Sidan håller första halvan i webbläsaren och skriver båda halvorna i EN sats, så här prövas det den bygger på, som API-rollen:
+      # paret sparas i en skrivning och är en lektion på veckan; två halvor i en sats godtas av databasen men inte i två satser av en
+      # transaktion (FP409 PAIRS), och en ensam halva nekas vem som än skriver den; en ensam halva, fel längd och en jämn halva på en
+      # post med udda veckor nekas av tjänsten och ingenting skrivs; en halva utan sal nekas (PAIR_ROOM) vilken halva det än är; ett
+      # delat inlägg har ett par per lärare (Bo:s udda och Annas jämna är inget par, TEACHER_PAIRS) och varje lärares del räknar sin
+      # egen lektion; ett par på en gammal nyckel är 409 STALE och ingenting skrivs. Skolan som körningen gjorde tas bort.
+      - name: Förlagda par, veckan probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+          NODE_ENV: test
+          JWT_SECRET: test-secret-not-used-by-the-fake-guard
+          JWT_ISSUER: https://test.invalid/auth/v1
+          # Nest builds the whole application, whose configuration asks for an engine; this probe asks it nothing (the real engine's half is
+          # probe-forlagg-par-motor.ts, which runs by hand), so the address is one nothing listens on.
+          AI_ENGINE_URL: http://127.0.0.1:1
+          AI_ENGINE_API_KEY: test-key
+          AI_ENGINE_TIMEOUT_MS: '15000'
+        run: npx ts-node --transpile-only scripts/test/probe-forlagg-par.ts
+
       # Hela skolans data (K5, 20270114090000): two schools, each with people,
       # lessons, attendance, absence, leave and notices, and an export ordered
       # at one of them, built by the job as the ordering administrator, stored

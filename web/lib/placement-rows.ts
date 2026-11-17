@@ -78,6 +78,8 @@ export interface Spot {
 
 export type RowEdit =
   | { kind: "add"; input: PlacementInput }
+  /** The two halves of a pair, odd weeks and even weeks, added in one write: the database refuses a lone half (lib/placement-pair.ts). */
+  | { kind: "addPair"; inputs: readonly [PlacementInput, PlacementInput] }
   /** A row to another place, and, when `roomId` is given (null: the engine chooses), to another room; left out, its room stays. */
   | { kind: "move"; key: string; to: Spot; roomId?: string | null }
   | { kind: "remove"; keys: readonly string[] };
@@ -90,6 +92,7 @@ export type RowEdit =
 export function listAfter(rows: readonly BoardPlacement[], edit: RowEdit): PlacementInput[] | null {
   const list = rows.map(inputOf);
   if (edit.kind === "add") return [...list, edit.input];
+  if (edit.kind === "addPair") return [...list, ...edit.inputs];
   const keys = keysOfRows(rows);
   const at = (key: string): number => keys.indexOf(key);
   if (edit.kind === "remove") {
