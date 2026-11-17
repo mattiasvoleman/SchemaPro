@@ -183,8 +183,11 @@ describe('Förlagda poster (e2e)', () => {
 
       it('is answered on its own route, with the rows judged, the post counted and what the rows are held against', async () => {
         const response = await board().set('x-test-user', admin()).expect(200);
-        // `blocks` is Förlagda block's: every block of the year with its lessons, a verdict for each member (block-placement-board.ts).
-        expect(Object.keys(response.body).sort()).toEqual(['academicYearId', 'blocks', 'kept', 'meals', 'placements', 'posts', 'timetable']);
+        // `blocks` is Förlagda block's: every block of the year with its lessons, a verdict for each member (block-placement-board.ts);
+        // `warnings` and `holds` are D1's: what the fixed week says of each row, and the other schools' hold on the school's teachers and rooms.
+        expect(Object.keys(response.body).sort()).toEqual(['academicYearId', 'blocks', 'holds', 'kept', 'meals', 'placements', 'posts', 'timetable', 'warnings']);
+        expect(response.body.warnings).toEqual([]);
+        expect(response.body.holds).toEqual([]);
         expect(response.body.timetable).toEqual({ placedLessons: 0, writtenAt: null });
         expect(response.body.placements).toEqual([
           // The lock already answers the post's one lesson, so the row is over the demand: the judge says so, and
@@ -245,7 +248,7 @@ describe('Förlagda poster (e2e)', () => {
     it('removes every row on an empty list', async () => {
       placements()['findMany']!.mockResolvedValue([]);
       const response = await put({ placements: [] }).expect(200);
-      expect(response.body).toEqual({ placements: [], verdicts: [], rowsKey: rowsKeyOf([]) });
+      expect(response.body).toEqual({ placements: [], verdicts: [], rowsKey: rowsKeyOf([]), warnings: [] });
       expect(placements()['createMany']).not.toHaveBeenCalled();
     });
 

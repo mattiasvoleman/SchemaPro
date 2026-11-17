@@ -4,6 +4,7 @@ import { BLOCK_POST_IDS, blockWeekBoard, isBlockWeekScenario } from "./timplan-b
 import { GROUPS, REQUIREMENTS, ROOMS, SUBJECTS, TEACHERS, YEAR } from "./world";
 import type { TeachingRequirement } from "../../../lib/types";
 import { placementTimetable } from "./placement-back";
+import { HOLDS, PLACEMENT_WARNINGS_SCENARIO, isWarningsScenario, warningsOfRows } from "./timplan-warnings";
 
 /**
  * Förlägg i veckan (GET /teaching-requirements/placements/board), as the
@@ -41,6 +42,9 @@ import { placementTimetable } from "./placement-back";
  *   placement-write-refuse:<id>   refuses every write for the last row (REQUIREMENT_PLACEMENT_REFUSED, TEACHER)
  *   placement-write-stale:<id>    answers the first write of a post with 409 REQUIREMENT_PLACEMENTS_STALE, as if somebody
  *                                 else had written it first, and takes the next (made on top of the key it then reads)
+ *
+ * Varningar medan man lägger (D1): a scenario that starts with placement-write-warnings is the write scenario with a third row (Idrott 7A, Friday), warnings of every
+ * kind on the board and in the answer of a save, and other schools' holds on a teacher and a room (timplan-warnings.ts has them and says which).
  *
  * Förlägg i veckan, the blocks (C2): the board has a `blocks` field (an older gateway has none, and the world's other scenarios keep it empty, so
  * that the baselines of the page do not move). A scenario that starts with placement-block-week is the same kind of small gateway for the world's
@@ -137,11 +141,14 @@ const written = new Map<string, Written>();
 function writtenOf(scenario: string): Written {
   let state = written.get(scenario);
   if (!state) {
+    const warned = scenario.startsWith(PLACEMENT_WARNINGS_SCENARIO);
     state = {
-      rows: [WEEK_ROWS[0]!, WEEK_ROWS[1]!],
+      // The warnings scenario also holds Idrott 7A's Friday row, which has the room-less warnings of its own.
+      rows: warned ? [...WEEK_ROWS] : [WEEK_ROWS[0]!, WEEK_ROWS[1]!],
       keys: new Map([
         [post(1).id, "k000000000000001"],
         [post(2).id, "k000000000000002"],
+        ...(warned ? ([[post(4).id, "k000000000000003"]] as const) : []),
       ]),
       counter: 0,
       staleOnce: scenario.startsWith(PLACEMENT_WRITE_STALE_SCENARIO),
@@ -162,7 +169,9 @@ function placedByRows(entry: TeachingRequirement, rows: readonly Row[]): number 
 
 /** The year's board, for the year the world has and for any other (which has no post). */
 export function boardOfYear(yearId: string, scenario: string | null) {
-  return yearId === YEAR.id && isBlockWeekScenario(scenario) ? blockWeekOfYear(yearId, scenario) : plainBoardOfYear(yearId, scenario);
+  const board = yearId === YEAR.id && isBlockWeekScenario(scenario) ? blockWeekOfYear(yearId, scenario) : plainBoardOfYear(yearId, scenario);
+  // What the fixed week says of each row, and the other schools' hold: only in the scenario that has them, so that the page's other baselines are what they were.
+  return yearId === YEAR.id && isWarningsScenario(scenario) ? { ...board, warnings: warningsOfRows(board.placements), holds: HOLDS } : board;
 }
 
 function plainBoardOfYear(yearId: string, scenario: string | null) {
@@ -327,7 +336,13 @@ export function writePlacements(requirementId: string, body: unknown, scenario: 
   state.rows = [...state.rows.filter((entry) => entry.requirementId !== requirementId), ...rows];
   const key = nextKey(state);
   state.keys.set(requirementId, key);
-  return { placements: rows, verdicts: rows.map((_, index) => ({ index, ok: true })), rowsKey: key };
+  return {
+    placements: rows,
+    verdicts: rows.map((_, index) => ({ index, ok: true })),
+    rowsKey: key,
+    // What the week says of the rows just written, by their new ids (the scenario with warnings only: an older gateway answers none).
+    ...(isWarningsScenario(scenario) ? { warnings: warningsOfRows(rows) } : {}),
+  };
 }
 
 /** What answers the scenario's posts: the row that places one lesson, the kept lesson that covers another. */
