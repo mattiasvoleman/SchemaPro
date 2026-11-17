@@ -868,9 +868,10 @@ describe('RequirementPlacementsService.boardOfYear', () => {
     it('counts the lessons the board has read, and asks the database for no kept lesson of its own', async () => {
       const { tx, service } = board({ rows: [stored({ id: 'p-1', startTime: time('10:00') })], kept: [keptTuesday()], workRules: CAP_90 });
       await service.boardOfYear(YEAR, user);
-      // The kept lessons are read once, for the board; the warnings add no read of them.
-      const keptReads = tx['masterLesson']!['findMany']!.mock.calls.filter((call) => JSON.stringify((call[0] as { where: unknown }).where) === JSON.stringify(keptMastersWhere(YEAR)));
-      expect(keptReads).toHaveLength(1);
+      // The kept lessons are read once, for the board; the warnings add no read of them (theirs is a filter ANDed on the kept ones).
+      const wheres = tx['masterLesson']!['findMany']!.mock.calls.map((call) => (call[0] as { where: Record<string, unknown> }).where);
+      expect(wheres.filter((where) => JSON.stringify(where) === JSON.stringify(keptMastersWhere(YEAR)))).toHaveLength(1);
+      expect(wheres.some((where) => 'AND' in where)).toBe(false);
     });
 
     it('words the post’s days for the reader and tells the läslogg that the post was read, for a reader without HR-läs as for one with it', async () => {
