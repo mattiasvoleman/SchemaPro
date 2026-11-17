@@ -420,7 +420,10 @@ export function classesToCsv(
 }
 
 /**
- * The teachers, with their post for the year the caller hands in.
+ * The teachers, with their post for the year the caller hands in. "The
+ * teachers" are those who teach: a TEACHER, and a SCHOOL_ADMIN with
+ * Users.teaches, as the gateway's own lärare.csv takes them; a file that
+ * left her out would be a different file from the same school's other one.
  *
  * `employmentOf` is optional so a page that has not loaded the posts still
  * exports a list — with the four post columns EMPTY, which the importer reads
@@ -434,6 +437,8 @@ export function teachersToCsv(
   people: {
     id?: string;
     role: string;
+    /** Users.teaches: an administrator who also teaches is in the file as a teacher is. */
+    teaches?: boolean | null;
     firstName: string;
     lastName: string;
     email: string;
@@ -453,7 +458,13 @@ export function teachersToCsv(
   return serializeCsv(
     CSV_TEMPLATES.teachers.headers,
     people
-      .filter((person) => person.role === "TEACHER" && isActivePerson(person))
+      // The gateway's lärare.csv takes the same people (src/school-export/csv-files.ts, `teachesLike`): a teacher,
+      // and an administrator with Users.teaches. Written out and not through lib/teaching-staff.ts: this module
+      // ships with six pages, one of them within a kilobyte of its bundle budget.
+      .filter(
+        (person) =>
+          (person.role === "TEACHER" || (person.role === "SCHOOL_ADMIN" && person.teaches === true)) && isActivePerson(person),
+      )
       .map((person) => {
         const found = person.id !== undefined ? employmentOf?.(person.id) : undefined;
         // A reader without HR-läs gets the post with its percentages hidden

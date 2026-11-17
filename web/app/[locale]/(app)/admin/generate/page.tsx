@@ -15,6 +15,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Link } from "@/i18n/navigation";
+import { teachesLike } from "@/lib/teaching-staff";
 import { ApiError } from "@/lib/api";
 import { changedPartsText, isActiveRun, staleParts, VARIANT_KEYS, variantLabel } from "@/lib/candidates/labels";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
@@ -312,7 +313,7 @@ export default function GeneratePage() {
   }): string => engineMessage(tEngine as unknown as MessageLookup, sentence);
 
   const teacherCount = useMemo(
-    () => (people ?? []).filter((person) => person.role === "TEACHER" && person.isActive).length,
+    () => (people ?? []).filter((person) => teachesLike(person) && person.isActive).length,
     [people],
   );
 

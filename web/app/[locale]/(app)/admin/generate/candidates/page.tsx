@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Layers, RefreshCw } from "lucide-react";
 import { Link } from "@/i18n/navigation";
+import { teachesLike } from "@/lib/teaching-staff";
 import { ApiError } from "@/lib/api";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import { worseFor, type IdleComparison } from "@/lib/candidates/idle";
@@ -197,7 +198,7 @@ export default function CandidatesPage() {
       lunch,
       academicYearId: year.id,
       numbering: year.gradeNumbering,
-      teacherIds: current.filter((person) => person.role === "TEACHER").map((person) => person.id),
+      teacherIds: current.filter(teachesLike).map((person) => person.id),
     };
   }, [year, peopleQuery.data, people, constraints, groups, memberships, frameTimes, requirements, lunch, rostersPending]);
 
@@ -291,7 +292,7 @@ export default function CandidatesPage() {
   const weekSections = useMemo((): { label: string | null; options: { id: string; label: string }[] }[] => {
     if (weekKind === "TEACHER") {
       const teachers = people
-        .filter((person) => person.role === "TEACHER" && person.isActive)
+        .filter((person) => teachesLike(person) && person.isActive)
         .map((person) => ({ id: person.id, label: `${person.firstName} ${person.lastName}` }));
       return [{ label: null, options: teachers }];
     }

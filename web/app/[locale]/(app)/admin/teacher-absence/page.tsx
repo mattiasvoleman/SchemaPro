@@ -3,6 +3,7 @@
 import { Suspense, lazy, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
+import { teachesLike } from "@/lib/teaching-staff";
 import type { MessageLookup } from "@/lib/engine-message";
 import { savedToast } from "@/lib/staffing-warnings";
 import { chainLookup } from "@/lib/cover-view";
@@ -119,6 +120,23 @@ export default function TeacherAbsencePage() {
   const substituteFor = target?.action === "substitute" ? target.lesson.id : null;
   const suggestionsQuery = useSubstituteSuggestions(substituteFor);
 
+  // Two lists that were one. Who can be ABSENT (the register, the preview, the absence dialog) is everybody who
+  // teaches: a teacher, or an administrator with Users.teaches, whose lessons the absence takes. Who may STEP IN
+  // (the substitute dialog's pick) is the active teachers only and stays so: an administrator who teaches is not in
+  // the pool and is never asked (SP409), and the gateway refuses her as a substitute.
+  const absentees = useMemo(
+    () => (peopleQuery.data ?? []).filter((p) => teachesLike(p) && p.isActive),
+    [peopleQuery.data],
+  );
+  const absenteeOptions = useMemo(
+    () => absentees.map((teacher) => ({ id: teacher.id, name: `${teacher.firstName} ${teacher.lastName}` })),
+    [absentees],
+  );
+  // Whose name an absence in the register is drawn with: everybody, not only those who can be registered absent now.
+  const everybodyOptions = useMemo(
+    () => (peopleQuery.data ?? []).map((p) => ({ id: p.id, name: `${p.firstName} ${p.lastName}` })),
+    [peopleQuery.data],
+  );
   const teachers = useMemo(
     () => (peopleQuery.data ?? []).filter((p) => p.role === "TEACHER" && p.isActive),
     [peopleQuery.data],
@@ -267,7 +285,7 @@ export default function TeacherAbsencePage() {
        * teacher and a range, the lessons, and the per-lesson actions — kept
        * exactly, with "Registrera frånvaro" turning the range into an absence.
        */}
-      <AbsenceRegister teachers={teacherOptions} />
+      <AbsenceRegister teachers={absenteeOptions} poolCandidates={teacherOptions} names={everybodyOptions} />
 
       <SectionCard id="absence-lessons" title={t("previewTitle")} description={t("previewBody")}>
         <FilterBar>
@@ -278,7 +296,7 @@ export default function TeacherAbsencePage() {
                 <SelectValue placeholder={t("selectTeacherPlaceholder")} />
               </SelectTrigger>
               <SelectContent>
-                {teacherOptions.map((teacher) => (
+                {absenteeOptions.map((teacher) => (
                   <SelectItem key={teacher.id} value={teacher.id}>
                     {teacher.name}
                   </SelectItem>
@@ -428,7 +446,7 @@ export default function TeacherAbsencePage() {
             open={registering}
             onOpenChange={setRegistering}
             mode="ADMIN"
-            teachers={teacherOptions}
+            teachers={absenteeOptions}
             initial={{ userId: teacherId, from, to: to < from ? from : to }}
           />
         </Suspense>

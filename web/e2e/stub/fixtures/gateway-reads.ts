@@ -3,11 +3,11 @@ import type { GuardianChild } from "../../../lib/guardian-queries";
 import type { GroupAttendanceRow, GroupMembershipRow } from "../../../lib/queries";
 import type { AbsenceReport, AttendanceRecordRow, Person } from "../../../lib/types";
 import { Reply, route, type GatewayContext, type GatewayRoute } from "../gateway-routes";
-import { HUVUDMAN_MEMBER, MULTI_GUARDIAN, type SignedInPerson } from "../sessions";
+import { HUVUDMAN_MEMBER, MULTI_GUARDIAN, TEACHING_ADMIN, type SignedInPerson } from "../sessions";
 import { HUVUDMAN_OF_STUB, HUVUDMAN_READER } from "./gateway-huvudman";
 import { CALENDAR_LESSONS_WITH_COVER } from "./cover-world";
 import { ABSENCE_REPORTS, ATTENDANCE_RECORDS, GROUP_MEMBERS } from "./school-days";
-import { ALL_PEOPLE, byId, GUARDIAN_LINKS, SCHOOL, SECOND_SCHOOL, STUDENT_LIST } from "./world";
+import { ALL_PEOPLE, byId, GUARDIAN_LINKS, SCHOOL, SECOND_SCHOOL, STUDENT_LIST, TEACHING_ADMIN_LISTED } from "./world";
 import type { MySchool } from "../../../lib/types";
 
 /** MULTI_GUARDIAN's child at Granskolan, the only person the stub keeps there. */
@@ -57,7 +57,10 @@ const staffOnly = (context: GatewayContext) =>
 const lessonOf = (id: string) => CALENDAR_LESSONS_WITH_COVER.find((lesson) => lesson.id === id) ?? null;
 
 export const readRoutes: GatewayRoute[] = [
-  route("GET", "/api/v1/users", (context): Person[] | Reply => staffOnly(context) ?? ALL_PEOPLE),
+  // The administrator who teaches is listed to herself and to nobody else (world.ts TEACHING_ADMIN_LISTED).
+  route("GET", "/api/v1/users", (context): Person[] | Reply =>
+    staffOnly(context) ?? (context.person?.userId === TEACHING_ADMIN.userId ? [...ALL_PEOPLE, TEACHING_ADMIN_LISTED] : ALL_PEOPLE),
+  ),
 
   route("GET", "/api/v1/users/counts", (context) => {
     if (context.person?.persona !== "admin") return context.person ? new Reply(403, { message: "Forbidden." }) : unauthorised;

@@ -621,6 +621,43 @@ function subjectsOnScreen(): string[] {
   ).map((subject) => subject.name);
 }
 
+describe("an administrator who teaches (Users.teaches) is a teacher of the grid", () => {
+  const admin = (id: string, firstName: string, lastName: string, teaches?: boolean) => ({
+    id,
+    role: "SCHOOL_ADMIN" as const,
+    firstName,
+    lastName,
+    email: `${id}@skola.se`,
+    phone: null,
+    isActive: true,
+    invitedAt: null,
+    studentGroupId: null,
+    teaches,
+  });
+
+  it("offers her in the teacher filter, and not an administrator who does not teach", async () => {
+    state.people = [...PEOPLE, admin("a-maja", "Maja", "Mark", true), admin("a-rolf", "Rolf", "Rektor")];
+    render(<TimetablePage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "timetable.filterTeacher" }));
+    expect(await screen.findByRole("menuitemcheckbox", { name: "Maja Mark" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemcheckbox", { name: "Karin Ek" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Rolf Rektor" })).not.toBeInTheDocument();
+  });
+
+  it("names a lesson by the administrator who stands on it, also when her mark has been taken off", async () => {
+    // The look-up of the name of the person a lesson already carries takes everybody (lib/teaching-staff.ts): the mark is
+    // taken off and she stays on her lessons, and a lesson that lost its teacher's name would read as an unassigned one.
+    state.people = [...PEOPLE, admin("a-rolf", "Rolf", "Rektor")];
+    state.lessons = [lesson("l-slojd", "s-sl", "g-51", "11:00", { teacherId: "a-rolf" })];
+    render(<TimetablePage />);
+    const card = screen.queryAllByRole("button").find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+    expect((await screen.findByRole("dialog")).textContent).toContain("Slöjd · 5.1 · R. Rektor");
+  });
+});
+
 describe("the week of one teacher, or several", () => {
   it("shows only what that teacher takes", async () => {
     render(<TimetablePage />);
@@ -2429,6 +2466,25 @@ describe("the room optimisation", () => {
 
     const list = await screen.findByRole("list", { name: "roomOptimization.mostImproved" });
     expect(list).toHaveTextContent("Nils Berg");
+  });
+
+  it("names a person who stands on lessons and is no teacher now, as it names a teacher (her mark was taken off)", async () => {
+    state.people = [
+      ...PEOPLE,
+      { id: "a-rolf", role: "SCHOOL_ADMIN", firstName: "Rolf", lastName: "Rektor", email: "a-rolf@skola.se", phone: null, isActive: true, invitedAt: null, studentGroupId: null },
+    ];
+    roomOptimization.propose.mutateAsync.mockResolvedValueOnce({
+      ...PROPOSAL,
+      walkers: [{ kind: "TEACHER", id: "a-rolf", before: PROPOSAL.teachers.before, after: PROPOSAL.teachers.after }],
+    });
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+
+    await fromMoreMenu(user, "timetable.optimizeRooms");
+    await user.click(await screen.findByRole("button", { name: "roomOptimization.compute" }));
+
+    const list = await screen.findByRole("list", { name: "roomOptimization.mostImproved" });
+    expect(list).toHaveTextContent("Rolf Rektor");
   });
 });
 

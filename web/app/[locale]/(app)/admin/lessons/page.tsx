@@ -124,6 +124,9 @@ export default function DayPlannerPage() {
     () => new Map((roomsQuery.data ?? []).map((room) => [room.id, room.name])),
     [roomsQuery.data],
   );
+  // Two lists that were one: who may STEP IN on a lesson (the substitute dialog's pick) is the active teachers only
+  // and stays so: an administrator who teaches (Users.teaches) is not in the pool and is never asked (SP409). The name
+  // on a lesson is looked up in everybody, so a lesson never loses the name of the person it carries.
   const teachers = useMemo(
     () => (peopleQuery.data ?? []).filter((person) => person.role === "TEACHER" && person.isActive),
     [peopleQuery.data],
@@ -133,8 +136,8 @@ export default function DayPlannerPage() {
     [teachers],
   );
   const teacherById = useMemo(
-    () => new Map(teachers.map((teacher) => [teacher.id, teacher])),
-    [teachers],
+    () => new Map((peopleQuery.data ?? []).map((person) => [person.id, person])),
+    [peopleQuery.data],
   );
 
   /** The row's name in its buttons' labels: "Ställ in lektion 08:00–09:00 Matematik 7A". */

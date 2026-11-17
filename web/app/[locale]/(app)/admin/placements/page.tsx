@@ -23,6 +23,7 @@ import { LoadError } from "@/components/ui/load-error";
 import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { teachesLike } from "@/lib/teaching-staff";
 import { profileWrites } from "@/lib/admin-areas";
 import { ApiError } from "@/lib/api";
 import { blockFitSentence, blockPlacementsRefusal } from "@/lib/block-placements";
@@ -244,8 +245,10 @@ export default function PlacementsPage() {
   const groupById = useMemo(() => new Map((groupsQuery.data ?? []).map((group) => [group.id, group])), [groupsQuery.data]);
   const subjectById = useMemo(() => new Map((subjectsQuery.data ?? []).map((subject) => [subject.id, subject])), [subjectsQuery.data]);
   const roomById = useMemo(() => new Map((roomsQuery.data ?? []).map((room) => [room.id, room])), [roomsQuery.data]);
-  const teachers = useMemo(() => (peopleQuery.data ?? []).filter((person) => person.role === "TEACHER"), [peopleQuery.data]);
-  const teacherById = useMemo(() => new Map(teachers.map((teacher) => [teacher.id, teacher])), [teachers]);
+  // The filter's teachers: those who teach (a teacher, or an administrator with Users.teaches). The name on a
+  // card is looked up in everybody, so a lesson never loses the name of the person it carries.
+  const teachers = useMemo(() => (peopleQuery.data ?? []).filter(teachesLike), [peopleQuery.data]);
+  const teacherById = useMemo(() => new Map((peopleQuery.data ?? []).map((person) => [person.id, person])), [peopleQuery.data]);
 
   const names: CardNames = useMemo(
     () => ({

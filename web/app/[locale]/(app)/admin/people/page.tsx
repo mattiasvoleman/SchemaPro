@@ -88,6 +88,7 @@ import { useBulkSelection } from "@/lib/bulk-selection";
 import { BulkSelectionBar, SelectAllCheckbox, SelectRowCheckbox } from "@/components/bulk/bulk-selection";
 import { studentsToCsv, teacherQualificationsToCsv, teachersToCsv } from "@/lib/csv-export";
 import { profileDecides, profileWrites, type AdminProfile } from "@/lib/admin-areas";
+import { teachesLike } from "@/lib/teaching-staff";
 import { teachesErrorOf, useAdministrators } from "@/lib/admin-role-queries";
 import { useProfile } from "@/components/profile-context";
 // Roller i skolan's two parts of the page, each fetched when it is shown: the
@@ -306,7 +307,8 @@ function PersonDetail({
   if (person.role !== "STUDENT") {
     return (
       <div className="space-y-3">
-        {person.role === "TEACHER" ? (
+        {/* A teacher, and an administrator who teaches (Users.teaches): both stand on posts and in groups. */}
+        {teachesLike(person) ? (
           <div className="space-y-1.5">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {t("teachesLabel")}
@@ -587,9 +589,9 @@ export default function PeoplePage() {
    * that fails downloads nothing, rather than a file with them in it.
    */
   const unmarked =
-    (role: UserRole, build: (kept: Person[]) => string | null | Promise<string | null>) => () =>
+    (about: UserRole | ((person: Person) => boolean), build: (kept: Person[]) => string | null | Promise<string | null>) => () =>
       import("@/lib/protected-people")
-        .then(({ withoutMarked }) => withoutMarked(people ?? [], role, build))
+        .then(({ withoutMarked }) => withoutMarked(people ?? [], about, build))
         .catch(() => {
           toast.error(tCommon("error"));
           return null;
@@ -1013,26 +1015,26 @@ export default function PeoplePage() {
                   // empty post cells, which the importer leaves alone. No
                   // active year, no posts: the import would have none to
                   // write them into.
-                  build: unmarked("TEACHER", (kept) =>
+                  build: unmarked(teachesLike, (kept) =>
                     teachersToCsv(
                       kept,
                       exportYearId === null ? undefined : (userId) => employmentOf(userId) ?? undefined,
                     ),
                   ),
                   empty:
-                    !people?.some((person) => person.role === "TEACHER") ||
+                    !people?.some(teachesLike) ||
                     (exportYearId !== null && employments === undefined),
                 },
                 {
                   kind: "teacherQualifications",
-                  build: unmarked("TEACHER", (kept) => teacherQualificationsToCsv(qualifications ?? [], kept, subjects ?? [])),
+                  build: unmarked(teachesLike, (kept) => teacherQualificationsToCsv(qualifications ?? [], kept, subjects ?? [])),
                   empty: (qualifications ?? []).length === 0 || people === undefined || subjects === undefined,
                 },
                 {
                   kind: "teacherDuties",
                   // Read and built at the click: the page holds no uppdrag,
                   // and sits close to its bundle budget.
-                  build: unmarked("TEACHER", (kept) =>
+                  build: unmarked(teachesLike, (kept) =>
                     exportYearId === null
                       ? null
                       : import("@/lib/duties-csv-export").then(({ teacherDutiesCsvFor }) =>
@@ -1041,7 +1043,7 @@ export default function PeoplePage() {
                   ),
                   empty:
                     exportYearId === null ||
-                    !people?.some((person) => person.role === "TEACHER") ||
+                    !people?.some(teachesLike) ||
                     subjects === undefined ||
                     groups === undefined,
                 },

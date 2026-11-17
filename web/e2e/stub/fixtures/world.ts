@@ -274,6 +274,15 @@ export const GUARDIAN_LINKS = [
 
 export const ALL_PEOPLE: Person[] = [ADMIN, ...TEACHER_LIST, ...STUDENT_LIST, ...GUARDIAN_LIST];
 
+/**
+ * The administrator who teaches (TEACHING_ADMIN) as GET /users lists her: to her own session only
+ * (gateway-reads.ts), so that no other suite's picker, list or count holds a person the school has always lacked.
+ * `teaches` is the mark the planner's pickers read (lib/teaching-staff.ts).
+ */
+export const TEACHING_ADMIN_LISTED: Person = person(TEACHING_ADMIN.userId, "SCHOOL_ADMIN", "Tora", "Tjänsteman", TEACHING_ADMIN.email, {
+  teaches: true,
+});
+
 /** The profile row getSession reads: Users plus the authId the session is keyed by. */
 export const PROFILE_ROWS = [
   { ...ADMIN, authId: PEOPLE.admin.authId, schoolId: SCHOOL.id },

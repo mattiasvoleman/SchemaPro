@@ -84,6 +84,11 @@ const people = [
   { id: "p2", role: "STUDENT", firstName: "Noah", lastName: "Sjö", email: "noah@skola.se", phone: "+46701234567", isActive: true, studentGroupId: null },
   { id: "p3", role: "STUDENT", firstName: "Ivar", lastName: "Ek", email: "ivar@skola.se", phone: null, isActive: false, studentGroupId: "g1" },
   { id: "a1", role: "SCHOOL_ADMIN", firstName: "Rek", lastName: "Tor", email: "rektor@skola.se", phone: null, isActive: true, studentGroupId: null },
+  // Administratör som lärare (Users.teaches): the file names a marked administrator as it names a teacher, and
+  // neither an unmarked one (a1, and a5 whose mark is explicitly false) nor a marked one who has left (a3).
+  { id: "a2", role: "SCHOOL_ADMIN", firstName: "Sture", lastName: "Mark", email: "sture@skola.se", phone: "070-765 43 21", isActive: true, studentGroupId: null, teaches: true },
+  { id: "a3", role: "SCHOOL_ADMIN", firstName: "Lena", lastName: "Borta", email: "lena@skola.se", phone: null, isActive: false, studentGroupId: null, teaches: true },
+  { id: "a5", role: "SCHOOL_ADMIN", firstName: "Olof", lastName: "Utan", email: "olof@skola.se", phone: null, isActive: true, studentGroupId: null, teaches: false },
 ];
 const groups = [
   { id: "g1", name: "7A", kind: "CLASS", gradeLevel: 7, halfOfId: null, replacesSubjectId: null },
@@ -179,6 +184,8 @@ const employments: Record<string, unknown> = {
   t2: { employmentPercent: 66.667, reductionPercent: 12.5, contractKind: "SEMESTER", signature: null },
   // Hidden from the reader: no percentage, so no post.
   t4: { employmentPercent: null, reductionPercent: null, contractKind: "FERIE", signature: "ASA" },
+  // The marked administrator's post is written as a teacher's is.
+  a2: { employmentPercent: 50, reductionPercent: 0, contractKind: "SEMESTER", signature: "STM" },
 };
 
 const guardianRows = [

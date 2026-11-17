@@ -51,10 +51,18 @@ import { PurgedNotice } from "@/components/retention/purged-notice";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FilterBar } from "@/components/ui/filter-bar";
 import { LoadError } from "@/components/ui/load-error";
+import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type Filter = "PENDING" | "APPROVED" | "REJECTED";
+
+// The most requests the gateway answers a list with, newest first (LEAVE_LIST_LIMIT in src/family/leave.service.ts;
+// teaching-admin.contract.test.ts holds the two equal). An administrator who teaches is handed the school's list and
+// this page narrows it to hers afterwards, so a school with more than this many requests in a tab can have an older one of
+// hers outside the answer: the page says so when the answer reached the limit. A teacher's list is cut after the
+// database has narrowed it, as it was, and says nothing.
+const LEAVE_LIST_LIMIT = 200;
 
 export default function TeacherLeavePage() {
   const t = useTranslations("teacherLeave");
@@ -128,6 +136,12 @@ export default function TeacherLeavePage() {
       </FilterBar>
 
       {filter !== "PENDING" ? <PurgedNotice kind="LEAVE_REQUESTS" /> : null}
+
+      {profile.role === "SCHOOL_ADMIN" && asked.length >= LEAVE_LIST_LIMIT ? (
+        <Notice tone="warning" title={t("cutOffTitle")}>
+          {t("cutOffBody", { count: LEAVE_LIST_LIMIT })}
+        </Notice>
+      ) : null}
 
       {inbox.isLoading ? (
         <div aria-busy="true">

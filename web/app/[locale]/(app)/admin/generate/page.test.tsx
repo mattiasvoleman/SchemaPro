@@ -220,6 +220,36 @@ beforeEach(() => {
   state.requirements = [requirement("g-sl1"), requirement("g-ma1"), requirement("g-41")];
 });
 
+describe("the teachers the run has (an administrator who teaches counts: Users.teaches)", () => {
+  const teachersLine = () => screen.getByText("generate.preTeachers").closest("li") as HTMLElement;
+  const staff = (id: string, role: string, extra: Record<string, unknown> = {}) => ({
+    ...pupil(id, "g-41"),
+    role,
+    studentGroupId: null,
+    firstName: "Lärare",
+    lastName: id,
+    ...extra,
+  });
+
+  it("counts active teachers and active administrators who teach, and not an administrator who does not, nor anybody who has left", () => {
+    state.people.push(
+      staff("t-1", "TEACHER"),
+      staff("t-2", "TEACHER", { isActive: false }),
+      staff("a-1", "SCHOOL_ADMIN", { teaches: true }),
+      staff("a-2", "SCHOOL_ADMIN", { teaches: true, isActive: false }),
+      staff("a-3", "SCHOOL_ADMIN"),
+    );
+    render(<GeneratePage />);
+    expect(within(teachersLine()).getByText("2")).toBeInTheDocument();
+  });
+
+  it("is not satisfied by an administrator who does not teach", () => {
+    state.people.push(staff("a-3", "SCHOOL_ADMIN"));
+    render(<GeneratePage />);
+    expect(within(teachersLine()).getByText("0")).toBeInTheDocument();
+  });
+});
+
 describe("uppdrag with dates and fixed times (20261017090000)", () => {
   const duty = (overrides: Record<string, unknown>) => ({
     id: "d-1", userId: "t-1", academicYearId: "y-1", kind: "RASTVAKT", label: "Rastvakt", minutesPerWeek: 40,

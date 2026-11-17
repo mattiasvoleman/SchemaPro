@@ -244,9 +244,9 @@ export function teachersToCsv(
     id?: string;
     role: string;
     /**
-     * An administrator who teaches (Users.teaches) is a teacher of the file. The gateway's copy leads the web's here
-     * until web/lib/csv-export.ts follows (the web's lärare.csv page, PR 5): a school with a marked person writes the
-     * person on this file and not on the page's, which is why the shared cases hold no such person.
+     * An administrator who teaches (Users.teaches) is a teacher of the file, as in the web's copy (web/lib/csv-export.ts,
+     * since part 5b): the shared cases hold a marked person, one who is not marked and one who has left, and both copies
+     * play them.
      */
     teaches?: boolean | null;
     firstName: string;

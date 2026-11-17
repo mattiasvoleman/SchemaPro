@@ -69,6 +69,8 @@ vi.mock("@/lib/queries", () => ({
       { id: "t-bo", role: "TEACHER", firstName: "Bo", lastName: "Ek", isActive: true },
       { id: "t-cecilia", role: "TEACHER", firstName: "Cecilia", lastName: "Ås", isActive: false },
       { id: "u-admin", role: "SCHOOL_ADMIN", firstName: "Dan", lastName: "Admin", isActive: true },
+      // An administrator who teaches (Users.teaches) is no klasslärare either (CT400): the picker is the teachers'.
+      { id: "u-maja", role: "SCHOOL_ADMIN", firstName: "Maja", lastName: "Mark", isActive: true, teaches: true },
     ],
   }),
   useRooms: () => ({ data: [{ id: "r-12", name: "Sal 12" }, { id: "r-14", name: "Sal 14" }] }),

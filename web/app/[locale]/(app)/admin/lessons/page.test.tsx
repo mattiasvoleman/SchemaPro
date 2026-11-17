@@ -51,6 +51,9 @@ vi.mock("@/lib/queries", () => ({
     data: [
       { id: "t-1", role: "TEACHER", isActive: true, firstName: "Nils", lastName: "Berg" },
       { id: "t-2", role: "TEACHER", isActive: true, firstName: "Bo", lastName: "Ek" },
+      // An administrator who teaches (Users.teaches) and one who does not.
+      { id: "a-1", role: "SCHOOL_ADMIN", isActive: true, firstName: "Maja", lastName: "Mark", teaches: true },
+      { id: "a-2", role: "SCHOOL_ADMIN", isActive: true, firstName: "Rolf", lastName: "Rektor" },
     ],
     isError: false,
   }),
@@ -127,6 +130,40 @@ describe("Dagsplanering", () => {
     await user.type(within(dialog).getByLabelText(/Meddelande till elever och vårdnadshavare/), "Läxa på Classroom");
     await user.click(within(dialog).getByRole("button", { name: "Ställ in lektion" }));
     await waitFor(() => expect(cancel).toHaveBeenCalledWith({ id: "cl-1", reason: "Läxa på Classroom" }));
+  });
+
+  it("names the administrator who teaches on her lesson, and anybody else its row carries", () => {
+    // A look-up of the name of the person a lesson carries takes everybody: a mark taken off later must not
+    // leave her lesson without a name.
+    state.lessons = {
+      data: [
+        {
+          ...LESSON,
+          teachers: [
+            { role: "LEAD", teacherId: "a-1" },
+            { role: "CO_TEACHER", teacherId: "a-2" },
+          ],
+        },
+      ],
+      isLoading: false,
+      isError: false,
+    };
+    renderPage();
+    const row = within(screen.getByRole("table", { name: /Dagens lektioner/ })).getByText("Matematik").closest("tr")!;
+    expect(within(row).getByText("Maja Mark")).toBeInTheDocument();
+    expect(within(row).getByText("Rolf Rektor")).toBeInTheDocument();
+  });
+
+  it("keeps an administrator who teaches out of the substitute pick (she is not in the pool and is never asked)", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const row = within(screen.getByRole("table", { name: /Dagens lektioner/ })).getByText("Matematik").closest("tr")!;
+    await user.click(within(row).getByRole("button", { name: "Tilldela vikarie 08:00–09:00 Matematik 7A" }));
+    const dialog = await screen.findByRole("dialog", {}, { timeout: 5000 });
+    await user.click(within(dialog).getByRole("combobox", { name: "Vikarierande lärare" }));
+    expect(await screen.findByRole("option", { name: "Bo Ek" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Maja Mark" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Rolf Rektor" })).not.toBeInTheDocument();
   });
 
   it("marks each row's actions as Drift's, and the day's navigation as no one's", () => {

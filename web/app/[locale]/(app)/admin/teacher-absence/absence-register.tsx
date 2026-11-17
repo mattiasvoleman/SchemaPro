@@ -103,7 +103,26 @@ function CountsCell({ counts, passes }: { counts: AbsenceCounts; passes?: PassSu
  * The reason is shown here, on an admin-only page, and nowhere a colleague,
  * a pupil or a guardian looks.
  */
-export function AbsenceRegister({ teachers }: { teachers: { id: string; name: string }[] }) {
+export function AbsenceRegister({
+  teachers,
+  poolCandidates,
+  names,
+}: {
+  /** Who can be registered absent (the filter and the "Registrera frånvaro" dialog): everybody who teaches, a marked administrator too (Users.teaches). */
+  teachers: { id: string; name: string }[];
+  /**
+   * Whose name an absence is drawn with: everybody in the school, so that an absence of a person who no longer teaches (her mark was taken
+   * off, or she has left) is not drawn with "—". Defaults to `teachers`, which is the old, narrower look-up.
+   */
+  names?: { id: string; name: string }[];
+  /**
+   * Who the substitute pool can take in: the teachers only, and never an administrator who teaches. She is not in the pool and is
+   * never asked (SP409). The database refuses her as a member (SubstitutePoolMembers_member_is_a_teacher, 409 POOL_MEMBER_MUST_BE_TEACHER),
+   * so this list is what keeps the dialog from offering a pick that can only end in that refusal. A required prop of its own, not a
+   * default of `teachers`: the wider list would then be the pool's by silence.
+   */
+  poolCandidates: { id: string; name: string }[];
+}) {
   const t = useTranslations("teacherAbsence");
   const tReasons = useTranslations("absenceReasons");
   // A reason gallring took reads "Gallrad", not "Ej angiven" (ABSENCE_REASONS).
@@ -128,7 +147,7 @@ export function AbsenceRegister({ teachers }: { teachers: { id: string; name: st
   );
   const { data: reasons } = useAbsenceReasons();
 
-  const nameOf = useMemo(() => new Map(teachers.map((teacher) => [teacher.id, teacher.name])), [teachers]);
+  const nameOf = useMemo(() => new Map((names ?? teachers).map((person) => [person.id, person.name])), [names, teachers]);
   const reasonOf = useMemo(() => new Map((reasons ?? []).map((reason) => [reason.id, reason])), [reasons]);
 
   return (
@@ -297,7 +316,7 @@ export function AbsenceRegister({ teachers }: { teachers: { id: string; name: st
       ) : null}
       {settingsOpened ? (
         <Suspense fallback={null}>
-          <CoverSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} teachers={teachers} />
+          <CoverSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} teachers={poolCandidates} />
         </Suspense>
       ) : null}
     </SectionCard>

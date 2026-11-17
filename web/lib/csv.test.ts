@@ -2112,6 +2112,23 @@ describe("export round trips", () => {
     ]);
   });
 
+  it("an administrator who teaches is in lärare.csv as a teacher is, and an administrator who does not, a marked one who has left and a pupil are not", () => {
+    // Users.teaches. The gateway's own lärare.csv takes the same people (src/school-export/csv-files.ts); the
+    // shared cases (csv-files-cases.test.ts) hold the two byte for byte.
+    const exported = teachersToCsv([
+      { role: "TEACHER", firstName: "Karin", lastName: "Ek", email: "karin@s.se" },
+      { role: "SCHOOL_ADMIN", firstName: "Maja", lastName: "Mark", email: "maja@s.se", teaches: true },
+      { role: "SCHOOL_ADMIN", firstName: "Rolf", lastName: "Rektor", email: "rolf@s.se" },
+      { role: "SCHOOL_ADMIN", firstName: "Olof", lastName: "Utan", email: "olof@s.se", teaches: false },
+      { role: "SCHOOL_ADMIN", firstName: "Lena", lastName: "Borta", email: "lena@s.se", teaches: true, isActive: false },
+      { role: "STUDENT", firstName: "Alma", lastName: "Berg", email: "alma@s.se", teaches: true },
+    ]);
+    const { rows, errors } = mapTeacherRows(parseCsv(exported));
+
+    expect(errors).toEqual([]);
+    expect(rows.map((row) => row.email)).toEqual(["karin@s.se", "maja@s.se"]);
+  });
+
   it("students survive with their class written as a name", () => {
     const exported = studentsToCsv(
       [

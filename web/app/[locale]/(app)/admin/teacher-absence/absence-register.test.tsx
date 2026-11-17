@@ -36,6 +36,12 @@ const post = api.post as unknown as Mock;
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 
+// The pool's dialog is its own file's test; here it is a stub that shows which teachers the register hands it.
+vi.mock("./cover-settings-dialog", () => ({
+  CoverSettingsDialog: ({ open, teachers }: { open: boolean; teachers: { id: string; name: string }[] }) =>
+    open ? <ul aria-label="poolCandidates">{teachers.map((teacher) => <li key={teacher.id}>{teacher.name}</li>)}</ul> : null,
+}));
+
 const TEACHERS = [
   { id: "t-anna", name: "Anna Lind" },
   { id: "t-bo", name: "Bo Ek" },
@@ -83,7 +89,7 @@ beforeEach(() => {
 
 describe("the absence register", () => {
   it("lists an absence with its reason, its lessons' cover state and a link to its day on the board", async () => {
-    wrap(<AbsenceRegister teachers={TEACHERS} />);
+    wrap(<AbsenceRegister teachers={TEACHERS} poolCandidates={TEACHERS} />);
     const row = (await screen.findByText("Anna Lind")).closest("tr")!;
     expect(within(row).getByText("Vård av barn")).toBeInTheDocument();
     expect(within(row).getByText("Anmäld av läraren")).toBeInTheDocument();
@@ -95,7 +101,7 @@ describe("the absence register", () => {
   });
 
   it("marks a row's changes as Drift's, and leaves the board, the filter and the settings to every reader", async () => {
-    wrap(<AbsenceRegister teachers={TEACHERS} />);
+    wrap(<AbsenceRegister teachers={TEACHERS} poolCandidates={TEACHERS} />);
     const row = (await screen.findByText("Anna Lind")).closest("tr")!;
     for (const action of ["Ändra", "Avsluta i förtid", "Återkalla"]) {
       expect(within(row).getByRole("button", { name: new RegExp(`^${action} Anna Lind`) })).toHaveAttribute(
@@ -114,7 +120,7 @@ describe("the absence register", () => {
       .mockRejectedValueOnce(new ApiError(409, "Det finns beslut…", "ABSENCE_HAS_DECISIONS", { count: 2, lessons: 1, passes: 1, lessonId: "l-1", decision: "SUBSTITUTE" }))
       .mockResolvedValueOnce({ ...ONGOING, phase: "ENDED" });
     const user = userEvent.setup();
-    wrap(<AbsenceRegister teachers={TEACHERS} />);
+    wrap(<AbsenceRegister teachers={TEACHERS} poolCandidates={TEACHERS} />);
     const row = (await screen.findByText("Anna Lind")).closest("tr")!;
     // Each row's buttons are named after their absence ("Avsluta i förtid Anna Lind …").
     await user.click(within(row).getByRole("button", { name: /^Avsluta i förtid Anna Lind/ }));
@@ -145,7 +151,7 @@ describe("the absence register", () => {
       .mockRejectedValueOnce(new ApiError(409, "…", "ABSENCE_HAS_DECISIONS", { count: 1, lessonId: "l-1", decision: "CANCELLED" }))
       .mockResolvedValueOnce({ ...ONGOING, status: "WITHDRAWN", phase: "WITHDRAWN" });
     const user = userEvent.setup();
-    wrap(<AbsenceRegister teachers={TEACHERS} />);
+    wrap(<AbsenceRegister teachers={TEACHERS} poolCandidates={TEACHERS} />);
     const row = (await screen.findByText("Anna Lind")).closest("tr")!;
     await user.click(within(row).getByRole("button", { name: /^Återkalla Anna Lind/ }));
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Återkalla" }));
@@ -161,7 +167,7 @@ describe("the absence register", () => {
       new ApiError(409, "Beslut finns på lektioner som redan hållits.", "ABSENCE_HAS_HELD_DECISIONS", { count: 1 }),
     );
     const user = userEvent.setup();
-    wrap(<AbsenceRegister teachers={TEACHERS} />);
+    wrap(<AbsenceRegister teachers={TEACHERS} poolCandidates={TEACHERS} />);
     const row = (await screen.findByText("Anna Lind")).closest("tr")!;
     await user.click(within(row).getByRole("button", { name: /^Återkalla Anna Lind/ }));
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Återkalla" }));
@@ -257,5 +263,44 @@ describe("Registrera frånvaro", () => {
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith("Läraren är redan registrerad som frånvarande under en del av perioden."),
     );
+  });
+});
+
+describe("an administrator who teaches (Users.teaches) in the register", () => {
+  const MAJA = { id: "a-maja", name: "Maja Mark" };
+
+  it("names her absence: who can be absent is everybody who teaches", async () => {
+    get.mockImplementation(async (path: string) => {
+      if (path.startsWith("/api/v1/teacher-absences")) return [{ ...ONGOING, id: "a-2", userId: "a-maja" }];
+      if (path === "/api/v1/teacher-absence-reasons") return REASONS;
+      throw new Error(`unexpected GET ${path}`);
+    });
+    wrap(<AbsenceRegister teachers={[...TEACHERS, MAJA]} poolCandidates={TEACHERS} />);
+    const row = (await screen.findByText("Maja Mark")).closest("tr")!;
+    expect(within(row).getByText("Pågår")).toBeInTheDocument();
+  });
+
+  it("names an absence of a person who is no longer among those who can be absent: her mark was taken off and her absence stays", async () => {
+    // `teachers` is who can be registered absent, `names` is whose name an absence is drawn with: everybody's.
+    const ROLF = { id: "a-rolf", name: "Rolf Rektor" };
+    get.mockImplementation(async (path: string) => {
+      if (path.startsWith("/api/v1/teacher-absences")) return [{ ...ONGOING, id: "a-3", userId: "a-rolf" }];
+      if (path === "/api/v1/teacher-absence-reasons") return REASONS;
+      throw new Error(`unexpected GET ${path}`);
+    });
+    wrap(<AbsenceRegister teachers={TEACHERS} poolCandidates={TEACHERS} names={[...TEACHERS, ROLF]} />);
+    const row = (await screen.findByText("Rolf Rektor")).closest("tr")!;
+    expect(within(row).getByText("Pågår")).toBeInTheDocument();
+  });
+
+  it("hands the substitute pool the candidates it was given, and not the list of who can be absent (SP409)", async () => {
+    // She is in `teachers` (she can be absent) and not in `poolCandidates` (she is not in the pool and is never asked): the
+    // pool's dialog gets the second list. The database would refuse her as a member (POOL_MEMBER_MUST_BE_TEACHER, SP409), so this
+    // is what keeps the dialog from offering a pick that can only end in that refusal.
+    const user = userEvent.setup();
+    wrap(<AbsenceRegister teachers={[...TEACHERS, MAJA]} poolCandidates={TEACHERS} />);
+    await user.click(await screen.findByRole("button", { name: "Inställningar" }));
+    const list = await screen.findByRole("list", { name: "poolCandidates" });
+    expect(within(list).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Anna Lind", "Bo Ek"]);
   });
 });

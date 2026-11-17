@@ -44,6 +44,7 @@ import {
   type ActivityForm,
   type ActivityProblem,
 } from "@/lib/schedule-activity-form";
+import { teachesLike } from "@/lib/teaching-staff";
 import type { BatchScope } from "@/lib/publication-types";
 import type { ActivityCreditLine, ActivitySelection, ScheduleActivity } from "@/lib/schedule-activity-types";
 import type { AcademicYear, Person, StudentGroup, Subject } from "@/lib/types";
@@ -120,7 +121,7 @@ export function ActivityFormBody({
   const replacementSubjects = useMemo(() => subjects.filter((subject) => !subject.countsTowardTimplan), [subjects]);
   const creditSubjects = useMemo(() => subjects.filter((subject) => subject.countsTowardTimplan), [subjects]);
   const teachers = useMemo(
-    () => people.filter((person) => person.role === "TEACHER" && person.isActive),
+    () => people.filter((person) => teachesLike(person) && person.isActive),
     [people],
   );
   const peopleById = useMemo(() => new Map(people.map((person) => [person.id, person])), [people]);

@@ -82,6 +82,7 @@ import {
   useRooms,
   useFrameTimes,
 } from "@/lib/queries";
+import { teachesLike } from "@/lib/teaching-staff";
 import { buildGroupConflictMap, buildPupilBufferMap, toPlacement } from "@/lib/conflicts";
 import { buildGradeSpans } from "@/lib/grade-span";
 import {
@@ -389,7 +390,7 @@ export default function GapsPage() {
       // Inactive staff are left out everywhere on this page: an answer to "who
       // can take Wednesday at ten" that names somebody who has left the school
       // is worse than a short list.
-      (people ?? []).filter((person) => person.role === "TEACHER" && person.isActive),
+      (people ?? []).filter((person) => teachesLike(person) && person.isActive),
     [people],
   );
   const students = useMemo(
