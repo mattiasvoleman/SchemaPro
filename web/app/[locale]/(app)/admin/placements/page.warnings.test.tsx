@@ -316,6 +316,9 @@ describe("a card with a warning", () => {
     const plain = cardOf(MA_TUE);
     expect(within(plain).queryByText(/warnings\.badge/)).not.toBeInTheDocument();
     expect(plain.querySelector("[title]")).toBeNull();
+    // Where the mark sits in the card (the smoke spec measures it there): in the header, beside the title, which the grid truncates and never the mark.
+    const marks = document.querySelectorAll("[data-lesson-id] > div > div > span[title]");
+    expect(Array.from(marks).map((mark) => mark.firstChild?.textContent)).toEqual(["warnings.badge", "warnings.badge"]);
   });
 
   it("has the stronger word where Generera will refuse, and keeps the word when only one of the warnings does", async () => {
