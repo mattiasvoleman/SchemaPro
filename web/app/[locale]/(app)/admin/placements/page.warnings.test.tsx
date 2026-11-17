@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api";
 import type { BoardBlock, BoardHold, PlacementBoard } from "@/lib/placement-board";
 import type { PlacementWarning } from "@/lib/requirement-placements";
 import PlacementsPage from "./page";
@@ -25,6 +26,8 @@ const state = vi.hoisted(() => ({
   blockWarnAfterPut: false,
   /** A read of the week after the first one takes this long (ms), so that the read a write starts is in flight when the page asks for it. */
   slowReads: 0,
+  /** The next PUT of a post is refused by the gateway: a row the judge would not have. */
+  refuseNext: false,
   keyCount: 0,
   rowCount: 0,
 }));
@@ -206,6 +209,13 @@ const withBoard = (over: Partial<PlacementBoard>) => {
 function fakePut(path: string, body: { placements: Array<Record<string, unknown>>; baseKey?: string }) {
   const current = state.board as PlacementBoard;
   if (path.includes("/teaching-blocks/")) return fakeBlockPut(path, body, current);
+  if (state.refuseNext) {
+    state.refuseNext = false;
+    // A network takes a moment: the write is on its way (the page is saving) when the gateway says no.
+    return new Promise((_, reject) =>
+      setTimeout(() => reject(new ApiError(409, "x", "REQUIREMENT_PLACEMENT_REFUSED", { index: 0, reason: "TEACHER", otherKind: "LESSON", className: "7B", subjectName: "Matematik", day: 2, start: "10:00", end: "11:00" })), 30),
+    );
+  }
   const postId = /teaching-requirements\/([^/]+)\/placements/.exec(path)![1]!;
   const clock = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
   const written = body.placements.map((input) => {
@@ -277,6 +287,7 @@ beforeEach(() => {
   state.warnOnPut = null;
   state.blockWarnAfterPut = false;
   state.slowReads = 0;
+  state.refuseNext = false;
   state.keyCount = 0;
   state.rowCount = 0;
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -543,6 +554,37 @@ describe("after a save", () => {
     fireEvent.keyDown(cardOf(MA_TUE), { key: "ArrowUp" });
     await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByTestId("placement-status")).toHaveTextContent("moved("));
+    expect(screen.getByTestId("placement-status")).not.toHaveTextContent("warnings.said");
+  });
+
+  it("takes away what it said when the next write is refused: the polite region does not repeat the warnings of the write before", async () => {
+    state.warnOnPut = (rows) => rows.map((entry) => warn(entry.id, entry.requirementId));
+    renderPage();
+    await ready();
+    cardOf(MA_TUE).focus();
+    fireEvent.keyDown(cardOf(MA_TUE), { key: "ArrowUp" });
+    await waitFor(() => expect(screen.getByTestId("placement-status")).toHaveTextContent("warnings.said(1|"));
+    state.refuseNext = true;
+    const next = cardOf("post-ma||60|2|09:45|ALL_WEEKS");
+    next.focus();
+    fireEvent.keyDown(next, { key: "ArrowUp" });
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId("placement-message")).toBeInTheDocument());
+    expect(screen.getByTestId("placement-status")).not.toHaveTextContent("warnings.");
+  });
+
+  it("does not read out the warnings of a block's lessons that are gone when the week cannot be read again: only the lessons the week has", async () => {
+    // The lesson the block had (br-1, which the board has a warning on) is replaced by the write; the read that follows fails, and the page keeps the week as the write patched it.
+    renderPage();
+    await ready();
+    api.get.mockImplementation(async () => {
+      throw new ApiError(500, "down");
+    });
+    blockCard().focus();
+    fireEvent.keyDown(blockCard(), { key: "ArrowDown" });
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(document.querySelector("[data-lesson-id='blockplacement:b-sv|60|3|08:15|ALL_WEEKS']")).not.toBeNull());
+    await new Promise((resolve) => setTimeout(resolve, 80));
     expect(screen.getByTestId("placement-status")).not.toHaveTextContent("warnings.said");
   });
 

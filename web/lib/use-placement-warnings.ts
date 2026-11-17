@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import type { TimetableLesson } from "@/components/schedule/timetable-grid";
 import { blockCardId } from "@/lib/placement-block-rows";
@@ -75,26 +75,27 @@ export function usePlacementWarnings({ board, filters, keys, blockKeys, saving }
 
   /** What was said after the last save, for the polite region that says everything else the page says after one. */
   const [said, setSaid] = useState("");
-  const latest = useRef(0);
+  // A write on its way: what was said of the last one is gone, so that the next is said anew even when it is the same.
   useEffect(() => {
-    if (!saving) return;
-    latest.current += 1;
-    setSaid("");
+    if (saving) setSaid("");
   }, [saving]);
   const say = useCallback(
     (warnings: readonly PlacementWarning[] | undefined) => {
-      latest.current += 1;
       const items = itemsOfWarnings(warnings, sentence);
       setSaid(items.length === 0 ? "" : t("said", { count: items.length, sentences: sentencesOf(items, t("refuses")) }));
     },
     [sentence, t],
   );
-  /** A block's write answers no warnings: they are the week's, read again once the write's own read is in. */
+  /**
+   * A block's write answers no warnings: they are the week's, read again once the write's own read is in. Only the warnings of the lessons the
+   * block has in the week that comes back (a read that fails or is cancelled gives the week as the write patched it, whose lessons are new and
+   * whose old warnings name rows that are gone).
+   */
   const sayBlock = useCallback(
     async (blockId: string, read: () => Promise<{ data?: PlacementBoard }>) => {
-      const mine = (latest.current += 1);
       const { data } = await read();
-      if (mine === latest.current) say((data?.warnings ?? []).filter((warning) => warning.blockId === blockId));
+      const lessons = new Set(data?.blocks.find((block) => block.id === blockId)?.rows.map((row) => row.id));
+      say((data?.warnings ?? []).filter((warning) => warning.blockId === blockId && lessons.has(warning.rowId)));
     },
     [say],
   );
