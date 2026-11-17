@@ -1,5 +1,5 @@
-import React, { useCallback, useState } from 'react';
-import { Text, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { AppState, Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TAB_SCREEN_EDGES } from '../tabScreenEdges';
@@ -21,8 +21,9 @@ import { CrisisTeacherView } from './CrisisTeacherView';
 //
 // An administrator who teaches (Users.teaches) is both readers. The gateway
 // answers both of them, so she has both views: her own groups' roll call is
-// what the tab opens on, every time it is shown, and the administration's
-// view is a button in its header (and the way back in the other's). An alarm
+// what the tab opens on, every time it is shown and every time the app comes
+// back to the front, and the administration's view is a button in its header
+// (and the way back in the other's). An alarm
 // is when a teacher is wanted in the room, so the roll call comes first even
 // when no alarm is going. Which views a person has, and which is first, is
 // appGate.alarmViews; only one view is mounted at a time, so the hooks of
@@ -46,6 +47,14 @@ export function CrisisScreen(): React.JSX.Element {
       setChosen(null);
     }, []),
   );
+  // The app coming back to the front is the tab being shown again too (a push tap, or the phone picked up by hand): no focus event is
+  // sent for a tab that is already the selected one, so a view she left the phone in must not be the one the next alarm meets.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next === 'active') setChosen(null);
+    });
+    return () => subscription.remove();
+  }, []);
   const view = chosen !== null && views.includes(chosen) ? chosen : views[0];
   const both = views.length > 1;
 

@@ -6229,7 +6229,9 @@ mark adds one view and takes nothing away.
 - **What is shown, and to whom.** At an alarm the **Larm** tab opens on **her own roll call** (the groups she answers for, counted
   as a teacher counts them, with the list kept on the phone for the night the network is gone), and the administration's view
   (start, watch, end) is one tap away in the header (**"Ledningens vy ›"**, and **"Mitt upprop ›"** back). Larm opens on the roll
-  call every time the tab is shown, also when nothing is going (the way to start an alarm is the button in the header). A push about
+  call every time the tab is shown and every time the app comes back to the front (a phone picked up, a tapped push: no focus event is sent for a
+  tab that is already the selected one), also when nothing is going (the way to start an alarm is the button in the header, which is drawn
+  while the first read is still going). A push about
   an alarm opens Larm as it does for every administrator, and Larm opens on the roll call. An administrator without the mark, a
   teacher, a pupil and a guardian see exactly what they saw before: the administrator's view alone, the teacher's roll call alone,
   nothing. Every other tab, and the start, are as they were.

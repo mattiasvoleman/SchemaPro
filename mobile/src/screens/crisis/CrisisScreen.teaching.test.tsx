@@ -14,6 +14,7 @@
  * own routes, and never the cover requests, which stay a teacher's (SP409).
  */
 import React from 'react';
+import { AppState } from 'react-native';
 import TestRenderer, { act } from 'react-test-renderer';
 import { translatorFor } from '../../i18n';
 import { fake } from '../../services/__testing__/crisisDatabase';
@@ -246,6 +247,24 @@ describe('Larm for each person (Users.teaches)', () => {
     await refocus();
     expect(rollCall(tree)).toBe(true);
     expect(management(tree)).toBe(false);
+  });
+
+  // No focus event is sent for a tab that is already the selected one: a push tapped while Larm is the open tab, or a phone picked
+  // up that was left there, is the app coming back to the front. The view she left it in (the administration's, after a drill she
+  // ended in the morning) must not be the one the next alarm meets: the roll call is what she is wanted for.
+  it('opens on her roll call when the app comes back to the front, also if she left it in the administration’s view', async () => {
+    as('SCHOOL_ADMIN', true);
+    tree = await render();
+    await press(pressable(tree, SWITCH_TO_MANAGEMENT));
+    expect(management(tree)).toBe(true);
+    // Every listener on the app's state (the screen's own, and the views'): the test runner's AppState is a mock that records them.
+    const handlers = jest.mocked(AppState.addEventListener).mock.calls.map((call) => call[1] as (state: string) => void);
+    await act(async () => handlers.forEach((handler) => handler('background')));
+    // Going to the background changes nothing she sees.
+    expect(management(tree)).toBe(true);
+    await act(async () => handlers.forEach((handler) => handler('active')));
+    await settle();
+    expect([management(tree), rollCall(tree)]).toEqual([false, true]);
   });
 
   it('keeps the way to the administration’s view when no alarm is going and she has no groups: starting one is there', async () => {

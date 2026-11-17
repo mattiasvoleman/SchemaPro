@@ -326,12 +326,13 @@ describe('CrisisScreen, a teacher’s roll call', () => {
 
     it('reads again, and sends, when the app returns to the front', async () => {
       tree = await render();
-      const handler = jest.mocked(AppState.addEventListener).mock.calls.at(-1)![1] as (state: string) => void;
+      // Every listener on the app's state: the screen's own (the view she is in) and the roll call's.
+      const handlers = jest.mocked(AppState.addEventListener).mock.calls.map((call) => call[1] as (state: string) => void);
       const reads = () => gateway.to('GET', '/api/v1/crisis/mine').length;
       const before = reads();
-      await act(async () => handler('background'));
+      await act(async () => handlers.forEach((handler) => handler('background')));
       expect(reads()).toBe(before);
-      await act(async () => handler('active'));
+      await act(async () => handlers.forEach((handler) => handler('active')));
       await settle();
       expect(reads()).toBe(before + 1);
     });
