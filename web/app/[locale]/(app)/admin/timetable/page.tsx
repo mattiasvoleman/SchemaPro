@@ -565,8 +565,12 @@ export default function TimetablePage() {
     ];
   }, [yearGroups, t]);
 
+  // The grid's teacher rows, the lesson dialogs' teacher pick and the name on a
+  // lesson: a teacher, or an administrator who teaches (Users.teaches). Written
+  // out and not through lib/teaching-staff.ts: this page sits close to its bundle
+  // budget. Not the substitute pick, which is the cover board's and stays TEACHER.
   const teachers = useMemo(
-    () => (people ?? []).filter((person) => person.role === "TEACHER"),
+    () => (people ?? []).filter((person) => person.role === "TEACHER" || (person.role === "SCHOOL_ADMIN" && person.teaches === true)),
     [people],
   );
   const students = useMemo(
@@ -707,9 +711,11 @@ export default function TimetablePage() {
     () => new Map((rooms ?? []).map((room) => [room.id, room])),
     [rooms],
   );
+  // The look-up of the name a lesson already carries takes everybody in the list, not the pick's: a mark taken off
+  // later leaves her on her lessons, and a lesson without its teacher's name reads as one nobody has.
   const teacherById = useMemo(
-    () => new Map(teachers.map((teacher) => [teacher.id, teacher])),
-    [teachers],
+    () => new Map((people ?? []).map((person) => [person.id, person])),
+    [people],
   );
   /** Everyone, pupils who have left included: a saved version still names them. */
   const personById = useMemo(
@@ -2657,7 +2663,8 @@ export default function TimetablePage() {
             onOpenChange={setRoomsOpen}
             academicYearId={shownYear?.id ?? null}
             rooms={rooms ?? []}
-            teachers={teachers}
+            // Names only, so everybody: the people it names may stand on lessons without being teachers now.
+            teachers={people ?? []}
             groups={groups ?? []}
             onApplied={afterRoomOptimization}
           />

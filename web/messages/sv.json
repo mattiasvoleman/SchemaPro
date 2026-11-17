@@ -7072,6 +7072,8 @@
     "listTitle": "{status, select, PENDING {Väntar på ditt beslut} APPROVED {Beviljade av dig} other {Avslagna av dig}}",
     "emptyTitle": "{status, select, PENDING {Inga ansökningar väntar på dig} APPROVED {Du har inte beviljat någon ansökan} other {Du har inte avslagit någon ansökan}}",
     "emptyHint": "En ansökan hamnar här när den gäller en elev i en klass där du är mentor, och den är så kort att rektor har delegerat beslutet till dig.",
+    "cutOffTitle": "Listan kan vara avskuren",
+    "cutOffBody": "Skolan har minst {count} ansökningar i den här fliken, och sidan hämtar bara de {count} senaste. Äldre ansökningar där du är mentor kan saknas.",
     "noDelegationTitle": "Rektor beslutar om all ledighet",
     "noDelegationHint": "Din skola har inte delegerat några beslut om ledighet till mentorerna. Ansökningarna går direkt till rektor.",
     "loadFailed": "Ansökningarna kunde inte hämtas",
@@ -9041,7 +9043,7 @@
     },
     "free": {
       "title": "Vem och vad är ledigt?",
-      "description": "Välj dag och tid för att se vilka lärare och salar som inte är upptagna hela tiden.",
+      "description": "Välj dag och tid för att se vilka lärare och salar som inte är upptagna hela tiden. Listan är de som undervisar och har tid: en administratör som undervisar kan stå i den, men tillfrågas inte som vikarie.",
       "date": "Dag",
       "from": "Från",
       "to": "Till",

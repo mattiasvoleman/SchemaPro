@@ -46,6 +46,11 @@ vi.mock("@/lib/queries", () => ({
       { id: "t-bo", role: "TEACHER", isActive: true, firstName: "Bo", lastName: "Ek" },
       { id: "t-cia", role: "TEACHER", isActive: true, firstName: "Cia", lastName: "Holm" },
       { id: "t-dan", role: "TEACHER", isActive: true, firstName: "Dan", lastName: "Ström" },
+      // A teacher the gateway names no candidate and no refusal for: the one the "other teacher" select holds.
+      { id: "t-eva", role: "TEACHER", isActive: true, firstName: "Eva", lastName: "Lund" },
+      // An administrator who teaches (Users.teaches) and one who does not: neither is in the pool, and neither is asked (SP409).
+      { id: "a-maja", role: "SCHOOL_ADMIN", isActive: true, firstName: "Maja", lastName: "Mark", teaches: true },
+      { id: "a-rolf", role: "SCHOOL_ADMIN", isActive: true, firstName: "Rolf", lastName: "Rektor" },
     ],
   }),
   useSubjects: () => ({
@@ -311,6 +316,20 @@ describe("Vikarietavla", () => {
       }),
     );
     expect(toast.success).toHaveBeenCalledWith("Vikarie tillsatt");
+  });
+
+  it("offers no administrator among the other teachers a vikarie can be picked from, the one who teaches included (SP409)", async () => {
+    const user = userEvent.setup();
+    renderBoard();
+    await screen.findByRole("cell", { name: "Matematik" });
+    await user.click(within(rowOf("Matematik")).getByRole("button", { name: /Tillsätt vikarie/ }));
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText("Legitimerad i Matematik för åk 7–9");
+    const others = Array.from(dialog.querySelectorAll("#cover-other option")).map((option) => option.textContent);
+    // Not vacuous: the select holds the teacher who is no candidate, and neither Maja nor Rolf.
+    expect(others).toContain("Eva Lund");
+    expect(others).not.toContain("Maja Mark");
+    expect(others).not.toContain("Rolf Rektor");
   });
 
   it("names each candidate briefly to a screen reader, with the reasons as its description, not inside the button", async () => {

@@ -679,7 +679,7 @@
       <tr><td class="k">Närvaro</td><td>Närvaroregistrering för hens lektioner (6.6).</td></tr>
       <tr><td class="k">Min tjänst</td><td>Hens egen tjänst, bara att läsa. Siffrorna räknas ur schemautkastet, som en administratör ser; en lärare ser det publicerade schemat. Sidan säger det.</td></tr>
       <tr><td class="k">Min frånvaro</td><td>Hens egna frånvaroanmälningar och de lektioner hen lämnat över. <span class="ui">Anmäl frånvaro</span> finns bara om skolan låter lärare anmäla sin egen frånvaro (6.2). Inga vikariepass och inga vikariefrågor: se <em>Vad markeringen inte ger</em>.</td></tr>
-      <tr><td class="k">Ledighet</td><td>Ledighetsansökningar som hen beslutar som mentor (nedan och 6.7).</td></tr>
+      <tr><td class="k">Ledighet</td><td>Ledighetsansökningar som hen beslutar som mentor (nedan och 6.7). Sidan hämtar skolans 200 senaste ansökningar i varje flik. Under <span class="ui">Väntar</span> visar den dem där hen är mentor, och under <span class="ui">Beviljade</span> och <span class="ui">Avslagna</span> dem hen själv beslutat och där hen är mentor. Har skolan fler än 200 i en flik säger sidan att listan kan vara avskuren.</td></tr>
       <tr><td class="k">Min rapportering</td><td>Hens egna lektioner som väntar på register, och hens andel (6.13).</td></tr>
     </tbody>
   </table>
@@ -819,20 +819,30 @@
   <div class="note">
     <span class="label">Väljarna och lärarfilen</span>
     <p>
-      Hur en markerad administratör väljs som lärare i Generera, på timplanen
-      och i förläggningen, och hur hen kommer med i lärarfilen
-      <em>larare.csv</em>, beskrivs här när den delen av webben är byggd.
+      En administratör med markeringen <span class="ui">Undervisar</span> väljs
+      som lärare där en lärare väljs: som lärare eller medlärare på en
+      timplanspost, i grundschemats lärarrader och lektionsdialoger, i Luckor
+      och håltimmar, i Generera (hen räknas med i antalet lärare) och i
+      förläggningens lärarfilter, på en aktivitet, i en otillgänglighetsregel
+      och som den som är frånvarande. Hen väljs på samma villkor som en lärare:
+      där en lärare som slutat är undanskymd är hen det också. En lektion eller
+      post som redan bär hens namn visar namnet också om markeringen tas bort.
+      Som vikarie väljs hen inte: se <em>Vad markeringen inte ger</em>.
+    </p>
+    <p>
+      Hen står också i lärarfilen <em>larare.csv</em> (3.6), med sin tjänst.
+      Filen bär ingen markering: läses den in i en ny skola blir personen lärare
+      där, och rektor sätter markeringen efteråt om hen ska vara administratör
+      som undervisar. Läses den in i samma skola hoppas redan registrerade
+      personer över, och hens roll och markering ändras aldrig. En tjänst som
+      står annorlunda i filen än i registret uppdateras, som för en lärare.
     </p>
   </div>
   <!--
-    5b (väljarna och larare.csv) fyller i anteckningen "Väljarna och
-    lärarfilen" ovan: byt dess text mot meningarna om vad som gäller när en
-    markerad administratör väljs som lärare, och ta bort meningen om att det
-    beskrivs senare. Korsreferenser hör hemma i 3.6 (larare.csv),
-    4.3 (Tjänstefördelning) och 5.2 (Generera). Förläggningens kapitel (4.2)
-    skrivs av D1 och D2: lägg inga meningar där utan att samordna med dem.
-    2.6 ska fortsätta att säga att hen är en administratör med lärarens vyer,
-    inte en lärare.
+    Korsreferenser till väljarna och larare.csv: 3.6 är gjord. Kvar är 4.3
+    (Tjänstefördelning) och 5.2 (Generera). Förläggningens kapitel (4.2)
+    skrivs av D1 och D2: lägg inga meningar där utan att samordna med dem. 2.6 ska fortsätta att säga att hen är en
+    administratör med lärarens vyer, inte en lärare.
   -->
 </section>
 
@@ -1611,7 +1621,7 @@
       <tr><td class="k">salstyper.csv</td><td>namn</td><td>En typ per rad, t.ex. <em>Textilslöjd</em>. Gäller hela skolan, inte ett enskilt läsår.</td></tr>
       <tr><td class="k">salar.csv</td><td>namn; kod; salstyp; kapacitet; lagsta_arskurs; hogsta_arskurs; byggnad; vaning</td><td>Under <span class="path">Grunddata › Salar</span>. Endast namnet krävs. Salstypen anges med namn och måste finnas — importera salstyperna först. En våning under mark skrivs med minus, t.ex. <em>-1</em>. Skolområde och om salen kräver godkännande ställs in på salen.</td></tr>
       <tr><td class="k">klasser.csv</td><td>namn; arskurs; typ; halvklass_av; ersatter_amne</td><td>Läsårets grupper. <em>typ</em> är <em>klass</em> eller <em>undervisningsgrupp</em>, tom betyder klass. <em>halvklass_av</em> är klassen en halvklass hör till (3.4). En klass som redan är delad får inga fler halvor från en fil. <em>ersatter_amne</em> är ämnet en undervisningsgrupp ersätter, med kod eller namn. En fil med bara namn och årskurs läses som förut. Importeras före eleverna — de hänvisar till klassnamnen.</td></tr>
-      <tr><td class="k">larare.csv</td><td>fornamn; efternamn; epost; telefon; tjanst_procent; nedsattning_procent; avtal; signatur</td><td>Ingen inbjudan skickas vid importen — du bjuder in när du vill, se 3.5. De fyra sista kolumnerna är tjänsten för det aktiva läsåret och får lämnas tomma. Procent skrivs med decimalkomma, t.ex. <em>66,667</em>. Saknar du HR-läs exporteras tjänsten tom, eftersom procenten inte visas för dig.</td></tr>
+      <tr><td class="k">larare.csv</td><td>fornamn; efternamn; epost; telefon; tjanst_procent; nedsattning_procent; avtal; signatur</td><td>Ingen inbjudan skickas vid importen — du bjuder in när du vill, se 3.5. De fyra sista kolumnerna är tjänsten för det aktiva läsåret och får lämnas tomma. Procent skrivs med decimalkomma, t.ex. <em>66,667</em>. Saknar du HR-läs exporteras tjänsten tom, eftersom procenten inte visas för dig. En administratör som undervisar (2.6) och är aktiv står med som lärare, med sin tjänst och utan markering.</td></tr>
       <tr><td class="k">elever.csv</td><td>fornamn; efternamn; epost; telefon; klass</td><td>Klassen anges med namn, t.ex. <em>7A</em>, och måste finnas. Lämna cellen tom för en elev som inte har någon klass än; förhandsvisningen och rapporten säger hur många som skapas utan klass, eftersom importen inte kan ge dem en klass i efterhand.</td></tr>
       <tr><td class="k">vardnadshavare.csv</td><td>fornamn; efternamn; epost; telefon; elev_epost</td><td>En rad per koppling mellan en vårdnadshavare och en elev: har en vårdnadshavare två barn blir det två rader med samma fyra första kolumner. <em>elev_epost</em> är elevens egen adress. Eleven måste finnas i skolan och vara aktiv, annars avvisas raden med rad och kolumn, och ingen vårdnadshavare skapas för den raden. En vårdnadshavare som inte finns skapas utan inbjudan (3.5). En som redan finns, även om adressen är skriven med andra versaler, får bara kopplingen: namn och telefon ändras inte. En koppling som redan finns hoppas över. Står samma adress på flera rader gäller den första raden, och förhandsvisningen varnar när en senare rad har andra uppgifter. Importeras efter eleverna, under <span class="path">Grunddata › Personer</span>. I en skola som hämtar från registret, se 7.2.</td></tr>
       <tr><td class="k">undervisningsgrupper.csv</td><td>grupp; epost</td><td>En rad per medlem. Gruppen skapas automatiskt om den saknas. En halvklass (3.4) tar bara klassens egna elever och varje elev i en halva i taget. En rad som bryter mot det avvisas med elevens och halvans namn, och de andra raderna läses ändå in.</td></tr>

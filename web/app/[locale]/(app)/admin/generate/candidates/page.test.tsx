@@ -103,6 +103,18 @@ const state = vi.hoisted(() => ({
   origin: undefined as unknown,
 }));
 
+// A pass-through: the håltimmar are still computed for real, and the test can read the inputs the page handed them.
+const idleSeen = vi.hoisted(() => ({ teacherIds: undefined as readonly string[] | undefined }));
+vi.mock("./idle-calculator", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./idle-calculator")>();
+  return {
+    default: (props: Parameters<typeof original.default>[0]) => {
+      idleSeen.teacherIds = props.inputs.teacherIds;
+      return original.default(props);
+    },
+  };
+});
+
 const apiGet = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
@@ -133,6 +145,9 @@ SCHOOL.years.push(ACTIVE);
 SCHOOL.people.push(
   person("t-1", "TEACHER", "Anna"),
   person("t-2", "TEACHER", "Bo"),
+  // An administrator who teaches (Users.teaches), and one who does not.
+  { ...person("a-1", "SCHOOL_ADMIN", "Maja"), teaches: true },
+  person("a-2", "SCHOOL_ADMIN", "Rolf"),
   person("p-1", "STUDENT", "Cia", "g-7a"),
   person("p-2", "STUDENT", "Dan", "g-7b"),
 );
@@ -454,6 +469,25 @@ describe("reviewing a candidate", () => {
     const user = userEvent.setup();
     await user.selectOptions(screen.getByLabelText("scheduleCandidates.week.kind"), "TEACHER");
     expect(await screen.findByRole("heading", { level: 2, name: "Anna Ek" })).toBeInTheDocument();
+  });
+
+  it("offers an administrator who teaches as a week to look at, and not one who does not (Users.teaches)", async () => {
+    render(<CandidatesPage />);
+
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText("scheduleCandidates.week.kind"), "TEACHER");
+    const target = await screen.findByLabelText("scheduleCandidates.week.kindTEACHER");
+    const offered = within(target).getAllByRole("option").map((option) => option.textContent);
+    expect(offered).toContain("Anna Ek");
+    expect(offered).toContain("Maja Ek");
+    expect(offered).not.toContain("Rolf Ek");
+  });
+
+  it("hands the håltimmar the teachers who teach: the administrator who teaches in the count, not the one who does not", async () => {
+    render(<CandidatesPage />);
+
+    await waitFor(() => expect(idleSeen.teacherIds).toBeDefined());
+    expect([...idleSeen.teacherIds!].sort()).toEqual(["a-1", "t-1", "t-2"]);
   });
 
   it("puts a teaching group's lesson on the week of the class its pupils come from, and offers the group itself", async () => {

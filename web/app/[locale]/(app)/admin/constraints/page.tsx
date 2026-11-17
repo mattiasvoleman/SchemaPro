@@ -17,6 +17,7 @@ import type {
   ConstraintResource,
   ConstraintType,
 } from "@/lib/types";
+import { teachesLike } from "@/lib/teaching-staff";
 import { cn, formatTime } from "@/lib/utils";
 import { groupLabel } from "@/lib/year-scope";
 import { NextStep } from "@/components/layout/next-step";
@@ -137,7 +138,8 @@ export default function ConstraintsPage() {
   const [deleting, setDeleting] = useState<AvailabilityConstraint | null>(null);
   const [form, setForm] = useState<ConstraintForm>(EMPTY_FORM);
 
-  const teachers = (people ?? []).filter((person) => person.role === "TEACHER");
+  // Whose availability can be written: a teacher, or an administrator who teaches (Users.teaches).
+  const teachers = (people ?? []).filter(teachesLike);
 
   const resourceOptions = (resourceType: ConstraintResource) => {
     switch (resourceType) {
@@ -162,8 +164,9 @@ export default function ConstraintsPage() {
 
   const resourceName = (constraint: AvailabilityConstraint): string => {
     if (constraint.userId) {
-      const teacher = teachers.find((person) => person.id === constraint.userId);
-      return teacher ? `${teacher.firstName} ${teacher.lastName}` : "—";
+      // Looked up in everybody, not in the picker's list: a rule written while she had the mark is about her still.
+      const person = (people ?? []).find((candidate) => candidate.id === constraint.userId);
+      return person ? `${person.firstName} ${person.lastName}` : "—";
     }
     if (constraint.roomId) {
       return rooms?.find((room) => room.id === constraint.roomId)?.name ?? "—";

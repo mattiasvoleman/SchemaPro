@@ -778,8 +778,15 @@ export default function RequirementsPage() {
     setSharesOk(false);
   }, [openShares, form.shares]);
 
+  // Who can be put on a post: a teacher, or an administrator who teaches
+  // (Users.teaches). Written out here and not through lib/teaching-staff.ts: this
+  // page sits within a kilobyte of its bundle budget. The names of the people a
+  // post already carries are looked up in `people` (personName), not in this list.
   const teachers = useMemo(
-    () => (people ?? []).filter((person) => person.role === "TEACHER" && person.isActive),
+    () =>
+      (people ?? []).filter(
+        (person) => (person.role === "TEACHER" || (person.role === "SCHOOL_ADMIN" && person.teaches === true)) && person.isActive,
+      ),
     [people],
   );
 
@@ -1024,7 +1031,8 @@ export default function RequirementsPage() {
   };
   const teacherLabel = (id: string | null) => {
     if (!id) return null;
-    const teacher = teachers.find((person) => person.id === id);
+    // Looked up in everybody, as personName is: a post still carries a person whose mark was taken off.
+    const teacher = (people ?? []).find((person) => person.id === id);
     return teacher ? `${teacher.firstName[0]}. ${teacher.lastName}` : null;
   };
 

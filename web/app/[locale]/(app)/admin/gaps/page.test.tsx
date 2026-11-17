@@ -179,8 +179,8 @@ const person = (
   id: string,
   firstName: string,
   lastName: string,
-  role: "TEACHER" | "STUDENT",
-  extra: { isActive?: boolean; studentGroupId?: string | null } = {},
+  role: "TEACHER" | "STUDENT" | "SCHOOL_ADMIN",
+  extra: { isActive?: boolean; studentGroupId?: string | null; teaches?: boolean } = {},
 ) => ({
   id,
   role,
@@ -191,6 +191,7 @@ const person = (
   isActive: extra.isActive ?? true,
   invitedAt: null,
   studentGroupId: extra.studentGroupId ?? null,
+  teaches: extra.teaches,
 });
 
 const PEOPLE = [
@@ -905,6 +906,24 @@ describe("Gaps page — idle gaps", () => {
       "Per Nordgaps.kindTeacher",
     ]);
     expect(statusOf("gaps.idleTitle")).toHaveTextContent("gaps.idleCount(4)");
+  });
+
+  it("takes an administrator who teaches (Users.teaches) as a teacher with gaps of her own, and not one who does not", () => {
+    state.lessons = [
+      ...WEEK,
+      lesson("m1", "g-none", "a-maja", "r-a12", 4, "09:00", "10:00"),
+      lesson("m2", "g-none", "a-maja", "r-a12", 4, "11:30", "12:30"),
+      lesson("r1", "g-none", "a-rolf", "r-a12", 4, "09:00", "10:00"),
+      lesson("r2", "g-none", "a-rolf", "r-a12", 4, "11:30", "12:30"),
+    ];
+    state.people = [
+      ...PEOPLE,
+      person("a-maja", "Maja", "Mark", "SCHOOL_ADMIN", { teaches: true }),
+      person("a-rolf", "Rolf", "Rektor", "SCHOOL_ADMIN"),
+    ];
+    render(<GapsPage />);
+    expect(reportNames()).toContain("Maja Markgaps.kindTeacher");
+    expect(reportNames().join(" ")).not.toContain("Rolf Rektor");
   });
 
   it("names each gap in words: day, clock time, how many pupils, and how long it feels", () => {

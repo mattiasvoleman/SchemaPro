@@ -39,6 +39,9 @@ const SUBJECTS: Subject[] = [
 const PEOPLE = [
   { id: "u-anna", role: "TEACHER", firstName: "Anna", lastName: "Berg", isActive: true },
   { id: "u-bo", role: "TEACHER", firstName: "Bo", lastName: "Carlsson", isActive: true },
+  // An administrator who teaches (Users.teaches) is on offer as a teacher; one who does not is not.
+  { id: "u-maja", role: "SCHOOL_ADMIN", firstName: "Maja", lastName: "Mark", isActive: true, teaches: true },
+  { id: "u-rolf", role: "SCHOOL_ADMIN", firstName: "Rolf", lastName: "Rektor", isActive: true },
   { id: "u-gone", role: "TEACHER", firstName: "Gunnar", lastName: "Borta", isActive: false },
   { id: "u-elev", role: "STUDENT", firstName: "Elsa", lastName: "Elev", isActive: true },
 ];
@@ -368,9 +371,9 @@ describe("/admin/activities", () => {
     const chips = within(classes).getByRole("list", { name: "Ansvariga för 9A" });
     expect(chips).toHaveTextContent("Anna Berg");
     expect(chips).toHaveTextContent("(ledande)");
-    // An inactive teacher, and a pupil, are not on offer.
+    // An inactive teacher, a pupil and an administrator who does not teach are not on offer; one who does is.
     const offered = within(within(classes).getByLabelText("Lägg till lärare i 9B")).getAllByRole("option").map((option) => option.textContent);
-    expect(offered).toEqual(["Lägg till lärare…", "Anna Berg", "Bo Carlsson"]);
+    expect(offered).toEqual(["Lägg till lärare…", "Anna Berg", "Bo Carlsson", "Maja Mark"]);
     expect(
       screen.getByText(/Lärare, tillgodoräkning eller beskrivning har ändrats sedan förhandsgranskningen/),
     ).toBeInTheDocument();

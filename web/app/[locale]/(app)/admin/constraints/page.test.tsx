@@ -32,6 +32,9 @@ vi.mock("@/lib/queries", () => ({
         lastName: "Ek",
         isActive: true,
       },
+      // An administrator who teaches (Users.teaches) can be given an availability rule; one who does not has no lessons.
+      { id: "u-2", role: "SCHOOL_ADMIN", firstName: "Maja", lastName: "Mark", isActive: true, teaches: true },
+      { id: "u-3", role: "SCHOOL_ADMIN", firstName: "Rolf", lastName: "Rektor", isActive: true },
     ],
   }),
   useRooms: () => ({ data: [{ id: "r-1", name: "A12" }] }),
@@ -101,6 +104,60 @@ describe("Constraints page — year-range locks", () => {
     vi.clearAllMocks();
     constraints.data = [];
     constraints.isError = false;
+  });
+
+  it("offers an administrator who teaches as the resource of a teacher rule, and not one who does not", async () => {
+    const user = userEvent.setup();
+    render(<ConstraintsPage />);
+    await user.click(screen.getByRole("button", { name: "addConstraint" }));
+    await pick(user, "resource", "resourceTeacher");
+    await user.click(screen.getByRole("combobox", { name: "name" }));
+    expect(await screen.findByRole("option", { name: "Karin Ek" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Maja Mark" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Rolf Rektor" })).not.toBeInTheDocument();
+  });
+
+  it("names her in the list when a rule is about her", () => {
+    constraints.data = [
+      {
+        id: "c-1",
+        resourceType: "TEACHER",
+        userId: "u-2",
+        roomId: null,
+        studentGroupId: null,
+        minGradeLevel: null,
+        maxGradeLevel: null,
+        dayOfWeek: 1,
+        startTime: "08:00",
+        endTime: "10:00",
+        type: "UNAVAILABLE",
+        reason: null,
+      },
+    ];
+    render(<ConstraintsPage />);
+    expect(screen.getByText("Maja Mark")).toBeInTheDocument();
+  });
+
+  it("still names the person of a rule when her mark has been taken off: the list looks up everybody, the picker offers the teachers", () => {
+    // Rolf has no mark (u-3): a rule written while she had it is about her still, and the list must not say "—".
+    constraints.data = [
+      {
+        id: "c-2",
+        resourceType: "TEACHER",
+        userId: "u-3",
+        roomId: null,
+        studentGroupId: null,
+        minGradeLevel: null,
+        maxGradeLevel: null,
+        dayOfWeek: 1,
+        startTime: "08:00",
+        endTime: "10:00",
+        type: "UNAVAILABLE",
+        reason: null,
+      },
+    ];
+    render(<ConstraintsPage />);
+    expect(screen.getByText("Rolf Rektor")).toBeInTheDocument();
   });
 
   it("swaps the resource picker for two year selects", async () => {
