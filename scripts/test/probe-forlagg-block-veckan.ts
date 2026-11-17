@@ -484,9 +484,12 @@ async function run(owner: Client, api: PrismaService): Promise<void> {
       assert.deepEqual(redOf((await blocks.listOfBlock(blockId, admin)).verdicts), [[0, spanska, 'TEACHER'], [1, tyska, 'TEACHER']], 'the read names both');
 
       // A new lesson that meets the red one A at Wednesday 10:00 (and not the teacher's lesson, which ends 10:30): refused, at its place in the list.
+      // It meets A for EVERY member (each member's own row of A is in its way), and the judge reads the members in id order, so the member it
+      // names is the one with the lowest id: the ids are made at random, so it is not the same member at every run.
+      const firstOfMembers = [...members].sort()[0]!;
       const beside = await refusalOf(blocks.replace(blockId, { placements: [a, lesson(3, '10:45', [])], baseKey: held.key } as never, admin));
       assert.equal(codeOf(beside), 'BLOCK_PLACEMENT_REFUSED');
-      assert.deepEqual([paramsOf(beside)['index'], paramsOf(beside)['requirementId'], paramsOf(beside)['reason']], [1, spanska, 'TEACHER'], 'a new lesson beside a red one is refused: the judge sees every row');
+      assert.deepEqual([paramsOf(beside)['index'], paramsOf(beside)['requirementId'], paramsOf(beside)['reason']], [1, firstOfMembers, 'TEACHER'], 'a new lesson beside a red one is refused: the judge sees every row');
 
       // Mend A: move it to Friday; B stands, red, and is named at ITS place in the answer (the week's order puts it first).
       const mendedA = await write([lesson(5, '09:00', []), held.lessons[1]!]);
