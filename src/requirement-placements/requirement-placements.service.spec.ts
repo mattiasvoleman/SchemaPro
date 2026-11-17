@@ -49,7 +49,7 @@ const POST = {
   startDate: null,
   endDate: null,
   shares: [] as { teacherId: string | null; lessons: number; minutes: number }[],
-  academicYear: { isActive: true, predecessorId: null, gradeNumbering: 'NIOARIG' },
+  academicYear: { isActive: true, predecessorId: null, gradeNumbering: 'NIOARIG', startDate: new Date('2026-08-17T00:00:00.000Z'), endDate: new Date('2027-06-11T00:00:00.000Z') },
 };
 
 const stored = (over: Record<string, unknown> = {}) => ({
@@ -99,6 +99,13 @@ interface World {
   /** Lessons the next Generera keeps, for the post and for the judge's day read. */
   kept?: Array<Record<string, unknown>>;
   rooms?: string[];
+  /** D1: the teachers' caps, the posts' limits, the school's lunch, the subjects that need a room type, and every room with its type. */
+  workRules?: Array<{ userId: string; maxTeachingMinutesPerDay: number | null }>;
+  limits?: Array<{ userId: string; maxTeachingDaysPerWeek: number | null; maxConsecutiveTeachingMinutes: number | null; consecutiveBreakMinutes: number | null }>;
+  lunch?: { lunchEnabled: boolean; lunchStartTime: Date; lunchEndTime: Date; lunchMinutes: number } | null;
+  classes?: string[];
+  needsType?: Record<string, string>;
+  everyRoom?: Array<{ id: string; roomTypeId: string | null; roomType: { name: string } | null }>;
   /** The lessons the grundschema has from a förläggning: how many, and when the newest was written. */
   written?: { count: number; at: Date | null };
 }
@@ -127,11 +134,25 @@ function setup(world: World = {}) {
   tx['masterLesson']!['aggregate']!.mockResolvedValue({ _count: { _all: world.written?.count ?? 0 }, _max: { createdAt: world.written?.at ?? null } });
   const names: Record<string, string> = { [SUBJECT]: 'Idrott och hälsa', 'sub-ma': 'Matematik', [GROUP]: '7A', 'g-7b': '7B' };
   const named = async ({ where }: { where: { id: { in: string[] } } }) => where.id.in.map((id) => ({ id, name: names[id] ?? id }));
-  tx['subject']!['findMany']!.mockImplementation(named);
-  tx['studentGroup']!['findMany']!.mockImplementation(named);
-  tx['room']!['findMany']!.mockImplementation(async ({ where }: { where: { id: { in: string[] } } }) =>
-    where.id.in.filter((id) => (world.rooms ?? [ROOM_1, ROOM_2]).includes(id)).map((id) => ({ id })),
+  // The subjects that need a room type (D1) are asked by a filter on the column; every other read is for the names.
+  tx['subject']!['findMany']!.mockImplementation(async (args: { where: { id: { in: string[] }; requiredRoomTypeId?: unknown } }) =>
+    args.where.requiredRoomTypeId === undefined
+      ? named(args)
+      : args.where.id.in.filter((id) => world.needsType?.[id] !== undefined).map((id) => ({ id, requiredRoomTypeId: world.needsType![id] })),
   );
+  // The groups that eat (D1) are asked by kind: the classes a world names, among those asked; every other read is for the names.
+  tx['studentGroup']!['findMany']!.mockImplementation(async (args: { where: { id: { in: string[] }; kind?: unknown } }) =>
+    args.where.kind === undefined ? named(args) : args.where.id.in.filter((id) => (world.classes ?? []).includes(id)).map((id) => ({ id })),
+  );
+  // The rooms the school names in a save (a filter on ids), and every room with its type (D1, no filter).
+  tx['room']!['findMany']!.mockImplementation(async (args: { where?: { id: { in: string[] } } }) =>
+    args.where === undefined
+      ? (world.everyRoom ?? [])
+      : args.where.id.in.filter((id) => (world.rooms ?? [ROOM_1, ROOM_2]).includes(id)).map((id) => ({ id })),
+  );
+  tx['teacherWorkRule']!['findMany']!.mockResolvedValue(world.workRules ?? []);
+  tx['teacherEmployment']!['findMany']!.mockResolvedValue(world.limits ?? []);
+  tx['lunchSetting']!['findUnique']!.mockResolvedValue(world.lunch ?? null);
   tx['teachingRequirementPlacement']!['deleteMany']!.mockResolvedValue({ count: 0 });
   tx['teachingRequirementPlacement']!['createMany']!.mockResolvedValue({ count: 0 });
   const service = new RequirementPlacementsService(prisma, masters as unknown as MasterLessonsService);
@@ -181,7 +202,7 @@ describe('RequirementPlacementsService', () => {
 
     it('answers a post with no row without reading the year\'s classes', async () => {
       const { service } = setup();
-      await expect(service.listOfPost(REQ, testUser())).resolves.toEqual({ placements: [], verdicts: [], rowsKey: rowsKeyOf([]) });
+      await expect(service.listOfPost(REQ, testUser())).resolves.toEqual({ placements: [], verdicts: [], rowsKey: rowsKeyOf([]), warnings: [] });
       expect(rostersOfYear).not.toHaveBeenCalled();
     });
 
@@ -347,7 +368,7 @@ describe('RequirementPlacementsService', () => {
       expect(masters.findConflicts).not.toHaveBeenCalled();
       expect(rostersOfYear).not.toHaveBeenCalled();
       expect(lockYearForGrundschemaEdit).toHaveBeenCalledWith(tx, YEAR);
-      expect(result).toEqual({ placements: [], verdicts: [], rowsKey: rowsKeyOf([]) });
+      expect(result).toEqual({ placements: [], verdicts: [], rowsKey: rowsKeyOf([]), warnings: [] });
     });
 
     it('answers 404 for an unknown post, taking no lock and writing nothing', async () => {
@@ -629,7 +650,7 @@ describe('RequirementPlacementsService', () => {
 
 describe('RequirementPlacementsService.boardOfYear', () => {
   const user = testUser();
-  const YEAR_ROW = { isActive: true, predecessorId: null, gradeNumbering: 'NIOARIG' };
+  const YEAR_ROW = { isActive: true, predecessorId: null, gradeNumbering: 'NIOARIG', startDate: new Date('2026-08-17T00:00:00.000Z'), endDate: new Date('2027-06-11T00:00:00.000Z') };
   const SECOND_REQ = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
   const BO = '55555555-5555-4555-8555-555555555555';
 
@@ -820,6 +841,93 @@ describe('RequirementPlacementsService.boardOfYear', () => {
     expect(tx['lunchSitting']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ where: { academicYearId: YEAR, isGenerated: false } }));
   });
 
+  describe('warnings: what the fixed week says of each row (D1)', () => {
+    const CAP_90 = [{ userId: TEACHER, maxTeachingMinutesPerDay: 90 }];
+    /** An hour on Tuesday at 08:00 that the teacher keeps, and the row below at 10:00: two hours on the day. */
+    const keptTuesday = () => keptLesson({ id: 'k-8', startTime: time('08:00'), endTime: time('09:00') });
+    const OVER = { code: 'TEACHER_DAY_TOO_LONG', refuses: false, params: { day: 2, minutes: 120, cap: 90 } };
+
+    it('says a day over the teacher’s cap on the row, by the row’s own id, with its post, and refuses nothing', async () => {
+      const { service } = board({ rows: [stored({ id: 'p-1', startTime: time('10:00') })], kept: [keptTuesday()], workRules: CAP_90 });
+      const answer = await service.boardOfYear(YEAR, user);
+      expect(answer.warnings).toEqual([{ rowId: 'p-1', requirementId: REQ, ...OVER }]);
+      expect(answer.placements[0]!.verdict).toEqual({ ok: true });
+    });
+
+    it('is an empty list for a school with no rule, no lunch and no row without a room, and reads only the two rule statements', async () => {
+      const { tx, service } = board({ rows: [stored()], kept: [keptTuesday()] });
+      const answer = await service.boardOfYear(YEAR, user);
+      expect(answer.warnings).toEqual([]);
+      expect(tx['teacherWorkRule']!['findMany']).toHaveBeenCalledTimes(1);
+      expect(tx['teacherEmployment']!['findMany']).toHaveBeenCalledTimes(1);
+      expect(tx['room']!['findMany']).not.toHaveBeenCalled();
+      expect(tx['subject']!['findMany']).toHaveBeenCalledTimes(1);
+      expect(tx['studentGroup']!['findMany']).toHaveBeenCalledTimes(1);
+    });
+
+    it('counts the lessons the board has read, and asks the database for no kept lesson of its own', async () => {
+      const { tx, service } = board({ rows: [stored({ id: 'p-1', startTime: time('10:00') })], kept: [keptTuesday()], workRules: CAP_90 });
+      await service.boardOfYear(YEAR, user);
+      // The kept lessons are read once, for the board; the warnings add no read of them.
+      const keptReads = tx['masterLesson']!['findMany']!.mock.calls.filter((call) => JSON.stringify((call[0] as { where: unknown }).where) === JSON.stringify(keptMastersWhere(YEAR)));
+      expect(keptReads).toHaveLength(1);
+    });
+
+    it('words the post’s days for the reader and tells the läslogg that the post was read, for a reader without HR-läs as for one with it', async () => {
+      const limits = [{ userId: TEACHER, maxTeachingDaysPerWeek: 1, maxConsecutiveTeachingMinutes: null, consecutiveBreakMinutes: null }];
+      const world = { rows: [stored({ id: 'p-1', dayOfWeek: 2 })], kept: [keptLesson({ id: 'k-3', dayOfWeek: 3 })], limits };
+      const shown = board(world);
+      const full = await shown.service.boardOfYear(YEAR, testUser());
+      expect(full.warnings).toEqual([{ rowId: 'p-1', requirementId: REQ, code: 'TEACHER_WEEK_TOO_MANY_DAYS', refuses: false, params: { days: 2, max: 1 } }]);
+      expect(shown.tx.$executeRaw).toHaveBeenCalledTimes(1);
+      const hidden = board(world);
+      const reader = await hidden.service.boardOfYear(YEAR, testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false }));
+      expect(reader.warnings).toEqual([{ rowId: 'p-1', requirementId: REQ, code: 'TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN', refuses: false }]);
+      expect(hidden.tx.$executeRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it('answers the other schools’ holds as bands: the resource, the day and the clock without seconds, and the schools by name', async () => {
+      (readOtherSchoolHolds as jest.Mock).mockResolvedValue({
+        holds: [
+          { holdId: 'h-1', kind: 'TEACHER_BUSY', resourceKind: 'TEACHER', resourceId: TEACHER, dayOfWeek: 2, startTime: '10:00:00', endTime: '11:15:00', schools: ['Skola B'], walked: true },
+          { holdId: 'h-2', kind: 'ROOM_LENT', resourceKind: 'ROOM', resourceId: ROOM_1, dayOfWeek: 4, startTime: '08:00:00', endTime: '09:00:00', schools: ['Skola B', 'Skola C'] },
+        ],
+      });
+      const { service } = board();
+      expect((await service.boardOfYear(YEAR, user)).holds).toEqual([
+        { kind: 'TEACHER_BUSY', resourceKind: 'TEACHER', resourceId: TEACHER, dayOfWeek: 2, startTime: '10:00', endTime: '11:15', schools: ['Skola B'] },
+        { kind: 'ROOM_LENT', resourceKind: 'ROOM', resourceId: ROOM_1, dayOfWeek: 4, startTime: '08:00', endTime: '09:00', schools: ['Skola B', 'Skola C'] },
+      ]);
+    });
+
+    it('asks a row with no room of the rooms of its subject’s type, and says a pin that no room of the type is free for', async () => {
+      const TYPE = 'type-slojd';
+      const { service } = board({
+        rows: [stored({ id: 'p-1', roomId: null, room: null, startTime: time('08:00') })],
+        kept: [keptLesson({ id: 'k-s', startTime: time('08:00'), endTime: time('09:00'), roomId: ROOM_2 })],
+        needsType: { [SUBJECT]: TYPE },
+        everyRoom: [{ id: ROOM_2, roomTypeId: TYPE, roomType: { name: 'Slöjdsal' } }],
+      });
+      const { warnings } = await service.boardOfYear(YEAR, user);
+      expect(warnings).toEqual([{ rowId: 'p-1', requirementId: REQ, code: 'NO_ROOM_FREE', refuses: true, params: { day: 2, start: '08:00', end: '09:00', roomType: 'Slöjdsal' } }]);
+    });
+
+    it('says a class that has no lunch left, and is quiet when the school has the lunch off', async () => {
+      const lunch = { lunchEnabled: true, lunchStartTime: time('10:30'), lunchEndTime: time('13:00'), lunchMinutes: 30 };
+      const rows = [stored({ id: 'p-1', startTime: time('10:30'), minutes: 150, roomId: ROOM_1 })];
+      const on = board({ rows, lunch, classes: [GROUP] });
+      expect((await on.service.boardOfYear(YEAR, user)).warnings).toEqual([
+        { rowId: 'p-1', requirementId: REQ, code: 'CLASS_HAS_NO_LUNCH', refuses: true, params: { day: 2, windowStart: '10:30', windowEnd: '13:00', minutes: 30 } },
+      ]);
+      const off = board({ rows, lunch: { ...lunch, lunchEnabled: false }, classes: [GROUP] });
+      expect((await off.service.boardOfYear(YEAR, user)).warnings).toEqual([]);
+      // A meal the school placed by hand for the class that day rescues it.
+      const meal = { id: 'm-1', studentGroupId: GROUP, dayOfWeek: 2, startTime: time('12:30'), endTime: time('13:00'), startDate: null, endDate: null };
+      const rescued = board({ rows, lunch, classes: [GROUP], meals: [meal] });
+      expect((await rescued.service.boardOfYear(YEAR, user)).warnings).toEqual([]);
+    });
+  });
+
   describe('asks the judge what the dialog asks it (review of #315, MEDEL-1)', () => {
     const BO_LOCK = () => keptLesson({ id: 'k-bo', teacherId: BO });
     const sharedPost = () => ({ ...POST, lessonsPerWeek: 3, shares: [{ teacherId: BO, lessons: 1, minutes: 60 }] });
@@ -909,7 +1017,7 @@ describe('RequirementPlacementsService, förlagda block', () => {
   const MEMBER_B = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000002';
   const MEMBER_C = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000003';
   const MEMBER_D = 'aaaaaaaa-aaaa-4aaa-8aaa-000000000004';
-  const YEAR_ROW = { isActive: true, predecessorId: null, gradeNumbering: 'NIOARIG' };
+  const YEAR_ROW = { isActive: true, predecessorId: null, gradeNumbering: 'NIOARIG', startDate: new Date('2026-08-17T00:00:00.000Z'), endDate: new Date('2027-06-11T00:00:00.000Z') };
 
   /** A member post as the block's read and the week's read select it: one lesson of 60, its own class, subject and teacher. */
   const member = (id: string, over: Record<string, unknown> = {}) => ({
@@ -1270,6 +1378,44 @@ describe('RequirementPlacementsService, förlagda block', () => {
       ]);
     });
 
+    it('warns a block lesson on the block’s own row: its id, the member whose teacher it is about, and the block (D1)', async () => {
+      const keptHour = {
+        id: 'k-1',
+        dayOfWeek: 2,
+        startTime: time('08:00'),
+        endTime: time('09:00'),
+        studentGroupId: 'g-9',
+        subjectId: 'sub-9',
+        teacherId: 't-1',
+        coTeacherId: null,
+        roomId: null,
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        isLocked: true,
+        isGenerated: false,
+        subject: { name: 'Matematik' },
+        studentGroup: { name: '9A' },
+        extraGroups: [],
+        participants: [],
+      };
+      // Member A's teacher (t-1) keeps an hour on Tuesday and the block puts its lesson there at 10:00: two hours against a cap of 90.
+      const withRoom = blockLesson('r-1', { rooms: [{ requirementId: MEMBER_A, roomId: ROOM_1, room: { name: 'Simhallen' } }] });
+      const { tx, service } = board({ posts: memberPosts, kept: [keptHour], blocks: [blockRead({ placements: [withRoom] })] });
+      tx['teacherWorkRule']!['findMany']!.mockResolvedValue([{ userId: 't-1', maxTeachingMinutesPerDay: 90 }]);
+      const answer = await service.boardOfYear(YEAR, user);
+      // A lesson with the member's room is a lock to the engine: the week is the school's own, and Generera takes it.
+      expect(answer.warnings).toEqual([
+        { rowId: 'r-1', requirementId: MEMBER_A, blockId: BLOCK, code: 'TEACHER_DAY_TOO_LONG', refuses: false, params: { day: 2, minutes: 120, cap: 90 } },
+      ]);
+      // The lesson of member B (another teacher, no rule) says nothing.
+      expect(answer.warnings.some((warning) => warning.requirementId === MEMBER_B)).toBe(false);
+      // The same lesson with no room for the member is a pinned lesson, which the engine holds to the cap: it refuses.
+      const pinned = board({ posts: memberPosts, kept: [keptHour], blocks: [blockRead({ placements: [blockLesson('r-1')] })] });
+      pinned.tx['teacherWorkRule']!['findMany']!.mockResolvedValue([{ userId: 't-1', maxTeachingMinutesPerDay: 90 }]);
+      expect((await pinned.service.boardOfYear(YEAR, user)).warnings[0]).toMatchObject({ rowId: 'r-1', refuses: true });
+    });
+
     it('says a block that cannot be placed, with the lessons it holds still listed', async () => {
       const { service } = board({ posts: memberPosts, blocks: [blockRead({ sameTimesAsBlockId: 'leader' })] });
       const [one] = (await service.boardOfYear(YEAR, user)).blocks;
@@ -1277,5 +1423,67 @@ describe('RequirementPlacementsService, förlagda block', () => {
       expect(one!.rows).toHaveLength(1);
       expect(one!.rows[0]!.verdicts.every((verdict) => !verdict.ok && verdict.reason === 'BLOCK_FIT' && verdict.params?.['rule'] === 'FOLLOWER')).toBe(true);
     });
+  });
+});
+
+describe('RequirementPlacementsService: warnings on a save and a read of one post (D1)', () => {
+  const user = testUser({ schoolId: 'the-callers-school' });
+  const CAP_90 = [{ userId: TEACHER, maxTeachingMinutesPerDay: 90 }];
+  const keptTuesday = {
+    id: 'k-8',
+    dayOfWeek: 2,
+    startTime: time('08:00'),
+    endTime: time('09:00'),
+    studentGroupId: GROUP,
+    subjectId: SUBJECT,
+    teacherId: TEACHER,
+    coTeacherId: null,
+    roomId: ROOM_2,
+    recurrence: 'ALL_WEEKS',
+    startDate: null,
+    endDate: null,
+    subject: { name: 'Idrott och hälsa' },
+    studentGroup: { name: '7A' },
+    extraGroups: [],
+    participants: [],
+  };
+  const OVER = { code: 'TEACHER_DAY_TOO_LONG', refuses: false, params: { day: 2, minutes: 120, cap: 90 } };
+
+  it('saves a row that takes the teacher over the cap, and says so at the row the answer has it at', async () => {
+    const { tx, service } = setup({ kept: [keptTuesday], workRules: CAP_90, rows: [stored({ id: 'p-new', startTime: time('10:00') })] });
+    const answer = await service.replace(REQ, { placements: [input({ startTime: '10:00' })] }, user);
+    // Nothing is refused: the row is written and the verdict is clean.
+    expect(tx['teachingRequirementPlacement']!['createMany']).toHaveBeenCalledTimes(1);
+    expect(answer.verdicts).toEqual([{ index: 0, ok: true }]);
+    expect(answer.warnings).toEqual([{ rowId: 'p-new', requirementId: REQ, ...OVER }]);
+  });
+
+  it('states each warning at the place of its row in the answer, which is the stored order and not the order sent', async () => {
+    const writtenOrder = [stored({ id: 'p-a', dayOfWeek: 2, startTime: time('10:00') }), stored({ id: 'p-b', dayOfWeek: 4, startTime: time('09:00') })];
+    const { service } = setup({ kept: [keptTuesday], workRules: CAP_90, rows: writtenOrder });
+    // Sent with Thursday first; stored with Tuesday first. The warning is about Tuesday's row, the first of the answer.
+    const answer = await service.replace(REQ, { placements: [input({ dayOfWeek: 4, startTime: '09:00' }), input({ dayOfWeek: 2, startTime: '10:00' })] }, user);
+    expect(answer.warnings).toEqual([{ rowId: 'p-a', requirementId: REQ, ...OVER }]);
+  });
+
+  it('says it again when the post is read, so that a row seen later carries the same words', async () => {
+    const { service } = setup({ kept: [keptTuesday], workRules: CAP_90, rows: [stored({ id: 'p-1', startTime: time('10:00') })] });
+    const read = await service.listOfPost(REQ, user);
+    expect(read.warnings).toEqual([{ rowId: 'p-1', requirementId: REQ, ...OVER }]);
+  });
+
+  it('reads no kept lesson of its own for a school with no rule, lunch or row without a room', async () => {
+    const { tx, service } = setup({ kept: [keptTuesday], rows: [stored({ id: 'p-1' })] });
+    await service.listOfPost(REQ, user);
+    // The judge's two reads (the day's lessons and the post's locks), and none for the warnings.
+    expect(tx['masterLesson']!['findMany']).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks the kept lessons of the ruled teachers only when a rule is there', async () => {
+    const { tx, service } = setup({ kept: [keptTuesday], workRules: CAP_90, rows: [stored({ id: 'p-1', startTime: time('10:00') })] });
+    await service.listOfPost(REQ, user);
+    expect(tx['masterLesson']!['findMany']).toHaveBeenCalledTimes(3);
+    const arms = (tx['masterLesson']!['findMany']!.mock.calls[2]![0] as { where: { AND: [unknown, { OR: unknown[] }] } }).where.AND[1].OR;
+    expect(arms).toEqual([{ teacherId: { in: [TEACHER] } }, { coTeacherId: { in: [TEACHER] } }]);
   });
 });
