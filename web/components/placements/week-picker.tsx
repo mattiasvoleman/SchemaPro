@@ -6,7 +6,8 @@ import { useLocale, useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
-import { shortDay, type YearWeek } from "@/lib/placement-weeks";
+import { shortDay } from "@/lib/placement-week-note";
+import type { YearWeek } from "@/lib/placement-weeks";
 
 /*
  * Vecka: one week of the läsår at a time (D2). "Alla veckor" is the week as it has always been drawn, every lesson with a mark

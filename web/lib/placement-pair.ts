@@ -2,9 +2,8 @@ import type { TimetableLesson } from "@/components/schedule/timetable-grid";
 import type { Placement, PupilBufferMap } from "@/lib/conflicts";
 import { pupilBufferOf } from "@/lib/conflicts";
 import type { BoardPost } from "@/lib/placement-board";
-import { clockOfMinutes } from "@/lib/requirement-placement-text";
+import { heldHalfCardId, otherHalf, type Half } from "@/lib/placement-pair-key";
 import { inputOfBrick, type Brick, type Spot } from "@/lib/placement-rows";
-import { otherParity } from "@/lib/placement-weeks";
 import type { PlacementInput } from "@/lib/requirement-placements";
 
 /*
@@ -14,7 +13,8 @@ import type { PlacementInput } from "@/lib/requirement-placements";
  * TEACHER_PAIRS says the same per teacher on a shared post), and it refuses a half that names no room (PAIR_ROOM: a pair is sent
  * to the engine as two locks, and a lock has a room). So the first half cannot be written when it is laid: it is HELD, in the
  * browser, until the second is laid, and then both go in one write, the post's whole list with two rows added. The held half is
- * the one state of the week that exists nowhere but in the page, and these functions are the whole of what is decided about it.
+ * the one state of the week that exists nowhere but in the page. The list below is what the page does with it, and every line of it is a test
+ * of the page (app/[locale]/(app)/admin/placements/page.pair.test.tsx); this file is the arithmetic of the pair.
  *
  * WHAT BECOMES OF A HELD HALF (planens risk, "den osparade halvan"). Nothing is stored: not in the database, not in localStorage.
  *
@@ -33,9 +33,6 @@ import type { PlacementInput } from "@/lib/requirement-placements";
  *
  * Pure: no React, no clock, no network.
  */
-
-/** The weeks of one half of a pair. */
-export type Half = "ODD_WEEKS" | "EVEN_WEEKS";
 
 /**
  * The first half of a pair, laid and not yet written. It belongs to a PART of a post (the post, the teacher whose lesson it is on
@@ -56,17 +53,10 @@ export interface HeldHalf {
   roomId: string;
 }
 
-/** The part a brick belongs to: its key without the count that tells the post's identical bricks apart. */
-export const partKeyOfBrick = (brick: Pick<Brick, "key">): string => brick.key.replace(/#\d+$/, "");
-
-/** Whether a post's lesson can be a pair: the post runs every week (an odd post or an even one has no other half). */
-export const canBePair = (post: Pick<BoardPost, "recurrence" | "cannotPlace">): boolean => post.recurrence === "ALL_WEEKS" && post.cannotPlace === null;
-
-/** The card of a held half, named by its part: `pairhalf:<post|teacher|minutes>`. */
-export const heldHalfCardId = (partKey: string): string => `pairhalf:${partKey}`;
+export { canBePair, heldHalfCardId, otherHalf, partKeyOfBrick, type Half } from "@/lib/placement-pair-key";
 
 /** The weeks the lesson being laid runs: the held half's other weeks once there is one, else the weeks the reader chose to start with. */
-export const weeksBeingLaid = (held: HeldHalf | null, first: Half): Half => (held ? otherParity(held.recurrence) : first);
+export const weeksBeingLaid = (held: HeldHalf | null, first: Half): Half => (held ? otherHalf(held.recurrence) : first);
 
 /** The two rows of a pair, as the PUT takes them: the held half and the one just laid, each with its weeks, its room and (on a shared post) its teacher. */
 export function pairInputs(
@@ -78,7 +68,7 @@ export function pairInputs(
   const row = (recurrence: Half, spot: Spot, roomId: string): PlacementInput => ({ ...inputOfBrick(brick, post, spot, roomId), recurrence });
   return [
     row(held.recurrence, { dayOfWeek: held.dayOfWeek, startMinutes: held.startMinutes }, held.roomId),
-    row(otherParity(held.recurrence), second.spot, second.roomId),
+    row(otherHalf(held.recurrence), second.spot, second.roomId),
   ];
 }
 
@@ -133,39 +123,3 @@ export function heldHalfPlacement(held: HeldHalf, post: Pick<BoardPost, "student
     endDate: post.endDate,
   };
 }
-
-/** What happens to a held half when something happens to the week. */
-export type PairEvent =
-  /** Another läsår is chosen. */
-  | { kind: "year" }
-  /** Ctrl+Z, or the Ångra button. */
-  | { kind: "undo" }
-  /** Redo. */
-  | { kind: "redo" }
-  /** A write of the pair came back 409 STALE (somebody else wrote the post). */
-  | { kind: "stale" }
-  /** The write of the pair was refused for the rows' sake (a clash, a missing room): nothing was written. */
-  | { kind: "refused" }
-  /** The week was read again; `partLeft` is whether the part still has a lesson to lay on the whole board. */
-  | { kind: "read"; partLeft: boolean }
-  /** The pair was written. */
-  | { kind: "written" };
-
-/** What is done with a held half for an event: kept, or released (the page says why in the case of a release the reader did not ask for). */
-export function fateOf(event: PairEvent): "keep" | "release" {
-  switch (event.kind) {
-    case "year":
-    case "undo":
-    case "written":
-      return "release";
-    case "read":
-      return event.partLeft ? "keep" : "release";
-    case "redo":
-    case "stale":
-    case "refused":
-      return "keep";
-  }
-}
-
-/** The clock text of a half's start, for the sentences. */
-export const startOfHalf = (held: Pick<HeldHalf, "startMinutes">): string => clockOfMinutes(held.startMinutes);

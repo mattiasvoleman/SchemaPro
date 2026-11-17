@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
-import type { Half } from "@/lib/placement-pair";
+import type { Half, WeeksChoice } from "@/lib/placement-pair-key";
 
 /*
  * Veckor, in the row that lays a chosen brick (D2): every week as always, or a PAIR, one lesson in two places (odd weeks in
@@ -13,19 +13,18 @@ import type { Half } from "@/lib/placement-pair";
  * in words, next to the button that lets it go. Fetched with the row's other fields, when a brick is chosen.
  */
 
-/** The reader's choice for the chosen brick: every week, or a pair that starts with the odd weeks or with the even ones. */
-export type WeeksChoice = "ALL_WEEKS" | Half;
+export type { WeeksChoice };
 
 export interface PairFieldsProps {
   choice: WeeksChoice;
   onChoice: (choice: WeeksChoice) => void;
-  /** The sentence about the held half, when one is held (the choice then cannot change). */
-  heldBody: string | null;
+  /** What is held, when a half is (the choice then cannot change): the lesson, the weeks it runs and the others, and where it stands. */
+  held: { lesson: string; weeks: string; otherWeeks: string; when: string } | null;
   onRelease: () => void;
   disabled: boolean;
 }
 
-export function PairFields({ choice, onChoice, heldBody, onRelease, disabled }: PairFieldsProps) {
+export function PairFields({ choice, onChoice, held, onRelease, disabled }: PairFieldsProps) {
   const t = useTranslations("placementWeek.pair");
   const id = useId();
   return (
@@ -35,7 +34,7 @@ export function PairFields({ choice, onChoice, heldBody, onRelease, disabled }: 
         <NativeSelect
           id={`${id}-weeks`}
           value={choice}
-          disabled={disabled || heldBody !== null}
+          disabled={disabled || held !== null}
           onChange={(event) => onChoice(event.target.value as WeeksChoice)}
           className="w-auto min-w-44 max-w-full"
         >
@@ -43,12 +42,12 @@ export function PairFields({ choice, onChoice, heldBody, onRelease, disabled }: 
           <option value="ODD_WEEKS">{t("oddFirst")}</option>
           <option value="EVEN_WEEKS">{t("evenFirst")}</option>
         </NativeSelect>
-        {choice !== "ALL_WEEKS" && heldBody === null ? <p className="text-xs text-muted-foreground">{t("hint")}</p> : null}
+        {choice !== "ALL_WEEKS" && held === null ? <p className="text-xs text-muted-foreground">{t("hint")}</p> : null}
       </div>
-      {heldBody !== null ? (
+      {held !== null ? (
         <div className="space-y-2 rounded-md border border-dashed border-foreground/50 p-2" role="group" aria-label={t("heldTitle")} data-testid="pair-held">
           <p className="text-sm font-medium">{t("heldTitle")}</p>
-          <p className="text-sm [overflow-wrap:anywhere]">{heldBody}</p>
+          <p className="text-sm [overflow-wrap:anywhere]">{t("heldBody", held)}</p>
           <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={onRelease}>
             {t("release")}
           </Button>

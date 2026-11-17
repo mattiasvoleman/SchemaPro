@@ -1,6 +1,5 @@
-import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useLeaveGuard } from "./use-leave-guard";
+import { guardLeaving } from "./leave-guard";
 
 /**
  * Leaving a page that holds a half of a pair asks first. A link inside the app is asked here (with the page's own words);
@@ -8,15 +7,23 @@ import { useLeaveGuard } from "./use-leave-guard";
  */
 
 let confirm: ReturnType<typeof vi.spyOn>;
+let stop: (() => void) | undefined;
 
 beforeEach(() => {
   confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   window.history.replaceState(null, "", "/sv/admin/placements?year=y1");
 });
 afterEach(() => {
+  stop?.();
+  stop = undefined;
   vi.restoreAllMocks();
   document.body.innerHTML = "";
 });
+
+const guard = (message = "Lämna sidan?") => {
+  stop = guardLeaving(message);
+  return stop;
+};
 
 /** A link in the document, pressed by a plain left click; the click is returned so that it can be asked whether it was stopped. */
 function press(href: string, init: MouseEventInit = {}, attrs: Record<string, string> = {}): MouseEvent {
@@ -34,7 +41,7 @@ function press(href: string, init: MouseEventInit = {}, attrs: Record<string, st
 
 describe("a link inside the app", () => {
   it("asks, with the page's words, and lets the click through on a yes", () => {
-    renderHook(() => useLeaveGuard(true, "Lämna sidan?"));
+    guard();
     const click = press("/sv/admin/timetable");
     expect(confirm).toHaveBeenCalledWith("Lämna sidan?");
     expect(click.defaultPrevented).toBe(false);
@@ -42,7 +49,7 @@ describe("a link inside the app", () => {
 
   it("stops the click on a no, in the capture phase, so that the app's own listener never sees it", () => {
     confirm.mockReturnValue(false);
-    renderHook(() => useLeaveGuard(true, "Lämna sidan?"));
+    guard();
     const reached = vi.fn();
     document.body.addEventListener("click", reached);
     const click = press("/sv/admin/timetable");
@@ -51,7 +58,7 @@ describe("a link inside the app", () => {
   });
 
   it("asks for the same page with another query, which is another place", () => {
-    renderHook(() => useLeaveGuard(true, "Lämna sidan?"));
+    guard();
     press("/sv/admin/placements?year=y2");
     expect(confirm).toHaveBeenCalledTimes(1);
   });
@@ -64,48 +71,40 @@ describe("a link inside the app", () => {
     ["a click with Ctrl, which opens another tab", "/sv/admin/timetable", { ctrlKey: true }, {}],
     ["a click with the middle button", "/sv/admin/timetable", { button: 1 }, {}],
   ])("does not ask for %s", (_name, href, init, attrs) => {
-    renderHook(() => useLeaveGuard(true, "Lämna sidan?"));
+    guard();
     const click = press(href, init, attrs);
     expect(confirm).not.toHaveBeenCalled();
     expect(click.defaultPrevented).toBe(false);
   });
 
-  it("is not asked about when nothing is held", () => {
-    renderHook(() => useLeaveGuard(false, "Lämna sidan?"));
-    press("/sv/admin/timetable");
-    expect(confirm).not.toHaveBeenCalled();
-  });
-
-  it("stops asking when the half is gone, and starts when one is held", () => {
-    const { rerender } = renderHook(({ active }) => useLeaveGuard(active, "Lämna sidan?"), { initialProps: { active: true } });
+  it("stops asking when it is stopped (the half is gone), and asks again when a new guard starts", () => {
+    const first = guard();
     press("/sv/admin/a");
     expect(confirm).toHaveBeenCalledTimes(1);
-    rerender({ active: false });
+    first();
     press("/sv/admin/b");
     expect(confirm).toHaveBeenCalledTimes(1);
-    rerender({ active: true });
+    guard();
     press("/sv/admin/c");
     expect(confirm).toHaveBeenCalledTimes(2);
   });
 
-  it("lets go of its listeners when the page goes", () => {
-    const { unmount } = renderHook(() => useLeaveGuard(true, "Lämna sidan?"));
-    unmount();
+  it("does not ask before it is started", () => {
     press("/sv/admin/timetable");
     expect(confirm).not.toHaveBeenCalled();
   });
 });
 
 describe("closing, reloading, typing another address", () => {
-  it("is the browser's own question: beforeunload is cancelled while a half is held", () => {
-    renderHook(() => useLeaveGuard(true, "Lämna sidan?"));
+  it("is the browser's own question: beforeunload is cancelled while the guard stands", () => {
+    guard();
     const event = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
   });
 
-  it("asks nothing when no half is held", () => {
-    renderHook(() => useLeaveGuard(false, "Lämna sidan?"));
+  it("asks nothing once the guard is stopped", () => {
+    guard()();
     const event = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(false);

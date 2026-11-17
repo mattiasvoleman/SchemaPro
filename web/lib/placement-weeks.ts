@@ -1,8 +1,9 @@
 import type { PlacementRecurrence } from "@/lib/requirement-placements";
 
 /*
- * Förlägg i veckan, the weeks: which weeks a läsår has, which of them a lesson
- * runs in, and what a card says of the weeks it runs (D2).
+ * Förlägg i veckan, the weeks: which weeks a läsår has and which of them a lesson
+ * runs in (D2). What a card SAYS of its weeks is lib/placement-week-note.ts, a module of
+ * its own because the cards are drawn with the page and this is fetched after it.
  *
  * THE SAME PARITY AS THE SERVER'S. An odd-weeks lesson runs the weeks whose ISO 8601
  * week number is odd (src/calendar/lesson-recurrence.ts runsOn). An ISO year of 53
@@ -53,9 +54,6 @@ export function isoWeekOf(day: string): number {
 
 /** The parity of the week that holds `day`: what an odd-weeks lesson and an even-weeks lesson are told apart by. */
 export const parityOfDay = (day: string): "ODD_WEEKS" | "EVEN_WEEKS" => (isoWeekOf(day) % 2 === 1 ? "ODD_WEEKS" : "EVEN_WEEKS");
-
-/** The other half of a pair. */
-export const otherParity = (parity: "ODD_WEEKS" | "EVEN_WEEKS"): "ODD_WEEKS" | "EVEN_WEEKS" => (parity === "ODD_WEEKS" ? "EVEN_WEEKS" : "ODD_WEEKS");
 
 /** The school's terms as a school says them: HT is the autumn (July to December by the week's Thursday), VT the spring. */
 export type Term = "HT" | "VT";
@@ -133,43 +131,6 @@ export function nearestWeekOf(weeks: readonly YearWeek[], monday: string, parity
     }
   }
   return null;
-}
-
-/** The words a card's note is written from: the page's translator of `placementWeek.note`. */
-export type NoteLookup = (key: string, values?: Record<string, string>) => string;
-
-/** A day as a school writes it on a card: "18 dec". The year is left out; the year the page shows is the läsår. */
-export function shortDay(day: string, locale: string): string {
-  return new Intl.DateTimeFormat(locale === "en" ? "en-GB" : "sv-SE", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(asMs(day)));
-}
-
-/**
- * What a card says of the dates its lesson runs: "HT" for a post that is the autumn's whole (from the year's start, to a day in
- * December), "VT" for the spring's (from a day in January, to the year's end), else the dates themselves: "t.o.m. 18 dec",
- * "fr.o.m. 11 jan", "17 aug–18 dec". HT and VT are said only for the clean cases; every other window says its dates, which are
- * always true.
- */
-export function windowNote(window: Pick<RunsWindow, "startDate" | "endDate">, year: { startDate: string; endDate: string }, locale: string, t: NoteLookup): string | null {
-  const start = window.startDate?.slice(0, 10) ?? null;
-  const end = window.endDate?.slice(0, 10) ?? null;
-  if (start === null && end === null) return null;
-  const first = Number(year.startDate.slice(0, 4));
-  const yearStart = year.startDate.slice(0, 10);
-  const yearEnd = year.endDate.slice(0, 10);
-  if ((start === null || start <= yearStart) && end !== null && end >= `${first}-12-01` && end <= `${first}-12-31`) return t("HT");
-  if (start !== null && start >= `${first + 1}-01-01` && start <= `${first + 1}-01-31` && (end === null || end >= yearEnd)) return t("VT");
-  if (start !== null && end !== null) return t("range", { from: shortDay(start, locale), to: shortDay(end, locale) });
-  if (end !== null) return t("until", { date: shortDay(end, locale) });
-  return t("from", { date: shortDay(start!, locale) });
-}
-
-/** What a card says of its weeks: the parity and the dates, "udda · HT"; null for a lesson that runs every week of the year. */
-export function weekNote(lesson: RunsWindow, year: { startDate: string; endDate: string } | null, locale: string, t: NoteLookup): string | null {
-  const parts = [
-    lesson.recurrence === "ODD_WEEKS" ? t("odd") : lesson.recurrence === "EVEN_WEEKS" ? t("even") : null,
-    year ? windowNote(lesson, year, locale, t) : lesson.startDate || lesson.endDate ? t("period") : null,
-  ].filter((part): part is string => part !== null);
-  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 /** The days of a week for the grid's headers (local midnight, as the grid compares them with today's date). */

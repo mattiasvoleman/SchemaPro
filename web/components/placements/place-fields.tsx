@@ -143,7 +143,8 @@ export function PlaceFields({ submitLabel, minutes, rooms, initial, sentenceOf, 
         {said}
       </p>
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" size="sm" disabled={saving || value === null || lacksRoom}>
+        {/* The button's words can be long ("Lägg andra halvan och spara paret"): they wrap at a phone's width instead of leaving the row. */}
+        <Button type="submit" size="sm" className="h-auto min-h-8 whitespace-normal py-1.5 text-left" disabled={saving || value === null || lacksRoom}>
           {submitLabel}
         </Button>
         <Button type="button" variant="outline" size="sm" disabled={saving || value === null} onClick={next}>

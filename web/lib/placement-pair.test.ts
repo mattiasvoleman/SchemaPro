@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { BoardPart, BoardPlacement, BoardPost } from "./placement-board";
 import {
   canBePair,
-  fateOf,
   heldHalfCard,
   heldHalfCardId,
   heldHalfPlacement,
@@ -10,10 +9,9 @@ import {
   partKeyOfBrick,
   weeksBeingLaid,
   type HeldHalf,
-  type PairEvent,
 } from "./placement-pair";
 import { bricksOf, keysOfRows, listAfter, removalOf } from "./placement-rows";
-import { otherParity } from "./placement-weeks";
+import { otherHalf } from "./placement-pair-key";
 
 /**
  * A pair is one lesson in two places, laid half by half. The database refuses a lone half and a half with no room, so the first is
@@ -90,7 +88,7 @@ describe("what a pair is made from", () => {
     expect(weeksBeingLaid(null, "EVEN_WEEKS")).toBe("EVEN_WEEKS");
     expect(weeksBeingLaid(held({ recurrence: "ODD_WEEKS" }), "EVEN_WEEKS")).toBe("EVEN_WEEKS");
     expect(weeksBeingLaid(held({ recurrence: "EVEN_WEEKS" }), "ODD_WEEKS")).toBe("ODD_WEEKS");
-    expect(otherParity("ODD_WEEKS")).toBe("EVEN_WEEKS");
+    expect(otherHalf("ODD_WEEKS")).toBe("EVEN_WEEKS");
   });
 });
 
@@ -192,21 +190,5 @@ describe("the held half on the week", () => {
     const buffers = new Map([["g-7a:s-ma", { minutesBefore: 15, minutesAfter: 10 }]]);
     expect(heldHalfPlacement(held(), post(), buffers)).toMatchObject({ minutesBefore: 15, minutesAfter: 10 });
     expect("minutesBefore" in heldHalfPlacement(held(), post())).toBe(false);
-  });
-});
-
-describe("what becomes of a held half", () => {
-  // The decisions, one row each: the page's behaviour is these and the page tests hold the page to them.
-  it.each<[PairEvent, "keep" | "release"]>([
-    [{ kind: "year" }, "release"],
-    [{ kind: "undo" }, "release"],
-    [{ kind: "redo" }, "keep"],
-    [{ kind: "stale" }, "keep"],
-    [{ kind: "refused" }, "keep"],
-    [{ kind: "read", partLeft: true }, "keep"],
-    [{ kind: "read", partLeft: false }, "release"],
-    [{ kind: "written" }, "release"],
-  ])("%j: %s", (event, fate) => {
-    expect(fateOf(event)).toBe(fate);
   });
 });

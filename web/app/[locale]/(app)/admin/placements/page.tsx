@@ -8,7 +8,6 @@ import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { useProfile, useReadOnly } from "@/components/profile-context";
 import { BrickList, type BrickGroup } from "@/components/placements/brick-list";
-import { WeekPicker } from "@/components/placements/week-picker";
 import { SinceRunNote } from "@/components/placements/since-run-note";
 import { FilterPicker } from "@/components/schedule/filter-picker";
 import { PlanningYearPicker, ProjectedRostersBanner } from "@/components/schedule/planning-year";
@@ -70,19 +69,8 @@ import {
   type CardNames,
 } from "@/lib/placement-board";
 import { usePlacementBoard } from "@/lib/placement-board-queries";
-import {
-  canBePair,
-  fateOf,
-  heldHalfCard,
-  heldHalfCardId,
-  heldHalfPlacement,
-  pairInputs,
-  partKeyOfBrick,
-  type Half,
-  type HeldHalf,
-} from "@/lib/placement-pair";
-import { narrowToWeek } from "@/lib/placement-week-view";
-import { datesOfWeek, nearestWeekOf, otherParity, runsInWeek, shortDay, weekNote, weeksOfYear } from "@/lib/placement-weeks";
+import { canBePair, heldHalfCardId, otherHalf, partKeyOfBrick, type Half, type WeeksChoice } from "@/lib/placement-pair-key";
+import { weekNote } from "@/lib/placement-week-note";
 import { usePlacementLinkTarget } from "@/lib/use-placement-link-target";
 import {
   dropOf,
@@ -126,16 +114,17 @@ import {
 import { placementsRefusal } from "@/lib/requirement-placements";
 import { clockOfMinutes, fitSentence, minutesOfClock, verdictSentence } from "@/lib/requirement-placement-text";
 import { compareSwedish } from "@/lib/sorting";
-import { useLeaveGuard } from "@/lib/use-leave-guard";
+import { useLazyModule } from "@/lib/use-lazy-module";
 import { useHistoryKeyboard } from "@/lib/use-schedule-history";
 import { cn, subjectColor } from "@/lib/utils";
 import type { PlaceValue } from "@/components/placements/place-fields";
 import type { BlockPlaceValue } from "@/components/placements/block-place-fields";
-import type { WeeksChoice } from "@/components/placements/pair-fields";
+import type { HeldHalf } from "@/lib/placement-pair";
 
 // What a brick chosen, or a card opened, needs and nothing else does: fetched when the first is pressed, not with the page.
 const PlaceFields = lazy(() => import("@/components/placements/place-fields").then((module) => ({ default: module.PlaceFields })));
 const BlockPlaceFields = lazy(() => import("@/components/placements/block-place-fields").then((module) => ({ default: module.BlockPlaceFields })));
+const WeekPicker = lazy(() => import("@/components/placements/week-picker").then((module) => ({ default: module.WeekPicker })));
 const PairFields = lazy(() => import("@/components/placements/pair-fields").then((module) => ({ default: module.PairFields })));
 const CardDialog = lazy(() => import("@/components/placements/card-dialog").then((module) => ({ default: module.CardDialog })));
 
@@ -245,6 +234,9 @@ export default function PlacementsPage() {
   const [week, setWeek] = useState<string | null>(null);
   /** The write of a pair is on its way: the count a write moves must not read as "the part has nothing left to lay" meanwhile. */
   const writingPair = useRef(false);
+  // What a week picked and a pair need is fetched when the page is up, not with it (lib/use-lazy-module.ts): the route has no bytes for it.
+  const weekTools = useLazyModule(() => import("@/lib/placement-week-tools"));
+  const pairTools = useLazyModule(() => import("@/lib/placement-pair-control"));
 
   const groups = useMemo(
     () => (groupsQuery.data ?? []).filter((group) => !year || group.academicYearId === year.id),
@@ -307,11 +299,11 @@ export default function PlacementsPage() {
     [everything, blockKeys],
   );
   const shownBlocks = useMemo(() => (everything ? visibleBlocks(everything, filters) : []), [everything, filters]);
-  const yearWeeks = useMemo(() => (year ? weeksOfYear(year.startDate, year.endDate) : []), [year]);
+  const yearWeeks = useMemo(() => (year && weekTools ? weekTools.weeksOfYear(year.startDate, year.endDate) : []), [year, weekTools]);
   // One week picked: the cards that run that week. The lists, the bricks, the figures and the mirror stay the year's (lib/placement-week-view.ts).
   const viewed = useMemo(
-    () => (shown ? (week ? narrowToWeek({ ...shown, blocks: shownBlocks }, postById, week) : { ...shown, blocks: shownBlocks }) : null),
-    [shown, shownBlocks, week, postById],
+    () => (shown ? (week && weekTools ? weekTools.narrowToWeek({ ...shown, blocks: shownBlocks }, postById, week) : { ...shown, blocks: shownBlocks }) : null),
+    [shown, shownBlocks, week, postById, weekTools],
   );
 
   // What the ghost and the arrow keys are held against; built when the week or a list changes, not at every pixel of a drag.
@@ -337,27 +329,15 @@ export default function PlacementsPage() {
     [mayWrite, everything, keys, groupsQuery.data, students, membershipsQuery.data, constraintsQuery.data, framesQuery.data, year?.gradeNumbering, year?.id],
   );
   const heldPost = held ? postById.get(held.postId) : undefined;
-  // The held half is in the week's way as any lesson is: what is laid beside it is held against it, or the pair would be refused for it at the end.
-  const mirror = useMemo(
-    () => (baseMirror && held && heldPost ? { ...baseMirror, others: [...baseMirror.others, heldHalfPlacement(held, heldPost, baseMirror.buffers)] } : baseMirror),
-    [baseMirror, held, heldPost],
+  // The first half of a pair, as a card (dashed, saying that it is not saved: drawn in whatever week is picked, it is in play and not in force) and as a lesson in
+  // the week's way: what is laid beside it is held against it, or the pair would be refused for it at the end.
+  const heldView = useMemo(
+    () => (held && heldPost && pairTools ? pairTools.heldViewOf(held, heldPost, names, tPair, baseMirror?.buffers) : null),
+    [held, heldPost, pairTools, names, tPair, baseMirror],
   );
+  const mirror = useMemo(() => (baseMirror && heldView ? { ...baseMirror, others: [...baseMirror.others, heldView.placement] } : baseMirror), [baseMirror, heldView]);
 
   const keptFilterNeeded = !isFiltered(filters);
-  // The first half of a pair is a card too, dashed and saying that it is not saved. It is drawn in whatever week is picked: it is in play, not in force.
-  const heldCard = useMemo(
-    () =>
-      held && heldPost
-        ? heldHalfCard(held, {
-            subject: names.subject(heldPost.subjectId)?.name ?? "",
-            subtitle: [names.group(heldPost.studentGroupId), names.teacher(held.teacherId ?? heldPost.teacherId)].filter(Boolean).join(" · "),
-            room: names.room(held.roomId),
-            color: names.color(heldPost.subjectId, names.subject(heldPost.subjectId)?.color),
-            note: tPair("heldNote", { weeks: tPair(held.recurrence === "ODD_WEEKS" ? "weeksOdd" : "weeksEven") }),
-          })
-        : null,
-    [held, heldPost, names, tPair],
-  );
   const cards = useMemo(
     () =>
       viewed
@@ -367,10 +347,10 @@ export default function PlacementsPage() {
             // The lessons Generera keeps are the school's whole grundschema, on a school that built one by hand: drawn
             // for what is picked, not for everything (review of #315, LÅG-3).
             ...(keptFilterNeeded ? [] : keptCards(viewed.kept, names)),
-            ...(heldCard ? [heldCard] : []),
+            ...(heldView ? [heldView.card] : []),
           ]
         : [],
-    [viewed, postById, names, keys, blockKeys, keptFilterNeeded, tBlock, heldCard],
+    [viewed, postById, names, keys, blockKeys, keptFilterNeeded, tBlock, heldView],
   );
   const bands = useMemo(
     () => (viewed ? mealBands(viewed.meals, (meal) => t("meal", { group: groupById.get(meal.studentGroupId)?.name ?? "" })) : []),
@@ -470,7 +450,7 @@ export default function PlacementsPage() {
   const pairWeeksOf = (brick: Brick): Half | null => {
     const post = postById.get(brick.postId);
     if (!post || !canBePair(post)) return null;
-    if (held) return partKeyOfBrick(brick) === held.partKey ? otherParity(held.recurrence) : null;
+    if (held) return partKeyOfBrick(brick) === held.partKey ? otherHalf(held.recurrence) : null;
     return brickKey === brick.key && weeksChoice !== "ALL_WEEKS" ? weeksChoice : null;
   };
 
@@ -552,7 +532,7 @@ export default function PlacementsPage() {
     // The history is one stack for the page, and a year has its own rows; the weeks and a half held belong to the year that is left.
     setWeek(null);
     setWeeksChoice("ALL_WEEKS");
-    if (held && fateOf({ kind: "year" }) === "release") {
+    if (held) {
       setHeld(null);
       setMessage({ tone: "ok", text: tPair("releasedYear") });
     }
@@ -561,11 +541,9 @@ export default function PlacementsPage() {
   // The part a held half is a half of has no lesson left to lay (somebody else laid it, the post was changed): the half is let go and the page says so.
   useEffect(() => {
     if (!held || !everything || heldBrick || saving || writingPair.current) return;
-    if (fateOf({ kind: "read", partLeft: false }) === "release") {
-      setHeld(null);
-      setBrickKey(null);
-      setMessage({ tone: "problem", text: tPair("releasedGone", { lesson: postName(postById.get(held.postId)) }) });
-    }
+    setHeld(null);
+    setBrickKey(null);
+    setMessage({ tone: "problem", text: tPair("releasedGone", { lesson: postName(heldPost) }) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [held, everything, heldBrick, saving]);
   // A brick chosen anew is laid every week until the reader says otherwise.
@@ -573,8 +551,9 @@ export default function PlacementsPage() {
     if (!held) setWeeksChoice("ALL_WEEKS");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brickKey]);
-  // Leaving with a half held asks first: the half is the one thing here that nobody else has.
-  useLeaveGuard(held !== null, tPair("leave"));
+  // Leaving with a half held asks first: the half is the one thing here that nobody else has (lib/leave-guard.ts).
+  const holding = held !== null;
+  useEffect(() => (holding ? pairTools?.guardLeaving(tPair("leave")) : undefined), [holding, pairTools, tPair]);
 
   // The element a change should leave the keyboard on, once the week has been drawn with the change in it. Not for ever: an
   // element that never comes (a filter hides it) must not take the keyboard later, when something else has been drawn.
@@ -821,106 +800,39 @@ export default function PlacementsPage() {
     [postById, postName, change, t, tDays],
   );
 
-  // ---------------------------------------------------------------- a pair (D2)
-
-  const weeksText = (recurrence: string): string => tPair(recurrence === "ODD_WEEKS" ? "weeksOdd" : "weeksEven");
-
-  /** The picker follows the half being laid: a half of odd weeks is laid looking at an odd week, so that what is shown is what the half can meet. */
-  const followWeek = (parity: Half): string => {
-    const current = week === null ? undefined : yearWeeks.find((entry) => entry.monday === week);
-    if (!current || current.parity === parity) return "";
-    const next = nearestWeekOf(yearWeeks, current.monday, parity);
-    if (!next) return "";
-    setWeek(next.monday);
-    return ` ${tWeeks("followed", { week: next.week, parity: tWeeks(next.parity === "ODD_WEEKS" ? "odd" : "even") })}`;
-  };
-
-  const releaseHeld = useCallback(
-    (text: string) => {
-      setHeld(null);
-      setBrickKey(null);
-      setMessage({ tone: "ok", text });
-    },
-    [],
-  );
-
-  /** The first half of a pair: held in the page and written nowhere (it would be refused as a lone half), asked of the mirror first. */
-  const holdHalf = useCallback(
-    (brick: Brick, spot: Spot, roomId: string | null, recurrence: Half): boolean => {
-      const post = postById.get(brick.postId);
-      if (!post) return false;
-      if (roomId === null) {
-        setMessage({ tone: "problem", text: tPair("needsRoom") });
-        return false;
-      }
-      const mover = moverOfBrick(brick, roomId);
-      const drop = mirror && mover ? dropOf(mirror, mover, { dayOfWeek: spot.dayOfWeek, startMinutes: spot.startMinutes, endMinutes: spot.startMinutes + brick.minutes }, otherNames) : OK_DROP;
-      if (drop.kind !== "OK") {
-        setMessage({ tone: "problem", text: `${t("cannotStandThere", { reason: sentenceOf(drop) })}${drop.kind === "CLASH" ? meetsRed(drop.params) : ""}` });
-        return false;
-      }
-      setHeld({ partKey: partKeyOfBrick(brick), postId: post.id, teacherId: post.parts.some((part) => part.teacherId !== post.teacherId) ? brick.teacherId : null, minutes: brick.minutes, recurrence, dayOfWeek: spot.dayOfWeek, startMinutes: spot.startMinutes, roomId });
-      setBrickKey(brick.key);
-      setRefusal(null);
-      const followed = followWeek(otherParity(recurrence));
-      setMessage({ tone: "ok", text: `${tPair("firstHeld", { weeks: weeksText(recurrence), otherWeeks: weeksText(otherParity(recurrence)), when: whenText(spot.dayOfWeek, spot.startMinutes, brick.minutes) })}${followed}` });
-      return true;
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [postById, moverOfBrick, mirror, otherNames, sentenceOf, meetsRed, t, tPair, tDays, week, yearWeeks],
-  );
-
-  /** The second half: both go in ONE write, the post's whole list with two rows added. */
-  const layPair = useCallback(
-    async (brick: Brick, spot: Spot, roomId: string | null): Promise<boolean> => {
-      const post = postById.get(brick.postId);
-      if (!post || !held) return false;
-      if (roomId === null) {
-        setMessage({ tone: "problem", text: tPair("needsRoom") });
-        return false;
-      }
-      const inputs = pairInputs(brick, post, held, { spot, roomId });
-      const line = (input: (typeof inputs)[number]) => tPair("pairLine", { weeks: weeksText(input.recurrence), when: whenText(input.dayOfWeek, minutesOfClock(input.startTime), input.minutes) });
-      const last = inputs[1];
-      const base = placementKeyOf({ requirementId: post.id, teacherId: last.teacherId ?? null, minutes: brick.minutes, dayOfWeek: last.dayOfWeek, startTime: last.startTime, recurrence: last.recurrence });
-      writingPair.current = true;
-      let done = false;
-      try {
-        done = await change(post.id, { kind: "addPair", inputs }, "place", tPair("placedPair", { lesson: postName(post), first: line(inputs[0]), second: line(last) }), cardOfKey(base));
-      } finally {
-        writingPair.current = false;
-      }
-      if (done && fateOf({ kind: "written" }) === "release") {
-        setHeld(null);
-        setBrickKey(null);
-        setWeeksChoice("ALL_WEEKS");
-      }
-      return done;
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [postById, held, change, postName, tPair, tDays],
-  );
-
+  // ---------------------------------------------------------------- a pair (D2): what the page does with it is lib/placement-pair-control.ts, fetched when the page is up
+  const pair = pairTools
+    ? pairTools.pairControl({
+        held,
+        setHeld,
+        setBrickKey,
+        setWeeksChoice,
+        weeksOf: pairWeeksOf,
+        postById,
+        mirror,
+        moverOfBrick,
+        otherNames,
+        say: setMessage,
+        setRefusal,
+        sentenceOf,
+        meetsRed,
+        change,
+        cardOfKey,
+        t,
+        tPair,
+        tWeeks,
+        tDays,
+        postName,
+        week,
+        yearWeeks,
+        nearestWeekOf: weekTools?.nearestWeekOf,
+        setWeek,
+        writing: writingPair,
+      })
+    : null;
   /** A brick laid, pulled or pointed to: a lesson of every week, or a half of the pair the reader chose (the first is held, the second writes both). */
-  const layBrick = useCallback(
-    async (brick: Brick, spot: Spot, roomId: string | null): Promise<boolean> => {
-      const weeks = pairWeeksOf(brick);
-      if (weeks === null) return place(brick, spot, roomId);
-      return held ? layPair(brick, spot, roomId) : holdHalf(brick, spot, roomId, weeks);
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [place, layPair, holdHalf, held, brickKey, weeksChoice, postById],
-  );
-
-  /** The held half is a card the reader may move: it is still only in the page. */
-  const moveHeld = (to: LessonChange): boolean => {
-    if (!held || to.endMinutes - to.startMinutes !== held.minutes) return false;
-    setHeld({ ...held, dayOfWeek: to.dayOfWeek, startMinutes: to.startMinutes });
-    setMessage({ tone: "ok", text: tPair("movedHalf", { when: whenText(to.dayOfWeek, to.startMinutes, held.minutes) }) });
-    return true;
-  };
-  const moverOfHeld = (): Mover | null =>
-    held && heldPost ? { id: heldHalfCardId(held.partKey), post: heldPost, teacherId: held.teacherId ?? heldPost.teacherId, roomId: held.roomId, recurrence: held.recurrence } : null;
+  const layBrick = (brick: Brick, spot: Spot, roomId: string | null): Promise<boolean> =>
+    pairWeeksOf(brick) === null ? place(brick, spot, roomId) : (pair?.lay(brick, spot, roomId) ?? Promise.resolve(false));
 
   const move = useCallback(
     async (card: string, to: Spot, roomId?: string | null): Promise<boolean> => {
@@ -1078,8 +990,8 @@ export default function PlacementsPage() {
       if (!mirror) return true;
       const span = { dayOfWeek: to.dayOfWeek, startMinutes: to.startMinutes, endMinutes: to.endMinutes };
       if (held && id === heldHalfCardId(held.partKey)) {
-        const mover = moverOfHeld();
-        return mover !== null && to.endMinutes - to.startMinutes === held.minutes && dropOf(mirror, mover, span, otherNames).kind === "OK";
+        const mover = pair?.moverOfHeld();
+        return !!mover && to.endMinutes - to.startMinutes === held.minutes && dropOf(mirror, mover, span, otherNames).kind === "OK";
       }
       const brick = brickByKey.get(id);
       if (brick) {
@@ -1104,7 +1016,7 @@ export default function PlacementsPage() {
       return dropOf(mirror, moverOfRow(id, row, post), span, otherNames).kind === "OK";
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mirror, brickByKey, moverOfBrick, roomFor, otherNames, rowByCard, postById, blockBrickByKey, blockById, roomsOfBlockBrick, lessonByCard, held, heldPost],
+    [mirror, brickByKey, moverOfBrick, roomFor, otherNames, rowByCard, postById, blockBrickByKey, blockById, roomsOfBlockBrick, lessonByCard, held, pair],
   );
 
   /** Why a lesson cannot stand where it was let go or pointed to. */
@@ -1113,7 +1025,7 @@ export default function PlacementsPage() {
       let drop: Drop = { kind: "OK" };
       const span = { dayOfWeek: to.dayOfWeek, startMinutes: to.startMinutes, endMinutes: to.endMinutes };
       if (held && id === heldHalfCardId(held.partKey)) {
-        const mover = moverOfHeld();
+        const mover = pair?.moverOfHeld();
         const said: Drop = to.endMinutes - to.startMinutes !== held.minutes ? { kind: "LENGTH" } : mirror && mover ? dropOf(mirror, mover, span, otherNames) : OK_DROP;
         setMessage({ tone: "problem", text: `${t("cannotMoveThere", { reason: sentenceOf(said) })}${said.kind === "CLASH" ? meetsRed(said.params) : ""}` });
         return;
@@ -1143,13 +1055,13 @@ export default function PlacementsPage() {
       setMessage({ tone: "problem", text: `${t(moving ? "cannotMoveThere" : "cannotStandThere", { reason: sentenceOf(drop) })}${drop.kind === "CLASH" ? meetsRed(drop.params) : ""}` });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [brickByKey, rowByCard, postById, mirror, moverOfBrick, roomFor, otherNames, sentenceOf, t, tBlock, blockBrickByKey, blockById, lessonByCard, roomsOfBlockBrick, postName, meetsRed, held, heldPost],
+    [brickByKey, rowByCard, postById, mirror, moverOfBrick, roomFor, otherNames, sentenceOf, t, tBlock, blockBrickByKey, blockById, lessonByCard, roomsOfBlockBrick, postName, meetsRed, held, pair],
   );
 
   const handleChange = useCallback(
     (id: string, to: LessonChange) => {
       if (held && id === heldHalfCardId(held.partKey)) {
-        moveHeld(to);
+        pair?.moveHeld(to);
         return;
       }
       const brick = brickByKey.get(id);
@@ -1309,7 +1221,7 @@ export default function PlacementsPage() {
     async (kind: "undo" | "redo") => {
       if (saving) return void setMessage({ tone: "ok", text: t("waitSaving") });
       // A half that is held is the newest thing done and is taken back first, before any step that was written; redo never brings one back.
-      if (kind === "undo" && held && fateOf({ kind: "undo" }) === "release") return releaseHeld(tPair("undoneHalf"));
+      if (kind === "undo" && held) return pair?.release(tPair("undoneHalf"));
       try {
         const step = await (kind === "undo" ? history.undo() : history.redo());
         if (!step) return;
@@ -1320,7 +1232,7 @@ export default function PlacementsPage() {
         problemFrom(error);
       }
     },
-    [saving, history, problemFrom, t, held, releaseHeld, tPair],
+    [saving, history, problemFrom, t, held, pair, tPair],
   );
   useHistoryKeyboard(
     mayWrite ? { undo: async () => (await undoOrRedo("undo"), null), redo: async () => (await undoOrRedo("redo"), null) } : NO_HISTORY,
@@ -1499,7 +1411,9 @@ export default function PlacementsPage() {
               <SectionCard id="placement-week" title={t("weekTitle")} description={t("weekDescription")}>
                 {yearWeeks.length > 0 ? (
                   <div className="mb-3">
-                    <WeekPicker weeks={yearWeeks} value={week} onChange={setWeek} />
+                    <Suspense fallback={null}>
+                      <WeekPicker weeks={yearWeeks} value={week} onChange={setWeek} />
+                    </Suspense>
                   </div>
                 ) : null}
                 <ul className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs" aria-label={t("legend")}>
@@ -1515,25 +1429,11 @@ export default function PlacementsPage() {
                       <Suspense fallback={null}>
                         <PairFields
                           choice={held ? held.recurrence : weeksChoice}
-                          onChoice={(choice) => {
-                            setWeeksChoice(choice);
-                            if (choice !== "ALL_WEEKS") {
-                              const followed = followWeek(choice);
-                              if (followed) setMessage({ tone: "ok", text: followed.trim() });
-                            }
-                          }}
-                          heldBody={
-                            held
-                              ? tPair("heldBody", {
-                                  lesson: postName(heldPost),
-                                  weeks: weeksText(held.recurrence),
-                                  otherWeeks: weeksText(otherParity(held.recurrence)),
-                                  when: whenText(held.dayOfWeek, held.startMinutes, held.minutes),
-                                })
-                              : null
-                          }
-                          onRelease={() => releaseHeld(tPair("released"))}
-                          disabled={saving}
+                          onChoice={(choice) => pair?.choose(choice)}
+                          held={pair?.heldText ?? null}
+                          onRelease={() => pair?.release(tPair("released"))}
+                          // Until the module that does the laying is here the choice waits: a pair chosen with nobody to lay it would lay nothing.
+                          disabled={saving || !pair}
                         />
                       </Suspense>
                     ) : null}
@@ -1617,7 +1517,7 @@ export default function PlacementsPage() {
                       lessons={cards}
                       bands={bands}
                       dayEndMinutes={DAY_END_MINUTES}
-                      dates={week ? datesOfWeek(week) : undefined}
+                      dates={week && weekTools ? weekTools.datesOfWeek(week) : undefined}
                       editable={mayWrite}
                       onLessonClick={(lesson) => {
                         // The held half has no dialog: it is not written. Its fields are the row above the week.
