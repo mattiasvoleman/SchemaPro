@@ -6562,7 +6562,7 @@ describe('OptimizationProxyService', () => {
                 {
                   category: 'TEACHER_OVERLAP',
                   code: 'TEACHER_SHARED_BY_PARALLEL_GROUPS',
-                  params: { groups: 2, minutes: 480, grades: '7' },
+                  params: { groups: 2, minutes: 480, grades: '7', classes: 1, classMinutes: 60, classOwn: 'some' },
                   message: 'One teacher stands on 2 groups of year 7 that take pupils from the same classes.',
                   requirementIds: rows,
                   roomIds: [],
@@ -6585,7 +6585,7 @@ describe('OptimizationProxyService', () => {
         expect.objectContaining({ code: 'TIGHT_WEEK_LOAD', resourceNames: [] }),
         expect.objectContaining({
           code: 'TEACHER_SHARED_BY_PARALLEL_GROUPS',
-          params: { groups: 2, minutes: 480, grades: '7' },
+          params: { groups: 2, minutes: 480, grades: '7', classes: 1, classMinutes: 60, classOwn: 'some' },
           resourceIds: [REQ_ID, SVENSKA],
           resourceNames: ['Matematik för 7A', 'Svenska för 7A'],
         }),
@@ -12732,7 +12732,11 @@ describe('OptimizationProxyService', () => {
           summaryCode: 'DEMAND_YEAR_WEEK_SHORT',
           summaryParams: { grades: '8', demandMinutes: 2210, capacityMinutes: 2200, shared: 'some' },
           conflicts: [
-            line('TEACHER_SHARED_BY_PARALLEL_GROUPS', { groups: 3, minutes: 480, grades: '8' }),
+            line('TEACHER_SHARED_BY_PARALLEL_GROUPS', {
+              groups: 3, minutes: 480, grades: '8', classes: 5, classMinutes: 60, classOwn: 'some',
+            }),
+            // A line from an engine that predates what the classes lose: no classOwn, and it is passed as it came.
+            line('TEACHER_SHARED_BY_PARALLEL_GROUPS', { groups: 2, minutes: 280, grades: '8' }),
             line('TIGHT_WEEK_LOAD', { grades: '8', demandMinutes: 2100, capacityMinutes: 2200, percent: 95 }),
             // The count of entries whose years nobody stated has no year to name.
             line('TIGHT_WEEK_LOAD', { grades: 'any', demandMinutes: 10, capacityMinutes: 10, percent: 100 }),
@@ -12745,7 +12749,8 @@ describe('OptimizationProxyService', () => {
           grades: '9', demandMinutes: 2210, capacityMinutes: 2200, shared: 'some',
         });
         expect(result.conflicts.map((detail) => detail.params)).toEqual([
-          { groups: 3, minutes: 480, grades: '9' },
+          { groups: 3, minutes: 480, grades: '9', classes: 5, classMinutes: 60, classOwn: 'some' },
+          { groups: 2, minutes: 280, grades: '9' },
           { grades: '9', demandMinutes: 2100, capacityMinutes: 2200, percent: 95 },
           { grades: 'any', demandMinutes: 10, capacityMinutes: 10, percent: 100 },
         ]);
@@ -12771,6 +12776,10 @@ describe('OptimizationProxyService', () => {
       it.each([
         ['DEMAND_YEAR_WEEK_SHORT', { grades: '8', demandMinutes: 2210, capacityMinutes: 2200, shared: 'none' }],
         ['TEACHER_SHARED_BY_PARALLEL_GROUPS', { groups: 3, minutes: 480, grades: '8' }],
+        [
+          'TEACHER_SHARED_BY_PARALLEL_GROUPS',
+          { groups: 3, minutes: 480, grades: '8', classes: 5, classMinutes: 60, classOwn: 'none' },
+        ],
         ['TIGHT_WEEK_LOAD', { grades: '8', demandMinutes: 2100, capacityMinutes: 2200, percent: 95 }],
         [
           'TIGHT_WEEK_TIMEOUT',
