@@ -83,12 +83,44 @@ export interface PlacementVerdict {
   params?: Record<string, string | number>;
 }
 
+/**
+ * What the week the school has fixed says about a row without refusing it (the gateway's placement-warnings.ts). A code this build
+ * has no sentence for is read as the general one (placement-warnings.ts sentenceOfWarning): the gateway deploys apart from the web.
+ */
+export type PlacementWarningCode =
+  | "TEACHER_DAY_TOO_LONG"
+  | "TEACHER_WEEK_TOO_MANY_DAYS"
+  | "TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN"
+  | "TEACHER_STRETCH_TOO_LONG"
+  | "TEACHER_STRETCH_TOO_LONG_HIDDEN"
+  | "CLASS_HAS_NO_LUNCH"
+  | "NO_ROOM_FREE";
+
+/**
+ * One warning on one row, the row named by its id in the SAME answer (a post's row, or a block's lesson): every save gives the rows new
+ * ids, so a warning is joined to a card through the answer it came in and never kept across a write.
+ */
+export interface PlacementWarning {
+  code: PlacementWarningCode;
+  /** True: Generera will refuse the week because of this. False: this does not stop it (no promise that nothing else does). */
+  refuses: boolean;
+  /** `day` is ISO 1..5; the `_HIDDEN` codes carry none. */
+  params?: Record<string, string | number>;
+  rowId: string;
+  /** The post's id; for a block's lesson, the member's. */
+  requirementId: string;
+  /** Set for a block's lesson. */
+  blockId?: string;
+}
+
 /** GET /:id/placements and the 200 of the PUT: the rows and a verdict per row, in the same order. */
 export interface PlacementsOfRequirement {
   placements: RequirementPlacement[];
   verdicts: PlacementVerdict[];
   /** The key of these rows: what the next write on top of them sends as `baseKey`. */
   rowsKey: string;
+  /** What the week says of the rows, at their places in this answer. Absent from a gateway before D1. */
+  warnings?: PlacementWarning[];
 }
 
 /** The year's placed lessons, for the mark on the timplan. */

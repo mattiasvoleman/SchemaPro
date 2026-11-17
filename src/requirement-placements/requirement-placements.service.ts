@@ -41,6 +41,9 @@ import {
   type PlacementVerdict,
 } from './placement-judge';
 import { placementRefusedConflict, placementsStaleConflict } from './placement-refusal';
+import { placementWarnings } from './placement-warning-reads';
+import type { PlacementWarning, PlacementWarningView } from './placement-warnings';
+import { readOtherSchoolHolds } from '../optimization/other-school-holds';
 import { boardBlockOf, type PlacementBoardWithBlocks } from './block-placement-board';
 import { besideRowsOfBlocks, judgedRowsOfBlock, loadBlocksOfYear, memberSlotsOfBlock } from './block-placement-judge';
 import { rowsKeyOf } from './placement-rows-key';
@@ -80,6 +83,11 @@ export interface RequirementPlacementsResponse {
    * them. After a PUT it is the key of the rows just written, so that a client can chain its writes without reading again.
    */
   rowsKey: string;
+  /**
+   * What the week the school has fixed says about these rows (placement-warnings.ts), one entry per warning, each naming
+   * its row in `placements`. Additive: an older client ignores it. A warning never refuses a save.
+   */
+  warnings: PlacementWarningView[];
 }
 
 /** Where a lesson stands, as a request states it or a stored row has it, and whose it is on a shared post. */
@@ -125,7 +133,7 @@ const POST_SELECT = {
   endDate: true,
   // Delade lektioner: who teaches which lessons (lessonTeachersOf sorts them itself).
   shares: { select: { teacherId: true, lessons: true, minutes: true } },
-  academicYear: { select: { isActive: true, predecessorId: true, gradeNumbering: true } },
+  academicYear: { select: { isActive: true, predecessorId: true, gradeNumbering: true, startDate: true, endDate: true } },
 } as const;
 
 /** What the week of förläggningar reads of every post of the year. */
@@ -261,8 +269,14 @@ export class RequirementPlacementsService {
         select: VIEW_SELECT,
         orderBy: [...VIEW_ORDER],
       });
-      const verdicts = await this.judge(tx, user, post, rows.map(slotOf));
-      return { placements: rows.map(viewOf), verdicts, rowsKey: rowsKeyOf(rows.map(keyedOf)) };
+      const { verdicts, rows: judgedRows, beside } = await this.judged(tx, user, post, rows.map(slotOf));
+      const warnings = await this.warningsOf(tx, user, post, judgedRows, beside);
+      return {
+        placements: rows.map(viewOf),
+        verdicts,
+        rowsKey: rowsKeyOf(rows.map(keyedOf)),
+        warnings: warningViewsOf(warnings, post.id, (index) => rows[index]!.id),
+      };
     });
   }
 
@@ -288,10 +302,10 @@ export class RequirementPlacementsService {
     return this.prisma.withRls(user, async (tx) => {
       const year = await tx.academicYear.findUnique({
         where: { id: academicYearId },
-        select: { isActive: true, predecessorId: true, gradeNumbering: true },
+        select: { isActive: true, predecessorId: true, gradeNumbering: true, startDate: true, endDate: true },
       });
       if (!year) throw new NotFoundException('Läsåret finns inte.');
-      const [posts, rows, keptRows, mealRows, blocks, written] = await Promise.all([
+      const [posts, rows, keptRows, mealRows, blocks, written, held] = await Promise.all([
         tx.teachingRequirement.findMany({ where: { academicYearId }, select: BOARD_POST_SELECT, orderBy: { id: 'asc' } }),
         tx.teachingRequirementPlacement.findMany({
           where: { requirement: { academicYearId } },
@@ -318,6 +332,8 @@ export class RequirementPlacementsService {
           _count: { _all: true },
           _max: { createdAt: true },
         }),
+        // Other schools' hold on this school's teachers and rooms, which the judge holds a row to (OTHER_SCHOOL): bands in the week.
+        readOtherSchoolHolds(tx, academicYearId, requireSchoolId(user)),
       ]);
 
       const kept = keptRows.map((lesson) => ({
@@ -342,17 +358,18 @@ export class RequirementPlacementsService {
       const locksByPost = new Map(posts.map((post) => [post.id, coveringLocksOf(boardPostShape(post), kept)]));
       const ofBlocks = blocks.map((block) => ({ block, ...judgedRowsOfBlock(block, block.rows) }));
 
+      // The posts' rows first, then each block's, one row per lesson and member (judgedRowsOfBlock).
+      const judgedRows = [...rows.map((row) => judgedRowOf(postById.get(row.requirementId)!, slotOf(row), row.id)), ...ofBlocks.flatMap((entry) => entry.judged)];
       // Every row of the year at once, as Generera's pre-flight judges them, against the lessons it keeps and each other.
       const verdicts: PlacementVerdict[] =
-        rows.length === 0 && ofBlocks.every((entry) => entry.judged.length === 0)
+        judgedRows.length === 0
           ? []
           : await judgePlacements(tx, this.masters, {
               academicYearId,
               schoolId: requireSchoolId(user),
               gradeNumbering: year.gradeNumbering as GradeNumbering,
               basis: await rostersOfYear(tx, user, academicYearId, { isActive: year.isActive, predecessorId: year.predecessorId }),
-              // The posts' rows first, then each block's, one row per lesson and member (judgedRowsOfBlock).
-              rows: [...rows.map((row) => judgedRowOf(postById.get(row.requirementId)!, slotOf(row), row.id)), ...ofBlocks.flatMap((entry) => entry.judged)],
+              rows: judgedRows,
               beside: [],
               demand: new Map(
                 [...slotsOf].map(([postId, slots]) => {
@@ -361,6 +378,25 @@ export class RequirementPlacementsService {
                 }),
               ),
             });
+
+      // What the fixed week says of every row, with the lessons Generera keeps and the meals placed by hand read once above.
+      const warned = await placementWarnings(tx, user, { academicYearId, year, rows: judgedRows, beside: [], kept, meals: mealRows });
+      const originOfJudged = ofBlocks.flatMap((entry) => entry.origins.map((origin) => ({ origin, block: entry.block })));
+      const warnings: PlacementWarningView[] = warned.flatMap((list, index) => {
+        if (list.length === 0) return [];
+        const post = index < rows.length ? rows[index]! : null;
+        const block = post === null ? originOfJudged[index - rows.length]! : null;
+        const rowId = post !== null ? post.id : block!.block.rows[block!.origin.index]?.id;
+        if (rowId === undefined || rowId === null) return [];
+        return list.map(
+          (warning): PlacementWarningView => ({
+            rowId,
+            requirementId: post !== null ? post.requirementId : block!.origin.requirementId,
+            ...(block !== null ? { blockId: block.origin.blockId } : {}),
+            ...warning,
+          }),
+        );
+      });
 
       const placements: BoardPlacementView[] = rows.map((row, index) => {
         const verdict = verdicts[index] ?? { index, ok: true };
@@ -379,6 +415,16 @@ export class RequirementPlacementsService {
         ),
         kept: kept.map(keptViewOf),
         meals: mealRows.map(mealViewOf),
+        warnings,
+        holds: held.holds.map((hold) => ({
+          kind: hold.kind,
+          resourceKind: hold.resourceKind,
+          resourceId: hold.resourceId,
+          dayOfWeek: hold.dayOfWeek,
+          startTime: hold.startTime.slice(0, 5),
+          endTime: hold.endTime.slice(0, 5),
+          schools: hold.schools,
+        })),
         blocks: ofBlocks.map((entry) => {
           // This block's verdicts: the rows after the posts' and the earlier blocks'.
           const start = rows.length + ofBlocks.slice(0, ofBlocks.indexOf(entry)).reduce((sum, earlier) => sum + earlier.judged.length, 0);
@@ -425,7 +471,7 @@ export class RequirementPlacementsService {
         const fit = placementFitOf(shape, wanted);
         if (fit !== null) throw requirementPlacementsConflict(fit, fitIndexOf(shape, wanted, fit));
 
-        const verdicts = await this.judge(tx, user, post, wanted);
+        const { verdicts, rows: judgedRows, beside } = await this.judged(tx, user, post, wanted);
         // Refused for the rows the save puts there, not for the ones the post already has: a post whose rows have stopped
         // holding is mended one row at a time, and the rows still not holding are said in the answer (placement-unchanged.ts).
         const failing = verdicts.filter((verdict) => !verdict.ok);
@@ -491,6 +537,8 @@ export class RequirementPlacementsService {
         });
         // The rows let stand that still do not hold are named (a verdict that is not ok), at the place the answer has them.
         const sent = sentIndexOf(written.map(slotOf), wanted);
+        // What the week says of the rows now written, at their places in the answer. A save is never refused for it.
+        const warned = await this.warningsOf(tx, user, post, judgedRows, beside);
         return {
           placements: written.map(viewOf),
           verdicts: written.map((_, index): PlacementVerdictView => {
@@ -500,6 +548,11 @@ export class RequirementPlacementsService {
               : { index, ok: true };
           }),
           rowsKey: rowsKeyOf(written.map(keyedOf)),
+          warnings: warningViewsOf(
+            written.map((_, index) => warned[sent[index] ?? -1] ?? []),
+            id,
+            (index) => written[index]!.id,
+          ),
         };
       });
     } catch (error) {
@@ -532,15 +585,17 @@ export class RequirementPlacementsService {
    * The post's rows judged against the kept lessons, the year's other posts'
    * förläggningar and each other. The year's classes are read on the basis the
    * hand edit uses (a year not yet activated is judged on the pupils its
-   * activation would place, and a year two steps ahead is refused, R6).
+   * activation would place, and a year two steps ahead is refused, R6). The rows
+   * as the judge read them and the rows beside are returned with the verdicts,
+   * so that the warnings count over the very same week without reading it again.
    */
-  private async judge(
+  private async judged(
     tx: PrismaClient,
     user: AuthenticatedUser,
     post: PostRow,
     slots: readonly PlacementSlot[],
-  ): Promise<PlacementVerdict[]> {
-    if (slots.length === 0) return [];
+  ): Promise<{ verdicts: PlacementVerdict[]; rows: JudgedPlacement[]; beside: JudgedPlacement[] }> {
+    if (slots.length === 0) return { verdicts: [], rows: [], beside: [] };
     const schoolId = requireSchoolId(user);
     const basis = await rostersOfYear(tx, user, post.academicYearId, {
       isActive: post.academicYear.isActive,
@@ -548,14 +603,26 @@ export class RequirementPlacementsService {
     });
     const beside = await this.besideOf(tx, post);
     const locks = await this.locksOf(tx, post);
-    return judgePlacements(tx, this.masters, {
+    const rows = slots.map((slot) => judgedRowOf(post, slot));
+    const verdicts = await judgePlacements(tx, this.masters, {
       academicYearId: post.academicYearId,
       schoolId,
       gradeNumbering: post.academicYear.gradeNumbering as GradeNumbering,
       basis,
-      rows: slots.map((slot) => judgedRowOf(post, slot)),
+      rows,
       beside,
       demand: new Map([[post.id, judgeDemandOf(post, locks, placedByRowsOf(post, slots))]]),
+    });
+    return { verdicts, rows, beside };
+  }
+
+  /** What the fixed week says of the post's rows (placement-warnings.ts), a list per row. */
+  private warningsOf(tx: PrismaClient, user: AuthenticatedUser, post: PostRow, rows: readonly JudgedPlacement[], beside: readonly JudgedPlacement[]): Promise<PlacementWarning[][]> {
+    return placementWarnings(tx, user, {
+      academicYearId: post.academicYearId,
+      year: { startDate: post.academicYear.startDate, endDate: post.academicYear.endDate },
+      rows,
+      beside,
     });
   }
 
@@ -634,6 +701,15 @@ export class RequirementPlacementsService {
       lessons.map((lesson) => ({ ...lesson, minutes: minutesOfClock(lesson.endTime) - minutesOfClock(lesson.startTime) })),
     );
   }
+}
+
+/** The warnings of a list of rows as an answer states them: each names its row in the answer, by the answer's own id. */
+function warningViewsOf(
+  warnings: readonly (readonly PlacementWarning[])[],
+  requirementId: string,
+  rowIdAt: (index: number) => string,
+): PlacementWarningView[] {
+  return warnings.flatMap((list, index) => list.map((warning): PlacementWarningView => ({ rowId: rowIdAt(index), requirementId, ...warning })));
 }
 
 /** What the fit reads of a post. */

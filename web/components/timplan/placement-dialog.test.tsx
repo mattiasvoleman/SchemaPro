@@ -641,6 +641,74 @@ describe("a save that leaves a row that does not hold (review of #326, MEDEL-2)"
   });
 });
 
+describe("a save the week warns about (D1)", () => {
+  const DAY = { code: "TEACHER_DAY_TOO_LONG", refuses: false, params: { day: 2, minutes: 470, cap: 420 }, rowId: "n1", requirementId: "r-sl" };
+  const LUNCH = { code: "CLASS_HAS_NO_LUNCH", refuses: true, params: { day: 2, windowStart: "10:30", windowEnd: "13:00", minutes: 30 }, rowId: "n1", requirementId: "r-sl" };
+  const wrote = (extra: Record<string, unknown>) =>
+    state.put.mockResolvedValue({ placements: [stored({ id: "n1" })], verdicts: [{ index: 0, ok: true }], rowsKey: "aaaaaaaaaaaaaaaa", ...extra });
+
+  it("says Sparat as before when the answer has no warning, with a gateway from before them", async () => {
+    answer([stored()], undefined, "0123456789abcdef");
+    wrote({});
+    const { user, onOpenChange } = await opened();
+    await user.click(saveButton());
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(state.success).toHaveBeenCalledWith("saved");
+    expect(state.warning).not.toHaveBeenCalled();
+  });
+
+  it("says an empty list as nothing too", async () => {
+    answer([stored()], undefined, "0123456789abcdef");
+    wrote({ warnings: [] });
+    const { user, onOpenChange } = await opened();
+    await user.click(saveButton());
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(state.success).toHaveBeenCalledWith("saved");
+    expect(state.warning).not.toHaveBeenCalled();
+  });
+
+  it("saves, says so, and says the warnings with their number, as a warning and not as the all-clear", async () => {
+    answer([stored()], undefined, "0123456789abcdef");
+    wrote({ warnings: [DAY, LUNCH] });
+    const { user, onOpenChange } = await opened();
+    await user.click(saveButton());
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(state.success).not.toHaveBeenCalled();
+    expect(state.warning).toHaveBeenCalledTimes(1);
+    const said = state.warning.mock.calls[0]![0] as string;
+    // The save is said first; then the number and the sentences, and after the one that refuses what that means (Generera will refuse the week).
+    expect(said.startsWith("saved ")).toBe(true);
+    expect(said).toContain("said(2|TEACHER_DAY_TOO_LONG(day(2)|470|420) CLASS_HAS_NO_LUNCH(day(2)|10:30|13:00|30) refuses)");
+  });
+
+  it("says a warning that is on several rows once", async () => {
+    answer([stored(), stored({ id: "p2", dayOfWeek: 3 })], undefined, "0123456789abcdef");
+    state.put.mockResolvedValue({
+      placements: [stored({ id: "n1" }), stored({ id: "n2", dayOfWeek: 3 })],
+      verdicts: [{ index: 0, ok: true }, { index: 1, ok: true }],
+      rowsKey: "aaaaaaaaaaaaaaaa",
+      warnings: [DAY, { ...DAY, rowId: "n2" }],
+    });
+    const { user, onOpenChange } = await opened();
+    await user.click(saveButton());
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(state.warning.mock.calls[0]![0] as string).toContain("said(1|TEACHER_DAY_TOO_LONG");
+  });
+
+  it("says a row that does not hold AND the warnings, in the one word, the rows first", async () => {
+    answer([stored()], undefined, "0123456789abcdef");
+    wrote({ verdicts: [{ index: 0, ok: false, reason: "TEACHER" }], warnings: [DAY] });
+    const { user, onOpenChange } = await opened();
+    await user.click(saveButton());
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(state.warning).toHaveBeenCalledTimes(1);
+    const said = state.warning.mock.calls[0]![0] as string;
+    expect(said).toContain("savedStillFailing(1)");
+    expect(said.indexOf("stillFailing(2|")).toBeLessThan(said.indexOf("said(1|"));
+    expect(said).toContain("said(1|TEACHER_DAY_TOO_LONG");
+  });
+});
+
 describe("a refused save", () => {
   const refusedRow = (index: number) =>
     new ApiError(409, "x", "REQUIREMENT_PLACEMENT_REFUSED", {
