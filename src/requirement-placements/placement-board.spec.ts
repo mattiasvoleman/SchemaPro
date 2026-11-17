@@ -8,6 +8,7 @@ import {
   boardPostShape,
   coveringLocksOf,
   keptViewOf,
+  lessonsLeftOf,
   mealViewOf,
   type BoardPost,
   type KeptForCount,
@@ -205,6 +206,23 @@ describe('boardPostOf: what a post has left', () => {
         for (const part of view.parts) expect(part.locked + part.placed + part.left).toBe(part.count);
       }
     }
+  });
+});
+
+describe('lessonsLeftOf: does Generera have anything to place at all (review of #339, LÅG-1)', () => {
+  const view = (over: Partial<BoardPost>, locks: Parameters<typeof boardPostOf>[1], rows: readonly PlacementShape[]) =>
+    boardPostOf(post({ lessonsPerWeek: 2, ...over }), locks, rows);
+
+  it('is true while any post has a lesson left, and false when a lock or a förläggning answers every lesson of every post', () => {
+    const answered = view({}, [{ minutes: 60, teacherId: ANNA }], [row(60)]);
+    expect(lessonsLeftOf([answered])).toBe(false);
+    expect(lessonsLeftOf([answered, view({ id: 'post-2' }, [], [row(60)])])).toBe(true);
+    expect(lessonsLeftOf([])).toBe(false);
+  });
+
+  it('counts a lesson no one can teach as left: the engine is asked for it', () => {
+    const shared = view({ shares: [{ teacherId: null, lessons: 1, minutes: 60 }, { teacherId: ANNA, lessons: 1, minutes: 60 }] }, [], [row(60, 'ALL_WEEKS', ANNA)]);
+    expect(lessonsLeftOf([shared])).toBe(true);
   });
 });
 

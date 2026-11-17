@@ -208,6 +208,91 @@ describe('Förlagda poster (e2e)', () => {
         expect(JSON.stringify(response.body)).not.toContain('a-pupil');
       });
 
+      describe('a warning and a hold that really are said (review of #339, LÅG-4)', () => {
+        const TEACHER_ID = '88888888-8888-4888-8888-888888888888';
+        const SIBLING_ID = '12121212-1212-4121-8121-121212121212';
+        const YEAR_DAYS = { startDate: new Date('2026-08-17T00:00:00.000Z'), endDate: new Date('2027-06-11T00:00:00.000Z') };
+        /** The teacher keeps Wednesday 13:00-14:00 (KEPT, of another class and subject); the post's row is the hour before: two hours, over a cap of one. */
+        const keptOfTeacher = { ...KEPT, id: 'k-2', studentGroupId: '12121212-0000-4121-8121-121212121212', subjectId: '99999999-0000-4999-8999-999999999999' };
+        const ROW_ID = '77777777-7777-4777-8777-777777777777';
+
+        beforeEach(() => {
+          harness.tx['academicYear']!['findUnique']!.mockResolvedValue({ isActive: true, predecessorId: null, gradeNumbering: 'NIOARIG', ...YEAR_DAYS });
+          const { academicYear: _year, ...post } = POST;
+          harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([{ ...post, teacherId: TEACHER_ID }]);
+          harness.tx['teachingRequirement']!['findUnique']!.mockResolvedValue({ ...POST, teacherId: TEACHER_ID });
+          harness.tx['teacherWorkRule']!['findMany']!.mockResolvedValue([{ userId: TEACHER_ID, maxTeachingMinutesPerDay: 60 }]);
+          givenKept([keptOfTeacher]);
+          placements()['findMany']!.mockImplementation(async ({ where }: { where: { requirementId?: unknown } }) =>
+            where.requirementId === undefined || where.requirementId === POST_ID ? [row({ dayOfWeek: 3, startTime: wallClock('12:00') })] : [],
+          );
+        });
+
+        afterEach(() => {
+          harness.tx['teacherWorkRule']!['findMany']!.mockResolvedValue([]);
+          harness.tx['$queryRaw']!.mockResolvedValue([]);
+        });
+
+        const THE_WARNING = {
+          rowId: ROW_ID,
+          requirementId: POST_ID,
+          code: 'TEACHER_DAY_TOO_LONG',
+          // The row has a room, so it is a lock to the engine, which takes it as it lies: a warning, and no refusal.
+          refuses: false,
+          params: { day: 3, minutes: 120, cap: 60 },
+        };
+
+        it('carries the warning of a row through the pipe, the filter and the serialiser: its code, its flat figures and its refusal', async () => {
+          const response = await board().set('x-test-user', admin()).expect(200);
+          expect(response.body.warnings).toEqual([THE_WARNING]);
+          // A figure is a number and a flag is a boolean on the wire, not a string: the page does arithmetic on them and branches on them.
+          expect(typeof response.body.warnings[0].params.minutes).toBe('number');
+          expect(response.body.warnings[0].refuses).toBe(false);
+        });
+
+        it('says the same on the post\'s own read and on a save, and writes the row all the same: a warning never refuses', async () => {
+          const read = await request(http()).get(`/api/v1/teaching-requirements/${POST_ID}/placements`).set('x-test-user', admin()).expect(200);
+          expect(read.body.warnings).toEqual([THE_WARNING]);
+          const saved = await request(http())
+            .put(`/api/v1/teaching-requirements/${POST_ID}/placements`)
+            .set('x-test-user', admin())
+            .send({ placements: [body({ dayOfWeek: 3, startTime: '12:00' })] })
+            .expect(200);
+          expect(saved.body.warnings).toEqual([THE_WARNING]);
+          expect(saved.body.verdicts).toEqual([{ index: 0, ok: true }]);
+          expect(placements()['createMany']).toHaveBeenCalledTimes(1);
+        });
+
+        it('carries another school\'s hold on a teacher as a band: the day, the clock without seconds and the school\'s name, and no lesson of it', async () => {
+          harness.tx['$queryRaw']!.mockImplementation(async (query: { strings?: string[] }) => {
+            const text = (query.strings ?? []).join('');
+            if (text.includes('sibling_schools')) return [{ school_id: SIBLING_ID, name: 'Roller skola' }];
+            if (text.includes('shared_teacher_busy')) {
+              return [
+                {
+                  teacher_id: TEACHER_ID,
+                  school_id: SIBLING_ID,
+                  day_of_week: 4,
+                  start_time: wallClock('09:00'),
+                  end_time: wallClock('10:00'),
+                  recurrence: 'ALL_WEEKS',
+                  start_date: YEAR_DAYS.startDate,
+                  end_date: YEAR_DAYS.endDate,
+                  travel_minutes: null,
+                },
+              ];
+            }
+            return [];
+          });
+          const response = await board().set('x-test-user', admin()).expect(200);
+          expect(response.body.holds).toEqual([
+            { kind: 'TEACHER_BUSY', resourceKind: 'TEACHER', resourceId: TEACHER_ID, dayOfWeek: 4, startTime: '09:00', endTime: '10:00', schools: ['Roller skola'] },
+          ]);
+          // The other school's own lessons stay with it: only its name and the times.
+          expect(Object.keys(response.body.holds[0]).sort()).toEqual(['dayOfWeek', 'endTime', 'kind', 'resourceId', 'resourceKind', 'schools', 'startTime']);
+        });
+      });
+
       it('refuses a year that is no uuid, and answers 404 for one the caller cannot see', async () => {
         await board('x').set('x-test-user', admin()).expect(400);
         harness.tx['academicYear']!['findUnique']!.mockResolvedValue(null);

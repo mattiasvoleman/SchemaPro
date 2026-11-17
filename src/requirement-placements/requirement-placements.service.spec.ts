@@ -975,6 +975,29 @@ describe('RequirementPlacementsService.boardOfYear', () => {
       const rescued = board({ rows, lunch, classes: [GROUP], meals: [meal] });
       expect((await rescued.service.boardOfYear(YEAR, user)).warnings).toEqual([]);
     });
+
+    describe('a class with no lunch: does Generera refuse it, or does it not call the engine at all (review of #339, LÅG-1)', () => {
+      const lunch = { lunchEnabled: true, lunchStartTime: time('10:30'), lunchEndTime: time('13:00'), lunchMinutes: 30 };
+      // The post's one lesson is the row at 12:00; a lesson in Matematik that Generera keeps runs from 10:30 to 12:00. Together they
+      // take every start of the class's break in the window.
+      const mathKept = keptLesson({ id: 'k-m', subjectId: 'sub-ma', startTime: time('10:30'), endTime: time('12:00'), teacherId: null });
+      const onePost = boardPost({ lessonsPerWeek: 1 });
+      const lockRow = stored({ id: 'p-1', startTime: time('12:00'), minutes: 60, roomId: ROOM_1 });
+      const refusesOf = async (world: Parameters<typeof board>[0]) => (await board({ lunch, classes: [GROUP], kept: [mathKept], ...world }).service.boardOfYear(YEAR, user)).warnings.map((warning) => [warning.code, warning.refuses]);
+
+      it('says the class has no lunch but not that Generera refuses, when every lesson of the year is laid by hand and Generera has nothing to place', async () => {
+        expect(await refusesOf({ posts: [onePost], rows: [lockRow] })).toEqual([['CLASS_HAS_NO_LUNCH', false]]);
+      });
+
+      it('says that Generera refuses when another post still has a lesson for the engine to place', async () => {
+        const other = boardPost({ id: OTHER_REQ, studentGroupId: 'g-7b', subjectId: 'sub-ma', lessonsPerWeek: 1 });
+        expect(await refusesOf({ posts: [onePost, other], rows: [lockRow] })).toEqual([['CLASS_HAS_NO_LUNCH', true]]);
+      });
+
+      it('says that Generera refuses when the row has no room: a pin is a lesson the engine places, whatever else is left', async () => {
+        expect(await refusesOf({ posts: [onePost], rows: [stored({ id: 'p-1', startTime: time('12:00'), minutes: 60, roomId: null, room: null })] })).toEqual([['CLASS_HAS_NO_LUNCH', true]]);
+      });
+    });
   });
 
   describe('asks the judge what the dialog asks it (review of #315, MEDEL-1)', () => {
@@ -1592,6 +1615,45 @@ describe('RequirementPlacementsService: warnings on a save and a read of one pos
     const other = (await second.service.listOfPost(REQ, user)).warnings.map((warning) => warning.params);
     expect(one).toHaveLength(2);
     expect(other).toEqual(one);
+  });
+
+  describe('a class with no lunch: does Generera refuse it, when the post read or saved is not the whole year (review of #339, LÅG-1)', () => {
+    const lunch = { lunchEnabled: true, lunchStartTime: time('10:30'), lunchEndTime: time('13:00'), lunchMinutes: 30 };
+    const mathKept = { ...keptTuesday, id: 'k-m', subjectId: 'sub-ma', startTime: time('10:30'), endTime: time('12:00'), teacherId: null };
+    const onePost = { ...POST, lessonsPerWeek: 1 };
+    /** A post as the board reads it (the year's posts, for the count of what is left to place). */
+    const boardRow = (post: typeof POST) => {
+      const { academicYear: _year, schoolId: _school, academicYearId: _academicYear, ...shape } = post;
+      return shape;
+    };
+    const lockRow = stored({ id: 'p-1', startTime: time('12:00'), minutes: 60, roomId: ROOM_1 });
+    const world = (over: Record<string, unknown> = {}) => ({ post: onePost, lunch, classes: [GROUP], kept: [mathKept], rows: [lockRow], ...over });
+    const lunchOf = (warnings: Array<{ code: string; refuses: boolean }>) => warnings.filter((warning) => warning.code === 'CLASS_HAS_NO_LUNCH').map((warning) => warning.refuses);
+
+    it('does not say that Generera refuses when no post of the year has a lesson left, in a read and in a save', async () => {
+      const read = setup(world());
+      read.tx['teachingRequirement']!['findMany']!.mockResolvedValue([boardRow(onePost)]);
+      expect(lunchOf((await read.service.listOfPost(REQ, user)).warnings)).toEqual([false]);
+      const save = setup(world());
+      save.tx['teachingRequirement']!['findMany']!.mockResolvedValue([boardRow(onePost)]);
+      expect(lunchOf((await save.service.replace(REQ, { placements: [input({ startTime: '12:00', minutes: 60 })] }, user)).warnings)).toEqual([false]);
+    });
+
+    it('says that Generera refuses when another post of the year still has a lesson to place', async () => {
+      const other = { ...onePost, id: OTHER_REQ, studentGroupId: 'g-7b', subjectId: 'sub-ma' };
+      const { tx, service } = setup(world());
+      tx['teachingRequirement']!['findMany']!.mockResolvedValue([boardRow(onePost), boardRow(other)]);
+      expect(lunchOf((await service.listOfPost(REQ, user)).warnings)).toEqual([true]);
+    });
+
+    it('asks the year only when it changes the answer: not for a pin, which the engine places, and not for a week with no lunch warning', async () => {
+      const pin = setup(world({ rows: [stored({ id: 'p-1', startTime: time('12:00'), minutes: 60, roomId: null, room: null })] }));
+      expect(lunchOf((await pin.service.listOfPost(REQ, user)).warnings)).toEqual([true]);
+      expect(pin.tx['teachingRequirement']!['findMany']).not.toHaveBeenCalled();
+      const quiet = setup(world({ kept: [], rows: [stored({ id: 'p-1', startTime: time('12:00'), minutes: 60 })] }));
+      expect((await quiet.service.listOfPost(REQ, user)).warnings).toEqual([]);
+      expect(quiet.tx['teachingRequirement']!['findMany']).not.toHaveBeenCalled();
+    });
   });
 
   it('asks the kept lessons of the ruled teachers only when a rule is there', async () => {

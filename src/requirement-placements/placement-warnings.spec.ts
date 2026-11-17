@@ -205,6 +205,36 @@ describe("classLunchWarningsOf: the class's lunch over its own fixed lessons", (
     expect(warnings.get(0)).toEqual([{ code: 'CLASS_HAS_NO_LUNCH', refuses: true, params: { day: 2, windowStart: '10:30', windowEnd: '13:00', minutes: 30 } }]);
   });
 
+  describe('whether Generera refuses: only when the engine is asked (review of #339, LÅG-1)', () => {
+    const full = () => [lesson(at(10, 30), at(11, 45), { row: 0 }), lesson(at(11, 45), at(13), { row: 1 })];
+    const refuses = (items: FixedItem[], lessonsLeft?: boolean) =>
+      [...classLunchWarningsOf(items, lunch, classes, [], year, lessonsLeft).values()].flat().map((warning) => warning.refuses);
+
+    it('refuses while a post has a lesson left for the engine to place, and when the caller has not counted the posts', () => {
+      expect(refuses(full(), true)).toEqual([true, true]);
+      expect(refuses(full())).toEqual([true, true]);
+    });
+
+    it('does not refuse a week laid entirely by hand: with no lesson left and no pin Generera does not call the engine', () => {
+      expect(refuses(full(), false)).toEqual([false, false]);
+      // The warning is still said: the class has no lunch, whether or not Generera is run.
+      expect(classLunchWarningsOf(full(), lunch, classes, [], year, false).size).toBe(2);
+    });
+
+    it('refuses when any förläggning of the week is a pin, in this class or another: a pin is a lesson the engine places', () => {
+      const pinElsewhere = item({ dayOfWeek: 4, startMinutes: at(8), endMinutes: at(9), groupIds: ['8B'], roomId: null, pin: true, row: 2 });
+      expect(refuses([...full(), pinElsewhere], false)).toEqual([true, true]);
+      // The pin itself is a lesson of the class and has no lunch either: still refuses.
+      expect(refuses([lesson(at(10, 30), at(13), { row: 0, pin: true, roomId: null })], false)).toEqual([true]);
+    });
+
+    it('is the same through placementWarningsOf, whose `lessonsLeft` is passed on and absent means the engine is asked', () => {
+      const input = { items: full(), rows: 2, teacherRules: new Map(), showsHr: true, lunch: { rule: lunch, classes, meals: [], year }, rooms: null };
+      expect(placementWarningsOf(input).byRow.flat().map((warning) => warning.refuses)).toEqual([true, true]);
+      expect(placementWarningsOf({ ...input, lessonsLeft: false }).byRow.flat().map((warning) => warning.refuses)).toEqual([false, false]);
+    });
+  });
+
   it('says nothing when one start is left, on the grid and at the edge of the window', () => {
     // The last start is 12:30 (12:30 + 30 = 13:00): a lesson that ends at 12:30 leaves it.
     expect(run([lesson(at(10, 30), at(12, 30), { row: 0 })]).size).toBe(0);
