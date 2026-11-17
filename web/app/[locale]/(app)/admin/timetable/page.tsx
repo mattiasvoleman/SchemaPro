@@ -842,6 +842,13 @@ export default function TimetablePage() {
     (id: string, change: LessonChange, without?: ReadonlySet<string>): boolean => {
       const lesson = lessonById.get(id);
       if (!lesson) return false;
+      // A lesson written from a förläggning is changed in Förlägg i veckan: refused during the drag, not after the drop (409). Let go
+      // where it already is it stands, as the server lets it (assertPlacedLessonStands): a parked one put back on its own slot, and a
+      // drag that ends where it began.
+      if (lesson.fromPlacement) {
+        const own = toPlacement(lesson);
+        return change.dayOfWeek === own.dayOfWeek && change.startMinutes === own.startMinutes && change.endMinutes === own.endMinutes;
+      }
       return (
         validatePlacement(
           {
@@ -1115,6 +1122,7 @@ export default function TimetablePage() {
             .filter(Boolean)
             .join(" "),
           teacher ? `${teacher.firstName[0]}. ${teacher.lastName}` : null,
+          lesson.fromPlacement ? t("placedMark") : null,
         ]
           .filter(Boolean)
           .join(" · "),
@@ -1492,6 +1500,8 @@ export default function TimetablePage() {
       const lesson = lessonById.get(id);
       // A block's card has no suggestions of its own: it says why.
       if (!lesson) return void blockKit?.refuse(id, false);
+      // No slot is "nearest free" for a lesson that cannot move: the sentence says where it is changed.
+      if (lesson.fromPlacement) return void toast.error(t("lessonIsPlaced"));
       const candidate: Placement = {
         id,
         dayOfWeek: change.dayOfWeek,
@@ -2341,17 +2351,31 @@ export default function TimetablePage() {
           title={t("emptyTitle")}
           description={t("emptyHint")}
           action={
-            <Button asChild>
-              <Link
-                href={
-                  shownYear && !shownYear.isActive
-                    ? `/admin/generate?year=${shownYear.id}`
-                    : "/admin/generate"
-                }
-              >
-                {t("emptyAction")}
-              </Link>
-            </Button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button asChild>
+                <Link
+                  href={
+                    shownYear && !shownYear.isActive
+                      ? `/admin/generate?year=${shownYear.id}`
+                      : "/admin/generate"
+                  }
+                >
+                  {t("emptyAction")}
+                </Link>
+              </Button>
+              {/* The week where lessons are laid by hand before Generera (Förlägg i veckan); Planering's. */}
+              <Button asChild variant="outline" data-writes="PLANERING">
+                <Link
+                  href={
+                    shownYear && !shownYear.isActive
+                      ? `/admin/placements?year=${shownYear.id}`
+                      : "/admin/placements"
+                  }
+                >
+                  {t("emptyAction2")}
+                </Link>
+              </Button>
+            </div>
           }
         />
       ) : resourceBoards ? (

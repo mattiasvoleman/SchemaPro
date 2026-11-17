@@ -246,9 +246,24 @@ export interface BoardMealView {
   endDate: string | null;
 }
 
+/**
+ * WHAT THE GRUNDSCHEMA HOLDS OF THE FÖRLÄGGNINGAR, as Generera last wrote it (A3): how many of the year's lessons are one
+ * (MasterLessons.fromPlacement) and when the newest of them was written. Counted from the grundschema and not from a run's
+ * row, since that is the only thing that is true after a run, after a schemaförslag was applied (which writes the grundschema
+ * with no Generera) and after a förläggning was REMOVED (which leaves no changedAt behind, while its lesson stands locked
+ * until the next Generera). `createdAt` and not `updatedAt`: writeRegeneration deletes the generated lessons and creates
+ * them again, and a lock or an unlock only moves `updatedAt`.
+ */
+export interface BoardTimetableView {
+  placedLessons: number;
+  writtenAt: string | null;
+}
+
 /** GET /teaching-requirements/placements/board: the year's week of förläggningar. */
 export interface PlacementBoardResponse {
   academicYearId: string;
+  /** What the grundschema holds of them now: Generera's last write (BoardTimetableView). Additive: an older web ignores it. */
+  timetable: BoardTimetableView;
   /** Every förläggning of the year, in the order of GET /teaching-requirements/placements, each judged now. */
   placements: BoardPlacementView[];
   /** Every timplanspost of the year, its lessons counted the way Generera counts them. */

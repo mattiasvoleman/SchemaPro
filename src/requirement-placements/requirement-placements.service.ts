@@ -291,7 +291,7 @@ export class RequirementPlacementsService {
         select: { isActive: true, predecessorId: true, gradeNumbering: true },
       });
       if (!year) throw new NotFoundException('Läsåret finns inte.');
-      const [posts, rows, keptRows, mealRows, blocks] = await Promise.all([
+      const [posts, rows, keptRows, mealRows, blocks, written] = await Promise.all([
         tx.teachingRequirement.findMany({ where: { academicYearId }, select: BOARD_POST_SELECT, orderBy: { id: 'asc' } }),
         tx.teachingRequirementPlacement.findMany({
           where: { requirement: { academicYearId } },
@@ -312,6 +312,12 @@ export class RequirementPlacementsService {
         }),
         // Förlagda block: every block of the year with its members and lessons (block-placement-judge.ts).
         loadBlocksOfYear(tx, academicYearId),
+        // What Generera last wrote from them (BoardTimetableView): the grundschema's own count and newest createdAt.
+        tx.masterLesson.aggregate({
+          where: { academicYearId, fromPlacement: true },
+          _count: { _all: true },
+          _max: { createdAt: true },
+        }),
       ]);
 
       const kept = keptRows.map((lesson) => ({
@@ -366,6 +372,7 @@ export class RequirementPlacementsService {
       });
       return {
         academicYearId,
+        timetable: { placedLessons: written._count._all, writtenAt: written._max.createdAt?.toISOString() ?? null },
         placements,
         posts: posts.map((post) =>
           boardPostOf(boardPostShape(post), locksByPost.get(post.id) ?? [], slotsOf.get(post.id) ?? [], rowsKeyOf(keyedOfPost.get(post.id) ?? [])),

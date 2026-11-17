@@ -2,6 +2,7 @@ import { uid, KIND } from "../sessions";
 import { Reply } from "../gateway-routes";
 import { REQUIREMENTS, ROOMS, SUBJECTS, TEACHERS, YEAR } from "./world";
 import type { TeachingRequirement } from "../../../lib/types";
+import { placementTimetable } from "./placement-back";
 
 /**
  * Förlägg i veckan (GET /teaching-requirements/placements/board), as the
@@ -161,6 +162,7 @@ export function boardOfYear(yearId: string, scenario: string | null) {
   const posts = yearId === YEAR.id ? REQUIREMENTS.filter((entry) => entry.academicYearId === yearId) : [];
   return {
     academicYearId: yearId,
+    timetable: placementTimetable(yearId, scenario),
     placements: remembered ? remembered.rows : week ? (anyRoom ? [...WEEK_ROWS, ANY_ROOM_ROW] : WEEK_ROWS) : [],
     posts: posts.map((entry) => ({
       id: entry.id,
