@@ -3590,9 +3590,84 @@
   </p>
   <p>
     <strong>Veckor.</strong> En ny lektion får postens veckor: varje vecka, eller
-    udda eller jämna veckor på en post som går så. Ett par, udda veckor på ett
-    ställe och jämna på ett annat, läggs i dialogen på posten; veckan visar
-    båda halvorna med märke och du kan flytta dem var för sig.
+    udda eller jämna veckor på en post som går så. På en post som går varje
+    vecka kan du i stället lägga ett <strong>par</strong>, udda veckor på ett
+    ställe och jämna veckor på ett annat: se <em>Par, och veckan en vecka i
+    taget</em> nedan. Veckan visar båda halvorna med märke, och du kan flytta
+    dem var för sig.
+  </p>
+  <h4 id="forlagg-par-och-veckor">Par, och veckan en vecka i taget</h4>
+  <p>
+    <strong>Ett par</strong> är en lektion på två ställen: udda veckor på det
+    ena, jämna veckor på det andra. Det kan läggas på en post som går varje
+    vecka. Välj brickan och sedan <span class="ui">Par, udda veckor först</span>
+    eller <span class="ui">Par, jämna veckor först</span> i fältet
+    <span class="ui">Veckor</span> (förvalet, <em>Varje vecka</em>, lägger en
+    vanlig lektion). Lägg sedan <strong>första halvan</strong> på något av de tre
+    sätten ovan, och därefter <strong>andra halvan</strong>, som läggs för de
+    andra veckorna.
+  </p>
+  <ul>
+    <li><strong>Första halvan sparas inte.</strong> Databasen tar inte emot en
+      ensam halva, så första halvan ligger bara i webbläsaren tills den andra
+      är lagd. Den syns som en streckad ruta med texten <em>udda veckor · inte
+      sparad</em>, och raden ovanför veckan säger vad som gäller. När du lägger
+      andra halvan sparas båda i en och samma sparning, och paret räknas som
+      <em>en</em> lektion i talet överst och i listan över posterna. Går något
+      fel sparas ingenting.</li>
+    <li><strong>Båda halvorna har en sal.</strong> Ett par skickas till motorn
+      som två lås, och ett lås har en sal. Fältet <span class="ui">Sal</span>
+      har därför inget <em>Motorn väljer sal</em> för en halva, och
+      <span class="ui">Lägg</span> väntar tills en sal är vald. Andra halvan
+      börjar på första halvans sal. De två halvorna får stå på samma tid, i
+      samma sal och hos samma lärare, eftersom udda och jämna veckor aldrig möts.</li>
+    <li><strong>På en delad post är ett par en lärares.</strong> Brickan har sin
+      lärare, och båda halvorna får den läraren. Två lärares halvor är inget par,
+      även om längden är densamma.</li>
+    <li><strong>Vad som händer med en halva som inte är sparad.</strong>
+      <em>Släpp halvan</em> tar bort den utan att något sparats. Ångra, eller
+      Ctrl+Z, tar tillbaka den <em>före</em> varje sparat steg och skriver inget;
+      Gör om för aldrig tillbaka en halva. Byter du läsår släpps den, och sidan
+      säger det. Stänger du fliken, laddar om, eller följer en länk i appen
+      frågar webbläsaren respektive sidan om du vill lämna; webbläsarens
+      Bakåt-knapp frågar inte, och halvan är då borta. Har någon annan ändrat
+      posten medan du lade andra halvan nekas sparningen (<em>409</em>): ingenting
+      skrivs, veckan läses om, första halvan ligger kvar och du lägger den andra
+      igen. Nekas paret för en krock eller en sal som saknas ligger halvan också
+      kvar, och meningen säger vilken halva det gäller. Har någon annan lagt
+      postens alla lektioner släpps halvan. Ett filter tappar inte halvan, men
+      medan en halva ligger kan du inte välja eller dra in en annan bricka: lägg
+      eller släpp halvan först. Halvan är med när veckan prövar det du lägger
+      bredvid, så en annan lektion kan inte läggas över den.</li>
+  </ul>
+  <p>
+    <strong>Märken på rutorna.</strong> Varje ruta säger vilka veckor den går:
+    <em>udda</em> eller <em>jämna</em>, och för en post som bara gäller en del av
+    läsåret datumen: <em>HT</em> för hela hösten (från läsårets start till en dag
+    i december), <em>VT</em> för hela våren (från en dag i januari till slutet),
+    annars sluten som <em>t.o.m. 30 okt.</em>, <em>fr.o.m. 11 jan.</em> eller
+    <em>24 aug.–30 okt.</em>. HT och VT sägs bara när det stämmer rakt av; varje
+    annat fönster säger sina datum, som alltid är sanna.
+  </p>
+  <p>
+    <strong>Vecka.</strong> Över veckan väljer du <span class="ui">Alla
+    veckor</span> (så som sidan alltid ritats) eller en enskild vecka av läsåret,
+    grupperade i höst- och vårtermin. Varje vecka står med veckonummer, datum och
+    om den är en udda (A) eller jämn (B) vecka. A-veckor är de med udda veckonummer
+    och B-veckor de med jämna, enligt ISO 8601; det är samma räkning som
+    publiceringen gör. En vecka du valt visar bara de lektioner som går just den
+    veckan, med dagens datum under dagarna: en lektion som går jämna veckor syns
+    inte en udda vecka, och en post som slutar den 18 december syns inte i januari.
+    Pilknapparna stegar ett läsår igenom, och <span class="ui">Alla veckor</span>
+    tar tillbaka alla. Läsåret kan börja en lördag, som produktionens gör; veckan
+    som rymmer lördagen har då ingen skoldag i läsåret och är ingen vecka i listan,
+    och första veckan börjar måndagen efter. Ett ISO-år med 53 veckor har två udda
+    veckor i rad vid årsskiftet, vecka 53 och vecka 1, och listan visar dem så.
+    Bara rutorna smalnas av: brickorna, listorna under veckan, talen och prövningen
+    av det du lägger gäller hela läsåret, eftersom en lektion läggs för sina veckor
+    och inte för veckan du tittar på. Lägger du ett par följer veckan du ser med:
+    en halva för udda veckor läggs mot en udda vecka, och när den är lagd visas en
+    jämn vecka för den andra.
   </p>
   <h4 id="forlagg-blockbricka">Ett parallellt blocks lektioner i veckan</h4>
   <p>
