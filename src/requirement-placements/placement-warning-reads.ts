@@ -152,7 +152,8 @@ export async function placementWarnings(tx: PrismaClient, user: AuthenticatedUse
     ]);
     const capOf = new Map(capped.map((rule) => [rule.userId, rule.maxTeachingMinutesPerDay]));
     const limitOf = new Map(limited.map((post) => [post.userId, post]));
-    for (const teacherId of new Set([...capOf.keys(), ...limitOf.keys()])) {
+    // In id order, so that a row with two teachers' warnings says them in the same order at every read.
+    for (const teacherId of [...new Set([...capOf.keys(), ...limitOf.keys()])].sort()) {
       teacherRules.set(teacherId, {
         maxTeachingMinutesPerDay: capOf.get(teacherId) ?? null,
         maxTeachingDaysPerWeek: limitOf.get(teacherId)?.maxTeachingDaysPerWeek ?? null,

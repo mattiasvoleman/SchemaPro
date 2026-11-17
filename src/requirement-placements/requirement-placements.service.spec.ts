@@ -1549,6 +1549,25 @@ describe('RequirementPlacementsService: warnings on a save and a read of one pos
     expect((await eat.service.listOfPost(REQ, user)).warnings.map((warning) => warning.code)).toEqual(['CLASS_HAS_NO_LUNCH']);
   });
 
+  it('says the warnings of a row with two ruled teachers in the teachers’ id order, whatever order the database answers in', async () => {
+    const BO = '55555555-5555-4555-8555-555555555555';
+    const world = { post: { ...POST, coTeacherId: BO } as unknown as typeof POST, rows: [stored({ id: 'p-1', startTime: time('10:00') })] };
+    const keptBoth = [
+      { ...keptTuesday, id: 'k-a', teacherId: TEACHER },
+      { ...keptTuesday, id: 'k-b', teacherId: BO, startTime: time('09:00'), endTime: time('10:00') },
+    ];
+    const rules = [
+      { userId: TEACHER, maxTeachingMinutesPerDay: 90 },
+      { userId: BO, maxTeachingMinutesPerDay: 100 },
+    ];
+    const first = setup({ ...world, kept: keptBoth, workRules: rules });
+    const second = setup({ ...world, kept: keptBoth, workRules: [...rules].reverse() });
+    const one = (await first.service.listOfPost(REQ, user)).warnings.map((warning) => warning.params);
+    const other = (await second.service.listOfPost(REQ, user)).warnings.map((warning) => warning.params);
+    expect(one).toHaveLength(2);
+    expect(other).toEqual(one);
+  });
+
   it('asks the kept lessons of the ruled teachers only when a rule is there', async () => {
     const { tx, service } = setup({ kept: [keptTuesday], workRules: CAP_90, rows: [stored({ id: 'p-1', startTime: time('10:00') })] });
     await service.listOfPost(REQ, user);
