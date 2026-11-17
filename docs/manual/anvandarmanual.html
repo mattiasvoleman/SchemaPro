@@ -2935,22 +2935,30 @@
     <p>
       En lärare kan inte vara på två ställen. Står samma lärare på tre av en
       årskurs språkgrupper kan de tre inte gå samtidigt, även om de inte delar
-      någon elev, och varje klass som de tar elever ur måste sitta igenom dem
-      en i taget: tre tider i stället för en. Med fem klasser och sex
-      språkgrupper kan det ta bort flera timmar av varje klasss vecka, och
-      årskursen blir full utan att något enskilt villkor är fel. Genereringen
-      räknar ut det före sökningen. Är årskursens minsta vecka större än ramtiderna
+      någon elev: tre tider i stället för en. En klass som de tar elever ur kan
+      inte heller ha någon egen lektion medan en av dem går, men det är allt
+      klassen förlorar: högst de egna lektioner den har. Har klasserna många
+      egna lektioner, som i ett språkval med fem klasser och sex språkgrupper,
+      kan det ta bort flera timmar av varje klasss vecka. Har de bara en timme
+      var, som åk 9 med bara Teknik, förlorar de högst den timmen, och då är
+      det lärarens kö, inte klasserna, som fyller veckan. Årskursen kan bli full
+      utan att något enskilt villkor är fel. Genereringen räknar ut det före
+      sökningen. Är årskursens minsta vecka större än ramtiderna
       lämnar vägras körningen med årskursen, minuterna mot ramtiderna och de
       grupper som delar lärare; ligger den över 85 % av ramtiderna säger en
-      <span class="ui">Lösaren hann inte klart</span> det i stället.
+      <span class="ui">Lösaren hann inte klart</span> det i stället. Raden för
+      varje lärare säger hur många minuter egna lektioner en av de delade
+      klasserna högst har, eller att klasserna inte har några.
     </p>
     <p>
       Två vägar ut. Ge varje språkgrupp en egen lärare och lägg posterna i
       ett parallellt block (ovan): då går de samtidigt, och språkvalet tar en tid
-      per lektion i stället för en per grupp. Eller låt varje grupp ta elever
-      ur färre klasser, så att det finns grupper som inte delar klass och kan
-      gå samtidigt med en lärare var. Räcker inte det kan ramtiderna vidgas
-      (5.1) eller lektioner tas bort.
+      per lektion i stället för en per grupp. Eller, när klasserna har egna
+      lektioner att vinna tillbaka, låt varje grupp ta elever ur färre klasser,
+      så att det finns grupper som inte delar klass och kan gå samtidigt med en
+      lärare var; raden säger när det inte lönar sig, och då hjälper bara egna
+      lärare. Räcker inte det kan ramtiderna vidgas (5.1) eller lektioner tas
+      bort.
     </p>
   </div>
   <h4 id="forlagg-block">Förlägg ett parallellt block</h4>
@@ -10744,8 +10752,8 @@
       </tr>
       <tr>
         <td class="k">Vägran säger att veckan inte rymmer en årskurs, och namnger lärare som står på flera grupper</td>
-        <td>Årskursens lektioner, växlingstiden mellan dem och lunchen behöver mer tid än ramtiderna lämnar, även om lektionerna kunde delas upp fritt. Oftast är det språkvalet: samma lärare på flera grupper som tar elever ur samma klasser, så att grupperna inte kan gå samtidigt och varje klass måste sitta igenom dem en i taget. Raderna visar årskursen, minuterna mot ramtiderna och grupperna per lärare; läraren själv namnges aldrig.</td>
-        <td>Ge varje grupp en egen lärare och lägg posterna i ett parallellt block (4.2), eller låt grupperna ta elever ur färre klasser. Annars: vidga ramtiderna (5.1) eller ta bort lektioner.</td>
+        <td>Årskursens lektioner, växlingstiden mellan dem och lunchen behöver mer tid än ramtiderna lämnar, även om lektionerna kunde delas upp fritt. Oftast är det språkvalet: samma lärare på flera grupper som tar elever ur samma klasser, så att grupperna inte kan gå samtidigt och en klass inte kan ha egna lektioner medan en av dem går. Raderna visar årskursen, minuterna mot ramtiderna, grupperna per lärare och hur många minuter egna lektioner en av de delade klasserna högst har (eller att de inga har); läraren själv namnges aldrig.</td>
+        <td>Ge varje grupp en egen lärare och lägg posterna i ett parallellt block (4.2). Har de delade klasserna egna lektioner kan grupperna också ta elever ur färre klasser; säger raden att klasserna inga har är det lärarens kö som fyller veckan, och då hjälper bara egna lärare. Annars: vidga ramtiderna (5.1) eller ta bort lektioner.</td>
       </tr>
       <tr>
         <td class="k">Lösaren hann inte klart, och diagnosen säger att veckan för en årskurs är trång</td>
