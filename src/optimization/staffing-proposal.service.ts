@@ -17,7 +17,7 @@ import { PrismaService } from '../database/prisma.service';
 import { changesDuringYear } from '../staffing/employment-periods';
 import { readLoadInput, type LoadRead } from '../staffing/load-input';
 import { lastYearKey, readLastYearTeachers } from '../staffing/last-year-teachers';
-import { readActiveStaffIds } from '../staffing/staff-candidates';
+import { readActiveStaff } from '../staffing/staff-candidates';
 import {
   SAME_TEACHER_TWICE,
   enforceRequirementBatch,
@@ -285,8 +285,18 @@ interface StaffingState {
   schoolId: string;
   read: LoadRead;
   policy: EnforcedPolicy;
-  /** Active TEACHER and SCHOOL_ADMIN ids, sorted. */
+  /** Active TEACHER and SCHOOL_ADMIN ids, sorted: who can lead a post, so a row led by anybody else is vacated. */
   staffIds: string[];
+  /**
+   * Of them, who may be OFFERED a post: teachers, and administrators who
+   * teach (Users.teaches). An administrator without the mark stays in
+   * staffIds, so what she leads is not taken from her, but she is offered
+   * nothing new (staff-candidates.ts). Not in the basis: an apply asks it
+   * again of the state it finds, and a mark moved since the proposal refuses
+   * the pick instead of making every earlier digest, an undo's included,
+   * stale.
+   */
+  candidateIds: string[];
   /** Last year's teachers (Fas 5's fold) per requirement id, for rows whose group has a predecessor. */
   lastYear: Map<string, LastYearTeachers>;
 }
@@ -310,9 +320,10 @@ interface RowPlan {
   /** Free rows only: last year's teachers among the staff, sorted. */
   lastYear: string[];
   /**
-   * Free dated rows only: the posts that change during the year which the
-   * row does not fit (allowedDatedRows), never newly given it whatever
-   * eligible says, sorted.
+   * Free rows only: never newly given it whatever eligible says, sorted. The
+   * posts that change during the year which a dated row does not fit
+   * (allowedDatedRows), a teacher who takes some of its lessons, and an
+   * administrator without Users.teaches who would have room for it.
    */
   excluded: string[];
 }
@@ -340,6 +351,8 @@ interface Plan {
   respectForcedByPolicy: boolean;
   tolerance: number;
   staff: Set<string>;
+  /** Of staff, who may be offered a post (Users.teaches for an administrator). */
+  candidates: Set<string>;
   teachers: TeacherPlan[];
   teacherById: Map<string, TeacherPlan>;
   rows: RowPlan[];
@@ -595,15 +608,25 @@ export class StaffingProposalService {
 
       const rows = new Map(state.read.input.requirements.map((row) => [row.id, row]));
       const staff = new Set(state.staffIds);
+      const candidates = new Set(state.candidateIds);
       const restoring: string[] = [];
       for (const change of dto.changes) {
         const row = rows.get(change.requirementId);
         if (!row) throw new BadRequestException(`Requirement ${change.requirementId} is not in this academic year.`);
-        if (change.toTeacherId !== null && !staff.has(change.toTeacherId)) {
-          // An undo may put back a lead who has left since: that is the state
-          // the apply found. Anybody else must be active staff.
-          if (dto.undo === true) restoring.push(change.toTeacherId);
-          else throw new BadRequestException(`Teacher ${change.toTeacherId} is not active staff of this school.`);
+        if (change.toTeacherId !== null && !candidates.has(change.toTeacherId)) {
+          // An undo may put back a lead who has left since, or one who no
+          // longer teaches (an administrator whose mark was taken off): that
+          // is the state the apply found. Anybody else must be offered the
+          // post, which an administrator without the mark is not.
+          if (dto.undo === true) {
+            if (!staff.has(change.toTeacherId)) restoring.push(change.toTeacherId);
+          } else {
+            throw new BadRequestException(
+              staff.has(change.toTeacherId)
+                ? `Teacher ${change.toTeacherId} is an administrator who does not teach (Users.teaches), so is offered no post.`
+                : `Teacher ${change.toTeacherId} is not active staff of this school.`,
+            );
+          }
         }
         if (change.toTeacherId !== null && change.toTeacherId === row.coTeacherId) {
           throw new BadRequestException(SAME_TEACHER_TWICE);
@@ -798,7 +821,7 @@ export class StaffingProposalService {
     const read = await readLoadInput(tx, user, academicYearId, schoolId);
     if (!read) throw new NotFoundException('Academic year not found.');
     const policy = await readCheckPolicy(tx, schoolId, readsHr(user));
-    const staffIds = await readActiveStaffIds(tx, academicYearId);
+    const { staffIds, candidateIds } = await readActiveStaff(tx, academicYearId);
     const groups = await tx.studentGroup.findMany({
       where: { academicYearId, predecessorId: { not: null } },
       select: { id: true, predecessorId: true },
@@ -816,7 +839,7 @@ export class StaffingProposalService {
       const teachers = folded.get(lastYearKey(row.predecessorId, row.subjectId));
       if (teachers) lastYear.set(row.id, teachers);
     }
-    return { schoolId, read, policy, staffIds, lastYear };
+    return { schoolId, read, policy, staffIds, candidateIds, lastYear };
   }
 
   /**
@@ -1006,7 +1029,11 @@ export class StaffingProposalService {
           limitMinutesPerWeek: target === null ? null : limitMinutes(target, plan.tolerance),
           // C1 asked of the year: no target above 0, or today over the
           // year's limit. The plan's own answer is the stretch's.
-          keepOrShed: target === null || target <= 0 || loadStatus(today, target, plan.tolerance) === 'OVER',
+          keepOrShed:
+            !plan.candidates.has(teacher.userId) ||
+            target === null ||
+            target <= 0 ||
+            loadStatus(today, target, plan.tolerance) === 'OVER',
           before: point(today, target),
           after: point(after.get(teacher.userId) ?? 0, target),
         };
@@ -1188,7 +1215,7 @@ export function toTenthsUp(minutes: number): number {
  * fixed load. Pure; the order is canonical (rows and teachers by real id).
  */
 export function planOf(
-  state: Pick<StaffingState, 'read' | 'policy' | 'staffIds' | 'lastYear'>,
+  state: Pick<StaffingState, 'read' | 'policy' | 'staffIds' | 'candidateIds' | 'lastYear'>,
   dto: Pick<StaffingProposalDto, 'onlyUnstaffed' | 'respectQualifications' | 'pinnedRequirementIds'>,
 ): Plan {
   const input = state.read.input;
@@ -1196,6 +1223,12 @@ export function planOf(
   const tolerance = loadPolicy.overAllocationTolerancePercent;
   const staffIds = [...new Set(state.staffIds)].sort(compareIds);
   const staff = new Set(staffIds);
+  // Who may be OFFERED a post. Everybody else in staffIds (an administrator
+  // without Users.teaches) is staff, so the rows she leads are hers and not
+  // vacated, but she is given nothing new: left out of every list of who may
+  // take a row, sent as keep-or-shed, and excluded from each free row she
+  // would otherwise have room for.
+  const candidates = new Set(state.candidateIds);
   const recorded = input.qualifications.length > 0;
   const respect = recorded && (dto.respectQualifications || state.policy.qualificationMode === 'REFUSE');
   const respectForcedByPolicy = recorded && !dto.respectQualifications && state.policy.qualificationMode === 'REFUSE';
@@ -1276,9 +1309,9 @@ export function planOf(
               .map((qualification) => qualification.userId),
           )
         : subjectFamiliarTeachers(input, row.id, state.lastYear.get(row.id) ?? null);
-      eligible = staffIds.filter((id) => holders.has(id));
+      eligible = staffIds.filter((id) => holders.has(id) && candidates.has(id));
       const taught = new Set(state.lastYear.get(row.id)?.teacherIds ?? []);
-      lastYear = staffIds.filter((id) => taught.has(id)).slice(0, MAX_LAST_YEAR);
+      lastYear = staffIds.filter((id) => taught.has(id) && candidates.has(id)).slice(0, MAX_LAST_YEAR);
     }
     return {
       row,
@@ -1310,7 +1343,7 @@ export function planOf(
     ...input,
     requirements: input.requirements.map((row) => (freeIds.has(row.id) ? { ...row, teacherId: null } : row)),
   };
-  const teachers = staffIds.map((userId): TeacherPlan => {
+  const plannedByLoad = staffIds.map((userId): TeacherPlan => {
     const employment = changingPost.get(userId);
     if (employment) return changingTeacherPlan(userId, employment, fixedInput, keptTenths.get(userId) ?? 0, tolerance);
     const target = targetOf.get(userId) ?? null;
@@ -1331,6 +1364,21 @@ export function planOf(
     };
   });
 
+  // The engine never sees keepOrShed: it follows from the target and the load
+  // above, and an administrator without the mark who has room by those would
+  // be given rows. So she is excluded from each free row (below), which the
+  // engine takes as "never newly given, whatever the room", and sent
+  // keep-or-shed, so that a proposal which gave her one anyway is refused
+  // whole (realise). One with no room by load needs neither: the engine
+  // already gives her nothing, and a school's administrators with no post
+  // then add nothing to the payload.
+  const notOfferedWithRoom = new Set(
+    plannedByLoad.filter((teacher) => !candidates.has(teacher.userId) && !teacher.keepOrShed).map((teacher) => teacher.userId),
+  );
+  const teachers = plannedByLoad.map((teacher): TeacherPlan =>
+    candidates.has(teacher.userId) || teacher.keepOrShed ? teacher : { ...teacher, keepOrShed: true },
+  );
+
   // A changing post is offered a dated row only where the row fits the post
   // on the dates it runs (allowedDatedRows); every other free dated row
   // excludes it, whatever behörighet says. Teachers in staffIds order, so
@@ -1348,7 +1396,7 @@ export function planOf(
       if (row.kind === 'FIXED') continue;
       const datedOut = allowed !== null && isDatedRow(row.row) && !allowed.has(row.row.id);
       const sharesRow = (row.row.shares ?? []).some((share) => share.teacherId === teacher.userId);
-      if (datedOut || sharesRow) row.excluded.push(teacher.userId);
+      if (datedOut || sharesRow || notOfferedWithRoom.has(teacher.userId)) row.excluded.push(teacher.userId);
     }
   }
 
@@ -1358,6 +1406,7 @@ export function planOf(
     respectForcedByPolicy,
     tolerance,
     staff,
+    candidates,
     teachers,
     teacherById: new Map(teachers.map((teacher) => [teacher.userId, teacher])),
     rows,

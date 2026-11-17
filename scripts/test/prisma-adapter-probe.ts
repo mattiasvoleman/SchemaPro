@@ -171,7 +171,7 @@ import { TeacherAbsencesService } from '../../src/cover/teacher-absences.service
 import { CoverSettingsService } from '../../src/cover/cover-settings.service';
 import { CoverSuggestionsService } from '../../src/cover/cover-suggestions.service';
 import { CoverReportsService } from '../../src/cover/cover-reports.service';
-import { readActiveStaffIds } from '../../src/staffing/staff-candidates';
+import { readActiveStaff } from '../../src/staffing/staff-candidates';
 import { TeacherWorkRulesService, WORK_RULE_DAY_IS_PLANNED } from '../../src/resources/teacher-work-rules.service';
 import { OptimizationJobsService } from '../../src/optimization/optimization-jobs.service';
 import { TEACHER_WORK_DAYS_HIDDEN, WORK_DAYS_HIDDEN_MESSAGE, WorkDaysRefusal } from '../../src/optimization/work-days';
@@ -7142,7 +7142,7 @@ async function check(label: string, body: () => Promise<void>): Promise<void> {
 // ---------------------------------------------------------------------------
 // Vikarieplanering (20261012090000–20261012120000): absences, the board, its
 // decisions and undo, the suggestions, the day proposal and its apply, the
-// hour statement against Fas 3, the pool's place in readActiveStaffIds, the
+// hour statement against Fas 3, the pool's place in readActiveStaff, the
 // per-teacher lock under two connections, and the reason nowhere it must
 // not be. In a school of its own, swept whole.
 // ---------------------------------------------------------------------------
@@ -7570,16 +7570,43 @@ async function coverChecks(owner: Client, api: PrismaService, open: (url: string
       assert.ok(counter.rows.some((row) => row.userId === school.pool.id && row.kind === 'POOL'));
     });
 
-    await check('(æ10) readActiveStaffIds leaves out a pool member without a post that year, keeps one with a post, and is one statement', async () => {
-      const ids = await api.withRls(school.admin, (tx) => readActiveStaffIds(tx, school.yearId));
-      assert.ok(!ids.includes(school.pool.id) && ids.includes(school.s1.id));
+    await check('(æ10) readActiveStaff leaves a pool member without a post that year out of both lists, keeps one with a post, offers a post to a teacher and a marked administrator but not to an unmarked one, and is one statement', async () => {
+      const staff = () => api.withRls(school.admin, (tx) => readActiveStaff(tx, school.yearId));
+      const before = await staff();
+      assert.ok(!before.staffIds.includes(school.pool.id) && !before.candidateIds.includes(school.pool.id));
+      assert.ok(before.staffIds.includes(school.s1.id) && before.candidateIds.includes(school.s1.id));
+      // An administrator without Users.teaches is staff (she can lead a post, so one she leads is not vacated) and is
+      // offered nothing: staffIds hold her, candidateIds do not.
+      assert.ok(before.staffIds.includes(school.admin.userId!) && !before.candidateIds.includes(school.admin.userId!));
+      // One who teaches is both, read through the real column and row security. Made and removed here, so that the
+      // checks after this one, which count the school's administrators, see the school as it was.
+      const marked = (
+        await owner.query<{ id: string }>(
+          `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+           VALUES ($1, $2, 'Probe', 'Markerad', 'SCHOOL_ADMIN', gen_random_uuid(), true, now()) RETURNING id`,
+          [school.schoolId, `${MARKER}-vik-markerad@example.invalid`],
+        )
+      ).rows[0]!;
+      try {
+        await owner.query(
+          `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt") VALUES ($1, $2, $3, 20, now())`,
+          [school.schoolId, marked.id, school.yearId],
+        );
+        await owner.query(`UPDATE "Users" SET teaches = true WHERE id = $1`, [marked.id]);
+        const withMark = await staff();
+        assert.ok(withMark.staffIds.includes(marked.id) && withMark.candidateIds.includes(marked.id));
+      } finally {
+        await owner.query(`UPDATE "Users" SET teaches = false WHERE id = $1`, [marked.id]);
+        await owner.query(`DELETE FROM "Users" WHERE id = $1`, [marked.id]);
+      }
       await owner.query(
         `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt") VALUES ($1, $2, $3, 20, now())`,
         [school.schoolId, school.pool.id, school.yearId],
       );
-      const sent = await statementsDuring(() => api.withRls(school.admin, (tx) => readActiveStaffIds(tx, school.yearId)));
+      const sent = await statementsDuring(staff);
       assert.equal(sent.filter((statement) => /^SELECT "public"\."Users"/.test(statement)).length, 1);
-      assert.ok((await api.withRls(school.admin, (tx) => readActiveStaffIds(tx, school.yearId))).includes(school.pool.id));
+      const after = await staff();
+      assert.ok(after.staffIds.includes(school.pool.id) && after.candidateIds.includes(school.pool.id));
     });
 
     await check('(æ11) self-report on: a teacher registers today’s absence, cannot change its reason (TA403), withdraws it within the hour, and the admins are told without a reason', async () => {

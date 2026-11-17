@@ -3952,7 +3952,11 @@ describe('Planning surface (e2e)', () => {
           subjectId: SUBJECT_ID,
           studentGroup: { predecessorId: null },
         });
-        harness.tx['user']!['findMany']!.mockResolvedValue([{ id: COLLEAGUE_ID }, { id: TEACHER_ID }]);
+        // The staff read selects the role and the mark: a row without them is nobody who may be offered a post.
+        harness.tx['user']!['findMany']!.mockResolvedValue([
+          { id: COLLEAGUE_ID, role: 'TEACHER', teaches: false },
+          { id: TEACHER_ID, role: 'TEACHER', teaches: false },
+        ]);
         const response = await request(http())
           .get(`/api/v1/staffing/suggest-teachers?requirementId=70707070-7070-4070-8070-707070707070`)
           .set('x-test-user', admin())
@@ -4002,7 +4006,11 @@ describe('Planning surface (e2e)', () => {
           subjectId: SUBJECT_ID,
           studentGroup: { predecessorId: PREDECESSOR_GROUP },
         });
-        harness.tx['user']!['findMany']!.mockResolvedValue([{ id: COLLEAGUE_ID }, { id: TEACHER_ID }]);
+        // The staff read selects the role and the mark: a row without them is nobody who may be offered a post.
+        harness.tx['user']!['findMany']!.mockResolvedValue([
+          { id: COLLEAGUE_ID, role: 'TEACHER', teaches: false },
+          { id: TEACHER_ID, role: 'TEACHER', teaches: false },
+        ]);
         const thisYear = [
           requirementRow(),
           requirementRow({ id: '60606060-6060-4060-8060-606060606060', teacherId: TEACHER_ID, lessonsPerWeek: 2 }),

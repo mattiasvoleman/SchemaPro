@@ -43,8 +43,14 @@ const CY = 'd0000000-0000-4000-8000-00000000000c';
 const DAG = 'd0000000-0000-4000-8000-00000000000d';
 /** Has left: inactive. */
 const EVA = 'd0000000-0000-4000-8000-00000000000e';
-/** A teaching rektor, 100 %. */
+/** A teaching rektor, 100 %, marked as teaching (Users.teaches). */
 const REKTOR = 'd0000000-0000-4000-8000-0000000000ad';
+/**
+ * An administrator who is not marked as teaching: staff, and with a post (withOffice) room for every row. Sorts
+ * before every teacher, so the stand-in engine, which picks in payload order, hands her the first open row
+ * unless the gateway says she is not offered one.
+ */
+const OFFICE = 'c1000000-0000-4000-8000-0000000000a1';
 const PUPIL = 'c0000000-0000-4000-8000-000000000071';
 
 const R_MA7 = '00000000-0000-4000-8000-000000000001';
@@ -155,7 +161,7 @@ function schoolRows(): Record<string, Row[]> {
       { id: CY, role: 'TEACHER', isActive: true, studentGroupId: null, firstName: 'Cy' },
       { id: DAG, role: 'TEACHER', isActive: true, studentGroupId: null, firstName: 'Dag' },
       { id: EVA, role: 'TEACHER', isActive: false, studentGroupId: null, firstName: 'Eva' },
-      { id: REKTOR, role: 'SCHOOL_ADMIN', isActive: true, studentGroupId: null, firstName: 'Rektor' },
+      { id: REKTOR, role: 'SCHOOL_ADMIN', teaches: true, isActive: true, studentGroupId: null, firstName: 'Rektor' },
       { id: PUPIL, role: 'STUDENT', isActive: true, studentGroupId: G7A },
     ],
     studentGroupMember: [],
@@ -197,6 +203,21 @@ function schoolRows(): Record<string, Row[]> {
     schoolBreak: [],
     scheduleChangeLog: [],
   };
+}
+
+/** The school with an administrator who does not teach: marked or not, and with a post (room) or without one. */
+function withOffice(options: { marked?: boolean; post?: boolean } = {}): Record<string, Row[]> {
+  const rows = schoolRows();
+  rows['user']!.push({
+    id: OFFICE,
+    role: 'SCHOOL_ADMIN',
+    teaches: options.marked === true,
+    isActive: true,
+    studentGroupId: null,
+    firstName: 'Kansli',
+  });
+  if (options.post !== false) rows['teacherEmployment']!.push(post(OFFICE));
+  return rows;
 }
 
 const ZERO_TERMS: StaffTerms = {
@@ -1324,6 +1345,166 @@ describe('StaffingProposalService.propose', () => {
 
 // ---------------------------------------------------------------------------
 
+describe('StaffingProposalService.propose, an administrator who is not marked as teaching (Users.teaches)', () => {
+  it('hands a free row to a marked administrator with room, and never to one without the mark', async () => {
+    // The control: the same school with her marked, and the stand-in engine gives her the first open row.
+    const marked = setup(withOffice({ marked: true }));
+    const markedProposal = await marked.service.propose(ask(), admin());
+    expect(markedProposal.assignments.some((a) => a.toTeacherId === OFFICE)).toBe(true);
+
+    const { service } = setup(withOffice());
+    const proposal = await service.propose(ask(), admin());
+    expect(proposal.assignments.length).toBeGreaterThan(0);
+    expect(proposal.assignments.some((a) => a.toTeacherId === OFFICE)).toBe(false);
+  });
+
+  it('sends her as staff with her room, names her on every free row, and sends her as keep-or-shed', async () => {
+    const { service, sent } = setup(withOffice());
+    const proposal = await service.propose(ask(), admin());
+    const payload = sent()[0]!;
+    expect(payload.teachers).toHaveLength(6); // she is still staff, so what she leads is not vacated
+    const office = payload.teachers[0]!;
+    expect(office).toMatchObject({ targetTenths: 6000, fixedTenths: 0 });
+    const free = payload.requirements.filter((row) => !row.fixed);
+    expect(free.length).toBeGreaterThan(0);
+    for (const row of free) expect(row.excludedTeacherIds).toContain(office.id);
+    for (const row of payload.requirements.filter((row) => row.fixed)) {
+      expect(row.excludedTeacherIds ?? []).not.toContain(office.id);
+    }
+    expect(proposal.teachers.find((t) => t.userId === OFFICE)).toMatchObject({ keepOrShed: true, targetMinutesPerWeek: 600 });
+    expect(proposal.counts).toMatchObject({ teachersSent: 6 });
+  });
+
+  it('adds nothing to the payload for one with no post: the engine gives a teacher without a target nothing already', async () => {
+    const { service, sent } = setup(withOffice({ post: false }));
+    await service.propose(ask(), admin());
+    const payload = sent()[0]!;
+    expect(payload.teachers).toHaveLength(6);
+    expect(payload.teachers[0]).toMatchObject({ targetTenths: null });
+    for (const row of payload.requirements) expect(row.excludedTeacherIds).toBeUndefined();
+  });
+
+  it('does not vacate a post she leads: it stays hers, fixed under "bara obemannade" and kept when it may move', async () => {
+    const leading = () => {
+      const rows = withOffice();
+      rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!['teacherId'] = OFFICE;
+      return rows;
+    };
+    const fixed = setup(leading());
+    const proposal = await fixed.service.propose(ask(), admin());
+    const payload = fixed.sent()[0]!;
+    expect(sentRow(payload, R_MA8, leading()['teachingRequirement']!)).toMatchObject({
+      fixed: true,
+      currentTeacherId: payload.teachers[0]!.id,
+    });
+    expect(proposal.counts).toMatchObject({ vacated: 1 }); // Eva's, and not hers
+
+    const movable = setup(leading());
+    const open = await movable.service.propose(ask({ onlyUnstaffed: false }), admin());
+    const sentMovable = movable.sent()[0]!;
+    expect(sentRow(sentMovable, R_MA8, leading()['teachingRequirement']!)).toMatchObject({
+      fixed: false,
+      currentTeacherId: sentMovable.teachers[0]!.id,
+    });
+    expect(open.assignments.find((a) => a.requirementId === R_MA8)).toBeUndefined();
+  });
+
+  it('counts a post she leads as hers when every row may move too, and not as one whose teacher has left', async () => {
+    const rows = withOffice();
+    rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!['teacherId'] = OFFICE;
+    const { service } = setup(rows);
+    const proposal = await service.propose(ask({ onlyUnstaffed: false }), admin());
+    expect(proposal.counts).toMatchObject({ vacated: 1 }); // Eva's, and not hers
+  });
+
+  it('leaves a post alone that an administrator with no post and no mark leads, also when every row may move: nobody knows her room', async () => {
+    // Production today: no one is marked, and a rektor without a registered post has no target. A row she leads is
+    // fixed whatever the dialog asks, as for a teacher without a target (untargetedLead), so "bara obemannade" off
+    // does not hand her post to whoever has room.
+    const rows = withOffice({ post: false });
+    rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!['teacherId'] = OFFICE;
+    const { service, sent } = setup(rows);
+    const proposal = await service.propose(ask({ onlyUnstaffed: false }), admin());
+    const payload = sent()[0]!;
+    expect(sentRow(payload, R_MA8, rows['teachingRequirement']!)).toMatchObject({
+      fixed: true,
+      currentTeacherId: payload.teachers[0]!.id,
+    });
+    expect(proposal.assignments.find((a) => a.requirementId === R_MA8)).toBeUndefined();
+  });
+
+  it('sends her as the co-teacher of a row she shares: she is staff, so the class counts her as already there', async () => {
+    const rows = withOffice();
+    rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!['coTeacherId'] = OFFICE;
+    const { service, sent } = setup(rows);
+    await service.propose(ask(), admin());
+    const payload = sent()[0]!;
+    expect(sentRow(payload, R_MA8, rows['teachingRequirement']!)).toMatchObject({ coTeacherId: payload.teachers[0]!.id });
+  });
+
+  it('leaves her out of who may take a row under respect, so a row only she is qualified for has nobody', async () => {
+    const rows = withOffice();
+    rows['teacherSubjectQualification'] = [ANNA, OFFICE].map((userId) => ({
+      userId,
+      subjectId: MA,
+      minGradeLevel: 7,
+      maxGradeLevel: 9,
+      kind: 'LEGITIMATION',
+      validFrom: null,
+      validTo: null,
+    }));
+    const { service, sent } = setup(rows);
+    await service.propose(ask({ respectQualifications: true }), admin());
+    const payload = sent()[0]!;
+    const office = payload.teachers[0]!.id;
+    const anna = payload.teachers[1]!.id;
+    const everyone = payload.eligibilitySets.flatMap((set) => set.teacherIds);
+    expect(everyone).toContain(anna);
+    expect(everyone).not.toContain(office);
+  });
+
+  it('does not send her as one of last year’s teachers of a rolled group: she cannot be given the row, so continuity with her is no goal', async () => {
+    const rows = withOffice();
+    rows['academicYear']!.push({ id: LAST_YEAR, schoolId: SCHOOL, name: '2025/26', startDate: day('2025-08-18'), endDate: day('2026-06-12'), isActive: false, predecessorId: null });
+    rows['academicYear']![0]!['predecessorId'] = LAST_YEAR;
+    rows['studentGroup']!.push({ id: G6A, academicYearId: LAST_YEAR, name: '6A', kind: 'CLASS', gradeLevel: 6, predecessorId: null });
+    rows['studentGroup']!.find((g) => g['id'] === G7A)!['predecessorId'] = G6A;
+    rows['teachingRequirement']!.push({ ...requirement(R_LAST, G6A, SV, { teacherId: OFFICE, coTeacherId: CY }), academicYearId: LAST_YEAR });
+    const { service, sent } = setup(rows);
+    await service.propose(ask(), admin());
+    const payload = sent()[0]!;
+    const yearRows = rows['teachingRequirement']!.filter((row) => row['academicYearId'] === YEAR);
+    // Payload order is by real id: OFFICE sorts first.
+    const cy = payload.teachers[[OFFICE, ANNA, BO, CY, DAG, REKTOR].indexOf(CY)]!.id;
+    expect(sentRow(payload, R_SV7, yearRows).lastYearTeacherIds).toEqual([cy]);
+  });
+
+  it('shows her as keep-or-shed to a reader without HR-läs too, though her post changes during the year', async () => {
+    const rows = withOffice();
+    rows['teacherEmploymentPeriod'] = [periodOf(OFFICE)];
+    const planner = testUser({ schoolId: SCHOOL, userId: REKTOR, adminProfile: 'SCHEMALAGGARE', hrRead: false });
+    const proposal = await setup(rows).service.propose(ask(), planner);
+    expect(proposal.teachers.find((t) => t.userId === OFFICE)).toMatchObject({ keepOrShed: true });
+  });
+
+  it('refuses (502) an answer that gives her a row anyway', async () => {
+    const rows = withOffice();
+    const { service } = setup(rows, (payload) => {
+      const answer = engineAnswer(payload);
+      const ma8 = sentRow(payload, R_MA8, rows['teachingRequirement']!).id;
+      return {
+        ...answer,
+        assignments: [
+          ...answer.assignments.filter((x) => x.requirementId !== ma8),
+          { requirementId: ma8, teacherId: payload.teachers[0]!.id },
+        ],
+        unstaffed: answer.unstaffed.filter((x) => x.requirementId !== ma8),
+      };
+    });
+    await expect(service.propose(ask(), admin())).rejects.toMatchObject({ status: 502 });
+  });
+});
+
 describe('StaffingProposalService.apply', () => {
   /** Locks answered as Postgres would, every raw statement recorded in order. */
   const givenLocks = (world: RolloverWorld) => {
@@ -1590,6 +1771,51 @@ describe('StaffingProposalService.apply', () => {
         ),
       ).rejects.toMatchObject({ status: 409, response: { code: 'STAFF_TEACHER_OVER_TARGET', params: { userId: BO } } });
       expect(leadOf(world, R_BO)).toBe(REKTOR);
+    });
+  });
+
+  describe('an administrator who is not marked as teaching (Users.teaches)', () => {
+    const R_X = '00000000-0000-4000-8000-0000000000d1';
+    const giveMa8To = (toTeacherId: string) => [{ requirementId: R_MA8, fromTeacherId: null, toTeacherId }];
+
+    it('400s a change that gives her a post, and says she does not teach, writing nothing', async () => {
+      const { service, world, proposal } = await proposeThenApply(withOffice());
+      await expect(
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: giveMa8To(OFFICE) }, admin()),
+      ).rejects.toThrow(/does not teach/);
+      expect(leadOf(world, R_MA8)).toBeNull();
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+    });
+
+    it('lets the same change through once she is marked, the basis being the proposal’s: a mark is asked again at the apply', async () => {
+      const { service, world, proposal } = await proposeThenApply(withOffice());
+      world.rows['user']!.find((row) => row['id'] === OFFICE)!['teaches'] = true;
+      await expect(
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: giveMa8To(OFFICE) }, admin()),
+      ).resolves.toMatchObject({ updated: 1 });
+      expect(leadOf(world, R_MA8)).toBe(OFFICE);
+    });
+
+    it('still says "not active staff" of one who has left, as before', async () => {
+      const { service, proposal } = await proposeThenApply(withOffice());
+      await expect(
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: giveMa8To(EVA) }, admin()),
+      ).rejects.toThrow(/not active staff/);
+    });
+
+    it('lets an undo put back a post on her, though she is offered none, and refuses the same change as no undo', async () => {
+      const rows = withOffice();
+      rows['teachingRequirement']!.push(requirement(R_X, G7A, SV, { teacherId: OFFICE }));
+      const { service, world, proposal } = await proposeThenApply(rows);
+      const away = { requirementId: R_X, fromTeacherId: OFFICE, toTeacherId: ANNA };
+      const back = { requirementId: R_X, fromTeacherId: ANNA, toTeacherId: OFFICE };
+      const applied = await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: [away] }, admin());
+      expect(leadOf(world, R_X)).toBe(ANNA);
+      await expect(
+        service.apply({ academicYearId: YEAR, basisSha256: applied.basisSha256, changes: [back] }, admin()),
+      ).rejects.toThrow(/does not teach/);
+      await service.apply({ academicYearId: YEAR, basisSha256: applied.basisSha256, undo: true, changes: [back] }, admin());
+      expect(leadOf(world, R_X)).toBe(OFFICE);
     });
   });
 

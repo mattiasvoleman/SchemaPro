@@ -74,6 +74,11 @@ export interface PublishReviewDialogProps {
   year: { id: string; startDate: string; endDate: string } | null;
   subjects?: readonly Named[];
   groups?: readonly Named[];
+  /**
+   * Only looked up, to name the teacher a lesson in the draft already carries, never picked from: pass everybody
+   * (lib/teaching-staff.ts). A list narrowed to those who teach today draws a "?" for an administrator whose mark was
+   * taken off after she was put on the lesson.
+   */
   teachers?: readonly PersonNamed[];
   rooms?: readonly Named[];
 }
