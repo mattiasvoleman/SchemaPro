@@ -6218,3 +6218,63 @@ a 30 s deadline: it never waits while it holds a lock, and after 30 s it stops w
   rooms empty ("Motorn väljer sal") and the engine chooses them, which counts as one group.
 - **Locks of the block.** A lesson of a block that somebody locks by hand while the rest is to place is refused as before
   (`BLOCK_PARTLY_LOCKED`); a block's lesson in the dialog is never a lock.
+
+## 25. The Rastra app and an administrator who teaches ("Administratör som undervisar", part 6 of 7)
+
+The app learns what the gateway, the database and the web have known since parts 1 to 5 (§20): **an administrator who teaches**
+(`Users.teaches`, set by rektor or a full administrator on `/admin/people`). She is still a `SCHOOL_ADMIN`: she signs in to the same
+app as every administrator, starts on the same tab and has the same tab bar. The rights are the administrator's either way; the
+mark adds one view and takes nothing away.
+
+- **What is shown, and to whom.** At an alarm the **Larm** tab opens on **her own roll call** (the groups she answers for, counted
+  as a teacher counts them, with the list kept on the phone for the night the network is gone), and the administration's view
+  (start, watch, end) is one tap away in the header (**"Ledningens vy ›"**, and **"Mitt upprop ›"** back). Larm opens on the roll
+  call every time the tab is shown and every time the app comes back to the front (a phone picked up, a tapped push: no focus event is sent for a
+  tab that is already the selected one), also when nothing is going (the way to start an alarm is the button in the header, which is drawn
+  while the first read is still going). A push about
+  an alarm opens Larm as it does for every administrator, and Larm opens on the roll call. An administrator without the mark, a
+  teacher, a pupil and a guardian see exactly what they saw before: the administrator's view alone, the teacher's roll call alone,
+  nothing. Every other tab, and the start, are as they were.
+- **What stays the teachers'.** **Vikarie** (cover requests) is not hers, and the mark opens no tab for it: the gateway refuses
+  every route of the colleague side to an administrator (`@Roles(TEACHER)`, SP409, §20.5), and the substitute pool refuses one, so a
+  tab for it would show an error and nothing else. A cover push never leads her there (it lands on Notiser, as it does for every
+  administrator). The class teacher's routes (CT400) are not in the app.
+- **No Ledighet in the app.** The app has no staff view of leave: Ledighet is the guardian's (answering a request for consent) and
+  the mentor's inbox is the web's (§20.7), so there is nothing for the mark to narrow on the phone.
+- **Where the mark comes from.** The profile read the app makes at sign-in and at every start with a network is
+  `Users` `select('id, role, teaches')` for the person's own row, under RLS through PostgREST, as the web's session read is (§20.7).
+  It is read strictly (`teaches === true`; a null, an absent field, the string "true" are not a mark), cached beside the role
+  (the keychain key `sp_teaches`, `'true'` or `'false'`, written every time, removed at sign-out) and re-read by the recheck at every
+  start with a network and every time the app returns to the front, so a mark given or taken away reaches a phone within the next
+  recheck. The huvudman's reader has no row at a school and signs in to no school's app (`NO_PROFILE`), as before.
+- **The database the app reads must hold `Users.teaches`: migration `20270212090000`** (part 1; in the production's 222 and in every
+  database that has run part 1). Where the column is missing (a preview or an environment that lags) PostgREST answers 42703, the
+  profile read fails and **nobody signs in**, in **either** app (Rastra vårdnadshavare reads the profile with the same code, although
+  it has no use for the mark; the login screen says "LOGIN_FAILED", not a missing column). A phone that already holds a cached profile
+  restores it without the read, and a recheck that fails leaves the session as it is. Check
+  `SELECT 1 FROM "_prisma_migrations" WHERE migration_name LIKE '20270212090000%'` before an app build points at a database.
+- **Older apps behave as today** (risk 9 of the investigation). An app built before this part does not select the column and ignores
+  the field: a marked administrator sees the administration's view in Larm alone and her phone keeps no roll call list, exactly as
+  now. That is not a new fault, and there is nothing to deploy for it: no migration, no gateway change, no store release is
+  needed before the gateway goes out. The gateway must be at part 4 (§20.6: the three doors of `GET /crisis/mine`,
+  `POST /crisis/mine/pupils` and `POST /crisis/mine/marks`), which is in the production.
+- **A phone updated in the middle of a session** holds a profile cached with no mark, which reads as not marked: it behaves as
+  before until the recheck has read her row (at the next start with a network, or when the app next comes to the front), and an
+  offline start shows what it showed. The other way round (the mark taken away while a phone still holds it) the roll call's read
+  answers 403 until the recheck, and the screen says it could not read the list; nothing is shown that she may not see.
+- **Nothing is run at deploy.** No migration, no engine, no gateway change. The production has no marked person today, so **nobody is
+  shown anything the day this ships**.
+- **Deploy order:** none beyond the migration of part 1 (already run). The app is released through the store builds (§15) when
+  it suits.
+- **Rolling back:** revert the pull request, or ship the previous build; a phone that holds the key `sp_teaches` leaves it in the
+  keychain until the next sign-out, where it is removed with the rest of the session and read by nothing.
+- **Not in this part:** the planner's pickers and `lärare.csv` (the web's part 5b) and the handbook (part 7).
+- **Tests:** `appGate.test.ts` (which views and tabs each role has, marked or not, and where a push leads);
+  `staffShell.test.tsx` (the tab bar of a teacher, an administrator and a marked administrator, Vikarie off for both
+  administrators); `CrisisScreen.teaching.test.tsx` (the screen for each person against a stubbed gateway: the views, the switch,
+  the reset at every focus, the routes asked); `crisisOffline.test.ts` (the phone keeps a list and asks about an alarm push for a
+  teacher and a marked administrator and for no one else); `authService.test.ts` and `secureTokenStore.test.ts` (the profile read,
+  the strict reading, the old cache, the recheck both ways); `CoverRequestsScreen.test.tsx` (a marked administrator reads nothing);
+  `teachingAdmin.contract.test.ts` reads the gateway's controllers as text and holds that every call the staff shell makes admits
+  her, that the cover requests stay a teacher's, that every call of the app is sorted and that no staff screen reads the leave
+  service.

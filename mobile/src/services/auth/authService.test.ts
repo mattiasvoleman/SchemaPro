@@ -50,7 +50,7 @@ const emit = (event: string): void => authListeners.forEach((listener) => listen
 
 function supabase(options: {
   signIn?: { data: { user: { id: string } | null }; error: { message: string; status?: number; code?: string } | null };
-  profile?: { id: string; role: string } | null;
+  profile?: { id: string; role: string; teaches?: unknown } | null;
   session?: { user: { id: string } } | null;
   sessionError?: Error | null;
   getSessionThrows?: boolean;
@@ -62,7 +62,9 @@ function supabase(options: {
   });
   const from = jest.fn(() => builder);
   const builder: Record<string, unknown> = {};
-  for (const method of ['select', 'eq']) builder[method] = () => builder;
+  const select = jest.fn(() => builder);
+  builder['select'] = select;
+  builder['eq'] = () => builder;
   builder['maybeSingle'] = async () => ({ data: options.profile ?? null, error: null });
   const signInWithOAuth = jest.fn(async () => options.oauth);
   const exchangeCodeForSession = jest.fn(async () => options.exchange);
@@ -94,7 +96,7 @@ function supabase(options: {
     },
     from,
   });
-  return { signOut, signInWithOAuth, exchangeCodeForSession, from, getSession, unsubscribe };
+  return { signOut, signInWithOAuth, exchangeCodeForSession, from, getSession, unsubscribe, select };
 }
 
 beforeEach(() => {
@@ -146,8 +148,9 @@ describe('AuthService.login', () => {
       isAuthenticated: true,
       teacherId: 'u-1',
       role: 'GUARDIAN',
+      teaches: false,
     });
-    expect(SecureTokenStore.saveTeacherSession).toHaveBeenCalledWith('u-1', 'GUARDIAN', 'auth-1');
+    expect(SecureTokenStore.saveTeacherSession).toHaveBeenCalledWith('u-1', 'GUARDIAN', 'auth-1', false);
   });
 });
 
@@ -191,7 +194,7 @@ describe('AuthService.restoreSession', () => {
   it('leaves push alone for a session that is still there', async () => {
     supabase({ session: { user: { id: 'auth-1' } } });
     (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-1', role: 'TEACHER', authId: 'auth-1' });
-    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: 'TEACHER' });
+    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: 'TEACHER', teaches: false });
     expect(releaseOnSignedOut).not.toHaveBeenCalled();
   });
 });
@@ -219,6 +222,7 @@ describe('AuthService.loginWithSchoolAccount', () => {
       isAuthenticated: true,
       teacherId: 'u-9',
       role: 'TEACHER',
+      teaches: false,
     });
     expect(lookup).toHaveBeenCalledWith('skola.example');
     expect(signInWithOAuth).toHaveBeenCalledWith({
@@ -233,7 +237,7 @@ describe('AuthService.loginWithSchoolAccount', () => {
     });
     expect(browser).toHaveBeenCalledWith('https://auth.example/authorize?provider=azure', 'rastra://auth/callback');
     expect(exchangeCodeForSession).toHaveBeenCalledWith('the-code');
-    expect(SecureTokenStore.saveTeacherSession).toHaveBeenCalledWith('u-9', 'TEACHER', 'auth-9');
+    expect(SecureTokenStore.saveTeacherSession).toHaveBeenCalledWith('u-9', 'TEACHER', 'auth-9', false);
   });
 
   it('wants an address with a domain, and asks nobody without one', async () => {
@@ -344,14 +348,14 @@ describe.each(['rastra', 'vardnadshavare'] as const)('the gate in %s', (app) => 
 
   it('admits its own role', async () => {
     supabase({ signIn: { data: { user: { id: 'auth-1' } }, error: null }, profile: { id: 'u-1', role: own } });
-    await expect(AuthService.login({ email: 'a@b.se', password: 'x' })).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: own });
+    await expect(AuthService.login({ email: 'a@b.se', password: 'x' })).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: own, teaches: false });
     expect(endSessionHere).not.toHaveBeenCalled();
   });
 
   it('leaves a restored session of its own role untouched, and asks the network nothing', async () => {
     const { from, signOut } = supabase({ session: { user: { id: 'auth-1' } } });
     (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-1', role: own, authId: 'auth-1' });
-    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: own });
+    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: own, teaches: false });
     expect(from).not.toHaveBeenCalled();
     expect(signOut).not.toHaveBeenCalled();
     expect(endSessionHere).not.toHaveBeenCalled();
@@ -383,7 +387,7 @@ describe.each(['rastra', 'vardnadshavare'] as const)('the gate in %s', (app) => 
     supabase({ getSessionThrows: true });
     (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: false, isInternetReachable: false });
     (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-1', role: own, authId: 'auth-1' });
-    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: own });
+    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: own, teaches: false });
     // Someone else's cached profile is still not this session's, offline too.
     (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-2', role: own, authId: 'auth-2' });
     await expect(AuthService.restoreSession()).resolves.toMatchObject({ isAuthenticated: false });
@@ -397,28 +401,28 @@ describe.each(['rastra', 'vardnadshavare'] as const)('the gate in %s', (app) => 
     // Android on a school Wi-Fi it could not confirm reaches the internet.
     supabase({ getSessionThrows: true });
     (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: true, isInternetReachable: false });
-    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: own });
+    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: own, teaches: false });
     // Unknown never spares the question: supabase-js is asked.
     const { getSession } = supabase({ session: { user: { id: 'auth-1' } } });
     (Network.getNetworkStateAsync as jest.Mock).mockRejectedValue(new Error('ExpoNetwork unavailable'));
-    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: own });
+    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: own, teaches: false });
     expect(getSession).toHaveBeenCalledTimes(1);
   });
 
   it('opens a session offline whose access token is past its hour, from the cached profile', async () => {
     supabase({ session: null, sessionError: new AuthRetryableFetchError('Network request failed', 0) });
     (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-1', role: own, authId: 'auth-1' });
-    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: own });
+    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: own, teaches: false });
     expect(releaseOnSignedOut).not.toHaveBeenCalled();
   });
 
   it('follows a role change it admits, and ends the session on one it does not', async () => {
-    const same = { isAuthenticated: true, teacherId: 'u-1', role: own } as const;
+    const same = { isAuthenticated: true, teacherId: 'u-1', role: own, teaches: false } as const;
     const sibling = app === 'rastra' ? 'SCHOOL_ADMIN' : null;
     if (sibling) {
       supabase({ session: { user: { id: 'auth-1' } }, profile: { id: 'u-1', role: sibling } });
       await expect(AuthService.recheckProfile(same)).resolves.toEqual({ ...same, role: sibling });
-      expect(SecureTokenStore.saveTeacherSession).toHaveBeenCalledWith('u-1', sibling, 'auth-1');
+      expect(SecureTokenStore.saveTeacherSession).toHaveBeenCalledWith('u-1', sibling, 'auth-1', false);
     }
     supabase({ session: { user: { id: 'auth-1' } }, profile: { id: 'u-1', role: wrong } });
     (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-1', role: own, authId: 'auth-1' });
@@ -432,7 +436,7 @@ describe.each(['rastra', 'vardnadshavare'] as const)('the gate in %s', (app) => 
   });
 
   it('leaves the session as it is when the profile is gone or Auth cannot be reached', async () => {
-    const same = { isAuthenticated: true, teacherId: 'u-1', role: own } as const;
+    const same = { isAuthenticated: true, teacherId: 'u-1', role: own, teaches: false } as const;
     supabase({ session: { user: { id: 'auth-1' } }, profile: null });
     await expect(AuthService.recheckProfile(same)).resolves.toBe(same);
     supabase({ session: null, sessionError: new AuthRetryableFetchError('Network request failed', 0) });
@@ -446,7 +450,7 @@ describe.each(['rastra', 'vardnadshavare'] as const)('the gate in %s', (app) => 
     ['none is stored', null],
     ['Auth refused its refresh', new AuthApiError('Invalid Refresh Token: Refresh Token Not Found', 400, 'refresh_token_not_found')],
   ])('signs out a session the server ended (%s): the cache goes, push is released, the queue stays', async (_case, sessionError) => {
-    const same = { isAuthenticated: true, teacherId: 'u-1', role: own } as const;
+    const same = { isAuthenticated: true, teacherId: 'u-1', role: own, teaches: false } as const;
     const { from } = supabase({ session: null, sessionError });
     // supabase-js has removed it, or there was none: nothing is stored.
     (storedSessionUserId as jest.Mock).mockResolvedValue(null);
@@ -569,7 +573,7 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reje
 const refused = (): Error => new AuthApiError('Invalid Refresh Token: Refresh Token Not Found', 400, 'refresh_token_not_found');
 
 describe('AuthService.recheckProfile after its session ended', () => {
-  const same = { isAuthenticated: true, teacherId: 'u-1', role: 'TEACHER' } as const;
+  const same = { isAuthenticated: true, teacherId: 'u-1', role: 'TEACHER', teaches: false } as const;
   const flush = () => new Promise((resolve) => setImmediate(resolve));
 
   beforeEach(() => {
@@ -607,7 +611,7 @@ describe('AuthService.recheckProfile after its session ended', () => {
     (storedSessionUserId as jest.Mock).mockResolvedValue('auth-2');
     refresh.resolve({ data: { session: null }, error: refused() });
     await expect(recheck).resolves.toBe(same);
-    expect(SecureTokenStore.saveTeacherSession).toHaveBeenCalledWith('u-2', 'TEACHER', 'auth-2');
+    expect(SecureTokenStore.saveTeacherSession).toHaveBeenCalledWith('u-2', 'TEACHER', 'auth-2', false);
     expect(SecureTokenStore.clearSession).toHaveBeenCalledTimes(1);
     expect(clearCachedSchoolData).toHaveBeenCalledTimes(1);
     expect(releaseOnSignedOut).not.toHaveBeenCalled();
@@ -742,7 +746,7 @@ describe('useSecureAuth.recheckProfile', () => {
       answer.reject(new AuthError('SESSION_EXPIRED', 'Invalid Refresh Token: Refresh Token Not Found'));
       await pending;
     });
-    expect(hook.current.authState).toEqual({ isAuthenticated: true, teacherId: 'u-2', role: 'TEACHER' });
+    expect(hook.current.authState).toEqual({ isAuthenticated: true, teacherId: 'u-2', role: 'TEACHER', teaches: false });
     expect(hook.current.error).toBeNull();
 
     // The session it checked is still the app's: signed out, and the login screen says why.
@@ -753,7 +757,7 @@ describe('useSecureAuth.recheckProfile', () => {
       again.reject(new AuthError('SESSION_EXPIRED', 'Invalid Refresh Token: Refresh Token Not Found'));
       await second;
     });
-    expect(hook.current.authState).toEqual({ isAuthenticated: false, teacherId: null, role: null });
+    expect(hook.current.authState).toEqual({ isAuthenticated: false, teacherId: null, role: null, teaches: false });
     expect(hook.current.error).toBe('SESSION_EXPIRED');
   });
 
@@ -768,7 +772,7 @@ describe('useSecureAuth.recheckProfile', () => {
       answer.resolve({ ...checked, role: 'SCHOOL_ADMIN' });
       await pending;
     });
-    expect(hook.current.authState).toEqual({ isAuthenticated: false, teacherId: null, role: null });
+    expect(hook.current.authState).toEqual({ isAuthenticated: false, teacherId: null, role: null, teaches: false });
   });
 });
 
@@ -790,17 +794,17 @@ describe('the cached profile belongs to the session’s person', () => {
     // A's profile, left by a session that ended without the logout button; B's session.
     const { from } = supabase({ session: { user: { id: 'auth-B' } }, profile: { id: 'u-B', role: 'TEACHER' } });
     (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-A', role: 'STUDENT', authId: 'auth-A' });
-    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-B', role: 'TEACHER' });
+    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-B', role: 'TEACHER', teaches: false });
     expect(from).toHaveBeenCalled();
-    expect(SecureTokenStore.saveTeacherSession).toHaveBeenCalledWith('u-B', 'TEACHER', 'auth-B');
+    expect(SecureTokenStore.saveTeacherSession).toHaveBeenCalledWith('u-B', 'TEACHER', 'auth-B', false);
   });
 
   it('adopts a profile cached before authId was kept, without the network', async () => {
     const { from } = supabase({ session: { user: { id: 'auth-1' } } });
     (SecureTokenStore.getTeacherSession as jest.Mock).mockResolvedValue({ teacherId: 'u-1', role: 'TEACHER', authId: null });
-    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: 'TEACHER' });
+    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: 'TEACHER', teaches: false });
     expect(from).not.toHaveBeenCalled();
-    expect(SecureTokenStore.saveTeacherSession).toHaveBeenCalledWith('u-1', 'TEACHER', 'auth-1');
+    expect(SecureTokenStore.saveTeacherSession).toHaveBeenCalledWith('u-1', 'TEACHER', 'auth-1', false);
   });
 
   it('ends a sign-in whose profile could not be read, so no later start restores it', async () => {
@@ -811,5 +815,171 @@ describe('the cached profile belongs to the session’s person', () => {
     await expect(AuthService.login({ email: 'a@b.se', password: 'x' })).rejects.toMatchObject({ code: 'LOGIN_FAILED' });
     expect(endSessionHere).toHaveBeenCalledWith('local');
     expect(SecureTokenStore.saveTeacherSession).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Administratör som lärare (Users.teaches, PR 6 av 7): the profile carries the
+// mark that an administrator teaches, read strictly and cached beside the
+// role. Everyone else, and a profile cached before the mark was kept, is not
+// marked, and the app admits the role it admitted before: the mark changes no
+// app (appGate.contract.test.ts keeps that for the roles).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('the mark that an administrator teaches (Users.teaches)', () => {
+  const saved = SecureTokenStore.saveTeacherSession as jest.Mock;
+  const stored = SecureTokenStore.getTeacherSession as jest.Mock;
+
+  beforeEach(() => {
+    (currentApp as jest.Mock).mockReturnValue('rastra');
+    saved.mockClear();
+    stored.mockReset();
+  });
+
+  it('asks the school for the mark with the person’s row, and caches what it answers beside the role', async () => {
+    const { select } = supabase({
+      signIn: { data: { user: { id: 'auth-1' } }, error: null },
+      profile: { id: 'u-1', role: 'SCHOOL_ADMIN', teaches: true },
+    });
+    await expect(AuthService.login({ email: 'a@b.se', password: 'x' })).resolves.toEqual({
+      isAuthenticated: true,
+      teacherId: 'u-1',
+      role: 'SCHOOL_ADMIN',
+      teaches: true,
+    });
+    expect(select).toHaveBeenCalledWith('id, role, teaches');
+    expect(saved).toHaveBeenCalledWith('u-1', 'SCHOOL_ADMIN', 'auth-1', true);
+  });
+
+  // Only a true is a mark: the column is a boolean, and anything else a row could carry is not one.
+  it.each([
+    ['false', false],
+    ['absent', undefined],
+    ['null', null],
+    ['the string "true"', 'true'],
+    ['the number 1', 1],
+    ['an object', {}],
+  ])('reads %s as not marked', async (_name, value) => {
+    supabase({
+      signIn: { data: { user: { id: 'auth-1' } }, error: null },
+      profile: { id: 'u-1', role: 'SCHOOL_ADMIN', teaches: value },
+    });
+    await expect(AuthService.login({ email: 'a@b.se', password: 'x' })).resolves.toMatchObject({ role: 'SCHOOL_ADMIN', teaches: false });
+    expect(saved).toHaveBeenCalledWith('u-1', 'SCHOOL_ADMIN', 'auth-1', false);
+  });
+
+  it.each([
+    ['a teacher', 'TEACHER'],
+    ['a pupil', 'STUDENT'],
+  ])('leaves %s unmarked, as the school has them', async (_who, role) => {
+    supabase({ signIn: { data: { user: { id: 'auth-1' } }, error: null }, profile: { id: 'u-1', role, teaches: false } });
+    await expect(AuthService.login({ email: 'a@b.se', password: 'x' })).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role, teaches: false });
+  });
+
+  // The huvudman's reader has no row at the school: nothing to read a mark from, so nobody is signed in and nothing is cached.
+  it('signs nobody in who has no row, and caches no mark for them', async () => {
+    const { signOut } = supabase({ signIn: { data: { user: { id: 'auth-1' } }, error: null }, profile: null });
+    await expect(AuthService.login({ email: 'a@b.se', password: 'x' })).rejects.toMatchObject({ code: 'NO_PROFILE' });
+    expect(signOut).toHaveBeenCalled();
+    expect(saved).not.toHaveBeenCalled();
+  });
+
+  it('keeps the mark the phone cached, offline as online, and asks the school nothing before routing', async () => {
+    const { from } = supabase({ session: { user: { id: 'auth-1' } } });
+    stored.mockResolvedValue({ teacherId: 'u-1', role: 'SCHOOL_ADMIN', authId: 'auth-1', teaches: true });
+    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: 'SCHOOL_ADMIN', teaches: true });
+    (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: false, isInternetReachable: false });
+    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: 'SCHOOL_ADMIN', teaches: true });
+    supabase({ session: null, sessionError: new AuthRetryableFetchError('Network request failed', 0) });
+    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: 'SCHOOL_ADMIN', teaches: true });
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  // A phone updated in the middle of a session holds a profile cached with no mark: the app behaves as it did until the school is asked.
+  it.each([
+    ['online', { isConnected: true, isInternetReachable: true }],
+    ['offline', { isConnected: false, isInternetReachable: false }],
+  ])('reads a profile cached before the mark was kept as not marked (%s)', async (_name, network) => {
+    (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue(network);
+    supabase({ session: { user: { id: 'auth-1' } } });
+    // The store hands back what its older key set holds: no mark.
+    stored.mockResolvedValue({ teacherId: 'u-1', role: 'SCHOOL_ADMIN', authId: 'auth-1' });
+    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: 'SCHOOL_ADMIN', teaches: false });
+  });
+
+  it('carries the cached mark through the adoption of a profile cached before authId was kept', async () => {
+    supabase({ session: { user: { id: 'auth-1' } } });
+    stored.mockResolvedValue({ teacherId: 'u-1', role: 'SCHOOL_ADMIN', authId: null, teaches: true });
+    await expect(AuthService.restoreSession()).resolves.toMatchObject({ teaches: true });
+    expect(saved).toHaveBeenCalledWith('u-1', 'SCHOOL_ADMIN', 'auth-1', true);
+  });
+
+  it('reads the mark with the profile on a cache miss, and caches it', async () => {
+    supabase({ session: { user: { id: 'auth-1' } }, profile: { id: 'u-1', role: 'SCHOOL_ADMIN', teaches: true } });
+    stored.mockResolvedValue(null);
+    await expect(AuthService.restoreSession()).resolves.toEqual({ isAuthenticated: true, teacherId: 'u-1', role: 'SCHOOL_ADMIN', teaches: true });
+    expect(saved).toHaveBeenCalledWith('u-1', 'SCHOOL_ADMIN', 'auth-1', true);
+  });
+
+  // The head teacher sets the mark and takes it away: the phone learns of either at the next profile read.
+  it.each([
+    ['marked', false, true],
+    ['unmarked', true, false],
+  ])('follows an administrator being %s under a session, and caches it', async (_what, before, after) => {
+    const current = { isAuthenticated: true, teacherId: 'u-1', role: 'SCHOOL_ADMIN', teaches: before } as const;
+    supabase({ session: { user: { id: 'auth-1' } }, profile: { id: 'u-1', role: 'SCHOOL_ADMIN', teaches: after } });
+    await expect(AuthService.recheckProfile(current)).resolves.toEqual({ ...current, teaches: after });
+    expect(saved).toHaveBeenCalledWith('u-1', 'SCHOOL_ADMIN', 'auth-1', after);
+  });
+
+  it('leaves the state as it is when the mark is unchanged, and caches nothing', async () => {
+    const current = { isAuthenticated: true, teacherId: 'u-1', role: 'SCHOOL_ADMIN', teaches: true } as const;
+    supabase({ session: { user: { id: 'auth-1' } }, profile: { id: 'u-1', role: 'SCHOOL_ADMIN', teaches: true } });
+    await expect(AuthService.recheckProfile(current)).resolves.toBe(current);
+    expect(saved).not.toHaveBeenCalled();
+  });
+
+  // The recheck runs at every start with a network: an older cache is how a marked administrator's phone learns of the mark.
+  it('lets a phone that cached no mark learn it at the first recheck, and an unmarked person’s recheck changes nothing', async () => {
+    const cachedBefore = { isAuthenticated: true, teacherId: 'u-1', role: 'SCHOOL_ADMIN', teaches: false } as const;
+    supabase({ session: { user: { id: 'auth-1' } }, profile: { id: 'u-1', role: 'SCHOOL_ADMIN', teaches: true } });
+    await expect(AuthService.recheckProfile(cachedBefore)).resolves.toMatchObject({ teaches: true });
+    const unmarked = { isAuthenticated: true, teacherId: 'u-2', role: 'TEACHER', teaches: false } as const;
+    supabase({ session: { user: { id: 'auth-2' } }, profile: { id: 'u-2', role: 'TEACHER', teaches: false } });
+    await expect(AuthService.recheckProfile(unmarked)).resolves.toBe(unmarked);
+  });
+
+  // The cached mark is read before any routing, so it passes the gate too: the guardian app ends a restored session of an
+  // administrator whatever the cache says of the mark, and so does the recheck.
+  it.each([true, false])('ends an administrator’s session in the guardian app at a start, offline too, and at a recheck (marked: %s)', async (teaches) => {
+    (currentApp as jest.Mock).mockReturnValue('vardnadshavare');
+    supabase({ session: { user: { id: 'auth-1' } }, profile: { id: 'u-1', role: 'SCHOOL_ADMIN', teaches } });
+    stored.mockResolvedValue({ teacherId: 'u-1', role: 'SCHOOL_ADMIN', authId: 'auth-1', teaches });
+    await expect(AuthService.restoreSession()).rejects.toMatchObject({ code: 'USE_SCHOOL_APP' });
+    (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: false, isInternetReachable: false });
+    await expect(AuthService.restoreSession()).rejects.toMatchObject({ code: 'USE_SCHOOL_APP' });
+    (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: true, isInternetReachable: true });
+    stored.mockResolvedValue(null);
+    await expect(AuthService.restoreSession()).rejects.toMatchObject({ code: 'USE_SCHOOL_APP' });
+    stored.mockResolvedValue({ teacherId: 'u-1', role: 'SCHOOL_ADMIN', authId: 'auth-1', teaches });
+    await expect(AuthService.recheckProfile({ isAuthenticated: true, teacherId: 'u-1', role: 'TEACHER', teaches: false })).rejects.toMatchObject({ code: 'USE_SCHOOL_APP' });
+    expect(saved).not.toHaveBeenCalled();
+  });
+
+  // Marked or not, the role decides the app: an administrator signs in to Rastra and never to the guardian app.
+  it.each([
+    ['rastra', true, null],
+    ['rastra', false, null],
+    ['vardnadshavare', true, 'USE_SCHOOL_APP'],
+    ['vardnadshavare', false, 'USE_SCHOOL_APP'],
+  ] as const)('the mark does not change which app admits an administrator (%s, marked: %s)', async (app, teaches, refusal) => {
+    (currentApp as jest.Mock).mockReturnValue(app);
+    supabase({ signIn: { data: { user: { id: 'auth-1' } }, error: null }, profile: { id: 'u-1', role: 'SCHOOL_ADMIN', teaches } });
+    if (refusal === null) {
+      await expect(AuthService.login({ email: 'a@b.se', password: 'x' })).resolves.toMatchObject({ role: 'SCHOOL_ADMIN', teaches });
+    } else {
+      await expect(AuthService.login({ email: 'a@b.se', password: 'x' })).rejects.toMatchObject({ code: refusal });
+      expect(saved).not.toHaveBeenCalled();
+    }
   });
 });

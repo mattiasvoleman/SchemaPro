@@ -11,7 +11,7 @@ import type { MessageKey } from '../../i18n';
 import { Column } from '../../layout/Column';
 import { GUTTER, READABLE_MAX } from '../../layout/responsive';
 import { missingPupils, silentTeachers, uncoveredCalls, type AlarmDetail, type CrisisKind, type CrisisMode } from '../../services/crisis';
-import { AlarmBanner, CountChips, STATUS_GLYPH } from './crisisParts';
+import { AlarmBanner, CountChips, STATUS_GLYPH, ViewSwitch } from './crisisParts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The administrator's side of an alarm (Krisläge, F2): start it (a real one
@@ -50,7 +50,11 @@ function failureKey(note: AdminFailureNote): MessageKey {
   }
 }
 
-export function CrisisAdminView({ gutter }: { readonly gutter: number }): React.JSX.Element {
+/**
+ * `toRollCall` is given to an administrator who teaches (Users.teaches), who comes here from her own roll call:
+ * the way back to it is in this header.
+ */
+export function CrisisAdminView({ gutter, toRollCall }: { readonly gutter: number; readonly toRollCall?: () => void }): React.JSX.Element {
   const { colors } = useAppTheme();
   const styles = useStyles();
   const { t } = useI18n();
@@ -62,6 +66,15 @@ export function CrisisAdminView({ gutter }: { readonly gutter: number }): React.
   if (state.isLoading) {
     return (
       <SafeAreaView style={styles.container} edges={TAB_SCREEN_EDGES}>
+        {/* The way back to her roll call is there before the first read has answered. */}
+        {toRollCall ? (
+          <View style={[styles.header, { paddingHorizontal: gutter }]}>
+            <Text style={styles.headerTitle} accessibilityRole="header">
+              {t('crisis.title')}
+            </Text>
+            <ViewSwitch label={t('crisis.switch.toRollCall')} hint={t('crisis.switch.toRollCallHint')} onPress={toRollCall} />
+          </View>
+        ) : null}
         <View style={styles.center}>
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
@@ -109,6 +122,7 @@ export function CrisisAdminView({ gutter }: { readonly gutter: number }): React.
         <Text style={styles.headerTitle} accessibilityRole="header">
           {t('crisis.title')}
         </Text>
+        {toRollCall ? <ViewSwitch label={t('crisis.switch.toRollCall')} hint={t('crisis.switch.toRollCallHint')} onPress={toRollCall} /> : null}
         {state.updatedAt !== null ? (
           <Text style={styles.headerSubtitle}>{t('crisis.admin.updatedAt', { time: formatTime(state.updatedAt) })}</Text>
         ) : null}

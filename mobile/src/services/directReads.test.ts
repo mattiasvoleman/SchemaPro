@@ -168,10 +168,12 @@ describe('direct reads of personal data', () => {
       'src/services/auth/authService.ts from Users',
     ]);
     // Their own row, by the auth id of the session they just signed in with,
-    // and only the id and the role.
+    // and only the id, the role and the mark that an administrator teaches
+    // (Users.teaches: a boolean about the person themself, the way the web's
+    // profile read has it beside hrRead). No name, no address, no number.
     const [own] = personal;
     expect(own!.chain).toMatch(/\.eq\(\s*'authId',\s*authId\s*\)/);
-    expect(own!.chain).toMatch(/\.select\(\s*'id, role'\s*\)/);
+    expect(own!.chain).toMatch(/\.select\(\s*'id, role, teaches'\s*\)/);
     expect(own!.chain).toMatch(/\.maybeSingle\b/);
   });
 });

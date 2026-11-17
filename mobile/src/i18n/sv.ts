@@ -527,6 +527,13 @@ export const sv = {
       dismiss: 'Stäng',
     },
     unavailable: 'Larm visas för lärare och administratörer.',
+    // An administrator who teaches (Users.teaches) has both views of Larm: her own groups first, the administration's one tap away.
+    switch: {
+      toManagement: 'Ledningens vy',
+      toManagementHint: 'Starta, följ och avsluta larm för hela skolan',
+      toRollCall: 'Mitt upprop',
+      toRollCallHint: 'Räkna dina egna grupper',
+    },
     notice: {
       alarm: 'Ett larm startade {when}. Öppna fliken Larm och räkna din grupp.',
       alarmDrill: 'En övning startade {when}. Öppna fliken Larm och räkna din grupp.',

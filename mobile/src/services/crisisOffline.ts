@@ -1,4 +1,5 @@
 import * as Notifications from 'expo-notifications';
+import { countsGroups } from './auth/appGate';
 import { SecureTokenStore } from './auth/secureTokenStore';
 import { readCachedCrisis, saveCachedCrisis } from './crisisCache';
 import { localCalls } from './crisisLocalList';
@@ -185,11 +186,14 @@ async function askGateway(): Promise<Answer> {
   }
 }
 
-/** The list the gateway just gave, kept for the signed-in teacher unless a newer one is already there. */
+/**
+ * The list the gateway just gave, kept for the signed-in person who counts their own groups (a teacher, or an
+ * administrator marked as teaching, Users.teaches) unless a newer one is already there.
+ */
 async function keepList(response: MyCrisisResponse): Promise<void> {
   try {
     const session = await SecureTokenStore.getTeacherSession();
-    if (!session || session.role !== 'TEACHER') return;
+    if (!session || !countsGroups(session.role, session.teaches)) return;
     const kept = await readCachedCrisis(session.teacherId);
     if (kept && Date.parse(kept.asOf) >= Date.parse(response.asOf)) return;
     await saveCachedCrisis(session.teacherId, response);
@@ -230,14 +234,16 @@ export async function handleCrisisPush(notification: unknown, now: number = Date
   const known = settled.get(push.at);
   if (known) return known;
 
-  // Only a teacher's phone has a list to ask for; an administrator's has none, and a signed-out one no bearer.
+  // Only the phone of someone who counts their own groups has a list to ask for: a teacher's, and an
+  // administrator's who is marked as teaching. An administrator's who is not has none (the gateway refuses
+  // her /crisis/mine), and a signed-out one no bearer.
   let session: Awaited<ReturnType<typeof SecureTokenStore.getTeacherSession>> = null;
   try {
     session = await SecureTokenStore.getTeacherSession();
   } catch {
     // Unreadable: no session to ask under.
   }
-  if (!session || session.role !== 'TEACHER') {
+  if (!session || !countsGroups(session.role, session.teaches)) {
     await rememberCrisisPush(notification, now);
     return 'UNKNOWN';
   }
