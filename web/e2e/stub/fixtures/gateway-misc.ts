@@ -25,6 +25,7 @@ import {
   SCHEDULE_ACTIVITIES,
   SCHEDULE_VERSIONS,
 } from "./misc-publication";
+import { backCaseOf } from "./placement-back";
 import {
   ago,
   LUNCH_SETTINGS,
@@ -67,8 +68,10 @@ const yearOf = (id: string | null) => byId(YEARS, id);
 export const miscRoutes: GatewayRoute[] = [
   // --- Lunch, generation, room rules ---------------------------------------------
   route("GET", "/api/v1/lunch-settings", () => LUNCH_SETTINGS),
-  route("GET", "/api/v1/optimization/jobs", ({ query }) => optimizationJobsFor(query.get("academicYearId"))),
+  route("GET", "/api/v1/optimization/jobs", ({ query, scenario }) => optimizationJobsFor(query.get("academicYearId"), scenario)),
   route("GET", "/api/v1/optimization/jobs/:id", ({ params }) => byId(OPTIMIZATION_JOBS, params.id) ?? notFound("Optimization job not found.")),
+  // A run started from the page (A3's way-back scenarios): the refused run the scenario holds first, else the year's own. The stub runs nothing.
+  route("POST", "/api/v1/optimization/jobs", ({ scenario }) => ({ jobId: (backCaseOf(scenario) === "refusal" ? OPTIMIZATION_JOBS.at(-1)! : OPTIMIZATION_JOBS[0]!).id })),
   route("GET", "/api/v1/room-types", () => ROOM_TYPES),
   route("GET", "/api/v1/room-preferences", () => ROOM_PREFERENCES),
   // Klasser's skolenheter card.

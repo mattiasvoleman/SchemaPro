@@ -8,10 +8,12 @@ import {
   lockedRowsOf,
   pinnedPlacesOf,
   pinnedRowsOf,
+  PIN_REFUSAL_CODES,
   placedLessonRowsOf,
   placedLessonWritesOf,
   placedMinutesOf,
   placedTaughtByPost,
+  placementIdsOf,
   placementsKeyOf,
   placementsRefusalOf,
   storedPlacementsOf,
@@ -1027,5 +1029,45 @@ describe('a block’s förläggningar take the same place k at every member (pro
     expect(same[0]).toEqual(same[1]);
     const swapped = pinnedPlacesOf(lessons, [...rows.filter((row) => row.requirementId === 'm-b')].reverse(), anon).places!.map(slotOf);
     expect(swapped).not.toEqual(same[0]);
+  });
+});
+
+describe('placementIdsOf: the ids a link back to the week is built from (A3)', () => {
+  const realByAnon = new Map([
+    ['anon-post', 'real-post'],
+    ['anon-member', 'real-member'],
+  ]);
+  const blockOfPost = new Map([['real-member', 'real-block']]);
+
+  it('turns the payload\'s id for the post back into the post\'s own', () => {
+    expect(placementIdsOf('anon-post', realByAnon, blockOfPost)).toEqual({ postId: 'real-post' });
+  });
+
+  it('adds the block\'s own id for a post that is a member of one, and only for it', () => {
+    expect(placementIdsOf('anon-member', realByAnon, blockOfPost)).toEqual({ postId: 'real-member', blockId: 'real-block' });
+    expect(placementIdsOf('anon-post', realByAnon, blockOfPost)).not.toHaveProperty('blockId');
+  });
+
+  it('says nothing for a line that names no post, a post this run did not send, or a route that sends no blocks', () => {
+    expect(placementIdsOf(undefined, realByAnon, blockOfPost)).toEqual({});
+    expect(placementIdsOf('anon-unknown', realByAnon, blockOfPost)).toEqual({});
+    expect(placementIdsOf('anon-member', realByAnon, undefined)).toEqual({ postId: 'real-member' });
+  });
+
+  it('never takes the block for the post: a block id with no post is no link', () => {
+    expect(placementIdsOf('anon-unknown', realByAnon, new Map([['anon-unknown', 'real-block']]))).toEqual({});
+  });
+});
+
+describe('PIN_REFUSAL_CODES', () => {
+  it('is the five refusals of a pinned lesson that say where it is, and not the one that says no day', () => {
+    expect([...PIN_REFUSAL_CODES].sort()).toEqual([
+      'PLACED_LESSON_IN_A_RAST',
+      'PLACED_LESSON_MARGINS_PAST_THE_DAY',
+      'PLACED_LESSON_OUTSIDE_FRAME',
+      'PLACED_LESSON_OUTSIDE_THE_WEEK',
+      'PLACED_LESSON_ROOM_NOT_ALLOWED',
+    ]);
+    expect(PIN_REFUSAL_CODES.has('PLACED_LESSONS_OF_BLOCK_DIFFER')).toBe(false);
   });
 });

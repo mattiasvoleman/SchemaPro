@@ -162,6 +162,7 @@ import { massvalChecks, sweepMassvalSchool } from './probe-massatgarder';
 import { sweepTenantKeySchools, tenantKeyChecks } from './probe-tenant-keys';
 import { placementWeekChecks, sweepPlacementWeekSchools } from './probe-forlagg-veckan';
 import { placementMirrorChecks, sweepPlacementMirrorSchools } from './probe-forlagg-spegel';
+import { placementBackChecks, sweepPlacementBackSchools } from './probe-forlagg-tillbaka';
 import { sweepTeachesGatewaySchool, teachesGatewayChecks } from './probe-teaches-gateway';
 import { sweepTeachesPr4School, teachesPr4Checks } from './probe-teaches-pr4';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
@@ -6137,6 +6138,8 @@ async function runChecks(
   await placementWeekChecks(owner, api, MARKER, check);
   // Förlägg i veckan: the judge against the contract fixture the web's mirror of it is held to (vv9).
   await placementMirrorChecks(owner, api, MARKER, check);
+  // Generera and the grundschema point back to the week: the post's id on a refusal's line, and what the board says the grundschema holds (vv10, vv11).
+  await placementBackChecks(owner, api, MARKER, check);
   // Administratör som lärare, gatewayens halva: what the gateway makes of the mark and of TE409 and TE410, and the deadlock of a mark.
   await teachesGatewayChecks(owner, api, MARKER, check, open, appUrl);
   // Administratör som lärare, del 4: krisläge, mentor och rapporteringsgrad som lärare, genom de riktiga tjänsterna.
@@ -6663,6 +6666,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepPlacementWeekSchools(owner, MARKER);
   // The contract fixture's schools, likewise.
   await sweepPlacementMirrorSchools(owner, MARKER);
+  // The way back to the week's school, likewise.
+  await sweepPlacementBackSchools(owner, MARKER);
   // Administratör som lärare, gatewayens halva: its school, likewise.
   await sweepTeachesGatewaySchool(owner, MARKER);
   await sweepTeachesPr4School(owner, MARKER);

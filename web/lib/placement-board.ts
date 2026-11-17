@@ -108,6 +108,8 @@ export interface BoardMeal {
 
 export interface PlacementBoard {
   academicYearId: string;
+  /** What the grundschema holds of the förläggningar, as Generera last wrote it; absent from a gateway before A3. */
+  timetable?: { placedLessons: number; writtenAt: string | null };
   placements: BoardPlacement[];
   posts: BoardPost[];
   kept: BoardKept[];

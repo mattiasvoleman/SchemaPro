@@ -174,9 +174,13 @@ describe("a block's card whose lessons are placed", () => {
 
 describe("the sentence the page says for LESSON_IS_PLACED", () => {
   // The page's showError chooses timetable.lessonIsPlaced for the code, whether the lesson is one lesson or a block's card.
-  it("points at the timplanspost, and at the block's own Förlägg for a parallel block, in both languages", () => {
-    expect(sv.timetable.lessonIsPlaced).toMatch(/Ändra förläggningen på timplansposten i stället, eller för ett parallellt block med Förlägg … under Block på sidan Timplansposter\.$/);
-    expect(en.timetable.lessonIsPlaced).toMatch(/Change the placement on its curriculum entry instead, or for a parallel block with Place lessons … under Blocks on the Curriculum entries page\.$/);
-    expect(sv.timetable.lessonIsPlaced).toMatch(/^Lektionen är förlagd på timplanen/);
+  it("points at Förlägg i veckan for a post (or its timplanspost), and at the block's own Förlägg for a parallel block, in both languages", () => {
+    // A3: the sentence is true before and after the block's card in the week (C2), so it names the week for a post and the dialog for a block.
+    expect(sv.timetable.lessonIsPlaced).toMatch(/Ändra den i Förlägg i veckan \(eller på timplansposten\), eller för ett parallellt block med Förlägg … under Block på sidan Timplansposter\.$/);
+    expect(en.timetable.lessonIsPlaced).toMatch(/Change it in Place in the week \(or on its curriculum entry\), or for a parallel block with Place lessons … under Blocks on the Curriculum entries page\.$/);
+    expect(sv.timetable.lessonIsPlaced).toMatch(/^Lektionen är förlagd, och Generera skriver om den från förläggningen\./);
+    // The swap dialog says the same of the same code.
+    expect(sv.swaps.placed).toContain("Förlägg i veckan");
+    expect(en.swaps.placed).toContain("Place in the week");
   });
 });

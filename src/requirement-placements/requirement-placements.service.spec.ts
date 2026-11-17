@@ -99,6 +99,8 @@ interface World {
   /** Lessons the next Generera keeps, for the post and for the judge's day read. */
   kept?: Array<Record<string, unknown>>;
   rooms?: string[];
+  /** The lessons the grundschema has from a förläggning: how many, and when the newest was written. */
+  written?: { count: number; at: Date | null };
 }
 
 function setup(world: World = {}) {
@@ -121,6 +123,8 @@ function setup(world: World = {}) {
         (where['dayOfWeek'] === undefined || (where['dayOfWeek'] as { in: number[] }).in.includes(lesson['dayOfWeek'] as number)),
     ),
   );
+  // What the grundschema holds of the förläggningar (the board's `timetable`): nothing written, unless a world says so.
+  tx['masterLesson']!['aggregate']!.mockResolvedValue({ _count: { _all: world.written?.count ?? 0 }, _max: { createdAt: world.written?.at ?? null } });
   const names: Record<string, string> = { [SUBJECT]: 'Idrott och hälsa', 'sub-ma': 'Matematik', [GROUP]: '7A', 'g-7b': '7B' };
   const named = async ({ where }: { where: { id: { in: string[] } } }) => where.id.in.map((id) => ({ id, name: names[id] ?? id }));
   tx['subject']!['findMany']!.mockImplementation(named);
@@ -670,6 +674,37 @@ describe('RequirementPlacementsService.boardOfYear', () => {
     const { tx, service } = board({ year: null });
     await expect(service.boardOfYear(YEAR, user)).rejects.toBeInstanceOf(NotFoundException);
     expect(tx['teachingRequirement']!['findMany']).not.toHaveBeenCalled();
+  });
+
+  describe('timetable: what the grundschema holds of the förläggningar (A3)', () => {
+    it('is nothing written, and no time, for a year Generera never wrote a förläggning in', async () => {
+      const { service } = board();
+      expect((await service.boardOfYear(YEAR, user)).timetable).toEqual({ placedLessons: 0, writtenAt: null });
+    });
+
+    it('counts the year\'s lessons that are a förläggning, and says when the newest was written, as an ISO time', async () => {
+      const { service } = board({ written: { count: 3, at: new Date('2026-11-16T09:30:00.000Z') } });
+      expect((await service.boardOfYear(YEAR, user)).timetable).toEqual({ placedLessons: 3, writtenAt: '2026-11-16T09:30:00.000Z' });
+    });
+
+    it('asks the grundschema and nothing else: this year\'s lessons marked fromPlacement, their count and newest createdAt (never updatedAt: a lock moves that)', async () => {
+      const { tx, service } = board();
+      await service.boardOfYear(YEAR, user);
+      expect(tx['masterLesson']!['aggregate']).toHaveBeenCalledTimes(1);
+      expect(tx['masterLesson']!['aggregate']).toHaveBeenCalledWith({
+        where: { academicYearId: YEAR, fromPlacement: true },
+        _count: { _all: true },
+        _max: { createdAt: true },
+      });
+    });
+
+    it('counts the lessons written, not the rows now stored: a row removed after the run leaves its lesson counted', async () => {
+      // One stored row, two lessons written from rows (the second row was removed since): the count is the grundschema's.
+      const { service } = board({ rows: [stored()], written: { count: 2, at: new Date('2026-11-16T09:30:00.000Z') } });
+      const answer = await service.boardOfYear(YEAR, user);
+      expect(answer.placements).toHaveLength(1);
+      expect(answer.timetable.placedLessons).toBe(2);
+    });
   });
 
   it('answers a year with no row without judging anything or reading the year\'s classes', async () => {
