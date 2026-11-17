@@ -419,3 +419,16 @@ describe("every route the code of a page can name is in the table, or is said no
     expect(paths.some((path) => sameRoute(path, "api/v1/cover-requests/mine"))).toBe(true);
   });
 });
+
+describe("the limit the leave page says its list may be cut at", () => {
+  it("is the gateway's own (LEAVE_LIST_LIMIT, LÅG-5 of the review of #329)", () => {
+    // An administrator who teaches is handed the school's list cut at the gateway's limit and the page narrows it
+    // afterwards; the notice that the list may be cut off says it when the answer reached that many. A limit
+    // that moved in src/ without the page would say it too late or never.
+    const gateway = /export const LEAVE_LIST_LIMIT = (\d+)/.exec(readFileSync(join(ROOT, "src", "family", "leave.service.ts"), "utf8"))?.[1];
+    const page = /const LEAVE_LIST_LIMIT = (\d+)/.exec(readFileSync(join(WEB, "app", "[locale]", "(app)", "teacher", "ledighet", "page.tsx"), "utf8"))?.[1];
+    expect(gateway, "the gateway's constant is found").toBeDefined();
+    expect(page, "the page's constant is found").toBeDefined();
+    expect(page).toBe(gateway);
+  });
+});

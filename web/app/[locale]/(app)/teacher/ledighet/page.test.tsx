@@ -212,6 +212,35 @@ describe("Ledighet for an administrator who teaches", () => {
     expect(screen.queryByText(/Rektor beslutar all ledighet/)).not.toBeInTheDocument();
   });
 
+  describe("a list the gateway cut at its limit (LÅG-5 of the review of #329)", () => {
+    // The gateway answers a list with the 200 newest requests of the tab; an administrator is handed the school's
+    // and the page narrows it to hers afterwards, so an older request of hers can lie outside the answer.
+    const school = (count: number) => Array.from({ length: count }, (_, at) => ({ ...OTHERS, id: `o-${at}` }));
+
+    it("says the list may be cut off when the answer reached the limit, also when none of it is hers", () => {
+      who.role = "SCHOOL_ADMIN";
+      state.inbox = { data: school(200), isLoading: false, isError: false };
+      renderPage();
+      expect(screen.getByText("Listan kan vara avskuren")).toBeInTheDocument();
+      expect(screen.getByText(/Skolan har minst 200 ansökningar i den här fliken, och sidan hämtar bara de 200 senaste/)).toBeInTheDocument();
+      // Her own list is empty, and the page does not take that for "nothing waits for you" without saying why it may be so.
+      expect(screen.getByText("Inga ansökningar väntar på dig")).toBeInTheDocument();
+    });
+
+    it("says nothing while the answer is shorter than the limit: then it is the whole school's", () => {
+      who.role = "SCHOOL_ADMIN";
+      state.inbox = { data: school(199), isLoading: false, isError: false };
+      renderPage();
+      expect(screen.queryByText("Listan kan vara avskuren")).not.toBeInTheDocument();
+    });
+
+    it("says nothing to a teacher, whose list the database narrowed before it was cut", () => {
+      state.inbox = { data: school(200), isLoading: false, isError: false };
+      renderPage();
+      expect(screen.queryByText("Listan kan vara avskuren")).not.toBeInTheDocument();
+    });
+  });
+
   it("leaves a teacher's list as the gateway gave it: no second filter on the page", () => {
     // The gateway narrowed it already (and a decided tab holds the mentor's own decisions, which may
     // be a pupil she no longer mentors): what it sent is what is shown.
