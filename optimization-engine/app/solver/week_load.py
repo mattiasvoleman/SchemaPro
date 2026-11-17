@@ -154,6 +154,42 @@ class SharedTeacher:
     requirement_ids: tuple[UUID, ...]
     #: Teaching minutes a week of those entries, margins not counted.
     minutes: int
+    #: How many HOME CLASSES make the teacher qualify: the classes two of the
+    #: qualifying entries both take pupils from (the `homes` of _shared_teachers
+    #: that two entries have in common), counted once each however many pairs
+    #: name them. 0 only for a record built by hand.
+    classes: int = 0
+    #: The most any one of the shared classes can lose to waiting for these
+    #: groups, in minutes a week: the teaching minutes of the OWN lessons of the
+    #: class that has most of them, among the classes counted by `classes`.
+    #:
+    #: A class's own lessons are the entries filed under the class itself
+    #: (`student_group_id` is the class): the lessons the engine is asked to
+    #: place, every lesson of such an entry whoever leads it, so a post split
+    #: between two teachers (lessonTeacherIds) counts whole, where `minutes`
+    #: above counts only what this teacher leads. They are the nodes that stand
+    #: for the class in the graph (a node weighs these minutes plus the
+    #: changeover margins, which are left out here as everywhere above), and
+    #: they are what the teacher's groups keep the class from holding while
+    #: they run: a class with none of them loses nothing to the queue but its
+    #: lunch. What is counted and what is not, on purpose:
+    #:
+    #: * an entry with a pupilGroupId (7A's svenska "without SvA7") is the
+    #:   class's own lesson and counts: the class's pupils less the replaced
+    #:   ones sit it, and the teacher's groups are kept off it the same;
+    #: * a post split between teachers counts whole (above);
+    #: * a half's own entries (7A:1's slöjd) are filed under the HALF, which
+    #:   the class only pairs with, and do not count for the class;
+    #: * lunch is a class's own claim too and is left out: it is the same
+    #:   fifteen minutes a day however many groups there are, and says nothing
+    #:   about the queue;
+    #: * lessons the school has locked or placed by hand are no longer entries
+    #:   (the gateway takes them off the demand) and the bound leaves them out
+    #:   as well; counting them would only make this number larger.
+    #:
+    #: The MAX rather than the sum: the sum of five classes' hours says nothing
+    #: about what any one of them loses, and the sentence is about a class.
+    class_minutes: int = 0
 
 
 @dataclass(frozen=True)
@@ -735,6 +771,11 @@ def _shared_teachers(
     """
     sharing = relations.sharing
     homes = set(relations.home_classes)
+    # What each home class holds of its own in this year (SharedTeacher.class_minutes).
+    own_minutes: dict[UUID, int] = defaultdict(int)
+    for member in members:
+        if member.student_group_id in homes:
+            own_minutes[member.student_group_id] += sum(member.lesson_minutes())
     by_teacher: dict[UUID, dict[UUID, AnonymousRequirement]] = defaultdict(dict)
     for member in members:
         for piece in pieces_of[member.id]:
@@ -745,15 +786,18 @@ def _shared_teachers(
     for teacher_id, entries in by_teacher.items():
         rows = list(entries.values())
         qualifying: dict[UUID, AnonymousRequirement] = {}
+        shared_classes: set[UUID] = set()
         for position, first in enumerate(rows):
             a = relations.pupil_key(first)
             for second in rows[position + 1:]:
                 b = relations.pupil_key(second)
                 if a == b or b in sharing.get(a, ()):
                     continue
-                if homes.intersection(sharing.get(a, ())).intersection(sharing.get(b, ())):
+                common = homes.intersection(sharing.get(a, ())).intersection(sharing.get(b, ()))
+                if common:
                     qualifying.setdefault(first.id, first)
                     qualifying.setdefault(second.id, second)
+                    shared_classes |= common
         if len({relations.pupil_key(entry) for entry in qualifying.values()}) < 2:
             continue
         found.append(
@@ -769,6 +813,8 @@ def _shared_teachers(
                     for index, minutes in enumerate(entry.lesson_minutes())
                     if teacher_id in relations.teachers_at(entry, index)
                 ),
+                classes=len(shared_classes),
+                class_minutes=max((own_minutes.get(class_id, 0) for class_id in shared_classes), default=0),
             ),
         )
     found.sort(key=lambda teacher: (-teacher.minutes, str(teacher.requirement_ids[0])))
