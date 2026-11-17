@@ -120,6 +120,8 @@ export class WriteFailure extends Error {
     /** The lessons that were sent, a post's rows or a block's: the refusal's `index` is a place in this list. */
     public readonly list: readonly SentLesson[],
     public readonly changedIndex: number,
+    /** The other places in the list the change is about: the first half of a pair is as much the change as the second. */
+    public readonly alsoChanged: readonly number[] = [],
   ) {
     super(reason instanceof Error ? reason.message : "Förläggningarna sparades inte.");
     this.name = "WriteFailure";
@@ -207,12 +209,14 @@ export function usePlacementEditor(academicYearId: string | null) {
       const before = rows.map(inputOf);
       const after = listAfter(rows, edit);
       if (after === null) return { ok: false, gone: true };
-      const changedIndex = edit.kind === "add" ? after.length - 1 : edit.kind === "move" ? keysOfRows(rows).indexOf(edit.key) : -1;
+      const changedIndex = edit.kind === "add" ? after.length - 1 : edit.kind === "addPair" ? after.length - 2 : edit.kind === "move" ? keysOfRows(rows).indexOf(edit.key) : -1;
+      // The two halves of a pair are one change: a refusal of either is about the pair that was laid.
+      const alsoChanged = edit.kind === "addPair" ? [after.length - 1] : [];
       let answer: PlacementsOfRequirement;
       try {
         answer = await mutateAsync({ postId, list: after, baseKey: baseKeyOf(board, postId) });
       } catch (error) {
-        throw new WriteFailure(error, after, changedIndex);
+        throw new WriteFailure(error, after, changedIndex, alsoChanged);
       }
       // A step is a write too and is refused like one, by a row of the list it puts back as well as by somebody else's write: it
       // carries the list it sent and no changed row (-1), so that the page says a refusal about a row as being about that row.

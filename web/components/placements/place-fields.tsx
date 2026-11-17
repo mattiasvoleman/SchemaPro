@@ -45,11 +45,13 @@ export interface PlaceFieldsProps {
   focusKey: string;
   /** The values as they stand in the fields (null when the start is no time), for a press on the week that lays the lesson with this room. */
   onValueChange?: (value: PlaceValue | null) => void;
+  /** A half of a pair names its room (a pair is sent as two locks): no "Motorn väljer sal", and no laying until a room is chosen. */
+  requireRoom?: boolean;
 }
 
 const DAYS = [1, 2, 3, 4, 5] as const;
 
-export function PlaceFields({ submitLabel, minutes, rooms, initial, sentenceOf, nextFree, refusal, saving, onSubmit, focusKey, onValueChange }: PlaceFieldsProps) {
+export function PlaceFields({ submitLabel, minutes, rooms, initial, sentenceOf, nextFree, refusal, saving, onSubmit, focusKey, onValueChange, requireRoom = false }: PlaceFieldsProps) {
   const t = useTranslations("placementWeek");
   const tPlacements = useTranslations("requirements.placements");
   const tDays = useTranslations("days");
@@ -65,7 +67,9 @@ export function PlaceFields({ submitLabel, minutes, rooms, initial, sentenceOf, 
   const value: PlaceValue | null = startMinutes === null ? null : { dayOfWeek: Number(day), startMinutes, roomId: roomId === "" ? null : roomId };
   const verdict = value ? sentenceOf(value) : null;
   const end = startMinutes === null ? null : clockOfMinutes(startMinutes + minutes);
-  const said = refusal !== null && !staleRefusal ? refusal : verdict ? verdict.text : t("noStart");
+  const lacksRoom = requireRoom && roomId === "";
+  // A pair's half with no room is said before anything else about the spot: the page does not lay it, and the sentence says why.
+  const said = lacksRoom ? t("pair.needsRoom") : refusal !== null && !staleRefusal ? refusal : verdict ? verdict.text : t("noStart");
   const edit = (change: () => void) => {
     setStaleRefusal(true);
     change();
@@ -99,7 +103,7 @@ export function PlaceFields({ submitLabel, minutes, rooms, initial, sentenceOf, 
       className="space-y-3"
       onSubmit={(event) => {
         event.preventDefault();
-        if (value && verdict?.drop.kind !== "DAY") onSubmit(value);
+        if (value && !lacksRoom && verdict?.drop.kind !== "DAY") onSubmit(value);
       }}
     >
       <div className="grid gap-3 sm:grid-cols-3 [&>*]:min-w-0">
@@ -125,8 +129,8 @@ export function PlaceFields({ submitLabel, minutes, rooms, initial, sentenceOf, 
         </FormField>
         <FormField id={`${id}-room`} label={tPlacements("room")}>
           <NativeSelect value={roomId} onChange={(event) => edit(() => setRoomId(event.target.value))}>
-            {/* The empty choice is a choice: the engine chooses the room at every Generera. */}
-            <option value="">{tPlacements("roomAny")}</option>
+            {/* The empty choice is a choice: the engine chooses the room at every Generera. A half of a pair has none: it is asked for. */}
+            <option value="">{requireRoom ? t("pair.chooseRoom") : tPlacements("roomAny")}</option>
             {rooms.map((room) => (
               <option key={room.id} value={room.id}>
                 {room.name}
@@ -139,7 +143,7 @@ export function PlaceFields({ submitLabel, minutes, rooms, initial, sentenceOf, 
         {said}
       </p>
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" size="sm" disabled={saving || value === null}>
+        <Button type="submit" size="sm" disabled={saving || value === null || lacksRoom}>
           {submitLabel}
         </Button>
         <Button type="button" variant="outline" size="sm" disabled={saving || value === null} onClick={next}>
