@@ -5743,12 +5743,60 @@ has the teacher's own rows. The rights are the administrator's either way (the v
   the web and the API deploy on their own.
 - **Rolling back:** revert the pull request. The web keeps nothing (the mark is the database's), and a person who is marked stays
   marked, with the gateway and the database answering as parts 2 to 4 say.
-- **Not in this part:** the planner's pickers and `lärare.csv` (the web's part 5b), the mobile app (part 6) and the handbook (part 7).
+- **Not in this part:** the planner's pickers and `lärare.csv` (the web's part 5b, 20.8 below), the mobile app (part 6) and the handbook (part 7).
 - **Tests:** web unit tests for every page and for the menu (`role-nav.test.tsx` holds the group, its order and that nobody else gets
   it); `lib/teaching-admin.contract.test.ts` reads the gateway's controllers as text and holds that every route a page of the group
   calls admits her, that the doors are the route-guards spec's eight, and that the colleague side, the class teacher's and the pool's
   routes are in no page's table; Playwright (`teaching-admin.a11y.spec.ts`, `teaching-admin.smoke.spec.ts`, a baseline for her menu and
   a fifth person in the document-size gate) against the stub's marked administrator.
+
+### 20.8 Part 5b, the web: the planner's pickers and `lärare.csv` (no migration, no gateway change)
+
+The second half of the web's part. Where part 5a gave a marked administrator (`Users.teaches`) her own pages, this lets the planner **put
+her on a lesson** and puts her in the school's **`lärare.csv`**, which the gateway has done since part 2. The rights are the
+administrator's either way.
+
+- **The pickers.** `web/lib/teaching-staff.ts` (one function, no imports) is the web's copy of the gateway's `teachesLike`
+  (`src/staffing/teaching-staff.ts`; `lib/teaching-staff.test.ts` reads the two as text and holds the same sentence). Three kinds of use
+  are kept apart, and the rule is a decision and not a style:
+  - *Who teaches* (a post's teacher and co-teacher, the grundschema's teacher rows and lesson dialogs, an activity's teacher, a person's
+    availability rule, the idle-gaps search, the generator's teacher count and the candidates page's håltimmar and week view, the
+    absence's person, the placements page's teacher filter, the "Undervisar" card on `/admin/people`): `teachesLike`.
+  - *The name of the person a lesson or brick already carries* (`/admin/lessons`, `/admin/placements`): anybody in the school's list,
+    so that a mark taken off later does not leave her lesson without a name.
+  - *Who may step in* (the substitute dialog on `/admin/lessons` and `/admin/teacher-absence`, the substitute pool's dialog behind
+    Inställningar on `/admin/teacher-absence`, the cover board, the class teacher's appointment): unchanged, `role === "TEACHER"`. A
+    teaching administrator is not in the substitute pool and is never asked (SP409, CT400), and the gateway refuses her as a substitute.
+    On `/admin/lessons` one list became two, and on `/admin/teacher-absence` the register takes two (`teachers`, who can be absent, and
+    `poolCandidates`, who the pool can take in): `POST /cover/pool` checks no role, so the web's list is what keeps her out of the pool.
+  `/admin/requirements` and `/admin/timetable` write the expression in place (no import), since they sit within 0,5 and 1,3 KB of their
+  budgets; `lib/csv-export.ts` does too, since it ships with six pages.
+- **`lärare.csv`.** The web's `teachersToCsv` takes a marked administrator as the gateway's copy
+  (`src/school-export/csv-files.ts`) does, so the school's two files no longer differ as soon as someone is marked (review of #321,
+  information 3). The shared cases `src/school-export/__fixtures__/csv-files-cases.json` are generated from the web page
+  (`UPDATE_CSV_FILES_CASES=1 npx vitest run lib/csv-files-cases.test.ts`), never edited by hand, and the gateway's spec plays them: a marked
+  person with a post, one who is not marked, one who is marked and has left, and one whose mark is explicitly false. The people page counts
+  a marked administrator with a protected identity among those the teacher, qualification and duty files held out.
+- **Skolans dag.** `GET /school-day/free` has listed a teaching administrator among the free since part 2; the card's description now says
+  that she is not asked to cover (section 20.5 says the page that shows the list should).
+- **`/teacher/ledighet`.** An administrator who teaches is handed the school's list cut at `LEAVE_LIST_LIMIT` (200) per tab and the page
+  narrows it to hers afterwards, so in a school with more requests than that in one tab an older one of hers can lie outside the answer. The
+  page says so, as a warning above the list, when the answer reached the limit (never for a teacher, whose list the database narrows before
+  it is cut). A mentor filter in `GET /leave-requests` was weighed and left: it needs a new query parameter (the gateway's pipe forbids
+  unknown ones, so an older gateway would answer 400), SQL against `app.leave_request_facts` to decide who decides the pending ones before the
+  cut, a regenerated OpenAPI and a database run; the production has no marked person.
+- **Nothing is run at deploy.** No migration, no engine, no change in any gateway answer. The web is additive against an older gateway:
+  `Person.teaches` is optional in the types and `undefined` is false, so an older gateway lists nobody as teaching and the pickers are as they
+  were. The production has no marked person, so **nobody sees a difference the day this ships**.
+- **Bundle.** Measured on a build of this branch against a build of main with the same environment: `/admin/requirements` 189,4 → 189,5 KB
+  (budget 190), `/admin/timetable` 188,7 → 188,7, `/admin/people` 187,7 → 187,8, `/admin/placements` 186,7 → 186,8, `/admin/gaps` 177,8 → 178,2,
+  `/teacher/ledighet` 162,4 → 162,5; no route is over its budget and no budget was moved. The shell's chunk is the same one (79 of 91
+  routes, 14 825 B gzipped in both). The document gate needs no new `measured`.
+- **Rolling back:** revert the pull request. The web keeps nothing; a marked person stays marked.
+- **Tests.** A page test per picker (a marked and an unmarked administrator: she is where she should be and not in the substitute
+  picks), `lib/teaching-staff.test.ts`, the shared CSV cases, a smoke spec against the stub (`teaching-admin.pickers.smoke.spec.ts`), and in
+  `lib/teaching-admin.contract.test.ts` a reading of every page of the group's imports with the compiler (`lib/api-literals.ts`): every
+  `/api/v1/` route a page can name is in its table or is said, with a reason, not to be called for her.
 
 ## 21. Pinned lessons in the generator ("Fästa lektioner")
 
