@@ -626,8 +626,10 @@
     hen från en administratör som inte undervisar är en markering,
     <span class="ui">Undervisar</span>, som rektor eller en fullständig
     administratör sätter på personen. Med markeringen räknas hen som lärare på
-    de ställen som beskrivs här, och på inget annat. Rättigheterna ändras inte:
-    se <em>Rätten är administratörens</em> nedan.
+    de ställen som beskrivs här, och på inget annat. Rättigheterna smalnar inte,
+    och de blir större bara där det står här, till exempel anteckningen till
+    vikarien på hens egna lektioner och markeringarna i ett larm: se
+    <em>Rätten är administratörens</em> nedan.
   </p>
 
   <h4>Sätt markeringen</h4>
@@ -672,7 +674,7 @@
   <table>
     <thead><tr><th style="width:24%">Sida</th><th>Vad hen ser och gör</th></tr></thead>
     <tbody>
-      <tr><td class="k">Mitt schema</td><td>Hens egna lektioner. Öppnar hen en lektion läser och skriver hen anteckningen till vikarien, om hen står på lektionen och har en tjänst för gruppens läsår.</td></tr>
+      <tr><td class="k">Mitt schema</td><td>Hens egna lektioner. Öppnar hen en lektion läser och skriver hen anteckningen till vikarien, om hen står på lektionen och har en tjänst för gruppens läsår. Ingen annan administratör läser den (6.11).</td></tr>
       <tr><td class="k">Larm</td><td>Uppropet för hens grupper när skolan startar ett larm, och länken <span class="ui">Ledningens vy</span> till Krisläge (6.14).</td></tr>
       <tr><td class="k">Närvaro</td><td>Närvaroregistrering för hens lektioner (6.6).</td></tr>
       <tr><td class="k">Min tjänst</td><td>Hens egen tjänst, bara att läsa. Siffrorna räknas ur schemautkastet, som en administratör ser; en lärare ser det publicerade schemat. Sidan säger det.</td></tr>
@@ -709,9 +711,11 @@
   <p>
     <strong>Som mentor.</strong> Har hen uppdraget <em>Mentorskap</em> för en
     klass (Tjänstefördelning, 4.3) är hen mentor på samma sätt som en lärare:
-    för ledighetsansökningar som rektor delegerat till mentorn (6.7), för
-    frånvarobevakningens mentorssammanställning (6.12), för kvittens (6.16) och
-    för att flytta en elev mellan två lektioner en dag (6.1). Ansökningarna som
+    för ledighetsansökningar som rektor delegerat till mentorn (6.7) och för
+    frånvarobevakningens mentorssammanställning (6.12). För kvittens (6.16) och
+    för att flytta en elev mellan två lektioner en dag (6.1) ger mentorskapet
+    hen inget som hens profil inte redan ger: en administratör med Drift
+    gör båda för vilken elev som helst. Ansökningarna som
     väntar på hen ligger under
     <span class="path">Min undervisning › Ledighet</span>, och hen får notisen
     <em>Ny ledighetsansökan</em>. Sidan visar det en lärare ser: de väntande
@@ -740,8 +744,8 @@
     </p>
   </div>
   <p>
-    <strong>Under Notiser</strong> (6.10) kan hen välja bort de tre notiser som
-    en lärare har och en administratör inte har:
+    <strong>Under Notiser</strong> (6.10) kan hen välja bort tre av de notiser
+    som en lärare har och en administratör inte har:
     <em>Ledighetsansökningar att besluta om</em>,
     <em>Elever som byter lektion för en dag</em> och
     <em>Påminnelser om öppna lektioner</em>. Notisen om en vikariefråga
@@ -776,11 +780,12 @@
     <li><strong>Hen kan inte ta bort sin sista tjänst medan markeringen
       står.</strong> Rastra Schema säger att det är personens sista tjänst och
       ber dig ta bort markeringen under Personer först. Samma gäller ett läsår
-      som skulle ta personens enda tjänst med sig när det raderas (3.1).</li>
-    <li><strong>Mentorerna frågas om.</strong> Ändras markeringen räknar Rastra
+      som skulle ta personens enda tjänst med sig när det tas bort (8.1).</li>
+    <li><strong>Mentorerna räknas om.</strong> Ändras markeringen räknar Rastra
       Schema om vilka mentorer som ska besluta de väntande
       ledighetsansökningarna och skickar den notis som saknas. Sätts markeringen
-      på en mentor får hen notisen för varje väntande ansökan i klassen, och en
+      på en mentor får hen notisen för varje väntande ansökan i klassen som ligger
+      hos mentorn (6.7), och en
       annan mentor som sedan tidigare saknade sin notis för en väntande ansökan
       får den också. En notis som redan skickats tas inte tillbaka när
       markeringen tas bort.</li>
@@ -7651,14 +7656,16 @@
     <thead><tr><th style="width:28%">Text</th><th>Skrivs av</th><th style="width:34%">Läses av</th></tr></thead>
     <tbody>
       <tr><td class="k">Ämne och läxa</td><td>Lektionens lärare och dess vikarie. Ämnet är en rad på högst 200 tecken, läxan högst 1 000.</td><td>Eleverna på lektionen och deras vårdnadshavare, skolans lärare och administratörer, och klassboken.</td></tr>
-      <tr><td class="k">Notis till vikarien</td><td>Lektionens egen lärare, också när hen är borta och vikarien redan är bokad. Högst 2 000 tecken.</td><td>Lektionens lärare och den som vikarierar på den. Aldrig skolans administratörer, vilken profil de än har, och aldrig eleverna eller vårdnadshavarna. På vikarietavlan ser administratören att det finns en notis, inte vad den säger.</td></tr>
+      <tr><td class="k">Notis till vikarien</td><td>Lektionens egen lärare, också när hen är borta och vikarien redan är bokad. Högst 2 000 tecken.</td><td>Lektionens lärare, också en administratör som undervisar (2.6), och den som vikarierar på den. Aldrig andra administratörer, vilken profil de än har, och aldrig eleverna eller vårdnadshavarna. På vikarietavlan ser administratören att det finns en notis, inte vad den säger.</td></tr>
     </tbody>
   </table>
   <p>
     Lektionens egen lärare är den som står på den publicerade lektionen, som
     lärare eller medlärare, eller den frånvarande som ett beslut på
     vikarietavlan gällde. En lärare som bara står i grundschemat, till exempel
-    i ett utkast som inte är publicerat, är det inte. Bokas en vikarie utan att
+    i ett utkast som inte är publicerat, är det inte. En administratör som
+    undervisar (2.6) är det, om hen står på lektionen och har en tjänst för
+    gruppens läsår. Bokas en vikarie utan att
     någon frånvaro är registrerad tar vikarien lärarens plats på lektionen och
     läraren kommer inte längre åt notisen. Lektionsloggen är ingen
     meddelandefunktion. Ingen kan svara på en
@@ -7690,8 +7697,10 @@
     för eleverna och vårdnadshavarna. Har läraren ändrat texten sedan du
     öppnade klassboken tas ingenting bort, och klassboken visar i stället den
     nya texten. Läsaren ser klassboken men inte knappen. En notis till
-    vikarien kan ingen administratör ta bort, eftersom ingen administratör
-    läser den. Den försvinner med lektionen.
+    vikarien kan ingen administratör ta bort här, eftersom klassboken inte visar
+    den och ingen annan administratör läser den. En administratör som
+    undervisar och står på lektionen ändrar eller tar bort sin egen på
+    lektionens sida, som en lärare gör (2.6). Den försvinner med lektionen.
   </p>
   <h4>När en lektion försvinner</h4>
   <p>
@@ -7860,7 +7869,7 @@
   <ul>
     <li><strong>Räkningen börjar första natten</strong> efter att Rastra har uppdaterats för skolan, och den är på för alla skolor: den går inte att slå av för en enskild skola. Den första körningen räknar de senaste 90 dagarna, så sidan har historik redan första morgonen.</li>
     <li><strong>Varje lärares andel ser</strong> rektor, fullständig administratör, expedition, schemaläggare och läsare, alltså alla administratörsprofiler. Varje sådan läsning skrivs i skolans läslogg (7.4).</li>
-    <li><strong>Läraren ser sin egen</strong> andel och sina öppna lektioner (4.6 i lärarmanualen), och ingen annan lärares, och det gör också en administratör som undervisar, under <span class="ui">Min rapportering</span> (2.6). Elever och vårdnadshavare ser ingenting.</li>
+    <li><strong>Läraren ser sin egen</strong> andel och sina öppna lektioner (4.6 i lärarmanualen), och ingen annan lärares. En administratör som undervisar ser sin egen andel under <span class="ui">Min rapportering</span> (2.6), och som administratör varje lärares andel, enligt punkten ovan. Elever och vårdnadshavare ser ingenting.</li>
     <li><strong>Påminnelserna och veckobeskedet</strong> är det enda skolan slår på, i inställningarna längst ner. De är avstängda tills dess, och ingen får någon notis av räkningen i sig. Inställningarna ändrar rektor, fullständig administratör, schemaläggare och expedition.</li>
   </ul>
 
