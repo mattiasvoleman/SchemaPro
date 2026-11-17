@@ -1537,7 +1537,7 @@ describe('RequirementPlacementsService: warnings on a save and a read of one pos
 
   it('counts the medlärare of the row’s post as teaching it, and a group a kept lesson was opened to as at it', async () => {
     const BO = '55555555-5555-4555-8555-555555555555';
-    const withCo = { ...POST, coTeacherId: BO };
+    const withCo = { ...POST, coTeacherId: BO } as unknown as typeof POST;
     const keptByBo = { ...keptTuesday, teacherId: BO, extraGroups: [{ studentGroupId: 'g-7b' }] };
     // Bo has the cap and is medlärare on the post’s lesson at 10:00; Bo keeps the hour at 08:00 (opened to 7B).
     const co = setup({ post: withCo, kept: [keptByBo], workRules: [{ userId: BO, maxTeachingMinutesPerDay: 90 }], rows: [stored({ id: 'p-1', startTime: time('10:00') })] });
