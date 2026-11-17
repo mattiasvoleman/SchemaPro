@@ -841,8 +841,14 @@ export default function TimetablePage() {
   const validateChange = useCallback(
     (id: string, change: LessonChange, without?: ReadonlySet<string>): boolean => {
       const lesson = lessonById.get(id);
-      // A lesson written from a förläggning is changed in Förlägg i veckan: refused during the drag, not after the drop (409).
-      if (!lesson || lesson.fromPlacement) return false;
+      if (!lesson) return false;
+      // A lesson written from a förläggning is changed in Förlägg i veckan: refused during the drag, not after the drop (409). Let go
+      // where it already is it stands, as the server lets it (assertPlacedLessonStands): a parked one put back on its own slot, and a
+      // drag that ends where it began.
+      if (lesson.fromPlacement) {
+        const own = toPlacement(lesson);
+        return change.dayOfWeek === own.dayOfWeek && change.startMinutes === own.startMinutes && change.endMinutes === own.endMinutes;
+      }
       return (
         validatePlacement(
           {

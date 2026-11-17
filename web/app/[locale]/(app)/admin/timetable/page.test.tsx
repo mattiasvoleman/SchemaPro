@@ -2881,6 +2881,30 @@ describe("the week of förläggningar, from the grundschema (A3)", () => {
       expect(noMutation.mutateAsync).not.toHaveBeenCalled();
     });
 
+    it("lets a parked one go back to its own slot, as the server does, and refuses any other from the tray", () => {
+      const parkedPlaced = () => [{ ...placedSlojd, isParked: true }];
+      // Slöjd is remembered on Monday 11:00–12:00; the pointer lets go over that hour (11:00 is y 198 at 1.1 px a minute from 08:00).
+      state.lessons = parkedPlaced();
+      const { unmount } = render(<TimetablePage />);
+      const handle = () => screen.getByRole("button", { name: "timetable.dragToPlace(Slöjd · 5.1 · K. Ek)" });
+      fireEvent.pointerDown(handle(), { pointerId: 1, button: 0, clientX: 700, clientY: 100 });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 100, clientY: 199 });
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 199 });
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-slojd", isParked: false, dayOfWeek: 1, startTime: "11:00" }));
+      expect(toasts.error).not.toHaveBeenCalledWith("timetable.lessonIsPlaced");
+      unmount();
+
+      // Any other place is a move, and a move is refused with the sentence.
+      noMutation.mutateAsync.mockClear();
+      state.lessons = parkedPlaced();
+      render(<TimetablePage />);
+      fireEvent.pointerDown(handle(), { pointerId: 1, button: 0, clientX: 700, clientY: 100 });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 200, clientY: 199 });
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 200, clientY: 199 });
+      expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+      expect(toasts.error).toHaveBeenCalledWith("timetable.lessonIsPlaced");
+    });
+
     it("moves the other lessons as before, beside it", () => {
       state.lessons = [placedSlojd, lesson("l-ma1", "s-ma", "g-ma1", "08:00")];
       render(<TimetablePage />);
