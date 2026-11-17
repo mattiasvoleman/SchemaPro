@@ -452,6 +452,17 @@ jobs:
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
         run: npx ts-node --transpile-only scripts/test/probe-forlagg-block-veckan.ts
 
+      # Varningar medan man lägger (D1): 26 små skolor där varje post är lagd för hand, och vad gatewayen säger om dem: lärarens dag
+      # (taket, dagarna, sammanhängande undervisning), klassens lunch (med en handlagd måltid, udda och jämna veckor och läsår av många
+      # perioder) och salar av ämnets slag, i tavlan, i en posts läsning och i en sparning (aldrig en vägran), och med HR-ordlyden för
+      # en läsare utan HR-läs. Utan motor här: lokalt körs samma fall mot den riktiga motorn (AI_ENGINE_URL), där varje varning har ett
+      # fall som Generera vägrar av samma skäl och ett som den inte gör. Provet river skolorna det gjorde.
+      - name: Förlagg, varningar probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/probe-forlagg-varningar.ts
+
       # Hela skolans data (K5, 20270114090000): two schools, each with people,
       # lessons, attendance, absence, leave and notices, and an export ordered
       # at one of them, built by the job as the ordering administrator, stored
