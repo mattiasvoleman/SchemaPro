@@ -461,6 +461,13 @@ jobs:
         env:
           DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=4
           PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+          NODE_ENV: test
+          JWT_SECRET: test-secret-not-used-by-the-fake-guard
+          JWT_ISSUER: https://test.invalid/auth/v1
+          AI_ENGINE_URL: http://127.0.0.1:1
+          AI_ENGINE_API_KEY: test-key
+          AI_ENGINE_TIMEOUT_MS: '15000'
+          PROBE_NO_ENGINE: '1'
         run: npx ts-node --transpile-only scripts/test/probe-forlagg-varningar.ts
 
       # Hela skolans data (K5, 20270114090000): two schools, each with people,

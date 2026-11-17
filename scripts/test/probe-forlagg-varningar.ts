@@ -9,8 +9,9 @@
  *   JWT_SECRET=… JWT_ISSUER=https://ci.invalid/auth/v1 NODE_ENV=test \
  *   npx ts-node --transpile-only scripts/test/probe-forlagg-varningar.ts
  *
- * Med en motor ur det här trädet på AI_ENGINE_URL körs också Generera på riktigt. Utan motor (Database-jobbet i CI har ingen) hålls det
- * gatewayen säger mot databasen ensam: samma fall, samma varningar, utan att Generera frågas.
+ * Med en motor ur det här trädet på AI_ENGINE_URL körs också Generera på riktigt. Med PROBE_NO_ENGINE=1 (Database-jobbet i CI har ingen
+ * motor; appen kräver ändå en AI_ENGINE_URL för att starta) hålls det gatewayen säger mot databasen ensam: samma fall, samma varningar,
+ * utan att Generera frågas.
  *
  * Varje fall är en egen skola (läsåret 2095/96, som börjar en lördag) där varje post är helt lagd för hand, så att motorn bara har
  * låsen och de fästa lektionerna att ta ställning till. Raderna sparas genom tjänsten som sidan gör (en vägran vore ett fel i provet:
@@ -26,6 +27,12 @@ import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-
 
 const SLUG = 'probe-forlagg-varningar';
 let failures = 0;
+
+/**
+ * Whether Generera is asked. The app needs AI_ENGINE_URL and AI_ENGINE_API_KEY to start at all (the CI job gives it a URL nobody
+ * answers at), so a run with no engine says so with PROBE_NO_ENGINE=1.
+ */
+const withEngine = (): boolean => process.env['PROBE_NO_ENGINE'] !== '1' && Boolean(process.env['AI_ENGINE_URL'] && process.env['AI_ENGINE_API_KEY']);
 
 function summarise(error: unknown): string {
   if (error instanceof HttpException) return `${error.name} ${error.getStatus()} ${JSON.stringify(error.getResponse())}`;
@@ -46,7 +53,7 @@ async function check(label: string, body: () => Promise<void>): Promise<void> {
 async function main(): Promise<void> {
   const started = Date.now();
   // Without an engine (the Database job of CI has none) the probe holds what the gateway says; with one, what Generera then does.
-  if (!process.env['AI_ENGINE_URL'] || !process.env['AI_ENGINE_API_KEY']) console.log('     (no engine: the warnings are checked against the database alone, and Generera is not asked)');
+  if (!withEngine()) console.log('     (no engine: the warnings are checked against the database alone, and Generera is not asked)');
   const owner = new Client({ connectionString: process.env['PROBE_OWNER_URL'] });
   await owner.connect();
   try {
@@ -472,7 +479,7 @@ async function run(owner: Client, app: import('@nestjs/common').INestApplication
       }
       assert.equal(forReader.warnings.length, board.warnings.length, 'the reader without HR-läs is told as many things');
       // The week is what Generera is then asked about.
-      if (!process.env['AI_ENGINE_URL'] || !process.env['AI_ENGINE_API_KEY']) return;
+      if (!withEngine()) return;
       const answer = await proxy.triggerScheduling(w.year, w.admin);
       const lines = (answer.conflicts?.conflicts ?? []).map((detail) => conflictView(storedOf(detail)));
       const said = `${answer.status} ${answer.conflicts?.summaryCode ?? ''} ${lines.map((line) => line.code).join(',')}`;
