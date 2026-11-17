@@ -2110,6 +2110,26 @@
       "sectionDescription": "Parallel blocks: one lesson of a block is sat by all the block's entries at the same time.",
       "noBlocks": "No blocks to show.",
       "blockFigures": "{placed} of {count, plural, one {# lesson placed} other {# lessons placed}}, {left} left for Generate."
+    },
+    "warnings": {
+      "title": "Warnings",
+      "label": "Warning:",
+      "badge": "\u26a0\ufe0e Warning",
+      "badgeRefuses": "\u26a0\ufe0e Refuses",
+      "said": "{count, plural, one {One warning:} other {# warnings:}} {sentences}",
+      "legend": "The Warning mark: the week says something about the lesson, which is saved and which Generate takes as it lies. The Refuses mark: Generate will refuse the week because of the lesson.",
+      "refuses": "Generate will refuse the week because of this.",
+      "standsAnyway": "The lesson is saved, and Generate takes it as it lies.",
+      "hold": "Booked at {schools}",
+      "day": "{day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}}",
+      "UNKNOWN": "The week has a warning about the lesson that this version cannot describe.",
+      "TEACHER_DAY_TOO_LONG": "The teacher teaches {minutes} min on {day}, over the cap of {cap} min.",
+      "TEACHER_WEEK_TOO_MANY_DAYS": "The teacher teaches {days} days a week, over the limit of {max}.",
+      "TEACHER_WEEK_TOO_MANY_DAYS_HIDDEN": "The teacher goes over their limit for teaching days.",
+      "TEACHER_STRETCH_TOO_LONG": "The teacher teaches {minutes} min in a row on {day}, over the limit of {max} min (break {breakMinutes} min).",
+      "TEACHER_STRETCH_TOO_LONG_HIDDEN": "The teacher goes over their limit for teaching in a row.",
+      "CLASS_HAS_NO_LUNCH": "The class gets no lunch on {day}: the lessons leave no {minutes} min free between {windowStart} and {windowEnd}.",
+      "NO_ROOM_FREE": "No room of type {roomType} is free on {day} {start}–{end}."
     }
   },
   "roomOptimization": {
