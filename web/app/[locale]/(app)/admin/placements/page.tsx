@@ -224,8 +224,16 @@ export default function PlacementsPage() {
   // What a week picked and a pair need is fetched when the page is up, not with it (lib/use-lazy-module.ts): the route has no bytes for it.
   const weekTools = useLazyModule(() => import("@/lib/placement-week-tools"));
   // The mirror of the clash rule and the pair that asks it are one module and one request (lib/placement-drag-tools.ts).
-  const dragTools = useLazyModule(() => import("@/lib/placement-drag-tools"));
+  // A chunk that does not come (a dropped connection, a proxy) is said once, in words: the controls below stay off, and the reader reloads.
+  const dragTools = useLazyModule(
+    () => import("@/lib/placement-drag-tools"),
+    () => setMessage({ tone: "problem", text: t("toolsFailed") }),
+  );
   const pairTools = dragTools;
+  // A writer's controls wait for the tools (review of #341, MEDEL-1). Without them the page has no mirror, and a field would say "Ledigt."
+  // for a time the teacher already holds, offer no room and no first free time, and lay the lesson as a pin; a press, a drop or an arrow key
+  // would send it. A reader has no controls and needs none.
+  const toolsHere = !mayWrite || dragTools !== null;
 
   const groups = useMemo(
     () => (groupsQuery.data ?? []).filter((group) => !year || group.academicYearId === year.id),
@@ -989,6 +997,7 @@ export default function PlacementsPage() {
 
   const validateChange = useCallback(
     (id: string, to: LessonChange): boolean => {
+      if (!toolsHere) return false;
       if (!drag) return true;
       const span = { dayOfWeek: to.dayOfWeek, startMinutes: to.startMinutes, endMinutes: to.endMinutes };
       if (held && id === heldHalfCardId(held.partKey)) {
@@ -1018,12 +1027,13 @@ export default function PlacementsPage() {
       return drag.dropOf(drag.moverOfRow(id, row, post), span).kind === "OK";
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [drag, brickByKey, moverOfBrick, roomFor, rowByCard, postById, blockBrickByKey, blockById, roomsOfBlockBrick, lessonByCard, held, pair],
+    [toolsHere, drag, brickByKey, moverOfBrick, roomFor, rowByCard, postById, blockBrickByKey, blockById, roomsOfBlockBrick, lessonByCard, held, pair],
   );
 
   /** Why a lesson cannot stand where it was let go or pointed to. */
   const refuseDrop = useCallback(
     (id: string, to: LessonChange, moving: boolean) => {
+      if (!toolsHere) return void setMessage({ tone: "problem", text: t("toolsLoading") });
       let drop: Drop = { kind: "OK" };
       const span = { dayOfWeek: to.dayOfWeek, startMinutes: to.startMinutes, endMinutes: to.endMinutes };
       if (held && id === heldHalfCardId(held.partKey)) {
@@ -1057,7 +1067,7 @@ export default function PlacementsPage() {
       setMessage({ tone: "problem", text: `${t(moving ? "cannotMoveThere" : "cannotStandThere", { reason: sentenceOf(drop) })}${drop.kind === "CLASH" ? meetsRed(drop.params) : ""}` });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [brickByKey, rowByCard, postById, drag, moverOfBrick, roomFor, sentenceOf, t, tBlock, blockBrickByKey, blockById, lessonByCard, roomsOfBlockBrick, postName, meetsRed, held, pair],
+    [toolsHere, brickByKey, rowByCard, postById, drag, moverOfBrick, roomFor, sentenceOf, t, tBlock, blockBrickByKey, blockById, lessonByCard, roomsOfBlockBrick, postName, meetsRed, held, pair],
   );
 
   const handleChange = useCallback(
@@ -1092,6 +1102,7 @@ export default function PlacementsPage() {
 
   const handleSlot = useCallback(
     (day: number, minute: number) => {
+      if (!toolsHere) return void setMessage({ tone: "problem", text: t("toolsLoading") });
       if (mayWrite && selectedBlockBrick) {
         const rooms = roomsOfBlockBrick(selectedBlockBrick);
         const block = blockById.get(selectedBlockBrick.blockId);
@@ -1114,7 +1125,7 @@ export default function PlacementsPage() {
       }
       void layBrick(selectedBrick, { dayOfWeek: day, startMinutes: minute }, room);
     },
-    [mayWrite, selectedBrick, draft, roomFor, drag, moverOfBrick, layBrick, sentenceOf, t, selectedBlockBrick, roomsOfBlockBrick, blockById, postById, placeBlock],
+    [toolsHere, mayWrite, selectedBrick, draft, roomFor, drag, moverOfBrick, layBrick, sentenceOf, t, selectedBlockBrick, roomsOfBlockBrick, blockById, postById, placeBlock],
   );
 
   /** A press on a brick that has not moved yet (a click chooses; only a pointer that moves pulls). */
@@ -1425,7 +1436,7 @@ export default function PlacementsPage() {
                   <li>{t("legendFailing")}</li>
                   {warned.legend ? <li>{warned.legend}</li> : null}
                 </ul>
-                {selectedBrick && mayWrite ? (
+                {selectedBrick && mayWrite && toolsHere ? (
                   <div data-writes="PLANERING" className="mb-3 space-y-2 rounded-md border p-3" data-testid="lay-row">
                     <h3 className="text-sm font-semibold">{t("layTitle")}</h3>
                     <p className="text-sm">{t("layChosen", { lesson: lessonOfBrick(selectedBrick) })}</p>
@@ -1470,7 +1481,7 @@ export default function PlacementsPage() {
                     </Button>
                   </div>
                 ) : null}
-                {selectedBlockBrick && mayWrite ? (
+                {selectedBlockBrick && mayWrite && toolsHere ? (
                   <div data-writes="PLANERING" className="mb-3 space-y-2 rounded-md border p-3" data-testid="lay-row">
                     <h3 className="text-sm font-semibold">{t("layTitle")}</h3>
                     <p className="text-sm [overflow-wrap:anywhere]">{t("layChosen", { lesson: lessonOfBlockBrick(selectedBlockBrick) })}</p>
@@ -1682,7 +1693,7 @@ export default function PlacementsPage() {
               <CardDialog
                 // One dialog per card: its fields start from the card as it stands.
                 key={openCard}
-                mayWrite={mayWrite && (openedRow !== undefined || openedLesson !== undefined)}
+                mayWrite={mayWrite && toolsHere && (openedRow !== undefined || openedLesson !== undefined)}
                 placed={
                   openedRow && openedPost
                     ? {

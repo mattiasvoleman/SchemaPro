@@ -225,6 +225,16 @@ describe("the other schools' bands", () => {
     ]);
   });
 
+  it("says the generic sentence for a band of two kinds whichever kind comes first (review of #341: the first kind was kept)", () => {
+    const teacher = hold({ schools: ["Östra skolan"] });
+    const borrowed = hold({ kind: "ROOM_BORROWED", resourceKind: "ROOM", resourceId: "r-gym", schools: ["Norra skolan"] });
+    const lent = hold({ kind: "ROOM_LENT", resourceKind: "ROOM", resourceId: "r-gym", schools: ["Norra skolan"] });
+    const picked = { teachers: ["anna"], rooms: ["r-gym"] };
+    for (const order of [[borrowed, teacher], [teacher, borrowed], [lent, teacher], [teacher, lent]]) {
+      expect(heldBands(order, picked, label).map((band) => band.label)).toEqual(["Bokad på Norra skolan och Östra skolan"]);
+    }
+  });
+
   it("says a lent room and a borrowed one as what they are, and not as booked (review of #339, LÅG-3)", () => {
     // ROOM_BORROWED is every hour OUTSIDE the loan's times, so a band "booked at the owner" over most of the week would be wrong; the id stays as it was.
     const lent = hold({ kind: "ROOM_LENT", resourceKind: "ROOM", resourceId: "r-gym", schools: ["Norra skolan"] });

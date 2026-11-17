@@ -1654,6 +1654,25 @@ describe('RequirementPlacementsService: warnings on a save and a read of one pos
       expect((await quiet.service.listOfPost(REQ, user)).warnings).toEqual([]);
       expect(quiet.tx['teachingRequirement']!['findMany']).not.toHaveBeenCalled();
     });
+
+    it('counts the year the post is in and no other: the three reads of the year carry it (review of #341, MEDEL-2)', async () => {
+      const { tx, service } = setup(world());
+      tx['teachingRequirement']!['findMany']!.mockResolvedValue([boardRow(onePost)]);
+      await service.listOfPost(REQ, user);
+      // Without the year a post of a past year with a lesson left would answer "the engine is asked" for this year.
+      expect(tx['teachingRequirement']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ where: { academicYearId: YEAR } }));
+      expect(tx['teachingRequirementPlacement']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ where: { requirement: { academicYearId: YEAR } } }));
+      expect(tx['masterLesson']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ where: keptMastersWhere(YEAR) }));
+    });
+
+    it('counts a lesson the grundschema already answers another post with as no lesson left: Generera keeps it, and has nothing to place (review of #341, MEDEL-2)', async () => {
+      const other = { ...onePost, id: OTHER_REQ, studentGroupId: 'g-7b', subjectId: 'sub-ma' };
+      // 7B's Matematik is held on Tuesday 08:00-09:00 by a lesson Generera keeps: the post's one hour is answered.
+      const answers = { ...keptTuesday, id: 'k-7b', studentGroupId: 'g-7b', subjectId: 'sub-ma', teacherId: null, startTime: time('08:00'), endTime: time('09:00') };
+      const { tx, service } = setup(world({ kept: [mathKept, answers] }));
+      tx['teachingRequirement']!['findMany']!.mockResolvedValue([boardRow(onePost), boardRow(other)]);
+      expect(lunchOf((await service.listOfPost(REQ, user)).warnings)).toEqual([false]);
+    });
   });
 
   it('asks the kept lessons of the ruled teachers only when a rule is there', async () => {

@@ -2067,6 +2067,8 @@
     "history": "Undo and redo",
     "saving": "Saving …",
     "waitSaving": "Saving. Wait a moment.",
+    "toolsLoading": "The page is still loading its tools. Try again in a moment.",
+    "toolsFailed": "The page's tools could not be loaded. Reload the page.",
     "stale": "Somebody else has changed this post's placed lessons since you read them. Nothing was written, and the week has been read again. Do what you wanted once more.",
     "staleHistory": "Somebody else has changed placed lessons since you made your changes. Undo and Redo are cleared.",
     "gone": "The lesson is no longer in the week. The week has been read again.",

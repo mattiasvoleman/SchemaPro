@@ -2067,6 +2067,8 @@
     "history": "Ångra och gör om",
     "saving": "Sparar …",
     "waitSaving": "Sparar. Vänta ett ögonblick.",
+    "toolsLoading": "Sidan hämtar fortfarande sina verktyg. Försök igen om ett ögonblick.",
+    "toolsFailed": "Sidans verktyg kunde inte hämtas. Ladda om sidan.",
     "stale": "Någon annan har ändrat postens förläggningar sedan du läste dem. Inget skrevs, och veckan har lästs om. Gör om det du ville.",
     "staleHistory": "Någon annan har ändrat förläggningar sedan du gjorde dina ändringar. Ångra och Gör om är nollställda.",
     "gone": "Lektionen finns inte längre i veckan. Veckan har lästs om.",
