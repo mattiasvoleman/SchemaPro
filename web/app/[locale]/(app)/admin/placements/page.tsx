@@ -672,7 +672,8 @@ export default function PlacementsPage() {
       const cause = failure ? failure.reason : error;
       if (problem === "STALE") {
         // A pair's write that finds the post changed writes nothing, and the first half stays held: it is the second that is laid again.
-        const text = held ? tPair("staleKept") : cause instanceof ApiError && cause.code === "BLOCK_PLACEMENTS_STALE" ? tBlock("stale") : t("stale");
+        // Only the pair's own write says so (it alone has a second row that changed with the first); another write meeting a STALE says what it always does.
+        const text = held && failure?.alsoChanged.length ? tPair("staleKept") : cause instanceof ApiError && cause.code === "BLOCK_PLACEMENTS_STALE" ? tBlock("stale") : t("stale");
         setMessage({ tone: "problem", text });
         void board.refetch();
         return;
