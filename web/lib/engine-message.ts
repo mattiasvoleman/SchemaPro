@@ -14,8 +14,10 @@
  *   - the message key, when the engine ships a sentence the web has not
  *     translated yet — the two deploy separately, so this is a Tuesday, not a
  *     bug;
- *   - a param the Swedish uses and the engine did not send, which would make
- *     next-intl throw inside the render.
+ *   - a param the Swedish uses and the engine did not send. next-intl does not
+ *     throw for that: it reports the missing argument and answers with its
+ *     fallback for the key, "<namespace>.<CODE>", which is what a school would
+ *     read in place of the sentence (see below).
  *
  * In all three the English is shown. Untranslated is a poor read; empty is no
  * read at all, and the sentence is the whole value of the response.
@@ -52,10 +54,14 @@ export function engineMessage(t: MessageLookup, sentence: EngineMessage): string
   const { code, message, params } = sentence;
   if (!code || !t.has(code)) return message;
   try {
-    return t(code, { ...(PARAM_DEFAULTS[code] ?? {}), ...(params ?? {}) });
+    const text = t(code, { ...(PARAM_DEFAULTS[code] ?? {}), ...(params ?? {}) });
+    // The real translator does not throw on a missing argument: its default
+    // onError only reports it and the answer is its fallback for the key,
+    // "<namespace>.<CODE>". That is not a sentence. Same answer as an
+    // untranslated key: show what the engine said.
+    return text === code || text.endsWith(`.${code}`) ? message : text;
   } catch {
-    // next-intl throws on a missing argument rather than printing a hole.
-    // Same answer as an untranslated key: show what the engine said.
+    // A translator that does throw (a stub, or one with an onError that does).
     return message;
   }
 }

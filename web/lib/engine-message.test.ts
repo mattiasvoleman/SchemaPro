@@ -101,7 +101,7 @@ describe("TEACHER_SHARED_BY_PARALLEL_GROUPS", () => {
 
   it("says how many minutes of their own a class has, and keeps the advice about fewer classes", () => {
     const text = render(swedish, { ...base, classes: 5, classMinutes: 60, classOwn: "some" });
-    expect(text).toContain("en klass har högst 60 minuter egna lektioner i veckan");
+    expect(text).toContain("en klass har högst 60 minuter egna lektioner kvar att lägga i veckan");
     expect(text).toContain("låt varje grupp ta elever ur färre klasser");
     expect(text).toContain("kör dem som ett parallellt block");
     expect(text).not.toContain("måste sitta igenom dem en i taget");
@@ -131,6 +131,18 @@ describe("TEACHER_SHARED_BY_PARALLEL_GROUPS", () => {
     expect(() => render(swedish, { ...base, classOwn: "some" })).not.toThrow();
   });
 
+  it("shows the engine's English, not the key, when a figure the branch names is missing", () => {
+    // The real translator reports a missing argument and answers with "engineMessages.<CODE>" (it does not throw),
+    // so the catch in engineMessage is not what keeps a half-formed row off the screen.
+    const quiet = (locale: string, messages: object) =>
+      createTranslator({ locale, messages, namespace: "engineMessages", onError: () => {} }) as unknown as MessageLookup;
+    const row = { ...base, classOwn: "some" }; // names classMinutes, which the row does not carry
+    expect(render(quiet("sv", sv), row)).toBe(ENGLISH);
+    expect(render(quiet("en", en), row)).toBe(ENGLISH);
+    // And a row that is whole is still the catalogue's sentence.
+    expect(render(quiet("sv", sv), { ...row, classMinutes: 60 })).toContain("högst 60 minuter");
+  });
+
   it("is read by the older web too: a message that names none of the new params ignores them", () => {
     const older = createTranslator({
       locale: "sv",
@@ -142,7 +154,7 @@ describe("TEACHER_SHARED_BY_PARALLEL_GROUPS", () => {
 
   it("says the same in English as the engine does", () => {
     const some = render(english, { ...base, classes: 5, classMinutes: 60, classOwn: "some" });
-    expect(some).toContain("a class has at most 60 minutes of lessons of its own a week");
+    expect(some).toContain("a class has at most 60 minutes of lessons of its own left to place a week");
     expect(render(english, { ...base, classes: 5, classMinutes: 0, classOwn: "none" })).not.toContain("fewer classes");
   });
 });

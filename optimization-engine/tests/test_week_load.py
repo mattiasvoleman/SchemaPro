@@ -1179,6 +1179,29 @@ def test_a_class_with_nothing_of_its_own_loses_nothing_to_the_queue() -> None:
     assert detail.params["classMinutes"] == 0
 
 
+def test_a_class_whose_own_lessons_are_all_locked_is_not_said_to_have_none() -> None:
+    """The classes' lessons are placed by hand, so no entry of theirs is left: the sentence says "left to place".
+
+    Locked and placed lessons are no longer entries (the gateway takes them off the demand), so the count is
+    nought. "The classes have no lessons of their own" would be false of a class with three locked a day.
+    """
+    payload = _without_class_lessons(_year(class_lessons=1))
+    payload["fixedLessons"] = [
+        {
+            "id": str(uuid4()), "teacherId": str(uuid4()), "studentGroupId": class_id, "dayOfWeek": 1,
+            "startTime": f"{8 + 2 * index:02d}:25:00", "endTime": f"{9 + 2 * index:02d}:15:00",
+        }
+        for class_id in CLASSES for index in range(3)
+    ]
+
+    (load,) = _every_load(payload)
+    (detail,) = SchedulerSolver._shared_teacher_details([load], 6)
+
+    assert detail.params["classOwn"] == "none"
+    assert "no lessons of their own left to place" in detail.message
+    assert "have no lessons of their own, so" not in detail.message
+
+
 def test_the_most_any_one_class_loses_is_said_not_the_sum() -> None:
     """Five classes of 3 lessons and one of 27: a class loses 1,350 minutes at the most, not 1,950."""
     payload = _year(class_lessons=3)
@@ -1295,9 +1318,9 @@ def test_the_sentence_says_what_the_classes_lose_and_keeps_its_advice_only_where
         {"groups": 5, "minutes": 800, "grades": "9", "classes": 5, "classMinutes": 0, "classOwn": "none"},
     )
 
-    assert "at most 60 minutes of lessons of its own a week" in some
+    assert "at most 60 minutes of lessons of its own left to place a week" in some
     assert "or let each group take pupils from fewer classes" in some
-    assert "have no lessons of their own" in none
+    assert "have no lessons of their own left to place" in none
     assert "teacher's queue and not the classes" in none
     # Nothing is gained by taking pupils from fewer classes when the classes hold nothing of their own.
     assert "fewer classes" not in none
@@ -1312,3 +1335,57 @@ def test_the_sentence_says_what_the_classes_lose_and_keeps_its_advice_only_where
         "class they share has to sit through them one after the other. Give each group a teacher of its own "
         "and run them as a parallel block, or let each group take pupils from fewer classes."
     )
+
+
+def test_a_class_with_several_posts_loses_the_sum_of_them() -> None:
+    """A class's own lessons are every post filed under it: 2 x 50 + 1 x 60 + 3 x 40 = 280 minutes, not the last post's 120.
+
+    Every case above gives a class one post, so a count that kept only the last one passed them all.
+    """
+    payload = _year(class_lessons=1)
+    first = next(row for row in payload["requirements"] if row["studentGroupId"] == CLASSES[0])  # type: ignore[union-attr]
+    first["lessonsPerWeek"] = 2
+    for lessons, minutes in ((1, 60), (3, 40)):
+        payload["requirements"].append({  # type: ignore[union-attr]
+            "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": CLASSES[0], "teacherId": str(uuid4()),
+            "lessonsPerWeek": lessons, "minutesPerLesson": minutes, "studentGroupSize": 24,
+            "minGradeLevel": 8, "maxGradeLevel": 8,
+        })
+
+    (load,) = _every_load(payload)
+    (teacher,) = load.shared
+
+    assert teacher.class_minutes == 2 * 50 + 60 + 3 * 40
+
+
+def test_the_classes_are_every_class_that_any_pair_names_once() -> None:
+    """g1 and g2 meet only in A, g2 and g3 only in B, g1 and g3 nowhere: two classes, and the larger one's minutes."""
+    a, b = str(uuid4()), str(uuid4())
+    g1, g2, g3 = (str(uuid4()) for _ in range(3))
+    payload = _year(class_lessons=1, classes=[a, b], groups=[g1, g2, g3])
+    for row in payload["requirements"]:  # type: ignore[union-attr]
+        if row["studentGroupId"] == a:
+            row["lessonsPerWeek"] = 5
+        elif row["studentGroupId"] == b:
+            row["lessonsPerWeek"] = 3
+    payload["groupConflicts"] = [[a, g1], [a, g2], [b, g2], [b, g3]]
+
+    (load,) = _every_load(payload)
+    teacher = _teacher_of(load, payload, SHARED_TEACHER)
+
+    assert teacher.classes == 2
+    assert teacher.class_minutes == 5 * 50  # A's, whichever pair was read last
+
+
+def test_a_class_with_one_short_lesson_still_has_lessons_of_its_own() -> None:
+    """`classOwn` is "none" only at nought: a single 15-minute lesson of a class is something the groups keep it from holding."""
+    payload = _year(class_lessons=1)
+    for row in payload["requirements"]:  # type: ignore[union-attr]
+        if row["studentGroupId"] in CLASSES:
+            row["minutesPerLesson"] = 15
+
+    (load,) = _every_load(payload)
+    (detail,) = SchedulerSolver._shared_teacher_details([load], 6)
+
+    assert detail.params["classMinutes"] == 15
+    assert detail.params["classOwn"] == "some"
