@@ -9021,7 +9021,7 @@
     },
     "free": {
       "title": "Who and what is free?",
-      "description": "Pick a day and a time to see which teachers and rooms are not occupied for the whole of it.",
+      "description": "Pick a day and a time to see which teachers and rooms are not occupied for the whole of it. The list is those who teach and have time: an administrator who teaches can be in it, but is not asked to cover.",
       "date": "Day",
       "from": "From",
       "to": "To",

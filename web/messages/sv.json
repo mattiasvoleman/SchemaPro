@@ -9021,7 +9021,7 @@
     },
     "free": {
       "title": "Vem och vad är ledigt?",
-      "description": "Välj dag och tid för att se vilka lärare och salar som inte är upptagna hela tiden.",
+      "description": "Välj dag och tid för att se vilka lärare och salar som inte är upptagna hela tiden. Listan är de som undervisar och har tid: en administratör som undervisar kan stå i den, men tillfrågas inte som vikarie.",
       "date": "Dag",
       "from": "Från",
       "to": "Till",
