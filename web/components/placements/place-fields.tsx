@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { FormField } from "@/components/ui/form-field";
-import { minutesOfField, type Drop } from "@/lib/placement-drop";
+import type { Drop } from "@/lib/placement-drop";
+import { minutesOfField } from "@/lib/placement-field";
 import { PLACEMENT_DAY_END, PLACEMENT_DAY_START, PLACEMENT_GRID_MINUTES, clockOfMinutes } from "@/lib/requirement-placement-text";
 
 /*
