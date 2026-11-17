@@ -682,6 +682,8 @@ export interface MasterLesson {
    * where it was, so it can be put back.
    */
   isParked: boolean;
+  /** Written by Generera from a förläggning: changed in Förlägg i veckan and never here. Absent reads as false. */
+  fromPlacement?: boolean;
   /** Which weeks the lesson runs; ISO week parity, not a count from the start. */
   recurrence: LessonRecurrence;
   /** YYYY-MM-DD, or null for the academic year's own boundary. */

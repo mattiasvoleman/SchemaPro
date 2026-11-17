@@ -3,6 +3,7 @@ import { Reply } from "../gateway-routes";
 import { BLOCK_POST_IDS, blockWeekBoard, isBlockWeekScenario } from "./timplan-block-placements";
 import { GROUPS, REQUIREMENTS, ROOMS, SUBJECTS, TEACHERS, YEAR } from "./world";
 import type { TeachingRequirement } from "../../../lib/types";
+import { placementTimetable } from "./placement-back";
 
 /**
  * Förlägg i veckan (GET /teaching-requirements/placements/board), as the
@@ -171,6 +172,7 @@ function plainBoardOfYear(yearId: string, scenario: string | null) {
   const posts = yearId === YEAR.id ? REQUIREMENTS.filter((entry) => entry.academicYearId === yearId) : [];
   return {
     academicYearId: yearId,
+    timetable: placementTimetable(yearId, scenario),
     placements: remembered ? remembered.rows : week ? (anyRoom ? [...WEEK_ROWS, ANY_ROOM_ROW] : WEEK_ROWS) : [],
     posts: posts.map((entry) => ({
       id: entry.id,

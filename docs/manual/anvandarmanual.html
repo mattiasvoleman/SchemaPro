@@ -3443,12 +3443,15 @@
       är.</li>
     <li>En förlagd lektion går inte att ändra i grundschemat: att flytta den,
       ge den en annan sal, lärare eller andra veckor, eller lägga till en klass
-      eller elever nekas med <em>Lektionen är förlagd på timplanen</em>, i
+      eller elever nekas med <em>Lektionen är förlagd</em>, i
       lektionens dialog, i byten och bytkedjor och i klasslärarens schema.
-      Ändra förläggningen på posten i stället, eller på blocket om lektionen
-      är en parallell blocklektion (4.2). Att låsa upp, låsa eller
-      parkera den går, och nästa Generera skriver den igen där förläggningen
-      säger.</li>
+      Kortet har ordet <em>Förlagd</em> i sin text, och ett drag av det nekas
+      redan under dragningen: släpper du det säger sidan var den ändras, i
+      stället för att föreslå en annan tid. Ändra förläggningen i
+      <span class="ui">Förlägg i veckan</span> (eller på posten), eller på
+      blocket om lektionen är en parallell blocklektion (4.2). Att låsa upp,
+      låsa eller parkera den går, och nästa Generera skriver den igen där
+      förläggningen säger.</li>
     <li>En version som återställs, och ett utkast som kasseras, lägger
       tillbaka den förlagda lektionen som förlagd, så nästa Generera skriver
       om den som vanligt.</li>
@@ -3459,6 +3462,13 @@
       förslag behåller dem. En ändrad förläggning gör sparade förslag
       föråldrade.</li>
   </ul>
+  <p>
+    Har läsåret inget grundschema ännu har sidan <span class="ui">Grundschema</span>
+    två åtgärder: <span class="ui">Generera schema</span> och
+    <span class="ui">Lägg ut lektioner för hand</span>, som öppnar
+    <span class="ui">Förlägg i veckan</span> för samma läsår. Den som inte lägger
+    (expeditionen och läsbehörigheten) ser den knappen inte.
+  </p>
   <h4>Det som ändras efteråt</h4>
   <ul>
     <li>Byts läraren på en post som inte delas följer förläggningen med: tid
@@ -3728,11 +3738,48 @@
     grundschemat följer med först vid nästa körning. Varje sparning här slutar
     med meningen <em>Gäller från nästa Generera.</em>
   </p>
+  <p id="andrat-sedan-senaste-schemat">
+    <strong>Ändrat sedan senaste schemat.</strong> Har läsåret ett schema, men
+    förläggningarna inte längre är det grundschemat skrevs från, säger veckan
+    <em>Ändrat sedan senaste schemat. Generera om.</em>, med en länk till
+    genereringssidan. Meningen står över sammanfattningen och döljs medan en
+    Generera pågår (den raden säger det redan). Den räknar två saker:
+    lektionerna förläggningarna står för mot lektionerna Generera skrev från dem
+    (en per rad på en post, och en per medlem för en rad i ett block), och om
+    någon rad sparats efter att grundschemat skrevs. Därför syns en
+    <em>borttagen</em> förläggning också: den lämnar ingen sparad tid efter sig,
+    men dess lektion står kvar i grundschemat tills nästa Generera. Ett schema
+    som kom av ett tillämpat schemaförslag räknas som ett schema, och tiden är
+    då när grundschemat skrevs och inte när en körning tog slut. Före det första
+    schemat säger veckan inget om ändrat, bara att en förläggning gäller från
+    nästa Generera.
+  </p>
+  <p>
+    <strong>Vad meningen inte kan veta.</strong> Ångrar du en ändring sparas
+    postens lista om, med en ny tid, och meningen står kvar fast listan är den
+    som skrevs. Den är en uppmaning att generera om och inget bevis på att veckan
+    skiljer sig från grundschemat.
+  </p>
   <h4>Hur en vägran läses</h4>
   <p>
     Förläggningar kan stoppa en körning på två sätt. Båda står på
     genereringssidan under <span class="ui">Upptäckta konflikter</span>, i
     kategorin <span class="ui">Förlagda poster</span>.
+  </p>
+  <p>
+    <strong>Visa i veckan.</strong> Varje rad som namnger en förläggning har en
+    länk <span class="ui">Visa i veckan</span> under meningen. Ett tryck öppnar
+    <span class="ui">Förlägg i veckan</span> för läsåret med kortet markerat och
+    tangentbordet på det; ingenting öppnas, så du ser raden på sin plats och
+    väljer själv vad du gör. Är raden en lektion i ett parallellt block pekar
+    länken på blockets kort. Hittas ingen lektion på den posten, den dagen och
+    den tiden (den är flyttad eller borttagen sedan körningen) säger veckan
+    <em>Förläggningen ligger inte längre där: den är flyttad eller
+    borttagen</em>, och posten står som vanligt i listan. En rad som lagrades
+    före länkarna saknar länken. Före en körning säger genereringssidan också
+    hur många lektioner som ligger fast, med en länk till veckan, och hur många av
+    dem som inte längre håller; den raden är en hjälp och hindrar ingen körning
+    (servern avgör).
   </p>
   <ul>
     <li><strong>Före motorn.</strong> Generera bedömer varje förläggning på nytt

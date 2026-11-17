@@ -8,6 +8,7 @@ import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { useProfile, useReadOnly } from "@/components/profile-context";
 import { BrickList, type BrickGroup } from "@/components/placements/brick-list";
+import { SinceRunNote } from "@/components/placements/since-run-note";
 import { FilterPicker } from "@/components/schedule/filter-picker";
 import { PlanningYearPicker, ProjectedRostersBanner } from "@/components/schedule/planning-year";
 import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
@@ -69,6 +70,7 @@ import {
   type CardNames,
 } from "@/lib/placement-board";
 import { usePlacementBoard } from "@/lib/placement-board-queries";
+import { usePlacementLinkTarget } from "@/lib/use-placement-link-target";
 import {
   dropOf,
   dropOfBlock,
@@ -204,7 +206,7 @@ export default function PlacementsPage() {
   /** What the fields of a chosen block brick hold: where, and a room for each post. */
   const [blockDraft, setBlockDraft] = useState<BlockPlaceValue | null>(null);
   /** The card a link marks (its lesson's card id), and whether the lesson it names is no longer there. */
-  const [markedCard, setMarkedCard] = useState<string | null>(null);
+  const [markedBlockCard, setMarkedBlockCard] = useState<string | null>(null);
   const [linkGone, setLinkGone] = useState(false);
   const [message, setMessage] = useState<{ tone: "ok" | "problem"; text: string } | null>(null);
   /** The gateway's sentence for the last row it refused, shown in the fields until they change. */
@@ -257,6 +259,8 @@ export default function PlacementsPage() {
   const summary = useMemo(() => (everything ? summaryWithBlocks(everything) : null), [everything]);
   // Every row of the year by key: a card is named by the lesson, and the keys are made over all of the rows so that a filter changes none.
   const keys = useMemo(() => keyByRowId(everything?.placements ?? []), [everything]);
+  // The card an address from Generera or the grundschema names (?post=&day=&start=), marked and given the keyboard.
+  const { markedCard, missing } = usePlacementLinkTarget(everything?.placements, keys, openCard);
   const rowByCard = useMemo(
     () => new Map((everything?.placements ?? []).map((row) => [placementCardId(keys.get(row.id) ?? row.id), row])),
     [everything, keys],
@@ -479,7 +483,7 @@ export default function PlacementsPage() {
     history.clear();
     setBrickKey(null);
     setOpenCard(null);
-    setMarkedCard(null);
+    setMarkedBlockCard(null);
     setMessage(null);
     // The history is one stack for the page, and a year has its own rows.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1059,13 +1063,14 @@ export default function PlacementsPage() {
     const found = lessonOfBlockLink(everything.blocks, blockLink);
     setBlockLink(null);
     if (!found) return void setLinkGone(true);
-    setMarkedCard(found.card);
+    setMarkedBlockCard(found.card);
     setPendingFocus(`[data-lesson-id="${found.card}"]`);
   }, [blockLink, everything, loading]);
+  // The open card, the post's card an address from Generera or the grundschema marks (A3's hook) and the block's card an address names (above).
   const selectedCards = useMemo(() => {
-    const ids = [openCard, markedCard].filter((id): id is string => id !== null);
+    const ids = [openCard, markedCard, markedBlockCard].filter((id): id is string => id !== null);
     return ids.length > 0 ? new Set(ids) : undefined;
-  }, [openCard, markedCard]);
+  }, [openCard, markedCard, markedBlockCard]);
 
   const lessonOfBrick = (brick: Brick | undefined): string =>
     brick ? t("brickLabel", { lesson: postName(postById.get(brick.postId)), teacher: teacherText(brick.teacherId), minutes: brick.minutes }) : "";
@@ -1134,6 +1139,8 @@ export default function PlacementsPage() {
               <Notice tone="warning">{t("running")}</Notice>
             </div>
           ) : null}
+
+          <SinceRunNote board={everything} jobs={jobsQuery.data} running={running} missing={missing} />
 
           <p role="status" className="text-sm" data-testid="placement-summary">
             {t("summary", { rows: summary.rows, left: summary.left })}
@@ -1339,7 +1346,7 @@ export default function PlacementsPage() {
                       dayEndMinutes={DAY_END_MINUTES}
                       editable={mayWrite}
                       onLessonClick={(lesson) => {
-                        setMarkedCard(null);
+                        setMarkedBlockCard(null);
                         setOpenCard(lesson.id);
                       }}
                       selectedIds={selectedCards}

@@ -87,6 +87,11 @@ describe('Förlagda poster (e2e)', () => {
     harness = await createTestApp();
   });
 
+  beforeEach(() => {
+    // What the grundschema holds of the förläggningar, which the week's board reads beside them (its `timetable`): nothing written.
+    harness.tx['masterLesson']!['aggregate']!.mockResolvedValue({ _count: { _all: 0 }, _max: { createdAt: null } });
+  });
+
   afterAll(async () => {
     await harness.close();
   });
@@ -179,7 +184,8 @@ describe('Förlagda poster (e2e)', () => {
       it('is answered on its own route, with the rows judged, the post counted and what the rows are held against', async () => {
         const response = await board().set('x-test-user', admin()).expect(200);
         // `blocks` is Förlagda block's: every block of the year with its lessons, a verdict for each member (block-placement-board.ts).
-        expect(Object.keys(response.body).sort()).toEqual(['academicYearId', 'blocks', 'kept', 'meals', 'placements', 'posts']);
+        expect(Object.keys(response.body).sort()).toEqual(['academicYearId', 'blocks', 'kept', 'meals', 'placements', 'posts', 'timetable']);
+        expect(response.body.timetable).toEqual({ placedLessons: 0, writtenAt: null });
         expect(response.body.placements).toEqual([
           // The lock already answers the post's one lesson, so the row is over the demand: the judge says so, and
           // the count agrees (the row places nothing).

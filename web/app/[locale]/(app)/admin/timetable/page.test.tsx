@@ -2792,6 +2792,130 @@ describe("the state ladder", () => {
   });
 });
 
+/*
+ * Förlägg i veckan and what Generera wrote from it (A3): the empty state leads to the week as well as to Generera, a lesson
+ * written from a förläggning says so in its text, and it is refused during the drag instead of after the drop (409 LESSON_IS_PLACED).
+ * The sentences are the catalogue's; what is held here is which one is said, where, and that nothing is written.
+ */
+describe("the week of förläggningar, from the grundschema (A3)", () => {
+  const card = (subject: string) => screen.queryAllByRole("button").find((el) => el.textContent?.includes(subject));
+  const placedSlojd = { ...lesson("l-slojd", "s-sl", "g-51", "11:00"), fromPlacement: true };
+
+  beforeEach(() => {
+    toasts.error.mockClear();
+  });
+
+  describe("the empty state", () => {
+    it("offers the week beside Generera, with the läsår's default address, as a write of Planering's", () => {
+      state.lessons = [];
+      render(<TimetablePage />);
+
+      const generate = screen.getByRole("link", { name: "timetable.emptyAction" });
+      const byHand = screen.getByRole("link", { name: "timetable.emptyAction2" });
+      expect(generate).toHaveAttribute("href", "/admin/generate");
+      expect(byHand).toHaveAttribute("href", "/admin/placements");
+      expect(byHand).toHaveAttribute("data-writes", "PLANERING");
+      // Generera is for every administrator who reads the page: its link has no mark.
+      expect(generate).not.toHaveAttribute("data-writes");
+    });
+
+    it("names the läsår in the link when it is not the active one, as Generera's link does", async () => {
+      planning.successor = {
+        id: "y-2",
+        name: "2027/28",
+        isActive: false,
+        predecessorId: "y-1",
+        startDate: "2027-08-16",
+        endDate: "2028-06-09",
+      };
+      state.lessons = [];
+      state.nextLessons = [];
+      const user = userEvent.setup();
+      render(<TimetablePage />);
+      await user.click(screen.getByRole("button", { name: "planningYear.optionNext(2027/28)" }));
+
+      expect(screen.getByRole("link", { name: "timetable.emptyAction2" })).toHaveAttribute("href", "/admin/placements?year=y-2");
+      expect(screen.getByRole("link", { name: "timetable.emptyAction" })).toHaveAttribute("href", "/admin/generate?year=y-2");
+    });
+
+    it("is not drawn for a grundschema that has lessons", () => {
+      render(<TimetablePage />);
+      expect(screen.queryByRole("link", { name: "timetable.emptyAction2" })).toBeNull();
+    });
+  });
+
+  describe("the mark", () => {
+    it("says on the card of a lesson written from a förläggning that it is one, and on no other", () => {
+      state.lessons = [placedSlojd, lesson("l-ma1", "s-ma", "g-ma1", "08:00")];
+      render(<TimetablePage />);
+
+      expect(card("Slöjd")!.textContent).toContain("timetable.placedMark");
+      expect(card("Matematik")!.textContent).not.toContain("timetable.placedMark");
+    });
+
+    it("reads a lesson from a gateway that does not send the column as one that is not placed", () => {
+      render(<TimetablePage />);
+      for (const subject of ["Matematik", "Slöjd", "Idrott"]) expect(card(subject)!.textContent).not.toContain("timetable.placedMark");
+    });
+  });
+
+  describe("moving one", () => {
+    it("is refused at the drop with the sentence about where it is changed, and nothing is written", () => {
+      state.lessons = [placedSlojd];
+      render(<TimetablePage />);
+
+      dragToTuesday("Slöjd");
+
+      expect(toasts.error).toHaveBeenCalledTimes(1);
+      expect(toasts.error).toHaveBeenCalledWith("timetable.lessonIsPlaced");
+      expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+    });
+
+    it("is refused for a lesson that is also locked, as it is written from the förläggning and locked", () => {
+      state.lessons = [{ ...placedSlojd, isLocked: true }];
+      render(<TimetablePage />);
+
+      dragToTuesday("Slöjd");
+
+      expect(toasts.error).toHaveBeenCalledWith("timetable.lessonIsPlaced");
+      expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+    });
+
+    it("lets a parked one go back to its own slot, as the server does, and refuses any other from the tray", () => {
+      const parkedPlaced = () => [{ ...placedSlojd, isParked: true }];
+      // Slöjd is remembered on Monday 11:00–12:00; the pointer lets go over that hour (11:00 is y 198 at 1.1 px a minute from 08:00).
+      state.lessons = parkedPlaced();
+      const { unmount } = render(<TimetablePage />);
+      const handle = () => screen.getByRole("button", { name: "timetable.dragToPlace(Slöjd · 5.1 · K. Ek)" });
+      fireEvent.pointerDown(handle(), { pointerId: 1, button: 0, clientX: 700, clientY: 100 });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 100, clientY: 199 });
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 199 });
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ id: "l-slojd", isParked: false, dayOfWeek: 1, startTime: "11:00" }));
+      expect(toasts.error).not.toHaveBeenCalledWith("timetable.lessonIsPlaced");
+      unmount();
+
+      // Any other place is a move, and a move is refused with the sentence.
+      noMutation.mutateAsync.mockClear();
+      state.lessons = parkedPlaced();
+      render(<TimetablePage />);
+      fireEvent.pointerDown(handle(), { pointerId: 1, button: 0, clientX: 700, clientY: 100 });
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 200, clientY: 199 });
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 200, clientY: 199 });
+      expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+      expect(toasts.error).toHaveBeenCalledWith("timetable.lessonIsPlaced");
+    });
+
+    it("moves the other lessons as before, beside it", () => {
+      state.lessons = [placedSlojd, lesson("l-ma1", "s-ma", "g-ma1", "08:00")];
+      render(<TimetablePage />);
+
+      dragToTuesday("Matematik");
+
+      expect(toasts.error).not.toHaveBeenCalledWith("timetable.lessonIsPlaced");
+    });
+  });
+});
+
 describe("the Lektionstid panel", () => {
   afterEach(() => {
     try {
