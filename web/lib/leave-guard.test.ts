@@ -25,18 +25,29 @@ const guard = (message = "Lämna sidan?") => {
   return stop;
 };
 
-/** A link in the document, pressed by a plain left click; the click is returned so that it can be asked whether it was stopped. */
-function press(href: string, init: MouseEventInit = {}, attrs: Record<string, string> = {}): MouseEvent {
+/**
+ * A link in the document, pressed by a plain left click. What the app would do with the click is what reaches the body: the page's own listener
+ * (`reached`) is where the app's navigation would start, and it is stopped there so that jsdom does not try to navigate. `stopped` is whether the
+ * guard kept the click from getting that far.
+ */
+function press(href: string, init: MouseEventInit = {}, attrs: Record<string, string> = {}): { stopped: boolean; reached: number } {
   const link = document.createElement("a");
   link.setAttribute("href", href);
   for (const [name, value] of Object.entries(attrs)) link.setAttribute(name, value);
   const inner = document.createElement("span");
   link.append(inner);
   document.body.append(link);
+  const seen = { stopped: false, reached: 0 };
+  const app = (event: Event) => {
+    seen.reached += 1;
+    event.preventDefault();
+  };
+  document.body.addEventListener("click", app);
   const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ...init });
-  // jsdom does not navigate; the click is only dispatched.
   inner.dispatchEvent(event);
-  return event;
+  document.body.removeEventListener("click", app);
+  seen.stopped = event.defaultPrevented && seen.reached === 0;
+  return seen;
 }
 
 describe("a link inside the app", () => {
@@ -44,17 +55,14 @@ describe("a link inside the app", () => {
     guard();
     const click = press("/sv/admin/timetable");
     expect(confirm).toHaveBeenCalledWith("Lämna sidan?");
-    expect(click.defaultPrevented).toBe(false);
+    expect(click).toEqual({ stopped: false, reached: 1 });
   });
 
   it("stops the click on a no, in the capture phase, so that the app's own listener never sees it", () => {
     confirm.mockReturnValue(false);
     guard();
-    const reached = vi.fn();
-    document.body.addEventListener("click", reached);
-    const click = press("/sv/admin/timetable");
-    expect(click.defaultPrevented).toBe(true);
-    expect(reached).not.toHaveBeenCalled();
+    // Stopped before the body: the app's own listener never sees the click, so no navigation starts.
+    expect(press("/sv/admin/timetable")).toEqual({ stopped: true, reached: 0 });
   });
 
   it("asks for the same page with another query, which is another place", () => {
@@ -74,7 +82,7 @@ describe("a link inside the app", () => {
     guard();
     const click = press(href, init, attrs);
     expect(confirm).not.toHaveBeenCalled();
-    expect(click.defaultPrevented).toBe(false);
+    expect(click).toEqual({ stopped: false, reached: 1 });
   });
 
   it("stops asking when it is stopped (the half is gone), and asks again when a new guard starts", () => {

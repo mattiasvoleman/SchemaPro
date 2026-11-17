@@ -603,13 +603,22 @@ describe("what becomes of a half that is held (BESLUT, lib/placement-pair.ts)", 
     await ready();
     const link = screen.getByRole("link", { name: "toGenerate" });
     link.setAttribute("href", "/sv/admin/generate");
+    // jsdom does not navigate: what the app's own listener would receive is swallowed here, and counted.
+    let reached = 0;
+    document.body.addEventListener("click", (event) => {
+      // The link's clicks only: the presses on the week bubble to the body too.
+      if (!(event.target instanceof Element) || !event.target.closest("a[href='/sv/admin/generate']")) return;
+      reached += 1;
+      event.preventDefault();
+    });
     fireEvent.click(link);
     expect(confirm).not.toHaveBeenCalled();
+    expect(reached).toBe(1);
     await holdFirstHalf();
-    const click = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
-    link.dispatchEvent(click);
+    // A no stops the click before the app's listener.
+    link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
     expect(confirm).toHaveBeenCalledWith("leave");
-    expect(click.defaultPrevented).toBe(true);
+    expect(reached).toBe(1);
   });
 });
 
