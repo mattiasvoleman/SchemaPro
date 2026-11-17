@@ -134,7 +134,7 @@ describe("TEACHER_SHARED_BY_PARALLEL_GROUPS", () => {
   it("shows the engine's English, not the key, when a figure the branch names is missing", () => {
     // The real translator reports a missing argument and answers with "engineMessages.<CODE>" (it does not throw),
     // so the catch in engineMessage is not what keeps a half-formed row off the screen.
-    const quiet = (locale: string, messages: object) =>
+    const quiet = (locale: string, messages: typeof sv) =>
       createTranslator({ locale, messages, namespace: "engineMessages", onError: () => {} }) as unknown as MessageLookup;
     const row = { ...base, classOwn: "some" }; // names classMinutes, which the row does not carry
     expect(render(quiet("sv", sv), row)).toBe(ENGLISH);
