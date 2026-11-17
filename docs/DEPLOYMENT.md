@@ -5768,7 +5768,9 @@ administrator's either way.
     Inställningar on `/admin/teacher-absence`, the cover board, the class teacher's appointment): unchanged, `role === "TEACHER"`. A
     teaching administrator is not in the substitute pool and is never asked (SP409, CT400), and the gateway refuses her as a substitute.
     On `/admin/lessons` one list became two, and on `/admin/teacher-absence` the register takes two (`teachers`, who can be absent, and
-    `poolCandidates`, who the pool can take in): `POST /cover/pool` checks no role, so the web's list is what keeps her out of the pool.
+    `poolCandidates`, who the pool can take in): `POST /cover/pool` checks no role itself, but the database refuses a member who is not a
+    teacher (`SubstitutePoolMembers_member_is_a_teacher`, SP409), so the web's list keeps the dialog from offering her for a pick that can
+    only end in that refusal.
   `/admin/requirements` and `/admin/timetable` write the expression in place (no import), since they sit within 0,5 and 1,3 KB of their
   budgets; `lib/csv-export.ts` does too, since it ships with six pages.
 - **`lärare.csv`.** The web's `teachersToCsv` takes a marked administrator as the gateway's copy

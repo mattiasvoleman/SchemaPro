@@ -639,6 +639,53 @@ describe("People page", () => {
       expect(toast.info).toHaveBeenCalledWith("heldOut.people(1)", expect.anything());
     });
 
+    it("does not count a protected administrator who does not teach among those larare.csv held out: she is not in that file", async () => {
+      // a-1 (Rita) carries no mark here. Her protected identity is held out of the files she is in, and larare.csv is not one of them.
+      state.marks = [{ userId: "a-1", source: "MANUAL" }];
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await openExports(user);
+      await user.click(screen.getByRole("menuitem", { name: "kinds.teachers" }));
+
+      await vi.waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("larare.csv", expect.any(String)));
+      expect(toast.info).toHaveBeenCalledWith("heldOut.people(0)", expect.anything());
+    });
+
+    it("counts a protected administrator who teaches among those the behörigheter file held out, as it does for larare.csv", async () => {
+      state.marked = ["a-1"];
+      state.marks = [{ userId: "a-1", source: "MANUAL" }];
+      state.qualifications = [
+        { id: "q-1", userId: "t-1", subjectId: "sub-ma", minGradeLevel: 7, maxGradeLevel: 9, kind: "LEGITIMATION", validFrom: null, validTo: null, note: null },
+      ];
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await openExports(user);
+      await user.click(screen.getByRole("menuitem", { name: "kinds.teacherQualifications" }));
+
+      await vi.waitFor(() => expect(toast.info).toHaveBeenCalledWith("heldOut.people(1)", expect.anything()));
+    });
+
+    it("counts a protected administrator who teaches among those the uppdrag file held out, as it does for larare.csv", async () => {
+      state.marked = ["a-1"];
+      state.marks = [{ userId: "a-1", source: "MANUAL" }];
+      apiGet.mockImplementation((path: string) =>
+        path === "/api/v1/person-protections"
+          ? Promise.resolve(state.marks)
+          : path.startsWith("/api/v1/teacher-duties")
+            ? Promise.resolve([])
+            : Promise.reject(new Error(`unexpected read ${path}`)),
+      );
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await openExports(user);
+      await user.click(screen.getByRole("menuitem", { name: "kinds.teacherDuties" }));
+
+      await vi.waitFor(() => expect(toast.info).toHaveBeenCalledWith("heldOut.people(1)", expect.anything()));
+    });
+
     it("says none was held out when nobody of the file's role is marked", async () => {
       state.marks = [{ userId: "t-1", source: "MANUAL" }];
       const user = userEvent.setup();

@@ -132,6 +132,11 @@ export default function TeacherAbsencePage() {
     () => absentees.map((teacher) => ({ id: teacher.id, name: `${teacher.firstName} ${teacher.lastName}` })),
     [absentees],
   );
+  // Whose name an absence in the register is drawn with: everybody, not only those who can be registered absent now.
+  const everybodyOptions = useMemo(
+    () => (peopleQuery.data ?? []).map((p) => ({ id: p.id, name: `${p.firstName} ${p.lastName}` })),
+    [peopleQuery.data],
+  );
   const teachers = useMemo(
     () => (peopleQuery.data ?? []).filter((p) => p.role === "TEACHER" && p.isActive),
     [peopleQuery.data],
@@ -280,7 +285,7 @@ export default function TeacherAbsencePage() {
        * teacher and a range, the lessons, and the per-lesson actions — kept
        * exactly, with "Registrera frånvaro" turning the range into an absence.
        */}
-      <AbsenceRegister teachers={absenteeOptions} poolCandidates={teacherOptions} />
+      <AbsenceRegister teachers={absenteeOptions} poolCandidates={teacherOptions} names={everybodyOptions} />
 
       <SectionCard id="absence-lessons" title={t("previewTitle")} description={t("previewBody")}>
         <FilterBar>

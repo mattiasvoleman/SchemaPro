@@ -21,9 +21,10 @@ import ts from "typescript";
  * re-exports it meets, and through `import()` (the whole of the module, since
  * a lazy component is its default and a dialog's chunk is its file). It does
  * not follow what it cannot name: a call through a value that is passed in
- * from somewhere else, or a path built from two constants (`${BASE}/mine`,
- * whose base is read here as a prefix and whose end is not). That is what
- * the table-to-web check in the contract test is for.
+ * from somewhere else, or a path built from a constant of ANOTHER module. A
+ * path built from a constant of the same module (`const BASE = "/api/v1/x"` and
+ * `${BASE}/mine`) is read whole; the table-to-web check of the contract test is
+ * global (any file, any page) and cannot stand in for that.
  */
 
 export interface Literal {
@@ -43,6 +44,8 @@ interface Module {
   file: string;
   source: ts.SourceFile;
   decls: Map<string, ts.Node[]>;
+  /** Top-level `const NAME = "text"` of this module, so that a path `${NAME}/mine` is read whole. */
+  consts: Map<string, string>;
   imports: Map<string, ImportRef>;
   reexports: Map<string, ImportRef>;
   stars: string[];
@@ -91,7 +94,9 @@ export class ApiLiterals {
         const path = normalise(child.text);
         if (path) here(path);
       } else if (ts.isTemplateExpression(child)) {
-        const text = [child.head.text, ...child.templateSpans.flatMap((span) => [":p", span.literal.text])].join("");
+        // A hole that is a constant of this module, written as a string, is that string: `${BASE}/mine` is the whole path.
+        const hole = (span: ts.TemplateSpan) => (ts.isIdentifier(span.expression) ? (module.consts.get(span.expression.text) ?? ":p") : ":p");
+        const text = [child.head.text, ...child.templateSpans.flatMap((span) => [hole(span), span.literal.text])].join("");
         const path = normalise(text);
         if (path) here(path);
       } else if (ts.isCallExpression(child) && child.expression.kind === ts.SyntaxKind.ImportKeyword) {
@@ -132,7 +137,7 @@ export class ApiLiterals {
     let module: Module | null = null;
     if (existsSync(file) && statSync(file).isFile() && /\.tsx?$/.test(file) && !/\.(test|spec)\.tsx?$/.test(file)) {
       const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-      module = { file, source, decls: new Map(), imports: new Map(), reexports: new Map(), stars: [] };
+      module = { file, source, decls: new Map(), consts: new Map(), imports: new Map(), reexports: new Map(), stars: [] };
       this.index(module);
     }
     this.modules.set(file, module);
@@ -164,8 +169,11 @@ export class ApiLiterals {
         if (isDefault) add("default", statement);
       } else if (ts.isVariableStatement(statement)) {
         for (const declaration of statement.declarationList.declarations) {
-          if (ts.isIdentifier(declaration.name)) add(declaration.name.text, declaration);
-          else add("*destructured", declaration);
+          if (ts.isIdentifier(declaration.name)) {
+            add(declaration.name.text, declaration);
+            const init = declaration.initializer;
+            if (init && (ts.isStringLiteral(init) || ts.isNoSubstitutionTemplateLiteral(init))) module.consts.set(declaration.name.text, init.text);
+          } else add("*destructured", declaration);
         }
       } else if (ts.isExportAssignment(statement)) {
         add("default", statement.expression);

@@ -127,6 +127,11 @@ const PAGES: Record<string, { files: string[]; calls: Call[] }> = {
       ["GET", "api/v1/attendance/lessons/:lessonId/records"],
       ["GET", "api/v1/attendance/lessons/:lessonId/reported-absences"],
       ["GET", "api/v1/lesson-moves/lessons/:lessonId"],
+      // The move of a pupil from one lesson to another for a day (components/lesson-moves): the hooks write `${BASE}/lessons/…`.
+      ["GET", "api/v1/lesson-moves/lessons/:lessonId/pupils"],
+      ["GET", "api/v1/lesson-moves/lessons/:lessonId/candidates"],
+      ["POST", "api/v1/lesson-moves"],
+      ["DELETE", "api/v1/lesson-moves/:id"],
     ],
   },
   "/teacher/tjanst": {

@@ -66,7 +66,9 @@ vi.mock("./cover-settings-dialog", () => ({
 }));
 const absences = vi.hoisted(() => ({ data: [] as unknown[] }));
 const register = vi.hoisted(() => ({
-  props: undefined as { teachers: { id: string; name: string }[]; poolCandidates: { id: string; name: string }[] } | undefined,
+  props: undefined as
+    | { teachers: { id: string; name: string }[]; poolCandidates: { id: string; name: string }[]; names?: { id: string; name: string }[] }
+    | undefined,
 }));
 vi.mock("./absence-register", async (importOriginal) => {
   const real = await importOriginal<typeof import("./absence-register")>();
@@ -197,6 +199,12 @@ describe("who can be absent, and who can step in (an administrator who teaches: 
     const names = (list: { name: string }[]) => list.map((entry) => entry.name);
     expect(names(register.props!.teachers)).toEqual(["Nils Berg", "Bo Ek", "Maja Mark"]);
     expect(names(register.props!.poolCandidates)).toEqual(["Nils Berg", "Bo Ek"]);
+  });
+
+  it("hands the register everybody's name too, so that an absence of a person whose mark was taken off is still named", () => {
+    render(<TeacherAbsencePage />);
+    const names = (list: { name: string }[]) => list.map((entry) => entry.name);
+    expect(names(register.props!.names!)).toEqual(expect.arrayContaining(["Nils Berg", "Maja Mark", "Rolf Rektor", "Gun Borta"]));
   });
 
   it("keeps her out of the substitute pool's candidates: the register hands its dialog the teachers only (SP409)", async () => {

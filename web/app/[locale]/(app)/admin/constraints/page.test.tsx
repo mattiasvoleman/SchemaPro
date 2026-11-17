@@ -138,6 +138,28 @@ describe("Constraints page — year-range locks", () => {
     expect(screen.getByText("Maja Mark")).toBeInTheDocument();
   });
 
+  it("still names the person of a rule when her mark has been taken off: the list looks up everybody, the picker offers the teachers", () => {
+    // Rolf has no mark (u-3): a rule written while she had it is about her still, and the list must not say "—".
+    constraints.data = [
+      {
+        id: "c-2",
+        resourceType: "TEACHER",
+        userId: "u-3",
+        roomId: null,
+        studentGroupId: null,
+        minGradeLevel: null,
+        maxGradeLevel: null,
+        dayOfWeek: 1,
+        startTime: "08:00",
+        endTime: "10:00",
+        type: "UNAVAILABLE",
+        reason: null,
+      },
+    ];
+    render(<ConstraintsPage />);
+    expect(screen.getByText("Rolf Rektor")).toBeInTheDocument();
+  });
+
   it("swaps the resource picker for two year selects", async () => {
     const user = userEvent.setup();
     render(<ConstraintsPage />);

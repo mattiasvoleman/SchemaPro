@@ -280,9 +280,23 @@ describe("an administrator who teaches (Users.teaches) in the register", () => {
     expect(within(row).getByText("Pågår")).toBeInTheDocument();
   });
 
+  it("names an absence of a person who is no longer among those who can be absent: her mark was taken off and her absence stays", async () => {
+    // `teachers` is who can be registered absent, `names` is whose name an absence is drawn with: everybody's.
+    const ROLF = { id: "a-rolf", name: "Rolf Rektor" };
+    get.mockImplementation(async (path: string) => {
+      if (path.startsWith("/api/v1/teacher-absences")) return [{ ...ONGOING, id: "a-3", userId: "a-rolf" }];
+      if (path === "/api/v1/teacher-absence-reasons") return REASONS;
+      throw new Error(`unexpected GET ${path}`);
+    });
+    wrap(<AbsenceRegister teachers={TEACHERS} poolCandidates={TEACHERS} names={[...TEACHERS, ROLF]} />);
+    const row = (await screen.findByText("Rolf Rektor")).closest("tr")!;
+    expect(within(row).getByText("Pågår")).toBeInTheDocument();
+  });
+
   it("hands the substitute pool the candidates it was given, and not the list of who can be absent (SP409)", async () => {
     // She is in `teachers` (she can be absent) and not in `poolCandidates` (she is not in the pool and is never asked): the
-    // pool's dialog gets the second list. The gateway's POST /cover/pool checks no role, so this is what keeps her out of it.
+    // pool's dialog gets the second list. The database would refuse her as a member (POOL_MEMBER_MUST_BE_TEACHER, SP409), so this
+    // is what keeps the dialog from offering a pick that can only end in that refusal.
     const user = userEvent.setup();
     wrap(<AbsenceRegister teachers={[...TEACHERS, MAJA]} poolCandidates={TEACHERS} />);
     await user.click(await screen.findByRole("button", { name: "Inställningar" }));

@@ -3266,6 +3266,14 @@ describe("Delade lektioner in the cell dialog", () => {
     expect(updateMock.mock.calls[0][0]).not.toHaveProperty("shares");
   });
 
+  it("names a post's teacher in its cell also when she is no teacher now: her mark was taken off and the post still carries her", () => {
+    const rolf: PersonFixture = { ...anna, id: "a-rolf", role: "SCHOOL_ADMIN", firstName: "Rolf", lastName: "Rektor", email: "rolf@example.test" };
+    state.people = loaded([anna, bo, rolf]);
+    state.requirements = loaded([{ ...requirements[0], teacherId: "a-rolf", lessonsPerWeek: 3, recurrence: "ALL_WEEKS" }, ...requirements.slice(1)]);
+    render(<RequirementsPage />);
+    expect(within(screen.getByLabelText(CELL)).getByText(/R\. Rektor/)).toBeInTheDocument();
+  });
+
   it("shows a shared post's extra teachers in its cell, and opens with its shares to save back", async () => {
     state.shares = loaded([{ requirementId: "r-so", teacherId: "t-bo", lessons: 1, minutes: 60 }]);
     render(<RequirementsPage />);

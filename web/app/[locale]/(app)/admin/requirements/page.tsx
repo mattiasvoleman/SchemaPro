@@ -1031,7 +1031,8 @@ export default function RequirementsPage() {
   };
   const teacherLabel = (id: string | null) => {
     if (!id) return null;
-    const teacher = teachers.find((person) => person.id === id);
+    // Looked up in everybody, as personName is: a post still carries a person whose mark was taken off.
+    const teacher = (people ?? []).find((person) => person.id === id);
     return teacher ? `${teacher.firstName[0]}. ${teacher.lastName}` : null;
   };
 

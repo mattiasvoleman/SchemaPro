@@ -44,6 +44,19 @@ beforeAll(() => {
   write("lib/other.test.ts", `export const nope = "/api/v1/in-a-test";`);
   write("lib/dir/index.ts", `export const fromIndex = () => "/api/v1/from-index";`);
   write("lib/notes.ts", `export const note = "http://example.test/api/v2/x"; export const plain = "/api/v1";`);
+  // A base kept in a constant of the module and the end appended to it: read whole, since the contract test cannot tell the ends apart.
+  write(
+    "lib/based.ts",
+    [
+      'const BASE = "/api/v1/based";',
+      "const OTHER = something();",
+      'export const useMine = () => get(`${BASE}/mine`);',
+      'export const useOne = (id: string) => get(`${BASE}/${id}/one?x=1`);',
+      'export const useOther = () => get(`${OTHER}/unknown`);',
+      "function get(path: string) { return path; }",
+      "function something() { return \"/elsewhere\"; }",
+    ].join("\n"),
+  );
 });
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -95,6 +108,15 @@ describe("the routes the code of a page can name", () => {
   it("does not stop at an import it cannot resolve, a package or a file that is not there", () => {
     write("app/eight.tsx", `import { x } from "some-package";\nimport { y } from "@/lib/missing";\nexport default function Page() { return [x, y, "/api/v1/kept"]; }`);
     expect(reach("app/eight.tsx")).toEqual(["api/v1/kept"]);
+  });
+
+  it("reads a constant of the same module whole: `${BASE}/mine` is the whole route, and a hole that is no constant stays a hole", () => {
+    write("app/ten.tsx", `import { useMine, useOne } from "@/lib/based";\nexport default function Page() { return [useMine, useOne]; }`);
+    // The base itself is also named (the constant is a declaration of the module the hooks name).
+    expect(reach("app/ten.tsx")).toEqual(["api/v1/based", "api/v1/based/:p/one", "api/v1/based/mine"]);
+    write("app/eleven.tsx", `import { useOther } from "@/lib/based";\nexport default function Page() { return useOther; }`);
+    // `OTHER` is no string literal of the module: its hole stays a hole, which is no gateway path.
+    expect(reach("app/eleven.tsx")).toEqual([]);
   });
 
   it("reaches a hook a page starts to use, which is what lets a mutant fail the contract", () => {

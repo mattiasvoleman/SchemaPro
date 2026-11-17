@@ -164,8 +164,9 @@ export default function ConstraintsPage() {
 
   const resourceName = (constraint: AvailabilityConstraint): string => {
     if (constraint.userId) {
-      const teacher = teachers.find((person) => person.id === constraint.userId);
-      return teacher ? `${teacher.firstName} ${teacher.lastName}` : "—";
+      // Looked up in everybody, not in the picker's list: a rule written while she had the mark is about her still.
+      const person = (people ?? []).find((candidate) => candidate.id === constraint.userId);
+      return person ? `${person.firstName} ${person.lastName}` : "—";
     }
     if (constraint.roomId) {
       return rooms?.find((room) => room.id === constraint.roomId)?.name ?? "—";
