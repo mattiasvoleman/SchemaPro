@@ -59,8 +59,26 @@ vi.mock("@/lib/queries", () => ({
   }),
   useSubstituteSuggestions: () => ({ data: [], isLoading: false }),
 }));
+// What the register hands the pool's dialog (the dialog is its own file's test).
+vi.mock("./cover-settings-dialog", () => ({
+  CoverSettingsDialog: ({ open, teachers }: { open: boolean; teachers: { id: string; name: string }[] }) =>
+    open ? <ul aria-label="poolCandidates">{teachers.map((teacher) => <li key={teacher.id}>{teacher.name}</li>)}</ul> : null,
+}));
+const absences = vi.hoisted(() => ({ data: [] as unknown[] }));
+const register = vi.hoisted(() => ({
+  props: undefined as { teachers: { id: string; name: string }[]; poolCandidates: { id: string; name: string }[] } | undefined,
+}));
+vi.mock("./absence-register", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./absence-register")>();
+  return {
+    AbsenceRegister: (props: NonNullable<typeof register.props>) => {
+      register.props = props;
+      return real.AbsenceRegister(props);
+    },
+  };
+});
 vi.mock("@/lib/cover-queries", () => ({
-  useAbsences: () => ({ data: [], isLoading: false }),
+  useAbsences: () => ({ data: absences.data, isLoading: false }),
   useAbsenceReasons: () => ({ data: [] }),
   useAbsenceActions: () => ({
     create: { mutateAsync: vi.fn(), isPending: false },
@@ -78,6 +96,7 @@ vi.mock("next-intl", () => ({
 
 beforeEach(() => {
   cancel.mockReset().mockResolvedValue({});
+  absences.data = [];
 });
 
 const chooseTeacher = async () => {
@@ -169,6 +188,24 @@ describe("who can be absent, and who can step in (an administrator who teaches: 
     await user.click(within(dialog).getByLabelText("absenceForm.teacher"));
     expect(await screen.findByRole("option", { name: "Maja Mark" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Rolf Rektor" })).not.toBeInTheDocument();
+  });
+
+  it("hands the register the list of who can be absent, and the pool the teachers only", () => {
+    // A pass-through spy (the register is drawn for real): which list goes to which prop is the page's choice, and the
+    // register's own test holds what it does with each.
+    render(<TeacherAbsencePage />);
+    const names = (list: { name: string }[]) => list.map((entry) => entry.name);
+    expect(names(register.props!.teachers)).toEqual(["Nils Berg", "Bo Ek", "Maja Mark"]);
+    expect(names(register.props!.poolCandidates)).toEqual(["Nils Berg", "Bo Ek"]);
+  });
+
+  it("keeps her out of the substitute pool's candidates: the register hands its dialog the teachers only (SP409)", async () => {
+    const user = userEvent.setup();
+    render(<TeacherAbsencePage />);
+    await user.click(screen.getByRole("button", { name: /teacherAbsence\.settings/ }));
+    const list = await screen.findByRole("list", { name: "poolCandidates" });
+    const names = within(list).getAllByRole("listitem").map((item) => item.textContent);
+    expect(names).toEqual(["Nils Berg", "Bo Ek"]);
   });
 
   it("keeps her out of the substitute pick: she is not in the pool and is never asked (SP409)", async () => {

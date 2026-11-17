@@ -280,7 +280,7 @@ export default function TeacherAbsencePage() {
        * teacher and a range, the lessons, and the per-lesson actions — kept
        * exactly, with "Registrera frånvaro" turning the range into an absence.
        */}
-      <AbsenceRegister teachers={absenteeOptions} />
+      <AbsenceRegister teachers={absenteeOptions} poolCandidates={teacherOptions} />
 
       <SectionCard id="absence-lessons" title={t("previewTitle")} description={t("previewBody")}>
         <FilterBar>

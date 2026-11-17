@@ -97,6 +97,8 @@ const state = vi.hoisted(() => ({
     | undefined,
   /** Users.teaches: who carries the mark in the register's list (GET /users answers with it). */
   marked: [] as string[],
+  /** A school with no teacher by role: the only person who may teach is an administrator who carries the mark. */
+  noTeachers: false,
   administratorsFailed: false,
   roleChanges: [] as unknown[],
   /** Whether the school has an active guardian, who is what makes the guardians export available. */
@@ -143,7 +145,7 @@ vi.mock("@/lib/work-rule-queries", () => ({
 
 vi.mock("@/lib/queries", () => ({
   usePeople: () => {
-    const all = state.withGuardian ? peopleAndAGuardian : people;
+    const all = (state.withGuardian ? peopleAndAGuardian : people).filter((one) => !(state.noTeachers && one.role === "TEACHER"));
     return {
       data: all.map((one) => (state.marked.includes(one.id) ? { ...one, teaches: true } : one)),
       isLoading: false,
@@ -285,6 +287,7 @@ describe("People page", () => {
     state.administrators = new Map();
     state.administratorsFailed = false;
     state.marked = [];
+    state.noTeachers = false;
     state.roleChanges = [];
     state.withGuardian = false;
     state.marks = [];
@@ -594,6 +597,20 @@ describe("People page", () => {
       expect(exported("larare.csv")).toContain("karin@skolan.se");
       expect(exported("larare.csv")).toContain("rita@skolan.se");
       expect(toast.info).toHaveBeenCalledWith("heldOut.people(0)", expect.anything());
+    });
+
+    it("offers larare.csv in a school whose only teaching person is an administrator who carries the mark, and not when she does not", async () => {
+      state.noTeachers = true;
+      const user = userEvent.setup();
+      const { unmount } = render(<PeoplePage />);
+      await openExports(user);
+      expect(screen.getByRole("menuitem", { name: "kinds.teachers" })).toHaveAttribute("data-disabled");
+      unmount();
+
+      state.marked = ["a-1"];
+      render(<PeoplePage />);
+      await openExports(user);
+      expect(screen.getByRole("menuitem", { name: "kinds.teachers" })).not.toHaveAttribute("data-disabled");
     });
 
     it("leaves an administrator who does not teach out of larare.csv", async () => {

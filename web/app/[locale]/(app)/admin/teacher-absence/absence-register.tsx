@@ -103,7 +103,19 @@ function CountsCell({ counts, passes }: { counts: AbsenceCounts; passes?: PassSu
  * The reason is shown here, on an admin-only page, and nowhere a colleague,
  * a pupil or a guardian looks.
  */
-export function AbsenceRegister({ teachers }: { teachers: { id: string; name: string }[] }) {
+export function AbsenceRegister({
+  teachers,
+  poolCandidates,
+}: {
+  /** Who can be absent, and whose name an absence is drawn with: everybody who teaches, a marked administrator too (Users.teaches). */
+  teachers: { id: string; name: string }[];
+  /**
+   * Who the substitute pool can take in: the teachers only, and never an administrator who teaches. She is not in the pool and is
+   * never asked (SP409), and the gateway's POST /cover/pool checks no role, so this list is the only thing that keeps her out. A
+   * required prop of its own, not a default of `teachers`: the wider list would then be the pool's by silence.
+   */
+  poolCandidates: { id: string; name: string }[];
+}) {
   const t = useTranslations("teacherAbsence");
   const tReasons = useTranslations("absenceReasons");
   // A reason gallring took reads "Gallrad", not "Ej angiven" (ABSENCE_REASONS).
@@ -297,7 +309,7 @@ export function AbsenceRegister({ teachers }: { teachers: { id: string; name: st
       ) : null}
       {settingsOpened ? (
         <Suspense fallback={null}>
-          <CoverSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} teachers={teachers} />
+          <CoverSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} teachers={poolCandidates} />
         </Suspense>
       ) : null}
     </SectionCard>
