@@ -646,9 +646,22 @@ describe("the other schools' bands", () => {
     renderPage();
     await ready();
     await pickRoom("Gymnastiksalen");
-    expect(screen.getByText("warnings.hold(Södra skolan och Östra skolan)")).toBeInTheDocument();
+    // The room is lent to them: a sentence of its own, and not "booked at" (review of #339, LÅG-3).
+    expect(screen.getByText("warnings.holdLent(Södra skolan och Östra skolan)")).toBeInTheDocument();
+    expect(screen.queryByText(/warnings\.hold\(/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "clearFilters" }));
     expect(screen.queryByText(/warnings\.hold/)).not.toBeInTheDocument();
+  });
+
+  it("says a borrowed room as borrowed, outside the loan's times: its band is not 'booked at the owner' (review of #339, LÅG-3)", async () => {
+    withBoard({
+      holds: [hold({ kind: "ROOM_BORROWED", resourceKind: "ROOM", resourceId: "r-gym", dayOfWeek: 2, startTime: "08:00", endTime: "13:00", schools: ["Roller skola"] })],
+    });
+    renderPage();
+    await ready();
+    await pickRoom("Gymnastiksalen");
+    expect(screen.getByText("warnings.holdBorrowed(Roller skola)")).toBeInTheDocument();
+    expect(screen.queryByText(/warnings\.hold\(/)).not.toBeInTheDocument();
   });
 
   it("draws the bands behind the cards and as text, so that they are never a colour alone", async () => {

@@ -175,7 +175,7 @@ test.describe("the lists", () => {
     await expect(dialog).toBeVisible();
     await expect(dialog.getByTestId("card-verdict")).toHaveText("Håller.");
     await expect(dialog.getByTestId("placement-warning")).toHaveCount(2);
-    await expect(dialog.getByTestId("placement-warning").first()).toContainText("Lektionen är sparad, och den här varningen stoppar inte Generera.");
+    await expect(dialog.getByTestId("placement-warning").first()).toContainText("Lektionen är sparad. Generera vägrar inte veckan för just det här, men kan vägra den av något annat.");
     await page.keyboard.press("Escape");
     await matematik(page).click();
     await expect(page.getByRole("dialog").getByTestId("placement-warning").first()).toContainText("Generera kommer att vägra veckan på grund av detta.");
@@ -221,9 +221,10 @@ test.describe("the other schools' bands", () => {
     await page.getByRole("button", { name: "Salar", exact: true }).click();
     await page.getByRole("menuitemcheckbox", { name: "NO-salen", exact: true }).click();
     await page.keyboard.press("Escape");
-    await expect(page.getByText("Bokad på Norra skolan och Östra skolan", { exact: true })).toBeVisible();
+    // The room is lent to them: said as lent, not as booked (review of #339, LÅG-3).
+    await expect(page.getByText("Utlånad till Norra skolan och Östra skolan", { exact: true })).toBeVisible();
     // The band is behind the cards and takes no pointer: a press on the hour under it still reaches the week.
-    await expect(page.getByText("Bokad på Norra skolan och Östra skolan", { exact: true })).toHaveCSS("pointer-events", "none");
+    await expect(page.getByText("Utlånad till Norra skolan och Östra skolan", { exact: true })).toHaveCSS("pointer-events", "none");
     expect(misses, MISSES).toEqual([]);
   });
 });

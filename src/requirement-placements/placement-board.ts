@@ -196,6 +196,13 @@ export function boardPostOf(
   };
 }
 
+/**
+ * Whether any post of the year still has a lesson for the engine to place: what Generera asks it for, the board's `left`. A year with
+ * none is one where Generera does not call the engine at all (every post answered by a lesson it keeps or a förläggning), so no
+ * rule of the engine can refuse it; a pin is not counted here, because a pin is a förläggning and the post's `left` is without it.
+ */
+export const lessonsLeftOf = (posts: readonly BoardPostView[]): boolean => posts.some((post) => post.parts.some((part) => part.left > 0));
+
 /** The judge's verdict on one row; `reason` and `params` only when the row does not hold. */
 export interface BoardVerdictView {
   ok: boolean;

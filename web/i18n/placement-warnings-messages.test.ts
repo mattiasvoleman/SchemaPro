@@ -37,11 +37,26 @@ describe("placementWeek.warnings", () => {
     expect(t("en")("said", { count: 3, sentences: "One. Two. Three." })).toBe("3 warnings: One. Two. Three.");
   });
 
-  it("says what a refusal means, and what the lack of one means: that the warning does not stop Generera, and no more (the gateway promises nothing the other way)", () => {
+  it("says what a refusal means, and what the lack of one means: that this reason does not make Generera refuse, and no more (the gateway promises nothing the other way)", () => {
     expect(t("sv")("refuses")).toBe("Generera kommer att vägra veckan på grund av detta.");
-    expect(t("sv")("standsAnyway")).toBe("Lektionen är sparad, och den här varningen stoppar inte Generera.");
+    expect(t("sv")("standsAnyway")).toBe("Lektionen är sparad. Generera vägrar inte veckan för just det här, men kan vägra den av något annat.");
     expect(t("en")("refuses")).toBe("Generate will refuse the week because of this.");
-    expect(t("en")("standsAnyway")).toBe("The lesson is saved, and this warning does not stop Generate.");
+    expect(t("en")("standsAnyway")).toBe("The lesson is saved. Generate will not refuse the week for this alone, but it may still refuse it for something else.");
+  });
+
+  it("promises no more for a warning that does not refuse than the gateway does: `refuses: false` is no evidence of a refusal, not a promise that Generera runs (review of #339, LÅG-5)", () => {
+    // The gateway's contract (placement-warnings.ts): "false is not a promise that it will not (the engine may find another reason),
+    // only that this one does not stop it". The card's dialog and the legend are the two places that say it to the reader.
+    for (const [locale, key, unwanted, wanted] of [
+      ["sv", "standsAnyway", /stoppar inte Generera/, /något annat/],
+      ["sv", "legend", /stoppar inte Generera/, /något annat/],
+      ["en", "standsAnyway", /does not stop Generate/, /something else/],
+      ["en", "legend", /does not stop Generate/, /something else/],
+    ] as const) {
+      const text = t(locale)(key);
+      expect(text, `${locale} ${key}`).not.toMatch(unwanted);
+      expect(text, `${locale} ${key}`).toMatch(wanted);
+    }
   });
 
   it("marks the card with a sign AND a word, so that it is never a colour alone, and with a stronger word for a refusal", () => {
@@ -57,6 +72,16 @@ describe("placementWeek.warnings", () => {
   it("names the other schools that hold a teacher or a room", () => {
     expect(t("sv")("hold", { schools: "Östra skolan och Södra skolan" })).toBe("Bokad på Östra skolan och Södra skolan");
     expect(t("en")("hold", { schools: "East School" })).toBe("Booked at East School");
+  });
+
+  it("says a lent room as lent and a borrowed one as borrowed, free only in the loan's times, in both languages (review of #339, LÅG-3: the band of a borrowed room covers every hour outside the loan)", () => {
+    expect(t("sv")("holdLent", { schools: "Norra skolan" })).toBe("Utlånad till Norra skolan");
+    expect(t("sv")("holdBorrowed", { schools: "Roller skola" })).toBe("Lånad från Roller skola, ledig bara i lånets tider");
+    expect(t("en")("holdLent", { schools: "North School" })).toBe("Lent to North School");
+    expect(t("en")("holdBorrowed", { schools: "Roller School" })).toBe("Borrowed from Roller School, free only in the loan's times");
+    for (const locale of ["sv", "en"] as const) {
+      expect(t(locale)("holdBorrowed", { schools: "X" })).not.toBe(t(locale)("hold", { schools: "X" }));
+    }
   });
 
   it("explains both marks in the legend, and names them as the cards do", () => {

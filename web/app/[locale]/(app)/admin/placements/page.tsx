@@ -74,21 +74,8 @@ import { usePlacementBoard } from "@/lib/placement-board-queries";
 import { canBePair, heldHalfCardId, otherHalf, partKeyOfBrick, type Half, type WeeksChoice } from "@/lib/placement-pair-key";
 import { usePlacementLinkTarget } from "@/lib/use-placement-link-target";
 import { usePlacementWarnings } from "@/lib/use-placement-warnings";
-import {
-  dropOf,
-  dropOfBlock,
-  moverOfBlockBrick,
-  moverOfBlockRow,
-  moverOfRow,
-  nextFreeSpot,
-  nextFreeSpotOfBlock,
-  suggestedBlockRooms,
-  suggestedRoom,
-  type Drop,
-  type Mover,
-  type OtherNames,
-} from "@/lib/placement-drop";
-import { buildMirror } from "@/lib/placement-mirror";
+// The mirror of the clash rule and what asks it come with the drag tools, a moment after the page is up (lib/placement-drag-tools.ts).
+import type { Drop, Mover, OtherNames } from "@/lib/placement-drop";
 import {
   bricksOf,
   inputOfBrick,
@@ -236,7 +223,17 @@ export default function PlacementsPage() {
   const [week, setWeek] = useState<string | null>(null);
   // What a week picked and a pair need is fetched when the page is up, not with it (lib/use-lazy-module.ts): the route has no bytes for it.
   const weekTools = useLazyModule(() => import("@/lib/placement-week-tools"));
-  const pairTools = useLazyModule(() => import("@/lib/placement-pair-control"));
+  // The mirror of the clash rule and the pair that asks it are one module and one request (lib/placement-drag-tools.ts).
+  // A chunk that does not come (a dropped connection, a proxy) is said once, in words: the controls below stay off, and the reader reloads.
+  const dragTools = useLazyModule(
+    () => import("@/lib/placement-drag-tools"),
+    () => setMessage({ tone: "problem", text: t("toolsFailed") }),
+  );
+  const pairTools = dragTools;
+  // A writer's controls wait for the tools (review of #341, MEDEL-1). Without them the page has no mirror, and a field would say "Ledigt."
+  // for a time the teacher already holds, offer no room and no first free time, and lay the lesson as a pin; a press, a drop or an arrow key
+  // would send it. A reader has no controls and needs none.
+  const toolsHere = !mayWrite || dragTools !== null;
 
   const groups = useMemo(
     () => (groupsQuery.data ?? []).filter((group) => !year || group.academicYearId === year.id),
@@ -318,8 +315,8 @@ export default function PlacementsPage() {
   );
   const baseMirror = useMemo(
     () =>
-      mayWrite && everything
-        ? buildMirror({
+      mayWrite && everything && dragTools
+        ? dragTools.buildMirror({
             board: everything,
             keys,
             groups: groupsQuery.data ?? [],
@@ -331,7 +328,7 @@ export default function PlacementsPage() {
             academicYearId: year?.id,
           })
         : null,
-    [mayWrite, everything, keys, groupsQuery.data, students, membershipsQuery.data, constraintsQuery.data, framesQuery.data, year?.gradeNumbering, year?.id],
+    [mayWrite, everything, dragTools, keys, groupsQuery.data, students, membershipsQuery.data, constraintsQuery.data, framesQuery.data, year?.gradeNumbering, year?.id],
   );
   const heldPost = held ? postById.get(held.postId) : undefined;
   // The first half of a pair, as a card (dashed, saying that it is not saved: drawn in whatever week is picked, it is in play and not in force) and as a lesson in
@@ -341,6 +338,8 @@ export default function PlacementsPage() {
     [held, heldPost, pairTools, names, tPair, baseMirror],
   );
   const mirror = useMemo(() => (baseMirror && heldView ? { ...baseMirror, others: [...baseMirror.others, heldView.placement] } : baseMirror), [baseMirror, heldView]);
+  // The mirror's questions, which every press, drop and open card asks: null until the tools and a mirror are here, and every use of them is behind it.
+  const drag = useMemo(() => (mirror && dragTools ? dragTools.dragOf(mirror, otherNames) : null), [mirror, dragTools, otherNames]);
 
   const keptFilterNeeded = !isFiltered(filters);
   const cards = useMemo(
@@ -482,8 +481,8 @@ export default function PlacementsPage() {
   /** The room each post of a block is offered for a lesson: the room its own lessons stand in, else its subject's rule, else none. */
   const blockRoomsFor = useCallback(
     (block: BoardBlock): Map<string, string | null> =>
-      suggestedBlockRooms({ block, posts: postById, rules: roomRulesQuery.data ?? [], gradeLevelOf: (groupId) => groupById.get(groupId)?.gradeLevel ?? null }),
-    [postById, roomRulesQuery.data, groupById],
+      dragTools?.suggestedBlockRooms({ block, posts: postById, rules: roomRulesQuery.data ?? [], gradeLevelOf: (groupId) => groupById.get(groupId)?.gradeLevel ?? null }) ?? new Map(),
+    [dragTools, postById, roomRulesQuery.data, groupById],
   );
   /** The rooms a block brick is laid with: what the fields hold when it is the chosen one, else the suggestion. */
   const roomsOfBlockBrick = useCallback(
@@ -497,24 +496,24 @@ export default function PlacementsPage() {
   const firstBlockSpot = useMemo((): Spot => {
     const start = { dayOfWeek: 1, startMinutes: 8 * 60 };
     const block = selectedBlockBrick ? blockById.get(selectedBlockBrick.blockId) : undefined;
-    if (!selectedBlockBrick || !block || !mirror) return start;
-    const mover = moverOfBlockBrick(selectedBlockBrick.key, block, postById, blockRoomsFor(block));
-    return nextFreeSpotOfBlock(mirror, mover, selectedBlockBrick.minutes, { dayOfWeek: 1, startMinutes: start.startMinutes - 15 }, otherNames) ?? start;
+    if (!selectedBlockBrick || !block || !drag) return start;
+    const mover = drag.moverOfBlockBrick(selectedBlockBrick.key, block, postById, blockRoomsFor(block));
+    return drag.nextFreeSpotOfBlock(mover, selectedBlockBrick.minutes, { dayOfWeek: 1, startMinutes: start.startMinutes - 15 }) ?? start;
     // The brick's key is its identity: a brick re-counted after a write is the same brick.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedBlockBrick?.key, mirror, postById, blockById, otherNames]);
+  }, [selectedBlockBrick?.key, drag, postById, blockById]);
   // Where the fields of a chosen brick start: the first time the week is free for it (searched once per brick, not at every
   // render), else Monday 08:00.
   const firstSpot = useMemo((): Spot => {
     const start = { dayOfWeek: 1, startMinutes: 8 * 60 };
     const post = selectedBrick ? postById.get(selectedBrick.postId) : undefined;
-    if (!selectedBrick || !post || !mirror) return start;
+    if (!selectedBrick || !post || !drag) return start;
     const mover: Mover = { id: selectedBrick.key, post, teacherId: selectedBrick.teacherId ?? post.teacherId, roomId: null, recurrence: pairWeeksOf(selectedBrick) ?? post.recurrence };
     // From a quarter before the day: the first time the search offers is Monday 08:00 itself when it is free.
-    return nextFreeSpot(mirror, mover, selectedBrick.minutes, { dayOfWeek: 1, startMinutes: start.startMinutes - 15 }, otherNames) ?? start;
+    return drag.nextFreeSpot(mover, selectedBrick.minutes, { dayOfWeek: 1, startMinutes: start.startMinutes - 15 }) ?? start;
     // The brick's key is its identity: a brick re-counted after a write is the same brick.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedBrick?.key, mirror, postById, otherNames, held?.recurrence, weeksChoice]);
+  }, [selectedBrick?.key, drag, postById, held?.recurrence, weeksChoice]);
   // A brick that is gone (it was the post's last) is a selection that ends.
   useEffect(() => {
     if (brickKey !== null && everything && !selectedBrick && !selectedBlockBrick) setBrickKey(null);
@@ -631,15 +630,17 @@ export default function PlacementsPage() {
     (brick: Brick): string | null => {
       const post = postById.get(brick.postId);
       if (!post) return null;
-      return suggestedRoom({
-        postRows: rowsOfPost(everything ?? { placements: [] }, post.id),
-        rules: roomRulesQuery.data ?? [],
-        subjectId: post.subjectId,
-        gradeLevel: groupById.get(post.studentGroupId)?.gradeLevel ?? null,
-        filterRooms: filters.rooms,
-      });
+      return (
+        dragTools?.suggestedRoom({
+          postRows: rowsOfPost(everything ?? { placements: [] }, post.id),
+          rules: roomRulesQuery.data ?? [],
+          subjectId: post.subjectId,
+          gradeLevel: groupById.get(post.studentGroupId)?.gradeLevel ?? null,
+          filterRooms: filters.rooms,
+        }) ?? null
+      );
     },
-    [postById, everything, roomRulesQuery.data, groupById, filters.rooms],
+    [dragTools, postById, everything, roomRulesQuery.data, groupById, filters.rooms],
   );
   const moverOfBrick = useCallback(
     (brick: Brick, roomId: string | null): Mover | null => {
@@ -672,7 +673,8 @@ export default function PlacementsPage() {
       const cause = failure ? failure.reason : error;
       if (problem === "STALE") {
         // A pair's write that finds the post changed writes nothing, and the first half stays held: it is the second that is laid again.
-        const text = held ? tPair("staleKept") : cause instanceof ApiError && cause.code === "BLOCK_PLACEMENTS_STALE" ? tBlock("stale") : t("stale");
+        // Only the pair's own write says so (it alone has a second row that changed with the first); another write meeting a STALE says what it always does.
+        const text = held && failure?.alsoChanged.length ? tPair("staleKept") : cause instanceof ApiError && cause.code === "BLOCK_PLACEMENTS_STALE" ? tBlock("stale") : t("stale");
         setMessage({ tone: "problem", text });
         void board.refetch();
         return;
@@ -995,46 +997,48 @@ export default function PlacementsPage() {
 
   const validateChange = useCallback(
     (id: string, to: LessonChange): boolean => {
-      if (!mirror) return true;
+      if (!toolsHere) return false;
+      if (!drag) return true;
       const span = { dayOfWeek: to.dayOfWeek, startMinutes: to.startMinutes, endMinutes: to.endMinutes };
       if (held && id === heldHalfCardId(held.partKey)) {
         const mover = pair?.moverOfHeld();
-        return !!mover && to.endMinutes - to.startMinutes === held.minutes && dropOf(mirror, mover, span, otherNames).kind === "OK";
+        return !!mover && to.endMinutes - to.startMinutes === held.minutes && drag.dropOf(mover, span).kind === "OK";
       }
       const brick = brickByKey.get(id);
       if (brick) {
         const mover = moverOfBrick(brick, roomFor(brick));
-        return mover !== null && dropOf(mirror, mover, span, otherNames).kind === "OK";
+        return mover !== null && drag.dropOf(mover, span).kind === "OK";
       }
       const blockBrick = blockBrickByKey.get(id);
       const blockOfBrick = blockBrick ? blockById.get(blockBrick.blockId) : undefined;
       if (blockBrick && blockOfBrick) {
-        return dropOfBlock(mirror, moverOfBlockBrick(blockBrick.key, blockOfBrick, postById, roomsOfBlockBrick(blockBrick)), span, otherNames).kind === "OK";
+        return drag.dropOfBlock(drag.moverOfBlockBrick(blockBrick.key, blockOfBrick, postById, roomsOfBlockBrick(blockBrick)), span).kind === "OK";
       }
       const lesson = lessonByCard.get(id);
       if (lesson) {
         // A lesson of a block keeps its length: the block's.
         if (to.endMinutes - to.startMinutes !== lesson.row.minutes) return false;
-        return dropOfBlock(mirror, moverOfBlockRow(id, lesson.key, lesson.block, lesson.row, postById), span, otherNames).kind === "OK";
+        return drag.dropOfBlock(drag.moverOfBlockRow(id, lesson.key, lesson.block, lesson.row, postById), span).kind === "OK";
       }
       const row = rowByCard.get(id);
       const post = row ? postById.get(row.requirementId) : undefined;
       // A kept lesson is not moved here, and a placed lesson keeps its length: the post's.
       if (!row || !post || to.endMinutes - to.startMinutes !== row.minutes) return false;
-      return dropOf(mirror, moverOfRow(id, row, post), span, otherNames).kind === "OK";
+      return drag.dropOf(drag.moverOfRow(id, row, post), span).kind === "OK";
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mirror, brickByKey, moverOfBrick, roomFor, otherNames, rowByCard, postById, blockBrickByKey, blockById, roomsOfBlockBrick, lessonByCard, held, pair],
+    [toolsHere, drag, brickByKey, moverOfBrick, roomFor, rowByCard, postById, blockBrickByKey, blockById, roomsOfBlockBrick, lessonByCard, held, pair],
   );
 
   /** Why a lesson cannot stand where it was let go or pointed to. */
   const refuseDrop = useCallback(
     (id: string, to: LessonChange, moving: boolean) => {
+      if (!toolsHere) return void setMessage({ tone: "problem", text: t("toolsLoading") });
       let drop: Drop = { kind: "OK" };
       const span = { dayOfWeek: to.dayOfWeek, startMinutes: to.startMinutes, endMinutes: to.endMinutes };
       if (held && id === heldHalfCardId(held.partKey)) {
         const mover = pair?.moverOfHeld();
-        const said: Drop = to.endMinutes - to.startMinutes !== held.minutes ? { kind: "LENGTH" } : mirror && mover ? dropOf(mirror, mover, span, otherNames) : OK_DROP;
+        const said: Drop = to.endMinutes - to.startMinutes !== held.minutes ? { kind: "LENGTH" } : drag && mover ? drag.dropOf(mover, span) : OK_DROP;
         setMessage({ tone: "problem", text: `${t("cannotMoveThere", { reason: sentenceOf(said) })}${said.kind === "CLASH" ? meetsRed(said.params) : ""}` });
         return;
       }
@@ -1046,12 +1050,12 @@ export default function PlacementsPage() {
       const lesson = lessonByCard.get(id);
       if (!brick && !row && !blockBrick && !lesson) drop = { kind: "KEPT" };
       else if ((row && to.endMinutes - to.startMinutes !== row.minutes) || (lesson && to.endMinutes - to.startMinutes !== lesson.row.minutes)) drop = { kind: "LENGTH" };
-      else if (mirror) {
-        if (blockBrick && blockOfBrick) drop = dropOfBlock(mirror, moverOfBlockBrick(blockBrick.key, blockOfBrick, postById, roomsOfBlockBrick(blockBrick)), span, otherNames);
-        else if (lesson) drop = dropOfBlock(mirror, moverOfBlockRow(id, lesson.key, lesson.block, lesson.row, postById), span, otherNames);
+      else if (drag) {
+        if (blockBrick && blockOfBrick) drop = drag.dropOfBlock(drag.moverOfBlockBrick(blockBrick.key, blockOfBrick, postById, roomsOfBlockBrick(blockBrick)), span);
+        else if (lesson) drop = drag.dropOfBlock(drag.moverOfBlockRow(id, lesson.key, lesson.block, lesson.row, postById), span);
         else {
-          const mover = brick ? moverOfBrick(brick, roomFor(brick)) : row && post ? moverOfRow(id, row, post) : null;
-          if (mover) drop = dropOf(mirror, mover, span, otherNames);
+          const mover = brick ? moverOfBrick(brick, roomFor(brick)) : row && post ? drag.moverOfRow(id, row, post) : null;
+          if (mover) drop = drag.dropOf(mover, span);
         }
       }
       // A refusal for a lesson of a block names the POST that clashes: the sentence alone is about a lesson none of the others has.
@@ -1063,7 +1067,7 @@ export default function PlacementsPage() {
       setMessage({ tone: "problem", text: `${t(moving ? "cannotMoveThere" : "cannotStandThere", { reason: sentenceOf(drop) })}${drop.kind === "CLASH" ? meetsRed(drop.params) : ""}` });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [brickByKey, rowByCard, postById, mirror, moverOfBrick, roomFor, otherNames, sentenceOf, t, tBlock, blockBrickByKey, blockById, lessonByCard, roomsOfBlockBrick, postName, meetsRed, held, pair],
+    [toolsHere, brickByKey, rowByCard, postById, drag, moverOfBrick, roomFor, sentenceOf, t, tBlock, blockBrickByKey, blockById, lessonByCard, roomsOfBlockBrick, postName, meetsRed, held, pair],
   );
 
   const handleChange = useCallback(
@@ -1098,11 +1102,12 @@ export default function PlacementsPage() {
 
   const handleSlot = useCallback(
     (day: number, minute: number) => {
+      if (!toolsHere) return void setMessage({ tone: "problem", text: t("toolsLoading") });
       if (mayWrite && selectedBlockBrick) {
         const rooms = roomsOfBlockBrick(selectedBlockBrick);
         const block = blockById.get(selectedBlockBrick.blockId);
-        if (mirror && block) {
-          const drop = dropOfBlock(mirror, moverOfBlockBrick(selectedBlockBrick.key, block, postById, rooms), { dayOfWeek: day, startMinutes: minute, endMinutes: minute + selectedBlockBrick.minutes }, otherNames);
+        if (drag && block) {
+          const drop = drag.dropOfBlock(drag.moverOfBlockBrick(selectedBlockBrick.key, block, postById, rooms), { dayOfWeek: day, startMinutes: minute, endMinutes: minute + selectedBlockBrick.minutes });
           // As for a post: the mirror is asked for the school day, and the gateway answers the press either way.
           if (drop.kind === "DAY") return void setMessage({ tone: "problem", text: t("cannotStandThere", { reason: sentenceOf(drop) }) });
         }
@@ -1112,15 +1117,15 @@ export default function PlacementsPage() {
       if (!mayWrite || !selectedBrick) return;
       const span = { dayOfWeek: day, startMinutes: minute, endMinutes: minute + selectedBrick.minutes };
       const room = draft ? draft.roomId : roomFor(selectedBrick);
-      if (mirror) {
+      if (drag) {
         const mover = moverOfBrick(selectedBrick, room);
-        const drop = mover ? dropOf(mirror, mover, span, otherNames) : OK_DROP;
+        const drop = mover ? drag.dropOf(mover, span) : OK_DROP;
         // The mirror may be stricter than the gateway, and is asked for what it knows; the gateway answers the press either way.
         if (drop.kind === "DAY") return void setMessage({ tone: "problem", text: t("cannotStandThere", { reason: sentenceOf(drop) }) });
       }
       void layBrick(selectedBrick, { dayOfWeek: day, startMinutes: minute }, room);
     },
-    [mayWrite, selectedBrick, draft, roomFor, mirror, moverOfBrick, otherNames, layBrick, sentenceOf, t, selectedBlockBrick, roomsOfBlockBrick, blockById, postById, placeBlock],
+    [toolsHere, mayWrite, selectedBrick, draft, roomFor, drag, moverOfBrick, layBrick, sentenceOf, t, selectedBlockBrick, roomsOfBlockBrick, blockById, postById, placeBlock],
   );
 
   /** A press on a brick that has not moved yet (a click chooses; only a pointer that moves pulls). */
@@ -1431,7 +1436,7 @@ export default function PlacementsPage() {
                   <li>{t("legendFailing")}</li>
                   {warned.legend ? <li>{warned.legend}</li> : null}
                 </ul>
-                {selectedBrick && mayWrite ? (
+                {selectedBrick && mayWrite && toolsHere ? (
                   <div data-writes="PLANERING" className="mb-3 space-y-2 rounded-md border p-3" data-testid="lay-row">
                     <h3 className="text-sm font-semibold">{t("layTitle")}</h3>
                     <p className="text-sm">{t("layChosen", { lesson: lessonOfBrick(selectedBrick) })}</p>
@@ -1461,12 +1466,12 @@ export default function PlacementsPage() {
                         onValueChange={setDraft}
                         sentenceOf={(value) => {
                           const mover = moverOfBrick(selectedBrick, value.roomId);
-                          const drop = mirror && mover ? dropOf(mirror, mover, { dayOfWeek: value.dayOfWeek, startMinutes: value.startMinutes, endMinutes: value.startMinutes + selectedBrick.minutes }, otherNames) : OK_DROP;
+                          const drop = drag && mover ? drag.dropOf(mover, { dayOfWeek: value.dayOfWeek, startMinutes: value.startMinutes, endMinutes: value.startMinutes + selectedBrick.minutes }) : OK_DROP;
                           return { drop, text: sentenceOf(drop) };
                         }}
                         nextFree={(value) => {
                           const mover = moverOfBrick(selectedBrick, value.roomId);
-                          return mirror && mover ? nextFreeSpot(mirror, mover, selectedBrick.minutes, value, otherNames) : null;
+                          return drag && mover ? drag.nextFreeSpot(mover, selectedBrick.minutes, value) : null;
                         }}
                         onSubmit={(value) => void layBrick(selectedBrick, { dayOfWeek: value.dayOfWeek, startMinutes: value.startMinutes }, value.roomId)}
                       />
@@ -1476,7 +1481,7 @@ export default function PlacementsPage() {
                     </Button>
                   </div>
                 ) : null}
-                {selectedBlockBrick && mayWrite ? (
+                {selectedBlockBrick && mayWrite && toolsHere ? (
                   <div data-writes="PLANERING" className="mb-3 space-y-2 rounded-md border p-3" data-testid="lay-row">
                     <h3 className="text-sm font-semibold">{t("layTitle")}</h3>
                     <p className="text-sm [overflow-wrap:anywhere]">{t("layChosen", { lesson: lessonOfBlockBrick(selectedBlockBrick) })}</p>
@@ -1494,14 +1499,14 @@ export default function PlacementsPage() {
                         onValueChange={setBlockDraft}
                         sentenceOf={(value) => {
                           const block = blockById.get(selectedBlockBrick.blockId)!;
-                          const drop = mirror
-                            ? dropOfBlock(mirror, moverOfBlockBrick(selectedBlockBrick.key, block, postById, new Map(Object.entries(value.rooms))), { dayOfWeek: value.dayOfWeek, startMinutes: value.startMinutes, endMinutes: value.startMinutes + selectedBlockBrick.minutes }, otherNames)
+                          const drop = drag
+                            ? drag.dropOfBlock(drag.moverOfBlockBrick(selectedBlockBrick.key, block, postById, new Map(Object.entries(value.rooms))), { dayOfWeek: value.dayOfWeek, startMinutes: value.startMinutes, endMinutes: value.startMinutes + selectedBlockBrick.minutes })
                             : OK_DROP;
                           return { drop, text: blockSentenceOf(drop) };
                         }}
                         nextFree={(value) => {
                           const block = blockById.get(selectedBlockBrick.blockId)!;
-                          return mirror ? nextFreeSpotOfBlock(mirror, moverOfBlockBrick(selectedBlockBrick.key, block, postById, new Map(Object.entries(value.rooms))), selectedBlockBrick.minutes, value, otherNames) : null;
+                          return drag ? drag.nextFreeSpotOfBlock(drag.moverOfBlockBrick(selectedBlockBrick.key, block, postById, new Map(Object.entries(value.rooms))), selectedBlockBrick.minutes, value) : null;
                         }}
                         onSubmit={(value) => void placeBlock(selectedBlockBrick, { dayOfWeek: value.dayOfWeek, startMinutes: value.startMinutes }, new Map(Object.entries(value.rooms)))}
                       />
@@ -1688,7 +1693,7 @@ export default function PlacementsPage() {
               <CardDialog
                 // One dialog per card: its fields start from the card as it stands.
                 key={openCard}
-                mayWrite={mayWrite && (openedRow !== undefined || openedLesson !== undefined)}
+                mayWrite={mayWrite && toolsHere && (openedRow !== undefined || openedLesson !== undefined)}
                 placed={
                   openedRow && openedPost
                     ? {
@@ -1746,16 +1751,16 @@ export default function PlacementsPage() {
                   refusal,
                   saving,
                   sentenceOf: (value) => {
-                    const mover = openedRow && openedPost ? moverOfRow(openCard, openedRow, openedPost) : null;
+                    const mover = drag && openedRow && openedPost ? drag.moverOfRow(openCard, openedRow, openedPost) : null;
                     const drop =
-                      mirror && mover && openedRow
-                        ? dropOf(mirror, { ...mover, roomId: value.roomId }, { dayOfWeek: value.dayOfWeek, startMinutes: value.startMinutes, endMinutes: value.startMinutes + openedRow.minutes }, otherNames)
+                      drag && mover && openedRow
+                        ? drag.dropOf({ ...mover, roomId: value.roomId }, { dayOfWeek: value.dayOfWeek, startMinutes: value.startMinutes, endMinutes: value.startMinutes + openedRow.minutes })
                         : OK_DROP;
                     return { drop, text: sentenceOf(drop) };
                   },
                   nextFree: (value) => {
-                    const mover = openedRow && openedPost ? moverOfRow(openCard, openedRow, openedPost) : null;
-                    return mirror && mover && openedRow ? nextFreeSpot(mirror, { ...mover, roomId: value.roomId }, openedRow.minutes, value, otherNames) : null;
+                    const mover = drag && openedRow && openedPost ? drag.moverOfRow(openCard, openedRow, openedPost) : null;
+                    return drag && mover && openedRow ? drag.nextFreeSpot({ ...mover, roomId: value.roomId }, openedRow.minutes, value) : null;
                   },
                 }}
                 blockFields={{
@@ -1764,19 +1769,17 @@ export default function PlacementsPage() {
                   saving,
                   sentenceOf: (value) => {
                     const drop =
-                      mirror && openedLesson
-                        ? dropOfBlock(
-                            mirror,
-                            moverOfBlockRow(openCard, openedLesson.key, openedLesson.block, openedLesson.row, postById, new Map(Object.entries(value.rooms))),
+                      drag && openedLesson
+                        ? drag.dropOfBlock(
+                            drag.moverOfBlockRow(openCard, openedLesson.key, openedLesson.block, openedLesson.row, postById, new Map(Object.entries(value.rooms))),
                             { dayOfWeek: value.dayOfWeek, startMinutes: value.startMinutes, endMinutes: value.startMinutes + openedLesson.row.minutes },
-                            otherNames,
                           )
                         : OK_DROP;
                     return { drop, text: blockSentenceOf(drop) };
                   },
                   nextFree: (value) =>
-                    mirror && openedLesson
-                      ? nextFreeSpotOfBlock(mirror, moverOfBlockRow(openCard, openedLesson.key, openedLesson.block, openedLesson.row, postById, new Map(Object.entries(value.rooms))), openedLesson.row.minutes, value, otherNames)
+                    drag && openedLesson
+                      ? drag.nextFreeSpotOfBlock(drag.moverOfBlockRow(openCard, openedLesson.key, openedLesson.block, openedLesson.row, postById, new Map(Object.entries(value.rooms))), openedLesson.row.minutes, value)
                       : null,
                 }}
                 onSave={(value) => {

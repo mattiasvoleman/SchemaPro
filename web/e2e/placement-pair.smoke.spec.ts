@@ -255,10 +255,10 @@ test.describe("the week picker, for a läsår that starts on a Saturday", () => 
     const options = select.locator("option");
     await expect(options.nth(0)).toHaveText("Alla veckor");
     // The week that holds the Saturday (10–14 August) is not one: the first is week 34, from Monday the 17th.
-    await expect(options.nth(1)).toHaveText("v. 34 · 17 aug.–21 aug. · jämna (B)");
+    await expect(options.nth(1)).toHaveText("v. 34 · 17 aug.–21 aug. · jämn");
     await expect(select.locator("option", { hasText: "10 aug." })).toHaveCount(0);
-    await expect(select.locator("option", { hasText: /^v\. 53 · .* · udda \(A\)$/ })).toHaveCount(1);
-    await expect(select.locator("option", { hasText: /^v\. 1 · .* · udda \(A\)$/ })).toHaveCount(1);
+    await expect(select.locator("option", { hasText: /^v\. 53 · .* · udda$/ })).toHaveCount(1);
+    await expect(select.locator("option", { hasText: /^v\. 1 · .* · udda$/ })).toHaveCount(1);
     await expect(picker.getByTestId("week-picker-status")).toContainText("Visar alla veckor");
 
     // A pair laid first: odd weeks Wednesday 09:00, even weeks Friday 10:15.
@@ -277,7 +277,7 @@ test.describe("the week picker, for a läsår that starts on a Saturday", () => 
 
     // An odd week: the odd half only, and its dates under the days.
     await select.selectOption("2026-08-24");
-    await expect(picker.getByTestId("week-picker-status")).toContainText("Visar vecka 35, 24 aug.–28 aug., udda (A).");
+    await expect(picker.getByTestId("week-picker-status")).toContainText("Visar vecka 35, 24 aug.–28 aug., udda.");
     await expect(odd).toBeVisible();
     await expect(even).toHaveCount(0);
     for (const date of ["24/8", "25/8", "26/8", "27/8", "28/8"]) await expect(page.getByText(date, { exact: true })).toBeVisible();
@@ -325,7 +325,7 @@ test.describe("the week picker, for a läsår that starts on a Saturday", () => 
     await expect(page.locator(HELD)).toBeVisible();
     // And the second half, which is odd, is laid looking at an odd week: 37.
     await expect(select).toHaveValue("2026-09-07");
-    await expect(page.getByTestId("placement-status")).toContainText("Visar nu vecka 37 (udda (A)), för den andra halvan.");
+    await expect(page.getByTestId("placement-status")).toContainText("Visar nu vecka 37 (udda), för den andra halvan.");
     expect(puts).toHaveLength(0);
   });
 });

@@ -542,6 +542,27 @@ describe("what becomes of a half that is held (BESLUT, lib/placement-pair.ts)", 
     await waitFor(() => expect(held()).toBeNull());
   });
 
+  it("says the general sentence for a 409 on another post's lesson moved while a half is held: 'the first half stays, lay the second again' is about the pair's own write (review of #338, LÅG-3)", async () => {
+    pinGeometry();
+    // Anna's odd-weeks Fysik on Thursday 10:00, a row of another post: it can be moved while the half of Matematik is held.
+    state.board = {
+      ...baseBoard(),
+      placements: [{ id: "row-fy", requirementId: "post-fy", dayOfWeek: 4, startTime: "10:00", endTime: "11:00", minutes: 60, roomId: "r-b3", roomName: "B3", recurrence: "ODD_WEEKS", teacherId: null, changedAt: "2026-11-13T08:00:00.000Z", verdict: { ok: true } }],
+      posts: baseBoard().posts.map((entry) => (entry.id === "post-fy" ? { ...entry, parts: [part({ count: 1, placed: 1, left: 0 })] } : entry)),
+    };
+    renderPage();
+    await ready();
+    await holdFirstHalf();
+    state.refuse = () => new ApiError(409, "stale", "REQUIREMENT_PLACEMENTS_STALE", { requirementId: "post-fy" });
+    const fysik = cardOf("post-fy||60|4|10:00|ODD_WEEKS")!;
+    fireEvent.pointerDown(fysik, { pointerId: 2, button: 0, ...at(4, 10, 5) });
+    fireEvent.pointerMove(window, { pointerId: 2, ...at(5, 13, 5) });
+    fireEvent.pointerUp(window, { pointerId: 2, ...at(5, 13, 5) });
+    await waitFor(() => expect(message()).toHaveTextContent(/^stale$/));
+    // The half is still held, as it was: the move was somebody else's post and the week has been read again.
+    expect(held()).toBeInTheDocument();
+  });
+
   it("keeps it when the pair is refused for a clash, and says which half and why: the sentence is about the pair", async () => {
     pinGeometry();
     renderPage();
