@@ -1,4 +1,4 @@
-import { ackTarget, appRefusal, homeOf, leaveConsentTarget, tapTarget, tapTypeOf } from './appGate';
+import { ackTarget, alarmViews, appRefusal, appTabs, homeOf, leaveConsentTarget, tapTarget, tapTypeOf } from './appGate';
 
 /**
  * Each app admits only its own roles, and tells everyone else which app is
@@ -173,5 +173,91 @@ describe('tapTypeOf', () => {
     ['a type that is not a string', { notification: { request: { content: { data: { type: 7 } } } } }],
   ])('says none for %s', (_name, response) => {
     expect(tapTypeOf(response)).toBeNull();
+  });
+});
+
+/**
+ * Administratör som lärare (Users.teaches, PR 6 av 7). The mark that an
+ * administrator teaches adds one thing to the app: Larm opens on the roll call
+ * of the person's own groups, with the administration's view one tap away.
+ * It changes no app, no start and no other tab: Vikarie stays a teacher's
+ * (the gateway refuses every cover route to an administrator, SP409).
+ */
+describe('alarmViews: what Larm shows each person, the one it opens on first', () => {
+  it.each([
+    // role, teaches, views
+    ['TEACHER', false, ['ROLL_CALL']],
+    ['SCHOOL_ADMIN', false, ['MANAGEMENT']],
+    // The marked administrator: her own groups first, then the administration's view.
+    ['SCHOOL_ADMIN', true, ['ROLL_CALL', 'MANAGEMENT']],
+    ['STUDENT', false, []],
+    ['GUARDIAN', false, []],
+    [null, false, []],
+    ['SYSTEM_ADMIN', false, []],
+  ] as const)('%s (teaches: %s) has %j', (role, teaches, views) => {
+    expect(alarmViews(role, teaches)).toEqual(views);
+  });
+
+  // The database holds the mark on an administrator alone (a CHECK, a trigger that zeroes it). A phone that was handed one
+  // anywhere else would be wrong, not generous: the mark counts for nothing but on an administrator.
+  it.each(['TEACHER', 'STUDENT', 'GUARDIAN', 'SYSTEM_ADMIN', ''])('gives the mark on %s no second view', (role) => {
+    expect(alarmViews(role, true)).toEqual(alarmViews(role, false));
+  });
+
+  it('reads only a mark that is exactly true', () => {
+    for (const odd of [undefined, null, 'true', 1, {}]) {
+      expect(alarmViews('SCHOOL_ADMIN', odd as unknown as boolean)).toEqual(['MANAGEMENT']);
+    }
+  });
+});
+
+describe('appTabs: the role-bound tabs of the staff shell', () => {
+  it.each([
+    // role, teaches, Vikarie, Larm
+    ['TEACHER', false, true, true],
+    ['SCHOOL_ADMIN', false, false, true],
+    // The mark opens no Vikarie tab: SP409 keeps an administrator out of the substitute pool and the question.
+    ['SCHOOL_ADMIN', true, false, true],
+    ['STUDENT', false, false, false],
+    ['GUARDIAN', false, false, false],
+    [null, false, false, false],
+  ] as const)('%s (teaches: %s): Vikarie %s, Larm %s', (role, teaches, cover, crisis) => {
+    expect(appTabs(role, teaches)).toEqual({ cover, crisis });
+  });
+});
+
+describe('tapTarget for an administrator who teaches', () => {
+  it.each([
+    ['CRISIS_ALARM', '/(app)/crisis'],
+    ['CRISIS_ENDED', '/(app)/crisis'],
+    // Larm is where the roll call of her own groups is, first: the push leads there.
+    // The cover question is a teacher's: she is never asked it, and a tap never opens a tab she has not got.
+    ['COVER_REQUESTED', '/(app)/notifications'],
+    ['COVER_REQUEST_CLOSED', '/(app)/notifications'],
+    ['COVER_REQUEST_ACCEPTED', '/(app)/notifications'],
+    ['LESSON_SUBSTITUTE', '/(app)/notifications'],
+    // The mentor's notice has no link for anyone (as on the web), and the guardian's notices are not hers.
+    ['LEAVE_REQUESTED', '/(app)/notifications'],
+    ['LEAVE_CONSENT_REQUESTED', '/(app)/notifications'],
+    ['ACK_REQUESTED', '/(app)/notifications'],
+    [null, '/(app)/notifications'],
+  ])('%s opens %s', (type, target) => {
+    expect(tapTarget('SCHOOL_ADMIN', type, true)).toBe(target);
+  });
+
+  it('leaves every other persona’s taps as they were, marked or not', () => {
+    for (const type of ['CRISIS_ALARM', 'CRISIS_ENDED', 'COVER_REQUESTED', 'COVER_REQUEST_CLOSED', 'LESSON_SUBSTITUTE', 'ACK_REQUESTED', 'LEAVE_CONSENT_REQUESTED', null]) {
+      for (const role of ['TEACHER', 'SCHOOL_ADMIN', 'STUDENT', 'GUARDIAN', null]) {
+        // A tap that says nothing of the mark (every call before it) is an unmarked person's.
+        expect(tapTarget(role, type, false)).toBe(tapTarget(role, type));
+      }
+      for (const role of ['TEACHER', 'STUDENT', 'GUARDIAN', null]) expect(tapTarget(role, type, true)).toBe(tapTarget(role, type, false));
+    }
+  });
+
+  it('does not change where the marked administrator starts, or which app admits her', () => {
+    expect(homeOf('SCHOOL_ADMIN')).toEqual({ group: '(app)', home: '/(app)/schedule', notifications: '/(app)/notifications' });
+    expect(appRefusal('rastra', 'SCHOOL_ADMIN')).toBeNull();
+    expect(appRefusal('vardnadshavare', 'SCHOOL_ADMIN')).toBe('USE_SCHOOL_APP');
   });
 });

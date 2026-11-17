@@ -22,7 +22,7 @@ import RootLayout from '../../../app/_layout';
 import { ensureAndroidChannel, foregroundPresentation, forgetTap, startSignedIn, takeLastTap } from '../pushRegistration';
 import { handleCrisisPush } from '../crisisOffline';
 
-type AuthShape = { authState: { isAuthenticated: boolean; teacherId: string | null; role: string | null }; isLoading: boolean };
+type AuthShape = { authState: { isAuthenticated: boolean; teacherId: string | null; role: string | null; teaches: boolean }; isLoading: boolean };
 
 let mockAuth: AuthShape;
 let mockSegments: string[];
@@ -74,8 +74,8 @@ jest.mock('../../theme/ThemeContext', () => ({
   useAppTheme: () => ({ statusBar: 'dark' }),
 }));
 
-const signedIn = (role: string | null): AuthShape => ({ authState: { isAuthenticated: true, teacherId: 'u1', role }, isLoading: false });
-const signedOut: AuthShape = { authState: { isAuthenticated: false, teacherId: null, role: null }, isLoading: false };
+const signedIn = (role: string | null, teaches = false): AuthShape => ({ authState: { isAuthenticated: true, teacherId: 'u1', role, teaches }, isLoading: false });
+const signedOut: AuthShape = { authState: { isAuthenticated: false, teacherId: null, role: null, teaches: false }, isLoading: false };
 
 let tree: TestRenderer.ReactTestRenderer | null = null;
 
@@ -290,6 +290,14 @@ describe('AuthGate (app/_layout.tsx)', () => {
         await act(async () => tapListener('COVER_REQUESTED')());
         expect(mockPush).toHaveBeenLastCalledWith('/(app)/notifications');
       });
+
+      // Users.teaches: she is a SCHOOL_ADMIN, the cover routes refuse her (SP409) and the Vikarie tab is not hers.
+      it.each(['COVER_REQUESTED', 'COVER_REQUEST_CLOSED'])('leaves an administrator who teaches on her Notiser tab for a %s push', async (type) => {
+        await mount(signedIn('SCHOOL_ADMIN', true), ['(app)', 'schedule']);
+        await act(async () => tapListener(type)());
+        expect(mockPush).toHaveBeenCalledTimes(1);
+        expect(mockPush).toHaveBeenCalledWith('/(app)/notifications');
+      });
     });
 
     describe('on an alarm (Krisläge)', () => {
@@ -304,6 +312,24 @@ describe('AuthGate (app/_layout.tsx)', () => {
         expect(mockPush).toHaveBeenCalledTimes(1);
         expect(mockPush).toHaveBeenCalledWith('/(app)/crisis');
         expect(forgetTap).toHaveBeenCalledTimes(1);
+      });
+
+      // Her roll call is the first thing Larm shows an administrator who teaches (CrisisScreen.teaching.test.tsx):
+      // the push leads to the same tab, and the tab opens on her own groups.
+      it.each(['CRISIS_ALARM', 'CRISIS_ENDED'])('opens the Larm tab of an administrator who teaches on a %s push, as it does for any administrator', async (type) => {
+        await mount(signedIn('SCHOOL_ADMIN', true), ['(app)', 'schedule']);
+        await act(async () => tapListener(type)());
+        expect(mockPush).toHaveBeenCalledTimes(1);
+        expect(mockPush).toHaveBeenCalledWith('/(app)/crisis');
+        expect(forgetTap).toHaveBeenCalledTimes(1);
+      });
+
+      it('opens Larm for a mark that arrives after the session did, with the listener of the person as they are by then', async () => {
+        await mount(signedIn('SCHOOL_ADMIN', false), ['(app)', 'schedule']);
+        await rerender(signedIn('SCHOOL_ADMIN', true));
+        await act(async () => tapListener('CRISIS_ALARM')());
+        expect(mockPush).toHaveBeenCalledTimes(1);
+        expect(mockPush).toHaveBeenCalledWith('/(app)/crisis');
       });
 
       it('opens the Larm tab of an alarm push that launched the app, and puts it to the gateway', async () => {

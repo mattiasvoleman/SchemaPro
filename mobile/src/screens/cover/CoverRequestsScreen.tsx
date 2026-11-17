@@ -14,6 +14,7 @@ import { DISABLED_OPACITY, type Tone } from '../../theme/tokens';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
 import { useCoverRequests, type Pending } from '../../hooks/useCoverRequests';
+import { appTabs } from '../../services/auth/appGate';
 import { formatDayHeading, formatTime } from '../../i18n/format';
 import type { Locale, MessageKey } from '../../i18n';
 import { useColumnLayout } from '../../layout/responsive';
@@ -84,8 +85,10 @@ export function CoverRequestsScreen(): React.JSX.Element {
   const { authState } = useAuth();
   const { gutter } = useColumnLayout();
   // The administrator shares this shell (and its route) but is not asked: the
-  // gateway answers a teacher only, so nothing is read for anyone else.
-  const teacher = authState.role === 'TEACHER';
+  // gateway answers a teacher only, so nothing is read for anyone else, an
+  // administrator who teaches (Users.teaches) included: the cover routes
+  // refuse them (SP409), and appTabs gives them no tab for it.
+  const teacher = appTabs(authState.role, authState.teaches).cover;
   const state = useCoverRequests(teacher);
   const { cover, answers, confirmations, pending } = state;
 
