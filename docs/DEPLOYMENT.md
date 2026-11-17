@@ -6219,7 +6219,7 @@ a 30 s deadline: it never waits while it holds a lock, and after 30 s it stops w
 - **Locks of the block.** A lesson of a block that somebody locks by hand while the rest is to place is refused as before
   (`BLOCK_PARTLY_LOCKED`); a block's lesson in the dialog is never a lock.
 
-## 25. The job's doors answer no login ("Dörrvakten")
+## 26. The job's doors answer no login ("Dörrvakten")
 
 Six `SECURITY DEFINER` functions in the schema `app` that the API's role may run are not for a person: they are the door of
 something that runs with no login, a background job or the SS12000 sync's and an integration key's principal. A job opens its
@@ -6269,7 +6269,7 @@ and ACL):
 | `app.meal_letter` | `2a5d90dedca1516969347a06d216e87b` | `ceb84a1e99239a88f75064e6f15463f3` |
 | `app.meal_letter_schools` | `f117f51aaf39fe038a4b516dbd82a367` | `d30fffeb44fbaa9ac84ffcca38145914` |
 
-### 25.1 Deploy order
+### 26.1 Deploy order
 
 **The migration first, then the merge.** The file writes and alters no table. It takes `ShareUpdateExclusive` on the six
 functions' own rows in `pg_proc` and, for the two `LANGUAGE sql` meal doors (checked when they are created), `ACCESS SHARE` on
@@ -6288,7 +6288,7 @@ while the file's transaction is open.
 3. After: the next tick of the cover job (every 5 minutes), the crisis job (every 15) and the meal letter job (every 2) log as
    before; `JobRuns` has no failed row for them.
 
-### 25.2 Rolling back
+### 26.2 Rolling back
 
 - Nothing is written to a table, so there is no data to put back. The migration is one transaction: if it stops, nothing
   applied, and `prisma migrate resolve --rolled-back 20270220090000_jobbens_dorrar_svarar_inte_en_inloggning_utan_personrad`
@@ -6301,7 +6301,7 @@ while the file's transaction is open.
   whatever it does not repeat. Do not edit the migration after it has run: its checksum is in production's
   `_prisma_migrations`.
 
-### 25.3 What is not done here
+### 26.3 What is not done here
 
 - **The tjänsteprincipalerna.** The guard asks for a login; it does not ask for no principal. `cover_requests_settle` and
   `crisis_settle` do not refuse a session that carries only a principal's setting and no claims (the same boundary as #289, its
@@ -6312,7 +6312,7 @@ while the file's transaction is open.
   RLS sections 515 to 519, and by the adapter probe's new connection, but by no behaviour in the suite, which has set the
   setting before the section runs (#289's U-3).
 
-### 25.4 Operations
+### 26.4 Operations
 
 - RLS sections 515 to 519 (and 515o to 519o in `rls-owner-checks.sql`) hold it: the guard's text in every door, the rights
   unchanged (`app_authenticated` runs the six, `authenticated` and `anon` none), what each door answers under every setting a
