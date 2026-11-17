@@ -25,7 +25,29 @@ import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { profileWrites } from "@/lib/admin-areas";
 import { ApiError } from "@/lib/api";
+import { blockFitSentence, blockPlacementsRefusal } from "@/lib/block-placements";
 import { usePlanningYear } from "@/lib/planning-year";
+import { blockLinkFromAddress, lessonOfBlockLink } from "@/lib/placement-block-link";
+import {
+  blockBricksOf,
+  blockCardId,
+  blockCards,
+  blockKeyByRowId,
+  blockKeyOf,
+  blockLessonsLeft,
+  keysOfBlockRows,
+  redLessonNamed,
+  summaryWithBlocks,
+  verdictLines,
+  verdictsOfAnswerRow,
+  visibleBlocks,
+  weeksOfBlock,
+  blockBrickKey,
+  blockInputOfBrick,
+  type BlockBrick,
+  type BlockEdit,
+  type BlockRoomChoice,
+} from "@/lib/placement-block-rows";
 import {
   DAY_END_MINUTES,
   NO_FILTERS,
@@ -36,11 +58,12 @@ import {
   placementCardId,
   placementCards,
   savedAt,
-  summaryOf,
   teacherOfPlacement,
   totalsOf,
   visibleBoard,
   weekDay,
+  type BoardBlock,
+  type BoardBlockRow,
   type BoardFilters,
   type BoardPlacement,
   type BoardPost,
@@ -48,7 +71,20 @@ import {
 } from "@/lib/placement-board";
 import { usePlacementBoard } from "@/lib/placement-board-queries";
 import { usePlacementLinkTarget } from "@/lib/use-placement-link-target";
-import { dropOf, moverOfRow, nextFreeSpot, suggestedRoom, type Drop, type Mover, type OtherNames } from "@/lib/placement-drop";
+import {
+  dropOf,
+  dropOfBlock,
+  moverOfBlockBrick,
+  moverOfBlockRow,
+  moverOfRow,
+  nextFreeSpot,
+  nextFreeSpotOfBlock,
+  suggestedBlockRooms,
+  suggestedRoom,
+  type Drop,
+  type Mover,
+  type OtherNames,
+} from "@/lib/placement-drop";
 import { buildMirror } from "@/lib/placement-mirror";
 import {
   bricksOf,
@@ -80,9 +116,11 @@ import { compareSwedish } from "@/lib/sorting";
 import { useHistoryKeyboard } from "@/lib/use-schedule-history";
 import { cn, subjectColor } from "@/lib/utils";
 import type { PlaceValue } from "@/components/placements/place-fields";
+import type { BlockPlaceValue } from "@/components/placements/block-place-fields";
 
 // What a brick chosen, or a card opened, needs and nothing else does: fetched when the first is pressed, not with the page.
 const PlaceFields = lazy(() => import("@/components/placements/place-fields").then((module) => ({ default: module.PlaceFields })));
+const BlockPlaceFields = lazy(() => import("@/components/placements/block-place-fields").then((module) => ({ default: module.BlockPlaceFields })));
 const CardDialog = lazy(() => import("@/components/placements/card-dialog").then((module) => ({ default: module.CardDialog })));
 
 /*
@@ -108,6 +146,11 @@ const CardDialog = lazy(() => import("@/components/placements/card-dialog").then
  *
  * The lessons Generera keeps (hand-made and locked, with a padlock) are changed
  * in the grundschema and are not moved here.
+ *
+ * A PARALLEL BLOCK's lesson is laid, moved and taken away the same three ways, for every post of the block at once, with a room for
+ * each post or "Motorn väljer sal" (placement-block-rows.ts, block-place-fields.tsx). Its brick is `block:<id>|<minutes>#n` and its
+ * card `blockplacement:<key>`; one write is a PUT of the block's whole list on the block's own key (usePlacementEditor.changeBlock),
+ * and the history is the same one stack. A post of a block has no brick of its own: the block's is the one to lay.
  */
 
 /** "A. Ek". */
@@ -117,6 +160,9 @@ const shortName = (person: { firstName: string; lastName: string }): string => `
 function postFromAddress(): string | null {
   return new URLSearchParams(window.location.search).get("post");
 }
+
+/** What the address may name of a lesson of a block: &block=…&day=…&start=…, the lesson whose card is marked (placement-block-link.ts). */
+const blockLinkFromWindow = () => blockLinkFromAddress(window.location.search);
 
 /** How long the gateway counts a PENDING or RUNNING run as running (the Generera page's own figure). */
 const RUNNING_MS = 15 * 60 * 1000;
@@ -128,6 +174,9 @@ export default function PlacementsPage() {
   const t = useTranslations("placementWeek");
   const tTimetable = useTranslations("timetable");
   const tPlacements = useTranslations("requirements.placements");
+  const tBlock = useTranslations("placementWeek.block");
+  // The sentences of the dialog on Timplansposter that a block says the same way: why a block's lessons do not fit it.
+  const tBlockFit = useTranslations("requirements.blockPlacements");
   const tDays = useTranslations("days");
   const locale = useLocale();
   const { profile } = useProfile();
@@ -154,6 +203,11 @@ export default function PlacementsPage() {
   const [brickKey, setBrickKey] = useState<string | null>(null);
   const [openCard, setOpenCard] = useState<string | null>(null);
   const [draft, setDraft] = useState<PlaceValue | null>(null);
+  /** What the fields of a chosen block brick hold: where, and a room for each post. */
+  const [blockDraft, setBlockDraft] = useState<BlockPlaceValue | null>(null);
+  /** The card a link marks (its lesson's card id), and whether the lesson it names is no longer there. */
+  const [markedBlockCard, setMarkedBlockCard] = useState<string | null>(null);
+  const [linkGone, setLinkGone] = useState(false);
   const [message, setMessage] = useState<{ tone: "ok" | "problem"; text: string } | null>(null);
   /** The gateway's sentence for the last row it refused, shown in the fields until they change. */
   const [refusal, setRefusal] = useState<string | null>(null);
@@ -161,6 +215,8 @@ export default function PlacementsPage() {
   const [pendingFocus, setPendingFocus] = useState<string | null>(null);
   const [focusPost, setFocusPost] = useState<string | null>(null);
   useEffect(() => setFocusPost(postFromAddress()), []);
+  const [blockLink, setBlockLink] = useState<ReturnType<typeof blockLinkFromWindow>>(null);
+  useEffect(() => setBlockLink(blockLinkFromWindow()), []);
   const gridRef = useRef<TimetableGridHandle>(null);
 
   const groups = useMemo(
@@ -200,7 +256,7 @@ export default function PlacementsPage() {
   const everything = board.data;
   const shown = useMemo(() => (everything ? visibleBoard(everything, filters) : null), [everything, filters]);
   const postById = useMemo(() => new Map((everything?.posts ?? []).map((post) => [post.id, post])), [everything]);
-  const summary = useMemo(() => (everything ? summaryOf(everything) : null), [everything]);
+  const summary = useMemo(() => (everything ? summaryWithBlocks(everything) : null), [everything]);
   // Every row of the year by key: a card is named by the lesson, and the keys are made over all of the rows so that a filter changes none.
   const keys = useMemo(() => keyByRowId(everything?.placements ?? []), [everything]);
   // The card an address from Generera or the grundschema names (?post=&day=&start=), marked and given the keyboard.
@@ -210,6 +266,20 @@ export default function PlacementsPage() {
     [everything, keys],
   );
   const keptById = useMemo(() => new Map((everything?.kept ?? []).map((lesson) => [keptCardId(lesson.id), lesson])), [everything]);
+  // The blocks' lessons are named by the lesson too (placement-block-rows.ts), over every lesson of every block so that a filter changes no name.
+  const blockKeys = useMemo(() => blockKeyByRowId(everything?.blocks ?? []), [everything]);
+  const blockById = useMemo(() => new Map((everything?.blocks ?? []).map((block) => [block.id, block])), [everything]);
+  const blockOfPost = useMemo(() => new Map((everything?.blocks ?? []).flatMap((block) => block.memberIds.map((id) => [id, block] as const))), [everything]);
+  const lessonByCard = useMemo(
+    () =>
+      new Map(
+        (everything?.blocks ?? []).flatMap((block) =>
+          block.rows.map((row) => [blockCardId(blockKeys.get(row.id) ?? row.id), { block, row, key: blockKeys.get(row.id) ?? row.id }] as const),
+        ),
+      ),
+    [everything, blockKeys],
+  );
+  const shownBlocks = useMemo(() => (everything ? visibleBlocks(everything, filters) : []), [everything, filters]);
 
   // What the ghost and the arrow keys are held against; built when the week or a list changes, not at every pixel of a drag.
   const students = useMemo(
@@ -240,12 +310,13 @@ export default function PlacementsPage() {
       shown
         ? [
             ...placementCards(shown.placements, postById, names, keys),
+            ...blockCards(shownBlocks, postById, names, { rooms: (chosen, total) => tBlock("cardRooms", { chosen, total }) }, blockKeys),
             // The lessons Generera keeps are the school's whole grundschema, on a school that built one by hand: drawn
             // for what is picked, not for everything (review of #315, LÅG-3).
             ...(keptFilterNeeded ? [] : keptCards(shown.kept, names)),
           ]
         : [],
-    [shown, postById, names, keys, keptFilterNeeded],
+    [shown, shownBlocks, postById, names, keys, blockKeys, keptFilterNeeded, tBlock],
   );
   const bands = useMemo(
     () => (shown ? mealBands(shown.meals, (meal) => t("meal", { group: groupById.get(meal.studentGroupId)?.name ?? "" })) : []),
@@ -273,6 +344,27 @@ export default function PlacementsPage() {
     ]
       .filter(Boolean)
       .join(" · ");
+
+  // ---------------------------------------------------------------- the blocks' words
+  /** The block's posts as the fields ask for their rooms: "Tyska Ty7". */
+  const membersOf = (block: BoardBlock) => block.memberIds.map((id) => ({ id, name: postById.has(id) ? postName(postById.get(id)) : tBlock("postGone") }));
+  const listOf = (list: string[]) => new Intl.ListFormat(locale, { type: "conjunction" }).format(list);
+  /** The sentences the judge says of a lesson of a block, the posts that fail for one sentence said together: "Tyska Ty7 och Franska Fr7: …". */
+  const linesOf = (block: BoardBlock | undefined, verdicts: readonly BoardBlockRow["verdicts"][number][]): string[] =>
+    verdictLines(verdicts, block?.memberIds ?? [], (verdict) => verdictSentence(tPlacements, verdict.reason, verdict.params)).map((line) =>
+      tBlock("postSaid", { posts: listOf(line.requirementIds.map((id) => (postById.has(id) ? postName(postById.get(id)) : tBlock("postGone")))), sentence: line.text }),
+    );
+  /** "tisdag 10:00–11:00 · Sal på 2 av 3 poster · udda". */
+  const blockRowLine = (block: BoardBlock, row: BoardBlockRow): string => {
+    const first = postById.get(block.memberIds[0] ?? "");
+    return [
+      `${tDays(String(row.dayOfWeek))} ${row.startTime}–${row.endTime}`,
+      tBlock("cardRooms", { chosen: row.rooms.length, total: block.memberIds.length }),
+      names.weeks({ recurrence: row.recurrence, startDate: first?.startDate ?? null, endDate: first?.endDate ?? null }),
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  };
 
   const orderedPosts = useMemo(() => {
     if (!shown) return [];
@@ -317,6 +409,49 @@ export default function PlacementsPage() {
   }, [bricks, postById, postName, teacherText, names, t]);
   const brickByKey = useMemo(() => new Map(bricks.map((brick) => [brick.key, brick])), [bricks]);
   const selectedBrick = brickKey ? brickByKey.get(brickKey) : undefined;
+
+  // The blocks' bricks: one per lesson a block has left, after the posts'. Narrowed by class and teacher, not by room, as the posts' are.
+  const blockBricks = useMemo(() => {
+    if (!mayWrite || !everything) return [];
+    return blockBricksOf(visibleBlocks(everything, { ...filters, rooms: [] }));
+  }, [mayWrite, everything, filters]);
+  const blockBrickByKey = useMemo(() => new Map(blockBricks.map((brick) => [brick.key, brick])), [blockBricks]);
+  const selectedBlockBrick = brickKey ? blockBrickByKey.get(brickKey) : undefined;
+  const blockBrickGroups: BrickGroup[] = useMemo(() => {
+    const groupsOf = new Map<string, BrickGroup>();
+    for (const brick of blockBricks) {
+      const block = blockById.get(brick.blockId);
+      if (!block) continue;
+      const entry = groupsOf.get(block.id) ?? { postId: block.id, title: block.name, block: true, bricks: [] };
+      entry.bricks.push({ key: brick.key, text: tBlock("brickText", { minutes: brick.minutes, count: block.memberIds.length }), color: names.color(block.id, null) });
+      groupsOf.set(block.id, entry);
+    }
+    return [...groupsOf.values()];
+  }, [blockBricks, blockById, names, tBlock]);
+  /** The room each post of a block is offered for a lesson: the room its own lessons stand in, else its subject's rule, else none. */
+  const blockRoomsFor = useCallback(
+    (block: BoardBlock): Map<string, string | null> =>
+      suggestedBlockRooms({ block, posts: postById, rules: roomRulesQuery.data ?? [], gradeLevelOf: (groupId) => groupById.get(groupId)?.gradeLevel ?? null }),
+    [postById, roomRulesQuery.data, groupById],
+  );
+  /** The rooms a block brick is laid with: what the fields hold when it is the chosen one, else the suggestion. */
+  const roomsOfBlockBrick = useCallback(
+    (brick: BlockBrick): Map<string, string | null> => {
+      const block = blockById.get(brick.blockId);
+      if (brickKey === brick.key && blockDraft) return new Map(Object.entries(blockDraft.rooms));
+      return block ? blockRoomsFor(block) : new Map();
+    },
+    [blockById, brickKey, blockDraft, blockRoomsFor],
+  );
+  const firstBlockSpot = useMemo((): Spot => {
+    const start = { dayOfWeek: 1, startMinutes: 8 * 60 };
+    const block = selectedBlockBrick ? blockById.get(selectedBlockBrick.blockId) : undefined;
+    if (!selectedBlockBrick || !block || !mirror) return start;
+    const mover = moverOfBlockBrick(selectedBlockBrick.key, block, postById, blockRoomsFor(block));
+    return nextFreeSpotOfBlock(mirror, mover, selectedBlockBrick.minutes, { dayOfWeek: 1, startMinutes: start.startMinutes - 15 }, otherNames) ?? start;
+    // The brick's key is its identity: a brick re-counted after a write is the same brick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBlockBrick?.key, mirror, postById, blockById, otherNames]);
   // Where the fields of a chosen brick start: the first time the week is free for it (searched once per brick, not at every
   // render), else Monday 08:00.
   const firstSpot = useMemo((): Spot => {
@@ -331,8 +466,8 @@ export default function PlacementsPage() {
   }, [selectedBrick?.key, mirror, postById, otherNames]);
   // A brick that is gone (it was the post's last) is a selection that ends.
   useEffect(() => {
-    if (brickKey !== null && everything && !selectedBrick) setBrickKey(null);
-  }, [brickKey, selectedBrick, everything]);
+    if (brickKey !== null && everything && !selectedBrick && !selectedBlockBrick) setBrickKey(null);
+  }, [brickKey, selectedBrick, selectedBlockBrick, everything]);
   // What the gateway refused belongs to the lesson it was said about.
   useEffect(() => setRefusal(null), [brickKey, openCard]);
 
@@ -348,6 +483,7 @@ export default function PlacementsPage() {
     history.clear();
     setBrickKey(null);
     setOpenCard(null);
+    setMarkedBlockCard(null);
     setMessage(null);
     // The history is one stack for the page, and a year has its own rows.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -365,7 +501,7 @@ export default function PlacementsPage() {
     }
     const giveUp = setTimeout(() => setPendingFocus(null), 3000);
     return () => clearTimeout(giveUp);
-  }, [pendingFocus, cards, brickGroups]);
+  }, [pendingFocus, cards, brickGroups, blockBrickGroups]);
 
   const loading = !year || board.isLoading || groupsQuery.isLoading || subjectsQuery.isLoading || roomsQuery.isLoading || peopleQuery.isLoading;
 
@@ -380,6 +516,8 @@ export default function PlacementsPage() {
   }, [focusPost, shown, loading]);
 
   const failingShown = (shown?.placements ?? []).filter((row) => !row.verdict.ok);
+  // A lesson of a block that does not hold is one line, however many of its posts it fails for.
+  const failingBlockLessons = shownBlocks.flatMap((block) => block.rows.filter((row) => row.verdicts.some((verdict) => !verdict.ok)).map((row) => ({ block, row })));
   const failed = board.isError && board.data === undefined;
   const running = (jobsQuery.data ?? []).some(
     (job) => (job.status === "PENDING" || job.status === "RUNNING") && Date.now() - new Date(job.createdAt).getTime() < RUNNING_MS,
@@ -402,6 +540,17 @@ export default function PlacementsPage() {
       }
     },
     [t, tPlacements],
+  );
+
+  /** The sentence for a drop of a block's lesson: the post that clashes first, as the gateway names it ("Tyska Ty7: Läraren har redan …"). */
+  const blockSentenceOf = useCallback(
+    (drop: Drop): string => {
+      const said = sentenceOf(drop);
+      if (drop.kind !== "CLASH" || drop.requirementId === undefined) return said;
+      const named = postById.has(drop.requirementId) ? postName(postById.get(drop.requirementId)) : tBlock("postGone");
+      return tBlock("postSaid", { posts: named, sentence: said });
+    },
+    [sentenceOf, postById, postName, tBlock],
   );
 
   const roomsList = useMemo(() => (roomsQuery.data ?? []).map((room) => ({ id: room.id, name: room.name })), [roomsQuery.data]);
@@ -427,12 +576,27 @@ export default function PlacementsPage() {
     [postById],
   );
 
+  /**
+   * A sentence added when the lesson that is in the way is one that stopped holding and was let stand: the judge is symmetric and sees every
+   * row, so a new lesson beside it is refused until the red one is moved or taken away (the handbook says it too).
+   */
+  const meetsRed = useCallback(
+    (params: Record<string, string | number> | undefined): string => {
+      const red = everything ? redLessonNamed(everything, params, otherNames) : null;
+      return red ? ` ${tBlock("meetsRed", { when: whenText(red.dayOfWeek, minutesOfClock(red.startTime), minutesOfClock(red.endTime) - minutesOfClock(red.startTime)) })}` : "";
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [everything, otherNames, tBlock, tDays],
+  );
+
   /** One thing the gateway refused, or failed to do, said once and in place. */
   const problemFrom = useCallback(
     (error: unknown) => {
       const problem = writeProblemOf(error);
+      const failure = error instanceof WriteFailure ? error : null;
+      const cause = failure ? failure.reason : error;
       if (problem === "STALE") {
-        setMessage({ tone: "problem", text: t("stale") });
+        setMessage({ tone: "problem", text: cause instanceof ApiError && cause.code === "BLOCK_PLACEMENTS_STALE" ? tBlock("stale") : t("stale") });
         void board.refetch();
         return;
       }
@@ -440,8 +604,33 @@ export default function PlacementsPage() {
         setMessage({ tone: "problem", text: tPlacements("busy") });
         return;
       }
-      const failure = error instanceof WriteFailure ? error : null;
-      const cause = failure ? failure.reason : error;
+      // A parallel block's lessons: the gateway names the lesson (a place in the list that was SENT) and the post of the block that clashes.
+      const ofBlock = blockPlacementsRefusal(cause);
+      if (ofBlock?.kind === "ROW") {
+        const sentence = verdictSentence(tPlacements, ofBlock.reason, ofBlock.params);
+        const post = postById.has(ofBlock.requirementId) ? postName(postById.get(ofBlock.requirementId)) : tBlock("postGone");
+        const named = failure ? failure.list[ofBlock.index] : undefined;
+        // A lesson of the block that is not the one that was changed (one that stopped holding and was let stand) refuses the change, and the sentence is about it.
+        if (named && ofBlock.index !== failure!.changedIndex) {
+          setMessage({
+            tone: "problem",
+            text: `${tBlock("otherRowRefused", { when: whenText(named.dayOfWeek, minutesOfClock(named.startTime), named.minutes), reason: tBlock("postSaid", { posts: post, sentence }) })}${meetsRed(ofBlock.params)}`,
+          });
+          return;
+        }
+        setRefusal(tBlock("postSaid", { posts: post, sentence }));
+        setMessage({ tone: "problem", text: `${tBlock("cannotStandThere", { post, reason: sentence })}${meetsRed(ofBlock.params)}` });
+        return;
+      }
+      if (ofBlock?.kind === "FIT") {
+        const sentence = blockFitSentence(tBlockFit, ofBlock.reason, tBlockFit("otherBlock"));
+        setRefusal(sentence);
+        setMessage({ tone: "problem", text: `${t("notSaved")} ${sentence}` });
+        // The block is not what this page holds (its posts' lessons or members were changed elsewhere, and the key, which is the lessons', says nothing
+        // of that): read the week again, or every later try is refused the same way until the page is reloaded.
+        void board.refetch();
+        return;
+      }
       const refused = placementsRefusal(cause);
       if (refused) {
         const sentence = refused.kind === "ROW" ? verdictSentence(tPlacements, refused.reason, refused.params) : fitSentence(tPlacements, refused.reason);
@@ -457,14 +646,14 @@ export default function PlacementsPage() {
           return;
         }
         setRefusal(sentence);
-        setMessage({ tone: "problem", text: t("cannotStandThere", { reason: sentence }) });
+        setMessage({ tone: "problem", text: `${t("cannotStandThere", { reason: sentence })}${ofRow ? meetsRed(ofRow.params) : ""}` });
         return;
       }
       const cannot = cause instanceof ApiError || cause instanceof Error ? cause.message : "";
       setMessage({ tone: "problem", text: `${t("notSaved")} ${cannot}`.trim() });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [board, t, tPlacements, tDays],
+    [board, t, tBlock, tBlockFit, tPlacements, tDays, postById, postName, meetsRed],
   );
 
   /** One change to one post: written, said, and the keyboard left on what changed. */
@@ -574,6 +763,115 @@ export default function PlacementsPage() {
     [rowByCard, postById, everything, keys, change, postName, t],
   );
 
+  // ---------------------------------------------------------------- a block's lessons
+
+  /** The card whose key is the lesson's after the change: of equal ones, the last. */
+  const cardOfBlockKey = (base: string) => (rowKeys: string[]): string | null => {
+    const same = rowKeys.filter((key) => key === base || key.startsWith(`${base}#`));
+    const last = same.at(-1);
+    return last ? `[data-lesson-id="${blockCardId(last)}"]` : null;
+  };
+
+  /** One change to one block: written, said, and the keyboard left on what changed. */
+  const changeBlockLessons = useCallback(
+    async (blockId: string, edit: BlockEdit, label: string, said: string, focusOn: (keys: string[]) => string | null): Promise<boolean> => {
+      if (saving) {
+        setMessage({ tone: "ok", text: t("waitSaving") });
+        return false;
+      }
+      try {
+        const result = await editor.changeBlock(blockId, edit, label);
+        if (!result.ok) {
+          setMessage({ tone: "problem", text: t("gone") });
+          void board.refetch();
+          return false;
+        }
+        setRefusal(null);
+        // A lesson the block had already that does not hold is let stand by the gateway and named in its answer, by lesson and post:
+        // said here, as the red box says it, so that the change is not taken for a block that is all right. `index` is the lesson's
+        // place in the ANSWER's list (day, start), which is what `placements` is.
+        const block = blockById.get(blockId);
+        const failing = result.answer.placements.flatMap((lesson, index) => {
+          const verdicts = verdictsOfAnswerRow(result.answer, index).filter((verdict) => !verdict.ok);
+          return verdicts.length > 0 ? [{ lesson, verdicts }] : [];
+        });
+        const lessons = failing
+          .map(({ lesson, verdicts }) => `${whenText(lesson.dayOfWeek, minutesOfClock(lesson.startTime), lesson.minutes)}: ${linesOf(block, verdicts as BoardBlockRow["verdicts"]).join(" ")}`)
+          .join("; ");
+        setMessage({
+          tone: failing.length > 0 ? "problem" : "ok",
+          text: `${said} ${t("fromNextGenerate")}${failing.length > 0 ? ` ${tBlock("stillFailing", { count: failing.length, rows: lessons })}` : ""}`,
+        });
+        const target = focusOn(keysOfBlockRows(blockId, result.answer.placements));
+        if (target) setPendingFocus(target);
+        return true;
+      } catch (error) {
+        problemFrom(error);
+        return false;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [saving, editor, board, problemFrom, blockById, t, tBlock],
+  );
+
+  const choicesOf = (rooms: ReadonlyMap<string, string | null>): BlockRoomChoice[] =>
+    [...rooms].flatMap(([requirementId, roomId]) => (roomId ? [{ requirementId, roomId }] : []));
+
+  const placeBlock = useCallback(
+    async (brick: BlockBrick, spot: Spot, rooms: ReadonlyMap<string, string | null>): Promise<boolean> => {
+      const block = blockById.get(brick.blockId);
+      if (!block) return false;
+      const input = blockInputOfBrick(brick, spot, choicesOf(rooms));
+      const base = blockKeyOf(block.id, { minutes: brick.minutes, dayOfWeek: spot.dayOfWeek, startTime: input.startTime, recurrence: weeksOfBlock(block) });
+      const done = await changeBlockLessons(
+        block.id,
+        { kind: "add", input },
+        "place",
+        t("placed", { lesson: block.name, when: whenText(spot.dayOfWeek, spot.startMinutes, brick.minutes) }),
+        cardOfBlockKey(base),
+      );
+      if (done) setBrickKey(null);
+      return done;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [blockById, changeBlockLessons, t, tDays],
+  );
+
+  const moveBlock = useCallback(
+    async (card: string, to: Spot, rooms?: ReadonlyMap<string, string | null>): Promise<boolean> => {
+      const found = lessonByCard.get(card);
+      if (!found) return false;
+      const next = blockKeyOf(found.block.id, { minutes: found.row.minutes, dayOfWeek: to.dayOfWeek, startTime: clockOfMinutes(to.startMinutes), recurrence: found.row.recurrence });
+      return changeBlockLessons(
+        found.block.id,
+        { kind: "move", key: found.key, to, ...(rooms ? { rooms: choicesOf(rooms) } : {}) },
+        "move",
+        t("moved", { lesson: found.block.name, when: whenText(to.dayOfWeek, to.startMinutes, found.row.minutes) }),
+        cardOfBlockKey(next),
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lessonByCard, changeBlockLessons, t, tDays],
+  );
+
+  const removeBlockLesson = useCallback(
+    async (card: string): Promise<boolean> => {
+      const found = lessonByCard.get(card);
+      if (!found) return false;
+      const done = await changeBlockLessons(
+        found.block.id,
+        { kind: "remove", key: found.key },
+        "remove",
+        t("removed", { lesson: found.block.name }),
+        // The lesson is a brick again: the keyboard goes to the block's brick, or to the list when it is not drawn.
+        () => `[data-brick^="${blockBrickKey(found.block.id, found.row.minutes, 0).slice(0, -1)}"]`,
+      );
+      if (done) setOpenCard(null);
+      return done;
+    },
+    [lessonByCard, changeBlockLessons, t],
+  );
+
   // ---------------------------------------------------------------- the grid's side
 
   const validateChange = useCallback(
@@ -585,13 +883,24 @@ export default function PlacementsPage() {
         const mover = moverOfBrick(brick, roomFor(brick));
         return mover !== null && dropOf(mirror, mover, span, otherNames).kind === "OK";
       }
+      const blockBrick = blockBrickByKey.get(id);
+      const blockOfBrick = blockBrick ? blockById.get(blockBrick.blockId) : undefined;
+      if (blockBrick && blockOfBrick) {
+        return dropOfBlock(mirror, moverOfBlockBrick(blockBrick.key, blockOfBrick, postById, roomsOfBlockBrick(blockBrick)), span, otherNames).kind === "OK";
+      }
+      const lesson = lessonByCard.get(id);
+      if (lesson) {
+        // A lesson of a block keeps its length: the block's.
+        if (to.endMinutes - to.startMinutes !== lesson.row.minutes) return false;
+        return dropOfBlock(mirror, moverOfBlockRow(id, lesson.key, lesson.block, lesson.row, postById), span, otherNames).kind === "OK";
+      }
       const row = rowByCard.get(id);
       const post = row ? postById.get(row.requirementId) : undefined;
       // A kept lesson is not moved here, and a placed lesson keeps its length: the post's.
       if (!row || !post || to.endMinutes - to.startMinutes !== row.minutes) return false;
       return dropOf(mirror, moverOfRow(id, row, post), span, otherNames).kind === "OK";
     },
-    [mirror, brickByKey, moverOfBrick, roomFor, otherNames, rowByCard, postById],
+    [mirror, brickByKey, moverOfBrick, roomFor, otherNames, rowByCard, postById, blockBrickByKey, blockById, roomsOfBlockBrick, lessonByCard],
   );
 
   /** Why a lesson cannot stand where it was let go or pointed to. */
@@ -602,15 +911,28 @@ export default function PlacementsPage() {
       const brick = brickByKey.get(id);
       const row = rowByCard.get(id);
       const post = row ? postById.get(row.requirementId) : undefined;
-      if (!brick && !row) drop = { kind: "KEPT" };
-      else if (row && to.endMinutes - to.startMinutes !== row.minutes) drop = { kind: "LENGTH" };
+      const blockBrick = blockBrickByKey.get(id);
+      const blockOfBrick = blockBrick ? blockById.get(blockBrick.blockId) : undefined;
+      const lesson = lessonByCard.get(id);
+      if (!brick && !row && !blockBrick && !lesson) drop = { kind: "KEPT" };
+      else if ((row && to.endMinutes - to.startMinutes !== row.minutes) || (lesson && to.endMinutes - to.startMinutes !== lesson.row.minutes)) drop = { kind: "LENGTH" };
       else if (mirror) {
-        const mover = brick ? moverOfBrick(brick, roomFor(brick)) : row && post ? moverOfRow(id, row, post) : null;
-        if (mover) drop = dropOf(mirror, mover, span, otherNames);
+        if (blockBrick && blockOfBrick) drop = dropOfBlock(mirror, moverOfBlockBrick(blockBrick.key, blockOfBrick, postById, roomsOfBlockBrick(blockBrick)), span, otherNames);
+        else if (lesson) drop = dropOfBlock(mirror, moverOfBlockRow(id, lesson.key, lesson.block, lesson.row, postById), span, otherNames);
+        else {
+          const mover = brick ? moverOfBrick(brick, roomFor(brick)) : row && post ? moverOfRow(id, row, post) : null;
+          if (mover) drop = dropOf(mirror, mover, span, otherNames);
+        }
       }
-      setMessage({ tone: "problem", text: t(moving ? "cannotMoveThere" : "cannotStandThere", { reason: sentenceOf(drop) }) });
+      // A refusal for a lesson of a block names the POST that clashes: the sentence alone is about a lesson none of the others has.
+      if (drop.kind === "CLASH" && drop.requirementId !== undefined) {
+        const named = postById.has(drop.requirementId) ? postName(postById.get(drop.requirementId)) : tBlock("postGone");
+        setMessage({ tone: "problem", text: `${tBlock(moving ? "cannotMoveThere" : "cannotStandThere", { post: named, reason: sentenceOf(drop) })}${meetsRed(drop.params)}` });
+        return;
+      }
+      setMessage({ tone: "problem", text: `${t(moving ? "cannotMoveThere" : "cannotStandThere", { reason: sentenceOf(drop) })}${drop.kind === "CLASH" ? meetsRed(drop.params) : ""}` });
     },
-    [brickByKey, rowByCard, postById, mirror, moverOfBrick, roomFor, otherNames, sentenceOf, t],
+    [brickByKey, rowByCard, postById, mirror, moverOfBrick, roomFor, otherNames, sentenceOf, t, tBlock, blockBrickByKey, blockById, lessonByCard, roomsOfBlockBrick, postName, meetsRed],
   );
 
   const handleChange = useCallback(
@@ -621,13 +943,34 @@ export default function PlacementsPage() {
         void place(brick, { dayOfWeek: to.dayOfWeek, startMinutes: to.startMinutes }, brickKey === brick.key && draft ? draft.roomId : roomFor(brick));
         return;
       }
+      const blockBrick = blockBrickByKey.get(id);
+      if (blockBrick) {
+        void placeBlock(blockBrick, { dayOfWeek: to.dayOfWeek, startMinutes: to.startMinutes }, roomsOfBlockBrick(blockBrick));
+        return;
+      }
+      // A lesson of a block that is dragged keeps the rooms its posts chose.
+      if (lessonByCard.has(id)) {
+        void moveBlock(id, { dayOfWeek: to.dayOfWeek, startMinutes: to.startMinutes });
+        return;
+      }
       if (rowByCard.has(id)) void move(id, { dayOfWeek: to.dayOfWeek, startMinutes: to.startMinutes });
     },
-    [brickByKey, brickKey, draft, roomFor, place, rowByCard, move],
+    [brickByKey, brickKey, draft, roomFor, place, rowByCard, move, blockBrickByKey, placeBlock, roomsOfBlockBrick, lessonByCard, moveBlock],
   );
 
   const handleSlot = useCallback(
     (day: number, minute: number) => {
+      if (mayWrite && selectedBlockBrick) {
+        const rooms = roomsOfBlockBrick(selectedBlockBrick);
+        const block = blockById.get(selectedBlockBrick.blockId);
+        if (mirror && block) {
+          const drop = dropOfBlock(mirror, moverOfBlockBrick(selectedBlockBrick.key, block, postById, rooms), { dayOfWeek: day, startMinutes: minute, endMinutes: minute + selectedBlockBrick.minutes }, otherNames);
+          // As for a post: the mirror is asked for the school day, and the gateway answers the press either way.
+          if (drop.kind === "DAY") return void setMessage({ tone: "problem", text: t("cannotStandThere", { reason: sentenceOf(drop) }) });
+        }
+        void placeBlock(selectedBlockBrick, { dayOfWeek: day, startMinutes: minute }, rooms);
+        return;
+      }
       if (!mayWrite || !selectedBrick) return;
       const span = { dayOfWeek: day, startMinutes: minute, endMinutes: minute + selectedBrick.minutes };
       const room = draft ? draft.roomId : roomFor(selectedBrick);
@@ -639,7 +982,7 @@ export default function PlacementsPage() {
       }
       void place(selectedBrick, { dayOfWeek: day, startMinutes: minute }, room);
     },
-    [mayWrite, selectedBrick, draft, roomFor, mirror, moverOfBrick, otherNames, place, sentenceOf, t],
+    [mayWrite, selectedBrick, draft, roomFor, mirror, moverOfBrick, otherNames, place, sentenceOf, t, selectedBlockBrick, roomsOfBlockBrick, blockById, postById, placeBlock],
   );
 
   /** A press on a brick that has not moved yet (a click chooses; only a pointer that moves pulls). */
@@ -650,7 +993,26 @@ export default function PlacementsPage() {
     (key: string, event: React.PointerEvent) => {
       const brick = brickByKey.get(key);
       const post = brick ? postById.get(brick.postId) : undefined;
-      if (!brick || !post) return;
+      const blockBrick = blockBrickByKey.get(key);
+      const block = blockBrick ? blockById.get(blockBrick.blockId) : undefined;
+      // What the grid draws under the pointer: a post's lesson, or the block's (its name, and the posts' subjects).
+      const ghost =
+        brick && post
+          ? {
+              minutes: brick.minutes,
+              title: names.subject(post.subjectId)?.name ?? "",
+              subtitle: [names.group(post.studentGroupId), names.teacher(brick.teacherId)].filter(Boolean).join(" · "),
+              color: names.color(post.subjectId, names.subject(post.subjectId)?.color),
+            }
+          : blockBrick && block
+            ? {
+                minutes: blockBrick.minutes,
+                title: block.name,
+                subtitle: block.memberIds.map((id) => names.subject(postById.get(id)?.subjectId ?? "")?.name).filter(Boolean).join(" · "),
+                color: names.color(block.id, null),
+              }
+            : null;
+      if (!ghost) return;
       pressed.current?.();
       const { pointerId, clientX, clientY } = event;
       // The drag starts when the pointer has moved a few pixels, not at the press: a click that begins a drag at once leaves
@@ -666,13 +1028,13 @@ export default function PlacementsPage() {
         stop();
         gridRef.current?.beginExternalDrag(
           {
-            id: brick.key,
+            id: key,
             dayOfWeek: 1,
             startMinutes: 8 * 60,
-            endMinutes: 8 * 60 + brick.minutes,
-            title: names.subject(post.subjectId)?.name ?? "",
-            subtitle: [names.group(post.studentGroupId), names.teacher(brick.teacherId)].filter(Boolean).join(" · "),
-            color: names.color(post.subjectId, names.subject(post.subjectId)?.color),
+            endMinutes: 8 * 60 + ghost.minutes,
+            title: ghost.title,
+            subtitle: ghost.subtitle,
+            color: ghost.color,
           },
           { pointerId, clientX: moved.clientX, clientY: moved.clientY },
         );
@@ -685,19 +1047,40 @@ export default function PlacementsPage() {
       window.addEventListener("pointercancel", end);
       pressed.current = stop;
     },
-    [brickByKey, postById, names],
+    [brickByKey, postById, names, blockBrickByKey, blockById],
   );
 
   const openedRow = openCard ? rowByCard.get(openCard) : undefined;
   const openedKept = openCard ? keptById.get(openCard) : undefined;
   const openedPost = openedRow ? postById.get(openedRow.requirementId) : undefined;
+  const openedLesson = openCard ? lessonByCard.get(openCard) : undefined;
   // A card that is gone (somebody else removed it, a save gave it another place) is a dialog that closes.
   useEffect(() => {
-    if (openCard !== null && everything && !openedRow && !openedKept) setOpenCard(null);
-  }, [openCard, everything, openedRow, openedKept]);
+    if (openCard !== null && everything && !openedRow && !openedKept && !openedLesson) setOpenCard(null);
+  }, [openCard, everything, openedRow, openedKept, openedLesson]);
+
+  // The lesson of a block that the address names (&block=…&day=…&start=…): its card is marked and the keyboard goes to it, once the week is drawn.
+  // The dialog is not opened. A lesson that is not there any more (it was moved or taken away since the link was made) is said in words.
+  useEffect(() => {
+    if (!blockLink || !everything || loading) return;
+    const found = lessonOfBlockLink(everything.blocks, blockLink);
+    setBlockLink(null);
+    if (!found) return void setLinkGone(true);
+    setMarkedBlockCard(found.card);
+    setPendingFocus(`[data-lesson-id="${found.card}"]`);
+  }, [blockLink, everything, loading]);
+  // The open card, the post's card an address from Generera or the grundschema marks (A3's hook) and the block's card an address names (above).
+  const selectedCards = useMemo(() => {
+    const ids = [openCard, markedCard, markedBlockCard].filter((id): id is string => id !== null);
+    return ids.length > 0 ? new Set(ids) : undefined;
+  }, [openCard, markedCard, markedBlockCard]);
 
   const lessonOfBrick = (brick: Brick | undefined): string =>
     brick ? t("brickLabel", { lesson: postName(postById.get(brick.postId)), teacher: teacherText(brick.teacherId), minutes: brick.minutes }) : "";
+  const lessonOfBlockBrick = (brick: BlockBrick | undefined): string => {
+    const block = brick ? blockById.get(brick.blockId) : undefined;
+    return brick && block ? tBlock("brickLabel", { block: block.name, minutes: brick.minutes, count: block.memberIds.length }) : "";
+  };
 
   const undoOrRedo = useCallback(
     async (kind: "undo" | "redo") => {
@@ -775,7 +1158,7 @@ export default function PlacementsPage() {
           {summary.failing > 0 ? (
             <Notice tone="destructive" title={t("failingTitle", { count: summary.failing })} id="placement-failing">
               <p>{t("failingBody")}</p>
-              {failingShown.length > 0 ? (
+              {failingShown.length + failingBlockLessons.length > 0 ? (
                 <ul className="mt-2 space-y-1.5">
                   {failingShown.map((row) => (
                     <li key={row.id} data-testid="failing-row">
@@ -786,9 +1169,21 @@ export default function PlacementsPage() {
                       {verdictSentence(tPlacements, row.verdict.reason, row.verdict.params)}
                     </li>
                   ))}
+                  {/* A lesson of a block is one line, the posts that fail for one sentence said together. */}
+                  {failingBlockLessons.map(({ block, row }) => (
+                    <li key={row.id} className="[overflow-wrap:anywhere]" data-testid="failing-row">
+                      <span className="font-medium">
+                        {block.name}, {blockRowLine(block, row)}
+                      </span>
+                      {": "}
+                      {linesOf(block, row.verdicts).join(" ")}
+                    </li>
+                  ))}
                 </ul>
               ) : null}
-              {failingShown.length < summary.failing ? <p className="mt-2">{t("failingHidden", { count: summary.failing - failingShown.length })}</p> : null}
+              {failingShown.length + failingBlockLessons.length < summary.failing ? (
+                <p className="mt-2">{t("failingHidden", { count: summary.failing - failingShown.length - failingBlockLessons.length })}</p>
+              ) : null}
             </Notice>
           ) : null}
 
@@ -837,19 +1232,27 @@ export default function PlacementsPage() {
           {message ? (
             message.tone === "problem" ? (
               <div data-testid="placement-message">
-                <Notice tone="destructive">{message.text}</Notice>
+                {/* A block's name can be one long word: the message breaks inside it at 320 px rather than leave its box. */}
+                <Notice tone="destructive">
+                  <span className="[overflow-wrap:anywhere]">{message.text}</span>
+                </Notice>
               </div>
             ) : null
           ) : null}
-          <p role="status" aria-live="polite" className={cn("text-sm", message?.tone === "ok" ? "" : "sr-only")} data-testid="placement-status">
+          <p role="status" aria-live="polite" className={cn("text-sm [overflow-wrap:anywhere]", message?.tone === "ok" ? "" : "sr-only")} data-testid="placement-status">
             {message?.tone === "ok" ? message.text : saving ? t("saving") : ""}
           </p>
+          {linkGone ? (
+            <p role="status" className="text-sm text-muted-foreground" data-testid="placement-link-gone">
+              {tBlock("linkGone")}
+            </p>
+          ) : null}
 
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
             <div data-writes="PLANERING" className="lg:sticky lg:top-4 lg:w-72 lg:shrink-0">
               <SectionCard id="placement-to-lay" title={t("toLayTitle")} description={t("toLayDescription")}>
                 <div className="max-h-72 overflow-y-auto pr-1 lg:max-h-[32rem]">
-                  <BrickList groups={brickGroups} selected={brickKey} onSelect={(key) => setBrickKey((current) => (current === key ? null : key))} onPull={pull} />
+                  <BrickList groups={[...brickGroups, ...blockBrickGroups]} selected={brickKey} onSelect={(key) => setBrickKey((current) => (current === key ? null : key))} onPull={pull} />
                 </div>
               </SectionCard>
             </div>
@@ -893,6 +1296,41 @@ export default function PlacementsPage() {
                     </Button>
                   </div>
                 ) : null}
+                {selectedBlockBrick && mayWrite ? (
+                  <div data-writes="PLANERING" className="mb-3 space-y-2 rounded-md border p-3" data-testid="lay-row">
+                    <h3 className="text-sm font-semibold">{t("layTitle")}</h3>
+                    <p className="text-sm [overflow-wrap:anywhere]">{t("layChosen", { lesson: lessonOfBlockBrick(selectedBlockBrick) })}</p>
+                    <Suspense fallback={null}>
+                      <BlockPlaceFields
+                        key={selectedBlockBrick.key}
+                        focusKey={selectedBlockBrick.key}
+                        submitLabel={t("lay")}
+                        minutes={selectedBlockBrick.minutes}
+                        members={membersOf(blockById.get(selectedBlockBrick.blockId)!)}
+                        rooms={roomsList}
+                        initial={{ ...firstBlockSpot, rooms: Object.fromEntries(blockRoomsFor(blockById.get(selectedBlockBrick.blockId)!)) }}
+                        refusal={refusal}
+                        saving={saving}
+                        onValueChange={setBlockDraft}
+                        sentenceOf={(value) => {
+                          const block = blockById.get(selectedBlockBrick.blockId)!;
+                          const drop = mirror
+                            ? dropOfBlock(mirror, moverOfBlockBrick(selectedBlockBrick.key, block, postById, new Map(Object.entries(value.rooms))), { dayOfWeek: value.dayOfWeek, startMinutes: value.startMinutes, endMinutes: value.startMinutes + selectedBlockBrick.minutes }, otherNames)
+                            : OK_DROP;
+                          return { drop, text: blockSentenceOf(drop) };
+                        }}
+                        nextFree={(value) => {
+                          const block = blockById.get(selectedBlockBrick.blockId)!;
+                          return mirror ? nextFreeSpotOfBlock(mirror, moverOfBlockBrick(selectedBlockBrick.key, block, postById, new Map(Object.entries(value.rooms))), selectedBlockBrick.minutes, value, otherNames) : null;
+                        }}
+                        onSubmit={(value) => void placeBlock(selectedBlockBrick, { dayOfWeek: value.dayOfWeek, startMinutes: value.startMinutes }, new Map(Object.entries(value.rooms)))}
+                      />
+                    </Suspense>
+                    <Button variant="ghost" size="sm" onClick={() => setBrickKey(null)}>
+                      {t("unchoose")}
+                    </Button>
+                  </div>
+                ) : null}
                 {!mayWrite && cards.length === 0 ? (
                   <p className="text-sm text-muted-foreground" data-testid="placement-week-empty">
                     {t("weekEmpty")}
@@ -910,13 +1348,16 @@ export default function PlacementsPage() {
                       bands={bands}
                       dayEndMinutes={DAY_END_MINUTES}
                       editable={mayWrite}
-                      onLessonClick={(lesson) => setOpenCard(lesson.id)}
-                      selectedIds={openCard || markedCard ? new Set([openCard, markedCard].filter((id): id is string => id !== null)) : undefined}
+                      onLessonClick={(lesson) => {
+                        setMarkedBlockCard(null);
+                        setOpenCard(lesson.id);
+                      }}
+                      selectedIds={selectedCards}
                       validateChange={validateChange}
                       // Let go outside the week: nothing is laid (the grid would otherwise take the last place it was over).
                       onDropOutside={() => undefined}
                       onLessonChange={handleChange}
-                      onInvalidDrop={(id, to) => refuseDrop(id, to, !brickByKey.has(id))}
+                      onInvalidDrop={(id, to) => refuseDrop(id, to, !brickByKey.has(id) && !blockBrickByKey.has(id))}
                       onSlotClick={handleSlot}
                     />
                   </div>
@@ -943,7 +1384,7 @@ export default function PlacementsPage() {
                       key={post.id}
                       id={`post-${post.id}`}
                       tabIndex={-1}
-                      className="scroll-mt-4 py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="scroll-mt-4 py-3 outline-none [overflow-wrap:anywhere] focus-visible:ring-2 focus-visible:ring-ring"
                       data-testid="placement-post"
                     >
                       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -953,7 +1394,12 @@ export default function PlacementsPage() {
                       <p className="text-sm">
                         {t("postFigures", { placed: total.placed, count: total.count, locked: total.locked, left: total.left })}
                       </p>
-                      {post.cannotPlace ? <p className="text-sm text-muted-foreground">{fitSentence(tPlacements, post.cannotPlace)}</p> : null}
+                      {post.cannotPlace ? (
+                        <p className="text-sm text-muted-foreground">
+                          {/* A post of a block is laid with its block: the block is named, not just "it is in a block". */}
+                          {post.cannotPlace === "BLOCK" && blockOfPost.has(post.id) ? tBlock("memberOf", { block: blockOfPost.get(post.id)!.name }) : fitSentence(tPlacements, post.cannotPlace)}
+                        </p>
+                      ) : null}
                       {post.parts.length > 1 || post.parts.some((part) => part.cannotPlace) ? (
                         <ul className="mt-1 space-y-0.5 text-sm">
                           {post.parts.map((part) => (
@@ -1001,12 +1447,63 @@ export default function PlacementsPage() {
             )}
           </SectionCard>
 
-          {openCard && (openedRow || openedKept) ? (
+          {/* Only a year that has parallel blocks has the list; a school with none (and a gateway that sends none) is not told "no blocks". */}
+          {everything.blocks.length > 0 ? (
+            <SectionCard id="placement-blocks" title={tBlock("sectionTitle")} description={tBlock("sectionDescription")}>
+              {shownBlocks.length === 0 ? (
+                <p className="text-sm text-muted-foreground" data-testid="placement-blocks-empty">
+                  {tBlock("noBlocks")}
+                </p>
+              ) : (
+                <ul className="divide-y">
+                  {shownBlocks.map((block) => {
+                    const whole = blockById.get(block.id) ?? block;
+                    return (
+                      <li
+                        key={block.id}
+                        id={`block-${block.id}`}
+                        tabIndex={-1}
+                        className="scroll-mt-4 py-3 outline-none [overflow-wrap:anywhere] focus-visible:ring-2 focus-visible:ring-ring"
+                        data-testid="placement-block"
+                      >
+                        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                          <h3 className="min-w-0 break-words text-sm font-semibold">{block.name}</h3>
+                          <span className="min-w-0 break-words text-sm text-muted-foreground">{membersOf(block).map((member) => member.name).join(" · ")}</span>
+                        </div>
+                        <p className="text-sm">{tBlock("blockFigures", { placed: whole.rows.length, count: whole.lengths.length, left: blockLessonsLeft(whole) })}</p>
+                        {block.cannotPlace ? (
+                          <p className="text-sm text-muted-foreground">
+                            {blockFitSentence(tBlockFit, block.cannotPlace, block.followsBlockId ? (blockById.get(block.followsBlockId)?.name ?? tBlockFit("otherBlock")) : tBlockFit("otherBlock"))}
+                          </p>
+                      ) : null}
+                      {block.rows.length > 0 ? (
+                        <ul className="mt-2 space-y-1 text-sm">
+                          {block.rows.map((row) => (
+                            <li key={row.id} className={cn("break-words", row.verdicts.some((verdict) => !verdict.ok) && "font-medium")} data-testid="placement-block-row">
+                              {blockRowLine(block, row)}
+                              {" — "}
+                              {row.verdicts.some((verdict) => !verdict.ok) ? linesOf(block, row.verdicts).join(" ") : t("holds")}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {block.rows.length > 0 ? (
+                        <p className="mt-1 text-xs text-muted-foreground">{t("savedAt", { when: savedAt([...block.rows.map((row) => row.changedAt)].sort().at(-1)!, locale) })}</p>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </SectionCard>
+          ) : null}
+
+          {openCard && (openedRow || openedKept || openedLesson) ? (
             <Suspense fallback={null}>
               <CardDialog
                 // One dialog per card: its fields start from the card as it stands.
                 key={openCard}
-                mayWrite={mayWrite && openedRow !== undefined}
+                mayWrite={mayWrite && (openedRow !== undefined || openedLesson !== undefined)}
                 placed={
                   openedRow && openedPost
                     ? {
@@ -1026,6 +1523,25 @@ export default function PlacementsPage() {
                           const lines = rowsOfThePost.filter((_, index) => doomed.includes(rowKeys[index]!)).map(rowLine);
                           return t("pairConfirm", { lesson: postName(openedPost), rows: lines.join("; ") });
                         })(),
+                      }
+                    : undefined
+                }
+                block={
+                  openedLesson
+                    ? {
+                        key: openedLesson.key,
+                        blockId: openedLesson.block.id,
+                        title: `${openedLesson.block.name} · ${openedLesson.row.minutes} min`,
+                        line: blockRowLine(openedLesson.block, openedLesson.row),
+                        verdictLines: openedLesson.row.verdicts.some((verdict) => !verdict.ok) ? linesOf(openedLesson.block, openedLesson.row.verdicts) : [t("holds")],
+                        savedAt: savedAt(openedLesson.row.changedAt, locale),
+                        minutes: openedLesson.row.minutes,
+                        initial: {
+                          dayOfWeek: openedLesson.row.dayOfWeek,
+                          startMinutes: minutesOfClock(openedLesson.row.startTime),
+                          rooms: Object.fromEntries(openedLesson.row.rooms.map((room) => [room.requirementId, room.roomId])),
+                        },
+                        members: membersOf(openedLesson.block),
                       }
                     : undefined
                 }
@@ -1055,10 +1571,34 @@ export default function PlacementsPage() {
                     return mirror && mover && openedRow ? nextFreeSpot(mirror, { ...mover, roomId: value.roomId }, openedRow.minutes, value, otherNames) : null;
                   },
                 }}
+                blockFields={{
+                  rooms: roomsList,
+                  refusal,
+                  saving,
+                  sentenceOf: (value) => {
+                    const drop =
+                      mirror && openedLesson
+                        ? dropOfBlock(
+                            mirror,
+                            moverOfBlockRow(openCard, openedLesson.key, openedLesson.block, openedLesson.row, postById, new Map(Object.entries(value.rooms))),
+                            { dayOfWeek: value.dayOfWeek, startMinutes: value.startMinutes, endMinutes: value.startMinutes + openedLesson.row.minutes },
+                            otherNames,
+                          )
+                        : OK_DROP;
+                    return { drop, text: blockSentenceOf(drop) };
+                  },
+                  nextFree: (value) =>
+                    mirror && openedLesson
+                      ? nextFreeSpotOfBlock(mirror, moverOfBlockRow(openCard, openedLesson.key, openedLesson.block, openedLesson.row, postById, new Map(Object.entries(value.rooms))), openedLesson.row.minutes, value, otherNames)
+                      : null,
+                }}
                 onSave={(value) => {
                   void move(openCard, { dayOfWeek: value.dayOfWeek, startMinutes: value.startMinutes }, value.roomId).then((done) => done && setOpenCard(null));
                 }}
-                onRemove={() => void remove(openCard)}
+                onSaveBlock={(value) => {
+                  void moveBlock(openCard, { dayOfWeek: value.dayOfWeek, startMinutes: value.startMinutes }, new Map(Object.entries(value.rooms))).then((done) => done && setOpenCard(null));
+                }}
+                onRemove={() => void (openedLesson ? removeBlockLesson(openCard) : remove(openCard))}
                 onClose={() => setOpenCard(null)}
               />
             </Suspense>

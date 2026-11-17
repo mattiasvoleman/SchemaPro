@@ -5,13 +5,16 @@ import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { BlockPlaceFields, type BlockPlaceFieldsProps, type BlockPlaceValue } from "@/components/placements/block-place-fields";
 import { PlaceFields, type PlaceFieldsProps, type PlaceValue } from "@/components/placements/place-fields";
 
 /*
  * A card of the week, opened (a press, or Enter on it): what it is, and for the
  * school that writes Planering, what can be done with it: change its day, start
  * and room, or take it away. A lesson Generera keeps is only described, with
- * where it is changed. Fetched when a card is first opened, not with the page.
+ * where it is changed. A lesson of a PARALLEL BLOCK is the third kind: its day, its start and a room for each post, the judge's word
+ * on each post that does not hold, and "Ta bort" (no question: a block has no pairs). Fetched when a card is first opened, not with
+ * the page.
  *
  * Focus goes to the first field and, when the dialog closes, back to the card
  * (Radix returns it to the element that was focused).
@@ -34,6 +37,24 @@ export interface PlacedCard {
   pair: string | null;
 }
 
+/** A lesson of a parallel block, opened. */
+export interface PlacedBlockCard {
+  /** The lesson's key (placement-block-rows.ts): not a row id, which every save changes. */
+  key: string;
+  blockId: string;
+  /** "Språkval åk 7 · 60 min". */
+  title: string;
+  /** "tisdag 10:00–11:00 · Sal på 2 av 3 poster · udda". */
+  line: string;
+  /** What the judge says of the lesson as stored: "Håller.", or a sentence for each group of posts that do not hold it. */
+  verdictLines: string[];
+  savedAt: string;
+  minutes: number;
+  initial: BlockPlaceValue;
+  /** The block's posts, as they are asked for a room. */
+  members: ReadonlyArray<{ id: string; name: string }>;
+}
+
 export interface KeptCard {
   title: string;
   line: string;
@@ -43,23 +64,28 @@ export interface KeptCard {
 export interface CardDialogProps {
   placed?: PlacedCard;
   kept?: KeptCard;
+  block?: PlacedBlockCard;
   mayWrite: boolean;
   fields: Pick<PlaceFieldsProps, "rooms" | "sentenceOf" | "nextFree" | "refusal" | "saving">;
+  blockFields?: Pick<BlockPlaceFieldsProps, "rooms" | "sentenceOf" | "nextFree" | "refusal" | "saving">;
   onSave: (value: PlaceValue) => void;
+  onSaveBlock?: (value: BlockPlaceValue) => void;
   onRemove: () => void;
   onClose: () => void;
 }
 
-export function CardDialog({ placed, kept, mayWrite, fields, onSave, onRemove, onClose }: CardDialogProps) {
+export function CardDialog({ placed, kept, block, mayWrite, fields, blockFields, onSave, onSaveBlock, onRemove, onClose }: CardDialogProps) {
   const t = useTranslations("placementWeek");
+  const tBlock = useTranslations("placementWeek.block");
   const [confirming, setConfirming] = useState(false);
-  const title = placed?.title ?? kept?.title ?? "";
+  const title = placed?.title ?? block?.title ?? kept?.title ?? "";
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <DialogContent className="max-w-lg">
+      {/* A grid's one column is as wide as its widest word unless it may be narrower: a block's name of one long word would widen the dialog past a 320 px screen. */}
+      <DialogContent className="grid-cols-[minmax(0,1fr)] max-w-lg">
         <DialogHeader>
           <DialogTitle className="[overflow-wrap:anywhere]">{title}</DialogTitle>
-          <DialogDescription className="[overflow-wrap:anywhere]">{placed?.line ?? kept?.line}</DialogDescription>
+          <DialogDescription className="[overflow-wrap:anywhere]">{placed?.line ?? block?.line ?? kept?.line}</DialogDescription>
         </DialogHeader>
 
         {placed ? (
@@ -102,6 +128,41 @@ export function CardDialog({ placed, kept, mayWrite, fields, onSave, onRemove, o
                     {t("remove")}
                   </Button>
                 )}
+                <p className="text-xs text-muted-foreground">{t("fromNextGenerate")}</p>
+              </div>
+            ) : null}
+          </div>
+        ) : block ? (
+          <div className="space-y-4">
+            <div className="space-y-1" data-testid="card-verdict">
+              {block.verdictLines.map((line) => (
+                <p key={line} className="text-sm [overflow-wrap:anywhere]">
+                  {line}
+                </p>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">{t("savedAt", { when: block.savedAt })}</p>
+            {/* To the block's line in the list under the week: everybody's, the läsare's too. */}
+            <Button variant="outline" size="sm" asChild>
+              <a href={`#block-${block.blockId}`} onClick={onClose}>
+                {tBlock("toBlock")}
+              </a>
+            </Button>
+            {mayWrite && blockFields && onSaveBlock ? (
+              <div data-writes="PLANERING" className="space-y-4">
+                <BlockPlaceFields
+                  {...blockFields}
+                  submitLabel={t("save")}
+                  minutes={block.minutes}
+                  members={block.members}
+                  initial={block.initial}
+                  focusKey={block.key}
+                  onSubmit={onSaveBlock}
+                />
+                {/* No question: a block has no pairs, so a removal takes the one lesson and nothing else. */}
+                <Button type="button" variant="outline" size="sm" disabled={blockFields.saving} onClick={onRemove}>
+                  {t("remove")}
+                </Button>
                 <p className="text-xs text-muted-foreground">{t("fromNextGenerate")}</p>
               </div>
             ) : null}

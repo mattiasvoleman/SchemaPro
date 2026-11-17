@@ -11,16 +11,29 @@
     "  classes   [{key, grade}]                 home classes of the year (grade 4..9)",
     "  teachers  [key]                          rooms [key]            subjects [key]",
     "  pupils    [{key, class}]                 a pupil's home class",
-    "  groups    [{key, members: [pupil]}]      teaching groups (kind TEACHING_GROUP), whose members are pupils of other classes",
-    "  posts     [{key, class, subject, teacher, coTeacher?, minutes, lessons, recurrence?, startDate?, endDate?, minutesBefore?, minutesAfter?, shares?: [{teacher, lessons}]}]   timplansposter (recurrence defaults to ALL_WEEKS; minutesBefore/After are the pupils' ombyte and dusch around the post's lessons, 0 when left out)",
+    "  groups    [{key, members: [pupil]}]      teaching groups (kind TEACHING_GROUP, no year of their own), whose members are pupils of the classes: a group shares pupils with every class one of its pupils is in",
+    "  posts     [{key, class | group, subject, teacher, coTeacher?, minutes, lessons, recurrence?, startDate?, endDate?, minutesBefore?, minutesAfter?, shares?: [{teacher, lessons}], lengths?, block?}]   timplansposter (recurrence defaults to ALL_WEEKS; minutesBefore/After are the pupils' ombyte and dusch around the post's lessons, 0 when left out)",
+    "            A post is taught to a `class` OR to a teaching `group` (exactly one of them; the web names it studentGroupId). `lengths` (longest first, e.g. [80, 40]) is a post whose lessons are not all one length:",
+    "            `lessons` is then lengths.length and `minutes` lengths[0]. `block` makes the post a MEMBER of the block of that key (the post's own rows are then refused: a block is laid by its own lesson).",
     "  kept      [{class | group, subject, teacher, coTeacher?, room?, day, start, minutes, recurrence?, startDate?, endDate?, extraClasses?: [class], locked?: true}]   lessons Generera keeps",
     "  rows      [{post, day, start, minutes, room?, recurrence?, teacher?}]   förläggningar of the posts, already stored (a pinned one has no room)",
     "  unavailable [{kind: teacher|room|class|grade, key?, grades?: [min, max], day, start, end}]   UNAVAILABLE constraints (a grade rule names grades, not a key)",
     "  frames    [{grades: [min, max], start, end}]                  ramtider for every weekday",
     "  meals     [{class, day, start, end, generated?: true}]         lunches the school placed by hand; a `generated` one is a meal Generera laid, which the judge does not hold a row to (and the week's board does not carry)",
-    "Candidate: {post, day, start, minutes, room?, recurrence?, teacher?, replaces?}. `replaces` names a `rows` entry (by index) that the candidate is a move of: the stored",
-    "row is not beside it (the PUT replaces the whole list), and the mirror must not hold the lesson against its own old place.",
-    "Verdict: {ok: true} or {ok: false, reason}, the judge's reasons (placement-judge.ts PlacementRefusalReason)."
+    "  blocks    [{key, posts: [post key], lessons: [{day, start, minutes, rooms?: {<post key>: <room key>}}]}]   parallel blocks (Språkval): the `posts` are the block's members, and `lessons` the lessons the school has already placed on it, stored as they stand (a lesson that",
+    "            no longer holds can be stored). A block of the same key in a case's `add` REPLACES the base block (it is not merged). THE MEMBERS agree on lessons, minutes/lengths and recurrence (the database insists), and every member sits every",
+    "            lesson of the block at once: a lesson of the block is ONE lesson at (day, start, minutes), in the members' weeks (the members' recurrence, and each member post's own startDate/endDate), and each member sits it as its OWN post's",
+    "            lesson (the member's class or group, subject, teacher, coTeacher, minutesBefore/After). `rooms` names the room a member chose for that lesson (post key -> room key); a member NOT named has its room chosen by the engine: no",
+    "            room, so no room clash and no room unavailability. A block lesson is one lesson per member for the rules, and the members are held against each other too (different groups stand in nobody's way, but a teacher, a room",
+    "            or a pupil two members share is a clash).",
+    "Candidate, one of two kinds. (a) A POST's row {post, day, start, minutes, room?, recurrence?, teacher?, replaces?} (the judge: the PUT on the post's path; every block of the world, with its stored lessons, is beside it). `replaces` names a `rows`",
+    "entry (by index) that the candidate is a move of: the stored row is not beside it (the PUT replaces the whole list), and the mirror must not hold the lesson against its own old place.",
+    "(b) A BLOCK's lesson {block, day, start, minutes, rooms?: {<post key>: <room key>}, replaces?} (the judge: PUT /teaching-blocks/:id/placements, with the candidate FIRST in the list, then the block's other stored lessons). `replaces` names a",
+    "stored lesson of that block (by index into the world's blocks[block].lessons) that the candidate is a move of: all of that lesson's rows are out of the way of the new place, and ONLY that lesson's: the block's other lessons are not. The",
+    "candidate is one lesson of every member of the block, in the block's weeks, with the room each member was given (a member left out of `rooms` has none), and every member's row is held against the week AND against the other members' rows.",
+    "Verdict: {ok: true}, or {ok: false, reason} for kind (a), or {ok: false, reason, post} for kind (b): the judge's reasons (placement-judge.ts PlacementRefusalReason), and `post` the first member (in the order of the world's `posts`) whose row is",
+    "refused. The mirror must refuse where the judge does and, for kind (b), name that member among those it refuses (it may name more). A stored lesson that is already red is let stand by the judge when the candidate re-states it unchanged",
+    "(`replaces` it with the same place and rooms): such a case is `mirrorStricter`, since the mirror holds every lesson against the whole week."
   ],
   "base": {
     "classes": [
@@ -28,17 +41,32 @@
       { "key": "7B", "grade": 7 },
       { "key": "4A", "grade": 4 }
     ],
-    "teachers": ["anna", "bo", "cy"],
-    "rooms": ["A1", "A2"],
-    "subjects": ["ma", "sv", "id"],
-    "pupils": [],
-    "groups": [],
+    "teachers": ["anna", "bo", "cy", "dan", "eva", "fia"],
+    "rooms": ["A1", "A2", "A3"],
+    "subjects": ["ma", "sv", "id", "sp", "ty", "fr"],
+    "pupils": [
+      { "key": "sp1", "class": "7A" },
+      { "key": "sp2", "class": "7B" },
+      { "key": "ty1", "class": "7A" },
+      { "key": "ty2", "class": "7B" },
+      { "key": "fr1", "class": "7A" },
+      { "key": "fr2", "class": "7B" }
+    ],
+    "groups": [
+      { "key": "GS", "members": ["sp1", "sp2"] },
+      { "key": "GT", "members": ["ty1", "ty2"] },
+      { "key": "GF", "members": ["fr1", "fr2"] }
+    ],
     "posts": [
       { "key": "P1", "class": "7A", "subject": "ma", "teacher": "anna", "minutes": 60, "lessons": 3 },
       { "key": "P2", "class": "7B", "subject": "sv", "teacher": "bo", "minutes": 60, "lessons": 3 },
       { "key": "P3", "class": "7A", "subject": "sv", "teacher": "bo", "minutes": 60, "lessons": 3 },
-      { "key": "P4", "class": "4A", "subject": "ma", "teacher": "anna", "minutes": 60, "lessons": 3 }
+      { "key": "P4", "class": "4A", "subject": "ma", "teacher": "anna", "minutes": 60, "lessons": 3 },
+      { "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 60, "lessons": 2, "block": "SV" },
+      { "key": "MT", "group": "GT", "subject": "ty", "teacher": "eva", "minutes": 60, "lessons": 2, "block": "SV" },
+      { "key": "MF", "group": "GF", "subject": "fr", "teacher": "fia", "minutes": 60, "lessons": 2, "block": "SV" }
     ],
+    "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [] }],
     "kept": [],
     "rows": [],
     "unavailable": [],
@@ -487,6 +515,475 @@
       },
       "candidate": { "post": "P3", "day": 2, "start": "11:05", "minutes": 60, "room": "A1" },
       "verdict": { "ok": false, "reason": "GROUP" }
+    },
+    {
+      "name": "a member's teacher is busy in the block's lesson",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "P4", "class": "4A", "subject": "ma", "teacher": "dan", "minutes": 60, "lessons": 3 }],
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }]
+      },
+      "candidate": { "post": "P4", "day": 2, "start": "10:30", "minutes": 60, "room": "A2" },
+      "verdict": { "ok": false, "reason": "TEACHER" }
+    },
+    {
+      "name": "a member's teacher is free on another day than the block's lesson",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "P4", "class": "4A", "subject": "ma", "teacher": "dan", "minutes": 60, "lessons": 3 }],
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }]
+      },
+      "candidate": { "post": "P4", "day": 3, "start": "10:30", "minutes": 60, "room": "A2" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the medlärare of a member is busy in the block's lesson",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 60, "lessons": 2, "block": "SV", "coTeacher": "cy" }, { "key": "P4", "class": "4A", "subject": "ma", "teacher": "cy", "minutes": 60, "lessons": 3 }],
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }]
+      },
+      "candidate": { "post": "P4", "day": 2, "start": "10:30", "minutes": 60, "room": "A2" },
+      "verdict": { "ok": false, "reason": "TEACHER" }
+    },
+    {
+      "name": "the room a member chose for the block's lesson is taken",
+      "rule": "ROOM",
+      "add": { "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }] },
+      "candidate": { "post": "P4", "day": 2, "start": "10:30", "minutes": 60, "room": "A1" },
+      "verdict": { "ok": false, "reason": "ROOM" }
+    },
+    {
+      "name": "the room another member chose for the block's lesson is taken as well",
+      "rule": "ROOM",
+      "add": {
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1", "MT": "A2" } }] }]
+      },
+      "candidate": { "post": "P4", "day": 2, "start": "10:30", "minutes": 60, "room": "A2" },
+      "verdict": { "ok": false, "reason": "ROOM" }
+    },
+    {
+      "name": "a member with no room of its own gives the block's lesson no room to clash with",
+      "rule": "ROOM",
+      "add": { "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }] },
+      "candidate": { "post": "P4", "day": 2, "start": "10:30", "minutes": 60, "room": "A2" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a class whose pupils sit a member's group is held at the block's time",
+      "rule": "GROUP",
+      "add": { "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }] },
+      "candidate": { "post": "P1", "day": 2, "start": "10:30", "minutes": 60, "room": "A2" },
+      "verdict": { "ok": false, "reason": "PUPILS" }
+    },
+    {
+      "name": "the same class is free right after the block's lesson",
+      "rule": "GROUP",
+      "add": { "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }] },
+      "candidate": { "post": "P1", "day": 2, "start": "11:00", "minutes": 60, "room": "A2" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the block's lesson meets a lesson Generera keeps of one member's teacher",
+      "rule": "TEACHER",
+      "add": { "kept": [{ "class": "4A", "subject": "ma", "teacher": "eva", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:30", "minutes": 60 },
+      "verdict": { "ok": false, "reason": "TEACHER", "post": "MT" }
+    },
+    {
+      "name": "the block's lesson right after that teacher's lesson holds",
+      "rule": "TEACHER",
+      "add": { "kept": [{ "class": "4A", "subject": "ma", "teacher": "eva", "room": "A2", "day": 2, "start": "09:00", "minutes": 60, "locked": true }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:00", "minutes": 60 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the block's lesson meets a förläggning of another post whose teacher is a member's",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "MF", "group": "GF", "subject": "fr", "teacher": "anna", "minutes": 60, "lessons": 2, "block": "SV" }],
+        "rows": [{ "post": "P4", "day": 2, "start": "10:00", "minutes": 60, "room": "A2" }]
+      },
+      "candidate": { "block": "SV", "day": 2, "start": "10:30", "minutes": 60 },
+      "verdict": { "ok": false, "reason": "TEACHER", "post": "MF" }
+    },
+    {
+      "name": "the room a member chose for the block's lesson is taken by a lesson Generera keeps",
+      "rule": "ROOM",
+      "add": { "kept": [{ "class": "4A", "subject": "ma", "teacher": "cy", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:30", "minutes": 60, "rooms": { "MT": "A2" } },
+      "verdict": { "ok": false, "reason": "ROOM", "post": "MT" }
+    },
+    {
+      "name": "a room no member chose for the block's lesson leaves the kept lesson's room alone",
+      "rule": "ROOM",
+      "add": { "kept": [{ "class": "4A", "subject": "ma", "teacher": "cy", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:30", "minutes": 60, "rooms": { "MS": "A1", "MT": "A3" } },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a block's lesson with no room for any member has no room to clash with",
+      "rule": "ROOM",
+      "add": { "kept": [{ "class": "4A", "subject": "ma", "teacher": "cy", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:30", "minutes": 60 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a lesson Generera keeps for one member's own group holds that member only",
+      "rule": "GROUP",
+      "add": { "kept": [{ "group": "GT", "subject": "ty", "teacher": "cy", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:30", "minutes": 60 },
+      "verdict": { "ok": false, "reason": "GROUP", "post": "MT" }
+    },
+    {
+      "name": "a class lesson Generera keeps holds every member group that shares its pupils",
+      "rule": "GROUP",
+      "add": { "kept": [{ "class": "7A", "subject": "sv", "teacher": "bo", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:30", "minutes": 60 },
+      "verdict": { "ok": false, "reason": "PUPILS", "post": "MS" }
+    },
+    {
+      "name": "a förläggning of an ordinary class holds the member groups' pupils that are in the class",
+      "rule": "GROUP",
+      "add": { "rows": [{ "post": "P2", "day": 2, "start": "10:00", "minutes": 60, "room": "A2" }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:30", "minutes": 60 },
+      "verdict": { "ok": false, "reason": "PUPILS", "post": "MS" }
+    },
+    {
+      "name": "a member's teacher is marked as unavailable at the block's time",
+      "rule": "AVAILABILITY",
+      "add": { "unavailable": [{ "kind": "teacher", "key": "fia", "day": 2, "start": "10:00", "end": "11:00" }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:30", "minutes": 60 },
+      "verdict": { "ok": false, "reason": "AVAILABILITY", "post": "MF" }
+    },
+    {
+      "name": "the room a member chose for the block's lesson is marked as unavailable",
+      "rule": "AVAILABILITY",
+      "add": { "unavailable": [{ "kind": "room", "key": "A1", "day": 2, "start": "10:00", "end": "11:00" }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:30", "minutes": 60, "rooms": { "MS": "A1" } },
+      "verdict": { "ok": false, "reason": "AVAILABILITY", "post": "MS" }
+    },
+    {
+      "name": "a room unavailable at the block's time does not hold the members that have no room",
+      "rule": "AVAILABILITY",
+      "add": { "unavailable": [{ "kind": "room", "key": "A2", "day": 2, "start": "10:00", "end": "11:00" }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:30", "minutes": 60, "rooms": { "MS": "A1" } },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a year rule for the members' year does not reach a teaching group in the judge, which reads no year of the group (the mirror derives it from the pupils, and is stricter)",
+      "rule": "GRADE_RULE",
+      "mirrorStricter": true,
+      "add": { "unavailable": [{ "kind": "grade", "grades": [7, 9], "day": 2, "start": "10:00", "end": "11:00" }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:30", "minutes": 60 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a ramtid for the members' year does not reach a teaching group in the judge, which reads no year of the group (the mirror derives it from the pupils, and is stricter)",
+      "rule": "FRAME",
+      "mirrorStricter": true,
+      "add": { "frames": [{ "grades": [7, 9], "start": "08:00", "end": "10:30" }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:00", "minutes": 60 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the block's lesson inside the ramtid holds",
+      "rule": "FRAME",
+      "add": { "frames": [{ "grades": [7, 9], "start": "08:00", "end": "11:00" }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:00", "minutes": 60 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a class's lunch the school placed by hand is no teaching group's: the block's lesson on it holds",
+      "rule": "LUNCH",
+      "add": { "meals": [{ "class": "7A", "day": 2, "start": "10:30", "end": "11:30" }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:00", "minutes": 60 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the block's lesson that ends after 18:00 is outside the school day",
+      "rule": "SCHOOL_DAY",
+      "add": {
+      },
+      "candidate": { "block": "SV", "day": 2, "start": "17:30", "minutes": 60 },
+      "verdict": { "ok": false, "reason": "SCHOOL_DAY", "post": "MS" }
+    },
+    {
+      "name": "the block's lesson in the last hour of the school day holds",
+      "rule": "SCHOOL_DAY",
+      "add": {
+      },
+      "candidate": { "block": "SV", "day": 2, "start": "17:00", "minutes": 60 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "two members that share a teacher cannot sit one lesson",
+      "rule": "TEACHER",
+      "add": { "posts": [{ "key": "MT", "group": "GT", "subject": "ty", "teacher": "dan", "minutes": 60, "lessons": 2, "block": "SV" }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:00", "minutes": 60 },
+      "verdict": { "ok": false, "reason": "TEACHER", "post": "MS" }
+    },
+    {
+      "name": "members with groups, teachers and rooms of their own sit one lesson",
+      "rule": "TEACHER",
+      "add": {
+      },
+      "candidate": { "block": "SV", "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1", "MT": "A2", "MF": "A3" } },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "two members that chose one room cannot sit one lesson",
+      "rule": "ROOM",
+      "add": {
+      },
+      "candidate": { "block": "SV", "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1", "MT": "A1" } },
+      "verdict": { "ok": false, "reason": "ROOM", "post": "MS" }
+    },
+    {
+      "name": "two members whose groups share a pupil cannot sit one lesson",
+      "rule": "GROUP",
+      "add": {
+        "groups": [{ "key": "GX", "members": ["sp1", "ty1"] }],
+        "posts": [{ "key": "MT", "group": "GX", "subject": "ty", "teacher": "eva", "minutes": 60, "lessons": 2, "block": "SV" }]
+      },
+      "candidate": { "block": "SV", "day": 2, "start": "10:00", "minutes": 60 },
+      "verdict": { "ok": false, "reason": "PUPILS", "post": "MS" }
+    },
+    {
+      "name": "a block's lesson shifted a quarter of an hour is not in its own way",
+      "rule": "TEACHER",
+      "add": { "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:15", "minutes": 60, "rooms": { "MS": "A1" }, "replaces": 0 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a new lesson of the block a quarter of an hour after its own is in its members' way",
+      "rule": "TEACHER",
+      "add": { "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:15", "minutes": 60, "rooms": { "MS": "A1" } },
+      "verdict": { "ok": false, "reason": "TEACHER", "post": "MS" }
+    },
+    {
+      "name": "a lesson of the block moved onto the block's other lesson is in its members' way",
+      "rule": "TEACHER",
+      "add": {
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60 }, { "day": 3, "start": "10:00", "minutes": 60 }] }]
+      },
+      "candidate": { "block": "SV", "day": 3, "start": "10:30", "minutes": 60, "replaces": 0 },
+      "verdict": { "ok": false, "reason": "TEACHER", "post": "MS" }
+    },
+    {
+      "name": "a lesson of the block moved to the day the block's other lesson is on, an hour away from it, holds",
+      "rule": "TEACHER",
+      "add": {
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60 }, { "day": 3, "start": "10:00", "minutes": 60 }] }]
+      },
+      "candidate": { "block": "SV", "day": 3, "start": "11:00", "minutes": 60, "replaces": 0 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a lesson of the block moved to a day the block has no other lesson on holds",
+      "rule": "TEACHER",
+      "add": {
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60 }, { "day": 3, "start": "09:00", "minutes": 60 }] }]
+      },
+      "candidate": { "block": "SV", "day": 4, "start": "10:00", "minutes": 60, "replaces": 0 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a stored lesson that stopped holding stays when it is sent again unchanged",
+      "rule": "TEACHER",
+      "mirrorStricter": true,
+      "add": {
+        "kept": [{ "class": "4A", "subject": "ma", "teacher": "dan", "room": "A2", "day": 2, "start": "10:00", "minutes": 30, "locked": true }],
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }]
+      },
+      "candidate": { "block": "SV", "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" }, "replaces": 0 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a new lesson of the block that meets a stored lesson that no longer holds is refused",
+      "rule": "TEACHER",
+      "add": {
+        "kept": [{ "class": "4A", "subject": "ma", "teacher": "dan", "room": "A2", "day": 2, "start": "10:00", "minutes": 30, "locked": true }],
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }]
+      },
+      "candidate": { "block": "SV", "day": 2, "start": "10:45", "minutes": 60 },
+      "verdict": { "ok": false, "reason": "TEACHER", "post": "MS" }
+    },
+    {
+      "name": "a new lesson that touches neither the lesson that no longer holds nor what it met holds",
+      "rule": "TEACHER",
+      "add": {
+        "kept": [{ "class": "4A", "subject": "ma", "teacher": "dan", "room": "A2", "day": 2, "start": "10:00", "minutes": 30, "locked": true }],
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }]
+      },
+      "candidate": { "block": "SV", "day": 3, "start": "10:00", "minutes": 60 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a block of 80 and 40 minutes holds its teachers for the whole 80",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 80, "lessons": 2, "block": "SV", "lengths": [80, 40] }, { "key": "MT", "group": "GT", "subject": "ty", "teacher": "eva", "minutes": 80, "lessons": 2, "block": "SV", "lengths": [80, 40] }, { "key": "MF", "group": "GF", "subject": "fr", "teacher": "fia", "minutes": 80, "lessons": 2, "block": "SV", "lengths": [80, 40] }, { "key": "P4", "class": "4A", "subject": "ma", "teacher": "dan", "minutes": 60, "lessons": 3 }],
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 80 }] }]
+      },
+      "candidate": { "post": "P4", "day": 2, "start": "11:00", "minutes": 60, "room": "A2" },
+      "verdict": { "ok": false, "reason": "TEACHER" }
+    },
+    {
+      "name": "a block of 80 and 40 minutes frees its teachers when the 80 are done",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 80, "lessons": 2, "block": "SV", "lengths": [80, 40] }, { "key": "MT", "group": "GT", "subject": "ty", "teacher": "eva", "minutes": 80, "lessons": 2, "block": "SV", "lengths": [80, 40] }, { "key": "MF", "group": "GF", "subject": "fr", "teacher": "fia", "minutes": 80, "lessons": 2, "block": "SV", "lengths": [80, 40] }, { "key": "P4", "class": "4A", "subject": "ma", "teacher": "dan", "minutes": 60, "lessons": 3 }],
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 80 }] }]
+      },
+      "candidate": { "post": "P4", "day": 2, "start": "11:20", "minutes": 60, "room": "A2" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a 40-minute lesson of a mixed block inside the block's 80-minute lesson is in its members' way",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 80, "lessons": 2, "block": "SV", "lengths": [80, 40] }, { "key": "MT", "group": "GT", "subject": "ty", "teacher": "eva", "minutes": 80, "lessons": 2, "block": "SV", "lengths": [80, 40] }, { "key": "MF", "group": "GF", "subject": "fr", "teacher": "fia", "minutes": 80, "lessons": 2, "block": "SV", "lengths": [80, 40] }],
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 80 }] }]
+      },
+      "candidate": { "block": "SV", "day": 2, "start": "11:00", "minutes": 40 },
+      "verdict": { "ok": false, "reason": "TEACHER", "post": "MS" }
+    },
+    {
+      "name": "a 40-minute lesson of a mixed block right after the 80 holds",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 80, "lessons": 2, "block": "SV", "lengths": [80, 40] }, { "key": "MT", "group": "GT", "subject": "ty", "teacher": "eva", "minutes": 80, "lessons": 2, "block": "SV", "lengths": [80, 40] }, { "key": "MF", "group": "GF", "subject": "fr", "teacher": "fia", "minutes": 80, "lessons": 2, "block": "SV", "lengths": [80, 40] }],
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 80 }] }]
+      },
+      "candidate": { "block": "SV", "day": 2, "start": "11:20", "minutes": 40 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a term block and an ordinary post whose dates never meet share a slot and a teacher",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 60, "lessons": 2, "block": "SV", "endDate": "2026-12-18" }, { "key": "MT", "group": "GT", "subject": "ty", "teacher": "eva", "minutes": 60, "lessons": 2, "block": "SV", "endDate": "2026-12-18" }, { "key": "MF", "group": "GF", "subject": "fr", "teacher": "fia", "minutes": 60, "lessons": 2, "block": "SV", "endDate": "2026-12-18" }, { "key": "P4", "class": "4A", "subject": "ma", "teacher": "dan", "minutes": 60, "lessons": 3, "startDate": "2027-01-11" }],
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }]
+      },
+      "candidate": { "post": "P4", "day": 2, "start": "10:00", "minutes": 60, "room": "A2" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a term block and an ordinary post whose dates meet hold the teacher",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 60, "lessons": 2, "block": "SV", "endDate": "2026-12-18" }, { "key": "MT", "group": "GT", "subject": "ty", "teacher": "eva", "minutes": 60, "lessons": 2, "block": "SV", "endDate": "2026-12-18" }, { "key": "MF", "group": "GF", "subject": "fr", "teacher": "fia", "minutes": 60, "lessons": 2, "block": "SV", "endDate": "2026-12-18" }, { "key": "P4", "class": "4A", "subject": "ma", "teacher": "dan", "minutes": 60, "lessons": 3, "startDate": "2026-11-02" }],
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }]
+      },
+      "candidate": { "post": "P4", "day": 2, "start": "10:00", "minutes": 60, "room": "A2" },
+      "verdict": { "ok": false, "reason": "TEACHER" }
+    },
+    {
+      "name": "a term block's lesson against a lesson Generera keeps in the spring shares the slot",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 60, "lessons": 2, "block": "SV", "endDate": "2026-12-18" }, { "key": "MT", "group": "GT", "subject": "ty", "teacher": "eva", "minutes": 60, "lessons": 2, "block": "SV", "endDate": "2026-12-18" }, { "key": "MF", "group": "GF", "subject": "fr", "teacher": "fia", "minutes": 60, "lessons": 2, "block": "SV", "endDate": "2026-12-18" }],
+        "kept": [{ "class": "4A", "subject": "ma", "teacher": "dan", "room": "A2", "day": 2, "start": "10:00", "minutes": 60, "locked": true, "startDate": "2027-01-11" }]
+      },
+      "candidate": { "block": "SV", "day": 2, "start": "10:00", "minutes": 60 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a block of odd weeks and an ordinary post of even weeks share a slot and a teacher",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 60, "lessons": 2, "block": "SV", "recurrence": "ODD_WEEKS" }, { "key": "MT", "group": "GT", "subject": "ty", "teacher": "eva", "minutes": 60, "lessons": 2, "block": "SV", "recurrence": "ODD_WEEKS" }, { "key": "MF", "group": "GF", "subject": "fr", "teacher": "fia", "minutes": 60, "lessons": 2, "block": "SV", "recurrence": "ODD_WEEKS" }, { "key": "P4", "class": "4A", "subject": "ma", "teacher": "dan", "minutes": 60, "lessons": 3, "recurrence": "EVEN_WEEKS" }],
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }]
+      },
+      "candidate": { "post": "P4", "day": 2, "start": "10:00", "minutes": 60, "room": "A2", "recurrence": "EVEN_WEEKS" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a block of odd weeks and an ordinary post of odd weeks hold the teacher",
+      "rule": "TEACHER",
+      "add": {
+        "posts": [{ "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 60, "lessons": 2, "block": "SV", "recurrence": "ODD_WEEKS" }, { "key": "MT", "group": "GT", "subject": "ty", "teacher": "eva", "minutes": 60, "lessons": 2, "block": "SV", "recurrence": "ODD_WEEKS" }, { "key": "MF", "group": "GF", "subject": "fr", "teacher": "fia", "minutes": 60, "lessons": 2, "block": "SV", "recurrence": "ODD_WEEKS" }, { "key": "P4", "class": "4A", "subject": "ma", "teacher": "dan", "minutes": 60, "lessons": 3, "recurrence": "ODD_WEEKS" }],
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }]
+      },
+      "candidate": { "post": "P4", "day": 2, "start": "10:00", "minutes": 60, "room": "A2", "recurrence": "ODD_WEEKS" },
+      "verdict": { "ok": false, "reason": "TEACHER" }
+    },
+    {
+      "name": "the ombyte before a member's lesson reaches back into the class's lesson that ended five minutes before it",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 60, "lessons": 2, "block": "SV", "minutesBefore": 15, "minutesAfter": 15 }],
+        "kept": [{ "class": "7A", "subject": "sv", "teacher": "bo", "room": "A2", "day": 2, "start": "08:55", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "block": "SV", "day": 2, "start": "10:00", "minutes": 60 },
+      "verdict": { "ok": false, "reason": "PUPILS", "post": "MS" }
+    },
+    {
+      "name": "a lesson of the class that ends exactly when the member's ombyte begins holds",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 60, "lessons": 2, "block": "SV", "minutesBefore": 15, "minutesAfter": 15 }],
+        "kept": [{ "class": "7A", "subject": "sv", "teacher": "bo", "room": "A2", "day": 2, "start": "08:45", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "block": "SV", "day": 2, "start": "10:00", "minutes": 60 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the dusch after a member's lesson runs into the class's lesson five minutes after it",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 60, "lessons": 2, "block": "SV", "minutesBefore": 15, "minutesAfter": 15 }],
+        "kept": [{ "class": "7A", "subject": "sv", "teacher": "bo", "room": "A2", "day": 2, "start": "11:05", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "block": "SV", "day": 2, "start": "10:00", "minutes": 60 },
+      "verdict": { "ok": false, "reason": "PUPILS", "post": "MS" }
+    },
+    {
+      "name": "a lesson of the class that starts when the member's dusch is done holds",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 60, "lessons": 2, "block": "SV", "minutesBefore": 15, "minutesAfter": 15 }],
+        "kept": [{ "class": "7A", "subject": "sv", "teacher": "bo", "room": "A2", "day": 2, "start": "11:15", "minutes": 60, "locked": true }]
+      },
+      "candidate": { "block": "SV", "day": 2, "start": "10:00", "minutes": 60 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "an ordinary lesson of a class five minutes after a block's lesson whose member has a dusch is held",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 60, "lessons": 2, "block": "SV", "minutesBefore": 15, "minutesAfter": 15 }],
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }]
+      },
+      "candidate": { "post": "P1", "day": 2, "start": "11:05", "minutes": 60, "room": "A2" },
+      "verdict": { "ok": false, "reason": "PUPILS" }
+    },
+    {
+      "name": "an ordinary lesson of the class that starts when that dusch is done holds",
+      "rule": "GROUP",
+      "add": {
+        "posts": [{ "key": "MS", "group": "GS", "subject": "sp", "teacher": "dan", "minutes": 60, "lessons": 2, "block": "SV", "minutesBefore": 15, "minutesAfter": 15 }],
+        "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }]
+      },
+      "candidate": { "post": "P1", "day": 2, "start": "11:15", "minutes": 60, "room": "A2" },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "a room that passes from one member to another when the lesson is moved a quarter of an hour is free",
+      "rule": "ROOM",
+      "add": { "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:15", "minutes": 60, "rooms": { "MT": "A1" }, "replaces": 0 },
+      "verdict": { "ok": true }
+    },
+    {
+      "name": "the twin of the move: the same room for another member in a NEW lesson a quarter of an hour after the stored one is refused (the stored lesson stays in the way)",
+      "rule": "TEACHER",
+      "add": { "blocks": [{ "key": "SV", "posts": ["MS", "MT", "MF"], "lessons": [{ "day": 2, "start": "10:00", "minutes": 60, "rooms": { "MS": "A1" } }] }] },
+      "candidate": { "block": "SV", "day": 2, "start": "10:15", "minutes": 60, "rooms": { "MT": "A1" } },
+      "verdict": { "ok": false, "reason": "TEACHER", "post": "MS" }
     }
   ]
 }

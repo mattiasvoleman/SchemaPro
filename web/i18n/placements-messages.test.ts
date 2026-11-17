@@ -557,3 +557,74 @@ describe("Förlägg blocket as the reader hears and sees it", () => {
     expect(enEngine("PLACEMENT_CANNOT_STAND", where)).toContain("the block's placed lessons no longer fit the block");
   });
 });
+
+describe("a parallel block's lessons on the week (C2)", () => {
+  const svBlock = createTranslator({ locale: "sv", messages: sv, namespace: "placementWeek.block" });
+  const enBlock = createTranslator({ locale: "en", messages: en, namespace: "placementWeek.block" });
+  const svBlockDialog = createTranslator({ locale: "sv", messages: sv, namespace: "requirements.blockPlacements" });
+  const enBlockDialog = createTranslator({ locale: "en", messages: en, namespace: "requirements.blockPlacements" });
+
+  it("says how many posts of a block chose a room for a lesson, and that the engine chooses when none did", () => {
+    expect(svBlock("cardRooms", { chosen: 0, total: 3 })).toBe("Motorn väljer sal");
+    expect(svBlock("cardRooms", { chosen: 2, total: 3 })).toBe("Sal på 2 av 3 poster");
+    expect(enBlock("cardRooms", { chosen: 0, total: 3 })).toBe("The engine chooses the room");
+    expect(enBlock("cardRooms", { chosen: 2, total: 3 })).toBe("Room for 2 of 3 entries");
+  });
+
+  it("names a block's brick by its length and how many posts sit it, in the singular and the plural", () => {
+    expect(svBlock("brickText", { minutes: 60, count: 3 })).toBe("60 min, 3 poster");
+    expect(svBlock("brickText", { minutes: 40, count: 1 })).toBe("40 min, 1 post");
+    expect(svBlock("brickLabel", { block: "Språkval åk 7", minutes: 60, count: 3 })).toBe("Språkval åk 7, 60 min, 3 poster");
+    expect(enBlock("brickText", { minutes: 40, count: 1 })).toBe("40 min, 1 entry");
+    expect(enBlock("brickLabel", { block: "Language choice", minutes: 60, count: 3 })).toBe("Language choice, 60 min, 3 entries");
+  });
+
+  it("says which post cannot have the lesson, and why, for a lesson laid or moved", () => {
+    expect(svBlock("cannotStandThere", { post: "Spanska Sp7", reason: "Läraren har redan en lektion." })).toBe("Kan inte läggas där: Spanska Sp7 kan inte ha lektionen då. Läraren har redan en lektion.");
+    expect(svBlock("cannotMoveThere", { post: "Spanska Sp7", reason: "X." })).toBe("Kan inte flyttas dit: Spanska Sp7 kan inte ha lektionen då. X.");
+    expect(enBlock("cannotStandThere", { post: "Spanish Sp7", reason: "X." })).toBe("Cannot be placed there: Spanish Sp7 cannot have the lesson then. X.");
+    expect(svBlock("postSaid", { posts: "Franska Fr7 och Spanska Sp7", sentence: "Y." })).toBe("Franska Fr7 och Spanska Sp7: Y.");
+  });
+
+  it("says that a lesson still does not hold after a save, in the singular and the plural, with the lessons said", () => {
+    expect(svBlock("stillFailing", { count: 1, rows: "tisdag 10:00–11:00: X" })).toBe("En lektion i blocket håller fortfarande inte, och Generera körs inte förrän de håller igen: tisdag 10:00–11:00: X");
+    expect(svBlock("stillFailing", { count: 3, rows: "R" })).toContain("3 lektioner i blocket håller fortfarande inte");
+    expect(enBlock("stillFailing", { count: 1, rows: "R" })).toContain("One lesson in the block still does not hold");
+    expect(enBlock("stillFailing", { count: 2, rows: "R" })).toContain("2 lessons in the block still do not hold");
+  });
+
+  it("says that a new lesson beside a lesson that stopped holding is refused until that one is moved or taken away, in both languages", () => {
+    expect(svBlock("meetsRed", { when: "tisdag 10:00–11:00" })).toBe("Lektionen som är i vägen, tisdag 10:00–11:00, håller inte längre men får ligga kvar. En ny lektion intill den nekas tills den har flyttats eller tagits bort.");
+    expect(enBlock("meetsRed", { when: "Tuesday 10:00–11:00" })).toContain("A new lesson next to it is refused until it has been moved or removed.");
+  });
+
+  it("says what the block's dialog says after a save that left a lesson red, for every day and the block's weeks", () => {
+    expect(svBlockDialog("savedStillFailing", { count: 1 })).toBe("Blockets förläggningar är sparade. En lektion håller fortfarande inte, och Generera körs inte förrän de håller igen.");
+    expect(svBlockDialog("savedStillFailing", { count: 2 })).toContain("2 lektioner håller fortfarande inte");
+    expect(enBlockDialog("savedStillFailing", { count: 1 })).toContain("One lesson still does not hold");
+    for (const [day, sv_, en_] of [[1, "måndag", "Monday"], [2, "tisdag", "Tuesday"], [3, "onsdag", "Wednesday"], [4, "torsdag", "Thursday"], [5, "fredag", "Friday"]] as const) {
+      expect(svBlockDialog("stillFailing", { day, start: "10:00", end: "11:00", weeks: "ALL_WEEKS", lines: "L" })).toBe(`Lektionen ${sv_} 10:00–11:00: L`);
+      expect(enBlockDialog("stillFailing", { day, start: "10:00", end: "11:00", weeks: "ALL_WEEKS", lines: "L" })).toBe(`The lesson on ${en_} 10:00–11:00: L`);
+    }
+    expect(svBlockDialog("stillFailing", { day: 2, start: "10:00", end: "11:00", weeks: "ODD_WEEKS", lines: "L" })).toBe("Lektionen tisdag 10:00–11:00 (udda veckor): L");
+    expect(enBlockDialog("stillFailing", { day: 4, start: "13:00", end: "14:00", weeks: "EVEN_WEEKS", lines: "L" })).toBe("The lesson on Thursday 13:00–14:00 (even weeks): L");
+    // A day the catalogue does not know reads as a number, not as a hole.
+    expect(svBlockDialog("stillFailing", { day: 7, start: "10:00", end: "11:00", weeks: "ALL_WEEKS", lines: "L" })).toBe("Lektionen dag 7 10:00–11:00: L");
+  });
+
+  it("counts a block's lessons for the list under the week and names the block a post is laid with", () => {
+    expect(svBlock("blockFigures", { placed: 1, count: 2, left: 1 })).toBe("1 av 2 lektioner förlagda, 1 kvar för Generera.");
+    expect(svBlock("blockFigures", { placed: 0, count: 1, left: 1 })).toBe("0 av 1 lektion förlagd, 1 kvar för Generera.");
+    expect(enBlock("blockFigures", { placed: 1, count: 2, left: 1 })).toBe("1 of 2 lessons placed, 1 left for Generate.");
+    expect(svBlock("memberOf", { block: "Språkval åk 7" })).toContain("blocket Språkval åk 7");
+    expect(enBlock("memberOf", { block: "Language choice" })).toContain("block Language choice");
+  });
+
+  it("has every word the block's fields and cards use, in both languages, with the same placeholders", () => {
+    const SV = (sv as { placementWeek: { block: Record<string, string> } }).placementWeek.block;
+    const EN = (en as { placementWeek: { block: Record<string, string> } }).placementWeek.block;
+    expect(Object.keys(EN).sort()).toEqual(Object.keys(SV).sort());
+    const names = (text: string) => [...text.matchAll(/\{(\w+)[,}]/g)].map((match) => match[1]).sort();
+    for (const key of Object.keys(SV)) expect(names(EN[key]!), key).toEqual(names(SV[key]!));
+  });
+});

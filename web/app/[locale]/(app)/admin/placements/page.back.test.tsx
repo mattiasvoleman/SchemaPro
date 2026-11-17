@@ -75,6 +75,8 @@ const row = (id: string, day: number, start: string, over: Partial<PlacementBoar
 const board = (over: Partial<PlacementBoard> = {}): PlacementBoard => ({
   academicYearId: "y1",
   timetable: { placedLessons: 2, writtenAt: "2026-11-16T09:00:00.000Z" },
+  // No parallel block in this world (the board of a gateway before the blocks, or a year with none).
+  blocks: [],
   posts: [
     {
       id: "post-ma",

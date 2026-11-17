@@ -106,6 +106,7 @@ const board = (over: Partial<PlacementBoard> = {}): PlacementBoard => ({
   posts: [],
   kept: [],
   meals: [],
+  blocks: [],
   ...over,
 });
 

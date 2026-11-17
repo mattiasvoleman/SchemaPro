@@ -1,18 +1,25 @@
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./api";
-import type { BoardPart, BoardPlacement, BoardPost, PlacementBoard } from "./placement-board";
+import type { PlacementsOfBlock } from "./block-placements";
+import { keysOfBlockRows } from "./placement-block-rows";
+import type { BoardBlock, BoardBlockRow, BoardPart, BoardPlacement, BoardPost, PlacementBoard } from "./placement-board";
 import { placementBoardKey } from "./placement-board-queries";
 import { keysOfRows } from "./placement-rows";
 import { WriteFailure, patchBoard, usePlacementEditor, writeProblemOf } from "./placement-write";
 import type { PlacementsOfRequirement, RequirementPlacement } from "./requirement-placements";
 
 const save = vi.hoisted(() => vi.fn());
+const saveBlock = vi.hoisted(() => vi.fn());
 vi.mock("./requirement-placements-api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./requirement-placements-api")>()),
   savePlacements: save,
+}));
+vi.mock("./block-placements", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./block-placements")>()),
+  saveBlockPlacements: saveBlock,
 }));
 
 const part = (over: Partial<BoardPart> = {}): BoardPart => ({ teacherId: "anna", minutes: 60, count: 3, locked: 0, placed: 1, left: 2, cannotPlace: null, ...over });
@@ -65,6 +72,7 @@ const board = (over: Partial<PlacementBoard> = {}): PlacementBoard => ({
   posts: [post(), post({ id: "post-2", rowsKey: "bbbbbbbbbbbbbbbb", parts: [part({ left: 1 })] })],
   kept: [],
   meals: [],
+  blocks: [],
   ...over,
 });
 
@@ -138,6 +146,9 @@ describe("what a failed write is", () => {
   it("is STALE for the gateway's REQUIREMENT_PLACEMENTS_STALE and BUSY for SCHEDULE_BUSY, and nothing else is either", () => {
     expect(writeProblemOf(new ApiError(409, "x", "REQUIREMENT_PLACEMENTS_STALE", { requirementId: "p" }))).toBe("STALE");
     expect(writeProblemOf(new ApiError(409, "x", "SCHEDULE_BUSY"))).toBe("BUSY");
+    expect(writeProblemOf(new ApiError(409, "x", "BLOCK_PLACEMENTS_STALE"))).toBe("STALE");
+    expect(writeProblemOf(new ApiError(409, "x", "BLOCK_PLACEMENT_REFUSED", { index: 0, requirementId: "p", reason: "ROOM" }))).toBe("OTHER");
+    expect(writeProblemOf(new ApiError(409, "x", "BLOCK_PLACEMENTS_DO_NOT_FIT", { reason: "COUNT" }))).toBe("OTHER");
     expect(writeProblemOf(new ApiError(409, "x", "REQUIREMENT_PLACEMENT_REFUSED"))).toBe("OTHER");
     expect(writeProblemOf(new ApiError(500, "x", "REQUIREMENT_PLACEMENTS_STALE"))).toBe("OTHER");
     expect(writeProblemOf(new Error("x"))).toBe("OTHER");
@@ -285,5 +296,242 @@ describe("usePlacementEditor", () => {
     });
     expect(changed).toBe(true);
     expect(result.current.history.canUndo).toBe(false);
+  });
+});
+
+describe("usePlacementEditor, a block's lessons", () => {
+  const blockRow = (over: Partial<BoardBlockRow> = {}): BoardBlockRow => ({
+    id: "br-1",
+    dayOfWeek: 2,
+    startTime: "10:00",
+    endTime: "11:00",
+    minutes: 60,
+    recurrence: "ALL_WEEKS",
+    rooms: [{ requirementId: "m-ty", roomId: "r-ty", roomName: "Tyska" }],
+    changedAt: "2026-11-13T08:00:00.000Z",
+    verdicts: [{ requirementId: "m-ty", ok: true }],
+    ...over,
+  });
+  const theBlock = (over: Partial<BoardBlock> = {}): BoardBlock => ({
+    id: "b-sv",
+    name: "Språkval",
+    memberIds: ["m-fr", "m-ty"],
+    lengths: [60, 60, 60],
+    recurrence: "ALL_WEEKS",
+    followsBlockId: null,
+    cannotPlace: null,
+    rows: [blockRow(), blockRow({ id: "br-2", dayOfWeek: 4, startTime: "13:00", endTime: "14:00", rooms: [] })],
+    rowsKey: "kk-0",
+    ...over,
+  });
+  const member = (id: string): BoardPost => post({ id, cannotPlace: "BLOCK", teacherId: `t-${id}`, parts: [part({ teacherId: `t-${id}`, count: 3, placed: 2, left: 1 })], rowsKey: "e3b0c44298fc1c14" });
+  const blockBoard = (): PlacementBoard => board({ posts: [post(), member("m-fr"), member("m-ty")], blocks: [theBlock()] });
+
+  const answerOfBlock = (lessons: { id: string; day: number; start: string; end: string; rooms?: { requirementId: string; roomId: string; roomName: string }[] }[], rowsKey: string): PlacementsOfBlock => ({
+    placements: lessons.map((lesson) => ({
+      id: lesson.id,
+      blockId: "b-sv",
+      dayOfWeek: lesson.day,
+      startTime: lesson.start,
+      endTime: lesson.end,
+      minutes: 60,
+      recurrence: "ALL_WEEKS" as const,
+      rooms: lesson.rooms ?? [],
+    })),
+    verdicts: lessons.flatMap((_, index) => ["m-fr", "m-ty"].map((requirementId) => ({ index, requirementId, ok: true }))),
+    rowsKey,
+    lengths: [60, 60, 60],
+  });
+  const TY = { requirementId: "m-ty", roomId: "r-ty", roomName: "Tyska" };
+
+  let client: QueryClient;
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const cached = () => client.getQueryData<PlacementBoard>(placementBoardKey("y1"))!;
+  const keys = () => keysOfBlockRows("b-sv", blockBoard().blocks[0]!.rows);
+  const FIRST_INPUT = { dayOfWeek: 2, startTime: "10:00", minutes: 60, rooms: [{ requirementId: "m-ty", roomId: "r-ty" }] };
+  const SECOND_INPUT = { dayOfWeek: 4, startTime: "13:00", minutes: 60, rooms: [] };
+
+  beforeEach(() => {
+    save.mockReset();
+    saveBlock.mockReset();
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(placementBoardKey("y1"), blockBoard());
+  });
+
+  it("writes the block's whole list on top of the key the week holds for the block, every other lesson as it stands with its rooms, and puts the answer into the week", async () => {
+    saveBlock.mockResolvedValue(answerOfBlock([{ id: "n-1", day: 3, start: "09:00", end: "10:00", rooms: [TY] }, { id: "n-2", day: 4, start: "13:00", end: "14:00" }], "kk-1"));
+    const { result } = renderHook(() => usePlacementEditor("y1"), { wrapper });
+    let outcome: Awaited<ReturnType<typeof result.current.changeBlock>>;
+    await act(async () => {
+      outcome = await result.current.changeBlock("b-sv", { kind: "move", key: keys()[0]!, to: { dayOfWeek: 3, startMinutes: 540 } }, "move");
+    });
+    expect(saveBlock).toHaveBeenCalledWith("b-sv", [{ dayOfWeek: 3, startTime: "09:00", minutes: 60, rooms: FIRST_INPUT.rooms }, SECOND_INPUT], "kk-0");
+    expect(outcome!).toMatchObject({ ok: true });
+    expect(cached().blocks[0]!.rowsKey).toBe("kk-1");
+    expect(cached().blocks[0]!.rows.map((entry) => entry.id)).toEqual(["n-1", "n-2"]);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("makes the next change on top of the key the last answer gave, without the week being read again", async () => {
+    saveBlock.mockResolvedValueOnce(answerOfBlock([{ id: "n-1", day: 2, start: "10:00", end: "11:00", rooms: [TY] }, { id: "n-2", day: 4, start: "13:00", end: "14:00" }, { id: "n-3", day: 5, start: "08:00", end: "09:00" }], "kk-1"));
+    saveBlock.mockResolvedValueOnce(answerOfBlock([{ id: "m-1", day: 2, start: "10:00", end: "11:00", rooms: [TY] }, { id: "m-2", day: 4, start: "13:00", end: "14:00" }], "kk-2"));
+    const { result } = renderHook(() => usePlacementEditor("y1"), { wrapper });
+    await act(async () => {
+      await result.current.changeBlock("b-sv", { kind: "add", input: { dayOfWeek: 5, startTime: "08:00", minutes: 60, rooms: [] } }, "place");
+    });
+    const second = keysOfBlockRows("b-sv", cached().blocks[0]!.rows)[2]!;
+    await act(async () => {
+      await result.current.changeBlock("b-sv", { kind: "remove", key: second }, "remove");
+    });
+    expect(saveBlock.mock.calls[1]![2]).toBe("kk-1");
+    expect(saveBlock.mock.calls[1]![1]).toHaveLength(2);
+  });
+
+  it("undoes by writing the list back on top of OUR last key of the block, with the rooms as they were, and not on the key the week shows when somebody else has written since", async () => {
+    saveBlock.mockResolvedValueOnce(answerOfBlock([{ id: "n-1", day: 5, start: "10:00", end: "11:00", rooms: [TY] }, { id: "n-2", day: 4, start: "13:00", end: "14:00" }], "kk-1"));
+    saveBlock.mockResolvedValueOnce(answerOfBlock([{ id: "u-1", day: 2, start: "10:00", end: "11:00", rooms: [TY] }, { id: "u-2", day: 4, start: "13:00", end: "14:00" }], "kk-2"));
+    const { result } = renderHook(() => usePlacementEditor("y1"), { wrapper });
+    await act(async () => {
+      await result.current.changeBlock("b-sv", { kind: "move", key: keys()[0]!, to: { dayOfWeek: 5, startMinutes: 600 } }, "move");
+    });
+    // Somebody else writes the block: the week now shows a key that is not ours.
+    client.setQueryData(placementBoardKey("y1"), { ...cached(), blocks: cached().blocks.map((entry) => ({ ...entry, rowsKey: "kk-someone-else" })) });
+    await act(async () => void (await result.current.history.undo()));
+    expect(saveBlock.mock.calls[1]![2]).toBe("kk-1");
+    expect(saveBlock.mock.calls[1]![1]).toEqual([FIRST_INPUT, SECOND_INPUT]);
+  });
+
+  it("chains undo and redo on the key each write left", async () => {
+    saveBlock.mockResolvedValueOnce(answerOfBlock([{ id: "n-1", day: 5, start: "10:00", end: "11:00", rooms: [TY] }, { id: "n-2", day: 4, start: "13:00", end: "14:00" }], "kk-1"));
+    saveBlock.mockResolvedValueOnce(answerOfBlock([{ id: "u-1", day: 2, start: "10:00", end: "11:00", rooms: [TY] }, { id: "u-2", day: 4, start: "13:00", end: "14:00" }], "kk-2"));
+    saveBlock.mockResolvedValueOnce(answerOfBlock([{ id: "r-1", day: 5, start: "10:00", end: "11:00", rooms: [TY] }, { id: "r-2", day: 4, start: "13:00", end: "14:00" }], "kk-3"));
+    const { result } = renderHook(() => usePlacementEditor("y1"), { wrapper });
+    await act(async () => {
+      await result.current.changeBlock("b-sv", { kind: "move", key: keys()[0]!, to: { dayOfWeek: 5, startMinutes: 600 } }, "move");
+    });
+    await act(async () => void (await result.current.history.undo()));
+    await act(async () => void (await result.current.history.redo()));
+    expect(saveBlock.mock.calls.map((call) => call[2])).toEqual(["kk-0", "kk-1", "kk-2"]);
+    expect(saveBlock.mock.calls[2]![1][0]).toEqual({ dayOfWeek: 5, startTime: "10:00", minutes: 60, rooms: FIRST_INPUT.rooms });
+  });
+
+  it("keeps one history for the page: a block's step and a post's step undo in the order they were made, each on its own key", async () => {
+    save.mockResolvedValueOnce(answerOf([stored({ id: "n-1", dayOfWeek: 3 })], "1111111111111111"));
+    save.mockResolvedValueOnce(answerOf([stored({ id: "u-1" })], "2222222222222222"));
+    saveBlock.mockResolvedValueOnce(answerOfBlock([{ id: "n-1", day: 5, start: "10:00", end: "11:00", rooms: [TY] }, { id: "n-2", day: 4, start: "13:00", end: "14:00" }], "kk-1"));
+    saveBlock.mockResolvedValueOnce(answerOfBlock([{ id: "u-1", day: 2, start: "10:00", end: "11:00", rooms: [TY] }, { id: "u-2", day: 4, start: "13:00", end: "14:00" }], "kk-2"));
+    const { result } = renderHook(() => usePlacementEditor("y1"), { wrapper });
+    await act(async () => {
+      await result.current.change("post-1", { kind: "move", key: keysOfRows(board().placements.filter((entry) => entry.requirementId === "post-1"))[0]!, to: { dayOfWeek: 3, startMinutes: 540 } }, "move");
+      await result.current.changeBlock("b-sv", { kind: "move", key: keys()[0]!, to: { dayOfWeek: 5, startMinutes: 600 } }, "move");
+    });
+    await act(async () => void (await result.current.history.undo()));
+    expect(saveBlock).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenCalledTimes(1);
+    await act(async () => void (await result.current.history.undo()));
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[1]![2]).toBe("1111111111111111");
+  });
+
+  it("refuses an undo whose block has been written by somebody else, and writes nothing", async () => {
+    saveBlock.mockResolvedValueOnce(answerOfBlock([{ id: "n-1", day: 5, start: "10:00", end: "11:00", rooms: [TY] }, { id: "n-2", day: 4, start: "13:00", end: "14:00" }], "kk-1"));
+    const { result } = renderHook(() => usePlacementEditor("y1"), { wrapper });
+    await act(async () => {
+      await result.current.changeBlock("b-sv", { kind: "move", key: keys()[0]!, to: { dayOfWeek: 5, startMinutes: 600 } }, "move");
+    });
+    // reconcile lets go of the key when the week shows another's: the step then is a write on an old key.
+    act(() => {
+      result.current.reconcile({ ...cached(), blocks: cached().blocks.map((entry) => ({ ...entry, rowsKey: "kk-someone-else" })) });
+    });
+    expect(result.current.history.canUndo).toBe(false);
+  });
+
+  it("says with the refusal which list was sent and where the changed lesson stood in it, which is the place a refusal names", async () => {
+    saveBlock.mockRejectedValue(new ApiError(409, "no", "BLOCK_PLACEMENT_REFUSED", { index: 1, requirementId: "m-fr", reason: "TEACHER" }));
+    const { result } = renderHook(() => usePlacementEditor("y1"), { wrapper });
+    let failure: unknown;
+    await act(async () => {
+      failure = await result.current.changeBlock("b-sv", { kind: "move", key: keys()[1]!, to: { dayOfWeek: 1, startMinutes: 480 } }, "move").catch((error: unknown) => error);
+    });
+    expect(failure).toBeInstanceOf(WriteFailure);
+    // The moved lesson is the SECOND of the list that was sent, and the list is the one that was sent (not the answer's order).
+    expect((failure as WriteFailure).changedIndex).toBe(1);
+    expect((failure as WriteFailure).list).toEqual([FIRST_INPUT, { dayOfWeek: 1, startTime: "08:00", minutes: 60, rooms: [] }]);
+    // A lesson that is added is the last of the sent list; a removal has none.
+    await act(async () => {
+      failure = await result.current.changeBlock("b-sv", { kind: "add", input: { dayOfWeek: 5, startTime: "08:00", minutes: 60, rooms: [] } }, "place").catch((error: unknown) => error);
+    });
+    expect((failure as WriteFailure).changedIndex).toBe(2);
+    await act(async () => {
+      failure = await result.current.changeBlock("b-sv", { kind: "remove", key: keys()[0]! }, "remove").catch((error: unknown) => error);
+    });
+    expect((failure as WriteFailure).changedIndex).toBe(-1);
+  });
+
+  it("is a STALE write, nothing written, for a 409 BLOCK_PLACEMENTS_STALE, with the week and the history untouched", async () => {
+    saveBlock.mockRejectedValue(new ApiError(409, "stale", "BLOCK_PLACEMENTS_STALE"));
+    const { result } = renderHook(() => usePlacementEditor("y1"), { wrapper });
+    let failure: unknown;
+    await act(async () => {
+      failure = await result.current.changeBlock("b-sv", { kind: "add", input: { dayOfWeek: 5, startTime: "08:00", minutes: 60, rooms: [] } }, "place").catch((error: unknown) => error);
+    });
+    expect(writeProblemOf(failure)).toBe("STALE");
+    expect(result.current.history.canUndo).toBe(false);
+    expect(cached()).toEqual(blockBoard());
+  });
+
+  it("refuses to change a lesson the week no longer has, and a block it does not have, and writes nothing", async () => {
+    const { result } = renderHook(() => usePlacementEditor("y1"), { wrapper });
+    let outcome: Awaited<ReturnType<typeof result.current.changeBlock>>;
+    await act(async () => {
+      outcome = await result.current.changeBlock("b-sv", { kind: "remove", key: "gone" }, "remove");
+    });
+    expect(outcome!).toEqual({ ok: false, gone: true });
+    await act(async () => {
+      outcome = await result.current.changeBlock("nope", { kind: "add", input: SECOND_INPUT }, "place");
+    });
+    expect(outcome!).toEqual({ ok: false, gone: true });
+    expect(saveBlock).not.toHaveBeenCalled();
+  });
+
+  it("clears the history when the week shows a block with a key that is not the one our last write left, and not for a block we did not write", async () => {
+    saveBlock.mockResolvedValue(answerOfBlock([{ id: "n-1", day: 2, start: "10:00", end: "11:00", rooms: [TY] }, { id: "n-2", day: 4, start: "13:00", end: "14:00" }, { id: "n-3", day: 5, start: "08:00", end: "09:00" }], "kk-1"));
+    const { result } = renderHook(() => usePlacementEditor("y1"), { wrapper });
+    await act(async () => {
+      await result.current.changeBlock("b-sv", { kind: "add", input: { dayOfWeek: 5, startTime: "08:00", minutes: 60, rooms: [] } }, "place");
+    });
+    expect(result.current.history.canUndo).toBe(true);
+    let changed = true;
+    act(() => {
+      changed = result.current.reconcile(cached());
+    });
+    expect(changed).toBe(false);
+    expect(result.current.history.canUndo).toBe(true);
+    // Another block changed: not ours, not a reason.
+    act(() => {
+      changed = result.current.reconcile({ ...cached(), blocks: [...cached().blocks, theBlock({ id: "b-other", rowsKey: "kk-other" })] });
+    });
+    expect(changed).toBe(false);
+    act(() => {
+      changed = result.current.reconcile({ ...cached(), blocks: cached().blocks.map((entry) => ({ ...entry, rowsKey: "kk-8" })) });
+    });
+    expect(changed).toBe(true);
+    expect(result.current.history.canUndo).toBe(false);
+  });
+
+  it("is saving while a write of a block is on its way, which turns undo and redo off for the page", async () => {
+    let finish: (answer: PlacementsOfBlock) => void = () => undefined;
+    saveBlock.mockReturnValue(new Promise<PlacementsOfBlock>((resolve) => (finish = resolve)));
+    const { result } = renderHook(() => usePlacementEditor("y1"), { wrapper });
+    let pending: Promise<unknown> = Promise.resolve();
+    act(() => {
+      pending = result.current.changeBlock("b-sv", { kind: "add", input: SECOND_INPUT }, "place");
+    });
+    await waitFor(() => expect(result.current.saving).toBe(true));
+    await act(async () => {
+      finish(answerOfBlock([{ id: "n-1", day: 2, start: "10:00", end: "11:00" }], "kk-1"));
+      await pending;
+    });
+    expect(result.current.saving).toBe(false);
   });
 });

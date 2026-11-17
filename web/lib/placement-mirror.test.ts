@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { BoardKept, BoardMeal, BoardPlacement, BoardPost, PlacementBoard } from "./placement-board";
+import { blockKeyByRowId, blockMemberId } from "./placement-block-rows";
+import type { BoardBlock, BoardBlockRow, BoardKept, BoardMeal, BoardPlacement, BoardPost, PlacementBoard } from "./placement-board";
 import { keyByRowId } from "./placement-rows";
-import { buildMirror, lunchOfBoard, mirrorHits, placementOfKept, placementOfRow, REASON_OF_HIT, type MirrorFacts } from "./placement-mirror";
+import { buildMirror, lunchOfBoard, mirrorHits, placementOfKept, placementOfRow, placementsOfBlockRow, REASON_OF_HIT, type MirrorFacts } from "./placement-mirror";
 import type { AvailabilityConstraint, StudentGroup } from "./types";
 
 /**
@@ -90,13 +91,14 @@ const unavailable = (over: Partial<AvailabilityConstraint>): AvailabilityConstra
   ...over,
 });
 
-function mirror(world: { rows?: BoardPlacement[]; kept?: BoardKept[]; meals?: BoardMeal[]; posts?: BoardPost[] } & Partial<MirrorFacts> = {}) {
+function mirror(world: { rows?: BoardPlacement[]; kept?: BoardKept[]; meals?: BoardMeal[]; posts?: BoardPost[]; blocks?: BoardBlock[] } & Partial<MirrorFacts> = {}) {
   const board: PlacementBoard = {
     academicYearId: "y1",
     placements: world.rows ?? [],
     posts: world.posts ?? [post()],
     kept: world.kept ?? [],
     meals: world.meals ?? [],
+    blocks: world.blocks ?? [],
   };
   return buildMirror({
     board,
@@ -259,5 +261,108 @@ describe("the rules the mirror has", () => {
       LUNCH: "LUNCH",
       ROOM_LOCK: null,
     });
+  });
+});
+
+describe("the lessons of the blocks", () => {
+  // A block "Språkval" of two posts, each for a teaching group of its own: the lesson is one Placement for each, with its own room.
+  const posts = [
+    post({ id: "fr", studentGroupId: "g-fr", subjectId: "s-fr", teacherId: "t-fr", coTeacherId: "t-co", cannotPlace: "BLOCK", startDate: "2026-08-17", endDate: "2026-12-18", minutesAfter: 15 }),
+    post({ id: "ty", studentGroupId: "g-ty", subjectId: "s-ty", teacherId: "t-ty", cannotPlace: "BLOCK" }),
+  ];
+  const lessonRow = (over: Partial<BoardBlockRow> = {}): BoardBlockRow => ({
+    id: "bl-1",
+    dayOfWeek: 2,
+    startTime: "10:00",
+    endTime: "11:00",
+    minutes: 60,
+    recurrence: "ODD_WEEKS",
+    rooms: [{ requirementId: "ty", roomId: "r-ty", roomName: "Tyska" }],
+    changedAt: "x",
+    verdicts: [],
+    ...over,
+  });
+  const theBlock = (rows: BoardBlockRow[]): BoardBlock => ({ id: "b-sv", name: "Språkval", memberIds: ["fr", "ty"], lengths: [60], recurrence: "ODD_WEEKS", followsBlockId: null, cannotPlace: null, rows, rowsKey: "k" });
+  const groups = [group("g-7a", 7), group("g-7b", 7), group("g-fr", null, { kind: "TEACHING_GROUP" }), group("g-ty", null, { kind: "TEACHING_GROUP" })];
+  const withBlock = (rows: BoardBlockRow[] = [lessonRow()], over: Parameters<typeof mirror>[0] = {}) =>
+    mirror({ posts: [post(), ...posts], blocks: [theBlock(rows)], groups, ...over });
+
+  it("turns a lesson of a block into one Placement for each of its posts: the post's class, subject, teachers, window and buffer, and the lesson's own place and weeks", () => {
+    const key = "b-sv|60|2|10:00|ODD_WEEKS";
+    const placements = placementsOfBlockRow(theBlock([]), lessonRow(), new Map(posts.map((entry) => [entry.id, entry])), key, new Map([["g-fr:s-fr", { minutesBefore: 0, minutesAfter: 15 }]]));
+    expect(placements).toHaveLength(2);
+    expect(placements[0]).toMatchObject({
+      id: blockMemberId(key, "fr"),
+      dayOfWeek: 2,
+      startMinutes: 600,
+      endMinutes: 660,
+      teacherId: "t-fr",
+      coTeacherId: "t-co",
+      studentGroupId: "g-fr",
+      subjectId: "s-fr",
+      recurrence: "ODD_WEEKS",
+      startDate: "2026-08-17",
+      endDate: "2026-12-18",
+      minutesAfter: 15,
+    });
+    expect(placements[1]).toMatchObject({ id: blockMemberId(key, "ty"), teacherId: "t-ty", studentGroupId: "g-ty", startDate: null, endDate: null });
+  });
+
+  it("gives each post the room it chose for the lesson and no room to the others: a room is never taken from another post", () => {
+    const [fr, ty] = placementsOfBlockRow(theBlock([]), lessonRow(), new Map(posts.map((entry) => [entry.id, entry])), "k");
+    expect(fr!.roomId).toBeNull();
+    expect(ty!.roomId).toBe("r-ty");
+    const swapped = placementsOfBlockRow(theBlock([]), lessonRow({ rooms: [{ requirementId: "fr", roomId: "r-fr", roomName: "Franska" }] }), new Map(posts.map((entry) => [entry.id, entry])), "k");
+    expect(swapped.map((entry) => entry.roomId)).toEqual(["r-fr", null]);
+  });
+
+  it("leaves out a post the board does not have, and every post of a block with no lesson", () => {
+    expect(placementsOfBlockRow(theBlock([]), lessonRow(), new Map([["ty", posts[1]!]]), "k").map((entry) => entry.studentGroupId)).toEqual(["g-ty"]);
+    expect(withBlock([]).others).toEqual([]);
+  });
+
+  it("puts every lesson of every block among the week's others, named by the lesson's card and the post, the stale blocks too", () => {
+    const rows = [lessonRow(), lessonRow({ id: "bl-2", dayOfWeek: 4, recurrence: "ODD_WEEKS" })];
+    const ctx = mirror({ posts: [post(), ...posts], blocks: [theBlock(rows), { ...theBlock([lessonRow({ id: "bl-3" })]), id: "b-no", cannotPlace: "FOLLOWER" }], groups });
+    const keys = blockKeyByRowId([theBlock(rows)]);
+    expect(ctx.others.map((entry) => entry.id)).toEqual([
+      blockMemberId(keys.get("bl-1")!, "fr"),
+      blockMemberId(keys.get("bl-1")!, "ty"),
+      blockMemberId(keys.get("bl-2")!, "fr"),
+      blockMemberId(keys.get("bl-2")!, "ty"),
+      blockMemberId("b-no|60|2|10:00|ODD_WEEKS", "fr"),
+      blockMemberId("b-no|60|2|10:00|ODD_WEEKS", "ty"),
+    ]);
+  });
+
+  it("holds an ordinary post's teacher against a teacher of the block, even in the room the block's other post chose", () => {
+    const ctx = withBlock();
+    expect(mirrorHits(ctx, candidate({ teacherId: "t-ty", roomId: null, recurrence: "ODD_WEEKS" })).map((hit) => hit.kind)).toEqual(["TEACHER"]);
+    expect(mirrorHits(ctx, candidate({ teacherId: "t-co", roomId: null, recurrence: "ODD_WEEKS" })).map((hit) => hit.kind)).toEqual(["TEACHER"]);
+    expect(mirrorHits(ctx, candidate({ teacherId: "t-free", roomId: null, recurrence: "ODD_WEEKS" }))).toEqual([]);
+  });
+
+  it("holds a room a post of the block chose, and a post with no room holds none", () => {
+    const ctx = withBlock();
+    expect(mirrorHits(ctx, candidate({ teacherId: "t-free", roomId: "r-ty", recurrence: "ODD_WEEKS" })).map((hit) => hit.kind)).toEqual(["ROOM"]);
+    expect(mirrorHits(ctx, candidate({ teacherId: "t-free", roomId: "r-fr", recurrence: "ODD_WEEKS" }))).toEqual([]);
+  });
+
+  it("holds the class of a post of the block, and the weeks decide: odd weeks meet the odd lesson and not the even", () => {
+    const ctx = withBlock();
+    expect(mirrorHits(ctx, candidate({ teacherId: "t-free", roomId: null, studentGroupId: "g-fr", recurrence: "ODD_WEEKS" })).map((hit) => hit.kind)).toEqual(["GROUP"]);
+    expect(mirrorHits(ctx, candidate({ teacherId: "t-free", roomId: null, studentGroupId: "g-fr", recurrence: "EVEN_WEEKS" }))).toEqual([]);
+  });
+
+  it("holds the pupils' minutes after a post's lessons against the class's next lesson (the post's buffer, not none)", () => {
+    // The post "fr" has fifteen minutes after its lessons: a lesson of the same group five minutes after the block's lesson is in them.
+    const ctx = withBlock();
+    expect(ctx.buffers.get("g-fr:s-fr")).toEqual({ minutesBefore: 0, minutesAfter: 15 });
+    const after = candidate({ teacherId: "t-free", roomId: null, studentGroupId: "g-fr", startMinutes: 665, endMinutes: 725, recurrence: "ODD_WEEKS", startDate: "2026-08-17", endDate: "2026-12-18" });
+    expect(mirrorHits(ctx, after).map((hit) => hit.kind)).toEqual(["GROUP"]);
+  });
+
+  it("is built from the board only: a board with no lesson of a block is the week as it was", () => {
+    expect(mirror({ kept: [kept()] }).others).toHaveLength(1);
   });
 });
