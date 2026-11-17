@@ -626,6 +626,9 @@ export default function PlacementsPage() {
         const sentence = blockFitSentence(tBlockFit, ofBlock.reason, tBlockFit("otherBlock"));
         setRefusal(sentence);
         setMessage({ tone: "problem", text: `${t("notSaved")} ${sentence}` });
+        // The block is not what this page holds (its posts' lessons or members were changed elsewhere, and the key, which is the lessons', says nothing
+        // of that): read the week again, or every later try is refused the same way until the page is reloaded.
+        void board.refetch();
         return;
       }
       const refused = placementsRefusal(cause);

@@ -707,6 +707,16 @@ describe("a block somebody else has written", () => {
     expect(await screen.findByTestId("placement-message")).toHaveTextContent("notSaved");
     expect(screen.getByTestId("placement-message")).toHaveTextContent("fit.COUNT");
   });
+
+  it("reads the week again after a refusal that says the block is not what the page holds (the app does not read again at a window's focus), so that the next try is made on what the block is now", async () => {
+    state.refuse = () => new ApiError(409, "no", "BLOCK_PLACEMENTS_DO_NOT_FIT", { reason: "COUNT", index: 1 });
+    renderPage();
+    await ready();
+    const reads = api.get.mock.calls.length;
+    fireEvent.keyDown(cardOf(TUESDAY)!, { key: "ArrowDown" });
+    expect(await screen.findByTestId("placement-message")).toHaveTextContent("fit.COUNT");
+    await waitFor(() => expect(api.get.mock.calls.length).toBeGreaterThan(reads));
+  });
 });
 
 describe("a lesson of the block that does not hold stays (rest of the review of #328)", () => {
