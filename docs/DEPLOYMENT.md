@@ -6282,7 +6282,7 @@ mark adds one view and takes nothing away.
 ## 26. The job's doors answer no login ("Dörrvakten")
 
 Six `SECURITY DEFINER` functions in the schema `app` that the API's role may run are not for a person: they are the door of
-something that runs with no login, a background job or the SS12000 sync's and an integration key's principal. A job opens its
+something that runs with no login: a background job, the SS12000 sync's principal or, at one of them, an integration key's principal. A job opens its
 transaction with `withDeliveryService` and sets no claims; every login sets them. Four of the six asked whether the session
 **resolved to a person** (`app.current_user_id() IS NOT NULL`), which is not the same as a login: the huvudman's reader and the
 municipality's administrator have claims and no `Users` row, and for them the guard let go. The two meal doors had no guard at
@@ -6293,15 +6293,17 @@ What a login with no person row could do, measured as `app_authenticated` on rea
 
 - `app.cover_requests_settle` closed every school's expired cover request and handed back the sender's `authId` and profile.
 - `app.crisis_settle` ended every school's alarm that had stood open longer than it can (12 hours, 3 for an exercise).
-- `app.leave_requests_tell_new_mentors` and `app.ss12000_source_secrets` have a door for a person and one for the sync's or an
-  integration key's principal. A login with no person row got nothing alone, but was let into the principal's branch when the
-  principal's own setting stood beside its claims, which no gateway route does. It was handed the school's owed leave notices
-  (and the notices were written), and the ciphertexts of a source's secrets.
+- `app.leave_requests_tell_new_mentors` and `app.ss12000_source_secrets` have a door for a person and one for what runs with no
+  login. At `leave_requests_tell_new_mentors` that is the sync's or an integration key's principal; at `ss12000_source_secrets`
+  it is **the sync's principal only**: an integration key's principal is refused there (`SS403`, "integrationen läser inga
+  hemligheter") and always was. A login with no person row got nothing alone, but was let into the principal's branch when
+  the principal's own setting stood beside its claims, which no gateway route does. It was handed the school's owed leave
+  notices (and the notices were written), and the ciphertexts of a source's secrets.
 - `app.meal_letter` and `app.meal_letter_schools` answered anybody with a login, a teacher at another school included: the
   school's kitchen address and the day's counts, and the list of schools with the letter on.
 
-No gateway route reaches a door with a login: the jobs run them in `withDeliveryService`, the sync and the key in
-`withSyncPrincipal` and `withServicePrincipal` (no claims), and the person's door in an ordinary request. This is defence in
+No gateway route reaches a door with a login: the jobs run them in `withDeliveryService`, the sync in `withSyncPrincipal` and,
+at the leave door only, the key in `withServicePrincipal` (no claims), and the person's door in an ordinary request. This is defence in
 depth, and the gateway is not changed.
 
 Migration `20270220090000_jobbens_dorrar_svarar_inte_en_inloggning_utan_personrad`: six `CREATE OR REPLACE FUNCTION` and six
@@ -6371,6 +6373,12 @@ while the file's transaction is open.
 - **Reading the setting without `missing_ok`** (`current_setting('request.jwt.claims')`) is caught by the text of each door in
   RLS sections 515 to 519, and by the adapter probe's new connection, but by no behaviour in the suite, which has set the
   setting before the section runs (#289's U-3).
+- **A wrong sentence in the migration's header comment.** The comment of 20270220090000 says, under "Vad som fanns" and in the
+  paragraph on who runs the doors, that the integration key's principal is one of those let in at both
+  `leave_requests_tell_new_mentors` and `ss12000_source_secrets`. At `ss12000_source_secrets` that is wrong: the key's principal
+  is refused there (`SS403`), before this migration and after it, and only the sync's principal is let in with no login. The
+  function body and its `COMMENT ON FUNCTION` say it rightly. The header is not corrected, because a changed line changes the
+  file's sha256, which is its checksum in `_prisma_migrations`; this section is the correction.
 
 ### 26.4 Operations
 
