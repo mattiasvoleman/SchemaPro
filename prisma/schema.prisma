@@ -526,7 +526,7 @@ model User {
   /// The person's code in the löneunderlag while marked (20270206091000): at most one row.
   payrollPseudonyms   PayrollPseudonym[] @relation("PayrollPseudonymUser")
   /// Membership of the substitute pool (20261012110000): at most one row, a
-  /// list for the composite key's sake as workRules. readActiveStaffIds
+  /// list for the composite key's sake as workRules. readActiveStaff
   /// filters on it.
   substitutePoolMemberships SubstitutePoolMember[] @relation("PoolMemberUser")
   /// This person's changes of role, profile and HR-läs, written by a trigger.

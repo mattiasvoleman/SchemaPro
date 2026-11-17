@@ -26,9 +26,11 @@ import {
   boardPostShape,
   coveringLocksOf,
   keptViewOf,
+  lessonsLeftOf,
   mealViewOf,
   type BoardPlacementView,
   type BoardPost,
+  type KeptForCount,
 } from './placement-board';
 import { lockPostForShares } from '../resources/requirement-shares';
 import {
@@ -229,6 +231,43 @@ const slotOf = (row: StoredView): PlacementSlot => ({
   teacherId: row.teacherId,
 });
 
+type BoardPostRow = Prisma.TeachingRequirementGetPayload<{ select: typeof BOARD_POST_SELECT }>;
+
+/** A lesson Generera keeps as the count reads it: with its length. */
+const keptForCountOf = <T extends { startTime: Date; endTime: Date }>(lesson: T): T & { minutes: number } => ({
+  ...lesson,
+  minutes: minutesOfClock(lesson.endTime) - minutesOfClock(lesson.startTime),
+});
+
+/**
+ * What every post's count is made of, from what the year holds: each post's rows as the count reads them (a block's lesson is one of
+ * each member's lessons placed), the rows as the key reads them, and each post's covering locks. The week of förläggningar counts
+ * and judges with them, and the question of whether the engine has anything to place counts with the same ones.
+ */
+function countedPostsOf(
+  posts: readonly BoardPostRow[],
+  rows: readonly StoredView[],
+  kept: readonly KeptForCount[],
+  blocks: Awaited<ReturnType<typeof loadBlocksOfYear>>,
+) {
+  const slotsOf = new Map<string, PlacementSlot[]>();
+  const keyedOfPost = new Map<string, KeyedRow[]>();
+  for (const row of rows) {
+    const list = slotsOf.get(row.requirementId);
+    if (list) list.push(slotOf(row));
+    else slotsOf.set(row.requirementId, [slotOf(row)]);
+    const keyed = keyedOfPost.get(row.requirementId);
+    if (keyed) keyed.push(keyedOf(row));
+    else keyedOfPost.set(row.requirementId, [keyedOf(row)]);
+  }
+  // A block's lesson is one of each member's lessons placed: the member's count and demand read it so.
+  for (const block of blocks) {
+    for (const [memberId, slots] of memberSlotsOfBlock(block, block.rows)) slotsOf.set(memberId, [...(slotsOf.get(memberId) ?? []), ...slots]);
+  }
+  const locksByPost = new Map(posts.map((post) => [post.id, coveringLocksOf(boardPostShape(post), kept)]));
+  return { slotsOf, keyedOfPost, locksByPost };
+}
+
 /**
  * Förlagda poster, the gateway's side: a timplanspost's förläggningar read,
  * judged and replaced (see placement-judge.ts for what a row is held to, and
@@ -336,26 +375,9 @@ export class RequirementPlacementsService {
         readOtherSchoolHolds(tx, academicYearId, requireSchoolId(user)),
       ]);
 
-      const kept = keptRows.map((lesson) => ({
-        ...lesson,
-        minutes: minutesOfClock(lesson.endTime) - minutesOfClock(lesson.startTime),
-      }));
+      const kept = keptRows.map(keptForCountOf);
       const postById = new Map(posts.map((post) => [post.id, post]));
-      const slotsOf = new Map<string, PlacementSlot[]>();
-      const keyedOfPost = new Map<string, KeyedRow[]>();
-      for (const row of rows) {
-        const list = slotsOf.get(row.requirementId);
-        if (list) list.push(slotOf(row));
-        else slotsOf.set(row.requirementId, [slotOf(row)]);
-        const keyed = keyedOfPost.get(row.requirementId);
-        if (keyed) keyed.push(keyedOf(row));
-        else keyedOfPost.set(row.requirementId, [keyedOf(row)]);
-      }
-      // A block's lesson is one of each member's lessons placed: the member's count and demand read it so.
-      for (const block of blocks) {
-        for (const [memberId, slots] of memberSlotsOfBlock(block, block.rows)) slotsOf.set(memberId, [...(slotsOf.get(memberId) ?? []), ...slots]);
-      }
-      const locksByPost = new Map(posts.map((post) => [post.id, coveringLocksOf(boardPostShape(post), kept)]));
+      const { slotsOf, keyedOfPost, locksByPost } = countedPostsOf(posts, rows, kept, blocks);
       const ofBlocks = blocks.map((block) => ({ block, ...judgedRowsOfBlock(block, block.rows) }));
 
       // The posts' rows first, then each block's, one row per lesson and member (judgedRowsOfBlock).
@@ -379,8 +401,20 @@ export class RequirementPlacementsService {
               ),
             });
 
-      // What the fixed week says of every row, with the lessons Generera keeps and the meals placed by hand read once above.
-      const warned = await placementWarnings(tx, user, { academicYearId, year, rows: judgedRows, beside: [], kept, meals: mealRows });
+      const boardPosts = posts.map((post) =>
+        boardPostOf(boardPostShape(post), locksByPost.get(post.id) ?? [], slotsOf.get(post.id) ?? [], rowsKeyOf(keyedOfPost.get(post.id) ?? [])),
+      );
+      // What the fixed week says of every row, with the lessons Generera keeps and the meals placed by hand read once above, and
+      // whether the engine has anything to place (the posts are counted: a class's lunch refuses only then).
+      const warned = await placementWarnings(tx, user, {
+        academicYearId,
+        year,
+        rows: judgedRows,
+        beside: [],
+        kept,
+        meals: mealRows,
+        lessonsLeft: lessonsLeftOf(boardPosts),
+      });
       const originOfJudged = ofBlocks.flatMap((entry) => entry.origins.map((origin) => ({ origin, block: entry.block })));
       const warnings: PlacementWarningView[] = warned.flatMap((list, index) => {
         if (list.length === 0) return [];
@@ -410,9 +444,7 @@ export class RequirementPlacementsService {
         academicYearId,
         timetable: { placedLessons: written._count._all, writtenAt: written._max.createdAt?.toISOString() ?? null },
         placements,
-        posts: posts.map((post) =>
-          boardPostOf(boardPostShape(post), locksByPost.get(post.id) ?? [], slotsOf.get(post.id) ?? [], rowsKeyOf(keyedOfPost.get(post.id) ?? [])),
-        ),
+        posts: boardPosts,
         kept: kept.map(keptViewOf),
         meals: mealRows.map(mealViewOf),
         warnings,
@@ -623,7 +655,25 @@ export class RequirementPlacementsService {
       year: { startDate: post.academicYear.startDate, endDate: post.academicYear.endDate },
       rows,
       beside,
+      lessonsLeft: () => this.yearHasLessonsLeft(tx, post.academicYearId),
     });
+  }
+
+  /**
+   * Whether any post of the year has a lesson left for the engine to place, counted as the week of förläggningar counts it (the same
+   * reads, the same functions). Asked by a post's read or save only when the answer changes what a lunch warning says: Generera does not
+   * call the engine for a year with nothing left, so the class's lunch cannot refuse it (placement-warnings.ts, ASKED).
+   */
+  private async yearHasLessonsLeft(tx: PrismaClient, academicYearId: string): Promise<boolean> {
+    const [posts, rows, keptRows, blocks] = await Promise.all([
+      tx.teachingRequirement.findMany({ where: { academicYearId }, select: BOARD_POST_SELECT, orderBy: { id: 'asc' } }),
+      tx.teachingRequirementPlacement.findMany({ where: { requirement: { academicYearId } }, select: VIEW_SELECT }),
+      tx.masterLesson.findMany({ where: keptMastersWhere(academicYearId), select: BOARD_KEPT_SELECT }),
+      loadBlocksOfYear(tx, academicYearId),
+    ]);
+    const { slotsOf, locksByPost } = countedPostsOf(posts, rows, keptRows.map(keptForCountOf), blocks);
+    // The rows' key is a write's, and the count has no use for it.
+    return lessonsLeftOf(posts.map((post) => boardPostOf(boardPostShape(post), locksByPost.get(post.id) ?? [], slotsOf.get(post.id) ?? [], '')));
   }
 
   /**

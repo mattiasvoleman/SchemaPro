@@ -5,7 +5,6 @@ import { keptCardId, type BoardBlock, type BoardBlockRow, type BoardPlacement, t
 import type { RoomPreference } from "@/lib/queries";
 import type { PlacementRecurrence, PlacementRefusalReason } from "@/lib/requirement-placements";
 import { PLACEMENT_DAY_END, PLACEMENT_DAY_START, PLACEMENT_GRID_MINUTES, clockOfMinutes } from "@/lib/requirement-placement-text";
-import { timeToMinutes } from "@/lib/utils";
 
 /*
  * Förlägg i veckan: can a lesson stand here? What the ghost under a drag, the
@@ -287,12 +286,8 @@ export function suggestedBlockRooms(input: {
   return rooms;
 }
 
-/** `HH:MM` as minutes, or null when it is no time (an empty field). */
-export const minutesOfField = (value: string): number | null => {
-  if (!/^\d{1,2}:\d{2}$/.test(value)) return null;
-  const minutes = timeToMinutes(value);
-  return Number.isFinite(minutes) ? minutes : null;
-};
+// Read by the fields, which are fetched apart from this module and must not pull it in: lib/placement-field.ts.
+export { minutesOfField } from "@/lib/placement-field";
 
 /**
  * The room to offer for a lesson: the room the post's other förläggningar stand in,

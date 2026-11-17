@@ -278,7 +278,7 @@ describe('StaffingLoadService', () => {
         subjectId: MA,
         studentGroup: { predecessorId: null },
       });
-      tx.user.findMany.mockResolvedValue([{ id: ME }]);
+      tx.user.findMany.mockResolvedValue([{ id: ME, role: 'TEACHER', teaches: false }]);
       const kindOf = async (row: ReturnType<typeof yearRow>) => {
         tx.academicYear.findUnique.mockResolvedValue(row);
         const answer = await service.suggestTeachers('req-1', testUser());
@@ -955,7 +955,10 @@ describe('StaffingLoadService', () => {
         subjectId: MA,
         studentGroup: { predecessorId: null },
       });
-      tx.user.findMany.mockResolvedValue([{ id: COLLEAGUE }, { id: ME }]);
+      tx.user.findMany.mockResolvedValue([
+        { id: COLLEAGUE, role: 'TEACHER', teaches: false },
+        { id: ME, role: 'TEACHER', teaches: false },
+      ]);
 
       const answer = await service.suggestTeachers('req-2', testUser());
 
@@ -981,7 +984,8 @@ describe('StaffingLoadService', () => {
           isActive: true,
           NOT: { substitutePoolMemberships: { some: {} }, employments: { none: { academicYearId: YEAR_ID } } },
         },
-        select: { id: true },
+        // The mark is selected on purpose: a row read without it is not a teaching administrator.
+        select: { id: true, role: true, teaches: true },
         orderBy: { id: 'asc' },
       });
       expect(answer).toMatchObject({ requirementId: 'req-2', teacherMinutesPerWeek: 120, qualificationsRecorded: false });
@@ -996,13 +1000,31 @@ describe('StaffingLoadService', () => {
       expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: null, ids: [ME] }]);
     });
 
+    it('ranks a teacher and an administrator who teaches, and leaves out one without the mark, though all are active staff', async () => {
+      tx.teachingRequirement.findUnique.mockResolvedValue({
+        academicYearId: YEAR_ID,
+        subjectId: MA,
+        studentGroup: { predecessorId: null },
+      });
+      tx.user.findMany.mockResolvedValue([
+        { id: 'admin-marked', role: 'SCHOOL_ADMIN', teaches: true },
+        { id: 'admin-plain', role: 'SCHOOL_ADMIN', teaches: false },
+        { id: 'admin-unread', role: 'SCHOOL_ADMIN' },
+        { id: ME, role: 'TEACHER', teaches: false },
+      ]);
+
+      const answer = await service.suggestTeachers('req-2', testUser());
+
+      expect(answer.candidates.map((candidate) => candidate.userId).sort()).toEqual([ME, 'admin-marked'].sort());
+    });
+
     it("gives a planner without HR-läs a changing post's room as the year's, as the report states it (Roller i skolan)", async () => {
       tx.teachingRequirement.findUnique.mockResolvedValue({
         academicYearId: YEAR_ID,
         subjectId: MA,
         studentGroup: { predecessorId: null },
       });
-      tx.user.findMany.mockResolvedValue([{ id: ME }]);
+      tx.user.findMany.mockResolvedValue([{ id: ME, role: 'TEACHER', teaches: false }]);
       tx.teacherEmployment.findMany.mockResolvedValue([
         {
           id: 'emp-me',
@@ -1043,7 +1065,10 @@ describe('StaffingLoadService', () => {
         subjectId: MA,
         studentGroup: { predecessorId: PRED },
       });
-      tx.user.findMany.mockResolvedValue([{ id: COLLEAGUE }, { id: ME }]);
+      tx.user.findMany.mockResolvedValue([
+        { id: COLLEAGUE, role: 'TEACHER', teaches: false },
+        { id: ME, role: 'TEACHER', teaches: false },
+      ]);
       const lastYearRows = [
         { teacherId: COLLEAGUE, coTeacherId: null, studentGroup: { name: '6A', academicYear: { name: '2025/26' } } },
         { teacherId: null, coTeacherId: COLLEAGUE, studentGroup: { name: '6A', academicYear: { name: '2025/26' } } },

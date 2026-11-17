@@ -32,4 +32,21 @@ describe("a module fetched after the page is up", () => {
     expect(error).not.toHaveBeenCalled();
     error.mockRestore();
   });
+
+  it("tells the page when the module does not come, once, and never a page that has gone (review of #341, MEDEL-1)", async () => {
+    const failure = new Error("Failed to load chunk");
+    const onError = vi.fn();
+    const { result } = renderHook(() => useLazyModule(async () => Promise.reject(failure), onError));
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    expect(onError).toHaveBeenCalledWith(failure);
+    expect(result.current).toBeNull();
+
+    let fail: (error: Error) => void = () => undefined;
+    const late = vi.fn();
+    const { unmount } = renderHook(() => useLazyModule(() => new Promise<{ answer: number }>((_, reject) => (fail = reject)), late));
+    unmount();
+    fail(failure);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(late).not.toHaveBeenCalled();
+  });
 });

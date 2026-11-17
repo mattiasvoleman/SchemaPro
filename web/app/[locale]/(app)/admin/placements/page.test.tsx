@@ -34,6 +34,22 @@ const state = vi.hoisted(() => ({
 }));
 
 const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn() }));
+/**
+ * The lazy modules of the page (lib/use-lazy-module.ts), held back or failed by a test that wants the moment before they arrive. By default
+ * they come at once, as they do for every other test of this file.
+ */
+const tools = vi.hoisted(() => ({ gate: Promise.resolve() as Promise<void>, failDragTools: false }));
+vi.mock("@/lib/use-lazy-module", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/use-lazy-module")>();
+  return {
+    ...actual,
+    useLazyModule: <T,>(load: () => Promise<T>, onError?: (error: unknown) => void) =>
+      actual.useLazyModule(
+        () => (tools.failDragTools && String(load).includes("placement-drag-tools") ? Promise.reject(new Error("Failed to load chunk")) : tools.gate.then(load)),
+        onError,
+      ),
+  };
+});
 vi.mock("@/lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/api")>()), api }));
 vi.mock("@/lib/planning-year", () => ({
   usePlanningYear: () => ({ year: state.year, active: state.year, successor: null, choose: vi.fn(), rosters: null, rostersFailed: false }),
@@ -271,6 +287,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  tools.gate = Promise.resolve();
+  tools.failDragTools = false;
 });
 
 const posts = () => screen.getAllByTestId("placement-post");
@@ -1384,5 +1402,80 @@ describe("a Generera is running", () => {
     renderPage();
     await ready();
     expect(screen.queryByTestId("placement-running")).not.toBeInTheDocument();
+  });
+});
+
+let release_: () => void = () => undefined;
+
+describe("until the drag tools are here (review of #341, MEDEL-1)", () => {
+  const hold = () => {
+    let release: () => void = () => undefined;
+    tools.gate = new Promise<void>((resolve) => (release = resolve));
+    return release;
+  };
+
+  it("offers no fields for a chosen brick, lays nothing for a press on the week, and says why; then the fields come with the post's room", async () => {
+    pinGeometry();
+    const release = hold();
+    renderPage();
+    await ready();
+    await userEvent.click(bricks()[0]!);
+    // Without the mirror the fields would say "free" for any time and offer no room: they wait.
+    expect(bricks()[0]).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByTestId("lay-row")).not.toBeInTheDocument();
+    fireEvent.click(columns()[2]!, at(3, 13, 30));
+    expect(await screen.findByTestId("placement-message")).toHaveTextContent("toolsLoading");
+    await noWrite();
+    release();
+    const row = await screen.findByTestId("lay-row");
+    await waitFor(() => expect(within(row).getByRole("combobox", { name: "room" })).toHaveValue("r-a12"));
+    fireEvent.click(columns()[2]!, at(3, 13, 30));
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+    expect(lastPut()[1].placements.at(-1)).toMatchObject({ dayOfWeek: 3, startTime: "13:30", roomId: "r-a12" });
+  });
+
+  it("moves no card with an arrow key, and says why, and does not take a kept lesson for one that may be moved", async () => {
+    release_ = hold();
+    renderPage();
+    await ready();
+    fireEvent.keyDown(cardOf(ANNA_ROW)!, { key: "ArrowUp" });
+    expect(await screen.findByTestId("placement-message")).toHaveTextContent("toolsLoading");
+    await noWrite();
+    release_();
+    await waitFor(() => expect(document.querySelector("[data-lesson-id]")).not.toBeNull());
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    fireEvent.keyDown(cardOf(ANNA_ROW)!, { key: "ArrowUp" });
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps a card's dialog read-only, so that it does not say a time is free before the mirror can know", async () => {
+    release_ = hold();
+    renderPage();
+    await ready();
+    await userEvent.click(cardOf(ANNA_ROW)!);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByRole("button", { name: "save" })).not.toBeInTheDocument();
+    release_();
+  });
+
+  it("says in words that the tools could not be fetched, and leaves the controls off, when the chunk does not come", async () => {
+    pinGeometry();
+    tools.failDragTools = true;
+    renderPage();
+    await ready();
+    expect(await screen.findByTestId("placement-message")).toHaveTextContent("toolsFailed");
+    await userEvent.click(bricks()[0]!);
+    expect(screen.queryByTestId("lay-row")).not.toBeInTheDocument();
+    fireEvent.click(columns()[2]!, at(3, 13, 30));
+    await noWrite();
+  });
+
+  it("asks nothing of a reader, who has no controls: the same page, with no message", async () => {
+    state.adminProfile = "REKTOR";
+    state.readOnly = true;
+    hold();
+    renderPage();
+    await ready();
+    expect(screen.queryByTestId("placement-message")).not.toBeInTheDocument();
   });
 });

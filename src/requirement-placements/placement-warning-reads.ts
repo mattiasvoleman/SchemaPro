@@ -74,6 +74,13 @@ export interface WarningReads {
   kept?: readonly KeptForWarnings[];
   /** The meals placed by hand (not the ones Generera laid), when the caller has read them. */
   meals?: readonly MealForWarnings[];
+  /**
+   * Whether any post of the year has a lesson left for the engine to place, which decides whether the class's lunch refuses
+   * (placement-warnings.ts, ASKED). The board has counted every post and says so; a read or a save of one post gives the question,
+   * asked only when a lunch warning would otherwise say that Generera refuses and no förläggning of the year is a pin (a pin is
+   * itself a lesson for the engine). Absent: the engine is taken to be asked.
+   */
+  lessonsLeft?: boolean | (() => Promise<boolean>);
 }
 
 const minutesOfTime = (time: Date): number => time.getUTCHours() * 60 + time.getUTCMinutes();
@@ -261,7 +268,13 @@ export async function placementWarnings(tx: PrismaClient, user: AuthenticatedUse
     ...reads.beside.map((row) => itemOfRow(row, null)),
     ...rows.map((row, index) => itemOfRow(row, index)),
   ];
-  const { byRow, hrTold } = placementWarningsOf({ items, rows: rows.length, teacherRules, showsHr: readsHr(user), lunch, rooms });
-  await recordRead(tx, 'EMPLOYMENT', hrTold, user.channel);
-  return byRow;
+  const input = { items, rows: rows.length, teacherRules, showsHr: readsHr(user), lunch, rooms };
+  let counted = placementWarningsOf({ ...input, ...(typeof reads.lessonsLeft === 'boolean' ? { lessonsLeft: reads.lessonsLeft } : {}) });
+  // The year's lessons are counted only when it changes an answer: a lunch warning that says Generera refuses, in a year with no pin.
+  const refusesLunch = counted.byRow.some((list) => list.some((warning) => warning.code === 'CLASS_HAS_NO_LUNCH' && warning.refuses));
+  if (typeof reads.lessonsLeft === 'function' && refusesLunch && !items.some((item) => item.pin)) {
+    if (!(await reads.lessonsLeft())) counted = placementWarningsOf({ ...input, lessonsLeft: false });
+  }
+  await recordRead(tx, 'EMPLOYMENT', counted.hrTold, user.channel);
+  return counted.byRow;
 }

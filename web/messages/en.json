@@ -2067,6 +2067,8 @@
     "history": "Undo and redo",
     "saving": "Saving …",
     "waitSaving": "Saving. Wait a moment.",
+    "toolsLoading": "The page is still loading its tools. Try again in a moment.",
+    "toolsFailed": "The page's tools could not be loaded. Reload the page.",
     "stale": "Somebody else has changed this post's placed lessons since you read them. Nothing was written, and the week has been read again. Do what you wanted once more.",
     "staleHistory": "Somebody else has changed placed lessons since you made your changes. Undo and Redo are cleared.",
     "gone": "The lesson is no longer in the week. The week has been read again.",
@@ -2138,8 +2140,7 @@
       "cannotPair": "The pair cannot be placed: {reason}",
       "weeksOdd": "odd weeks",
       "weeksEven": "even weeks",
-      "movedHalf": "Moved the half to {when}.",
-      "heldLabel": "Half lesson, not saved: {lesson}, {weeks}, {when}"
+      "movedHalf": "Moved the half to {when}."
     },
     "weeks": {
       "label": "Week",
@@ -2149,12 +2150,12 @@
       "ht": "Autumn term (HT)",
       "vt": "Spring term (VT)",
       "option": "wk {week} · {from}–{to} · {parity}",
-      "odd": "odd (A)",
-      "even": "even (B)",
+      "odd": "odd",
+      "even": "even",
       "shown": "Showing week {week}, {from}–{to}, {parity}. Lessons that do not run that week are not shown.",
       "shownAll": "Showing all weeks. A lesson that runs only odd or even weeks, or only part of the school year, has a mark.",
       "followed": "Now showing week {week} ({parity}), for the other half.",
-      "hint": "Odd weeks are A weeks and even weeks are B weeks, by week number (ISO 8601)."
+      "hint": "Odd and even weeks are counted by week number (ISO 8601), as everywhere else in the app."
     },
     "note": {
       "odd": "odd",
@@ -2172,10 +2173,12 @@
       "badge": "\u26a0\ufe0e Warning",
       "badgeRefuses": "\u26a0\ufe0e Refuses",
       "said": "{count, plural, one {One warning:} other {# warnings:}} {sentences}",
-      "legend": "The Warning mark: the week says something about the lesson, which is saved. The warning does not stop Generate. The Refuses mark: Generate will refuse the week because of the lesson.",
+      "legend": "The Warning mark: the week says something about the lesson, which is saved. Generate will not refuse the week for that alone, but it may still refuse it for something else. The Refuses mark: Generate will refuse the week because of the lesson.",
       "refuses": "Generate will refuse the week because of this.",
-      "standsAnyway": "The lesson is saved, and this warning does not stop Generate.",
+      "standsAnyway": "The lesson is saved. Generate will not refuse the week for this alone, but it may still refuse it for something else.",
       "hold": "Booked at {schools}",
+      "holdLent": "Lent to {schools}",
+      "holdBorrowed": "Borrowed from {schools}, free only in the loan's times",
       "day": "{day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} other {day {day}}}",
       "UNKNOWN": "The week has a warning about the lesson that this version cannot describe.",
       "TEACHER_DAY_TOO_LONG": "The teacher teaches {minutes} min on {day}, over the cap of {cap} min.",

@@ -2703,7 +2703,8 @@ export default function TimetablePage() {
               year={shownYear}
               subjects={subjects}
               groups={groups}
-              teachers={teachers}
+              // Names only, so everybody: a lesson in the draft keeps its teacher when her mark is taken off.
+              teachers={people ?? []}
               rooms={rooms}
             />
           </Suspense>
