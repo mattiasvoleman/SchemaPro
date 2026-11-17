@@ -77,6 +77,13 @@ describe("teacherDayWarningsOf: the teacher's day over the fixed week", () => {
     expect(teacherDayWarningsOf(items, new Map(), true).warnings.size).toBe(0);
   });
 
+  it('gives the figure of the weeks the rows are in, not of a heavier week of the lessons Generera keeps alone', () => {
+    // Odd weeks: six hours kept (over a cap of five, the school's own). Even weeks: five and a half, with the row in them.
+    const heavy = item({ dayOfWeek: 1, startMinutes: at(8), endMinutes: at(14), recurrence: 'ODD_WEEKS', roomId: 'r2' });
+    const row = item({ row: 0, dayOfWeek: 1, startMinutes: at(8), endMinutes: at(13, 30), recurrence: 'EVEN_WEEKS' });
+    expect(teacherDayWarningsOf([heavy, row], rulesOf(cap(300)), true).warnings.get(0)).toEqual([{ code: 'TEACHER_DAY_TOO_LONG', refuses: false, params: { day: 1, minutes: 330, cap: 300 } }]);
+  });
+
   describe('whether Generera refuses', () => {
     const locked = item({ dayOfWeek: 1, startMinutes: at(8), endMinutes: at(11), roomId: 'r2' });
     it('never for a week of locks and kept lessons: the engine takes them as they are', () => {
@@ -89,6 +96,16 @@ describe("teacherDayWarningsOf: the teacher's day over the fixed week", () => {
       // The cap holds the day: three hours locked and a pin of an hour is four, the cap. No warning at all.
       const fits = [locked, item({ row: 0, pin: true, roomId: null, dayOfWeek: 1, startMinutes: at(11), endMinutes: at(12) })];
       expect(teacherDayWarningsOf(fits, rulesOf(cap(240)), true).warnings.size).toBe(0);
+    });
+    it('not for a pin that fits the cap in the weeks it runs, however far over the cap another week is', () => {
+      // Odd weeks: 180 locked and an hour of pin, 240 minutes, the cap exactly. Even weeks: 180 and 120 more, over it, by a lock.
+      const everyWeek = item({ dayOfWeek: 1, startMinutes: at(8), endMinutes: at(11), roomId: 'r2' });
+      const evenLock = item({ row: 1, dayOfWeek: 1, startMinutes: at(11), endMinutes: at(13), recurrence: 'EVEN_WEEKS', roomId: 'r2' });
+      const oddPin = item({ row: 0, pin: true, roomId: null, dayOfWeek: 1, startMinutes: at(11), endMinutes: at(12), recurrence: 'ODD_WEEKS' });
+      const { warnings } = teacherDayWarningsOf([everyWeek, evenLock, oddPin], rulesOf(cap(240)), true);
+      // The even weeks are over the cap and are the row's to say, and Generera takes them as they are; the odd weeks hold.
+      expect([...warnings.keys()]).toEqual([1]);
+      expect(warnings.get(1)![0]!.refuses).toBe(false);
     });
     it('for a pin on a day whose locks are over the cap alone: nothing is left for it', () => {
       const items = [
@@ -314,6 +331,11 @@ describe('noRoomWarningsOf: a pin with no room of its kind free', () => {
   it('warns when the fixed lessons in rooms of the type hold every room there is', () => {
     const warnings = noRoomWarningsOf([inRoom('sal1'), inRoom('sal2'), pin(0)], facts);
     expect(warnings.get(0)).toEqual([{ code: 'NO_ROOM_FREE', refuses: true, params: { day: 3, start: '09:00', end: '10:00', roomType: 'Slöjdsal' } }]);
+  });
+
+  it('does not count a lesson at the same hour of another weekday', () => {
+    expect(noRoomWarningsOf([inRoom('sal1', { dayOfWeek: 4 }), pin(0)], facts).size).toBe(0);
+    expect(noRoomWarningsOf([inRoom('sal1', { dayOfWeek: 4 }), inRoom('sal2', { dayOfWeek: 4 }), pin(0)], facts).size).toBe(0);
   });
 
   it('says nothing while a room is left, or at another time, or in the other week', () => {

@@ -1522,6 +1522,32 @@ describe('RequirementPlacementsService: warnings on a save and a read of one pos
     expect(read.warnings).toEqual([{ rowId: 'p-1', requirementId: REQ, ...OVER }]);
   });
 
+  it('asks the rules by what they hold: the teachers’ caps among the work rules, the days and the stretch among the posts, and the meals the school placed by hand', async () => {
+    const lunch = { lunchEnabled: true, lunchStartTime: time('10:30'), lunchEndTime: time('13:00'), lunchMinutes: 30 };
+    const { tx, service } = setup({ lunch, classes: [GROUP], rows: [stored({ id: 'p-1', startTime: time('10:30'), minutes: 150 })] });
+    await service.listOfPost(REQ, user);
+    expect(tx['teacherWorkRule']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: { in: [TEACHER] }, maxTeachingMinutesPerDay: { not: null } } }));
+    expect(tx['teacherEmployment']!['findMany']).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { academicYearId: YEAR, userId: { in: [TEACHER] }, OR: [{ maxTeachingDaysPerWeek: { not: null } }, { maxConsecutiveTeachingMinutes: { not: null } }] } }),
+    );
+    // The class’s meals placed by hand, not the ones Generera laid and lays again.
+    expect(tx['lunchSitting']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ where: { academicYearId: YEAR, isGenerated: false, studentGroupId: { in: [GROUP] } } }));
+  });
+
+  it('counts the medlärare of the row’s post as teaching it, and a group a kept lesson was opened to as at it', async () => {
+    const BO = '55555555-5555-4555-8555-555555555555';
+    const withCo = { ...POST, coTeacherId: BO };
+    const keptByBo = { ...keptTuesday, teacherId: BO, extraGroups: [{ studentGroupId: 'g-7b' }] };
+    // Bo has the cap and is medlärare on the post’s lesson at 10:00; Bo keeps the hour at 08:00 (opened to 7B).
+    const co = setup({ post: withCo, kept: [keptByBo], workRules: [{ userId: BO, maxTeachingMinutesPerDay: 90 }], rows: [stored({ id: 'p-1', startTime: time('10:00') })] });
+    expect((await co.service.listOfPost(REQ, user)).warnings).toEqual([{ rowId: 'p-1', requirementId: REQ, ...OVER }]);
+    // A kept lesson opened to the class the lunch is asked of: it takes the class’s hour like a lesson of its own.
+    const lunch = { lunchEnabled: true, lunchStartTime: time('10:30'), lunchEndTime: time('13:00'), lunchMinutes: 30 };
+    const wide = { ...keptTuesday, startTime: time('10:30'), endTime: time('12:30'), studentGroupId: 'g-7b', extraGroups: [{ studentGroupId: GROUP }] };
+    const eat = setup({ kept: [wide], lunch, classes: [GROUP], rows: [stored({ id: 'p-1', startTime: time('12:30'), minutes: 30 })] });
+    expect((await eat.service.listOfPost(REQ, user)).warnings.map((warning) => warning.code)).toEqual(['CLASS_HAS_NO_LUNCH']);
+  });
+
   it('asks the kept lessons of the ruled teachers only when a rule is there', async () => {
     const { tx, service } = setup({ kept: [keptTuesday], workRules: CAP_90, rows: [stored({ id: 'p-1', startTime: time('10:00') })] });
     await service.listOfPost(REQ, user);
