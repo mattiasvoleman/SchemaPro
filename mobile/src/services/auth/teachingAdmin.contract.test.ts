@@ -124,6 +124,9 @@ interface Call {
   readonly file: string;
 }
 
+/** Calls to apiRequest whose path the reading could not render (a path built by a function, a join, a parameter): never silently skipped. */
+const UNREADABLE: string[] = [];
+
 /** The gateway calls one source file makes through apiRequest, read from its syntax. */
 function callsOf(file: string): Call[] {
   const text = readFileSync(file, 'utf8');
@@ -168,6 +171,7 @@ function callsOf(file: string): Call[] {
   const visit = (node: import('typescript').Node): void => {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'apiRequest' && node.arguments[0]) {
       const rendered = render(node.arguments[0]);
+      if (rendered === null) UNREADABLE.push(`${relative(APP, file)}: ${node.arguments[0].getText(source)}`);
       if (rendered !== null && rendered.startsWith('/api/v1/')) {
         const options = node.arguments[1];
         let verb = 'GET';
@@ -322,6 +326,10 @@ describe('every call the Vikarie tab makes is a teacher’s alone, so the mark o
 });
 
 describe('every gateway call in the app is sorted (c)', () => {
+  it('can read the path of every call it sorts: one it cannot read is one it would let through', () => {
+    expect(UNREADABLE).toEqual([]);
+  });
+
   it('belongs to one of the staff shell, the Vikarie tab or the family’s shells', () => {
     const known = new Set([...STAFF_SHELL, ...VIKARIE_TAB, ...FAMILY_SHELLS]);
     const unsorted = [...new Set(ALL_CALLS.filter((call) => !known.has(call.file)).map((call) => `${call.file}: ${call.verb} ${call.path}`))];
