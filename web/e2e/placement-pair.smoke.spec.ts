@@ -234,6 +234,20 @@ test.describe("a pair laid half by half", () => {
 });
 
 test.describe("the week picker, for a läsår that starts on a Saturday", () => {
+  test("the keyboard stays on the next-week button at the last week: the button is not disabled under the reader", async ({ page, baseURL }) => {
+    await open(page, baseURL!, { saturday: true });
+    const picker = page.getByTestId("week-picker");
+    await picker.getByRole("combobox").selectOption("2027-05-31");
+    const next = picker.getByRole("button", { name: "Nästa vecka" });
+    await next.focus();
+    await page.keyboard.press("Enter");
+    await expect(picker.getByRole("combobox")).toHaveValue("2027-06-07");
+    await expect(next).toHaveAttribute("aria-disabled", "true");
+    await expect(next).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(picker.getByRole("combobox")).toHaveValue("2027-06-07");
+  });
+
   test("starts on the Monday after, has week 53 and week 1 as two odd weeks, and shows a week with its own dates and the lessons that run it", async ({ page, baseURL }) => {
     const { puts, misses } = await open(page, baseURL!, { saturday: true });
     const picker = page.getByTestId("week-picker");
@@ -299,7 +313,7 @@ test.describe("the week picker, for a läsår that starts on a Saturday", () => 
     const select = picker.getByRole("combobox");
     await picker.getByRole("button", { name: "Nästa vecka" }).click();
     await expect(select).toHaveValue("2026-08-17");
-    await expect(picker.getByRole("button", { name: "Föregående vecka" })).toBeDisabled();
+    await expect(picker.getByRole("button", { name: "Föregående vecka" })).toHaveAttribute("aria-disabled", "true");
     await picker.getByRole("button", { name: "Nästa vecka" }).click();
     await expect(select).toHaveValue("2026-08-24");
     // Week 35 is odd. A pair that starts with the EVEN weeks is laid looking at an even week: 36.

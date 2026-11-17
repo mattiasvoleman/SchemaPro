@@ -162,6 +162,16 @@ describe("the held half on the week", () => {
     expect(card.locked).toBeUndefined();
   });
 
+  it("takes its length from the half, not from an hour: a half of 40 minutes ends 40 minutes after it starts, as a card and as the clash rule's lesson", () => {
+    const forty = held({ minutes: 40, startMinutes: 9 * 60 + 15 });
+    expect(heldHalfCard(forty, names)).toMatchObject({ startMinutes: 555, endMinutes: 595 });
+    expect(heldHalfPlacement(forty, post())).toMatchObject({ startMinutes: 555, endMinutes: 595 });
+    // And one of an hour and a half, which crosses a full hour.
+    const long = held({ minutes: 90, startMinutes: 10 * 60 });
+    expect(heldHalfCard(long, names).endMinutes).toBe(690);
+    expect(heldHalfPlacement(long, post()).endMinutes).toBe(690);
+  });
+
   it("leaves the room out when the room is not known, not a blank", () => {
     expect("room" in heldHalfCard(held(), { ...names, room: undefined })).toBe(false);
   });

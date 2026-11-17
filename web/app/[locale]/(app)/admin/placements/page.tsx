@@ -70,7 +70,6 @@ import {
 } from "@/lib/placement-board";
 import { usePlacementBoard } from "@/lib/placement-board-queries";
 import { canBePair, heldHalfCardId, otherHalf, partKeyOfBrick, type Half, type WeeksChoice } from "@/lib/placement-pair-key";
-import { weekNote } from "@/lib/placement-week-note";
 import { usePlacementLinkTarget } from "@/lib/use-placement-link-target";
 import {
   dropOf,
@@ -259,11 +258,12 @@ export default function PlacementsPage() {
       },
       room: (id) => (id ? roomById.get(id)?.name : undefined),
       noRoom: tPlacements("roomAny"),
-      weeks: (lesson) => weekNote(lesson, year ?? null, locale, tNote),
+      // The marks come with the week tools, a moment after the page is up (the route has no bytes for them in its first load).
+      weeks: (lesson) => weekTools?.weekNote(lesson, year ?? null, locale, tNote) ?? null,
       color: (subjectId, color) => subjectColor(subjectId, color),
       keptNote: t("keptNote"),
     }),
-    [subjectById, groupById, teacherById, roomById, year, locale, tNote, tPlacements, t],
+    [subjectById, groupById, teacherById, roomById, year, locale, tNote, weekTools, tPlacements, t],
   );
   const otherNames: OtherNames = useMemo(
     () => ({ group: (id) => groupById.get(id)?.name, subject: (id) => subjectById.get(id)?.name }),

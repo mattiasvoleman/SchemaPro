@@ -449,6 +449,19 @@ describe("what becomes of a half that is held (BESLUT, lib/placement-pair.ts)", 
     await noWrite();
   });
 
+  it("takes the row for it away with it, and keeps the weeks choice fixed while it is held", async () => {
+    pinGeometry();
+    renderPage();
+    await ready();
+    await holdFirstHalf();
+    expect(within(screen.getByTestId("pair-fields")).getByRole("combobox")).toBeDisabled();
+    await userEvent.click(within(screen.getByTestId("pair-held")).getByRole("button", { name: "release" }));
+    await waitFor(() => expect(held()).toBeNull());
+    expect(screen.queryByTestId("lay-row")).toBeNull();
+    expect(screen.queryByTestId("pair-held")).toBeNull();
+    await noWrite();
+  });
+
   it("takes it back first on undo, before any step that was written, and writes nothing", async () => {
     pinGeometry();
     renderPage();
@@ -847,13 +860,17 @@ describe("the week picker", () => {
     const group = screen.getByTestId("week-picker");
     await userEvent.click(within(group).getByRole("button", { name: "next" }));
     expect(picker()).toHaveValue("2026-08-17");
-    expect(within(group).getByRole("button", { name: "prev" })).toBeDisabled();
+    expect(within(group).getByRole("button", { name: "prev" })).toHaveAttribute("aria-disabled", "true");
     await userEvent.click(within(group).getByRole("button", { name: "next" }));
     expect(picker()).toHaveValue("2026-08-24");
     await userEvent.selectOptions(picker(), "");
     await userEvent.click(within(group).getByRole("button", { name: "prev" }));
     expect(picker()).toHaveValue("2027-06-07");
-    expect(within(group).getByRole("button", { name: "next" })).toBeDisabled();
+    const last = within(group).getByRole("button", { name: "next" });
+    expect(last).toHaveAttribute("aria-disabled", "true");
+    // Pressed once more at the end it does nothing, and the week stays the last.
+    await userEvent.click(last);
+    expect(picker()).toHaveValue("2027-06-07");
   });
 
   it("narrows the cards only: the figures, the lists and the bricks are the year's", async () => {
@@ -878,6 +895,34 @@ describe("the week picker", () => {
     state.year = { id: "y2", name: "2027/28", startDate: "2027-08-14", endDate: "2028-06-10", isActive: false };
     rerender(tree());
     await waitFor(() => expect(picker()).toHaveValue(""));
+  });
+
+  it("shows every card of the new läsår after the läsår is changed with a week picked: the week does not outlive its year, in the cards and in what the picker says", async () => {
+    const { rerender } = renderPage();
+    await ready();
+    await userEvent.selectOptions(picker(), "2026-08-24");
+    // Week 35 is odd and in the autumn: the even half and the spring's lesson are not on it.
+    await waitFor(() => expect(lessonIds().sort()).toEqual([HT_CARD, ODD_CARD].sort()));
+    state.year = { id: "y2", name: "2027/28", startDate: "2027-08-14", endDate: "2028-06-10", isActive: false };
+    rerender(tree());
+    await waitFor(() => expect(picker()).toHaveValue(""));
+    await waitFor(() => expect(lessonIds().sort()).toEqual([EVEN_CARD, HT_CARD, ODD_CARD, VT_CARD].sort()));
+    expect(screen.getByTestId("week-picker-status")).toHaveTextContent("shownAll");
+  });
+
+  it("leaves the week shown where it is when the half chosen runs that week's own parity, and when every week is chosen again", async () => {
+    state.board = baseBoard();
+    renderPage();
+    await ready();
+    // Week 35 is odd: a pair that starts with the odd weeks is laid looking at the week already shown, not at the next odd one.
+    await userEvent.selectOptions(picker(), "2026-08-24");
+    await chooseBrick("post-ma|anna|60#1", "ODD_WEEKS");
+    expect(picker()).toHaveValue("2026-08-24");
+    // Even weeks first moves it to an even week (36); choosing every week again is no reason to move it again.
+    await userEvent.selectOptions(within(screen.getByTestId("pair-fields")).getByRole("combobox"), "EVEN_WEEKS");
+    await waitFor(() => expect(picker()).toHaveValue("2026-08-31"));
+    await userEvent.selectOptions(within(screen.getByTestId("pair-fields")).getByRole("combobox"), "ALL_WEEKS");
+    expect(picker()).toHaveValue("2026-08-31");
   });
 
   it("follows the half being laid: the week shown becomes one of the weeks the half runs, and the other's for the second", async () => {

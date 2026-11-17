@@ -2,8 +2,8 @@ import type { PlacementRecurrence } from "@/lib/requirement-placements";
 
 /*
  * Förlägg i veckan, the weeks: which weeks a läsår has and which of them a lesson
- * runs in (D2). What a card SAYS of its weeks is lib/placement-week-note.ts, a module of
- * its own because the cards are drawn with the page and this is fetched after it.
+ * runs in (D2). What a card SAYS of its weeks is lib/placement-week-note.ts; both are fetched
+ * after the page is up (lib/placement-week-tools.ts).
  *
  * THE SAME PARITY AS THE SERVER'S. An odd-weeks lesson runs the weeks whose ISO 8601
  * week number is odd (src/calendar/lesson-recurrence.ts runsOn). An ISO year of 53

@@ -107,3 +107,29 @@ describe("a week picked", () => {
     expect(view.placements).toHaveLength(1);
   });
 });
+
+describe("a card's own day is asked of the dates, not the Monday of its week", () => {
+  // A window that ends on a Tuesday (2026-12-15, in the week of 2026-12-14): Tuesday's card stands that week and Thursday's does not.
+  const untilTuesday = new Map([["post-tue", { recurrence: "ALL_WEEKS", startDate: null, endDate: "2026-12-15" }]]);
+  const WEEK = "2026-12-14";
+
+  it("holds a placement of the post's window's last day and not one after it", () => {
+    const view = cards({ placements: [row({ id: "tue", requirementId: "post-tue", dayOfWeek: 2 }), row({ id: "thu", requirementId: "post-tue", dayOfWeek: 4 })] });
+    expect(ids(narrowToWeek(view, untilTuesday, WEEK).placements)).toEqual(["tue"]);
+  });
+
+  it("holds a kept lesson of its own last day and not one after it", () => {
+    const view = cards({ kept: [kept({ id: "tue", dayOfWeek: 2, endDate: "2026-12-15" }), kept({ id: "thu", dayOfWeek: 4, endDate: "2026-12-15" })] });
+    expect(ids(narrowToWeek(view, untilTuesday, WEEK).kept)).toEqual(["tue"]);
+  });
+
+  it("holds a meal of its own last day and not one after it", () => {
+    const view = cards({ meals: [meal({ id: "tue", dayOfWeek: 2, endDate: "2026-12-15" }), meal({ id: "thu", dayOfWeek: 4, endDate: "2026-12-15" })] });
+    expect(ids(narrowToWeek(view, untilTuesday, WEEK).meals)).toEqual(["tue"]);
+  });
+
+  it("holds a block's lesson of the first member's window's last day and not one after it", () => {
+    const view = cards({ blocks: [{ ...block([blockRow({ id: "tue", dayOfWeek: 2 }), blockRow({ id: "thu", dayOfWeek: 4 })]), memberIds: ["post-tue", "post-other"] }] });
+    expect(ids(narrowToWeek(view, untilTuesday, WEEK).blocks[0]!.rows)).toEqual(["tue"]);
+  });
+});

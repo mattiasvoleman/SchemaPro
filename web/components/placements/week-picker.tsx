@@ -48,7 +48,8 @@ export function WeekPicker({ weeks, value, onChange }: WeekPickerProps) {
       <Label htmlFor={`${id}-select`} id={`${id}-label`} className="text-sm">
         {t("label")}
       </Label>
-      <Button type="button" variant="outline" size="icon" aria-label={t("prev")} disabled={at <= 0 && at !== -1} onClick={() => step(-1)} className="size-9">
+      {/* aria-disabled, not disabled: a button that becomes disabled under the keyboard loses focus to the page, and the reader who stepped to the last week has lost their place. step() does nothing past the ends. */}
+      <Button type="button" variant="outline" size="icon" aria-label={t("prev")} aria-disabled={(at <= 0 && at !== -1) || undefined} onClick={() => step(-1)} className="size-9 aria-disabled:pointer-events-none aria-disabled:opacity-50">
         <ChevronLeft className="size-4" aria-hidden />
       </Button>
       <NativeSelect id={`${id}-select`} value={value ?? ""} onChange={(event) => onChange(event.target.value === "" ? null : event.target.value)} className="w-auto min-w-44 max-w-full">
@@ -56,7 +57,7 @@ export function WeekPicker({ weeks, value, onChange }: WeekPickerProps) {
         <optgroup label={t("ht")}>{weeks.filter((week) => week.term === "HT").map(option)}</optgroup>
         <optgroup label={t("vt")}>{weeks.filter((week) => week.term === "VT").map(option)}</optgroup>
       </NativeSelect>
-      <Button type="button" variant="outline" size="icon" aria-label={t("next")} disabled={at === weeks.length - 1} onClick={() => step(1)} className="size-9">
+      <Button type="button" variant="outline" size="icon" aria-label={t("next")} aria-disabled={at === weeks.length - 1 || undefined} onClick={() => step(1)} className="size-9 aria-disabled:pointer-events-none aria-disabled:opacity-50">
         <ChevronRight className="size-4" aria-hidden />
       </Button>
       <p role="status" aria-live="polite" className="w-full text-sm text-muted-foreground [overflow-wrap:anywhere]" data-testid="week-picker-status">

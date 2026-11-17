@@ -38,6 +38,14 @@ describe("what a card says of the dates it runs", () => {
     expect(note("2027-02-01", null)).toBe("from(1 feb.)");
     // A window that ends in November is not an HT.
     expect(note(null, "2026-11-27")).toBe("until(27 nov.)");
+    // A window that ends on the 1st of December is 2½ weeks short of the autumn: dates, not HT. One that starts on the 29th of January
+    // has lost January: dates, not VT. And one that starts in December (the autumn's end) is nobody's whole term.
+    expect(note(null, "2026-12-01")).toBe("until(1 dec.)");
+    expect(note("2027-01-29", null)).toBe("from(29 jan.)");
+    expect(note("2026-12-01", null)).toBe("from(1 dec.)");
+    // The edges that stay the short way: the autumn ends in the second half of December, the spring starts in the first half of January.
+    expect(note(null, "2026-12-15")).toBe("HT");
+    expect(note("2027-01-15", null)).toBe("VT");
   });
 
   it("writes the day in the reader's language", () => {
