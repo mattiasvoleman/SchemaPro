@@ -20,13 +20,18 @@
  * In all three the English is shown. Untranslated is a poor read; empty is no
  * read at all, and the sentence is the whole value of the response.
  *
- * ONE OF THEM IS KNOWN AND IS NOT LEFT TO THE FALLBACK. A refusal of a placed
+ * TWO OF THEM ARE KNOWN AND ARE NOT LEFT TO THE FALLBACK. A refusal of a placed
  * lesson is stored with the job it refused, and the argument `block` (the block a
  * member's lesson belongs to) is newer than the oldest of them: a row written
  * before Förlägg blocket has no `block`, and reads as a lesson of no block.
+ * Likewise a shared teacher's line written before it said what the classes
+ * lose has no `classOwn`: the sentence branches on it, and "unknown" is the
+ * branch that says what the line always said, in Swedish, which the English
+ * fallback would not.
  */
 const PARAM_DEFAULTS: Record<string, Record<string, string | number>> = {
   PLACEMENT_CANNOT_STAND: { block: "NO_BLOCK" },
+  TEACHER_SHARED_BY_PARALLEL_GROUPS: { classOwn: "unknown" },
 };
 
 /** The half of next-intl's translator this needs, so a test can pass a stub. */

@@ -2943,6 +2943,15 @@ class SchedulerSolver:
                             "groups": len(teacher.requirement_ids),
                             "minutes": teacher.minutes,
                             "grades": "any" if load.year is None else str(load.year),
+                            # What the classes they share lose (SharedTeacher.class_minutes).
+                            # `classOwn` is the one the sentence branches on: "none" when
+                            # the classes have no lesson of their own to lose, so the queue
+                            # is the teacher's and not the classes'. A row stored before
+                            # these existed has none of the three, and the web reads that
+                            # as the older sentence (lib/engine-message.ts PARAM_DEFAULTS).
+                            "classes": teacher.classes,
+                            "classMinutes": teacher.class_minutes,
+                            "classOwn": "none" if teacher.class_minutes == 0 else "some",
                         },
                         requirement_ids=list(teacher.requirement_ids),
                         resource_ids=list(teacher.requirement_ids),

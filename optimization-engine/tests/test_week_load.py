@@ -204,7 +204,11 @@ def test_a_year_above_its_frame_is_refused_before_any_model_and_named() -> None:
     }
     assert {str(i) for i in shared.requirement_ids} == ids_of_shared
     assert {str(i) for i in shared.resource_ids} == ids_of_shared
-    assert shared.params == {"groups": 3, "minutes": 480, "grades": "8"}
+    # 29 lessons x 50 minutes of each of the five classes' own, which is what they lose.
+    assert shared.params == {
+        "groups": 3, "minutes": 480, "grades": "8",
+        "classes": 5, "classMinutes": 29 * 50, "classOwn": "some",
+    }
     assert shared.category == "TEACHER_OVERLAP"
     # Never a person: the teacher's id is in no field of the refusal.
     assert SHARED_TEACHER not in conflicts.model_dump_json()
@@ -1101,8 +1105,210 @@ def test_the_sentences_read_as_sentences() -> None:
         {"grades": "any", "demandMinutes": 1, "capacityMinutes": 1, "shared": "none"},
     )
     assert "3 groups of year 8" in render(
-        "TEACHER_SHARED_BY_PARALLEL_GROUPS", {"groups": 3, "minutes": 480, "grades": "8"},
+        "TEACHER_SHARED_BY_PARALLEL_GROUPS",
+        {"groups": 3, "minutes": 480, "grades": "8", "classes": 5, "classMinutes": 60, "classOwn": "some"},
     )
     assert "1 group of year 8" in render(
-        "TEACHER_SHARED_BY_PARALLEL_GROUPS", {"groups": 1, "minutes": 40, "grades": "8"},
+        "TEACHER_SHARED_BY_PARALLEL_GROUPS",
+        {"groups": 1, "minutes": 40, "grades": "8", "classes": 1, "classMinutes": 0, "classOwn": "none"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# What the classes lose (SharedTeacher.classes and class_minutes)
+#
+# THE SCHOOL (2026-11-17). Year 9 of a school whose classes hold nothing but one
+# 60-minute lesson of their own: the groups of a shared teacher were said to
+# make "every class sit through them one after the other", which read as the
+# groups' whole hours lost by every class. A class loses at most its own
+# lessons, and the sentence now says how many they are.
+# ---------------------------------------------------------------------------
+
+
+def _every_load(payload: dict[str, object]) -> list[week_load.StageLoad]:
+    """The year's load whatever it is: the row's fields do not depend on a tight week."""
+    solver = SchedulerSolver(_settings())
+    solver.TIGHT_WEEK_LOAD = 0.0
+    return solver._week_loads(_request(payload))
+
+
+def _without_class_lessons(payload: dict[str, object]) -> dict[str, object]:
+    payload["requirements"] = [
+        row for row in payload["requirements"]  # type: ignore[union-attr]
+        if row["studentGroupId"] not in CLASSES
+    ]
+    return payload
+
+
+def _teacher_of(
+    load: week_load.StageLoad, payload: dict[str, object], teacher: str,
+) -> week_load.SharedTeacher:
+    mine = {row["id"] for row in payload["requirements"] if teacher in (  # type: ignore[union-attr]
+        row["teacherId"], *(row.get("lessonTeacherIds") or []),
+    )}
+    (found,) = [t for t in load.shared if {str(i) for i in t.requirement_ids} <= mine]
+    return found
+
+
+def test_a_class_with_lessons_of_its_own_loses_those_minutes() -> None:
+    payload = _year(class_lessons=27)
+
+    (load,) = _loads(payload)
+    (teacher,) = load.shared
+
+    assert teacher.classes == 5
+    assert teacher.class_minutes == 27 * 50
+    (detail,) = SchedulerSolver._shared_teacher_details([load], 6)
+    assert detail.params == {
+        "groups": 3, "minutes": 480, "grades": "8",
+        "classes": 5, "classMinutes": 1350, "classOwn": "some",
+    }
+
+
+def test_a_class_with_nothing_of_its_own_loses_nothing_to_the_queue() -> None:
+    """The case this was written for: the teacher's queue fills the week, not the classes."""
+    payload = _without_class_lessons(_year(class_lessons=1))
+
+    (load,) = _every_load(payload)
+    (teacher,) = load.shared
+
+    assert teacher.classes == 5  # they still share the five classes, and that is still said
+    assert teacher.class_minutes == 0
+    (detail,) = SchedulerSolver._shared_teacher_details([load], 6)
+    assert detail.params["classOwn"] == "none"
+    assert detail.params["classMinutes"] == 0
+
+
+def test_the_most_any_one_class_loses_is_said_not_the_sum() -> None:
+    """Five classes of 3 lessons and one of 27: a class loses 1,350 minutes at the most, not 1,950."""
+    payload = _year(class_lessons=3)
+    for row in payload["requirements"]:  # type: ignore[union-attr]
+        if row["studentGroupId"] == CLASSES[0]:
+            row["lessonsPerWeek"] = 27
+
+    (load,) = _every_load(payload)
+    (teacher,) = load.shared
+
+    assert teacher.class_minutes == 27 * 50
+
+
+def test_class_minutes_is_what_the_classes_nodes_weigh_in_the_graph() -> None:
+    """A node weighs a lesson's slots plus the changeover; take the margins off and these are the minutes."""
+    from app.solver.frames import changeover_slots, span_of
+
+    payload = _year(class_lessons=27)
+    request = _request(payload)
+    solver = SchedulerSolver(_settings())
+    grid = solver._grid
+    relations = week_load.Relations(
+        sharing={}, pupil_key=scheduler_solver.pupil_key_of, teachers_at=scheduler_solver._teachers_at,
+        meal_clear_of=lambda eater, class_id: False,
+    )
+    own = [r for r in request.requirements if str(r.student_group_id) == CLASSES[0]]
+    padding = changeover_slots(request.frame_times, span_of(own[0]), grid)
+
+    weight = sum(
+        piece.weight
+        for requirement in own
+        for piece in week_load._pieces_of(requirement, relations, padding, grid)
+    )
+    (teacher,) = _loads(payload)[0].shared
+
+    assert padding > 0
+    assert weight == 27 * (grid.minutes_to_slots(50) + padding)
+    assert (weight - 27 * padding) * grid.slot_minutes == teacher.class_minutes
+    # Lunch is the class's own claim too, and is not in the number: a meal node is not one of these pieces.
+    assert teacher.class_minutes == 27 * 50
+
+
+def test_a_halfs_own_lessons_are_not_its_class_s() -> None:
+    """7A:1 and 7A:2 share a teacher and the class they are cut from; their slöjd is theirs, not 7A's."""
+    half_one, half_two, teacher = str(uuid4()), str(uuid4()), str(uuid4())
+    payload = _year(class_lessons=5, shared=False)
+    for half in (half_one, half_two):
+        payload["requirements"].append({  # type: ignore[union-attr]
+            "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": half, "teacherId": teacher,
+            "lessonsPerWeek": 2, "minutesPerLesson": 60, "studentGroupSize": 12,
+            "minGradeLevel": 8, "maxGradeLevel": 8,
+        })
+        payload["groupConflicts"].append([CLASSES[0], half])  # type: ignore[union-attr]
+    # The halves share no pupil with each other: no pair between them.
+
+    (load,) = _every_load(payload)
+    found = _teacher_of(load, payload, teacher)
+
+    assert found.classes == 1
+    assert found.class_minutes == 5 * 50  # 7A's own, and none of the halves' 2 x 2 x 60
+
+
+def test_a_lesson_with_a_replaced_pupil_is_still_the_classes_own_and_the_replacing_group_is_not() -> None:
+    """7A's svenska "without SvA7" (a pupilGroupId) counts for 7A; SvA7's own post does not."""
+    derived, replacing = str(uuid4()), str(uuid4())
+    payload = _year(class_lessons=1)
+    for row in payload["requirements"]:  # type: ignore[union-attr]
+        if row["studentGroupId"] == CLASSES[0]:
+            row["lessonsPerWeek"] = 5
+            row["pupilGroupId"] = derived
+    payload["requirements"].append({  # type: ignore[union-attr]
+        "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": replacing, "teacherId": str(uuid4()),
+        "lessonsPerWeek": 4, "minutesPerLesson": 50, "studentGroupSize": 6,
+        "minGradeLevel": 8, "maxGradeLevel": 8,
+    })
+    # The derived key pairs with the class and with what the class pairs with, never with SvA7.
+    payload["groupConflicts"] += [[derived, CLASSES[0]], *([derived, g] for g in GROUPS)]  # type: ignore[operator]
+    payload["groupConflicts"].append([CLASSES[0], replacing])  # type: ignore[union-attr]
+
+    (load,) = _every_load(payload)
+    (teacher,) = [t for t in load.shared if t.classes == 5]
+
+    assert teacher.class_minutes == 5 * 50
+
+
+def test_a_post_split_between_teachers_counts_whole_for_the_class_and_by_share_for_the_teacher() -> None:
+    """`minutes` is what THIS teacher leads; a class's own post counts every lesson, whoever leads it."""
+    other, class_teacher = str(uuid4()), str(uuid4())
+    payload = _year(class_lessons=1)
+    for row in payload["requirements"]:  # type: ignore[union-attr]
+        if row["studentGroupId"] == CLASSES[0]:
+            row["lessonsPerWeek"] = 6
+            row["minutesPerLesson"] = 80
+            row["lessonLengths"] = [80, 80, 60, 60, 40, 40]  # not six of one length: 360 minutes, not 480
+            row["teacherId"] = class_teacher
+            row["lessonTeacherIds"] = [class_teacher, other] * 3
+        elif row["teacherId"] == SHARED_TEACHER and row["studentGroupId"] == GROUPS[0]:
+            row["lessonTeacherIds"] = [SHARED_TEACHER, other, other, SHARED_TEACHER]
+
+    (load,) = _every_load(payload)
+    teacher = _teacher_of(load, payload, SHARED_TEACHER)
+
+    assert teacher.minutes == 2 * 40 + 4 * 40 + 4 * 40  # group 0: the two of four lessons it leads
+    assert teacher.class_minutes == 80 + 80 + 60 + 60 + 40 + 40
+
+
+def test_the_sentence_says_what_the_classes_lose_and_keeps_its_advice_only_where_it_helps() -> None:
+    some = render(
+        "TEACHER_SHARED_BY_PARALLEL_GROUPS",
+        {"groups": 5, "minutes": 800, "grades": "9", "classes": 5, "classMinutes": 60, "classOwn": "some"},
+    )
+    none = render(
+        "TEACHER_SHARED_BY_PARALLEL_GROUPS",
+        {"groups": 5, "minutes": 800, "grades": "9", "classes": 5, "classMinutes": 0, "classOwn": "none"},
+    )
+
+    assert "at most 60 minutes of lessons of its own a week" in some
+    assert "or let each group take pupils from fewer classes" in some
+    assert "have no lessons of their own" in none
+    assert "teacher's queue and not the classes" in none
+    # Nothing is gained by taking pupils from fewer classes when the classes hold nothing of their own.
+    assert "fewer classes" not in none
+    assert "parallel block" in none and "parallel block" in some
+    # A row stored before these existed is read by the web as "unknown": the old sentence, word for word.
+    assert render(
+        "TEACHER_SHARED_BY_PARALLEL_GROUPS",
+        {"groups": 5, "minutes": 800, "grades": "9", "classOwn": "unknown"},
+    ) == (
+        "One teacher stands on 5 groups of year 9 that take pupils from the same classes, 800 minutes a week "
+        "in all. A teacher cannot be in two places, so those groups cannot run at the same time, and every "
+        "class they share has to sit through them one after the other. Give each group a teacher of its own "
+        "and run them as a parallel block, or let each group take pupils from fewer classes."
     )
