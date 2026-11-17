@@ -17,6 +17,7 @@ import type {
   ConstraintResource,
   ConstraintType,
 } from "@/lib/types";
+import { teachesLike } from "@/lib/teaching-staff";
 import { cn, formatTime } from "@/lib/utils";
 import { groupLabel } from "@/lib/year-scope";
 import { NextStep } from "@/components/layout/next-step";
@@ -137,7 +138,8 @@ export default function ConstraintsPage() {
   const [deleting, setDeleting] = useState<AvailabilityConstraint | null>(null);
   const [form, setForm] = useState<ConstraintForm>(EMPTY_FORM);
 
-  const teachers = (people ?? []).filter((person) => person.role === "TEACHER");
+  // Whose availability can be written: a teacher, or an administrator who teaches (Users.teaches).
+  const teachers = (people ?? []).filter(teachesLike);
 
   const resourceOptions = (resourceType: ConstraintResource) => {
     switch (resourceType) {

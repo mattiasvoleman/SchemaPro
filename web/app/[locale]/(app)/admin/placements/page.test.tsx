@@ -56,6 +56,9 @@ vi.mock("@/lib/queries", () => ({
     data: [
       { id: "anna", role: "TEACHER", firstName: "Anna", lastName: "Ek", isActive: true },
       { id: "bo", role: "TEACHER", firstName: "Bo", lastName: "Lind", isActive: true },
+      // An administrator who teaches (Users.teaches), and one who does not.
+      { id: "maja", role: "SCHOOL_ADMIN", firstName: "Maja", lastName: "Mark", isActive: true, teaches: true },
+      { id: "rolf", role: "SCHOOL_ADMIN", firstName: "Rolf", lastName: "Rektor", isActive: true },
     ],
     isLoading: state.peopleLoading,
   }),
@@ -639,6 +642,34 @@ describe("Att lägga", () => {
     renderPage();
     await ready();
     expect(bricks().map((brick) => brick.textContent)).toEqual(["brickText(A. Ek|60)", "brickText(A. Ek|60)", "brickText(B. Lind|60)"]);
+  });
+
+  it("names the administrator who teaches on her brick, and anybody else a post carries (the name is looked up in everybody)", async () => {
+    state.board = board({
+      posts: [
+        {
+          ...board().posts[0]!,
+          parts: [
+            { teacherId: "maja", minutes: 60, count: 1, locked: 0, placed: 0, left: 1, cannotPlace: null },
+            { teacherId: "rolf", minutes: 60, count: 1, locked: 0, placed: 0, left: 1, cannotPlace: null },
+          ],
+        },
+      ],
+      placements: [],
+    });
+    renderPage();
+    await ready();
+    expect(bricks().map((brick) => brick.textContent)).toEqual(["brickText(M. Mark|60)", "brickText(R. Rektor|60)"]);
+  });
+
+  it("offers the administrator who teaches in the teacher filter, and not one who does not", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await ready();
+    await user.click(screen.getByRole("button", { name: /filterTeacher/ }));
+    expect(await screen.findByText("Anna Ek")).toBeInTheDocument();
+    expect(screen.getByText("Maja Mark")).toBeInTheDocument();
+    expect(screen.queryByText("Rolf Rektor")).not.toBeInTheDocument();
   });
 
   it("says that nothing is left when nothing is", async () => {

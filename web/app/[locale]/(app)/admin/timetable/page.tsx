@@ -565,8 +565,12 @@ export default function TimetablePage() {
     ];
   }, [yearGroups, t]);
 
+  // The grid's teacher rows, the lesson dialogs' teacher pick and the name on a
+  // lesson: a teacher, or an administrator who teaches (Users.teaches). Written
+  // out and not through lib/teaching-staff.ts: this page sits close to its bundle
+  // budget. Not the substitute pick, which is the cover board's and stays TEACHER.
   const teachers = useMemo(
-    () => (people ?? []).filter((person) => person.role === "TEACHER"),
+    () => (people ?? []).filter((person) => person.role === "TEACHER" || (person.role === "SCHOOL_ADMIN" && person.teaches === true)),
     [people],
   );
   const students = useMemo(

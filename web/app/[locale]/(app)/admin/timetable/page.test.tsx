@@ -621,6 +621,31 @@ function subjectsOnScreen(): string[] {
   ).map((subject) => subject.name);
 }
 
+describe("an administrator who teaches (Users.teaches) is a teacher of the grid", () => {
+  const admin = (id: string, firstName: string, lastName: string, teaches?: boolean) => ({
+    id,
+    role: "SCHOOL_ADMIN" as const,
+    firstName,
+    lastName,
+    email: `${id}@skola.se`,
+    phone: null,
+    isActive: true,
+    invitedAt: null,
+    studentGroupId: null,
+    teaches,
+  });
+
+  it("offers her in the teacher filter, and not an administrator who does not teach", async () => {
+    state.people = [...PEOPLE, admin("a-maja", "Maja", "Mark", true), admin("a-rolf", "Rolf", "Rektor")];
+    render(<TimetablePage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "timetable.filterTeacher" }));
+    expect(await screen.findByRole("menuitemcheckbox", { name: "Maja Mark" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemcheckbox", { name: "Karin Ek" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Rolf Rektor" })).not.toBeInTheDocument();
+  });
+});
+
 describe("the week of one teacher, or several", () => {
   it("shows only what that teacher takes", async () => {
     render(<TimetablePage />);

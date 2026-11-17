@@ -207,6 +207,8 @@ interface PersonFixture {
   email: string;
   isActive: boolean;
   studentGroupId: string | null;
+  /** Users.teaches: an administrator who also teaches. */
+  teaches?: boolean;
 }
 
 /** The slice of the load report the candidate line reads: one balance per teacher. */
@@ -3406,6 +3408,21 @@ describe("Delade lektioner in the cell dialog", () => {
     expect(
       screen.getAllByRole("option").map((option) => names.find((name) => option.textContent?.includes(name)) ?? option.textContent),
     ).toEqual(["notAssigned", "David Öberg", "Cilla Ek", "inactiveTeacher(Bo Lind)"]);
+  });
+
+  it("offers an administrator who teaches (Users.teaches) among a share's teachers, and not one who does not", async () => {
+    const maja: PersonFixture = { ...anna, id: "a-maja", role: "SCHOOL_ADMIN", teaches: true, firstName: "Maja", lastName: "Mark", email: "maja@example.test" };
+    const rolf: PersonFixture = { ...anna, id: "a-rolf", role: "SCHOOL_ADMIN", firstName: "Rolf", lastName: "Rektor", email: "rolf@example.test" };
+    state.people = loaded([anna, bo, maja, rolf]);
+    state.shares = loaded([{ requirementId: "r-so", teacherId: "t-bo", lessons: 1, minutes: 60 }]);
+    const user = await open();
+    await screen.findByText("part(Bo Lind|1|3|60|33)");
+
+    const pickers = screen.getAllByRole("combobox", { name: "teacher" });
+    await user.click(pickers[pickers.length - 1]!);
+    const offered = screen.getAllByRole("option").map((option) => option.textContent ?? "");
+    expect(offered.some((text) => text.includes("Maja Mark"))).toBe(true);
+    expect(offered.some((text) => text.includes("Rolf Rektor"))).toBe(false);
   });
 
   it("names a share's teacher who has left, as inactive, rather than as nobody", async () => {

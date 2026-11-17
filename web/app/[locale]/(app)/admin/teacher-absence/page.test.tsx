@@ -28,15 +28,22 @@ globalThis.ResizeObserver ??= class ResizeObserverStub {
 const cancel = vi.hoisted(() => vi.fn());
 
 const LESSONS = [
-  { id: "cl-1", date: "2026-10-12", startsAt: "2026-10-12T06:00:00Z", endsAt: "2026-10-12T07:00:00Z", subjectId: "s-ma", studentGroupId: "g-7a", roomId: null, status: "SCHEDULED" },
-  { id: "cl-2", date: "2026-10-12", startsAt: "2026-10-12T08:00:00Z", endsAt: "2026-10-12T09:00:00Z", subjectId: "s-ma", studentGroupId: "g-7b", roomId: null, status: "SCHEDULED" },
+  { id: "cl-1", date: "2026-10-12", startsAt: "2026-10-12T06:00:00Z", endsAt: "2026-10-12T07:00:00Z", subjectId: "s-ma", studentGroupId: "g-7a", roomId: null, status: "SCHEDULED", teachers: [{ role: "LEAD", teacherId: "t-1" }] },
+  { id: "cl-2", date: "2026-10-12", startsAt: "2026-10-12T08:00:00Z", endsAt: "2026-10-12T09:00:00Z", subjectId: "s-ma", studentGroupId: "g-7b", roomId: null, status: "SCHEDULED", teachers: [{ role: "LEAD", teacherId: "t-1" }] },
 ];
 
 // "Gallrat före": nothing gallrat in these rows.
 vi.mock("@/lib/retention-queries", () => ({ usePurgedBefore: () => ({ of: () => null }) }));
 vi.mock("@/lib/queries", () => ({
   usePeople: () => ({
-    data: [{ id: "t-1", role: "TEACHER", isActive: true, firstName: "Nils", lastName: "Berg" }],
+    data: [
+      { id: "t-1", role: "TEACHER", isActive: true, firstName: "Nils", lastName: "Berg" },
+      { id: "t-2", role: "TEACHER", isActive: true, firstName: "Bo", lastName: "Ek" },
+      // An administrator who teaches (Users.teaches), one who does not, and a teacher who has left.
+      { id: "a-1", role: "SCHOOL_ADMIN", isActive: true, firstName: "Maja", lastName: "Mark", teaches: true },
+      { id: "a-2", role: "SCHOOL_ADMIN", isActive: true, firstName: "Rolf", lastName: "Rektor" },
+      { id: "t-3", role: "TEACHER", isActive: false, firstName: "Gun", lastName: "Borta" },
+    ],
   }),
   useSubjects: () => ({ data: [{ id: "s-ma", name: "Matematik" }] }),
   useGroups: () => ({ data: [{ id: "g-7a", name: "7A" }, { id: "g-7b", name: "7B" }] }),
@@ -140,5 +147,38 @@ describe("the register dialog beside the page's own filter", () => {
     expect(field).toHaveAttribute("role", "combobox");
     expect(field.id).not.toBe(filter.id);
     expect(document.querySelectorAll(`[id="${field.id}"]`)).toHaveLength(1);
+  });
+});
+
+describe("who can be absent, and who can step in (an administrator who teaches: Users.teaches)", () => {
+  it("lists her among those who can be absent in the page's filter, and not an administrator who does not teach, nor a teacher who has left", async () => {
+    const user = userEvent.setup();
+    render(<TeacherAbsencePage />);
+    await user.click(screen.getByRole("combobox"));
+    expect(await screen.findByRole("option", { name: "Nils Berg" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Maja Mark" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Rolf Rektor" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Gun Borta" })).not.toBeInTheDocument();
+  });
+
+  it("lists her in the register dialog's teacher field too", async () => {
+    const user = userEvent.setup();
+    render(<TeacherAbsencePage />);
+    await user.click(screen.getByRole("button", { name: /teacherAbsence\.register/ }));
+    const dialog = await screen.findByRole("dialog", {}, { timeout: 5000 });
+    await user.click(within(dialog).getByLabelText("absenceForm.teacher"));
+    expect(await screen.findByRole("option", { name: "Maja Mark" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Rolf Rektor" })).not.toBeInTheDocument();
+  });
+
+  it("keeps her out of the substitute pick: she is not in the pool and is never asked (SP409)", async () => {
+    const user = await chooseTeacher();
+    const row = screen.getByText("7A").closest("tr")!;
+    await user.click(within(row).getByRole("button", { name: /dayPlanner\.substituteAction/ }));
+    const dialog = await screen.findByRole("dialog", {}, { timeout: 5000 });
+    await user.click(within(dialog).getByRole("combobox", { name: "dayPlanner.substituteSelect" }));
+    expect(await screen.findByRole("option", { name: "Bo Ek" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Maja Mark" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Rolf Rektor" })).not.toBeInTheDocument();
   });
 });
