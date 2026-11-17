@@ -54,6 +54,7 @@ import {
   ProjectedRostersBanner,
 } from "@/components/schedule/planning-year";
 import { LunchLocksNote, PeriodNote } from "@/components/schedule/period-note";
+import { DialogLoadBoundary } from "@/components/schedule/dialog-load-boundary";
 import { CandidatesSection, candidatesHref } from "./candidates-section";
 import { RefusalLink } from "./refusal-link";
 import { placementLinkOfRefusal } from "@/lib/placement-link";
@@ -727,9 +728,12 @@ export default function GeneratePage() {
                 </span>
               </p>
             ) : null}
-            <Suspense fallback={null}>
-              <PlacedRow yearId={year?.id ?? null} yearIsActive={year?.isActive ?? true} running={isRunning} />
-            </Suspense>
+            {/* A chunk that does not arrive leaves this row out; it must not take the page, and the button beside it, along. */}
+            <DialogLoadBoundary onError={() => undefined}>
+              <Suspense fallback={null}>
+                <PlacedRow yearId={year?.id ?? null} yearIsActive={year?.isActive ?? true} running={isRunning} />
+              </Suspense>
+            </DialogLoadBoundary>
             <Button
               className="w-full sm:w-auto"
               disabled={!canRun || isRunning || candidateRunActive}
