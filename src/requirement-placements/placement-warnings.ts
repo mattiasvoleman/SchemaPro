@@ -45,13 +45,25 @@ import {
  *                          teaching in a row as a wish.
  *   CLASS_HAS_NO_LUNCH     the class's own fixed lessons leave no start for
  *                          the lunch break inside the school's window
- *                          (LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK). Always
- *                          refuses: a lock is arithmetic, and a pin is a
- *                          lesson the lunch has to keep clear of.
+ *                          (LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK). Refuses
+ *                          when the engine is asked at all: a lock is
+ *                          arithmetic, and a pin is a lesson the lunch has to
+ *                          keep clear of. See ASKED below.
  *   NO_ROOM_FREE           a pin whose subject needs a room type has no room
  *                          of that type free: the fixed lessons in rooms of
  *                          the type and the other pins hold every room there
- *                          is. Always refuses, since a pin is placed.
+ *                          is. Always refuses, since the warning is about a
+ *                          pin, a lesson the engine places, so it is asked.
+ *
+ * ASKED. Generera does not call the engine when it has nothing to send
+ * (optimization-proxy.service.ts: an empty list of requirements answers
+ * FEASIBLE at once, and no rule of the engine is read). A week the school has
+ * laid entirely by hand, every lesson a lock and no post with a lesson left,
+ * can therefore break the class's lunch without Generera refusing it
+ * (measured: LÅG-1 of the review of #339). The engine has something to place
+ * when a post has a lesson left (`lessonsLeft`, which the board counts and a
+ * save asks for) or when any förläggning is a pin, since a pin stays in the
+ * lessons its post asks of the engine. `asked` below is that test.
  *
  * ONLY WHERE THE ANSWER IS CERTAIN does a warning say `refuses`. What is left
  * out of each count makes it quieter than the engine and never louder
@@ -275,7 +287,9 @@ export function mealsCover(meals: readonly HandMeal[], from: string, to: string)
  * the lessons run together, rescues the day (the engine skips a pinned day in every one of its lunch refusals).
  *
  * `classes` are the groups that eat (the home classes); a lesson reaches a class when it names it, as lead group or as
- * an extra group. Always refuses: see the file's first paragraphs.
+ * an extra group. Refuses when the engine is asked (see ASKED in the file's first paragraphs): `lessonsLeft` is whether
+ * any post of the year has a lesson left for it to place, and a pin anywhere in the fixed week is a lesson it places.
+ * Absent reads as true, the answer for a caller that has not counted the year's posts (the engine is then asked).
  */
 export function classLunchWarningsOf(
   items: readonly FixedItem[],
@@ -283,8 +297,10 @@ export function classLunchWarningsOf(
   classes: ReadonlySet<string>,
   meals: readonly HandMeal[],
   year: YearSpan,
+  lessonsLeft = true,
 ): WarningsByRow {
   const warnings: WarningsByRow = new Map();
+  const asked = lessonsLeft || items.some((item) => item.pin);
   const last = lunch.endMinutes - lunch.minutes;
   if (last < lunch.startMinutes) return warnings;
   for (const classId of classes) {
@@ -315,7 +331,7 @@ export function classLunchWarningsOf(
           if (item.row !== null) {
             add(warnings, item.row, {
               code: 'CLASS_HAS_NO_LUNCH',
-              refuses: true,
+              refuses: asked,
               params: { day, windowStart: clock(lunch.startMinutes), windowEnd: clock(lunch.endMinutes), minutes: lunch.minutes },
             });
           }
@@ -394,6 +410,8 @@ export interface WarningInput {
   showsHr: boolean;
   lunch: { rule: LunchRule; classes: ReadonlySet<string>; meals: readonly HandMeal[]; year: YearSpan } | null;
   rooms: RoomFacts | null;
+  /** Whether any post of the year has a lesson left for the engine to place (classLunchWarningsOf). Absent: true. */
+  lessonsLeft?: boolean;
 }
 
 /** Every warning, per row, in a fixed order: the teacher's day, the class's lunch, the room. */
@@ -401,7 +419,7 @@ export function placementWarningsOf(input: WarningInput): { byRow: PlacementWarn
   const parts: WarningsByRow[] = [];
   const day = teacherDayWarningsOf(input.items, input.teacherRules, input.showsHr);
   parts.push(day.warnings);
-  if (input.lunch) parts.push(classLunchWarningsOf(input.items, input.lunch.rule, input.lunch.classes, input.lunch.meals, input.lunch.year));
+  if (input.lunch) parts.push(classLunchWarningsOf(input.items, input.lunch.rule, input.lunch.classes, input.lunch.meals, input.lunch.year, input.lessonsLeft));
   if (input.rooms) parts.push(noRoomWarningsOf(input.items, input.rooms));
   const byRow = Array.from({ length: input.rows }, (_, row) => parts.flatMap((part) => part.get(row) ?? []));
   return { byRow, hrTold: [...new Set(day.hrTold)] };

@@ -113,16 +113,26 @@ const minutesOf = (clock: string): number => Number(clock.slice(0, 2)) * 60 + Nu
  * The other schools' hold on a teacher or a room that is PICKED, as bands behind the cards (as the meals are). Nothing is drawn for a
  * resource no filter points at: a school's week is full of them. Two holds at one time are one band that names every school. The page
  * only shows them: the gateway already refuses a row on top of one (OTHER_SCHOOL), and the mirror is not told.
+ *
+ * THE BAND SAYS WHAT KIND OF HOLD IT IS (review of #339, LÅG-3), for a room that is lent or borrowed is not "booked": ROOM_BORROWED is a
+ * room of another school that this school may use only in the times of an approved loan, so the band covers every hour OUTSIDE them
+ * and "booked at the owner" is wrong over most of the week. `label` is asked with the kind the band's holds have in common, and with none
+ * when two kinds are at one time (the generic sentence).
  */
-export function heldBands(holds: readonly BoardHold[] | undefined, filters: Pick<BoardFilters, "teachers" | "rooms">, label: (schools: readonly string[]) => string): TimetableBand[] {
-  const bands = new Map<string, { dayOfWeek: number; start: number; end: number; schools: Set<string> }>();
+export function heldBands(
+  holds: readonly BoardHold[] | undefined,
+  filters: Pick<BoardFilters, "teachers" | "rooms">,
+  label: (schools: readonly string[], kind: BoardHold["kind"] | undefined) => string,
+): TimetableBand[] {
+  const bands = new Map<string, { dayOfWeek: number; start: number; end: number; schools: Set<string>; kind: BoardHold["kind"] | undefined }>();
   for (const hold of holds ?? []) {
     if (!(hold.resourceKind === "TEACHER" ? filters.teachers : filters.rooms).includes(hold.resourceId)) continue;
     const start = Math.max(minutesOf(hold.startTime), FROM);
     const end = Math.min(minutesOf(hold.endTime), TO);
     if (end <= start) continue;
     const key = `${hold.dayOfWeek}|${start}|${end}`;
-    const band = bands.get(key) ?? { dayOfWeek: hold.dayOfWeek, start, end, schools: new Set<string>() };
+    const band = bands.get(key) ?? { dayOfWeek: hold.dayOfWeek, start, end, schools: new Set<string>(), kind: hold.kind };
+    if (band.kind !== hold.kind) band.kind = undefined;
     for (const school of hold.schools) band.schools.add(school);
     bands.set(key, band);
   }
@@ -131,6 +141,6 @@ export function heldBands(holds: readonly BoardHold[] | undefined, filters: Pick
     dayOfWeek: band.dayOfWeek,
     startMinutes: band.start,
     endMinutes: band.end,
-    label: label([...band.schools].sort((a, b) => a.localeCompare(b, "sv"))),
+    label: label([...band.schools].sort((a, b) => a.localeCompare(b, "sv")), band.kind),
   }));
 }

@@ -67,8 +67,10 @@ export function usePlacementWarnings({ board, filters, keys, blockKeys, saving }
 
   const held = useMemo(
     () =>
-      heldBands(board?.holds, filters, (schools) =>
-        t("hold", { schools: new Intl.ListFormat(locale === "en" ? "en-GB" : "sv-SE", { type: "conjunction" }).format(schools) }),
+      heldBands(board?.holds, filters, (schools, kind) =>
+        t(kind === "ROOM_LENT" ? "holdLent" : kind === "ROOM_BORROWED" ? "holdBorrowed" : "hold", {
+          schools: new Intl.ListFormat(locale === "en" ? "en-GB" : "sv-SE", { type: "conjunction" }).format(schools),
+        }),
       ),
     [board?.holds, filters, locale, t],
   );

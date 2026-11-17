@@ -12,7 +12,7 @@ import type { YearWeek } from "@/lib/placement-weeks";
 /*
  * Vecka: one week of the läsår at a time (D2). "Alla veckor" is the week as it has always been drawn, every lesson with a mark
  * for the weeks it runs; a week picked shows only the lessons that run THAT week, under its dates, with its week number and
- * whether it is an odd (A) or an even (B) week, grouped by term. The picker only chooses: which cards a week holds is
+ * whether it is an odd or an even week (by its number, in the words the rest of the app uses), grouped by term. The picker only chooses: which cards a week holds is
  * lib/placement-weeks.ts runsInWeek, and what is shown is the page's.
  *
  * A native select, as the pages under a tight budget use (components/ui/native-select.tsx), with two buttons for the

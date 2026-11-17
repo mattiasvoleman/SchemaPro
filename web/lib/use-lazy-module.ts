@@ -3,14 +3,22 @@ import { useEffect, useState } from "react";
 /**
  * A module fetched after the page is up, or null until it is: for what the page needs only once somebody does something (a week
  * picked, a half of a pair laid) and which the route has no bytes for in its first load. `load` is read once, on the first render.
+ * `onError` is told when it does not come (a chunk that fails to load): without it the rejection is nobody's, as it was.
  */
-export function useLazyModule<T>(load: () => Promise<T>): T | null {
+export function useLazyModule<T>(load: () => Promise<T>, onError?: (error: unknown) => void): T | null {
   const [module, setModule] = useState<T | null>(null);
   useEffect(() => {
     let live = true;
-    void load().then((loaded) => {
-      if (live) setModule(loaded);
-    });
+    void load().then(
+      (loaded) => {
+        if (live) setModule(loaded);
+      },
+      onError === undefined
+        ? undefined
+        : (error: unknown) => {
+            if (live) onError(error);
+          },
+    );
     return () => {
       live = false;
     };
