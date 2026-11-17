@@ -28,6 +28,11 @@ describe("week numbers and parity: the server's own (src/calendar/lesson-recurre
     ["2027-01-03", 53],
     ["2027-01-04", 1],
     ["2027-06-07", 23],
+    // A week whose Thursday is the 1st of January is week 1 of the new year, though its Monday and Wednesday are in December.
+    ["2025-12-28", 52],
+    ["2025-12-29", 1],
+    ["2025-12-31", 1],
+    ["2026-01-01", 1],
   ])("%s is in week %i", (day, week) => {
     expect(isoWeekOf(day)).toBe(week);
   });

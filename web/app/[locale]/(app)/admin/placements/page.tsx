@@ -232,8 +232,6 @@ export default function PlacementsPage() {
   const [weeksChoice, setWeeksChoice] = useState<WeeksChoice>("ALL_WEEKS");
   /** The week shown: the Monday of one week of the läsår, or null for all of them (D2). Only the cards are narrowed by it. */
   const [week, setWeek] = useState<string | null>(null);
-  /** The write of a pair is on its way: the count a write moves must not read as "the part has nothing left to lay" meanwhile. */
-  const writingPair = useRef(false);
   // What a week picked and a pair need is fetched when the page is up, not with it (lib/use-lazy-module.ts): the route has no bytes for it.
   const weekTools = useLazyModule(() => import("@/lib/placement-week-tools"));
   const pairTools = useLazyModule(() => import("@/lib/placement-pair-control"));
@@ -540,7 +538,7 @@ export default function PlacementsPage() {
   }, [year?.id]);
   // The part a held half is a half of has no lesson left to lay (somebody else laid it, the post was changed): the half is let go and the page says so.
   useEffect(() => {
-    if (!held || !everything || heldBrick || saving || writingPair.current) return;
+    if (!held || !everything || heldBrick || saving) return;
     setHeld(null);
     setBrickKey(null);
     setMessage({ tone: "problem", text: tPair("releasedGone", { lesson: postName(heldPost) }) });
@@ -827,7 +825,6 @@ export default function PlacementsPage() {
         yearWeeks,
         nearestWeekOf: weekTools?.nearestWeekOf,
         setWeek,
-        writing: writingPair,
       })
     : null;
   /** A brick laid, pulled or pointed to: a lesson of every week, or a half of the pair the reader chose (the first is held, the second writes both). */

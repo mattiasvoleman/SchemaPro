@@ -499,8 +499,12 @@ describe("what becomes of a half that is held (BESLUT, lib/placement-pair.ts)", 
     await holdFirstHalf();
     state.year = { id: "y2", name: "2027/28", startDate: "2027-08-14", endDate: "2028-06-10", isActive: false };
     rerender(tree());
-    await waitFor(() => expect(held()).toBeNull());
     await waitFor(() => expect(status()).toHaveTextContent("releasedYear"));
+    // The other year's week is drawn (its board has been read): the half is not back, and the row for it is gone.
+    await ready();
+    expect(held()).toBeNull();
+    expect(screen.queryByTestId("pair-held")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("lay-row")).not.toBeInTheDocument();
     await noWrite();
   });
 
@@ -577,8 +581,11 @@ describe("what becomes of a half that is held (BESLUT, lib/placement-pair.ts)", 
     renderPage();
     await ready();
     await holdFirstHalf();
-    await userEvent.click(brickOf("post-fy|anna|60#1"));
+    // With the keyboard (a press of the mouse is also a pull, which says the same): Enter on another brick chooses nothing.
+    brickOf("post-fy|anna|60#1").focus();
+    await userEvent.keyboard("{Enter}");
     expect(message()).toHaveTextContent("finishFirst");
+    expect(brickOf("post-fy|anna|60#1")).toHaveAttribute("aria-pressed", "false");
     // The row is still the half's.
     expect(screen.getByTestId("pair-held")).toBeInTheDocument();
     fireEvent.pointerDown(brickOf("post-fy|anna|60#1"), { pointerId: 1, button: 0, clientX: 10, clientY: 10 });
@@ -641,6 +648,63 @@ describe("the held half is in the week's way, and can be moved", () => {
       [2, "10:00", "ODD_WEEKS"],
       [2, "10:00", "EVEN_WEEKS"],
     ]);
+  });
+
+  it("judges the second half for the OTHER weeks: on the very time and with the very teacher of the held half it is free, and the fields say so", async () => {
+    pinGeometry();
+    renderPage();
+    await ready();
+    await holdFirstHalf();
+    // The held odd half stands on Tuesday 10:00. The second half's fields are put on the same Tuesday 10:00: even weeks, so no clash.
+    const row = screen.getByTestId("lay-row");
+    await userEvent.selectOptions(within(row).getByRole("combobox", { name: "day" }), "2");
+    fireEvent.change(within(row).getByLabelText("start"), { target: { value: "10:00" } });
+    await waitFor(() => expect(within(row).getByTestId("place-verdict")).toHaveTextContent("free"));
+    // And a lesson of the same weeks (an every-week lesson would be) is not: the mirror knows the half runs the odd weeks.
+    expect(within(row).getByTestId("place-verdict")).not.toHaveTextContent("verdict.");
+  });
+
+  it("holds the half of a shared post as its own teacher's lesson in the week's way (Anna's half is Anna's, not the post's teacher Bo's)", async () => {
+    pinGeometry();
+    // Anna's odd-weeks Fysik, Monday 09:00 in B3: moved onto Tuesday 10:00 later, where Anna's half of Slöjd is held.
+    state.board = {
+      ...baseBoard(),
+      placements: [{ id: "row-fy", requirementId: "post-fy", dayOfWeek: 4, startTime: "10:00", endTime: "11:00", minutes: 60, roomId: "r-b3", roomName: "B3", recurrence: "ODD_WEEKS", teacherId: null, changedAt: "2026-11-13T08:00:00.000Z", verdict: { ok: true } }],
+      posts: baseBoard().posts.map((entry) => (entry.id === "post-fy" ? { ...entry, parts: [part({ count: 1, placed: 1, left: 0 })] } : entry)),
+    };
+    renderPage();
+    await ready();
+    // Slöjd 7B is Bo's post; the lesson that is Anna's is the pair.
+    await userEvent.click(brickOf("post-sl|anna|60#1"));
+    await screen.findByTestId("lay-row");
+    await userEvent.selectOptions(within(await screen.findByTestId("pair-fields")).getByRole("combobox"), "ODD_WEEKS");
+    await setRoom("r-a12");
+    fireEvent.click(columns()[1]!, at(2, 10));
+    await waitFor(() => expect(document.querySelector("[data-lesson-id='pairhalf:post-sl|anna|60']")).toBeInTheDocument());
+    await noWrite();
+    // Anna's other odd lesson cannot be moved onto the half: the same teacher, the same weeks.
+    const fysik = cardOf("post-fy||60|4|10:00|ODD_WEEKS")!;
+    fireEvent.pointerDown(fysik, { pointerId: 4, button: 0, ...at(4, 10, 5) });
+    fireEvent.pointerMove(window, { pointerId: 4, ...at(2, 10, 5) });
+    fireEvent.pointerUp(window, { pointerId: 4, ...at(2, 10, 5) });
+    await waitFor(() => expect(message()).toHaveTextContent("cannotMoveThere("));
+    await noWrite();
+  });
+
+  it("writes a pair that uses the post's last lesson, and says so as a pair: the brick going is not the half being let go", async () => {
+    pinGeometry();
+    state.board = { ...baseBoard(), posts: baseBoard().posts.map((entry) => (entry.id === "post-ma" ? { ...entry, parts: [part({ count: 1, left: 1 })] } : entry)) };
+    renderPage();
+    await ready();
+    await holdFirstHalf();
+    fireEvent.click(columns()[3]!, at(4, 13, 15));
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(status()).toHaveTextContent("placedPair(Matematik 7A|"));
+    // No word of a half let go, however many renders it took (the count moved with the write, before the half was cleared).
+    expect(message()).toBeNull();
+    expect(held()).toBeNull();
+    await waitFor(() => expect(brickOf("post-ma|anna|60#1")).toBeNull());
+    expect(status()).toHaveTextContent("placedPair(Matematik 7A|");
   });
 
   it("moves the held half by dragging its card, still without writing, and the pair is written where it was left", async () => {

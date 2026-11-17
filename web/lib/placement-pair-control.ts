@@ -54,8 +54,6 @@ export interface PairContext {
   yearWeeks: readonly YearWeek[];
   nearestWeekOf: ((weeks: readonly YearWeek[], monday: string, parity: Half) => YearWeek | null) | undefined;
   setWeek: (monday: string | null) => void;
-  /** The write of a pair is on its way: the part's count moves with it and must not read as "nothing left to lay". */
-  writing: { current: boolean };
 }
 
 export function pairControl(c: PairContext) {
@@ -123,13 +121,9 @@ export function pairControl(c: PairContext) {
     const line = (input: (typeof inputs)[number]) => c.tPair("pairLine", { weeks: weeksText(input.recurrence), when: whenText(input.dayOfWeek, minutesOfClock(input.startTime), input.minutes) });
     const last = inputs[1];
     const base = placementKeyOf({ requirementId: post.id, teacherId: last.teacherId ?? null, minutes: brick.minutes, dayOfWeek: last.dayOfWeek, startTime: last.startTime, recurrence: last.recurrence });
-    c.writing.current = true;
-    let done = false;
-    try {
-      done = await c.change(post.id, { kind: "addPair", inputs }, "place", c.tPair("placedPair", { lesson: c.postName(post), first: line(inputs[0]), second: line(last) }), c.cardOfKey(base));
-    } finally {
-      c.writing.current = false;
-    }
+    // The write moves the part's count (the brick may go) before the half is cleared, and the page does not read "nothing left to lay" meanwhile:
+    // the page's `saving` holds it until the answer is in, and the half is cleared in the same turn.
+    const done = await c.change(post.id, { kind: "addPair", inputs }, "place", c.tPair("placedPair", { lesson: c.postName(post), first: line(inputs[0]), second: line(last) }), c.cardOfKey(base));
     if (done) {
       c.setHeld(null);
       c.setBrickKey(null);
