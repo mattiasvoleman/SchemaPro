@@ -64853,11 +64853,11 @@ BEGIN
   PERFORM set_config('app.tk5_pb', pg_temp.tk_id(6023)::text, true);
   PERFORM set_config('app.tk5_ra', (SELECT id::text FROM "LeaveRequests" WHERE "studentId" = pg_temp.tk_id(6021)), true);
   PERFORM set_config('app.tk5_rb', (SELECT id::text FROM "LeaveRequests" WHERE "studentId" = pg_temp.tk_id(6023)), true);
-  -- The first day of the requests is the fixture's own (the Monday after the school's day when it was planted), not a Monday counted again here.
-  PERFORM set_config('app.tk5_mon', (SELECT "startDate"::text FROM "LeaveRequests" WHERE id = current_setting('app.tk5_ra')::uuid), true);
-  IF current_setting('app.tk5_ra') = '' OR current_setting('app.tk5_rb') = '' OR current_setting('app.tk5_mon') = '' THEN
+  IF current_setting('app.tk5_ra') = '' OR current_setting('app.tk5_rb') = '' THEN
     RAISE EXCEPTION 'tk 512: the two pending leave requests of the fixture are not there';
   END IF;
+  -- The first day of the requests is the fixture's own (the Monday after the school's day when it was planted), not a Monday counted again here.
+  PERFORM set_config('app.tk5_mon', (SELECT "startDate"::text FROM "LeaveRequests" WHERE id = current_setting('app.tk5_ra')::uuid), true);
   -- The duties the cast stands on: each administrator has their one MENTORSKAP, the teachers theirs, the teacher with no class none.
   PERFORM pg_temp.tk_expect('512 the duties of the cast',
     (SELECT string_agg(right(u."authId"::text, 4) || '=' || (SELECT count(*) FROM "TeacherDuties" d WHERE d."userId" = u.id AND d.kind = 'MENTORSKAP'), ',' ORDER BY u."authId")
