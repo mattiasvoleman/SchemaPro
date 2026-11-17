@@ -190,6 +190,8 @@ const publication = vi.hoisted(() => ({
   mode: "DIRECT" as "DIRECT" | "DRAFT",
   needsAcknowledgement: false,
   draftPending: false,
+  /** The teacher the draft's removed lesson carries; null is a lesson with none. */
+  draftTeacher: null as string | null,
   publish: { mutateAsync: vi.fn(), isPending: false },
 }));
 vi.mock("@/lib/publication-queries", () => ({
@@ -213,7 +215,7 @@ vi.mock("@/lib/publication-queries", () => ({
               after: { id: "l-slojd", subjectId: "s-sl", studentGroupId: "g-41", teacherId: null, coTeacherId: null, roomId: null, dayOfWeek: 2, startTime: "11:00", endTime: "12:00", isParked: false },
             },
           ],
-          removed: [{ id: "l-gone", subjectId: "s-sl", studentGroupId: "g-41", teacherId: null, coTeacherId: null, roomId: null, dayOfWeek: 3, startTime: "08:00", endTime: "09:00", isParked: false }],
+          removed: [{ id: "l-gone", subjectId: "s-sl", studentGroupId: "g-41", teacherId: publication.draftTeacher, coTeacherId: null, roomId: null, dayOfWeek: 3, startTime: "08:00", endTime: "09:00", isParked: false }],
           pendingRemovals: 0,
         }
       : undefined,
@@ -655,6 +657,40 @@ describe("an administrator who teaches (Users.teaches) is a teacher of the grid"
     fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
     fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
     expect((await screen.findByRole("dialog")).textContent).toContain("Slöjd · 5.1 · R. Rektor");
+  });
+
+  describe("in the publish review", () => {
+    afterEach(() => {
+      publication.mode = "DIRECT";
+      publication.draftTeacher = null;
+    });
+
+    // The review names the lessons the draft adds, changes and removes, and it names a teacher by looking her up in the
+    // list the page hands it. That list is a look-up and not a pick (lib/teaching-staff.ts): a lesson keeps its teacher
+    // when the mark is taken off, and its line must not turn into "Slöjd · 4.1 · tis 08:00 · ?".
+    it("names the administrator on a removed lesson, also when her mark has been taken off", async () => {
+      publication.mode = "DRAFT";
+      publication.draftTeacher = "a-rolf";
+      state.people = [...PEOPLE, admin("a-rolf", "Rolf", "Rektor")];
+      const user = userEvent.setup();
+      render(<TimetablePage />);
+
+      await user.click(await screen.findByText("publishing.badgePending(2)"));
+
+      expect(await screen.findByText("Slöjd · 4.1 · days.3 08:00–09:00 · Rolf Rektor")).toBeInTheDocument();
+    });
+
+    it("names an administrator whose mark stands, as before", async () => {
+      publication.mode = "DRAFT";
+      publication.draftTeacher = "a-maja";
+      state.people = [...PEOPLE, admin("a-maja", "Maja", "Mark", true)];
+      const user = userEvent.setup();
+      render(<TimetablePage />);
+
+      await user.click(await screen.findByText("publishing.badgePending(2)"));
+
+      expect(await screen.findByText("Slöjd · 4.1 · days.3 08:00–09:00 · Maja Mark")).toBeInTheDocument();
+    });
   });
 });
 
