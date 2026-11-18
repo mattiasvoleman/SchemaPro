@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { usePlacementLinkTarget } from "./use-placement-link-target";
 
 /*
@@ -130,5 +130,30 @@ describe("the mark", () => {
     const { result } = render({ rows: [row("r1")], years: years("y-active") });
     await act(async () => undefined);
     expect(result.current).toEqual({ markedCard: null, missing: false });
+  });
+});
+
+describe("the keyboard when the school picks another läsår and then the first one again (review of #345)", () => {
+  it("is moved to the card once, when the address is read: coming back is not the address again, and the mark has ended", async () => {
+    const card = document.createElement("div");
+    card.setAttribute("data-lesson-id", "placement:r1");
+    card.tabIndex = -1;
+    card.scrollIntoView = vi.fn();
+    document.body.appendChild(card);
+    try {
+      const focus = vi.spyOn(card, "focus");
+      at("?post=post-1&day=3&start=10:00");
+      const { result, rerender } = render({ rows: [row("r1")], years: years("y-active") });
+      await waitFor(() => expect(result.current.markedCard).toBe("placement:r1"));
+      expect(focus).toHaveBeenCalledTimes(1);
+      rerender({ rows: undefined, years: years("y-next") });
+      expect(result.current.markedCard).toBeNull();
+      rerender({ rows: [row("r1")], years: years("y-active") });
+      await act(async () => undefined);
+      expect(focus).toHaveBeenCalledTimes(1);
+      expect(result.current.markedCard).toBeNull();
+    } finally {
+      card.remove();
+    }
   });
 });

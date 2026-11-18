@@ -52,6 +52,12 @@ export function usePlacementLinkTarget(
     if (openCard !== null) setEnded(true);
   }, [openCard]);
 
+  // The school picking another läsår ends the mark as opening a card does: coming back to the läsår is not the address again, and it
+  // would otherwise take the keyboard from the picker and scroll to the card a second time (review of #345).
+  useEffect(() => {
+    if (found !== null && shownId !== undefined && found.yearId !== shownId) setEnded(true);
+  }, [found, shownId]);
+
   // What was found belongs to the läsår it was found in: the school picking another läsår leaves it behind.
   const current = found !== null && found.yearId === shownId ? found : null;
   const card = current?.card ?? null;
