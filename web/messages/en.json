@@ -7464,7 +7464,7 @@
       "ENGINE_LACKS_PERIODS": "The timetable engine is older than the rest of the service and cannot plan curriculum entries with dates yet. Try again in a few minutes.",
       "ENGINE_LACKS_PINNED_LESSONS": "The timetable engine is older than the rest of the service and cannot hold placed lessons without a room yet. Try again in a few minutes.",
       "ENGINE_MEALS_INCONSISTENT": "The timetable engine answered with lunch times that do not fit the periods of the school year, so nothing was written. Try again, and get in touch if it keeps happening.",
-      "ENGINE_TIMED_OUT": "The scheduling engine did not answer within its longest wait and stopped the run, so no timetable was saved. Run Generate again.",
+      "ENGINE_TIMED_OUT": "The scheduling engine did not answer within its longest wait, so no timetable was saved. It may go on working in the background for a while, so wait a few minutes before you run Generate again.",
       "CANDIDATES_RUNNING": "Timetable proposals are being computed for this school year. Generate can be started once they are done."
     },
     "page": {

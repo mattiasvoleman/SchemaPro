@@ -736,7 +736,7 @@ const ENGINE_CEILING_SENTENCE = 'Optimization timed out.';
  */
 export const ENGINE_TIMED_OUT = 'ENGINE_TIMED_OUT';
 const ENGINE_TIMED_OUT_MESSAGE =
-  'The scheduling engine did not answer within its longest wait and stopped the run, so no timetable was saved. Run Generate again.';
+  'The scheduling engine did not answer within its longest wait, so no timetable was saved. It may go on working in the background for a while, so wait a few minutes before you run Generate again.';
 
 /**
  * Whether a failed engine call may have left the engine solving. It did when
