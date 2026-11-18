@@ -36,8 +36,11 @@ describe('the e2e harness server', () => {
   });
 
   it('does not keep the process alive for a spec that forgets to close it', () => {
-    const server = harness.app.getHttpServer() as import('node:http').Server & { hasRef?: () => boolean };
-    // The listening handle is unref'd: Node's hasRef() says so where it has it.
-    if (typeof server.hasRef === 'function') expect(server.hasRef()).toBe(false);
+    // net.Server has no hasRef() (Node 24: `typeof server.hasRef` is "undefined"), so the question goes to the listening handle, which has one.
+    // The type check is part of the test: a Node that lost the handle's hasRef() must fail here and not pass without asking anything.
+    const server = harness.app.getHttpServer() as import('node:http').Server & { _handle?: { hasRef?: () => boolean } };
+    const handle = server._handle;
+    expect(typeof handle?.hasRef).toBe('function');
+    expect(handle!.hasRef!()).toBe(false);
   });
 });
