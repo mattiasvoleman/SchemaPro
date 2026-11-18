@@ -72,6 +72,7 @@ import {
   draftMastersWhere,
   engineMayStillBeSolving,
   ENGINE_LACKS_BEST_EFFORT,
+  ENGINE_TIMED_OUT,
   OptimizationProxyService,
   previousLessonsFrom,
   regenerationSweepDay,
@@ -586,6 +587,9 @@ function unplacedViewOf(value: unknown): RunUnplaced | null {
  */
 export function engineFailureOf(error: unknown): RunFailure {
   const failure = failureOf(error);
+  // The engine's own ceiling has a name of its own for Generera; a candidate
+  // run says it as it said every engine 503 before (ENGINE_TIMED_OUT).
+  if (failure.code === ENGINE_TIMED_OUT) return { ...failure, code: CANDIDATE_ENGINE_TIMEOUT };
   if (failure.code !== null || !(error instanceof HttpException)) return failure;
   const status = error.getStatus();
   if (status === 503 || status === 504) return { ...failure, code: CANDIDATE_ENGINE_TIMEOUT };

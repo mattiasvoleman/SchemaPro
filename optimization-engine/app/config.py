@@ -41,8 +41,10 @@ class Settings(BaseSettings):
     # before it answers TIMEOUT (the satisfaction search takes all of it; phase
     # 1a is capped inside it, see SchedulerSolver.CLEAN_SAT_CAP_SECONDS). The
     # probe below is spent AFTER it, so a timed-out solve answers in about
-    # SOLVER_MAX_TIME_SECONDS + SOLVER_PROBE_SECONDS, and the API's
-    # AI_ENGINE_TIMEOUT_MS must exceed that sum.
+    # SOLVER_MAX_TIME_SECONDS + SOLVER_PROBE_SECONDS after its builds. The
+    # engine's own ceiling (optimize.solve_ceiling_seconds) is that sum plus
+    # thirty seconds for the builds, and the API's AI_ENGINE_TIMEOUT_MS must
+    # exceed the ceiling: at a 180 s budget and a 20 s probe, 230 s.
     #
     # There used to be a second setting, SOLVER_TIMEOUT_SECONDS, validated and
     # logged at start-up and read by nothing: raising it changed no solve, and
