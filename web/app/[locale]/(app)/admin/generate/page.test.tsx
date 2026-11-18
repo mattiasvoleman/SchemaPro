@@ -1726,7 +1726,7 @@ describe("Schemaförslag beside Generera (design §6)", () => {
     expect(screen.getByRole("button", { name: "scheduleCandidates.section.start" })).toBeEnabled();
   });
 
-  it.each(["GENERATE_STALE", "SCHEDULE_BUSY", "ENGINE_LACKS_PERIODS", "ENGINE_LACKS_PINNED_LESSONS", "ENGINE_MEALS_INCONSISTENT"])("says in its own words why a job stopped before writing (%s)", (code) => {
+  it.each(["GENERATE_STALE", "SCHEDULE_BUSY", "ENGINE_LACKS_PERIODS", "ENGINE_LACKS_PINNED_LESSONS", "ENGINE_MEALS_INCONSISTENT", "ENGINE_TIMED_OUT"])("says in its own words why a job stopped before writing (%s)", (code) => {
     // The gateway's codes, not the engine's: engineMessages has no sentence
     // for them, so without these the admin would read the English.
     state.job = {

@@ -956,9 +956,12 @@ def test_the_timeout_probes_stop_at_the_deadline(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("walk", [WALK, None])
-def test_solve_bounds_the_timeout_probes_only_where_the_walk_is_kept(monkeypatch, walk) -> None:
-    """With the walk the timeout probes get a deadline counted from the
-    request's arrival, builds included; without it, the probes they always had."""
+def test_solve_bounds_the_timeout_probes_with_the_walk_or_without_it(monkeypatch, walk) -> None:
+    """The timeout probes always get a deadline: the budget and the probe's
+    seconds from the start of the search, which with the walk is the request's
+    arrival, builds included. Without the walk they once had none, and on
+    2026-11-17 a search that stopped ten seconds after its 180 left the probe
+    running past the API's ceiling (test_search_options, "the ceiling")."""
     import app.solver.scheduler_solver as module
 
     seen: list[object] = []
@@ -978,7 +981,7 @@ def test_solve_bounds_the_timeout_probes_only_where_the_walk_is_kept(monkeypatch
     payload = _payload([_requirement(GROUP, kind="LAB"), _requirement(OTHER_GROUP, kind="GYM")], walk=walk)
     _solver, _request, response = _solve(payload)
     assert response.status == "TIMEOUT"
-    assert (seen[0] is not None) is (walk is not None)
+    assert seen[0] is not None
 
 
 def test_slow_builds_on_a_short_budget_time_out_rather_than_fail(monkeypatch) -> None:
