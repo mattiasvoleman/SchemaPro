@@ -45,7 +45,7 @@ import {
   SWEEP_JOB,
   yearHasActiveCandidateRun,
 } from './schedule-candidates.service';
-import { ENGINE_LACKS_BEST_EFFORT, ENGINE_LACKS_CANDIDATES } from './optimization-proxy.service';
+import { ENGINE_LACKS_BEST_EFFORT, ENGINE_LACKS_CANDIDATES, ENGINE_TIMED_OUT } from './optimization-proxy.service';
 import {
   CONSECUTIVE_TEACHING_HIDDEN_MESSAGE,
   TEACHER_WORK_DAYS_HIDDEN,
@@ -2193,6 +2193,8 @@ describe('the pieces', () => {
     expect(engineFailureOf(new Error('boom'))).toEqual({ message: 'boom', code: null, params: null });
     expect(engineFailureOf(new HttpException('Bad request', HttpStatus.BAD_REQUEST))).toEqual({ message: 'Bad request', code: null, params: null });
     expect(engineFailureOf(new HttpException({ message: 'x', code: 'not a code' }, 504))).toMatchObject({ code: CANDIDATE_ENGINE_TIMEOUT });
+    // The engine's own ceiling has its own name for Generera; a candidate run says it as every engine 503.
+    expect(engineFailureOf(new HttpException({ message: 'x', code: ENGINE_TIMED_OUT }, 503))).toMatchObject({ code: CANDIDATE_ENGINE_TIMEOUT });
   });
 
   it('names an engine that broke, and a 3xx that reached the run as one, CANDIDATE_ENGINE_FAILED', () => {

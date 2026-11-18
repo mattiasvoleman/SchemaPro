@@ -330,7 +330,7 @@ log looks *fine* is the port problem described above, not a crash.
 | `SUPABASE_SERVICE_ROLE_KEY` | your `SUPABASE_SERVICE_KEY` from Step 2 |
 | `AI_ENGINE_URL` | your `SOLVER_URL` from Step 6a — including `https://`, e.g. `https://solver-prod-a1b2.up.railway.app` |
 | `AI_ENGINE_API_KEY` | your `SOLVER_SECRET` from Step 6a |
-| `AI_ENGINE_TIMEOUT_MS` | `90000` |
+| `AI_ENGINE_TIMEOUT_MS` | `120000` (more than `SOLVER_MAX_TIME_SECONDS` + `SOLVER_PROBE_SECONDS` + 30 s; at a 180 s budget `240000`) |
 | `THROTTLE_TTL_SECONDS` | `60` |
 | `THROTTLE_LIMIT` | `120` |
 | `CORS_ORIGINS` | `http://localhost:3000` for now; corrected in Step 8 |

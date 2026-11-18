@@ -526,7 +526,11 @@ export default function GeneratePage() {
               // partition of the year's periods, so nothing was written.
               code === "ENGINE_MEALS_INCONSISTENT"
               ? tCandidates("jobErrors.ENGINE_MEALS_INCONSISTENT")
-              : null;
+              : // The engine stopped waiting for its own solve: nothing came back,
+                // not even a TIMEOUT's explanation (ENGINE_TIMED_OUT in the proxy).
+                code === "ENGINE_TIMED_OUT"
+                ? tCandidates("jobErrors.ENGINE_TIMED_OUT")
+                : null;
 
   const solverStatus = job?.status === "SUCCEEDED" ? job.solverStatus : null;
   // Both verdicts mean "no timetable came back", but only INFEASIBLE is a
