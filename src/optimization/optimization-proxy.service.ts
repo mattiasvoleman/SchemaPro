@@ -721,6 +721,22 @@ const ENGINE_UNREACHABLE = 'The AI engine could not be reached.';
 const ENGINE_UNAVAILABLE = 'AI engine unavailable.';
 /** callAiEngine's sentence when the engine answered, and the answer says nothing a school may read. */
 const ENGINE_ERROR = 'The AI engine returned an error.';
+/** What the engine's 503 says when its own ceiling stopped the wait (app/api/v1/optimize.py). */
+const ENGINE_CEILING_SENTENCE = 'Optimization timed out.';
+
+/**
+ * The engine stopped waiting for its own solve (optimize.solve_ceiling_seconds)
+ * and answered 503. Not a fault in the engine and not a refusal of the week: the
+ * run took longer than the engine waits, so nothing came back to save, not even
+ * a TIMEOUT's explanation. Its own code, so the page says that and not "the AI
+ * engine returned an error", which is what three runs said on 2026-11-17. The
+ * solve thread can still be running (engineMayStillBeSolving: a 503 that is not
+ * "unreachable"). A schemaförslag run reads it as CANDIDATE_ENGINE_TIMEOUT
+ * (engineFailureOf), as it read every engine 503 before.
+ */
+export const ENGINE_TIMED_OUT = 'ENGINE_TIMED_OUT';
+const ENGINE_TIMED_OUT_MESSAGE =
+  'The scheduling engine did not answer within its longest wait, so no timetable was saved. It may go on working in the background for a while, so wait a few minutes before you run Generate again.';
 
 /**
  * Whether a failed engine call may have left the engine solving. It did when
@@ -4791,6 +4807,13 @@ export class OptimizationProxyService {
                 // And older than `placements`: sent again without it, below.
                 if (error.response.status === 422 && carriesPlacements && refusesField(body, 'placements')) {
                   throw new EngineLacksPlacements();
+                }
+                // The engine's own ceiling: said as what it is (ENGINE_TIMED_OUT).
+                if (error.response.status === HttpStatus.SERVICE_UNAVAILABLE && body?.message === ENGINE_CEILING_SENTENCE) {
+                  throw new HttpException(
+                    { message: ENGINE_TIMED_OUT_MESSAGE, code: ENGINE_TIMED_OUT },
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                  );
                 }
                 const readable =
                   error.response.status < 500 && typeof body?.message === 'string';

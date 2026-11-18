@@ -1351,8 +1351,9 @@ def _solve_guarded(
     shape written straight in CP-SAT, the old rows and all, throws with
     presolve and is proved INFEASIBLE without it (test_solve_guard.py keeps
     it). The retry gets what the first attempt left of the solver's
-    own time limit, never a second one: run_solver answers 503 at the budget
-    plus thirty seconds, and a slice paid twice would trade the 500 for that.
+    own time limit, never a second one: run_solver answers 503 at the budget,
+    the probe and thirty seconds (optimize.solve_ceiling_seconds), and a slice
+    paid twice would trade the 500 for that.
 
     UNKNOWN WHEN THE RETRY THROWS TOO, or no time is left for it, wherever
     the caller has something truer to say than the throw. UNKNOWN is the
@@ -5777,11 +5778,15 @@ class SchedulerSolver:
         # path ran to 91 s against the gateway's and the API's 90. A week
         # without the walk keeps the clock it always had.
         started = entered if travel is not None else time.monotonic()
-        probe_deadline = (
-            None
-            if travel is None
-            else entered + total_budget + self._settings.solver_probe_seconds
-        )
+        # THE PROBE ENDS ON A CLOCK, with the walk or without it: the budget
+        # and the probe's seconds from the moment the search began. The
+        # search can stop some seconds after its budget (2026-11-17: ten, on
+        # an 809-lesson week at 180 s), and a probe that then took its whole
+        # twenty, builds on top, ran past the API's ceiling, which answered
+        # 503 in the middle of it (optimize.solve_ceiling_seconds). A probe
+        # that cannot have the rest of its slice is not started, and the
+        # summary counts only the rules that were probed (_probe_timeout).
+        probe_deadline = started + total_budget + self._settings.solver_probe_seconds
 
         def _remaining() -> float:
             return total_budget - (time.monotonic() - started)
@@ -5798,9 +5803,7 @@ class SchedulerSolver:
 
         def _timeout_conflicts() -> ConflictAnalysis | None:
             return self._with_tight_week(
-                self._probe_timeout(request)
-                if probe_deadline is None
-                else self._probe_timeout(request, deadline=probe_deadline),
+                self._probe_timeout(request, deadline=probe_deadline),
                 tight,
             )
 
@@ -6111,12 +6114,23 @@ class SchedulerSolver:
         def _remaining() -> float:
             return total_budget - (time.monotonic() - entered)
 
+        # THE PROBE ENDS ON A CLOCK HERE TOO. Without one it ran every
+        # relaxation's build and slice after a search that had stopped late,
+        # and a week with five or more of them passed
+        # optimize.solve_ceiling_seconds: the 503 this ceiling is there to
+        # leave for a solve that hangs came in the middle of the probe, as it
+        # did for Generera on 2026-11-17. The clock here counts from the
+        # request's arrival, builds included, as `_remaining` does.
+        probe_deadline = entered + total_budget + self._settings.solver_probe_seconds
+
         def _timeout() -> OptimizeScheduleResponse:
             return OptimizeScheduleResponse(
                 request_id=request.request_id,
                 status="TIMEOUT",
                 lessons=[],
-                conflicts=self._with_tight_week(self._probe_timeout(hard), tight),
+                conflicts=self._with_tight_week(
+                    self._probe_timeout(hard, deadline=probe_deadline), tight,
+                ),
             )
 
         self._hint_previous_lessons(feas_model, feas_decisions, request.previous_lessons)
@@ -11095,8 +11109,9 @@ class SchedulerSolver:
 
         None for a request that turned its probes off, as for a deployment
         that set SOLVER_PROBE_SECONDS to zero: the TIMEOUT then stands bare.
-        Likewise where the school keeps the walk and `deadline` came before
-        any probe could run.
+        Likewise where `deadline` came before any probe could run: solve()
+        gives one to every week, the budget and the probe's seconds from the
+        moment its search began.
         """
         budget = self._settings.solver_probe_seconds
         if budget <= 0 or not _runs_probes(request):
@@ -11127,11 +11142,14 @@ class SchedulerSolver:
                 )
         found: list[tuple[str, float]] = []
         probed = 0
+        # The seconds of every probe the deadline cut short: what "inside N s
+        # each" may say when the clock, not the slice, ended a probe.
+        cut: list[float] = []
         # What the walk's own probe did: how long it searched and what it
         # answered. None while it has not run.
         walk_probe: tuple[int, float] | None = None
         for code, relaxed in relaxations:
-            # `deadline` (a week that keeps the walk; see solve()) bounds the
+            # `deadline` (see solve()) bounds the
             # probes and their builds together: a probe that cannot have the
             # rest of its slice is not started, and the summary counts only
             # the rules that were probed.
@@ -11158,9 +11176,12 @@ class SchedulerSolver:
                 # would not have solved them either.
                 seconds = budget
             if deadline is not None:
+                planned = seconds
                 seconds = min(seconds, deadline - time.monotonic())
                 if seconds < self.MIN_PHASE_SECONDS:
                     break
+                if seconds < planned:
+                    cut.append(seconds)
             probed += 1
             started = time.perf_counter()
             status, _ = self._probe_search(
@@ -11202,12 +11223,19 @@ class SchedulerSolver:
                 ),
             )
         if not found:
+            # ONLY WHAT RAN IS SAID, as with the walk above. The deadline (see
+            # solve()) can end the loop before the last rule, or before the
+            # first when the search stopped late: "none of the 5 rules probed
+            # made one appear inside 4 s each" was then said of searches that
+            # never ran or ran for less. Nothing probed leaves the TIMEOUT bare.
+            if probed == 0:
+                return None
             return ConflictAnalysis(
                 summary_code="PROBE_NOTHING_HELPED",
                 summary_params={
                     "budget": budget,
-                    "rules": len(relaxations),
-                    "slice": round(slice_seconds),
+                    "rules": probed,
+                    "slice": round(min([slice_seconds, *cut])),
                 },
                 conflicts=[],
             )

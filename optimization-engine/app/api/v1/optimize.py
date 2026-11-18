@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.config import Settings
 from app.dependencies import get_app_settings, verify_api_key
 from app.logging_config import get_logger
-from app.schemas.schedule import OptimizeScheduleRequest, OptimizeScheduleResponse
+from app.schemas.schedule import OptimizeScheduleRequest, OptimizeScheduleResponse, SearchOptions
 from app.solver.scheduler_solver import SchedulerSolver, settings_for_search
 
 logger = get_logger(__name__)
@@ -20,20 +20,48 @@ router = APIRouter(prefix="/api/v1", tags=["optimization"])
 _SOLVE_BUILD_HEADROOM_SECONDS = 30.0
 
 
+def solve_ceiling_seconds(settings: Settings, search: SearchOptions | None = None) -> float:
+    """The wall-clock after which a solve is answered 503 instead of waited for.
+
+    THE PROBE IS COUNTED FOR A REQUEST THAT RUNS IT. A schemaförslag candidate
+    after the first sends `probes: false` (SearchOptions.probes): nothing is
+    spent after its budget, and its ceiling is the budget and the builds as it
+    was. Counting the deployment's probe for it put the ceiling (30 + 20 + 30 =
+    80 s) after the gateway's own wait for it (30 + 45 = 75 s,
+    candidate-variants.ts callTimeoutMs), which the engine is meant to answer
+    first. `settings` is the request's scoped copy (settings_for_search).
+
+    THE SEARCH, THE PROBE AND THE BUILDS, NOT THE SEARCH ALONE. A solve that
+    runs out of time answers TIMEOUT after its budget AND the timeout probe
+    (SOLVER_PROBE_SECONDS), which names the rule that does not fit; the model
+    builds come before the budget's clock starts. The ceiling was the budget
+    plus thirty seconds, which held at a 60 s budget, and at 180 s on a
+    809-lesson week (2026-11-17) the builds took eight seconds, the search
+    stopped ten after its budget, and the ceiling fell in the middle of the
+    probe three times running: the school read "The AI engine returned an
+    error." instead of the TIMEOUT and what the probe had found. The probe now
+    has a deadline of its own (SchedulerSolver.solve), and the ceiling lies
+    past it, so the 503 is left for a solve that hangs.
+    """
+    probe = settings.solver_probe_seconds if search is None or search.runs_probes else 0.0
+    return settings.solver_max_time_seconds + probe + _SOLVE_BUILD_HEADROOM_SECONDS
+
+
 async def run_solver(
     payload: OptimizeScheduleRequest,
     settings: Settings,
 ) -> OptimizeScheduleResponse:
     """Run the CPU-bound solve off the event loop with a hard ceiling.
 
-    The ceiling is the REQUEST'S budget plus the headroom: a schemaförslag
-    candidate that asked for thirty seconds is answered 503 at sixty, not at
-    a Generera's ninety. `settings` is the app's and is never written to;
+    The ceiling is the REQUEST'S budget and probe plus the headroom
+    (solve_ceiling_seconds): a schemaförslag candidate that asked for thirty
+    seconds, whose probe is then fifteen, is answered 503 at seventy-five, not
+    at a Generera's 110. `settings` is the app's and is never written to;
     settings_for_search returns a copy when the request brings a budget.
     """
     settings = settings_for_search(settings, payload.search)
     solver = SchedulerSolver(settings)
-    timeout = settings.solver_max_time_seconds + _SOLVE_BUILD_HEADROOM_SECONDS
+    timeout = solve_ceiling_seconds(settings, payload.search)
     try:
         return await asyncio.wait_for(
             asyncio.to_thread(solver.solve, payload),
