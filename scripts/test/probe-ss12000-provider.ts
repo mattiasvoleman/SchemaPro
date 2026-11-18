@@ -366,7 +366,7 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
         await provider.deletedEntities(caller, {}),
       ]);
       assert.ok(!answers.includes(key), 'the stretch key left through v2');
-      checkSchema('Duty', duties[1]);
+      assert.deepEqual(checkSchema(duties[1]!, 'Duty'), [], 'the spring duty is not S1-shaped');
 
       // What no Duty shows moves none: the spring's nedsättning, an autumn period with the post's
       // grad and its own nedsättning, and one whose grad rounds to the post's 60.

@@ -267,6 +267,17 @@ export interface BoardTimetableView {
   writtenAt: string | null;
 }
 
+/**
+ * GET /teaching-requirements/placements/latest: the lessons the last Generera laid and nobody has taken over, as the week
+ * draws them behind its cards ("Visa senaste schemat"). The shape of a kept lesson (ids only, no pupil, no person named), and
+ * what the next Generera replaces (generatedMastersWhere). Read on its own, when the school asks: a school's year is some
+ * thousands of lessons, which the week of förläggningar does not need to carry for everyone who opens it.
+ */
+export interface LatestScheduleResponse {
+  academicYearId: string;
+  lessons: BoardKeptView[];
+}
+
 /** GET /teaching-requirements/placements/board: the year's week of förläggningar. */
 export interface PlacementBoardResponse {
   academicYearId: string;

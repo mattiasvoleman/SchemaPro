@@ -286,6 +286,9 @@ test.describe("axe", () => {
     await page.getByRole("menuitemcheckbox", { name: "Anna Lind", exact: true }).click();
     await page.keyboard.press("Escape");
     await expect(page.getByText("Bokad på Östra skolan", { exact: true })).toBeVisible();
+    // From the top of the page: after the clicks above the sticky header's avatar sits over the week, and its tint measures 4.49:1 in dark.
+    // The header got a button (Kontrollera veckan), so the page is taller at 375 px and the clicks scroll it to where that happens.
+    await page.evaluate(() => window.scrollTo(0, 0));
     const reports = await scanBothSchemes(page, "placement-warnings-bands", true);
     expect(reports, reports.join("\n")).toEqual([]);
     expect(misses, MISSES).toEqual([]);

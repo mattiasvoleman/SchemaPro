@@ -20,6 +20,8 @@ const WEEKDAY = /^[1-5]$/;
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export interface PlacementLinkTarget {
+  /** The läsår the address names, or null when it names none (the grundschema's link leaves out the active one). */
+  yearId: string | null;
   postId: string;
   blockId: string | null;
   /** ISO weekday, Monday to Friday. */
@@ -66,7 +68,7 @@ export function linkTargetOf(search: string): PlacementLinkTarget | null {
   const day = query.get("day");
   const start = query.get("start");
   if (!postId || day === null || start === null || !WEEKDAY.test(day) || !CLOCK.test(start)) return null;
-  return { postId, blockId: query.get("block") || null, day: Number(day), start };
+  return { yearId: query.get("year") || null, postId, blockId: query.get("block") || null, day: Number(day), start };
 }
 
 /**

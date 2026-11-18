@@ -457,7 +457,7 @@ async function checks(owner: PrismaClient, api: PrismaService, slug: string): Pr
 
   // --- (lf) forty rooms, a term -----------------------------------------------------------------------
   await check('(lf) forty rooms, a term of Tuesday evenings each, against a full schedule: registered in under 2 s, or in eighty empty transactions a series where the machine is slower than the one the phase measured on', async () => {
-    const rooms = [];
+    const rooms: Array<{ id: string; name: string }> = [];
     for (let i = 0; i < 40; i++) rooms.push(await owner.room.create({ data: { schoolId: s, name: `Sal ${String(i + 1).padStart(2, '0')}` } }));
     const termStart = tuesdayOnOrAfter(dayShift(todayIso, 200));
     const termEnd = dayShift(termStart, 7 * 19);

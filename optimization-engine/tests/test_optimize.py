@@ -1034,10 +1034,11 @@ def test_tiny_time_budget_never_reports_a_satisfiable_model_as_infeasible() -> N
     was answered, so it is a 200 carrying "TIMEOUT" and no lessons. A second
     copy of this test used to sit further up the file under the same name —
     shadowed, therefore never run — asserting a 503 with code SOLVER_TIMEOUT.
-    Nothing raises SolverTimeoutError anywhere in the engine, so that copy
-    described a behaviour that does not exist and would have failed the moment
-    it was collected. Its one honest claim, that the caller is not handed an
-    error, is folded into the status-code assertion here.
+    That copy asserted a 503 for a budget that ran out, which is the other
+    thing: a 503 with the code SOLVER_TIMEOUT is a route's CEILING passing
+    (app/timing.py), raised by all four routes and asserted in
+    tests/test_timing.py. Its one honest claim, that the caller is not handed
+    an error, is folded into the status-code assertion here.
     """
     settings = Settings(
         API_KEY="test-api-key-000000000000000000000000",
@@ -4857,6 +4858,13 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         # extra_forbidden at ['body', 'search'], which is the shape the
         # gateway reads as ENGINE_LACKS_CANDIDATES.
         "search",
+        # Optional (M1, Tidskedjan): how long the caller waits, in seconds,
+        # sent by a gateway that read `deadlineSeconds` in GET /api/v1/timing's
+        # `capabilities` and never to an engine that did not say it: an older
+        # one answers it with a 422 whose one error is extra_forbidden at
+        # ['body', 'deadlineSeconds'], which the gateway reads, sends the
+        # request again without the field and reads the times again.
+        "deadlineSeconds",
         # Optional, and sent only for a Bästa möjliga schema candidate (the
         # school's switch is on and the run asked for the mode): every other
         # payload omits it and is solved as before. An engine older than this

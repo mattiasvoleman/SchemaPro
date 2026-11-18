@@ -1,0 +1,10 @@
+{
+  "_about": "The 503 a route answers when it stops waiting for its solve (app/main.py solver_timeout_handler, app/exceptions.SolverTimeoutError). Read by the engine's tests (tests/test_timing.py) AND by the API's (src/optimization/optimization-proxy.service.spec.ts): the gateway turns this body into ENGINE_TIMED_OUT by the code, or by the sentence for an engine older than the code, and two copies of a sentence in two languages is how a rewording gave every school 'The AI engine returned an error.' again. Change a sentence here and both suites say so.",
+  "code": "SOLVER_TIMEOUT",
+  "sentences": {
+    "optimize": "Optimization timed out.",
+    "optimize-rooms": "Room optimization timed out.",
+    "staff": "Staffing proposal timed out.",
+    "plan-exams": "Exam planning timed out."
+  }
+}

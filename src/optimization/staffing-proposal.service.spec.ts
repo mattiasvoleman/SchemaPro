@@ -1778,13 +1778,34 @@ describe('StaffingProposalService.apply', () => {
     const R_X = '00000000-0000-4000-8000-0000000000d1';
     const giveMa8To = (toTeacherId: string) => [{ requirementId: R_MA8, fromTeacherId: null, toTeacherId }];
 
-    it('400s a change that gives her a post, and says she does not teach, writing nothing', async () => {
+    it('409s STAFF_PROPOSAL_STALE for a change that gives her a post, writing nothing: the proposal is old, and the dialog says so (review of #340, LÅG-3)', async () => {
       const { service, world, proposal } = await proposeThenApply(withOffice());
       await expect(
         service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: giveMa8To(OFFICE) }, admin()),
-      ).rejects.toThrow(/does not teach/);
+      ).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
       expect(leadOf(world, R_MA8)).toBeNull();
       expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+    });
+
+    it('is the same answer when the mark was taken off after the proposal: she was offered the post then, and the basis, which holds who is staff, is the same', async () => {
+      const rows = withOffice();
+      rows['user']!.find((row) => row['id'] === OFFICE)!['teaches'] = true;
+      const { service, world, proposal } = await proposeThenApply(rows);
+      // Marked: the same change is let through, so the 409 below is the mark taken off and nothing else.
+      world.rows['user']!.find((row) => row['id'] === OFFICE)!['teaches'] = false;
+      await expect(
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: giveMa8To(OFFICE) }, admin()),
+      ).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
+      expect(leadOf(world, R_MA8)).toBeNull();
+    });
+
+    it('says nothing in English with a uuid any more: the sentence of the old 400 is gone from the answer', async () => {
+      const { service, proposal } = await proposeThenApply(withOffice());
+      const refused = await service
+        .apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: giveMa8To(OFFICE) }, admin())
+        .catch((error: unknown) => error as { response?: { message?: string } });
+      expect(JSON.stringify(refused)).not.toMatch(/does not teach|Users\.teaches/);
+      expect(JSON.stringify(refused)).not.toContain(OFFICE);
     });
 
     it('lets the same change through once she is marked, the basis being the proposal’s: a mark is asked again at the apply', async () => {
@@ -1813,7 +1834,7 @@ describe('StaffingProposalService.apply', () => {
       expect(leadOf(world, R_X)).toBe(ANNA);
       await expect(
         service.apply({ academicYearId: YEAR, basisSha256: applied.basisSha256, changes: [back] }, admin()),
-      ).rejects.toThrow(/does not teach/);
+      ).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
       await service.apply({ academicYearId: YEAR, basisSha256: applied.basisSha256, undo: true, changes: [back] }, admin());
       expect(leadOf(world, R_X)).toBe(OFFICE);
     });

@@ -3785,6 +3785,25 @@
       lärare eller en sal, annars skulle en skola som byggt sitt schema för hand
       få hela veckan full; antalet står under veckan. Välj en klass i filtret
       för att också se klassens måltider, de du själv lagt, som band.</li>
+    <li><strong>Visa senaste schemat</strong> är en ruta över veckan. Den är
+      avstängd från början, och då läses inget. Slår du på den och har valt en
+      klass, en lärare eller en sal ritas de lektioner som senaste Generera lade
+      som bleka, streckade rutor bakom veckan, så att du ser var motorn lade
+      resten förra gången innan du lägger något själv. Har du valt en vecka
+      visas de som går just den veckan. Rutorna går inte att trycka på, dra eller
+      öppna, och en förläggning prövas inte mot dem: nästa Generera lägger om
+      dem och kan lägga dem någon annanstans. Ligger en förläggning ovanpå en
+      blek lektion syns båda. Det som visas är de lektioner nästa Generera
+      ersätter, som de ligger i grundschemat nu; lektionerna Generera skrev från
+      en förläggning är redan korten så länge raden ligger kvar där den skrevs
+      (flyttas eller tas den bort efter körningen står lektionen kvar i
+      grundschemat på den gamla platsen tills nästa Generera, och syns
+      varken som kort eller som blek lektion), och de handgjorda och låsta ligger kvar
+      som <em>i grundschemat</em>. En lektion som ligger helt före 08:00 eller
+      efter 18:00 ritas inte, eftersom veckan inte når dit. Raden under rutan
+      säger hur många lektioner som visas, eller varför inga gör det (inget
+      valt, läsningen pågår eller misslyckades, eller att senaste schemat inte
+      har något för det du valt). Rutan finns också för den som bara läser.</li>
     <li><strong>Posterna</strong> står under veckan, en rad per timplanspost
       med <em>så många lektioner förlagda, så många fasta i grundschemat, så
       många kvar för Generera</em>, och varje förläggning med sitt skäl. På en
@@ -3792,6 +3811,15 @@
     <li><strong>Filtren</strong> för klass, lärare och sal gäller veckan, listan
       och brickorna. En förläggning hör till klassen på sin post, till lärarens
       egen lektion på en delad post och till sin sal.</li>
+    <li><strong>Kontrollera veckan.</strong> Knappen överst, bredvid vägen till
+      <span class="ui">Generera schema</span>, frågar motorn om veckan som den
+      ligger just nu, förläggningarna med, utan att lägga något schema, och
+      svarar på några sekunder: inget hittades som stoppar veckan, veckan är
+      trång (”Åk 9 ligger på 97 % av ramtiden”) eller veckan går inte att
+      lägga, med samma rader som en nekad körning ger. Svaret gäller veckan som
+      den stod när du frågade, så en ändring du sparar tar bort det. Kontrollen
+      kan visa att en vecka är omöjlig eller trång, aldrig att ett schema
+      finns (5.2). Knappen syns för dem som får köra Generera.</li>
     <li><strong>Varningar.</strong> Medan du lägger visar sidan, på rutan och på
       posten, vad det som ligger fast redan bryter: läraren går över sitt tak
       per dag, sitt antal undervisningsdagar eller sin gräns för undervisning i
@@ -4085,8 +4113,13 @@
   <p>
     <strong>Vad meningen inte kan veta.</strong> Ångrar du en ändring sparas
     postens lista om, med en ny tid, och meningen står kvar fast listan är den
-    som skrevs. Den är en uppmaning att generera om och inget bevis på att veckan
-    skiljer sig från grundschemat.
+    som skrevs. Går det åt andra hållet, tiger meningen: återställer du en äldre
+    version av grundschemat eller kastar ett utkast, skapas lektionerna om och får
+    återställningens tid, och en förläggning som sparades mellan körningen och
+    återställningen räknas då som äldre än schemat. Meningen kan alltså vara tyst
+    fast schemat skrevs från äldre förläggningar; efter en återställning, generera
+    om om du är osäker. Den är en uppmaning att generera om och inget bevis på att
+    veckan skiljer sig från grundschemat, och inget bevis på att den inte gör det.
   </p>
   <h4>Hur en vägran läses</h4>
   <p>
@@ -4103,7 +4136,10 @@
     länken på blockets kort. Hittas ingen lektion på den posten, den dagen och
     den tiden (den är flyttad eller borttagen sedan körningen) säger veckan
     <em>Förläggningen ligger inte längre där: den är flyttad eller
-    borttagen</em>, och posten står som vanligt i listan. En rad som lagrades
+    borttagen</em>, och posten står som vanligt i listan. Meningen gäller läsåret
+    länken pekade på och försvinner när du väljer ett annat läsår eller lägger en
+    lektion på just den platsen. En länk till ett läsår som varken är det aktiva
+    eller nästa visar det aktiva läsåret och säger ingenting om kortet. En rad som lagrades
     före länkarna saknar länken. Före en körning säger genereringssidan också
     hur många lektioner som ligger fast, med en länk till veckan, och hur många av
     dem som inte längre håller; den raden är en hjälp och hindrar ingen körning
@@ -5673,6 +5709,27 @@
     Klicka <span class="ui">Generera schema</span>. Motorn arbetar i bakgrunden
     och visar resultatet när den är klar. Vänta tills körningen avslutats innan
     du navigerar vidare.
+  </p>
+  <p>
+    Vill du veta hur veckan ser ut före körningen finns
+    <span class="ui">Kontrollera veckan</span> bredvid
+    <span class="ui">Generera schema</span>. Knappen räknar på veckan med
+    motorns snabba förkontroller, lägger inget schema och svarar på några
+    sekunder. Svaret står under <span class="ui">Förutsättningar</span>: inget
+    hittades som stoppar veckan, veckan är trång (”Åk 9 ligger på 97 % av
+    ramtiden”) eller veckan går inte att lägga, med samma rader som en nekad
+    körning ger. Kontrollen kan visa att en vecka är omöjlig eller trång, men
+    aldrig att ett schema finns, så ”inget hittades” är ingen garanti. Det
+    kontrollen inte körde står under svaret: lunchstegets egen räkning, och
+    frågan om förläggningarna är orsaken, gör bara
+    <span class="ui">Generera schema</span>.
+  </p>
+  <p>
+    Samma kontroll görs när du klickar <span class="ui">Generera schema</span>.
+    Är veckan trång eller omöjlig frågar sidan (”Åk 7 är 94 % full. Kör
+    ändå?”) innan körningen startar, så att du slipper vänta flera minuter på
+    en vecka som inte går. Kan kontrollen inte köras, till exempel medan
+    schemamotorn uppdateras, startar körningen som vanligt.
   </p>
   <p>
     Är nästa läsår rullat men ännu inte aktiverat väljer du överst på sidan

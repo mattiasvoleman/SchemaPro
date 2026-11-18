@@ -2,8 +2,9 @@
 
 THE SCHOOL (2026-11-03). Year 8 with five home classes and five language
 groups cut across all of them. Three of the groups have one teacher, so they
-cannot run together even though they share no pupil with each other, and every
-class has to sit through them one after the other. The class counts (cliques of
+cannot run together even though they share no pupil with each other, and no
+lesson of a class can run while a group that holds some of its pupils does:
+the groups follow one another. The class counts (cliques of
 pupils) say the week is a comfortable 80 %; the count with the teachers in it
 says 95 % or more, and CP-SAT spent twelve hundred seconds not finding it.
 
@@ -1308,6 +1309,22 @@ def test_a_post_split_between_teachers_counts_whole_for_the_class_and_by_share_f
     assert teacher.class_minutes == 80 + 80 + 60 + 60 + 40 + 40
 
 
+def test_the_sentence_is_about_the_class_and_not_the_classes_when_it_is_one_class() -> None:
+    """Review of #342, LÅG-6: `classes` is how many classes the groups take pupils from, and "The classes they share" is a plural for one."""
+    params = {"groups": 2, "minutes": 280, "grades": "8", "classMinutes": 0, "classOwn": "none"}
+    one = render("TEACHER_SHARED_BY_PARALLEL_GROUPS", {**params, "classes": 1})
+    several = render("TEACHER_SHARED_BY_PARALLEL_GROUPS", {**params, "classes": 3})
+
+    assert "The class they share has no lesson of its own left to place" in one
+    assert "the teacher's queue and not the class that fills the week" in one
+    assert "The classes they share" not in one and "classes that fill" not in one
+    assert "The classes they share have no lessons of their own left to place" in several
+    assert "the teacher's queue and not the classes that fill the week" in several
+    # Both keep the advice that helps (a teacher of their own) and leave out the one that does not (fewer classes).
+    assert "parallel block" in one and "parallel block" in several
+    assert "fewer classes" not in one and "fewer classes" not in several
+
+
 def test_the_sentence_says_what_the_classes_lose_and_keeps_its_advice_only_where_it_helps() -> None:
     some = render(
         "TEACHER_SHARED_BY_PARALLEL_GROUPS",
@@ -1328,13 +1345,23 @@ def test_the_sentence_says_what_the_classes_lose_and_keeps_its_advice_only_where
     # A row stored before these existed is read by the web as "unknown": the old sentence, word for word.
     assert render(
         "TEACHER_SHARED_BY_PARALLEL_GROUPS",
-        {"groups": 5, "minutes": 800, "grades": "9", "classOwn": "unknown"},
+        {"groups": 5, "minutes": 800, "grades": "9", "classes": 0, "classOwn": "unknown"},
     ) == (
         "One teacher stands on 5 groups of year 9 that take pupils from the same classes, 800 minutes a week "
         "in all. A teacher cannot be in two places, so those groups cannot run at the same time, and every "
         "class they share has to sit through them one after the other. Give each group a teacher of its own "
         "and run them as a parallel block, or let each group take pupils from fewer classes."
     )
+
+
+def test_the_first_sentence_says_the_same_class_when_the_groups_take_pupils_from_one_class() -> None:
+    """The second sentence became singular for one class (review of #342, LÅG-6); the first still said "from the same classes"."""
+    params = {"groups": 2, "minutes": 280, "grades": "8", "classMinutes": 0}
+    for own in ("none", "some", "other"):
+        one = render("TEACHER_SHARED_BY_PARALLEL_GROUPS", {**params, "classOwn": own, "classes": 1})
+        several = render("TEACHER_SHARED_BY_PARALLEL_GROUPS", {**params, "classOwn": own, "classes": 2})
+        assert "that take pupils from the same class, 280 minutes" in one, own
+        assert "that take pupils from the same classes, 280 minutes" in several, own
 
 
 def test_a_class_with_several_posts_loses_the_sum_of_them() -> None:
