@@ -2167,6 +2167,17 @@
       "from": "fr.o.m. {date}",
       "period": "period"
     },
+    "latest": {
+      "label": "Visa senaste schemat",
+      "hint": "Ritar de lektioner senaste Generera lade bleka bakom veckan, för det du valt ovan. Nästa Generera lägger om dem, och en förläggning prövas inte mot dem.",
+      "needsFilter": "Välj en klass, en lärare eller en sal för att se det senaste schemat.",
+      "loading": "Läser det senaste schemat …",
+      "failed": "Det senaste schemat gick inte att läsa.",
+      "none": "Inget i det senaste schemat för det du valt.",
+      "shown": "{count, plural, one {# lektion} other {# lektioner}} ur det senaste schemat visas bleka.",
+      "legend": "Blek, streckad: ur det senaste schemat",
+      "ghost": "Senaste schemat: {lesson}"
+    },
     "warnings": {
       "title": "Varningar",
       "label": "Varning:",

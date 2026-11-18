@@ -8,6 +8,7 @@ import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { useProfile, useReadOnly } from "@/components/profile-context";
 import { BrickList, type BrickGroup } from "@/components/placements/brick-list";
+import { LatestSwitch } from "@/components/placements/latest-switch";
 import { SinceRunNote } from "@/components/placements/since-run-note";
 import { WarningLines } from "@/components/placements/warning-lines";
 import { FilterPicker } from "@/components/schedule/filter-picker";
@@ -70,7 +71,7 @@ import {
   type BoardPost,
   type CardNames,
 } from "@/lib/placement-board";
-import { usePlacementBoard } from "@/lib/placement-board-queries";
+import { useLatestSchedule, usePlacementBoard } from "@/lib/placement-board-queries";
 import { canBePair, heldHalfCardId, otherHalf, partKeyOfBrick, type Half, type WeeksChoice } from "@/lib/placement-pair-key";
 import { usePlacementLinkTarget } from "@/lib/use-placement-link-target";
 import { usePlacementWarnings } from "@/lib/use-placement-warnings";
@@ -175,6 +176,7 @@ export default function PlacementsPage() {
   const tPair = useTranslations("placementWeek.pair");
   const tNote = useTranslations("placementWeek.note");
   const tWeeks = useTranslations("placementWeek.weeks");
+  const tLatest = useTranslations("placementWeek.latest");
   const locale = useLocale();
   const { profile } = useProfile();
   const readOnly = useReadOnly();
@@ -221,6 +223,8 @@ export default function PlacementsPage() {
   const [weeksChoice, setWeeksChoice] = useState<WeeksChoice>("ALL_WEEKS");
   /** The week shown: the Monday of one week of the läsår, or null for all of them (D2). Only the cards are narrowed by it. */
   const [week, setWeek] = useState<string | null>(null);
+  /** "Visa senaste schemat": the lessons the last Generera laid, drawn pale behind the week; read only while it is on. */
+  const [showLatest, setShowLatest] = useState(false);
   // What a week picked and a pair need is fetched when the page is up, not with it (lib/use-lazy-module.ts): the route has no bytes for it.
   const weekTools = useLazyModule(() => import("@/lib/placement-week-tools"));
   // The mirror of the clash rule and the pair that asks it are one module and one request (lib/placement-drag-tools.ts).
@@ -342,6 +346,16 @@ export default function PlacementsPage() {
   const drag = useMemo(() => (mirror && dragTools ? dragTools.dragOf(mirror, otherNames) : null), [mirror, dragTools, otherNames]);
 
   const keptFilterNeeded = !isFiltered(filters);
+  // Read when it is on and something is picked: with nothing picked it draws nothing, and a school's whole machine-made schedule is not worth the read.
+  const latest = useLatestSchedule(year?.id ?? null, showLatest && !keptFilterNeeded);
+  // Drawn for what is picked and the week shown, as the lessons Generera keeps are; the tools come with the week's (lib/placement-week-tools.ts).
+  const ghosts = useMemo(
+    () =>
+      showLatest && latest.data && weekTools
+        ? weekTools.ghostLessonsOf({ lessons: latest.data.lessons, filters, week, names, said: (lesson) => tLatest("ghost", { lesson }) })
+        : [],
+    [showLatest, latest.data, weekTools, filters, week, names, tLatest],
+  );
   const cards = useMemo(
     () =>
       viewed
@@ -1430,11 +1444,19 @@ export default function PlacementsPage() {
                     </Suspense>
                   </div>
                 ) : null}
+                <LatestSwitch
+                  on={showLatest}
+                  onChange={setShowLatest}
+                  picked={!keptFilterNeeded}
+                  state={latest.isError ? "failed" : latest.data && weekTools ? "ready" : "loading"}
+                  count={ghosts.length}
+                />
                 <ul className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs" aria-label={t("legend")}>
                   <li>{t("legendPlaced")}</li>
                   <li>{t("legendKept")}</li>
                   <li>{t("legendFailing")}</li>
                   {warned.legend ? <li>{warned.legend}</li> : null}
+                  {ghosts.length > 0 ? <li>{tLatest("legend")}</li> : null}
                 </ul>
                 {selectedBrick && mayWrite && toolsHere ? (
                   <div data-writes="PLANERING" className="mb-3 space-y-2 rounded-md border p-3" data-testid="lay-row">
@@ -1516,7 +1538,7 @@ export default function PlacementsPage() {
                     </Button>
                   </div>
                 ) : null}
-                {!mayWrite && cards.length === 0 ? (
+                {!mayWrite && cards.length === 0 && ghosts.length === 0 ? (
                   <p className="text-sm text-muted-foreground" data-testid="placement-week-empty">
                     {t("weekEmpty")}
                   </p>
@@ -1531,6 +1553,7 @@ export default function PlacementsPage() {
                       ref={gridRef}
                       lessons={markedCards}
                       bands={allBands}
+                      behind={ghosts.length > 0 && weekTools ? (day, scale) => <weekTools.GhostColumn ghosts={ghosts} day={day} scale={scale} /> : undefined}
                       dayEndMinutes={DAY_END_MINUTES}
                       dates={week && weekTools ? weekTools.datesOfWeek(week) : undefined}
                       editable={mayWrite}

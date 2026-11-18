@@ -2167,6 +2167,17 @@
       "from": "from {date}",
       "period": "period"
     },
+    "latest": {
+      "label": "Show the latest schedule",
+      "hint": "Draws the lessons the last Generera laid as pale outlines behind the week, for what you picked above. The next Generera lays them again, and a förläggning is not judged against them.",
+      "needsFilter": "Pick a class, a teacher or a room to see the latest schedule.",
+      "loading": "Reading the latest schedule …",
+      "failed": "The latest schedule could not be read.",
+      "none": "Nothing in the latest schedule for what you picked.",
+      "shown": "{count, plural, one {# lesson} other {# lessons}} from the latest schedule shown as pale outlines.",
+      "legend": "Pale, dashed: from the latest schedule",
+      "ghost": "Latest schedule: {lesson}"
+    },
     "warnings": {
       "title": "Warnings",
       "label": "Warning:",

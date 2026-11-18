@@ -155,6 +155,12 @@ interface TimetableGridProps {
    * the `pointer-events-none` on the element below.
    */
   bands?: TimetableBand[];
+  /**
+   * Drawn in each day's column behind the lessons and the hour lines, and inert: a layer the caller lays down (the week of
+   * förläggningar's latest schedule). It is given the day, the minute the column starts at and the height of a minute, and is
+   * not lessons: layoutDay would give every lesson beside it a lane of its own.
+   */
+  behind?: (day: number, scale: { startMinutes: number; pxPerMinute: number }) => React.ReactNode;
   /** A movable band dropped at a new day and start (drag, or the arrow keys). */
   onBandMove?: (id: string, dayOfWeek: number, startMinutes: number) => void;
   /** A removable band's × pressed, or Delete on its grip. */
@@ -308,6 +314,7 @@ function TimetableGridInner({
   onBandMove,
   onBandRemove,
   bands,
+  behind,
   className,
 }: TimetableGridInnerProps) {
   const t = useTranslations("common");
@@ -1001,6 +1008,8 @@ function TimetableGridInner({
                     }}
                   />
                 ) : null}
+
+                {behind?.(day, { startMinutes: startHour * 60, pxPerMinute })}
 
                 {/* Hour lines */}
                 {hours.slice(1, -1).map((hour) => (

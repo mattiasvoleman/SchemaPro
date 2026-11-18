@@ -23,7 +23,7 @@ describe("placementWeek.pair and placementWeek.weeks", () => {
   const code = SOURCE_DIRS.flatMap((dir) => sourcesOf(join(ROOT, dir))).join("\n");
 
   it("has no sentence that nothing says (review of #338, LÅG-4: heldLabel was written and never used)", () => {
-    for (const namespace of ["pair", "weeks", "note"] as const) {
+    for (const namespace of ["pair", "weeks", "note", "latest"] as const) {
       for (const locale of ["sv", "en"] as const) {
         const catalogue = (locale === "sv" ? sv : en).placementWeek[namespace] as Record<string, string>;
         // A key is said as "key" through the namespace's own translator, or as "pair.key" through its parent's.

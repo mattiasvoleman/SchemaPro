@@ -353,3 +353,36 @@ function answeredOf(requirementId: string, anyRoom = false): { locked?: number; 
   if (requirementId === post(4).id) return { placed: 1 };
   return {};
 }
+
+/**
+ * The latest schedule (GET /teaching-requirements/placements/latest): what the last Generera laid and nobody has taken over, which "Visa
+ * senaste schemat" draws behind the week. Four lessons of 7A and one of 7B: a Monday lesson and a Wednesday one in a free hour, one on
+ * Tuesday 10:00 where the scenario places Svenska 7A (the förläggning stands on it, which is allowed: nothing is judged against a lesson the
+ * next Generera replaces), and two parallel at Thursday 08:00 so that the layer lays two side by side. The world's kept lessons are not here:
+ * they are the week's own.
+ */
+export function latestOfYear(academicYearId: string) {
+  const lesson = (index: number, over: Record<string, unknown>) => ({
+    id: uid(KIND.masterLesson, 900 + index),
+    extraGroupIds: [],
+    coTeacherId: null,
+    recurrence: "ALL_WEEKS",
+    startDate: null,
+    endDate: null,
+    locked: false,
+    generated: true,
+    ...over,
+  });
+  const base = { studentGroupId: GROUPS.g7A.id, roomId: ROOMS.r102.id };
+  return {
+    academicYearId,
+    lessons: [
+      lesson(1, { ...base, dayOfWeek: 1, startTime: "09:15", endTime: "10:15", subjectId: SUBJECTS.ma.id, teacherId: TEACHERS.bo.id }),
+      lesson(2, { ...base, dayOfWeek: 2, startTime: "10:00", endTime: "11:00", subjectId: SUBJECTS.sv.id, teacherId: TEACHERS.anna.id }),
+      lesson(3, { ...base, dayOfWeek: 3, startTime: "13:00", endTime: "14:00", subjectId: SUBJECTS.ma.id, teacherId: TEACHERS.bo.id }),
+      lesson(4, { ...base, dayOfWeek: 4, startTime: "08:00", endTime: "09:00", subjectId: SUBJECTS.sv.id, teacherId: TEACHERS.anna.id }),
+      lesson(5, { ...base, dayOfWeek: 4, startTime: "08:00", endTime: "09:00", subjectId: SUBJECTS.ma.id, teacherId: TEACHERS.bo.id, extraGroupIds: [GROUPS.g7B.id] }),
+      lesson(6, { ...base, studentGroupId: GROUPS.g7B.id, dayOfWeek: 5, startTime: "10:00", endTime: "11:00", subjectId: SUBJECTS.ma.id, teacherId: TEACHERS.bo.id }),
+    ],
+  };
+}
