@@ -1790,6 +1790,44 @@
     "historyYearsLoadFailedHint": "The academic years could not be loaded, so the page does not know which year's runs to show. Earlier runs and the timetable are untouched. Reload the page.",
     "historyNoYear": "There is no active academic year, so there are no runs to show."
   },
+  "weekCheck": {
+    "button": "Check the week",
+    "checking": "Checking…",
+    "title": "Week check",
+    "hint": "Counts the week without laying any timetable and answers in a few seconds.",
+    "verdict": {
+      "OK": "The pre-check found nothing that stops the week.",
+      "TIGHT": "The week is tight",
+      "IMPOSSIBLE": "The week cannot be laid"
+    },
+    "okBody": "That is no guarantee that a timetable exists. The check can show that a week is impossible or tight, but not that it can be laid.",
+    "okCutTitle": "The pre-check did not finish counting the week",
+    "okCutBody": "No year was found over the limit, but the week load did not get to count every year, so a year with no row is not counted. That is no guarantee that a timetable exists.",
+    "atLeast": "The figures are at least this high: the count did not finish.",
+    "tightBody": "A week this tight is hard to lay, and more time may not be enough. The rows below say what takes the time.",
+    "impossibleBody": "Generate would refuse the week within seconds. Fix the causes below first.",
+    "yearTight": "{grades, select, any {The classes of unknown year are} other {Year {grades} is}} at {percent} % of the frame time.",
+    "yearOver": "{grades, select, any {The classes of unknown year need} other {Year {grades} needs}} more than the frame time gives: at least {demandMinutes} of {capacityMinutes} minutes.",
+    "refusedTitle": "The week cannot be laid as it is",
+    "notRun": "What was not run",
+    "skipped": {
+      "LUNCH_STAGE": "The lunch stage's own count was not run. Generate does it.",
+      "PLACEMENTS_PROBE": "The question whether the placements are the cause was not asked. Generate asks it.",
+      "WEEK_LOAD_DEADLINE": "The week load did not get to count every year, so a year with no row is not counted.",
+      "ENGINE": "The engine was not asked: every lesson is hand-placed."
+    },
+    "unavailable": "The check could not run right now. You can still generate the timetable.",
+    "unavailableOlder": "The scheduling engine is being updated and cannot check the week yet. Try again in a few minutes. You can still generate the timetable.",
+    "ask": {
+      "titleTight": "{grades, select, any {The classes of unknown year are} other {Year {grades} is}} {percent} % full. Run anyway?",
+      "titleTightPlain": "The week is tight. Run anyway?",
+      "titleImpossible": "The week cannot be laid. Run anyway?",
+      "titleRefused": "The week cannot be laid as it is. Run anyway?",
+      "bodyTight": "Generate can take several minutes on a week this tight and may end in a time limit instead of an answer.",
+      "bodyImpossible": "Generate would refuse the week within seconds. Run it anyway if you want the refusal in the run history.",
+      "confirm": "Run anyway"
+    }
+  },
   "timetable": {
     "title": "Master timetable",
     "subtitle": "The recurring weekly template produced by the AI engine",
