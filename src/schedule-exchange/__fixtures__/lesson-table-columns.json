@@ -1,0 +1,183 @@
+{
+  "columns": [
+    {
+      "key": "lessonId",
+      "sv": "Lektions-id",
+      "en": "Lesson id",
+      "aliases": []
+    },
+    {
+      "key": "group",
+      "sv": "Klass/grupp",
+      "en": "Class/group",
+      "aliases": []
+    },
+    {
+      "key": "groupId",
+      "sv": "Grupp-id",
+      "en": "Group id",
+      "aliases": []
+    },
+    {
+      "key": "extraGroups",
+      "sv": "Ytterligare klasser",
+      "en": "Additional classes",
+      "aliases": []
+    },
+    {
+      "key": "extraGroupIds",
+      "sv": "Ytterligare klass-id",
+      "en": "Additional class ids",
+      "aliases": []
+    },
+    {
+      "key": "subject",
+      "sv": "Ämne",
+      "en": "Subject",
+      "aliases": []
+    },
+    {
+      "key": "subjectCode",
+      "sv": "Ämneskod",
+      "en": "Subject code",
+      "aliases": []
+    },
+    {
+      "key": "subjectId",
+      "sv": "Ämnes-id",
+      "en": "Subject id",
+      "aliases": []
+    },
+    {
+      "key": "teacher",
+      "sv": "Lärare",
+      "en": "Teacher",
+      "aliases": [
+        "Lärare signatur",
+        "Signatur",
+        "Teacher signature"
+      ]
+    },
+    {
+      "key": "teacherName",
+      "sv": "Lärarnamn",
+      "en": "Teacher name",
+      "aliases": []
+    },
+    {
+      "key": "teacherEmail",
+      "sv": "Lärare e-post",
+      "en": "Teacher e-mail",
+      "aliases": []
+    },
+    {
+      "key": "teacherId",
+      "sv": "Lärar-id",
+      "en": "Teacher id",
+      "aliases": []
+    },
+    {
+      "key": "coTeacher",
+      "sv": "Medlärare",
+      "en": "Co-teacher",
+      "aliases": [
+        "Medlärare signatur"
+      ]
+    },
+    {
+      "key": "coTeacherName",
+      "sv": "Medlärarnamn",
+      "en": "Co-teacher name",
+      "aliases": []
+    },
+    {
+      "key": "coTeacherEmail",
+      "sv": "Medlärare e-post",
+      "en": "Co-teacher e-mail",
+      "aliases": []
+    },
+    {
+      "key": "coTeacherId",
+      "sv": "Medlärar-id",
+      "en": "Co-teacher id",
+      "aliases": []
+    },
+    {
+      "key": "room",
+      "sv": "Sal",
+      "en": "Room",
+      "aliases": []
+    },
+    {
+      "key": "roomId",
+      "sv": "Sal-id",
+      "en": "Room id",
+      "aliases": []
+    },
+    {
+      "key": "day",
+      "sv": "Dag",
+      "en": "Day",
+      "aliases": []
+    },
+    {
+      "key": "start",
+      "sv": "Start",
+      "en": "Start",
+      "aliases": []
+    },
+    {
+      "key": "end",
+      "sv": "Slut",
+      "en": "End",
+      "aliases": []
+    },
+    {
+      "key": "length",
+      "sv": "Längd",
+      "en": "Length (min)",
+      "aliases": [
+        "Längd (min)"
+      ]
+    },
+    {
+      "key": "period",
+      "sv": "Period",
+      "en": "Period",
+      "aliases": []
+    },
+    {
+      "key": "from",
+      "sv": "Från",
+      "en": "From",
+      "aliases": []
+    },
+    {
+      "key": "to",
+      "sv": "Till",
+      "en": "To",
+      "aliases": []
+    },
+    {
+      "key": "weeks",
+      "sv": "Veckomönster",
+      "en": "Week pattern",
+      "aliases": [
+        "Vecka",
+        "Veckor"
+      ]
+    },
+    {
+      "key": "block",
+      "sv": "Block",
+      "en": "Block",
+      "aliases": []
+    },
+    {
+      "key": "locked",
+      "sv": "Låst",
+      "en": "Locked",
+      "aliases": []
+    }
+  ]
+}
