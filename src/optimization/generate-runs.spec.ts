@@ -2,6 +2,7 @@ import {
   abandonedAt,
   generateAlreadyRunning,
   GENERATE_ALREADY_RUNNING,
+  HEARTBEAT_INTERVAL_MS,
   INSTANCE_NAME,
   LEASE_MARGIN_SECONDS,
   LEASE_MAX_SECONDS,
@@ -102,5 +103,27 @@ describe('INSTANCE_NAME', () => {
     expect(INSTANCE_NAME.length).toBeGreaterThan(0);
     expect(INSTANCE_NAME.length).toBeLessThanOrEqual(100);
     expect(INSTANCE_NAME).toContain(`:${process.pid}:`);
+  });
+
+  it('is cut to what the column takes when the host name is long (a host name may be 255 characters)', () => {
+    // The check OptimizationJobs_claimedBy_is_short refuses more than 100 characters, and a claimant the first heartbeat
+    // cannot write is a run that never starts. The name is read once, at load, so the module is loaded again here.
+    jest.isolateModules(() => {
+      jest.doMock('node:os', () => ({ ...jest.requireActual<typeof import('node:os')>('node:os'), hostname: () => 'h'.repeat(250) }));
+      const { INSTANCE_NAME: long } = jest.requireActual<typeof import('./generate-runs')>('./generate-runs');
+      expect(long).toHaveLength(100);
+      expect(long.startsWith('hhhh')).toBe(true);
+    });
+    jest.dontMock('node:os');
+  });
+});
+
+describe('the heartbeat against the lease', () => {
+  // The lease is renewed by a timer, so a timer that is slower than the lease abandons a run that is still solving. The one
+  // constant that holds the design together is not asserted by the tests that advance fake time by it.
+  it('beats at least three times inside the lease a default deployment gives, and twice inside the shortest one', () => {
+    expect(HEARTBEAT_INTERVAL_MS * 3).toBeLessThanOrEqual(leaseSecondsFor(undefined) * 1000);
+    expect(HEARTBEAT_INTERVAL_MS * 2).toBeLessThanOrEqual(LEASE_MIN_SECONDS * 1000);
+    expect(HEARTBEAT_INTERVAL_MS).toBeGreaterThan(0);
   });
 });
