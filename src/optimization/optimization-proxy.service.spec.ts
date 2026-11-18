@@ -1732,6 +1732,37 @@ describe('OptimizationProxyService', () => {
       await expect(call()).rejects.not.toThrow('CP-SAT');
     });
 
+    it("names the engine's own ceiling instead of the generic sentence", async () => {
+      // 2026-11-17: three Generera runs met the engine's 503 in the middle of
+      // their timeout probe and the school read "The AI engine returned an error."
+      const ceiling = new AxiosError('boom');
+      ceiling.response = {
+        status: 503,
+        data: { code: 'HTTP_ERROR', message: 'Optimization timed out.' },
+      } as never;
+      http.post.mockReturnValue(throwError(() => ceiling));
+
+      const thrown = await call().catch((error: unknown) => error);
+
+      expect(thrown).toBeInstanceOf(HttpException);
+      expect((thrown as HttpException).getStatus()).toBe(503);
+      expect((thrown as HttpException).getResponse()).toMatchObject({ code: 'ENGINE_TIMED_OUT' });
+      expect((thrown as HttpException).message).not.toContain('returned an error');
+      // The solve thread may still be running: a schemaförslag run keeps its deadline.
+      expect(engineMayStillBeSolving(thrown)).toBe(true);
+    });
+
+    it('keeps the generic sentence for any other 503 the engine answers', async () => {
+      const other = new AxiosError('boom');
+      other.response = { status: 503, data: { code: 'HTTP_ERROR', message: 'Service Unavailable' } } as never;
+      http.post.mockReturnValue(throwError(() => other));
+
+      const thrown = await call().catch((error: unknown) => error);
+
+      expect((thrown as HttpException).getResponse()).not.toMatchObject({ code: 'ENGINE_TIMED_OUT' });
+      expect((thrown as HttpException).message).toBe('The AI engine returned an error.');
+    });
+
     it('falls back to the generic sentence when the body carries no message', async () => {
       // A proxy or a load balancer can answer 4xx with HTML, or nothing.
       const odd = new AxiosError('boom');

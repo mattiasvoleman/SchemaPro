@@ -7499,6 +7499,7 @@
       "ENGINE_LACKS_PERIODS": "Schemamotorn är äldre än resten av tjänsten och kan inte planera poster med datum ännu. Försök igen om några minuter.",
       "ENGINE_LACKS_PINNED_LESSONS": "Schemamotorn är äldre än resten av tjänsten och kan inte hålla förlagda lektioner utan sal ännu. Försök igen om några minuter.",
       "ENGINE_MEALS_INCONSISTENT": "Schemamotorn svarade med lunchtider som inte passar läsårets perioder, så ingenting skrevs. Försök igen, och hör av dig om det upprepas.",
+      "ENGINE_TIMED_OUT": "Schemamotorn hann inte svara inom sin längsta väntetid, så inget schema sparades. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen.",
       "CANDIDATES_RUNNING": "Schemaförslag tas fram för läsåret just nu. Generera går att starta när de är klara."
     },
     "page": {

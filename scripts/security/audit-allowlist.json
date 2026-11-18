@@ -1,5 +1,29 @@
 {
-  "api": [],
-  "web": [],
-  "mobile": []
+  "api": [
+    {
+      "id": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "reason": "No patched release exists: the advisory (updated 2026-11-17) marks picomatch <=4.0.7 vulnerable and 4.0.7 is the newest version published (checked 2026-11-18). The ReDoS needs a crafted glob pattern (repeated single-branch extglobs); picomatch here only ever compiles this repository's own patterns, at build, test or watch time. In the gateway it is reached only through devDependencies: jest (jest-haste-map via anymatch, micromatch, and ts-jest via jest-util, all picomatch 2.3.2) and @nestjs/cli / @nestjs/schematics via @angular-devkit/core (picomatch 4.0.4). `npm prune --omit=dev` leaves every copy out of the production image, and no request reaches a glob. Remove this entry when picomatch ships a fix, and bump with the seven-day rule.",
+      "addedAt": "2026-11-18",
+      "expires": "2026-12-18"
+    }
+  ],
+  "web": [
+    {
+      "id": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "reason": "No patched release exists: the advisory (updated 2026-11-17) marks picomatch <=4.0.7 vulnerable and 4.0.7 is the newest version published (checked 2026-11-18). The ReDoS needs a crafted glob pattern (repeated single-branch extglobs); picomatch here only ever compiles this repository's own patterns, at build, test or watch time. In the web it is reached through vite and vitest (tests), tinyglobby under vitest, tailwindcss 3 (chokidar and micromatch at build time) and @parcel/watcher under next-intl (the message watcher of the dev server and the build). None of them runs in the Next server on a request, and no request-supplied string becomes a glob. Remove this entry when picomatch ships a fix, and bump with the seven-day rule.",
+      "addedAt": "2026-11-18",
+      "expires": "2026-12-18"
+    }
+  ],
+  "mobile": [
+    {
+      "id": "GHSA-fc5q-39xc-vjpf",
+      "package": "picomatch",
+      "reason": "No patched release exists: the advisory (updated 2026-11-17) marks picomatch <=4.0.7 vulnerable and 4.0.7 is the newest version published (checked 2026-11-18). The ReDoS needs a crafted glob pattern (repeated single-branch extglobs); picomatch here only ever compiles this repository's own patterns, at build, test or watch time. In the apps it is reached through metro and jest (anymatch, micromatch, jest-util and the top-level copy metro resolves), which bundle and test at build time; none of them is part of the app bundle a phone runs, and no user input becomes a glob. Remove this entry when picomatch ships a fix, and bump with the seven-day rule.",
+      "addedAt": "2026-11-18",
+      "expires": "2026-12-18"
+    }
+  ]
 }
