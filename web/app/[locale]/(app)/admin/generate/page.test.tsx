@@ -1776,6 +1776,16 @@ describe("Schemaförslag beside Generera (design §6)", () => {
       expect(screen.queryByText("generate.historyStatus.FAILED")).toBeNull();
     });
 
+    it("does not say a run was interrupted when the newest run of the year failed on its own account", () => {
+      // After a reload, a failure that is the engine's or the school's is not "the service was restarted": only the abandonment is.
+      state.history = [abandoned({ id: "job-failed", error: "The AI engine returned an error.", errorCode: "ENGINE_ERROR" })];
+      render(<GeneratePage />);
+
+      expect(screen.queryByText("scheduleCandidates.jobErrors.ENGINE_RUN_ABANDONED")).toBeNull();
+      expect(screen.queryByRole("button", { name: "generate.runAgain" })).toBeNull();
+      expect(screen.getByText("generate.historyStatus.FAILED")).toBeInTheDocument();
+    });
+
     it("says nothing about an older run that went away once a later one has run", () => {
       state.history = [
         { id: "job-new", status: "SUCCEEDED", solverStatus: "OPTIMAL", lessonsGenerated: 12, createdAt: "2026-11-18T09:00:00.000Z" },
