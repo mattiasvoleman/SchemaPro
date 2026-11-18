@@ -11,6 +11,8 @@ import { StaffingProposalService } from './staffing-proposal.service';
 import { ScheduleCandidatesService } from './schedule-candidates.service';
 import { EngineTimingService } from './engine-timing.service';
 import { FALLBACK_WAIT_MS } from './engine-timing';
+import { WeekCheckController } from './week-check.controller';
+import { WeekCheckService } from './week-check.service';
 
 @Module({
   imports: [
@@ -33,7 +35,8 @@ import { FALLBACK_WAIT_MS } from './engine-timing';
       },
     }),
   ],
-  controllers: [OptimizationController],
+  // Kontrollera veckan has a controller of its own, beside the run's.
+  controllers: [OptimizationController, WeekCheckController],
   providers: [
     // The engine's times, read from the engine (M1): the proxy waits by them.
     EngineTimingService,
@@ -44,6 +47,7 @@ import { FALLBACK_WAIT_MS } from './engine-timing';
     // Schemaförslag. Its sweep registers with the global JobRunner when
     // CANDIDATES_BACKGROUND is on; the runner is @Optional, as GallringJob's.
     ScheduleCandidatesService,
+    WeekCheckService,
   ],
   // Provplanering (src/exams) asks the engine through the same call.
   exports: [OptimizationProxyService],
