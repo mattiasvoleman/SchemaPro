@@ -10418,7 +10418,7 @@ def test_a_timeout_carries_the_probe(monkeypatch: pytest.MonkeyPatch) -> None:
             params={"seconds": 1.0},
         )],
     )
-    monkeypatch.setattr(SchedulerSolver, "_probe_timeout", lambda self, request: verdict)
+    monkeypatch.setattr(SchedulerSolver, "_probe_timeout", lambda self, request, **_kwargs: verdict)
     solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=2.0))
 
     response = solver.solve(OptimizeScheduleRequest.model_validate(_sample_payload()))
