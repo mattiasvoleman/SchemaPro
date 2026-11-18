@@ -223,15 +223,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { LoadError } from "@/components/ui/load-error";
 import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
-import {
-  DistributionFields,
-  RequirementDistributionBreaches,
-  perDayInRange,
-  perDayValue,
-  useRuleSummary,
-} from "@/components/timplan/distribution-fields";
-import { effectiveDistribution, hasDistributionRule } from "@/lib/subject-distribution";
+import { effectiveDistribution, perDayInRange, perDayValue } from "@/lib/subject-distribution";
 import {
   Dialog,
   DialogContent,
@@ -306,6 +298,19 @@ const PlacementDialog = lazy(() =>
     default: module.PlacementDialog,
   })),
 );
+/**
+ * The rule the post is held to (Ämnesfördelning): the switch, its two fields and what the grundschema already breaks under it. Fetched with the
+ * dialog like the fields above, and for the same reason: only the dialog draws it, and the route has no room to carry it (its budget is 190 KB).
+ */
+const CellDistribution = lazy(() =>
+  import("@/components/timplan/cell-distribution").then((module) => ({
+    default: module.CellDistribution,
+  })),
+);
+/** Holds the rule's place in the dialog while its code arrives. */
+function DistributionFallback() {
+  return <Skeleton className="h-24 rounded-md" />;
+}
 /** Holds the recurrence box's place in the dialog while its code arrives. */
 function RecurrenceFieldsFallback() {
   return (
@@ -421,8 +426,6 @@ export default function RequirementsPage() {
   // A STAFF_* refusal is the engine catalogue's sentence (lib/staffing-warnings.ts),
   // so the dialog and the staffing workspace word the same 409 the same way.
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
-  const tDistribution = useTranslations("distribution");
-  const ruleSummary = useRuleSummary();
   const {
     data: years,
     isLoading: yearsLoading,
@@ -2278,67 +2281,18 @@ export default function RequirementsPage() {
               </Button>
             ) : null}
             {cell ? (
-              <fieldset className="space-y-3 rounded-md border px-3 py-2">
-                <legend className="px-1 text-sm font-medium">{tDistribution("title")}</legend>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="space-y-1">
-                    <Label htmlFor="req-own-distribution">{tDistribution("own")}</Label>
-                    <p id="req-own-distribution-hint" className="text-xs text-muted-foreground">
-                      {form.ownDistribution
-                        ? tDistribution("ownOn")
-                        : tDistribution("ownOff", {
-                            subject: subjectOf(cell.subjectId)?.name ?? "",
-                            rule: ruleSummary(effectiveDistribution({}, subjectOf(cell.subjectId))),
-                          })}
-                    </p>
-                  </div>
-                  <Switch
-                    id="req-own-distribution"
-                    aria-describedby="req-own-distribution-hint"
-                    checked={form.ownDistribution}
-                    onCheckedChange={(checked) => {
-                      // Switched on, the post starts from its subject's rule, so
-                      // an exception is one change away rather than a retyping.
-                      const subjectRule = effectiveDistribution({}, subjectOf(cell.subjectId));
-                      setForm({
-                        ...form,
-                        ownDistribution: checked,
-                        maxLessonsPerDay:
-                          checked && subjectRule.maxLessonsPerDay !== null
-                            ? String(subjectRule.maxLessonsPerDay)
-                            : "",
-                        minDaysBetween: checked ? subjectRule.minDaysBetween : null,
-                      });
-                    }}
-                  />
-                </div>
-                {form.ownDistribution ? (
-                  <DistributionFields
-                    id="req-distribution"
-                    perDay={form.maxLessonsPerDay}
-                    apart={form.minDaysBetween}
-                    onPerDay={(value) => setForm({ ...form, maxLessonsPerDay: value })}
-                    onApart={(value) => setForm({ ...form, minDaysBetween: value })}
-                  />
-                ) : null}
-                {/*
-                  What the grundschema already breaks under the rule as the
-                  dialog holds it. Mounted only while there is a rule, so a
-                  post without one reads no timetable.
-                */}
-                {activeYearId && cellRule && hasDistributionRule(cellRule) ? (
-                  <RequirementDistributionBreaches
-                    yearId={activeYearId}
-                    groupId={cell.groupId}
-                    subjectId={cell.subjectId}
-                    label={t("cellLabel", {
-                      subject: subjectOf(cell.subjectId)?.name ?? "",
-                      group: groupOf(cell.groupId)?.name ?? "",
-                    })}
-                    rule={cellRule}
-                  />
-                ) : null}
-              </fieldset>
+              <Suspense fallback={<DistributionFallback />}>
+                <CellDistribution
+                  form={form}
+                  onChange={(next) => setForm({ ...form, ...next })}
+                  subject={subjectOf(cell.subjectId)}
+                  subjectId={cell.subjectId}
+                  groupId={cell.groupId}
+                  groupName={groupOf(cell.groupId)?.name ?? ""}
+                  yearId={activeYearId}
+                  rule={cellRule}
+                />
+              </Suspense>
             ) : null}
             {/*
               Avancerat: what each teacher is CHARGED of this row in
