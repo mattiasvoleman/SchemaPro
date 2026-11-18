@@ -821,7 +821,7 @@ export async function klasslarareChecks(owner: Client, api: PrismaService, marke
             tx,
             await rostersOfYear(tx, sara, year),
             { id: mine, academicYearId: year, studentGroupId: g4a, subjectId: svenska },
-            { dayOfWeek: 4, startMinutes: 600, endMinutes: 660, teacherId: karin.userId, coTeacherId: null, roomId: aula, extraGroupIds: [], studentIds: [] },
+            { dayOfWeek: 4, startMinutes: 600, endMinutes: 660, teacherId: karin.userId!, coTeacherId: null, roomId: aula, extraGroupIds: [], studentIds: [] },
           ),
         )
       ).map((one) => one.kind);
@@ -898,7 +898,7 @@ export async function klasslarareChecks(owner: Client, api: PrismaService, marke
 
     // The exam: a schedule activity (D3) for 4A over the lesson's hour, which cancels the lesson and lays one replacement lesson.
     const made = await activities.create(
-      { academicYearId: year, name: 'Prov i matematik 4A', fromDate: tuesday, toDate: tuesday, startTime: '09:00', endTime: '10:00', scope: 'GROUPS', groupIds: [g4a], replacementSubjectId: prov, teachers: [{ studentGroupId: g4a, teacherId: lars.userId }], notify: false },
+      { academicYearId: year, name: 'Prov i matematik 4A', fromDate: tuesday, toDate: tuesday, startTime: '09:00', endTime: '10:00', scope: 'GROUPS', groupIds: [g4a], replacementSubjectId: prov, teachers: [{ studentGroupId: g4a, teacherId: lars.userId! }], notify: false },
       sara,
     );
     assert.equal(made.cancelled >= 1, true, 'the activity cancelled the lesson');

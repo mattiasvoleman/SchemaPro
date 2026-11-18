@@ -782,7 +782,7 @@ export async function krislageChecks(owner: Client, api: PrismaService, marker: 
       await endOpenAlarms();
     });
   } finally {
-    await racer.onModuleDestroy?.();
+    await racer.onApplicationShutdown();
     await sweepKrislageSchool(owner, marker);
   }
 }
