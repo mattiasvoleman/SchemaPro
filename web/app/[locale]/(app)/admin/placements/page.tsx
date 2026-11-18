@@ -225,9 +225,11 @@ export default function PlacementsPage() {
   const weekTools = useLazyModule(() => import("@/lib/placement-week-tools"));
   // The mirror of the clash rule and the pair that asks it are one module and one request (lib/placement-drag-tools.ts).
   // A chunk that does not come (a dropped connection, a proxy) is said once, in words: the controls below stay off, and the reader reloads.
+  // Fetched for a writer only: a reader drags, lays and holds nothing, and everything below that asks for the tools is behind them (review of #341, LÅG-5).
   const dragTools = useLazyModule(
     () => import("@/lib/placement-drag-tools"),
     () => setMessage({ tone: "problem", text: t("toolsFailed") }),
+    mayWrite,
   );
   const pairTools = dragTools;
   // A writer's controls wait for the tools (review of #341, MEDEL-1). Without them the page has no mirror, and a field would say "Ledigt."
@@ -279,7 +281,7 @@ export default function PlacementsPage() {
   // Every row of the year by key: a card is named by the lesson, and the keys are made over all of the rows so that a filter changes none.
   const keys = useMemo(() => keyByRowId(everything?.placements ?? []), [everything]);
   // The card an address from Generera or the grundschema names (?post=&day=&start=), marked and given the keyboard.
-  const { markedCard, missing } = usePlacementLinkTarget(everything?.placements, keys, openCard);
+  const { markedCard, missing } = usePlacementLinkTarget(everything?.placements, keys, openCard, { shownId: year?.id, activeId: active?.id });
   const rowByCard = useMemo(
     () => new Map((everything?.placements ?? []).map((row) => [placementCardId(keys.get(row.id) ?? row.id), row])),
     [everything, keys],

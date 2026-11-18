@@ -38,15 +38,19 @@ const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn() }));
  * The lazy modules of the page (lib/use-lazy-module.ts), held back or failed by a test that wants the moment before they arrive. By default
  * they come at once, as they do for every other test of this file.
  */
-const tools = vi.hoisted(() => ({ gate: Promise.resolve() as Promise<void>, failDragTools: false }));
+const tools = vi.hoisted(() => ({ gate: Promise.resolve() as Promise<void>, failDragTools: false, fetched: [] as string[] }));
 vi.mock("@/lib/use-lazy-module", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/use-lazy-module")>();
   return {
     ...actual,
-    useLazyModule: <T,>(load: () => Promise<T>, onError?: (error: unknown) => void) =>
+    useLazyModule: <T,>(load: () => Promise<T>, onError?: (error: unknown) => void, enabled?: boolean) =>
       actual.useLazyModule(
-        () => (tools.failDragTools && String(load).includes("placement-drag-tools") ? Promise.reject(new Error("Failed to load chunk")) : tools.gate.then(load)),
+        () => {
+          tools.fetched.push(String(load));
+          return tools.failDragTools && String(load).includes("placement-drag-tools") ? Promise.reject(new Error("Failed to load chunk")) : tools.gate.then(load);
+        },
         onError,
+        enabled,
       ),
   };
 });
@@ -270,6 +274,7 @@ beforeEach(() => {
   state.peopleLoading = false;
   state.adminProfile = "SCHEMALAGGARE";
   state.readOnly = false;
+  tools.fetched.length = 0;
   state.jobs = [];
   state.refuse = null;
   state.keyCount = 0;
@@ -1468,6 +1473,25 @@ describe("until the drag tools are here (review of #341, MEDEL-1)", () => {
     expect(screen.queryByTestId("lay-row")).not.toBeInTheDocument();
     fireEvent.click(columns()[2]!, at(3, 13, 30));
     await noWrite();
+  });
+
+  it("fetches the drag tools for a writer and not for a reader, who drags, lays and holds nothing (review of #341, LÅG-5)", async () => {
+    const dragToolsFetched = () => tools.fetched.some((load) => load.includes("placement-drag-tools"));
+    const weekToolsFetched = () => tools.fetched.some((load) => load.includes("placement-week-tools"));
+    hold();
+    const writer = renderPage();
+    await ready();
+    expect(dragToolsFetched()).toBe(true);
+    writer.unmount();
+
+    tools.fetched.length = 0;
+    state.adminProfile = "REKTOR";
+    state.readOnly = true;
+    renderPage();
+    await ready();
+    // The week picker and the cards' week marks are the reader's too.
+    expect(weekToolsFetched()).toBe(true);
+    expect(dragToolsFetched()).toBe(false);
   });
 
   it("asks nothing of a reader, who has no controls: the same page, with no message", async () => {
