@@ -163,7 +163,11 @@ export const CANDIDATES_NONE_APPLICABLE = 'CANDIDATES_NONE_APPLICABLE';
 export const SWEEP_JOB = 'schedule-candidates-sweep';
 /** Every quarter hour: a lost run already frees its year at the next start, so this is for the ones nobody starts after. */
 export const SWEEP_INTERVAL_MS = 15 * 60 * 1000;
-/** A Generera job of the year PENDING or RUNNING and younger than this holds candidate runs off, and an apply. */
+/**
+ * A Generera job of the year PENDING or RUNNING, younger than this and inside its lease (OptimizationJobs."leaseUntil",
+ * 20270222090000) holds candidate runs off, and an apply. The lease is what frees the year when a job's process is gone; this
+ * is the age no run reaches, which the lease's column default (what an older API gives a row) never exceeds either.
+ */
 export const GENERATE_JOB_WINDOW_MS = 15 * 60 * 1000;
 /** The sweep's other limit: a run older than this has lost its task whatever its heartbeat says. */
 export const RUN_MAX_AGE_MS = 30 * 60 * 1000;
@@ -992,11 +996,16 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
   }
 
   private async generateRunning(tx: PrismaClient, academicYearId: string): Promise<boolean> {
+    const now = Date.now();
     const jobs = await tx.optimizationJob.count({
       where: {
         academicYearId,
         status: { in: ['PENDING', 'RUNNING'] },
-        createdAt: { gte: new Date(Date.now() - GENERATE_JOB_WINDOW_MS) },
+        createdAt: { gte: new Date(now - GENERATE_JOB_WINDOW_MS) },
+        // Alive: a job whose lease has run out is one whose process is gone,
+        // and the sweep is about to fail it (the same reading as a candidate
+        // run's own, yearHasActiveCandidateRun).
+        leaseUntil: { gte: new Date(now) },
       },
     });
     return jobs > 0;

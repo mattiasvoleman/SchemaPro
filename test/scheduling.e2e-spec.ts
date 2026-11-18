@@ -1,4 +1,5 @@
 import request from 'supertest';
+import { Prisma } from '@prisma/client';
 import { AxiosError } from 'axios';
 import { throwError } from 'rxjs';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
@@ -75,6 +76,124 @@ describe('Scheduling surface (e2e)', () => {
       expect(response.body).toHaveProperty('jobId');
     });
 
+    /*
+     * The queue entry (omgång 12, M4), as an administrator meets it over HTTP:
+     * the first start, the second start of the same year, and a run whose
+     * process is gone. The database half (the partial unique index, the lease,
+     * the sweep) is the RLS suite's and the adapter probe's; here, what the
+     * gateway makes of it.
+     */
+    describe('a run as a queue entry', () => {
+      const uniqueViolation = () =>
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2010',
+          clientVersion: 'test',
+          meta: { driverAdapterError: { cause: { originalCode: '23505', originalMessage: 'duplicate key' } } },
+        });
+      const runningRow = (overrides: Record<string, unknown> = {}) => ({
+        id: VERSION_ID,
+        academicYearId: YEAR_ID,
+        status: 'RUNNING',
+        solverStatus: null,
+        lessonsGenerated: 0,
+        conflictSummary: null,
+        conflicts: null,
+        error: null,
+        createdAt: new Date(Date.now() - 6 * 60 * 1000),
+        finishedAt: null,
+        leaseUntil: new Date(Date.now() + 2 * 60 * 1000),
+        ...overrides,
+      });
+
+      afterEach(() => {
+        harness.tx['optimizationJob']!['create']!.mockReset();
+        harness.tx['optimizationJob']!['findUnique']!.mockReset();
+        harness.tx['optimizationJob']!['findMany']!.mockReset().mockResolvedValue([]);
+      });
+
+      it('refuses a second start of the year 409 GENERATE_ALREADY_RUNNING, with the code the page translates, and starts no run', async () => {
+        harness.tx['optimizationJob']!['create']!.mockRejectedValue(uniqueViolation());
+
+        const response = await request(http())
+          .post('/api/v1/optimization/jobs')
+          .set('x-test-user', admin())
+          .send({ academicYearId: YEAR_ID })
+          .expect(409);
+
+        expect(response.body).toMatchObject({ code: 'GENERATE_ALREADY_RUNNING' });
+        // Problem+json: the sentence is the detail, the name beside it is what the page translates.
+        expect(response.body.detail).toBe('Generera kör redan för läsåret. Vänta tills körningen är klar.');
+        expect(harness.http.post).not.toHaveBeenCalled();
+      });
+
+      it('sweeps before it starts, in a transaction of its own that carries no login', async () => {
+        harness.tx['optimizationJob']!['create']!.mockResolvedValue({ id: VERSION_ID });
+        harness.tx.$queryRaw = jest.fn(async () => [{ changed: 0 }]);
+        try {
+          await request(http())
+            .post('/api/v1/optimization/jobs')
+            .set('x-test-user', admin())
+            .send({ academicYearId: YEAR_ID })
+            .expect(202);
+          const statements = (harness.tx.$queryRaw as jest.Mock).mock.calls.map(
+            ([call]) => ((call as { strings?: string[] }).strings ?? []).join('?'),
+          );
+          expect(statements.some((text) => text.includes('app.optimization_jobs_sweep()'))).toBe(true);
+        } finally {
+          delete (harness.tx as unknown as Record<string, unknown>)['$queryRaw'];
+        }
+      });
+
+      it('shows a run whose lease has run out as the sentence the page says, FAILED ENGINE_RUN_ABANDONED, and one whose lease holds as running', async () => {
+        const dead = runningRow({ id: 'dead', leaseUntil: new Date(Date.now() - 90 * 1000) });
+        harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(dead);
+        harness.tx['optimizationJob']!['findMany']!.mockResolvedValue([runningRow({ id: 'alive' }), dead]);
+
+        const one = await request(http())
+          .get(`/api/v1/optimization/jobs/${VERSION_ID}`)
+          .set('x-test-user', admin())
+          .expect(200);
+        expect(one.body).toMatchObject({
+          status: 'FAILED',
+          errorCode: 'ENGINE_RUN_ABANDONED',
+          error: 'The run stopped before it finished: the service that ran it was restarted or lost.',
+        });
+        expect(Date.parse(one.body.finishedAt)).toBe(dead.leaseUntil.getTime());
+
+        const history = await request(http())
+          .get(`/api/v1/optimization/jobs?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .expect(200);
+        expect(history.body.map((run: { id: string; status: string }) => [run.id, run.status])).toEqual([
+          ['alive', 'RUNNING'],
+          ['dead', 'FAILED'],
+        ]);
+      });
+
+      it('never puts the claimant or the lease on the wire', async () => {
+        harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(
+          runningRow({ claimedBy: 'host:1:abcd', heartbeatAt: new Date() }),
+        );
+        const response = await request(http())
+          .get(`/api/v1/optimization/jobs/${VERSION_ID}`)
+          .set('x-test-user', admin())
+          .expect(200);
+        expect(JSON.stringify(response.body)).not.toContain('host:1:abcd');
+        expect(Object.keys(response.body)).not.toEqual(expect.arrayContaining(['claimedBy']));
+        expect(Object.keys(response.body)).not.toEqual(expect.arrayContaining(['leaseUntil']));
+        expect(Object.keys(response.body)).not.toEqual(expect.arrayContaining(['heartbeatAt']));
+      });
+
+      it('lets only an administrator start a run', async () => {
+        await request(http())
+          .post('/api/v1/optimization/jobs')
+          .set('x-test-user', asUser({ role: 'TEACHER' }))
+          .send({ academicYearId: YEAR_ID })
+          .expect(403);
+        expect(harness.tx['optimizationJob']!['create']).not.toHaveBeenCalled();
+      });
+    });
+
     it('rejects an objective weight outside the accepted range', async () => {
       await request(http())
         .post('/api/v1/optimization/jobs')
@@ -138,6 +257,8 @@ describe('Scheduling surface (e2e)', () => {
         forgetStaffingWorld(harness.tx);
         harness.tx['optimizationJob']!['create']!.mockReset();
         harness.tx['optimizationJob']!['update']!.mockReset();
+        // The mock's own default (zero rows updated) comes back on the next touch.
+        delete (harness.tx as unknown as Record<string, unknown>)['$executeRaw'];
       });
 
       it('refuses the synchronous trigger without calling the engine', async () => {
@@ -158,6 +279,8 @@ describe('Scheduling surface (e2e)', () => {
         givenRefusingSchool();
         harness.tx['optimizationJob']!['create']!.mockResolvedValue({ id: VERSION_ID });
         harness.tx['optimizationJob']!['update']!.mockResolvedValue({ id: VERSION_ID });
+        // The run's first heartbeat (RUNNING, the claim and the lease) is one compare-and-set: a row updated.
+        harness.tx.$executeRaw = jest.fn(async () => 1);
 
         await request(http())
           .post('/api/v1/optimization/jobs')
@@ -167,7 +290,7 @@ describe('Scheduling surface (e2e)', () => {
 
         // The run is fire-and-forget: wait for it to write its outcome.
         const update = harness.tx['optimizationJob']!['update']!;
-        for (let tries = 0; tries < 50 && update.mock.calls.length < 2; tries++) {
+        for (let tries = 0; tries < 50 && update.mock.calls.length < 1; tries++) {
           await new Promise((resolve) => setImmediate(resolve));
         }
         expect(update).toHaveBeenLastCalledWith({

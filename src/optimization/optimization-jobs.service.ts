@@ -1,7 +1,10 @@
-import { HttpException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { HttpException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { DEFAULT_CANDIDATES_CONFIG, type CandidatesConfig } from '../config/configuration';
 import { PrismaService } from '../database/prisma.service';
+import { errorName, JobRunner } from '../jobs/job-runner';
 import { recordRead } from '../access-log/access-log';
 import { readsHr } from '../staffing/hr-visibility';
 import { OptimizationProxyService } from './optimization-proxy.service';
@@ -37,6 +40,19 @@ import {
   type ConflictView,
 } from './stored-conflicts';
 import { lockYearForSolveStart, SCHEDULE_BUSY } from './regeneration-lock';
+import {
+  ABANDONED_MESSAGE,
+  abandonedAt,
+  ENGINE_RUN_ABANDONED,
+  generateAlreadyRunning,
+  GENERATE_SWEEP_INTERVAL_MS,
+  GENERATE_SWEEP_JOB,
+  HEARTBEAT_INTERVAL_MS,
+  INSTANCE_NAME,
+  INTERRUPTED_MESSAGE,
+  isUniqueViolation,
+  leaseSecondsFor,
+} from './generate-runs';
 
 /**
  * What a failed run has to say for itself.
@@ -184,6 +200,8 @@ const JOB_SELECT = {
   errorParams: true,
   createdAt: true,
   finishedAt: true,
+  // For a run whose lease has run out before the sweep has come round (abandonedAt).
+  leaseUntil: true,
 } as const;
 
 /** A run's row as it is read. */
@@ -203,6 +221,8 @@ interface JobRow {
   errorParams?: unknown;
   createdAt: Date;
   finishedAt: Date | null;
+  /** Absent from a row read before the column: such a run is never read as abandoned. */
+  leaseUntil?: Date | null;
 }
 
 /**
@@ -311,11 +331,17 @@ const NO_NAMES: ReadonlyMap<string, string> = new Map();
  * field is built from the whitelist: nothing of the stored JSON is spread
  * into the answer, so a field kept for the server (subjectIds) cannot leave
  * by being next to one that may.
+ *
+ * A run still active whose lease has run out is shown as what the sweep will
+ * make it, FAILED ENGINE_RUN_ABANDONED, finished when its lease ran out
+ * (abandonedAt), so that the page never polls a dead run for ever and says
+ * what happened as soon as it is certain, not when the sweep comes round.
  */
 export function jobView(
   job: JobRow,
   posts: ReadonlyMap<string, PostShown> | null,
   names: ReadonlyMap<string, string> = NO_NAMES,
+  now: Date = new Date(),
 ): { view: OptimizationJobView; revealed: string[] } {
   const revealed: string[] = [];
   const say = (sentence: StoredSentence): SentenceShown => {
@@ -350,13 +376,14 @@ export function jobView(
     });
   }
 
+  const abandoned = abandonedAt(job, now);
   const summary = say(summaryOf(job));
-  const failure = say(failureOf(job));
+  const failure = say(abandoned ? sentenceOf(ENGINE_RUN_ABANDONED, null, ABANDONED_MESSAGE, []) : failureOf(job));
 
   return {
     view: {
       id: job.id,
-      status: job.status as JobStatus,
+      status: abandoned ? 'FAILED' : (job.status as JobStatus),
       solverStatus: (job.solverStatus as SolverStatus | null) ?? null,
       lessonsGenerated: job.lessonsGenerated,
       conflictSummary: summary.message,
@@ -377,7 +404,7 @@ export function jobView(
       error: failure.message,
       supersededBy: null,
       createdAt: job.createdAt.toISOString(),
-      finishedAt: job.finishedAt ? job.finishedAt.toISOString() : null,
+      finishedAt: abandoned ? abandoned.toISOString() : job.finishedAt ? job.finishedAt.toISOString() : null,
     },
     revealed,
   };
@@ -388,23 +415,149 @@ export function jobView(
  * row is what the Generate page polls and what the per-year run history reads;
  * RLS scopes every row to the admin's school.
  *
- * The row is durable, the *work* is not. `run` executes in whichever API
- * process took the request, with no lease and no sweeper, so a restart
- * mid-solve strands the row at RUNNING for ever and nothing stops two admins
- * starting overlapping runs for the same year. Turning this into a real queue
- * needs a claim column, a partial unique index on the active job per year, and
- * a startup pass that fails abandoned rows — until then, do not read this
- * class as one.
+ * THE RUN IS A QUEUE ENTRY (omgång 12, M4; generate-runs.ts). `run` executes
+ * in whichever API process took the request, and a process can go at any
+ * moment: every merge deploys the API, and a run takes up to about four
+ * minutes. What lets the row outlive the process is on the row itself:
+ *
+ *   - a lease ("leaseUntil") the process renews every half minute while it
+ *     works, each time to the longest the engine can still be solving for it;
+ *   - a partial unique index, one active run per year, which a second start
+ *     meets as 409 GENERATE_ALREADY_RUNNING;
+ *   - a sweep (app.optimization_jobs_sweep) that fails a run whose lease has
+ *     run out with ENGINE_RUN_ABANDONED. A start calls it first, the gateway's
+ *     runner every five minutes, and a page reads an expired lease as the
+ *     abandonment it will become (jobView).
+ *
+ * It is not a queue in the sense that a second process picks a lost run up:
+ * the run is failed with a sentence that says so, and the administrator runs
+ * Generera again. A restart that can say so itself (OnModuleDestroy) fails the
+ * runs it has in flight at once, with the same code.
+ *
+ * SCHEDULE_BUSY is another thing. It is the year's regeneration lock, held for
+ * a moment by an apply, a restore or the write at the end of a run, and waited
+ * for at most 5 s: a start that finds the start lock taken that long, or the
+ * write of a run that finds the regeneration lock taken, answers it. A second
+ * Generera start that finds a run going is not busy, it is refused: the index
+ * holds even for a start that took no lock.
  */
 @Injectable()
-export class OptimizationJobsService {
+export class OptimizationJobsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OptimizationJobsService.name);
+  /** This instance's runs in flight, job id → who started it and the timer that renews its lease. */
+  private readonly inFlight = new Map<string, { user: AuthenticatedUser; timer: NodeJS.Timeout }>();
+  private sweeping: Promise<void> | null = null;
 
   constructor(
     private readonly proxy: OptimizationProxyService,
     private readonly prisma: PrismaService,
+    @Optional() private readonly config?: ConfigService,
+    @Optional() private readonly jobs?: JobRunner,
   ) {}
 
+  onModuleInit(): void {
+    if (!this.background() || !this.jobs) return;
+    this.jobs.register({ name: GENERATE_SWEEP_JOB, intervalMs: GENERATE_SWEEP_INTERVAL_MS, tick: () => this.tick() });
+  }
+
+  /**
+   * Leaves the runner, stops renewing, and fails this instance's runs in
+   * flight with ENGINE_RUN_ABANDONED, best effort: the year is free at once
+   * instead of after the lease, and the page says the service restarted. Each
+   * under the administrator who started it, as every write of the run is.
+   *
+   * A run whose engine call comes back while the process is still draining
+   * writes its own outcome over this, as a run the sweep gave up on does: what
+   * happened wins over what was guessed (run()).
+   */
+  async onModuleDestroy(): Promise<void> {
+    this.jobs?.unregister(GENERATE_SWEEP_JOB);
+    const runs = [...this.inFlight];
+    for (const [, { timer }] of runs) clearInterval(timer);
+    this.inFlight.clear();
+    await Promise.allSettled(
+      runs.map(([jobId, { user }]) =>
+        this.prisma.withRls(user, (tx) =>
+          tx.optimizationJob.updateMany({
+            where: { id: jobId, status: { in: ['PENDING', 'RUNNING'] } },
+            data: {
+              status: 'FAILED',
+              error: INTERRUPTED_MESSAGE,
+              errorCode: ENGINE_RUN_ABANDONED,
+              errorParams: Prisma.DbNull,
+              finishedAt: new Date(),
+            },
+          }),
+        ),
+      ),
+    );
+  }
+
+  /** Whether the sweep's interval is set. */
+  get scheduled(): boolean {
+    return this.jobs?.isScheduled(GENERATE_SWEEP_JOB) ?? false;
+  }
+
+  /** The runs this instance is working on, by id. */
+  get running(): string[] {
+    return [...this.inFlight.keys()];
+  }
+
+  /** The one switch of both sweeps (CANDIDATES_BACKGROUND): a deployment that turns background jobs off turns this off too. */
+  private background(): boolean {
+    return (this.config?.get<CandidatesConfig>('candidates') ?? DEFAULT_CANDIDATES_CONFIG).background;
+  }
+
+  /**
+   * app.optimization_jobs_sweep() in a short transaction of its own, with no
+   * principal: the function is the owner's, takes no argument and refuses a
+   * call that carries a login. Returns how many runs it failed.
+   */
+  async sweep(): Promise<number> {
+    const rows = await this.prisma.withDeliveryService((tx) =>
+      tx.$queryRaw<{ changed: number }[]>(Prisma.sql`SELECT app.optimization_jobs_sweep() AS "changed"`),
+    );
+    return Number(rows?.[0]?.changed ?? 0);
+  }
+
+  /** One pass of the job; a tick while the last one runs waits for it. Never throws. */
+  async tick(): Promise<void> {
+    if (this.sweeping) return this.sweeping;
+    const started = new Date();
+    this.sweeping = this.sweep()
+      .then((changed) => this.jobs?.settled(GENERATE_SWEEP_JOB, started, { ok: true, counts: { changed } }))
+      .catch((error: unknown) => {
+        this.logger.warn(`Generera sweep failed [${errorName(error)}]`);
+        this.jobs?.settled(GENERATE_SWEEP_JOB, started, { ok: false, error: errorName(error) });
+      })
+      .finally(() => {
+        this.sweeping = null;
+      });
+    return this.sweeping;
+  }
+
+  private async sweepBeforeStart(): Promise<void> {
+    try {
+      await this.sweep();
+    } catch (error) {
+      // Its own transaction, so a failure here costs only what it would have
+      // freed; the partial index still refuses a second active run.
+      this.logger.warn(`Generera sweep before a start failed [${errorName(error)}]`);
+    }
+  }
+
+  /**
+   * A run, inserted PENDING, and its task started. Refused before the 202:
+   *
+   *   - 409 CANDIDATES_RUNNING beside a live schemaförslag run of the year;
+   *   - 409 GENERATE_ALREADY_RUNNING beside a Generera run of the year that is
+   *     going: the partial unique index, which two starts that pass the start
+   *     lock one after the other meet too;
+   *   - 409 SCHEDULE_BUSY when the year's start lock is not free within 5 s.
+   *
+   * The sweep runs first, in its own transaction, so a run whose process died
+   * does not hold the year until the five-minute job comes round.
+   */
   async start(
     academicYearId: string,
     user: AuthenticatedUser,
@@ -415,6 +568,7 @@ export class OptimizationJobsService {
       throw new NotFoundException('School context missing from token.');
     }
 
+    await this.sweepBeforeStart();
     const job = await this.prisma.withRls(user, async (tx) => {
       // Nothing here reads a roster — run() does, through the proxy, on the
       // year's projected rosters (projected-rosters.ts). The basis is asked
@@ -429,18 +583,25 @@ export class OptimizationJobsService {
       // never locks the button until the sweep comes round.
       await lockYearForSolveStart(tx, academicYearId, SCHEDULE_BUSY);
       if (await yearHasActiveCandidateRun(tx, academicYearId)) throw candidatesRunning();
-      return tx.optimizationJob.create({
-        data: {
-          schoolId: user.schoolId as string,
-          academicYearId,
-          actorId: user.userId ?? null,
-          status: 'PENDING',
-          weights: (weights ?? undefined) as Prisma.InputJsonValue | undefined,
-        },
-        select: { id: true },
-      });
+      try {
+        return await tx.optimizationJob.create({
+          data: {
+            schoolId: user.schoolId as string,
+            academicYearId,
+            actorId: user.userId ?? null,
+            status: 'PENDING',
+            weights: (weights ?? undefined) as Prisma.InputJsonValue | undefined,
+          },
+          select: { id: true },
+        });
+      } catch (error) {
+        // The year's one active place (OptimizationJobs_one_active_per_year).
+        if (isUniqueViolation(error)) throw generateAlreadyRunning();
+        throw error;
+      }
     });
 
+    this.track(job.id, user);
     // Fire and forget — run() records its own outcome on the job row and is
     // written never to throw. The catch stays regardless: this promise is
     // deliberately unawaited, and Node answers an unhandled rejection by
@@ -448,6 +609,7 @@ export class OptimizationJobsService {
     // for every school on the instance instead of failing a single job.
     void this.run(job.id, academicYearId, user, weights, rules).catch(
       (error: unknown) => {
+        this.untrack(job.id);
         this.logger.error(
           `Optimization job ${job.id} crashed outside its own error handling.`,
           error instanceof Error ? error.stack : String(error),
@@ -608,7 +770,8 @@ export class OptimizationJobsService {
       jobs.map((job) => ({ academicYearId: job.academicYearId, sentences: hrSentencesOf(job) })),
       notedOf(jobs),
       (posts, names) => {
-        const shown = jobs.map((job) => jobView(job, posts(job.academicYearId), names));
+        const now = new Date();
+        const shown = jobs.map((job) => jobView(job, posts(job.academicYearId), names, now));
         return { result: shown.map(({ view }) => view), revealed: shown.flatMap(({ revealed }) => revealed) };
       },
     );
@@ -717,7 +880,15 @@ export class OptimizationJobsService {
       // is the likeliest failure of the whole run — and outside the try its
       // rejection escapes into the unawaited promise above instead of landing
       // on the job row like every other failure.
-      await this.update(jobId, user, { status: 'RUNNING' });
+      //
+      // The first heartbeat: RUNNING, this process as the claimant, and the
+      // lease. Nothing was updated when the run is no longer active (the sweep
+      // gave it up in the moments since the insert, or its school is gone), and
+      // then it is not this process's to run.
+      if (!(await this.beat(jobId, user))) {
+        this.logger.warn(`Optimization job is no longer active, nothing was run [jobId=${jobId}]`);
+        return;
+      }
       const response = await this.proxy.triggerScheduling(
         academicYearId,
         user,
@@ -742,6 +913,13 @@ export class OptimizationJobsService {
           response.notes && response.notes.length > 0
             ? (response.notes.map(storedOf) as unknown as Prisma.InputJsonValue)
             : Prisma.DbNull,
+        // What happened wins over what was guessed: a run the sweep (or a
+        // restart) gave up on while its engine call was still going, and that
+        // then came back and wrote its timetable, ends SUCCEEDED, and what
+        // was said of it as abandoned goes.
+        error: null,
+        errorCode: null,
+        errorParams: Prisma.DbNull,
         finishedAt: new Date(),
       });
     } catch (error) {
@@ -754,7 +932,63 @@ export class OptimizationJobsService {
         errorParams: storedParams(refusal.params, refusal.subjectIds),
         finishedAt: new Date(),
       }).catch(() => undefined);
+    } finally {
+      this.untrack(jobId);
     }
+  }
+
+  /** Starts renewing the run's lease, and remembers it for a restart (onModuleDestroy). */
+  private track(jobId: string, user: AuthenticatedUser): void {
+    const timer = setInterval(() => void this.renew(jobId, user), HEARTBEAT_INTERVAL_MS);
+    // A timer must never keep the process alive: a restart is exactly when it should go.
+    timer.unref();
+    this.inFlight.set(jobId, { user, timer });
+  }
+
+  private untrack(jobId: string): void {
+    const entry = this.inFlight.get(jobId);
+    if (!entry) return;
+    clearInterval(entry.timer);
+    this.inFlight.delete(jobId);
+  }
+
+  /**
+   * One renewal of the timer. A renewal that finds the run no longer active —
+   * the sweep gave it up, a restart failed it, it ended — stops the timer and
+   * writes nothing; the run itself goes on to its own end, whose write is the
+   * truth. Never throws: a lost connection costs one renewal, and the lease is
+   * several of them long.
+   */
+  private async renew(jobId: string, user: AuthenticatedUser): Promise<void> {
+    try {
+      if (await this.beat(jobId, user)) return;
+      this.logger.warn(`Optimization job is no longer active, its lease is not renewed [jobId=${jobId}]`);
+      this.untrack(jobId);
+    } catch (error) {
+      this.logger.warn(`Optimization job heartbeat failed [jobId=${jobId}, ${errorName(error)}]`);
+    }
+  }
+
+  /**
+   * The compare-and-set every sign of life is: RUNNING, this process as the
+   * claimant, the heartbeat now (the database's clock, the one the sweep
+   * reads) and the lease, WHERE the run is still PENDING or RUNNING. False when
+   * nothing was updated: the run is not active any more.
+   *
+   * The lease is the longest the engine can still be solving for the run
+   * (leaseSecondsFor), from now.
+   */
+  private async beat(jobId: string, user: AuthenticatedUser): Promise<boolean> {
+    const lease = leaseSecondsFor(this.proxy.waitSeconds);
+    const updated = await this.prisma.withRls(user, (tx) =>
+      tx.$executeRaw(
+        Prisma.sql`UPDATE "OptimizationJobs"
+                      SET "status" = 'RUNNING', "claimedBy" = ${INSTANCE_NAME}, "heartbeatAt" = now(),
+                          "leaseUntil" = now() + make_interval(secs => ${lease})
+                    WHERE "id" = ${jobId}::uuid AND "status" IN ('PENDING', 'RUNNING')`,
+      ),
+    );
+    return Number(updated) > 0;
   }
 
   private async update(

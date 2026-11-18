@@ -348,12 +348,15 @@ describe('ScheduleCandidatesService', () => {
       expect(tx.scheduleCandidateRun.create).not.toHaveBeenCalled();
     });
 
-    it('409 GENERATE_RUNNING beside a Generera job of the year younger than 15 minutes', async () => {
+    it('409 GENERATE_RUNNING beside a Generera job of the year younger than 15 minutes and inside its lease', async () => {
       tx.optimizationJob.count.mockResolvedValue(1);
       await expect(refusal()).resolves.toEqual({ status: 409, body: expect.objectContaining({ code: GENERATE_RUNNING }) });
       const where = tx.optimizationJob.count.mock.calls[0][0].where;
       expect(where).toMatchObject({ academicYearId: YEAR, status: { in: ['PENDING', 'RUNNING'] } });
       expect(Date.now() - where.createdAt.gte.getTime()).toBeGreaterThanOrEqual(15 * 60 * 1000 - 1000);
+      // A job whose process is gone (its lease has run out) holds nobody off: the sweep is about to fail it.
+      expect(where.leaseUntil.gte).toBeInstanceOf(Date);
+      expect(Math.abs(where.leaseUntil.gte.getTime() - Date.now())).toBeLessThan(5000);
     });
 
     it('asks about Generera under the year’s start lock, which POST jobs takes too', async () => {
