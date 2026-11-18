@@ -295,7 +295,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `INTEGRATION_SECRETS_KEY_PREVIOUS` | optional, same shape: the key before a rotation, which still decrypts and never encrypts. Rotate by moving the current key here, setting a new one, letting each school's admin save its credential again (or waiting for the next save), then clearing it |
 | `SS12000_BACKGROUND` | `on` (default) or `off`: the 5-minute tick that runs scheduled syncs and marks stale and expired runs, and the 1-minute tick that delivers v2.0 subscription notices and purges old tombstones and delivery rows. A school's sync runs at night only once its admin turns the schedule on, and auto-applies only once the admin turns that on too; a notice goes out only once a consumer has registered a subscription |
 | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` | recommended `15` (Railway's own default is `0`): the seconds between SIGTERM and SIGKILL when a deploy replaces the instance. On SIGTERM the API marks a Schemaförslag run that was solving as interrupted, stops taking requests, lets the ones in flight finish, and only then closes its database pool. With `0` it is killed before any of that: the run is left to its lease (about three minutes), and a request in flight is cut off as before |
-| `CANDIDATES_BACKGROUND` | `on` (default) or `off`: the quarter-hourly sweep that marks abandoned candidate runs FAILED, deletes runs older than seven days, and deletes the emptied rows "Ta bort förslagen" left of runs whose engine call was still out, once that call could have ended. Every start in any school sweeps first, so off only delays those deletions |
+| `CANDIDATES_BACKGROUND` | `on` (default) or `off`: the quarter-hourly sweep that marks abandoned candidate runs FAILED, deletes runs older than seven days, and deletes the emptied rows "Ta bort förslagen" left of runs whose engine call was still out, once that call could have ended. Every start in any school sweeps first, so off only delays those deletions. It also turns off the five-minute `generate-runs-sweep` that fails Generera runs whose lease has run out (§27.1); a Generera start sweeps first too, and the page reads an expired lease as abandoned, so that is delayed in the same way |
 | `COVER_REQUESTS_BACKGROUND` | `on` (default) or `off`: the 5-minute tick that settles the open vikarieförfrågningar: the ones whose time is out end `EXPIRED` and the administrator who asked is told nobody said yes, the ones whose lesson or absence went away end `CLOSED` and the colleagues they waited on are told. A question past its time cannot be answered whether or not it has run; the tick settles the stored status, frees the lesson for a new question and tells who it concerns |
 | `CRISIS_BACKGROUND` | `on` (default) or `off`: the quarter-hourly look at alarms left open in Krisläge. A real alarm that has stood open for 12 hours, or an exercise for 3, is ended (`autoEnded`), because only one of each kind can be open and a forgotten one would stop the next. Nobody is told; the app reads the alarm again when it is opened. With `off` an alarm is ended by an administrator or not at all |
 | `GALLRING_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of the nightly gallring. A school's run starts at 03:00 its local time, once a night, and only for the kinds its admin has given a period on `/admin/dataskydd`; a school that has decided nothing loses nothing |
@@ -6533,14 +6533,16 @@ Rollback: the API from before runs against the new schema unchanged. To take the
 
 RLS sections 530–534 (the catalogue; the index in action for each status and school; the CHECKs at their edges and the renewal
 through the API's role and the roles that may not; the sweep to the microsecond with `now()` held still by the transaction;
-the door's refusal of every shape of login and its rights), on PostgreSQL 16 and 17. The adapter probe's `gq-a`–`gq-i`
+the door's refusal of every shape of login and its rights), on PostgreSQL 16 and 17. The adapter probe's `gq-a`–`gq-j`
 (`scripts/test/probe-generera-ko.ts`) run the real service against the database: a start's claim and lease, the second start's 409
 and the adapter's own shape of the refusal, two starts at once as one run and one 409, a renewal, an expired lease read and swept,
 a row a heartbeat holds skipped, the door through the adapter, a second year of one school beside the first, a run that comes back
-after being given up, and a restart.
+after being given up, a restart, and a start while the API's own clock leads the database's by twenty minutes (the heartbeat and the
+lease are both filled by the database's clock, which the check between them compares).
 
 A run across a real jump of the database's clock was run by hand on the clock-shim image (a probe in CI cannot restart its
-database; the scripts and the output are in the author's notes, `m4-prod/klock/`). A run started through the real service took a
-lease of 270 s and its process was ended without `OnModuleDestroy`. With the database's clock moved on 100 s the page read it as
+database, so it is not a CI step). Three steps ran against one database kept on a volume; between them it was recreated with its
+`CLOCK_REALTIME` moved on by an offset, and the API process was started with its own clock moved on by the same offset. A run
+started through the real service took a lease of 270 s and its process was ended without `OnModuleDestroy`. With the database's clock moved on 100 s the page read it as
 running and a second start was 409 `GENERATE_ALREADY_RUNNING`; moved on 300 s the page read it as `FAILED`
 `ENGINE_RUN_ABANDONED` while the row still said `RUNNING`, and a start swept it first (finished at its lease end) and went through.
