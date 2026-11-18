@@ -6439,3 +6439,106 @@ while the file's transaction is open.
   source's secret is read, and a kitchen letter is handed over.
 - After a release that rewrites one of the six, run `prod-fore.sql` of that release: the `prosrc` row of the function it
   rewrites is the one that must equal the "After" column above.
+
+## 27. Generera as a queue entry ("Generera som kö", omgång 12, M4)
+
+A Generera run is a row in `OptimizationJobs` that the API process which took the request works on in the background. The row
+was durable and the work was not: every merge deploys the API, a run takes up to about four minutes, and a process that went in
+the middle left its row at `RUNNING` for ever, the page polling it for ever, and nothing stopped two administrators starting two
+runs of one year. Schemaförslag's runs (`ScheduleCandidateRuns`, 20261125090000) already had a heartbeat, a lease, a sweep and
+a partial unique index; Generera now has the same. The engine is not changed.
+
+Migration `20270222090000_en_generera_korning_har_en_lease_och_ett_lasar_hogst_en_aktiv`: three columns on `OptimizationJobs`,
+two CHECKs, one partial unique index and one function. No new table, no grant on a table, no arm.
+
+| Added | What it is |
+|---|---|
+| `claimedBy text` | The API process that runs it (`host:pid:random`), for the log. Null before the column and for a run an older API started. Never on the wire. |
+| `heartbeatAt timestamptz` | The database's clock at the run's last sign of life. Default `now()`. |
+| `leaseUntil timestamptz` | Until when the run holds its year. Default `now() + 15 minutes`, which is what an API from before the column gives a run. CHECK: at least the heartbeat and at most an hour past it. |
+| `OptimizationJobs_one_active_per_year` | `UNIQUE (schoolId, academicYearId) WHERE status IN ('PENDING','RUNNING')`: at most one active run per year, by the database. |
+| `app.optimization_jobs_sweep()` | `SECURITY DEFINER`, no argument, returns the number of runs it failed. Fails an active run whose lease ran out, or that began more than 30 minutes ago, `FAILED` with `ENGINE_RUN_ABANDONED`, finished when its lease ran out. Takes its rows `FOR UPDATE SKIP LOCKED`. Refuses (`GQ403`) a call that carries a login, as the doors of §26 do; only the API's role may run it. |
+
+### 27.1 The lease, the heartbeat and what the engine can still be doing
+
+`OptimizationJobsService` makes a first heartbeat before the engine call (`RUNNING`, the claimant, the lease: one
+compare-and-set, `WHERE status IN ('PENDING','RUNNING')`) and then renews it every 30 seconds with a timer while the run
+lives. Each renewal sets the lease to **the API's wait for the engine (`AI_ENGINE_TIMEOUT_MS`) plus 30 seconds**, clamped to the
+database's 60–3600 s: at the 240 000 ms §5 asks for at a 180 s budget, 270 s. §5 requires `AI_ENGINE_TIMEOUT_MS` to exceed the
+engine's ceiling (`optimize.solve_ceiling_seconds`: the budget, the probe and thirty seconds: 230 s at 180 and 20), so a run whose
+lease has run out has no engine call left to wait for, and the year can be given to the next one without a second solve starting
+beside the first. When the engine can say its own ceiling (M1), the lease takes it from there; until then it follows the wait
+the API enforces, as the page's "up to N minutes" does. `CANDIDATES_BACKGROUND=off` turns off this sweep as well as
+schemaförslag's.
+
+A renewal that finds the run no longer active (the sweep gave it up, a restart failed it, it ended) stops the timer and writes
+nothing. A run whose engine call comes back after that writes its own outcome, `SUCCEEDED` or `FAILED`, over what was guessed
+about it, and takes the abandonment off the row.
+
+### 27.2 What ends a run whose process went away
+
+1. **A restart that can say so.** `OnModuleDestroy` fails the runs this instance has in flight, best effort, at once:
+   `FAILED`, `ENGINE_RUN_ABANDONED`. The year is free for the next start.
+2. **The sweep.** Before every start (in a transaction of its own, so a failure costs only what it would have freed), and every
+   five minutes as the job `generate-runs-sweep` in the gateway's runner (`JobRuns`).
+3. **The page's own read.** `GET /optimization/jobs/:id` and the history show an active run past its lease as `FAILED`
+   `ENGINE_RUN_ABANDONED`, finished when the lease ran out, before the sweep has come round. The page says
+   "Körningen avbröts när tjänsten startades om. Kör Generera igen." and offers "Kör igen", also after a reload when the year's
+   newest run is such a run, and the history names it "Avbröts".
+
+### 27.3 One active run per year, and how it meets the other refusals
+
+| Code | 409 when | Raised by |
+|---|---|---|
+| `GENERATE_ALREADY_RUNNING` | a Generera run of the year is going and a second is started | the partial unique index (23505 on the insert), the one thing that holds even for a start that took no lock |
+| `CANDIDATES_RUNNING` | Generera is started beside a live schemaförslag run of the year | the start's own check, under the year's start lock |
+| `GENERATE_RUNNING` | a schemaförslag run is started, or one is applied, beside a live Generera run of the year | the candidates' check, which now counts a Generera run only while it is inside its lease and its 15 minutes (`leaseUntil >= now`) |
+| `SCHEDULE_BUSY` | the year's start lock is not free within 5 s, or (at the end of a run) the regeneration lock is not | `lockYearForSolveStart`, and the write at the end of a run, which stores it on the run |
+
+`SCHEDULE_BUSY` is "someone is rewriting the year right now": an apply, a restore or a run's write holds the regeneration lock for a
+moment, and the answer is to try again in a few seconds. `GENERATE_ALREADY_RUNNING` is "a run is going": the second start waits
+for it, and the page keeps the button waiting with the reason beside it, and after a refused click reads the history again so the
+run shows and is polled. The two kinds of run (Generera's and schemaförslag's) are kept apart as before, by the start lock and each
+start's check of the other's table: a constraint cannot span two tables, so that half is not the database's.
+
+### 27.4 Production's rows that hang now
+
+Production can hold rows that stopped at `RUNNING`. A unique index cannot be built over two of one year, so the migration, in
+its one transaction (the file has a `$$` body), first: closes every active run older than 15 minutes (no run of the old API
+lasts that long; the old gateway and page already called a job older than that lost) as `FAILED` `ENGINE_RUN_ABANDONED`; leaves
+every younger one exactly as it is, with fifteen minutes from its start as its lease; and **stops with nothing changed** if two
+runs of one year are both younger than that (`prisma migrate resolve --rolled-back <name>`, then deploy again when one has ended).
+`prod-fore.sql` counts them: `years_with_two_runs_going_both_younger_than_15_minutes_...` must be 0.
+
+### 27.5 Deploy order, and what the old API does in between
+
+**The migration first, then the merge.** The API after this names the new columns and calls the new function. The file takes
+`OptimizationJobs` `ACCESS EXCLUSIVE` NOWAIT in a loop (50 ms apart, 30 s at most, then it stops with nothing changed), the only
+table it touches; `ADD COLUMN` with a stable default rewrites nothing. The API before it names the old columns only and
+keeps working; the one difference, said once: in the minutes between the migration and the API's deploy, a start of a year that
+already has a run going fails (23505, a 500 from the old gateway) where it used to start a second solve beside the first.
+
+Rollback: the API from before runs against the new schema unchanged. To take the guarantee away, `DROP INDEX
+"OptimizationJobs_one_active_per_year"`; the columns and the function can stay.
+
+### 27.6 What is not done
+
+- No other process picks a lost run up: it is failed with a sentence that says so, and the administrator runs Generera again.
+- The synchronous `POST /optimization/trigger` has no row and so no lease; it is not a queue entry.
+- The lease follows `AI_ENGINE_TIMEOUT_MS` and not the engine's own ceiling until M1 lets the API read that.
+
+### 27.7 Tests
+
+RLS sections 530–534 (the catalogue; the index in action for each status and school; the CHECKs at their edges and the renewal
+through the API's role and the roles that may not; the sweep to the microsecond with `now()` held still by the transaction;
+the door's refusal of every shape of login and its rights), on PostgreSQL 16 and 17. The adapter probe's `gq-a`–`gq-i`
+(`scripts/test/probe-generera-ko.ts`) run the real service against the database: a start's claim and lease, the second start's 409
+and the adapter's own shape of the refusal, two starts at once as one run and one 409, a renewal, an expired lease read and swept,
+a row a heartbeat holds skipped, the door through the adapter, a second year of one school beside the first, a run that comes back
+after being given up, and a restart.
+
+A run across a real jump of the database's clock was run by hand on the clock-shim image (a probe in CI cannot restart its
+database; the scripts and the output are in the author's notes, `m4-prod/klock/`). A run started through the real service took a
+lease of 270 s and its process was ended without `OnModuleDestroy`. With the database's clock moved on 100 s the page read it as
+running and a second start was 409 `GENERATE_ALREADY_RUNNING`; moved on 300 s the page read it as `FAILED`
+`ENGINE_RUN_ABANDONED` while the row still said `RUNNING`, and a start swept it first (finished at its lease end) and went through.
