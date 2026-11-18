@@ -1238,7 +1238,10 @@ BEGIN
   INSERT INTO "MasterLessonStudents" ("schoolId", "masterLessonId", "studentId") VALUES (m, ml, pupil2);
   INSERT INTO "ScheduleVersions" ("schoolId", "academicYearId", name, lessons, "lessonCount") VALUES (m, yr, 'Roller version', '[]', 0);
   INSERT INTO "ScheduleChangeLogs" ("schoolId", "academicYearId", action) VALUES (m, yr, 'CREATE');
-  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId") VALUES (m, yr);
+  -- A run that has ended: a year has at most one active run (OptimizationJobs_one_active_per_year, 20270222090000),
+  -- and the sections that start one of their own in this year must be able to.
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", status, "solverStatus", "finishedAt")
+  VALUES (m, yr, 'SUCCEEDED', 'OPTIMAL', now());
 
   -- Drift.
   INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", "roomId", date, "startsAt", "endsAt", "updatedAt")

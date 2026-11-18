@@ -3191,9 +3191,21 @@ model OptimizationJob {
   notes                 Json?
   createdAt             DateTime              @default(now()) @db.Timestamptz(6)
   finishedAt            DateTime?             @db.Timestamptz(6)
+  /// The API process that runs it (its own name, for the log); null before 20270222090000 and for a run an older API started.
+  claimedBy             String?
+  /// The database's clock at the run's last sign of life; the process that runs it renews it every half minute. The default is
+  /// the database's own (dbgenerated), not Prisma's now(), which the client fills from the API's clock: the CHECK
+  /// OptimizationJobs_lease_follows_the_heartbeat compares it with leaseUntil, which the database fills, so one clock must fill both.
+  heartbeatAt           DateTime              @default(dbgenerated("now()")) @db.Timestamptz(6)
+  /// Until when the run holds its year: at each renewal, the longest the engine can still be solving for it. Past it an
+  /// active run is abandoned (app.optimization_jobs_sweep: FAILED, ENGINE_RUN_ABANDONED). DB CHECK: at most an hour past the
+  /// heartbeat. The default is the fifteen minutes an API from before the column gives a run.
+  leaseUntil            DateTime              @default(dbgenerated("(now() + '00:15:00'::interval)")) @db.Timestamptz(6)
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 
+  // And, in the migration alone (Prisma cannot say a partial index): OptimizationJobs_one_active_per_year, UNIQUE
+  // (schoolId, academicYearId) WHERE status IN ('PENDING', 'RUNNING') — at most one active run per year.
   @@index([schoolId, academicYearId, createdAt])
   @@map("OptimizationJobs")
 }
