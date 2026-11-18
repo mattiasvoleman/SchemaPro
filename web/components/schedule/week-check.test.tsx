@@ -62,13 +62,41 @@ describe("WeekCheckPanel", () => {
   });
 
   it("says OK as nothing found, never as a timetable that exists, and names what did not run", () => {
-    render(<WeekCheckPanel {...props(result({ skipped: ["LUNCH_STAGE", "WEEK_LOAD_DEADLINE"] }))} />);
+    render(<WeekCheckPanel {...props(result({ skipped: ["LUNCH_STAGE"] }))} />);
 
     expect(screen.getByText("weekCheck.verdict.OK")).toBeInTheDocument();
     expect(screen.getByText("weekCheck.okBody")).toBeInTheDocument();
     expect(screen.getByText("weekCheck.skipped.LUNCH_STAGE")).toBeInTheDocument();
-    expect(screen.getByText("weekCheck.skipped.WEEK_LOAD_DEADLINE")).toBeInTheDocument();
     expect(screen.queryByText(/weekCheck\.skipped\.PLACEMENTS_PROBE/)).toBeNull();
+    expect(document.querySelector(".text-success-strong")).not.toBeNull();
+  });
+
+  it("does not draw an OK as the all-clear when the week load ran out of time, and says what that leaves open", () => {
+    // Measured: åk 9 of the analysis week with some subjects taken out, whose count needs 7 CPU-seconds and is cut
+    // at four, answers OK here while the whole count says 90 %.
+    render(<WeekCheckPanel {...props(result({ skipped: ["LUNCH_STAGE", "WEEK_LOAD_DEADLINE"] }))} />);
+
+    expect(screen.getByText("weekCheck.okCutTitle")).toBeInTheDocument();
+    expect(screen.getByText("weekCheck.okCutBody")).toBeInTheDocument();
+    expect(screen.queryByText("weekCheck.verdict.OK")).toBeNull();
+    expect(screen.queryByText("weekCheck.okBody")).toBeNull();
+    expect(screen.getByText("weekCheck.skipped.WEEK_LOAD_DEADLINE")).toBeInTheDocument();
+    expect(document.querySelector(".text-success-strong")).toBeNull();
+  });
+
+  it("says a tight year's figure is at least that when the count did not finish, and not otherwise", () => {
+    const tight = {
+      verdict: "TIGHT" as const,
+      years: [{ year: 9, demandMinutes: 2185, capacityMinutes: 2275, percent: 96, over: false }],
+      conflicts: { summary: "", summaryCode: "", summaryParams: {}, conflicts: [tightRow] },
+    };
+    const { unmount } = render(<WeekCheckPanel {...props(result({ ...tight, skipped: ["LUNCH_STAGE", "WEEK_LOAD_DEADLINE"] }))} />);
+    expect(screen.getByText("weekCheck.atLeast")).toBeInTheDocument();
+    expect(screen.getByText("weekCheck.verdict.TIGHT")).toBeInTheDocument();
+    unmount();
+
+    render(<WeekCheckPanel {...props(result({ ...tight, skipped: ["LUNCH_STAGE"] }))} />);
+    expect(screen.queryByText("weekCheck.atLeast")).toBeNull();
   });
 
   it("says a tight year as its share of the frame, with the rows a refused run carries beneath it", () => {

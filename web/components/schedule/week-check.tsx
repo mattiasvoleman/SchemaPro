@@ -132,22 +132,29 @@ function Result({
   const conflictLabel = (category: string): string =>
     tConflicts.has(category as never) ? tConflicts(category as never) : category;
   const ok = result.verdict === "OK";
+  // The week load's seconds ran out: a year with no row was not counted, and a year with one may be higher than it
+  // says. An OK is then "nothing found so far", and is not drawn as the green all-clear.
+  const cut = result.skipped.includes("WEEK_LOAD_DEADLINE");
+  const clear = ok && !cut;
   const summary = result.conflicts?.summaryCode || result.conflicts?.summary ? result.conflicts : null;
 
   return (
     <div className="space-y-3">
       <div className="space-y-1.5" role="status">
         <p className="flex items-center gap-2 font-medium">
-          {ok ? (
+          {clear ? (
             <CheckCircle2 className="size-4 shrink-0 text-success-strong" aria-hidden="true" />
           ) : (
             <AlertTriangle className="size-4 shrink-0 text-warning-strong" aria-hidden="true" />
           )}
-          {t(`verdict.${result.verdict}`)}
+          {ok && cut ? t("okCutTitle") : t(`verdict.${result.verdict}`)}
         </p>
         <YearLines years={result.years} />
+        {cut && result.years.length > 0 ? (
+          <p className="max-w-prose text-sm text-muted-foreground">{t("atLeast")}</p>
+        ) : null}
         <p className="max-w-prose text-sm text-muted-foreground">
-          {ok ? t("okBody") : result.verdict === "TIGHT" ? t("tightBody") : t("impossibleBody")}
+          {ok ? (cut ? t("okCutBody") : t("okBody")) : result.verdict === "TIGHT" ? t("tightBody") : t("impossibleBody")}
         </p>
       </div>
 

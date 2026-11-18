@@ -1801,6 +1801,9 @@
       "IMPOSSIBLE": "Veckan går inte att lägga"
     },
     "okBody": "Det är ingen garanti för att ett schema finns. Kontrollen kan visa att en vecka är omöjlig eller trång, men inte att den går att lägga.",
+    "okCutTitle": "Förkontrollen hann inte räkna klart veckan",
+    "okCutBody": "Ingen årskurs hittades över gränsen, men veckolasten hann inte räknas för alla årskurser, så en årskurs utan rad är inte räknad. Det är ingen garanti för att ett schema finns.",
+    "atLeast": "Procenttalen är lägst så höga: räkningen hann inte klart.",
     "tightBody": "En så trång vecka är svår att lägga, och mer tid kanske inte räcker. Raderna nedan säger vad som tar tid.",
     "impossibleBody": "Generera skulle neka veckan inom några sekunder. Rätta orsakerna nedan först.",
     "yearTight": "{grades, select, any {Klasserna med okänd årskurs ligger} other {Åk {grades} ligger}} på {percent} % av ramtiden.",
@@ -1821,7 +1824,7 @@
       "titleImpossible": "Veckan går inte att lägga. Kör ändå?",
       "titleRefused": "Veckan kan inte läggas som den är. Kör ändå?",
       "bodyTight": "Generera kan ta flera minuter på en så trång vecka och kan sluta i en tidsgräns i stället för ett svar.",
-      "bodyImpossible": "Generera skulle neka veckan inom några sekunder. Kör den ändå om du vill ha nekan i körhistoriken.",
+      "bodyImpossible": "Generera skulle neka veckan inom några sekunder. Kör den ändå om du vill ha den nekade körningen i körhistoriken.",
       "confirm": "Kör ändå"
     }
   },

@@ -72,6 +72,20 @@ export type WeekCheckOutcome =
   /** No answer: the engine is older than the API, the API older than this page, or something failed. */
   | { kind: "unavailable"; reason: "ENGINE_OLDER" | "ERROR"; message: string };
 
+/**
+ * The longest a check is waited for. It answers in a few seconds; the gateway's own wait for the engine is thirty,
+ * and a Generera that waits longer than that for a check is held by the one thing that was asked to cost it nothing.
+ * A check that has not answered by then is one that cannot (`unavailable`), and the run goes on.
+ */
+export const WEEK_CHECK_WAIT_MS = 15_000;
+
+/** A signal that ends the wait; none in a browser that has no AbortSignal.timeout, where the check waits as it did. */
+function waitOf(ms: number): AbortSignal | undefined {
+  return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+    ? AbortSignal.timeout(ms)
+    : undefined;
+}
+
 /** The gateway's code for an engine that does not know the route yet (deploys are minutes apart). */
 export const ENGINE_LACKS_WEEK_CHECK = "ENGINE_LACKS_WEEK_CHECK";
 
@@ -114,7 +128,11 @@ export function useWeekCheck() {
     retry: false,
     mutationFn: async (academicYearId) => {
       try {
-        const result = await api.post<WeekCheckResult>("/api/v1/optimization/week-check", { academicYearId });
+        const result = await api.post<WeekCheckResult>(
+          "/api/v1/optimization/week-check",
+          { academicYearId },
+          waitOf(WEEK_CHECK_WAIT_MS),
+        );
         return { kind: "result", result };
       } catch (error) {
         return classifyWeekCheckError(error);
