@@ -9,6 +9,8 @@ import { OptimizationJobsService } from './optimization-jobs.service';
 import { RoomOptimizationService } from './room-optimization.service';
 import { StaffingProposalService } from './staffing-proposal.service';
 import { ScheduleCandidatesService } from './schedule-candidates.service';
+import { WeekCheckController } from './week-check.controller';
+import { WeekCheckService } from './week-check.service';
 
 @Module({
   imports: [
@@ -29,7 +31,8 @@ import { ScheduleCandidatesService } from './schedule-candidates.service';
       },
     }),
   ],
-  controllers: [OptimizationController],
+  // Kontrollera veckan has a controller of its own, beside the run's.
+  controllers: [OptimizationController, WeekCheckController],
   providers: [
     OptimizationProxyService,
     OptimizationJobsService,
@@ -38,6 +41,7 @@ import { ScheduleCandidatesService } from './schedule-candidates.service';
     // Schemaförslag. Its sweep registers with the global JobRunner when
     // CANDIDATES_BACKGROUND is on; the runner is @Optional, as GallringJob's.
     ScheduleCandidatesService,
+    WeekCheckService,
   ],
   // Provplanering (src/exams) asks the engine through the same call.
   exports: [OptimizationProxyService],

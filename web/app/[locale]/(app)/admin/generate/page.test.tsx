@@ -79,10 +79,22 @@ const NEXT = {
 
 /** GET /academic-years/:id/rosters, and every other gateway read, as one spy. */
 const apiGet = vi.hoisted(() => vi.fn());
+/** POST /optimization/week-check: Kontrollera veckan, asked by its own button and before every run. */
+const apiPost = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
-  api: { get: apiGet },
+  api: { get: apiGet, post: apiPost },
 }));
+
+/** A check that finds nothing: the answer every test that is about something else gets. */
+const OK_CHECK = {
+  verdict: "OK",
+  years: [],
+  conflicts: null,
+  skipped: ["LUNCH_STAGE"],
+  elapsedMs: 40,
+  checkedBy: "ENGINE",
+};
 
 const noMutation = { mutateAsync: vi.fn(), isPending: false };
 /** The two reads the page asks to be made again: the year's history, the candidates overview. */
@@ -189,6 +201,8 @@ const pupil = (id: string, studentGroupId: string) => ({
 beforeEach(() => {
   cleanup();
   apiGet.mockReset();
+  apiPost.mockReset();
+  apiPost.mockResolvedValue(OK_CHECK);
   historyRefetch.mockReset();
   candidatesRefetch.mockReset();
   state.years = [ACTIVE];
@@ -1380,8 +1394,9 @@ describe("next year, before its activation", () => {
       screen.getByRole("button", { name: "planningYear.optionNext(2027/28)", pressed: true }),
     ).toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole("button", { name: /generate\.run/ }));
-    expect(noMutation.mutateAsync).toHaveBeenCalledWith(
-      expect.objectContaining({ academicYearId: "y-2" }),
+    // The run follows the week check (Kontrollera veckan), which is a request of its own.
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ academicYearId: "y-2" })),
     );
   });
 
@@ -1713,7 +1728,9 @@ describe("Schemaförslag beside Generera (design §6)", () => {
     render(<GeneratePage />);
     await userEvent.setup().click(runButton());
 
-    expect(toast.error).toHaveBeenCalledWith("scheduleCandidates.jobErrors.CANDIDATES_RUNNING");
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("scheduleCandidates.jobErrors.CANDIDATES_RUNNING"),
+    );
     expect(candidatesRefetch).toHaveBeenCalledTimes(1);
   });
 
@@ -1816,6 +1833,22 @@ describe("Schemaförslag beside Generera (design §6)", () => {
       render(<GeneratePage />);
 
       expect(screen.getByRole("button", { name: "generate.runAgain" })).toBeDisabled();
+    });
+
+    it("waits for the week's check like Generera does, so a second click starts neither a second check nor a second run", async () => {
+      // A run starts with Kontrollera veckan: the button that starts one again is held for as long as that check is on its way.
+      state.job = abandoned();
+      apiPost.mockReturnValue(new Promise(() => undefined));
+      // The mutation spy is the file's, shared by every test that clicks Generera: this one counts its own calls.
+      noMutation.mutateAsync.mockClear();
+      render(<GeneratePage />);
+
+      const again = screen.getByRole("button", { name: "generate.runAgain" });
+      await userEvent.setup().click(again);
+
+      expect(screen.getByRole("button", { name: "generate.runAgain" })).toBeDisabled();
+      expect(apiPost).toHaveBeenCalledTimes(1);
+      expect(noMutation.mutateAsync).not.toHaveBeenCalled();
     });
   });
 

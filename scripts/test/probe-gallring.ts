@@ -333,7 +333,7 @@ export async function gallringChecks(owner: Client, api: PrismaService, marker: 
       );
       assert.deepEqual(waiting.waiting, { DEPARTED_PEOPLE_SCB: 1, DEPARTED_PEOPLE_LOGIN: 1 });
 
-      deleted.push('retry');
+      (deleted as string[]).push('retry');
       const next = await job.runSchool(s);
       assert.equal(next.people, 1);
       // Its cutoff is the first night's or, if a school day went by between

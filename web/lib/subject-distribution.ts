@@ -23,6 +23,21 @@
 /** Bounds shared by the DTOs, the CHECKs (20261019090000) and the engine. */
 export const MAX_LESSONS_PER_DAY_MIN = 1;
 export const MAX_LESSONS_PER_DAY_MAX = 20;
+
+/**
+ * Whether the per-day field holds what the API takes: empty for no limit, or a
+ * whole number 1..20 — the bounds of the DTO, the CHECK and the engine.
+ */
+export function perDayInRange(value: string): boolean {
+  if (value.trim() === "") return true;
+  const count = Number(value);
+  return Number.isInteger(count) && count >= MAX_LESSONS_PER_DAY_MIN && count <= MAX_LESSONS_PER_DAY_MAX;
+}
+
+/** The field as the API wants it: null for no limit. Call only when in range. */
+export function perDayValue(value: string): number | null {
+  return value.trim() === "" ? null : Number(value);
+}
 export const MIN_DAYS_BETWEEN_MIN = 2;
 export const MIN_DAYS_BETWEEN_MAX = 6;
 

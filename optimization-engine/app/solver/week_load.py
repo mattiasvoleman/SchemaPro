@@ -11,8 +11,11 @@ The case this was written for (2026-11-03): three to six language groups in
 each of years 7-9, the same three teachers on all of them. The groups share no
 pupils with each other, so a count of cliques lets them run side by side. They
 cannot — one teacher is in one room — and each group takes pupils from nearly
-every class of the year, so every class must sit through the groups one after
-the other: twelve occasions where four would do. The count that sees only
+every class of the year, so no lesson of a class can run while a group that
+holds some of its pupils does, and those groups follow one another: twelve
+occasions where four would do. (What that costs a class is room for its own
+lessons, not sitting through the groups: `SharedTeacher.class_minutes` counts
+it, and the sentence a school reads says it with the figure.) The count that sees only
 pupils said 80 %; the count below says 94-98 %, and CP-SAT searched twelve
 hundred seconds on eight workers without finding the week.
 
@@ -758,9 +761,9 @@ def _shared_teachers(
     """Teachers whose groups would run side by side if they were not one person.
 
     Two entries of one teacher QUALIFY when they share no pupil with each other
-    but both take pupils from the same HOME CLASS: that class has to sit through
-    them one after the other only because their teacher is shared. That is the
-    language-choice pattern. Two classes' mathematics under one teacher do not
+    but both take pupils from the same HOME CLASS: no lesson of that class can
+    run while either of them does, and the two cannot run together only because
+    their teacher is shared. That is the language-choice pattern. Two classes' mathematics under one teacher do not
     qualify — they have no home class in common — and a teacher is not named
     for teaching them, which every teacher in every school does. (Not "a group
     both share pupils with": the language groups take pupils from every class,

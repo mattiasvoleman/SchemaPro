@@ -193,7 +193,7 @@ export async function calendarFeedChecks(owner: Client, api: PrismaService, mark
       const family = new FamilyScheduleService(api);
       for (const monday of [thisMonday, plus(thisMonday, 7)]) {
         const week = await family.week({ studentId: pupil.id, week: monday }, asGuardian);
-        const fromFeed = document.lessons
+        const fromFeed: Array<Record<string, unknown>> = document.lessons
           .filter((entry) => entry.date >= monday && entry.date <= plus(monday, 6))
           .map((entry) => ({
             id: entry.id,

@@ -8,10 +8,9 @@ import { FormField } from "@/components/ui/form-field";
 import { Switch } from "@/components/ui/switch";
 import { useActiveYear, useGroups, useMasterLessons, useRequirements } from "@/lib/queries";
 import {
-  MAX_LESSONS_PER_DAY_MAX,
-  MAX_LESSONS_PER_DAY_MIN,
   distributionBreaches,
   hasDistributionRule,
+  perDayInRange,
   type DistributionBreach,
   type DistributionRule,
 } from "@/lib/subject-distribution";
@@ -25,20 +24,11 @@ import type { MasterLesson } from "@/lib/types";
  * saved; the dialog is where a school sees the lot before it changes the rule.
  */
 
-/**
- * Whether the per-day field holds what the API takes: empty for no limit, or a
- * whole number 1..20 — the bounds of the DTO, the CHECK and the engine.
+/*
+ * `perDayInRange` and `perDayValue` are in lib/subject-distribution.ts (what the two dialogs that write the rule read the field with),
+ * and re-exported: the timplan's dialog needs them without the controls, which it fetches with the dialog.
  */
-export function perDayInRange(value: string): boolean {
-  if (value.trim() === "") return true;
-  const count = Number(value);
-  return Number.isInteger(count) && count >= MAX_LESSONS_PER_DAY_MIN && count <= MAX_LESSONS_PER_DAY_MAX;
-}
-
-/** The field as the API wants it: null for no limit. Call only when in range. */
-export function perDayValue(value: string): number | null {
-  return value.trim() === "" ? null : Number(value);
-}
+export { perDayInRange, perDayValue } from "@/lib/subject-distribution";
 
 export interface DistributionFieldsProps {
   /** Prefix for the controls' ids, unique on the page. */

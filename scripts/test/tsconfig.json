@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    "declaration": false,
+    "sourceMap": false,
+    "types": ["node"],
+    // The probes are scripts that import the gateway's own services and run them against a
+    // database. What this typecheck is for is a renamed export or a changed signature, which
+    // otherwise first shows up as a TypeError in the Database job; an unused local in a
+    // throwaway probe is not worth a red build.
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": ["./**/*.ts"],
+  // An `exclude` is inherited whole, and the root's leaves out `test` and the specs the
+  // probes may import; nothing the includes reach needs leaving out.
+  "exclude": []
+}
