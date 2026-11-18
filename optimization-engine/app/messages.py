@@ -433,7 +433,7 @@ MESSAGES: dict[str, str] = {
     "TEACHER_SHARED_BY_PARALLEL_GROUPS": (
         "One teacher stands on {groups, plural, one {# group} other {# groups}} of "
         "{grades, select, any {the classes with unknown years} other {year {grades}}} that take "
-        "pupils from the same classes, {minutes} minutes a week in all. A teacher cannot be in two "
+        "pupils from {classes, plural, one {the same class} other {the same classes}}, {minutes} minutes a week in all. A teacher cannot be in two "
         "places, so those groups cannot run at the same time"
         "{classOwn, select, "
         "none {. {classes, plural, "

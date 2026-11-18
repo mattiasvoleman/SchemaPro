@@ -2,8 +2,9 @@
 
 THE SCHOOL (2026-11-03). Year 8 with five home classes and five language
 groups cut across all of them. Three of the groups have one teacher, so they
-cannot run together even though they share no pupil with each other, and every
-class has to sit through them one after the other. The class counts (cliques of
+cannot run together even though they share no pupil with each other, and no
+lesson of a class can run while a group that holds some of its pupils does:
+the groups follow one another. The class counts (cliques of
 pupils) say the week is a comfortable 80 %; the count with the teachers in it
 says 95 % or more, and CP-SAT spent twelve hundred seconds not finding it.
 
@@ -1344,13 +1345,23 @@ def test_the_sentence_says_what_the_classes_lose_and_keeps_its_advice_only_where
     # A row stored before these existed is read by the web as "unknown": the old sentence, word for word.
     assert render(
         "TEACHER_SHARED_BY_PARALLEL_GROUPS",
-        {"groups": 5, "minutes": 800, "grades": "9", "classOwn": "unknown"},
+        {"groups": 5, "minutes": 800, "grades": "9", "classes": 0, "classOwn": "unknown"},
     ) == (
         "One teacher stands on 5 groups of year 9 that take pupils from the same classes, 800 minutes a week "
         "in all. A teacher cannot be in two places, so those groups cannot run at the same time, and every "
         "class they share has to sit through them one after the other. Give each group a teacher of its own "
         "and run them as a parallel block, or let each group take pupils from fewer classes."
     )
+
+
+def test_the_first_sentence_says_the_same_class_when_the_groups_take_pupils_from_one_class() -> None:
+    """The second sentence became singular for one class (review of #342, LÅG-6); the first still said "from the same classes"."""
+    params = {"groups": 2, "minutes": 280, "grades": "8", "classMinutes": 0}
+    for own in ("none", "some", "other"):
+        one = render("TEACHER_SHARED_BY_PARALLEL_GROUPS", {**params, "classOwn": own, "classes": 1})
+        several = render("TEACHER_SHARED_BY_PARALLEL_GROUPS", {**params, "classOwn": own, "classes": 2})
+        assert "that take pupils from the same class, 280 minutes" in one, own
+        assert "that take pupils from the same classes, 280 minutes" in several, own
 
 
 def test_a_class_with_several_posts_loses_the_sum_of_them() -> None:

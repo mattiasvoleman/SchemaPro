@@ -120,10 +120,13 @@ describe("TEACHER_SHARED_BY_PARALLEL_GROUPS", () => {
     expect(sv1).toContain("Klassen de delar har ingen egen lektion kvar att lägga");
     expect(sv1).toContain("lärarens kö och inte klassen som fyller veckan");
     expect(sv1).not.toContain("Klasserna");
+    // The first sentence agrees with it: the groups take pupils from the same class, not the same classes.
+    expect(sv1).toContain("som tar elever ur samma klass, 800 minuter");
     const en1 = render(english, { ...base, groups: 2, classes: 1, classMinutes: 0, classOwn: "none" });
     expect(en1).toContain("The class they share has no lesson of its own left to place");
     expect(en1).toContain("the teacher's queue and not the class that fills the week");
     expect(en1).not.toContain("The classes they share");
+    expect(en1).toContain("that take pupils from the same class, 800 minutes");
   });
 
   it("keeps the plural for two classes and more, and reads a line with none of the count as several", () => {
