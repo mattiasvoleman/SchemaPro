@@ -6,7 +6,7 @@ import type { TemplateKind } from "@/lib/column-fields";
 import type { MappingTemplate } from "@/lib/column-mapping";
 import { readTable, type RawTable } from "@/lib/column-table";
 import { useImportTemplates } from "@/lib/column-template-queries";
-import { decodeCsvBytes } from "@/lib/csv-encoding";
+import { readSource, type TableSource } from "@/lib/column-source";
 import { MAX_UPLOAD_BYTES } from "@/lib/schedule-exchange";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -27,15 +27,12 @@ export interface ColumnMappingDialogProps {
   onOpenChange: (open: boolean) => void;
   kind: TemplateKind;
   /** Pasted text, or a file chosen; the dialog reads a file's bytes in the encoding it was saved in. */
-  source: { text: string } | { file: File } | null;
+  source: TableSource | null;
   onUse: (table: MappedTable) => void;
 }
 
 const NO_TEMPLATES: MappingTemplate[] = [];
 const PREVIEW_ROWS = 5;
-/** A paste this long is not a timetable, and a browser that parses it freezes: it is turned back with a sentence. */
-const MAX_TEXT = 5_000_000;
-const ENCODING_NAME = { "windows-1252": "Windows-1252", macintosh: "Mac Roman" } as const;
 
 type Reading = { state: "loading" } | { state: "problem"; text: string } | { state: "table"; table: RawTable; encoding: string | null; serial: number };
 
@@ -58,27 +55,16 @@ export function ColumnMappingDialog({ open, onOpenChange, kind, source, onUse }:
     let live = true;
     setReading({ state: "loading" });
     setMapping(null);
-    const finish = (text: string, encoding: string | null) => {
+    void readSource(source).then((read) => {
       if (!live) return;
-      if (text.length > MAX_TEXT) setReading({ state: "problem", text: t("tooLong") });
-      else {
-        const table = readTable(text);
-        serial.current += 1;
-        setReading(table.rows.length === 0 ? { state: "problem", text: t("empty") } : { state: "table", table, encoding, serial: serial.current });
+      if (!read.ok) {
+        setReading({ state: "problem", text: read.reason === "tooLong" ? t("tooLong") : read.problem });
+        return;
       }
-    };
-    if ("text" in source) {
-      finish(source.text, null);
-    } else {
-      void source.file.arrayBuffer().then((buffer) => {
-        const decoded = decodeCsvBytes(new Uint8Array(buffer));
-        if (decoded.problem !== null) {
-          if (live) setReading({ state: "problem", text: decoded.problem });
-          return;
-        }
-        finish(decoded.text, decoded.encoding === "utf-8" ? null : ENCODING_NAME[decoded.encoding]);
-      });
-    }
+      const table = readTable(read.text);
+      serial.current += 1;
+      setReading(table.rows.length === 0 ? { state: "problem", text: t("empty") } : { state: "table", table, encoding: read.encoding, serial: serial.current });
+    });
     return () => {
       live = false;
     };

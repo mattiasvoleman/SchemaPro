@@ -542,6 +542,14 @@ vi.mock("@/i18n/navigation", () => ({
   ),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+// The dialogs the page opens read the school's saved column templates through react-query; these tests render the page with its own hooks
+// mocked and no QueryClient, and ask only what the dialog is handed (the templates have tests of their own: components/import).
+vi.mock("@/lib/column-template-queries", () => ({
+  useImportTemplates: () => ({ data: [] }),
+  useCreateImportTemplate: () => ({ mutate: vi.fn(), isPending: false }),
+  useUpdateImportTemplate: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteImportTemplate: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 
 // The year's blocks, read for the dialog of a post in one; blockPair is the
 // real one. Recorded, so a test can say when the page asked.

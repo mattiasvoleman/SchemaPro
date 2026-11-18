@@ -38,6 +38,12 @@ export interface ColumnMappingPanelProps {
   /** The school's templates of the kind: empty while they load, or when they cannot be read. */
   templates: readonly MappingTemplate[];
   onChange: (state: MappingState | null) => void;
+  /**
+   * For a dialog that has its own preview and its own count of the rows (the CSV importers): the columns are folded away behind
+   * one line while nothing needs the user's say, the "N rows ready" and the file warnings its owner already shows are left out, and
+   * the notices of the mapping itself (a column that is not read, a personnummer column dropped) stay.
+   */
+  compact?: boolean;
 }
 
 const SKIP = "__skip__";
@@ -52,7 +58,7 @@ const NONE = "";
  * belongs to), so that the two places that show it, the schedule exchange and the CSV dialog, share all of it. The parent
  * gives it a `key` per table (a new paste is a new panel) and a stable `templates` list (an empty constant while they load).
  */
-export function ColumnMappingPanel({ kind, table, templates, onChange }: ColumnMappingPanelProps) {
+export function ColumnMappingPanel({ kind, table, templates, onChange, compact = false }: ColumnMappingPanelProps) {
   const t = useTranslations("columnMapping");
   // What the user has said: where the headers stand, and, once they have changed a column or taken a template, the columns as they left them.
   // Everything else is DERIVED from the table and the templates, so a template that arrives late places the columns the user has not touched.
@@ -65,6 +71,15 @@ export function ColumnMappingPanel({ kind, table, templates, onChange }: ColumnM
   const applied = chosen ? chosen.applied : (recognition?.template ?? null);
   const columns = useMemo(() => (block ? describeColumns(block, kind, assignment) : []), [block, kind, assignment]);
   const result = useMemo(() => (block && assignment.length === block.headers.length ? applyMapping(block, kind, assignment) : null), [block, kind, assignment]);
+
+  // Folded away while nothing needs the user's say; opened by a missing field, a column nothing places or a row held back, and then
+  // kept open (a column the user has just placed must not fold the list away under their hand) until they close it themselves.
+  const needsSay = result !== null && (result.problems.length > 0 || result.unplaced.length > 0 || result.rowProblems.length > 0);
+  const [latched, setLatched] = useState(false);
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (needsSay) setLatched(true);
+  }, [needsSay]);
 
   // The parent's callback may be a new function every render; what it is told changes only when the mapping does.
   const notify = useRef(onChange);
@@ -98,10 +113,8 @@ export function ColumnMappingPanel({ kind, table, templates, onChange }: ColumnM
     return t("headerRow.option", { row, text: cells.join(" · ") });
   };
 
-  return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">{t("intro")}</p>
-
+  const columnsView = (
+    <>
       {candidates.length > 1 ? (
         <div className="space-y-1">
           <Label htmlFor="mapping-header-row">{t("headerRow.label")}</Label>
@@ -117,8 +130,6 @@ export function ColumnMappingPanel({ kind, table, templates, onChange }: ColumnM
           </NativeSelect>
         </div>
       ) : null}
-
-      <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} />
 
       <div className="overflow-x-auto rounded-md border">
         <table className="w-full text-sm">
@@ -175,9 +186,38 @@ export function ColumnMappingPanel({ kind, table, templates, onChange }: ColumnM
         </table>
       </div>
 
-      {result ? <Summary result={result} label={label} columnName={columnName} /> : null}
-
       <TemplateControls kind={kind} block={block} assignment={assignment} applied={applied} headerRow={block.headerRowNumber === table.rowNumbers[0] ? null : block.headerRowNumber} onSaved={(template) => setChosen({ assignment, applied: template, touched: false })} onDeleted={() => setChosen({ assignment, applied: null, touched: false })} />
+    </>
+  );
+
+  if (compact) {
+    const placed = columns.filter((column) => column.status === "placed").length;
+    const readable = columns.filter((column) => column.status !== "personalNumber").length;
+    return (
+      <div className="space-y-3">
+        <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} />
+        <details
+          open={userOpen ?? (latched || needsSay)}
+          onToggle={(event) => setUserOpen(event.currentTarget.open)}
+          className="rounded-md border px-3 py-2"
+        >
+          <summary className="cursor-pointer text-sm font-medium">{t(needsSay ? "compact.needsSay" : "compact.allPlaced", { placed, total: readable })}</summary>
+          <div className="mt-3 space-y-4">
+            <p className="text-sm text-muted-foreground">{t("intro")}</p>
+            {columnsView}
+          </div>
+        </details>
+        {result ? <Summary result={result} label={label} columnName={columnName} compact /> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">{t("intro")}</p>
+      <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} />
+      {columnsView}
+      {result ? <Summary result={result} label={label} columnName={columnName} /> : null}
     </div>
   );
 }
@@ -233,10 +273,12 @@ function Summary({
   result,
   label,
   columnName,
+  compact = false,
 }: {
   result: Applied;
   label: (id: string) => string;
   columnName: (index: number) => string;
+  compact?: boolean;
 }) {
   const t = useTranslations("columnMapping");
   const names = (refs: { index: number }[]) => refs.map((ref) => columnName(ref.index)).join(", ");
@@ -256,7 +298,7 @@ function Summary({
             ))}
           </ul>
         </Notice>
-      ) : (
+      ) : compact ? null : (
         <Notice tone={result.ok ? "success" : "warning"}>{t("summary.ready", { count: result.rows.length })}</Notice>
       )}
 
@@ -275,7 +317,7 @@ function Summary({
       {result.skipped.length > 0 ? <Notice tone="neutral">{t("skipped", { count: result.skipped.length, names: names(result.skipped) })}</Notice> : null}
       {result.dropped.length > 0 ? <Notice tone="neutral">{t("dropped", { count: result.dropped.length })}</Notice> : null}
       {result.emptied.length > 0 ? <Notice tone="neutral">{t("emptied", { count: result.emptied.length })}</Notice> : null}
-      {result.warnings.map((warning) => (
+      {result.warnings.filter((warning) => !compact || warning.code === "REPLACEMENT_CHARACTER").map((warning) => (
         <Notice key={warning.code} tone="warning">
           {t(`warnings.${warning.code}`, { rows: (warning.rows ?? []).join(", ") })}
         </Notice>

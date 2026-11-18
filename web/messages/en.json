@@ -3454,6 +3454,9 @@
     },
     "downloadTemplate": "Download template",
     "chooseFile": "Choose file",
+    "pasteLabel": "Or paste the table here",
+    "pasteHint": "Select the table in the other program, copy and paste it. The headers must be on top.",
+    "pasteRead": "Read in what was pasted",
     "noActiveYear": "No active academic year. Activate a year before importing.",
     "importingIntoYear": "The rows will be imported into {year}.",
     "mappingErrors": "Problems in the file",
@@ -8066,6 +8069,9 @@
       "fileHint": "An Excel file (.xlsx) is read here by selecting the cells and pasting them, or by saving it as CSV.",
       "read": "Read in the table",
       "kindLessons": "Lessons (the timetable)",
+      "kindRequirements": "Staff allocation (the post import)",
+      "kindLabel": "What does the table hold?",
+      "requirementsHint": "A staff allocation becomes posts in the timplan: teachers are given by signature, and you point out the group, subject, lessons per week and minutes per lesson yourself. The preview and Import are in the next step.",
       "used": "The table {name} has been read: {count, plural, one {# row} other {# rows}}. The preview is below.",
       "tooLarge": "The file is too large: at most {size} kB is accepted."
     },
@@ -11002,9 +11008,13 @@
   },
   "columnMapping": {
     "intro": "Say which column of the table is which field. What you do not point out is not read in, and Rastra never guesses which column is which.",
+    "compact": {
+      "allPlaced": "All columns are pointed out ({placed} of {total} are read). Show or change",
+      "needsSay": "Columns to point out ({placed} of {total} are read)"
+    },
     "pasted": "Pasted table",
     "empty": "There was no table in the text. Paste the rows, with the headers on top.",
-    "tooLong": "The text is too long to be a table of lessons. Split it, or save the table as a CSV file.",
+    "tooLong": "The text is too long to be a table. Split it, or save the table as a CSV file.",
     "readAs": "The file was read as {encoding}. If å, ä and ö are wrong below, save the file as CSV UTF-8 and choose it again.",
     "dialog": {
       "title": "Read in a table",
