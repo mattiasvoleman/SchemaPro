@@ -44,10 +44,8 @@ describe('the public viewer (e2e)', () => {
       }
       return known ? [{ doc: DOC }] : [{ doc: null }];
     });
-    // Listen once: an unlistened server makes supertest open and close an
-    // ephemeral port per request, and across the 600 requests below a pooled
-    // keep-alive socket can meet a closed one ("socket hang up", or a hang).
-    await harness.app.listen(0, '127.0.0.1');
+    // The harness listens once on the loopback (test/utils/test-app.ts). An unlistened server makes supertest open and close an ephemeral
+    // port per request, and across the 600 requests below a request can meet another process on that port ("socket hang up", or a 404).
   });
   afterEach(async () => {
     await harness.close();

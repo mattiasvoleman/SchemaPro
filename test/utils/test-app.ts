@@ -375,6 +375,17 @@ export async function createTestApp(
   // harness with different limits cannot see a payload the real API rejects.
   configureBodyParsers(app);
   await app.init();
+  // LISTENING, ON THE LOOPBACK ADDRESS, ONCE. Given a server that is not listening, supertest starts it for each request with
+  // `listen(0)`, which binds the wildcard address, and asks it at 127.0.0.1:<port>. On macOS a request to 127.0.0.1:<port> goes to
+  // whichever process holds that very port on 127.0.0.1 before a wildcard bind on it: other servers on this machine's loopback
+  // (the desktop app's own, other sessions' dev servers and stubs) answer a request meant for this app, and answer 404 "not found"
+  // (text/plain, no Express headers), or hang up. Measured on this Mac (omgång 12, B9): 8 to 14 requests of 20 000 on a fresh
+  // `listen(0)` were answered by another process, always on the port of one of the listeners on 127.0.0.1 and with the same
+  // body; none of 9 000 on `listen(0, '127.0.0.1')`. A route sweep of 400 requests meets one in about a fifth of its runs, which
+  // is the "404 undefined" and "socket hang up" of the e2e suites under load (memory e2e-socket-hang-up-flake): never the code.
+  // `unref`: a spec that forgets `close()` must not keep the worker alive.
+  await app.listen(0, '127.0.0.1');
+  (app.getHttpServer() as { unref?: () => void }).unref?.();
 
   return {
     app,
