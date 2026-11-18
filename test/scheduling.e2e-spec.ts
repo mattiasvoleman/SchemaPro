@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { Prisma } from '@prisma/client';
+import { Role } from '../src/auth/enums/role.enum';
 import { AxiosError } from 'axios';
 import { throwError } from 'rxjs';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
@@ -187,7 +188,7 @@ describe('Scheduling surface (e2e)', () => {
       it('lets only an administrator start a run', async () => {
         await request(http())
           .post('/api/v1/optimization/jobs')
-          .set('x-test-user', asUser({ role: 'TEACHER' }))
+          .set('x-test-user', asUser({ role: Role.TEACHER }))
           .send({ academicYearId: YEAR_ID })
           .expect(403);
         expect(harness.tx['optimizationJob']!['create']).not.toHaveBeenCalled();
