@@ -108,7 +108,7 @@ const statusMatches = (filter: unknown, status: string): boolean => {
 describe('ScheduleCandidatesService', () => {
   let tx: TxMock;
   let prisma: PrismaMock;
-  let proxy: { prepareSchedule: jest.Mock; solveCandidate: jest.Mock; applyCandidateWrite: jest.Mock };
+  let proxy: { engineTimes: jest.Mock; prepareSchedule: jest.Mock; solveCandidate: jest.Mock; applyCandidateWrite: jest.Mock };
   let versions: { snapshotInTransaction: jest.Mock };
   let realtime: { notifyMasterTimetableChanged: jest.Mock };
   let jobs: { register: jest.Mock; unregister: jest.Mock; isScheduled: jest.Mock; settled: jest.Mock };
@@ -291,6 +291,8 @@ describe('ScheduleCandidatesService', () => {
     tx.optimizationJob.count.mockResolvedValue(0);
 
     proxy = {
+      // The engine's probe and headroom as it said them; nothing here, so a call waits as it always did (M1).
+      engineTimes: jest.fn(() => undefined),
       prepareSchedule: jest.fn(async () => {
         steps.push('proxy:prepare');
         return prepared();

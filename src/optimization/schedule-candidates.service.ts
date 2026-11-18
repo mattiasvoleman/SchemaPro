@@ -736,7 +736,10 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
 
   private searchSettings(): SearchSettings {
     const settings = this.settings();
-    return { maxSeconds: settings.maxSeconds, workers: settings.solverWorkers };
+    // The engine's probe and headroom as it last said them: a call's wait follows them, and without
+    // them (an older engine, or one not asked yet) it is what it always was.
+    const times = this.proxy.engineTimes();
+    return { maxSeconds: settings.maxSeconds, workers: settings.solverWorkers, ...(times !== undefined ? { times } : {}) };
   }
 
   // ---------------------------------------------------------------------------

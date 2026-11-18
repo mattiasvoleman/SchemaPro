@@ -204,7 +204,8 @@ export class ExamPlannerService {
         throw badExam(EXAM_TOO_MANY, `Planera högst ${MAX_EXAMS} prov åt gången: välj de prov som hör till en provvecka.`, { limit: MAX_EXAMS });
       }
       const response = await this.proxy.callAiEngine<PlanExamsResponse>(PLAN_EXAMS_PATH, built.request, engineMaps(), {
-        timeoutMs: PLAN_TIMEOUT_MS,
+        // 90 s, or what the engine says the planner needs if the exam budget was raised past it.
+        timeoutMs: this.proxy.waitMsAtLeast(PLAN_EXAMS_PATH, PLAN_TIMEOUT_MS),
       });
       realised = realise(built, response);
     }

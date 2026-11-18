@@ -114,9 +114,20 @@ export class EnvironmentVariables {
   @IsNotEmpty()
   AI_ENGINE_API_KEY!: string;
 
+  /**
+   * OPTIONAL (M1, Tidskedjan): how long the API waits for one call to the engine, in
+   * milliseconds. Unset, which is what DEPLOYMENT.md §5 recommends, the API waits
+   * as long as the engine says its route can take (GET /api/v1/timing) plus a
+   * margin, so nothing is set in two places. Set, it is the wait, the request
+   * carries it as its deadline (the engine answers inside it, with a shorter
+   * search if it must), and a start in production that finds it shorter than the
+   * engine can need is refused with the sentence that says which number to change
+   * (EngineTimingService).
+   */
+  @IsOptional()
   @IsInt()
   @Min(1000)
-  AI_ENGINE_TIMEOUT_MS: number = 15000;
+  AI_ENGINE_TIMEOUT_MS?: number;
 
   @IsInt()
   @Min(1)

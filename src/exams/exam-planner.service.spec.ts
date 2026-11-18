@@ -138,7 +138,7 @@ describe('ExamPlannerService', () => {
     activities = { createWithin: jest.fn(), settleCreated: jest.fn(), remove: jest.fn() };
     service = new ExamPlannerService(
       createPrismaMock(tx) as unknown as PrismaService,
-      { callAiEngine: engine } as unknown as OptimizationProxyService,
+      { callAiEngine: engine, waitMsAtLeast: (_path: string, floorMs: number) => floorMs } as unknown as OptimizationProxyService,
       activities as unknown as ScheduleActivitiesService,
     );
     world = {

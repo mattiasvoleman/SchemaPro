@@ -59,6 +59,35 @@ describe('validateEnv', () => {
     });
   });
 
+  describe('AI_ENGINE_TIMEOUT_MS (M1: optional, best left unset)', () => {
+    const without = () => {
+      const { AI_ENGINE_TIMEOUT_MS: _dropped, ...rest } = valid();
+      return rest;
+    };
+
+    it('may be left out: the API then waits as long as the engine says (EngineTimingService), and there is no default to mistake for a setting', () => {
+      const validated = validateEnv(without());
+
+      expect(validated.AI_ENGINE_TIMEOUT_MS).toBeUndefined();
+    });
+
+    it('may be an empty string a template leaves, which is not a setting either', () => {
+      expect(() => validateEnv({ ...without(), AI_ENGINE_TIMEOUT_MS: undefined })).not.toThrow();
+    });
+
+    it.each([['the docs recommend', '240000'], ['one second, the least', '1000']])('accepts what %s', (_label, value) => {
+      expect(validateEnv({ ...valid(), AI_ENGINE_TIMEOUT_MS: value }).AI_ENGINE_TIMEOUT_MS).toBe(Number(value));
+    });
+
+    it.each([
+      ['under a second', '999'],
+      ['not a number', 'soon'],
+      ['not a whole number of milliseconds', '1500.5'],
+    ])('refuses %s', (_label, value) => {
+      expect(() => validateEnv({ ...valid(), AI_ENGINE_TIMEOUT_MS: value })).toThrow(/AI_ENGINE_TIMEOUT_MS/);
+    });
+  });
+
   it('names the offending variable and never echoes its value', () => {
     // The message goes to a log an operator reads, and half of these variables
     // are secrets.
