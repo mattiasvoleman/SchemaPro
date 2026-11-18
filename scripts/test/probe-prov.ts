@@ -249,6 +249,8 @@ export async function examChecks(owner: Client, api: PrismaService, marker: stri
     const activities = new ScheduleActivitiesService(api, realtime, notifications);
     const sent: PlanExamsRequest[] = [];
     const proxy = {
+      // The planner waits 90 s, or what the engine says it needs if that is more (M1): no engine says anything here.
+      waitMsAtLeast: (_path: string, floorMs: number): number => floorMs,
       callAiEngine: async <T>(_path: string, payload: object): Promise<T> => {
         sent.push(payload as PlanExamsRequest);
         const url = process.env.G4_ENGINE_URL;
