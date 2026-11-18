@@ -636,3 +636,111 @@ def test_a_completion_that_finds_nothing_leaves_phase_2_its_partial_hint(
     assert [completing for _, _, completing in seen] == [True, False]
     phase2_hinted, phase2_variables, _ = seen[-1]
     assert 0 < phase2_hinted < phase2_variables
+
+
+# ---------------------------------------------------------------------------
+# The ceiling and the probe's clock (2026-11-17: three Generera runs answered
+# 503 in the middle of their timeout probe)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("budget", "probe", "search", "ceiling"),
+    [
+        # Production since 2026-11-03: 180 s and the default probe. The API waits 240 s.
+        (180.0, 20.0, None, 230.0),
+        # The defaults.
+        (60.0, 20.0, None, 110.0),
+        # A schemaförslag candidate: its 30 s, and a probe of half of that.
+        (60.0, 20.0, {"maxSeconds": 30}, 75.0),
+        # Probes off at the deployment: the budget and the builds.
+        (60.0, 0.0, None, 90.0),
+    ],
+)
+def test_the_ceiling_lies_past_the_budget_the_probe_and_the_builds(
+    budget: float, probe: float, search: dict[str, object] | None, ceiling: float,
+) -> None:
+    from app.api.v1.optimize import solve_ceiling_seconds
+
+    settings = settings_for_search(
+        _settings(SOLVER_MAX_TIME_SECONDS=budget, SOLVER_PROBE_SECONDS=probe),
+        SearchOptions.model_validate(search) if search is not None else None,
+    )
+
+    assert solve_ceiling_seconds(settings) == ceiling
+
+
+def test_run_solver_waits_for_the_ceiling_not_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The 503 is the ceiling's: a TIMEOUT and its probe answer before it."""
+    from app.api.v1 import optimize
+
+    _Recorder(monkeypatch, answer=cp_model.UNKNOWN)
+    waited: list[float | None] = []
+    real_wait_for = asyncio.wait_for
+
+    async def wait_for(awaitable: object, timeout: float | None) -> object:
+        waited.append(timeout)
+        return await real_wait_for(awaitable, timeout=None)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(optimize.asyncio, "wait_for", wait_for)
+    request = OptimizeScheduleRequest.model_validate(_payload(changeover=5))
+
+    response = asyncio.run(
+        optimize.run_solver(request, _settings(SOLVER_MAX_TIME_SECONDS=180, SOLVER_PROBE_SECONDS=20)),
+    )
+
+    assert response.status == "TIMEOUT"
+    assert waited == [230.0]
+
+
+def test_the_timeout_probe_has_a_deadline_without_the_walk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The budget and the probe's seconds from the moment the search began."""
+    _Recorder(monkeypatch, answer=cp_model.UNKNOWN)
+    seen: list[tuple[float | None, float]] = []
+    original = SchedulerSolver._probe_timeout
+
+    def probe(self: SchedulerSolver, request: OptimizeScheduleRequest, *, deadline: float | None = None):  # type: ignore[no-untyped-def]
+        seen.append((deadline, scheduler_solver.time.monotonic()))
+        return original(self, request, deadline=deadline)
+
+    monkeypatch.setattr(SchedulerSolver, "_probe_timeout", probe)
+    before = scheduler_solver.time.monotonic()
+
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=60, SOLVER_PROBE_SECONDS=20)).solve(
+        OptimizeScheduleRequest.model_validate(_payload(changeover=5)),
+    )
+
+    assert response.status == "TIMEOUT"
+    [(deadline, called_at)] = seen
+    assert deadline is not None
+    # started lies between the request's arrival and the probe's call.
+    assert before + 80.0 <= deadline <= called_at + 80.0
+
+
+def test_a_search_that_overran_its_budget_leaves_the_probe_unstarted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A probe that cannot have the rest of its slice is not started.
+
+    Phase 1a is made to stop late, as CP-SAT does on a large week: past the
+    budget AND the probe's seconds. Without the deadline the probe ran its
+    whole slice after it, which on 2026-11-17 put the answer past the API's
+    ceiling. With it the TIMEOUT answers at once, unprobed.
+    """
+    recorder = _Recorder(monkeypatch, answer=cp_model.UNKNOWN)
+    original = cp_model.CpSolver.Solve
+
+    def late(solver: cp_model.CpSolver, model: cp_model.CpModel, *args: object, **kwargs: object) -> int:
+        answer = original(solver, model, *args, **kwargs)
+        threading.Event().wait(1.6)
+        return answer
+
+    monkeypatch.setattr(cp_model.CpSolver, "Solve", late)
+
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=0.5, SOLVER_PROBE_SECONDS=1.0)).solve(
+        OptimizeScheduleRequest.model_validate(_payload(changeover=5)),
+    )
+
+    assert response.status == "TIMEOUT"
+    # Phase 1a only: phase 1b had no time left, and the probe's deadline had passed.
+    assert len(recorder.calls) == 1, recorder.parameters()

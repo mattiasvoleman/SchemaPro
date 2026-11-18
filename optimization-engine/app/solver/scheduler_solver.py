@@ -5657,11 +5657,15 @@ class SchedulerSolver:
         # path ran to 91 s against the gateway's and the API's 90. A week
         # without the walk keeps the clock it always had.
         started = entered if travel is not None else time.monotonic()
-        probe_deadline = (
-            None
-            if travel is None
-            else entered + total_budget + self._settings.solver_probe_seconds
-        )
+        # THE PROBE ENDS ON A CLOCK, with the walk or without it: the budget
+        # and the probe's seconds from the moment the search began. The
+        # search can stop some seconds after its budget (2026-11-17: ten, on
+        # an 809-lesson week at 180 s), and a probe that then took its whole
+        # twenty, builds on top, ran past the API's ceiling, which answered
+        # 503 in the middle of it (optimize.solve_ceiling_seconds). A probe
+        # that cannot have the rest of its slice is not started, and the
+        # summary counts only the rules that were probed (_probe_timeout).
+        probe_deadline = started + total_budget + self._settings.solver_probe_seconds
 
         def _remaining() -> float:
             return total_budget - (time.monotonic() - started)
@@ -5678,9 +5682,7 @@ class SchedulerSolver:
 
         def _timeout_conflicts() -> ConflictAnalysis | None:
             return self._with_tight_week(
-                self._probe_timeout(request)
-                if probe_deadline is None
-                else self._probe_timeout(request, deadline=probe_deadline),
+                self._probe_timeout(request, deadline=probe_deadline),
                 tight,
             )
 
@@ -10975,8 +10977,9 @@ class SchedulerSolver:
 
         None for a request that turned its probes off, as for a deployment
         that set SOLVER_PROBE_SECONDS to zero: the TIMEOUT then stands bare.
-        Likewise where the school keeps the walk and `deadline` came before
-        any probe could run.
+        Likewise where `deadline` came before any probe could run: solve()
+        gives one to every week, the budget and the probe's seconds from the
+        moment its search began.
         """
         budget = self._settings.solver_probe_seconds
         if budget <= 0 or not _runs_probes(request):
@@ -11011,7 +11014,7 @@ class SchedulerSolver:
         # answered. None while it has not run.
         walk_probe: tuple[int, float] | None = None
         for code, relaxed in relaxations:
-            # `deadline` (a week that keeps the walk; see solve()) bounds the
+            # `deadline` (see solve()) bounds the
             # probes and their builds together: a probe that cannot have the
             # rest of its slice is not started, and the summary counts only
             # the rules that were probed.
