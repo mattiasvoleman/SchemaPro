@@ -1739,6 +1739,115 @@ describe("Schemaförslag beside Generera (design §6)", () => {
     expect(screen.queryByText("The draft changed during the run.")).toBeNull();
   });
 
+  /*
+   * A run whose process went away (the service was restarted, or lost): its lease ran out, and the gateway reads a run
+   * past its lease as FAILED ENGINE_RUN_ABANDONED before the sweep has come round. The page says what happened, in the
+   * gateway's own words, and offers to run again; it never polls a dead run for ever.
+   */
+  describe("a run whose process went away", () => {
+    const abandoned = (over: Record<string, unknown> = {}) => ({
+      id: "job-gone", status: "FAILED", solverStatus: null, lessonsGenerated: 0, conflicts: [],
+      error: "The run stopped before it finished: the service that ran it was restarted or lost.",
+      errorCode: "ENGINE_RUN_ABANDONED", errorParams: null,
+      createdAt: "2026-11-18T08:00:00.000Z", finishedAt: "2026-11-18T08:04:30.000Z",
+      ...over,
+    });
+
+    it("says the sentence, not the English, and offers to run again", async () => {
+      state.job = abandoned();
+      render(<GeneratePage />);
+
+      expect(screen.getByText("scheduleCandidates.jobErrors.ENGINE_RUN_ABANDONED")).toBeInTheDocument();
+      expect(screen.queryByText(/the service that ran it was restarted/)).toBeNull();
+      const again = screen.getByRole("button", { name: "generate.runAgain" });
+      expect(again).toBeEnabled();
+      await userEvent.setup().click(again);
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ academicYearId: "y-1" }));
+    });
+
+    it("offers it after a reload too, when the newest run of the year is the one that went away", () => {
+      state.history = [abandoned()];
+      render(<GeneratePage />);
+
+      expect(screen.getByText("scheduleCandidates.jobErrors.ENGINE_RUN_ABANDONED")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "generate.runAgain" })).toBeEnabled();
+      // And the history names it for what it is, not as a failure of its own.
+      expect(screen.getByText("generate.historyStatus.ABANDONED")).toBeInTheDocument();
+      expect(screen.queryByText("generate.historyStatus.FAILED")).toBeNull();
+    });
+
+    it("says nothing about an older run that went away once a later one has run", () => {
+      state.history = [
+        { id: "job-new", status: "SUCCEEDED", solverStatus: "OPTIMAL", lessonsGenerated: 12, createdAt: "2026-11-18T09:00:00.000Z" },
+        abandoned(),
+      ];
+      render(<GeneratePage />);
+
+      expect(screen.queryByText("scheduleCandidates.jobErrors.ENGINE_RUN_ABANDONED")).toBeNull();
+      expect(screen.queryByRole("button", { name: "generate.runAgain" })).toBeNull();
+      expect(screen.getByText("generate.historyStatus.ABANDONED")).toBeInTheDocument();
+    });
+
+    it("says it once when this page has a run of its own to show", () => {
+      state.job = { ...abandoned({ id: "job-own" }), error: "The draft changed.", errorCode: "GENERATE_STALE" };
+      state.history = [abandoned()];
+      render(<GeneratePage />);
+
+      expect(screen.queryByText("scheduleCandidates.jobErrors.ENGINE_RUN_ABANDONED")).toBeNull();
+      expect(screen.queryByRole("button", { name: "generate.runAgain" })).toBeNull();
+    });
+
+    it("keeps the button waiting while a run of the year is going, and while the next run it starts is", () => {
+      state.history = [
+        { id: "job-other", status: "RUNNING", solverStatus: null, lessonsGenerated: 0, createdAt: new Date().toISOString() },
+        abandoned(),
+      ];
+      state.job = abandoned({ id: "job-own" });
+      render(<GeneratePage />);
+
+      expect(screen.getByRole("button", { name: "generate.runAgain" })).toBeDisabled();
+    });
+  });
+
+  /*
+   * One run of a year at a time, in the database (OptimizationJobs_one_active_per_year): the second start is refused
+   * 409 GENERATE_ALREADY_RUNNING. The page says so before the click when it has read the other run, and after it when
+   * it has not.
+   */
+  describe("a second start of a year that has a run going", () => {
+    it("keeps Generera waiting for a run someone else started, saying so", () => {
+      state.history = [
+        { id: "job-other", status: "RUNNING", solverStatus: null, lessonsGenerated: 0, createdAt: new Date().toISOString() },
+      ];
+      render(<GeneratePage />);
+
+      expect(runButton()).toBeDisabled();
+      expect(document.getElementById(runButton().getAttribute("aria-describedby") ?? "")?.textContent).toBe("generate.blockedRunning");
+    });
+
+    it("does not keep it waiting for a run of its own that the history still calls running", () => {
+      state.job = { id: "job-own", status: "SUCCEEDED", solverStatus: "OPTIMAL", lessonsGenerated: 12, conflicts: [], createdAt: "2026-11-18T08:00:00.000Z" };
+      state.history = [
+        { id: "job-own", status: "RUNNING", solverStatus: null, lessonsGenerated: 0, createdAt: new Date().toISOString() },
+      ];
+      render(<GeneratePage />);
+
+      expect(runButton()).toBeEnabled();
+      expect(screen.queryByText("generate.blockedRunning")).toBeNull();
+    });
+
+    it("reads the history again when the start is refused, so the run shows and is polled", async () => {
+      // Started in another tab since this page read the history: until it is read again, the page has no run to wait for.
+      noMutation.mutateAsync.mockRejectedValueOnce(new ApiError(409, "Generera kör redan.", "GENERATE_ALREADY_RUNNING"));
+      render(<GeneratePage />);
+      await userEvent.setup().click(runButton());
+
+      expect(toast.error).toHaveBeenCalledWith("scheduleCandidates.jobErrors.GENERATE_ALREADY_RUNNING");
+      expect(historyRefetch).toHaveBeenCalledTimes(1);
+      expect(candidatesRefetch).not.toHaveBeenCalled();
+    });
+  });
+
   describe("a run the write refused after reading the school again (GENERATE_STALE with the parts it found changed)", () => {
     const stale = (errorParams: Record<string, string | number> | null) => {
       state.job = {

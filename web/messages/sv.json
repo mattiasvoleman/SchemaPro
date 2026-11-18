@@ -1714,6 +1714,8 @@
       "refusalLink": "Visa i veckan",
       "refusalLinkLabel": "Visa i veckan: {sentence}"
     },
+    "runAgain": "Kör igen",
+    "blockedRunning": "Generera körs redan för läsåret, av någon annan eller i en annan flik. Den går att starta när körningen är klar.",
     "runningUpTo": "Optimerar… detta kan ta upp till {minutes, plural, one {en minut} other {# minuter}}",
     "lastRun": "Senaste körning",
     "statusOPTIMAL": "Optimal lösning hittad",
@@ -1785,7 +1787,8 @@
       "RUNNING": "Körs",
       "SUCCEEDED": "Klar",
       "UNSTAFFED": "Stoppad: lärare saknas",
-      "PARTLY_LOCKED": "Stoppad: block delvis låst"
+      "PARTLY_LOCKED": "Stoppad: block delvis låst",
+      "ABANDONED": "Avbröts"
     },
     "historyYearsLoadFailedHint": "Läsåren kunde inte hämtas, så sidan vet inte vilket läsårs körningar den ska visa. Tidigare körningar och schemat är orörda. Ladda om sidan.",
     "historyNoYear": "Det finns inget aktivt läsår, så det finns inga körningar att visa."
@@ -7465,6 +7468,8 @@
       "ENGINE_LACKS_PINNED_LESSONS": "Schemamotorn är äldre än resten av tjänsten och kan inte hålla förlagda lektioner utan sal ännu. Försök igen om några minuter.",
       "ENGINE_MEALS_INCONSISTENT": "Schemamotorn svarade med lunchtider som inte passar läsårets perioder, så ingenting skrevs. Försök igen, och hör av dig om det upprepas.",
       "ENGINE_TIMED_OUT": "Schemamotorn hann inte svara inom sin längsta väntetid, så inget schema sparades. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen.",
+      "ENGINE_RUN_ABANDONED": "Körningen avbröts när tjänsten startades om. Kör Generera igen.",
+      "GENERATE_ALREADY_RUNNING": "Generera kör redan för läsåret. Vänta tills körningen är klar.",
       "CANDIDATES_RUNNING": "Schemaförslag tas fram för läsåret just nu. Generera går att starta när de är klara."
     },
     "page": {

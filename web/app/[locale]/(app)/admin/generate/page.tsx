@@ -95,7 +95,8 @@ function historyStatusKey(run: OptimizationJob): string {
   if (run.solverStatus === "INFEASIBLE" && run.conflictSummaryCode === "BLOCK_PARTLY_LOCKED_SUMMARY") {
     return "PARTLY_LOCKED";
   }
-  if (run.status === "FAILED") return "FAILED";
+  // A run whose process went away (a restart, a crash) is not one that failed on its own account.
+  if (run.status === "FAILED") return run.errorCode === "ENGINE_RUN_ABANDONED" ? "ABANDONED" : "FAILED";
   return run.solverStatus ?? run.status;
 }
 
@@ -445,6 +446,14 @@ export default function GeneratePage() {
       now - new Date(entry.createdAt).getTime() < GENERATE_RUNNING_MS,
   );
   const generating = isRunning || foreignGenerating;
+  const abandonedHere = job?.status === "FAILED" && job.errorCode === "ENGINE_RUN_ABANDONED";
+  /*
+   * The newest run of the year, when a reload has left this page without its own job and that run is one whose process
+   * went away: the page says so as it does for a run it watched, and offers to run again.
+   */
+  const newestInHistory = history?.[0];
+  const abandonedBeforeReload =
+    job === undefined && newestInHistory?.status === "FAILED" && newestInHistory.errorCode === "ENGINE_RUN_ABANDONED";
   /*
    * While such a job runs, the history is read again every few seconds and
    * the clock moves with it: its row turning SUCCEEDED or FAILED, or ageing
@@ -491,9 +500,29 @@ export default function GeneratePage() {
         void candidatesQuery.refetch();
         return;
       }
+      // Another administrator, or another tab, started a run of the year since this page last read the history: the
+      // database lets one run of a year be active. The history is read again, so the run shows and is polled, and
+      // the button waits for it with the reason beside it.
+      if (error instanceof ApiError && error.code === "GENERATE_ALREADY_RUNNING") {
+        toast.error(tCandidates("jobErrors.GENERATE_ALREADY_RUNNING"));
+        void refetchHistory();
+        return;
+      }
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
   };
+
+  const runAgainButton = (
+    <Button
+      variant="outline"
+      onClick={run}
+      disabled={!canRun || isRunning || foreignGenerating || candidateRunActive}
+      data-writes="SCHEMALAGGNING DRIFT"
+    >
+      <Sparkles />
+      {t("runAgain")}
+    </Button>
+  );
 
   /**
    * The gateway's own reasons for a job it stopped before writing, which are
@@ -506,7 +535,11 @@ export default function GeneratePage() {
    * that do not fit them (ENGINE_MEALS_INCONSISTENT).
    */
   const jobErrorText = (code: string | null, params: Record<string, string | number> | null): string | null =>
-    code === "GENERATE_STALE"
+    // The process that ran it went away (the service was restarted, or lost): its lease ran out and the sweep, or the
+    // page's own read of the lease, ended it. Nothing was written.
+    code === "ENGINE_RUN_ABANDONED"
+      ? tCandidates("jobErrors.ENGINE_RUN_ABANDONED")
+      : code === "GENERATE_STALE"
       ? staleParts(params).length > 0
         ? tCandidates("jobErrors.GENERATE_STALE_PARTS", {
             parts: changedPartsText(tCandidates, staleParts(params), locale),
@@ -709,6 +742,13 @@ export default function GeneratePage() {
               disables — a greyed button with no reason beside it is a button
               people click at and then call support about.
             */}
+            {/* One run of a year at a time, in the database (OptimizationJobs_one_active_per_year): a run that someone else
+                started, or this page started before a reload, holds the button until it ends or is abandoned. */}
+            {foreignGenerating ? (
+              <p id="generate-blocked-running" className="mr-auto max-w-prose text-sm text-foreground">
+                {t("blockedRunning")}
+              </p>
+            ) : null}
             {candidateRunActive ? (
               <p id="generate-blocked-candidates" className="mr-auto max-w-prose text-sm text-foreground">
                 {tCandidates("generateBlocked")}{" "}
@@ -741,11 +781,12 @@ export default function GeneratePage() {
             </DialogLoadBoundary>
             <Button
               className="w-full sm:w-auto"
-              disabled={!canRun || isRunning || candidateRunActive}
+              disabled={!canRun || isRunning || candidateRunActive || foreignGenerating}
               onClick={run}
               data-writes="SCHEMALAGGNING DRIFT"
               aria-describedby={
                 [
+                  foreignGenerating ? "generate-blocked-running" : null,
                   candidateRunActive ? "generate-blocked-candidates" : null,
                   blockedByStaffing ? "generate-blocked-unstaffed" : null,
                 ]
@@ -1022,6 +1063,7 @@ export default function GeneratePage() {
           }
           descriptionClassName="text-foreground"
         >
+          {abandonedHere ? <div className="flex flex-wrap items-center gap-3">{runAgainButton}</div> : null}
           {job.status === "SUCCEEDED" && !noScheduleProduced ? (
             <div className="flex flex-wrap items-center gap-3">
               <Badge variant="success">{t("lessonsGenerated", { count: job.lessonsGenerated })}</Badge>
@@ -1172,6 +1214,22 @@ export default function GeneratePage() {
               </ul>
             </section>
           ) : null}
+        </SectionCard>
+      ) : null}
+
+      {abandonedBeforeReload ? (
+        <SectionCard
+          id="last-run"
+          title={
+            <span className="flex items-center gap-2">
+              <AlertTriangle className="size-4 shrink-0 text-warning-strong" />
+              {t("lastRun")}
+            </span>
+          }
+          description={tCandidates("jobErrors.ENGINE_RUN_ABANDONED")}
+          descriptionClassName="text-foreground"
+        >
+          <div className="flex flex-wrap items-center gap-3">{runAgainButton}</div>
         </SectionCard>
       ) : null}
 
