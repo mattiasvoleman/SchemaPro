@@ -30,6 +30,19 @@ vi.mock("@/lib/schedule-exchange", async (importOriginal) => ({
   saveBase64,
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// The post import's dialog has its own tests (components/import/csv-import-dialog.test.tsx); here it is only asked what it was handed.
+vi.mock("@/components/import/lazy-csv-import-dialog", () => ({
+  LazyCsvImportDialog: (props: { open: boolean; kinds: string[]; academicYearId?: string | null; source?: { text: string } | { file: File } | null }) =>
+    props.open ? (
+      <div
+        role="dialog"
+        aria-label="csv-dialog"
+        data-kinds={props.kinds.join(",")}
+        data-year={props.academicYearId ?? ""}
+        data-text={props.source && "text" in props.source ? props.source.text : ""}
+      />
+    ) : null,
+}));
 
 let years: { yearId: string | null; isLoading: boolean; isError: boolean; years: unknown[] } = { yearId: "y1", isLoading: false, isError: false, years: [{ id: "y1", name: "2026/2027" }] };
 vi.mock("@/components/schedule/year-select", () => ({
@@ -339,5 +352,40 @@ describe("Schema som fil: en tabell från ett annat program", () => {
     expect(await screen.findByText("table.used(pasted|1)")).toBeInTheDocument();
     await choose(csvFile("annat.csv"));
     expect(screen.queryByText(/^table.used/)).not.toBeInTheDocument();
+  });
+
+  describe("a Tjänstefördelning", () => {
+    const chooseRequirements = () => fireEvent.change(screen.getByLabelText("table.kindLabel"), { target: { value: "requirements" } });
+
+    it("says what it becomes only when it is the kind chosen", () => {
+      renderPage();
+      expect(screen.queryByText("table.requirementsHint")).not.toBeInTheDocument();
+      chooseRequirements();
+      expect(screen.getByText("table.requirementsHint")).toBeInTheDocument();
+    });
+
+    it("goes to the post import's dialog with the pasted table and the year chosen on the page, and to nothing else", async () => {
+      renderPage();
+      chooseRequirements();
+      paste("Grupp\tÄmne\tLärare\n7A\tMa\tKBE");
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "table.read" }));
+
+      const dialog = await screen.findByRole("dialog", { name: "csv-dialog" });
+      expect(dialog).toHaveAttribute("data-kinds", "requirements");
+      expect(dialog).toHaveAttribute("data-year", "y1");
+      expect(dialog).toHaveAttribute("data-text", "Grupp\tÄmne\tLärare\n7A\tMa\tKBE");
+      // Not the lessons' own mapping dialog, and nothing sent: the post import's preview comes first.
+      expect(screen.queryByText("dialog.title")).not.toBeInTheDocument();
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it("opens the lessons' mapping dialog, not the post import's, while lessons are the kind chosen", async () => {
+      renderPage();
+      paste("Kurs\tÄmne\n7A\tMa");
+      await userEvent.setup().click(screen.getByRole("button", { name: "table.read" }));
+      expect(await screen.findByText("dialog.title")).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "csv-dialog" })).not.toBeInTheDocument();
+    });
   });
 });

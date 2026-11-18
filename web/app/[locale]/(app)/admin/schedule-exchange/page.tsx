@@ -18,6 +18,8 @@ import {
   type ImportResultDto,
 } from "@/lib/schedule-exchange";
 import { LazyColumnMappingDialog } from "@/components/import/lazy-column-mapping-dialog";
+import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
+import { PasteTable } from "@/components/import/paste-table";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { YearSelect, useYearScope } from "@/components/schedule/year-select";
@@ -74,6 +76,8 @@ export default function ScheduleExchangePage() {
   const [tableProblem, setTableProblem] = useState<string | null>(null);
   const [mapping, setMapping] = useState<{ open: boolean; source: { text: string } | { file: File } | null }>({ open: false, source: null });
   const [mapped, setMapped] = useState<{ name: string; count: number } | null>(null);
+  // What the table holds: lessons go through the schedule exchange's own reader below, a Tjänstefördelning through the post import's dialog.
+  const [tableKind, setTableKind] = useState<"lessons" | "requirements">("lessons");
   const [previewNext, setPreviewNext] = useState(false);
 
   const summary = useQuery({
@@ -264,21 +268,22 @@ export default function ScheduleExchangePage() {
 
       <SectionCard id="table" title={t("table.title")} description={t("table.description")} icon={Table2}>
         <div className="space-y-3">
-          <p className="text-sm">{t("table.kindLessons")}</p>
           <div>
-            <label htmlFor="exchange-paste" className="mb-1 block text-sm font-medium">
-              {t("table.paste")}
+            <label htmlFor="exchange-table-kind" className="mb-1 block text-sm font-medium">
+              {t("table.kindLabel")}
             </label>
-            <textarea
-              id="exchange-paste"
-              value={pasted}
-              onChange={(event) => setPasted(event.target.value)}
-              rows={6}
-              spellCheck={false}
-              className="block w-full rounded-md border border-input-strong bg-transparent px-3 py-2 font-mono text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-            <p className="mt-1 text-sm text-muted-foreground">{t("table.pasteHint")}</p>
+            <NativeSelect
+              id="exchange-table-kind"
+              value={tableKind}
+              onChange={(event) => setTableKind(event.target.value as "lessons" | "requirements")}
+              className="max-w-md"
+            >
+              <option value="lessons">{t("table.kindLessons")}</option>
+              <option value="requirements">{t("table.kindRequirements")}</option>
+            </NativeSelect>
+            {tableKind === "requirements" ? <p className="mt-1 text-sm text-muted-foreground">{t("table.requirementsHint")}</p> : null}
           </div>
+          <PasteTable id="exchange-paste" label={t("table.paste")} hint={t("table.pasteHint")} value={pasted} onChange={setPasted} />
           <div>
             <label htmlFor="exchange-table-file" className="mb-1 block text-sm font-medium">
               {t("table.file")}
@@ -305,11 +310,19 @@ export default function ScheduleExchangePage() {
       </SectionCard>
 
       <LazyColumnMappingDialog
-        open={mapping.open}
+        open={mapping.open && tableKind === "lessons"}
         onOpenChange={(open) => setMapping((current) => ({ ...current, open }))}
         kind="scheduleLessons"
         source={mapping.source}
         onUse={takeMappedTable}
+      />
+      {/* A Tjänstefördelning is posts of the timplan: the post import's own dialog, with its preview and its Importera, for the year chosen above. */}
+      <LazyCsvImportDialog
+        kinds={["requirements"]}
+        academicYearId={yearId}
+        open={mapping.open && tableKind === "requirements"}
+        onOpenChange={(open) => setMapping((current) => ({ ...current, open }))}
+        source={mapping.source}
       />
 
       <SectionCard id="import" title={t("import.title")} description={t("import.description")} icon={FileUp}>

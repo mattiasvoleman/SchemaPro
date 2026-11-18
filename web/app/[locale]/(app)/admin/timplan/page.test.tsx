@@ -183,6 +183,14 @@ vi.mock("@/lib/csv-export", async (importOriginal) => ({
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// The dialogs the page opens read the school's saved column templates through react-query; these tests render the page with its own hooks
+// mocked and no QueryClient, and ask only what the dialog is handed (the templates have tests of their own: components/import).
+vi.mock("@/lib/column-template-queries", () => ({
+  useImportTemplates: () => ({ data: [] }),
+  useCreateImportTemplate: () => ({ mutate: vi.fn(), isPending: false }),
+  useUpdateImportTemplate: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteImportTemplate: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
   useTranslations: () => (key: string, values?: Record<string, unknown>) =>

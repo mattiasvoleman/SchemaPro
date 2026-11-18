@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Download } from "lucide-react";
@@ -32,11 +32,11 @@ import {
   useImportCsv,
   type ImportReport,
 } from "@/lib/queries";
-import { readTable, type RawTable } from "@/lib/column-table";
-import { readSource, type TableSource } from "@/lib/column-source";
+import type { TableSource } from "@/lib/column-source";
 import { useImportTemplates } from "@/lib/column-template-queries";
 import type { MappingTemplate } from "@/lib/column-mapping";
-import { ColumnMappingPanel, type MappingState } from "@/components/import/column-mapping-panel";
+import { ColumnMappingPanel } from "@/components/import/column-mapping-panel";
+import { useTableReading } from "@/components/import/use-table-reading";
 import { PasteTable } from "@/components/import/paste-table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -113,11 +113,6 @@ const REFUSED_BODY = "One or more fields failed validation.";
 const WITHOUT_CLASS = "IMPORT_STUDENT_WITHOUT_CLASS";
 
 const NO_TEMPLATES: MappingTemplate[] = [];
-
-/** The table a file or a paste was read into, before and apart from what the mapping makes of it. */
-type Reading =
-  | { state: "table"; name: string; table: RawTable; encoding: string | null; serial: number }
-  | { state: "problem"; name: string; problem: string };
 
 interface FilePreview {
   fileName: string;
@@ -200,22 +195,15 @@ export function CsvImportDialog({
   const importCsv = useImportCsv();
 
   const [kind, setKind] = useState<ImportKind>(kinds[0]);
-  const [reading, setReading] = useState<Reading | null>(null);
-  // What the column panel says of the table: the mapped table, and what is wrong with the mapping. Null until it has been shown.
-  const [mapping, setMapping] = useState<MappingState | null>(null);
+  const { reading, mapping, setMapping, load: readInto, clear } = useTableReading((problem) => tMap(problem));
   const [pasted, setPasted] = useState("");
   const [report, setReport] = useState<ImportReport | null>(null);
   // Remounting the input is the reliable way to clear a picked file.
   const [fileInputKey, setFileInputKey] = useState(0);
-  // A new table is a new panel (the choices of the last one are for another table's columns), and the last one read wins.
-  const serial = useRef(0);
-  const ticket = useRef(0);
   const templates = useImportTemplates(open ? kind : null);
 
   const reset = () => {
-    ticket.current += 1;
-    setReading(null);
-    setMapping(null);
+    clear();
     setReport(null);
     setPasted("");
     setFileInputKey((key) => key + 1);
@@ -233,24 +221,9 @@ export function CsvImportDialog({
   };
 
   /** Reads a file or a paste into a table; the panel below then asks which column is which field. */
-  const load = async (from: TableSource, name: string) => {
-    const mine = (ticket.current += 1);
+  const load = (from: TableSource, name: string) => {
     setReport(null);
-    setMapping(null);
-    // Bytes, not file.text(): a file saved in Excel is Windows-1252, and read as UTF-8 its å, ä and ö would be lost (readSource).
-    const read = await readSource(from);
-    if (mine !== ticket.current) return;
-    if (!read.ok) {
-      setReading({ state: "problem", name, problem: read.reason === "tooLong" ? tMap("tooLong") : read.problem });
-      return;
-    }
-    const table = readTable(read.text);
-    if (table.rows.length === 0) {
-      setReading({ state: "problem", name, problem: tMap("empty") });
-      return;
-    }
-    serial.current += 1;
-    setReading({ state: "table", name, table, encoding: read.encoding, serial: serial.current });
+    return readInto(from, name);
   };
 
   const onFileChosen = (event: React.ChangeEvent<HTMLInputElement>) => {
