@@ -99,8 +99,7 @@ describe('Kalenderprenumeration (e2e)', () => {
       if (sql.includes('app.calendar_feed(')) return [{ document: values[0] === tokenHashOf(TOKEN) ? WEEK : null }];
       return [];
     });
-    // Listen once, as the viewer's spec does: supertest's ephemeral ports per request meet closed sockets.
-    await harness.app.listen(0, '127.0.0.1');
+    // The harness listens once on the loopback (test/utils/test-app.ts): supertest's ephemeral ports per request can meet another process.
   });
   afterEach(async () => {
     await harness.close();

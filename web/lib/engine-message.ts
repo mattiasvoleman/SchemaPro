@@ -33,7 +33,9 @@
  */
 const PARAM_DEFAULTS: Record<string, Record<string, string | number>> = {
   PLACEMENT_CANNOT_STAND: { block: "NO_BLOCK" },
-  TEACHER_SHARED_BY_PARALLEL_GROUPS: { classOwn: "unknown" },
+  // `classes` is read by the one branch that says the classes have nothing of their own (one class or several); a line that is in that branch
+  // always carries it, and a line that does not read as several, which is what the sentence said before it counted them.
+  TEACHER_SHARED_BY_PARALLEL_GROUPS: { classOwn: "unknown", classes: 0 },
 };
 
 /** The half of next-intl's translator this needs, so a test can pass a stub. */
