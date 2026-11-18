@@ -44,13 +44,18 @@ export interface Block {
   unterminated: boolean;
 }
 
+/** The longest key a template may hold (the gateway's DTO). */
+const KEY_MAX = 100;
+
 /** The keys of a header row: unique, and stable under case, spacing, punctuation and diacritics. */
 export function keysOf(headers: readonly string[]): string[] {
   const seen = new Map<string, number>();
   return headers.map((header, index) => {
     // A header that has the shape of a number is never a key (a key is stored and sent): that column is known by its position.
     const normalised = normalizeHeader(header);
-    const base = normalised === "" || hasPersonalNumber(header) || hasPersonalNumber(normalised) ? `kolumn${index + 1}` : normalised;
+    // At most KEY_MAX characters, the gateway's bound on a key (src/import-templates: /^[a-z0-9]{1,100}(#[0-9]{1,3})?$/): a header of a hundred
+    // letters or more (a title pasted over the header row) would otherwise make a template that cannot be saved.
+    const base = normalised === "" || hasPersonalNumber(header) || hasPersonalNumber(normalised) ? `kolumn${index + 1}` : normalised.slice(0, KEY_MAX);
     const count = (seen.get(base) ?? 0) + 1;
     seen.set(base, count);
     return count === 1 ? base : `${base}#${count}`;
@@ -124,7 +129,8 @@ const DROPPED = new WeakMap<Block, Set<number>>();
 
 /** A header as a message may show it: redacted, one line, at most 40 characters; null for a header that is itself a number (not named). */
 function labelOf(header: string): string | null {
-  if (hasPersonalNumber(header)) return null;
+  // As keysOf: a header that has the shape of a number once its punctuation is gone ("19800101(1234)") is not named either.
+  if (hasPersonalNumber(header) || hasPersonalNumber(normalizeHeader(header))) return null;
   const flat = redactPersonalNumbers(header).replace(/\s+/g, " ").trim();
   return flat.length > 40 ? `${flat.slice(0, 40)}…` : flat;
 }
@@ -390,7 +396,8 @@ export interface Applied {
 export const MAX_ROW_PROBLEMS = 200;
 
 const TIME_RANGE = /^(\d{1,2}[:.]\d{2})\s*[-‐-―−]\s*(\d{1,2}[:.]\d{2})$/;
-const TEACHER_SEPARATOR = /\s*(?:[,;/|&]|\soch\s)\s*/i;
+// No \s* round the separator: the parts are trimmed, and a \s* at both ends makes the split quadratic in a cell with a long run of spaces.
+const TEACHER_SEPARATOR = /[,;/|&]|\soch\s/i;
 
 const refOf = (block: Block, index: number): ColumnRef => ({ index, label: labelOf(block.headers[index]!) });
 const nameOf = (label: string | null): string => (label === null ? "(rubriken visas inte)" : `”${label}”`);

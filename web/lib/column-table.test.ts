@@ -65,6 +65,15 @@ describe("the formula guard", () => {
   );
 });
 
+describe("writeMappedTable, a table of very many rows", () => {
+  it("is written whatever the number of rows (a spread of the row numbers is a RangeError from about 125 000)", () => {
+    const count = 300_000;
+    const rows = Array.from({ length: count }, () => ["x"]);
+    const text = writeMappedTable(1, ["h"], rows, rows.map((_, index) => index + 2));
+    expect(text.length).toBe("h\r\n".length + count * "x\r\n".length);
+  });
+});
+
 describe("writeMappedTable", () => {
   it("writes the header and each row on the row it came from, with empty lines between, and CRLF after every line", () => {
     expect(writeMappedTable(3, ["A", "B"], [["1", "2"], ["3", "4"]], [4, 6])).toBe("\r\n\r\nA;B\r\n1;2\r\n\r\n3;4\r\n");
@@ -85,5 +94,13 @@ describe("writeMappedTable", () => {
 
   it("writes only the header for a table with no rows", () => {
     expect(writeMappedTable(1, ["A"], [], [])).toBe("A\r\n");
+  });
+});
+
+describe("readTable, a quote inside an unquoted field", () => {
+  it("is part of the field: a nickname in quotes or an inch mark does not open a quoted field that swallows the rows below", () => {
+    const table = readTable('namn;kod\nOla "Olle" Berg;x\n5" skruv;y\nEva;z\n');
+    expect(table.rows).toEqual([["namn", "kod"], ['Ola "Olle" Berg', "x"], ['5" skruv', "y"], ["Eva", "z"]]);
+    expect(table.unterminated).toBe(false);
   });
 });
