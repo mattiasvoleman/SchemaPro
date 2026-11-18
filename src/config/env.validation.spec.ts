@@ -71,8 +71,11 @@ describe('validateEnv', () => {
       expect(validated.AI_ENGINE_TIMEOUT_MS).toBeUndefined();
     });
 
-    it('may be an empty string a template leaves, which is not a setting either', () => {
+    it('may be set to nothing, which is what clearing the field in a host leaves and is not a setting either', () => {
       expect(() => validateEnv({ ...without(), AI_ENGINE_TIMEOUT_MS: undefined })).not.toThrow();
+      for (const blank of ['', null]) {
+        expect(validateEnv({ ...valid(), AI_ENGINE_TIMEOUT_MS: blank }).AI_ENGINE_TIMEOUT_MS).toBeUndefined();
+      }
     });
 
     it.each([['the docs recommend', '240000'], ['one second, the least', '1000']])('accepts what %s', (_label, value) => {

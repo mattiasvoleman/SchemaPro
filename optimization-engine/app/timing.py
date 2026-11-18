@@ -43,6 +43,15 @@ TRANSFER_MARGIN_SECONDS = 5.0
 #: ends at the ceiling itself races the 503 that ends the wait.
 ANSWER_SLACK_SECONDS = 3.0
 
+#: How far past its own time limit a CP-SAT solve may stop. Not a guess: on
+#: 2026-11-17 the search of the 809-lesson week stopped about ten seconds after
+#: its 180. Every step the clock cuts (a search squeezed by a short deadline or
+#: a slow setup, the explanation, a probe's last slice) is cut at `answer_by`
+#: and may then run this far past it, so the edge lies this much before the
+#: slack and not at it: with only the slack, the three seconds of it were all
+#: such a step had, and the incident's own overrun passed the ceiling by two.
+SOLVE_OVERRUN_SECONDS = 10.0
+
 #: How much of the timeout probe the search always leaves behind when the clock
 #: is tight (a slow build, a short deadline). The search is what the school asked
 #: for and the probe is what it is told when the search finds nothing, so the
@@ -106,9 +115,10 @@ def ceiling_seconds(limits: RouteLimits, deadline_seconds: float | None = None) 
 class Deadline:
     """One request's clock: when it came in, and how long the route will wait.
 
-    `answer_by` is the one edge every step of a solve counts to. It lies a little
-    before the ceiling, so that the last step's answer is built before the route
-    stops waiting.
+    `answer_by` is the one edge every step of a solve counts to. It lies before
+    the ceiling by the answer's own slack and by how far a solve may stop past its
+    limit (SOLVE_OVERRUN_SECONDS), so that the last step's answer is built before
+    the route stops waiting even when that step overran.
     """
 
     entered: float
@@ -116,7 +126,9 @@ class Deadline:
 
     @property
     def answer_by(self) -> float:
-        return self.entered + self.ceiling - min(ANSWER_SLACK_SECONDS, self.ceiling / 2)
+        return self.entered + self.ceiling - min(
+            ANSWER_SLACK_SECONDS + SOLVE_OVERRUN_SECONDS, self.ceiling / 2,
+        )
 
     def left(self, now: float) -> float:
         """Seconds until `answer_by`, negative once it has passed."""

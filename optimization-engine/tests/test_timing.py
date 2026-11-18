@@ -31,6 +31,7 @@ from app.timing import (
     ANSWER_SLACK_SECONDS,
     BUILD_HEADROOM_SECONDS,
     PROBE_FLOOR_SECONDS,
+    SOLVE_OVERRUN_SECONDS,
     TRANSFER_MARGIN_SECONDS,
     Deadline,
     RouteLimits,
@@ -64,6 +65,7 @@ def test_the_named_margins_are_what_the_design_says() -> None:
     assert BUILD_HEADROOM_SECONDS == 30.0
     assert TRANSFER_MARGIN_SECONDS == 5.0
     assert ANSWER_SLACK_SECONDS == 3.0
+    assert SOLVE_OVERRUN_SECONDS == 10.0
     assert PROBE_FLOOR_SECONDS == 5.0
 
 
@@ -109,13 +111,25 @@ def test_a_deadline_can_only_shorten_the_ceiling(deadline: float | None, expecte
 def test_the_answer_is_due_a_little_before_the_ceiling() -> None:
     clock = Deadline(entered=1000.0, ceiling=230.0)
 
-    assert clock.answer_by == 1000.0 + 230.0 - ANSWER_SLACK_SECONDS
-    assert clock.left(1100.0) == pytest.approx(127.0)
-    assert clock.left(1228.0) == pytest.approx(-1.0)
+    assert clock.answer_by == 1000.0 + 230.0 - ANSWER_SLACK_SECONDS - SOLVE_OVERRUN_SECONDS
+    assert clock.left(1100.0) == pytest.approx(117.0)
+    assert clock.left(1218.0) == pytest.approx(-1.0)
     assert clock.cap(1100.0, 20.0) == 20.0
-    assert clock.cap(1220.0, 20.0) == pytest.approx(7.0)
+    assert clock.cap(1210.0, 20.0) == pytest.approx(7.0)
     assert clock.clamp(5000.0) == clock.answer_by
     assert clock.clamp(1100.0) == 1100.0
+
+
+def test_a_step_cut_at_the_edge_that_overran_is_still_inside_the_ceiling() -> None:
+    """The edge lies a solve's overrun and the answer's slack before the ceiling.
+
+    On 2026-11-17 CP-SAT stopped ten seconds after its 180: a step the clock cut
+    at `answer_by` (a search squeezed by a short deadline, the explanation, a
+    probe's last slice) may do the same, and the answer is built after it.
+    """
+    clock = Deadline(entered=0.0, ceiling=230.0)
+
+    assert clock.answer_by + SOLVE_OVERRUN_SECONDS + ANSWER_SLACK_SECONDS <= clock.ceiling
 
 
 def test_a_ceiling_shorter_than_the_slack_gives_up_half_of_itself_not_all() -> None:
@@ -135,14 +149,14 @@ def test_the_search_ends_where_the_clock_leaves_the_probes_floor() -> None:
     """A slow build, or a caller that waits less than the settings need."""
     clock = Deadline(entered=0.0, ceiling=230.0)
 
-    # Builds took 40 s: 227 (the answer) less the probe's floor (5) less 40 is 182 ... of 180: held.
-    assert clock.search_budget(started=40.0, budget=180.0, probe_seconds=20.0) == 180.0
-    # Builds took 60 s: 227 - 5 - 60 = 162, so the search ends there.
-    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=20.0) == pytest.approx(162.0)
+    # Builds took 30 s: 217 (the answer) less the probe's floor (5) less 30 is 182 ... of 180: held.
+    assert clock.search_budget(started=30.0, budget=180.0, probe_seconds=20.0) == 180.0
+    # Builds took 60 s: 217 - 5 - 60 = 152, so the search ends there.
+    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=20.0) == pytest.approx(152.0)
     # The floor is the probe's own seconds when they are fewer than five.
-    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=2.0) == pytest.approx(165.0)
+    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=2.0) == pytest.approx(155.0)
     # No probe: the search keeps everything up to the answer.
-    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=0.0) == pytest.approx(167.0)
+    assert clock.search_budget(started=60.0, budget=180.0, probe_seconds=0.0) == pytest.approx(157.0)
     # The builds ate it all: no search, and not a negative one.
     assert clock.search_budget(started=500.0, budget=180.0, probe_seconds=20.0) == 0.0
 
@@ -150,9 +164,9 @@ def test_the_search_ends_where_the_clock_leaves_the_probes_floor() -> None:
 def test_the_probe_counts_from_where_the_search_ended_and_never_past_the_edge() -> None:
     clock = Deadline(entered=0.0, ceiling=230.0)
 
-    assert clock.probe_end(now=198.0, probe_seconds=20.0) == 218.0
+    assert clock.probe_end(now=190.0, probe_seconds=20.0) == 210.0
     # A search that ended late: the probe is cut to the edge, not dropped.
-    assert clock.probe_end(now=215.0, probe_seconds=20.0) == clock.answer_by
+    assert clock.probe_end(now=205.0, probe_seconds=20.0) == clock.answer_by
     assert clock.probe_end(now=300.0, probe_seconds=20.0) == clock.answer_by
 
 

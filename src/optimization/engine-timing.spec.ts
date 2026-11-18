@@ -92,6 +92,8 @@ describe('parseEngineTiming', () => {
   it('knows whether the engine can be sent a deadline', () => {
     expect(supportsDeadline(production())).toBe(true);
     expect(supportsDeadline(parseEngineTiming({ ...PRODUCTION_BODY, capabilities: [] }))).toBe(false);
+    // A capability of some later engine is not this one: only the field this gateway sends counts.
+    expect(supportsDeadline(parseEngineTiming({ ...PRODUCTION_BODY, capabilities: ['somethingElse'] }))).toBe(false);
     expect(supportsDeadline(null)).toBe(false);
   });
 });

@@ -1034,10 +1034,11 @@ def test_tiny_time_budget_never_reports_a_satisfiable_model_as_infeasible() -> N
     was answered, so it is a 200 carrying "TIMEOUT" and no lessons. A second
     copy of this test used to sit further up the file under the same name —
     shadowed, therefore never run — asserting a 503 with code SOLVER_TIMEOUT.
-    Nothing raises SolverTimeoutError anywhere in the engine, so that copy
-    described a behaviour that does not exist and would have failed the moment
-    it was collected. Its one honest claim, that the caller is not handed an
-    error, is folded into the status-code assertion here.
+    That copy asserted a 503 for a budget that ran out, which is the other
+    thing: a 503 with the code SOLVER_TIMEOUT is a route's CEILING passing
+    (app/timing.py), raised by all four routes and asserted in
+    tests/test_timing.py. Its one honest claim, that the caller is not handed
+    an error, is folded into the status-code assertion here.
     """
     settings = Settings(
         API_KEY="test-api-key-000000000000000000000000",

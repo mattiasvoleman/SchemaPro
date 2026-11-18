@@ -1,4 +1,4 @@
-import { plainToInstance } from 'class-transformer';
+import { plainToInstance, Transform } from 'class-transformer';
 import {
   IsIn,
   Matches,
@@ -123,7 +123,12 @@ export class EnvironmentVariables {
    * search if it must), and a start in production that finds it shorter than the
    * engine can need is refused with the sentence that says which number to change
    * (EngineTimingService).
+   *
+   * SET TO NOTHING IS NOT SET (`AI_ENGINE_TIMEOUT_MS=""`, which is what clearing the field in a
+   * host's dashboard leaves, as the file's own isBlank says for the other optional variables):
+   * the implicit conversion turned "" into 0, which is under the minimum, and the API would not start.
    */
+  @Transform(({ value, obj, key }) => (isBlank((obj as Record<string, unknown>)[key]) ? undefined : value))
   @IsOptional()
   @IsInt()
   @Min(1000)
