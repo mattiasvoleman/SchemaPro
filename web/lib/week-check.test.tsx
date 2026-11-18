@@ -58,7 +58,17 @@ describe("classifyWeekCheckError", () => {
   it("reads the gateway's code for an older engine, and a 404 for an older API, as the function that is coming", () => {
     expect(classifyWeekCheckError(new ApiError(503, "m", ENGINE_LACKS_WEEK_CHECK)).kind).toBe("unavailable");
     expect(classifyWeekCheckError(new ApiError(503, "m", ENGINE_LACKS_WEEK_CHECK))).toMatchObject({ reason: "ENGINE_OLDER" });
-    expect(classifyWeekCheckError(new ApiError(404, "Cannot POST"))).toMatchObject({ reason: "ENGINE_OLDER" });
+    expect(classifyWeekCheckError(new ApiError(404, "Cannot POST /api/v1/optimization/week-check"))).toMatchObject({
+      reason: "ENGINE_OLDER",
+    });
+  });
+
+  it("does not read the gateway's other 404, a year that is not there, as a function that is coming", () => {
+    expect(classifyWeekCheckError(new ApiError(404, "Academic year not found."))).toEqual({
+      kind: "unavailable",
+      reason: "ERROR",
+      message: "Academic year not found.",
+    });
   });
 
   it.each([

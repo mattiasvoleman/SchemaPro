@@ -92,8 +92,12 @@ export function classifyWeekCheckError(error: unknown): WeekCheckOutcome {
     if (error.code === ENGINE_LACKS_WEEK_CHECK) {
       return { kind: "unavailable", reason: "ENGINE_OLDER", message: error.message };
     }
-    // A 404 is an API that predates the route (this page can be deployed first).
-    if (error.status === 404) return { kind: "unavailable", reason: "ENGINE_OLDER", message: error.message };
+    // An API that predates the route answers Nest's own 404, "Cannot POST /…" (this page can be deployed first). A 404
+    // with another sentence is the gateway saying something is not there ("the läsår does not exist"), which is no
+    // function that is coming.
+    if (error.status === 404 && /^Cannot POST /.test(error.message)) {
+      return { kind: "unavailable", reason: "ENGINE_OLDER", message: error.message };
+    }
     return { kind: "unavailable", reason: "ERROR", message: error.message };
   }
   return { kind: "unavailable", reason: "ERROR", message: error instanceof Error ? error.message : "" };
