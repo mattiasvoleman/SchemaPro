@@ -1315,9 +1315,9 @@ export default function PlacementsPage() {
       />
       <ProjectedRostersBanner year={year} active={active} rosters={rosters} failed={rostersFailed} />
 
-      {/* A chunk that does not arrive leaves the answer out; it must not take the page along. Asked for by a button, so nothing before it. */}
+      {/* A chunk that does not arrive leaves the answer out and says so, as the drag tools' does; it must not take the page along. Asked for by a button, so nothing before it. */}
       {weekCheck.pending || weekCheck.outcome ? (
-        <DialogLoadBoundary onError={() => undefined}>
+        <DialogLoadBoundary onError={() => setMessage({ tone: "problem", text: t("toolsFailed") })}>
           <Suspense fallback={null}>
             <WeekCheckPanel outcome={weekCheck.outcome} pending={weekCheck.pending} />
           </Suspense>

@@ -22,9 +22,11 @@ const state = vi.hoisted(() => ({
 const choose = vi.hoisted(() => vi.fn());
 const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), post: vi.fn() }));
 vi.mock("@/lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/api")>()), api }));
+/** The läsår the page shows, which a test sets to change it (the real hook is the Läsår choice of the header). */
+const planning = vi.hoisted(() => ({ year: { id: "y1", name: "2026/27", startDate: "2026-08-15", endDate: "2027-06-11", isActive: true } }));
 vi.mock("@/lib/planning-year", () => ({
   usePlanningYear: () => ({
-    year: { id: "y1", name: "2026/27", startDate: "2026-08-15", endDate: "2027-06-11", isActive: true },
+    year: planning.year,
     active: { id: "y1" },
     successor: null,
     choose,
@@ -144,6 +146,7 @@ const TIGHT = {
 beforeEach(() => {
   state.board = board();
   state.jobs = [];
+  planning.year = { id: "y1", name: "2026/27", startDate: "2026-08-15", endDate: "2027-06-11", isActive: true };
   choose.mockReset();
   api.get.mockReset().mockImplementation(async () => structuredClone(state.board));
   api.put.mockReset();
@@ -279,5 +282,54 @@ describe("the answer is of the week as it stood", () => {
     await act(async () => answer(TIGHT));
 
     expect(region()).toBeNull();
+  });
+});
+
+describe("what the answer and the button depend on", () => {
+  it("is dropped at once when another läsår is chosen, before that year's board has come, and the next ask names the new year", async () => {
+    const view = renderPage();
+    await ready();
+    await userEvent.setup().click(checkButton());
+    await screen.findByRole("region", { name: "title" });
+
+    // The other year's board is slow: until it comes the page has no week to say anything of.
+    let drawn: (board: unknown) => void = () => undefined;
+    api.get.mockReset().mockImplementation(() => new Promise((resolve) => (drawn = resolve)));
+    planning.year = { id: "y2", name: "2027/28", startDate: "2027-08-15", endDate: "2028-06-11", isActive: false };
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <PlacementsPage />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(region()).toBeNull());
+    expect(checkButton()).toBeDisabled();
+
+    await act(async () => drawn(structuredClone({ ...(state.board as PlacementBoard), academicYearId: "y2" })));
+    await waitFor(() => expect(checkButton()).toBeEnabled());
+    api.post.mockClear();
+    await userEvent.setup().click(checkButton());
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/v1/optimization/week-check", { academicYearId: "y2" }, expect.any(AbortSignal)));
+  });
+
+  it("is a check that cannot be asked, said in words, when the module that asks does not arrive, and the button is open again", async () => {
+    renderPage();
+    await ready();
+    // The page loads lib/week-check when somebody presses: a chunk that does not come rejects that import.
+    vi.resetModules();
+    vi.doMock("@/lib/week-check", () => {
+      throw new Error("Failed to fetch dynamically imported module: /_next/static/chunks/lib_week-check.js");
+    });
+    try {
+      await userEvent.setup().click(checkButton());
+
+      expect(await screen.findByText("unavailable")).toBeInTheDocument();
+      expect(api.post).not.toHaveBeenCalled();
+      expect(checkButton()).toBeEnabled();
+      expect(checkButton()).toHaveTextContent("button");
+    } finally {
+      vi.doUnmock("@/lib/week-check");
+      vi.resetModules();
+    }
   });
 });

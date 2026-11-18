@@ -23,7 +23,8 @@ import type { WeekCheckOutcome, WeekCheckResult, WeekCheckYear } from "@/lib/wee
  * Kontrollera veckan, drawn: the answer under the prerequisites, and the
  * question before a run ("Åk 7 är 94 % full. Kör ändå?"). Behind a lazy import
  * on the pages that carry it — a route near its bundle budget pays for the
- * button and the hook, and for this only when somebody asks.
+ * button and its state, and for this (and, on Förlägg i veckan, for the request
+ * in lib/week-check.ts) only when somebody asks.
  *
  * The rows are the ones a refused run shows (Notice + category badge + the
  * engine catalogue's sentence), so a school reads the same sentence before a

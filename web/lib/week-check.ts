@@ -6,7 +6,8 @@ import { api, ApiError } from "@/lib/api";
  * BEFORE any timetable is searched for (POST /optimization/week-check). Its
  * own file, beside lib/queries.ts, which is in every route's chunk graph and
  * has nothing to spare. Shared by every page that asks the question: Generera
- * today, Förlägg i veckan later.
+ * (useWeekCheck) and Förlägg i veckan, which loads this module with import()
+ * when somebody presses the button (askWeekCheck).
  *
  * AN `OK` IS NOT "A TIMETABLE EXISTS". The checks can prove a week impossible
  * and say that it is tight; they cannot prove it possible. `skipped` says what
