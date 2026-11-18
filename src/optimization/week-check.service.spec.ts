@@ -1,7 +1,7 @@
 // FIRST, as the built application reads it (see optimization-module.di.spec.ts): the proxy's constructor must see the
 // clash rule's file before the proxy's own is read. Kept first on purpose; do not let an import sorter move it.
 import { MasterLessonsService } from '../calendar/master-lessons.service';
-import { HttpException, HttpStatus, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { HttpException, HttpStatus, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { testUser } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
 import type {
@@ -24,7 +24,7 @@ const TEACHER_USER_ID = '99999999-9999-4999-8999-999999999999';
 const ANON_GROUP = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
 const user = testUser();
-const tx = { marker: 'the transaction' };
+const tx = { marker: 'the transaction', academicYear: { findUnique: jest.fn() } };
 
 const detail = (overrides: Partial<AiEngineConflictDetail> = {}): AiEngineConflictDetail => ({
   category: 'REQUIREMENT_DEMAND',
@@ -82,6 +82,7 @@ describe('WeekCheckService', () => {
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    tx.academicYear.findUnique.mockReset().mockResolvedValue({ id: YEAR_ID });
     prisma = { withRls: jest.fn(async (_user: unknown, run: (client: unknown) => unknown) => run(tx)) };
     proxy = {
       prepareSchedule: jest.fn(async () => ready()),
@@ -121,6 +122,17 @@ describe('WeekCheckService', () => {
 
       expect(proxy.callAiEngine.mock.calls[0]![1]).toEqual(payload);
       expect(Object.keys(proxy.callAiEngine.mock.calls[0]![1] as object)).not.toContain('rules');
+    });
+
+    it('answers 404 for a year the school has not got, before the week is fetched or the engine woken', async () => {
+      // Another school's year reads as no row under RLS, so it is the same answer as an id that never was one.
+      tx.academicYear.findUnique.mockResolvedValue(null);
+
+      await expect(service.check(YEAR_ID, user)).rejects.toThrow(NotFoundException);
+
+      expect(tx.academicYear.findUnique).toHaveBeenCalledWith({ where: { id: YEAR_ID }, select: { id: true } });
+      expect(proxy.prepareSchedule).not.toHaveBeenCalled();
+      expect(proxy.callAiEngine).not.toHaveBeenCalled();
     });
 
     it('waits seconds for the engine, not the minutes a run waits', () => {

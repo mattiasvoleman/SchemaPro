@@ -80,6 +80,10 @@ describe('Kontrollera veckan (e2e)', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // The school's year, as the check reads it before it fetches the week (the select of its id alone); the fetch's own reads of it stay empty.
+    harness.tx['academicYear']!['findUnique']!.mockReset().mockImplementation(async (args: { select?: Record<string, boolean> }) =>
+      Object.keys(args.select ?? {}).join() === 'id' ? { id: YEAR_ID } : undefined,
+    );
   });
 
   afterEach(() => {
@@ -159,6 +163,15 @@ describe('Kontrollera veckan (e2e)', () => {
       expect(harness.tx['optimizationJob']!['update']).not.toHaveBeenCalled();
       expect(harness.tx['masterLesson']!['deleteMany']).not.toHaveBeenCalled();
       expect(harness.tx['masterLesson']!['createMany']).not.toHaveBeenCalled();
+    });
+
+    it('answers 404 for a year the school has not got, and wakes nothing', async () => {
+      harness.tx['academicYear']!['findUnique']!.mockReset().mockResolvedValue(null);
+
+      const response = await post().set('x-test-user', admin()).send({ academicYearId: YEAR_ID }).expect(404);
+
+      expect(response.body).toMatchObject({ status: 404, detail: 'Academic year not found.' });
+      expect(harness.http.post).not.toHaveBeenCalled();
     });
 
     it('says a week with nothing to place is OK without waking the engine', async () => {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import type {
@@ -83,9 +83,17 @@ export class WeekCheckService {
     const started = Date.now();
     this.logger.log(`Week check requested [requestId=${requestId}, academicYearId=${academicYearId}]`);
 
-    const prepared = await this.prisma.withRls(user, (tx) =>
-      this.proxy.prepareSchedule(tx, academicYearId, user, { requestId }),
-    );
+    const prepared = await this.prisma.withRls(user, async (tx) => {
+      // A year the school has not got is a 404, as the other proposals say it
+      // (room-optimization, staffing-proposal). The fetch reads such a year as
+      // a week with nothing in it (rostersOfYear takes it for the current
+      // one), and the check would answer 200 OK for an id that is no year of
+      // this school: another school's, whose row RLS hides, answers as a
+      // year that never existed.
+      const year = await tx.academicYear.findUnique({ where: { id: academicYearId }, select: { id: true } });
+      if (!year) throw new NotFoundException('Academic year not found.');
+      return this.proxy.prepareSchedule(tx, academicYearId, user, { requestId });
+    });
 
     if (!prepared.ready) {
       // Two blocks on the same times that no longer fit together: the refusal

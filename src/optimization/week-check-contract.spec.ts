@@ -63,7 +63,9 @@ describe('Kontrollera veckan: the wire contract', () => {
       callAiEngine: jest.fn(async () => reply()),
       realiseConflicts: jest.fn((conflicts: unknown) => conflicts ?? null),
     };
-    const prisma = { withRls: jest.fn(async (_user: unknown, run: (client: unknown) => unknown) => run({})) };
+    // The school's year, read before the week is fetched (WeekCheckService.check).
+    const tx = { academicYear: { findUnique: jest.fn(async () => ({ id: 'year-1' })) } };
+    const prisma = { withRls: jest.fn(async (_user: unknown, run: (client: unknown) => unknown) => run(tx)) };
     service = new WeekCheckService(prisma as unknown as PrismaService, proxy as unknown as OptimizationProxyService);
   });
 
