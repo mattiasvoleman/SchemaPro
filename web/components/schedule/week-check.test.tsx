@@ -197,6 +197,13 @@ describe("the question before a run", () => {
     expect(within(screen.getByRole("dialog")).getByText("weekCheck.ask.titleTightPlain")).toBeInTheDocument();
   });
 
+  it("is not drawn on a page with no run to ask before, whatever `asking` says", () => {
+    render(<WeekCheckPanel outcome={tight} pending={false} asking />);
+
+    expect(screen.getByText("weekCheck.verdict.TIGHT")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("is not open while a new check is on its way, whatever the run asked", () => {
     render(<WeekCheckPanel {...props(tight, { asking: true, pending: true })} />);
     expect(screen.queryByRole("dialog")).toBeNull();

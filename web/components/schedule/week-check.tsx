@@ -37,13 +37,16 @@ export interface WeekCheckPanelProps {
   outcome: WeekCheckOutcome | null;
   /** A check is on its way. */
   pending: boolean;
-  /** The run was asked for on a week the check warned about: the dialog is open. */
-  asking: boolean;
-  onRunAnyway: () => void;
-  onCancelRun: () => void;
+  /**
+   * The run was asked for on a week the check warned about: the dialog is open. Absent on a page with no run to ask
+   * before (Förlägg i veckan), which then draws the answer alone.
+   */
+  asking?: boolean;
+  onRunAnyway?: () => void;
+  onCancelRun?: () => void;
 }
 
-export function WeekCheckPanel({ outcome, pending, asking, onRunAnyway, onCancelRun }: WeekCheckPanelProps) {
+export function WeekCheckPanel({ outcome, pending, asking = false, onRunAnyway, onCancelRun }: WeekCheckPanelProps) {
   const t = useTranslations("weekCheck");
   if (!pending && !outcome) return null;
   return (
@@ -58,12 +61,14 @@ export function WeekCheckPanel({ outcome, pending, asking, onRunAnyway, onCancel
           <Outcome outcome={outcome} />
         ) : null}
       </SectionCard>
-      <AskBeforeRun
-        open={asking && !pending && outcome !== null}
-        outcome={outcome}
-        onRunAnyway={onRunAnyway}
-        onCancel={onCancelRun}
-      />
+      {onRunAnyway && onCancelRun ? (
+        <AskBeforeRun
+          open={asking && !pending && outcome !== null}
+          outcome={outcome}
+          onRunAnyway={onRunAnyway}
+          onCancel={onCancelRun}
+        />
+      ) : null}
     </>
   );
 }

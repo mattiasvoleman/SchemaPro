@@ -104,22 +104,29 @@ export function classifyWeekCheckError(error: unknown): WeekCheckOutcome {
 }
 
 /**
- * POST week-check for a year. Never retried: it is read-only, but a second ask
- * is the person's to make, and the route is throttled. `check` resolves with
- * the outcome whatever happened, so a caller that goes on to a run does not
- * need a catch.
+ * POST week-check for a year, as an outcome whatever happened: it never throws.
+ * A plain function, so that a page near its bundle budget can load this module
+ * when somebody asks (Förlägg i veckan) instead of carrying it.
+ */
+export async function askWeekCheck(academicYearId: string): Promise<WeekCheckOutcome> {
+  try {
+    const result = await api.post<WeekCheckResult>("/api/v1/optimization/week-check", { academicYearId });
+    return { kind: "result", result };
+  } catch (error) {
+    return classifyWeekCheckError(error);
+  }
+}
+
+/**
+ * askWeekCheck as a mutation, for the page that asks before a run. Never
+ * retried: it is read-only, but a second ask is the person's to make, and the
+ * route is throttled. `check` resolves with the outcome whatever happened, so a
+ * caller that goes on to a run does not need a catch.
  */
 export function useWeekCheck() {
   const mutation = useMutation<WeekCheckOutcome, never, string>({
     retry: false,
-    mutationFn: async (academicYearId) => {
-      try {
-        const result = await api.post<WeekCheckResult>("/api/v1/optimization/week-check", { academicYearId });
-        return { kind: "result", result };
-      } catch (error) {
-        return classifyWeekCheckError(error);
-      }
-    },
+    mutationFn: askWeekCheck,
   });
   return {
     outcome: mutation.data ?? null,

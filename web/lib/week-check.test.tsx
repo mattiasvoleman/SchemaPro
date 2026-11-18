@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import {
+  askWeekCheck,
   classifyWeekCheckError,
   ENGINE_LACKS_WEEK_CHECK,
   useWeekCheck,
@@ -82,6 +83,28 @@ describe("classifyWeekCheckError", () => {
 
   it("says nothing of a thrown value that is not an Error", () => {
     expect(classifyWeekCheckError("boom")).toEqual({ kind: "unavailable", reason: "ERROR", message: "" });
+  });
+});
+
+describe("askWeekCheck", () => {
+  beforeEach(() => {
+    apiPost.mockReset();
+  });
+
+  it("is the request the hook makes, as an outcome, for a page that loads it when somebody asks", async () => {
+    const answer = { verdict: "OK", years: [], conflicts: null, skipped: ["LUNCH_STAGE"], elapsedMs: 4, checkedBy: "ENGINE" };
+    apiPost.mockResolvedValueOnce(answer);
+
+    await expect(askWeekCheck("y-1")).resolves.toEqual({ kind: "result", result: answer });
+    expect(apiPost).toHaveBeenCalledWith("/api/v1/optimization/week-check", { academicYearId: "y-1" });
+  });
+
+  it("never rejects: a refusal and a failure are outcomes", async () => {
+    apiPost.mockRejectedValueOnce(new ApiError(400, "English.", "LUNCH_X", { seats: 20 }));
+    await expect(askWeekCheck("y-1")).resolves.toMatchObject({ kind: "refused", code: "LUNCH_X" });
+
+    apiPost.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    await expect(askWeekCheck("y-1")).resolves.toMatchObject({ kind: "unavailable", reason: "ERROR" });
   });
 });
 

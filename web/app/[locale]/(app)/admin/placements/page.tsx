@@ -2,7 +2,7 @@
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { Redo2, Undo2 } from "lucide-react";
+import { ClipboardCheck, Loader2, Redo2, Undo2 } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
@@ -10,6 +10,7 @@ import { useProfile, useReadOnly } from "@/components/profile-context";
 import { BrickList, type BrickGroup } from "@/components/placements/brick-list";
 import { SinceRunNote } from "@/components/placements/since-run-note";
 import { WarningLines } from "@/components/placements/warning-lines";
+import { DialogLoadBoundary } from "@/components/schedule/dialog-load-boundary";
 import { FilterPicker } from "@/components/schedule/filter-picker";
 import { PlanningYearPicker, ProjectedRostersBanner } from "@/components/schedule/planning-year";
 import {
@@ -109,6 +110,7 @@ import { cn, subjectColor } from "@/lib/utils";
 import type { PlaceValue } from "@/components/placements/place-fields";
 import type { BlockPlaceValue } from "@/components/placements/block-place-fields";
 import type { HeldHalf } from "@/lib/placement-pair";
+import type { WeekCheckOutcome } from "@/lib/week-check";
 
 // What a brick chosen, or a card opened, needs and nothing else does: fetched when the first is pressed, not with the page.
 const PlaceFields = lazy(() => import("@/components/placements/place-fields").then((module) => ({ default: module.PlaceFields })));
@@ -116,6 +118,8 @@ const BlockPlaceFields = lazy(() => import("@/components/placements/block-place-
 const WeekPicker = lazy(() => import("@/components/placements/week-picker").then((module) => ({ default: module.WeekPicker })));
 const PairFields = lazy(() => import("@/components/placements/pair-fields").then((module) => ({ default: module.PairFields })));
 const CardDialog = lazy(() => import("@/components/placements/card-dialog").then((module) => ({ default: module.CardDialog })));
+/** Kontrollera veckan's answer, drawn only once somebody has asked: the route is near its bundle budget (lib/week-check.ts is loaded the same way). */
+const WeekCheckPanel = lazy(() => import("@/components/schedule/week-check").then((module) => ({ default: module.WeekCheckPanel })));
 
 /*
  * FÖRLÄGG I VECKAN — what the school has placed by hand, in a week, before and
@@ -166,6 +170,7 @@ const NO_HISTORY = { undo: async () => null, redo: async () => null };
 
 export default function PlacementsPage() {
   const t = useTranslations("placementWeek");
+  const tWeekCheck = useTranslations("weekCheck");
   const tTimetable = useTranslations("timetable");
   const tPlacements = useTranslations("requirements.placements");
   const tBlock = useTranslations("placementWeek.block");
@@ -184,6 +189,33 @@ export default function PlacementsPage() {
 
   const { year, active, successor, choose, rosters, rostersFailed } = usePlanningYear();
   const board = usePlacementBoard(year?.id ?? null);
+  /*
+   * Kontrollera veckan: the engine's quick checks on the week as it stands, förläggningar and all, in seconds. State of
+   * this page and a module loaded when somebody asks (lib/week-check.ts), not a hook: the route is near its bundle budget.
+   * The answer is of the week as it stood, so a save that changes the board drops it, and so does another year; an answer
+   * that comes back after either is dropped too (`weekCheckAsk` counts the asks).
+   */
+  const [weekCheck, setWeekCheck] = useState<{ pending: boolean; outcome: WeekCheckOutcome | null }>({ pending: false, outcome: null });
+  const weekCheckAsk = useRef(0);
+  const dropWeekCheck = useCallback(() => {
+    weekCheckAsk.current += 1;
+    setWeekCheck({ pending: false, outcome: null });
+  }, []);
+  const boardData = board.data;
+  useEffect(() => dropWeekCheck(), [boardData, dropWeekCheck]);
+  const checkWeek = async () => {
+    if (!year) return;
+    const mine = ++weekCheckAsk.current;
+    setWeekCheck({ pending: true, outcome: null });
+    let outcome: WeekCheckOutcome;
+    try {
+      outcome = await (await import("@/lib/week-check")).askWeekCheck(year.id);
+    } catch {
+      // The module did not arrive: a check that cannot be asked, which is said as one.
+      outcome = { kind: "unavailable", reason: "ERROR", message: "" };
+    }
+    if (mine === weekCheckAsk.current) setWeekCheck({ pending: false, outcome });
+  };
   const groupsQuery = useGroups();
   const subjectsQuery = useSubjects();
   const roomsQuery = useRooms();
@@ -1273,10 +1305,24 @@ export default function PlacementsPage() {
             <Button variant="outline" size="sm" asChild data-writes="SCHEMALAGGNING">
               <Link href="/admin/generate">{t("toGenerate")}</Link>
             </Button>
+            {/* Read-only, with the areas of the route behind it (Schemaläggning and Drift, as Generera's): the week as laid. */}
+            <Button variant="outline" size="sm" data-writes="SCHEMALAGGNING DRIFT" disabled={!year || !boardData || weekCheck.pending} onClick={() => void checkWeek()}>
+              {weekCheck.pending ? <Loader2 className="animate-spin" /> : <ClipboardCheck />}
+              {weekCheck.pending ? tWeekCheck("checking") : tWeekCheck("button")}
+            </Button>
           </>
         }
       />
       <ProjectedRostersBanner year={year} active={active} rosters={rosters} failed={rostersFailed} />
+
+      {/* A chunk that does not arrive leaves the answer out; it must not take the page along. Asked for by a button, so nothing before it. */}
+      {weekCheck.pending || weekCheck.outcome ? (
+        <DialogLoadBoundary onError={() => undefined}>
+          <Suspense fallback={null}>
+            <WeekCheckPanel outcome={weekCheck.outcome} pending={weekCheck.pending} />
+          </Suspense>
+        </DialogLoadBoundary>
+      ) : null}
 
       {failed ? (
         <LoadError title={t("loadFailed")} hint={t("loadFailedHint")} action={<Button variant="outline" size="sm" onClick={() => void board.refetch()}>{t("retry")}</Button>} />
