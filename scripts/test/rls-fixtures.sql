@@ -1205,6 +1205,9 @@ BEGIN
   INSERT INTO "RoomPreferences" ("schoolId", "subjectId", "updatedAt") VALUES (m, subj, now()) RETURNING id INTO pref;
   INSERT INTO "RoomPreferenceRooms" ("schoolId", "preferenceId", "roomId") VALUES (m, pref, room);
   INSERT INTO "StaffingPolicies" ("schoolId", "updatedAt") VALUES (m, now());
+  -- Kolumnmappning (20270223090000): a template of the school's, which section 116 reads and copies.
+  INSERT INTO "ImportMappingTemplates" ("schoolId", kind, name, "headerRow", placements, "updatedAt")
+  VALUES (m, 'requirements', 'Roller mall', NULL, '[{"key":"grupp","label":"Grupp","field":"groupName"},{"key":"amne","label":"Ämne","field":"subject"}]', now());
   INSERT INTO "TeacherSubjectQualifications" ("schoolId", "userId", "subjectId", "minGradeLevel", "maxGradeLevel", kind, "updatedAt")
   VALUES (m, teacher, subj, 7, 9, 'LEGITIMATION', now());
   INSERT INTO "TeacherWorkRules" ("schoolId", "userId", "updatedAt") VALUES (m, teacher, now());

@@ -7020,3 +7020,29 @@ model StaffCostRate {
   @@id([schoolId, category])
   @@map("StaffCostRates")
 }
+
+/// A school's saved column mapping for one kind of import (Kolumnmappning, X2): which column of the school's own
+/// file is which of Rastra's fields, kept under a name so the next file with the same columns is read the same way.
+/// `kind` is one of the thirteen in src/import-templates/import-fields.ts (the eleven CSV imports, the timplan and
+/// the schedule exchange's table); `placements` is a list of { key, label, field } where `key` is the header with
+/// case, spaces, punctuation and diacritics dropped, `label` the header as written and `field` one of the kind's
+/// fields or null for "read nothing from this column". It holds headers and never a value, and never anything
+/// that looks like a personnummer (the gateway refuses it). Read by every administrator, written by Planering.
+model ImportMappingTemplate {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId   String   @db.Uuid
+  kind       String
+  /// 1..80 characters, not blank, no control characters. Unique per school and kind.
+  name       String
+  /// The file row the headers stand on when a title lies above them (1..20); null is the first row with content.
+  headerRow  Int?     @db.SmallInt
+  placements Json
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([schoolId, kind, name])
+  /// The target a tenant-scoped composite foreign key needs; see User.
+  @@unique([id, schoolId])
+  @@index([schoolId, kind])
+  @@map("ImportMappingTemplates")
+}
