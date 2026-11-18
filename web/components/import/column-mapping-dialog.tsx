@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import type { TemplateKind } from "@/lib/column-fields";
 import type { MappingTemplate } from "@/lib/column-mapping";
@@ -37,7 +37,7 @@ const PREVIEW_ROWS = 5;
 const MAX_TEXT = 5_000_000;
 const ENCODING_NAME = { "windows-1252": "Windows-1252", macintosh: "Mac Roman" } as const;
 
-type Reading = { state: "loading" } | { state: "problem"; text: string } | { state: "table"; table: RawTable; encoding: string | null };
+type Reading = { state: "loading" } | { state: "problem"; text: string } | { state: "table"; table: RawTable; encoding: string | null; serial: number };
 
 /**
  * Peka ut kolumnerna: a table pasted or chosen, mapped to the fields of one kind, and what that makes of its first rows, before
@@ -49,6 +49,8 @@ export function ColumnMappingDialog({ open, onOpenChange, kind, source, onUse }:
   const t = useTranslations("columnMapping");
   const [reading, setReading] = useState<Reading>({ state: "loading" });
   const [mapping, setMapping] = useState<MappingState | null>(null);
+  // Each table read is a new panel: the choices of the last one are for another table's columns.
+  const serial = useRef(0);
   const templates = useImportTemplates(open ? kind : null);
 
   useEffect(() => {
@@ -61,7 +63,8 @@ export function ColumnMappingDialog({ open, onOpenChange, kind, source, onUse }:
       if (text.length > MAX_TEXT) setReading({ state: "problem", text: t("tooLong") });
       else {
         const table = readTable(text);
-        setReading(table.rows.length === 0 ? { state: "problem", text: t("empty") } : { state: "table", table, encoding });
+        serial.current += 1;
+        setReading(table.rows.length === 0 ? { state: "problem", text: t("empty") } : { state: "table", table, encoding, serial: serial.current });
       }
     };
     if ("text" in source) {
@@ -105,7 +108,7 @@ export function ColumnMappingDialog({ open, onOpenChange, kind, source, onUse }:
           // scrolls inside its own box (overflow-x-auto) instead of widening the dialog past a phone's edge.
           <div className="min-w-0 space-y-4">
             {reading.encoding ? <p className="text-sm text-muted-foreground">{t("readAs", { encoding: reading.encoding })}</p> : null}
-            <ColumnMappingPanel key={source && "file" in source ? `${source.file.name}-${source.file.size}` : "paste"} kind={kind} table={reading.table} templates={templates.data ?? NO_TEMPLATES} onChange={onChange} />
+            <ColumnMappingPanel key={reading.serial} kind={kind} table={reading.table} templates={templates.data ?? NO_TEMPLATES} onChange={onChange} />
             {applied && applied.problems.length === 0 && applied.rows.length > 0 ? (
               <div className="space-y-1">
                 <p className="text-sm font-medium">{t("dialog.preview")}</p>

@@ -97,6 +97,8 @@ export function headerRowCandidates(table: RawTable, most = 10): number[] {
  * cells have the shape. A single cell with the shape in another column is not this: it holds its row back (applyMapping).
  */
 export function personalNumberColumns(block: Block): Set<number> {
+  const known = DROPPED.get(block);
+  if (known !== undefined) return known;
   const found = new Set<number>();
   block.headers.forEach((header, index) => {
     if (isPersonalNumberHeader(normalizeHeader(header)) || hasPersonalNumber(header)) {
@@ -113,8 +115,12 @@ export function personalNumberColumns(block: Block): Set<number> {
     }
     if (numbers >= 1 && numbers * 2 >= filled) found.add(index);
   });
+  DROPPED.set(block, found);
   return found;
 }
+
+/** A block is read many times (every change of a choice asks again), and scanning every cell for the shape is not free: once per block. */
+const DROPPED = new WeakMap<Block, Set<number>>();
 
 /** A header as a message may show it: redacted, one line, at most 40 characters; null for a header that is itself a number (not named). */
 function labelOf(header: string): string | null {

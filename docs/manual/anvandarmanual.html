@@ -10345,6 +10345,52 @@
       klass och gruppnamn.</li>
   </ul>
 
+  <h4>Från ett annat program: klistra in en tabell</h4>
+  <p>
+    Kommer schemat från ett program vars kolumner inte heter som Rastra Schemas
+    kan du peka ut dem själv. Kortet <span class="ui">Från ett annat
+    program</span> tar en tabell du har kopierat (markera den i det andra
+    programmet eller i Excel, kopiera och klistra in) eller en CSV-fil. En
+    Excelfil (.xlsx) läses här genom att du markerar cellerna och klistrar in
+    dem, eller sparar filen som CSV; en fil som Excel sparat som
+    <em>CSV (semikolonavgränsad)</em> läses i den kodning den sparades i, så
+    å, ä och ö blir rätt.
+  </p>
+  <ul>
+    <li><strong>Du pekar ut kolumnerna.</strong> Dialogen listar tabellens
+      kolumner med några exempel, och för varje en väljare: ett fält,
+      <em>Läs inte kolumnen</em> eller <em>Inte placerad</em>. Rastra gissar
+      aldrig vilken kolumn som är vilken. En kolumn vars rubrik Rastra redan
+      känner, som <em>Dag</em> eller <em>Sal</em>, är placerad från början; alla
+      andra står som <em>Inte placerade</em> tills du väljer, och sammanfattningen
+      nämner varje kolumn som inte läses. Står det en rubrik ovanför tabellen
+      (<em>Schema hösten 2026</em>) väljer du vilken rad rubrikerna står på.</li>
+    <li><strong>Start och slut i en cell, flera lärare i en cell.</strong> Står
+      tiden som <em>08:10–09:00</em> i en kolumn väljer du <em>Tid, start och slut
+      i en cell</em>; står lärarna som <em>ABC, DEF</em> väljer du <em>Lärare,
+      flera i en cell</em> (den första blir lärare och den andra medlärare; fler
+      än två går inte, en lektion har högst två).</li>
+    <li><strong>Personnummer lämnar aldrig webbläsaren.</strong> En kolumn som
+      ser ut som personnummer, eller vars rubrik säger det, släpps innan något
+      skickas, och sammanfattningen säger att den släpptes. Har en kolumn som
+      läses en enstaka cell med ett personnummer läses inte den raden in, och
+      meddelandet nämner raden och kolumnen men aldrig numret.</li>
+    <li><strong>Mallar.</strong> Under <span class="ui">Spara som mall</span> ger
+      du mappningen ett namn. Nästa gång en tabell har samma kolumner (i vilken
+      ordning som helst, med annan versalisering) används mallen av sig själv, och
+      dialogen säger det. Har tabellen kolumner som mallen inte känner står de
+      som <em>Inte placerade</em>. Saknar den en kolumn mallen väntar sig
+      erbjuds mallen men används inte förrän du väljer <span class="ui">Använd
+      ändå</span>. Mallar sparar rubriker och fält, aldrig några värden. Alla
+      administratörer kan använda mallarna; att spara, ändra och ta bort dem
+      kräver Planering (2.2), och utan det går tabellen ändå att läsa in.</li>
+    <li><strong>Sedan är det som vanligt.</strong> <span class="ui">Använd
+      tabellen</span> förhandsgranskar den mappade tabellen på samma sätt som en
+      fil (Importera ovan): ingenting skrivs förrän du har läst förhandsvisningen
+      och trycker <span class="ui">Skriv in</span>. Raderna får samma skäl till
+      vägran som vid en fil, och radnumren är de i det du klistrade in.</li>
+  </ul>
+
   <h4>Det här kan de fyra formaten, och inte</h4>
   <table>
     <thead><tr><th style="width:24%">Format</th><th>Så är det valt, och det filen inte bär</th></tr></thead>

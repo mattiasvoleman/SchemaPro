@@ -290,6 +290,23 @@ describe("a table that is not text", () => {
   });
 });
 
+describe("a second table", () => {
+  it("starts over: the choices made for the last table's columns are not carried to the next, of the same width or not", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const ui = (text: string) => (
+      <QueryClientProvider client={client}>
+        <ColumnMappingDialog open onOpenChange={vi.fn()} kind="scheduleLessons" source={{ text }} onUse={vi.fn()} />
+      </QueryClientProvider>
+    );
+    const view = render(ui("Kurs\tFack\n7A\tMa"));
+    fireEvent.change(await screen.findByRole("combobox", { name: "columns.fieldOf(Kurs)" }), { target: { value: "group" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "columns.fieldOf(Fack)" }), { target: { value: "__skip__" } });
+    view.rerender(ui("Foo\tBar\n1\t2"));
+    expect(await screen.findByRole("combobox", { name: "columns.fieldOf(Foo)" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "columns.fieldOf(Bar)" })).toHaveValue("");
+  });
+});
+
 describe("the dialog's own buttons", () => {
   it("closes on Avbryt without handing anything back", async () => {
     const onOpenChange = vi.fn();
