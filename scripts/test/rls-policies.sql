@@ -20306,6 +20306,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('HuvudmanSchoolEvents', '{}', '{}', '{}', '{}'),
   ('HuvudmanSchoolRequests', '{}', '{}', '{}', '{}'),
   ('HuvudmanSchools', '{}', '{}', '{}', '{}'),
+  ('ImportMappingTemplates', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('InstructionProofs', '{DRIFT}', '{}', '{}', '{}'),
   ('InstructionTemplates', '{DRIFT}', '{DRIFT}', '{}', '{}'),
   ('IntegrationApiKeys', '{INTEGRATIONER}', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}'),
@@ -66372,4 +66373,503 @@ BEGIN
   RAISE NOTICE 'gq 534: the sweep takes no login, and only the API''s role runs it';
 END $$;
 SET LOCAL ROLE app_authenticated;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Kolumnmappning (20270223090000), sections 535-539: "ImportMappingTemplates", a school's saved mapping of an
+-- import's columns (X2). Headers and the field each stands for, never a value. The helpers made here have the prefix
+-- km_, and every section runs in the school the skyddad identitet fixtures made (rls-skyddad-school), whose principals
+-- are the ones section 436 uses: …e50000000001 FULL, …02 REKTOR, …03 EXPEDITION, …04 SCHEMALAGGARE, …05 LASARE, …06 and
+-- …07 teachers, …11 and …12 pupils, …21 and …22 guardians, …31 the other school's FULL.
+--
+--   535  the catalogue: the columns, the keys, the CHECKs, the indexes, row security with four arms and no other, the
+--        arms' shape, the API role's four privileges and nobody else's, and no key to a person
+--   536  who reads and who writes: every administrator profile reads; Planering (full, rektor, schemaläggare) makes,
+--        changes and removes; the expedition and the läsare are refused every write; a row lock for a read keeps working
+--        for them; a teacher, a pupil and a guardian meet nothing
+--   537  the school: the other school's administrator reads, changes and removes nothing of this school's, makes its own
+--        under the same names, and no write moves a row across (the update arm's school filter on its own)
+--   538  the rows themselves: the kind, the name, the header row and the posts are held to their bounds, and a name is
+--        taken once per school and kind
+--   539  what the arms do not give: PostgREST's roles are refused everything, and a session with no one behind it meets
+--        nothing
+-- ---------------------------------------------------------------------------
+
+-- 535: the catalogue.
+BEGIN;
+DO $$
+DECLARE
+  cols text;
+  def text;
+  n integer;
+  r text;
+  t text;
+BEGIN
+  SELECT string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod), ',' ORDER BY a.attnum) INTO cols
+    FROM pg_attribute a WHERE a.attrelid = 'public."ImportMappingTemplates"'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+  IF cols IS DISTINCT FROM 'id:uuid,schoolId:uuid,kind:text,name:text,headerRow:smallint,placements:jsonb,createdAt:timestamp(6) with time zone,updatedAt:timestamp(6) with time zone' THEN
+    RAISE EXCEPTION 'km 535: ImportMappingTemplates has the columns %', cols;
+  END IF;
+  -- Every column but the header row is NOT NULL. A CHECK lets a NULL through (a NULL name or kind satisfies its CHECK), so a
+  -- nullable kind, name or school would admit rows the bounds below never see.
+  SELECT string_agg(a.attname, ',' ORDER BY a.attnum) INTO def
+    FROM pg_attribute a WHERE a.attrelid = 'public."ImportMappingTemplates"'::regclass AND a.attnum > 0 AND NOT a.attisdropped AND NOT a.attnotnull;
+  IF def IS DISTINCT FROM 'headerRow' THEN RAISE EXCEPTION 'km 535: the nullable columns are %, not the header row alone', def; END IF;
+  -- Headers and fields, no person and no value: nothing in the table's columns names one.
+  IF EXISTS (SELECT 1 FROM pg_attribute a
+              WHERE a.attrelid = 'public."ImportMappingTemplates"'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+                AND a.attname ~* '(user|teacher|employment|person|student|pupil|guardian|cell|value|email|created.*by)') THEN
+    RAISE EXCEPTION 'km 535: a column of ImportMappingTemplates names a person or a value';
+  END IF;
+  SELECT pg_get_constraintdef(c.oid) INTO def FROM pg_constraint c WHERE c.conrelid = 'public."ImportMappingTemplates"'::regclass AND c.contype = 'p';
+  IF def IS DISTINCT FROM 'PRIMARY KEY (id)' THEN RAISE EXCEPTION 'km 535: the key is %', def; END IF;
+
+  -- One foreign key, the school's, cascading both ways: nothing points at a person, and nothing points here.
+  SELECT count(*) INTO n FROM pg_constraint WHERE conrelid = 'public."ImportMappingTemplates"'::regclass AND contype = 'f';
+  IF n <> 1 THEN RAISE EXCEPTION 'km 535: % foreign keys, not the school''s alone', n; END IF;
+  SELECT count(*) INTO n FROM pg_constraint c
+   WHERE c.conrelid = 'public."ImportMappingTemplates"'::regclass AND c.contype = 'f' AND c.confrelid = 'public."Schools"'::regclass
+     AND c.confdeltype = 'c' AND c.confupdtype = 'c' AND (SELECT array_agg(a.attname::text) FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)) = ARRAY['schoolId'];
+  IF n <> 1 THEN RAISE EXCEPTION 'km 535: the school''s key does not cascade'; END IF;
+  SELECT count(*) INTO n FROM pg_constraint WHERE confrelid = 'public."ImportMappingTemplates"'::regclass;
+  IF n <> 0 THEN RAISE EXCEPTION 'km 535: % keys point at ImportMappingTemplates', n; END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."ImportMappingTemplates"'::regclass) THEN
+    RAISE EXCEPTION 'km 535: row security is not on';
+  END IF;
+
+  SELECT string_agg(c.conname || ':' || c.contype::text, ',' ORDER BY c.conname COLLATE "C") INTO def
+    FROM pg_constraint c WHERE c.conrelid = 'public."ImportMappingTemplates"'::regclass AND c.contype IN ('u', 'x', 'c');
+  IF def IS DISTINCT FROM 'ImportMappingTemplates_headerRow_check:c,ImportMappingTemplates_id_schoolId_key:u,ImportMappingTemplates_kind_check:c,ImportMappingTemplates_name_check:c,ImportMappingTemplates_placements_check:c,ImportMappingTemplates_schoolId_kind_name_key:u' THEN
+    RAISE EXCEPTION 'km 535: the constraints are %', def;
+  END IF;
+  SELECT pg_get_constraintdef(c.oid) INTO def FROM pg_constraint c WHERE c.conname = 'ImportMappingTemplates_schoolId_kind_name_key';
+  IF def IS DISTINCT FROM 'UNIQUE ("schoolId", kind, name)' THEN RAISE EXCEPTION 'km 535: a name is unique as %', def; END IF;
+  SELECT pg_get_constraintdef(c.oid) INTO def FROM pg_constraint c WHERE c.conname = 'ImportMappingTemplates_id_schoolId_key';
+  IF def IS DISTINCT FROM 'UNIQUE (id, "schoolId")' THEN RAISE EXCEPTION 'km 535: the tenant key is %', def; END IF;
+  -- The thirteen kinds, every one named, and no other.
+  SELECT pg_get_constraintdef(c.oid) INTO def FROM pg_constraint c WHERE c.conname = 'ImportMappingTemplates_kind_check';
+  SELECT count(*) INTO n FROM regexp_matches(def, '''([A-Za-z]+)''::text', 'g');
+  IF n <> 13 THEN RAISE EXCEPTION 'km 535: the kind CHECK names % kinds, not 13: %', n, def; END IF;
+  FOREACH t IN ARRAY ARRAY['students', 'guardians', 'teachers', 'classes', 'teachingGroups', 'roomTypes', 'rooms', 'subjects',
+                           'requirements', 'teacherQualifications', 'teacherDuties', 'timplan', 'scheduleLessons'] LOOP
+    IF def NOT LIKE '%''' || t || '''::text%' THEN RAISE EXCEPTION 'km 535: the kind CHECK lacks %', t; END IF;
+  END LOOP;
+  SELECT string_agg(indexname, ',' ORDER BY indexname COLLATE "C") INTO def FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'ImportMappingTemplates';
+  IF def IS DISTINCT FROM 'ImportMappingTemplates_id_schoolId_key,ImportMappingTemplates_pkey,ImportMappingTemplates_schoolId_kind_idx,ImportMappingTemplates_schoolId_kind_name_key' THEN
+    RAISE EXCEPTION 'km 535: the indexes are %', def;
+  END IF;
+
+  -- The arms: four, for the API's role alone, the administrators' for the read, Planering's for every write.
+  SELECT string_agg(policyname || ':' || cmd || ':' || roles::text, ',' ORDER BY policyname COLLATE "C") INTO def
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'ImportMappingTemplates';
+  IF def IS DISTINCT FROM 'import_mapping_templates_admin_delete:DELETE:{app_authenticated},import_mapping_templates_admin_insert:INSERT:{app_authenticated},import_mapping_templates_admin_select:SELECT:{app_authenticated},import_mapping_templates_admin_update:UPDATE:{app_authenticated}' THEN
+    RAISE EXCEPTION 'km 535: the arms are %', def;
+  END IF;
+  FOR t, def IN
+    SELECT p.policyname || ':' || p.cmd, coalesce(p.qual, '') || ' | ' || coalesce(p.with_check, '')
+      FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = 'ImportMappingTemplates'
+  LOOP
+    IF def NOT LIKE '%current_school_id()%' OR def NOT LIKE '%''SCHOOL_ADMIN''::"UserRole"%' OR def LIKE '% OR %' OR def LIKE '%NOT %'
+       OR def LIKE '%TEACHER%' OR def LIKE '%STUDENT%' OR def LIKE '%GUARDIAN%' THEN
+      RAISE EXCEPTION 'km 535: % is not the school''s administrators'' alone: %', t, def;
+    END IF;
+    IF t NOT LIKE '%:SELECT' AND def NOT LIKE '%current_user_may(''PLANERING''%true)%' THEN
+      RAISE EXCEPTION 'km 535: the write % is not Planering''s: %', t, def;
+    END IF;
+    IF t LIKE '%:SELECT' AND def LIKE '%current_user_may%' THEN
+      RAISE EXCEPTION 'km 535: the read % asks an area, though every administrator reads: %', t, def;
+    END IF;
+    -- The update arm's USING admits every administrator (a row lock for a read keeps working) and its CHECK asks the area.
+    IF t = 'import_mapping_templates_admin_update:UPDATE' AND split_part(def, ' | ', 1) LIKE '%current_user_may%' THEN
+      RAISE EXCEPTION 'km 535: the update arm''s USING asks the area, so a row lock for a read is refused: %', def;
+    END IF;
+  END LOOP;
+
+  -- Privileges: the four a gateway needs; no truncate; none for a PostgREST role; nothing of PG 17's MAINTAIN.
+  FOREACH t IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'] LOOP
+    IF NOT has_table_privilege('app_authenticated', 'public."ImportMappingTemplates"', t) THEN
+      RAISE EXCEPTION 'km 535: the API role lacks % on the table', t;
+    END IF;
+  END LOOP;
+  FOREACH t IN ARRAY ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+    IF has_table_privilege('app_authenticated', 'public."ImportMappingTemplates"', t) THEN
+      RAISE EXCEPTION 'km 535: the API role holds % on the table', t;
+    END IF;
+  END LOOP;
+  FOREACH r IN ARRAY ARRAY['authenticated', 'anon'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r)
+       AND (has_any_column_privilege(r, 'public."ImportMappingTemplates"', 'SELECT') OR has_any_column_privilege(r, 'public."ImportMappingTemplates"', 'INSERT')
+            OR has_any_column_privilege(r, 'public."ImportMappingTemplates"', 'UPDATE') OR has_table_privilege(r, 'public."ImportMappingTemplates"', 'DELETE')) THEN
+      RAISE EXCEPTION 'km 535: % holds a privilege on the table', r;
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role')
+     AND has_table_privilege('service_role', 'public."ImportMappingTemplates"', 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') THEN
+    RAISE EXCEPTION 'km 535: service_role writes the table';
+  END IF;
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    FOREACH r IN ARRAY ARRAY['authenticated', 'app_authenticated', 'service_role', 'anon'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_table_privilege(r, 'public."ImportMappingTemplates"', 'MAINTAIN') THEN
+        RAISE EXCEPTION 'km 535: % holds MAINTAIN on the table', r;
+      END IF;
+    END LOOP;
+  END IF;
+  RAISE NOTICE 'km 535: the catalogue of ImportMappingTemplates is as the migration says';
+END $$;
+ROLLBACK;
+
+-- 536: who reads and who writes.
+BEGIN;
+CREATE FUNCTION pg_temp.km_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'km: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+CREATE FUNCTION pg_temp.km_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+-- One template of the school as a statement, for a principal to try.
+CREATE FUNCTION pg_temp.km_ins(school uuid, kind text, name text) RETURNS text LANGUAGE sql AS $f$
+  SELECT format($q$INSERT INTO "ImportMappingTemplates" ("schoolId", kind, name, placements) VALUES (%L, %L, %L, '[{"key":"namn","label":"Namn","field":"name"}]')$q$, school, kind, name)
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  who text;
+  n bigint;
+  v text;
+  tpl uuid;
+BEGIN
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  IF school IS NULL OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-skyddad-school' THEN
+    RAISE EXCEPTION 'km 536: the full administrator is not in rls-skyddad-school; fixtures did not run';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "ImportMappingTemplates" WHERE "schoolId" = school) THEN
+    RAISE EXCEPTION 'km 536: a school starts with a template';
+  END IF;
+
+  -- The expedition and the läsare read but are refused every write: they do not hold Planering.
+  FOREACH who IN ARRAY ARRAY['03', '05'] LOOP
+    PERFORM pg_temp.km_as('00000000-0000-4000-8000-e500000000' || who);
+    PERFORM pg_temp.km_refuses(pg_temp.km_ins(school, 'requirements', 'Höst'), '42501', format('…%s making a template', who));
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM "ImportMappingTemplates" WHERE "schoolId" = school) THEN RAISE EXCEPTION 'km 536: a refused insert left a row'; END IF;
+
+  -- Planering makes them: the full administrator, rektor and the schemaläggare.
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000001');
+  EXECUTE pg_temp.km_ins(school, 'requirements', 'Höst');
+  SELECT id INTO tpl FROM "ImportMappingTemplates" WHERE name = 'Höst';
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000002');
+  EXECUTE pg_temp.km_ins(school, 'rooms', 'Salar');
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000004');
+  EXECUTE pg_temp.km_ins(school, 'students', 'Elever');
+  SELECT count(*) INTO n FROM "ImportMappingTemplates" WHERE "schoolId" = school;
+  IF n <> 3 THEN RAISE EXCEPTION 'km 536: Planering made % templates, not 3', n; END IF;
+
+  -- Every administrator profile reads all three, and changes and removes none unless it holds Planering.
+  FOREACH who IN ARRAY ARRAY['03', '05'] LOOP
+    PERFORM pg_temp.km_as('00000000-0000-4000-8000-e500000000' || who);
+    SELECT count(*) INTO n FROM "ImportMappingTemplates";
+    IF n <> 3 THEN RAISE EXCEPTION 'km 536: …% reads % templates, not 3', who, n; END IF;
+    SELECT name INTO v FROM "ImportMappingTemplates" WHERE id = tpl;
+    IF v IS DISTINCT FROM 'Höst' THEN RAISE EXCEPTION 'km 536: …% reads the name as %', who, v; END IF;
+    -- The arm lets them reach the row and its check refuses the new one: an error, not an empty update.
+    PERFORM pg_temp.km_refuses(format($q$UPDATE "ImportMappingTemplates" SET name = 'Ändrad' WHERE id = %L$q$, tpl), '42501', format('…%s renaming a template', who));
+    PERFORM pg_temp.km_refuses(format($q$UPDATE "ImportMappingTemplates" SET placements = '[]' WHERE id = %L$q$, tpl), '42501', format('…%s changing the posts', who));
+    -- A delete has only its USING, so a refused one finds nothing.
+    DELETE FROM "ImportMappingTemplates" WHERE id = tpl;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'km 536: …% removed a template', who; END IF;
+    -- A row lock for a read keeps working: the update arm's USING admits every administrator (116).
+    SELECT count(*) INTO n FROM (SELECT id FROM "ImportMappingTemplates" WHERE id = tpl FOR UPDATE) l;
+    IF n <> 1 THEN RAISE EXCEPTION 'km 536: …% cannot lock a template for a read', who; END IF;
+  END LOOP;
+
+  -- Planering changes and removes, whoever made the row.
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000004');
+  UPDATE "ImportMappingTemplates" SET name = 'Höstens filer', "headerRow" = 3 WHERE id = tpl;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'km 536: the schemaläggare could not change a template of the full administrator''s'; END IF;
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000002');
+  SELECT name || '/' || "headerRow" INTO v FROM "ImportMappingTemplates" WHERE id = tpl;
+  IF v IS DISTINCT FROM 'Höstens filer/3' THEN RAISE EXCEPTION 'km 536: rektor reads the template as %', v; END IF;
+  DELETE FROM "ImportMappingTemplates" WHERE id = tpl;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'km 536: rektor could not remove a template'; END IF;
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000001');
+  SELECT count(*) INTO n FROM "ImportMappingTemplates" WHERE "schoolId" = school;
+  IF n <> 2 THEN RAISE EXCEPTION 'km 536: % templates remain, not 2', n; END IF;
+  SELECT id INTO tpl FROM "ImportMappingTemplates" WHERE name = 'Salar';
+
+  -- Teachers, pupils and guardians read nothing and write nothing.
+  FOREACH who IN ARRAY ARRAY['06', '07', '11', '12', '21', '22'] LOOP
+    PERFORM pg_temp.km_as('00000000-0000-4000-8000-e500000000' || who);
+    SELECT count(*) INTO n FROM "ImportMappingTemplates";
+    IF n <> 0 THEN RAISE EXCEPTION 'km 536: % …% reads % templates', app.current_user_role(), who, n; END IF;
+    UPDATE "ImportMappingTemplates" SET name = 'Ändrad';
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'km 536: % …% changed a template', app.current_user_role(), who; END IF;
+    DELETE FROM "ImportMappingTemplates";
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'km 536: % …% removed a template', app.current_user_role(), who; END IF;
+    SELECT count(*) INTO n FROM (SELECT id FROM "ImportMappingTemplates" FOR UPDATE) l;
+    IF n <> 0 THEN RAISE EXCEPTION 'km 536: % …% locked a template', app.current_user_role(), who; END IF;
+    PERFORM pg_temp.km_refuses(pg_temp.km_ins(school, 'rooms', 'Egen'), '42501', format('%s …%s making a template', app.current_user_role(), who));
+  END LOOP;
+  PERFORM set_config('app.test_km_school', school::text, true);
+  PERFORM set_config('app.test_km_template', tpl::text, true);
+  RAISE NOTICE 'km 536: every administrator reads; Planering writes; a teacher, a pupil and a guardian meet nothing';
+END $$;
+ROLLBACK;
+
+-- 537: the school.
+BEGIN;
+CREATE FUNCTION pg_temp.km_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'km: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+CREATE FUNCTION pg_temp.km_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+CREATE FUNCTION pg_temp.km_ins(school uuid, kind text, name text) RETURNS text LANGUAGE sql AS $f$
+  SELECT format($q$INSERT INTO "ImportMappingTemplates" ("schoolId", kind, name, placements) VALUES (%L, %L, %L, '[{"key":"namn","label":"Namn","field":"name"}]')$q$, school, kind, name)
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  other uuid;
+  n bigint;
+  tpl uuid;
+BEGIN
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000031');
+  other := app.current_school_id();
+  IF school IS NULL OR other IS NULL OR school = other THEN RAISE EXCEPTION 'km 537: the two schools are not two (%, %)', school, other; END IF;
+
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000001');
+  EXECUTE pg_temp.km_ins(school, 'requirements', 'Höst');
+  EXECUTE pg_temp.km_ins(school, 'rooms', 'Salar');
+  SELECT id INTO tpl FROM "ImportMappingTemplates" WHERE name = 'Höst';
+  -- The administrator of this school makes none for the other, and moves none there.
+  PERFORM pg_temp.km_refuses(pg_temp.km_ins(other, 'requirements', 'Annans'), '42501', 'full making a template for another school');
+  PERFORM pg_temp.km_refuses(format($q$UPDATE "ImportMappingTemplates" SET "schoolId" = %L WHERE id = %L$q$, other, tpl), '42501', 'full moving a template to another school');
+
+  -- The other school's administrator: reads nothing of this school's, changes and removes nothing of it, makes its own
+  -- under the same names (a name is unique per school and kind).
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000031');
+  SELECT count(*) INTO n FROM "ImportMappingTemplates";
+  IF n <> 0 THEN RAISE EXCEPTION 'km 537: the other school reads % of this school''s templates', n; END IF;
+  UPDATE "ImportMappingTemplates" SET name = 'Ändrad' WHERE "schoolId" = school;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'km 537: the other school changed a template of this school'; END IF;
+  DELETE FROM "ImportMappingTemplates" WHERE "schoolId" = school;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'km 537: the other school removed a template of this school'; END IF;
+  PERFORM pg_temp.km_refuses(pg_temp.km_ins(school, 'requirements', 'Annans'), '42501', 'the other school making a template for this school');
+  EXECUTE pg_temp.km_ins(other, 'requirements', 'Höst');
+  SELECT count(*) INTO n FROM "ImportMappingTemplates";
+  IF n <> 1 THEN RAISE EXCEPTION 'km 537: the other school reads % templates, not its own one', n; END IF;
+
+  -- The update arm's school filter, on its own. A statement with a WHERE reads a column, so the select arm's school
+  -- filter applies and hides a hole in the update arm's: these have no WHERE and no column in their SET, so only the
+  -- update arm stands between the administrator and the other school's template (which exists).
+  -- Mutants: the USING without the school (the first touches the other school's row too and the second moves it
+  -- here) and the WITH CHECK without the school (the third moves this school's two into the other).
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000001');
+  UPDATE "ImportMappingTemplates" SET "updatedAt" = now();
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 2 THEN RAISE EXCEPTION 'km 537: an update with no where touched % templates, not this school''s two', n; END IF;
+  UPDATE "ImportMappingTemplates" SET "schoolId" = school;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 2 THEN RAISE EXCEPTION 'km 537: an update to this school with no where touched % templates, not this school''s two', n; END IF;
+  PERFORM pg_temp.km_refuses(format($q$UPDATE "ImportMappingTemplates" SET "schoolId" = %L$q$, other), '42501', 'full moving every template it can reach into another school');
+  DELETE FROM "ImportMappingTemplates";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 2 THEN RAISE EXCEPTION 'km 537: a delete with no where removed % templates, not this school''s two', n; END IF;
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000031');
+  SELECT count(*) INTO n FROM "ImportMappingTemplates";
+  IF n <> 1 THEN RAISE EXCEPTION 'km 537: the other school reads % templates after this school''s updates and delete, not its own one', n; END IF;
+  RAISE NOTICE 'km 537: a template stays in its own school, whoever asks and whatever they write';
+END $$;
+ROLLBACK;
+
+-- 538: the rows themselves.
+BEGIN;
+CREATE FUNCTION pg_temp.km_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'km: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+CREATE FUNCTION pg_temp.km_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+-- A template with its parts as given, for the bounds below. NULL means the column's own default.
+CREATE FUNCTION pg_temp.km_row(school uuid, kind text, name text, header_row text, placements text) RETURNS text LANGUAGE sql AS $f$
+  SELECT format($q$INSERT INTO "ImportMappingTemplates" ("schoolId", kind, name, "headerRow", placements) VALUES (%L, %L, %L, %s, %L::jsonb)$q$,
+                school, kind, name, coalesce(header_row, 'NULL'), coalesce(placements, '[]'))
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  other uuid;
+  k text;
+  n bigint;
+  post constant text := '{"key":"a","label":"A","field":"name"}';
+BEGIN
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000031');
+  other := app.current_school_id();
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000001');
+
+  -- Every one of the thirteen kinds is accepted, and nothing else.
+  FOREACH k IN ARRAY ARRAY['students', 'guardians', 'teachers', 'classes', 'teachingGroups', 'roomTypes', 'rooms', 'subjects',
+                           'requirements', 'teacherQualifications', 'teacherDuties', 'timplan', 'scheduleLessons'] LOOP
+    EXECUTE pg_temp.km_row(school, k, 'En', NULL, NULL);
+  END LOOP;
+  SELECT count(*) INTO n FROM "ImportMappingTemplates" WHERE "schoolId" = school;
+  IF n <> 13 THEN RAISE EXCEPTION 'km 538: % kinds were accepted, not 13', n; END IF;
+  FOREACH k IN ARRAY ARRAY['', 'Students', 'student', 'untis', 'tables', 'scheduleLesson'] LOOP
+    PERFORM pg_temp.km_refuses(pg_temp.km_row(school, k, 'Två', NULL, NULL), '23514', format('the kind %L', k));
+  END LOOP;
+
+  -- The name: 1..80 characters after trimming, no control character.
+  PERFORM pg_temp.km_refuses(pg_temp.km_row(school, 'rooms', '', NULL, NULL), '23514', 'an empty name');
+  PERFORM pg_temp.km_refuses(pg_temp.km_row(school, 'rooms', '   ', NULL, NULL), '23514', 'a blank name');
+  PERFORM pg_temp.km_refuses(pg_temp.km_row(school, 'rooms', repeat('x', 81), NULL, NULL), '23514', 'a name of 81 characters');
+  PERFORM pg_temp.km_refuses(pg_temp.km_row(school, 'rooms', E'Ho\tst', NULL, NULL), '23514', 'a name with a tab');
+  PERFORM pg_temp.km_refuses(pg_temp.km_row(school, 'rooms', E'Ho\nst', NULL, NULL), '23514', 'a name with a line break');
+  EXECUTE pg_temp.km_row(school, 'rooms', repeat('ö', 80), NULL, NULL);
+  EXECUTE pg_temp.km_row(school, 'rooms', 'x', NULL, NULL);
+  SELECT count(*) INTO n FROM "ImportMappingTemplates" WHERE "schoolId" = school AND kind = 'rooms';
+  IF n <> 3 THEN RAISE EXCEPTION 'km 538: % room templates, not the 3 whose names fit', n; END IF;
+
+  -- The header row: 1..20 or none.
+  PERFORM pg_temp.km_refuses(pg_temp.km_row(school, 'subjects', 'Rad', '0', NULL), '23514', 'header row 0');
+  PERFORM pg_temp.km_refuses(pg_temp.km_row(school, 'subjects', 'Rad', '21', NULL), '23514', 'header row 21');
+  PERFORM pg_temp.km_refuses(pg_temp.km_row(school, 'subjects', 'Rad', '-1', NULL), '23514', 'header row -1');
+  EXECUTE pg_temp.km_row(school, 'subjects', 'Rad ett', '1', NULL);
+  EXECUTE pg_temp.km_row(school, 'subjects', 'Rad tjugo', '20', NULL);
+  EXECUTE pg_temp.km_row(school, 'subjects', 'Ingen rad', NULL, NULL);
+
+  -- The posts: a JSON array of at most 200 posts and 40 000 bytes. A column is NOT NULL, and nothing but an array goes in.
+  PERFORM pg_temp.km_refuses(pg_temp.km_row(school, 'classes', 'Objekt', NULL, '{"a":1}'), '23514', 'an object');
+  PERFORM pg_temp.km_refuses(pg_temp.km_row(school, 'classes', 'Text', NULL, '"a"'), '23514', 'a string');
+  PERFORM pg_temp.km_refuses(pg_temp.km_row(school, 'classes', 'Tal', NULL, '1'), '23514', 'a number');
+  PERFORM pg_temp.km_refuses(pg_temp.km_row(school, 'classes', 'Null', NULL, 'null'), '23514', 'a JSON null');
+  PERFORM pg_temp.km_refuses(format($q$INSERT INTO "ImportMappingTemplates" ("schoolId", kind, name, placements) VALUES (%L, 'classes', 'Ingen', NULL)$q$, school), '23502', 'no posts at all');
+  EXECUTE pg_temp.km_row(school, 'classes', 'Tom', NULL, '[]');
+  EXECUTE pg_temp.km_row(school, 'classes', 'Tvåhundra', NULL, (SELECT '[' || string_agg('{"key":"k' || i || '","label":"","field":null}', ',') || ']' FROM generate_series(1, 200) i));
+  PERFORM pg_temp.km_refuses(pg_temp.km_row(school, 'classes', 'Tvåhundraett', NULL,
+    (SELECT '[' || string_agg('{"key":"k' || i || '","label":"","field":null}', ',') || ']' FROM generate_series(1, 201) i)), '23514', '201 posts');
+  -- 40 000 bytes of text: one post whose label fills it (the DTO holds a label to 120, the database the whole to 40 000).
+  EXECUTE pg_temp.km_row(school, 'classes', 'Fyrtiotusen', NULL, '[{"key":"a","label":"' || repeat('x', 39900) || '","field":null}]');
+  PERFORM pg_temp.km_refuses(pg_temp.km_row(school, 'classes', 'Fyrtiotusen och en', NULL, '[{"key":"a","label":"' || repeat('x', 40000) || '","field":null}]'), '23514', 'a template past 40 000 bytes');
+
+  -- A name is taken once per school and kind: the same name in another kind, and in another school, is another template.
+  PERFORM pg_temp.km_refuses(pg_temp.km_row(school, 'rooms', 'En', NULL, NULL), '23505', 'the same name twice in one kind');
+  PERFORM pg_temp.km_refuses(pg_temp.km_row(school, 'rooms', 'x', NULL, NULL), '23505', 'the same short name twice in one kind');
+  EXECUTE pg_temp.km_row(school, 'rooms', 'En till', NULL, NULL);
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000031');
+  EXECUTE pg_temp.km_row(other, 'rooms', 'En', NULL, NULL);
+  SELECT count(*) INTO n FROM "ImportMappingTemplates";
+  IF n <> 1 THEN RAISE EXCEPTION 'km 538: the other school reads % templates, not its own one', n; END IF;
+  -- Case is the school's: two names that differ only in case are two (the service trims and the arms do not fold).
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000001');
+  EXECUTE pg_temp.km_row(school, 'rooms', 'EN', NULL, NULL);
+
+  -- An update meets the same bounds, row by row.
+  PERFORM pg_temp.km_refuses(format($q$UPDATE "ImportMappingTemplates" SET kind = 'untis' WHERE "schoolId" = %L AND name = 'Tom'$q$, school), '23514', 'changing to a kind that is none');
+  PERFORM pg_temp.km_refuses(format($q$UPDATE "ImportMappingTemplates" SET name = 'En' WHERE "schoolId" = %L AND name = 'Tom'$q$, school), '23505', 'renaming into a name taken in the kind');
+  PERFORM pg_temp.km_refuses(format($q$UPDATE "ImportMappingTemplates" SET placements = '{}' WHERE "schoolId" = %L AND name = 'Tom'$q$, school), '23514', 'changing the posts to an object');
+  PERFORM pg_temp.km_refuses(format($q$UPDATE "ImportMappingTemplates" SET "headerRow" = 99 WHERE "schoolId" = %L AND name = 'Tom'$q$, school), '23514', 'changing the header row to 99');
+  RAISE NOTICE 'km 538: the kind, the name, the header row and the posts are held to their bounds';
+END $$;
+ROLLBACK;
+
+-- 539: what the arms do not give.
+BEGIN;
+CREATE FUNCTION pg_temp.km_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'km: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+CREATE FUNCTION pg_temp.km_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+DO $$
+DECLARE
+  school uuid;
+BEGIN
+  PERFORM pg_temp.km_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  INSERT INTO "ImportMappingTemplates" ("schoolId", kind, name, placements) VALUES (school, 'students', 'Elever', '[]');
+  PERFORM set_config('app.test_km_school', school::text, true);
+END $$;
+-- PostgREST's role, as the full administrator: no grant at all, so no read and no write, and no way round the arms.
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  PERFORM pg_temp.km_refuses('SELECT count(*) FROM "ImportMappingTemplates"', '42501', 'PostgREST''s read of the templates');
+  PERFORM pg_temp.km_refuses(format($q$INSERT INTO "ImportMappingTemplates" ("schoolId", kind, name, placements) VALUES (%L, 'rooms', 'Salar', '[]')$q$, current_setting('app.test_km_school')), '42501', 'PostgREST''s insert of a template');
+  PERFORM pg_temp.km_refuses('UPDATE "ImportMappingTemplates" SET name = ''x''', '42501', 'PostgREST''s update of the templates');
+  PERFORM pg_temp.km_refuses('DELETE FROM "ImportMappingTemplates"', '42501', 'PostgREST''s delete of the templates');
+END $$;
+SET LOCAL ROLE app_authenticated;
+-- The role that is signed in with no one behind it (the state a withSystemTransaction leaves) reads nothing and writes nothing.
+SELECT set_config('request.jwt.claims', '', true);
+DO $$
+DECLARE
+  n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "ImportMappingTemplates";
+  IF n <> 0 THEN RAISE EXCEPTION 'km 539: a session with no principal reads % templates', n; END IF;
+  PERFORM pg_temp.km_refuses(format($q$INSERT INTO "ImportMappingTemplates" ("schoolId", kind, name, placements) VALUES (%L, 'rooms', 'Salar', '[]')$q$, current_setting('app.test_km_school')), '42501', 'a session with no principal making a template');
+  UPDATE "ImportMappingTemplates" SET name = 'x';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'km 539: a session with no principal changed % templates', n; END IF;
+  DELETE FROM "ImportMappingTemplates";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'km 539: a session with no principal removed % templates', n; END IF;
+  RAISE NOTICE 'km 539: PostgREST''s roles and a session with no one behind it meet nothing';
+END $$;
 ROLLBACK;

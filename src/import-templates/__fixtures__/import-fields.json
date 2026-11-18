@@ -1,0 +1,161 @@
+{
+  "kinds": [
+    "students",
+    "guardians",
+    "teachers",
+    "classes",
+    "teachingGroups",
+    "roomTypes",
+    "rooms",
+    "subjects",
+    "requirements",
+    "teacherQualifications",
+    "teacherDuties",
+    "timplan",
+    "scheduleLessons"
+  ],
+  "fields": {
+    "students": [
+      "firstName",
+      "lastName",
+      "email",
+      "phone",
+      "className"
+    ],
+    "guardians": [
+      "firstName",
+      "lastName",
+      "email",
+      "phone",
+      "studentEmail"
+    ],
+    "teachers": [
+      "firstName",
+      "lastName",
+      "email",
+      "phone",
+      "employmentPercent",
+      "reductionPercent",
+      "contractKind",
+      "signature"
+    ],
+    "classes": [
+      "name",
+      "gradeLevel",
+      "kind",
+      "halfOf",
+      "replacesSubject"
+    ],
+    "teachingGroups": [
+      "groupName",
+      "email"
+    ],
+    "roomTypes": [
+      "name"
+    ],
+    "rooms": [
+      "name",
+      "code",
+      "roomType",
+      "capacity",
+      "minGradeLevel",
+      "maxGradeLevel",
+      "building",
+      "floor"
+    ],
+    "subjects": [
+      "name",
+      "code",
+      "color",
+      "roomType",
+      "nationalCode",
+      "countsTowardTimplan"
+    ],
+    "requirements": [
+      "groupName",
+      "subject",
+      "lessonsPerWeek",
+      "minutesPerLesson",
+      "lessonLengths",
+      "minutesBefore",
+      "minutesAfter",
+      "teacherEmail",
+      "teacherSignature",
+      "coTeacherEmail",
+      "coTeacherSignature",
+      "teacherLoadPercent",
+      "coTeacherLoadPercent",
+      "recurrence",
+      "startDate",
+      "endDate"
+    ],
+    "teacherQualifications": [
+      "teacherEmail",
+      "subject",
+      "minGrade",
+      "maxGrade",
+      "kind"
+    ],
+    "teacherDuties": [
+      "teacherEmail",
+      "kind",
+      "label",
+      "minutesPerWeek",
+      "countsAsTeaching",
+      "subject",
+      "groupName",
+      "validFrom",
+      "validTo",
+      "note"
+    ],
+    "timplan": [
+      "subject",
+      "gradeLevel",
+      "minutesPerWeek",
+      "note"
+    ],
+    "scheduleLessons": [
+      "group",
+      "extraGroups",
+      "subject",
+      "subjectCode",
+      "teacher",
+      "teacherName",
+      "teacherEmail",
+      "coTeacher",
+      "coTeacherName",
+      "coTeacherEmail",
+      "room",
+      "day",
+      "start",
+      "end",
+      "weeks",
+      "from",
+      "to",
+      "block",
+      "timeRange",
+      "teacherList"
+    ]
+  },
+  "conflicts": {
+    "scheduleLessons": [
+      [
+        "timeRange",
+        "start"
+      ],
+      [
+        "timeRange",
+        "end"
+      ],
+      [
+        "teacherList",
+        "teacher"
+      ],
+      [
+        "teacherList",
+        "coTeacher"
+      ]
+    ]
+  },
+  "limit": 20
+}

@@ -563,6 +563,27 @@ export class ImportRequirementRowDto {
   coTeacherEmail?: string | null;
 
   /**
+   * The lead teacher by lärarsignatur (TeacherEmployments.signature for the year the dialog names) instead of by
+   * e-mail: what a table out of another timetable program calls a teacher (Kolumnmappning, X2). Optional and
+   * additive, and bounded as the signature itself is (1..8 visible characters). Whether a row may name a teacher
+   * both ways, and whether the signature belongs to an active teacher of the year, is the service's, per row.
+   */
+  @IsOptional()
+  @IsString({ message: 'teacherSignature: anges som text.' })
+  @MinLength(1, { message: 'teacherSignature: minst ett tecken.' })
+  @MaxLength(8, { message: 'teacherSignature: högst åtta tecken.' })
+  @Matches(/\S/, { message: 'teacherSignature: kan inte bestå av bara mellanslag.' })
+  teacherSignature?: string | null;
+
+  /** The second teacher by signature, as above. */
+  @IsOptional()
+  @IsString({ message: 'coTeacherSignature: anges som text.' })
+  @MinLength(1, { message: 'coTeacherSignature: minst ett tecken.' })
+  @MaxLength(8, { message: 'coTeacherSignature: högst åtta tecken.' })
+  @Matches(/\S/, { message: 'coTeacherSignature: kan inte bestå av bara mellanslag.' })
+  coTeacherSignature?: string | null;
+
+  /**
    * What each teacher is charged in the tjänstefördelning, 0..200 % — the
    * columns CreateTeachingRequirementDto states, with its messages. Optional
    * like the buffers and for their reason: an absent column leaves the stored
@@ -637,6 +658,8 @@ export const REQUIREMENT_FILE_COLUMNS = [
   'minutesAfter',
   'teacherEmail',
   'coTeacherEmail',
+  'teacherSignature',
+  'coTeacherSignature',
   'teacherLoadPercent',
   'coTeacherLoadPercent',
   'recurrence',
@@ -663,6 +686,8 @@ export const OPTIONAL_REQUIREMENT_COLUMNS = [
   'minutesAfter',
   'teacherEmail',
   'coTeacherEmail',
+  'teacherSignature',
+  'coTeacherSignature',
   'teacherLoadPercent',
   'coTeacherLoadPercent',
   'recurrence',
