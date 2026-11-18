@@ -492,7 +492,7 @@ export async function deladeChecks(owner: Client, api: PrismaService, check: Che
       });
       const finding = await api.withRls(aPlanner, (tx) =>
         otherSchoolFinding(tx as never, a, [lesson({ id: 'teacher' }), lesson({ id: 'room', teacherId: null, roomId: localHall, dayOfWeek: 3 })], {
-          from: '2030-08-19', to: '2031-06-13', yearStart: '2030-08-15', yearEnd: '2031-06-15',
+          from: '2030-08-19', to: '2031-06-13', yearId: yearA, yearStart: '2030-08-15', yearEnd: '2031-06-15',
         }),
       );
       assert.deepEqual(finding.entries?.map((entry) => entry.masterLessonId), ['teacher', 'room']);

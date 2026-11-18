@@ -586,7 +586,7 @@ async function checks(owner: Client, api: PrismaService, slug: string): Promise<
     const text = readFileSync(join(__dirname, '..', '..', 'prisma', 'migrations', name, 'migration.sql'), 'utf8');
     const loop = /DO \$\$\nDECLARE\n {2}give_up[\s\S]*?\nEND\n\$\$;/.exec(text)?.[0];
     assert.ok(loop?.includes('LOCK TABLE "Schools"') && loop.includes('LOCK TABLE "Users"'), 'the first DO block is not the lock loop');
-    const quick = loop.replace("interval '30 seconds'", "interval '1 second'");
+    const quick = loop!.replace("interval '30 seconds'", "interval '1 second'");
     assert.notEqual(quick, loop, 'the loop no longer has a 30 second deadline to shorten');
     const second = new Client({ connectionString: requiredEnv('PROBE_OWNER_URL') });
     await second.connect();

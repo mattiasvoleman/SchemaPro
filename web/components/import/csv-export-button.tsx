@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Download } from "lucide-react";
-import { CSV_TEMPLATES, downloadCsv, type ImportKind } from "@/lib/csv-export";
+import type { ImportKind } from "@/lib/csv-export";
 import type { HeldOutFile } from "@/lib/protected-people";
 import { Button } from "@/components/ui/button";
 import {
@@ -58,7 +58,10 @@ export function CsvExportButton({ exports }: { exports: CsvExport[] }) {
     running.current = true;
     setPending(true);
     try {
-      const built = await entry.build();
+      // The templates and the download are fetched at the click, beside the builder and not after it: a page with an export button does not
+      // carry them in its first load (/admin/requirements, at its bundle budget, reaches csv-export through nothing else), and a chunk that
+      // was asked for with the click is there when the file is.
+      const [built, { CSV_TEMPLATES, downloadCsv }] = await Promise.all([entry.build(), import("@/lib/csv-export")]);
       if (built === null) return;
       const content = typeof built === "string" ? built : built.content;
       if (content !== null) downloadCsv(CSV_TEMPLATES[entry.kind].filename, content);

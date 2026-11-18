@@ -415,7 +415,7 @@ export async function placementBackChecks(owner: Client, api: PrismaService, mar
       const mine = await timetable();
       assert.deepEqual((await placements.boardOfYear(year, expedition)).timetable, mine);
       assert.deepEqual((await placements.boardOfYear(year, reader)).timetable, mine);
-      const teacher = { authId: anna.authId, userId: anna.id, schoolId: school, role: Role.TEACHER, adminProfile: null, channel: 'WEB', hrRead: false } as AuthenticatedUser;
+      const teacher = { authId: anna.authId, userId: anna.id, schoolId: school, role: Role.TEACHER, adminProfile: null, channel: 'WEB', hrRead: false } as unknown as AuthenticatedUser;
       const seen = await placements.boardOfYear(year, teacher);
       assert.equal(seen.placements.length, 0, 'a teacher sees no förläggning');
       assert.ok(seen.timetable.placedLessons <= mine.placedLessons, 'and what a teacher sees of the grundschema is never more than the administrator sees');

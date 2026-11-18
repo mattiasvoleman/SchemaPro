@@ -2221,7 +2221,7 @@ export class OptimizationProxyService {
    * mapped back and no screen showed, so a school read "0 class(es)" one
    * week and "the classes named here" with nobody named the next.
    */
-  private realiseConflicts(
+  realiseConflicts(
     conflicts: AiEngineConflictAnalysis | null | undefined,
     maps: AnonMaps,
   ): AiEngineConflictAnalysis | null {

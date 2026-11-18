@@ -158,7 +158,6 @@ maybe('Schemavisarens lägen: the open routes as every caller, in two schools (a
     prisma = new PrismaService();
     await prisma.$connect();
     harness = await createTestApp({ configure: (builder) => builder.overrideProvider(PrismaService).useValue(prisma) });
-    await harness.app.listen(0, '127.0.0.1');
     a = await plant(SLUGS[0]!, true);
     b = await plant(SLUGS[1]!, false);
   });
