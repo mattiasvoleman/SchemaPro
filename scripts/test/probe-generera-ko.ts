@@ -19,10 +19,12 @@
  *   gq-h  a run the sweep gave up on while its engine call was still going, which then comes back, ends SUCCEEDED and loses the
  *         abandonment it was given: what happened wins over what was guessed;
  *   gq-i  a restart that can say so (onModuleDestroy) fails the run in flight with ENGINE_RUN_ABANDONED and frees the year at once.
+ *   gq-j  a start works whatever the API's clock says: heartbeatAt and leaseUntil are both filled by the database's clock, which the
+ *         CHECK OptimizationJobs_lease_follows_the_heartbeat compares.
  *
  * Everything is decided by the database's state: a lease is planted as a time relative to the database's own clock, and nothing
  * waits for one to run out. The one step across a real clock jump (the service's own run, then the database's clock moved on and
- * the sweep) is scripts of the author's, run by hand on the clock-shim image (docs/DEPLOYMENT.md §28).
+ * the sweep) was run by hand on the clock-shim image, and is described in docs/DEPLOYMENT.md §27.7.
  */
 import { strict as assert } from 'node:assert';
 import { HttpException } from '@nestjs/common';
@@ -336,6 +338,33 @@ export async function generateQueueChecks(owner: Client, api: PrismaService, mar
       assert.equal(await active(), 0);
       answerAll();
       await until('the run that was in flight ends', async () => (await row(id)).status === 'SUCCEEDED');
+    });
+
+    await check('(gq-j) a start works whatever the API’s clock says: the heartbeat and the lease are filled by the database, one clock for both', async () => {
+      // OptimizationJobs_lease_follows_the_heartbeat compares leaseUntil (the database's now() + 15 minutes) with heartbeatAt. A heartbeatAt
+      // that Prisma fills from the API's clock (@default(now())) breaks every start once that clock leads the database's by the
+      // lease's fifteen minutes (23514, a 500): the API's clock is moved twenty minutes on, and a start must still go through.
+      const RealDate = Date;
+      const lead = 20 * 60_000;
+      class LeadingDate extends RealDate {
+        constructor(...args: unknown[]) {
+          if (args.length === 0) super(RealDate.now() + lead);
+          else super(...(args as [string | number | Date]));
+        }
+        static override now(): number {
+          return RealDate.now() + lead;
+        }
+      }
+      let id = '';
+      (globalThis as { Date: DateConstructor }).Date = LeadingDate as unknown as DateConstructor;
+      try {
+        id = (await jobs.start(year, admin)).jobId;
+      } finally {
+        (globalThis as { Date: DateConstructor }).Date = RealDate;
+      }
+      await until('its heartbeat', async () => (await row(id)).status === 'RUNNING');
+      assert.equal((await row(id)).lease, 270);
+      await settle();
     });
   } finally {
     answerAll();
