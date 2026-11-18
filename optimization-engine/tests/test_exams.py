@@ -1486,8 +1486,11 @@ def test_the_exam_budget_is_its_own_setting() -> None:
 
 #: Every route and every schema the app had before the exam planner: the
 #: generator's, the room optimiser's, the staffing proposal's, the health
-#: check. The legacy /v1/schedule is not in the schema.
+#: check, and Kontrollera veckan's (a route of the generator's, added to the
+#: list when it was built: this test is about what the EXAM router changes).
+#: The legacy /v1/schedule is not in the schema.
 ROUTES_BEFORE = {
+    "/api/v1/check-week": {"post"},
     "/api/v1/optimize": {"post"},
     "/api/v1/optimize-rooms": {"post"},
     "/api/v1/staff": {"post"},

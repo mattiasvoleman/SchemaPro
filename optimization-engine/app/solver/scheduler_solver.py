@@ -82,6 +82,12 @@ from app.schemas.schedule import (
     SearchOptions,
     SolverStatus,
 )
+from app.schemas.week_check import (
+    WeekCheckResponse,
+    WeekCheckSkipped,
+    WeekCheckVerdict,
+    WeekCheckYear,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2936,7 +2942,13 @@ class SchedulerSolver:
         memo[key] = held
         return held
 
-    def _week_loads(self, request: OptimizeScheduleRequest) -> list[StageLoad]:
+    def _week_loads(
+        self,
+        request: OptimizeScheduleRequest,
+        *,
+        cut: list[bool] | None = None,
+        deadline: float | None = None,
+    ) -> list[StageLoad]:
         """The years whose least week passes TIGHT_WEEK_LOAD of their frame time.
 
         The count itself is week_load.week_loads, which says why it is sound.
@@ -2945,6 +2957,20 @@ class SchedulerSolver:
         which days. Handed over as the model's own readers rather than
         restated, so that the count and the model cannot disagree about who
         may not overlap whom.
+
+        `cut` is for the week check, which must say when a year with no row is
+        a year that was not counted: week_loads stops at its deadline and
+        returns what it holds, silently, so a True is appended here when the
+        deadline had passed by the time it returned. Said of a count that
+        finished at the very deadline too, which errs the safe way: "not
+        counted" for a year that may have been.
+
+        `deadline` is a time.monotonic() instant that several weeks' counts
+        SHARE: a year cut into periods is counted week by week, and the week
+        check's four seconds are its whole count, not each week's (eight
+        periods of a heavy year took 33 s, past the route's own ceiling).
+        Absent, this count has WEEK_LOAD_SECONDS of its own, as a solve's
+        always had.
         """
         sharing = _groups_sharing_students(request.group_conflicts)
         rules = request.rules
@@ -2971,7 +2997,12 @@ class SchedulerSolver:
                 exempt_days=exempt_days,
                 pins=self._lunch_pins(request.lunch_placements, eaters),
             )
-        return week_loads(
+        if deadline is None:
+            deadline = time.monotonic() + self.WEEK_LOAD_SECONDS
+        # The request's clock edge, when a solve runs one (M1): a week check has
+        # none, and _clock_clamp then hands the deadline back unchanged.
+        deadline = self._clock_clamp(deadline)
+        loads = week_loads(
             request.requirements,
             request.frame_times,
             self._grid,
@@ -2984,8 +3015,11 @@ class SchedulerSolver:
             ),
             lunch,
             threshold=self.TIGHT_WEEK_LOAD,
-            deadline=self._clock_clamp(time.monotonic() + self.WEEK_LOAD_SECONDS),
+            deadline=deadline,
         )
+        if cut is not None and time.monotonic() >= deadline:
+            cut.append(True)
+        return loads
 
     @staticmethod
     def _shared_teacher_details(loads: Sequence[StageLoad], limit: int) -> list[ConflictDetail]:
@@ -3068,6 +3102,28 @@ class SchedulerSolver:
             ],
         )
 
+    def _tight_week_details(self, tight: Sequence[StageLoad]) -> list[ConflictDetail]:
+        """One row per tight year, then the teachers who stand on groups that could run together.
+
+        The rows a TIMEOUT carries (_with_tight_week) and the rows Kontrollera
+        veckan answers TIGHT with (check_week): one function, so that a school
+        reads the same sentence before a run as after one.
+        """
+        return [
+            ConflictDetail(
+                category="REQUIREMENT_DEMAND",
+                code="TIGHT_WEEK_LOAD",
+                params={
+                    "grades": "any" if load.year is None else str(load.year),
+                    "demandMinutes": load.demand_minutes,
+                    "capacityMinutes": load.capacity_minutes,
+                    "percent": int(load.load * 100),
+                },
+                requirement_ids=list(load.requirement_ids),
+            )
+            for load in tight
+        ] + self._shared_teacher_details(tight, MAX_SHARED_TEACHERS_NAMED)
+
     def _with_tight_week(
         self, analysis: ConflictAnalysis | None, tight: Sequence[StageLoad],
     ) -> ConflictAnalysis | None:
@@ -3083,20 +3139,7 @@ class SchedulerSolver:
         """
         if not tight:
             return analysis
-        details = [
-            ConflictDetail(
-                category="REQUIREMENT_DEMAND",
-                code="TIGHT_WEEK_LOAD",
-                params={
-                    "grades": "any" if load.year is None else str(load.year),
-                    "demandMinutes": load.demand_minutes,
-                    "capacityMinutes": load.capacity_minutes,
-                    "percent": int(load.load * 100),
-                },
-                requirement_ids=list(load.requirement_ids),
-            )
-            for load in tight
-        ] + self._shared_teacher_details(tight, MAX_SHARED_TEACHERS_NAMED)
+        details = self._tight_week_details(tight)
         if analysis is not None and analysis.summary_code == "PROBE_ONE_RULE_HELPED":
             return analysis.model_copy(update={"conflicts": [*analysis.conflicts, *details]})
         worst = tight[0]
@@ -5370,7 +5413,12 @@ class SchedulerSolver:
         return status, probe
 
     def _prechecks(
-        self, request: OptimizeScheduleRequest,
+        self,
+        request: OptimizeScheduleRequest,
+        *,
+        run_lunch_stage: bool = True,
+        week_load_cut: list[bool] | None = None,
+        shared_week_load_deadline: bool = False,
     ) -> tuple[
         OptimizeScheduleResponse | None,
         int,
@@ -5387,6 +5435,23 @@ class SchedulerSolver:
         möjliga schema can run exactly the same checks on the week with its
         relaxable rules taken out (relaxation.strip): the hard rules are
         refused by name there, in the same words, and by the same code.
+
+        KONTROLLERA VECKAN runs it too (check_week), and is why there are two
+        keywords, neither of which a solve passes:
+
+        * `run_lunch_stage=False` leaves out the lunches alone — the one step
+          here that is a CP-SAT model of its own (up to LUNCH_STAGE_CAP_SECONDS,
+          and a solve again to name what it proved). Everything else is
+          arithmetic and the year's week load, so a week it refuses is refused
+          by the same count in the same words, and a week the lunch stage
+          alone would have refused is the one answer the check cannot give.
+        * `week_load_cut` collects a True when the week load stopped at its
+          deadline (see _week_loads).
+        * `shared_week_load_deadline` gives every week's count one deadline,
+          WEEK_LOAD_SECONDS from the first of them, instead of that long for
+          each (a year of eight periods is eight counts). The question a
+          refusal asks again of the year alone (_solved_in) keeps a deadline
+          of its own, so that the analysis answered is the one solve() gives.
         """
         self._validate_request(request)
         # THE STEP, beside the grid it counts in. Per request, because the week
@@ -5438,12 +5503,17 @@ class SchedulerSolver:
                 ),
                 step, lunch_hints, nearly_full,
             )
+        week_load_deadline = (
+            time.monotonic() + self.WEEK_LOAD_SECONDS if shared_week_load_deadline else None
+        )
         for label, week in self._solved_weeks(weeks):
             # Then the lunches alone: a small model that proves what the full
             # one could not in a minute, or hands it a warm start. See
             # _lunch_stage_one. Its starts are a warm start for the one week
             # it was asked about, so a school of two weeks takes none.
-            verdict, week_hints = self._lunch_stage_one(week)
+            verdict, week_hints = (
+                self._lunch_stage_one(week) if run_lunch_stage else (None, {})
+            )
             # Which of the three verdicts below refused, as something that can
             # be asked again of another request (_solved_in).
             asked: Callable[[OptimizeScheduleRequest], ConflictAnalysis | None] = (
@@ -5460,7 +5530,7 @@ class SchedulerSolver:
             # which the class counts leave out: after every verdict above, so
             # a week one of them decides keeps its answer. See week_load.
             if verdict is None:
-                loads = self._week_loads(week)
+                loads = self._week_loads(week, cut=week_load_cut, deadline=week_load_deadline)
                 verdict = self._week_load_verdict(loads)
                 asked = lambda asked_of: self._week_load_verdict(self._week_loads(asked_of))  # noqa: E731
                 for load in loads:
@@ -5478,6 +5548,79 @@ class SchedulerSolver:
                     step, lunch_hints, nearly_full,
                 )
         return None, step, lunch_hints, nearly_full
+
+    def check_week(self, request: OptimizeScheduleRequest) -> WeekCheckResponse:
+        """KONTROLLERA VECKAN: what Generera's first moments find out, without a solve.
+
+        _prechecks run as solve() runs them, less the lunch stage (a model of
+        its own), and answered as what they found:
+
+        * IMPOSSIBLE when one of them refused the week. `conflicts` is the
+          analysis solve() answers INFEASIBLE with, because it is the same
+          call, so the words and the rows a school reads here are the ones
+          the same school reads after a run. A refusal of the payload itself
+          (_validate_request) is not caught: it is the InvalidScheduleInputError
+          a Generera is refused with, and the route's handler says it as a 400.
+        * TIGHT when none did but a year's least week passes TIGHT_WEEK_LOAD,
+          with the rows a TIMEOUT adds to its answer (_tight_week_details) and
+          none of its headline, which speaks of a search that has not happened.
+        * OK otherwise, which is NOT "a timetable exists": nothing here can
+          prove one, and `skipped` names what did not run.
+
+        THE SCHEDULING MODEL IS NEVER BUILT, and nothing here calls
+        _solve_guarded. The one CP-SAT call on the way is week_load's own, a
+        small model per pricing step (the heaviest independent set of a year's
+        graph; one worker, a second at most) inside the week load's deadline
+        (WEEK_LOAD_SECONDS). The deadline is why `WEEK_LOAD_DEADLINE` exists:
+        a year it did not reach has no row, and an unfinished count must not
+        read as "no year over the threshold".
+
+        Reads nothing but `request`, writes nothing, and leaves the settings
+        alone, so a solver built for one check can be thrown away.
+        """
+        started = time.monotonic()
+        week_load_cut: list[bool] = []
+        refusal, _step, _hints, nearly_full = self._prechecks(
+            request,
+            run_lunch_stage=False,
+            week_load_cut=week_load_cut,
+            shared_week_load_deadline=True,
+        )
+        loads = sorted(nearly_full.values(), key=lambda load: -load.load)
+        skipped: list[WeekCheckSkipped] = ["LUNCH_STAGE"]
+        verdict: WeekCheckVerdict
+        if refusal is not None:
+            verdict = "IMPOSSIBLE"
+            conflicts = refusal.conflicts
+            # What Generera does next with such a refusal: ask whether releasing
+            # the förläggningar lays the week, which is a solve (_placements_verdict).
+            if _runs_probes(request) and self._asks_the_released_week(request, refusal):
+                skipped.append("PLACEMENTS_PROBE")
+        elif loads:
+            verdict = "TIGHT"
+            conflicts = ConflictAnalysis(conflicts=self._tight_week_details(loads))
+        else:
+            verdict = "OK"
+            conflicts = None
+        if week_load_cut:
+            skipped.append("WEEK_LOAD_DEADLINE")
+        return WeekCheckResponse(
+            request_id=request.request_id,
+            verdict=verdict,
+            years=[
+                WeekCheckYear(
+                    year=load.year,
+                    demand_minutes=load.demand_minutes,
+                    capacity_minutes=load.capacity_minutes,
+                    percent=int(load.load * 100),
+                    over=load.over,
+                )
+                for load in loads
+            ],
+            conflicts=conflicts,
+            skipped=skipped,
+            elapsed_ms=round((time.monotonic() - started) * 1000),
+        )
 
     def _counted_refusal(
         self,

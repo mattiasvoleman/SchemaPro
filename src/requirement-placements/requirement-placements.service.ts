@@ -9,7 +9,7 @@ import { parseTimeString, toWallClock } from '../common/utils/time';
 import { PrismaService } from '../database/prisma.service';
 import type { TaughtLesson } from '../optimization/locked-coverage';
 import { judgeDemandOf } from '../optimization/post-demand';
-import { keptMastersWhere } from '../optimization/preserved-lessons';
+import { generatedMastersWhere, keptMastersWhere } from '../optimization/preserved-lessons';
 import { lockYearForGrundschemaEdit } from '../optimization/regeneration-lock';
 import { rostersOfYear } from '../year-rollover/projected-rosters';
 import type { ReplacePlacementsDto } from './dto/requirement-placements.dto';
@@ -31,6 +31,7 @@ import {
   type BoardPlacementView,
   type BoardPost,
   type KeptForCount,
+  type LatestScheduleResponse,
 } from './placement-board';
 import { lockPostForShares } from '../resources/requirement-shares';
 import {
@@ -296,6 +297,28 @@ export class RequirementPlacementsService {
         orderBy: [{ requirementId: 'asc' }, ...VIEW_ORDER],
       });
       return rows.map(viewOf);
+    });
+  }
+
+  /**
+   * THE LATEST SCHEDULE, for the week to draw behind its cards: the lessons the last Generera laid and nobody has taken over, which
+   * the next one replaces (generatedMastersWhere), in the shape of a kept lesson. Asked for when the school turns "Visa senaste
+   * schemat" on and not with every open of the week: it is the year's whole machine-made schedule. Ids only, no pupil, no person
+   * named, and a read every administrator may make, as the week itself is.
+   */
+  async latestOfYear(academicYearId: string, user: AuthenticatedUser): Promise<LatestScheduleResponse> {
+    return this.prisma.withRls(user, async (tx) => {
+      const year = await tx.academicYear.findUnique({ where: { id: academicYearId }, select: { id: true } });
+      if (!year) throw new NotFoundException('Läsåret finns inte.');
+      // No extraGroups: generatedMastersWhere leaves out every lesson that has one (it is a PRESERVED_FROM_REGENERATION arm), so the read would
+      // be a second statement, with a bind for every lesson of the year, to find nothing (review of #347).
+      const { extraGroups: _kept, ...columns } = BOARD_KEPT_SELECT;
+      const lessons = await tx.masterLesson.findMany({
+        where: generatedMastersWhere(academicYearId),
+        select: columns,
+        orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
+      });
+      return { academicYearId, lessons: lessons.map((lesson) => keptViewOf({ ...lesson, extraGroups: [] })) };
     });
   }
 
@@ -665,13 +688,16 @@ export class RequirementPlacementsService {
    * call the engine for a year with nothing left, so the class's lunch cannot refuse it (placement-warnings.ts, ASKED).
    */
   private async yearHasLessonsLeft(tx: PrismaClient, academicYearId: string): Promise<boolean> {
-    const [posts, rows, keptRows, blocks] = await Promise.all([
+    const [posts, rows, keptRows] = await Promise.all([
       tx.teachingRequirement.findMany({ where: { academicYearId }, select: BOARD_POST_SELECT, orderBy: { id: 'asc' } }),
       tx.teachingRequirementPlacement.findMany({ where: { requirement: { academicYearId } }, select: VIEW_SELECT }),
       tx.masterLesson.findMany({ where: keptMastersWhere(academicYearId), select: BOARD_KEPT_SELECT }),
-      loadBlocksOfYear(tx, academicYearId),
     ]);
-    const { slotsOf, locksByPost } = countedPostsOf(posts, rows, keptRows.map(keptForCountOf), blocks);
+    // The blocks are not read (review of #341, LÅG-4). A placed lesson of a block is a pin, and the caller asks this only when no
+    // row of the post or beside it is one (placement-warning-reads.ts: `!items.some((item) => item.pin)`, and `besideOf` carries
+    // every placed block's lessons), so a block with a lesson placed never reaches here, and a block with none adds no slot to
+    // the count. Reading them cost a join over every member and row of the year for an answer they cannot change.
+    const { slotsOf, locksByPost } = countedPostsOf(posts, rows, keptRows.map(keptForCountOf), []);
     // The rows' key is a write's, and the count has no use for it.
     return lessonsLeftOf(posts.map((post) => boardPostOf(boardPostShape(post), locksByPost.get(post.id) ?? [], slotsOf.get(post.id) ?? [], '')));
   }

@@ -35,8 +35,8 @@ describe("CsvExportButton", () => {
 
     await user.click(screen.getByRole("button", { name: "exportButton" }));
 
-    // Named from the template, so it matches the file the school already has.
-    expect(downloadCsv).toHaveBeenCalledWith("salstyper.csv", "FILINNEHÅLL");
+    // Named from the template, so it matches the file the school already has. The templates are fetched at the click, so the download is a moment behind it.
+    await waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("salstyper.csv", "FILINNEHÅLL"));
   });
 
   it("waits for a builder loaded at the click, and downloads nothing when it answers null", async () => {
@@ -47,10 +47,11 @@ describe("CsvExportButton", () => {
       <CsvExportButton exports={[{ kind: "roomTypes", build: async () => "SENT" }]} />,
     );
     await user.click(screen.getByRole("button", { name: "exportButton" }));
-    expect(downloadCsv).toHaveBeenCalledWith("salstyper.csv", "SENT");
+    await waitFor(() => expect(downloadCsv).toHaveBeenCalledWith("salstyper.csv", "SENT"));
 
     rerender(<CsvExportButton exports={[{ kind: "roomTypes", build: async () => null }]} />);
     await user.click(screen.getByRole("button", { name: "exportButton" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "exportButton" })).not.toHaveAttribute("aria-busy", "true"));
     expect(downloadCsv).toHaveBeenCalledTimes(1);
   });
 

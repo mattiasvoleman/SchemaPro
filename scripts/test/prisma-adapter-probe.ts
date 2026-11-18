@@ -9912,7 +9912,7 @@ async function viewerChecks(owner: Client, api: PrismaService): Promise<void> {
       assert.deepEqual(doc.week, { from: '2096-10-01', to: '2096-10-07', isoWeek: '2096-W40' });
       assert.equal(doc.days.length, 7);
       assert.deepEqual(Object.keys(doc.days[0]!).sort(), ['date', 'lessons', 'meals']);
-      const lessons = doc.days.flatMap((day) => day.lessons.map((entry) => ({ date: day.date, ...entry })));
+      const lessons: Array<Record<string, unknown>> = doc.days.flatMap((day) => day.lessons.map((entry) => ({ date: day.date, ...entry })));
       for (const entry of lessons) {
         assert.deepEqual(Object.keys(entry).sort(), ['cancelled', 'date', 'end', 'groups', 'room', 'start', 'subject', 'teachers']);
       }
@@ -9930,7 +9930,7 @@ async function viewerChecks(owner: Client, api: PrismaService): Promise<void> {
 
     await check('(pub-e) a room\'s week shows a named pupil\'s lesson as busy, and a one-pupil group without its name', async () => {
       const doc = (await view(room.token)) as { days: Array<{ date: string; lessons: Array<Record<string, unknown>> }> };
-      const lessons = doc.days.flatMap((day) => day.lessons.map((entry) => ({ date: day.date, ...entry })));
+      const lessons: Array<Record<string, unknown>> = doc.days.flatMap((day) => day.lessons.map((entry) => ({ date: day.date, ...entry })));
       const thursday = lessons.find((entry) => entry.date === '2096-10-04');
       assert.deepEqual(thursday, { date: '2096-10-04', start: '09:00', end: '10:00', busy: true });
       const tuesday = lessons.find((entry) => entry.date === '2096-10-02');

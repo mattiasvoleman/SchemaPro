@@ -83,6 +83,13 @@ jobs:
       - name: Typecheck (test sources)
         run: npm run typecheck:test
 
+      # The probes and the RLS runner's scripts in scripts/test import the gateway's own
+      # services and are run with `ts-node --transpile-only`, which checks no types: a
+      # renamed export (readActiveStaffIds, #340) was a TypeError first seen in the Database
+      # job, after the whole RLS suite. Here it is a compile error in a minute.
+      - name: Typecheck (scripts/test)
+        run: npm run typecheck:scripts
+
       # Unit + e2e in one run so the reported coverage is the combined figure
       # §2 gates on. Both exercise a mocked Prisma layer — no database needed.
       - name: Unit + integration tests with coverage

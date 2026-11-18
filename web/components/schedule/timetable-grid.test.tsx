@@ -99,6 +99,36 @@ describe("TimetableGrid day columns", () => {
   });
 });
 
+describe("TimetableGrid behind: a layer the caller lays down in each column", () => {
+  it("is called for each day with the day, the minute the column starts at and the height of a minute", () => {
+    const behind = vi.fn((_day: number, _scale: { startMinutes: number; pxPerMinute: number }) => null);
+    render(<TimetableGrid lessons={[makeLesson()]} behind={behind} />);
+    expect(behind.mock.calls.map((call) => call[0])).toEqual([1, 2, 3, 4, 5]);
+    // The default window: 08:00 and 1.1 px a minute, as the lesson test below measures it.
+    expect(behind).toHaveBeenCalledWith(1, { startMinutes: 480, pxPerMinute: 1.1 });
+  });
+
+  it("is drawn in the column it was given for, and takes no lane from the lessons beside it", () => {
+    render(
+      <TimetableGrid
+        lessons={[makeLesson()]}
+        behind={(day) => (day === 1 ? <div data-testid="layer" style={{ position: "absolute", top: 0, height: 66 }} /> : null)}
+      />,
+    );
+    const layer = screen.getByTestId("layer");
+    const lesson = screen.getByRole("button", { name: /Math/ });
+    expect(layer.parentElement).toBe(lesson.parentElement);
+    // The one lesson of the day keeps the whole column: a layer is not a lane.
+    expect(lesson.style.width).toBe("calc(100% - 6px)");
+    expect(screen.getAllByTestId("layer")).toHaveLength(1);
+  });
+
+  it("is nothing when the caller gives none", () => {
+    render(<TimetableGrid lessons={[makeLesson()]} />);
+    expect(screen.queryByTestId("layer")).not.toBeInTheDocument();
+  });
+});
+
 describe("TimetableGrid time axis and vertical placement", () => {
   it("labels interior hours of the default 08:00-16:00 window, omitting both edges", () => {
     render(<TimetableGrid lessons={[makeLesson()]} />);

@@ -1665,6 +1665,16 @@ describe('RequirementPlacementsService: warnings on a save and a read of one pos
       expect(tx['masterLesson']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ where: keptMastersWhere(YEAR) }));
     });
 
+    it('does not read the year’s blocks to count what is left: a placed block lesson is a pin, and the count is not asked then (review of #341, LÅG-4)', async () => {
+      const { tx, service } = setup(world());
+      tx['teachingRequirement']!['findMany']!.mockResolvedValue([boardRow(onePost)]);
+      // The week had to ask the year (a lunch that refuses, no pin), so the count has been made: through the posts' reads and no block's.
+      expect(lunchOf((await service.listOfPost(REQ, user)).warnings)).toEqual([false]);
+      const wheres = tx['teachingBlock']!['findMany']!.mock.calls.map((call) => (call[0] as { where: unknown }).where);
+      // Only the read of what the post is judged beside: the blocks with a lesson placed. The whole year's blocks, with every member and row, is not read.
+      expect(wheres).toEqual([{ academicYearId: YEAR, placements: { some: {} } }]);
+    });
+
     it('counts a lesson the grundschema already answers another post with as no lesson left: Generera keeps it, and has nothing to place (review of #341, MEDEL-2)', async () => {
       const other = { ...onePost, id: OTHER_REQ, studentGroupId: 'g-7b', subjectId: 'sub-ma' };
       // 7B's Matematik is held on Tuesday 08:00-09:00 by a lesson Generera keeps: the post's one hour is answered.
