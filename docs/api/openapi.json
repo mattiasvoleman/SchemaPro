@@ -103,6 +103,9 @@
       "name": "Import"
     },
     {
+      "name": "ImportTemplates"
+    },
+    {
       "name": "IntegrationKeys"
     },
     {
@@ -10650,6 +10653,250 @@
           "STUDENT",
           "GUARDIAN"
         ]
+      }
+    },
+    "/api/v1/import-templates": {
+      "get": {
+        "tags": [
+          "ImportTemplates"
+        ],
+        "operationId": "ImportTemplatesController_list",
+        "parameters": [
+          {
+            "name": "kind",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "classes",
+                "guardians",
+                "requirements",
+                "roomTypes",
+                "rooms",
+                "scheduleLessons",
+                "students",
+                "subjects",
+                "teacherDuties",
+                "teacherQualifications",
+                "teachers",
+                "teachingGroups",
+                "timplan"
+              ]
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-rate-limit": {
+          "limit": 60,
+          "ttlSeconds": 60
+        }
+      },
+      "post": {
+        "tags": [
+          "ImportTemplates"
+        ],
+        "operationId": "ImportTemplatesController_create",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateImportTemplateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "PLANERING"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 60,
+          "ttlSeconds": 60
+        }
+      }
+    },
+    "/api/v1/import-templates/{id}": {
+      "delete": {
+        "tags": [
+          "ImportTemplates"
+        ],
+        "operationId": "ImportTemplatesController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "PLANERING"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 60,
+          "ttlSeconds": 60
+        }
+      },
+      "patch": {
+        "tags": [
+          "ImportTemplates"
+        ],
+        "operationId": "ImportTemplatesController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateImportTemplateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "PLANERING"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 60,
+          "ttlSeconds": 60
+        }
       }
     },
     "/api/v1/import/group-members": {
@@ -28977,6 +29224,50 @@
           "scopes"
         ]
       },
+      "CreateImportTemplateDto": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "classes",
+              "guardians",
+              "requirements",
+              "roomTypes",
+              "rooms",
+              "scheduleLessons",
+              "students",
+              "subjects",
+              "teacherDuties",
+              "teacherQualifications",
+              "teachers",
+              "teachingGroups",
+              "timplan"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "headerRow": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 20
+          },
+          "placements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportTemplatePlacementDto"
+            }
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "placements"
+        ]
+      },
       "CreateLeaveRequestDto": {
         "type": "object",
         "properties": {
@@ -31037,6 +31328,20 @@
             "nullable": true,
             "maxLength": 254
           },
+          "teacherSignature": {
+            "type": "string",
+            "nullable": true,
+            "pattern": "\\S",
+            "minLength": 1,
+            "maxLength": 8
+          },
+          "coTeacherSignature": {
+            "type": "string",
+            "nullable": true,
+            "pattern": "\\S",
+            "minLength": 1,
+            "maxLength": 8
+          },
           "teacherLoadPercent": {
             "type": "number",
             "nullable": true,
@@ -31088,6 +31393,7 @@
               "enum": [
                 "coTeacherEmail",
                 "coTeacherLoadPercent",
+                "coTeacherSignature",
                 "endDate",
                 "groupName",
                 "lessonLengths",
@@ -31099,7 +31405,8 @@
                 "startDate",
                 "subject",
                 "teacherEmail",
-                "teacherLoadPercent"
+                "teacherLoadPercent",
+                "teacherSignature"
               ]
             }
           },
@@ -31611,6 +31918,29 @@
         },
         "required": [
           "rows"
+        ]
+      },
+      "ImportTemplatePlacementDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z0-9]{1,100}(#[0-9]{1,3})?$"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "field": {
+            "type": "string",
+            "nullable": true,
+            "pattern": "^[A-Za-z][A-Za-z0-9]{0,59}$"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "field"
         ]
       },
       "ImportTimplanDto": {
@@ -34239,6 +34569,28 @@
             "type": "number",
             "minimum": 0,
             "maximum": 60
+          }
+        }
+      },
+      "UpdateImportTemplateDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "headerRow": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 20
+          },
+          "placements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportTemplatePlacementDto"
+            }
           }
         }
       },

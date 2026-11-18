@@ -156,6 +156,9 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   AcademicYearTimplans: only('PLANERING'),
   AvailabilityConstraints: only('PLANERING'),
   FrameTimes: only('PLANERING'),
+  // Kolumnmappning (20270223090000): the school's saved mappings of an import's columns, headers and never a value.
+  // Every administrator reads them; Planering writes, whichever import they are for.
+  ImportMappingTemplates: only('PLANERING'),
   LocalTimplanEntries: only('PLANERING'),
   LocalTimplans: only('PLANERING'),
   LunchServings: only('PLANERING'),

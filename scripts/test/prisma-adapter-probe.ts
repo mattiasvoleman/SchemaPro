@@ -136,6 +136,7 @@ import { calendarFeedChecks, sweepCalendarFeedSchool } from './probe-calendar-fe
 import { generateQueueChecks, sweepGenerateQueueSchool } from './probe-generera-ko';
 import { leaveChecks, sweepLeaveSchool } from './probe-leave';
 import { skolenheterChecks, sweepSkolenheterSchool } from './probe-skolenheter';
+import { importTemplatesChecks, sweepImportTemplatesSchools } from './probe-import-templates';
 import { adminAreaChecks, sweepRollerSchool } from './probe-admin-areas';
 import { huvudmanChecks } from './probe-huvudman';
 import { deladeChecks } from './probe-delade';
@@ -6146,6 +6147,8 @@ async function runChecks(
   await teachesGatewayChecks(owner, api, MARKER, check, open, appUrl);
   // Administratör som lärare, del 4: krisläge, mentor och rapporteringsgrad som lärare, genom de riktiga tjänsterna.
   await teachesPr4Checks(owner, api, MARKER, check);
+  // Kolumnmappning: a school's saved column mappings through the real service and the arms, and the requirements import by signature.
+  await importTemplatesChecks(owner, api, MARKER, check);
 }
 
 
@@ -6661,6 +6664,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepKlasslarareSchool(owner, MARKER);
   // The schools of a batch taken back after a template moved, likewise.
   await sweepAvbokningFlyttSchools(owner, MARKER);
+  // Kolumnmappning's three schools, likewise.
+  await sweepImportTemplatesSchools(owner, MARKER);
   // Elevlistan i uppföljningen's school, likewise.
   await sweepElevlistanSchool(owner, MARKER);
   // Massåtgärder's school, likewise.

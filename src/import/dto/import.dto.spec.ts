@@ -133,6 +133,43 @@ describe('ImportRequirementRowDto', () => {
   });
 });
 
+/**
+ * The teacher by signature (Kolumnmappning, X2): two optional fields on the row, bounded as the signature itself
+ * is, and two optional columns of the file. A gateway before them refuses the fields (forbidNonWhitelisted), which
+ * is why the gateway is deployed before the web that sends them.
+ */
+describe('ImportRequirementRowDto, a teacher by signature', () => {
+  it.each([
+    ['both signatures', { teacherSignature: 'KA', coTeacherSignature: 'ÅSÖ' }],
+    ['null signatures, as an empty cell posts', { teacherSignature: null, coTeacherSignature: null }],
+    ['a signature of eight characters', { teacherSignature: 'ABCDEFGH' }],
+    ['a signature with a space inside', { teacherSignature: 'K A' }],
+  ])('accepts %s', async (_what, patch) => {
+    await expect(failing({ ...base, ...patch })).resolves.toEqual([]);
+  });
+
+  it.each([
+    ['too long', { teacherSignature: 'ABCDEFGHI' }, ['teacherSignature']],
+    ['empty', { teacherSignature: '' }, ['teacherSignature']],
+    ['blank', { coTeacherSignature: '   ' }, ['coTeacherSignature']],
+    ['not text', { teacherSignature: 7 }, ['teacherSignature']],
+    // The co-teacher's field has its own decorators, so each bound is held for it as well as for the lead's.
+    ['too long, the co-teacher\'s', { coTeacherSignature: 'ABCDEFGHI' }, ['coTeacherSignature']],
+    ['empty, the co-teacher\'s', { coTeacherSignature: '' }, ['coTeacherSignature']],
+    ['blank, the lead\'s', { teacherSignature: '   ' }, ['teacherSignature']],
+    ['not text, the co-teacher\'s', { coTeacherSignature: 7 }, ['coTeacherSignature']],
+  ])('refuses a signature that is %s, naming the field', async (_what, patch, fields) => {
+    await expect(failing({ ...base, ...patch })).resolves.toEqual(fields);
+  });
+
+  it('puts both fields among the columns a file may have, and among those it may leave out', () => {
+    for (const column of ['teacherSignature', 'coTeacherSignature']) {
+      expect(REQUIREMENT_FILE_COLUMNS).toContain(column);
+      expect(OPTIONAL_REQUIREMENT_COLUMNS).toContain(column);
+    }
+  });
+});
+
 describe('the timplan column lists', () => {
   it('knows both ombyte columns, spelled as the API fields are', () => {
     // The CSV header and the API field are ONE name on purpose: an admin who

@@ -879,6 +879,13 @@ const NAMED_CHECKS: Record<string, string> = {
   TeachingRequirements_lesson_lengths_are_canonical:
     'lessonLengths: en längd per lektion, längsta först, 15–240 minuter i femminuterssteg och ' +
     'två eller tre olika längder — och lessonsPerWeek och minutesPerLesson ska vara antalet och den längsta.',
+  // Kolumnmappning (20270223090000): the DTO and the service refuse these first. The 40 000 bytes of the posts are the one
+  // bound only the database counts (jsonb's own text, with its spaces), so a template of 200 long headers meets it here.
+  ImportMappingTemplates_placements_check:
+    'placements: en mall rymmer högst 200 kolumner och 40 000 byte. Korta rubrikerna eller spara två mallar.',
+  ImportMappingTemplates_name_check: 'name: mallens namn är 1–80 tecken, utan styrtecken.',
+  ImportMappingTemplates_headerRow_check: 'headerRow: rubrikraden är rad 1 till 20.',
+  ImportMappingTemplates_kind_check: 'kind: importens sort är en av de tretton som mallarna gäller.',
 };
 
 /** TimplanCredits' composite keys (migration 20261009100000) and the field each guards. */

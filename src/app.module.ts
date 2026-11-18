@@ -20,6 +20,7 @@ import { JobsModule } from './jobs/jobs.module';
 import { FamilyModule } from './family/family.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ImportModule } from './import/import.module';
+import { ImportTemplatesModule } from './import-templates/import-templates.module';
 import { ScheduleExchangeModule } from './schedule-exchange/exchange.module';
 import { IntegrationModule } from './integration/integration.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
@@ -111,6 +112,7 @@ import type { ThrottleConfig } from './config/configuration';
     FamilyModule,
     NotificationsModule,
     ImportModule,
+    ImportTemplatesModule,
     ScheduleExchangeModule,
     IntegrationModule,
 
