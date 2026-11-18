@@ -93,22 +93,23 @@ describe('OptimizationProxyService: the wait and the deadline', () => {
       expect(post.mock.calls[0]![2]).toMatchObject({ timeout: 240_000 });
     });
 
-    it('is AI_ENGINE_TIMEOUT_MS as it was set, as before', async () => {
+    it('is AI_ENGINE_TIMEOUT_MS as it was set, as before: the module’s own client already waits that, so no per-call timeout rides along', async () => {
       const { call, post } = await build({ timeoutMs: 300_000 });
       post.mockReturnValue(of({ data: {} }));
 
       await call('/v1/schedule');
 
-      expect(post.mock.calls[0]![2]).toMatchObject({ timeout: 300_000 });
+      expect(Object.keys(post.mock.calls[0]![2] as object)).toEqual(['headers', 'maxRedirects']);
+      expect((await build({ timeoutMs: 300_000 })).service.waitSeconds).toBe(300);
     });
 
-    it('is 120 s for an engine that said nothing, with nothing set', async () => {
+    it('is 120 s for an engine that said nothing, with nothing set: the module’s default, so no per-call timeout either', async () => {
       const { call, post } = await build({ body: null });
       post.mockReturnValue(of({ data: {} }));
 
       await call('/v1/schedule');
 
-      expect(post.mock.calls[0]![2]).toMatchObject({ timeout: 120_000 });
+      expect(Object.keys(post.mock.calls[0]![2] as object)).toEqual(['headers', 'maxRedirects']);
     });
 
     it('is the call’s own when it states one, as a schemaförslag call and a plan do', async () => {
@@ -171,7 +172,8 @@ describe('OptimizationProxyService: the wait and the deadline', () => {
 
       expect(service.waitSeconds).toBe(1);
       expect(post.mock.calls[0]![1]).toEqual({ a: 1 });
-      expect(post.mock.calls[0]![2]).toMatchObject({ timeout: 50 });
+      // The module's own client waits those 50 ms already: nothing rides along, as before.
+      expect(Object.keys(post.mock.calls[0]![2] as object)).toEqual(['headers', 'maxRedirects']);
     });
   });
 

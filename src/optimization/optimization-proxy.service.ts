@@ -23,7 +23,7 @@ import { todayInZone } from '../common/utils/time';
 import { schoolTimezone } from '../cover/cover-context';
 import { gradeSpanOf, loadRosters, roomNeedsOf, type RoomNeeds } from './room-eligibility';
 import { EngineTimingService } from './engine-timing.service';
-import { deadlineSecondsOf, isEngineCeilingBody, routeOf, waitMsAtLeast, type EngineRoute } from './engine-timing';
+import { FALLBACK_WAIT_MS, deadlineSecondsOf, isEngineCeilingBody, routeOf, waitMsAtLeast, type EngineRoute } from './engine-timing';
 import { fromNioarig, toNioarig, toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { dayNumberingOf, yearNumberingOf } from '../common/year-numbering';
 import { lockCoversDemand } from './locked-coverage';
@@ -1415,7 +1415,7 @@ export class OptimizationProxyService {
    */
   private waitMsFor(route: EngineRoute | null): number {
     const configured = this.aiConfig.timeoutMs;
-    return this.timing !== undefined ? this.timing.waitMs(route) : (configured ?? 120_000);
+    return this.timing !== undefined ? this.timing.waitMs(route) : (configured ?? FALLBACK_WAIT_MS);
   }
 
   /**
@@ -4763,7 +4763,11 @@ export class OptimizationProxyService {
             // non-2xx, and lands in the branch below that says the engine
             // answered with an error.
             maxRedirects: 0,
-            timeout: waitMs,
+            // The module's own client waits what AI_ENGINE_TIMEOUT_MS says (120 s when it is unset), and a
+            // call that waits by that adds nothing: Generera's call has always been exactly that. One that
+            // waits by anything else (the engine's own ceiling, a candidate's budget) states it, or the
+            // client would cut it off at the default first.
+            ...(waitMs !== (this.aiConfig.timeoutMs ?? FALLBACK_WAIT_MS) ? { timeout: waitMs } : {}),
           })
           .pipe(
             timeout(waitMs),
