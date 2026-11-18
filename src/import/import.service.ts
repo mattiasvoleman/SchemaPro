@@ -72,7 +72,7 @@ import type {
 } from './dto/import.dto';
 import { dutyIdentity } from '../staffing/duty-identity';
 import { readsHr } from '../staffing/hr-visibility';
-import { teacherWhere } from '../staffing/teaching-staff';
+import { teacherWhere, teacherWhereAnd } from '../staffing/teaching-staff';
 
 /**
  * Everything a timplan row states about a requirement — that is, every column
@@ -1884,6 +1884,39 @@ export class ImportService {
         teachers.map((teacher) => [teacher.email.toLowerCase(), teacher.id]),
       );
 
+      // Kolumnmappning (X2): a teacher named by lärarsignatur. The signature is unique per school and year (a
+      // partial unique index), so it names one teacher of THIS year, found as the schedule exchange finds them:
+      // trimmed and without regard to case. Two employments that differ only in case are ambiguous, and a row
+      // naming them is refused, never given the first. Whether the person is an active teacher is asked as the
+      // e-mail path asks it.
+      const signatures = new Set(
+        dto.rows
+          .flatMap((row) => [row.teacherSignature, row.coTeacherSignature])
+          .filter((signature): signature is string => !!signature?.trim())
+          .map((signature) => this.normalizeName(signature)),
+      );
+      const teacherBySignature = new Map<string, string | null>();
+      if (signatures.size > 0) {
+        const employments = await tx.teacherEmployment.findMany({
+          where: { academicYearId: dto.academicYearId, signature: { not: null } },
+          select: { userId: true, signature: true },
+        });
+        const named = employments.filter((employment) => signatures.has(this.normalizeName(employment.signature ?? '')));
+        const active = new Set(
+          (
+            await tx.user.findMany({
+              where: teacherWhereAnd({ isActive: true, id: { in: named.map((employment) => employment.userId) } }),
+              select: { id: true },
+            })
+          ).map((user) => user.id),
+        );
+        for (const employment of named) {
+          if (!active.has(employment.userId)) continue;
+          const key = this.normalizeName(employment.signature ?? '');
+          teacherBySignature.set(key, teacherBySignature.has(key) ? null : employment.userId);
+        }
+      }
+
       // Only worth a round trip if some row states a period; a requirement
       // without one runs the whole year by definition and has nothing the
       // year's bounds could contradict. Same reasoning as
@@ -1961,6 +1994,7 @@ export class ImportService {
         fileKeys.add(`${groupId}:${subject.id}`);
       }
       const touchedTeacherIds = new Set<string>(teacherByEmail.values());
+      for (const userId of teacherBySignature.values()) if (userId !== null) touchedTeacherIds.add(userId);
       for (const key of fileKeys) {
         const stored = existingByKey.get(key);
         if (stored?.teacherId) touchedTeacherIds.add(stored.teacherId);
@@ -2034,8 +2068,21 @@ export class ImportService {
         }
         seenAtRow.set(key, rowNumber);
 
-        let teacherId: string | null = null;
+        // A teacher is named by e-mail or by signature, never both on one row: two answers to one question are a
+        // defect in the file, and neither is the one to trust.
         const teacherEmail = row.teacherEmail?.trim();
+        const teacherSignature = row.teacherSignature?.trim();
+        const coTeacherEmail = row.coTeacherEmail?.trim();
+        const coTeacherSignature = row.coTeacherSignature?.trim();
+        if ((teacherEmail && teacherSignature) || (coTeacherEmail && coTeacherSignature)) {
+          report.errors.push({
+            row: rowNumber,
+            message: `Raden anger ${teacherEmail && teacherSignature ? 'läraren' : 'medläraren'} både med e-postadress och med signatur. Ange en av dem.`,
+          });
+          continue;
+        }
+
+        let teacherId: string | null = null;
         if (teacherEmail) {
           teacherId = teacherByEmail.get(teacherEmail.toLowerCase()) ?? null;
           if (!teacherId) {
@@ -2045,10 +2092,16 @@ export class ImportService {
             });
             continue;
           }
+        } else if (teacherSignature) {
+          const found = this.signatureProblem(teacherBySignature, teacherSignature, false);
+          if (typeof found === 'string') {
+            report.errors.push({ row: rowNumber, message: found });
+            continue;
+          }
+          teacherId = found.userId;
         }
 
         let coTeacherId: string | null = null;
-        const coTeacherEmail = row.coTeacherEmail?.trim();
         if (coTeacherEmail) {
           coTeacherId = teacherByEmail.get(coTeacherEmail.toLowerCase()) ?? null;
           if (!coTeacherId) {
@@ -2058,6 +2111,13 @@ export class ImportService {
             });
             continue;
           }
+        } else if (coTeacherSignature) {
+          const found = this.signatureProblem(teacherBySignature, coTeacherSignature, true);
+          if (typeof found === 'string') {
+            report.errors.push({ row: rowNumber, message: found });
+            continue;
+          }
+          coTeacherId = found.userId;
         }
 
         // Cannot throw: @IsCalendarDate already refused anything that is not a
@@ -2159,8 +2219,9 @@ export class ImportService {
           ...(writable.has('minutesAfter')
             ? { minutesAfter: row.minutesAfter ?? 0 }
             : {}),
-          ...(writable.has('teacherEmail') ? { teacherId } : {}),
-          ...(writable.has('coTeacherEmail') ? { coTeacherId } : {}),
+          // A teacher column is the file's whether it names the teacher by e-mail or by signature.
+          ...(writable.has('teacherEmail') || writable.has('teacherSignature') ? { teacherId } : {}),
+          ...(writable.has('coTeacherEmail') || writable.has('coTeacherSignature') ? { coTeacherId } : {}),
           // The buffers' two silences again, for a figure whose "none" is the
           // whole row: an empty cell is 100, an absent column is untouched.
           ...(writable.has('teacherLoadPercent')
@@ -2714,6 +2775,26 @@ export class ImportService {
   /** Name matching is what humans expect: trimmed and case-insensitive. */
   private normalizeName(name: string): string {
     return name.trim().toLowerCase();
+  }
+
+  /**
+   * The teacher a signature names this year, or the sentence for a row that names none: no active teacher holds
+   * it, or two do (spellings that differ only in case). Kolumnmappning (X2).
+   */
+  private signatureProblem(
+    bySignature: ReadonlyMap<string, string | null>,
+    signature: string,
+    coTeacher: boolean,
+  ): { userId: string } | string {
+    const found = bySignature.get(this.normalizeName(signature));
+    const who = coTeacher ? ' (medlärare)' : '';
+    if (found === undefined) {
+      return `Ingen aktiv lärare med signaturen "${signature}"${who} det valda läsåret. Lägg in signaturen på lärarens tjänst först, eller lämna kolumnen tom.`;
+    }
+    if (found === null) {
+      return `Signaturen "${signature}"${who} hör till mer än en lärare det valda läsåret (stavningar som bara skiljer i versaler). Rätta signaturerna på tjänsterna först.`;
+    }
+    return { userId: found };
   }
 }
 

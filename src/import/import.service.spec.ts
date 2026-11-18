@@ -2608,6 +2608,140 @@ describe('ImportService', () => {
       });
     });
 
+    describe('a teacher named by signature (Kolumnmappning, X2)', () => {
+      /** The year's employments: Karin signs KA, Bo signs bo (the case differs from how a file may write it). */
+      // The first read of the table is the signature lookup; the staffing checks read it again (to lock the posts),
+      // and what they read is not a list of signatures, so only the first call is given the rows.
+      const employments = (...rows: { userId: string; signature: string }[]) => {
+        tx.teacherEmployment.findMany.mockReset();
+        tx.teacherEmployment.findMany.mockResolvedValue([]).mockResolvedValueOnce(rows);
+      };
+      const SIGNED = ['teacherEmail', 'teacherSignature', 'coTeacherEmail', 'coTeacherSignature'] as const;
+      const bySignature = (...rows: ImportRequirementRowDto[]) => runWithColumns([...SIGNED], ...rows);
+
+      beforeEach(() => {
+        employments({ userId: TEACHER_ID, signature: 'KA' }, { userId: CO_TEACHER_ID, signature: 'bo' });
+      });
+
+      it('writes the teacher and the co-teacher the signatures name, found without regard to case and spaces', async () => {
+        const report = await bySignature(row({ teacherSignature: ' ka ', coTeacherSignature: 'BO' }));
+
+        expect(report).toMatchObject({ created: 1, errors: [] });
+        expect(tx.teachingRequirement.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ teacherId: TEACHER_ID, coTeacherId: CO_TEACHER_ID }),
+        });
+        // The year of the file, and only a signature that is held (the unique index is per year).
+        expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({
+          where: { academicYearId: YEAR_ID, signature: { not: null } },
+          select: { userId: true, signature: true },
+        });
+      });
+
+      it('asks whether the person is an active teacher as the e-mail path asks, and refuses one who is not', async () => {
+        tx.user.findMany.mockResolvedValue([{ id: CO_TEACHER_ID }]);
+        const report = await bySignature(row({ teacherSignature: 'KA' }));
+
+        expect(report.created).toBe(0);
+        expect(report.errors).toEqual([
+          { row: 1, message: expect.stringContaining('Ingen aktiv lärare med signaturen "KA" det valda läsåret') },
+        ]);
+        expect(tx.user.findMany).toHaveBeenCalledWith({
+          where: { AND: [{ OR: [{ role: 'TEACHER' }, { role: 'SCHOOL_ADMIN', teaches: true }] }, { isActive: true, id: { in: [TEACHER_ID] } }] },
+          select: { id: true },
+        });
+      });
+
+      it('names the co-teacher in the sentence for a signature nobody holds, and goes on with the other rows', async () => {
+        const report = await bySignature(row({ coTeacherSignature: 'ZZ' }), row({ groupName: '7B', teacherSignature: 'KA' }));
+
+        expect(report.created).toBe(1);
+        expect(report.errors).toEqual([{ row: 1, message: expect.stringContaining('signaturen "ZZ" (medlärare) det valda läsåret') }]);
+      });
+
+      it('refuses a signature two teachers hold in spellings that differ only in case, and gives it to neither', async () => {
+        employments({ userId: TEACHER_ID, signature: 'KA' }, { userId: CO_TEACHER_ID, signature: 'ka' });
+        const report = await bySignature(row({ teacherSignature: 'Ka' }));
+
+        expect(report.created).toBe(0);
+        expect(report.errors).toEqual([{ row: 1, message: expect.stringContaining('hör till mer än en lärare') }]);
+      });
+
+      it('does not count a person who is no longer active when it asks which teachers share a signature', async () => {
+        employments({ userId: TEACHER_ID, signature: 'KA' }, { userId: CO_TEACHER_ID, signature: 'ka' });
+        tx.user.findMany.mockResolvedValue([{ id: TEACHER_ID }]);
+        const report = await bySignature(row({ teacherSignature: 'KA' }));
+
+        expect(report).toMatchObject({ created: 1, errors: [] });
+        expect(tx.teachingRequirement.create).toHaveBeenCalledWith({ data: expect.objectContaining({ teacherId: TEACHER_ID }) });
+      });
+
+      it('refuses a row that names a teacher both ways, and says which of the two it is', async () => {
+        const report = await bySignature(
+          row({ teacherEmail: 'karin@example.com', teacherSignature: 'KA' }),
+          row({ groupName: '7B', coTeacherEmail: 'bo@example.com', coTeacherSignature: 'bo' }),
+        );
+
+        expect(report.created).toBe(0);
+        expect(report.errors).toEqual([
+          { row: 1, message: 'Raden anger läraren både med e-postadress och med signatur. Ange en av dem.' },
+          { row: 2, message: 'Raden anger medläraren både med e-postadress och med signatur. Ange en av dem.' },
+        ]);
+      });
+
+      it('lets a file with both columns name one teacher by e-mail and another by signature, row by row', async () => {
+        const report = await bySignature(row({ teacherEmail: 'karin@example.com' }), row({ groupName: '7B', teacherSignature: 'bo' }));
+
+        expect(report).toMatchObject({ created: 2, errors: [] });
+        expect(tx.teachingRequirement.create.mock.calls.map((call) => call[0].data.teacherId)).toEqual([TEACHER_ID, CO_TEACHER_ID]);
+      });
+
+      it('reads an empty cell in a signature column as no teacher, the way an empty e-mail cell is', async () => {
+        // No signature is held in the file, so the first read of the table is the staffing checks' and the lookup is not made.
+        employments();
+        arrangeRows(tx.teachingRequirement.findMany, [{ ...stored({ teacherId: TEACHER_ID }) }]);
+        const report = await runWithColumns(['teacherSignature'], row({ teacherSignature: null }));
+
+        expect(report).toMatchObject({ updated: 1, errors: [] });
+        expect(tx.teachingRequirement.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ teacherId: null }) }),
+        );
+      });
+
+      it('writes the co-teacher alone when the file has only the co-teacher\'s signature column, and leaves the lead teacher', async () => {
+        employments({ userId: TEACHER_ID, signature: 'KA' }, { userId: CO_TEACHER_ID, signature: 'bo' });
+        arrangeRows(tx.teachingRequirement.findMany, [stored({ teacherId: TEACHER_ID })]);
+        const report = await runWithColumns(['coTeacherSignature'], row({ coTeacherSignature: 'BO' }));
+
+        expect(report).toMatchObject({ updated: 1, errors: [] });
+        const data = tx.teachingRequirement.update.mock.calls[0]![0].data;
+        expect(data).toMatchObject({ coTeacherId: CO_TEACHER_ID });
+        expect(data).not.toHaveProperty('teacherId');
+      });
+
+      it('leaves the teachers of a file with neither column alone, as it always has, and asks nobody', async () => {
+        employments();
+        arrangeRows(tx.teachingRequirement.findMany, [stored({ teacherId: TEACHER_ID })]);
+        const report = await runWithColumns([], row({ lessonsPerWeek: 4 }));
+
+        expect(report).toMatchObject({ updated: 1, errors: [] });
+        expect(tx.teachingRequirement.update.mock.calls[0]![0].data).not.toHaveProperty('teacherId');
+        // Only the staffing checks read the table (to lock the stored teacher's post), never to look a signature up.
+        for (const [args] of tx.teacherEmployment.findMany.mock.calls) {
+          expect(args).not.toHaveProperty('where.signature');
+        }
+      });
+
+      it('counts a teacher found by signature among those whose posts the staffing checks lock', async () => {
+        await bySignature(row({ teacherSignature: 'KA' }));
+
+        expect(tx.teachingRequirement.create).toHaveBeenCalledTimes(1);
+        expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({
+          where: { academicYearId: YEAR_ID, userId: { in: [TEACHER_ID] } },
+          select: { id: true },
+        });
+      });
+    });
+
     describe('resolution', () => {
       it('creates a requirement from a row with no counterpart, stamped with the school of the caller and the posted year', async () => {
         const report = await run(
