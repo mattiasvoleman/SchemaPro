@@ -40,6 +40,7 @@ import { CalendarModule } from '../../src/calendar/calendar.module';
 import { SwapsModule } from '../../src/swaps/swaps.module';
 import { UsersModule } from '../../src/users/users.module';
 import { ImportModule } from '../../src/import/import.module';
+import { ImportTemplatesModule } from '../../src/import-templates/import-templates.module';
 import { ScheduleExchangeModule } from '../../src/schedule-exchange/exchange.module';
 import { OptimizationModule } from '../../src/optimization/optimization.module';
 import { IntegrationModule } from '../../src/integration/integration.module';
@@ -171,6 +172,7 @@ export const FEATURE_MODULES = [
   HealthModule,
   FamilyModule,
   ImportModule,
+  ImportTemplatesModule,
   ScheduleExchangeModule,
   IntegrationModule,
   OptimizationModule,
