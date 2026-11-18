@@ -202,6 +202,74 @@ def test_a_week_load_that_ran_out_of_time_says_a_year_was_not_counted(
     assert response.skipped == ["LUNCH_STAGE", "WEEK_LOAD_DEADLINE"]
 
 
+def _cut_into_periods(payload: dict[str, object], periods: int) -> dict[str, object]:
+    """One post of the year dated to each of `periods` periods: the year is counted week by week."""
+    cut = copy.deepcopy(payload)
+    rows: list[dict[str, object]] = []
+    for index, row in enumerate(cut["requirements"]):  # type: ignore[arg-type]
+        if index != 0:
+            rows.append(row)
+            continue
+        for period in range(periods):
+            rows.append({
+                **row,
+                "id": str(uuid4()),
+                "periods": [number == period for number in range(periods)],
+            })
+    cut["requirements"] = rows
+    return cut
+
+
+def test_the_week_loads_seconds_are_the_whole_checks_and_not_each_weeks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A year of eight periods is eight counts, and "a few seconds" is what the check is asked for.
+
+    Measured on the analysis' åk 9 shape with some subject dated into periods:
+    4.1 s for one week, 12.3 s for three, 24.8 s for six and 33.1 s for eight,
+    each week taking its whole four seconds, which is past the route's own
+    ceiling (30 s). The deadline is the check's, shared by every week; what a
+    later week was not given time to count is said (WEEK_LOAD_DEADLINE).
+    """
+    request = _request(_cut_into_periods(wl._year(class_lessons=20, shared=False), 4))
+    assert len(scheduler_solver._weeks_and_requests(request)) == 4
+    deadlines: list[float] = []
+
+    def count_until_the_deadline(*args: object, deadline: float, **kwargs: object) -> list[object]:
+        deadlines.append(deadline)
+        while time.monotonic() < deadline:
+            time.sleep(0.01)
+        return []
+
+    monkeypatch.setattr(scheduler_solver, "week_loads", count_until_the_deadline)
+    monkeypatch.setattr(SchedulerSolver, "WEEK_LOAD_SECONDS", 0.4)
+    started = time.monotonic()
+
+    response = _checker().check_week(request)
+
+    assert time.monotonic() - started < 0.4 * 2, "each week was given the whole of the seconds"
+    assert len(deadlines) == 4 and len(set(deadlines)) == 1
+    assert response.skipped == ["LUNCH_STAGE", "WEEK_LOAD_DEADLINE"]
+
+
+def test_a_solve_still_gives_every_weeks_count_its_own_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Generera's own first moments are as they were: the shared deadline is the check's."""
+    request = _request(_cut_into_periods(wl._year(class_lessons=20, shared=False), 3))
+    deadlines: list[float] = []
+
+    def record(*args: object, deadline: float, **kwargs: object) -> list[object]:
+        deadlines.append(deadline)
+        time.sleep(0.05)
+        return []
+
+    monkeypatch.setattr(scheduler_solver, "week_loads", record)
+    monkeypatch.setattr(SchedulerSolver, "_lunch_stage_one", lambda self, week: (None, {}))
+
+    _checker()._prechecks(request)
+
+    assert len(deadlines) == 3 and len(set(deadlines)) == 3
+
+
 def _pinned(payload: dict[str, object]) -> dict[str, object]:
     """One class's first lesson held on Monday at 08:30 (Fästa lektioner)."""
     held = copy.deepcopy(payload)
@@ -492,3 +560,49 @@ def test_a_request_id_is_echoed() -> None:
     request = _request(wl._year(class_lessons=20, shared=False))
     assert _checker().check_week(request).request_id == request.request_id
     assert str(uuid4()) != str(request.request_id)
+
+
+def _two_years(first_lessons: int, second_lessons: int) -> dict[str, object]:
+    """Year 8 and year 9, each with classes and groups of its own, and no teacher between them."""
+    first = wl._year(class_lessons=first_lessons)
+    second = wl._year(
+        class_lessons=second_lessons,
+        grade=9,
+        classes=[str(uuid4()) for _ in range(5)],
+        groups=[str(uuid4()) for _ in range(5)],
+        teacher_of_three=str(uuid4()),
+    )
+    return {
+        **first,
+        "requirements": [*first["requirements"], *second["requirements"]],  # type: ignore[misc]
+        "groups": [*first["groups"], *second["groups"]],  # type: ignore[misc]
+        "groupConflicts": [*first["groupConflicts"], *second["groupConflicts"]],  # type: ignore[misc]
+        "frameTimes": [*first["frameTimes"], *second["frameTimes"]],  # type: ignore[misc]
+    }
+
+
+def test_two_tight_years_are_said_heaviest_first_each_with_a_row_of_its_own() -> None:
+    """The page names the year on top ("Åk 9 är 95 % full. Kör ändå?"), so the order is part of the answer.
+
+    Year 9 is the second in the payload and the heavier: a check that listed
+    the years as it met them, or lightest first, would ask about the wrong one.
+    """
+    response = _checker().check_week(_request(_two_years(25, 27)))
+
+    assert response.verdict == "TIGHT"
+    assert [(year.year, year.percent) for year in response.years] == [(9, 95), (8, 90)]
+    assert response.conflicts is not None
+    rows = [row for row in response.conflicts.conflicts if row.code == "TIGHT_WEEK_LOAD"]
+    assert [row.params["grades"] for row in rows] == ["9", "8"]
+
+
+def test_the_time_a_check_took_is_in_milliseconds(monkeypatch: pytest.MonkeyPatch) -> None:
+    def a_quarter_of_a_second(self: SchedulerSolver, request: OptimizeScheduleRequest, **kwargs: object):  # noqa: ANN202
+        time.sleep(0.25)
+        return None, 1, {}, {}
+
+    monkeypatch.setattr(SchedulerSolver, "_prechecks", a_quarter_of_a_second)
+
+    response = _checker().check_week(_request(wl._year(class_lessons=20, shared=False)))
+
+    assert 250 <= response.elapsed_ms < 2500

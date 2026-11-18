@@ -2877,7 +2877,11 @@ class SchedulerSolver:
         return held
 
     def _week_loads(
-        self, request: OptimizeScheduleRequest, *, cut: list[bool] | None = None,
+        self,
+        request: OptimizeScheduleRequest,
+        *,
+        cut: list[bool] | None = None,
+        deadline: float | None = None,
     ) -> list[StageLoad]:
         """The years whose least week passes TIGHT_WEEK_LOAD of their frame time.
 
@@ -2894,6 +2898,13 @@ class SchedulerSolver:
         deadline had passed by the time it returned. Said of a count that
         finished at the very deadline too, which errs the safe way: "not
         counted" for a year that may have been.
+
+        `deadline` is a time.monotonic() instant that several weeks' counts
+        SHARE: a year cut into periods is counted week by week, and the week
+        check's four seconds are its whole count, not each week's (eight
+        periods of a heavy year took 33 s, past the route's own ceiling).
+        Absent, this count has WEEK_LOAD_SECONDS of its own, as a solve's
+        always had.
         """
         sharing = _groups_sharing_students(request.group_conflicts)
         rules = request.rules
@@ -2920,7 +2931,8 @@ class SchedulerSolver:
                 exempt_days=exempt_days,
                 pins=self._lunch_pins(request.lunch_placements, eaters),
             )
-        deadline = time.monotonic() + self.WEEK_LOAD_SECONDS
+        if deadline is None:
+            deadline = time.monotonic() + self.WEEK_LOAD_SECONDS
         loads = week_loads(
             request.requirements,
             request.frame_times,
@@ -5295,6 +5307,7 @@ class SchedulerSolver:
         *,
         run_lunch_stage: bool = True,
         week_load_cut: list[bool] | None = None,
+        shared_week_load_deadline: bool = False,
     ) -> tuple[
         OptimizeScheduleResponse | None,
         int,
@@ -5323,6 +5336,11 @@ class SchedulerSolver:
           alone would have refused is the one answer the check cannot give.
         * `week_load_cut` collects a True when the week load stopped at its
           deadline (see _week_loads).
+        * `shared_week_load_deadline` gives every week's count one deadline,
+          WEEK_LOAD_SECONDS from the first of them, instead of that long for
+          each (a year of eight periods is eight counts). The question a
+          refusal asks again of the year alone (_solved_in) keeps a deadline
+          of its own, so that the analysis answered is the one solve() gives.
         """
         self._validate_request(request)
         # THE STEP, beside the grid it counts in. Per request, because the week
@@ -5374,6 +5392,9 @@ class SchedulerSolver:
                 ),
                 step, lunch_hints, nearly_full,
             )
+        week_load_deadline = (
+            time.monotonic() + self.WEEK_LOAD_SECONDS if shared_week_load_deadline else None
+        )
         for label, week in self._solved_weeks(weeks):
             # Then the lunches alone: a small model that proves what the full
             # one could not in a minute, or hands it a warm start. See
@@ -5398,11 +5419,7 @@ class SchedulerSolver:
             # which the class counts leave out: after every verdict above, so
             # a week one of them decides keeps its answer. See week_load.
             if verdict is None:
-                loads = (
-                    self._week_loads(week)
-                    if week_load_cut is None
-                    else self._week_loads(week, cut=week_load_cut)
-                )
+                loads = self._week_loads(week, cut=week_load_cut, deadline=week_load_deadline)
                 verdict = self._week_load_verdict(loads)
                 asked = lambda asked_of: self._week_load_verdict(self._week_loads(asked_of))  # noqa: E731
                 for load in loads:
@@ -5453,7 +5470,10 @@ class SchedulerSolver:
         started = time.monotonic()
         week_load_cut: list[bool] = []
         refusal, _step, _hints, nearly_full = self._prechecks(
-            request, run_lunch_stage=False, week_load_cut=week_load_cut,
+            request,
+            run_lunch_stage=False,
+            week_load_cut=week_load_cut,
+            shared_week_load_deadline=True,
         )
         loads = sorted(nearly_full.values(), key=lambda load: -load.load)
         skipped: list[WeekCheckSkipped] = ["LUNCH_STAGE"]
