@@ -1630,6 +1630,46 @@
     som innehöll fel. Rader som redan finns hoppas över — det är därför
     riskfritt att rätta felen i filen och ladda upp samma fil igen.
   </p>
+  <h4>Kolumner som heter något annat, och en tabell från ett annat program</h4>
+  <p>
+    Heter kolumnerna i din fil något annat än i mallarna, eller kommer tabellen
+    från ett annat program, behöver du inte skriva om filen. Efter att du valt
+    en fil, eller klistrat in en tabell du kopierat i det andra programmet eller
+    i Excel och tryckt <span class="ui">Läs in det inklistrade</span>, listar
+    dialogen kolumnerna med några exempel under
+    <span class="ui">Kolumner att peka ut</span>, och för varje kolumn väljer du
+    vilket fält den är, <em>Läs inte kolumnen</em> eller lämnar den som
+    <em>Inte placerad</em>. Rastra gissar aldrig vilken kolumn som är vilken:
+    en kolumn vars rubrik importen redan känner är placerad från början, alla
+    andra väntar på dig, och sammanfattningen nämner varje kolumn som inte
+    läses. Är alla kolumner placerade visas bara en rad,
+    <span class="ui">Alla kolumner är utpekade</span>, som du kan öppna för att
+    ändra. Står det en rubrik ovanför tabellen väljer du vilken rad
+    rubrikerna står på. Förhandsvisningen och <span class="ui">Importera</span>
+    kommer efter det och är som vid en fil: ingenting skrivs förrän du tryckt.
+  </p>
+  <ul>
+    <li><strong>Mallar.</strong> Ett utpekande kan sparas som en mall med ett
+      namn och används nästa gång en tabell har samma kolumner, i vilken
+      ordning som helst. Alla administratörer kan använda mallarna; att spara,
+      ändra och ta bort dem kräver Planering (2.2), och utan det går tabellen
+      ändå att läsa in. Mallarna sparar rubriker och fält, aldrig några värden.</li>
+    <li><strong>Personnummer lämnar aldrig webbläsaren.</strong> En kolumn som
+      ser ut som personnummer, eller vars rubrik säger det, släpps innan något
+      skickas, och sammanfattningen säger att den släpptes. Har en kolumn som
+      läses en enstaka cell med ett personnummer läses inte den raden in, och
+      importen väntar: meddelandet nämner raden och kolumnen men aldrig numret.</li>
+    <li><strong>Lärare på signatur i timplansposter.</strong> I filen för
+      timplansposterna kan läraren och medläraren anges med signatur
+      (<em>larare_signatur</em> och <em>medlarare_signatur</em>) i stället för
+      med e-postadress: samma person står på en rad antingen med den ena eller
+      med den andra. Signaturen är den i läsårets tjänst, och en som inte finns
+      avvisar raden. En tjänstefördelning som kopierats ur ett annat program
+      och har signaturer går alltså att läsa in utan adresser; se 7.7, där den
+      också kan väljas direkt.</li>
+    <li><strong>Excel.</strong> En Excelfil (.xlsx) läses inte här: markera
+      cellerna och klistra in dem, eller spara filen som CSV.</li>
+  </ul>
   <div class="note">
     <span class="label">Exportera lika gärna som importera</span>
     <p>
@@ -10389,6 +10429,17 @@
       fil (Importera ovan): ingenting skrivs förrän du har läst förhandsvisningen
       och trycker <span class="ui">Skriv in</span>. Raderna får samma skäl till
       vägran som vid en fil, och radnumren är de i det du klistrade in.</li>
+    <li><strong>En tjänstefördelning i stället för lektioner.</strong> Under
+      <span class="ui">Vad innehåller tabellen?</span> väljer du
+      <em>Tjänstefördelning</em>. Tabellen blir då poster i timplanen, och går
+      genom importens egen dialog för det läsår som är valt på sidan, med samma
+      förhandsvisning och samma <span class="ui">Importera</span> som under
+      3.6. Du pekar ut grupp, ämne, lektioner per vecka och minuter per lektion;
+      lärarna anges på signatur (<em>Lärare (signatur)</em>) eftersom en
+      tjänstefördelning sällan har några adresser. Timmar eller procent per
+      lärare räknas aldrig om till lektioner och minuter: saknas de två fälten
+      avvisas tabellen och de namnges. En lärare som inte finns i Rastra
+      avvisar raden, som vid vilken post som helst.</li>
   </ul>
 
   <h4>Det här kan de fyra formaten, och inte</h4>
