@@ -495,6 +495,10 @@ describe('the roster-reader inventory', () => {
       //
       // Förlagda block judge a block's lesson as the rows of its members in the same call (judgePlacements), so the block's
       // view (listOfBlock) and its save (replace) read the same basis and answer the same 409.
+      //
+      // Kontrollera veckan asks the engine about the week Generera would send, and builds it by Generera's own fetch
+      // (prepareSchedule), so a year two steps ahead answers R6's 409 there as POST jobs does: a check that read a week no
+      // Generera may be run for would answer about pupils the year does not have.
       expect(reached.map((entry) => entry.route).sort()).toEqual([
         'AnalysisController.costBasis',
         'AnalysisController.keyFigures',
@@ -550,6 +554,7 @@ describe('the roster-reader inventory', () => {
         'TeachingRequirementsController.update',
         'TimplanCoverageController.get',
         'TimplanCoverageController.plannedPupils',
+        'WeekCheckController.check',
         'YearRolloverController.rosters',
       ]);
     });
