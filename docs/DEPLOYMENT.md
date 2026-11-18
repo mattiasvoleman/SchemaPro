@@ -6470,7 +6470,7 @@ the staff's addresses.
 Beside them, `app.login_is_held_elsewhere(authId, userId)` is a person's door (an administrator's `withRls` in
 `users.service.ts`) and answered a session with no login as well, a yes or no about whether a login id is held by any school.
 
-Migration `20270221090000_jobbens_ovriga_dorrar_svarar_inte_en_inloggning`: 38 `CREATE OR REPLACE FUNCTION` and 38
+Migration `20270224090000_jobbens_ovriga_dorrar_svarar_inte_en_inloggning`: 38 `CREATE OR REPLACE FUNCTION` and 38
 `COMMENT ON FUNCTION`. **No table, no grant, no new object, no gateway change.** The guard is the one of section 26 (no claims, no
 lone subject setting, an empty string read as none), each door refusing the way it answers:
 

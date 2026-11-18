@@ -12,7 +12,7 @@
 \set ON_ERROR_STOP on
 
 -- ---------------------------------------------------------------------------
--- Jobbens dörrar (20270221090000, avsnitt 520–523). Jobbets transaktion har ingen inloggning (withDeliveryService sätter inga
+-- Jobbens dörrar (20270224090000, avsnitt 520–523). Jobbets transaktion har ingen inloggning (withDeliveryService sätter inga
 -- claims), och dörrarna nekar nu varje session som har en. Ett avsnitt som planterar rader som en administratör och sedan kör
 -- en av dörrarna kör den som jobbet kör den: genom pg_temp.u12_<dörr>, som har samma argument och ger samma svar som dörren
 -- men sätter claims (request.jwt.claims och request.jwt.claim.sub) åt sidan medan dörren körs och sätter tillbaka dem efteråt,
@@ -7582,7 +7582,7 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
--- Jobbens övriga dörrar (20270221090000), ägarsidan: 520o–521o. Sektionerna 520–523 i rls-policies.sql håller vaktens text,
+-- Jobbens övriga dörrar (20270224090000), ägarsidan: 520o–521o. Sektionerna 520–523 i rls-policies.sql håller vaktens text,
 -- rättigheterna och svaret under varje inställning utan rader. Här planterar ägaren raderna, så att dörren har något att svara,
 -- och visar att jobbets dörr (inga claims) svarar det och att ingen inloggning gör det: de nio LANGUAGE sql-dörrarna svarar
 -- inget åt en inloggning, och gallringens dörr nekar (GL403) och skriver ingen körning. Varje scenario körs i en egen rullad

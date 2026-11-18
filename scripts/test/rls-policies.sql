@@ -31,7 +31,7 @@
 \set ON_ERROR_STOP on
 
 -- ---------------------------------------------------------------------------
--- Jobbens dörrar (20270221090000, avsnitt 520–523). Jobbets transaktion har ingen inloggning (withDeliveryService sätter inga
+-- Jobbens dörrar (20270224090000, avsnitt 520–523). Jobbets transaktion har ingen inloggning (withDeliveryService sätter inga
 -- claims), och dörrarna nekar nu varje session som har en. Ett avsnitt som planterar rader som en administratör och sedan kör
 -- en av dörrarna kör den som jobbet kör den: genom pg_temp.u12_<dörr>, som har samma argument och ger samma svar som dörren
 -- men sätter claims (request.jwt.claims och request.jwt.claim.sub) åt sidan medan dörren körs och sätter tillbaka dem efteråt,
@@ -14914,7 +14914,7 @@ ROLLBACK;
 -- while its cover stays, and school A has not moved. The run's counts are the
 -- rows that went, and "gallrat före" answers the cutoffs. Run under an admin
 -- principal instead, the purge is refused (GL403, the door's guard from
--- 20270221090000; and the tjänst history's own guard, TL403, behind it).
+-- 20270224090000; and the tjänst history's own guard, TL403, behind it).
 --
 -- The lesson ON the attendance cutoff is planted here, in this transaction,
 -- and the night runs at its now(): the counts, the lesson and the run's
@@ -14992,7 +14992,7 @@ END $$;
 -- Under the admin's own principal the purge is refused. The run starts at
 -- now(), as the night's does: the night interrupts it at its own now(), and a
 -- run begun at clock_timestamp() would then finish before it started. Since
--- 20270221090000 the refusal is the door's (GL403: gallring is the job's, and a
+-- 20270224090000 the refusal is the door's (GL403: gallring is the job's, and a
 -- login is refused); the history's guard (TL403) stands behind it, and 521o in
 -- rls-owner-checks.sql holds that half, which the door now keeps a person from.
 DO $$
@@ -27625,7 +27625,7 @@ BEGIN
     RAISE EXCEPTION 'flera 242b: a held login counted as nobody''s';
   END IF;
   -- The answer is read past row security: a login that sees none of these rows (it is nobody's) is told as well. With nobody
-  -- signed in the door answers nothing (20270221090000: a person's door, which asks for a login).
+  -- signed in the door answers nothing (20270224090000: a person's door, which asks for a login).
   PERFORM set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid())::text, true);
   IF NOT app.login_is_held_elsewhere('fe000000-0000-4000-8000-000000000240', NULL) THEN
     RAISE EXCEPTION 'flera 242b: with a login that sees none of the rows, the shared login was nobody''s';
@@ -32741,7 +32741,7 @@ BEGIN
   -- 268h
   PERFORM set_config('request.jwt.claims', json_build_object('sub', l)::text, true);
   l_row := app.current_user_id();
-  -- The door answers a login (20270221090000): the roller school's administrator, who invites, is the one who asks.
+  -- The door answers a login (20270224090000): the roller school's administrator, who invites, is the one who asks.
   PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
   IF l_row IS NULL THEN RAISE EXCEPTION 'huvudman 268h: L has no row at A'; END IF;
   IF NOT app.login_is_held_elsewhere(l::uuid, l_row) THEN
@@ -57218,9 +57218,9 @@ BEGIN
   IF src NOT LIKE '%UPDATE "TeacherEmploymentLogs" SET%jsonb_set("before", ''{payrollNumber}'', ''null''::jsonb)%' THEN
     RAISE EXCEPTION 'lid 464: pseudonymisation leaves the payroll number in the versions of the post';
   END IF;
-  -- 20270206091000's body with the job's guard (20270221090000) as its first statement: the same lines, and one more at the top.
+  -- 20270206091000's body with the job's guard (20270224090000) as its first statement: the same lines, and one more at the top.
   IF md5(src) IS DISTINCT FROM 'd852d535cb86226eb97b068fa3984014' THEN
-    RAISE EXCEPTION 'lid 464: app.gallring_pseudonymise is not 20270221090000''s body (md5 %); a release that restates it must carry the lines marked "skyddad identitet" and "Löne-id"', md5(src);
+    RAISE EXCEPTION 'lid 464: app.gallring_pseudonymise is not 20270224090000''s body (md5 %); a release that restates it must carry the lines marked "skyddad identitet" and "Löne-id"', md5(src);
   END IF;
   SELECT p.prosrc INTO src FROM pg_proc p WHERE p.oid = 'app.teacher_employment_logs_append_only()'::regprocedure;
   IF src NOT LIKE '%IF TG_OP = ''UPDATE'' AND app.gallring_in_progress(OLD."schoolId")%'
@@ -65583,7 +65583,7 @@ END $$;
 ROLLBACK;
 
 -- ===========================================================================
--- Jobbens övriga dörrar (20270221090000): sections 520–523 (och 520o–523o i rls-owner-checks.sql).
+-- Jobbens övriga dörrar (20270224090000): sections 520–523 (och 520o–521o i rls-owner-checks.sql).
 --
 -- 37 SECURITY DEFINER-funktioner som API-rollen får köra är till för det som körs utan inloggning: bakgrundsjobben
 -- (frånvarostatistiken, frånvarobevakningen, gallringen, rapporteringsgraden, push och utleverans, skolans export, jobbens
