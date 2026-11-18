@@ -1308,6 +1308,22 @@ def test_a_post_split_between_teachers_counts_whole_for_the_class_and_by_share_f
     assert teacher.class_minutes == 80 + 80 + 60 + 60 + 40 + 40
 
 
+def test_the_sentence_is_about_the_class_and_not_the_classes_when_it_is_one_class() -> None:
+    """Review of #342, LÅG-6: `classes` is how many classes the groups take pupils from, and "The classes they share" is a plural for one."""
+    params = {"groups": 2, "minutes": 280, "grades": "8", "classMinutes": 0, "classOwn": "none"}
+    one = render("TEACHER_SHARED_BY_PARALLEL_GROUPS", {**params, "classes": 1})
+    several = render("TEACHER_SHARED_BY_PARALLEL_GROUPS", {**params, "classes": 3})
+
+    assert "The class they share has no lesson of its own left to place" in one
+    assert "the teacher's queue and not the class that fills the week" in one
+    assert "The classes they share" not in one and "classes that fill" not in one
+    assert "The classes they share have no lessons of their own left to place" in several
+    assert "the teacher's queue and not the classes that fill the week" in several
+    # Both keep the advice that helps (a teacher of their own) and leave out the one that does not (fewer classes).
+    assert "parallel block" in one and "parallel block" in several
+    assert "fewer classes" not in one and "fewer classes" not in several
+
+
 def test_the_sentence_says_what_the_classes_lose_and_keeps_its_advice_only_where_it_helps() -> None:
     some = render(
         "TEACHER_SHARED_BY_PARALLEL_GROUPS",

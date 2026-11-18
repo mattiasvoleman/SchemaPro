@@ -115,6 +115,28 @@ describe("TEACHER_SHARED_BY_PARALLEL_GROUPS", () => {
     expect(text).not.toContain("färre klasser");
   });
 
+  it("says the class and not the classes when it is one class the groups take pupils from (review of #342, LÅG-6)", () => {
+    const sv1 = render(swedish, { ...base, groups: 2, classes: 1, classMinutes: 0, classOwn: "none" });
+    expect(sv1).toContain("Klassen de delar har ingen egen lektion kvar att lägga");
+    expect(sv1).toContain("lärarens kö och inte klassen som fyller veckan");
+    expect(sv1).not.toContain("Klasserna");
+    const en1 = render(english, { ...base, groups: 2, classes: 1, classMinutes: 0, classOwn: "none" });
+    expect(en1).toContain("The class they share has no lesson of its own left to place");
+    expect(en1).toContain("the teacher's queue and not the class that fills the week");
+    expect(en1).not.toContain("The classes they share");
+  });
+
+  it("keeps the plural for two classes and more, and reads a line with none of the count as several", () => {
+    for (const classes of [2, 5]) {
+      const text = render(swedish, { ...base, classes, classMinutes: 0, classOwn: "none" });
+      expect(text).toContain("Klasserna de delar har inga egna lektioner kvar att lägga");
+      expect(text).toContain("lärarens kö och inte klasserna som fyller veckan");
+    }
+    expect(render(english, { ...base, classes: 3, classMinutes: 0, classOwn: "none" })).toContain("the teacher's queue and not the classes that fill the week");
+    // A row that says the classes have nothing and carries no count: the sentence it would have been before the count was read.
+    expect(render(swedish, { ...base, classMinutes: 0, classOwn: "none" })).toContain("Klasserna de delar har inga egna lektioner");
+  });
+
   it("reads a line stored before the classes were counted as the sentence it always was, in Swedish", () => {
     // No classOwn, no classes, no classMinutes: PARAM_DEFAULTS supplies "unknown", and the branch that is
     // not chosen needs nothing the row does not have.
