@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { BoardBlock, BoardHold, PlacementBoard } from "@/lib/placement-board";
+import type { BoardBlock, BoardHold, LatestSchedule, PlacementBoard } from "@/lib/placement-board";
 import { REQUIREMENT_PLACEMENTS_KEY, type PlacementWarning } from "@/lib/requirement-placements";
 
 /*
@@ -27,5 +27,22 @@ export function usePlacementBoard(academicYearId: string | null) {
       // A gateway deployed before the blocks, the warnings or the holds were on the board has no such field: none, nothing to draw.
       return { ...board, blocks: board.blocks ?? [], warnings: board.warnings ?? [], holds: board.holds ?? [] };
     },
+  });
+}
+
+/**
+ * The latest schedule, behind the week when the school asks to see it (GET /teaching-requirements/placements/latest): the year's whole
+ * machine-made schedule, so read only while "Visa senaste schemat" is on. Its own key, outside the prefix a write of förläggningar
+ * invalidates: laying a lesson changes nothing in what the last Generera laid.
+ */
+export const latestScheduleKey = (academicYearId: string | null) => ["placementLatest", academicYearId] as const;
+
+export function useLatestSchedule(academicYearId: string | null, wanted: boolean) {
+  return useQuery({
+    queryKey: latestScheduleKey(academicYearId),
+    enabled: wanted && academicYearId !== null,
+    // Turned off and on again within the minute draws from what was read: the year's whole schedule is not read at every press.
+    staleTime: 60_000,
+    queryFn: () => api.get<LatestSchedule>(`/api/v1/teaching-requirements/placements/latest?academicYearId=${encodeURIComponent(academicYearId!)}`),
   });
 }

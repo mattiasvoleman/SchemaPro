@@ -96,6 +96,15 @@ export interface BoardKept {
   generated: boolean;
 }
 
+/**
+ * GET /teaching-requirements/placements/latest: what the last Generera laid and nobody has taken over, which the next one
+ * replaces. A lesson in the shape of a kept one, read when "Visa senaste schemat" is turned on.
+ */
+export interface LatestSchedule {
+  academicYearId: string;
+  lessons: BoardKept[];
+}
+
 /** A meal the school placed by hand: the only meals a row is held to. */
 export interface BoardMeal {
   id: string;
@@ -235,6 +244,18 @@ export const teacherOfPlacement = (row: Pick<BoardPlacement, "teacherId">, post:
 const picks = (list: readonly string[], id: string | null): boolean => list.length === 0 || (id !== null && list.includes(id));
 
 /**
+ * The lessons of the grundschema that the filters pick: a lesson belongs to its class and the classes it also has, to its teacher or
+ * medlärare and to its room. The lessons Generera keeps, and the latest schedule behind the week, are picked the same way.
+ */
+export const lessonsOfFilters = (lessons: readonly BoardKept[], filters: BoardFilters): BoardKept[] =>
+  lessons.filter(
+    (lesson) =>
+      (filters.groups.length === 0 || [lesson.studentGroupId, ...lesson.extraGroupIds].some((id) => filters.groups.includes(id))) &&
+      (filters.teachers.length === 0 || picks(filters.teachers, lesson.teacherId) || picks(filters.teachers, lesson.coTeacherId)) &&
+      picks(filters.rooms, lesson.roomId),
+  );
+
+/**
  * The board narrowed by class, teacher and room. A row belongs to its post's
  * class, to its lesson's teacher and to its room; a kept lesson to its class
  * and the classes it also has, its teacher or medlärare and its room. The
@@ -263,12 +284,7 @@ export function visibleBoard(board: PlacementBoard, filters: BoardFilters): Visi
         [post.teacherId, ...post.parts.map((part) => part.teacherId)].some((id) => picks(filters.teachers, id))) &&
       (filters.rooms.length === 0 || roomed.has(post.id)),
   );
-  const kept = board.kept.filter(
-    (lesson) =>
-      (filters.groups.length === 0 || [lesson.studentGroupId, ...lesson.extraGroupIds].some((id) => filters.groups.includes(id))) &&
-      (filters.teachers.length === 0 || picks(filters.teachers, lesson.teacherId) || picks(filters.teachers, lesson.coTeacherId)) &&
-      picks(filters.rooms, lesson.roomId),
-  );
+  const kept = lessonsOfFilters(board.kept, filters);
   const meals = filters.groups.length === 0 ? [] : board.meals.filter((meal) => filters.groups.includes(meal.studentGroupId));
   return { posts, placements, kept, meals };
 }

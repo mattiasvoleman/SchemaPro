@@ -107,7 +107,7 @@ describe("which sentences nothing says (review of #341, LÅG-6)", () => {
   });
 
   it("has no sentence that nothing says (review of #338, LÅG-4: heldLabel was written and never used)", () => {
-    for (const namespace of ["pair", "weeks", "note"] as const) {
+    for (const namespace of ["pair", "weeks", "note", "latest"] as const) {
       for (const locale of ["sv", "en"] as const) {
         const catalogue = (locale === "sv" ? sv : en).placementWeek[namespace] as Record<string, string>;
         const unused = Object.keys(catalogue).filter((key) => !asked.has(`placementWeek.${namespace}.${key}`));
