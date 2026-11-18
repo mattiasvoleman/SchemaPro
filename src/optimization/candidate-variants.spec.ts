@@ -109,6 +109,22 @@ describe('search, timeouts and the lease', () => {
     expect(answeredFirst).toEqual([]);
   });
 
+  it("waits by the engine's own probe and headroom once it has said them, and exactly as before at its defaults (M1, LÅG-9 of the review of #344)", () => {
+    const lead = { variant: 'KEEP', seed: null, lead: true };
+    const other = { variant: 'TEACHER_GAPS', seed: 1, lead: false };
+    // The production engine's figures are the defaults this wait always assumed.
+    const production = { ...SETTINGS, times: { probeSeconds: 20, headroomSeconds: 30 } };
+    expect(callTimeoutMs(lead, production)).toBe(callTimeoutMs(lead, SETTINGS));
+    expect(callTimeoutMs(other, production)).toBe(callTimeoutMs(other, SETTINGS));
+    // A probe set to 60 s on the engine is waited for here, where it was 20 whatever the engine was set to.
+    const longProbe = { ...SETTINGS, times: { probeSeconds: 60, headroomSeconds: 30 } };
+    expect(callTimeoutMs(lead, longProbe)).toBe(135_000);
+    // A call that asks for no probes does not wait for one.
+    expect(callTimeoutMs(other, longProbe)).toBe(75_000);
+    // And the run's lease follows the longest call, so it holds the longer wait.
+    expect(leaseSecondsFor([lead, other], longProbe)).toBe(270);
+  });
+
   it('leases a run twice its longest call, within 60..3600 s', () => {
     const calls = [
       { variant: 'KEEP', seed: null, lead: true },

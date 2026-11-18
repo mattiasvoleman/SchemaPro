@@ -3811,6 +3811,15 @@
     <li><strong>Filtren</strong> för klass, lärare och sal gäller veckan, listan
       och brickorna. En förläggning hör till klassen på sin post, till lärarens
       egen lektion på en delad post och till sin sal.</li>
+    <li><strong>Kontrollera veckan.</strong> Knappen överst, bredvid vägen till
+      <span class="ui">Generera schema</span>, frågar motorn om veckan som den
+      ligger just nu, förläggningarna med, utan att lägga något schema, och
+      svarar på några sekunder: inget hittades som stoppar veckan, veckan är
+      trång (”Åk 9 ligger på 97 % av ramtiden”) eller veckan går inte att
+      lägga, med samma rader som en nekad körning ger. Svaret gäller veckan som
+      den stod när du frågade, så en ändring du sparar tar bort det. Kontrollen
+      kan visa att en vecka är omöjlig eller trång, aldrig att ett schema
+      finns (5.2). Knappen syns för dem som får köra Generera.</li>
     <li><strong>Varningar.</strong> Medan du lägger visar sidan, på rutan och på
       posten, vad det som ligger fast redan bryter: läraren går över sitt tak
       per dag, sitt antal undervisningsdagar eller sin gräns för undervisning i
@@ -5700,6 +5709,27 @@
     Klicka <span class="ui">Generera schema</span>. Motorn arbetar i bakgrunden
     och visar resultatet när den är klar. Vänta tills körningen avslutats innan
     du navigerar vidare.
+  </p>
+  <p>
+    Vill du veta hur veckan ser ut före körningen finns
+    <span class="ui">Kontrollera veckan</span> bredvid
+    <span class="ui">Generera schema</span>. Knappen räknar på veckan med
+    motorns snabba förkontroller, lägger inget schema och svarar på några
+    sekunder. Svaret står under <span class="ui">Förutsättningar</span>: inget
+    hittades som stoppar veckan, veckan är trång (”Åk 9 ligger på 97 % av
+    ramtiden”) eller veckan går inte att lägga, med samma rader som en nekad
+    körning ger. Kontrollen kan visa att en vecka är omöjlig eller trång, men
+    aldrig att ett schema finns, så ”inget hittades” är ingen garanti. Det
+    kontrollen inte körde står under svaret: lunchstegets egen räkning, och
+    frågan om förläggningarna är orsaken, gör bara
+    <span class="ui">Generera schema</span>.
+  </p>
+  <p>
+    Samma kontroll görs när du klickar <span class="ui">Generera schema</span>.
+    Är veckan trång eller omöjlig frågar sidan (”Åk 7 är 94 % full. Kör
+    ändå?”) innan körningen startar, så att du slipper vänta flera minuter på
+    en vecka som inte går. Kan kontrollen inte köras, till exempel medan
+    schemamotorn uppdateras, startar körningen som vanligt.
   </p>
   <p>
     Är nästa läsår rullat men ännu inte aktiverat väljer du överst på sidan

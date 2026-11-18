@@ -1734,6 +1734,23 @@ class OptimizeScheduleRequest(CamelModel):
     # Optional, and absent on every request but a schemaförslag candidate's;
     # absent is today's solve byte for byte. See SearchOptions.
     search: SearchOptions | None = None
+    #: How many seconds the caller waits for the answer, counted from the moment
+    #: it sends the request (M1, Tidskedjan). The engine answers inside it: its
+    #: own ceiling is at most this less app.timing.TRANSFER_MARGIN_SECONDS, and
+    #: every step of the solve counts its time from that ceiling, so a caller
+    #: that waits less than the engine's settings need is answered with a
+    #: shorter search and a TIMEOUT that says how long it was, not by a 503 it
+    #: has already stopped waiting for.
+    #:
+    #: NOT IN `search`, because there the key's presence means "this is a
+    #: schemaförslag candidate" (SearchOptions) and a Generera that carried a
+    #: deadline would be solved as one. Optional and additive: absent, the
+    #: ceiling is what the deployment's own settings give it (optimize.
+    #: solve_ceiling_seconds), as before. The gateway sends it only to an
+    #: engine that says it can (GET /api/v1/timing, `capabilities`).
+    deadline_seconds: float | None = Field(
+        default=None, alias="deadlineSeconds", gt=0, le=3600,
+    )
     # Optional, and absent on every request but a best-effort run's; absent is
     # today's solve byte for byte. See Relaxation.
     relaxation: Relaxation | None = None

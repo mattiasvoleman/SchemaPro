@@ -1,4 +1,5 @@
 import type { ObjectiveWeights, SearchOptions } from './interfaces/ai-engine-payload.interface';
+import { CALL_MARGIN_SECONDS, LEGACY_PROBE_SECONDS, candidateCallMs, type CandidateTimes } from './engine-timing';
 
 /*
  * THE EMPHASES A SCHEMAFÖRSLAG RUN ASKS FOR (design §1), in one table so the
@@ -74,10 +75,19 @@ export const DEFAULT_CANDIDATE_COUNT = 3;
 export const MIN_CANDIDATE_COUNT = 2;
 export const MAX_CANDIDATE_COUNT = 4;
 
-/** The engine's build headroom (30 s) plus the transfer and the gateway's own margin. */
-export const CALL_HEADROOM_SECONDS = 45;
-/** The engine's timeout probe, paid only by a call that asks for probes. */
-export const PROBE_SECONDS = 20;
+/**
+ * The engine's build headroom (30 s) plus the transfer and the gateway's own margin: what a
+ * call waits beyond its budget when the engine has said nothing of its times. With the
+ * engine's own figures (GET /api/v1/timing) the headroom is the engine's and the margin is
+ * CALL_MARGIN_SECONDS (engine-timing.ts); the sum is the same at the engine's defaults.
+ */
+export const CALL_HEADROOM_SECONDS = 30 + CALL_MARGIN_SECONDS;
+/**
+ * The engine's timeout probe, paid only by a call that asks for probes, as it was before the
+ * engine said it (SOLVER_PROBE_SECONDS' default). It was this number, hardcoded, whatever the
+ * engine's variable was set to; now it is the engine's own when the engine says it.
+ */
+export const PROBE_SECONDS = LEGACY_PROBE_SECONDS;
 
 /**
  * The disruption floor of a refresh ("Uppdatera förslagen"): the old
@@ -139,6 +149,12 @@ export interface CallShape {
 export interface SearchSettings {
   maxSeconds: number;
   workers: number;
+  /**
+   * The engine's generator times as it said them (GET /api/v1/timing): its probe and its build
+   * headroom. Absent for an engine that has said nothing, and the waits are then what they always
+   * were.
+   */
+  times?: CandidateTimes;
 }
 
 /**
@@ -165,9 +181,14 @@ export function searchFor(call: CallShape, settings: SearchSettings): SearchOpti
  * asked for. Longer than the engine's own ceiling for the request, so the
  * engine answers first (a TIMEOUT with its explanation) instead of the
  * gateway giving up on a thread that keeps solving.
+ *
+ * The probe and the headroom are the ENGINE'S, as it said them (settings.times),
+ * so a probe set to 60 s on the engine is waited for here, and nothing was
+ * written twice. An engine that has said nothing is waited for as before: 20 s of
+ * probe on the first call and 30 s of headroom (the review of #344, LÅG-9).
  */
 export function callTimeoutMs(call: CallShape, settings: SearchSettings): number {
-  return (settings.maxSeconds + CALL_HEADROOM_SECONDS + (call.lead ? PROBE_SECONDS : 0)) * 1000;
+  return candidateCallMs(settings.maxSeconds, call.lead, settings.times);
 }
 
 /**

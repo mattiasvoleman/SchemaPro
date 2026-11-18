@@ -1714,6 +1714,8 @@
       "refusalLink": "Visa i veckan",
       "refusalLinkLabel": "Visa i veckan: {sentence}"
     },
+    "runAgain": "Kör igen",
+    "blockedRunning": "Generera körs redan för läsåret, av någon annan eller i en annan flik. Den går att starta när körningen är klar.",
     "runningUpTo": "Optimerar… detta kan ta upp till {minutes, plural, one {en minut} other {# minuter}}",
     "lastRun": "Senaste körning",
     "statusOPTIMAL": "Optimal lösning hittad",
@@ -1785,10 +1787,49 @@
       "RUNNING": "Körs",
       "SUCCEEDED": "Klar",
       "UNSTAFFED": "Stoppad: lärare saknas",
-      "PARTLY_LOCKED": "Stoppad: block delvis låst"
+      "PARTLY_LOCKED": "Stoppad: block delvis låst",
+      "ABANDONED": "Avbröts"
     },
     "historyYearsLoadFailedHint": "Läsåren kunde inte hämtas, så sidan vet inte vilket läsårs körningar den ska visa. Tidigare körningar och schemat är orörda. Ladda om sidan.",
     "historyNoYear": "Det finns inget aktivt läsår, så det finns inga körningar att visa."
+  },
+  "weekCheck": {
+    "button": "Kontrollera veckan",
+    "checking": "Kontrollerar…",
+    "title": "Kontroll av veckan",
+    "hint": "Räknar på veckan utan att lägga något schema och svarar på några sekunder.",
+    "verdict": {
+      "OK": "Förkontrollen hittade inget som stoppar veckan.",
+      "TIGHT": "Veckan är trång",
+      "IMPOSSIBLE": "Veckan går inte att lägga"
+    },
+    "okBody": "Det är ingen garanti för att ett schema finns. Kontrollen kan visa att en vecka är omöjlig eller trång, men inte att den går att lägga.",
+    "okCutTitle": "Förkontrollen hann inte räkna klart veckan",
+    "okCutBody": "Ingen årskurs hittades över gränsen, men veckolasten hann inte räknas för alla årskurser, så en årskurs utan rad är inte räknad. Det är ingen garanti för att ett schema finns.",
+    "atLeast": "Procenttalen är lägst så höga: räkningen hann inte klart.",
+    "tightBody": "En så trång vecka är svår att lägga, och mer tid kanske inte räcker. Raderna nedan säger vad som tar tid.",
+    "impossibleBody": "Generera skulle neka veckan inom några sekunder. Rätta orsakerna nedan först.",
+    "yearTight": "{grades, select, any {Klasserna med okänd årskurs ligger} other {Åk {grades} ligger}} på {percent} % av ramtiden.",
+    "yearOver": "{grades, select, any {Klasserna med okänd årskurs behöver} other {Åk {grades} behöver}} mer än ramtiden ger: minst {demandMinutes} av {capacityMinutes} minuter.",
+    "refusedTitle": "Veckan kan inte läggas som den är",
+    "notRun": "Det här kördes inte",
+    "skipped": {
+      "LUNCH_STAGE": "Lunchstegets egen räkning kördes inte. Generera gör den.",
+      "PLACEMENTS_PROBE": "Frågan om förläggningarna är orsaken ställdes inte. Generera ställer den.",
+      "WEEK_LOAD_DEADLINE": "Veckolasten hann inte räknas för alla årskurser, så en årskurs utan rad är inte räknad.",
+      "ENGINE": "Motorn anropades inte: alla lektioner är handplacerade."
+    },
+    "unavailable": "Kontrollen kunde inte köras just nu. Du kan ändå generera schemat.",
+    "unavailableOlder": "Schemamotorn uppdateras och kan inte kontrollera veckan ännu. Försök igen om några minuter. Du kan ändå generera schemat.",
+    "ask": {
+      "titleTight": "{grades, select, any {Klasserna med okänd årskurs är} other {Åk {grades} är}} {percent} % full. Kör ändå?",
+      "titleTightPlain": "Veckan är trång. Kör ändå?",
+      "titleImpossible": "Veckan går inte att lägga. Kör ändå?",
+      "titleRefused": "Veckan kan inte läggas som den är. Kör ändå?",
+      "bodyTight": "Generera kan ta flera minuter på en så trång vecka och kan sluta i en tidsgräns i stället för ett svar.",
+      "bodyImpossible": "Generera skulle neka veckan inom några sekunder. Kör den ändå om du vill ha den nekade körningen i körhistoriken.",
+      "confirm": "Kör ändå"
+    }
   },
   "timetable": {
     "title": "Grundschema",
@@ -7476,6 +7517,8 @@
       "ENGINE_LACKS_PINNED_LESSONS": "Schemamotorn är äldre än resten av tjänsten och kan inte hålla förlagda lektioner utan sal ännu. Försök igen om några minuter.",
       "ENGINE_MEALS_INCONSISTENT": "Schemamotorn svarade med lunchtider som inte passar läsårets perioder, så ingenting skrevs. Försök igen, och hör av dig om det upprepas.",
       "ENGINE_TIMED_OUT": "Schemamotorn hann inte svara inom sin längsta väntetid, så inget schema sparades. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen.",
+      "ENGINE_RUN_ABANDONED": "Körningen avbröts när tjänsten startades om. Kör Generera igen.",
+      "GENERATE_ALREADY_RUNNING": "Generera kör redan för läsåret. Vänta tills körningen är klar.",
       "CANDIDATES_RUNNING": "Schemaförslag tas fram för läsåret just nu. Generera går att starta när de är klara."
     },
     "page": {
