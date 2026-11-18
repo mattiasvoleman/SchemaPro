@@ -19,6 +19,7 @@
     "start:prod": "node dist/main.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:test": "tsc --noEmit -p test/tsconfig.json",
+    "typecheck:scripts": "tsc --noEmit -p scripts/test/tsconfig.json",
     "test": "TZ=UTC jest",
     "test:unit": "TZ=UTC jest --selectProjects unit",
     "test:watch": "TZ=UTC jest --selectProjects unit --watch",
@@ -53,7 +54,7 @@
     "bench:latency": "npm install --no-save --no-audit --no-fund autocannon@^8 && node scripts/bench/api-latency.mjs",
     "bench:solver": "cd optimization-engine && PYTHONPATH=. python benchmarks/solve_2000_students.py --students 2000 --assert-under 10",
     "bench:lighthouse": "npm exec --prefix web --yes -- @lhci/cli@^0.14 autorun --config=web/lighthouserc.json",
-    "verify": "npm run typecheck && npm run typecheck:test && npm run test:cov"
+    "verify": "npm run typecheck && npm run typecheck:test && npm run typecheck:scripts && npm run test:cov"
   },
   "dependencies": {
     "@nestjs/axios": "^4.0.1",
