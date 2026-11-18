@@ -444,6 +444,21 @@
       "text": "a 8001011234 b 800101-1234 c",
       "has": true,
       "redacted": "a [personnummer] b [personnummer] c"
+    },
+    {
+      "text": "198001011234567",
+      "has": false,
+      "redacted": "198001011234567"
+    },
+    {
+      "text": "19800101123456",
+      "has": false,
+      "redacted": "19800101123456"
+    },
+    {
+      "text": "x1980010112345678",
+      "has": false,
+      "redacted": "x1980010112345678"
     }
   ]
 }

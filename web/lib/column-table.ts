@@ -175,7 +175,9 @@ const line = (cells: readonly string[]): string => cells.map((cell) => quoteFiel
 export function writeMappedTable(headerRowNumber: number, headers: readonly string[], rows: readonly (readonly string[])[], rowNumbers: readonly number[]): string {
   const byNumber = new Map<number, readonly string[]>();
   rows.forEach((cells, index) => byNumber.set(rowNumbers[index]!, cells));
-  const last = Math.max(headerRowNumber, ...rowNumbers);
+  // A loop, not Math.max(...rowNumbers): a spread of a few hundred thousand numbers is a RangeError, and a paste may be 5 MB of short rows.
+  let last = headerRowNumber;
+  for (const number of rowNumbers) if (number > last) last = number;
   const lines: string[] = [];
   for (let n = 1; n <= last; n += 1) {
     lines.push(n === headerRowNumber ? line(headers) : byNumber.has(n) ? line(byNumber.get(n)!) : "");

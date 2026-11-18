@@ -91,8 +91,15 @@ describe("a column that looks like a personnummer", () => {
     const b = block("Namn;19800101-1234;Klass\nAnna;a;7A\nBo;b;7B");
     const done = applyMapping(b, "students", assign("firstName", "lastName", "className"));
     expect(done.dropped).toEqual([{ index: 1, label: null }]);
-    expect(done.rows.map((row) => row.join("|"))).not.toContain("a");
+    // The column is not read although a field was put on it: the field is then missing, and no row holds what the column had.
+    expect(done.problems.map((problem) => [problem.code, problem.field])).toEqual([["MISSING_REQUIRED", "lastName"], ["MISSING_REQUIRED", "email"]]);
+    expect(done.rows).toEqual([]);
     expect(JSON.stringify(done)).not.toMatch(/19800101/);
+    // A field the kind does not need: the rows are written without it.
+    const rooms = applyMapping(block("namn;kod;Id\nA;B;19800101-1234\nC;D;19900202-4321"), "rooms", assign("name", "code", "building"));
+    expect(rooms.ok).toBe(true);
+    expect(rooms.headers).toEqual(["namn", "kod"]);
+    expect(rooms.rows).toEqual([["A", "B"], ["C", "D"]]);
   });
 
   it("holds a row back when a column that is read has a cell with the shape, naming the row and the column, never the value", () => {
@@ -106,6 +113,52 @@ describe("a column that looks like a personnummer", () => {
     expect(JSON.stringify(done)).not.toMatch(/19800101|8001011234/);
     // The fourth row has one too, in a column that is not read, and is not held back for it.
     expect(done.rowNumbers).toEqual([2, 4, 5]);
+  });
+});
+
+describe("two columns the user put on one field", () => {
+  it("are shown as duplicates, each with the field, and neither is called placed", () => {
+    const b = block("namn;kod;extra\nA;B;C\n");
+    const states = describeColumns(b, "rooms", assign("name", "name", "code"));
+    expect(states.map((state) => [state.status, state.field])).toEqual([["duplicate", "name"], ["duplicate", "name"], ["placed", "code"]]);
+  });
+});
+
+describe("a personnummer where the mapping splits a cell in two", () => {
+  const LESSONS = (cells: string[]) => block(`Kurs\tFack\tPed\tTid\tDag\n${cells.join("\n")}\n`);
+  const FIELDS_OF = assign("group", "subject", "teacherList", "timeRange", "day");
+
+  it("holds the row back for a personnummer in a teacher list or a time range, and writes nothing of the cell", () => {
+    for (const [column, cell] of [["Ped", "ABC, 19800101-1234"], ["Ped", "19800101-1234"], ["Tid", "08:10-09:00 800101-1234"]] as const) {
+      const rows = ["7A\tMat\tABC\t08:10-09:00\tMån", "7B\tSv\tDEF\t09:20-10:10\tTis", "7C\tEn\tGHI\t10:20-11:10\tOns"];
+      rows[0] = column === "Ped" ? `7A\tMat\t${cell}\t08:10-09:00\tMån` : `7A\tMat\tABC\t${cell}\tMån`;
+      const done = applyMapping(LESSONS(rows), "scheduleLessons", FIELDS_OF);
+      expect(done.rowProblems.map((problem) => [problem.row, problem.code]), cell).toEqual([[2, "PERSONAL_NUMBER_IN_CELL"]]);
+      expect(done.rowNumbers, cell).toEqual([3, 4]);
+      expect(done.csv, cell).not.toMatch(/1980|800101/);
+      expect(JSON.stringify(done), cell).not.toMatch(/1980|800101/);
+    }
+  });
+});
+
+describe("a header that has the shape of a number only after its punctuation is gone", () => {
+  it("is known by its position, as a header that has the shape of one is", () => {
+    for (const header of ["19800101-1234", "19800101(1234)", "(8001011234)", "1980 01 01 / 1234", "19800101_1234"]) {
+      expect(keysOf(["Kurs", header]), header).toEqual(["kurs", "kolumn2"]);
+    }
+  });
+});
+
+describe("what a table pasted from another program writes between two times and two teachers", () => {
+  const lesson = (tid: string, ped: string) => block(`Kurs;Fack;Ped;Tid;Dag\n7A;Mat;"${ped}";"${tid}";Mån\n`);
+  const ASSIGN = assign("group", "subject", "teacherList", "timeRange", "day");
+
+  it("takes a minus sign or a hyphen-like dash between the times, and a slash between the teachers", () => {
+    for (const dash of ["-", "\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2015", "\u2212"]) {
+      const done = applyMapping(lesson(`08:10${dash}09:00`, "ABC/DEF"), "scheduleLessons", ASSIGN);
+      expect(done.ok, dash.charCodeAt(0).toString(16)).toBe(true);
+      expect(done.rows[0], dash.charCodeAt(0).toString(16)).toEqual(["7A", "Mat", "Mån", "08:10", "09:00", "ABC", "DEF"]);
+    }
   });
 });
 
@@ -250,6 +303,29 @@ describe("applying a mapping", () => {
     const done = applyMapping(block(`Namn;Byggnad\n${rows}`), "rooms", assign("name", "building"));
     expect(done.rowProblems).toHaveLength(200);
     expect(done.hiddenRowProblems).toBe(50);
+  });
+});
+
+describe("a teacher list with a long run of spaces", () => {
+  it("is split in time linear in its length, so that a pasted cell cannot freeze the page", () => {
+    const cell = `ABC${" ".repeat(100_000)}DEF och GHI`;
+    const t0 = performance.now();
+    const done = applyMapping(block(`Kurs;Fack;Ped;Tid;Dag\n7A;Mat;"${cell}";08:10-09:00;Mån\n`), "scheduleLessons", assign("group", "subject", "teacherList", "timeRange", "day"));
+    expect(performance.now() - t0).toBeLessThan(2000);
+    expect(done.ok).toBe(true);
+    expect(done.rows[0]!.slice(5)).toEqual([`ABC${" ".repeat(100_000)}DEF`, "GHI"]);
+  });
+});
+
+describe("what a template may hold of a header", () => {
+  it("keeps a key to the gateway's hundred characters, unique under a cut, and names no header that is a number once its punctuation is gone", () => {
+    const long = "Schema för klass sjuA höstterminen tjugohundratjugosex ".repeat(4);
+    const keys = keysOf([long, `${long}x`, "Kurs"]);
+    expect(keys.map((key) => key.length)).toEqual([100, 100 + "#2".length, 4]);
+    for (const key of keys) expect(key).toMatch(/^[a-z0-9]{1,100}(#[0-9]{1,3})?$/);
+    expect(new Set(keys).size).toBe(3);
+    const b = block("Kurs;19800101(1234)\nA;x\n");
+    expect(placementsOf(b, "scheduleLessons", ["group", "block"]).map((post) => [post.key, post.label])).toEqual([["kurs", "Kurs"], ["kolumn2", ""]]);
   });
 });
 
