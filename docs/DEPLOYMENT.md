@@ -6439,3 +6439,60 @@ while the file's transaction is open.
   source's secret is read, and a kitchen letter is handed over.
 - After a release that rewrites one of the six, run `prod-fore.sql` of that release: the `prosrc` row of the function it
   rewrites is the one that must equal the "After" column above.
+
+## 28. A school's saved column mappings ("Kolumnmappning", part 1 of 3: the templates)
+
+The browser maps the columns of a school's own file to Rastra's fields (round 12, X2); this part keeps what the school named.
+Migration `20270223090000_en_skola_sparar_kolumnmallar_for_sina_importer` makes one table, `ImportMappingTemplates`
+(`id`, `schoolId`, `kind`, `name`, `headerRow`, `placements`, `createdAt`, `updatedAt`), and the gateway gets
+`api/v1/import-templates` (list, create, change, remove). The mapping is applied in the browser; nothing here reads a file.
+
+- **What a row holds.** A kind of import (one of thirteen: the eleven CSV imports, the lokal timplan's and the table of
+  Schemat som tabell), a name, the row the headers stand on when a title lies above them, and a list of `{ key, label, field }`:
+  the header with case, spaces, punctuation and diacritics dropped, the header as written, and the field it stands for or
+  null for a column the school chose not to read. Headers and fields, never a value, and never a header that has the shape of
+  a personnummer (the gateway refuses one with `TEMPLATE_PERSONAL_NUMBER`, and the row has no key to a person).
+- **Who.** Every administrator reads. Planering writes (the route says `@Area('PLANERING')` and the arms ask
+  `app.current_user_may('PLANERING', true)`). Teachers, pupils, guardians and `anon` have no arm, and no PostgREST role holds
+  a privilege on the table. An administrator with only Personal can map and import but cannot save the mapping (403
+  `AREA_NOT_YOURS`).
+- **The same change adds** two optional fields to a requirements row, `teacherSignature` and `coTeacherSignature` (a teacher
+  by lärarsignatur for the year the dialog names, in place of an e-mail address), and their two names in
+  `REQUIREMENT_FILE_COLUMNS` and `OPTIONAL_REQUIREMENT_COLUMNS`. A row naming a teacher both ways is refused, and so is a
+  signature that two teachers hold in spellings that differ only in case.
+
+### 28.1 Deploy order
+
+1. Run the migration. It adds a table nothing else reads, so a gateway from before it is unaffected and a migration with no
+   gateway is harmless. In production, as the owner, from a tree that has every applied migration: `prod-fore.sql`,
+   `migrate deploy`, `prod-efter.sql`.
+2. Merge. The gateway answers the new routes, and the signature fields are accepted (`forbidNonWhitelisted` is on, so a
+   gateway from before them answers 400 to a row that carries one: the web that sends them is deployed after this).
+3. The web (parts 2 and 3) lists the templates when a dialog opens and treats a failed read as "no templates": it works
+   against a gateway that has none of this.
+
+### 28.2 Rolling back
+
+- Nothing else reads the table, so `DROP TABLE "ImportMappingTemplates"` is the whole of it; the saved mappings go with it,
+  and no import is affected (a mapping is only a convenience over the same rows). Mark the migration rolled back
+  (`prisma migrate resolve --rolled-back …`) only if it stopped half-way: it is one transaction.
+- The signature fields are additive: a client that never sends them is unchanged. Do not edit the migration after it has run.
+
+### 28.3 What the gateway does with a template
+
+- `name` is trimmed and held to 1-80 characters without control characters; `placements` to 200 posts and 40 000 bytes; every
+  `field` must be one of the kind's (`src/import-templates/import-fields.ts`, held equal to a fixture the web reads); no
+  field is placed twice and no two fields that read the same cells are placed together (`timeRange` with `start`/`end`,
+  `teacherList` with `teacher`/`coTeacher`). A school keeps at most 20 templates per kind (409 `TEMPLATE_LIMIT`), and a name
+  is taken once per school and kind (409 `TEMPLATE_NAME_TAKEN`, also for the second of two writers at once).
+- The answers carry a `code` and flat `params` (the field, the kind, an index), never a header that looks like a personnummer.
+
+### 28.4 Operations
+
+- RLS sections 535 to 539 hold it, on PG 17 and PG 16: the catalogue (columns, keys, the CHECKs, indexes, four arms and no
+  other, the API role's four privileges, nobody's MAINTAIN), who reads and who writes, the school, the bounds, and PostgREST's
+  roles. Section 116's area matrix lists the table (`src/auth/admin-areas.ts`). The adapter probe's `km1` to `km5` run the
+  service and the signature import through the real adapter.
+- Production's order, for `prod-efter.sql`: as the API's role, the table exists with row security on and four arms, the API
+  role holds SELECT, INSERT, UPDATE and DELETE on it, `authenticated` and `anon` hold nothing, and a write inside a transaction
+  that is rolled back is admitted for a Planering administrator and refused for a läsare.
