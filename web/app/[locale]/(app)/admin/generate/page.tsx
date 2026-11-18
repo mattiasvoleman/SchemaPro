@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
+  ClipboardCheck,
   History,
   Loader2,
   SlidersHorizontal,
@@ -49,6 +50,7 @@ import { useStaffingPolicy, useTeacherDuties } from "@/lib/staffing-queries";
 import { sharesByRequirement, useRequirementShares } from "@/lib/requirement-shares";
 import { dutyPeriodLine, keepsTimesAllYear } from "@/lib/duty-lines";
 import { usePlanningYear } from "@/lib/planning-year";
+import { useWeekCheck, warnsBeforeRun } from "@/lib/week-check";
 import { withProjectedHomes } from "@/lib/projected-rosters";
 import {
   PlanningYearPicker,
@@ -66,6 +68,14 @@ import { useScheduleCandidates } from "./use-schedule-candidates";
  * after the first drawing, as the board's own read is, so that it costs the page's first load nothing (A3).
  */
 const PlacedRow = lazy(() => import("./placed-row").then((module) => ({ default: module.PlacedRow })));
+
+/**
+ * Kontrollera veckan's answer and its "Kör ändå?" question: drawn only once a check has been asked for, so that a
+ * route near its bundle budget carries the button and the hook and the rest when somebody wants it.
+ */
+const WeekCheckPanel = lazy(() =>
+  import("@/components/schedule/week-check").then((module) => ({ default: module.WeekCheckPanel })),
+);
 
 /**
  * How long the gateway counts a PENDING or RUNNING job as running when it
@@ -117,6 +127,7 @@ export default function GeneratePage() {
   const tStaffing = useTranslations("staffing");
   const tCommon = useTranslations("common");
   const tCandidates = useTranslations("scheduleCandidates");
+  const tWeekCheck = useTranslations("weekCheck");
   const locale = useLocale();
   /*
    * The year generated for: this one, or next year before its activation.
@@ -239,6 +250,12 @@ export default function GeneratePage() {
   }, [requirements, groups, memberships, people]);
 
   const startOptimization = useStartOptimization();
+  /*
+   * Kontrollera veckan: the engine's quick checks on the week, in seconds. Asked for by its own button, and before every
+   * run (`run` below): a week they find tight or impossible is asked about first ("Åk 7 är 94 % full. Kör ändå?").
+   */
+  const weekCheck = useWeekCheck();
+  const [askingBeforeRun, setAskingBeforeRun] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const { data: job } = useOptimizationJob(jobId);
   const historyQuery = useOptimizationHistory(year?.id ?? null);
@@ -474,8 +491,32 @@ export default function GeneratePage() {
     if (jobStatus === "SUCCEEDED" || jobStatus === "FAILED") void refetchHistory();
   }, [jobStatus, hasYear, refetchHistory]);
 
+  /** The button beside Generera: the answer is shown under the prerequisites, and nothing is started. */
+  const checkWeek = async () => {
+    if (!year) return;
+    setAskingBeforeRun(false);
+    await weekCheck.check(year.id);
+  };
+
+  /**
+   * Generera: the week is checked first, which costs seconds and saves a school the minutes a hopeless week takes. A
+   * week the check finds tight or impossible is asked about; one it cannot check (an older engine, a failure) is run
+   * as it always was, and so is one it finds nothing in.
+   */
   const run = async () => {
     if (!year) return;
+    setAskingBeforeRun(false);
+    const outcome = await weekCheck.check(year.id);
+    if (warnsBeforeRun(outcome)) {
+      setAskingBeforeRun(true);
+      return;
+    }
+    await startRun();
+  };
+
+  const startRun = async () => {
+    if (!year) return;
+    setAskingBeforeRun(false);
     try {
       const { jobId: newJobId } = await startOptimization.mutateAsync({
         academicYearId: year.id,
@@ -645,6 +686,9 @@ export default function GeneratePage() {
             onChoose={(yearId) => {
               // The last run's card is that year's; it must not stand under the other.
               setJobId(null);
+              // The check's answer is that year's too.
+              setAskingBeforeRun(false);
+              weekCheck.reset();
               planning.choose(yearId);
             }}
           />
@@ -735,9 +779,20 @@ export default function GeneratePage() {
                 <PlacedRow yearId={year?.id ?? null} yearIsActive={year?.isActive ?? true} running={isRunning} />
               </Suspense>
             </DialogLoadBoundary>
+            {/* Read-only, so not held back by an unmet prerequisite: a post without a teacher is one of the things it says. */}
             <Button
               className="w-full sm:w-auto"
-              disabled={!canRun || isRunning || candidateRunActive}
+              variant="outline"
+              disabled={!year || prerequisitesLoading || prerequisitesFailed || weekCheck.isPending || isRunning}
+              onClick={checkWeek}
+              data-writes="SCHEMALAGGNING DRIFT"
+            >
+              {weekCheck.isPending ? <Loader2 className="animate-spin" /> : <ClipboardCheck />}
+              {weekCheck.isPending ? tWeekCheck("checking") : tWeekCheck("button")}
+            </Button>
+            <Button
+              className="w-full sm:w-auto"
+              disabled={!canRun || isRunning || candidateRunActive || weekCheck.isPending}
               onClick={run}
               data-writes="SCHEMALAGGNING DRIFT"
               aria-describedby={
@@ -960,6 +1015,21 @@ export default function GeneratePage() {
           )}
         </SectionCard>
       </div>
+
+      {/* A chunk that does not arrive leaves the answer out; it must not take the page, and the buttons, along. */}
+      {weekCheck.isPending || weekCheck.outcome ? (
+        <DialogLoadBoundary onError={() => undefined}>
+          <Suspense fallback={null}>
+            <WeekCheckPanel
+              outcome={weekCheck.outcome}
+              pending={weekCheck.isPending}
+              asking={askingBeforeRun}
+              onRunAnyway={() => void startRun()}
+              onCancelRun={() => setAskingBeforeRun(false)}
+            />
+          </Suspense>
+        </DialogLoadBoundary>
+      ) : null}
 
       <CandidatesSection
         year={year}
