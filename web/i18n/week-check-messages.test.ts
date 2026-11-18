@@ -59,6 +59,22 @@ describe("weekCheck", () => {
     expect(en.weekCheck.okBody).toContain("no guarantee");
   });
 
+  it("says a check that did not finish as that, with its figures as lower bounds, in both languages", () => {
+    expect(swedish("okCutTitle")).toBe("Förkontrollen hann inte räkna klart veckan");
+    expect(english("okCutTitle")).toBe("The pre-check did not finish counting the week");
+    expect(sv.weekCheck.okCutBody).toContain("ingen garanti");
+    expect(en.weekCheck.okCutBody).toContain("no guarantee");
+    expect(swedish("atLeast")).toContain("lägst så höga");
+    expect(english("atLeast")).toContain("at least");
+  });
+
+  it("asks for the refused run in the run history in words a reader has", () => {
+    expect(sv.weekCheck.ask.bodyImpossible).toBe(
+      "Generera skulle neka veckan inom några sekunder. Kör den ändå om du vill ha den nekade körningen i körhistoriken.",
+    );
+    expect(sv.weekCheck.ask.bodyImpossible).not.toContain("nekan");
+  });
+
   it("has no sentence that nothing says", () => {
     const code = SOURCE_DIRS.flatMap((dir) => sourcesOf(join(ROOT, dir))).join("\n");
     const flat = (catalogue: Record<string, unknown>, prefix = ""): string[] =>

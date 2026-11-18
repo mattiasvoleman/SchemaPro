@@ -1801,6 +1801,9 @@
       "IMPOSSIBLE": "The week cannot be laid"
     },
     "okBody": "That is no guarantee that a timetable exists. The check can show that a week is impossible or tight, but not that it can be laid.",
+    "okCutTitle": "The pre-check did not finish counting the week",
+    "okCutBody": "No year was found over the limit, but the week load did not get to count every year, so a year with no row is not counted. That is no guarantee that a timetable exists.",
+    "atLeast": "The figures are at least this high: the count did not finish.",
     "tightBody": "A week this tight is hard to lay, and more time may not be enough. The rows below say what takes the time.",
     "impossibleBody": "Generate would refuse the week within seconds. Fix the causes below first.",
     "yearTight": "{grades, select, any {The classes of unknown year are} other {Year {grades} is}} at {percent} % of the frame time.",

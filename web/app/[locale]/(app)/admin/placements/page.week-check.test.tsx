@@ -191,7 +191,9 @@ describe("the button", () => {
     await userEvent.setup().click(checkButton());
 
     // The module that asks is loaded when somebody asks, so the request follows the click.
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/v1/optimization/week-check", { academicYearId: "y1" }));
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/api/v1/optimization/week-check", { academicYearId: "y1" }, expect.any(AbortSignal)),
+    );
     const panel = await screen.findByRole("region", { name: "title" });
     expect(within(panel).getByText("verdict.TIGHT")).toBeInTheDocument();
     expect(within(panel).getByText("yearTight(7|94)")).toBeInTheDocument();

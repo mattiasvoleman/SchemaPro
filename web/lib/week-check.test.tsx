@@ -8,6 +8,7 @@ import {
   classifyWeekCheckError,
   ENGINE_LACKS_WEEK_CHECK,
   useWeekCheck,
+  WEEK_CHECK_WAIT_MS,
   warnsBeforeRun,
   type WeekCheckOutcome,
   type WeekCheckResult,
@@ -96,7 +97,7 @@ describe("askWeekCheck", () => {
     apiPost.mockResolvedValueOnce(answer);
 
     await expect(askWeekCheck("y-1")).resolves.toEqual({ kind: "result", result: answer });
-    expect(apiPost).toHaveBeenCalledWith("/api/v1/optimization/week-check", { academicYearId: "y-1" });
+    expect(apiPost).toHaveBeenCalledWith("/api/v1/optimization/week-check", { academicYearId: "y-1" }, expect.any(AbortSignal));
   });
 
   it("never rejects: a refusal and a failure are outcomes", async () => {
@@ -131,7 +132,7 @@ describe("useWeekCheck", () => {
       outcome = await hook.current.check("y-1");
     });
 
-    expect(apiPost).toHaveBeenCalledWith("/api/v1/optimization/week-check", { academicYearId: "y-1" });
+    expect(apiPost).toHaveBeenCalledWith("/api/v1/optimization/week-check", { academicYearId: "y-1" }, expect.any(AbortSignal));
     expect(outcome).toEqual({ kind: "result", result: answer });
     await waitFor(() => expect(hook.current.outcome).toEqual({ kind: "result", result: answer }));
   });
@@ -148,6 +149,33 @@ describe("useWeekCheck", () => {
     expect(outcome).toMatchObject({ kind: "unavailable", reason: "ENGINE_OLDER" });
     // The client above retries mutations twice; this one is asked for once.
     expect(apiPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives the request a wait of its own, shorter than the gateway's, so that no check can hold a run for long", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    apiPost.mockResolvedValueOnce({ verdict: "OK", years: [], conflicts: null, skipped: [], elapsedMs: 1, checkedBy: "ENGINE" });
+    const { result: hook } = renderHook(() => useWeekCheck(), { wrapper });
+
+    await act(async () => {
+      await hook.current.check("y-1");
+    });
+
+    expect(timeout).toHaveBeenCalledWith(WEEK_CHECK_WAIT_MS);
+    expect(WEEK_CHECK_WAIT_MS).toBeLessThan(30_000);
+    timeout.mockRestore();
+  });
+
+  it("reads a wait that ran out as a check that could not answer, not as an exception", async () => {
+    apiPost.mockRejectedValueOnce(new DOMException("The operation timed out.", "TimeoutError"));
+    const { result: hook } = renderHook(() => useWeekCheck(), { wrapper });
+
+    let outcome: WeekCheckOutcome | undefined;
+    await act(async () => {
+      outcome = await hook.current.check("y-1");
+    });
+
+    expect(outcome).toMatchObject({ kind: "unavailable", reason: "ERROR" });
+    expect(warnsBeforeRun(outcome)).toBe(false);
   });
 
   it("drops the answer on reset, as a year change does", async () => {

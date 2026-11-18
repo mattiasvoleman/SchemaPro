@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -256,6 +256,9 @@ export default function GeneratePage() {
    */
   const weekCheck = useWeekCheck();
   const [askingBeforeRun, setAskingBeforeRun] = useState(false);
+  /* The year the page shows now, for a check whose answer comes after another year has been chosen (`run` below). */
+  const shownYearId = useRef<string | null>(null);
+  shownYearId.current = year?.id ?? null;
   const [jobId, setJobId] = useState<string | null>(null);
   const { data: job } = useOptimizationJob(jobId);
   const historyQuery = useOptimizationHistory(year?.id ?? null);
@@ -505,8 +508,12 @@ export default function GeneratePage() {
    */
   const run = async () => {
     if (!year) return;
+    const asked = year.id;
     setAskingBeforeRun(false);
-    const outcome = await weekCheck.check(year.id);
+    const outcome = await weekCheck.check(asked);
+    // The year picker is not held while a check is on its way, and the answer, and the run, were asked for the year
+    // that was shown then: a run for one the page no longer shows would be written over a year nobody is looking at.
+    if (shownYearId.current !== asked) return;
     if (warnsBeforeRun(outcome)) {
       setAskingBeforeRun(true);
       return;

@@ -299,7 +299,7 @@ describe("Kontrollera veckan: the button", () => {
 
     await userEvent.setup().click(checkButton());
 
-    expect(apiPost).toHaveBeenCalledWith("/api/v1/optimization/week-check", { academicYearId: "y-1" });
+    expect(apiPost).toHaveBeenCalledWith("/api/v1/optimization/week-check", { academicYearId: "y-1" }, expect.any(AbortSignal));
     expect(noMutation.mutateAsync).not.toHaveBeenCalled();
     const region = await screen.findByRole("region", { name: "weekCheck.title" });
     expect(within(region).getByText("weekCheck.verdict.TIGHT")).toBeInTheDocument();
@@ -405,7 +405,7 @@ describe("Kontrollera veckan: before a run", () => {
     await waitFor(() =>
       expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ academicYearId: "y-1" })),
     );
-    expect(apiPost).toHaveBeenCalledWith("/api/v1/optimization/week-check", { academicYearId: "y-1" });
+    expect(apiPost).toHaveBeenCalledWith("/api/v1/optimization/week-check", { academicYearId: "y-1" }, expect.any(AbortSignal));
     expect(apiPost.mock.invocationCallOrder[0]).toBeLessThan(noMutation.mutateAsync.mock.invocationCallOrder[0]);
     expect(screen.queryByRole("dialog")).toBeNull();
   });
@@ -504,5 +504,60 @@ describe("Kontrollera veckan: before a run", () => {
     await userEvent.setup().click(runButton());
     await screen.findByRole("dialog");
     expect(noMutation.mutateAsync).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Kontrollera veckan: a run is neither held nor misdirected by it", () => {
+  beforeEach(() => {
+    state.years = [ACTIVE, NEXT];
+    state.people.push({ ...pupil("t-1", "g-41"), role: "TEACHER", studentGroupId: null });
+    state.policy = { unstaffedGeneration: "REFUSE" };
+    noMutation.mutateAsync.mockReset();
+    noMutation.mutateAsync.mockResolvedValue({ jobId: "job-1" });
+  });
+
+  it.each([
+    ["finds nothing", OK_CHECK],
+    ["finds the week tight", TIGHT_CHECK],
+  ])("starts no run, and asks no question, for a year the page no longer shows when the check %s", async (_name, answer) => {
+    let reply: (value: unknown) => void = () => undefined;
+    apiPost.mockReturnValueOnce(new Promise((resolve) => (reply = resolve)));
+    render(<GeneratePage />);
+
+    await userEvent.setup().click(runButton());
+    await waitFor(() => expect(apiPost).toHaveBeenCalledTimes(1));
+    // The year picker is not held while the check is on its way: next year is chosen.
+    await userEvent.setup().click(screen.getByRole("button", { name: /planningYear\.optionNext/ }));
+    await act(async () => reply(answer));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // A run for y-1 would be written over a year the page has stopped showing.
+    expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("goes on to run when the check has not answered within its wait", async () => {
+    const wait = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(wait.signal);
+    apiPost.mockImplementationOnce(
+      (_path: string, _body: unknown, signal?: AbortSignal) =>
+        new Promise((_resolve, reject) =>
+          signal?.addEventListener("abort", () => reject(new DOMException("The operation timed out.", "TimeoutError"))),
+        ),
+    );
+    render(<GeneratePage />);
+
+    await userEvent.setup().click(runButton());
+    await waitFor(() => expect(apiPost).toHaveBeenCalledTimes(1));
+    // Still waiting: the run is not started, and not asked about either.
+    expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+
+    await act(async () => wait.abort());
+
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ academicYearId: "y-1" })),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    vi.restoreAllMocks();
   });
 });
