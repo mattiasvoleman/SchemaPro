@@ -362,6 +362,9 @@ describe('Förlagda poster (e2e)', () => {
         });
         // The read is the year's lessons that are not kept, not parked and not written from a förläggning.
         expect(harness.tx['masterLesson']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ where: generatedMastersWhere(YEAR_ID) }));
+        // No lesson with a second class is read (generatedMastersWhere leaves them out), so there is no read of the second classes either.
+        const select = (harness.tx['masterLesson']!['findMany']!.mock.calls.at(-1)![0] as { select: Record<string, unknown> }).select;
+        expect(select).not.toHaveProperty('extraGroups');
       });
 
       it('is a year that is there: 404 for one the caller cannot see, and 400 for a year that is no uuid', async () => {

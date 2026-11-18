@@ -117,3 +117,27 @@ test("Visa senaste schemat: no automated accessibility violation in either theme
   expect(reports, reports.join("\n")).toEqual([]);
   expect(misses, MISSES).toEqual([]);
 });
+
+test("Visa senaste schemat: a pale lesson over the day's edge (07:30 or 18:30) is cut there, and the grid gets no vertical scroll (review of #347)", async ({ page, baseURL }) => {
+  // The world's latest schedule plus two lessons of 7A over 08:00 and 18:00, added to the stub's own answer.
+  await page.route("**/api/v1/teaching-requirements/placements/latest*", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { lessons: Array<Record<string, unknown>> };
+    const template = body.lessons[0]!;
+    body.lessons.push(
+      { ...template, id: "edge-late", dayOfWeek: 5, startTime: "17:30", endTime: "18:30" },
+      { ...template, id: "edge-early", dayOfWeek: 1, startTime: "07:30", endTime: "08:30" },
+    );
+    await route.fulfill({ response, json: body });
+  });
+  const misses = await openWithLayer(page, baseURL!, { width: 1280, height: 800 });
+  await expect(page.getByTestId("placement-ghost")).toHaveCount(7);
+  const out = await page.evaluate(() => {
+    const first = document.querySelector<HTMLElement>("[data-testid=placement-ghost]")!;
+    let scroller: HTMLElement | null = first.parentElement;
+    while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowX)) scroller = scroller.parentElement;
+    return { scrollable: scroller ? scroller.scrollHeight - scroller.clientHeight : null };
+  });
+  expect(out.scrollable).toBeLessThanOrEqual(1);
+  expect(misses, MISSES).toEqual([]);
+});

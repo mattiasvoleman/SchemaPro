@@ -310,12 +310,15 @@ export class RequirementPlacementsService {
     return this.prisma.withRls(user, async (tx) => {
       const year = await tx.academicYear.findUnique({ where: { id: academicYearId }, select: { id: true } });
       if (!year) throw new NotFoundException('Läsåret finns inte.');
+      // No extraGroups: generatedMastersWhere leaves out every lesson that has one (it is a PRESERVED_FROM_REGENERATION arm), so the read would
+      // be a second statement, with a bind for every lesson of the year, to find nothing (review of #347).
+      const { extraGroups: _kept, ...columns } = BOARD_KEPT_SELECT;
       const lessons = await tx.masterLesson.findMany({
         where: generatedMastersWhere(academicYearId),
-        select: BOARD_KEPT_SELECT,
+        select: columns,
         orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
       });
-      return { academicYearId, lessons: lessons.map(keptViewOf) };
+      return { academicYearId, lessons: lessons.map((lesson) => keptViewOf({ ...lesson, extraGroups: [] })) };
     });
   }
 

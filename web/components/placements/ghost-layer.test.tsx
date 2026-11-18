@@ -148,6 +148,14 @@ describe("GhostColumn", () => {
     for (const element of screen.getAllByTestId("placement-ghost")) expect(element.className).toContain("pointer-events-none");
   });
 
+  it("is cut at the column's edges: a lesson that crosses 08:00 or 18:00 must not stand outside the day's body (review of #347)", () => {
+    render(<GhostColumn ghosts={ghosts} day={2} scale={scale} />);
+    const [one] = screen.getAllByTestId("placement-ghost");
+    // The grid's scroll box scrolls upright too (overflow-x: auto), so a lesson that reached past the bottom would give it a vertical scroll.
+    expect(one!.parentElement).toHaveClass("overflow-hidden", "absolute", "inset-0", "pointer-events-none");
+    expect(screen.getByTestId("placement-ghost-column")).toBe(one!.parentElement);
+  });
+
   it("draws nothing for a day that has none", () => {
     render(<GhostColumn ghosts={ghosts} day={5} scale={scale} />);
     expect(screen.queryByTestId("placement-ghost")).not.toBeInTheDocument();

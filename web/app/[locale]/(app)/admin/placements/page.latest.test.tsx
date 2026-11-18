@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
   latest: undefined as unknown,
   latestFails: false,
   readOnly: false,
+  yearId: "y1",
   jobs: [] as Array<{ id: string; status: string; solverStatus: string | null; finishedAt: string | null; createdAt: string }>,
 }));
 
@@ -23,7 +24,7 @@ const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn() }));
 vi.mock("@/lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/api")>()), api }));
 vi.mock("@/lib/planning-year", () => ({
   usePlanningYear: () => ({
-    year: { id: "y1", name: "2026/27", startDate: "2026-08-15", endDate: "2027-06-11", isActive: true },
+    year: { id: state.yearId, name: "2026/27", startDate: "2026-08-15", endDate: "2027-06-11", isActive: state.yearId === "y1" },
     active: { id: "y1" },
     successor: null,
     choose: vi.fn(),
@@ -145,6 +146,7 @@ beforeEach(() => {
   state.latest = { academicYearId: "y1", lessons: [generated("g1"), generated("g2", { dayOfWeek: 4, startTime: "11:00", endTime: "12:00", subjectId: "s-sv" }), generated("g3", { studentGroupId: "g-7b" })] };
   state.latestFails = false;
   state.readOnly = false;
+  state.yearId = "y1";
   state.jobs = [];
   api.get.mockReset().mockImplementation(async (path: string) => {
     if (path.includes("/placements/latest")) {
@@ -231,6 +233,28 @@ describe("the switch for the latest schedule", () => {
     await pickClass();
     await waitFor(() => expect(screen.getByTestId("placement-latest-said")).toHaveTextContent("failed"));
     expect(ghosts()).toEqual([]);
+  });
+
+  it("is read for the läsår on screen: another läsår is another read, and nothing of the first one's schedule is drawn for it (review of #345/#347)", async () => {
+    const other = { academicYearId: "y2", lessons: [generated("n1", { dayOfWeek: 5, startTime: "13:00", endTime: "14:00" })] };
+    api.get.mockImplementation(async (path: string) => {
+      if (path.includes("/placements/latest")) return structuredClone(path.includes("academicYearId=y2") ? other : state.latest);
+      return structuredClone(state.board);
+    });
+    const { rerender } = renderPage();
+    await ready();
+    await turnOn();
+    await pickClass();
+    await waitFor(() => expect(ghosts()).toHaveLength(2));
+    state.yearId = "y2";
+    rerender(
+      <QueryClientProvider client={client}>
+        <PlacementsPage />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(asked()).toContain("/api/v1/teaching-requirements/placements/latest?academicYearId=y2"));
+    await waitFor(() => expect(ghosts()).toHaveLength(1));
+    expect(ghosts()[0]!.getAttribute("aria-label")).toContain("13:00–14:00");
   });
 
   it("is the reader's too: it is a read, and a reader with no card in the week still sees the schedule's lessons", async () => {

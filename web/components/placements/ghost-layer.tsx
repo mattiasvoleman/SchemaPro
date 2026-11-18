@@ -83,7 +83,9 @@ export function GhostColumn({
   scale: { startMinutes: number; pxPerMinute: number };
 }) {
   return (
-    <>
+    // Cut at the column's edges: a lesson that crosses 08:00 or 18:00 (ghostLessonsOf keeps it) would otherwise stand 33 px outside the
+    // day's body, and the grid's scroll box, which is `overflow-x: auto` and so scrolls upright too, would get a vertical scroll for it.
+    <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden" data-testid="placement-ghost-column">
       {layoutDay(ghosts.filter((ghost) => ghost.dayOfWeek === day)).map((ghost) => {
         const height = Math.max(14, (ghost.endMinutes - ghost.startMinutes) * scale.pxPerMinute);
         return (
@@ -107,6 +109,6 @@ export function GhostColumn({
           </div>
         );
       })}
-    </>
+    </div>
   );
 }
