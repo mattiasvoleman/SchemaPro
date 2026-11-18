@@ -6464,8 +6464,11 @@ Migration `20270223090000_en_skola_sparar_kolumnmallar_for_sina_importer` makes 
 ### 28.1 Deploy order
 
 1. Run the migration. It adds a table nothing else reads, so a gateway from before it is unaffected and a migration with no
-   gateway is harmless. In production, as the owner, from a tree that has every applied migration: `prod-fore.sql`,
-   `migrate deploy`, `prod-efter.sql`.
+   gateway is harmless. In production, as the owner, from a tree that has every applied migration: the release's
+   `prod-fore.sql`, `migrate deploy`, the release's `prod-efter.sql` (read-only SQL kept with the release's notes, not in this
+   repository). The migration's one lock on a live table is SHARE ROW EXCLUSIVE on `Schools` for the foreign key: it waits
+   for a transaction that is writing `Schools` (nothing in the gateway does) and blocks nothing that reads it or checks a
+   key against it.
 2. Merge. The gateway answers the new routes, and the signature fields are accepted (`forbidNonWhitelisted` is on, so a
    gateway from before them answers 400 to a row that carries one: the web that sends them is deployed after this).
 3. The web (parts 2 and 3) lists the templates when a dialog opens and treats a failed read as "no templates": it works
@@ -6493,6 +6496,9 @@ Migration `20270223090000_en_skola_sparar_kolumnmallar_for_sina_importer` makes 
   other, the API role's four privileges, nobody's MAINTAIN), who reads and who writes, the school, the bounds, and PostgREST's
   roles. Section 116's area matrix lists the table (`src/auth/admin-areas.ts`). The adapter probe's `km1` to `km5` run the
   service and the signature import through the real adapter.
-- Production's order, for `prod-efter.sql`: as the API's role, the table exists with row security on and four arms, the API
-  role holds SELECT, INSERT, UPDATE and DELETE on it, `authenticated` and `anon` hold nothing, and a write inside a transaction
-  that is rolled back is admitted for a Planering administrator and refused for a läsare.
+- What `prod-efter.sql` asks of production, read-only and as the owner (the API's own login is not on the operator's
+  machine, so each role's rights are read with `has_table_privilege`): the table has the columns, keys, CHECKs and indexes
+  above, row security is on and not forced, the four arms read as the migration wrote them (text and md5), the API role holds
+  SELECT, INSERT, UPDATE and DELETE and nothing more, `authenticated`, `anon` and `service_role` write nothing, nobody holds
+  MAINTAIN, and no other table, function or arm changed. That a Planering administrator writes and a läsare does not is held
+  by RLS sections 535 to 539, not asked of production.

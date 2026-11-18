@@ -2,7 +2,22 @@ import 'reflect-metadata';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import fixture from './__fixtures__/import-fields.json';
-import { REQUIREMENT_FILE_COLUMNS } from '../import/dto/import.dto';
+import { getMetadataStorage } from 'class-validator';
+import {
+  ImportGuardianRowDto,
+  ImportGroupRowDto,
+  ImportMembershipRowDto,
+  ImportRequirementRowDto,
+  ImportRoomRowDto,
+  ImportRoomTypeRowDto,
+  ImportStudentRowDto,
+  ImportSubjectRowDto,
+  ImportTeacherDutyRowDto,
+  ImportTeacherQualificationRowDto,
+  ImportTeacherRowDto,
+  ImportTimplanRowDto,
+  REQUIREMENT_FILE_COLUMNS,
+} from '../import/dto/import.dto';
 import { IMPORT_TEMPLATE_CONFLICTS, IMPORT_TEMPLATE_FIELDS, IMPORT_TEMPLATE_KINDS, IMPORT_TEMPLATE_LIMIT } from './import-fields';
 
 /**
@@ -51,6 +66,30 @@ describe('the import template fields', () => {
     expect(check).not.toBeNull();
     const kinds = [...check![1]!.matchAll(/'([A-Za-z]+)'/g)].map((m) => m[1]);
     expect(kinds).toEqual(IMPORT_TEMPLATE_KINDS);
+  });
+
+  it('are, for the twelve kinds a CSV importer reads, the properties of that importer\'s row, no more and no fewer', () => {
+    // The ids are "the importers' own": a field a template can place is a key of the row the import takes, so a property
+    // added to or taken from a row DTO fails here, and not as a school's saved template that names a field no import reads.
+    const rowOf = {
+      students: ImportStudentRowDto,
+      guardians: ImportGuardianRowDto,
+      teachers: ImportTeacherRowDto,
+      classes: ImportGroupRowDto,
+      teachingGroups: ImportMembershipRowDto,
+      roomTypes: ImportRoomTypeRowDto,
+      rooms: ImportRoomRowDto,
+      subjects: ImportSubjectRowDto,
+      requirements: ImportRequirementRowDto,
+      teacherQualifications: ImportTeacherQualificationRowDto,
+      teacherDuties: ImportTeacherDutyRowDto,
+      timplan: ImportTimplanRowDto,
+    } as const;
+    const propertiesOf = (target: new () => object): string[] =>
+      [...new Set(getMetadataStorage().getTargetValidationMetadatas(target, '', true, false).map((meta) => meta.propertyName))].sort();
+    for (const [kind, dto] of Object.entries(rowOf)) {
+      expect([kind, [...IMPORT_TEMPLATE_FIELDS[kind as keyof typeof rowOf]].sort()]).toEqual([kind, propertiesOf(dto)]);
+    }
   });
 
   it('give the requirements import every field of its row that names a teacher', () => {

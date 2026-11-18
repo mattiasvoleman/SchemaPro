@@ -15,6 +15,7 @@ import {
   TEMPLATE_NAME_INVALID,
   TEMPLATE_NAME_TAKEN,
   TEMPLATE_PERSONAL_NUMBER,
+  TEMPLATE_TOO_LARGE,
   TEMPLATE_UNKNOWN_FIELD,
   toTemplateView,
 } from './import-templates.service';
@@ -25,6 +26,13 @@ const NOW = new Date('2026-11-18T10:00:00.000Z');
 
 const post = (key: string, field: string | null, label = key) => ({ key, label, field });
 const known = (code: string) => new Prisma.PrismaClientKnownRequestError('x', { code, clientVersion: 'test' });
+/** A driver error under P2039, as the adapter carries a CHECK violation it has no code for. */
+const checkViolation = (constraint: string) =>
+  new Prisma.PrismaClientKnownRequestError(`Database error. Code: \`23514\`. Message: \`new row for relation "ImportMappingTemplates" violates check constraint "${constraint}"\``, {
+    code: 'P2039',
+    clientVersion: 'test',
+    meta: { driverAdapterError: { cause: { originalCode: '23514', originalMessage: `new row for relation "ImportMappingTemplates" violates check constraint "${constraint}"`, kind: 'postgres' } } },
+  });
 const row = (over: Record<string, unknown> = {}) => ({
   id: ID,
   kind: 'requirements',
@@ -139,6 +147,16 @@ describe('checkPlacements', () => {
     expect(JSON.stringify(refused)).not.toMatch(/1980|800161/);
   });
 
+  it('does not quote a field name that has the shape of a personnummer, and refuses it by its place', () => {
+    const refused = refusal(() => checkPlacements('rooms', [post('namn', 'a198001011234', 'Namn')]));
+    expect(refused).toEqual({ status: 400, code: TEMPLATE_PERSONAL_NUMBER, params: { index: 0 } });
+    try {
+      checkPlacements('rooms', [post('namn', 'a198001011234', 'Namn')]);
+    } catch (error) {
+      expect(JSON.stringify((error as BadRequestException).getResponse())).not.toMatch(/198001011234/);
+    }
+  });
+
   it('lets an ordinary header with digits and dates through', () => {
     expect(() =>
       checkPlacements('students', [post('klass7a', 'className', 'Klass 7A'), post('lasar20262027', null, 'Läsår 2026-2027')]),
@@ -242,6 +260,14 @@ describe('ImportTemplatesService', () => {
       expect(tx.importMappingTemplate.create).not.toHaveBeenCalled();
     });
 
+    it('answers a template over the database\'s 40 000 bytes with a 400 and a code, not a 500', async () => {
+      // jsonb's text has more spaces than the request, so 200 posts within the DTO's bounds can still be over the CHECK.
+      tx.importMappingTemplate.create.mockRejectedValue(checkViolation('ImportMappingTemplates_placements_check'));
+      const refused = await service.create(mapping, testUser()).catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(BadRequestException);
+      expect((refused as BadRequestException).getResponse()).toMatchObject({ code: TEMPLATE_TOO_LARGE, params: { maxPlacements: 200, maxBytes: 40_000 } });
+    });
+
     it('takes a second writer\'s name as the name taken', async () => {
       tx.importMappingTemplate.create.mockRejectedValue(known('P2002'));
       const refused = await service.create(mapping, testUser()).catch((error: unknown) => error);
@@ -263,6 +289,13 @@ describe('ImportTemplatesService', () => {
       await expect(service.update(ID, { placements: [post('namn', 'firstName')] }, testUser())).rejects.toMatchObject({
         response: { code: TEMPLATE_UNKNOWN_FIELD },
       });
+    });
+
+    it('answers a changed list of posts over the database\'s 40 000 bytes with the same 400', async () => {
+      tx.importMappingTemplate.update.mockRejectedValue(checkViolation('ImportMappingTemplates_placements_check'));
+      const refused = await service.update(ID, { placements: [post('grupp', 'groupName')] }, testUser()).catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(BadRequestException);
+      expect((refused as BadRequestException).getResponse()).toMatchObject({ code: TEMPLATE_TOO_LARGE });
     });
 
     it('answers 404 for a row the arms hide, and writes nothing', async () => {

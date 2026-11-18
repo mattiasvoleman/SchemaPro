@@ -2637,6 +2637,17 @@ describe('ImportService', () => {
         });
       });
 
+      it('finds a signature with an accented letter whichever way it is written, in the file and on the post (NFC and NFD)', async () => {
+        // A UTF-8 file from some programs writes Å as A and a combining ring; the schedule exchange composes before it compares.
+        employments({ userId: TEACHER_ID, signature: 'ÅSÖ'.normalize('NFC') }, { userId: CO_TEACHER_ID, signature: 'ÄÖE'.normalize('NFD') });
+        const report = await bySignature(row({ teacherSignature: 'ÅSÖ'.normalize('NFD'), coTeacherSignature: 'ÄÖE'.normalize('NFC') }));
+
+        expect(report).toMatchObject({ created: 1, errors: [] });
+        expect(tx.teachingRequirement.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ teacherId: TEACHER_ID, coTeacherId: CO_TEACHER_ID }),
+        });
+      });
+
       it('asks whether the person is an active teacher as the e-mail path asks, and refuses one who is not', async () => {
         tx.user.findMany.mockResolvedValue([{ id: CO_TEACHER_ID }]);
         const report = await bySignature(row({ teacherSignature: 'KA' }));

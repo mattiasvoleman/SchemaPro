@@ -65552,6 +65552,11 @@ BEGIN
   IF cols IS DISTINCT FROM 'id:uuid,schoolId:uuid,kind:text,name:text,headerRow:smallint,placements:jsonb,createdAt:timestamp(6) with time zone,updatedAt:timestamp(6) with time zone' THEN
     RAISE EXCEPTION 'km 535: ImportMappingTemplates has the columns %', cols;
   END IF;
+  -- Every column but the header row is NOT NULL. A CHECK lets a NULL through (a NULL name or kind satisfies its CHECK), so a
+  -- nullable kind, name or school would admit rows the bounds below never see.
+  SELECT string_agg(a.attname, ',' ORDER BY a.attnum) INTO def
+    FROM pg_attribute a WHERE a.attrelid = 'public."ImportMappingTemplates"'::regclass AND a.attnum > 0 AND NOT a.attisdropped AND NOT a.attnotnull;
+  IF def IS DISTINCT FROM 'headerRow' THEN RAISE EXCEPTION 'km 535: the nullable columns are %, not the header row alone', def; END IF;
   -- Headers and fields, no person and no value: nothing in the table's columns names one.
   IF EXISTS (SELECT 1 FROM pg_attribute a
               WHERE a.attrelid = 'public."ImportMappingTemplates"'::regclass AND a.attnum > 0 AND NOT a.attisdropped
