@@ -665,13 +665,16 @@ export class RequirementPlacementsService {
    * call the engine for a year with nothing left, so the class's lunch cannot refuse it (placement-warnings.ts, ASKED).
    */
   private async yearHasLessonsLeft(tx: PrismaClient, academicYearId: string): Promise<boolean> {
-    const [posts, rows, keptRows, blocks] = await Promise.all([
+    const [posts, rows, keptRows] = await Promise.all([
       tx.teachingRequirement.findMany({ where: { academicYearId }, select: BOARD_POST_SELECT, orderBy: { id: 'asc' } }),
       tx.teachingRequirementPlacement.findMany({ where: { requirement: { academicYearId } }, select: VIEW_SELECT }),
       tx.masterLesson.findMany({ where: keptMastersWhere(academicYearId), select: BOARD_KEPT_SELECT }),
-      loadBlocksOfYear(tx, academicYearId),
     ]);
-    const { slotsOf, locksByPost } = countedPostsOf(posts, rows, keptRows.map(keptForCountOf), blocks);
+    // The blocks are not read (review of #341, LÅG-4). A placed lesson of a block is a pin, and the caller asks this only when no
+    // row of the post or beside it is one (placement-warning-reads.ts: `!items.some((item) => item.pin)`, and `besideOf` carries
+    // every placed block's lessons), so a block with a lesson placed never reaches here, and a block with none adds no slot to
+    // the count. Reading them cost a join over every member and row of the year for an answer they cannot change.
+    const { slotsOf, locksByPost } = countedPostsOf(posts, rows, keptRows.map(keptForCountOf), []);
     // The rows' key is a write's, and the count has no use for it.
     return lessonsLeftOf(posts.map((post) => boardPostOf(boardPostShape(post), locksByPost.get(post.id) ?? [], slotsOf.get(post.id) ?? [], '')));
   }
