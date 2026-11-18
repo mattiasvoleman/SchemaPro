@@ -64,3 +64,14 @@ export const PRESERVED_FROM_REGENERATION: Prisma.MasterLessonWhereInput[] = [
 export function keptMastersWhere(academicYearId: string): Prisma.MasterLessonWhereInput {
   return { academicYearId, isParked: false, OR: PRESERVED_FROM_REGENERATION };
 }
+
+/**
+ * The lessons the last Generera laid and nobody has taken over: what the NEXT Generera replaces (the complement of
+ * PRESERVED_FROM_REGENERATION), not parked, and not those it wrote from a förläggning, which are the week's cards
+ * (`fromPlacement`: a post's rows come back as locked lessons of their own). The week of förläggningar draws them behind
+ * its cards when the school asks to see the latest schedule (GET /teaching-requirements/placements/latest). Stated
+ * here, next to the arms it is the complement of, so that a fifth arm of PRESERVED_FROM_REGENERATION moves it too.
+ */
+export function generatedMastersWhere(academicYearId: string): Prisma.MasterLessonWhereInput {
+  return { academicYearId, isParked: false, fromPlacement: false, NOT: { OR: PRESERVED_FROM_REGENERATION } };
+}

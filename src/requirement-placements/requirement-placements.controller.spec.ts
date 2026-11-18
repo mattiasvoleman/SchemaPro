@@ -18,7 +18,7 @@ const POST = '55555555-5555-4555-8555-555555555555';
 const ROOM = '66666666-6666-4666-8666-666666666666';
 
 describe('RequirementPlacementsController', () => {
-  let service: { listOfYear: jest.Mock; boardOfYear: jest.Mock; listOfPost: jest.Mock; replace: jest.Mock };
+  let service: { listOfYear: jest.Mock; boardOfYear: jest.Mock; latestOfYear: jest.Mock; listOfPost: jest.Mock; replace: jest.Mock };
   let controller: RequirementPlacementsController;
   const user = testUser();
 
@@ -26,6 +26,7 @@ describe('RequirementPlacementsController', () => {
     service = {
       listOfYear: jest.fn().mockResolvedValue([]),
       boardOfYear: jest.fn().mockResolvedValue({ academicYearId: YEAR, placements: [], posts: [], kept: [], meals: [] }),
+      latestOfYear: jest.fn().mockResolvedValue({ academicYearId: YEAR, lessons: [] }),
       listOfPost: jest.fn().mockResolvedValue({ placements: [], verdicts: [], rowsKey: 'e3b0c44298fc1c14' }),
       replace: jest.fn().mockResolvedValue({ placements: [], verdicts: [], rowsKey: 'e3b0c44298fc1c14' }),
     };
@@ -41,6 +42,11 @@ describe('RequirementPlacementsController', () => {
     it('answers the year\'s week of förläggningar with the caller as principal', async () => {
       await expect(controller.boardOfYear(YEAR, user)).resolves.toEqual({ academicYearId: YEAR, placements: [], posts: [], kept: [], meals: [] });
       expect(service.boardOfYear).toHaveBeenCalledWith(YEAR, user);
+    });
+
+    it('answers the latest schedule with the caller as principal', async () => {
+      await expect(controller.latestOfYear(YEAR, user)).resolves.toEqual({ academicYearId: YEAR, lessons: [] });
+      expect(service.latestOfYear).toHaveBeenCalledWith(YEAR, user);
     });
 
     it('lists one post\'s rows with their verdicts', async () => {
@@ -77,6 +83,7 @@ describe('RequirementPlacementsController', () => {
       expect(Reflect.getMetadata(PATH_METADATA, RequirementPlacementsController)).toBe('api/v1/teaching-requirements');
       expect([path(proto.listOfYear), method(proto.listOfYear)]).toEqual(['placements', RequestMethod.GET]);
       expect([path(proto.boardOfYear), method(proto.boardOfYear)]).toEqual(['placements/board', RequestMethod.GET]);
+      expect([path(proto.latestOfYear), method(proto.latestOfYear)]).toEqual(['placements/latest', RequestMethod.GET]);
       expect([path(proto.listOfPost), method(proto.listOfPost)]).toEqual([':id/placements', RequestMethod.GET]);
       expect([path(proto.replace), method(proto.replace)]).toEqual([':id/placements', RequestMethod.PUT]);
     });
@@ -84,11 +91,12 @@ describe('RequirementPlacementsController', () => {
     it('declares the week before the `:id` routes, so that no post can be named "placements"', () => {
       const order = Object.getOwnPropertyNames(proto).filter((name) => name !== 'constructor');
       expect(order.indexOf('boardOfYear')).toBeLessThan(order.indexOf('listOfPost'));
+      expect(order.indexOf('latestOfYear')).toBeLessThan(order.indexOf('listOfPost'));
       expect(order.indexOf('listOfYear')).toBeLessThan(order.indexOf('listOfPost'));
     });
 
     it('leaves the area to the class: reading is every administrator\'s, only the PUT is a write', () => {
-      for (const handler of [proto.listOfYear, proto.boardOfYear, proto.listOfPost, proto.replace]) {
+      for (const handler of [proto.listOfYear, proto.boardOfYear, proto.latestOfYear, proto.listOfPost, proto.replace]) {
         expect(Reflect.getMetadata(AREA_KEY, handler)).toBeUndefined();
         expect(Reflect.getMetadata(ROLES_KEY, handler)).toBeUndefined();
       }
