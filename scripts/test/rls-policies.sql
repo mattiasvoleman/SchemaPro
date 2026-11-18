@@ -65515,3 +65515,515 @@ BEGIN
   RAISE NOTICE 'dörrvakt 519: the letter and the list answer the job and no login';
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 530: Generera som kö, katalogen (20270222090000).
+--
+-- OptimizationJobs fick tre kolumner (claimedBy, heartbeatAt, leaseUntil), två CHECK, ett partiellt unikt index (högst en aktiv
+-- körning per läsår) och en städning, app.optimization_jobs_sweep(). Inga armar ändrades: de fyra administratörsarmarna ligger kvar
+-- hos API:ts roll ensam (section 162), och kolumnerna lyds av dem som tabellens övriga. Här läses allt ur katalogen, så att en
+-- senare migrering som lossar något syns också på en väg ingen sektion går.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  got text;
+  fn record;
+  src text;
+BEGIN
+  SELECT string_agg(a.attname || ' ' || format_type(a.atttypid, a.atttypmod) || ' ' || CASE WHEN a.attnotnull THEN 'not null' ELSE 'null' END
+                    || ' ' || coalesce(pg_get_expr(d.adbin, d.adrelid), 'no default'), ', ' ORDER BY a.attname) INTO got
+    FROM pg_attribute a
+    LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = 'public."OptimizationJobs"'::regclass AND a.attname IN ('claimedBy', 'heartbeatAt', 'leaseUntil') AND NOT a.attisdropped;
+  IF got IS DISTINCT FROM 'claimedBy text null no default, '
+                       || 'heartbeatAt timestamp(6) with time zone not null now(), '
+                       || 'leaseUntil timestamp(6) with time zone not null (now() + ''00:15:00''::interval)' THEN
+    RAISE EXCEPTION 'gq 530: the lease columns are %', got;
+  END IF;
+
+  -- De två CHECK, validerade. Namnen och uttrycken, utan parenteser (Postgres 16 och 17 sätter dem olika); kanterna prövar 532.
+  SELECT string_agg(c.conname || ' ' || c.convalidated::text || ' ' || translate(regexp_replace(pg_get_constraintdef(c.oid), '\s+', ' ', 'g'), '()', ''), '; ' ORDER BY c.conname) INTO got
+    FROM pg_constraint c
+   WHERE c.conrelid = 'public."OptimizationJobs"'::regclass AND c.contype = 'c';
+  IF got IS NULL
+     OR position('OptimizationJobs_lease_follows_the_heartbeat true CHECK "leaseUntil" >= "heartbeatAt" AND "leaseUntil" <= "heartbeatAt" + ''01:00:00''::interval' IN got) = 0
+     OR position('OptimizationJobs_claimedBy_is_short true CHECK "claimedBy" IS NULL OR char_length"claimedBy" >= 1 AND char_length"claimedBy" <= 100' IN got) = 0 THEN
+    RAISE EXCEPTION 'gq 530: the checks of OptimizationJobs are %', got;
+  END IF;
+
+  -- Indexet: unikt, partiellt, (schoolId, academicYearId), och bara de två aktiva statusarna i villkoret.
+  SELECT string_agg((SELECT string_agg(a.attname, ',' ORDER BY k.ord) FROM unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
+                       JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum)
+                    || ' unique=' || i.indisunique::text || ' valid=' || i.indisvalid::text || ' where ' || pg_get_expr(i.indpred, i.indrelid), '; ') INTO got
+    FROM pg_index i
+    JOIN pg_class ix ON ix.oid = i.indexrelid
+   WHERE i.indrelid = 'public."OptimizationJobs"'::regclass AND ix.relname = 'OptimizationJobs_one_active_per_year';
+  IF got IS NULL OR got NOT LIKE 'schoolId,academicYearId unique=true valid=true where %'
+     OR got NOT LIKE '%''PENDING''%' OR got NOT LIKE '%''RUNNING''%' OR got LIKE '%''SUCCEEDED''%' OR got LIKE '%''FAILED''%' THEN
+    RAISE EXCEPTION 'gq 530: the one-active-run index is %', coalesce(got, 'missing');
+  END IF;
+
+  -- Armarna som förut: de fyra, API:ts rolls ensam. Ingen arm nämner de nya kolumnerna (en arm som gjorde det vore en ny dörr).
+  SELECT string_agg(policyname || ' ' || cmd || ' ' || roles::text, ', ' ORDER BY policyname) INTO got
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'OptimizationJobs';
+  IF got IS DISTINCT FROM 'optimization_jobs_admin_delete DELETE {app_authenticated}, '
+                       || 'optimization_jobs_admin_insert INSERT {app_authenticated}, '
+                       || 'optimization_jobs_admin_select SELECT {app_authenticated}, '
+                       || 'optimization_jobs_admin_update UPDATE {app_authenticated}' THEN
+    RAISE EXCEPTION 'gq 530: OptimizationJobs'' arms are %', got;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'OptimizationJobs'
+                AND (coalesce(qual, '') || coalesce(with_check, '')) ~ '(claimedBy|heartbeatAt|leaseUntil)') THEN
+    RAISE EXCEPTION 'gq 530: an arm of OptimizationJobs reads a lease column';
+  END IF;
+
+  -- Rättigheterna: API:ts roll läser, lägger till, ändrar och tar bort, men har ingen TRUNCATE, REFERENCES eller TRIGGER (och ingen
+  -- MAINTAIN på 17); tjänsteroller läser bara; anon och PUBLIC håller inget.
+  IF NOT (has_table_privilege('app_authenticated', 'public."OptimizationJobs"', 'SELECT')
+          AND has_table_privilege('app_authenticated', 'public."OptimizationJobs"', 'INSERT')
+          AND has_table_privilege('app_authenticated', 'public."OptimizationJobs"', 'UPDATE')
+          AND has_table_privilege('app_authenticated', 'public."OptimizationJobs"', 'DELETE')) THEN
+    RAISE EXCEPTION 'gq 530: the API''s role lost a privilege on OptimizationJobs';
+  END IF;
+  IF has_table_privilege('app_authenticated', 'public."OptimizationJobs"', 'TRUNCATE')
+     OR has_table_privilege('app_authenticated', 'public."OptimizationJobs"', 'REFERENCES')
+     OR has_table_privilege('app_authenticated', 'public."OptimizationJobs"', 'TRIGGER') THEN
+    RAISE EXCEPTION 'gq 530: the API''s role holds more than it uses on OptimizationJobs';
+  END IF;
+  IF has_any_column_privilege('anon', 'public."OptimizationJobs"', 'SELECT') OR has_any_column_privilege('anon', 'public."OptimizationJobs"', 'UPDATE') THEN
+    RAISE EXCEPTION 'gq 530: anon holds a privilege on OptimizationJobs';
+  END IF;
+
+  -- Städningen: SECURITY DEFINER, sökvägen fastlåst, ett heltal tillbaka, ägd av ingen API-roll, och API:ts rolls ensam att köra
+  -- (PUBLIC inräknad).
+  SELECT p.prosecdef, p.proconfig, format_type(p.prorettype, NULL) AS ret, p.pronargs, r.rolname AS owner, p.provolatile, p.prosrc, p.oid,
+         coalesce(p.proacl::text, '') AS acl
+    INTO fn
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace JOIN pg_roles r ON r.oid = p.proowner
+   WHERE n.nspname = 'app' AND p.proname = 'optimization_jobs_sweep';
+  IF fn.oid IS NULL THEN RAISE EXCEPTION 'gq 530: app.optimization_jobs_sweep() is missing'; END IF;
+  IF NOT fn.prosecdef OR fn.ret <> 'integer' OR fn.pronargs <> 0 OR fn.provolatile <> 'v'
+     OR fn.proconfig IS DISTINCT FROM ARRAY['search_path=public, pg_temp'] THEN
+    RAISE EXCEPTION 'gq 530: the sweep is not a SECURITY DEFINER integer function with a pinned search_path: %', row_to_json(fn);
+  END IF;
+  IF fn.owner IN ('app_authenticated', 'authenticated', 'anon', 'service_role') THEN
+    RAISE EXCEPTION 'gq 530: the sweep is owned by %', fn.owner;
+  END IF;
+  IF NOT has_function_privilege('app_authenticated', fn.oid, 'EXECUTE')
+     OR has_function_privilege('authenticated', fn.oid, 'EXECUTE')
+     OR has_function_privilege('anon', fn.oid, 'EXECUTE')
+     OR has_function_privilege('service_role', fn.oid, 'EXECUTE')
+     OR fn.acl ~ '(^\{|,)=' THEN
+    RAISE EXCEPTION 'gq 530: the sweep''s rights are %, not the API''s role alone', fn.acl;
+  END IF;
+
+  -- Kroppen: vakten (ingen inloggning), raderna den låser, och orsaken den skriver. Utan kommentarer och med enkla blanksteg.
+  src := regexp_replace(regexp_replace(fn.prosrc, '--[^\n]*', '', 'g'), '\s+', ' ', 'g');
+  IF position($g$IF nullif(current_setting('request.jwt.claims', true), '') IS NOT NULL OR nullif(current_setting('request.jwt.claim.sub', true), '') IS NOT NULL THEN RAISE EXCEPTION 'The sweep of Generera runs takes no login' USING ERRCODE = 'GQ403'; END IF;$g$ IN src) = 0 THEN
+    RAISE EXCEPTION 'gq 530: the sweep does not refuse a login first';
+  END IF;
+  IF position($g$WHERE "status" IN ('PENDING', 'RUNNING') AND ("leaseUntil" < now() OR "createdAt" < now() - interval '30 minutes') FOR UPDATE SKIP LOCKED$g$ IN src) = 0 THEN
+    RAISE EXCEPTION 'gq 530: the sweep does not ask for an active run past its lease or its half hour, skipping rows another transaction holds';
+  END IF;
+  IF position($g$"errorCode" = 'ENGINE_RUN_ABANDONED'$g$ IN src) = 0 OR position($g$"finishedAt" = least(stale."leaseUntil", now())$g$ IN src) = 0 THEN
+    RAISE EXCEPTION 'gq 530: the sweep does not name the abandonment, finished when the lease ran out';
+  END IF;
+  RAISE NOTICE 'gq 530: the columns, the checks, the index, the arms, the rights and the sweep are as the migration left them';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 531: högst en aktiv körning per läsår, av databasen.
+--
+-- Schemaläggaren (rls-roller-school) startar en körning. Den andra starten av samma läsår nekas 23505 med indexets namn, vare sig den
+-- första är PENDING eller RUNNING; en körning som tagit slut (SUCCEEDED, FAILED) hindrar ingen, och en som togs slut kan inte väckas
+-- till liv bredvid en aktiv. En rad skriven som en äldre API skriver den (utan lease-kolumnerna) får femton minuter att leva, de som
+-- den gamla porten och sidan redan kallade förlorad. En annan skola startar sin egen samtidigt, och ser inte den förstas.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('rls.admin_auth_id', :'admin_auth_id', true);
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  other_school uuid;
+  yr uuid;
+  other_yr uuid;
+  first_run uuid;
+  second_run uuid;
+  n bigint;
+  msg text;
+  cons text;
+  dflt interval;
+  st text;
+  seen_by_other bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_may('SCHEMALAGGNING', true)
+     OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-roller-school' THEN
+    RAISE EXCEPTION 'gq 531: expected the matrix school''s schemaläggare';
+  END IF;
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  SELECT count(*) INTO n FROM "OptimizationJobs" WHERE "academicYearId" = yr AND status IN ('PENDING', 'RUNNING');
+  IF n <> 0 THEN RAISE EXCEPTION 'gq 531: the fixtures left % active run(s) in the year', n; END IF;
+
+  -- Den första: en rad som en äldre API skriver den, utan någon lease-kolumn.
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId") VALUES (school, yr, app.current_user_id()) RETURNING id INTO first_run;
+  SELECT "leaseUntil" - "heartbeatAt", "claimedBy" INTO dflt, msg FROM "OptimizationJobs" WHERE id = first_run;
+  IF dflt IS DISTINCT FROM interval '15 minutes' OR msg IS NOT NULL THEN
+    RAISE EXCEPTION 'gq 531: a run written without the lease columns holds % and is claimed by %, not 15 minutes and nobody', dflt, msg;
+  END IF;
+  IF (SELECT "heartbeatAt" FROM "OptimizationJobs" WHERE id = first_run) <> now() THEN
+    RAISE EXCEPTION 'gq 531: a new run''s heartbeat is not now';
+  END IF;
+
+  -- Den andra, PENDING bredvid PENDING: nekad, med indexets namn.
+  BEGIN
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId") VALUES (school, yr);
+    RAISE EXCEPTION 'gq 531: a second PENDING run of the year was started beside the first';
+  EXCEPTION WHEN unique_violation THEN
+    GET STACKED DIAGNOSTICS cons = CONSTRAINT_NAME, msg = MESSAGE_TEXT;
+    IF cons IS DISTINCT FROM 'OptimizationJobs_one_active_per_year' THEN
+      RAISE EXCEPTION 'gq 531: the second start was refused by % (%), not by the one-active-run index', cons, msg;
+    END IF;
+  END;
+
+  -- RUNNING räknas lika (hjärtslaget gör PENDING till RUNNING, och det ändrar inget).
+  UPDATE "OptimizationJobs" SET status = 'RUNNING' WHERE id = first_run;
+  IF NOT FOUND THEN RAISE EXCEPTION 'gq 531: the first run could not become RUNNING'; END IF;
+  FOREACH st IN ARRAY ARRAY['PENDING', 'RUNNING'] LOOP
+    BEGIN
+      INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", status) VALUES (school, yr, st::"OptimizationJobStatus");
+      RAISE EXCEPTION 'gq 531: a second % run of the year was started beside a RUNNING one', st;
+    EXCEPTION WHEN unique_violation THEN
+      NULL;
+    END;
+  END LOOP;
+
+  -- En körning som tagit slut hindrar ingen, och historiken får hålla hur många som helst.
+  FOREACH st IN ARRAY ARRAY['SUCCEEDED', 'FAILED', 'SUCCEEDED', 'FAILED'] LOOP
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", status, "finishedAt") VALUES (school, yr, st::"OptimizationJobStatus", now());
+  END LOOP;
+
+  -- En avslutad körning väcks inte till liv bredvid en aktiv.
+  second_run := (SELECT id FROM "OptimizationJobs" WHERE "academicYearId" = yr AND status = 'FAILED' ORDER BY id LIMIT 1);
+  BEGIN
+    UPDATE "OptimizationJobs" SET status = 'RUNNING', "finishedAt" = NULL WHERE id = second_run;
+    RAISE EXCEPTION 'gq 531: a finished run was brought back to life beside an active one';
+  EXCEPTION WHEN unique_violation THEN
+    NULL;
+  END;
+
+  -- När den första tagit slut kan nästa startas, och när den första blir FAILED eller SUCCEEDED går det på båda sätt.
+  FOREACH st IN ARRAY ARRAY['SUCCEEDED', 'FAILED'] LOOP
+    UPDATE "OptimizationJobs" SET status = st::"OptimizationJobStatus", "finishedAt" = now() WHERE id = first_run;
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId") VALUES (school, yr) RETURNING id INTO second_run;
+    UPDATE "OptimizationJobs" SET status = 'RUNNING' WHERE id = second_run;
+    -- och den första, nu avslutad, går inte att väcka bredvid den nya
+    BEGIN
+      UPDATE "OptimizationJobs" SET status = 'PENDING', "finishedAt" = NULL WHERE id = first_run;
+      RAISE EXCEPTION 'gq 531: a % run was brought back beside the next', st;
+    EXCEPTION WHEN unique_violation THEN
+      NULL;
+    END;
+    UPDATE "OptimizationJobs" SET status = 'FAILED', "finishedAt" = now() WHERE id = second_run;
+    first_run := second_run;
+  END LOOP;
+
+  -- Ett annat läsår av samma skola: skolan som sådan har bara ett läsår här, så läsårets egen nyckel prövas av den andra skolan nedan.
+  -- Den andra skolan (runnerns, skolan med det aktiva läsåret) startar sin egen körning av sitt eget läsår samtidigt.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', current_setting('rls.admin_auth_id'))::text, true);
+  other_school := app.current_school_id();
+  IF other_school IS NULL OR other_school = school THEN RAISE EXCEPTION 'gq 531: the second administrator is of the same school'; END IF;
+  SELECT id INTO other_yr FROM "AcademicYears" WHERE "schoolId" = other_school ORDER BY "isActive" DESC, id LIMIT 1;
+  UPDATE "OptimizationJobs" SET status = 'SUCCEEDED', "finishedAt" = now() WHERE "academicYearId" = other_yr AND status IN ('PENDING', 'RUNNING');
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId") VALUES (other_school, other_yr, app.current_user_id());
+  BEGIN
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId") VALUES (other_school, other_yr);
+    RAISE EXCEPTION 'gq 531: a second run of the other school''s year was started';
+  EXCEPTION WHEN unique_violation THEN
+    NULL;
+  END;
+  SELECT count(*) INTO seen_by_other FROM "OptimizationJobs" WHERE "schoolId" = school;
+  IF seen_by_other <> 0 THEN RAISE EXCEPTION 'gq 531: the other school reads % of the first school''s runs', seen_by_other; END IF;
+  RAISE NOTICE 'gq 531: one active run per year, by the database, for each school, and the history is free';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 532: lease-kolumnerna, genom API:ts roll och genom de andra.
+--
+-- De två CHECK vägrar en lease före sitt hjärtslag och en mer än en timme bortom det, och ett tomt eller för långt namn på hävdaren.
+-- Förnyelsen API:t gör (tjänstens egen sats, med hjärtslaget och leasen från databasens klocka) går igenom schemaläggarens arm och
+-- ändrar bara en körning som ännu är aktiv. En administratör utan SCHEMALAGGNING, en lärare och PostgREST:s roll förnyar ingenting,
+-- och den sista läser ingen körning alls.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  yr uuid;
+  run uuid;
+  ended uuid;
+  n bigint;
+  seen bigint;
+  claimant text := 'host.example:4242:ab12cd34';
+BEGIN
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId") VALUES (school, yr, app.current_user_id()) RETURNING id INTO run;
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", status, "finishedAt") VALUES (school, yr, 'SUCCEEDED', now()) RETURNING id INTO ended;
+  SELECT count(*) INTO seen FROM "OptimizationJobs";
+
+  -- De två CHECK, kant för kant. Varje försök i en egen delsats, och med fel kontrakt faller det på det sättet.
+  BEGIN
+    UPDATE "OptimizationJobs" SET "heartbeatAt" = now(), "leaseUntil" = now() - interval '1 microsecond' WHERE id = run;
+    RAISE EXCEPTION 'gq 532: a lease before its heartbeat was accepted';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "heartbeatAt" = now(), "leaseUntil" = now() + interval '1 hour 1 microsecond' WHERE id = run;
+    RAISE EXCEPTION 'gq 532: a lease more than an hour past its heartbeat was accepted';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  UPDATE "OptimizationJobs" SET "heartbeatAt" = now(), "leaseUntil" = now() + interval '1 hour' WHERE id = run;
+  UPDATE "OptimizationJobs" SET "heartbeatAt" = now(), "leaseUntil" = now() WHERE id = run;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "claimedBy" = '' WHERE id = run;
+    RAISE EXCEPTION 'gq 532: an empty claimant was accepted';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "claimedBy" = repeat('x', 101) WHERE id = run;
+    RAISE EXCEPTION 'gq 532: a claimant of 101 characters was accepted';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  UPDATE "OptimizationJobs" SET "claimedBy" = repeat('x', 100) WHERE id = run;
+  UPDATE "OptimizationJobs" SET "claimedBy" = NULL WHERE id = run;
+
+  -- Förnyelsen, ord för ord som tjänsten skickar den (src/optimization/optimization-jobs.service.ts, beat): RUNNING, hävdaren,
+  -- hjärtslaget nu och leasen 270 s fram, där körningen ännu är aktiv. En körning som tagit slut ändras inte.
+  UPDATE "OptimizationJobs"
+     SET "status" = 'RUNNING', "claimedBy" = claimant, "heartbeatAt" = now(), "leaseUntil" = now() + make_interval(secs => 270)
+   WHERE "id" = run AND "status" IN ('PENDING', 'RUNNING');
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'gq 532: the administrator''s renewal changed % row(s), not the run''s', n; END IF;
+  IF NOT EXISTS (SELECT 1 FROM "OptimizationJobs" WHERE id = run AND status = 'RUNNING' AND "claimedBy" = claimant
+                    AND "leaseUntil" = "heartbeatAt" + interval '270 seconds') THEN
+    RAISE EXCEPTION 'gq 532: the renewal did not leave RUNNING, the claimant and a lease 270 s past the heartbeat';
+  END IF;
+  UPDATE "OptimizationJobs"
+     SET "status" = 'RUNNING', "claimedBy" = claimant, "heartbeatAt" = now(), "leaseUntil" = now() + make_interval(secs => 270)
+   WHERE "id" = ended AND "status" IN ('PENDING', 'RUNNING');
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'gq 532: a renewal changed a run that had ended'; END IF;
+
+  -- Expeditionen (en administratör utan SCHEMALAGGNING) läser körningarna men förnyar och startar ingenting.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000108')::text, true);
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR app.current_user_may('SCHEMALAGGNING', true) THEN
+    RAISE EXCEPTION 'gq 532: expected an administrator without SCHEMALAGGNING';
+  END IF;
+  SELECT count(*) INTO n FROM "OptimizationJobs";
+  IF n <> seen THEN RAISE EXCEPTION 'gq 532: the expedition administrator reads % run(s), not the school''s %', n, seen; END IF;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "heartbeatAt" = now(), "leaseUntil" = now() + make_interval(secs => 270) WHERE id = run;
+    RAISE EXCEPTION 'gq 532: an administrator without SCHEMALAGGNING renewed a lease';
+  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+
+  -- En lärare ser ingen körning, ändrar ingen och startar ingen.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000111')::text, true);
+  SELECT count(*) INTO n FROM "OptimizationJobs";
+  IF n <> 0 THEN RAISE EXCEPTION 'gq 532: a teacher reads % run(s)', n; END IF;
+  UPDATE "OptimizationJobs" SET "heartbeatAt" = now(), "leaseUntil" = now() + make_interval(secs => 270);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'gq 532: a teacher renewed % lease(s)', n; END IF;
+  BEGIN
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId") VALUES (school, yr);
+    RAISE EXCEPTION 'gq 532: a teacher started a run';
+  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+
+  -- PostgREST:s roll, med schemaläggarens claims: ingen läsning, ingen förnyelse, och inte heller läsningen av just de nya kolumnerna.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+  SET LOCAL ROLE authenticated;
+  IF current_user <> 'authenticated' THEN RAISE EXCEPTION 'gq 532: could not act as authenticated'; END IF;
+  SELECT count(*) INTO n FROM (SELECT "claimedBy", "heartbeatAt", "leaseUntil" FROM "OptimizationJobs") AS r;
+  IF n <> 0 THEN RAISE EXCEPTION 'gq 532: as PostgREST''s role the schemaläggare reads % lease(s)', n; END IF;
+  UPDATE "OptimizationJobs" SET "heartbeatAt" = now(), "leaseUntil" = now() + make_interval(secs => 270);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'gq 532: as PostgREST''s role the schemaläggare renewed % lease(s)', n; END IF;
+  SET LOCAL ROLE app_authenticated;
+
+  -- Och som den var: körningens lease är den förnyelsens.
+  IF NOT EXISTS (SELECT 1 FROM "OptimizationJobs" WHERE id = run AND "leaseUntil" = "heartbeatAt" + interval '270 seconds' AND "claimedBy" = claimant) THEN
+    RAISE EXCEPTION 'gq 532: the run is not as the one renewal left it';
+  END IF;
+  RAISE NOTICE 'gq 532: the checks hold at their edges, the renewal is the API''s alone, and no other role reads or renews a lease';
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 533: städningen, med klockan stilla.
+--
+-- now() är transaktionens, så en körning planterad som "nu minus en mikrosekund" och en som "nu" möter samma klocka som städningen:
+-- kanterna prövas på en mikrosekund, utan att något beror på hur länge sektionen tagit. Varje scenario planteras som schemaläggaren
+-- (hennes arm skriver raden), städas utan inloggning (dörren tar ingen) och läses tillbaka som hon.
+--
+-- Aktiv och förbi sin lease: FAILED ENGINE_RUN_ABANDONED, avslutad när leasen tog slut. Aktiv och förbi halvtimmen med en lease som
+-- håller: FAILED, avslutad nu. Båda förbi: leasens slut. Leasen som tar slut exakt nu, och halvtimmen på en minut när: orörda.
+-- Avslutade körningar rörs inte hur gammal leasen än är, och en rad som en annan transaktion håller hoppas över (adapterproben).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  yr uuid;
+  sc record;
+  rid uuid;
+  swept integer;
+  got record;
+  expected_fin timestamptz;
+  own_code text;
+  own_reason text;
+  own_solver text;
+  own_params jsonb;
+  admin_claims constant text := json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text;
+  tested integer := 0;
+BEGIN
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  SELECT count(*) INTO swept FROM "OptimizationJobs" WHERE status IN ('PENDING', 'RUNNING');
+  IF swept <> 0 THEN RAISE EXCEPTION 'gq 533: % active run(s) are left from the fixtures', swept; END IF;
+
+  FOR sc IN SELECT * FROM (VALUES
+      ('a lease that ran out a microsecond ago',        'RUNNING',   interval '2 minutes',                       interval '-1 microsecond', true,  'lease'),
+      ('a lease that ends this very instant',           'RUNNING',   interval '2 minutes',                       interval '0',              false, NULL),
+      ('a lease that ends in a microsecond',            'RUNNING',   interval '2 minutes',                       interval '1 microsecond',  false, NULL),
+      ('a pending run whose lease ran out a second ago','PENDING',   interval '5 minutes',                       interval '-1 second',      true,  'lease'),
+      ('past the half hour by a microsecond, lease holds','RUNNING', interval '30 minutes 1 microsecond',        interval '4 minutes',      true,  'now'),
+      ('exactly the half hour, lease holds',            'RUNNING',   interval '30 minutes',                      interval '4 minutes',      false, NULL),
+      ('past both limits',                              'RUNNING',   interval '40 minutes',                      interval '-10 minutes',    true,  'lease'),
+      ('a lease long expired on a run that succeeded',  'SUCCEEDED', interval '2 hours',                         interval '-1 hour',        false, NULL),
+      ('a lease long expired on a run that failed',     'FAILED',    interval '2 hours',                         interval '-1 hour',        false, NULL)
+    ) AS t(label, status, created_ago, lease_off, is_swept, fin) LOOP
+    PERFORM set_config('request.jwt.claims', admin_claims, true);
+    -- (An active run carries stale params, planted: the sweep leaves a run it fails with none.)
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId", status, "solverStatus", "error", "errorCode", "errorParams", "createdAt", "heartbeatAt", "leaseUntil", "finishedAt")
+    VALUES (school, yr, app.current_user_id(), sc.status::"OptimizationJobStatus",
+            CASE WHEN sc.status = 'SUCCEEDED' THEN 'OPTIMAL' END,
+            CASE WHEN sc.status = 'FAILED' THEN 'its own reason' END,
+            CASE WHEN sc.status = 'FAILED' THEN 'ITS_OWN_CODE' END,
+            CASE WHEN sc.status IN ('PENDING', 'RUNNING') THEN '{"stale": 1}'::jsonb END,
+            now() - sc.created_ago, now() + sc.lease_off - interval '270 seconds', now() + sc.lease_off,
+            CASE WHEN sc.status IN ('SUCCEEDED', 'FAILED') THEN now() - sc.created_ago + interval '1 minute' END)
+    RETURNING id INTO rid;
+
+    PERFORM set_config('request.jwt.claims', '', true);
+    swept := app.optimization_jobs_sweep();
+    PERFORM set_config('request.jwt.claims', admin_claims, true);
+    IF swept <> sc.is_swept::int THEN
+      RAISE EXCEPTION 'gq 533: %: the sweep reported % run(s), expected %', sc.label, swept, sc.is_swept::int;
+    END IF;
+    SELECT status::text AS status, "solverStatus", error, "errorCode", "errorParams", "finishedAt", "leaseUntil", "claimedBy" INTO got
+      FROM "OptimizationJobs" WHERE id = rid;
+    IF sc.is_swept THEN
+      expected_fin := CASE sc.fin WHEN 'lease' THEN got."leaseUntil" ELSE now() END;
+      IF got.status <> 'FAILED' OR got."errorCode" <> 'ENGINE_RUN_ABANDONED' OR got."errorParams" IS NOT NULL
+         OR got.error <> 'The run stopped before it finished: the service that ran it was restarted or lost.'
+         OR got."finishedAt" IS DISTINCT FROM expected_fin THEN
+        RAISE EXCEPTION 'gq 533: %: swept to %', sc.label, row_to_json(got);
+      END IF;
+    ELSE
+      -- (A CASE with its own THEN cannot stand in an IF's condition: PL/pgSQL ends the condition at the first THEN.)
+      own_code := CASE WHEN sc.status = 'FAILED' THEN 'ITS_OWN_CODE' END;
+      own_reason := CASE WHEN sc.status = 'FAILED' THEN 'its own reason' END;
+      own_solver := CASE WHEN sc.status = 'SUCCEEDED' THEN 'OPTIMAL' END;
+      own_params := CASE WHEN sc.status IN ('PENDING', 'RUNNING') THEN '{"stale": 1}'::jsonb END;
+      IF got.status <> sc.status OR got."errorCode" IS DISTINCT FROM own_code OR got.error IS DISTINCT FROM own_reason
+         OR got."solverStatus" IS DISTINCT FROM own_solver OR got."errorParams" IS DISTINCT FROM own_params
+         OR (sc.status IN ('PENDING', 'RUNNING') AND got."finishedAt" IS NOT NULL) THEN
+        RAISE EXCEPTION 'gq 533: %: touched, now %', sc.label, row_to_json(got);
+      END IF;
+    END IF;
+    -- En andra gång städar ingenting till, och den som städades är kvar som den blev.
+    PERFORM set_config('request.jwt.claims', '', true);
+    swept := app.optimization_jobs_sweep();
+    PERFORM set_config('request.jwt.claims', admin_claims, true);
+    IF swept <> 0 THEN RAISE EXCEPTION 'gq 533: %: a second sweep reported % run(s)', sc.label, swept; END IF;
+    DELETE FROM "OptimizationJobs" WHERE id = rid;
+    tested := tested + 1;
+  END LOOP;
+  IF tested <> 9 THEN RAISE EXCEPTION 'gq 533: % scenarios ran, expected 9', tested; END IF;
+
+  -- En sådan rad frigör läsåret: en ny körning kan startas direkt efter städningen.
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", status, "createdAt", "heartbeatAt", "leaseUntil")
+  VALUES (school, yr, 'RUNNING', now() - interval '6 minutes', now() - interval '5 minutes', now() - interval '1 second');
+  BEGIN
+    INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId") VALUES (school, yr);
+    RAISE EXCEPTION 'gq 533: a run was started while a lost one still held the year';
+  EXCEPTION WHEN unique_violation THEN NULL; END;
+  PERFORM set_config('request.jwt.claims', '', true);
+  swept := app.optimization_jobs_sweep();
+  PERFORM set_config('request.jwt.claims', admin_claims, true);
+  IF swept <> 1 THEN RAISE EXCEPTION 'gq 533: the sweep freed % run(s), expected the lost one', swept; END IF;
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId") VALUES (school, yr);
+  RAISE NOTICE 'gq 533: an active run past its lease or its half hour is failed with the abandonment, to the microsecond, and its year is free';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 534: städningens dörr tar ingen inloggning.
+--
+-- Gatewayens jobb och en start anropar den utan några claims alls; varje inloggning (en person, en läsare, nyckelslagningen, ett
+-- ensamt subjekt i den gamla claimstilen) nekas GQ403 innan något rörs. Rättigheten att köra är API:ts rolls ensam: de andra rollerna
+-- nekas 42501 (dörrvakten 20270220090000 för jobbens dörrar).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  sh record;
+  got text;
+  want text;
+  seen integer := 0;
+BEGIN
+  FOR sh IN SELECT * FROM (VALUES
+      ('no claims at all',                   '',                                                              '',                                        'ok'),
+      ('an empty object',                    '{}',                                                            '',                                        'GQ403'),
+      ('a space',                            ' ',                                                             '',                                        'GQ403'),
+      ('the word null',                      'null',                                                          '',                                        'GQ403'),
+      ('a role and no subject',              '{"role":"authenticated"}',                                      '',                                        'GQ403'),
+      ('a lone subject, the old claim style','',                                                              '00000000-0000-4000-8000-000000000107',    'GQ403'),
+      ('a person',                           '{"sub":"00000000-0000-4000-8000-000000000107"}',                '',                                        'GQ403'),
+      ('a person, both styles',              '{"sub":"00000000-0000-4000-8000-000000000107"}',                '00000000-0000-4000-8000-000000000107',    'GQ403'),
+      ('a login that is no person',          '{"sub":"00000000-0000-4000-8000-0000000009ff","role":"authenticated"}', '',                                  'GQ403')
+    ) AS t(label, claims, subject, expected) LOOP
+    PERFORM set_config('request.jwt.claims', sh.claims, true);
+    PERFORM set_config('request.jwt.claim.sub', sh.subject, true);
+    BEGIN
+      PERFORM app.optimization_jobs_sweep();
+      got := 'ok';
+    EXCEPTION WHEN SQLSTATE 'GQ403' THEN
+      got := 'GQ403';
+    END;
+    IF got <> sh.expected THEN
+      RAISE EXCEPTION 'gq 534: %: the sweep answered %, expected %', sh.label, got, sh.expected;
+    END IF;
+    seen := seen + 1;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  IF seen <> 9 THEN RAISE EXCEPTION 'gq 534: % shapes ran, expected 9', seen; END IF;
+
+  -- Rättigheterna, prövade genom att köra: PostgREST:s roll nekas (42501), och API:ts roll körs som varje jobb.
+  SET LOCAL ROLE authenticated;
+  BEGIN
+    PERFORM app.optimization_jobs_sweep();
+    RAISE EXCEPTION 'gq 534: PostgREST''s role ran the sweep';
+  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+  SET LOCAL ROLE app_authenticated;
+  PERFORM app.optimization_jobs_sweep();
+  RAISE NOTICE 'gq 534: the sweep takes no login, and only the API''s role runs it';
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
