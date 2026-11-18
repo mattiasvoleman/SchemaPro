@@ -33161,6 +33161,12 @@ BEGIN
     'l_a', (SELECT id FROM "Users" WHERE "schoolId" = a AND "authId" = 'fe000000-0000-4000-8000-000000002758'),
     'n_a', (SELECT id FROM "Users" WHERE "schoolId" = a AND "authId" = 'fe000000-0000-4000-8000-000000002759'),
     'p_a', (SELECT id FROM "Users" WHERE "schoolId" = a AND "authId" = 'fe000000-0000-4000-8000-000000002760'),
+    -- A's läsår is the seed's, chosen from the clock the seed ran at, and T's lesson at A
+    -- (rls-fixtures.sql, section 'delade') has no dates of its own: it runs through the
+    -- year. The year is read by the fixture's own rule, so a window over it meets the lesson
+    -- whichever year the seed picked.
+    'a_from', (SELECT "startDate" FROM "AcademicYears" WHERE "schoolId" = a ORDER BY "startDate" LIMIT 1),
+    'a_to', (SELECT "endDate" FROM "AcademicYears" WHERE "schoolId" = a ORDER BY "startDate" LIMIT 1),
     'local_hall', (SELECT id FROM "Rooms" WHERE "schoolId" = a AND name = 'Roller hall (lånad)'));
   PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000105', NULL);
   v := v || jsonb_build_object(
@@ -33177,6 +33183,7 @@ BEGIN
   PERFORM pg_temp.delade_as(NULL, NULL);
   IF v ->> 'a' IS NULL OR v ->> 'm' IS NULL OR v ->> 'c' IS NULL OR v ->> 'd' IS NULL OR v ->> 't_a' IS NULL
      OR v ->> 't_m' IS NULL OR v ->> 'y_a' IS NULL OR v ->> 'hall' IS NULL OR v ->> 'local_hall' IS NULL
+     OR v ->> 'a_from' IS NULL OR v ->> 'a_to' IS NULL
      OR v ->> 'a_student' IS NULL OR v ->> 'z_a' IS NULL OR v ->> 'q_a' IS NULL OR v ->> 'k_a' IS NULL
      OR v ->> 'l_a' IS NULL OR v ->> 'n_a' IS NULL OR v ->> 'p_a' IS NULL OR v ->> 'l_m' IS NULL OR v ->> 'p_m' IS NULL THEN
     RAISE EXCEPTION 'delade: the fixtures are missing (%)', v;
@@ -33192,6 +33199,8 @@ DECLARE
   a uuid := ids ->> 'a';
   m uuid := ids ->> 'm';
   c uuid := ids ->> 'c';
+  a_from date := ids ->> 'a_from';
+  a_to date := ids ->> 'a_to';
   wrong text[] := '{}';
   got text;
   base text;
@@ -33263,7 +33272,7 @@ BEGIN
   -- c. The other side: at M, T's lesson at A in A's year; Y has none at A.
   PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000105', NULL);
   SELECT string_agg(format('%s %s %s-%s %s %s', s.school_id = a, b.day_of_week, b.start_time, b.end_time, b.recurrence, b.travel_minutes), '; ')
-    INTO got FROM app.shared_teacher_busy('2026-08-01', '2027-07-31') b JOIN app.shared_teachers() s USING (teacher_id, school_id)
+    INTO got FROM app.shared_teacher_busy(a_from, a_to) b JOIN app.shared_teachers() s USING (teacher_id, school_id)
    WHERE b.teacher_id::text = ids ->> 't_m';
   IF got IS DISTINCT FROM 't 1 08:00:00-09:00:00 ALL_WEEKS 15' THEN
     wrong := wrong || format('276c M reads T''s lessons at A as [%s]', got);
@@ -33285,7 +33294,7 @@ BEGIN
   FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000105', '00000000-0000-4000-8000-000000000107',
                              '00000000-0000-4000-8000-000000000108', '00000000-0000-4000-8000-000000000115'] LOOP
     PERFORM pg_temp.delade_as(sub, NULL);
-    IF (SELECT count(*) FROM app.shared_teacher_busy('2026-08-01', '2027-07-31') WHERE teacher_id::text = ids ->> 't_m') <> 1
+    IF (SELECT count(*) FROM app.shared_teacher_busy(a_from, a_to) WHERE teacher_id::text = ids ->> 't_m') <> 1
        OR (SELECT count(*) FROM app.shared_teachers() WHERE teacher_id::text = ids ->> 't_m') <> 2 THEN
       wrong := wrong || format('276d the roller school''s %s does not read its shared teachers', sub);
     END IF;
@@ -33416,6 +33425,8 @@ DECLARE
   a uuid := ids ->> 'a';
   m uuid := ids ->> 'm';
   c uuid := ids ->> 'c';
+  a_from date := ids ->> 'a_from';
+  a_to date := ids ->> 'a_to';
   wrong text[] := '{}';
   got text;
 BEGIN
@@ -33439,7 +33450,7 @@ BEGIN
   END IF;
   PERFORM pg_temp.delade_as('00000000-0000-4000-8000-000000000105', NULL);
   SELECT string_agg(format('%s %s-%s', day_of_week, start_time, end_time), '; ') INTO got
-    FROM app.shared_teacher_busy('2026-08-01', '2027-07-31') WHERE teacher_id::text = ids ->> 'l_m' AND school_id = a;
+    FROM app.shared_teacher_busy(a_from, a_to) WHERE teacher_id::text = ids ->> 'l_m' AND school_id = a;
   IF got IS DISTINCT FROM '2 15:00:00-16:00:00' THEN
     wrong := wrong || format('276f once A marks L, M reads L''s lessons at A as [%s]', got);
   END IF;
@@ -34253,6 +34264,8 @@ SELECT set_config('app.test_d_admin', :'admin_auth_id', true);
 DO $$
 DECLARE
   ids jsonb := pg_temp.delade_ids();
+  a_from date := ids ->> 'a_from';
+  a_to date := ids ->> 'a_to';
   col record;
   wrong text[] := '{}';
   n bigint;
@@ -34268,7 +34281,7 @@ BEGIN
   FOREACH sub IN ARRAY ARRAY['00000000-0000-4000-8000-000000000107', '00000000-0000-4000-8000-000000000108'] LOOP
     PERFORM pg_temp.delade_as(sub, NULL);
     IF (SELECT count(*) FROM app.sibling_schools()) <> 2
-       OR (SELECT count(*) FROM app.shared_teacher_busy('2026-08-01', '2027-07-31') WHERE teacher_id::text = ids ->> 't_m') <> 1
+       OR (SELECT count(*) FROM app.shared_teacher_busy(a_from, a_to) WHERE teacher_id::text = ids ->> 't_m') <> 1
        OR (SELECT count(*) FROM "RoomLoans") <> 2 THEN
       wrong := wrong || format('279d %s does not read what the generator and the publish read', sub);
     END IF;
@@ -38407,10 +38420,14 @@ BEGIN
 END $$;
 ROLLBACK;
 
--- 306g: the Mondays of the summer-time switches. Spring forward is Sunday
--- 2026-03-29 and fall back Sunday 2026-10-25. A 60-minute lesson is 60 minutes
--- on the Monday after, though the offset moved; the lesson's day is the local
--- date; the window's days are local dates.
+-- 306g: the Mondays of the summer-time switches. Spring forward is the last Sunday of
+-- March and fall back the last Sunday of October. A 60-minute lesson is 60 minutes on the
+-- Monday after, though the offset moved; the lesson's day is the local date; the window's
+-- days are local dates. The count refuses a day that is not over, so the section asks about
+-- the latest pair of switches whose Mondays have passed in the school's days: from the
+-- Tuesday after October's switch that is this year's pair, until then last year's. A fixed
+-- pair (2026's) would be refused at any clock set before its Monday, and would keep proving
+-- the same two days when the clock is set to a switch day of a later year.
 BEGIN;
 SELECT pg_temp.fb_as('00000000-0000-4000-8000-d10000000001');
 DO $$
@@ -38420,35 +38437,53 @@ DECLARE
   ka uuid := (SELECT id FROM "StudentGroups" WHERE name = 'FB7A');
   p1 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p1@example.invalid');
   p2 uuid := (SELECT id FROM "Users" WHERE email = 'fb-p2@example.invalid');
+  y integer := extract(year FROM app.school_today())::integer;
+  spring_sun date;
+  fall_sun date;
+  spring_mon date;
+  fall_mon date;
 BEGIN
+  fall_sun := make_date(y, 10, 31) - extract(dow FROM make_date(y, 10, 31))::integer;
+  IF fall_sun + 1 >= app.school_today() THEN
+    y := y - 1;
+    fall_sun := make_date(y, 10, 31) - extract(dow FROM make_date(y, 10, 31))::integer;
+  END IF;
+  spring_sun := make_date(y, 3, 31) - extract(dow FROM make_date(y, 3, 31))::integer;
+  spring_mon := spring_sun + 1;
+  fall_mon := fall_sun + 1;
+  -- The two Sundays are the switches: the day is 23 hours long in spring and 25 in fall.
+  IF ((spring_sun + 1)::timestamp AT TIME ZONE 'Europe/Stockholm') - (spring_sun::timestamp AT TIME ZONE 'Europe/Stockholm') <> interval '23 hours'
+     OR ((fall_sun + 1)::timestamp AT TIME ZONE 'Europe/Stockholm') - (fall_sun::timestamp AT TIME ZONE 'Europe/Stockholm') <> interval '25 hours' THEN
+    RAISE EXCEPTION 'frånvarobevakning 306g: % and % are not the days the clock moves', spring_sun, fall_sun;
+  END IF;
   INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'Bevakning 306g', 'FB306G', now()) RETURNING id INTO subj;
   INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled) VALUES (school, true);
   INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES (school, 'MENTOR', 'SHARE', 'INVALID', 25, 7);
   INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, "consecutiveDays") VALUES (school, 'REKTOR', 'CONSECUTIVE', 'ALL', 2);
   -- Spring: the Friday before and the Monday after. 1 absent of 4: 25 %, reached.
-  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-03-27', ARRAY['PRESENT', 'PRESENT']);
-  PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-03-30', ARRAY['ABSENT', 'PRESENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p1, spring_mon - 3, ARRAY['PRESENT', 'PRESENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p1, spring_mon, ARRAY['ABSENT', 'PRESENT']);
   -- A lesson's minutes are its elapsed time: one from 01:30 to 03:30 on the night the clock
   -- jumps from 02:00 to 03:00 is 60 minutes, not the 120 that the wall clock shows.
   INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
-  VALUES (school, subj, ka, '2026-03-29', ('2026-03-29 01:30'::timestamp AT TIME ZONE 'Europe/Stockholm'),
-          ('2026-03-29 03:30'::timestamp AT TIME ZONE 'Europe/Stockholm'), now());
+  VALUES (school, subj, ka, spring_sun, ((spring_sun + time '01:30') AT TIME ZONE 'Europe/Stockholm'),
+          ((spring_sun + time '03:30') AT TIME ZONE 'Europe/Stockholm'), now());
   INSERT INTO "AttendanceRecords" ("schoolId", "calendarLessonId", "studentId", status, "updatedAt")
-  SELECT school, id, (SELECT id FROM "Users" WHERE email = 'fb-p3@example.invalid'), 'ABSENT', now() FROM "CalendarLessons" WHERE date = '2026-03-29';
-  PERFORM pg_temp.fb_plant(subj, ka, (SELECT id FROM "Users" WHERE email = 'fb-p3@example.invalid'), '2026-03-30', ARRAY['PRESENT']);
+  SELECT school, id, (SELECT id FROM "Users" WHERE email = 'fb-p3@example.invalid'), 'ABSENT', now() FROM "CalendarLessons" WHERE date = spring_sun;
+  PERFORM pg_temp.fb_plant(subj, ka, (SELECT id FROM "Users" WHERE email = 'fb-p3@example.invalid'), spring_mon, ARRAY['PRESENT']);
   -- Fall: Friday and Monday absent all day across the extra hour.
-  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-10-23', ARRAY['ABSENT', 'ABSENT']);
-  PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-10-26', ARRAY['ABSENT', 'ABSENT']);
-  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-03-30');
+  PERFORM pg_temp.fb_plant(subj, ka, p2, fall_mon - 3, ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.fb_plant(subj, ka, p2, fall_mon, ARRAY['ABSENT', 'ABSENT']);
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, spring_mon);
   PERFORM pg_temp.fb_expect('306g, spring', pg_temp.fb_findings(),
-    E'p1 MENTOR SHARE INVALID 2026-03-30 2026-03-30 - 60/240\n' ||
-    E'p3 MENTOR SHARE INVALID 2026-03-30 2026-03-30 - 60/120');
-  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-10-26');
+    format(E'p1 MENTOR SHARE INVALID %1$s %1$s - 60/240\n' ||
+           E'p3 MENTOR SHARE INVALID %1$s %1$s - 60/120', spring_mon));
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, fall_mon);
   PERFORM pg_temp.fb_expect('306g, fall', pg_temp.fb_findings(),
-    E'p1 MENTOR SHARE INVALID 2026-03-30 2026-03-30 2026-10-26 60/240\n' ||
-    E'p2 MENTOR SHARE INVALID 2026-10-26 2026-10-26 - 240/240\n' ||
-    E'p2 REKTOR CONSECUTIVE ALL 2026-10-26 2026-10-26 - 2d\n' ||
-    E'p3 MENTOR SHARE INVALID 2026-03-30 2026-03-30 2026-10-26 60/120');
+    format(E'p1 MENTOR SHARE INVALID %1$s %1$s %2$s 60/240\n' ||
+           E'p2 MENTOR SHARE INVALID %2$s %2$s - 240/240\n' ||
+           E'p2 REKTOR CONSECUTIVE ALL %2$s %2$s - 2d\n' ||
+           E'p3 MENTOR SHARE INVALID %1$s %1$s %2$s 60/120', spring_mon, fall_mon));
 END $$;
 ROLLBACK;
 

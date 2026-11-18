@@ -65,12 +65,14 @@ describe("placementLinkOf", () => {
 describe("linkTargetOf", () => {
   it("reads what placementLinkOf wrote", () => {
     expect(linkTargetOf(placementLinkOf({ yearId: "y", postId: "p", day: 4, start: "13:00" }).replace("/admin/placements", ""))).toEqual({
+      yearId: "y",
       postId: "p",
       blockId: null,
       day: 4,
       start: "13:00",
     });
     expect(linkTargetOf(placementLinkOf({ postId: "m", blockId: "b", day: 2, start: "08:30" }).replace("/admin/placements", ""))).toEqual({
+      yearId: null,
       postId: "m",
       blockId: "b",
       day: 2,
@@ -102,6 +104,12 @@ describe("linkTargetOf", () => {
     expect(linkTargetOf("?post=p&day=5&start=23:59")?.start).toBe("23:59");
   });
 
+  it("carries the läsår it names, and none when the address names none (the active one)", () => {
+    expect(linkTargetOf("?year=y9&post=p&day=2&start=08:30")?.yearId).toBe("y9");
+    expect(linkTargetOf("?post=p&day=2&start=08:30")?.yearId).toBeNull();
+    expect(linkTargetOf("?year=&post=p&day=2&start=08:30")?.yearId).toBeNull();
+  });
+
   it("carries the block, which the week's own card does not read", () => {
     expect(linkTargetOf("?post=m&day=2&start=08:30&block=b")?.blockId).toBe("b");
     expect(linkTargetOf("?post=m&day=2&start=08:30&block=")?.blockId).toBeNull();
@@ -119,7 +127,7 @@ describe("markedRowOf", () => {
     recurrence: "ALL_WEEKS" as const,
     ...over,
   });
-  const target = { postId: "post-1", blockId: null, day: 3, start: "10:00" };
+  const target = { yearId: null, postId: "post-1", blockId: null, day: 3, start: "10:00" };
 
   it("finds the row on the post, the day and the start", () => {
     const rows = [row({ id: "a", dayOfWeek: 2 }), row({ id: "b" }), row({ id: "c", startTime: "11:00" }), row({ id: "d", requirementId: "post-2" })];

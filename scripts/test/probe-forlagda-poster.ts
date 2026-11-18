@@ -808,7 +808,7 @@ async function run(owner: Client, engine: EngineStub, app: INestApplicationConte
     { dayOfWeek: 4, startTime: '13:00', minutes: 60, roomId: gym, recurrence: 'ALL_WEEKS' as const },
   ];
   // The empty post's lists name no room (the engine chooses): its rows must not clash with the race post's rooms.
-  const withoutRoom = (list: typeof listA) => list.map((row) => ({ ...row, roomId: null }));
+  const withoutRoom = <T extends { roomId: string | null }>(list: readonly T[]) => list.map((row) => ({ ...row, roomId: null }));
   const baseList = [{ dayOfWeek: 5, startTime: '08:00', minutes: 60, roomId: sal32, recurrence: 'ALL_WEEKS' as const }];
   const storedOf = async (postId: string): Promise<string[]> =>
     (

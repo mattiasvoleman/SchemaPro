@@ -879,9 +879,9 @@ export async function ss12000NarvaroChecks(owner: Client, api: PrismaService, ma
       // Another pupil the same apply deactivates: a write that came after the addresses before.
       const leaving = await person('STUDENT', 'Ville', 'Vidare', klass.id);
       const changes: StoredChange[] = [
-        { id: randomUUID(), seq: 1, entity: 'PERSON', op: 'UPDATE', externalId: sourceId, localId: pupilX.id, after: { firstName: 'Ebba', lastName: 'Epostsson' } },
-        { id: randomUUID(), seq: 2, entity: 'PERSON', op: 'UPDATE', externalId: sourceId, localId: pupilX.id, after: { email: `${marker}-nv-ny-${randomUUID()}@example.invalid` } },
-        { id: randomUUID(), seq: 3, entity: 'PERSON', op: 'DEACTIVATE', externalId: null, localId: leaving.id, after: null },
+        { id: randomUUID(), seq: 1, entity: 'PERSON', op: 'UPDATE', externalId: sourceId, localId: pupilX.id, after: { firstName: 'Ebba', lastName: 'Epostsson' }, protectedIdentity: false },
+        { id: randomUUID(), seq: 2, entity: 'PERSON', op: 'UPDATE', externalId: sourceId, localId: pupilX.id, after: { email: `${marker}-nv-ny-${randomUUID()}@example.invalid` }, protectedIdentity: false },
+        { id: randomUUID(), seq: 3, entity: 'PERSON', op: 'DEACTIVATE', externalId: null, localId: leaving.id, after: null, protectedIdentity: false },
       ];
       const gate = () => {
         let open!: () => void;
