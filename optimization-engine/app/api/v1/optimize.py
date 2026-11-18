@@ -3,24 +3,31 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 
 from app.config import Settings
 from app.dependencies import get_app_settings, verify_api_key
+from app.exceptions import SolverTimeoutError
 from app.logging_config import get_logger
 from app.schemas.schedule import OptimizeScheduleRequest, OptimizeScheduleResponse, SearchOptions
 from app.solver.scheduler_solver import SchedulerSolver, settings_for_search
+from app.timing import BUILD_HEADROOM_SECONDS, ceiling_seconds, generation_limits
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["optimization"])
 
 # Head-room added on top of the solver wall-clock limit to cover the synchronous
 # model-build phase. If the whole solve exceeds this, we fail rather than let a
-# pathological request pin the worker indefinitely.
-_SOLVE_BUILD_HEADROOM_SECONDS = 30.0
+# pathological request pin the worker indefinitely. One number for every route
+# now (app.timing); the name stays for what imports it.
+_SOLVE_BUILD_HEADROOM_SECONDS = BUILD_HEADROOM_SECONDS
 
 
-def solve_ceiling_seconds(settings: Settings, search: SearchOptions | None = None) -> float:
+def solve_ceiling_seconds(
+    settings: Settings,
+    search: SearchOptions | None = None,
+    deadline_seconds: float | None = None,
+) -> float:
     """The wall-clock after which a solve is answered 503 instead of waited for.
 
     THE PROBE IS COUNTED FOR A REQUEST THAT RUNS IT. A schemaförslag candidate
@@ -42,9 +49,22 @@ def solve_ceiling_seconds(settings: Settings, search: SearchOptions | None = Non
     error." instead of the TIMEOUT and what the probe had found. The probe now
     has a deadline of its own (SchedulerSolver.solve), and the ceiling lies
     past it, so the 503 is left for a solve that hangs.
+
+    A REQUEST THAT CARRIES ITS DEADLINE (`deadline_seconds`, how long the caller
+    waits) HAS A CEILING THAT IS NEVER PAST IT: the settings' own sum, or the
+    deadline less the transfer margin, whichever is less (app.timing). The
+    solver counts every step's time from this same number, so the answer comes
+    inside the caller's wait. The sum itself is app.timing.ceiling_seconds,
+    which GET /api/v1/timing reports too.
     """
-    probe = settings.solver_probe_seconds if search is None or search.runs_probes else 0.0
-    return settings.solver_max_time_seconds + probe + _SOLVE_BUILD_HEADROOM_SECONDS
+    return ceiling_seconds(
+        generation_limits(
+            settings,
+            runs_probes=search is None or search.runs_probes,
+            headroom_seconds=_SOLVE_BUILD_HEADROOM_SECONDS,
+        ),
+        deadline_seconds,
+    )
 
 
 async def run_solver(
@@ -61,7 +81,7 @@ async def run_solver(
     """
     settings = settings_for_search(settings, payload.search)
     solver = SchedulerSolver(settings)
-    timeout = solve_ceiling_seconds(settings, payload.search)
+    timeout = solve_ceiling_seconds(settings, payload.search, payload.deadline_seconds)
     try:
         return await asyncio.wait_for(
             asyncio.to_thread(solver.solve, payload),
@@ -69,9 +89,8 @@ async def run_solver(
         )
     except asyncio.TimeoutError:
         logger.error("optimization_timed_out", request_id=str(payload.request_id))
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Optimization timed out.",
+        raise SolverTimeoutError(
+            "Optimization timed out.", route="optimize", ceiling_seconds=timeout,
         ) from None
 
 

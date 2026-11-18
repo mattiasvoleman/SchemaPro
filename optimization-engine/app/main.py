@@ -15,9 +15,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.exams import router as exams_router
 from app.api.v1.optimize import router as optimize_router
-from app.api.v1.optimize import run_solver
+from app.api.v1.optimize import run_solver, solve_ceiling_seconds
 from app.api.v1.rooms import router as rooms_router
 from app.api.v1.staffing import router as staffing_router
+from app.api.v1.timing import router as timing_router
 from app.config import Settings, get_settings
 from app.dependencies import get_app_settings, verify_api_key
 from app.exceptions import (
@@ -80,6 +81,9 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         solver_max_time_seconds=settings.solver_max_time_seconds,
         solver_probe_seconds=settings.solver_probe_seconds,
         solver_explain_sharp_seconds=settings.solver_explain_sharp_seconds,
+        # What the API reads from GET /api/v1/timing: the longest a plain
+        # generation waits for its solve, so the first line of the log says it.
+        solve_ceiling_seconds=solve_ceiling_seconds(settings),
         slot_minutes=settings.slot_minutes,
         schedule_day=(
             f"{settings.schedule_day_start_minutes // 60:02d}:00-"
@@ -194,11 +198,21 @@ def register_exception_handlers(application: FastAPI) -> None:
         exc: SolverTimeoutError,
     ) -> JSONResponse:
         # 503, not 500: the request was valid and retrying with a larger budget
-        # may succeed. Mirrors the asyncio wait_for ceiling in run_solver.
-        logger.error("solver_timed_out", path=request.url.path, error=str(exc))
+        # may succeed. Raised where each route's asyncio wait_for gives up
+        # (its ceiling, app.timing). The message is the route's own sentence
+        # unchanged; the code and the details are what the gateway reads now
+        # (an older one reads the sentence).
+        logger.error(
+            "solver_timed_out", path=request.url.path, route=exc.route,
+            ceiling_seconds=exc.ceiling_seconds,
+        )
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content=error_payload(code="SOLVER_TIMEOUT", message=str(exc)),
+            content=error_payload(
+                code="SOLVER_TIMEOUT",
+                message=str(exc),
+                details={"route": exc.route, "ceilingSeconds": exc.ceiling_seconds},
+            ),
         )
 
     @application.exception_handler(OptimizationEngineError)
@@ -294,6 +308,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(optimize_router)
     application.include_router(rooms_router)
     application.include_router(staffing_router)
+    application.include_router(timing_router)
     application.include_router(exams_router)
     application.include_router(create_legacy_schedule_router())
 

@@ -18,8 +18,10 @@ side. The tests below hold that each sees its own budget while the other runs.
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import types
+from pathlib import Path
 from uuid import uuid4
 
 import httpx
@@ -33,6 +35,7 @@ from app.main import create_app, register_exception_handlers
 from app.schemas.schedule import OptimizeScheduleRequest, ScheduleRules, SearchOptions
 from app.solver import scheduler_solver
 from app.solver.scheduler_solver import SchedulerSolver, settings_for_search
+from app.timing import Deadline
 
 API_KEY = "test-api-key-000000000000000000000000"
 HEADERS = {"X-API-Key": API_KEY}
@@ -383,7 +386,10 @@ def test_a_candidates_timeout_reports_the_candidates_budget(
     assert len(limits) == 3, limits
     assert limits[0] == 30.0
     assert 29.0 < limits[1] <= 30.0
-    assert limits[2] == 15.0
+    # The probe's clock counts its own seconds from where the search ended and
+    # its builds are inside them (M1), so the one slice is its whole bound less
+    # the milliseconds the corridor's build took.
+    assert 14.0 < limits[2] <= 15.0
     assert app.state.settings is settings
     assert settings.solver_max_time_seconds == 60.0
     assert settings.solver_probe_seconds == 20.0
@@ -731,13 +737,14 @@ def test_run_solver_waits_for_the_ceiling_not_the_budget(
 def test_a_solve_that_hangs_is_answered_503_with_the_sentence_the_gateway_reads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The ceiling end to end: the status and the body's sentence.
+    """The route stops waiting at its ceiling and answers 503 with the shared body.
 
     The gateway turns exactly this 503 into ENGINE_TIMED_OUT
-    (optimization-proxy.service.ts, ENGINE_CEILING_SENTENCE) by comparing
-    the sentence, so a rewording here would silently give every school the
-    generic "The AI engine returned an error." again. The same body stands in
-    that file's spec.
+    (optimization-proxy.service.ts), by the code, or for an engine older than
+    the code by the sentence. A rewording here would silently give every school
+    the generic "The AI engine returned an error." again, so the body is read
+    from tests/data/solver_timeout_body.json, which the API's spec reads too:
+    change a sentence in either place and the other suite says so.
     """
     from app.api.v1 import optimize
 
@@ -758,12 +765,24 @@ def test_a_solve_that_hangs_is_answered_503_with_the_sentence_the_gateway_reads(
         finally:
             released.set()
 
+    shared = json.loads((Path(__file__).parent / "data" / "solver_timeout_body.json").read_text())
     assert response.status_code == 503, response.text
-    assert response.json() == {"code": "HTTP_ERROR", "message": "Optimization timed out."}
-
+    assert response.json() == {
+        "code": shared["code"],
+        "message": shared["sentences"]["optimize"],
+        # 0.1 s of search, 0.1 s of probe and the 0.2 s of headroom the test left.
+        "details": {"route": "optimize", "ceilingSeconds": pytest.approx(0.4)},
+    }
 
 def test_the_timeout_probe_has_a_deadline_without_the_walk(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The budget and the probe's seconds from the moment the search began."""
+    """The probe's seconds, counted from where the search ENDED.
+
+    They were counted from where its budget ended (`started + budget + probe`),
+    so a search that stopped ten seconds late spent ten of the probe's twenty
+    before it began (the review of #344, LÅG-1). Here the search has no
+    overrun, so the two are the same instant and the test cannot tell them
+    apart; test_a_late_search_leaves_the_probe_its_own_seconds can.
+    """
     _Recorder(monkeypatch, answer=cp_model.UNKNOWN)
     seen: list[tuple[float | None, float]] = []
     original = SchedulerSolver._probe_timeout
@@ -773,7 +792,6 @@ def test_the_timeout_probe_has_a_deadline_without_the_walk(monkeypatch: pytest.M
         return original(self, request, deadline=deadline)
 
     monkeypatch.setattr(SchedulerSolver, "_probe_timeout", probe)
-    before = scheduler_solver.time.monotonic()
 
     response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=60, SOLVER_PROBE_SECONDS=20)).solve(
         OptimizeScheduleRequest.model_validate(_payload(changeover=5)),
@@ -782,37 +800,34 @@ def test_the_timeout_probe_has_a_deadline_without_the_walk(monkeypatch: pytest.M
     assert response.status == "TIMEOUT"
     [(deadline, called_at)] = seen
     assert deadline is not None
-    # started lies between the request's arrival and the probe's call.
-    assert before + 80.0 <= deadline <= called_at + 80.0
+    # Its seconds from the moment it was asked for, which lies just before the call.
+    assert called_at - 1.0 <= deadline - 20.0 <= called_at
 
-
-def test_a_search_that_overran_its_budget_leaves_the_probe_unstarted(
+def test_a_deadline_that_leaves_the_search_nothing_leaves_the_probe_its_floor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A probe that cannot have the rest of its slice is not started.
+    """A caller that waits less than the builds need is answered, without a search.
 
-    Phase 1a is made to stop late, as CP-SAT does on a large week: past the
-    budget AND the probe's seconds. Without the deadline the probe ran its
-    whole slice after it, which on 2026-11-17 put the answer past the API's
-    ceiling. With it the TIMEOUT answers at once, unprobed.
+    A deadline of 7 s is a ceiling of 2 s and an answer due at 1 s, and the
+    search yields the probe's floor (here its whole second): the search has
+    none. It used to be a CP-SAT solve on a time limit at or under zero (a
+    MODEL_INVALID, an HTTP 500). Now no search runs, and the TIMEOUT says it was
+    searched for 0 s, with the one probe the clock leaves.
     """
     recorder = _Recorder(monkeypatch, answer=cp_model.UNKNOWN)
-    original = cp_model.CpSolver.Solve
-
-    def late(solver: cp_model.CpSolver, model: cp_model.CpModel, *args: object, **kwargs: object) -> int:
-        answer = original(solver, model, *args, **kwargs)
-        threading.Event().wait(1.6)
-        return answer
-
-    monkeypatch.setattr(cp_model.CpSolver, "Solve", late)
+    payload = _payload(changeover=5)
+    payload["deadlineSeconds"] = 7
 
     response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=0.5, SOLVER_PROBE_SECONDS=1.0)).solve(
-        OptimizeScheduleRequest.model_validate(_payload(changeover=5)),
+        OptimizeScheduleRequest.model_validate(payload),
     )
 
     assert response.status == "TIMEOUT"
-    # Phase 1a only: phase 1b had no time left, and the probe's deadline had passed.
-    assert len(recorder.calls) == 1, recorder.parameters()
+    assert response.conflicts is not None
+    assert response.conflicts.summary_params["budget"] == 0
+    # No search; the one solve that ran is the probe's, inside the second it was left.
+    [only] = [float(p["max_time_in_seconds"]) for p in recorder.parameters()]
+    assert 0.5 <= only <= 1.0, only
 
 
 # ---------------------------------------------------------------------------
@@ -829,7 +844,14 @@ class _Clock:
     can be put in front of the probe without anyone waiting for it.
     """
 
-    def __init__(self, monkeypatch: pytest.MonkeyPatch, *, late: float = 0.0, build: float = 0.0) -> None:
+    def __init__(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        late: float = 0.0,
+        build: float = 0.0,
+        first: int = cp_model.UNKNOWN,
+    ) -> None:
         self.now = 1000.0
         self.solves: list[float] = []
         self._late = late
@@ -843,7 +865,8 @@ class _Clock:
             self.solves.append(limit)
             # The first solve stops `late` seconds after its limit, as CP-SAT does on a large week.
             self.now += limit + (self._late if len(self.solves) == 1 else 0.0)
-            return cp_model.UNKNOWN
+            # `first` is what the first solve answers: INFEASIBLE makes a proof that comes late.
+            return first if len(self.solves) == 1 else cp_model.UNKNOWN
 
         monkeypatch.setattr(cp_model.CpSolver, "Solve", solve)
         if build:
@@ -874,10 +897,55 @@ def _best_effort(changeover: int = 5) -> OptimizeScheduleRequest:
 def test_a_probe_the_clock_cut_short_is_said_for_what_ran(monkeypatch: pytest.MonkeyPatch) -> None:
     """Four rules to probe, time for one: the summary says one, and how long it had.
 
-    The search stops 5 s late, so 1 of the probe's 6 s is left, where a rule's
-    slice is 1.5. It said "none of the 4 rules probed made a timetable appear
-    inside 2 s each" of three searches that never began and a fourth that had
-    a second.
+    The caller waits 30 s, so the answer is due at 22 s (ceiling 25 less the
+    three seconds the answer takes to build). The search stops 11 s late, at
+    21 s, so 1 of the probe's 6 s is left, where a rule's slice is 1.5. It said
+    "none of the 4 rules probed made a timetable appear inside 2 s each" of
+    three searches that never began and a fourth that had a second.
+    """
+    clock = _Clock(monkeypatch, late=11.0)
+    _rules_to_probe(monkeypatch, 4)
+    payload = _payload(changeover=5)
+    payload["deadlineSeconds"] = 30
+
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10, SOLVER_PROBE_SECONDS=6)).solve(
+        OptimizeScheduleRequest.model_validate(payload),
+    )
+
+    assert response.status == "TIMEOUT"
+    assert response.conflicts is not None
+    assert response.conflicts.summary_code == "PROBE_NOTHING_HELPED"
+    # Phase 1a, then the one probe the clock allowed.
+    assert len(clock.solves) == 2
+    assert clock.solves[1] == pytest.approx(1.0)
+    assert response.conflicts.summary_params == {"budget": 10, "rules": 1, "slice": 1}
+
+def test_a_search_that_used_the_probes_time_leaves_the_timeout_bare(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No probe ran, so no sentence says one did.
+
+    The search stops 13 s late, at 23 s, after the answer was due (22 s).
+    """
+    clock = _Clock(monkeypatch, late=13.0)
+    _rules_to_probe(monkeypatch, 4)
+    payload = _payload(changeover=5)
+    payload["deadlineSeconds"] = 30
+
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10, SOLVER_PROBE_SECONDS=6)).solve(
+        OptimizeScheduleRequest.model_validate(payload),
+    )
+
+    assert response.status == "TIMEOUT"
+    assert len(clock.solves) == 1
+    assert response.conflicts is None
+
+
+def test_a_late_search_leaves_the_probe_its_own_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The probe's seconds count from where the search ended, not from where its budget did.
+
+    The review of #344 (LÅG-1): at 180 s a search that stopped ten seconds late
+    left the parallel-groups probe 7 of its 12 s and the others none. Here the
+    search stops 5 s late and the probe still has its 6: four rules, 1.5 s each.
+    No deadline, so the clock's edge (46 s less 3) is far off.
     """
     clock = _Clock(monkeypatch, late=5.0)
     _rules_to_probe(monkeypatch, 4)
@@ -887,26 +955,10 @@ def test_a_probe_the_clock_cut_short_is_said_for_what_ran(monkeypatch: pytest.Mo
     )
 
     assert response.status == "TIMEOUT"
+    assert clock.solves[0] == pytest.approx(10.0)
+    assert clock.solves[1:] == [pytest.approx(1.5)] * 4
     assert response.conflicts is not None
-    assert response.conflicts.summary_code == "PROBE_NOTHING_HELPED"
-    # Phase 1a, then the one probe the clock allowed.
-    assert len(clock.solves) == 2
-    assert response.conflicts.summary_params == {"budget": 10, "rules": 1, "slice": 1}
-
-
-def test_a_search_that_used_the_probes_time_leaves_the_timeout_bare(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No probe ran, so no sentence says one did."""
-    clock = _Clock(monkeypatch, late=7.0)
-    _rules_to_probe(monkeypatch, 4)
-
-    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10, SOLVER_PROBE_SECONDS=6)).solve(
-        OptimizeScheduleRequest.model_validate(_payload(changeover=5)),
-    )
-
-    assert response.status == "TIMEOUT"
-    assert len(clock.solves) == 1
-    assert response.conflicts is None
-
+    assert response.conflicts.summary_params == {"budget": 10, "rules": 4, "slice": 2}
 
 def test_the_probe_clock_starts_after_the_builds_where_the_walk_is_not_kept(
     monkeypatch: pytest.MonkeyPatch,
@@ -938,7 +990,7 @@ def test_the_probe_clock_starts_after_the_builds_where_the_walk_is_not_kept(
 
 
 def test_the_best_effort_timeout_probe_ends_on_a_clock_too(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Bästa möjliga schema's TIMEOUT answers within the budget and the probe.
+    """Bästa möjliga schema's TIMEOUT answers within the search and the probe's seconds.
 
     The search stops two seconds late and five rules are left to probe, each
     with a one-second build. Without a clock all five ran their builds and
@@ -969,7 +1021,252 @@ def test_the_best_effort_timeout_probe_ends_on_a_clock_too(monkeypatch: pytest.M
     response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10, SOLVER_PROBE_SECONDS=6)).solve(_best_effort())
 
     assert response.status == "TIMEOUT"
-    # The budget, the probe, and the one build the clock cannot cut short.
-    assert clock.now - entered <= 10.0 + 6.0 + 1.0, clock.now - entered
-    # And the probe had its time: the clock is the budget AND the probe's seconds.
+    # The search's 10 s and its 2 late, the probe's 6, and the one build the clock cannot cut short.
+    assert clock.now - entered <= 10.0 + 2.0 + 6.0 + 1.0, clock.now - entered
+    # And the probe had its time: the clock is the probe's seconds from where the search ended.
     assert len(clock.solves) > 1
+
+
+# ---------------------------------------------------------------------------
+# M1, Tidskedjan: what the request's clock cuts, and what it leaves alone
+# ---------------------------------------------------------------------------
+
+
+def _with_deadline(payload: dict[str, object], seconds: float) -> OptimizeScheduleRequest:
+    payload["deadlineSeconds"] = seconds
+    return OptimizeScheduleRequest.model_validate(payload)
+
+
+def test_a_caller_that_waits_less_than_the_settings_need_is_answered_inside_its_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The settings say 20 s of search and 6 of probe; the caller waits 25 s.
+
+    Its ceiling is 20 s and the answer is due at 17, so the search ends at 12
+    (17 less the probe's floor of 5) and the TIMEOUT says it searched for 12 s,
+    not 20: the number on the page is the number the search had. The probe has
+    the 5 s that are left. Before, this was a 503 the caller had already stopped
+    waiting for, and the school read "did not respond in time".
+    """
+    clock = _Clock(monkeypatch)
+    entered = clock.now
+
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=20, SOLVER_PROBE_SECONDS=6)).solve(
+        _with_deadline(_payload(changeover=5), 25),
+    )
+
+    assert response.status == "TIMEOUT"
+    assert clock.solves == [pytest.approx(12.0), pytest.approx(5.0)]
+    assert response.conflicts is not None
+    assert response.conflicts.summary_params == {"budget": 12, "rules": 1, "slice": 5}
+    # And the answer was in time: due at 17 s.
+    assert clock.now - entered == pytest.approx(17.0)
+
+
+def test_a_deadline_the_settings_fit_inside_changes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Whole budget, whole probe: the same solve as a request that carried none."""
+    with_deadline = _Clock(monkeypatch)
+    SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=20, SOLVER_PROBE_SECONDS=6)).solve(
+        _with_deadline(_payload(changeover=5), 400),
+    )
+    kept = list(with_deadline.solves)
+
+    without = _Clock(monkeypatch)
+    SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=20, SOLVER_PROBE_SECONDS=6)).solve(
+        OptimizeScheduleRequest.model_validate(_payload(changeover=5)),
+    )
+
+    assert kept == without.solves == [20.0, 6.0]
+
+
+def test_an_infeasible_proof_that_comes_late_is_explained_only_as_far_as_the_clock_goes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The review of #344, LÅG-2: the explanation had a cap of its own and no clock.
+
+    The caller waits 40 s (ceiling 35, the answer due at 32). The proof comes
+    at 20 s, and the explanation's cap is 15 s, which would have ended at 35:
+    past the edge. It is given the 12 s the clock has left.
+    """
+    clock = _Clock(monkeypatch, first=cp_model.INFEASIBLE)
+    entered = clock.now
+
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=20, SOLVER_PROBE_SECONDS=6)).solve(
+        _with_deadline(_payload(changeover=5), 40),
+    )
+
+    assert response.status == "INFEASIBLE"
+    assert clock.solves[0] == pytest.approx(20.0)
+    assert clock.solves[1] == pytest.approx(12.0)
+    assert clock.now - entered <= 32.0 + 1e-9
+
+
+def test_an_infeasible_proof_that_comes_too_late_stands_unexplained(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The verdict was proved; an explanation that cannot have half a second is left out.
+
+    The proof comes at 31.7 s of an answer due at 32: nothing is built, nothing
+    is solved, and the school reads INFEASIBLE without the names (as it already
+    does when the explanation gives UNKNOWN).
+    """
+    clock = _Clock(monkeypatch, late=11.7, first=cp_model.INFEASIBLE)
+    builds: list[bool] = []
+    original = SchedulerSolver._build_model
+
+    def counted(solver: SchedulerSolver, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        builds.append(bool(kwargs.get("use_assumptions")))
+        return original(solver, *args, **kwargs)
+
+    monkeypatch.setattr(SchedulerSolver, "_build_model", counted)
+
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=20, SOLVER_PROBE_SECONDS=6)).solve(
+        _with_deadline(_payload(changeover=5), 40),
+    )
+
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is None
+    assert len(clock.solves) == 1
+    # The two models of the search, and none for the explanation: a build is paid before its solve.
+    assert builds == [False, False]
+
+
+def test_an_infeasible_proof_with_no_deadline_is_explained_as_it_always_was(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No deadline: the cap is min(budget, 15 s), and a late proof is still explained for it."""
+    clock = _Clock(monkeypatch, late=5.0, first=cp_model.INFEASIBLE)
+
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=20, SOLVER_PROBE_SECONDS=6)).solve(
+        OptimizeScheduleRequest.model_validate(_payload(changeover=5)),
+    )
+
+    assert response.status == "INFEASIBLE"
+    assert clock.solves[1] == 15.0
+
+
+def test_the_probe_does_not_count_the_rules_after_its_time_has_gone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The review of #344, LÅG-3: _timeout_relaxations counted the week's load first, on no clock."""
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=20, SOLVER_PROBE_SECONDS=6))
+
+    def counted(self: SchedulerSolver, request: OptimizeScheduleRequest) -> list[tuple[str, OptimizeScheduleRequest]]:
+        raise AssertionError("the rules were counted after the clock ran out")
+
+    monkeypatch.setattr(SchedulerSolver, "_timeout_relaxations", counted)
+
+    outcome = solver._probe_timeout(
+        OptimizeScheduleRequest.model_validate(_payload(changeover=5)),
+        deadline=scheduler_solver.time.monotonic() - 1.0,
+    )
+
+    assert outcome is None
+
+
+def test_the_week_load_count_stops_at_the_clocks_edge(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Four seconds a real week, and never past the answer's edge."""
+    seen: list[float] = []
+
+    def count(*_args: object, deadline: float, **_kwargs: object) -> list[object]:
+        seen.append(deadline)
+        return []
+
+    monkeypatch.setattr(scheduler_solver, "week_loads", count)
+    solver = SchedulerSolver(_settings())
+    request = OptimizeScheduleRequest.model_validate(_payload())
+
+    solver._week_loads(request)
+    outside_a_solve = seen.pop()
+    solver._deadline = Deadline(entered=scheduler_solver.time.monotonic(), ceiling=4.0)
+    solver._week_loads(request)
+    inside_a_short_one = seen.pop()
+
+    now = scheduler_solver.time.monotonic()
+    assert 3.0 < outside_a_solve - now <= SchedulerSolver.WEEK_LOAD_SECONDS
+    assert inside_a_short_one <= solver._deadline.answer_by
+    assert inside_a_short_one - now < 2.5
+
+
+def test_a_best_effort_week_whose_caller_waits_less_is_answered_inside_the_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bästa möjliga schema counts its search from the request's arrival, and the deadline holds it too."""
+    clock = _Clock(monkeypatch)
+    entered = clock.now
+    payload = _best_effort_payload()
+
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=20, SOLVER_PROBE_SECONDS=6)).solve(
+        _with_deadline(payload, 25),
+    )
+
+    assert response.status == "TIMEOUT"
+    assert clock.solves[0] == pytest.approx(12.0)
+    assert clock.now - entered <= 17.0 + 1e-9
+
+
+def test_a_best_effort_deadline_that_leaves_the_search_nothing_is_the_timeout_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock(monkeypatch, build=3.0)
+    payload = _best_effort_payload()
+
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=20, SOLVER_PROBE_SECONDS=6)).solve(
+        _with_deadline(payload, 14),
+    )
+
+    # Ceiling 9 s, due at 6 s; two builds of 3 s have used it, and the search had none.
+    assert response.status == "TIMEOUT"
+    assert clock.solves == []
+
+
+def _best_effort_payload(changeover: int = 5) -> dict[str, object]:
+    payload = _payload(changeover=changeover)
+    payload["requirements"][0]["maxLessonsPerDay"] = 1  # type: ignore[index]
+    payload["relaxation"] = {"mode": "BEST_EFFORT"}
+    return payload
+
+
+def test_an_explanations_next_try_is_counted_with_what_a_build_costs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The cap's remainder and the clock's, after the build the try has to pay first."""
+    clock = _Clock(monkeypatch)
+    solver = SchedulerSolver(_settings())
+    assert solver._explanation_room(10.0, 4.0) == 10.0  # outside a solve there is no clock, only the cap
+
+    solver._deadline = Deadline(entered=clock.now, ceiling=12.0)  # due at 9 s
+
+    assert solver._explanation_room(10.0, 4.0) == pytest.approx(5.0)
+    assert solver._explanation_room(3.0, 4.0) == pytest.approx(3.0)
+    assert solver._explanation_room(10.0, 0.0) == pytest.approx(9.0)
+
+
+def test_the_förläggning_verdicts_get_what_the_clock_has_left(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both asks of the released week count to the edge, not past it, whatever the settings say.
+
+    The settings give budget 180 and probe 20, so without the clock they would be
+    given 200 s from the request's arrival; the caller waits 15 s, due at 7.
+    """
+    from app.exceptions import InvalidScheduleInputError
+    from app.schemas.schedule import OptimizeScheduleResponse
+
+    clock = _Clock(monkeypatch)
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=180, SOLVER_PROBE_SECONDS=20))
+    solver._deadline = Deadline(entered=clock.now, ceiling=10.0)
+    request = OptimizeScheduleRequest.model_validate(_payload()).model_copy(update={"placements": object()})
+    seen: list[float | None] = []
+    monkeypatch.setattr(SchedulerSolver, "_asks_the_released_week", staticmethod(lambda request, response: True))
+
+    def verdict(self: SchedulerSolver, request: OptimizeScheduleRequest, *, seconds_left: float | None = None) -> None:
+        seen.append(seconds_left)
+
+    monkeypatch.setattr(SchedulerSolver, "_placements_verdict", verdict)
+    refused = OptimizeScheduleResponse(
+        request_id=request.request_id, status="INFEASIBLE", lessons=[], conflicts=None,
+    )
+
+    solver._with_placements_named(request, refused, clock.now)
+    solver._refusal_with_placements_named(
+        request, InvalidScheduleInputError("a lock", code="SOME_REFUSAL"), clock.now,
+    )
+
+    assert seen == [pytest.approx(7.0), pytest.approx(7.0)]

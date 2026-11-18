@@ -4857,6 +4857,13 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         # extra_forbidden at ['body', 'search'], which is the shape the
         # gateway reads as ENGINE_LACKS_CANDIDATES.
         "search",
+        # Optional (M1, Tidskedjan): how long the caller waits, in seconds,
+        # sent by a gateway that read `deadlineSeconds` in GET /api/v1/timing's
+        # `capabilities` and never to an engine that did not say it: an older
+        # one answers it with a 422 whose one error is extra_forbidden at
+        # ['body', 'deadlineSeconds'], which the gateway reads, sends the
+        # request again without the field and reads the times again.
+        "deadlineSeconds",
         # Optional, and sent only for a Bästa möjliga schema candidate (the
         # school's switch is on and the run asked for the mode): every other
         # payload omits it and is solved as before. An engine older than this
