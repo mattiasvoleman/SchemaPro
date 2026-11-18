@@ -84,6 +84,31 @@ describe('search, timeouts and the lease', () => {
     expect(callTimeoutMs({ variant: 'FREE', seed: 3, lead: true }, { maxSeconds: 120, workers: 1 })).toBe(185_000);
   });
 
+  it("waits longer than the engine's own ceiling for every call it makes, so the engine answers first", () => {
+    // The engine's ceiling for a request (optimize.solve_ceiling_seconds): its budget, the
+    // probe where it runs one (the lead asks for it; half the budget at most, 20 s by default)
+    // and 30 s for the builds. The same table stands in
+    // optimization-engine/tests/test_search_options.py (CANDIDATE_CEILINGS): change both together.
+    const ceilings: Array<{ maxSeconds: number; lead: boolean; ceiling: number }> = [
+      { maxSeconds: 5, lead: true, ceiling: 37.5 },
+      { maxSeconds: 30, lead: true, ceiling: 75 },
+      { maxSeconds: 120, lead: true, ceiling: 170 },
+      { maxSeconds: 5, lead: false, ceiling: 35 },
+      { maxSeconds: 30, lead: false, ceiling: 60 },
+      { maxSeconds: 120, lead: false, ceiling: 150 },
+    ];
+    const answeredFirst = ceilings
+      .map(({ maxSeconds, lead, ceiling }) => ({
+        maxSeconds,
+        lead,
+        ceiling,
+        waits: callTimeoutMs({ variant: 'KEEP', seed: null, lead }, { maxSeconds, workers: 1 }) / 1000,
+      }))
+      .filter(({ ceiling, waits }) => waits <= ceiling);
+    // Listed, so a failure names the call that gives up before the engine does.
+    expect(answeredFirst).toEqual([]);
+  });
+
   it('leases a run twice its longest call, within 60..3600 s', () => {
     const calls = [
       { variant: 'KEEP', seed: null, lead: true },
