@@ -80,6 +80,11 @@ const DEFAULT_WAIT_SECONDS = 240;
  *
  * It follows the wait the API actually enforces, as the page's "up to N
  * minutes" does, until the engine can say its own ceiling (M1).
+ *
+ * The engine's 503 at its ceiling stops its wait, not its solve thread
+ * (ENGINE_TIMED_OUT, optimization-proxy.service.ts): the ten seconds the API's
+ * wait has over the ceiling and the thirty here are where that goes. A margin,
+ * not a proof, until the engine reports when its thread ends.
  */
 export function leaseSecondsFor(waitSeconds: number | undefined): number {
   const wait = typeof waitSeconds === 'number' && Number.isFinite(waitSeconds) ? waitSeconds : DEFAULT_WAIT_SECONDS;

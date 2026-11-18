@@ -6467,7 +6467,9 @@ lives. Each renewal sets the lease to **the API's wait for the engine (`AI_ENGIN
 database's 60–3600 s: at the 240 000 ms §5 asks for at a 180 s budget, 270 s. §5 requires `AI_ENGINE_TIMEOUT_MS` to exceed the
 engine's ceiling (`optimize.solve_ceiling_seconds`: the budget, the probe and thirty seconds: 230 s at 180 and 20), so a run whose
 lease has run out has no engine call left to wait for, and the year can be given to the next one without a second solve starting
-beside the first. When the engine can say its own ceiling (M1), the lease takes it from there; until then it follows the wait
+beside the first. (The engine's 503 at its ceiling stops its wait and not its solve thread, which `ENGINE_TIMED_OUT` says to
+the school; the ten seconds the API's wait has over the ceiling, and the thirty on top of it, are where that goes. It is a margin,
+not a proof, until the engine reports when its thread ends.) When the engine can say its own ceiling (M1), the lease takes it from there; until then it follows the wait
 the API enforces, as the page's "up to N minutes" does. `CANDIDATES_BACKGROUND=off` turns off this sweep as well as
 schemaförslag's.
 
