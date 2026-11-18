@@ -21,6 +21,7 @@
 
 import { COMBINED_OUTPUT, FIELDS, FIELD_CONFLICTS, fieldOf, type CombinedField, type FieldSpec, type TemplateKind } from "@/lib/column-fields";
 import { writeMappedTable, type RawTable } from "@/lib/column-table";
+import { PHONE_ALIASES } from "@/lib/csv-aliases";
 import { normalizeHeader } from "@/lib/csv-export";
 import { hasPersonalNumber, isPersonalNumberHeader, redactPersonalNumbers } from "@/lib/personal-number";
 
@@ -66,6 +67,30 @@ export function keysOf(headers: readonly string[]): string[] {
 const baseOf = (key: string): string => key.replace(/#\d+$/, "");
 
 /**
+ * A telephone number as a school writes it in a file: ten digits, the first a 0 (the national form: 0701234567, or 070 123 45 67
+ * with one space between digits), and no hyphen or plus between the sixth and the seventh digit, where a personnummer has one.
+ *
+ * Ten digits that read as a date and four more ARE the shape of a personnummer (personal-number.ts, kept equal to the gateway's,
+ * whose fixture says 0701234567 is one), and for a column nobody called a telephone column that is right: the gateway's
+ * own reader of the flat table has no telephone field and refuses the cell. But the pupils', guardians' and teachers' files
+ * have one, and more than half of the numbers that begin 070 read as a date (a month 01-09, a day 01-31), so a column of
+ * telephone numbers was dropped as "personnummer" and a row with one among others was held back, in files that import today.
+ * In a column the importer reads as a telephone number, a cell of this form is a telephone number. A cell of any other form
+ * (a hyphen before the last four, twelve digits, a number that begins with anything but 0) is still a personnummer.
+ */
+const BARE_TELEPHONE = /^0\d(?: ?\d){8}$/;
+export const isBareTelephone = (cell: string): boolean => BARE_TELEPHONE.test(cell);
+
+/** The columns whose header the importers read as a telephone number (lib/csv-aliases.ts: the one list). */
+function telephoneColumns(block: Block): Set<number> {
+  const found = new Set<number>();
+  block.keys.forEach((key, index) => {
+    if (PHONE_ALIASES.includes(baseOf(key))) found.add(index);
+  });
+  return found;
+}
+
+/**
  * The block under the header row. `headerRow` is the file row the headers stand on (a title above them is skipped), or null
  * for the first row with content. Null when the table is empty or has no row with that number.
  */
@@ -73,7 +98,12 @@ export function chooseHeaderRow(table: RawTable, headerRow: number | null): Bloc
   if (table.rows.length === 0) return null;
   const at = headerRow === null ? 0 : table.rowNumbers.indexOf(headerRow);
   if (at === -1) return null;
-  const headers = table.rows[at]!.map((cell) => cell.trim());
+  const written = table.rows[at]!.map((cell) => cell.trim());
+  // A column right of the last that has a header or a cell is no column: a sheet Excel has formatted past its data is saved as
+  // "a;b;c;;" and every such file would otherwise open the column list to name two columns with nothing in them.
+  let width = written.length;
+  while (width > 0 && written[width - 1] === "" && !table.rows.slice(at + 1).some((raw) => (raw[width - 1] ?? "").trim() !== "")) width -= 1;
+  const headers = written.slice(0, width);
   const body: string[][] = [];
   const rowNumbers: number[] = [];
   const overflowRows: number[] = [];
@@ -105,6 +135,7 @@ export function personalNumberColumns(block: Block): Set<number> {
   const known = DROPPED.get(block);
   if (known !== undefined) return known;
   const found = new Set<number>();
+  const telephones = telephoneColumns(block);
   block.headers.forEach((header, index) => {
     if (isPersonalNumberHeader(normalizeHeader(header)) || hasPersonalNumber(header)) {
       found.add(index);
@@ -116,7 +147,8 @@ export function personalNumberColumns(block: Block): Set<number> {
       const cell = row[index]!;
       if (cell === "") continue;
       filled += 1;
-      if (hasPersonalNumber(cell)) numbers += 1;
+      // A telephone column's own numbers are not what this looks for (isBareTelephone).
+      if (hasPersonalNumber(cell) && !(telephones.has(index) && isBareTelephone(cell))) numbers += 1;
     }
     if (numbers >= 1 && numbers * 2 >= filled) found.add(index);
   });
@@ -299,9 +331,10 @@ export function describeColumns(block: Block, kind: TemplateKind, assignment: As
     const named = fieldsNaming(kind, key);
     if (named.length === 1 && !dropped.has(index) && assignment[index] === undefined) spelled.set(named[0]!.id, (spelled.get(named[0]!.id) ?? 0) + 1);
   });
+  const telephones = telephoneColumns(block);
   return block.keys.map((key, index): ColumnState => {
     // A cell with the shape of a number is never shown, in a column that is not a personnummer column either.
-    const sample = dropped.has(index) ? [] : block.body.map((row) => row[index]!).filter((cell) => cell !== "" && !hasPersonalNumber(cell)).slice(0, 3);
+    const sample = dropped.has(index) ? [] : block.body.map((row) => row[index]!).filter((cell) => cell !== "" && !(hasPersonalNumber(cell) && !(telephones.has(index) && isBareTelephone(cell)))).slice(0, 3);
     const base = { index, label: labelOf(block.headers[index]!), key, sample };
     if (dropped.has(index)) return { ...base, status: "personalNumber", field: null };
     const field = assignment[index];
@@ -501,12 +534,14 @@ export function applyMapping(block: Block, kind: TemplateKind, assignment: Assig
   const plainAt = plain.map((field) => holders.get(field.id)![0]!);
   const combinedAt = combined.map((field) => ({ field, index: holders.get(field.id)![0]! }));
   const read = [...plainAt, ...combinedAt.map((entry) => entry.index)];
+  // The column placed on a telephone field: a bare ten-digit number in it is a telephone number (isBareTelephone).
+  const telephoneAt = fieldOf(kind, "phone") !== undefined ? holders.get("phone")?.[0] : undefined;
   const replacement = new Set<number>();
 
   block.body.forEach((cells, at) => {
     const number = block.rowNumbers[at]!;
     // A personnummer in a column that is read: the row is not read, and the message says where and not what.
-    const numbered = read.filter((index) => hasPersonalNumber(cells[index]!));
+    const numbered = read.filter((index) => hasPersonalNumber(cells[index]!) && !(index === telephoneAt && isBareTelephone(cells[index]!)));
     if (numbered.length > 0) {
       const names = numbered.slice(0, 3).map((index) => nameOf(labelOf(block.headers[index]!)));
       const more = numbered.length > 3 ? ` och ${numbered.length - 3} till` : "";

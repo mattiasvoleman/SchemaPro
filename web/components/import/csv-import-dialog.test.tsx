@@ -1301,3 +1301,39 @@ describe("CsvImportDialog: pointing out the columns", () => {
     });
   });
 });
+
+describe("CsvImportDialog telephone numbers written without hyphens", () => {
+  it("sends the numbers of a guardians file: ten digits are no personnummer in the telephone column", async () => {
+    mockPost.mockResolvedValue({ created: 3, linked: 3, skipped: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["guardians"] });
+
+    await uploadCsv(
+      user,
+      "fornamn;efternamn;epost;telefon;elev_epost\r\nGun;Berg;gun@example.com;0701234567;alma@example.com\r\nOla;Ek;ola@example.com;0709876543;nils@example.com\r\nEva;Li;eva@example.com;070 123 45 67;bo@example.com\r\n",
+    );
+
+    await screen.findByText("rowsReady(count=3)");
+    expect(screen.queryByText(/^dropped\(/)).not.toBeInTheDocument();
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+    await waitFor(() => expect(mockPost).toHaveBeenCalled());
+    const [, body] = mockPost.mock.calls[0] as [string, { rows: Array<{ phone: string | null }> }];
+    expect(body.rows.map((row) => row.phone)).toEqual(["0701234567", "0709876543", "070 123 45 67"]);
+  });
+
+  it("still holds a row back for a personnummer written as one in the telephone column", async () => {
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["students"] });
+
+    await uploadCsv(
+      user,
+      "fornamn;efternamn;epost;telefon;klass\r\nAlma;Berg;alma@example.com;0701234567;7A\r\nNils;Ek;nils@example.com;800101-1234;7B\r\nEva;Lind;eva@example.com;031-123456;7C\r\n",
+    );
+
+    await screen.findByText("rowProblems.title");
+    expect(screen.getByText(/Rad 3/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/800101-1234/);
+    expect(importButton()).toBeDisabled();
+  });
+});

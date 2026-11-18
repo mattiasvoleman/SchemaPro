@@ -54,6 +54,20 @@ describe("the header row", () => {
     expect(b.overflowRows).toEqual([3]);
   });
 
+  it("does not count the columns right of the last one that has a header or a cell: a sheet Excel formatted past its data is `a;b;;`", () => {
+    const b = block("fornamn;efternamn;epost;klass;;\r\nAlma;Berg;alma@example.com;7A;;\r\nNils;Ek;nils@example.com;7B;;\r\n");
+    expect(b.headers).toEqual(["fornamn", "efternamn", "epost", "klass"]);
+    const done = applyMapping(b, "students", aliasAssignment(b, "students"));
+    expect(done.unplaced).toEqual([]);
+    expect(done.ok).toBe(true);
+    // A column with a cell but no header is a column, and one with a header but no cell is one too; so is one between others.
+    expect(block("a;;c;;\n1;2;3;;\n").headers).toEqual(["a", "", "c"]);
+    expect(block("a;b;;\n1;;;4\n").headers).toEqual(["a", "b", "", ""]);
+    expect(block("a;b;;\n1;;;\n").headers).toEqual(["a", "b"]);
+    // What lies right of the header is still named: the row is listed, and nothing of it is read.
+    expect(block("a;b;;\n1;2;;;5\n").overflowRows).toEqual([2]);
+  });
+
   it("keys a header by its normalised spelling, `#2` for one that stands twice, `kolumn<n>` for one that is nothing", () => {
     expect(keysOf(["Lärare e-post", "LARARE E POST", "Namn", "namn", "namn", "#", ""])).toEqual(["larareepost", "larareepost#2", "namn", "namn#2", "namn#3", "kolumn6", "kolumn7"]);
   });
@@ -453,5 +467,47 @@ describe("what the user is shown", () => {
   it("has an entry for every field of the kind that a placed column fills", () => {
     const required = FIELDS.scheduleLessons.filter((f) => f.required).length;
     expect(required).toBe(5);
+  });
+});
+
+describe("a telephone number is no personnummer in a telephone column", () => {
+  const GUARDIANS = "fornamn;efternamn;epost;telefon;elev_epost\nGun;Berg;gun@e.se;0701234567;alma@e.se\nOla;Ek;ola@e.se;0709876543;nils@e.se\nEva;Li;eva@e.se;070 123 45 67;bo@e.se\n";
+
+  it("keeps the telephone column of a guardians file whose numbers are written without hyphens, and reads every number", () => {
+    const b = block(GUARDIANS);
+    expect([...personalNumberColumns(b)]).toEqual([]);
+    const done = applyMapping(b, "guardians", aliasAssignment(b, "guardians"));
+    expect(done.ok).toBe(true);
+    expect(done.dropped).toEqual([]);
+    expect(done.headers).toEqual(["fornamn", "efternamn", "epost", "telefon", "elev_epost"]);
+    expect(done.rows.map((row) => row[3])).toEqual(["0701234567", "0709876543", "070 123 45 67"]);
+    // The telephone column's numbers are shown to the user as what they are.
+    expect(describeColumns(b, "guardians", aliasAssignment(b, "guardians"))[3]!.sample).toEqual(["0701234567", "0709876543", "070 123 45 67"]);
+  });
+
+  it("reads such a number in a column the user placed on the telephone field, whatever its header", () => {
+    const b = block("Förnamn;Efternamn;Post;Kontakt;Klass\nA;B;a@e.se;0701234567;7A\nC;D;c@e.se;x;7A\nE;F;e@e.se;y;7A\n");
+    expect([...personalNumberColumns(b)]).toEqual([]);
+    const done = applyMapping(b, "students", assign("firstName", "lastName", "email", "phone", "className"));
+    expect(done.ok).toBe(true);
+    expect(done.rows[0]).toEqual(["A", "B", "a@e.se", "0701234567", "7A"]);
+  });
+
+  it("still holds a row back for a number that has the personnummer's own form in a telephone column", () => {
+    for (const cell of ["070123-4567", "070123+4567", "19070123-4567", "190701234567", "8001011234", "800101-1234"]) {
+      const b = block(`fornamn;efternamn;epost;telefon;klass\nA;B;a@e.se;${cell};7A\nC;D;c@e.se;08-123 456 78;7A\nE;F;e@e.se;031-123456;7A\nG;H;g@e.se;;7A\n`);
+      const done = applyMapping(b, "students", aliasAssignment(b, "students"));
+      expect(done.rowProblems.map((problem) => problem.code), cell).toEqual(["PERSONAL_NUMBER_IN_CELL"]);
+      expect(JSON.stringify(done), cell).not.toContain(cell);
+    }
+  });
+
+  it("is a telephone number only in a telephone column: the same cell in a column of another header is a personnummer", () => {
+    const b = block("fornamn;efternamn;epost;klass\nA;B;a@e.se;0701234567\nC;D;c@e.se;7A\nE;F;e@e.se;7B\n");
+    const done = applyMapping(b, "students", assign("firstName", "lastName", "email", "className"));
+    expect(done.rowProblems.map((problem) => problem.code)).toEqual(["PERSONAL_NUMBER_IN_CELL"]);
+    // A column of such numbers under an id's header is a column of personnummer, not telephones.
+    const ids = block("fornamn;efternamn;epost;klass;id\nA;B;a@e.se;7A;0801011234\nC;D;c@e.se;7A;0902021234\n");
+    expect([...personalNumberColumns(ids)]).toEqual([4]);
   });
 });
