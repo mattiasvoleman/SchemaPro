@@ -168,6 +168,8 @@ describe("the switch for the latest schedule", () => {
     expect(asked()).toEqual([]);
     expect(ghosts()).toEqual([]);
     expect(screen.queryByTestId("placement-latest-said")).not.toBeInTheDocument();
+    // The legend's line for the pale lessons is there only while they are.
+    expect(within(screen.getByRole("list", { name: "legend" })).queryByText("legend")).not.toBeInTheDocument();
   });
 
   it("says what to pick when it is on and nothing is: and reads nothing, since nothing would be drawn", async () => {
