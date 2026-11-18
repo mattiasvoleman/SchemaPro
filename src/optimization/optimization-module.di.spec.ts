@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PrismaService } from '../database/prisma.service';
 import { OptimizationProxyService } from './optimization-proxy.service';
+import { EngineTimingService } from './engine-timing.service';
 
 /*
  * FÖRLAGDA POSTER NEED THE CLASH RULE IN THE PROXY, AS NEST GIVES IT.
@@ -32,11 +33,30 @@ describe('OptimizationProxyService receives MasterLessonsService from Nest (HÖG
     expect(types[3]).toBe(MasterLessonsService);
   });
 
+  it('is decorated with EngineTimingService in its fifth place (M1), which Nest gives it', async () => {
+    const types = Reflect.getMetadata('design:paramtypes', OptimizationProxyService) as unknown[];
+    expect(types[4]).toBe(EngineTimingService);
+
+    const config = { getOrThrow: () => ({ baseUrl: 'http://engine.invalid', apiKey: 'k'.repeat(32), timeoutMs: 1000 }) };
+    const built = await Test.createTestingModule({
+      providers: [
+        OptimizationProxyService,
+        EngineTimingService,
+        { provide: PrismaService, useValue: {} },
+        { provide: HttpService, useValue: {} },
+        { provide: ConfigService, useValue: config },
+        { provide: MasterLessonsService, useValue: { findConflicts: jest.fn() } },
+      ],
+    }).compile();
+    expect((built.get(OptimizationProxyService) as unknown as { timing: unknown }).timing).toBe(built.get(EngineTimingService));
+  });
+
   it('gets the clash rule injected when Nest builds it, and refuses to build without one', async () => {
     const masters = { findConflicts: jest.fn() };
     const config = { getOrThrow: () => ({ baseUrl: 'http://engine.invalid', apiKey: 'k'.repeat(32), timeoutMs: 1000 }) };
     const providers = [
       OptimizationProxyService,
+      EngineTimingService,
       { provide: PrismaService, useValue: {} },
       { provide: HttpService, useValue: {} },
       { provide: ConfigService, useValue: config },

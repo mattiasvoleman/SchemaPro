@@ -20,7 +20,13 @@ export interface JwtConfig {
 export interface AiEngineConfig {
   baseUrl: string;
   apiKey: string;
-  timeoutMs: number;
+  /**
+   * AI_ENGINE_TIMEOUT_MS when it was SET, else undefined (M1, Tidskedjan): the
+   * API then waits as long as the engine says its route can take, counted from
+   * GET /api/v1/timing (engine-timing.ts waitMsFor), and 120 s for an engine
+   * that says nothing.
+   */
+  timeoutMs?: number;
 }
 
 export interface ThrottleConfig {

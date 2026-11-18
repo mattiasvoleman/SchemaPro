@@ -9,6 +9,8 @@ import { OptimizationJobsService } from './optimization-jobs.service';
 import { RoomOptimizationService } from './room-optimization.service';
 import { StaffingProposalService } from './staffing-proposal.service';
 import { ScheduleCandidatesService } from './schedule-candidates.service';
+import { EngineTimingService } from './engine-timing.service';
+import { FALLBACK_WAIT_MS } from './engine-timing';
 import { WeekCheckController } from './week-check.controller';
 import { WeekCheckService } from './week-check.service';
 
@@ -23,7 +25,9 @@ import { WeekCheckService } from './week-check.service';
         const ai = configService.getOrThrow<AiEngineConfig>('aiEngine');
         return {
           baseURL: ai.baseUrl,
-          timeout: ai.timeoutMs,
+          // The default of the module's own client; every call to the engine states its own wait
+          // (OptimizationProxyService.callAiEngine), so this is only what a call that did not would get.
+          timeout: ai.timeoutMs ?? FALLBACK_WAIT_MS,
           headers: {
             'Accept': 'application/json',
           },
@@ -34,6 +38,8 @@ import { WeekCheckService } from './week-check.service';
   // Kontrollera veckan has a controller of its own, beside the run's.
   controllers: [OptimizationController, WeekCheckController],
   providers: [
+    // The engine's times, read from the engine (M1): the proxy waits by them.
+    EngineTimingService,
     OptimizationProxyService,
     OptimizationJobsService,
     RoomOptimizationService,

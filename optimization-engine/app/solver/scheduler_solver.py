@@ -119,6 +119,7 @@ from app.solver.room_allocator import (
     splits,
 )
 from app.solver.time_grid import TimeGrid
+from app.timing import Deadline, ceiling_seconds, generation_limits
 from app.solver.week_load import (
     MAX_SHARED_TEACHERS_NAMED,
     LunchFacts,
@@ -1464,6 +1465,71 @@ class SchedulerSolver:
             slot_minutes=settings.slot_minutes,
             schedule_days=tuple(settings.schedule_days),
         )
+        # THE REQUEST'S CLOCK (app.timing), set by solve() for the length of
+        # one solve and None outside it: a step called on its own (a test, a
+        # benchmark) has no clock and is bounded by its own cap, as it always
+        # was. One solver is built per request (run_solver), so nothing here
+        # is shared between two.
+        self._deadline: Deadline | None = None
+        # The seconds the search was given, once solve() has decided them: the
+        # budget it asked for, or less when the clock could not hold it.
+        # What a TIMEOUT says it searched for (_reported_budget).
+        self._search_seconds: float | None = None
+        # What one model build cost, measured by the strict solve's own two:
+        # a step that has to build again (the explanation, a probe) is not
+        # started unless the clock has that much besides its own time.
+        self._build_seconds: float = 0.0
+
+    # ---- the request's clock (app.timing) -------------------------------------
+
+    def _clock_left(self) -> float | None:
+        """Seconds until the answer must have been built, None outside solve()."""
+        return None if self._deadline is None else self._deadline.left(time.monotonic())
+
+    def _clock_cap(self, seconds: float) -> float:
+        """`seconds`, or what the clock has left if that is less."""
+        left = self._clock_left()
+        return seconds if left is None else min(seconds, left)
+
+    def _clock_clamp(self, instant: float) -> float:
+        """An instant of this module's own, never later than the answer's edge."""
+        return instant if self._deadline is None else self._deadline.clamp(instant)
+
+    def _search_budget(self, request: OptimizeScheduleRequest, started: float) -> float:
+        """The seconds the search has from `started`: its budget, unless the clock cannot hold it.
+
+        EXACTLY the budget while it can, so a week whose builds are quick is
+        searched for the number of seconds the deployment set. A search that
+        would run past where the clock leaves room for the probe's floor ends
+        there instead, and the TIMEOUT that follows says how long it had.
+        """
+        budget = self._settings.solver_max_time_seconds
+        if self._deadline is not None:
+            probe = self._settings.solver_probe_seconds if _runs_probes(request) else 0.0
+            budget = self._deadline.search_budget(started, budget, probe)
+        self._search_seconds = budget
+        return budget
+
+    def _reported_budget(self) -> int:
+        """The budget a TIMEOUT says it searched for, in whole seconds."""
+        seconds = (
+            self._settings.solver_max_time_seconds
+            if self._search_seconds is None
+            else self._search_seconds
+        )
+        return round(seconds)
+
+    def _probe_deadline(self) -> float:
+        """The instant the timeout probe must stop, counted from NOW: where the search ended.
+
+        Its own seconds, but never past the clock's edge. It was counted from
+        where the search's BUDGET ended, so a search that stopped ten seconds
+        late (CP-SAT does, on a large week) spent ten of the probe's twenty
+        before it began.
+        """
+        now = time.monotonic()
+        probe = self._settings.solver_probe_seconds
+        return now + probe if self._deadline is None else self._deadline.probe_end(now, probe)
 
     def _build_model(
         self,
@@ -2933,6 +2999,9 @@ class SchedulerSolver:
             )
         if deadline is None:
             deadline = time.monotonic() + self.WEEK_LOAD_SECONDS
+        # The request's clock edge, when a solve runs one (M1): a week check has
+        # none, and _clock_clamp then hands the deadline back unchanged.
+        deadline = self._clock_clamp(deadline)
         loads = week_loads(
             request.requirements,
             request.frame_times,
@@ -3077,7 +3146,7 @@ class SchedulerSolver:
         return ConflictAnalysis(
             summary_code="TIGHT_WEEK_TIMEOUT",
             summary_params={
-                "budget": round(self._settings.solver_max_time_seconds),
+                "budget": self._reported_budget(),
                 "grades": "any" if worst.year is None else str(worst.year),
                 "demandMinutes": worst.demand_minutes,
                 "capacityMinutes": worst.capacity_minutes,
@@ -4939,6 +5008,24 @@ class SchedulerSolver:
         # objective, 1.9 s and a core of six. So the objective first, on
         # EXPLAIN_WALK_FIRST_SECONDS of the cap, and only when it names nothing
         # the model without it, on the rest.
+        # THE EXPLANATION IS UNDER THE REQUEST'S CLOCK TOO. A proof that comes
+        # late (the end of phase 1b) used to be explained for up to fifteen
+        # seconds and a model build for each try, on no clock at all: 226 s
+        # against a ceiling of 230 at a 20 s probe, and 226 against 210 at none
+        # (the review of #344, LÅG-2). The verdict stands whether it is
+        # explained or not, so an explanation that cannot have its first
+        # seconds before the edge is left out, and one that can is cut to
+        # them; each try after the first is counted with what a build costs.
+        left = self._clock_left()
+        if left is not None and left < self.MIN_PHASE_SECONDS + self._build_seconds:
+            logger.warning(
+                "the explanation of an INFEASIBLE week was left out [requestId=%s]: "
+                "%.1f s of the clock left, a build costs about %.1f s",
+                request.request_id, left, self._build_seconds,
+            )
+            return OptimizeScheduleResponse(
+                request_id=request.request_id, status="INFEASIBLE", lessons=[], conflicts=None,
+            )
         keeps_walk = travel_map(
             request, slot_minutes=self._grid.slot_minutes, step=_start_step(request, self._grid),
         ) is not None
@@ -4956,9 +5043,13 @@ class SchedulerSolver:
             sum(requirement.lessons_per_week for requirement in request.requirements)
             >= self.EXPLAIN_SHARP_FROM_LESSONS
         )
+        built_at = time.monotonic()
         model, registry, _, _, _ = self._build_model(
             request, use_assumptions=True, include_objective=not sharp_first,
         )
+        # What THIS week's build cost, which the tries after the first are
+        # counted with: the strict solve's own figure is the dearest of two.
+        built = max(time.monotonic() - built_at, 0.0)
         solver = cp_model.CpSolver()
         # Capped, because the verdict is already in. Measured: a payload phase 1
         # proves INFEASIBLE in under a second can keep this single-threaded
@@ -4968,6 +5059,16 @@ class SchedulerSolver:
         # one after sixty, and the school has its answer forty-five seconds
         # sooner.
         cap = min(self._settings.solver_max_time_seconds, self.EXPLAIN_CAP_SECONDS)
+        # The cap is what the CLOCK has left when that is less: the tries
+        # below take their shares of it, so none of them can pass the edge.
+        clock_cap = self._clock_cap(cap)
+        if clock_cap < cap:
+            cap = clock_cap
+            if cap < self.MIN_PHASE_SECONDS:
+                return OptimizeScheduleResponse(
+                    request_id=request.request_id, status="INFEASIBLE", lessons=[],
+                    conflicts=None,
+                )
         if sharp_first:
             first = cap if pinned else min(cap, self._settings.solver_explain_sharp_seconds)
         else:
@@ -4982,7 +5083,7 @@ class SchedulerSolver:
         # twice leaves the solver with no response, and its wall_time raises.
         used = time.monotonic() - started
         if keeps_walk and not sharp_first and status != cp_model.INFEASIBLE:
-            left = cap - used
+            left = self._explanation_room(cap - used, built)
             if left >= self.MIN_PHASE_SECONDS:
                 model, registry, _, _, _ = self._build_model(
                     request, use_assumptions=True, include_objective=False,
@@ -5001,7 +5102,7 @@ class SchedulerSolver:
         if sharp_first and not pinned and status not in (cp_model.OPTIMAL, cp_model.FEASIBLE) and (
             conflicts is None or conflicts.summary_code == "CONFLICT_NO_CORE"
         ):
-            left = cap - used
+            left = self._explanation_room(cap - used, built)
             if left >= self.MIN_PHASE_SECONDS:
                 model, registry, _, _, _ = self._build_model(
                     request, use_assumptions=True, include_objective=True,
@@ -5054,6 +5155,16 @@ class SchedulerSolver:
             # leaves named by its class (_named_by_class).
             conflicts=_named_by_class(request, conflicts),
         )
+
+    def _explanation_room(self, from_cap: float, built: float) -> float:
+        """Seconds an explanation's next try may have: the cap's remainder, and the clock's after a build.
+
+        A try after the first builds the model again, and the build is paid
+        before the solve starts, so the clock has to hold both: `built`, which
+        this week's first build cost, comes off what it has left.
+        """
+        left = self._clock_left()
+        return from_cap if left is None else min(from_cap, left - built)
 
     # A phase below this gets no real search done — it is all presolve — so a
     # smaller remainder is not worth a second solve and the winning phase-1
@@ -5754,25 +5865,43 @@ class SchedulerSolver:
         if scoped is not self._settings:
             return SchedulerSolver(scoped).solve(request)
         entered = time.monotonic()
+        # THE REQUEST'S CLOCK, from the same sum the route waits by
+        # (optimize.solve_ceiling_seconds), with the caller's own deadline in
+        # it when the request carries one. Every step below that has a time of
+        # its own counts it to this clock's edge, so what is optional gives way
+        # before the answer is late: the probe, then the explanation, then the
+        # search itself down to the probe's floor (app.timing).
+        self._deadline = Deadline(
+            entered,
+            ceiling_seconds(
+                generation_limits(self._settings, runs_probes=_runs_probes(request)),
+                request.deadline_seconds,
+            ),
+        )
+        self._search_seconds = None
         try:
-            response = (
-                self._solve_best_effort(request, entered)
-                if request.relaxation is not None
-                else self._solve_strict(request, entered)
-            )
-        except InvalidScheduleInputError as refusal:
-            # FÖRLAGDA POSTER, AND THE REFUSALS BEFORE THE MODEL: "locked
-            # lessons leave 7A no lunch break" about locks the school never
-            # made by hand is the same question (review of #293, MEDEL-3).
-            named = self._refusal_with_placements_named(request, refusal, entered)
-            if named is None:
-                raise
-            return named
-        # FÖRLAGDA POSTER: a refusal of a week the school pinned lessons in is
-        # asked once more with the pins released (_placements_verdict). Only a
-        # request carrying `placements` is; every other answer leaves here as
-        # it was made.
-        return self._with_placements_named(request, response, entered)
+            try:
+                response = (
+                    self._solve_best_effort(request, entered)
+                    if request.relaxation is not None
+                    else self._solve_strict(request, entered)
+                )
+            except InvalidScheduleInputError as refusal:
+                # FÖRLAGDA POSTER, AND THE REFUSALS BEFORE THE MODEL: "locked
+                # lessons leave 7A no lunch break" about locks the school never
+                # made by hand is the same question (review of #293, MEDEL-3).
+                named = self._refusal_with_placements_named(request, refusal, entered)
+                if named is None:
+                    raise
+                return named
+            # FÖRLAGDA POSTER: a refusal of a week the school pinned lessons in is
+            # asked once more with the pins released (_placements_verdict). Only a
+            # request carrying `placements` is; every other answer leaves here as
+            # it was made.
+            return self._with_placements_named(request, response, entered)
+        finally:
+            self._deadline = None
+            self._search_seconds = None
 
     def _solve_strict(
         self, request: OptimizeScheduleRequest, entered: float,
@@ -5790,7 +5919,11 @@ class SchedulerSolver:
             request, use_assumptions=False, include_objective=False,
         )
 
-        total_budget = self._settings.solver_max_time_seconds
+        # What the two builds cost, for a step after the search that has to
+        # build again (_explain_infeasible, the probe): `entered` is the
+        # request's arrival, and the prechecks and the lunch stage are in it,
+        # so this is the dearest a build can have been, not the cheapest.
+        self._build_seconds = (time.monotonic() - entered) / 2
         travel = travel_map(request, slot_minutes=self._grid.slot_minutes, step=step)
         # WHERE THE SCHOOL KEEPS THE WALK THE BUILDS COUNT, from the moment the
         # request arrived: two builds of a 2,000-pupil week with the walk took
@@ -5798,15 +5931,21 @@ class SchedulerSolver:
         # path ran to 91 s against the gateway's and the API's 90. A week
         # without the walk keeps the clock it always had.
         started = entered if travel is not None else time.monotonic()
-        # THE PROBE ENDS ON A CLOCK, with the walk or without it: the budget
-        # and the probe's seconds from the moment the search began. The
-        # search can stop some seconds after its budget (2026-11-17: ten, on
-        # an 809-lesson week at 180 s), and a probe that then took its whole
-        # twenty, builds on top, ran past the API's ceiling, which answered
-        # 503 in the middle of it (optimize.solve_ceiling_seconds). A probe
-        # that cannot have the rest of its slice is not started, and the
-        # summary counts only the rules that were probed (_probe_timeout).
-        probe_deadline = started + total_budget + self._settings.solver_probe_seconds
+        # THE SEARCH HAS ITS BUDGET, unless the request's clock cannot hold it
+        # (a slow build, or a caller that waits less than the settings need):
+        # then it ends where the clock leaves the probe's floor, and the
+        # TIMEOUT says how long it had (_search_budget).
+        total_budget = self._search_budget(request, started)
+        # THE PROBE ENDS ON A CLOCK, with the walk or without it, and counts
+        # its seconds from where the search ENDED (_probe_deadline), never past
+        # the clock's edge. The search can stop some seconds after its budget
+        # (2026-11-17: ten, on an 809-lesson week at 180 s), and a probe that
+        # then took its whole twenty, builds on top, ran past the API's
+        # ceiling, which answered 503 in the middle of it
+        # (optimize.solve_ceiling_seconds). A probe that cannot have its
+        # seconds before the edge is cut to what is left, one that cannot have
+        # the least of them is not started, and the summary counts only the
+        # rules that were probed (_probe_timeout).
 
         def _remaining() -> float:
             return total_budget - (time.monotonic() - started)
@@ -5823,7 +5962,7 @@ class SchedulerSolver:
 
         def _timeout_conflicts() -> ConflictAnalysis | None:
             return self._with_tight_week(
-                self._probe_timeout(request, deadline=probe_deadline),
+                self._probe_timeout(request, deadline=self._probe_deadline()),
                 tight,
             )
 
@@ -5882,10 +6021,15 @@ class SchedulerSolver:
             phase1, phase1_code = sited, cp_model.FEASIBLE
         else:
             # ---- phase 1a: clean satisfaction build -------------------------
-            if travel is not None and _remaining() < self.MIN_PHASE_SECONDS:
-                # Nothing left after the builds and the planned sites: the
-                # timeout below, as phase 1b's own guard has it, never a
-                # solve on a time limit at or under zero.
+            if (
+                travel is not None or total_budget < self._settings.solver_max_time_seconds
+            ) and _remaining() < self.MIN_PHASE_SECONDS:
+                # Nothing left after the builds and the planned sites (or, the
+                # clock having cut the search short, after a deadline that
+                # leaves it none): the timeout below, as phase 1b's own guard
+                # has it, never a solve on a time limit at or under zero. A
+                # week with no walk and a whole budget keeps the solve it
+                # always had, however small the budget.
                 phase1_code = cp_model.UNKNOWN
             else:
                 phase1 = self._generation_solver(
@@ -6128,7 +6272,10 @@ class SchedulerSolver:
         feas_model, _, feas_decisions, feas_plan, lunch_feas = self._build_model(
             request, use_assumptions=False, include_objective=False, relax=feas_relax,
         )
-        total_budget = self._settings.solver_max_time_seconds
+        # THE SEARCH'S CLOCK COUNTS FROM THE REQUEST'S ARRIVAL here, builds
+        # included, and has its budget unless the request's clock cannot hold it.
+        total_budget = self._search_budget(request, entered)
+        self._build_seconds = (time.monotonic() - entered) / 2
         tight = sorted(nearly_full.values(), key=lambda load: -load.load)
 
         def _remaining() -> float:
@@ -6139,9 +6286,8 @@ class SchedulerSolver:
         # and a week with five or more of them passed
         # optimize.solve_ceiling_seconds: the 503 this ceiling is there to
         # leave for a solve that hangs came in the middle of the probe, as it
-        # did for Generera on 2026-11-17. The clock here counts from the
-        # request's arrival, builds included, as `_remaining` does.
-        probe_deadline = entered + total_budget + self._settings.solver_probe_seconds
+        # did for Generera on 2026-11-17. Its seconds count from where the
+        # search ended, never past the clock's edge (_probe_deadline).
 
         def _timeout() -> OptimizeScheduleResponse:
             return OptimizeScheduleResponse(
@@ -6149,7 +6295,7 @@ class SchedulerSolver:
                 status="TIMEOUT",
                 lessons=[],
                 conflicts=self._with_tight_week(
-                    self._probe_timeout(hard, deadline=probe_deadline), tight,
+                    self._probe_timeout(hard, deadline=self._probe_deadline()), tight,
                 ),
             )
 
@@ -6159,6 +6305,14 @@ class SchedulerSolver:
                 feas_model.AddHint(lunch_feas[key], slot)
 
         # ---- phase 1a: the hard rules, the deviations priced ----------------
+        if (
+            total_budget < self._settings.solver_max_time_seconds
+            and _remaining() < self.MIN_PHASE_SECONDS
+        ):
+            # The request's clock left the search nothing (a deadline shorter
+            # than the builds): the timeout, never a solve on a time limit at
+            # or under zero.
+            return _timeout()
         phase1 = self._generation_solver(request, min(max(0.0, _remaining()), self.CLEAN_SAT_CAP_SECONDS))
         phase1.parameters.stop_after_first_solution = True
         phase1_code = _solve_guarded(
@@ -10956,7 +11110,7 @@ class SchedulerSolver:
         """
         if response.status != "INFEASIBLE" or not self._asks_the_released_week(request, response):
             return response
-        deadline = (
+        deadline = self._clock_clamp(
             entered
             + self._settings.solver_max_time_seconds
             + self._settings.solver_probe_seconds
@@ -11018,7 +11172,7 @@ class SchedulerSolver:
         # again would bury the one under all of them.
         if request.placements is None or not refusal.code or refusal.code.startswith("PLACED_LESSON"):
             return None
-        deadline = (
+        deadline = self._clock_clamp(
             entered
             + self._settings.solver_max_time_seconds
             + self._settings.solver_probe_seconds
@@ -11136,6 +11290,13 @@ class SchedulerSolver:
         budget = self._settings.solver_probe_seconds
         if budget <= 0 or not _runs_probes(request):
             return None
+        # THE CLOCK IS READ BEFORE THE RULES ARE COUNTED. _timeout_relaxations
+        # counts the week's load again (up to WEEK_LOAD_SECONDS a real week)
+        # and none of it was under any clock: four to eight seconds a
+        # timed-out week spent after the probe's time had gone (the review of
+        # #344, LÅG-3). With the probe's seconds gone the TIMEOUT stands bare.
+        if deadline is not None and deadline - time.monotonic() < self.MIN_PHASE_SECONDS:
+            return None
 
         relaxations = self._timeout_relaxations(request)
         if not relaxations:
@@ -11173,7 +11334,13 @@ class SchedulerSolver:
             # probes and their builds together: a probe that cannot have the
             # rest of its slice is not started, and the summary counts only
             # the rules that were probed.
-            if deadline is not None and deadline - time.monotonic() < self.MIN_PHASE_SECONDS:
+            if (
+                deadline is not None
+                and deadline - time.monotonic() < self.MIN_PHASE_SECONDS + self._build_seconds
+            ):
+                # Not the rule's build either: it is paid before the slice
+                # starts, and a build with no slice after it is time spent
+                # for nothing.
                 break
             try:
                 feas_model, _, decisions, plan, _ = self._build_model(
@@ -11212,7 +11379,7 @@ class SchedulerSolver:
             if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
                 found.append((code, time.perf_counter() - started))
 
-        budget = round(self._settings.solver_max_time_seconds)
+        budget = self._reported_budget()
         if keeps_walk and not found:
             # WITH THE WALK KEPT ONLY WHAT RAN IS SAID. No probe ran when the
             # builds ate the probes' time (the review's slow setup on a
@@ -11689,7 +11856,7 @@ class SchedulerSolver:
             f"distributionRules={distribution_rules}, blocks={blocks}, "
             f"travelPairs={travel_pairs}, travelMinutes={travel_minutes}, "
             f"startStepMinutes={step_minutes}, "
-            f"budget={self._settings.solver_max_time_seconds}s. "
+            f"budget={self._settings.solver_max_time_seconds if self._search_seconds is None else self._search_seconds}s. "
             + " ".join(hints)
         )
 

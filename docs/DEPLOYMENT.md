@@ -252,9 +252,9 @@ Run it with:
 | `APP_ENV` | `production` |
 | `API_KEY` | the generated `AI_ENGINE_API_KEY` |
 | `ALLOWED_ORIGINS` | the API's origin, e.g. `https://api.yourschool.example` |
-| `SOLVER_MAX_TIME_SECONDS` | `60`: the solve budget in seconds (raise for very large schools). A solve that times out answers after this plus `SOLVER_PROBE_SECONDS` (default `20`), counted from the end of its model builds (from the request's arrival for Bästa möjliga schema and for a week that keeps Restid); the probe stops on that clock even when the search ran late, and a rule it had no time for is not probed and not counted in the summary. The engine's own ceiling, after which it answers 503 (`ENGINE_TIMED_OUT` on the page) instead of waiting, is that sum plus 30 s for the builds; a request that asks for no probes (every Schemaförslag call after the first) has the budget plus the 30 s. The old `SOLVER_TIMEOUT_SECONDS` is gone: nothing read it. |
+| `SOLVER_MAX_TIME_SECONDS` | `60`: the solve budget in seconds (raise for very large schools). A solve that times out answers after this plus `SOLVER_PROBE_SECONDS` (default `20`). The engine keeps **one clock per request** (§5.1): the search has this budget, counted from the end of its model builds (from the request's arrival for Bästa möjliga schema and for a week that keeps Restid); the probe's seconds count from where the search *ended*, and nothing after it passes the instant the answer is due, 13 s before the engine's ceiling. The ceiling, after which the engine answers 503 (`ENGINE_TIMED_OUT` on the page) instead of waiting for its solve, is the budget, the probe and 30 s for the builds; a request that asks for no probes (every Schemaförslag call after the first) has the budget and the 30 s; and a request that carries its caller's deadline has the shorter of that and the deadline less 5 s. The engine says all of this on `GET /api/v1/timing` and the API reads it from there: there is no second number to set. The old `SOLVER_TIMEOUT_SECONDS` is gone: nothing read it. |
 | `SOLVER_EXPLAIN_SHARP_SECONDS` | `10` (default, must be above 0 and a finite number; the engine does not start on `0`, a negative value or `inf`): the share of the 15 s explanation cap that a LARGE refused week (50 lessons or more) gets for its first try, on the model without the objective, before the model with it is tried as the reserve. Raise it if the first try does not finish on this processor (section 23). |
-| `EXAM_SOLVER_MAX_TIME_SECONDS` | `20` (default): the budget of the exam planner (`POST /api/v1/plan-exams`, Provplanering), apart from the generator's. A short budget never refuses: a greedy plan is the floor and the answer from the first instant, so less time means fewer exams placed or a clumsier plan. A request can ask for less and never for more. The API waits 90 s for it. |
+| `EXAM_SOLVER_MAX_TIME_SECONDS` | `20` (default): the budget of the exam planner (`POST /api/v1/plan-exams`, Provplanering), apart from the generator's. A short budget never refuses: a greedy plan is the floor and the answer from the first instant, so less time means fewer exams placed or a clumsier plan. A request can ask for less and never for more. The API waits for the engine's ceiling for it (50 s at the default, `GET /api/v1/timing`) and never less than 90 s. |
 
 The solver needs no database and no PII ever reaches it. Keep it on a private
 network reachable only by the API if your host supports it.
@@ -282,8 +282,8 @@ Run it with (see `.env.example` for the full annotated list):
 | `SUPABASE_SERVICE_ROLE_KEY` | service role key |
 | `AI_ENGINE_URL` | solver base URL, scheme included (`https://…`) — a bare hostname is not a URL and surfaces as "AI engine unavailable" |
 | `AI_ENGINE_API_KEY` | the shared secret from step 0 |
-| `AI_ENGINE_TIMEOUT_MS` | `120000`. Must exceed the engine's ceiling, `SOLVER_MAX_TIME_SECONDS` + `SOLVER_PROBE_SECONDS` + 30 s: at the defaults 110 s, so `120000`; at a 180 s budget and a 20 s probe 230 s, so use at least `240000` there. A shorter wait gives up on a solve that answers TIMEOUT in about its budget and its probe, and the school reads "The AI engine did not respond in time." |
-| `CANDIDATE_MAX_SECONDS` | optional, `5`–`120`, default `30`: Schemaförslag's solve budget for each candidate, the same for all of them so the emphases are compared at one budget (docs/verification-baseline.md). Each candidate call waits this plus 45 s (plus 20 s for the first call's probes), whatever `AI_ENGINE_TIMEOUT_MS` says |
+| `AI_ENGINE_TIMEOUT_MS` | **optional, and best left unset.** Unset, the API waits as long as the engine says its route can take (`GET /api/v1/timing`) plus 10 s: 240 s at a 180 s budget and a 20 s probe, and it follows the engine when its budget is changed, so nothing is set in two places. An engine that says nothing (older, or not up yet) is waited for 120 000 ms. Set, it is the wait, and the request carries it to the engine as its deadline (`deadlineSeconds`), so the engine answers inside it; it must then be at least the engine's ceiling plus 5 s: `240000` at a 180 s budget and a 20 s probe (235 000 is the least). **A production start that finds it set and shorter is refused**, with a sentence that says which number to change (the deploy then fails and the one before it keeps serving); at runtime a shorter wait is answered with a shorter search, which a TIMEOUT states ("within 94 s"), and a line in the log. To get out of a refused start remove the variable. |
+| `CANDIDATE_MAX_SECONDS` | optional, `5`–`120`, default `30`: Schemaförslag's solve budget for each candidate, the same for all of them so the emphases are compared at one budget (docs/verification-baseline.md). Each candidate call waits this plus the engine's build headroom (30 s) plus 15 s, and for the first call's probes the engine's own probe (20 s: it is read from the engine, not written here), whatever `AI_ENGINE_TIMEOUT_MS` says. A value above the engine's `SOLVER_MAX_TIME_SECONDS` does nothing, since the engine gives every candidate the smaller, and the API says so once at its start |
 | `CANDIDATE_SOLVER_WORKERS` | optional, `1`–`16`, default `4`: the solver workers a candidate solve uses, so a plain Generera beside it keeps the other cores |
 | `CANDIDATE_RUNS_MAX` | optional, `1`–`10`, default `2`: candidate runs active across all schools at once; a start beyond it answers 409 `CANDIDATES_BUSY`. A run cut off by a redeploy while the engine was solving for it, or whose call timed out (cancelled or not), frees its year at once but keeps counting here until that solve could have ended (at most its call's timeout, about 1½ minutes at the defaults): the engine solves on once its caller stops waiting, whether the API restarted or only gave up on the call, and the engine's own 503 at its timeout does not stop the solve either. "Ta bort förslagen" hides such a run at once, and the sweep deletes its row after that |
 | `THROTTLE_TTL_SECONDS` / `THROTTLE_LIMIT` | `60` / `120` |
@@ -313,6 +313,34 @@ point.
 
 Verify: any request without a bearer token returns `401` in the RFC-7807
 shape, e.g. `curl -i https://api.yourschool.example/api/v1/subjects -X POST`.
+
+### 5.1 Every time in the chain, and which of them is set by hand
+
+A generation passes through several limits, and until the Generera runs of 2026-11-17 (three of them ended in "The AI engine returned an error." because the engine's ceiling fell in the middle of its own probe) they were set by hand in two services and held together by a paragraph of this file. They are now one chain with one clock per request: the engine says its times, the API reads them, and a request carries its caller's deadline. **What is still set by hand is the first block of rows below, all of it on the engine and all optional but the budget.**
+
+| Time | At the production settings | Where it comes from | Set by hand? |
+| --- | --- | --- | --- |
+| The search's budget | 180 s | engine `SOLVER_MAX_TIME_SECONDS` | **yes**, on the engine |
+| The timeout probe | 20 s | engine `SOLVER_PROBE_SECONDS` (0 switches it off) | yes, optional |
+| The explanation's first try on a large week | 10 s of a 15 s cap | engine `SOLVER_EXPLAIN_SHARP_SECONDS`; the cap is code | yes, optional |
+| The room, staffing and exam budgets | 10, 10 and 20 s | engine `ROOM_SOLVER_MAX_TIME_SECONDS`, `STAFF_SOLVER_MAX_TIME_SECONDS`, `EXAM_SOLVER_MAX_TIME_SECONDS` | yes, optional |
+| A schemaförslag candidate's budget | 30 s | API `CANDIDATE_MAX_SECONDS` (the engine takes the smaller of it and its own budget) | yes, optional |
+| The API's wait, as a cap | none | API `AI_ENGINE_TIMEOUT_MS` | optional, best left unset |
+| The build headroom | 30 s | code (`optimization-engine/app/timing.py`) | no |
+| The transfer margin between the API and the engine | 5 s | code | no |
+| **The engine's ceiling** (it answers 503 `SOLVER_TIMEOUT` after it) | **230 s** | the budget, the probe and the headroom; for a request with a deadline at most the deadline less the transfer margin. Said on `GET /api/v1/timing` | no |
+| The instant the answer is due | 217 s | the ceiling less 13 s: 3 s to build the answer and 10 s for a solve that stops past its own limit, as the search of the 809-lesson week did on 2026-11-17; every step of the solve ends before it, the probe and the explanation first | no |
+| The API's wait for Generera | 240 s | the engine's ceiling and 10 s, unless `AI_ENGINE_TIMEOUT_MS` is set | no |
+| A schemaförslag call's wait | 95 s (the first call, with probes), 75 s | `CANDIDATE_MAX_SECONDS`, the engine's headroom and probe, and 15 s | no |
+| The page's "up to N minutes", and anything that needs to know how long a run can last | the API's wait | the API's wait (`OptimizationProxyService.waitSeconds`) | no |
+
+When the numbers disagree, in the order of how soon it is said:
+
+1. **At the API's start**, in production, if `AI_ENGINE_TIMEOUT_MS` is set and shorter than the engine's ceiling plus 5 s: the start is refused with "AI_ENGINE_TIMEOUT_MS=120000 is shorter than the engine can need: …" and the three ways out (raise it, remove it, lower the engine's budget). Only if the engine answered; an engine that is down, older or not up yet is not a reason to refuse, and a deploy brings the two up together in either order.
+2. **On a call**, if the engine's variables were changed after the API started (a change on the engine restarts only the engine): the request carries the API's wait as its deadline, so the engine answers inside it with a shorter search, a TIMEOUT that says how long it searched, and its probe cut to what is left (never less than 5 s of it). The API logs the sentence once and reads the engine's times again every ten minutes and after any ceiling it did not expect.
+3. **Never as a 503 the API has stopped waiting for**, which is what the three runs of 2026-11-17 were.
+
+A deploy brings the engine and the API up together, in either order (both deploy on every merge), and every combination of old and new is the old behaviour or better: an API older than this reads nothing and sends no deadline, and an engine older than this answers 404 on `/api/v1/timing`, after which the API waits as it always did and sends no field the engine would refuse. An engine that is rolled back after its times were read answers the first request with a 422 naming `deadlineSeconds`; the API sends it again without the field and reads the times again.
 
 ## 6. Deploy the web app
 

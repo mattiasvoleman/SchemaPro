@@ -108,7 +108,7 @@ const statusMatches = (filter: unknown, status: string): boolean => {
 describe('ScheduleCandidatesService', () => {
   let tx: TxMock;
   let prisma: PrismaMock;
-  let proxy: { prepareSchedule: jest.Mock; solveCandidate: jest.Mock; applyCandidateWrite: jest.Mock };
+  let proxy: { engineTimes: jest.Mock; prepareSchedule: jest.Mock; solveCandidate: jest.Mock; applyCandidateWrite: jest.Mock };
   let versions: { snapshotInTransaction: jest.Mock };
   let realtime: { notifyMasterTimetableChanged: jest.Mock };
   let jobs: { register: jest.Mock; unregister: jest.Mock; isScheduled: jest.Mock; settled: jest.Mock };
@@ -291,6 +291,8 @@ describe('ScheduleCandidatesService', () => {
     tx.optimizationJob.count.mockResolvedValue(0);
 
     proxy = {
+      // The engine's probe and headroom as it said them; nothing here, so a call waits as it always did (M1).
+      engineTimes: jest.fn(() => undefined),
       prepareSchedule: jest.fn(async () => {
         steps.push('proxy:prepare');
         return prepared();
@@ -474,6 +476,18 @@ describe('ScheduleCandidatesService', () => {
       const calls = proxy.solveCandidate.mock.calls.map(([, options]) => options);
       expect(calls[0]).toEqual({ weights: null, search: { workers: 2, probes: true, maxSeconds: 90 }, timeoutMs: 155_000 });
       expect(calls[1]).toEqual({ weights: { disruption: 2, teacherGap: 8 }, search: { workers: 2, probes: false, maxSeconds: 90, seed: 1 }, timeoutMs: 135_000 });
+    });
+
+    it('waits for the engine\'s own probe and headroom once it has said them, in the call and in the heartbeat (the review of #344, LÅG-9)', async () => {
+      // A probe set to 60 s on the engine: 30 + 30 s of headroom + 15 s + 60 s for the lead, and the others as before.
+      proxy.engineTimes.mockReturnValue({ probeSeconds: 60, headroomSeconds: 30 });
+
+      await startAndRun(dto({ count: 2 }));
+
+      const calls = proxy.solveCandidate.mock.calls.map(([, options]) => options);
+      expect(calls.map((call) => call.timeoutMs)).toEqual([135_000, 75_000]);
+      const raw = tx.$executeRaw.mock.calls.map((args) => sqlOf(args));
+      expect(raw.filter(({ text }) => text.includes('make_interval(secs =>')).map(({ values }) => values[0])).toEqual([135, 75]);
     });
 
     it('sets each call\'s engine deadline with its heartbeat and clears it as the candidate is stored, the run finishes or fails', async () => {

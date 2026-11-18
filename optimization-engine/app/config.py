@@ -43,8 +43,12 @@ class Settings(BaseSettings):
     # probe below is spent AFTER it, so a timed-out solve answers in about
     # SOLVER_MAX_TIME_SECONDS + SOLVER_PROBE_SECONDS after its builds. The
     # engine's own ceiling (optimize.solve_ceiling_seconds) is that sum plus
-    # thirty seconds for the builds, and the API's AI_ENGINE_TIMEOUT_MS must
-    # exceed the ceiling: at a 180 s budget and a 20 s probe, 230 s.
+    # thirty seconds for the builds: at a 180 s budget and a 20 s probe, 230 s.
+    # The engine says it on GET /api/v1/timing and the API waits by it, so
+    # nothing is set to match on the other side; an API with an
+    # AI_ENGINE_TIMEOUT_MS of its own needs it at least the ceiling plus 5 s,
+    # and a request carries the wait it was sent with as its deadline
+    # (app/timing.py), which is what keeps an answer inside it either way.
     #
     # There used to be a second setting, SOLVER_TIMEOUT_SECONDS, validated and
     # logged at start-up and read by nothing: raising it changed no solve, and

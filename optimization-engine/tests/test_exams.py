@@ -1494,6 +1494,8 @@ ROUTES_BEFORE = {
     "/api/v1/optimize": {"post"},
     "/api/v1/optimize-rooms": {"post"},
     "/api/v1/staff": {"post"},
+    # M1 (Tidskedjan): the engine says its times. A route of its own, read-only.
+    "/api/v1/timing": {"get"},
     "/health": {"get"},
 }
 
