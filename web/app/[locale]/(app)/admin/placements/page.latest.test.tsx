@@ -15,12 +15,23 @@ const state = vi.hoisted(() => ({
   board: undefined as unknown,
   latest: undefined as unknown,
   latestFails: false,
+  failWeekTools: false,
   readOnly: false,
   yearId: "y1",
   jobs: [] as Array<{ id: string; status: string; solverStatus: string | null; finishedAt: string | null; createdAt: string }>,
 }));
 
 const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn() }));
+// The week's own tools can be made not to arrive (a chunk that does not come), as the page's lazy hook would see it.
+vi.mock("@/lib/use-lazy-module", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/use-lazy-module")>();
+  const hook = actual.useLazyModule as (...args: unknown[]) => unknown;
+  return {
+    ...actual,
+    useLazyModule: (load: () => Promise<unknown>, ...rest: unknown[]) =>
+      hook(() => (state.failWeekTools && String(load).includes("placement-week-tools") ? Promise.reject(new Error("Failed to load chunk")) : load()), ...rest),
+  };
+});
 vi.mock("@/lib/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/api")>()), api }));
 vi.mock("@/lib/planning-year", () => ({
   usePlanningYear: () => ({
@@ -145,6 +156,7 @@ beforeEach(() => {
   state.board = board();
   state.latest = { academicYearId: "y1", lessons: [generated("g1"), generated("g2", { dayOfWeek: 4, startTime: "11:00", endTime: "12:00", subjectId: "s-sv" }), generated("g3", { studentGroupId: "g-7b" })] };
   state.latestFails = false;
+  state.failWeekTools = false;
   state.readOnly = false;
   state.yearId = "y1";
   state.jobs = [];
@@ -255,6 +267,13 @@ describe("the switch for the latest schedule", () => {
     await waitFor(() => expect(asked()).toContain("/api/v1/teaching-requirements/placements/latest?academicYearId=y2"));
     await waitFor(() => expect(ghosts()).toHaveLength(1));
     expect(ghosts()[0]!.getAttribute("aria-label")).toContain("13:00–14:00");
+  });
+
+  it("says once that the page's tools did not come when the week's own do not, and does not stand on 'reading' for ever (review of #347, LÅG-5)", async () => {
+    state.failWeekTools = true;
+    renderPage();
+    await ready();
+    expect(await screen.findByTestId("placement-message")).toHaveTextContent("toolsFailed");
   });
 
   it("is the reader's too: it is a read, and a reader with no card in the week still sees the schedule's lessons", async () => {

@@ -226,7 +226,12 @@ export default function PlacementsPage() {
   /** "Visa senaste schemat": the lessons the last Generera laid, drawn pale behind the week; read only while it is on. */
   const [showLatest, setShowLatest] = useState(false);
   // What a week picked and a pair need is fetched when the page is up, not with it (lib/use-lazy-module.ts): the route has no bytes for it.
-  const weekTools = useLazyModule(() => import("@/lib/placement-week-tools"));
+  // A chunk that does not come is said once, as the drag tools' is: without it the picker, the cards' week marks and the latest schedule never arrive, and the
+  // switch's row would read "Läser det senaste schemat …" for ever (review of #347, LÅG-5).
+  const weekTools = useLazyModule(
+    () => import("@/lib/placement-week-tools"),
+    () => setMessage({ tone: "problem", text: t("toolsFailed") }),
+  );
   // The mirror of the clash rule and the pair that asks it are one module and one request (lib/placement-drag-tools.ts).
   // A chunk that does not come (a dropped connection, a proxy) is said once, in words: the controls below stay off, and the reader reloads.
   const dragTools = useLazyModule(
