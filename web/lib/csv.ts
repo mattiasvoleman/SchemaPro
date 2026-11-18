@@ -342,6 +342,8 @@ function cellProblem(row: number, label: string, value: string, rule: CellRule):
 }
 
 const NAME: CellRule = { max: 120 };
+/** UserSignature's and ImportRequirementRowDto's @MaxLength(8). */
+const SIGNATURE_MAX = 8;
 /** CreateUserDto's @MaxLength(40); a number is text, written as the school writes it. */
 const PHONE: CellRule = { max: 40 };
 const GROUP_NAME: CellRule = { max: 60 };
@@ -438,7 +440,9 @@ const FIELD_LABELS: Record<string, string> = {
   halfOf: "halvklass_av",
   replacesSubject: "ersatter_amne",
   teacherEmail: "larare",
+  teacherSignature: "larare_signatur",
   coTeacherEmail: "medlarare",
+  coTeacherSignature: "medlarare_signatur",
   teacherLoadPercent: "larare_procent",
   coTeacherLoadPercent: "medlarare_procent",
   recurrence: "veckor",
@@ -1460,6 +1464,13 @@ export type RequirementRow = {
   teacherEmail?: string | null;
   coTeacherEmail?: string | null;
   /**
+   * The lead and the co-teacher by the signature the staff list carries, instead of by e-mail (a Skola24
+   * Tjänstefördelning has signatures and no addresses). Optional like the e-mail: absent leaves the teacher alone, an
+   * empty cell clears it — and a row names a teacher in one way, never both (the gateway refuses it, so this does too).
+   */
+  teacherSignature?: string | null;
+  coTeacherSignature?: string | null;
+  /**
    * What the lead and the co-teacher are charged of the row, 0..200. Optional
    * like the minutes: absent leaves the stored value alone, an empty cell
    * means 100 — the gateway reads a null the same way (ImportRequirementRowDto).
@@ -1679,6 +1690,25 @@ export function mapRequirementRows(parsed: ParsedCsv): MappedRows<RequirementRow
       const problem = cellProblem(rowNumber, FIELD_LABELS[field]!, cell(field), rule);
       if (problem !== null) return fail(problem);
     }
+    // A signature is one to eight visible characters, counted as the gateway counts them (an emoji once); a cell of
+    // spaces is an empty cell, as every other cell here is.
+    for (const field of ["teacherSignature", "coTeacherSignature"] as const) {
+      const signature = cell(field);
+      if (signature !== "" && textLength(signature) > SIGNATURE_MAX) {
+        return fail(`Rad ${rowNumber}: ${FIELD_LABELS[field]} "${signature}" är längre än åtta tecken.`);
+      }
+    }
+    // One way to name a teacher on a row: the gateway refuses both, so the browser says it first and with the columns' names.
+    for (const [email, signature, who] of [
+      ["teacherEmail", "teacherSignature", "läraren"],
+      ["coTeacherEmail", "coTeacherSignature", "medläraren"],
+    ] as const) {
+      if (cell(email) !== "" && cell(signature) !== "") {
+        return fail(
+          `Rad ${rowNumber}: ${who} står både i ${FIELD_LABELS[email]} och i ${FIELD_LABELS[signature]}. Ange en av dem.`,
+        );
+      }
+    }
 
     /*
      * Lektionslängder. A filled cell is the row: its count and longest are
@@ -1848,6 +1878,11 @@ export function mapRequirementRows(parsed: ParsedCsv): MappedRows<RequirementRow
     if (columnOf.has("teacherEmail")) row.teacherEmail = cell("teacherEmail") || null;
     if (columnOf.has("coTeacherEmail")) {
       row.coTeacherEmail = cell("coTeacherEmail") || null;
+    }
+    // Never "" for an empty cell: the gateway holds a signature to one character at least, and null is what clears.
+    if (columnOf.has("teacherSignature")) row.teacherSignature = cell("teacherSignature") || null;
+    if (columnOf.has("coTeacherSignature")) {
+      row.coTeacherSignature = cell("coTeacherSignature") || null;
     }
     // Absent leaves the stored charge alone, for the reason the minutes do: a
     // school's own four-column sheet must not reset every 50 % co-teacher.
