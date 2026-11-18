@@ -258,3 +258,86 @@ describe("Schema som fil: import", () => {
     expect(screen.getByText("newBlocks(Språkval)")).toBeInTheDocument();
   });
 });
+
+describe("Schema som fil: en tabell från ett annat program", () => {
+  const paste = (text: string) => fireEvent.change(screen.getByLabelText("table.paste"), { target: { value: text } });
+  const base64Of = (call: unknown[]) => Buffer.from((call[1] as { files: { contentBase64: string }[] }).files[0]!.contentBase64, "base64").toString("utf8");
+
+  it("will not read a table before something is pasted or chosen", () => {
+    renderPage();
+    expect(screen.getByRole("button", { name: "table.read" })).toBeDisabled();
+    paste("Klass\tÄmne");
+    expect(screen.getByRole("button", { name: "table.read" })).toBeEnabled();
+  });
+
+  it("reads a pasted table in the dialog and previews the MAPPED table, as an ordinary CSV in the format the gateway reads", async () => {
+    post.mockResolvedValue(plan());
+    renderPage();
+    paste("Kurs\tÄmne\tDag\tStart\tSlut\n7A\tMa\tMån\t08:10\t09:00");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "table.read" }));
+    const dialog = await screen.findByRole("dialog");
+    // "Ämne", "Dag", "Start" and "Slut" are spellings the reader knows; "Kurs" is the user's to place.
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "columns.fieldOf(Kurs)" }), { target: { value: "group" } });
+    await user.click(within(dialog).getByRole("button", { name: "dialog.use" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(post.mock.calls[0]![0]).toBe("/api/v1/schedule-exchange/import/preview");
+    expect(post.mock.calls[0]![1]).toMatchObject({ academicYearId: "y1", format: "TABLE_CSV" });
+    expect((post.mock.calls[0]![1] as { files: { name: string }[] }).files.map((file) => file.name)).toEqual(["tabell.csv"]);
+    expect(base64Of(post.mock.calls[0]!)).toBe("Klass/grupp;Ämne;Dag;Start;Slut\r\n7A;Ma;Mån;08:10;09:00\r\n");
+    expect(await screen.findByText("table.used(pasted|1)")).toBeInTheDocument();
+    expect(screen.getByLabelText("import.format")).toHaveValue("TABLE_CSV");
+    // The pasted original is not kept on the page once the mapped table has been taken.
+    expect(screen.getByLabelText("table.paste")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "table.read" })).toBeDisabled();
+  });
+
+  it("never sends a column that looks like a personnummer: it is not in the body of the request at all", async () => {
+    post.mockResolvedValue(plan());
+    renderPage();
+    paste("Namn\tPersonnr\tKlass\tÄmne\tDag\tStart\tSlut\nAnna\t19800101-1234\t7A\tMa\tMån\t08:10\t09:00\nBo\t800101-1235\t7B\tSv\tTis\t09:20\t10:10");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "table.read" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(await within(dialog).findByRole("combobox", { name: "columns.fieldOf(Klass)" }), { target: { value: "group" } });
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "columns.fieldOf(Namn)" }), { target: { value: "__skip__" } });
+    await user.click(within(dialog).getByRole("button", { name: "dialog.use" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    const sent = JSON.stringify(post.mock.calls[0]![1]) + base64Of(post.mock.calls[0]!);
+    expect(sent).not.toMatch(/1980|800101|Personnr|Anna/);
+  });
+
+  it("writes nothing and sends nothing when the dialog is closed without using the table", async () => {
+    renderPage();
+    paste("Kurs\tÄmne\n7A\tMa");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "table.read" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "dialog.cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(post).not.toHaveBeenCalled();
+    expect(screen.queryByText(/^table.used/)).not.toBeInTheDocument();
+  });
+
+  it("turns a table file that is far too large back before it is read", async () => {
+    renderPage();
+    const input = screen.getByLabelText("table.file") as HTMLInputElement;
+    await userEvent.setup({ applyAccept: false }).upload(input, csvFile("big.csv", 5 * 1024 * 1024 + 1));
+    expect(screen.getByText(/^table.tooLarge/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "table.read" })).toBeDisabled();
+  });
+
+  it("forgets that a table was read when another file is chosen for the ordinary import", async () => {
+    post.mockResolvedValue(plan());
+    renderPage();
+    paste("Klass\tÄmne\tDag\tStart\tSlut\n7A\tMa\tMån\t08:10\t09:00");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "table.read" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(await within(dialog).findByRole("combobox", { name: "columns.fieldOf(Klass)" }), { target: { value: "group" } });
+    await user.click(within(dialog).getByRole("button", { name: "dialog.use" }));
+    expect(await screen.findByText("table.used(pasted|1)")).toBeInTheDocument();
+    await choose(csvFile("annat.csv"));
+    expect(screen.queryByText(/^table.used/)).not.toBeInTheDocument();
+  });
+});

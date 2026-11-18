@@ -8057,6 +8057,18 @@
       "download": "Download",
       "failed": "The file could not be downloaded."
     },
+    "table": {
+      "title": "From another program",
+      "description": "Paste a table you have copied (for example from Skola24 or Excel) or choose a CSV file. You point out the columns yourself, and nothing is written until you have seen the preview.",
+      "paste": "Paste the table here",
+      "pasteHint": "Select the table, copy and paste it. The headers must be on top.",
+      "file": "Or choose a CSV file",
+      "fileHint": "An Excel file (.xlsx) is read here by selecting the cells and pasting them, or by saving it as CSV.",
+      "read": "Read in the table",
+      "kindLessons": "Lessons (the timetable)",
+      "used": "The table {name} has been read: {count, plural, one {# row} other {# rows}}. The preview is below.",
+      "tooLarge": "The file is too large: at most {size} kB is accepted."
+    },
     "import": {
       "title": "Import",
       "description": "Read a file in as locked lessons. Rows that cannot be placed are named, and then nothing is written.",
@@ -10987,5 +10999,209 @@
     "noteOutside": "Evenings and weekends are the open hours ({openFrom}–{openTo}) that fall outside school time, holidays included.",
     "noteCounts": "Booked is time held by a lesson or an approved booking, a day of an external booking too. A booking waiting for a decision is not counted. Time that both a lesson and a booking hold is counted once.",
     "noteUnits": "A resource with several units is counted in unit-hours: one unit for one hour is one unit-hour."
+  },
+  "columnMapping": {
+    "intro": "Say which column of the table is which field. What you do not point out is not read in, and Rastra never guesses which column is which.",
+    "pasted": "Pasted table",
+    "empty": "There was no table in the text. Paste the rows, with the headers on top.",
+    "tooLong": "The text is too long to be a table of lessons. Split it, or save the table as a CSV file.",
+    "readAs": "The file was read as {encoding}. If å, ä and ö are wrong below, save the file as CSV UTF-8 and choose it again.",
+    "dialog": {
+      "title": "Read in a table",
+      "preview": "How the first rows are read",
+      "cancel": "Cancel",
+      "use": "Use the table",
+      "tooLarge": "The table is too large: at most {size} kB is accepted. Read it in parts."
+    },
+    "headerRow": {
+      "label": "The headers are on",
+      "option": "Row {row}: {text}"
+    },
+    "template": {
+      "applied": "The template “{name}” fits the table and is used.",
+      "appliedMore": "The template “{name}” fits the table and is used. The table has columns the template does not know: they are not placed yet.",
+      "changed": "You have changed the mapping from the template “{name}”. Save over it below if the change is to apply next time.",
+      "ambiguous": "Several templates fit equally well. Choose one.",
+      "offered": "The template “{name}” expects {columns, plural, one {a column} other {# columns}} that the table does not have.",
+      "useAnyway": "Use it anyway"
+    },
+    "columns": {
+      "title": "The columns of the table",
+      "header": "Column",
+      "sample": "Example",
+      "field": "Field",
+      "fieldOf": "Field for the column {column}",
+      "noHeader": "(no header)",
+      "hiddenHeader": "(header not shown)"
+    },
+    "option": {
+      "unplaced": "Not placed",
+      "skip": "Do not read the column",
+      "required": "(required)"
+    },
+    "personalNumber": "Looks like personal identity numbers. The column is not read in and does not leave the browser.",
+    "status": {
+      "duplicate": "More than one column points at the same field. Choose one each."
+    },
+    "summary": {
+      "cannot": "The table cannot be read in like this",
+      "ready": "{count, plural, =0 {No rows are read in.} one {# row is read in.} other {# rows are read in.}}"
+    },
+    "problems": {
+      "MISSING_REQUIRED": "The field {field} is not placed on any column.",
+      "DUPLICATE_TARGET": "The field {field} is placed on more than one column: {columns}.",
+      "FIELDS_CONFLICT": "The fields {field} and {other} read the same cells and cannot be used together.",
+      "UNKNOWN_FIELD": "The field {field} does not exist for this import."
+    },
+    "rowProblems": {
+      "title": "Rows that are not read in",
+      "more": "…and {count} more"
+    },
+    "unplaced": "{count, plural, one {# column is not read, because nothing placed it} other {# columns are not read, because nothing placed them}}: {names}.",
+    "skipped": "{count, plural, one {# column is not read, as you chose} other {# columns are not read, as you chose}}: {names}.",
+    "dropped": "{count, plural, one {# column that looks like personal identity numbers was dropped} other {# columns that look like personal identity numbers were dropped}}. None of it leaves the browser.",
+    "emptied": "{count, plural, one {# row has nothing in the columns that are read and is skipped} other {# rows have nothing in the columns that are read and are skipped}}.",
+    "warnings": {
+      "UNTERMINATED_QUOTE": "A quotation mark in the table was never closed. Check the last rows.",
+      "CELLS_RIGHT_OF_HEADER": "Row {rows} has cells to the right of the last header. They are not read in.",
+      "REPLACEMENT_CHARACTER": "Row {rows} has characters that broke in the encoding. Check the names."
+    },
+    "save": {
+      "title": "Save as a template",
+      "help": "A template is recognised by the columns, and used the next time a table has the same.",
+      "name": "Name of the template",
+      "button": "Save as a new template",
+      "update": "Save over the template “{name}”",
+      "delete": "Remove the template",
+      "saved": "The template “{name}” was saved.",
+      "deleted": "The template was removed.",
+      "nameTaken": "There is already a template with that name.",
+      "notYours": "The template was not saved: that takes Planning. The table can still be read in.",
+      "limit": "The school already has {limit} templates for this import. Remove one first.",
+      "failed": "The template was not saved."
+    },
+    "fields": {
+      "students": {
+        "firstName": "First name",
+        "lastName": "Last name",
+        "email": "E-mail",
+        "phone": "Phone",
+        "className": "Class"
+      },
+      "guardians": {
+        "firstName": "First name",
+        "lastName": "Last name",
+        "email": "E-mail",
+        "phone": "Phone",
+        "studentEmail": "Pupil e-mail"
+      },
+      "teachers": {
+        "firstName": "First name",
+        "lastName": "Last name",
+        "email": "E-mail",
+        "phone": "Phone",
+        "employmentPercent": "Employment percent",
+        "reductionPercent": "Reduction percent",
+        "contractKind": "Contract",
+        "signature": "Signature"
+      },
+      "classes": {
+        "name": "Name",
+        "gradeLevel": "Grade",
+        "kind": "Type (class or teaching group)",
+        "halfOf": "Half of",
+        "replacesSubject": "Replaces subject"
+      },
+      "teachingGroups": {
+        "groupName": "Group",
+        "email": "Pupil e-mail"
+      },
+      "roomTypes": {
+        "name": "Name"
+      },
+      "rooms": {
+        "name": "Name",
+        "code": "Code",
+        "roomType": "Room type",
+        "capacity": "Capacity",
+        "minGradeLevel": "Lowest grade",
+        "maxGradeLevel": "Highest grade",
+        "building": "Building",
+        "floor": "Floor"
+      },
+      "subjects": {
+        "name": "Name",
+        "code": "Code",
+        "color": "Colour",
+        "roomType": "Room type",
+        "nationalCode": "National code",
+        "countsTowardTimplan": "Teaching time"
+      },
+      "requirements": {
+        "groupName": "Group",
+        "subject": "Subject",
+        "lessonsPerWeek": "Lessons per week",
+        "minutesPerLesson": "Minutes per lesson",
+        "lessonLengths": "Lesson lengths (for example 1x80+1x40)",
+        "minutesBefore": "Minutes before",
+        "minutesAfter": "Minutes after",
+        "teacherEmail": "Teacher (e-mail)",
+        "teacherSignature": "Teacher (signature)",
+        "coTeacherEmail": "Co-teacher (e-mail)",
+        "coTeacherSignature": "Co-teacher (signature)",
+        "teacherLoadPercent": "Teacher percent",
+        "coTeacherLoadPercent": "Co-teacher percent",
+        "recurrence": "Weeks (all, odd, even)",
+        "startDate": "From (date)",
+        "endDate": "To (date)"
+      },
+      "teacherQualifications": {
+        "teacherEmail": "Teacher e-mail",
+        "subject": "Subject",
+        "minGrade": "From grade",
+        "maxGrade": "To grade",
+        "kind": "Qualification"
+      },
+      "teacherDuties": {
+        "teacherEmail": "Teacher e-mail",
+        "kind": "Kind of duty",
+        "label": "Label",
+        "minutesPerWeek": "Minutes per week",
+        "countsAsTeaching": "Counts as teaching",
+        "subject": "Subject",
+        "groupName": "Group",
+        "validFrom": "From (date)",
+        "validTo": "To (date)",
+        "note": "Note"
+      },
+      "timplan": {
+        "subject": "Subject",
+        "gradeLevel": "Grade",
+        "minutesPerWeek": "Minutes per week",
+        "note": "Note"
+      },
+      "scheduleLessons": {
+        "group": "Class/group",
+        "extraGroups": "Additional classes",
+        "subject": "Subject",
+        "subjectCode": "Subject code",
+        "teacher": "Teacher (signature)",
+        "teacherName": "Teacher name",
+        "teacherEmail": "Teacher (e-mail)",
+        "coTeacher": "Co-teacher (signature)",
+        "coTeacherName": "Co-teacher name",
+        "coTeacherEmail": "Co-teacher (e-mail)",
+        "room": "Room",
+        "day": "Day",
+        "start": "Start",
+        "end": "End",
+        "weeks": "Week pattern (A/B)",
+        "from": "From (date)",
+        "to": "To (date)",
+        "block": "Block",
+        "timeRange": "Time, start and end in one cell",
+        "teacherList": "Teachers, several in one cell"
+      }
+    }
   }
 }

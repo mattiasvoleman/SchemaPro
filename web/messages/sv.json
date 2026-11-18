@@ -8057,6 +8057,18 @@
       "download": "Hämta",
       "failed": "Filen gick inte att hämta."
     },
+    "table": {
+      "title": "Från ett annat program",
+      "description": "Klistra in en tabell du har kopierat (till exempel ur Skola24 eller Excel) eller välj en CSV-fil. Du pekar ut kolumnerna själv, och inget skrivs förrän du har sett förhandsvisningen.",
+      "paste": "Klistra in tabellen här",
+      "pasteHint": "Markera tabellen, kopiera och klistra in. Rubrikerna ska stå överst.",
+      "file": "Eller välj en CSV-fil",
+      "fileHint": "En Excelfil (.xlsx) läses här genom att du markerar cellerna och klistrar in dem, eller sparar den som CSV.",
+      "read": "Läs in tabellen",
+      "kindLessons": "Lektioner (schemat)",
+      "used": "Tabellen {name} är läst: {count, plural, one {# rad} other {# rader}}. Förhandsvisningen står nedan.",
+      "tooLarge": "Filen är för stor: högst {size} kB tas emot."
+    },
     "import": {
       "title": "Importera",
       "description": "Läs in en fil som låsta lektioner. Rader som inte går att placera nämns vid namn, och då skrivs ingenting.",
@@ -10987,5 +10999,209 @@
     "noteOutside": "Kvällar och helger är öppettiderna ({openFrom}–{openTo}) som ligger utanför skoltid, också lov.",
     "noteCounts": "Bokat är tid som en lektion eller en godkänd bokning håller, också en dag i en extern bokning. En bokning som väntar på beslut räknas inte. Tid som både en lektion och en bokning håller räknas en gång.",
     "noteUnits": "En resurs med flera exemplar räknas i enhetstimmar: ett exemplar i en timme är en enhetstimme."
+  },
+  "columnMapping": {
+    "intro": "Säg vilken kolumn i tabellen som är vilket fält. Det du inte pekar ut läses inte in, och Rastra gissar aldrig vilken kolumn som är vilken.",
+    "pasted": "Inklistrad tabell",
+    "empty": "Det fanns ingen tabell i texten. Klistra in raderna, med rubrikerna överst.",
+    "tooLong": "Texten är för lång för att vara en tabell med lektioner. Dela upp den, eller spara tabellen som en CSV-fil.",
+    "readAs": "Filen lästes som {encoding}. Är å, ä och ö fel nedan, spara filen som CSV UTF-8 och välj den igen.",
+    "dialog": {
+      "title": "Läs in en tabell",
+      "preview": "Så här läses de första raderna",
+      "cancel": "Avbryt",
+      "use": "Använd tabellen",
+      "tooLarge": "Tabellen är för stor: högst {size} kB tas emot. Läs in den i delar."
+    },
+    "headerRow": {
+      "label": "Rubrikerna står på",
+      "option": "Rad {row}: {text}"
+    },
+    "template": {
+      "applied": "Mallen ”{name}” passar tabellen och är använd.",
+      "appliedMore": "Mallen ”{name}” passar tabellen och är använd. Tabellen har kolumner som mallen inte känner: de är inte placerade än.",
+      "changed": "Du har ändrat mappningen från mallen ”{name}”. Spara över den nedan om ändringen ska gälla nästa gång.",
+      "ambiguous": "Flera mallar passar lika bra. Välj en.",
+      "offered": "Mallen ”{name}” väntar sig {columns, plural, one {en kolumn} other {# kolumner}} som tabellen inte har.",
+      "useAnyway": "Använd ändå"
+    },
+    "columns": {
+      "title": "Tabellens kolumner",
+      "header": "Kolumn",
+      "sample": "Exempel",
+      "field": "Fält",
+      "fieldOf": "Fält för kolumnen {column}",
+      "noHeader": "(utan rubrik)",
+      "hiddenHeader": "(rubriken visas inte)"
+    },
+    "option": {
+      "unplaced": "Inte placerad",
+      "skip": "Läs inte kolumnen",
+      "required": "(krävs)"
+    },
+    "personalNumber": "Ser ut som personnummer. Kolumnen läses inte in och lämnar inte webbläsaren.",
+    "status": {
+      "duplicate": "Mer än en kolumn pekar på samma fält. Välj en var."
+    },
+    "summary": {
+      "cannot": "Tabellen går inte att läsa in så här",
+      "ready": "{count, plural, =0 {Inga rader läses in.} one {# rad läses in.} other {# rader läses in.}}"
+    },
+    "problems": {
+      "MISSING_REQUIRED": "Fältet {field} är inte placerat på någon kolumn.",
+      "DUPLICATE_TARGET": "Fältet {field} är placerat på mer än en kolumn: {columns}.",
+      "FIELDS_CONFLICT": "Fälten {field} och {other} läser samma celler och kan inte användas tillsammans.",
+      "UNKNOWN_FIELD": "Fältet {field} finns inte för den här importen."
+    },
+    "rowProblems": {
+      "title": "Rader som inte läses in",
+      "more": "…och {count} till"
+    },
+    "unplaced": "{count, plural, one {# kolumn läses inte, för ingenting har placerat den} other {# kolumner läses inte, för ingenting har placerat dem}}: {names}.",
+    "skipped": "{count, plural, one {# kolumn läses inte, som du valde} other {# kolumner läses inte, som du valde}}: {names}.",
+    "dropped": "{count, plural, one {# kolumn som ser ut som personnummer släpptes} other {# kolumner som ser ut som personnummer släpptes}}. Ingenting av dem lämnar webbläsaren.",
+    "emptied": "{count, plural, one {# rad har inget i de kolumner som läses och hoppas över} other {# rader har inget i de kolumner som läses och hoppas över}}.",
+    "warnings": {
+      "UNTERMINATED_QUOTE": "Ett citattecken i tabellen stängdes aldrig. Kontrollera de sista raderna.",
+      "CELLS_RIGHT_OF_HEADER": "Rad {rows} har celler till höger om den sista rubriken. De läses inte in.",
+      "REPLACEMENT_CHARACTER": "Rad {rows} har tecken som gått sönder i kodningen. Kontrollera namnen."
+    },
+    "save": {
+      "title": "Spara som mall",
+      "help": "En mall känns igen på kolumnerna, och används nästa gång en tabell har samma.",
+      "name": "Mallens namn",
+      "button": "Spara som ny mall",
+      "update": "Spara över mallen ”{name}”",
+      "delete": "Ta bort mallen",
+      "saved": "Mallen ”{name}” sparades.",
+      "deleted": "Mallen togs bort.",
+      "nameTaken": "Det finns redan en mall med det namnet.",
+      "notYours": "Mallen sparades inte: det kräver Planering. Tabellen går att läsa in ändå.",
+      "limit": "Skolan har redan {limit} mallar för den här importen. Ta bort en först.",
+      "failed": "Mallen sparades inte."
+    },
+    "fields": {
+      "students": {
+        "firstName": "Förnamn",
+        "lastName": "Efternamn",
+        "email": "E-post",
+        "phone": "Telefon",
+        "className": "Klass"
+      },
+      "guardians": {
+        "firstName": "Förnamn",
+        "lastName": "Efternamn",
+        "email": "E-post",
+        "phone": "Telefon",
+        "studentEmail": "Elevens e-post"
+      },
+      "teachers": {
+        "firstName": "Förnamn",
+        "lastName": "Efternamn",
+        "email": "E-post",
+        "phone": "Telefon",
+        "employmentPercent": "Tjänst i procent",
+        "reductionPercent": "Nedsättning i procent",
+        "contractKind": "Avtal",
+        "signature": "Signatur"
+      },
+      "classes": {
+        "name": "Namn",
+        "gradeLevel": "Årskurs",
+        "kind": "Typ (klass eller undervisningsgrupp)",
+        "halfOf": "Halvklass av",
+        "replacesSubject": "Ersätter ämne"
+      },
+      "teachingGroups": {
+        "groupName": "Grupp",
+        "email": "Elevens e-post"
+      },
+      "roomTypes": {
+        "name": "Namn"
+      },
+      "rooms": {
+        "name": "Namn",
+        "code": "Kod",
+        "roomType": "Salstyp",
+        "capacity": "Kapacitet",
+        "minGradeLevel": "Lägsta årskurs",
+        "maxGradeLevel": "Högsta årskurs",
+        "building": "Byggnad",
+        "floor": "Våning"
+      },
+      "subjects": {
+        "name": "Namn",
+        "code": "Kod",
+        "color": "Färg",
+        "roomType": "Salstyp",
+        "nationalCode": "Nationell kod",
+        "countsTowardTimplan": "Undervisningstid"
+      },
+      "requirements": {
+        "groupName": "Grupp",
+        "subject": "Ämne",
+        "lessonsPerWeek": "Lektioner per vecka",
+        "minutesPerLesson": "Minuter per lektion",
+        "lessonLengths": "Lektionslängder (till exempel 1x80+1x40)",
+        "minutesBefore": "Minuter före",
+        "minutesAfter": "Minuter efter",
+        "teacherEmail": "Lärare (e-post)",
+        "teacherSignature": "Lärare (signatur)",
+        "coTeacherEmail": "Medlärare (e-post)",
+        "coTeacherSignature": "Medlärare (signatur)",
+        "teacherLoadPercent": "Lärarens procent",
+        "coTeacherLoadPercent": "Medlärarens procent",
+        "recurrence": "Veckor (alla, udda, jämna)",
+        "startDate": "Från (datum)",
+        "endDate": "Till (datum)"
+      },
+      "teacherQualifications": {
+        "teacherEmail": "Lärarens e-post",
+        "subject": "Ämne",
+        "minGrade": "Från årskurs",
+        "maxGrade": "Till årskurs",
+        "kind": "Behörighet"
+      },
+      "teacherDuties": {
+        "teacherEmail": "Lärarens e-post",
+        "kind": "Typ av uppdrag",
+        "label": "Benämning",
+        "minutesPerWeek": "Minuter per vecka",
+        "countsAsTeaching": "Räknas som undervisning",
+        "subject": "Ämne",
+        "groupName": "Grupp",
+        "validFrom": "Från (datum)",
+        "validTo": "Till (datum)",
+        "note": "Anteckning"
+      },
+      "timplan": {
+        "subject": "Ämne",
+        "gradeLevel": "Årskurs",
+        "minutesPerWeek": "Minuter per vecka",
+        "note": "Notering"
+      },
+      "scheduleLessons": {
+        "group": "Klass/grupp",
+        "extraGroups": "Ytterligare klasser",
+        "subject": "Ämne",
+        "subjectCode": "Ämneskod",
+        "teacher": "Lärare (signatur)",
+        "teacherName": "Lärarnamn",
+        "teacherEmail": "Lärare (e-post)",
+        "coTeacher": "Medlärare (signatur)",
+        "coTeacherName": "Medlärarnamn",
+        "coTeacherEmail": "Medlärare (e-post)",
+        "room": "Sal",
+        "day": "Dag",
+        "start": "Start",
+        "end": "Slut",
+        "weeks": "Veckomönster (A/B)",
+        "from": "Från (datum)",
+        "to": "Till (datum)",
+        "block": "Block",
+        "timeRange": "Tid, start och slut i en cell",
+        "teacherList": "Lärare, flera i en cell"
+      }
+    }
   }
 }

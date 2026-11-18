@@ -1,10 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { FileDown, FileUp, Loader2 } from "lucide-react";
+import { FileDown, FileUp, Loader2, Table2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import {
   EXCHANGE_FORMATS,
@@ -17,6 +17,7 @@ import {
   type ImportPlanDto,
   type ImportResultDto,
 } from "@/lib/schedule-exchange";
+import { LazyColumnMappingDialog } from "@/components/import/lazy-column-mapping-dialog";
 import { Page } from "@/components/layout/page";
 import { PageHeader } from "@/components/layout/page-header";
 import { YearSelect, useYearScope } from "@/components/schedule/year-select";
@@ -40,7 +41,17 @@ import { ImportPreview } from "./import-preview";
  * the page does is choose, send, and show the answer; nothing is written
  * until the preview has been read and Skriv in is pressed, and then only if
  * the preview's fingerprint is still the plan's.
+ *
+ * ONE EXCEPTION, AND WHY. A table pasted or chosen from another program is read
+ * here, in the browser (Kolumnmappning, X2): the user points out which column is
+ * which, a column that looks like a personnummer is dropped before anything is
+ * sent, and what goes on to the gateway is an ordinary table under the headers
+ * its reader knows. That code is in the dialog, fetched at the first click, so
+ * the page carries only the card that opens it.
  */
+
+/** The largest table the card reads, pasted or from a file: a timetable of a school is far smaller. */
+const MAX_TABLE_BYTES = 5 * 1024 * 1024;
 
 const KEYS = { summary: (yearId: string) => ["schedule-exchange", "summary", yearId] as const };
 
@@ -56,6 +67,14 @@ export default function ScheduleExchangePage() {
   const [result, setResult] = useState<ImportResultDto | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [exportNotes, setExportNotes] = useState<string[]>([]);
+  // The table card (Kolumnmappning): a paste or a file, the dialog that maps it, and the note that it has been read.
+  const tableInput = useRef<HTMLInputElement>(null);
+  const [pasted, setPasted] = useState("");
+  const [tableFile, setTableFile] = useState<File | null>(null);
+  const [tableProblem, setTableProblem] = useState<string | null>(null);
+  const [mapping, setMapping] = useState<{ open: boolean; source: { text: string } | { file: File } | null }>({ open: false, source: null });
+  const [mapped, setMapped] = useState<{ name: string; count: number } | null>(null);
+  const [previewNext, setPreviewNext] = useState(false);
 
   const summary = useQuery({
     queryKey: KEYS.summary(yearId ?? ""),
@@ -115,8 +134,46 @@ export default function ScheduleExchangePage() {
     },
   });
 
+  // A table the dialog handed back is previewed at once, as the user has already chosen what to read: the preview writes nothing.
+  useEffect(() => {
+    if (!previewNext) return;
+    setPreviewNext(false);
+    preview.mutate();
+    // `preview.mutate` is stable; the flag is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewNext]);
+
+  function chooseTableFile(list: FileList | null) {
+    const chosen = list?.[0] ?? null;
+    setTableProblem(null);
+    if (chosen && chosen.size > MAX_TABLE_BYTES) {
+      setTableFile(null);
+      setTableProblem(t("table.tooLarge", { size: Math.round(MAX_TABLE_BYTES / 1024) }));
+      if (tableInput.current) tableInput.current.value = "";
+      return;
+    }
+    setTableFile(chosen);
+  }
+
+  function takeMappedTable(table: { csv: string; rows: number; name: string }) {
+    setMapping({ open: false, source: null });
+    setFiles([new File([table.csv], "tabell.csv", { type: "text/csv" })]);
+    setFormat("TABLE_CSV");
+    setPlan(null);
+    setResult(null);
+    setProblem(null);
+    setMapped({ name: table.name, count: table.rows });
+    if (fileInput.current) fileInput.current.value = "";
+    // What was pasted or chosen has been taken, mapped; the original (a personnummer column in it, perhaps) is not kept on the page.
+    setPasted("");
+    setTableFile(null);
+    if (tableInput.current) tableInput.current.value = "";
+    setPreviewNext(true);
+  }
+
   function choose(list: FileList | null) {
     const chosen = Array.from(list ?? []);
+    setMapped(null);
     setPlan(null);
     setResult(null);
     setProblem(null);
@@ -204,6 +261,56 @@ export default function ScheduleExchangePage() {
           <Skeleton className="h-24 w-full" />
         )}
       </SectionCard>
+
+      <SectionCard id="table" title={t("table.title")} description={t("table.description")} icon={Table2}>
+        <div className="space-y-3">
+          <p className="text-sm">{t("table.kindLessons")}</p>
+          <div>
+            <label htmlFor="exchange-paste" className="mb-1 block text-sm font-medium">
+              {t("table.paste")}
+            </label>
+            <textarea
+              id="exchange-paste"
+              value={pasted}
+              onChange={(event) => setPasted(event.target.value)}
+              rows={6}
+              spellCheck={false}
+              className="block w-full rounded-md border border-input-strong bg-transparent px-3 py-2 font-mono text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <p className="mt-1 text-sm text-muted-foreground">{t("table.pasteHint")}</p>
+          </div>
+          <div>
+            <label htmlFor="exchange-table-file" className="mb-1 block text-sm font-medium">
+              {t("table.file")}
+            </label>
+            <input
+              ref={tableInput}
+              id="exchange-table-file"
+              type="file"
+              accept=".csv,.tsv,.txt"
+              onChange={(event) => chooseTableFile(event.target.files)}
+              className="block w-full text-sm"
+            />
+            <p className="mt-1 text-sm text-muted-foreground">{t("table.fileHint")}</p>
+          </div>
+          {tableProblem ? <Notice tone="destructive">{tableProblem}</Notice> : null}
+          <Button
+            disabled={tableFile === null && pasted.trim() === ""}
+            onClick={() => setMapping({ open: true, source: tableFile !== null ? { file: tableFile } : { text: pasted } })}
+          >
+            {t("table.read")}
+          </Button>
+          {mapped ? <Notice tone="success">{t("table.used", { name: mapped.name, count: mapped.count })}</Notice> : null}
+        </div>
+      </SectionCard>
+
+      <LazyColumnMappingDialog
+        open={mapping.open}
+        onOpenChange={(open) => setMapping((current) => ({ ...current, open }))}
+        kind="scheduleLessons"
+        source={mapping.source}
+        onUse={takeMappedTable}
+      />
 
       <SectionCard id="import" title={t("import.title")} description={t("import.description")} icon={FileUp}>
         <div className="space-y-3">
