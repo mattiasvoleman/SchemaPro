@@ -21,6 +21,7 @@ import type {
 } from "@/lib/types";
 import { BOM, CSV_TEMPLATES, downloadCsv, normalizeHeader, serializeCsv, type ImportKind } from "@/lib/csv-export";
 import { isEmailAddress, isHexColor, textLength } from "@/lib/csv-cell-rules";
+import { CSV_ALIASES, PHONE_ALIASES } from "@/lib/csv-aliases";
 import {
   LESSON_GRID_MINUTES,
   LESSON_MAX_MINUTES,
@@ -343,7 +344,6 @@ function cellProblem(row: number, label: string, value: string, rule: CellRule):
 const NAME: CellRule = { max: 120 };
 /** CreateUserDto's @MaxLength(40); a number is text, written as the school writes it. */
 const PHONE: CellRule = { max: 40 };
-const PHONE_ALIASES = ["telefon", "telefonnummer", "tel", "mobil", "mobilnummer", "phone"];
 const GROUP_NAME: CellRule = { max: 60 };
 const EMAIL: CellRule = { email: true, max: 254 };
 const SUBJECT: CellRule = { max: 120 };
@@ -466,11 +466,11 @@ export function mapStudentRows(parsed: ParsedCsv): MappedRows<{
   const mapped = mapRows(
     parsed,
     [
-      { field: "firstName", aliases: ["fornamn", "firstname"], required: true, rule: NAME },
-      { field: "lastName", aliases: ["efternamn", "lastname"], required: true, rule: NAME },
-      { field: "email", aliases: ["epost", "email", "epostadress"], required: true, rule: EMAIL },
-      { field: "phone", aliases: PHONE_ALIASES, required: false, rule: PHONE },
-      { field: "className", aliases: ["klass", "class"], required: "column", rule: GROUP_NAME },
+      { field: "firstName", aliases: CSV_ALIASES.students.firstName, required: true, rule: NAME },
+      { field: "lastName", aliases: CSV_ALIASES.students.lastName, required: true, rule: NAME },
+      { field: "email", aliases: CSV_ALIASES.students.email, required: true, rule: EMAIL },
+      { field: "phone", aliases: CSV_ALIASES.students.phone, required: false, rule: PHONE },
+      { field: "className", aliases: CSV_ALIASES.students.className, required: "column", rule: GROUP_NAME },
     ],
     requiredMessage,
   );
@@ -503,14 +503,14 @@ export function mapGuardianRows(parsed: ParsedCsv): MappedRows<{
   const mapped = mapRows(
     parsed,
     [
-      { field: "firstName", aliases: ["fornamn", "firstname"], required: true, rule: NAME },
-      { field: "lastName", aliases: ["efternamn", "lastname"], required: true, rule: NAME },
-      { field: "email", aliases: ["epost", "email", "epostadress"], required: true, rule: EMAIL },
-      { field: "phone", aliases: PHONE_ALIASES, required: false, rule: PHONE },
+      { field: "firstName", aliases: CSV_ALIASES.guardians.firstName, required: true, rule: NAME },
+      { field: "lastName", aliases: CSV_ALIASES.guardians.lastName, required: true, rule: NAME },
+      { field: "email", aliases: CSV_ALIASES.guardians.email, required: true, rule: EMAIL },
+      { field: "phone", aliases: CSV_ALIASES.guardians.phone, required: false, rule: PHONE },
       {
         field: "studentEmail",
-        // normalizeHeader strips the underscore: "elev_epost" reads "elevepost".
-        aliases: ["elevepost", "elevensepost", "elevemail", "studentemail", "pupilemail"],
+        // normalizeHeader strips the underscore: "elev_epost" reads "elevepost" (lib/csv-aliases.ts).
+        aliases: CSV_ALIASES.guardians.studentEmail,
         required: true,
         rule: EMAIL,
       },
@@ -610,17 +610,11 @@ export type TeacherRow = {
 };
 
 const TEACHER_POST_COLUMNS = {
-  employmentPercent: [
-    "tjanstprocent",
-    "tjanst",
-    "tjanstgoringsgrad",
-    "tjanstgoringsgradprocent",
-    "employmentpercent",
-  ],
-  reductionPercent: ["nedsattningprocent", "nedsattning", "reductionpercent"],
-  contractKind: ["avtal", "avtalsform", "contractkind", "tjanstetyp"],
-  signature: ["signatur", "signature", "sign", "lararsignatur"],
-} satisfies Record<string, string[]>;
+  employmentPercent: CSV_ALIASES.teachers.employmentPercent,
+  reductionPercent: CSV_ALIASES.teachers.reductionPercent,
+  contractKind: CSV_ALIASES.teachers.contractKind,
+  signature: CSV_ALIASES.teachers.signature,
+};
 
 /** "ferie", "semester", the enum names, and the two Swedish compounds. */
 const CONTRACT_BY_WORD: Record<string, TeacherContractKind> = {
@@ -644,10 +638,10 @@ export function mapTeacherRows(parsed: ParsedCsv): MappedRows<TeacherRow> {
   const normalized = parsed.headers.map(normalizeHeader);
   const find = (aliases: string[]) => normalized.findIndex((header) => aliases.includes(header));
   const columns = {
-    firstName: find(["fornamn", "firstname"]),
-    lastName: find(["efternamn", "lastname"]),
-    email: find(["epost", "email", "epostadress"]),
-    phone: find(PHONE_ALIASES),
+    firstName: find(CSV_ALIASES.teachers.firstName),
+    lastName: find(CSV_ALIASES.teachers.lastName),
+    email: find(CSV_ALIASES.teachers.email),
+    phone: find(CSV_ALIASES.teachers.phone),
     employmentPercent: find(TEACHER_POST_COLUMNS.employmentPercent),
     reductionPercent: find(TEACHER_POST_COLUMNS.reductionPercent),
     contractKind: find(TEACHER_POST_COLUMNS.contractKind),
@@ -774,13 +768,7 @@ export type TeacherQualificationRow = {
   kind: TeacherQualificationKind;
 };
 
-const QUALIFICATION_COLUMNS = {
-  teacherEmail: ["larareepost", "larare", "epost", "email", "epostadress", "teacheremail"],
-  subject: ["amne", "amneskod", "subject", "subjectcode", "kod", "code"],
-  minGrade: ["franarskurs", "fran", "lagstaarskurs", "minarskurs", "mingrade", "from"],
-  maxGrade: ["tillarskurs", "till", "hogstaarskurs", "maxarskurs", "maxgrade", "to"],
-  kind: ["behorighet", "slag", "kind", "typ"],
-} satisfies Record<string, string[]>;
+const QUALIFICATION_COLUMNS = CSV_ALIASES.teacherQualifications;
 
 type QualificationField = keyof typeof QUALIFICATION_COLUMNS;
 
@@ -915,19 +903,7 @@ export type TeacherDutyRow = {
   note?: string | null;
 };
 
-const DUTY_COLUMNS = {
-  teacherEmail: ["larareepost", "larare", "epost", "email", "teacheremail"],
-  kind: ["typ", "uppdragstyp", "kind"],
-  label: ["benamning", "namn", "uppdrag", "label"],
-  minutesPerWeek: ["minuterpervecka", "minuter", "minutesperweek", "minutes"],
-  countsAsTeaching: ["raknassomundervisning", "raknas", "countsasteaching"],
-  subject: ["amne", "amneskod", "subject"],
-  groupName: ["grupp", "klass", "group", "groupname"],
-  // As the timplan file spells its period, "Fr.o.m." included.
-  validFrom: ["fran", "franochmed", "from", "fom", "giltigfran", "validfrom"],
-  validTo: ["till", "tillochmed", "tom", "giltigtill", "validto"],
-  note: ["anteckning", "kommentar", "note"],
-} satisfies Record<string, string[]>;
+const DUTY_COLUMNS = CSV_ALIASES.teacherDuties;
 
 type DutyField = keyof typeof DUTY_COLUMNS;
 const DUTY_REQUIRED: DutyField[] = ["teacherEmail", "kind", "label", "minutesPerWeek"];
@@ -1128,11 +1104,11 @@ const GROUP_KIND_BY_WORD: Record<string, "CLASS" | "TEACHING_GROUP"> = {
 export function mapClassRows(parsed: ParsedCsv): MappedRows<ClassRow> {
   const normalized = parsed.headers.map(normalizeHeader);
   const find = (aliases: string[]) => normalized.findIndex((header) => aliases.includes(header));
-  const nameColumn = find(["namn", "name", "klass"]);
-  const gradeColumn = find(["arskurs", "gradelevel", "ak"]);
-  const kindColumn = find(["typ", "kind", "grupptyp"]);
-  const halfColumn = find(["halvklassav", "halvav", "halfof"]);
-  const replacesColumn = find(["ersatteramne", "ersatter", "replacessubject"]);
+  const nameColumn = find(CSV_ALIASES.classes.name);
+  const gradeColumn = find(CSV_ALIASES.classes.gradeLevel);
+  const kindColumn = find(CSV_ALIASES.classes.kind);
+  const halfColumn = find(CSV_ALIASES.classes.halfOf);
+  const replacesColumn = find(CSV_ALIASES.classes.replacesSubject);
   if (nameColumn === -1) {
     return {
       rows: [],
@@ -1273,37 +1249,26 @@ export function mapSubjectRows(parsed: ParsedCsv): MappedRows<SubjectRow> {
   const mapped = mapRows(
     parsed,
     [
-      { field: "name", aliases: ["namn", "name", "amne"], required: true, rule: NAME },
-      { field: "code", aliases: ["kod", "code", "forkortning"], required: false, rule: { max: 20 } },
-      { field: "color", aliases: ["farg", "color"], required: false, rule: { hex: true } },
+      { field: "name", aliases: CSV_ALIASES.subjects.name, required: true, rule: NAME },
+      { field: "code", aliases: CSV_ALIASES.subjects.code, required: false, rule: { max: 20 } },
+      { field: "color", aliases: CSV_ALIASES.subjects.color, required: false, rule: { hex: true } },
       {
         field: "roomType",
         // Headers are compared normalized, underscores gone: "kräver_salstyp"
         // arrives as "kraversalstyp", which the old "kraver_salstyp" never met.
-        aliases: ["salstyp", "kraversalstyp", "roomtype"],
+        aliases: CSV_ALIASES.subjects.roomType,
         required: false,
         rule: GROUP_NAME,
       },
       {
         field: "nationalCode",
-        aliases: [
-          "nationellkod",
-          "nationellamneskod",
-          "nationalcode",
-          "skolverketskod",
-          "skolverketkod",
-        ],
+        aliases: CSV_ALIASES.subjects.nationalCode,
         required: false,
         rule: { max: 20 },
       },
       {
         field: "countsTowardTimplan",
-        aliases: [
-          "undervisningstid",
-          "raknassomundervisningstid",
-          "countstowardtimplan",
-          "undervisningsamne",
-        ],
+        aliases: CSV_ALIASES.subjects.countsTowardTimplan,
         required: false,
       },
     ],
@@ -1355,16 +1320,7 @@ export type RoomRow = {
   floor: number | null;
 };
 
-const ROOM_COLUMNS = {
-  name: ["namn", "name", "sal", "rum"],
-  code: ["kod", "code", "salskod"],
-  roomType: ["salstyp", "typ", "roomtype"],
-  capacity: ["kapacitet", "platser", "antalplatser", "capacity"],
-  minGradeLevel: ["lagstaarskurs", "franarskurs", "mingrade"],
-  maxGradeLevel: ["hogstaarskurs", "tillarskurs", "maxgrade"],
-  building: ["byggnad", "hus", "building"],
-  floor: ["vaning", "plan", "floor"],
-} satisfies Record<string, string[]>;
+const ROOM_COLUMNS = CSV_ALIASES.rooms;
 
 /**
  * Salar. Only the name is required; every bound is CreateRoomDto's, said
@@ -1443,7 +1399,7 @@ export function mapRoomRows(parsed: ParsedCsv): MappedRows<RoomRow> {
 export function mapRoomTypeRows(parsed: ParsedCsv) {
   return mapRows(
     parsed,
-    [{ field: "name", aliases: ["namn", "name", "salstyp", "typ"], required: true, rule: GROUP_NAME }],
+    [{ field: "name", aliases: CSV_ALIASES.roomTypes.name, required: true, rule: GROUP_NAME }],
     requiredMessage,
   );
 }
@@ -1452,8 +1408,8 @@ export function mapMembershipRows(parsed: ParsedCsv) {
   return mapRows(
     parsed,
     [
-      { field: "groupName", aliases: ["grupp", "group", "undervisningsgrupp"], required: true, rule: GROUP_NAME },
-      { field: "email", aliases: ["epost", "email", "epostadress", "elev"], required: true, rule: EMAIL },
+      { field: "groupName", aliases: CSV_ALIASES.teachingGroups.groupName, required: true, rule: GROUP_NAME },
+      { field: "email", aliases: CSV_ALIASES.teachingGroups.email, required: true, rule: EMAIL },
     ],
     requiredMessage,
   );
@@ -1516,85 +1472,7 @@ export type RequirementRow = {
   endDate?: string | null;
 };
 
-const REQUIREMENT_COLUMNS = {
-  groupName: ["grupp", "group", "undervisningsgrupp", "klass", "class"],
-  subject: ["amne", "amneskod", "subject", "subjectcode", "kod", "code"],
-  lessonsPerWeek: [
-    "lektionerpervecka",
-    "lektionervecka",
-    "lektioner",
-    "antallektioner",
-    "lessonsperweek",
-  ],
-  minutesPerLesson: [
-    "minuterperlektion",
-    "minuterlektion",
-    "minuter",
-    "lektionslangd",
-    "minutesperlesson",
-  ],
-  // Not "lektionslangd", which is minutesPerLesson above: the plural is a
-  // different column, the one that can say "1x80+1x40".
-  lessonLengths: ["lektionslangder", "langder", "lessonlengths"],
-  // The template writes the API's field name; the Swedish spellings are here
-  // because an administrator who adds the column by hand writes what the
-  // timplan page calls it — "Ombyte före (minuter)" — and not a camelCase
-  // identifier. "minuter" alone is taken by minutesPerLesson above, so neither
-  // side may claim it.
-  // A bare "fore" and "efter" are deliberately NOT accepted: they are the words
-  // a school also writes over a pair of date or time columns, and a mistaken
-  // match here would read a date as minutes and refuse the whole row.
-  minutesBefore: ["minutesbefore", "ombytefore", "minuterfore"],
-  minutesAfter: ["minutesafter", "duschefter", "ombyteefter", "minuterefter"],
-  teacherEmail: [
-    "larare",
-    "undervisandelarare",
-    "lararepost",
-    "teacher",
-    "teacheremail",
-  ],
-  coTeacherEmail: [
-    "medlarare",
-    "medlararepost",
-    "andralarare",
-    "larare2",
-    "coteacher",
-    "coteacheremail",
-  ],
-  // Never a bare "procent": a school's own sheet may carry a tjänstegrad
-  // column under that word, and reading it as a charge would quietly halve
-  // every row. Each spelling names whose percentage it is.
-  teacherLoadPercent: [
-    "larareprocent",
-    "lararprocent",
-    "lararensprocent",
-
-    "raknasforlarare",
-    "raknasforlararen",
-    "teacherloadpercent",
-  ],
-  coTeacherLoadPercent: [
-    "medlararprocent",
-    "medlarareprocent",
-    "raknasformedlarare",
-    "raknasformedlararen",
-    "coteacherloadpercent",
-  ],
-  recurrence: ["veckor", "vecka", "weeks", "recurrence"],
-  // "Fr.o.m." normalizes to "from", not "fom" — the dots are stripped, not the
-  // letters between them. Both spellings are listed rather than one being
-  // reasoned about at a glance.
-  startDate: [
-    "fran",
-    "franochmed",
-    "from",
-    "fom",
-    "start",
-    "startdatum",
-    "startdate",
-  ],
-  endDate: ["till", "tillochmed", "tom", "slut", "slutdatum", "enddate"],
-} satisfies Record<string, string[]>;
+const REQUIREMENT_COLUMNS = CSV_ALIASES.requirements;
 
 /**
  * A column the timplan file may carry. Exported because the API has to be told

@@ -1,0 +1,464 @@
+{
+  "cases": [
+    {
+      "text": "19800101-1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "8001011234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "198001011234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "800101-1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19800181-1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "8001811234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "Anna Berg 19800101-1234",
+      "has": true,
+      "redacted": "Anna Berg [personnummer]"
+    },
+    {
+      "text": "(800101-1234)",
+      "has": true,
+      "redacted": "([personnummer])"
+    },
+    {
+      "text": "19800101 - 1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19800101 1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "800101 1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "800101 1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "800101   1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "800101.1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "800101/1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "800101_1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "800101−1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "800101​1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "800101­1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "８００１０１－１２３４",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "8 0 0 1 0 1 1 2 3 4",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "1980 01 01 1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "1980-01-01-1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "1980-01-01 1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "80-01-01-1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "abc8001011234xyz",
+      "has": true,
+      "redacted": "abc[personnummer]xyz"
+    },
+    {
+      "text": "Se anteckning: 19800101-1234 (vikarie)",
+      "has": true,
+      "redacted": "Se anteckning: [personnummer] (vikarie)"
+    },
+    {
+      "text": "800101\n1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "800101\r\n1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19800101-\n1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "800101\t1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "800101+1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19800101+1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "800101–1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "800101—1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "0701234567",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "Personnr: 8001011234",
+      "has": true,
+      "redacted": "Personnr: [personnummer]"
+    },
+    {
+      "text": "121212-1212",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "20001231-9999",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "6001011234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "19800191-1234",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "800131-0000",
+      "has": true,
+      "redacted": "[personnummer]"
+    },
+    {
+      "text": "",
+      "has": false,
+      "redacted": ""
+    },
+    {
+      "text": " ",
+      "has": false,
+      "redacted": " "
+    },
+    {
+      "text": "Anna Berg",
+      "has": false,
+      "redacted": "Anna Berg"
+    },
+    {
+      "text": "Klass 7A",
+      "has": false,
+      "redacted": "Klass 7A"
+    },
+    {
+      "text": "Åk 7-9",
+      "has": false,
+      "redacted": "Åk 7-9"
+    },
+    {
+      "text": "Matematik",
+      "has": false,
+      "redacted": "Matematik"
+    },
+    {
+      "text": "08:10",
+      "has": false,
+      "redacted": "08:10"
+    },
+    {
+      "text": "08:10-09:00",
+      "has": false,
+      "redacted": "08:10-09:00"
+    },
+    {
+      "text": "2026-08-17",
+      "has": false,
+      "redacted": "2026-08-17"
+    },
+    {
+      "text": "2026-08-17-2026-12-18",
+      "has": false,
+      "redacted": "2026-08-17-2026-12-18"
+    },
+    {
+      "text": "2026-08-17 2026-12-18",
+      "has": false,
+      "redacted": "2026-08-17 2026-12-18"
+    },
+    {
+      "text": "17/8/2026",
+      "has": false,
+      "redacted": "17/8/2026"
+    },
+    {
+      "text": "1234",
+      "has": false,
+      "redacted": "1234"
+    },
+    {
+      "text": "123456",
+      "has": false,
+      "redacted": "123456"
+    },
+    {
+      "text": "12345678",
+      "has": false,
+      "redacted": "12345678"
+    },
+    {
+      "text": "0123456789",
+      "has": false,
+      "redacted": "0123456789"
+    },
+    {
+      "text": "1234567890",
+      "has": false,
+      "redacted": "1234567890"
+    },
+    {
+      "text": "9999999999",
+      "has": false,
+      "redacted": "9999999999"
+    },
+    {
+      "text": "800001-1234",
+      "has": false,
+      "redacted": "800001-1234"
+    },
+    {
+      "text": "801301-1234",
+      "has": false,
+      "redacted": "801301-1234"
+    },
+    {
+      "text": "800132-1234",
+      "has": false,
+      "redacted": "800132-1234"
+    },
+    {
+      "text": "800192-1234",
+      "has": false,
+      "redacted": "800192-1234"
+    },
+    {
+      "text": "19801301-1234",
+      "has": false,
+      "redacted": "19801301-1234"
+    },
+    {
+      "text": "A1",
+      "has": false,
+      "redacted": "A1"
+    },
+    {
+      "text": "SL1",
+      "has": false,
+      "redacted": "SL1"
+    },
+    {
+      "text": "Lärare e-post",
+      "has": false,
+      "redacted": "Lärare e-post"
+    },
+    {
+      "text": "anna.berg@skolan.example",
+      "has": false,
+      "redacted": "anna.berg@skolan.example"
+    },
+    {
+      "text": "v. 35-41",
+      "has": false,
+      "redacted": "v. 35-41"
+    },
+    {
+      "text": "Vecka 12",
+      "has": false,
+      "redacted": "Vecka 12"
+    },
+    {
+      "text": "7A,7B",
+      "has": false,
+      "redacted": "7A,7B"
+    },
+    {
+      "text": "7A | 7B",
+      "has": false,
+      "redacted": "7A | 7B"
+    },
+    {
+      "text": "Hus B plan 1",
+      "has": false,
+      "redacted": "Hus B plan 1"
+    },
+    {
+      "text": "12345",
+      "has": false,
+      "redacted": "12345"
+    },
+    {
+      "text": "1234-5678",
+      "has": false,
+      "redacted": "1234-5678"
+    },
+    {
+      "text": "Mån 08:10",
+      "has": false,
+      "redacted": "Mån 08:10"
+    },
+    {
+      "text": "8:10",
+      "has": false,
+      "redacted": "8:10"
+    },
+    {
+      "text": "081000",
+      "has": false,
+      "redacted": "081000"
+    },
+    {
+      "text": "2026",
+      "has": false,
+      "redacted": "2026"
+    },
+    {
+      "text": "20262027",
+      "has": false,
+      "redacted": "20262027"
+    },
+    {
+      "text": "Läsår 2026-2027",
+      "has": false,
+      "redacted": "Läsår 2026-2027"
+    },
+    {
+      "text": "08-17",
+      "has": false,
+      "redacted": "08-17"
+    },
+    {
+      "text": "1980",
+      "has": false,
+      "redacted": "1980"
+    },
+    {
+      "text": "19800101",
+      "has": false,
+      "redacted": "19800101"
+    },
+    {
+      "text": "800101",
+      "has": false,
+      "redacted": "800101"
+    },
+    {
+      "text": "12 34 56",
+      "has": false,
+      "redacted": "12 34 56"
+    },
+    {
+      "text": "800101-1234 och 19900202-4321",
+      "has": true,
+      "redacted": "[personnummer] och [personnummer]"
+    },
+    {
+      "text": "a 8001011234 b 800101-1234 c",
+      "has": true,
+      "redacted": "a [personnummer] b [personnummer] c"
+    },
+    {
+      "text": "198001011234567",
+      "has": false,
+      "redacted": "198001011234567"
+    },
+    {
+      "text": "19800101123456",
+      "has": false,
+      "redacted": "19800101123456"
+    },
+    {
+      "text": "x1980010112345678",
+      "has": false,
+      "redacted": "x1980010112345678"
+    }
+  ]
+}

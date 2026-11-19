@@ -189,6 +189,13 @@ const COLUMNS: readonly Column[] = [
   { key: 'locked', sv: 'Låst', en: 'Locked', aliases: [] },
 ];
 
+/**
+ * The columns as a list a mapping can be checked against (Kolumnmappning, X2): the key, the Swedish header the writer
+ * writes, the English one and the other spellings the reader takes. The web's catalogue of the table's fields
+ * (web/lib/column-fields.ts) writes a mapped table back under these headers and is held to them by a fixture.
+ */
+export const LESSON_TABLE_COLUMNS: readonly { key: string; sv: string; en: string; aliases: readonly string[] }[] = COLUMNS;
+
 /** The Swedish header row, as the writer writes it. */
 export const LESSON_TABLE_HEADER: readonly string[] = COLUMNS.map((column) => column.sv);
 /** The English header row, accepted by the reader and available for a template. */

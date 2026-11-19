@@ -172,6 +172,27 @@ export const miscRoutes: GatewayRoute[] = [
     teachers: 6,
     teachersWithoutSignature: 1,
   })),
+  // Kolumnmappning: the school has saved no mapping, and the preview of a table answers a plan that says how many rows it got, so a
+  // browser test can see that the mapped table, and only it, reached the gateway.
+  route("GET", "/api/v1/import-templates", () => []),
+  route("POST", "/api/v1/schedule-exchange/import/preview", ({ body }) => {
+    const file = (body as { files?: { contentBase64: string }[] } | null)?.files?.[0];
+    const lines = file ? Buffer.from(file.contentBase64, "base64").toString("utf8").split(/\r?\n/).filter((line) => line.trim() !== "") : [];
+    const rows = Math.max(0, lines.length - 1);
+    return {
+      format: "TABLE_CSV",
+      yearName: YEAR.name,
+      summary: { rows, create: rows, unchanged: 0, refused: 0, unreadable: 0, notInFile: 0 },
+      rows: lines.slice(1).map((line, index) => ({ ref: `rad ${index + 2}`, label: line.split(";").slice(0, 2).join(" · "), action: "CREATE", refusals: [], changes: [] })),
+      unreadable: [],
+      requirements: [],
+      newBlocks: [],
+      warnings: [],
+      notes: [],
+      canApply: rows > 0,
+      fingerprint: "a".repeat(32),
+    };
+  }),
   // Kalenderprenumeration: each person's own feeds, as PUBLICATION_SETTINGS
   // has the audiences (teachers and guardians on, pupils off). Anna has her
   // week's, Sara Ella's but not yet Hugo's; the admin none of her own.
