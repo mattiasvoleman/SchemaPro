@@ -498,7 +498,8 @@ describe('the roster-reader inventory', () => {
       //
       // Kontrollera veckan asks the engine about the week Generera would send, and builds it by Generera's own fetch
       // (prepareSchedule), so a year two steps ahead answers R6's 409 there as POST jobs does: a check that read a week no
-      // Generera may be run for would answer about pupils the year does not have.
+      // Generera may be run for would answer about pupils the year does not have. Its question what the week would be
+      // with teacher choice (askChoice) builds the same week by the same fetch, and answers the same 409 for the same year.
       expect(reached.map((entry) => entry.route).sort()).toEqual([
         'AnalysisController.costBasis',
         'AnalysisController.keyFigures',
@@ -554,6 +555,7 @@ describe('the roster-reader inventory', () => {
         'TeachingRequirementsController.update',
         'TimplanCoverageController.get',
         'TimplanCoverageController.plannedPupils',
+        'WeekCheckController.askChoice',
         'WeekCheckController.check',
         'YearRolloverController.rosters',
       ]);

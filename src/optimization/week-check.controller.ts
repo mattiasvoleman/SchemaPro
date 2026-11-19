@@ -9,7 +9,9 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { RolesGuard } from '../auth/roles.guard';
 import { WeekCheckDto } from './dto/week-check.dto';
 import type { WeekCheckView } from './interfaces/week-check.interface';
+import type { WeekCheckChoiceView } from './interfaces/week-check-choice.interface';
 import { OptimizationJobsService } from './optimization-jobs.service';
+import { WeekCheckChoiceService } from './week-check-choice.service';
 import { WeekCheckService } from './week-check.service';
 
 /**
@@ -30,6 +32,7 @@ export class WeekCheckController {
   constructor(
     private readonly weekCheck: WeekCheckService,
     private readonly jobs: OptimizationJobsService,
+    private readonly choice: WeekCheckChoiceService,
   ) {}
 
   /**
@@ -50,6 +53,25 @@ export class WeekCheckController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   check(@Body() dto: WeekCheckDto, @CurrentUser() user: AuthenticatedUser): Promise<WeekCheckView> {
     return this.weekCheck.check(dto.academicYearId, user).catch(async (error: unknown) => {
+      throw await this.jobs.refusalForReader(error, dto.academicYearId, user);
+    });
+  }
+
+  /**
+   * What the week would be if teachers could be chosen (week-check-choice.ts):
+   * the floor, and a second teacher in the subjects that carry most. Asked for
+   * by name after the check has answered, because it is up to twelve checks in
+   * a row, and so throttled as the routes that wake the solver are (three a
+   * minute). 200, not 202: nothing is left running.
+   *
+   * Refused the way the check is: the payload's own refusal leaves as its code
+   * and values.
+   */
+  @Post('week-check/choice')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  askChoice(@Body() dto: WeekCheckDto, @CurrentUser() user: AuthenticatedUser): Promise<WeekCheckChoiceView> {
+    return this.choice.choice(dto.academicYearId, user).catch(async (error: unknown) => {
       throw await this.jobs.refusalForReader(error, dto.academicYearId, user);
     });
   }

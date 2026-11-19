@@ -11,8 +11,10 @@ import { RolesGuard } from '../auth/roles.guard';
 import { testUser } from '../../test/utils/prisma-mock';
 import { WeekCheckDto } from './dto/week-check.dto';
 import type { WeekCheckView } from './interfaces/week-check.interface';
+import type { WeekCheckChoiceView } from './interfaces/week-check-choice.interface';
 import type { OptimizationJobsService } from './optimization-jobs.service';
 import { WeekCheckController } from './week-check.controller';
+import type { WeekCheckChoiceService } from './week-check-choice.service';
 import type { WeekCheckService } from './week-check.service';
 
 const YEAR_ID = '44444444-4444-4444-8444-444444444444';
@@ -26,16 +28,32 @@ const view: WeekCheckView = {
   checkedBy: 'ENGINE',
 };
 
+const choiceView: WeekCheckChoiceView = {
+  status: 'NO_TIGHT_YEAR',
+  years: [],
+  qualificationsRecorded: true,
+  releasedPosts: 0,
+  notRun: 0,
+  calls: 1,
+  elapsedMs: 12,
+};
+
 describe('WeekCheckController', () => {
   let weekCheck: { check: jest.Mock };
+  let choice: { choice: jest.Mock };
   let jobs: { refusalForReader: jest.Mock };
   let controller: WeekCheckController;
 
   beforeEach(() => {
     weekCheck = { check: jest.fn() };
+    choice = { choice: jest.fn() };
     // As the service answers every error but a days refusal: the error itself.
     jobs = { refusalForReader: jest.fn(async (error: unknown) => error) };
-    controller = new WeekCheckController(weekCheck as unknown as WeekCheckService, jobs as unknown as OptimizationJobsService);
+    controller = new WeekCheckController(
+      weekCheck as unknown as WeekCheckService,
+      jobs as unknown as OptimizationJobsService,
+      choice as unknown as WeekCheckChoiceService,
+    );
   });
 
   it('asks about the DTO year as the caller, and answers with what the service says', async () => {
@@ -63,6 +81,41 @@ describe('WeekCheckController', () => {
     weekCheck.check.mockRejectedValue(down);
 
     await expect(controller.check({ academicYearId: YEAR_ID }, testUser())).rejects.toBe(down);
+  });
+
+  describe('the choice: what the week would be if teachers could be chosen', () => {
+    it('asks about the DTO year as the caller, and answers with what the service says', async () => {
+      choice.choice.mockResolvedValue(choiceView);
+      const user = testUser();
+
+      await expect(controller.askChoice({ academicYearId: YEAR_ID }, user)).resolves.toBe(choiceView);
+      expect(choice.choice).toHaveBeenCalledWith(YEAR_ID, user);
+      expect(weekCheck.check).not.toHaveBeenCalled();
+    });
+
+    it('words a refusal about a post\'s days for this caller before it leaves, as the check does', async () => {
+      const raw = new HttpException({ message: 'days', code: 'TEACHER_WORK_DAYS_TOO_FEW_FOR_WEEK' }, HttpStatus.BAD_REQUEST);
+      const worded = new HttpException({ message: 'hidden', code: 'TEACHER_WORK_DAYS_HIDDEN' }, HttpStatus.BAD_REQUEST);
+      choice.choice.mockRejectedValue(raw);
+      jobs.refusalForReader.mockResolvedValue(worded);
+      const user = testUser();
+
+      await expect(controller.askChoice({ academicYearId: YEAR_ID }, user)).rejects.toBe(worded);
+      expect(jobs.refusalForReader).toHaveBeenCalledWith(raw, YEAR_ID, user);
+    });
+
+    it('is POST /api/v1/optimization/week-check/choice, answering 200, behind the check\'s guards and areas', () => {
+      const method = WeekCheckController.prototype.askChoice;
+      expect(Reflect.getMetadata(PATH_METADATA, method)).toBe('week-check/choice');
+      expect(Reflect.getMetadata(METHOD_METADATA, method)).toBe(RequestMethod.POST);
+      expect(Reflect.getMetadata(HTTP_CODE_METADATA, method)).toBe(HttpStatus.OK);
+    });
+
+    it('is throttled at three a minute, as the routes that wake the solver are: it is up to twelve checks in a row', () => {
+      const method = WeekCheckController.prototype.askChoice;
+      expect(Reflect.getMetadata('THROTTLER:LIMITdefault', method)).toBe(3);
+      expect(Reflect.getMetadata('THROTTLER:TTLdefault', method)).toBe(60_000);
+    });
   });
 
   describe('the route', () => {
