@@ -1831,6 +1831,62 @@
       "confirm": "Kör ändå"
     }
   },
+  "weekCheckChoice": {
+    "title": "Om lärare kunde väljas",
+    "hint": "Räknar om veckan som om lärarna i de ämnen där flera är behöriga kunde väljas fritt, och som om ett ämne fick en andra lärare. Det kan ta upp till en halv minut. Inget ändras i schemat.",
+    "button": "Se vad lärarval ger",
+    "again": "Räkna om",
+    "asking": "Räknar om veckan med lärarval…",
+    "unavailable": {
+      "ENGINE_OLDER": "Schemamotorn uppdateras och kan inte räkna ut det ännu. Försök igen om några minuter.",
+      "THROTTLED": "Det har frågats för ofta. Vänta en minut och försök igen.",
+      "ERROR": "Det gick inte att räkna ut vad lärarval ger just nu. Veckokontrollen ovan gäller ändå."
+    },
+    "status": {
+      "NO_TIGHT_YEAR": "Ingen årskurs ligger nära gränsen, så det finns inget att räkna om med lärarval.",
+      "NOT_ASKED": "Veckan räknades inte om: motorn fick ingen vecka att räkna på."
+    },
+    "year": "Åk {year}",
+    "today": "Veckan som den är: {figure}.",
+    "count": {
+      "short": {
+        "load": "{atLeast, select, yes {minst } other {}}{percent} %",
+        "over": "{percent} %",
+        "under": "under {below} %",
+        "unknown": "inte räknad",
+        "refused": "nekas av en annan räkning"
+      },
+      "long": {
+        "load": "{atLeast, select, yes {minst } other {}}{percent} % av ramtiden",
+        "over": "{percent} %, mer än ramtiden ger (minst {demandMinutes} av {capacityMinutes} minuter)",
+        "under": "under {below} % av ramtiden",
+        "unknown": "inte räknad, räkningen hann inte klart",
+        "refused": "nekas av en annan räkning än veckolasten"
+      }
+    },
+    "period": "Räknat för veckorna {from} – {to}{more, select, yes { och övriga veckor med samma poster} other {}}.",
+    "floor": {
+      "load": "Även om varje grupp i de ämnen där flera lärare är behöriga fick en egen lärare är åk {year} minst {percent} % full.",
+      "over": "Även om varje grupp i de ämnen där flera lärare är behöriga fick en egen lärare behöver åk {year} mer än ramtiden ger: minst {demandMinutes} av {capacityMinutes} minuter.",
+      "under": "Även om varje grupp i de ämnen där flera lärare är behöriga fick en egen lärare hittar kontrollen inget över {below} % för åk {year}. Det är inte bevisat trängre än så.",
+      "unknown": "Räkningen hann inte klart för åk {year}, så golvet med fritt lärarval kan inte sägas.",
+      "refused": "Veckan nekas även med fritt lärarval, av en annan räkning än veckolasten.",
+      "cut": "Räkningen hann inte klart, så siffran är bara en nedre gräns och kan vara högre.",
+      "overBody": "Inget lärarval kan lösa veckan. Det behövs mer undervisningstid eller färre timmar.",
+      "mayHelp": "Ett lärarval kan hjälpa. Det betyder inte att veckan går att lägga.",
+      "noQualifications": "Skolan har inte lagt in några behörigheter, så kontrollen vet inte vilka lärare som kan välja. Lägg in dem först.",
+      "nothingToRelease": "Inget ämne har fler än en behörig lärare i den här årskursen, så ett lärarval kan inte ändra veckan. Det som kan hjälpa är fler behöriga lärare."
+    },
+    "whatIf": {
+      "title": "En andra lärare i ett ämne, med ämnets poster delade jämnt (ett exempel, inte den bästa delningen)",
+      "line": "En andra lärare i {subject}: {from} → {to}",
+      "detail": "{qualified, plural, =0 {Ingen behörig lärare i dag} one {# behörig lärare i dag: en andra behöver hittas} other {# behöriga lärare i dag: valet finns redan}}. {moved} av {of} poster går till den andra.",
+      "stillOver": "Veckan ligger fortfarande över ramtiden.",
+      "unranked": "Räkningen hann inte klart, så den rangordnas inte."
+    },
+    "limits": "Siffrorna är nedre gränser som motorn kan bevisa för årskursens trängsta del av läsåret. De säger inte att ett schema finns. Behörigheter räknas som de gäller i dag.",
+    "notRun": "{count, plural, one {# ämne} other {# ämnen}} hann inte räknas om inom tiden."
+  },
   "timetable": {
     "title": "Grundschema",
     "subtitle": "Den återkommande veckomallen som AI-motorn tagit fram",
