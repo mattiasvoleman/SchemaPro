@@ -3,6 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 import { ApiError, api } from "@/lib/api";
 import { StaffingProposalDialog, type StaffingProposalDialogProps } from "./staffing-proposal-dialog";
@@ -50,7 +51,9 @@ const point = (minutes: number, target: number | null, status: "UNDER" | "OK" | 
  * Anna (target 1000, limit 1100) takes Matematik 7A (open) and Musik 8B (from
  * Gun, who has left). Bo (target 600) takes NO 7A from Cilla, who has no
  * target and keeps or sheds. NO 8B stays unstaffed — only its co-teacher is
- * qualified — and Musik needs more than anybody has left.
+ * qualified — and Musik needs more than anybody has left. Cilla is staff, so
+ * NO 7A is a post the school chose and has released; Gun has left, so Musik 8B
+ * is open to the engine without a release.
  */
 const proposal = (overrides: Partial<StaffingProposal> = {}): StaffingProposal => ({
   status: "FEASIBLE",
@@ -69,6 +72,7 @@ const proposal = (overrides: Partial<StaffingProposal> = {}): StaffingProposal =
     openRequirements: 2,
     keptRequirements: 2,
     fixedRequirements: 3,
+    releasedRequirements: 0,
     vacated: 1,
     inconsistent: 0,
     teachersSent: 3,
@@ -262,18 +266,36 @@ describe("StaffingProposalDialog", () => {
       const user = userEvent.setup();
       renderDialog();
       expect(screen.getByRole("heading", { name: "Föreslå bemanning för 2026/27" })).toBeInTheDocument();
-      expect(screen.getByRole("checkbox", { name: /Bara obemannade poster/ })).toBeChecked();
+      // Off: the posts the school has released are proposed too. A teacher it chose never is, whichever this is.
+      expect(screen.getByRole("checkbox", { name: /Bara obemannade poster/ })).not.toBeChecked();
       expect(screen.getByRole("checkbox", { name: /Respektera behörighet/ })).toBeChecked();
       expect(screen.getByText(/2 av 4 lärare har ett mål/)).toBeInTheDocument();
       expect(screen.getByText(/Grundschemat ändras inte/)).toBeInTheDocument();
       await computeProposal(user);
-      expect(asks()).toEqual([{ academicYearId: "y1", onlyUnstaffed: true, respectQualifications: true }]);
+      expect(asks()).toEqual([{ academicYearId: "y1", onlyUnstaffed: false, respectQualifications: true }]);
+    });
+
+    it("says what each state of 'Bara obemannade poster' means: released posts are proposed, a chosen teacher never moves", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      const box = screen.getByRole("checkbox", { name: /Bara obemannade poster/ });
+      expect(box).toHaveAccessibleName(/^Bara obemannade poster/);
+      expect(
+        screen.getByText(
+          "Poster utan lärare, och de poster du har släppt för motorn, får få en lärare föreslagen. Poster med en lärare som du har valt flyttas aldrig.",
+        ),
+      ).toBeInTheDocument();
+      await user.click(box);
+      expect(
+        screen.getByText("Bara poster utan lärare, eller där läraren har slutat. Släppta poster lämnas som de är."),
+      ).toBeInTheDocument();
     });
 
     it("sends the options as set, and only the weights that differ from the engine's defaults", async () => {
       const user = userEvent.setup();
       renderDialog();
       await user.click(screen.getByRole("checkbox", { name: /Bara obemannade poster/ }));
+      expect(screen.getByRole("checkbox", { name: /Bara obemannade poster/ })).toBeChecked();
       await user.click(screen.getByRole("checkbox", { name: /Respektera behörighet/ }));
       expect(screen.getByText(/kan ge en post till en obehörig/)).toBeInTheDocument();
       await user.click(screen.getByText("Avancerat"));
@@ -283,7 +305,7 @@ describe("StaffingProposalDialog", () => {
       expect(balance).toHaveValue(100);
       await computeProposal(user);
       expect(asks()).toEqual([
-        { academicYearId: "y1", onlyUnstaffed: false, respectQualifications: false, weights: { balance: 100 } },
+        { academicYearId: "y1", onlyUnstaffed: true, respectQualifications: false, weights: { balance: 100 } },
       ]);
     });
 
@@ -536,7 +558,7 @@ describe("StaffingProposalDialog", () => {
       await waitFor(() => expect(asks()).toHaveLength(2));
       expect(asks()[1]).toEqual({
         academicYearId: "y1",
-        onlyUnstaffed: true,
+        onlyUnstaffed: false,
         respectQualifications: true,
         pinnedRequirementIds: ["r-mu-8b"],
       });
@@ -810,6 +832,437 @@ describe("StaffingProposalDialog", () => {
       expect(toast.error).toHaveBeenLastCalledWith(
         "Kunde inte ångra: Gun Gone, Musik för 8B: Läraren saknar behörighet i Musik för åk 8.",
       );
+    });
+  });
+
+  /**
+   * Musik 8B (Gun has left) to Anna gives her a subject she does not teach and the years 8 and 9 of a mixed group;
+   * NO 7A (a post Cilla leads, released) to Bo gives him year 7; Matematik 7A to Anna gives nothing new.
+   */
+  const withNewTeaching = (overrides: Partial<StaffingProposal> = {}) => {
+    const base = proposal();
+    return proposal({
+      assignments: [
+        base.assignments[0]!,
+        { ...base.assignments[1]!, newTeaching: { subject: true, years: [8, 9] } },
+        { ...base.assignments[2]!, newTeaching: { subject: false, years: [7] } },
+      ],
+      ...overrides,
+    });
+  };
+  const useNewTeaching = () => post.mockImplementation(async (path: string) => (path === PROPOSE ? withNewTeaching() : applied()));
+  const NEW_BODY = {
+    academicYearId: "y1",
+    basisSha256: BASIS,
+    changes: [
+      { requirementId: "r-ma-7a", fromTeacherId: null, toTeacherId: "t-anna" },
+      { requirementId: "r-mu-8b", fromTeacherId: "t-gone", toTeacherId: "t-anna" },
+      { requirementId: "r-no-7a", fromTeacherId: "t-cilla", toTeacherId: "t-bo" },
+    ],
+    confirmedNewTeaching: [
+      { requirementId: "r-mu-8b", toTeacherId: "t-anna" },
+      { requirementId: "r-no-7a", toTeacherId: "t-bo" },
+    ],
+  };
+
+  describe("released posts, and what a row gives its teacher", () => {
+    it("marks a post whose teacher the school chose with 'Släppt för motorn', and no post that is open anyway", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await computeProposal(user);
+      const row = (name: string) => screen.getByRole("checkbox", { name: `Ta med ${name}` }).closest("tr") as HTMLElement;
+      // Cilla is staff: her post is moved because the school released it.
+      expect(within(row("NO för 7A")).getByText("Släppt för motorn")).toBeInTheDocument();
+      // Gun has left, and Matematik 7A has nobody: open to the engine, nothing was released.
+      expect(within(row("Musik för 8B")).queryByText("Släppt för motorn")).toBeNull();
+      expect(within(row("Matematik för 7A")).queryByText("Släppt för motorn")).toBeNull();
+    });
+
+    it("marks a row that gives its teacher a new subject, new years, or both, and no row that gives nothing", async () => {
+      const user = userEvent.setup();
+      useNewTeaching();
+      renderDialog();
+      await computeProposal(user);
+      const row = (name: string) => screen.getByRole("checkbox", { name: `Ta med ${name}` }).closest("tr") as HTMLElement;
+      expect(within(row("Musik för 8B")).getByText("Nytt ämne")).toBeInTheDocument();
+      expect(within(row("Musik för 8B")).getByText("Nya årskurser 8, 9")).toBeInTheDocument();
+      expect(within(row("NO för 7A")).getByText("Ny årskurs 7")).toBeInTheDocument();
+      expect(within(row("NO för 7A")).queryByText("Nytt ämne")).toBeNull();
+      expect(within(row("Matematik för 7A")).queryByText(/Nytt ämne|Ny årskurs|Nya årskurser/)).toBeNull();
+    });
+
+    it("says how many selected changes are confirmed separately, following the selection", async () => {
+      const user = userEvent.setup();
+      useNewTeaching();
+      renderDialog();
+      await computeProposal(user);
+      expect(
+        screen.getByText("2 valda ändringar ger lärare ny undervisning och bekräftas särskilt innan de tillämpas."),
+      ).toBeInTheDocument();
+      await user.click(screen.getByRole("checkbox", { name: "Ta med NO för 7A" }));
+      expect(
+        screen.getByText("1 vald ändring ger en lärare ny undervisning och bekräftas särskilt innan den tillämpas."),
+      ).toBeInTheDocument();
+      await user.click(screen.getByRole("checkbox", { name: "Ta med Musik för 8B" }));
+      expect(screen.queryByText(/bekräftas särskilt/)).toBeNull();
+    });
+
+    it("says how many posts are released, and that they were left as they are when only the unstaffed were asked for", async () => {
+      const user = userEvent.setup();
+      const base = proposal();
+      post.mockResolvedValue(proposal({ counts: { ...base.counts, releasedRequirements: 3 } }));
+      renderDialog();
+      await computeProposal(user);
+      expect(screen.getByText("3 poster är släppta för motorn.")).toBeInTheDocument();
+      expect(screen.queryByText(/lämnas som de är/)).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Ändra val" }));
+
+      post.mockResolvedValue(
+        proposal({ options: { ...base.options, onlyUnstaffed: true }, counts: { ...base.counts, releasedRequirements: 1 } }),
+      );
+      await computeProposal(user);
+      expect(
+        screen.getByText("1 post är släppt för motorn men lämnas som den är, eftersom du valde bara obemannade poster."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("1 post är släppt för motorn.")).toBeNull();
+    });
+
+    it("says nothing of releases when none are made, and points to the card when there is nothing to propose", async () => {
+      const user = userEvent.setup();
+      const base = proposal();
+      post.mockResolvedValue(
+        proposal({ assignments: [], unstaffed: [], conflicts: [], counts: { ...base.counts, freeRequirements: 0 } }),
+      );
+      renderDialog();
+      await user.click(screen.getByRole("button", { name: "Beräkna förslag" }));
+      expect(await screen.findByText("Det finns inget att föreslå: varje post är bemannad eller låst.")).toBeInTheDocument();
+      expect(screen.queryByText(/är släppt|är släppta/)).toBeNull();
+      expect(screen.getByText(/släpp posten under Släppta poster på den här sidan/)).toBeInTheDocument();
+    });
+
+    it("does not point to the card once something is released", async () => {
+      const user = userEvent.setup();
+      const base = proposal();
+      post.mockResolvedValue(
+        proposal({ assignments: [], unstaffed: [], conflicts: [], counts: { ...base.counts, freeRequirements: 0, releasedRequirements: 2 } }),
+      );
+      renderDialog();
+      await user.click(screen.getByRole("button", { name: "Beräkna förslag" }));
+      expect(await screen.findByText("2 poster är släppta för motorn.")).toBeInTheDocument();
+      expect(screen.getByText("Det finns inget att föreslå: varje post är bemannad eller låst.")).toBeInTheDocument();
+      expect(screen.queryByText(/släpp posten under Släppta poster/)).toBeNull();
+    });
+  });
+
+  describe("the second confirmation of new teaching", () => {
+    it("writes nothing when Tillämpa is pressed over a row that gives new teaching: it asks first, row by row", async () => {
+      const user = userEvent.setup();
+      useNewTeaching();
+      const { onOpenChange } = renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+
+      expect(applies()).toEqual([]);
+      expect(onOpenChange).not.toHaveBeenCalled();
+      expect(await screen.findByRole("heading", { name: "Bekräfta ny undervisning" })).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Förslaget ger några lärare ett ämne eller en årskurs de inte undervisar i i dag. Ta det med läraren innan du godkänner.",
+        ),
+      ).toBeInTheDocument();
+      const lines = within(screen.getByRole("list")).getAllByRole("listitem").map((item) => item.textContent);
+      expect(lines).toEqual([
+        "Anna Berg: Musik för 8B — nytt ämne och nya årskurser 8, 9",
+        "Bo Alm: NO för 7A — ny årskurs 7",
+      ]);
+      // Matematik 7A gives nothing new and is not listed, but is applied in the same request: said, as a number.
+      expect(screen.getByText("Ytterligare 1 vald ändring tillämpas samtidigt.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Tillbaka" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Bekräfta och tillämpa 3 valda" })).toBeEnabled();
+      // The proposal's own table is behind the step.
+      expect(screen.queryByText("Förslag per post")).toBeNull();
+    });
+
+    it("moves focus to the step's heading, so a screen reader starts at the question", async () => {
+      const user = userEvent.setup();
+      useNewTeaching();
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      const heading = await screen.findByRole("heading", { name: "Bekräfta ny undervisning" });
+      await waitFor(() => expect(heading).toHaveFocus());
+      // The step is a region named by its heading.
+      expect(screen.getByRole("region", { name: "Bekräfta ny undervisning" })).toBeInTheDocument();
+    });
+
+    it("sends the changes with confirmedNewTeaching only from its own button: exactly the rows that give new teaching", async () => {
+      const user = userEvent.setup();
+      useNewTeaching();
+      const { onOpenChange } = renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await user.click(await screen.findByRole("button", { name: "Bekräfta och tillämpa 3 valda" }));
+      await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+      // One request: the ordinary change rides along unconfirmed, the other two are named with the teacher they go to.
+      expect(applies()).toEqual([NEW_BODY]);
+      expect(toast.success).toHaveBeenCalledWith("3 poster fick en ny lärare.", expect.anything());
+    });
+
+    it("lists only the selected rows, and confirms only those", async () => {
+      const user = userEvent.setup();
+      useNewTeaching();
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("checkbox", { name: "Ta med Musik för 8B" }));
+      await user.click(screen.getByRole("button", { name: "Tillämpa 2 valda" }));
+      const lines = within(await screen.findByRole("list")).getAllByRole("listitem").map((item) => item.textContent);
+      expect(lines).toEqual(["Bo Alm: NO för 7A — ny årskurs 7"]);
+      await user.click(screen.getByRole("button", { name: "Bekräfta och tillämpa 2 valda" }));
+      await waitFor(() => expect(applies()).toHaveLength(1));
+      expect(applies()[0]).toEqual({
+        ...NEW_BODY,
+        changes: [NEW_BODY.changes[0], NEW_BODY.changes[2]],
+        confirmedNewTeaching: [NEW_BODY.confirmedNewTeaching[1]],
+      });
+    });
+
+    it("applies at once, as before, when no selected row gives new teaching", async () => {
+      const user = userEvent.setup();
+      useNewTeaching();
+      const { onOpenChange } = renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("checkbox", { name: "Ta med Musik för 8B" }));
+      await user.click(screen.getByRole("checkbox", { name: "Ta med NO för 7A" }));
+      await user.click(screen.getByRole("button", { name: "Tillämpa 1 vald" }));
+      await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+      expect(screen.queryByRole("heading", { name: "Bekräfta ny undervisning" })).toBeNull();
+      // No confirmedNewTeaching at all: the request is what it was before the step existed.
+      expect(applies()).toEqual([
+        {
+          academicYearId: "y1",
+          basisSha256: BASIS,
+          changes: [{ requirementId: "r-ma-7a", fromTeacherId: null, toTeacherId: "t-anna" }],
+        },
+      ]);
+    });
+
+    it("asks nothing of a proposal that gives nobody new teaching", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await computeProposal(user);
+      expect(screen.queryByText(/bekräftas särskilt/)).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await waitFor(() => expect(applies()).toHaveLength(1));
+      expect(applies()[0]).not.toHaveProperty("confirmedNewTeaching");
+    });
+
+    it("goes back with Tillbaka to the proposal as it was, the selection kept, nothing written, focus on Tillämpa", async () => {
+      const user = userEvent.setup();
+      useNewTeaching();
+      const { onOpenChange } = renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("checkbox", { name: "Ta med Matematik för 7A" }));
+      await user.click(screen.getByRole("button", { name: "Tillämpa 2 valda" }));
+      await user.click(await screen.findByRole("button", { name: "Tillbaka" }));
+
+      expect(screen.getByText("Förslag per post")).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Bekräfta ny undervisning" })).toBeNull();
+      expect(screen.getByRole("checkbox", { name: "Ta med Matematik för 7A" })).not.toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Ta med Musik för 8B" })).toBeChecked();
+      await waitFor(() => expect(screen.getByRole("button", { name: "Tillämpa 2 valda" })).toHaveFocus());
+      expect(applies()).toEqual([]);
+      expect(onOpenChange).not.toHaveBeenCalled();
+    });
+
+    it("goes back with Escape, and closes the dialog only on the next one", async () => {
+      const user = userEvent.setup();
+      useNewTeaching();
+      const { onOpenChange } = renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await screen.findByRole("heading", { name: "Bekräfta ny undervisning" });
+
+      await user.keyboard("{Escape}");
+      expect(await screen.findByText("Förslag per post")).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Bekräfta ny undervisning" })).toBeNull();
+      expect(onOpenChange).not.toHaveBeenCalled();
+      expect(applies()).toEqual([]);
+
+      await user.keyboard("{Escape}");
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it("marks the confirming button with the areas of the apply, as Tillämpa is", async () => {
+      const user = userEvent.setup();
+      useNewTeaching();
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      expect(await screen.findByRole("button", { name: "Bekräfta och tillämpa 3 valda" })).toHaveAttribute(
+        "data-writes",
+        "SCHEMALAGGNING PLANERING",
+      );
+    });
+
+    it("holds both buttons while the apply is on its way", async () => {
+      const user = userEvent.setup();
+      let finish: (value: StaffingApplyResult) => void = () => {};
+      post.mockImplementation((path: string) =>
+        path === PROPOSE ? Promise.resolve(withNewTeaching()) : new Promise((done) => (finish = done)),
+      );
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await user.click(await screen.findByRole("button", { name: "Bekräfta och tillämpa 3 valda" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Bekräfta och tillämpa 3 valda" })).toBeDisabled());
+      expect(screen.getByRole("button", { name: "Tillbaka" })).toBeDisabled();
+      finish(applied());
+      await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    });
+
+    it("leaves the undo as it was: the toast's Ångra puts back what was, with no confirmation", async () => {
+      const user = userEvent.setup();
+      useNewTeaching();
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await user.click(await screen.findByRole("button", { name: "Bekräfta och tillämpa 3 valda" }));
+      await waitFor(() => expect(toast.success).toHaveBeenCalled());
+      await pressUndo();
+      expect(applies()[1]).toEqual({
+        academicYearId: "y1",
+        basisSha256: BASIS_AFTER,
+        undo: true,
+        changes: [
+          { requirementId: "r-ma-7a", fromTeacherId: "t-anna", toTeacherId: null },
+          { requirementId: "r-mu-8b", fromTeacherId: "t-anna", toTeacherId: "t-gone" },
+          { requirementId: "r-no-7a", fromTeacherId: "t-bo", toTeacherId: "t-cilla" },
+        ],
+      });
+      expect(applies()[1]).not.toHaveProperty("confirmedNewTeaching");
+      expect(toast.success).toHaveBeenLastCalledWith("Bemanningen är som före förslaget.");
+    });
+
+    it("says in words when the gateway still wants a confirmation, and stays in the step", async () => {
+      const user = userEvent.setup();
+      post.mockImplementation(async (path: string) => {
+        if (path === PROPOSE) return withNewTeaching();
+        throw new ApiError(409, "Förslaget ger 2 ändringar …", "STAFF_NEW_TEACHING_UNCONFIRMED", {
+          count: 2,
+          requirementId: "r-mu-8b",
+          userId: "t-anna",
+          newSubject: 1,
+          newYears: "8,9",
+        });
+      });
+      const { onOpenChange } = renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await user.click(await screen.findByRole("button", { name: "Bekräfta och tillämpa 3 valda" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Förslaget ger 2 ändringar ny undervisning som inte är bekräftad. Ingenting sparades. Gå tillbaka och beräkna ett nytt förslag.",
+      );
+      // Still the step: the admin chooses to go back, and nothing was closed or written.
+      expect(screen.getByRole("heading", { name: "Bekräfta ny undervisning" })).toBeInTheDocument();
+      expect(onOpenChange).not.toHaveBeenCalled();
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Bekräfta och tillämpa 3 valda" })).toBeEnabled();
+    });
+
+    it("says a post the school chose and has not released, with its row named, and keeps the proposal", async () => {
+      const user = userEvent.setup();
+      post.mockImplementation(async (path: string) => {
+        if (path === PROPOSE) return proposal();
+        throw new ApiError(409, "NO för 7A har en lärare …", "STAFF_ROW_NOT_RELEASED", { requirementId: "r-no-7a" });
+      });
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "NO för 7A: Posten har en lärare som skolan valt och är inte släppt för motorn. Ingenting sparades.",
+      );
+      expect(screen.getByText("Förslag per post")).toBeInTheDocument();
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("says it without a row when the gateway names none the dialog knows", async () => {
+      const user = userEvent.setup();
+      post.mockImplementation(async (path: string) => {
+        if (path === PROPOSE) return proposal();
+        throw new ApiError(409, "…", "STAFF_ROW_NOT_RELEASED", { requirementId: "r-elsewhere" });
+      });
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        /^Posten har en lärare som skolan valt och är inte släppt för motorn\. Ingenting sparades\.$/,
+      );
+    });
+
+    it("goes back to the options on a stale basis from the step, saying nothing was saved", async () => {
+      const user = userEvent.setup();
+      post.mockImplementation(async (path: string) => {
+        if (path === PROPOSE) return withNewTeaching();
+        throw new ApiError(409, "Tjänstefördelningen har ändrats sedan förslaget beräknades.", "STAFF_PROPOSAL_STALE");
+      });
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await user.click(await screen.findByRole("button", { name: "Bekräfta och tillämpa 3 valda" }));
+      expect(await screen.findByText(/Ingenting sparades\. Beräkna ett nytt förslag\./)).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Bekräfta ny undervisning" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Beräkna om" })).toBeEnabled();
+    });
+
+    it("starts from the first step again when the dialog is closed from the step and opened for a new proposal", async () => {
+      const user = userEvent.setup();
+      useNewTeaching();
+      const { onOpenChange } = renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await screen.findByRole("heading", { name: "Bekräfta ny undervisning" });
+      // The X of the dialog: the step does not survive into the next proposal.
+      await user.click(screen.getByRole("button", { name: "Stäng" }));
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+      expect(screen.queryByRole("heading", { name: "Bekräfta ny undervisning" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Beräkna förslag" })).toBeInTheDocument();
+    });
+
+    it("says it in English", async () => {
+      const user = userEvent.setup();
+      useNewTeaching();
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={queryClient}>
+          <NextIntlClientProvider locale="en" messages={en} timeZone="Europe/Stockholm" onError={(error) => { throw error; }}>
+            <StaffingProposalDialog
+              open
+              onOpenChange={vi.fn()}
+              academicYearId="y1"
+              academicYearName="2026/27"
+              teachersWithTarget={2}
+              teachersTotal={4}
+              qualificationsRecorded
+              policy={{ qualificationMode: "WARN", overAllocationTolerancePercent: 10 }}
+              teacherName={(id) => names[id] ?? id}
+              groupName={(id) => groups[id] ?? "—"}
+              subjectName={(id) => subjects[id] ?? "—"}
+              onOpenSettings={vi.fn()}
+            />
+          </NextIntlClientProvider>
+        </QueryClientProvider>,
+      );
+      await user.click(screen.getByRole("button", { name: "Compute proposal" }));
+      await screen.findByText("Proposal per entry");
+      await user.click(screen.getByRole("button", { name: "Apply 3 selected" }));
+      expect(await screen.findByRole("heading", { name: "Confirm new teaching" })).toBeInTheDocument();
+      expect(
+        within(screen.getByRole("list")).getAllByRole("listitem").map((item) => item.textContent),
+      ).toEqual([
+        "Anna Berg: Musik for 8B — new subject and new year groups 8, 9",
+        "Bo Alm: NO for 7A — new year group 7",
+      ]);
+      expect(screen.getByRole("button", { name: "Confirm and apply 3 selected" })).toBeInTheDocument();
     });
   });
 

@@ -4360,14 +4360,46 @@
     tjänsten fylls med. Delningen ändras i timplansposternas dialog.
   </p>
 
+  <h4>Släppta poster</h4>
+  <p>
+    <span class="ui">Föreslå bemanning</span> flyttar aldrig en lärare som
+    skolan har valt. Vill du att motorn ska få föreslå en annan behörig lärare
+    för en post <em>släpper</em> du den. Kortet
+    <span class="ui">Släppta poster</span> längre ned på tjänstefördelningen
+    listar ämnena, årskurs för årskurs, med antal poster, hur många som är
+    bemannade och hur många som är släppta.
+    <span class="ui">Släpp N bemannade</span> släpper alla bemannade poster i
+    ämnet och årskursen på en gång, och <span class="ui">Ta tillbaka alla</span>
+    tar tillbaka dem. Öppnar du raden kan du släppa eller ta tillbaka en post
+    i taget; vid en släppt post står vem som släppte den och när. En post utan
+    lärare, eller vars lärare har slutat, behöver inte släppas: den är alltid
+    öppen för förslaget.
+  </p>
+  <p>
+    Släppningen är en egen uppgift per post och inte en inställning för ett
+    ämne. <span class="ui">Släpp N bemannade</span> gäller de poster ämnet har
+    när du trycker: en post du lägger till efteråt är inte släppt. Släppningen
+    är skolans besked för det här läsåret och följer inte med en rullning (8.1);
+    skolan avgör på nytt varje läsår vad motorn får röra. En tillämpning tar
+    inte tillbaka den, så en post du släppt är kvar släppt, vem som än leder
+    den, tills du tar tillbaka den. Ändrar du en släppning efter att ett förslag
+    har beräknats sparar dialogen inte det förslaget: du får beräkna om. Alla
+    administratörer ser kortet, men bara den som får ändra planeringen kan
+    släppa och ta tillbaka. Lärare ser aldrig vilka poster som är släppta.
+  </p>
+
   <h4>Föreslå bemanning</h4>
   <p>
     <span class="ui">Föreslå bemanning</span> överst på sidan låter motorn
-    bemanna alla poster på en gång i stället för en i taget. Dialogen har två
-    val. <span class="ui">Bara obemannade poster (och poster vars lärare har
-    slutat)</span> är förvalt: poster som har en aktiv lärare lämnas som de är.
-    Tar du bort bocken får varje post som inte är låst byta lärare, utom de
-    som de fasta reglerna nedan håller kvar.
+    bemanna alla poster på en gång i stället för en i taget. Förslaget flyttar
+    aldrig en lärare som skolan har valt: en post som har en lärare och inte
+    är släppt för motorn (nästa avsnitt) lämnas som den är, vad du än väljer.
+    Dialogen har två val. <span class="ui">Bara obemannade poster</span> är
+    inte förvalt. Med bocken bemannar förslaget bara poster som saknar lärare,
+    eller vars lärare har slutat, och släppta poster lämnas som de är. Utan
+    bocken får också de poster du har släppt för motorn få en annan lärare
+    föreslagen, förutom de som de fasta reglerna nedan håller kvar. Har du inte
+    släppt någon post är de två lika.
     <span class="ui">Respektera behörighet</span> betyder att en post bara ges
     till en lärare vars behörighet täcker ämnet och gruppens årskurser; utan
     bocken föredras behöriga lärare men en obehörig kan få posten när ingen
@@ -4393,7 +4425,8 @@
       <span class="ui">Föreslå lärare</span> tar inte upp hen. De poster hen
       redan leder räknas inte som att hen har slutat.</li>
     <li>En post som har en lärare i dag blir aldrig obemannad. Förslaget tar
-      bara en post från en lärare för att ge den till en annan.</li>
+      bara en post från en lärare för att ge den till en annan, och bara en
+      post som skolan har släppt för motorn.</li>
     <li>Medlärare ändras inte. Förslaget bemannar bara postens lärare, och
       medläraren räknas som redan i klassen.</li>
     <li>Delade lektioner ändras inte. Förslaget bemannar bara postens lärare,
@@ -4438,7 +4471,10 @@
     lärare (eller <em>Obemannad</em>, eller lärarens namn med <em>har
     slutat</em>). Märkena säger varför: behörighetens slag, <em>Saknar
     behörighet</em>, <em>Undervisar redan i ämnet</em>, <em>Samma som förra
-    läsåret</em> och <em>Har redan gruppen</em>. Varje lärare som berörs står
+    läsåret</em> och <em>Har redan gruppen</em>. <em>Släppt för motorn</em>
+    står vid en post som har en lärare i dag och byter lärare. <em>Nytt
+    ämne</em> och <em>Ny årskurs 8</em> står vid en ändring som ger läraren ett
+    ämne eller en årskurs läraren inte undervisar i i dag. Varje lärare som berörs står
     med minuter och procent av målet före och efter, och
     <span class="ui">Visa alla</span> visar resten. Sist kommer posterna som
     blir kvar obemannade, med skälet, och motorns förklaringar, till exempel
@@ -4467,6 +4503,31 @@
     att hen redan låg över gränsen då, men en lärare som skulle hamna över
     både det och dagens läge vägras som vanligt. Ångra går inte om någon har
     ändrat posterna sedan dess.
+  </p>
+  <h4>Ny undervisning bekräftas särskilt</h4>
+  <p>
+    Ger en ändring en lärare ett ämne eller en årskurs som läraren inte
+    undervisar i i dag märks den <em>Nytt ämne</em> eller <em>Ny årskurs</em>.
+    Läraren undervisar i ett ämne eller en årskurs om läraren leder, medleder
+    eller tar lektioner av någon post i ämnet respektive årskursen, räknat som
+    posterna står när förslaget beräknades. Det som ändras tidigare i samma
+    förslag räknas inte: två poster i ett ämne till en lärare som inte
+    undervisar det är två nya ämnen. En grupp som inte har någon årskurs ger
+    aldrig en ny årskurs.
+  </p>
+  <p>
+    Trycker du <span class="ui">Tillämpa</span> med sådana ändringar valda
+    sparar dialogen ingenting än. Den visar dem under
+    <span class="ui">Bekräfta ny undervisning</span>, en rad per ändring med
+    läraren, posten och vad som är nytt, och först
+    <span class="ui">Bekräfta och tillämpa</span> sparar, tillsammans med de
+    valda ändringar som inte ger något nytt. <span class="ui">Tillbaka</span>
+    går tillbaka till förslaget. Ta det med läraren innan du bekräftar: ett
+    nytt ämne eller en ny årskurs är något läraren ska få veta och förbereda
+    sig för. Bekräftelsen kontrolleras också av gatewayn: en tillämpning som
+    ger en lärare ny undervisning och inte har bekräftat just den ändringen
+    sparar ingenting, och det gäller varje anrop som inte kommer från dialogen
+    också. <span class="ui">Ångra</span> frågar inget.
   </p>
   <div class="note">
     <span class="label">Grundschemat ändras inte</span>

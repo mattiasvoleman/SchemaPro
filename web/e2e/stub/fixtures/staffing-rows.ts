@@ -1,3 +1,4 @@
+import type { EngineRelease } from "../../../lib/engine-release-queries";
 import type { HistoryChange, HistoryEntry } from "../../../lib/staffing-history-queries";
 import type {
   StaffingPolicy,
@@ -8,7 +9,7 @@ import type {
 } from "../../../lib/types";
 import { KIND, uid } from "../sessions";
 import { addDays, AUTUMN_YEAR, stockholmInstant, TODAY, YEAR_END, YEAR_START } from "./calendar";
-import { ADMIN, GROUPS, SUBJECTS, TEACHER_LIST, TEACHERS, YEAR } from "./world";
+import { ADMIN, GROUPS, REQUIREMENTS, SUBJECTS, TEACHER_LIST, TEACHERS, YEAR } from "./world";
 
 /**
  * Tjänstefördelningen of Exempelskolan as the gateway stores it: the policy,
@@ -128,6 +129,21 @@ export const EMPLOYMENTS: TeacherEmployment[] = [
   // week on the post itself (Lärarens dag): the deltid the constraint stood
   // in for.
   employment(5, TEACHERS.eva.id, 80, "FERIE", "EHO", { note: "Ledig fredagar.", maxTeachingDaysPerWeek: 4 }),
+];
+
+// --- Släppta poster ----------------------------------------------------------
+
+/**
+ * The posts the school has released for the engine (20270226090000): Bo's matematik in 7A, three days ago, by the
+ * administrator. One staffed post released and every other not, so the card draws both states; the unstaffed Bild post is
+ * always open and has no switch.
+ */
+export const ENGINE_RELEASES: EngineRelease[] = [
+  {
+    requirementId: REQUIREMENTS.find((post) => post.subjectId === SUBJECTS.ma.id && post.studentGroupId === GROUPS.g7A.id)!.id,
+    releasedAt: stockholmInstant(addDays(TODAY, -3), "09:30"),
+    releasedById: ADMIN.id,
+  },
 ];
 
 // --- Behörigheter ------------------------------------------------------------
