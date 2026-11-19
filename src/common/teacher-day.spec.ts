@@ -609,6 +609,34 @@ describe('lockedWeekdaySetsByPeriod', () => {
     ]);
   });
 
+  it('reads no week of a lov: a lesson that ends and one that starts there never hand a period their two days', () => {
+    // Monday's lesson runs to 28 December and Tuesday's from the 28th, both inside the jullov (19 December to 10
+    // January). On a post of two days the autumn holds the Monday and the spring the Tuesday: no week with school
+    // holds both. Read in the lov's week — folded into the autumn, as the stretches are — the autumn would
+    // hold {Monday, Tuesday} and refuse the post's other day, for a week in which nothing is taught.
+    const lov = { startDate: new Date('2026-12-19T00:00:00.000Z'), endDate: new Date('2027-01-10T00:00:00.000Z'), minGradeLevel: null, maxGradeLevel: null };
+    const monday = lesson('m', 1, { endDate: '2026-12-28' });
+    const tuesday = lesson('tu', 2, { startDate: '2026-12-28' });
+    const periods = yearPeriodsOf(
+      year,
+      [[{ startDate: null, endDate: '2026-12-28' }], [{ startDate: '2026-12-28', endDate: null }]],
+      { breaks: [lov], grades: [9] },
+    )!;
+    expect(periods.weekPeriods.filter((period) => period === null)).toHaveLength(3);
+    expect(lockedWeekdaySetsByPeriod([monday, tuesday], 2, year, periods.weekPeriods)).toEqual([
+      { weekdays: [1], periods: [true, false] },
+      { weekdays: [2], periods: [false, true] },
+    ]);
+    // The same weeks read as a period of their own (the lov not known) hold the two days together.
+    const unread = yearPeriodsOf(year, [[{ startDate: null, endDate: '2026-12-28' }], [{ startDate: '2026-12-28', endDate: null }]])!;
+    expect(lockedWeekdaySetsByPeriod([monday, tuesday], 2, year, unread.weekPeriods)).toContainEqual({
+      weekdays: [1, 2],
+      periods: expect.any(Array),
+    });
+    // No week with school at all: nothing to hold.
+    expect(lockedWeekdaySetsByPeriod([monday], 2, year, [null, null])).toBeNull();
+  });
+
   it('is null when every period holds the same weeks: the sets say it already', () => {
     const periods = cut(AUTUMN, SPRING);
     expect(lockedWeekdaySetsByPeriod([lesson('m', 1), lesson('tu', 2)], 2, year, periods.weekPeriods)).toBeNull();
@@ -930,6 +958,8 @@ describe('lockedWeekdaySetsByPeriod', () => {
       // The real sets of each period, in the odd weeks and in the even ones.
       const real = periods.weeks.map(() => ({ ODD_WEEKS: new Set<string>(), EVEN_WEEKS: new Set<string>() }));
       periods.weekPeriods.forEach((period, week) => {
+        // No breaks are given here, so no week is without school: every week is in a period.
+        if (period === null) throw new Error(`week ${week} is in no period`);
         const own = [
           ...new Set(
             kept

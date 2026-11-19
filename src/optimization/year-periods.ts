@@ -36,8 +36,62 @@
  * everywhere (runsOn). An entry whose window touches no week of the läsår is
  * read as running in all of them — what the engine held for every dated entry
  * before it knew periods, and the stricter reading.
+ *
+ * A WEEK WITH NO SCHOOL DAY IS NO WEEK OF THE CUT. The engine plans and checks
+ * every week a period holds, so a week no lesson is written in (a jullov that
+ * the terms' dates fall inside: a post that ends on the Sunday of its first
+ * week and one that starts the Monday after) became a period of its own and
+ * was solved as a school week — solve time for nothing, and a refusal in a
+ * week with no school that blocked the whole year. A week is without school
+ * (weeksWithSchool) when every weekday of it that lies in the läsår is closed
+ * by a SchoolBreak, and a day is closed when publish writes no lesson on it
+ * (CalendarService.publish, publish-days.ts — breakCoversGroup is the one
+ * rule, imported and not copied). That fixes four things:
+ *
+ *   - A week that is only partly a lov stays a school week, whatever days of
+ *     it the lov takes. So does a week with no weekday in the läsår at all
+ *     (a läsår that starts on a Saturday): not a break's doing, and left as
+ *     it was (a Saturday and a Sunday are a period of their own).
+ *   - GRADES. A break with years (minGradeLevel, maxGradeLevel) closes a day
+ *     for the groups whose årskurs is in the span, a group with no year (a
+ *     nivågrupp across several) only for a break of the whole school — what
+ *     publish does with the group's lesson. A day is closed for the school
+ *     when EVERY group of the year is off it (noSchoolDays, the reading the
+ *     salslån ask too: a day no årskurs has school), so a prao week for åk 9
+ *     is a school week, the rest of the school having lessons in it. The
+ *     groups are all of the year's and not those an entry holds, so that every
+ *     payload of a school — Generera, Kontrollera veckan, Förlägg i veckan —
+ *     is cut at the same weeks, and a week is never hidden where some entry's
+ *     årskurs has school: the groups of an entry are among them. A year that
+ *     lists no group is asked as one group of no year: only a lov for all
+ *     closes the day.
+ *   - THE KIND OF THE BREAK IS NOT ASKED. A studiedag closes a day as a lov
+ *     does: publish selects no `kind` and says why (nobody is taught on
+ *     either), and a second opinion here would be a lov honoured by one reader
+ *     and not by the other. Closures of a class or a årskurs on dates
+ *     (AvailabilityConstraint, a class closed on a day or some hours of it)
+ *     are not read: they are per class and mostly per hour, and a week closed
+ *     by them alone is still a school week here — the stricter reading.
+ *   - WHERE IT GOES. A week with no school belongs to no period (`weekPeriods`
+ *     has null there, `weeks` and `oddWeeks` do not count it, no entry's
+ *     dates are read in it). The stretches are another matter: they say where
+ *     in the calendar the periods are in force, are a partition of the läsår
+ *     (a meal is written as the rows of its periods' weeks, lunch-parts.ts)
+ *     and so hold such a week in the period of the school week before it, the
+ *     first period for the weeks before the first.
+ *
+ * WHAT THIS LOOSENS. Two entries that share a week with no school only — an
+ * autumn post to the 10th of January and a spring post from the 4th — met in
+ * that week and no other, so the engine held them apart there, which is what
+ * the board's clash read (detectConflicts, year-clashes.ts, findConflicts:
+ * weeksCanOverlap on the dates alone, no break read) flags too. Now no week
+ * with a lesson holds both, so the engine may place them together and the
+ * board still flags it: red for a week in which neither is taught. The cut
+ * is no longer "never looser than weeksCanOverlap" for the weeks of a lov.
+ * Teaching the board and the gate about breaks is a change of its own.
  */
 import { isoWeekNumber } from '../calendar/lesson-recurrence';
+import { noSchoolDays, type PublishBreak } from '../calendar/publish-days';
 import type { YearSpan } from '../common/teacher-day';
 
 const DAY_MS = 86_400_000;
@@ -57,25 +111,43 @@ export interface PeriodStretch {
   to: string;
 }
 
+/** What tells a week with school in it from a week without (weeksWithSchool). */
+export interface SchoolDays {
+  /** The läsår's SchoolBreaks, whatever their kind. */
+  breaks: readonly PublishBreak[];
+  /** The årskurs of every group of the läsår, null for a group with no year (a nivågrupp). */
+  grades: readonly (number | null)[];
+}
+
 export interface YearPeriods {
-  /** How many real weeks each period is: the payload's `periodWeeks`. */
+  /**
+   * How many school weeks each period is: the payload's `periodWeeks`. A week with no school day
+   * (weeksWithSchool) is none of them, so this is not the weeks of the period's `stretches` where
+   * a lov lies in one.
+   */
   weeks: number[];
   /**
-   * How many of each period's weeks are odd ISO weeks: the payload's `periodOddWeeks`. The
+   * How many of each period's school weeks are odd ISO weeks: the payload's `periodOddWeeks`. The
    * engine's week is a period in a parity, and a period of one week (the läsår's first two
    * days, a test week) has no week of the other: the engine asks nothing of that cell, says
    * the period whole where its only week is, and weighs the weeks a refusal is chosen by as
    * they are, an odd and an even week not being as many in a period of three.
    */
   oddWeeks: number[];
-  /** Each period's weeks as stretches of days, in order, clipped to the läsår. */
+  /**
+   * Each period's weeks as stretches of days, in order, clipped to the läsår. Together they are every
+   * day of the läsår once: a week with no school day is held by the period of the school week before
+   * it (the first period's for the weeks before the first), so a period's meal covers the lov inside
+   * it and a sentence that names a stretch names weeks that are in the calendar.
+   */
   stretches: PeriodStretch[][];
   /**
    * The period of each week of the läsår, from the week of its first day:
    * for what is read week by week and sent period by period (a teacher's
-   * kept weekdays, src/common/teacher-day.ts).
+   * kept weekdays, src/common/teacher-day.ts). Null for a week with no
+   * school day (weeksWithSchool), which is read in no period.
    */
-  weekPeriods: number[];
+  weekPeriods: (number | null)[];
   /**
    * Each entry's mask, by its position in what was read; undefined for an
    * entry that runs in every period, which is sent without the key.
@@ -115,6 +187,35 @@ const touches = (windows: readonly HeldWindow[], week: { monday: string; sunday:
       (window.endDate === null || window.endDate >= week.monday),
   );
 
+/** The weekdays the engine plans: Monday to Friday (SCHEDULE_DAYS in optimization-engine/app/config.py). */
+const SCHEDULE_WEEKDAYS = 5;
+
+/**
+ * Which weeks of the läsår have a school day in them, from the week of its first day: false for a
+ * week every weekday of which (Monday to Friday, those that lie in the läsår) is a day no årskurs
+ * has school (noSchoolDays: a lov closes a day for a group by publish's rule, breakCoversGroup).
+ * No break, or none read, closes nothing, and every week is true — what a school that has no
+ * breaks always was.
+ *
+ * A week with no weekday in the läsår (it starts on a Saturday, or ends on a Sunday that is no
+ * weekday of the läsår's last week) is true: no break closed it, and the cut reads it as it did.
+ */
+export function weeksWithSchool(year: YearSpan, schoolDays: SchoolDays | undefined): boolean[] {
+  const weeks = weeksOfYear(year);
+  if (!schoolDays || schoolDays.breaks.length === 0) return weeks.map(() => true);
+  const off = noSchoolDays(schoolDays.breaks, schoolDays.grades, year.startDate, year.endDate);
+  return weeks.map(({ monday }) => {
+    let weekdaysInYear = 0;
+    for (let offset = 0; offset < SCHEDULE_WEEKDAYS; offset += 1) {
+      const day = dayOf(addDays(parseDay(monday), offset));
+      if (day < year.startDate || day > year.endDate) continue;
+      weekdaysInYear += 1;
+      if (!off.has(day)) return true;
+    }
+    return weekdaysInYear === 0;
+  });
+}
+
 /**
  * The läsår cut into periods by the entries' windows, and each entry's mask.
  *
@@ -122,24 +223,44 @@ const touches = (windows: readonly HeldWindow[], week: { monday: string; sunday:
  * post or a lock, several for a post that holds other posts' weeks too (a
  * leader post of two blocks on the same times: same-times.ts).
  *
+ * `schoolDays` are the breaks of the läsår and the årskurser of its groups,
+ * and take the weeks with no school day out of the cut (the header says how). Without them every week of the läsår is one, and the cut is what
+ * it was.
+ *
  * Null when the entries do not tell two weeks apart, which is every school
  * until one dates a post: nothing is then sent, and the payload is the one it
- * was. Null as well for a läsår that would need more periods than the engine
- * reads (MAX_PERIODS) — no real läsår does, and such a year is sent as it
- * always was, every entry every week.
+ * was. Null too when the weeks that have school do not tell apart, though
+ * the weeks of a lov do (a post from the middle of a jullov), and for a läsår
+ * that would need more periods than the engine reads (MAX_PERIODS) — no real
+ * läsår does, and such a year is sent as it always was, every entry every week.
  */
-export function yearPeriodsOf(year: YearSpan, entries: readonly (readonly HeldWindow[])[]): YearPeriods | null {
+export function yearPeriodsOf(
+  year: YearSpan,
+  entries: readonly (readonly HeldWindow[])[],
+  schoolDays?: SchoolDays,
+): YearPeriods | null {
   const weeks = weeksOfYear(year);
+  const school = weeksWithSchool(year, schoolDays);
+  if (!school.some(Boolean)) return null;
   const runs = entries.map((windows) => weeks.map((week) => touches(windows, week)));
-  // An entry in every week, or in none of them, tells no two weeks apart.
-  const dated = runs.map((inWeek) => inWeek.some(Boolean) && !inWeek.every(Boolean));
+  // An entry in every week that has school, or in none of them, tells no two weeks apart. The weeks of a
+  // lov are not read: an entry that runs in none of the school weeks (its dates are all in the lov) is
+  // read as running in all of them, as an entry outside the läsår is.
+  const dated = runs.map((inWeek) => {
+    const read = inWeek.filter((_, week) => school[week]);
+    return read.some(Boolean) && !read.every(Boolean);
+  });
   if (!dated.some(Boolean)) return null;
 
   const periodOf = new Map<string, number>();
   const firstWeek: number[] = [];
   const weeksIn: number[][] = [];
-  const weekPeriods: number[] = [];
+  const weekPeriods: (number | null)[] = [];
   weeks.forEach((_, week) => {
+    if (!school[week]) {
+      weekPeriods.push(null);
+      return;
+    }
     const signature = runs.map((inWeek, entry) => (dated[entry] && inWeek[week] ? '1' : '0')).join('');
     let period = periodOf.get(signature);
     if (period === undefined) {
@@ -151,28 +272,37 @@ export function yearPeriodsOf(year: YearSpan, entries: readonly (readonly HeldWi
     weeksIn[period]!.push(week);
     weekPeriods.push(period);
   });
-  // At least two by now: a dated entry runs in some week and not in another.
+  // At least two by now: a dated entry runs in some week that has school and not in another.
   if (firstWeek.length > MAX_PERIODS) return null;
+
+  // The calendar's own partition: a week with no school day in the period of the school week before it,
+  // the weeks before the first school week in the period of that.
+  let carried = weekPeriods.find((period) => period !== null)!;
+  const heldIn: number[][] = weeksIn.map(() => []);
+  weekPeriods.forEach((period, week) => {
+    carried = period ?? carried;
+    heldIn[carried]!.push(week);
+  });
 
   const clip = (day: string, low: string, high: string): string => (day < low ? low : day > high ? high : day);
   // A week is odd by the ISO number of the week its Monday is in, as everywhere else (runsOn), also
   // for the läsår's first week that starts on a Saturday.
   const oddWeeks = weeksIn.map(
-    (held) => held.filter((week) => isoWeekNumber(parseDay(weeks[week]!.monday)) % 2 === 1).length,
+    (inPeriod) => inPeriod.filter((week) => isoWeekNumber(parseDay(weeks[week]!.monday)) % 2 === 1).length,
   );
   return {
-    weeks: weeksIn.map((held) => held.length),
+    weeks: weeksIn.map((inPeriod) => inPeriod.length),
     oddWeeks,
-    stretches: weeksIn.map((held) => {
+    stretches: heldIn.map((inPeriod) => {
       const stretches: PeriodStretch[] = [];
-      let from = held[0]!;
-      held.forEach((week, index) => {
-        if (held[index + 1] === week + 1) return;
+      let from = inPeriod[0]!;
+      inPeriod.forEach((week, index) => {
+        if (inPeriod[index + 1] === week + 1) return;
         stretches.push({
           from: clip(weeks[from]!.monday, year.startDate, year.endDate),
           to: clip(weeks[week]!.sunday, year.startDate, year.endDate),
         });
-        from = held[index + 1] ?? week;
+        from = inPeriod[index + 1] ?? week;
       });
       return stretches;
     }),

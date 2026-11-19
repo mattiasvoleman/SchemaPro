@@ -2,15 +2,18 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { LessonRecurrence } from '@prisma/client';
 import { runsOn, weeksCanOverlap } from '../calendar/lesson-recurrence';
+import { breakDaysOf, publishSkips, type PublishBreak, type PublishDaysContext } from '../calendar/publish-days';
 import {
   MAX_PERIODS,
   periodSentence,
   lunchLocksSentence,
   weekPeriodsOfUndatedYear,
+  weeksWithSchool,
   withLockPeriodDates,
   withPeriodDates,
   yearPeriodsOf,
   type HeldWindow,
+  type SchoolDays,
 } from './year-periods';
 
 const DAY_MS = 86_400_000;
@@ -854,6 +857,414 @@ describe('periodSentence', () => {
       for (const key of ['lockFrom', 'lockTo', 'otherLockFrom', 'otherLockTo']) {
         expect(lunchLocksSentence({ ...dated, [key]: 20270111 })).toBe('');
       }
+    });
+  });
+});
+
+describe('yearPeriodsOf: a week with no school day is no week of the cut', () => {
+  /** What the school this was found at has: jullov 22 December to 9 January, for the whole school. */
+  const lov = (startDate: string, endDate: string, grades: [number | null, number | null] = [null, null]): PublishBreak => ({
+    startDate: day(startDate),
+    endDate: day(endDate),
+    minGradeLevel: grades[0],
+    maxGradeLevel: grades[1],
+  });
+  const JULLOV = lov('2026-12-22', '2027-01-09');
+  /** The groups of the läsår by their årskurs: null is a group with no year (a nivågrupp). */
+  const school = (breaks: PublishBreak[], grades: (number | null)[] = [9]): SchoolDays => ({ breaks, grades });
+  /** The cells the engine solves: a period's odd weeks and its even ones, each when it has a week. */
+  const cells = (weeks: number[], odd: number[]): number =>
+    weeks.reduce((sum, count, period) => sum + (odd[period]! > 0 ? 1 : 0) + (count - odd[period]! > 0 ? 1 : 0), 0);
+
+  // Åk 9 at Kunskapsskolan Västerås: slöjd switches groups on 3/4 January, Musik and Bild on 10/11, and
+  // Hemkunskap ends on 21 December and starts again on 11 January (found 2026-11-19).
+  const slojdAutumn = [{ startDate: '2026-08-18', endDate: '2027-01-03' }];
+  const slojdSpring = [{ startDate: '2027-01-04', endDate: '2027-06-07' }];
+  const musikAutumn = [{ startDate: '2026-08-18', endDate: '2027-01-10' }];
+  const musikSpring = [{ startDate: '2027-01-11', endDate: '2027-06-07' }];
+  const hemkunskapAutumn = [{ startDate: '2026-08-18', endDate: '2026-12-21' }];
+  const hemkunskapSpring = [{ startDate: '2027-01-11', endDate: '2027-06-07' }];
+  const KUNSKAPSSKOLAN = [slojdAutumn, slojdSpring, musikAutumn, musikSpring, hemkunskapAutumn, hemkunskapSpring, [ALL_YEAR]];
+
+  it('cuts the school this was found at into two periods, where it was four with six weeks to solve', () => {
+    const before = yearPeriodsOf(YEAR, KUNSKAPSSKOLAN)!;
+    // The autumn to the week of 21 December, then the two weeks of the lov, each its own, then the spring.
+    expect(before.weeks).toEqual([19, 1, 1, 22]);
+    expect(cells(before.weeks, before.oddWeeks)).toBe(6);
+
+    const after = yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([JULLOV]))!;
+    // The week of 21 December has a Monday of school and is the autumn's last; 28 December and 4 January have none.
+    expect(after.weeks).toEqual([19, 22]);
+    expect(after.oddWeeks).toEqual([9, 11]);
+    expect(cells(after.weeks, after.oddWeeks)).toBe(4);
+    expect(after.masks).toEqual([
+      [true, false],
+      [false, true],
+      [true, false],
+      [false, true],
+      [true, false],
+      [false, true],
+      undefined,
+    ]);
+    // The weeks of the läsår from 17 August: 28 December is the 20th and 4 January the 21st.
+    expect(after.weekPeriods).toEqual([...Array(19).fill(0), null, null, ...Array(22).fill(1)]);
+    // The stretches tile the läsår: the lov is the autumn's, whose period it follows.
+    expect(after.stretches).toEqual([
+      [{ from: '2026-08-17', to: '2027-01-10' }],
+      [{ from: '2027-01-11', to: '2027-06-11' }],
+    ]);
+  });
+
+  it('says in its sentences the days of the weeks the period is: a Monday, a Sunday or the läsår’s own day', () => {
+    const periods = yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([JULLOV]))!;
+    for (const [period, expected] of [
+      [0, ' Counted for the weeks from 2026-08-17 to 2027-01-10, which is when these run together.'],
+      [1, ' Counted for the weeks from 2027-01-11 to 2027-06-11, which is when these run together.'],
+    ] as const) {
+      const named = withPeriodDates({ period }, periods.stretches);
+      expect(periodSentence(named)).toBe(expected);
+      expect(named).toMatchObject({ periodStretches: 1 });
+    }
+    // A refusal that counts the odd weeks of both terms names the whole läsår in two runs: the lov is no
+    // week of either period, so the terms do not meet in the dates, and the sentence says there is more.
+    const both = withPeriodDates({ period: 0, periods: '0,1', parity: 'ODD_WEEKS' }, periods.stretches);
+    expect(both).toMatchObject({ periodFrom: '2026-08-17', periodTo: '2027-06-11', periodStretches: 1 });
+    // The klassens lunch's sentence names the two parts as they come.
+    expect(withLockPeriodDates({ lockPeriods: '0;1' }, periods.stretches)).toMatchObject({
+      lockFrom: '2026-08-17',
+      lockTo: '2027-01-10',
+      otherLockFrom: '2027-01-11',
+      otherLockTo: '2027-06-11',
+      lockWeeksElsewhere: 0,
+    });
+    // Every day named is a day of the läsår, and the periods name every day of it once.
+    const days = periods.stretches.flat();
+    expect(days[0]!.from).toBe(YEAR.startDate);
+    expect(days[days.length - 1]!.to).toBe(YEAR.endDate);
+    expect(addDays(days[0]!.to, 1)).toBe(days[1]!.from);
+  });
+
+  it('leaves a week that is only partly a lov a school week, whichever of its days the lov takes', () => {
+    // 28 December to 7 January: the week of the 28th is closed, the week of 4 January has its Friday.
+    const partly = yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([lov('2026-12-28', '2027-01-07')]))!;
+    expect(partly.weeks).toEqual([19, 1, 22]);
+    expect(partly.weekPeriods.filter((period) => period === null)).toHaveLength(1);
+    expect(partly.weekPeriods[19]).toBeNull();
+    expect(partly.weekPeriods[20]).toBe(1);
+    expect(partly.stretches).toEqual([
+      [{ from: '2026-08-17', to: '2027-01-03' }],
+      [{ from: '2027-01-04', to: '2027-01-10' }],
+      [{ from: '2027-01-11', to: '2027-06-11' }],
+    ]);
+    // Monday to Thursday of a week is a lov and the Friday is not: a school week.
+    expect(weeksWithSchool(YEAR, school([lov('2026-12-28', '2027-01-07')]))[20]).toBe(true);
+    // A lov of a Saturday and a Sunday closes nothing; a lov that ends on a Friday closes the week, for the
+    // days that are no school days need no break.
+    expect(weeksWithSchool(YEAR, school([lov('2026-12-26', '2026-12-27')])).every(Boolean)).toBe(true);
+    const friday = weeksWithSchool(YEAR, school([lov('2026-12-23', '2027-01-08')]));
+    expect([friday[18], friday[19], friday[20], friday[21]]).toEqual([true, false, false, true]);
+    // Two lov that meet close the week between them: each takes some of its days.
+    expect(weeksWithSchool(YEAR, school([lov('2026-12-28', '2026-12-30'), lov('2026-12-31', '2027-01-03')]))[19]).toBe(false);
+    // A week is a school week with one open day, and a break's days take no others.
+    expect(weeksWithSchool(YEAR, school([lov('2026-12-28', '2026-12-30'), lov('2027-01-01', '2027-01-03')]))[19]).toBe(true);
+  });
+
+  describe('a break for some årskurser', () => {
+    const lower = (min: number | null, max: number | null) => lov('2026-12-22', '2027-01-09', [min, max]);
+    const unchanged = yearPeriodsOf(YEAR, KUNSKAPSSKOLAN)!;
+
+    it('is a lov for the school only where every group of the year is inside it', () => {
+      // Åk 1 to 6 are off; åk 9 is taught, so the weeks are school weeks and the cut is the one it was.
+      expect(yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([lower(1, 6)], [3, 9]))).toEqual(unchanged);
+      // Only åk 3 and åk 6 are in the school: both off, so the weeks are closed.
+      expect(yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([lower(1, 6)], [3, 6, 3]))!.weeks).toEqual([19, 22]);
+      // The bounds are inclusive, and one bound is enough: from åk 7, to åk 6.
+      expect(yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([lower(7, null)], [7, 9]))!.weeks).toEqual([19, 22]);
+      expect(yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([lower(null, 6)], [1, 6]))!.weeks).toEqual([19, 22]);
+      expect(yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([lower(null, 6)], [1, 7]))).toEqual(unchanged);
+    });
+
+    it('is no lov for a group with no årskurs, which only a break for the whole school closes', () => {
+      // A nivågrupp across several years is not shown to be inside, and publish keeps its lessons (breakCoversGroup).
+      expect(yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([lower(1, 6)], [3, null]))).toEqual(unchanged);
+      expect(yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([JULLOV], [3, null, 9]))!.weeks).toEqual([19, 22]);
+      // A year that lists no group is asked as one group of no year.
+      expect(yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([lower(1, 9)], []))).toEqual(unchanged);
+      expect(yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([JULLOV], []))!.weeks).toEqual([19, 22]);
+    });
+
+    it('closes a day for a group by any one of the breaks, the school’s own and a span’s together', () => {
+      // åk 1–6 and åk 7–9 by two breaks: every group is off every day.
+      expect(yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([lower(1, 6), lower(7, 9)], [3, 9]))!.weeks).toEqual([19, 22]);
+      // But åk 7 is in neither of åk 1–6 and åk 8–9: a school week.
+      expect(yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([lower(1, 6), lower(8, 9)], [3, 7, 9]))).toEqual(unchanged);
+    });
+
+    it('does not take a prao week for åk 9 from the school, whose other years are taught', () => {
+      const prao = lov('2027-01-04', '2027-01-08', [9, 9]);
+      expect(yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([prao], [7, 9]))).toEqual(unchanged);
+      // A school that holds only åk 9 has no school in that week: it is not one of its weeks.
+      const onlyNine = yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([prao], [9]))!;
+      expect(onlyNine.weekPeriods[21 - 1]).toBeNull();
+      expect(onlyNine.weeks).toEqual([19, 1, 22]);
+    });
+  });
+
+  it('is the cut it was where no break closes a week: the same periods, to the last number', () => {
+    const unchanged = yearPeriodsOf(YEAR, KUNSKAPSSKOLAN)!;
+    const same = (days: SchoolDays | undefined) => expect(yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, days)).toEqual(unchanged);
+    same(undefined);
+    same(school([]));
+    // A day, a Saturday and Sunday, the days of a week that has two days beside it, a break outside the läsår.
+    same(school([lov('2026-12-23', '2026-12-23')]));
+    same(school([lov('2026-12-26', '2026-12-27')]));
+    same(school([lov('2026-12-28', '2026-12-31')]));
+    same(school([lov('2027-07-01', '2027-08-10'), lov('2026-06-15', '2026-08-16')]));
+    // And a school that dates nothing is sent nothing, whatever its breaks.
+    expect(yearPeriodsOf(YEAR, [[ALL_YEAR]], school([JULLOV]))).toBeNull();
+    expect(yearPeriodsOf(YEAR, [], school([JULLOV]))).toBeNull();
+    // The weeks of every period are still every week of the läsår, none missing.
+    expect(unchanged.weekPeriods.every((period) => period !== null)).toBe(true);
+  });
+
+  it('is null where the weeks that have school are all one, or there is none', () => {
+    // A post held to the last day of the autumn and from the first of the spring is dated by the weeks between
+    // the terms alone; those are the lov, and no week with school tells it from the rest.
+    const exceptTheLov = [{ startDate: null, endDate: '2026-12-20' }, { startDate: '2027-01-11', endDate: null }];
+    expect(yearPeriodsOf(YEAR, [exceptTheLov])!.weeks).toEqual([40, 3]);
+    expect(yearPeriodsOf(YEAR, [exceptTheLov], school([lov('2026-12-21', '2027-01-10')]))).toBeNull();
+    // A post that starts on the 28th, inside the lov, is held in every week of school from the 11th.
+    expect(yearPeriodsOf(YEAR, [[{ startDate: '2026-12-28', endDate: '2027-01-03' }]], school([JULLOV]))).toBeNull();
+    expect(yearPeriodsOf(YEAR, [[{ startDate: null, endDate: '2027-06-12' }]], school([JULLOV]))).toBeNull();
+    // A lov over the whole läsår has no school week to cut.
+    expect(yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([lov('2026-01-01', '2027-12-31')]))).toBeNull();
+  });
+
+  it('reads an entry whose dates are all in the lov as running in every period, the stricter reading', () => {
+    // It has no week with school in it: nothing is written for it, and as an entry outside the läsår it is every week.
+    const inLov = [{ startDate: '2026-12-28', endDate: '2027-01-03' }];
+    const periods = yearPeriodsOf(YEAR, [...KUNSKAPSSKOLAN, inLov], school([JULLOV]))!;
+    expect(periods.weeks).toEqual([19, 22]);
+    expect(periods.masks[periods.masks.length - 1]).toBeUndefined();
+    // Where it is dated against school weeks it is cut: a post of the autumn that ends in the lov is the autumn's.
+    expect(periods.masks[0]).toEqual([true, false]);
+  });
+
+  describe('the weeks at the läsår’s edges', () => {
+    it('keeps a week of a läsår that starts on a Saturday, which no break closed: a Saturday and a Sunday are a period', () => {
+      const saturday = { startDate: '2026-08-15', endDate: '2027-06-12' };
+      const entries = [[{ startDate: '2026-08-17', endDate: null }], [ALL_YEAR]];
+      expect(yearPeriodsOf(saturday, entries)!.weeks).toEqual([1, 43]);
+      // The jullov (19 December to 10 January) takes its three weeks and leaves the first week as it was.
+      const withLov = yearPeriodsOf(saturday, entries, school([lov('2026-12-19', '2027-01-10')]))!;
+      expect(withLov.weeks).toEqual([1, 40]);
+      expect(withLov.weekPeriods[0]).toBe(0);
+      expect(withLov.weekPeriods.filter((period) => period === null)).toHaveLength(3);
+      // A break over the first days of school closes no week of the weekend.
+      const first = weeksWithSchool(saturday, school([lov('2026-08-15', '2026-08-21')], [3]));
+      expect([first[0], first[1], first[2]]).toEqual([true, false, true]);
+      // The last week ends on a Saturday of the läsår: its weekdays are the school's days.
+      const last = weeksWithSchool(saturday, school([lov('2027-06-07', '2027-06-12')], [3]));
+      expect([last[last.length - 2], last[last.length - 1]]).toEqual([true, false]);
+    });
+
+    it('counts only the weekdays that are in the läsår, so a week the läsår cuts in two is closed by what is left', () => {
+      // A läsår that starts on a Wednesday: Monday and Tuesday are before it, and a lov over the Wednesday to the
+      // Friday closes the week. One day short of it does not.
+      const wednesday = { startDate: '2026-08-19', endDate: '2027-06-10' };
+      expect(weeksWithSchool(wednesday, school([lov('2026-08-19', '2026-08-21')], [3]))[0]).toBe(false);
+      expect(weeksWithSchool(wednesday, school([lov('2026-08-19', '2026-08-20')], [3]))[0]).toBe(true);
+      // And the last week, to a Thursday.
+      const last = weeksWithSchool(wednesday, school([lov('2027-06-07', '2027-06-10')], [3]));
+      expect(last[last.length - 1]).toBe(false);
+    });
+  });
+
+  describe('the weeks around a change of the clock', () => {
+    // The clocks go back on Sunday 25 October 2026 and forward on Sunday 28 March 2027 (Easter Sunday). The
+    // cut reads days as days (UTC midnights, ISO text), so the week of the change is a week of seven days.
+    const autumn = [{ startDate: null, endDate: '2026-10-25' }];
+    const afterAutumn = [{ startDate: '2026-10-26', endDate: null }];
+    const spring = [{ startDate: null, endDate: '2027-03-28' }];
+    const afterSpring = [{ startDate: '2027-03-29', endDate: null }];
+    const HOST_LOV = lov('2026-10-26', '2026-10-30');
+    const EASTER_LOV = lov('2027-03-29', '2027-04-02');
+
+    it('moves the end of a period past a höstlov that follows the change of the clock', () => {
+      const without = yearPeriodsOf(YEAR, [autumn, afterAutumn])!;
+      expect(without.stretches).toEqual([[{ from: '2026-08-17', to: '2026-10-25' }], [{ from: '2026-10-26', to: '2027-06-11' }]]);
+      const with_ = yearPeriodsOf(YEAR, [autumn, afterAutumn], school([HOST_LOV]))!;
+      // The week of 26 October has no school: it is held by the period before it, and the next term starts on 2 November.
+      expect(with_.weeks).toEqual([10, 32]);
+      expect(with_.stretches).toEqual([[{ from: '2026-08-17', to: '2026-11-01' }], [{ from: '2026-11-02', to: '2027-06-11' }]]);
+      expect(with_.weekPeriods.slice(9, 12)).toEqual([0, null, 1]);
+    });
+
+    it('does the same for a påsklov after the change of the clock to summertime, and for both together', () => {
+      const periods = yearPeriodsOf(YEAR, [spring, afterSpring, autumn, afterAutumn], school([EASTER_LOV, HOST_LOV]))!;
+      // The weeks are Mondays to Sundays whatever the clock did in the night of the change.
+      for (const stretch of periods.stretches.flat()) {
+        expect(day(stretch.from).getUTCDay()).toBe(stretch.from === YEAR.startDate ? 1 : 1);
+        expect(stretch.to === YEAR.endDate || day(stretch.to).getUTCDay() === 0).toBe(true);
+      }
+      expect(periods.stretches.flat().some((stretch) => stretch.to === '2027-04-04' || stretch.from === '2027-04-05')).toBe(true);
+      expect(weeksWithSchool(YEAR, school([EASTER_LOV]))[picked(YEAR, '2027-03-29')]).toBe(false);
+      expect(weeksWithSchool(YEAR, school([EASTER_LOV]))[picked(YEAR, '2027-03-22')]).toBe(true);
+    });
+    const picked = (year: { startDate: string }, value: string): number =>
+      Math.round((day(mondayOf(value)).getTime() - day(mondayOf(year.startDate)).getTime()) / (7 * DAY_MS));
+  });
+
+  describe('agrees with publish about what a day is', () => {
+    const next = random(20261119);
+    const pick = <T>(values: readonly T[]): T => values[Math.floor(next() * values.length)]!;
+
+    /** One day of the walk publish makes: BREAK for a group of that årskurs, as publishSkips answers it. */
+    const publishClosed = (breaks: PublishBreak[], year: { startDate: string; endDate: string }, grade: number | null, date: string) => {
+      const ctx: PublishDaysContext = {
+        breakDays: breakDaysOf(breaks, year.startDate, year.endDate),
+        gradeOfGroup: new Map([['g', grade]]),
+        closuresByDate: new Map(),
+        timezone: 'Europe/Stockholm',
+      };
+      return (
+        publishSkips({ studentGroupId: 'g', startTime: new Date(0), endTime: new Date(0) }, date, ctx) === 'BREAK'
+      );
+    };
+
+    it('closes a week exactly when publish writes no lesson on any weekday of it for any group of the year', () => {
+      const seen = { closed: 0, open: 0, partlyClosed: 0 };
+      for (let round = 0; round < 400; round += 1) {
+        const start = addDays('2026-08-10', Math.floor(next() * 14));
+        const year = { startDate: start, endDate: addDays(start, 250 + Math.floor(next() * 80)) };
+        const breaks: PublishBreak[] = Array.from({ length: 1 + Math.floor(next() * 6) }, () => {
+          const from = addDays(year.startDate, Math.floor(next() * 300));
+          const span = pick<[number | null, number | null]>([[null, null], [null, null], [1, 6], [7, 9], [9, 9], [null, 6], [3, null]]);
+          return lov(from, addDays(from, Math.floor(next() * (next() < 0.5 ? 6 : 21))), span);
+        });
+        const grades = Array.from({ length: 1 + Math.floor(next() * 3) }, () => pick<number | null>([null, 1, 3, 6, 7, 9]));
+        const read = weeksWithSchool(year, school(breaks, grades));
+        read.forEach((hasSchool, week) => {
+          const monday = addDays(mondayOf(year.startDate), 7 * week);
+          const weekdays = [0, 1, 2, 3, 4].map((offset) => addDays(monday, offset)).filter((date) => date >= year.startDate && date <= year.endDate);
+          // The question publish answers: is there a lesson written for some group on some of the weekdays?
+          const taught = weekdays.some((date) => grades.some((grade) => !publishClosed(breaks, year, grade, date)));
+          expect(hasSchool).toBe(weekdays.length === 0 || taught);
+          if (!hasSchool) seen.closed += 1;
+          else if (weekdays.some((date) => grades.every((grade) => publishClosed(breaks, year, grade, date)))) seen.partlyClosed += 1;
+          else seen.open += 1;
+        });
+      }
+      // Weeks of every kind were in it: closed ones, open ones, and open ones with a closed day.
+      expect(seen.closed).toBeGreaterThan(200);
+      expect(seen.open).toBeGreaterThan(2000);
+      expect(seen.partlyClosed).toBeGreaterThan(100);
+    });
+  });
+
+  describe('over random years, windows and breaks', () => {
+    const next = random(20261120);
+    const pick = <T>(values: readonly T[]): T => values[Math.floor(next() * values.length)]!;
+    const mondays = (year: { startDate: string; endDate: string }): string[] => {
+      const out: string[] = [];
+      for (let monday = mondayOf(year.startDate); monday <= year.endDate; monday = addDays(monday, 7)) out.push(monday);
+      return out;
+    };
+    const touches = (window: HeldWindow, monday: string): boolean =>
+      (window.startDate === null || window.startDate <= addDays(monday, 6)) &&
+      (window.endDate === null || window.endDate >= monday);
+
+    function world() {
+      const start = addDays('2026-08-10', Math.floor(next() * 14));
+      const year = { startDate: start, endDate: addDays(start, 250 + Math.floor(next() * 80)) };
+      const anyDay = (): string => addDays(year.startDate, Math.floor(next() * 380) - 30);
+      const windows = Array.from({ length: 2 + Math.floor(next() * 7) }, (): HeldWindow => {
+        const kind = next();
+        if (kind < 0.2) return ALL_YEAR;
+        if (kind < 0.4) return { startDate: null, endDate: anyDay() };
+        if (kind < 0.6) return { startDate: anyDay(), endDate: null };
+        const from = anyDay();
+        return { startDate: from, endDate: addDays(from, Math.floor(next() * (next() < 0.5 ? 9 : 200)) - 1) };
+      });
+      const breaks = Array.from({ length: Math.floor(next() * 6) }, () => {
+        const from = addDays(year.startDate, Math.floor(next() * 300));
+        return lov(from, addDays(from, Math.floor(next() * (next() < 0.5 ? 6 : 24))), pick<[number | null, number | null]>([[null, null], [null, null], [1, 6], [9, 9]]));
+      });
+      const grades = Array.from({ length: 1 + Math.floor(next() * 2) }, () => pick<number | null>([null, 3, 9]));
+      return { year, windows, days: school(breaks, grades) };
+    }
+
+    it('cuts the weeks that have school and no others: the entries meet where a school week holds both', () => {
+      const seen = { dated: 0, fewer: 0, none: 0, meet: 0, apart: 0 };
+      for (let round = 0; round < 1500; round += 1) {
+        const { year, windows, days } = world();
+        const entries = windows.map((window) => [window]);
+        const periods = yearPeriodsOf(year, entries, days);
+        const without = yearPeriodsOf(year, entries);
+        const read = weeksWithSchool(year, days);
+        const weeks = mondays(year);
+        // A lov takes weeks away, never adds one: no more periods than the cut that reads every week.
+        expect(periods?.weeks.length ?? 1).toBeLessThanOrEqual(without?.weeks.length ?? 1);
+        if (periods && without && periods.weeks.length < without.weeks.length) seen.fewer += 1;
+        if (!periods) {
+          // Not told apart by the school weeks: every entry is in all of them or in none.
+          if (!read.some(Boolean)) seen.none += 1;
+          for (const window of windows) {
+            const held = weeks.filter((monday, week) => read[week] && touches(window, monday));
+            expect([0, read.filter(Boolean).length]).toContain(held.length);
+          }
+          continue;
+        }
+        seen.dated += 1;
+        const count = periods.weeks.length;
+        expect(count).toBeGreaterThanOrEqual(2);
+        // The school weeks are in exactly one period each; the others are in none.
+        expect(periods.weekPeriods).toHaveLength(weeks.length);
+        periods.weekPeriods.forEach((period, week) => expect(period === null).toBe(!read[week]));
+        expect(periods.weeks.reduce((sum, weeksIn) => sum + weeksIn, 0)).toBe(read.filter(Boolean).length);
+        expect(Math.min(...periods.weeks)).toBeGreaterThanOrEqual(1);
+        // Two periods never hold the same entries.
+        const signatures = new Set(
+          periods.weeks.map((_, period) => periods.masks.map((mask) => (mask ? (mask[period] ? '1' : '0') : '-')).join('')),
+        );
+        expect(signatures.size).toBe(count);
+        // In every school week each dated entry runs as its mask says of its period.
+        weeks.forEach((monday, week) => {
+          const period = periods.weekPeriods[week];
+          if (period === null || period === undefined) return;
+          windows.forEach((window, index) => {
+            const mask = periods.masks[index];
+            if (mask) expect(touches(window, monday)).toBe(mask[period]);
+          });
+        });
+        // The stretches are every day of the läsår once: the weeks of no school are held by a period.
+        let covered = 0;
+        let previousEnd = addDays(year.startDate, -1);
+        for (const stretch of periods.stretches.flat().sort((a, b) => (a.from < b.from ? -1 : 1))) {
+          expect(stretch.from).toBe(addDays(previousEnd, 1));
+          previousEnd = stretch.to;
+          covered += (day(stretch.to).getTime() - day(stretch.from).getTime()) / DAY_MS + 1;
+        }
+        expect(previousEnd).toBe(year.endDate);
+        expect(covered).toBe((day(year.endDate).getTime() - day(year.startDate).getTime()) / DAY_MS + 1);
+        // Two entries meet in the engine where some school week holds a date of each: never looser than
+        // that, and never stricter than that for two that are both dated against the school weeks.
+        for (let a = 0; a < windows.length; a += 1) {
+          for (let b = a + 1; b < windows.length; b += 1) {
+            const first = periods.masks[a];
+            const second = periods.masks[b];
+            if (!first || !second) continue;
+            const engine = first.some((runs, period) => runs && second[period]);
+            const schoolWeek = weeks.some((monday, week) => read[week] && touches(windows[a]!, monday) && touches(windows[b]!, monday));
+            expect(engine).toBe(schoolWeek);
+            seen[engine ? 'meet' : 'apart'] += 1;
+          }
+        }
+      }
+      expect(seen.dated).toBeGreaterThan(800);
+      expect(seen.fewer).toBeGreaterThan(10);
+      expect(seen.meet).toBeGreaterThan(1000);
+      expect(seen.apart).toBeGreaterThan(1000);
     });
   });
 });

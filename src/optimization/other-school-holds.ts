@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { Prisma, type LessonRecurrence, type PrismaClient } from '@prisma/client';
 import { SLOT_MINUTES } from '../common/solver-grid';
 import { busyBlocks, clockOf } from './other-school-busy';
-import { breakCoversGroup, breakDaysOf, type PublishBreak } from '../calendar/publish-days';
+import { noSchoolDays } from '../calendar/publish-days';
 import { borrowedReservations, lentReservations, type ApprovedWindow } from './room-loan-windows';
 
 /**
@@ -57,31 +57,11 @@ export interface OtherSchoolHolds {
   holds: OtherSchoolHold[];
 }
 
+export { noSchoolDays };
+
 const EMPTY: OtherSchoolHolds = { holds: [] };
 /** The name a hold gives a borrower that has left the huvudman, which the school can no longer read. */
 const LEFT_HUVUDMAN = 'en skola som har lämnat huvudmannen';
-
-/**
- * The days of [from, to] no årskurs of the year has school: a school-wide lov,
- * or lov that together cover every group's årskurs (a group without one, a
- * teaching group, only by a school-wide lov, as the publish reads them).
- */
-export function noSchoolDays(
-  breaks: readonly PublishBreak[],
-  grades: readonly (number | null)[],
-  from: string,
-  to: string,
-): Set<string> {
-  const distinct = [...new Set(grades)];
-  const off = new Set<string>();
-  for (const [date, entries] of breakDaysOf(breaks, from, to)) {
-    const everyone =
-      entries.some((entry) => entry.minGradeLevel === null && entry.maxGradeLevel === null) ||
-      (distinct.length > 0 && distinct.every((grade) => entries.some((entry) => breakCoversGroup(entry, grade))));
-    if (everyone) off.add(date);
-  }
-  return off;
-}
 
 /** A stable id for a hold: the same hold on the same run is the same id. */
 export function holdId(schoolId: string, kind: HoldKind, resourceId: string, day: number, start: string, end: string): string {

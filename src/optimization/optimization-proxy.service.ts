@@ -88,6 +88,7 @@ import {
   yearPeriodsOf,
   type HeldWindow,
   type PeriodStretch,
+  type SchoolDays,
   type YearPeriods,
 } from './year-periods';
 import { datedMeals, MealPartsError, type DatedMeal } from './lunch-parts';
@@ -1920,6 +1921,30 @@ export class OptimizationProxyService {
         ? await this.readCoverageBase(tx, academicYearId, [...data.preservedRows, ...lockedRowsOf(data.placedRows)], draftLessons)
         : null,
     };
+  }
+
+  /**
+   * What takes a week with no school day out of the läsår's periods
+   * (year-periods.ts, SchoolDays): the year's breaks, and the årskurs of every
+   * group of the year, a group with no year (a nivågrupp) null — which only a
+   * break of the whole school closes, as publish keeps its lessons. All the
+   * year's groups and not the payload's, so that every payload of a school is
+   * cut at the same weeks.
+   *
+   * `kind` is not selected, for publish's reason (calendar.service.ts): a lov
+   * and a studiedag close a day alike. Read for a payload that has dates only,
+   * so a school that dates nothing reads what it read.
+   */
+  private async schoolDaysOf(
+    tx: PrismaClient,
+    academicYearId: string,
+    groups: readonly { gradeLevel: number | null }[],
+  ): Promise<SchoolDays> {
+    const breaks = await tx.schoolBreak.findMany({
+      where: { academicYearId },
+      select: { startDate: true, endDate: true, minGradeLevel: true, maxGradeLevel: true },
+    });
+    return { breaks, grades: groups.map((group) => group.gradeLevel) };
   }
 
   /**
@@ -4406,15 +4431,22 @@ export class OptimizationProxyService {
      *
      * Null for a week nothing dates, and then every entry is the object it
      * was: the payload of a school without dated posts is byte for byte what
-     * it always sent.
+     * it always sent. The school's breaks are read only here, for a payload
+     * that has dates, and take a week with no school day out of the cut
+     * (year-periods.ts, weeksWithSchool): a jullov between two terms is no
+     * period for the engine to solve.
      */
     const yearPeriods =
       yearSpan && someEntryIsDated
-        ? yearPeriodsOf(yearSpan, [
-            ...requirements.map((entry) => heldWindowsOf.get(entry.id)!),
-            ...lockWindows,
-            ...releasedRequirements.map((entry) => heldWindowsOf.get(entry.id)!),
-          ])
+        ? yearPeriodsOf(
+            yearSpan,
+            [
+              ...requirements.map((entry) => heldWindowsOf.get(entry.id)!),
+              ...lockWindows,
+              ...releasedRequirements.map((entry) => heldWindowsOf.get(entry.id)!),
+            ],
+            await this.schoolDaysOf(tx, academicYearId, allGroups),
+          )
         : null;
     const inPeriods = <E extends object>(entries: readonly E[], offset: number): E[] =>
       entries.map((entry, index) => {

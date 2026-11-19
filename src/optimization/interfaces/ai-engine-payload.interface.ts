@@ -768,8 +768,10 @@ export interface AiEngineScheduleRequest {
    */
   placements?: AnonymousPlacements;
   /**
-   * Terminer: how many real weeks each period of the läsår is, in the masks'
-   * order (AnonymousRequirement.periods). Weights for what the engine
+   * Terminer: how many school weeks each period of the läsår is, in the masks'
+   * order (AnonymousRequirement.periods). A week with no school day (a jullov
+   * every weekday of which a break closes, year-periods.ts) is none of them and
+   * no period of its own. Weights for what the engine
    * MEASURES — a hole that exists in one period is that period's share of a
    * hole — and never a rule. The KEY is sent only beside a mask, so every
    * school that dates no post sends the payload it always sent.
