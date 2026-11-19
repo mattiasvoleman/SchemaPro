@@ -83,6 +83,25 @@ export async function scheduleActivityChecks(owner: Client, api: PrismaService, 
   const one = async <T extends object>(sql: string, params: unknown[] = []): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
   const all = async <T extends object>(sql: string, params: unknown[] = []): Promise<T[]> => (await owner.query<T>(sql, params)).rows;
   const today = (await one<{ d: string }>(`SELECT ((now() AT TIME ZONE 'Europe/Stockholm')::date)::text AS d`)).d;
+  // (sa-j) runs over the weekend the clock goes forward, the last Sunday of March: the next one after today. The year below is
+  // stretched to hold its Friday and Monday, for from the end of April until the end of May no spring switch is inside
+  // [today - 30, today + 300].
+  const shiftDay = (iso: string, days: number): string => {
+    const d = new Date(`${iso}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+  const lastSundayOfMarch = (calendarYear: number): string => {
+    const d = new Date(Date.UTC(calendarYear, 2, 31));
+    d.setUTCDate(31 - d.getUTCDay());
+    return d.toISOString().slice(0, 10);
+  };
+  const thisCalendarYear = Number(today.slice(0, 4));
+  const springSunday =
+    shiftDay(lastSundayOfMarch(thisCalendarYear), -2) > today ? lastSundayOfMarch(thisCalendarYear) : lastSundayOfMarch(thisCalendarYear + 1);
+  const springFriday = shiftDay(springSunday, -2);
+  const springSaturday = shiftDay(springSunday, -1);
+  const springMonday = shiftDay(springSunday, 1);
 
   const s = (
     await one<{ id: string }>(
@@ -99,8 +118,8 @@ export async function scheduleActivityChecks(owner: Client, api: PrismaService, 
   try {
     const year = await one<{ id: string }>(
       `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "gradeNumbering", "updatedAt")
-       VALUES ($1, 'probe aktivitet', $2::date - 30, $2::date + 300, true, 'NIOARIG', now()) RETURNING id`,
-      [s, today],
+       VALUES ($1, 'probe aktivitet', $2::date - 30, GREATEST($2::date + 300, $3::date + 7), true, 'NIOARIG', now()) RETURNING id`,
+      [s, today, springMonday],
     );
     const group = async (name: string, kind: 'CLASS' | 'TEACHING_GROUP', grade: number | null, halfOf: string | null = null, replaces: string | null = null) =>
       (
@@ -418,8 +437,8 @@ export async function scheduleActivityChecks(owner: Client, api: PrismaService, 
     });
 
     await check('(sa-j) over a weekend and the change to summer time the replacement lessons keep the class’s own clock, and a day with no lesson gets none', async () => {
-      const friday = '2027-03-26';
-      const monday2 = '2027-03-29';
+      const friday = springFriday;
+      const monday2 = springMonday;
       for (const date of [friday, monday2]) await lesson(date, '08:00', '08:45', matte, k7c, [eva]);
       const dst = await activities.create(
         {
@@ -447,7 +466,7 @@ export async function scheduleActivityChecks(owner: Client, api: PrismaService, 
         [dst.activity.id],
       );
       assert.deepEqual(instants.map((row) => row.at), ['07:00', '06:00']);
-      assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "CalendarLessons" WHERE "schoolId" = $1 AND date = '2027-03-27'`, [s])).n, 0);
+      assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "CalendarLessons" WHERE "schoolId" = $1 AND date = $2::date`, [s, springSaturday])).n, 0);
       await activities.remove(dst.activity.id, admin);
       assert.equal((await one<{ n: number }>(`SELECT count(*)::int AS n FROM "ScheduleActivityLessons" WHERE "activityId" = $1`, [dst.activity.id])).n, 0);
     });
