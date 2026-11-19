@@ -216,9 +216,7 @@ describe('/login\'s lookup under the rate limit (e2e)', () => {
   beforeAll(async () => {
     process.env['THROTTLE_LIMIT'] = '1000';
     harness = await createTestApp({ throttle: true });
-    // Listen once: hundreds of requests on ephemeral ports can meet a closed
-    // keep-alive socket (see public-viewer.e2e-spec.ts).
-    await harness.app.listen(0, '127.0.0.1');
+    // The harness listens once on the loopback (test/utils/test-app.ts): hundreds of requests on ephemeral ports can meet another process.
   });
   afterAll(async () => {
     await harness.close();

@@ -51,12 +51,28 @@ class InvalidScheduleInputError(OptimizationEngineError):
 
 
 class SolverTimeoutError(OptimizationEngineError):
-    """Raised when CP-SAT exhausts its budget without proving anything.
+    """A route stopped waiting for its solve: its ceiling (app.timing) passed.
 
-    Distinct from INFEASIBLE: the model may well be satisfiable, the solver just
-    ran out of time. Reporting it as INFEASIBLE would tell the gateway that no
-    schedule exists, which it surfaces to the school as a hard failure.
+    Distinct from INFEASIBLE and from a TIMEOUT answer: the model may well be
+    satisfiable, and a TIMEOUT is an ANSWER (the search ran out of its budget and
+    the probe said what it could). This is the other thing, a solve that did not
+    answer at all inside the longest the route waits, so there is nothing to
+    return, not even an explanation. Reporting it as INFEASIBLE would tell the
+    gateway that no schedule exists, which it surfaces to the school as a hard
+    failure.
+
+    Raised by all four routes (optimize, optimize-rooms, staff, plan-exams) and
+    answered by main.py as 503 with the code SOLVER_TIMEOUT and `details`
+    carrying the route and the ceiling that passed. `message` is the sentence
+    each route has always answered with, word for word: a gateway older than the
+    code reads that sentence and nothing else (tests/data/solver_timeout_body.json
+    is the one example both sides read).
     """
+
+    def __init__(self, message: str, *, route: str, ceiling_seconds: float) -> None:
+        super().__init__(message)
+        self.route = route
+        self.ceiling_seconds = ceiling_seconds
 
 
 def error_payload(

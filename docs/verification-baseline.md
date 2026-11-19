@@ -1212,7 +1212,9 @@ all four variants:
 - **A call costs 0.3 s beyond its budget.** The engine's own ceiling is the
   budget plus 30 s, plus the probe's seconds for a call that runs one (the
   lead: half the budget at most, 20 s by default), and the gateway's is the
-  budget plus 45 s, plus 20 s for the lead.
+  budget plus 45 s, plus 20 s for the lead (since M1 the probe and the
+  headroom are the engine's own, read from `GET /api/v1/timing`, and the
+  waits are the same at its defaults).
 
 **The lead's probe split.** The probe runs only after a TIMEOUT, which no
 candidate reached. So it was called directly, on the lead's request and under

@@ -943,7 +943,7 @@ async function reviewChecks(
                 coTeacherId: l.coTeacherId,
                 roomId: l.roomId,
                 extraGroupIds: l.extraGroups.map((e) => e.studentGroupId),
-                studentIds: [],
+                studentIds: [] as string[],
                 recurrence: l.recurrence,
                 startDate: l.startDate,
                 endDate: l.endDate,

@@ -22,6 +22,8 @@ import { isWriteConflict } from '../common/utils/prisma-errors';
 import { todayInZone } from '../common/utils/time';
 import { schoolTimezone } from '../cover/cover-context';
 import { gradeSpanOf, loadRosters, roomNeedsOf, type RoomNeeds } from './room-eligibility';
+import { EngineTimingService } from './engine-timing.service';
+import { FALLBACK_WAIT_MS, deadlineSecondsOf, isEngineCeilingBody, routeOf, waitMsAtLeast, type EngineRoute } from './engine-timing';
 import { fromNioarig, toNioarig, toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { dayNumberingOf, yearNumberingOf } from '../common/year-numbering';
 import { lockCoversDemand } from './locked-coverage';
@@ -721,8 +723,6 @@ const ENGINE_UNREACHABLE = 'The AI engine could not be reached.';
 const ENGINE_UNAVAILABLE = 'AI engine unavailable.';
 /** callAiEngine's sentence when the engine answered, and the answer says nothing a school may read. */
 const ENGINE_ERROR = 'The AI engine returned an error.';
-/** What the engine's 503 says when its own ceiling stopped the wait (app/api/v1/optimize.py). */
-const ENGINE_CEILING_SENTENCE = 'Optimization timed out.';
 
 /**
  * The engine stopped waiting for its own solve (optimize.solve_ceiling_seconds)
@@ -737,6 +737,13 @@ const ENGINE_CEILING_SENTENCE = 'Optimization timed out.';
 export const ENGINE_TIMED_OUT = 'ENGINE_TIMED_OUT';
 const ENGINE_TIMED_OUT_MESSAGE =
   'The scheduling engine did not answer within its longest wait, so no timetable was saved. It may go on working in the background for a while, so wait a few minutes before you run Generate again.';
+/**
+ * The same, for the engine's other routes (rooms, staffing, exams): they save
+ * nothing a school is waiting for either, and Generate is not what they run again.
+ * Their pages read the 503 as "the engine cannot just now" and show their own text.
+ */
+const ENGINE_TIMED_OUT_OTHER_MESSAGE =
+  'The scheduling engine did not answer within its longest wait. It may go on working in the background for a while, so wait a few minutes before you try again.';
 
 /**
  * Whether a failed engine call may have left the engine solving. It did when
@@ -1302,6 +1309,13 @@ function engineLacksPeriods(): HttpException {
  */
 class EngineLacksPlacements extends Error {}
 
+/**
+ * The engine refused `deadlineSeconds` as a field it does not know. It said it
+ * could take it when its times were read, so it was rolled back since: the
+ * request is sent again without it, and the times are read again.
+ */
+class EngineLacksDeadline extends Error {}
+
 function engineLacksBestEffort(): HttpException {
   return new HttpException(
     {
@@ -1379,7 +1393,43 @@ export class OptimizationProxyService {
    * wait is enforced by, not written into a sentence that outlives it.
    */
   get waitSeconds(): number {
-    return Math.ceil(this.aiConfig.timeoutMs / 1000);
+    return Math.ceil(this.waitMsFor('optimize') / 1000);
+  }
+
+  /**
+   * How long the engine says its generator may take to answer a plain request,
+   * in seconds, or undefined while it has not said (an engine older than
+   * GET /api/v1/timing, or one that was not up when this was asked). What a run
+   * can still be solving for after the API has stopped waiting (the engine's
+   * answer at its ceiling stops its wait, and the solve ends by its clock), for
+   * a lease that wants it exact (M4 reads waitSeconds, which is never less).
+   */
+  get engineCeilingSeconds(): number | undefined {
+    return this.timing?.current()?.routes.optimize?.ceilingSeconds;
+  }
+
+  /**
+   * The wait of one call to `route`, in milliseconds: AI_ENGINE_TIMEOUT_MS if it
+   * is set, else the engine's own ceiling for the route and a margin (the engine
+   * answers first), else 120 s for an engine that has said nothing.
+   */
+  private waitMsFor(route: EngineRoute | null): number {
+    const configured = this.aiConfig.timeoutMs;
+    return this.timing !== undefined ? this.timing.waitMs(route) : (configured ?? FALLBACK_WAIT_MS);
+  }
+
+  /**
+   * The wait of a caller that has a floor of its own, for a route: the floor, or what the engine says
+   * the route needs and a margin if that is more (the exam planner's 90 s, when the exam budget is
+   * raised past what 90 s holds).
+   */
+  waitMsAtLeast(path: string, floorMs: number): number {
+    return waitMsAtLeast(routeOf(path), this.timing?.current() ?? null, floorMs);
+  }
+
+  /** The engine's times as it last said them, for a schemaförslag call's wait; undefined before it has. */
+  engineTimes(): { probeSeconds: number; headroomSeconds: number } | undefined {
+    return this.timing?.candidateTimes();
   }
 
   constructor(
@@ -1400,6 +1450,14 @@ export class OptimizationProxyService {
      * refused loudly rather than sent unjudged.
      */
     private readonly masters?: MasterLessonsService,
+    /**
+     * The engine's times, read from the engine (M1, Tidskedjan): the wait of every
+     * call, and whether the engine can be sent a deadline. REQUIRED of Nest, so no
+     * @Optional(), like `masters`; optional in the signature only for the callers
+     * that build this service by hand (the specs, the probes), which then wait by
+     * AI_ENGINE_TIMEOUT_MS, or 120 s, as the gateway always did.
+     */
+    private readonly timing?: EngineTimingService,
   ) {
     this.aiConfig = this.configService.getOrThrow<AiEngineConfig>('aiEngine');
   }
@@ -2221,7 +2279,7 @@ export class OptimizationProxyService {
    * mapped back and no screen showed, so a school read "0 class(es)" one
    * week and "the classes named here" with nobody named the next.
    */
-  private realiseConflicts(
+  realiseConflicts(
     conflicts: AiEngineConflictAnalysis | null | undefined,
     maps: AnonMaps,
   ): AiEngineConflictAnalysis | null {
@@ -4653,6 +4711,27 @@ export class OptimizationProxyService {
     options: { timeoutMs?: number } = {},
   ): Promise<TResponse> {
     const url = `${this.aiConfig.baseUrl}${path}`;
+    // THE CALL'S WAIT, stated for the module's client AND for rxjs below, from one number: the caller's
+    // own (a schemaförslag call, a plan), else the engine's ceiling for the route and a margin, else
+    // AI_ENGINE_TIMEOUT_MS as it was set. It was the module's default for every call that stated none.
+    const route = routeOf(path);
+    // An engine that has said nothing yet (it was not up when the API started) is asked again, at most
+    // every half minute, before a call is waited for: the wait of an API with no AI_ENGINE_TIMEOUT_MS is
+    // counted from what the engine says, and 120 s is not what a 180 s budget needs.
+    await this.timing?.ensure();
+    const waitMs = options.timeoutMs ?? this.waitMsFor(route);
+    if (options.timeoutMs === undefined) this.timing?.noteWait(route, waitMs);
+    // THE REQUEST CARRIES ITS DEADLINE, to an engine that said it can take it: the engine then answers
+    // inside this wait (a shorter search if its settings need more) and not by a 503 this call has
+    // stopped waiting for. Never to an engine that did not say: its models forbid fields they do not know.
+    if (
+      route === 'optimize' &&
+      this.timing?.supportsDeadline() === true &&
+      (payload as { deadlineSeconds?: unknown }).deadlineSeconds === undefined
+    ) {
+      payload = { ...payload, deadlineSeconds: deadlineSecondsOf(waitMs) };
+    }
+    const carriesDeadline = (payload as { deadlineSeconds?: unknown }).deadlineSeconds !== undefined;
     const carriesSearch = (payload as { search?: unknown }).search !== undefined;
     const carriesRelaxation = (payload as { relaxation?: unknown }).relaxation !== undefined;
     const carriesPlacements = (payload as { placements?: unknown }).placements !== undefined;
@@ -4684,10 +4763,14 @@ export class OptimizationProxyService {
             // non-2xx, and lands in the branch below that says the engine
             // answered with an error.
             maxRedirects: 0,
-            ...(options.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+            // The module's own client waits what AI_ENGINE_TIMEOUT_MS says (120 s when it is unset), and a
+            // call that waits by that adds nothing: Generera's call has always been exactly that. One that
+            // waits by anything else (the engine's own ceiling, a candidate's budget) states it, or the
+            // client would cut it off at the default first.
+            ...(waitMs !== (this.aiConfig.timeoutMs ?? FALLBACK_WAIT_MS) ? { timeout: waitMs } : {}),
           })
           .pipe(
-            timeout(options.timeoutMs ?? this.aiConfig.timeoutMs),
+            timeout(waitMs),
             /*
              * Three different failures, told apart, because they need three
              * different things done about them.
@@ -4768,6 +4851,11 @@ export class OptimizationProxyService {
                  * carried `search`, and only that exact refusal: any other
                  * 422 is this gateway's mistake and keeps its own sentence.
                  */
+                // An engine older than `deadlineSeconds`, though it said it can take it: it was rolled back
+                // after the times were read. Sent again below without the field, and the times read again.
+                if (error.response.status === 422 && carriesDeadline && refusesField(body, 'deadlineSeconds')) {
+                  throw new EngineLacksDeadline();
+                }
                 if (error.response.status === 422 && carriesSearch && refusesField(body, 'search')) {
                   throw new HttpException(
                     {
@@ -4808,10 +4896,14 @@ export class OptimizationProxyService {
                 if (error.response.status === 422 && carriesPlacements && refusesField(body, 'placements')) {
                   throw new EngineLacksPlacements();
                 }
-                // The engine's own ceiling: said as what it is (ENGINE_TIMED_OUT).
-                if (error.response.status === HttpStatus.SERVICE_UNAVAILABLE && body?.message === ENGINE_CEILING_SENTENCE) {
+                // The engine's own ceiling, from any of its four routes: said as what it is
+                // (ENGINE_TIMED_OUT). By the code, or by the sentence for an engine older than the code.
+                if (error.response.status === HttpStatus.SERVICE_UNAVAILABLE && isEngineCeilingBody(body)) {
+                  // What the engine said of its times may have changed, which is what a ceiling that was not
+                  // expected says: read them again, and do not wait for it.
+                  void this.timing?.refresh();
                   throw new HttpException(
-                    { message: ENGINE_TIMED_OUT_MESSAGE, code: ENGINE_TIMED_OUT },
+                    { message: route === 'optimize' || route === null ? ENGINE_TIMED_OUT_MESSAGE : ENGINE_TIMED_OUT_OTHER_MESSAGE, code: ENGINE_TIMED_OUT },
                     HttpStatus.SERVICE_UNAVAILABLE,
                   );
                 }
@@ -4876,6 +4968,13 @@ export class OptimizationProxyService {
 
       return response.data;
     } catch (error) {
+      if (error instanceof EngineLacksDeadline) {
+        this.logger.warn(`AI engine at ${this.aiConfig.baseUrl} predates deadlineSeconds; sent again without it.`);
+        this.timing?.forget();
+        void this.timing?.refresh();
+        const { deadlineSeconds: _deadline, ...without } = payload as { deadlineSeconds?: unknown };
+        return this.callAiEngine<TResponse>(path, without, maps, options);
+      }
       if (error instanceof EngineLacksPlacements) {
         this.logger.warn(`AI engine at ${this.aiConfig.baseUrl} predates placements; sent again without them.`);
         const { placements: _placements, ...without } = payload as { placements?: unknown };

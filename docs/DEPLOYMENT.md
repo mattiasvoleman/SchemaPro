@@ -252,9 +252,9 @@ Run it with:
 | `APP_ENV` | `production` |
 | `API_KEY` | the generated `AI_ENGINE_API_KEY` |
 | `ALLOWED_ORIGINS` | the API's origin, e.g. `https://api.yourschool.example` |
-| `SOLVER_MAX_TIME_SECONDS` | `60`: the solve budget in seconds (raise for very large schools). A solve that times out answers after this plus `SOLVER_PROBE_SECONDS` (default `20`), counted from the end of its model builds (from the request's arrival for Bästa möjliga schema and for a week that keeps Restid); the probe stops on that clock even when the search ran late, and a rule it had no time for is not probed and not counted in the summary. The engine's own ceiling, after which it answers 503 (`ENGINE_TIMED_OUT` on the page) instead of waiting, is that sum plus 30 s for the builds; a request that asks for no probes (every Schemaförslag call after the first) has the budget plus the 30 s. The old `SOLVER_TIMEOUT_SECONDS` is gone: nothing read it. |
+| `SOLVER_MAX_TIME_SECONDS` | `60`: the solve budget in seconds (raise for very large schools). A solve that times out answers after this plus `SOLVER_PROBE_SECONDS` (default `20`). The engine keeps **one clock per request** (§5.1): the search has this budget, counted from the end of its model builds (from the request's arrival for Bästa möjliga schema and for a week that keeps Restid); the probe's seconds count from where the search *ended*, and nothing after it passes the instant the answer is due, 13 s before the engine's ceiling. The ceiling, after which the engine answers 503 (`ENGINE_TIMED_OUT` on the page) instead of waiting for its solve, is the budget, the probe and 30 s for the builds; a request that asks for no probes (every Schemaförslag call after the first) has the budget and the 30 s; and a request that carries its caller's deadline has the shorter of that and the deadline less 5 s. The engine says all of this on `GET /api/v1/timing` and the API reads it from there: there is no second number to set. The old `SOLVER_TIMEOUT_SECONDS` is gone: nothing read it. |
 | `SOLVER_EXPLAIN_SHARP_SECONDS` | `10` (default, must be above 0 and a finite number; the engine does not start on `0`, a negative value or `inf`): the share of the 15 s explanation cap that a LARGE refused week (50 lessons or more) gets for its first try, on the model without the objective, before the model with it is tried as the reserve. Raise it if the first try does not finish on this processor (section 23). |
-| `EXAM_SOLVER_MAX_TIME_SECONDS` | `20` (default): the budget of the exam planner (`POST /api/v1/plan-exams`, Provplanering), apart from the generator's. A short budget never refuses: a greedy plan is the floor and the answer from the first instant, so less time means fewer exams placed or a clumsier plan. A request can ask for less and never for more. The API waits 90 s for it. |
+| `EXAM_SOLVER_MAX_TIME_SECONDS` | `20` (default): the budget of the exam planner (`POST /api/v1/plan-exams`, Provplanering), apart from the generator's. A short budget never refuses: a greedy plan is the floor and the answer from the first instant, so less time means fewer exams placed or a clumsier plan. A request can ask for less and never for more. The API waits for the engine's ceiling for it (50 s at the default, `GET /api/v1/timing`) and never less than 90 s. |
 
 The solver needs no database and no PII ever reaches it. Keep it on a private
 network reachable only by the API if your host supports it.
@@ -282,8 +282,8 @@ Run it with (see `.env.example` for the full annotated list):
 | `SUPABASE_SERVICE_ROLE_KEY` | service role key |
 | `AI_ENGINE_URL` | solver base URL, scheme included (`https://…`) — a bare hostname is not a URL and surfaces as "AI engine unavailable" |
 | `AI_ENGINE_API_KEY` | the shared secret from step 0 |
-| `AI_ENGINE_TIMEOUT_MS` | `120000`. Must exceed the engine's ceiling, `SOLVER_MAX_TIME_SECONDS` + `SOLVER_PROBE_SECONDS` + 30 s: at the defaults 110 s, so `120000`; at a 180 s budget and a 20 s probe 230 s, so use at least `240000` there. A shorter wait gives up on a solve that answers TIMEOUT in about its budget and its probe, and the school reads "The AI engine did not respond in time." |
-| `CANDIDATE_MAX_SECONDS` | optional, `5`–`120`, default `30`: Schemaförslag's solve budget for each candidate, the same for all of them so the emphases are compared at one budget (docs/verification-baseline.md). Each candidate call waits this plus 45 s (plus 20 s for the first call's probes), whatever `AI_ENGINE_TIMEOUT_MS` says |
+| `AI_ENGINE_TIMEOUT_MS` | **optional, and best left unset.** Unset, the API waits as long as the engine says its route can take (`GET /api/v1/timing`) plus 10 s: 240 s at a 180 s budget and a 20 s probe, and it follows the engine when its budget is changed, so nothing is set in two places. An engine that says nothing (older, or not up yet) is waited for 120 000 ms. Set, it is the wait, and the request carries it to the engine as its deadline (`deadlineSeconds`), so the engine answers inside it; it must then be at least the engine's ceiling plus 5 s: `240000` at a 180 s budget and a 20 s probe (235 000 is the least). **A production start that finds it set and shorter is refused**, with a sentence that says which number to change (the deploy then fails and the one before it keeps serving); at runtime a shorter wait is answered with a shorter search, which a TIMEOUT states ("within 94 s"), and a line in the log. To get out of a refused start remove the variable. |
+| `CANDIDATE_MAX_SECONDS` | optional, `5`–`120`, default `30`: Schemaförslag's solve budget for each candidate, the same for all of them so the emphases are compared at one budget (docs/verification-baseline.md). Each candidate call waits this plus the engine's build headroom (30 s) plus 15 s, and for the first call's probes the engine's own probe (20 s: it is read from the engine, not written here), whatever `AI_ENGINE_TIMEOUT_MS` says. A value above the engine's `SOLVER_MAX_TIME_SECONDS` does nothing, since the engine gives every candidate the smaller, and the API says so once at its start |
 | `CANDIDATE_SOLVER_WORKERS` | optional, `1`–`16`, default `4`: the solver workers a candidate solve uses, so a plain Generera beside it keeps the other cores |
 | `CANDIDATE_RUNS_MAX` | optional, `1`–`10`, default `2`: candidate runs active across all schools at once; a start beyond it answers 409 `CANDIDATES_BUSY`. A run cut off by a redeploy while the engine was solving for it, or whose call timed out (cancelled or not), frees its year at once but keeps counting here until that solve could have ended (at most its call's timeout, about 1½ minutes at the defaults): the engine solves on once its caller stops waiting, whether the API restarted or only gave up on the call, and the engine's own 503 at its timeout does not stop the solve either. "Ta bort förslagen" hides such a run at once, and the sweep deletes its row after that |
 | `THROTTLE_TTL_SECONDS` / `THROTTLE_LIMIT` | `60` / `120` |
@@ -295,7 +295,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `INTEGRATION_SECRETS_KEY_PREVIOUS` | optional, same shape: the key before a rotation, which still decrypts and never encrypts. Rotate by moving the current key here, setting a new one, letting each school's admin save its credential again (or waiting for the next save), then clearing it |
 | `SS12000_BACKGROUND` | `on` (default) or `off`: the 5-minute tick that runs scheduled syncs and marks stale and expired runs, and the 1-minute tick that delivers v2.0 subscription notices and purges old tombstones and delivery rows. A school's sync runs at night only once its admin turns the schedule on, and auto-applies only once the admin turns that on too; a notice goes out only once a consumer has registered a subscription |
 | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` | recommended `15` (Railway's own default is `0`): the seconds between SIGTERM and SIGKILL when a deploy replaces the instance. On SIGTERM the API marks a Schemaförslag run that was solving as interrupted, stops taking requests, lets the ones in flight finish, and only then closes its database pool. With `0` it is killed before any of that: the run is left to its lease (about three minutes), and a request in flight is cut off as before |
-| `CANDIDATES_BACKGROUND` | `on` (default) or `off`: the quarter-hourly sweep that marks abandoned candidate runs FAILED, deletes runs older than seven days, and deletes the emptied rows "Ta bort förslagen" left of runs whose engine call was still out, once that call could have ended. Every start in any school sweeps first, so off only delays those deletions |
+| `CANDIDATES_BACKGROUND` | `on` (default) or `off`: the quarter-hourly sweep that marks abandoned candidate runs FAILED, deletes runs older than seven days, and deletes the emptied rows "Ta bort förslagen" left of runs whose engine call was still out, once that call could have ended. Every start in any school sweeps first, so off only delays those deletions. It also turns off the five-minute `generate-runs-sweep` that fails Generera runs whose lease has run out (§27.1); a Generera start sweeps first too, and the page reads an expired lease as abandoned, so that is delayed in the same way |
 | `COVER_REQUESTS_BACKGROUND` | `on` (default) or `off`: the 5-minute tick that settles the open vikarieförfrågningar: the ones whose time is out end `EXPIRED` and the administrator who asked is told nobody said yes, the ones whose lesson or absence went away end `CLOSED` and the colleagues they waited on are told. A question past its time cannot be answered whether or not it has run; the tick settles the stored status, frees the lesson for a new question and tells who it concerns |
 | `CRISIS_BACKGROUND` | `on` (default) or `off`: the quarter-hourly look at alarms left open in Krisläge. A real alarm that has stood open for 12 hours, or an exercise for 3, is ended (`autoEnded`), because only one of each kind can be open and a forgotten one would stop the next. Nobody is told; the app reads the alarm again when it is opened. With `off` an alarm is ended by an administrator or not at all |
 | `GALLRING_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of the nightly gallring. A school's run starts at 03:00 its local time, once a night, and only for the kinds its admin has given a period on `/admin/dataskydd`; a school that has decided nothing loses nothing |
@@ -313,6 +313,34 @@ point.
 
 Verify: any request without a bearer token returns `401` in the RFC-7807
 shape, e.g. `curl -i https://api.yourschool.example/api/v1/subjects -X POST`.
+
+### 5.1 Every time in the chain, and which of them is set by hand
+
+A generation passes through several limits, and until the Generera runs of 2026-11-17 (three of them ended in "The AI engine returned an error." because the engine's ceiling fell in the middle of its own probe) they were set by hand in two services and held together by a paragraph of this file. They are now one chain with one clock per request: the engine says its times, the API reads them, and a request carries its caller's deadline. **What is still set by hand is the first block of rows below, all of it on the engine and all optional but the budget.**
+
+| Time | At the production settings | Where it comes from | Set by hand? |
+| --- | --- | --- | --- |
+| The search's budget | 180 s | engine `SOLVER_MAX_TIME_SECONDS` | **yes**, on the engine |
+| The timeout probe | 20 s | engine `SOLVER_PROBE_SECONDS` (0 switches it off) | yes, optional |
+| The explanation's first try on a large week | 10 s of a 15 s cap | engine `SOLVER_EXPLAIN_SHARP_SECONDS`; the cap is code | yes, optional |
+| The room, staffing and exam budgets | 10, 10 and 20 s | engine `ROOM_SOLVER_MAX_TIME_SECONDS`, `STAFF_SOLVER_MAX_TIME_SECONDS`, `EXAM_SOLVER_MAX_TIME_SECONDS` | yes, optional |
+| A schemaförslag candidate's budget | 30 s | API `CANDIDATE_MAX_SECONDS` (the engine takes the smaller of it and its own budget) | yes, optional |
+| The API's wait, as a cap | none | API `AI_ENGINE_TIMEOUT_MS` | optional, best left unset |
+| The build headroom | 30 s | code (`optimization-engine/app/timing.py`) | no |
+| The transfer margin between the API and the engine | 5 s | code | no |
+| **The engine's ceiling** (it answers 503 `SOLVER_TIMEOUT` after it) | **230 s** | the budget, the probe and the headroom; for a request with a deadline at most the deadline less the transfer margin. Said on `GET /api/v1/timing` | no |
+| The instant the answer is due | 217 s | the ceiling less 13 s: 3 s to build the answer and 10 s for a solve that stops past its own limit, as the search of the 809-lesson week did on 2026-11-17; every step of the solve ends before it, the probe and the explanation first | no |
+| The API's wait for Generera | 240 s | the engine's ceiling and 10 s, unless `AI_ENGINE_TIMEOUT_MS` is set | no |
+| A schemaförslag call's wait | 95 s (the first call, with probes), 75 s | `CANDIDATE_MAX_SECONDS`, the engine's headroom and probe, and 15 s | no |
+| The page's "up to N minutes", and anything that needs to know how long a run can last | the API's wait | the API's wait (`OptimizationProxyService.waitSeconds`) | no |
+
+When the numbers disagree, in the order of how soon it is said:
+
+1. **At the API's start**, in production, if `AI_ENGINE_TIMEOUT_MS` is set and shorter than the engine's ceiling plus 5 s: the start is refused with "AI_ENGINE_TIMEOUT_MS=120000 is shorter than the engine can need: …" and the three ways out (raise it, remove it, lower the engine's budget). Only if the engine answered; an engine that is down, older or not up yet is not a reason to refuse, and a deploy brings the two up together in either order.
+2. **On a call**, if the engine's variables were changed after the API started (a change on the engine restarts only the engine): the request carries the API's wait as its deadline, so the engine answers inside it with a shorter search, a TIMEOUT that says how long it searched, and its probe cut to what is left (never less than 5 s of it). The API logs the sentence once and reads the engine's times again every ten minutes and after any ceiling it did not expect.
+3. **Never as a 503 the API has stopped waiting for**, which is what the three runs of 2026-11-17 were.
+
+A deploy brings the engine and the API up together, in either order (both deploy on every merge), and every combination of old and new is the old behaviour or better: an API older than this reads nothing and sends no deadline, and an engine older than this answers 404 on `/api/v1/timing`, after which the API waits as it always did and sends no field the engine would refuse. An engine that is rolled back after its times were read answers the first request with a 422 naming `deadlineSeconds`; the API sends it again without the field and reads the times again.
 
 ## 6. Deploy the web app
 
@@ -6440,6 +6468,113 @@ while the file's transaction is open.
 - After a release that rewrites one of the six, run `prod-fore.sql` of that release: the `prosrc` row of the function it
   rewrites is the one that must equal the "After" column above.
 
+## 27. Generera as a queue entry ("Generera som kö", omgång 12, M4)
+
+A Generera run is a row in `OptimizationJobs` that the API process which took the request works on in the background. The row
+was durable and the work was not: every merge deploys the API, a run takes up to about four minutes, and a process that went in
+the middle left its row at `RUNNING` for ever, the page polling it for ever, and nothing stopped two administrators starting two
+runs of one year. Schemaförslag's runs (`ScheduleCandidateRuns`, 20261125090000) already had a heartbeat, a lease, a sweep and
+a partial unique index; Generera now has the same. The engine is not changed.
+
+Migration `20270222090000_en_generera_korning_har_en_lease_och_ett_lasar_hogst_en_aktiv`: three columns on `OptimizationJobs`,
+two CHECKs, one partial unique index and one function. No new table, no grant on a table, no arm.
+
+| Added | What it is |
+|---|---|
+| `claimedBy text` | The API process that runs it (`host:pid:random`), for the log. Null before the column and for a run an older API started. Never on the wire. |
+| `heartbeatAt timestamptz` | The database's clock at the run's last sign of life. Default `now()`. |
+| `leaseUntil timestamptz` | Until when the run holds its year. Default `now() + 15 minutes`, which is what an API from before the column gives a run. CHECK: at least the heartbeat and at most an hour past it. |
+| `OptimizationJobs_one_active_per_year` | `UNIQUE (schoolId, academicYearId) WHERE status IN ('PENDING','RUNNING')`: at most one active run per year, by the database. |
+| `app.optimization_jobs_sweep()` | `SECURITY DEFINER`, no argument, returns the number of runs it failed. Fails an active run whose lease ran out, or that began more than 30 minutes ago, `FAILED` with `ENGINE_RUN_ABANDONED`, finished when its lease ran out. Takes its rows `FOR UPDATE SKIP LOCKED`. Refuses (`GQ403`) a call that carries a login, as the doors of §26 do; only the API's role may run it. |
+
+### 27.1 The lease, the heartbeat and what the engine can still be doing
+
+`OptimizationJobsService` makes a first heartbeat before the engine call (`RUNNING`, the claimant, the lease: one
+compare-and-set, `WHERE status IN ('PENDING','RUNNING')`) and then renews it every 30 seconds with a timer while the run
+lives. Each renewal sets the lease to **the API's wait for the engine (`AI_ENGINE_TIMEOUT_MS`) plus 30 seconds**, clamped to the
+database's 60–3600 s: at the 240 000 ms §5 asks for at a 180 s budget, 270 s. §5 requires `AI_ENGINE_TIMEOUT_MS` to exceed the
+engine's ceiling (`optimize.solve_ceiling_seconds`: the budget, the probe and thirty seconds: 230 s at 180 and 20), so a run whose
+lease has run out has no engine call left to wait for, and the year can be given to the next one without a second solve starting
+beside the first. (The engine's 503 at its ceiling stops its wait and not its solve thread, which `ENGINE_TIMED_OUT` says to
+the school; the ten seconds the API's wait has over the ceiling, and the thirty on top of it, are where that goes. It is a margin,
+not a proof, until the engine reports when its thread ends.) When the engine can say its own ceiling (M1), the lease takes it from there; until then it follows the wait
+the API enforces, as the page's "up to N minutes" does. `CANDIDATES_BACKGROUND=off` turns off this sweep as well as
+schemaförslag's.
+
+A renewal that finds the run no longer active (the sweep gave it up, a restart failed it, it ended) stops the timer and writes
+nothing. A run whose engine call comes back after that writes its own outcome, `SUCCEEDED` or `FAILED`, over what was guessed
+about it, and takes the abandonment off the row.
+
+### 27.2 What ends a run whose process went away
+
+1. **A restart that can say so.** `OnModuleDestroy` fails the runs this instance has in flight, best effort, at once:
+   `FAILED`, `ENGINE_RUN_ABANDONED`. The year is free for the next start.
+2. **The sweep.** Before every start (in a transaction of its own, so a failure costs only what it would have freed), and every
+   five minutes as the job `generate-runs-sweep` in the gateway's runner (`JobRuns`).
+3. **The page's own read.** `GET /optimization/jobs/:id` and the history show an active run past its lease as `FAILED`
+   `ENGINE_RUN_ABANDONED`, finished when the lease ran out, before the sweep has come round. The page says
+   "Körningen avbröts när tjänsten startades om. Kör Generera igen." and offers "Kör igen", also after a reload when the year's
+   newest run is such a run, and the history names it "Avbröts".
+
+### 27.3 One active run per year, and how it meets the other refusals
+
+| Code | 409 when | Raised by |
+|---|---|---|
+| `GENERATE_ALREADY_RUNNING` | a Generera run of the year is going and a second is started | the partial unique index (23505 on the insert), the one thing that holds even for a start that took no lock |
+| `CANDIDATES_RUNNING` | Generera is started beside a live schemaförslag run of the year | the start's own check, under the year's start lock |
+| `GENERATE_RUNNING` | a schemaförslag run is started, or one is applied, beside a live Generera run of the year | the candidates' check, which now counts a Generera run only while it is inside its lease and its 15 minutes (`leaseUntil >= now`) |
+| `SCHEDULE_BUSY` | the year's start lock is not free within 5 s, or (at the end of a run) the regeneration lock is not | `lockYearForSolveStart`, and the write at the end of a run, which stores it on the run |
+
+`SCHEDULE_BUSY` is "someone is rewriting the year right now": an apply, a restore or a run's write holds the regeneration lock for a
+moment, and the answer is to try again in a few seconds. `GENERATE_ALREADY_RUNNING` is "a run is going": the second start waits
+for it, and the page keeps the button waiting with the reason beside it, and after a refused click reads the history again so the
+run shows and is polled. The two kinds of run (Generera's and schemaförslag's) are kept apart as before, by the start lock and each
+start's check of the other's table: a constraint cannot span two tables, so that half is not the database's.
+
+### 27.4 Production's rows that hang now
+
+Production can hold rows that stopped at `RUNNING`. A unique index cannot be built over two of one year, so the migration, in
+its one transaction (the file has a `$$` body), first: closes every active run older than 15 minutes (no run of the old API
+lasts that long; the old gateway and page already called a job older than that lost) as `FAILED` `ENGINE_RUN_ABANDONED`; leaves
+every younger one exactly as it is, with fifteen minutes from its start as its lease; and **stops with nothing changed** if two
+runs of one year are both younger than that (`prisma migrate resolve --rolled-back <name>`, then deploy again when one has ended).
+`prod-fore.sql` counts them: `years_with_two_runs_going_both_younger_than_15_minutes_...` must be 0.
+
+### 27.5 Deploy order, and what the old API does in between
+
+**The migration first, then the merge.** The API after this names the new columns and calls the new function. The file takes
+`OptimizationJobs` `ACCESS EXCLUSIVE` NOWAIT in a loop (50 ms apart, 30 s at most, then it stops with nothing changed), the only
+table it touches; `ADD COLUMN` with a stable default rewrites nothing. The API before it names the old columns only and
+keeps working; the one difference, said once: in the minutes between the migration and the API's deploy, a start of a year that
+already has a run going fails (23505, a 500 from the old gateway) where it used to start a second solve beside the first.
+
+Rollback: the API from before runs against the new schema unchanged. To take the guarantee away, `DROP INDEX
+"OptimizationJobs_one_active_per_year"`; the columns and the function can stay.
+
+### 27.6 What is not done
+
+- No other process picks a lost run up: it is failed with a sentence that says so, and the administrator runs Generera again.
+- The synchronous `POST /optimization/trigger` has no row and so no lease; it is not a queue entry.
+- The lease follows `AI_ENGINE_TIMEOUT_MS` and not the engine's own ceiling until M1 lets the API read that.
+
+### 27.7 Tests
+
+RLS sections 530–534 (the catalogue; the index in action for each status and school; the CHECKs at their edges and the renewal
+through the API's role and the roles that may not; the sweep to the microsecond with `now()` held still by the transaction;
+the door's refusal of every shape of login and its rights), on PostgreSQL 16 and 17. The adapter probe's `gq-a`–`gq-j`
+(`scripts/test/probe-generera-ko.ts`) run the real service against the database: a start's claim and lease, the second start's 409
+and the adapter's own shape of the refusal, two starts at once as one run and one 409, a renewal, an expired lease read and swept,
+a row a heartbeat holds skipped, the door through the adapter, a second year of one school beside the first, a run that comes back
+after being given up, a restart, and a start while the API's own clock leads the database's by twenty minutes (the heartbeat and the
+lease are both filled by the database's clock, which the check between them compares).
+
+A run across a real jump of the database's clock was run by hand on the clock-shim image (a probe in CI cannot restart its
+database, so it is not a CI step). Three steps ran against one database kept on a volume; between them it was recreated with its
+`CLOCK_REALTIME` moved on by an offset, and the API process was started with its own clock moved on by the same offset. A run
+started through the real service took a lease of 270 s and its process was ended without `OnModuleDestroy`. With the database's clock moved on 100 s the page read it as
+running and a second start was 409 `GENERATE_ALREADY_RUNNING`; moved on 300 s the page read it as `FAILED`
+`ENGINE_RUN_ABANDONED` while the row still said `RUNNING`, and a start swept it first (finished at its lease end) and went through.
+
 ## 28. A school's saved column mappings ("Kolumnmappning", part 1 of 3: the templates)
 
 The browser maps the columns of a school's own file to Rastra's fields (round 12, X2); this part keeps what the school named.
@@ -6464,8 +6599,11 @@ Migration `20270223090000_en_skola_sparar_kolumnmallar_for_sina_importer` makes 
 ### 28.1 Deploy order
 
 1. Run the migration. It adds a table nothing else reads, so a gateway from before it is unaffected and a migration with no
-   gateway is harmless. In production, as the owner, from a tree that has every applied migration: `prod-fore.sql`,
-   `migrate deploy`, `prod-efter.sql`.
+   gateway is harmless. In production, as the owner, from a tree that has every applied migration: the release's
+   `prod-fore.sql`, `migrate deploy`, the release's `prod-efter.sql` (read-only SQL kept with the release's notes, not in this
+   repository). The migration's one lock on a live table is SHARE ROW EXCLUSIVE on `Schools` for the foreign key: it waits
+   for a transaction that is writing `Schools` (nothing in the gateway does) and blocks nothing that reads it or checks a
+   key against it.
 2. Merge. The gateway answers the new routes, and the signature fields are accepted (`forbidNonWhitelisted` is on, so a
    gateway from before them answers 400 to a row that carries one: the web that sends them is deployed after this).
 3. The web (parts 2 and 3) lists the templates when a dialog opens and treats a failed read as "no templates": it works
@@ -6493,6 +6631,9 @@ Migration `20270223090000_en_skola_sparar_kolumnmallar_for_sina_importer` makes 
   other, the API role's four privileges, nobody's MAINTAIN), who reads and who writes, the school, the bounds, and PostgREST's
   roles. Section 116's area matrix lists the table (`src/auth/admin-areas.ts`). The adapter probe's `km1` to `km5` run the
   service and the signature import through the real adapter.
-- Production's order, for `prod-efter.sql`: as the API's role, the table exists with row security on and four arms, the API
-  role holds SELECT, INSERT, UPDATE and DELETE on it, `authenticated` and `anon` hold nothing, and a write inside a transaction
-  that is rolled back is admitted for a Planering administrator and refused for a läsare.
+- What `prod-efter.sql` asks of production, read-only and as the owner (the API's own login is not on the operator's
+  machine, so each role's rights are read with `has_table_privilege`): the table has the columns, keys, CHECKs and indexes
+  above, row security is on and not forced, the four arms read as the migration wrote them (text and md5), the API role holds
+  SELECT, INSERT, UPDATE and DELETE and nothing more, `authenticated`, `anon` and `service_role` write nothing, nobody holds
+  MAINTAIN, and no other table, function or arm changed. That a Planering administrator writes and a läsare does not is held
+  by RLS sections 535 to 539, not asked of production.

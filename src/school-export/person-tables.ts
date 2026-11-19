@@ -320,7 +320,9 @@ export function tableFiles(): TableFile[] {
 export const WITHOUT_SCHOOL_COLUMN: ReadonlySet<string> = new Set(['RoomLoans']);
 
 const identifier = (name: string): Prisma.Sql => Prisma.raw(`"${name.replace(/"/g, '""')}"`);
-const SECRET = /token|secret|password|hash|apikey/i;
+// claimedBy is the API process that ran a Generera run (host:pid:random, OptimizationJobs): the platform's own name for an
+// instance, which is nothing the person asked for and nothing a school should read, so it is written (dold) as a secret is.
+const SECRET = /token|secret|password|hash|apikey|claimedby/i;
 
 /** The rows of `file.table` that are the persons' `ids`, as the table has them (column order kept). */
 export async function readTable(tx: PrismaClient, schoolId: string, file: TableFile, ids: readonly string[]): Promise<Array<Record<string, unknown>>> {

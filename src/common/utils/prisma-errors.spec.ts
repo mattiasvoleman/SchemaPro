@@ -314,6 +314,27 @@ describe('rethrowPrismaError and a tjänstefördelning CHECK', () => {
   });
 });
 
+describe('rethrowPrismaError and a kolumnmall CHECK', () => {
+  // Every CHECK of 20270223090000 that a field names: the DTO and the service refuse these first.
+  it.each([
+    ['ImportMappingTemplates_placements_check', 'placements'],
+    ['ImportMappingTemplates_name_check', 'name'],
+    ['ImportMappingTemplates_headerRow_check', 'headerRow'],
+    ['ImportMappingTemplates_kind_check', 'kind'],
+  ])('answers %s with a 400 naming %s', (constraint, field) => {
+    let thrown: unknown;
+    try {
+      rethrowPrismaError(
+        driverError('23514', `new row for relation "ImportMappingTemplates" violates check constraint "${constraint}"`),
+      );
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(BadRequestException);
+    expect((thrown as BadRequestException).message.startsWith(`${field}: `)).toBe(true);
+  });
+});
+
 describe('rethrowPrismaError and a rastvaktsschema CHECK', () => {
   // Every CHECK of 20261207090000, each with the field its 400 names: the
   // service and the DTOs refuse these first, so a row only meets the CHECK

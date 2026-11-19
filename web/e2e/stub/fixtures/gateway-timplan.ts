@@ -2,7 +2,7 @@ import { Reply, route, type GatewayRoute } from "../gateway-routes";
 import { plannedClassPupils, plannedCoverage, teachingTimeCard } from "./timplan-coverage";
 import { placedInYear, placedOf, placementsStored, SHARED_PLACEMENTS_SCENARIO, SHARED_POST_SHARES } from "./timplan-placements";
 import { BLOCK, blockPlacementsOf, blockPlacementsStored, blockWeekRead, blockWeekWrite, isBlockWeekScenario } from "./timplan-block-placements";
-import { boardOfYear, writePlacements } from "./timplan-board";
+import { boardOfYear, latestOfYear, writePlacements } from "./timplan-board";
 import { NATIONAL_TIMPLANS } from "./timplan-national";
 import { CHECKS, CREDITS, PLAN_LIST, PLANS, YEAR_TIMPLANS } from "./timplan-plans";
 import { GUARDIAN_LINKS, NEXT_YEAR, REQUIREMENTS, YEAR } from "./world";
@@ -75,6 +75,15 @@ export const timplanRoutes: GatewayRoute[] = [
     const yearId = query.get("academicYearId") ?? "";
     if (!KNOWN_YEARS.has(yearId)) return notFound("Läsåret");
     return boardOfYear(yearId, scenario);
+  }),
+
+  // Förlägg i veckan, "Visa senaste schemat": the lessons the last Generera laid, read when the school asks (timplan-board.ts latestOfYear).
+  route("GET", "/api/v1/teaching-requirements/placements/latest", ({ person, query }) => {
+    if (!person) return new Reply(401, { message: "Inte inloggad." });
+    if (person.role !== "SCHOOL_ADMIN") return new Reply(403, { message: "Åtkomst nekad." });
+    const yearId = query.get("academicYearId") ?? "";
+    if (!KNOWN_YEARS.has(yearId)) return notFound("Läsåret");
+    return latestOfYear(yearId);
   }),
 
   // One post's rows and their verdicts (the dialog Förlägg opens on), and the

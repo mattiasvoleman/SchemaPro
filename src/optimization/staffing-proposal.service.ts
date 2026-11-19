@@ -620,12 +620,15 @@ export class StaffingProposalService {
           // post, which an administrator without the mark is not.
           if (dto.undo === true) {
             if (!staff.has(change.toTeacherId)) restoring.push(change.toTeacherId);
+          } else if (staff.has(change.toTeacherId)) {
+            // An administrator the school has marked as teaching was offered posts when the proposal was computed, and the mark has
+            // been taken off since. The basis holds who is staff and not who is a candidate (a new basis would make every digest,
+            // an undo's too, out of date at each change of a mark), so the proposal still passes the basis and is old only here.
+            // It is the proposal gone old, as any other change under it is: "calculate again", the flow the dialog already has
+            // (review of #340, LÅG-3; it was a 400 with an English sentence and a uuid that the dialog showed as it stood).
+            throw stale();
           } else {
-            throw new BadRequestException(
-              staff.has(change.toTeacherId)
-                ? `Teacher ${change.toTeacherId} is an administrator who does not teach (Users.teaches), so is offered no post.`
-                : `Teacher ${change.toTeacherId} is not active staff of this school.`,
-            );
+            throw new BadRequestException(`Teacher ${change.toTeacherId} is not active staff of this school.`);
           }
         }
         if (change.toTeacherId !== null && change.toTeacherId === row.coTeacherId) {

@@ -1893,7 +1893,7 @@ export class ImportService {
         dto.rows
           .flatMap((row) => [row.teacherSignature, row.coTeacherSignature])
           .filter((signature): signature is string => !!signature?.trim())
-          .map((signature) => this.normalizeName(signature)),
+          .map((signature) => this.normalizeSignature(signature)),
       );
       const teacherBySignature = new Map<string, string | null>();
       if (signatures.size > 0) {
@@ -1901,7 +1901,7 @@ export class ImportService {
           where: { academicYearId: dto.academicYearId, signature: { not: null } },
           select: { userId: true, signature: true },
         });
-        const named = employments.filter((employment) => signatures.has(this.normalizeName(employment.signature ?? '')));
+        const named = employments.filter((employment) => signatures.has(this.normalizeSignature(employment.signature ?? '')));
         const active = new Set(
           (
             await tx.user.findMany({
@@ -1912,7 +1912,7 @@ export class ImportService {
         );
         for (const employment of named) {
           if (!active.has(employment.userId)) continue;
-          const key = this.normalizeName(employment.signature ?? '');
+          const key = this.normalizeSignature(employment.signature ?? '');
           teacherBySignature.set(key, teacherBySignature.has(key) ? null : employment.userId);
         }
       }
@@ -2778,6 +2778,16 @@ export class ImportService {
   }
 
   /**
+   * A signature as it is compared: composed (NFC), trimmed, inner spaces collapsed and lower-cased, as the schedule
+   * exchange compares one (exchange-plan.ts normalizeName). "ÅSÖ" typed as A + a combining ring looks like the post's
+   * and is not the same string until it is composed, and the sentence for the row would then say that nobody holds a
+   * signature that is plainly on the screen.
+   */
+  private normalizeSignature(signature: string): string {
+    return signature.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
+  }
+
+  /**
    * The teacher a signature names this year, or the sentence for a row that names none: no active teacher holds
    * it, or two do (spellings that differ only in case). Kolumnmappning (X2).
    */
@@ -2786,7 +2796,7 @@ export class ImportService {
     signature: string,
     coTeacher: boolean,
   ): { userId: string } | string {
-    const found = bySignature.get(this.normalizeName(signature));
+    const found = bySignature.get(this.normalizeSignature(signature));
     const who = coTeacher ? ' (medlärare)' : '';
     if (found === undefined) {
       return `Ingen aktiv lärare med signaturen "${signature}"${who} det valda läsåret. Lägg in signaturen på lärarens tjänst först, eller lämna kolumnen tom.`;

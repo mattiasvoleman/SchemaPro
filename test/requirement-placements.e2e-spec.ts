@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import request from 'supertest';
 import { Role } from '../src/auth/enums/role.enum';
+import { generatedMastersWhere } from '../src/optimization/preserved-lessons';
 import { rowsKeyOf as keyOfRows } from '../src/requirement-placements/placement-rows-key';
 
 /** The key of rows as the fixture states them (its recurrence is a plain string, the key's type a LessonRecurrence). */
@@ -302,6 +303,79 @@ describe('Förlagda poster (e2e)', () => {
       it('is every administrator\'s to read and no teacher\'s', async () => {
         await board().set('x-test-user', asUser({ adminProfile: 'LASARE' as never })).expect(200);
         await board().set('x-test-user', asUser({ role: Role.TEACHER })).expect(403);
+      });
+    });
+
+    describe('the latest schedule (the week\'s "Visa senaste schemat")', () => {
+      const latest = (year = YEAR_ID) => request(http()).get(`/api/v1/teaching-requirements/placements/latest?academicYearId=${year}`);
+      const GENERATED = {
+        id: 'g-1',
+        dayOfWeek: 2,
+        startTime: wallClock('08:00'),
+        endTime: wallClock('09:00'),
+        studentGroupId: GROUP_ID,
+        subjectId: SUBJECT_ID,
+        teacherId: '88888888-8888-4888-8888-888888888888',
+        coTeacherId: null,
+        roomId: ROOM_ID,
+        recurrence: 'ODD_WEEKS',
+        startDate: null,
+        endDate: null,
+        isLocked: false,
+        isGenerated: true,
+        extraGroups: [],
+      };
+
+      beforeEach(() => {
+        harness.tx['academicYear']!['findUnique']!.mockResolvedValue({ id: YEAR_ID });
+        harness.tx['masterLesson']!['findMany']!.mockResolvedValue([GENERATED]);
+      });
+
+      afterEach(() => {
+        harness.tx['academicYear']!['findUnique']!.mockReset();
+        givenKept([]);
+      });
+
+      it('answers the lessons the next Generera replaces, as ids and clocks, and nothing of a person', async () => {
+        const response = await latest().set('x-test-user', admin()).expect(200);
+        expect(response.body).toEqual({
+          academicYearId: YEAR_ID,
+          lessons: [
+            {
+              id: 'g-1',
+              dayOfWeek: 2,
+              startTime: '08:00',
+              endTime: '09:00',
+              studentGroupId: GROUP_ID,
+              extraGroupIds: [],
+              subjectId: SUBJECT_ID,
+              teacherId: '88888888-8888-4888-8888-888888888888',
+              coTeacherId: null,
+              roomId: ROOM_ID,
+              recurrence: 'ODD_WEEKS',
+              startDate: null,
+              endDate: null,
+              locked: false,
+              generated: true,
+            },
+          ],
+        });
+        // The read is the year's lessons that are not kept, not parked and not written from a förläggning.
+        expect(harness.tx['masterLesson']!['findMany']).toHaveBeenCalledWith(expect.objectContaining({ where: generatedMastersWhere(YEAR_ID) }));
+        // No lesson with a second class is read (generatedMastersWhere leaves them out), so there is no read of the second classes either.
+        const select = (harness.tx['masterLesson']!['findMany']!.mock.calls.at(-1)![0] as { select: Record<string, unknown> }).select;
+        expect(select).not.toHaveProperty('extraGroups');
+      });
+
+      it('is a year that is there: 404 for one the caller cannot see, and 400 for a year that is no uuid', async () => {
+        harness.tx['academicYear']!['findUnique']!.mockResolvedValue(null);
+        await latest().set('x-test-user', admin()).expect(404);
+        await latest('x').set('x-test-user', admin()).expect(400);
+      });
+
+      it('is every administrator\'s to read and no teacher\'s', async () => {
+        await latest().set('x-test-user', asUser({ adminProfile: 'LASARE' as never })).expect(200);
+        await latest().set('x-test-user', asUser({ role: Role.TEACHER })).expect(403);
       });
     });
 

@@ -17,6 +17,16 @@ import type {
   AiEngineScheduleResponse,
 } from './interfaces/ai-engine-payload.interface';
 import { OptimizationJobsService, jobView } from './optimization-jobs.service';
+import {
+  ABANDONED_MESSAGE,
+  ENGINE_RUN_ABANDONED,
+  GENERATE_ALREADY_RUNNING,
+  GENERATE_SWEEP_INTERVAL_MS,
+  GENERATE_SWEEP_JOB,
+  HEARTBEAT_INTERVAL_MS,
+  INSTANCE_NAME,
+  INTERRUPTED_MESSAGE,
+} from './generate-runs';
 import type { OptimizationProxyService } from './optimization-proxy.service';
 import { recordedReads } from '../../test/utils/recorded-reads';
 import {
@@ -59,6 +69,9 @@ describe('OptimizationJobsService', () => {
     proxy = { triggerScheduling: jest.fn().mockResolvedValue(engineResponse()) };
     tx.optimizationJob.create.mockResolvedValue({ id: JOB_ID });
     tx.optimizationJob.update.mockResolvedValue({});
+    // The run's heartbeats and its first claim are one compare-and-set each:
+    // one row updated says the run is still active and the process's own.
+    tx.$executeRaw.mockResolvedValue(1);
     service = new OptimizationJobsService(
       proxy as unknown as OptimizationProxyService,
       prisma as unknown as PrismaService,
@@ -126,7 +139,9 @@ describe('OptimizationJobsService', () => {
         status: 409,
         response: expect.objectContaining({ code: 'CANDIDATES_RUNNING' }),
       });
-      const sql = (tx.$queryRaw.mock.calls[0][0] as { strings: string[]; values: unknown[] });
+      const sql = tx.$queryRaw.mock.calls
+        .map(([call]) => call as { strings: string[]; values: unknown[] })
+        .find((call) => call.strings.join('?').includes('"ScheduleCandidateRuns"')) as { strings: string[]; values: unknown[] };
       expect(sql.values).toEqual([YEAR_ID]);
       expect(sql.strings.join('?')).toContain(`"heartbeatAt" + make_interval(secs => "leaseSeconds") >= now()`);
       expect(tx.optimizationJob.create).not.toHaveBeenCalled();
@@ -135,22 +150,33 @@ describe('OptimizationJobsService', () => {
 
     it('asks under the year’s start lock, which a candidate start takes too, so two clicks cannot pass beside each other', async () => {
       const order: string[] = [];
-      tx.$executeRaw.mockImplementation(async (strings: readonly string[]) => {
-        order.push(strings.join('?'));
-        return 0;
+      const textOf = (statement: unknown): string =>
+        Array.isArray(statement) ? statement.join('?') : (statement as { strings: string[] }).strings.join('?');
+      tx.$executeRaw.mockImplementation(async (statement: unknown) => {
+        order.push(textOf(statement));
+        return 1;
       });
-      tx.$queryRaw.mockImplementation(async () => {
+      tx.$queryRaw.mockImplementation(async (statement: unknown) => {
+        const text = textOf(statement);
+        if (text.includes('optimization_jobs_sweep')) {
+          order.push('sweep');
+          return [{ changed: 0 }];
+        }
         order.push('check');
         return [{ active: 0 }];
       });
 
       await service.start(YEAR_ID, testUser());
 
-      expect(order).toEqual([
+      // The sweep first, in a transaction of its own; then the lock and the check; the insert; and only then the
+      // run's first heartbeat.
+      expect(order.slice(0, 4)).toEqual([
+        'sweep',
         "SET LOCAL lock_timeout = '5s'",
         "SELECT pg_advisory_xact_lock(hashtext('grundschema-solve-start'), hashtext(?::uuid::text))",
         'check',
       ]);
+      expect(tx.optimizationJob.create).toHaveBeenCalledTimes(1);
     });
 
     it('starts beside no candidate run, or one past its lease', async () => {
@@ -224,11 +250,11 @@ describe('OptimizationJobsService', () => {
       await service.start(YEAR_ID, testUser());
       await flushBackgroundRun();
 
+      // RUNNING is the first heartbeat: the claim and the lease in one compare-and-set, before the solver call.
+      const beat = tx.$executeRaw.mock.calls.find(([call]) => (call as { strings?: string[] }).strings?.join('?').includes(`SET "status" = 'RUNNING'`));
+      expect(beat).toBeDefined();
+      expect(tx.optimizationJob.update).toHaveBeenCalledTimes(1);
       expect(tx.optimizationJob.update).toHaveBeenNthCalledWith(1, {
-        where: { id: JOB_ID },
-        data: { status: 'RUNNING' },
-      });
-      expect(tx.optimizationJob.update).toHaveBeenNthCalledWith(2, {
         where: { id: JOB_ID },
         data: {
           status: 'SUCCEEDED',
@@ -250,6 +276,10 @@ describe('OptimizationJobsService', () => {
           ],
           // Every wish kept, or none stated: null, as on every run before.
           notes: DbNull,
+          // What a sweep or a restart said of the run while it was going is taken back: what happened wins.
+          error: null,
+          errorCode: null,
+          errorParams: DbNull,
           finishedAt: expect.any(Date),
         },
       });
@@ -391,9 +421,7 @@ describe('OptimizationJobsService', () => {
 
     it('resolves even when recording the FAILED status itself fails', async () => {
       proxy.triggerScheduling.mockRejectedValue(new Error('engine down'));
-      tx.optimizationJob.update
-        .mockResolvedValueOnce({}) // RUNNING
-        .mockRejectedValue(new Error('db down')); // FAILED write also fails
+      tx.optimizationJob.update.mockRejectedValue(new Error('db down')); // the FAILED write also fails
 
       await expect(runPrivate()).resolves.toBeUndefined();
     });
@@ -449,7 +477,6 @@ describe('OptimizationJobsService', () => {
 
     it('marks the job FAILED when persisting the success result fails', async () => {
       tx.optimizationJob.update
-        .mockResolvedValueOnce({}) // RUNNING
         .mockRejectedValueOnce(new Error('conflicts write failed')) // SUCCEEDED
         .mockResolvedValueOnce({}); // FAILED
 
@@ -465,14 +492,14 @@ describe('OptimizationJobsService', () => {
       );
     });
 
-    it('records a failed RUNNING update on the job row instead of rejecting', async () => {
-      // The RUNNING write once sat outside run()'s try/catch, so its rejection
-      // escaped into `void this.run(...)` in start() — an unhandled rejection,
-      // which Node answers by killing the API for every school on the instance.
-      // It has to be contained like every other failure in the run.
-      tx.optimizationJob.update
-        .mockRejectedValueOnce(new Error('db down')) // RUNNING
-        .mockResolvedValueOnce({}); // FAILED
+    it('records a failed first heartbeat on the job row instead of rejecting', async () => {
+      // The RUNNING write (now the first heartbeat) once sat outside run()'s
+      // try/catch, so its rejection escaped into `void this.run(...)` in
+      // start() — an unhandled rejection, which Node answers by killing the API
+      // for every school on the instance. It has to be contained like every
+      // other failure in the run.
+      tx.$executeRaw.mockRejectedValueOnce(new Error('db down')); // the first heartbeat
+      tx.optimizationJob.update.mockResolvedValueOnce({}); // FAILED
 
       await expect(runPrivate()).resolves.toBeUndefined();
 
@@ -515,6 +542,313 @@ describe('OptimizationJobsService', () => {
     });
   });
 
+  describe('the run as a queue entry', () => {
+    const statementOf = (call: unknown): string =>
+      Array.isArray(call) ? call.join('?') : ((call as { strings?: string[] }).strings ?? []).join('?');
+    const beats = () => tx.$executeRaw.mock.calls.filter(([call]) => statementOf(call).includes(`SET "status" = 'RUNNING'`));
+    const uniqueViolation = (shape: 'P2002' | 'adapter') =>
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: shape === 'P2002' ? 'P2002' : 'P2010',
+        clientVersion: 'test',
+        meta:
+          shape === 'P2002'
+            ? { target: ['schoolId', 'academicYearId'] }
+            : { driverAdapterError: { cause: { originalCode: '23505', originalMessage: 'duplicate key' } } },
+      });
+
+    /** What the heartbeats answer in turn (the last one stays), every other raw statement of the start passing. */
+    const heartbeatsAnswer = (...answers: Array<number | Error>) => {
+      tx.$executeRaw.mockImplementation(async (call: unknown) => {
+        if (!statementOf(call).includes(`SET "status" = 'RUNNING'`)) return 0;
+        const next = answers.length > 1 ? answers.shift()! : answers[0]!;
+        if (next instanceof Error) throw next;
+        return next;
+      });
+    };
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    describe('one active run per year', () => {
+      it.each([['P2002' as const], ['adapter' as const]])(
+        'answers 409 GENERATE_ALREADY_RUNNING when the insert meets the partial unique index (%s), and runs nothing',
+        async (shape) => {
+          tx.optimizationJob.create.mockRejectedValue(uniqueViolation(shape));
+
+          const attempt = service.start(YEAR_ID, testUser());
+
+          await expect(attempt).rejects.toMatchObject({
+            status: 409,
+            response: expect.objectContaining({ code: GENERATE_ALREADY_RUNNING }),
+          });
+          await flushBackgroundRun();
+          expect(proxy.triggerScheduling).not.toHaveBeenCalled();
+          expect(beats()).toHaveLength(0);
+          expect(service.running).toEqual([]);
+        },
+      );
+
+      it('says it in Swedish in the body’s message, beside the code the page translates', async () => {
+        tx.optimizationJob.create.mockRejectedValue(uniqueViolation('P2002'));
+        await expect(service.start(YEAR_ID, testUser())).rejects.toMatchObject({
+          response: { code: GENERATE_ALREADY_RUNNING, message: 'Generera kör redan för läsåret. Vänta tills körningen är klar.' },
+        });
+      });
+
+      it('does not mistake another failure of the insert for it', async () => {
+        tx.optimizationJob.create.mockRejectedValue(new Error('db down'));
+        await expect(service.start(YEAR_ID, testUser())).rejects.toThrow('db down');
+      });
+    });
+
+    describe('the sweep before a start', () => {
+      it('runs in a transaction of its own, before the start’s own', async () => {
+        await service.start(YEAR_ID, testUser());
+
+        expect(prisma.withDeliveryService).toHaveBeenCalledTimes(1);
+        expect(prisma.withDeliveryService.mock.invocationCallOrder[0]).toBeLessThan(prisma.withRls.mock.invocationCallOrder[0]);
+        const sweep = tx.$queryRaw.mock.calls.map(([call]) => statementOf(call)).find((text) => text.includes('optimization_jobs_sweep'));
+        expect(sweep).toContain('SELECT app.optimization_jobs_sweep()');
+      });
+
+      it('costs a start nothing when it fails: the partial index still holds the year', async () => {
+        prisma.withDeliveryService.mockRejectedValueOnce(new Error('sweep down'));
+        await expect(service.start(YEAR_ID, testUser())).resolves.toEqual({ jobId: JOB_ID });
+      });
+    });
+
+    describe('the lease', () => {
+      const engineThatNeverAnswers = () => {
+        let answer!: (response: AiEngineScheduleResponse) => void;
+        proxy.triggerScheduling.mockReturnValue(new Promise<AiEngineScheduleResponse>((resolve) => (answer = resolve)));
+        return (response: AiEngineScheduleResponse = engineResponse()) => answer(response);
+      };
+
+      it('is taken in the first heartbeat, before the engine call: RUNNING, the claimant and the lease in one compare-and-set', async () => {
+        Object.assign(proxy, { waitSeconds: 240 });
+        const order: string[] = [];
+        tx.$executeRaw.mockImplementation(async (call: unknown) => {
+          if (statementOf(call).includes(`SET "status" = 'RUNNING'`)) order.push('beat');
+          return 1;
+        });
+        proxy.triggerScheduling.mockImplementation(async () => {
+          order.push('engine');
+          return engineResponse();
+        });
+
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+
+        expect(order).toEqual(['beat', 'engine']);
+        const [call] = beats()[0] as [{ strings: string[]; values: unknown[] }];
+        const text = call.strings.join('?');
+        expect(text).toContain(`WHERE "id" = ?::uuid AND "status" IN ('PENDING', 'RUNNING')`);
+        expect(text).toContain('"heartbeatAt" = now()');
+        expect(text).toContain('"leaseUntil" = now() + make_interval(secs => ?)');
+        // The claimant, the job, and the lease: the API's own wait for the engine, which must exceed the
+        // engine's ceiling, and thirty seconds for its own steps.
+        expect(call.values).toEqual([INSTANCE_NAME, 270, JOB_ID]);
+      });
+
+      it('follows the wait the API enforces, within the database’s bounds', async () => {
+        Object.assign(proxy, { waitSeconds: 600 });
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+        expect((beats()[0]![0] as { values: unknown[] }).values[1]).toBe(630);
+      });
+
+      it('is renewed every half minute while the engine works, and stops being renewed when the run ends', async () => {
+        jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
+        Object.assign(proxy, { waitSeconds: 240 });
+        const answer = engineThatNeverAnswers();
+
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+        expect(beats()).toHaveLength(1);
+        expect(service.running).toEqual([JOB_ID]);
+
+        await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS - 1);
+        expect(beats()).toHaveLength(1);
+        await jest.advanceTimersByTimeAsync(1);
+        expect(beats()).toHaveLength(2);
+        await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS * 2);
+        expect(beats()).toHaveLength(4);
+        // Each renewal sets the lease again, to the same longest the engine can still be solving.
+        expect(beats().map(([call]) => (call as { values: unknown[] }).values[1])).toEqual([270, 270, 270, 270]);
+
+        answer();
+        await flushBackgroundRun();
+        expect(service.running).toEqual([]);
+        await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS * 4);
+        expect(beats()).toHaveLength(4);
+      });
+
+      it('stops renewing, and writes nothing, when a renewal finds the run no longer active', async () => {
+        jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
+        engineThatNeverAnswers();
+        heartbeatsAnswer(1, 0);
+
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+        await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS);
+        expect(beats()).toHaveLength(2);
+        expect(service.running).toEqual([]);
+
+        await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS * 3);
+        expect(beats()).toHaveLength(2);
+        expect(tx.optimizationJob.update).not.toHaveBeenCalled();
+      });
+
+      it('costs one renewal when a renewal fails, not the run', async () => {
+        jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
+        engineThatNeverAnswers();
+        heartbeatsAnswer(1, new Error('pool exhausted'), 1);
+
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+        await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS * 2);
+
+        expect(beats()).toHaveLength(3);
+        expect(service.running).toEqual([JOB_ID]);
+        expect(tx.optimizationJob.update).not.toHaveBeenCalled();
+      });
+
+      it('runs nothing when the first heartbeat finds the run no longer active', async () => {
+        heartbeatsAnswer(0);
+
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+
+        expect(proxy.triggerScheduling).not.toHaveBeenCalled();
+        expect(tx.optimizationJob.update).not.toHaveBeenCalled();
+        expect(service.running).toEqual([]);
+      });
+
+      it('never keeps the process alive', async () => {
+        engineThatNeverAnswers();
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+        const { timer } = (service as unknown as { inFlight: Map<string, { timer: NodeJS.Timeout }> }).inFlight.get(JOB_ID)!;
+        expect(timer.hasRef()).toBe(false);
+        await service.onModuleDestroy();
+      });
+    });
+
+    describe('a restart that can say so', () => {
+      it('fails the runs in flight at once with ENGINE_RUN_ABANDONED, under the administrator who started each, and stops renewing', async () => {
+        jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
+        proxy.triggerScheduling.mockReturnValue(new Promise(() => undefined));
+        const user = testUser({ userId: 'admin-1' });
+        tx.optimizationJob.updateMany.mockResolvedValue({ count: 1 });
+        await service.start(YEAR_ID, user);
+        await flushBackgroundRun();
+        prisma.withRls.mockClear();
+
+        await service.onModuleDestroy();
+
+        expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
+        expect(tx.optimizationJob.updateMany).toHaveBeenCalledWith({
+          where: { id: JOB_ID, status: { in: ['PENDING', 'RUNNING'] } },
+          data: {
+            status: 'FAILED',
+            error: INTERRUPTED_MESSAGE,
+            errorCode: ENGINE_RUN_ABANDONED,
+            errorParams: DbNull,
+            finishedAt: expect.any(Date),
+          },
+        });
+        expect(service.running).toEqual([]);
+        const before = beats().length;
+        await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS * 3);
+        expect(beats()).toHaveLength(before);
+      });
+
+      it('only touches a run that is still active, so one that ended is left as it ended', async () => {
+        proxy.triggerScheduling.mockReturnValue(new Promise(() => undefined));
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+        await service.onModuleDestroy();
+        expect(tx.optimizationJob.updateMany.mock.calls[0]![0].where.status).toEqual({ in: ['PENDING', 'RUNNING'] });
+      });
+
+      it('has nothing to fail when no run is in flight, and still leaves the runner', async () => {
+        const jobs = { register: jest.fn(), unregister: jest.fn(), isScheduled: jest.fn(), settled: jest.fn() };
+        const withRunner = new OptimizationJobsService(
+          proxy as unknown as OptimizationProxyService,
+          prisma as unknown as PrismaService,
+          undefined,
+          jobs as never,
+        );
+        await withRunner.onModuleDestroy();
+        expect(jobs.unregister).toHaveBeenCalledWith(GENERATE_SWEEP_JOB);
+        expect(tx.optimizationJob.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('survives a failed write: a restart must not hang on it', async () => {
+        proxy.triggerScheduling.mockReturnValue(new Promise(() => undefined));
+        tx.optimizationJob.updateMany.mockRejectedValue(new Error('db gone'));
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+        await expect(service.onModuleDestroy()).resolves.toBeUndefined();
+      });
+    });
+
+    describe('the job in the gateway’s runner', () => {
+      const runner = () => ({ register: jest.fn(), unregister: jest.fn(), isScheduled: jest.fn().mockReturnValue(true), settled: jest.fn() });
+      const withRunner = (jobs: ReturnType<typeof runner>, background = true) =>
+        new OptimizationJobsService(
+          proxy as unknown as OptimizationProxyService,
+          prisma as unknown as PrismaService,
+          { get: () => ({ background }) } as never,
+          jobs as never,
+        );
+
+      it('registers every five minutes when background jobs are on', () => {
+        const jobs = runner();
+        withRunner(jobs).onModuleInit();
+        expect(jobs.register).toHaveBeenCalledWith({ name: GENERATE_SWEEP_JOB, intervalMs: GENERATE_SWEEP_INTERVAL_MS, tick: expect.any(Function) });
+        expect(GENERATE_SWEEP_INTERVAL_MS).toBe(5 * 60 * 1000);
+        expect(withRunner(jobs).scheduled).toBe(true);
+      });
+
+      it('registers nothing when CANDIDATES_BACKGROUND is off, or without a runner', () => {
+        const jobs = runner();
+        withRunner(jobs, false).onModuleInit();
+        expect(jobs.register).not.toHaveBeenCalled();
+        expect(() => service.onModuleInit()).not.toThrow();
+        expect(service.scheduled).toBe(false);
+      });
+
+      it('records a pass with how many runs it failed', async () => {
+        const jobs = runner();
+        tx.$queryRaw.mockResolvedValue([{ changed: 2 }]);
+        await withRunner(jobs).tick();
+        expect(jobs.settled).toHaveBeenCalledWith(GENERATE_SWEEP_JOB, expect.any(Date), { ok: true, counts: { changed: 2 } });
+      });
+
+      it('never throws, and says how it failed by name only', async () => {
+        const jobs = runner();
+        tx.$queryRaw.mockRejectedValue(new TypeError('connection refused to db.example'));
+        await expect(withRunner(jobs).tick()).resolves.toBeUndefined();
+        expect(jobs.settled).toHaveBeenCalledWith(GENERATE_SWEEP_JOB, expect.any(Date), { ok: false, error: 'TypeError' });
+      });
+
+      it('lets a tick that finds the last pass still running wait for it', async () => {
+        const jobs = runner();
+        let finish!: (rows: unknown[]) => void;
+        tx.$queryRaw.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+        const sweeper = withRunner(jobs);
+        const first = sweeper.tick();
+        const second = sweeper.tick();
+        finish([{ changed: 0 }]);
+        await Promise.all([first, second]);
+        expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+        expect(jobs.settled).toHaveBeenCalledTimes(1);
+      });
+    });
+  });
+
   describe('get', () => {
     const row = (overrides: Record<string, unknown> = {}) => ({
       id: JOB_ID,
@@ -538,6 +872,84 @@ describe('OptimizationJobsService', () => {
       await expect(service.get(JOB_ID, testUser())).resolves.toMatchObject({
         status: 'RUNNING',
         waitSeconds: 240,
+      });
+    });
+
+    describe('a run whose lease has run out', () => {
+      const running = (leaseUntil: Date | null | undefined, extra: Record<string, unknown> = {}) =>
+        row({
+          status: 'RUNNING',
+          solverStatus: null,
+          finishedAt: null,
+          conflicts: null,
+          lessonsGenerated: 0,
+          createdAt: new Date(Date.now() - 6 * 60 * 1000),
+          leaseUntil,
+          ...extra,
+        });
+
+      it('is shown as what the sweep will make it: FAILED, ENGINE_RUN_ABANDONED, finished when the lease ran out', async () => {
+        const leaseEnded = new Date(Date.now() - 2 * 60 * 1000);
+        tx.optimizationJob.findUnique.mockResolvedValue(running(leaseEnded));
+
+        await expect(service.get(JOB_ID, testUser())).resolves.toMatchObject({
+          status: 'FAILED',
+          solverStatus: null,
+          errorCode: ENGINE_RUN_ABANDONED,
+          error: ABANDONED_MESSAGE,
+          errorParams: null,
+          errorNames: [],
+          finishedAt: leaseEnded.toISOString(),
+        });
+      });
+
+      it('is shown as running while the lease holds, and when the row has no lease to read (a row from before the column)', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(running(new Date(Date.now() + 60_000)));
+        await expect(service.get(JOB_ID, testUser())).resolves.toMatchObject({ status: 'RUNNING', finishedAt: null, errorCode: null });
+
+        tx.optimizationJob.findUnique.mockResolvedValue(running(undefined));
+        await expect(service.get(JOB_ID, testUser())).resolves.toMatchObject({ status: 'RUNNING', finishedAt: null });
+      });
+
+      it('is abandoned past half an hour whatever its lease says: a timer can outlive the work it was for', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(
+          running(new Date(Date.now() + 60_000), { createdAt: new Date(Date.now() - 31 * 60 * 1000) }),
+        );
+        const view = await service.get(JOB_ID, testUser());
+        expect(view).toMatchObject({ status: 'FAILED', errorCode: ENGINE_RUN_ABANDONED });
+        // Finished no later than now, never at a lease that has not come yet.
+        expect(new Date(view.finishedAt as string).getTime()).toBeLessThanOrEqual(Date.now());
+      });
+
+      it('leaves a run that has ended exactly as it ended, however old its lease', async () => {
+        const stale = new Date(Date.now() - 60 * 60 * 1000);
+        tx.optimizationJob.findUnique.mockResolvedValue(row({ leaseUntil: stale }));
+        await expect(service.get(JOB_ID, testUser())).resolves.toMatchObject({ status: 'SUCCEEDED', errorCode: null });
+
+        tx.optimizationJob.findUnique.mockResolvedValue(
+          row({ status: 'FAILED', error: 'engine down', errorCode: 'ENGINE_DOWN', leaseUntil: stale }),
+        );
+        await expect(service.get(JOB_ID, testUser())).resolves.toMatchObject({ status: 'FAILED', errorCode: 'ENGINE_DOWN', error: 'engine down' });
+      });
+
+      it('is read the same in the history, one clock for every run', async () => {
+        const dead = running(new Date(Date.now() - 60_000), { id: 'dead' });
+        const alive = running(new Date(Date.now() + 60_000), { id: 'alive' });
+        tx.optimizationJob.findMany.mockResolvedValue([alive, dead]);
+
+        const views = await service.list(YEAR_ID, testUser());
+
+        expect(views.map((view) => [view.id, view.status, view.errorCode])).toEqual([
+          ['alive', 'RUNNING', null],
+          ['dead', 'FAILED', ENGINE_RUN_ABANDONED],
+        ]);
+      });
+
+      it('asks the lease with the run, in the one statement the page’s poll costs', async () => {
+        tx.optimizationJob.findUnique.mockResolvedValue(row());
+        await service.get(JOB_ID, testUser());
+        expect(tx.optimizationJob.findUnique.mock.calls[0]![0].select.leaseUntil).toBe(true);
+        expect(prisma.queryWithRls).toHaveBeenCalledTimes(1);
       });
     });
 
