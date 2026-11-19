@@ -5633,7 +5633,12 @@ async function runChecks(
           // one indexed SELECT on LessonPupilMoves by fromLessonId, with the
           // named pupils it already reads. Nothing is read of the move when
           // the lesson's roster is the recorded one.
-          'suggest a substitute': 32,
+          // +1 since Behörighet som i ett annat ämne (20270225090000): the
+          // subject's pointer, one indexed SELECT of the lesson's subject, read
+          // before the behörigheter of it and of its source
+          // (readHeldQualifications); a school that records no behörighet reads
+          // none of it.
+          'suggest a substitute': 33,
           // The assignment enters the publication lock and locks the lesson
           // row and the substitute (+3: two writers cannot both put one
           // person on two lessons at one hour, nor cover during a DRAFT
@@ -5656,7 +5661,10 @@ async function runChecks(
           // (COVER_TEACHER_ON_SUPERVISION), one SELECT, as in the suggestion.
           // +1 since Elevens lektion för dagen, as in the suggestion: the
           // lesson's moves, read with its roster for the booking's notice.
-          'assign a substitute': 38,
+          // +1 since Behörighet som i ett annat ämne: the subjects' pointers,
+          // read beside the behörigheter the warning asks (one SELECT, and only
+          // because the school has recorded a behörighet).
+          'assign a substitute': 39,
           // +1 each since Publicering: app.enter_grundschema_write, the shared
           // publication lock and the mode in one statement, first (below).
           // +1 since Halvklasser on a PATCH that meets another group's lesson
@@ -5669,7 +5677,10 @@ async function runChecks(
           // read, its year's share of the regeneration lock
           // (app.lock_years_for_grundschema_edit), one statement, so an edit
           // beside an apply answers 409 within 5 s and never deadlocks with it.
-          'PATCH a new teacher': 36,
+          // +1 since Behörighet som i ett annat ämne: the subjects' pointers,
+          // read beside the behörigheter the new teacher is judged by (one
+          // SELECT, and only because the school has recorded a behörighet).
+          'PATCH a new teacher': 37,
           // +1 each since Ämnesfördelning: a drag to another weekday asks the
           // lesson's timplanspost for its distribution rule (one indexed
           // SELECT), and stops there when the post has none, as here. A
@@ -5707,7 +5718,10 @@ async function runChecks(
           // shares, which a PATCH naming a teacher must still fit, and every
           // row's shares in the load read — each a selected relation, so a
           // statement of its own under Prisma 7, indexed on requirementId.
-          'give a timplanspost a teacher': 25,
+          // +1 since Behörighet som i ett annat ämne: the subjects' pointers,
+          // read beside the behörigheter the load read asks (one SELECT, and
+          // only because the school has recorded a behörighet).
+          'give a timplanspost a teacher': 26,
           // +1 since Lärarens dag (20261123090000) on a create that names a
           // teacher, in a school without a cap, as here, and the one thing a
           // create pays for it: the teachers' caps, one indexed SELECT,
