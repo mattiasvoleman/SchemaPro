@@ -78,16 +78,26 @@ describe("weekCheckChoice", () => {
       expect(Object.keys(en.weekCheckChoice.count[form])).toEqual(["load", "over", "under", "unknown", "refused"]);
     }
     expect(swedish("count.long.under", { below: 85 })).toBe("under 85 % av ramtiden");
-    // A week over the supply keeps its figure in a line of "from → to", where a second teacher can take it from 114 to 109,
-    // and the detail under the line says it is still over (whatIf.stillOver).
-    expect(swedish("count.short.over", { percent: 114 })).toBe("114 %");
+    // A week over the supply is only a lower bound of its tightest period (the engine stops counting at the first period it
+    // refuses), so it is said "minst" and as a sentence of its own, never as the second half of a "from → to".
+    expect(swedish("count.short.over", { percent: 114 })).toBe("minst 114 %");
+    expect(english("count.short.over", { percent: 114 })).toBe("at least 114 %");
     expect(swedish("count.long.over", { percent: 114, demandMinutes: 2610, capacityMinutes: 2275 })).toBe(
-      "114 %, mer än ramtiden ger (minst 2610 av 2275 minuter)",
+      "minst 114 %, mer än ramtiden ger (minst 2610 av 2275 minuter)",
     );
     expect(english("count.long.over", { percent: 114, demandMinutes: 2610, capacityMinutes: 2275 })).toBe(
-      "114 %, more than the frame time gives (at least 2610 of 2275 minutes)",
+      "at least 114 %, more than the frame time gives (at least 2610 of 2275 minutes)",
     );
-    expect(sv.weekCheckChoice.whatIf.stillOver).toBe("Veckan ligger fortfarande över ramtiden.");
+    expect(swedish("whatIf.lineOver", { subject: "Hemkunskap", to: "minst 109 %" })).toBe(
+      "En andra lärare i Hemkunskap: veckan ligger fortfarande över ramtiden (minst 109 %)",
+    );
+    expect(english("whatIf.lineOver", { subject: "Home economics", to: "at least 109 %" })).toBe(
+      "A second teacher in Home economics: the week is still over the frame time (at least 109 %)",
+    );
+    expect(sv.weekCheckChoice.whatIf.stillOver).toContain("första period den nekar");
+    expect(en.weekCheckChoice.whatIf.stillOver).toContain("first period it refuses");
+    // A week below the supply that a second teacher brings from over it is the one "from → to": a bound and a value.
+    expect(swedish("whatIf.line", { subject: "Hemkunskap", from: "minst 114 %", to: "97 %" })).toBe("En andra lärare i Hemkunskap: minst 114 % → 97 %");
   });
 
   it("says whether a second teacher would have to be found or the choice already exists, naming no person", () => {

@@ -21,8 +21,11 @@ import {
   MAX_YEARS,
   candidatesOf,
   countOf,
+  holdersOf,
   judgedDay,
+  optionsFor,
   qualifiedHolders,
+  rankable,
   rankingFigure,
   releasePosts,
   shareWithSecond,
@@ -58,6 +61,8 @@ interface Read {
   numbering: GradeNumbering;
   /** Anonymous post id -> the real subject's id. */
   subjectOf: Map<string, string>;
+  /** Anonymous post id -> the real id of the teacher who leads it today (null: nobody). */
+  leaderOf: Map<string, string | null>;
   subjectNames: Map<string, string>;
   qualifications: Qualification[];
   /** The school has recorded a behörighet at all (the proposal's "recorded"). */
@@ -167,9 +172,18 @@ export class WeekCheckChoiceService {
       const subjectId = read.subjectOf.get(requirement.id);
       return subjectId === undefined ? 0 : qualifiedHolders(read.qualifications, subjectId, spanOf(requirement), read.day);
     };
+    // What a post could be led by: the qualified teachers, and its lead today (optionsFor).
+    const optionsOf = (requirement: AnonymousRequirement): number => {
+      const subjectId = read.subjectOf.get(requirement.id);
+      if (subjectId === undefined) return 0;
+      return optionsFor(
+        holdersOf(read.qualifications, subjectId, spanOf(requirement), read.day),
+        read.leaderOf.get(requirement.id),
+      );
+    };
     let releasedPosts = 0;
     if (read.recorded) {
-      const floor = releasePosts(payload, qualifiedOf);
+      const floor = releasePosts(payload, optionsOf);
       releasedPosts = floor.released.length;
       if (releasedPosts > 0) {
         const response = understood(await ask(floor.payload, false));
@@ -191,7 +205,7 @@ export class WeekCheckChoiceService {
       const target = out[years.indexOf(candidate.year)]!;
       const post = payload.requirements.find((requirement) => requirement.id === candidate.postIds[0]);
       const count = countFor(response, candidate.year);
-      const ranked = rankingFigure(target.today) !== null && rankingFigure(count) !== null;
+      const ranked = rankable(target.today, count);
       const whatIf: ChoiceWhatIf = {
         subject: read.subjectNames.get(candidate.subjectId) ?? '',
         qualified: post ? qualifiedOf(post) : 0,
@@ -241,6 +255,7 @@ export class WeekCheckChoiceService {
         stretches: null,
         numbering,
         subjectOf: new Map(),
+        leaderOf: new Map(),
         subjectNames: new Map(),
         qualifications: [],
         recorded: false,
@@ -251,11 +266,14 @@ export class WeekCheckChoiceService {
 
       // The real subject of each post sent, through the anonymous id it was sent under.
       const realOfAnon = new Map([...prepared.anonMaps.requirementAnonMap].map(([real, anon]) => [anon, real]));
-      const rowSubject = new Map(prepared.requirementRows.map((row) => [row.id, row.subjectId]));
+      const rowOf = new Map(prepared.requirementRows.map((row) => [row.id, row]));
       const subjectOf = new Map<string, string>();
+      const leaderOf = new Map<string, string | null>();
       for (const requirement of prepared.payload.requirements) {
-        const subjectId = rowSubject.get(realOfAnon.get(requirement.id) ?? '');
-        if (subjectId !== undefined) subjectOf.set(requirement.id, subjectId);
+        const row = rowOf.get(realOfAnon.get(requirement.id) ?? '');
+        if (row === undefined) continue;
+        subjectOf.set(requirement.id, row.subjectId);
+        leaderOf.set(requirement.id, row.teacherId ?? null);
       }
       const subjectIds = [...new Set(subjectOf.values())];
       const day = judgedDay(isoDay(new Date()), isoDay(year.startDate), isoDay(year.endDate));
@@ -291,6 +309,7 @@ export class WeekCheckChoiceService {
         stretches: prepared.periodStretches,
         numbering,
         subjectOf,
+        leaderOf,
         subjectNames: new Map(subjects.map((subject) => [subject.id, subject.name])),
         qualifications: rows.map((row) => ({
           userId: row.userId,

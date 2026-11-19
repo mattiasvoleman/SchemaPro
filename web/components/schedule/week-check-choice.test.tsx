@@ -180,10 +180,23 @@ describe("WeekCheckChoice", () => {
     expect(screen.getByRole("list")).toBeInstanceOf(HTMLOListElement);
   });
 
-  it("says a what-if that is still over the supply is, under its line", async () => {
-    await ask(done({ years: [year({ whatIf: [whatIf("Hemkunskap", load(109, { over: true }))] })] }));
+  it("says a what-if that is still over the supply as that and not as from → to: its figure is a bound, and it is not ranked", async () => {
+    await ask(done({ years: [year({ today: load(114, { over: true }), whatIf: [whatIf("Hemkunskap", load(109, { over: true }), { ranked: false })] })] }));
 
-    expect(await screen.findByRole("listitem")).toHaveTextContent("weekCheckChoice.whatIf.stillOver");
+    const item = await screen.findByRole("listitem");
+    expect(item).toHaveTextContent("weekCheckChoice.whatIf.lineOver(Hemkunskap|weekCheckChoice.count.short.over(109|2480|2275))");
+    expect(item).not.toHaveTextContent("weekCheckChoice.whatIf.line(");
+    expect(item).toHaveTextContent("weekCheckChoice.whatIf.stillOver");
+    // Its reason is the first period the engine refuses, not a count that did not finish.
+    expect(item).not.toHaveTextContent("weekCheckChoice.whatIf.unranked");
+  });
+
+  it("says a what-if that is over the supply and was also cut both ways", async () => {
+    await ask(done({ years: [year({ whatIf: [whatIf("Hemkunskap", load(109, { over: true, atLeast: true }), { ranked: false })] })] }));
+
+    const item = await screen.findByRole("listitem");
+    expect(item).toHaveTextContent("weekCheckChoice.whatIf.stillOver");
+    expect(item).toHaveTextContent("weekCheckChoice.whatIf.unranked");
   });
 
   it("says a what-if that was not ranked is not ranked, and a cut figure as at least", async () => {

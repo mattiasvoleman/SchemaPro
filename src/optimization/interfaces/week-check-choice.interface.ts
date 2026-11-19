@@ -29,7 +29,10 @@ export interface ChoicePeriod {
  * `LOAD`: the year's least week against its frames, in the tightest period.
  * `atLeast` when the week load's seconds ran out: the figure is then a lower
  * bound at the deadline and is never "the value", and never ranks another.
- * `over`: proved above the supply, so no timetable exists.
+ * `over`: proved above the supply, so no timetable exists. The figure of an
+ * over week is only a lower bound of the tightest period's: the engine counts a
+ * year's periods in turn and stops at the first it refuses, so the periods after
+ * it are not counted. It is said "at least", and ranks nobody (rankingFigure).
  * `UNDER`: counted to the end and not at the tight threshold (`below`, whole
  * percent): the engine gives a year under it no row.
  * `UNKNOWN`: the seconds ran out before the year was reached; nothing is said.
@@ -65,7 +68,7 @@ export interface ChoiceWhatIf {
   moved: number;
   of: number;
   count: ChoiceCount;
-  /** False when this or the baseline figure is cut or unknown: it is listed, not ranked. */
+  /** False when this figure is a bound (cut, unknown, or over the supply) or the baseline's is one with no value to compare against: listed, not ranked. */
   ranked: boolean;
 }
 

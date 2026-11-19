@@ -142,3 +142,49 @@ def test_a_payload_with_a_post_with_no_second_teacher_is_unchanged_in_its_answer
     first = _check(client, copy.deepcopy(cases["base"]))
     second = _check(client, copy.deepcopy(cases["base"]))
     assert first["years"] == second["years"]
+
+
+def _autumn_over_and_spring_more(cases: dict[str, Any]) -> dict[str, Any]:
+    """The fixture's week with both periods over the supply: the autumn's two groups share a teacher at nine lessons, the spring's three at twelve."""
+    payload = copy.deepcopy(cases["base"])
+    for requirement in payload["requirements"]:
+        if requirement.get("periods") == [True, False]:
+            requirement["lessonsPerWeek"] = 9
+            requirement["teacherId"] = "cd22fde1-0000-4000-8000-000000000001"
+        elif requirement.get("periods") == [False, True]:
+            requirement["lessonsPerWeek"] = 12
+    return payload
+
+
+def _teacher_of_their_own(payload: dict[str, Any], periods: list[bool]) -> dict[str, Any]:
+    relieved = copy.deepcopy(payload)
+    for number, requirement in enumerate(r for r in relieved["requirements"] if r.get("periods") == periods):
+        requirement["teacherId"] = f"cd22fde1-0000-4000-8000-0000000001{number:02d}"
+    return relieved
+
+
+def test_a_week_over_the_supply_is_answered_by_the_first_period_it_refuses_and_not_by_the_tightest(
+    client: TestClient, cases: dict[str, Any],
+) -> None:
+    """The engine stops at the first period it refuses, so an over figure is a bound, never "the tightest period's".
+
+    The gateway says such a figure "at least" and never ranks it (rankingFigure in week-check-choice.ts). If the engine
+    one day counts every period before it refuses, this fails and the gateway may say the value.
+    """
+    today = _autumn_over_and_spring_more(cases)
+    spring_alone = copy.deepcopy(today)
+    spring_alone["requirements"] = [r for r in spring_alone["requirements"] if r.get("periods") != [True, False]]
+    for requirement in spring_alone["requirements"]:
+        requirement.pop("periods", None)
+    spring_alone["periodWeeks"] = None
+    spring_alone["periodOddWeeks"] = None
+
+    answered = _year(_check(client, today), 9)
+    spring = _year(_check(client, spring_alone), 9)
+    relieved_autumn = _year(_check(client, _teacher_of_their_own(today, [True, False])), 9)
+
+    # The spring is the tighter period, 144 % on its own, and the two-period week says the autumn's 107 %.
+    assert spring is not None and spring["over"] and spring["percent"] == 144
+    assert answered is not None and answered["over"] and answered["percent"] == 107
+    # Relieve the autumn and the answer rises to the spring's: a change that can only relax the week reads as a worse one.
+    assert relieved_autumn is not None and relieved_autumn["percent"] == 144

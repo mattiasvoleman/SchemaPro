@@ -98,6 +98,8 @@ describe('WeekCheckChoiceService', () => {
   let payloadOfWeek: Record<string, unknown>;
   let stretches: { from: string; to: string }[][] | null;
   let qualifications: Record<string, unknown>[];
+  /** The real teacher who leads post n today, where a test says (the row's teacherId). */
+  let leadersOf: Map<number, string>;
 
   const qualification = (userId: string, subjectId: string, overrides: Record<string, unknown> = {}) => ({
     userId,
@@ -117,7 +119,11 @@ describe('WeekCheckChoiceService', () => {
       payload: payloadOfWeek,
       storedRules,
       anonMaps: { requirementAnonMap: new Map(requirements.map((r, i) => [real(i + 1), r.id])) },
-      requirementRows: requirements.map((r, i) => ({ id: real(i + 1), subjectId: subjectsOf.get(i + 1) ?? `subject-${i + 1}` })),
+      requirementRows: requirements.map((r, i) => ({
+        id: real(i + 1),
+        subjectId: subjectsOf.get(i + 1) ?? `subject-${i + 1}`,
+        teacherId: leadersOf.get(i + 1) ?? null,
+      })),
       periodStretches: stretches,
     };
     proxy.prepareSchedule.mockResolvedValue(prepared as unknown as PrepareResult);
@@ -128,6 +134,7 @@ describe('WeekCheckChoiceService', () => {
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     requirements = week();
     subjectsOf = weekSubjects();
+    leadersOf = new Map();
     stretches = null;
     // Hemkunskap has two qualified teachers, Musik one.
     qualifications = [qualification(USER_A, HKK), qualification(USER_B, HKK), qualification(USER_B, MUSIK)];
@@ -302,6 +309,23 @@ describe('WeekCheckChoiceService', () => {
         expect(timeoutMs).toBeGreaterThanOrEqual(WEEK_CHECK_CHOICE_MIN_CALL_MS);
       }
     });
+
+    it('never waits for a check beyond the end of the budget: a call begun with 14 s left waits 14 s at most, so the analysis is over before the page stops waiting', async () => {
+      jest.useFakeTimers({ now: FIRST });
+      let call = 0;
+      proxy.callAiEngine.mockImplementation(async () => {
+        jest.setSystemTime(FIRST + (call + 1) * 10_000);
+        call += 1;
+        return call === 2 ? under() : answer();
+      });
+
+      await service.choice(YEAR_ID, user);
+
+      const waits = proxy.callAiEngine.mock.calls.map((entry) => (entry[3] as { timeoutMs: number }).timeoutMs);
+      // The baseline begins with the whole budget (the 30 s ceiling is more than it), the floor 10 s later with 14 s.
+      expect(waits[0]).toBeLessThanOrEqual(WEEK_CHECK_CHOICE_BUDGET_MS);
+      expect(waits[1]).toBeLessThanOrEqual(WEEK_CHECK_CHOICE_BUDGET_MS - 10_000);
+    });
   });
 
   describe('a lower bound is never the value', () => {
@@ -326,6 +350,20 @@ describe('WeekCheckChoiceService', () => {
 
       expect(view.years[0]!.today).toMatchObject({ atLeast: true });
       expect(view.years[0]!.whatIf.every((item) => !item.ranked)).toBe(true);
+    });
+
+    it('ranks no what-if that is still over the supply, against the week as it stands or another: the engine counts no period after the first it refuses', async () => {
+      // As it stands 114 % (over), Hemkunskap's second teacher 109 % (still over), Musik's 97 %: only Musik's is a value.
+      answers(answer({ verdict: 'IMPOSSIBLE', years: [row(114, true)] }), under(), answer({ verdict: 'IMPOSSIBLE', years: [row(109, true)] }), answer({ years: [row(97)] }));
+
+      const view = await service.choice(YEAR_ID, user);
+
+      const list = view.years[0]!.whatIf;
+      expect(list.map((item) => [item.subject, item.ranked])).toEqual([
+        ['Musik', true],
+        ['Hemkunskap', false],
+      ]);
+      expect(list[1]!.count).toMatchObject({ over: true, atLeast: false });
     });
 
     it('does not call a year with no row "under 85 %" when the count did not finish', async () => {
@@ -421,6 +459,28 @@ describe('WeekCheckChoiceService', () => {
 
       expect(view).toMatchObject({ qualificationsRecorded: true, releasedPosts: 0 });
       expect(view.years[0]!.floor).toBeNull();
+    });
+
+    it('releases a post led by someone who is not qualified when one qualified teacher could take it: the floor must lie below every choice', async () => {
+      // Hemkunskap: USER_B is the one qualified teacher, the three posts are led by USER_A, who holds nothing.
+      qualifications = [qualification(USER_B, HKK), qualification(USER_B, MUSIK)];
+      leadersOf = new Map([
+        [1, USER_A],
+        [2, USER_A],
+        [3, USER_A],
+        [4, USER_B],
+        [5, USER_B],
+      ]);
+      build();
+      answers(answer(), under(), answer(), answer());
+
+      const view = await service.choice(YEAR_ID, user);
+
+      // Giving one post to USER_B and leaving two with USER_A is a choice; a floor that kept all three with USER_A could lie above it.
+      expect(view.releasedPosts).toBe(3);
+      expect(sent(1).requirements.slice(0, 3).map((r) => r.teacherId)).not.toContain(TEACHER_A);
+      // The Musik posts are led by the one qualified teacher: nothing to choose, nothing released.
+      expect(sent(1).requirements.slice(3).map((r) => r.teacherId)).toEqual([TEACHER_B, TEACHER_B]);
     });
 
     it('counts a behörighet valid today and not one that has ended or covers other years', async () => {
@@ -591,6 +651,13 @@ describe('rankedWhatIfs', () => {
       item('Åttonde', 87),
     ];
     expect(rankedWhatIfs(list).map((entry) => entry.subject)).toEqual(['Teknik', 'Bild', 'Åttonde', 'Musik']);
+  });
+
+  it('lists a what-if that has a figure but is not ranked (the week as it stands was cut) after the ranked ones, whatever its figure', () => {
+    const list = [item('Ovärderad', 60, false), item('Värderad', 99)];
+    // Same figure kind: only the flag tells them apart, and a cut week as it stands makes no figure beat another.
+    const exact = { ...list[0]!, count: { ...list[0]!.count, atLeast: false } as ChoiceWhatIf['count'] };
+    expect(rankedWhatIfs([exact, list[1]!]).map((entry) => entry.subject)).toEqual(['Värderad', 'Ovärderad']);
   });
 
   it('lists the ones that rank nobody after the ones that do, in the same order every time', () => {

@@ -38,7 +38,10 @@ export type ChoiceCount =
       capacityMinutes: number;
       /** Whole percent, rounded down. */
       percent: number;
-      /** Proved above the supply: no timetable exists, whichever teachers are chosen. */
+      /**
+       * Proved above the supply: no timetable exists, whichever teachers are chosen. The figure is then only a lower bound
+       * of the tightest period's (the engine stops counting at the first period it refuses): said "at least", ranked never.
+       */
       over: boolean;
       /** The count's seconds ran out: a lower bound at the deadline, never the value. */
       atLeast: boolean;
@@ -57,7 +60,7 @@ export interface ChoiceWhatIf {
   moved: number;
   of: number;
   count: ChoiceCount;
-  /** False when this or the week as it stands is cut or unknown: listed, never ranked. */
+  /** False when this figure is a bound (cut, unknown or over the supply) or the week as it stands has no value to compare it with: listed, never ranked. */
   ranked: boolean;
 }
 

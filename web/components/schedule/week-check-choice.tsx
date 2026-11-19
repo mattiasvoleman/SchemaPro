@@ -215,13 +215,19 @@ function WhatIfList({ year }: { year: ChoiceYear }) {
 function WhatIfItem({ item, today }: { item: ChoiceWhatIf; today: string }) {
   const t = useTranslations("weekCheckChoice");
   const countText = useCountText();
+  // A week still over the supply is a lower bound of its tightest period (the engine stops at the first it refuses): it is
+  // not set against the week as it stands as "from → to", and it ranks nobody. Cut or unknown is said by its own sentence.
+  const over = item.count.kind === "LOAD" && item.count.over;
+  const to = countText(item.count, "short");
   return (
     <li>
-      <span className="font-medium">{t("whatIf.line", { subject: item.subject, from: today, to: countText(item.count, "short") })}</span>
+      <span className="font-medium">
+        {over ? t("whatIf.lineOver", { subject: item.subject, to }) : t("whatIf.line", { subject: item.subject, from: today, to })}
+      </span>
       <span className="block text-xs text-muted-foreground">
         {t("whatIf.detail", { qualified: item.qualified, moved: item.moved, of: item.of })}
-        {item.count.kind === "LOAD" && item.count.over ? ` ${t("whatIf.stillOver")}` : ""}
-        {item.ranked ? "" : ` ${t("whatIf.unranked")}`}
+        {over ? ` ${t("whatIf.stillOver")}` : ""}
+        {!item.ranked && (!over || (item.count.kind === "LOAD" && item.count.atLeast)) ? ` ${t("whatIf.unranked")}` : ""}
       </span>
       <PeriodLine period={periodOf(item.count)} />
     </li>

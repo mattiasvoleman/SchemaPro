@@ -7,12 +7,15 @@ import {
   candidatesOf,
   countOf,
   derivedId,
+  holdersOf,
   judgedDay,
+  optionsFor,
   lessonMinutesOf,
   percentOf,
   periodOf,
   periodOfTightWeek,
   qualifiedHolders,
+  rankable,
   rankingFigure,
   releasePosts,
   shareWithSecond,
@@ -134,6 +137,27 @@ describe('qualifiedHolders and judgedDay', () => {
   });
 });
 
+describe('optionsFor: what a post could be led by in a choice', () => {
+  it('counts the qualified teachers, and the lead too when they are not one of them', () => {
+    expect(optionsFor(new Set(['a', 'b']), 'a')).toBe(2);
+    expect(optionsFor(new Set(['a']), 'a')).toBe(1);
+    // An unqualified lead beside one qualified teacher: the post can stay or go to the qualified one.
+    expect(optionsFor(new Set(['a']), 'u')).toBe(2);
+    expect(optionsFor(new Set(), 'u')).toBe(1);
+    expect(optionsFor(new Set(['a']), null)).toBe(1);
+    expect(optionsFor(new Set(['a']), undefined)).toBe(1);
+  });
+
+  it('reads who holds a subject on a day, as people', () => {
+    const rows: LoadQualification[] = [
+      { userId: 'a', subjectId: 's', minGradeLevel: 7, maxGradeLevel: 9, kind: 'BEHORIG', validFrom: null, validTo: null },
+      { userId: 'a', subjectId: 's', minGradeLevel: 7, maxGradeLevel: 9, kind: 'TILLATEN', validFrom: null, validTo: null },
+      { userId: 'b', subjectId: 's', minGradeLevel: 1, maxGradeLevel: 3, kind: 'BEHORIG', validFrom: null, validTo: null },
+    ];
+    expect([...holdersOf(rows, 's', { min: 9, max: 9 }, '2026-11-19')]).toEqual(['a']);
+  });
+});
+
 describe('the floor: releasePosts', () => {
   it('gives a teacher of their own to every post that has two or more qualified, and leaves the rest as they were', () => {
     const free = post({ teacherId: T1, subjectId: 'a' });
@@ -218,6 +242,37 @@ describe('candidatesOf: where a second teacher would be asked about', () => {
     // big 300 stays; mid1 180 -> second (0 < 300); mid2 180 -> second (180 < 300); small 60 -> teacher (300 vs 360).
     expect(candidate!.moved).toEqual([mid1.id, mid2.id]);
     expect(candidatesOf([small, mid2, big, mid1], [9], map)).toEqual([candidate]);
+  });
+
+  it('shares the posts within each period they run in, so the second teacher takes about half of the autumn and of the spring', () => {
+    // Created in the order autumn, spring, autumn, spring, which a split across periods turns into "the spring's both go, the autumn's stay".
+    const a1 = post({ periods: [true, false] });
+    const s1 = post({ periods: [false, true] });
+    const a2 = post({ periods: [true, false] });
+    const s2 = post({ periods: [false, true] });
+    const map = subjects([a1, 's'], [s1, 's'], [a2, 's'], [s2, 's']);
+
+    const [candidate] = candidatesOf([a1, s1, a2, s2], [9], map);
+
+    // The first of each period stays, the second goes: one of the autumn's two and one of the spring's two.
+    expect(candidate!.moved).toEqual([a2.id, s2.id]);
+    expect(candidate!.moved.filter((id) => [a1.id, a2.id].includes(id))).toHaveLength(1);
+    expect(candidate!.moved.filter((id) => [s1.id, s2.id].includes(id))).toHaveLength(1);
+  });
+
+  it('keeps apart the odd weeks and the even ones of a period, and falls back on one run when no set of weeks holds two posts', () => {
+    const odd = post({ recurrence: 'ODD_WEEKS' });
+    const even = post({ recurrence: 'EVEN_WEEKS' });
+    const odd2 = post({ recurrence: 'ODD_WEEKS' });
+    const even2 = post({ recurrence: 'EVEN_WEEKS' });
+    const [alternating] = candidatesOf([odd, even, odd2, even2], [9], subjects([odd, 's'], [even, 's'], [odd2, 's'], [even2, 's']));
+    expect(alternating!.moved).toEqual([odd2.id, even2.id]);
+
+    // One post in each of the autumn and the spring: nothing to share within a period, so the posts are shared in one run.
+    const autumn = post({ periods: [true, false] });
+    const spring = post({ periods: [false, true] });
+    const [alone] = candidatesOf([autumn, spring], [9], subjects([autumn, 's'], [spring, 's']));
+    expect(alone!.moved).toEqual([spring.id]);
   });
 
   it('never moves all of them, and never asks about one post: a post cannot be shared between posts', () => {
@@ -455,10 +510,45 @@ describe('rankingFigure', () => {
     expect(rankingFigure({ kind: 'REFUSED', code: 'X', params: {} })).toBeNull();
   });
 
+  it('is nothing for a week over the supply: the engine stops at the first period it refuses, so the figure is a bound and not the tightest\'s', () => {
+    // Autumn 107 % and spring 144 % are answered 107 %; with the autumn relieved the answer is 144 % (test_week_check_choice.py).
+    const over = (demandMinutes: number) =>
+      ({ kind: 'LOAD', demandMinutes, capacityMinutes: 2200, percent: percentOf(demandMinutes, 2200), over: true, atLeast: false, period: null }) as const;
+    expect(rankingFigure(over(2370))).toBeNull();
+    expect(rankingFigure(over(3180))).toBeNull();
+  });
+
   it('puts a year under the tight threshold before every year over it', () => {
     const under = rankingFigure({ kind: 'UNDER', below: 85 })!;
     expect(under).toBeLessThan(85);
     expect(under).toBeLessThan(rankingFigure({ kind: 'LOAD', demandMinutes: 1870, capacityMinutes: 2200, percent: 85, over: false, atLeast: false, period: null })!);
+  });
+});
+
+describe('rankable: when a what-if may be set beside the week as it stands', () => {
+  const load = (percent: number, flags: { over?: boolean; atLeast?: boolean } = {}) =>
+    ({ kind: 'LOAD', demandMinutes: percent * 22, capacityMinutes: 2200, percent, over: false, atLeast: false, period: null, ...flags }) as const;
+
+  it('ranks a value against a value', () => {
+    expect(rankable(load(95), load(87))).toBe(true);
+    expect(rankable(load(95), { kind: 'UNDER', below: 85 })).toBe(true);
+  });
+
+  it('ranks a value against a week over the supply: the bound is above it, whatever the periods the engine did not count', () => {
+    expect(rankable(load(114, { over: true }), load(97))).toBe(true);
+    expect(rankable(load(114, { over: true, atLeast: true }), load(97))).toBe(true);
+  });
+
+  it('ranks nothing that is itself over the supply, cut, unknown or refused: two bounds are not set in order', () => {
+    expect(rankable(load(114, { over: true }), load(109, { over: true }))).toBe(false);
+    expect(rankable(load(95), load(109, { over: true }))).toBe(false);
+    expect(rankable(load(95), load(80, { atLeast: true }))).toBe(false);
+    expect(rankable(load(95), { kind: 'UNKNOWN' })).toBe(false);
+  });
+
+  it('ranks nothing against a week as it stands that was cut below the supply: its bound has no value to be under', () => {
+    expect(rankable(load(95, { atLeast: true }), load(87))).toBe(false);
+    expect(rankable({ kind: 'UNKNOWN' }, load(87))).toBe(false);
   });
 });
 

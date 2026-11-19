@@ -1851,14 +1851,14 @@
     "count": {
       "short": {
         "load": "{atLeast, select, yes {at least } other {}}{percent} %",
-        "over": "{percent} %",
+        "over": "at least {percent} %",
         "under": "under {below} %",
         "unknown": "not counted",
         "refused": "refused by another count"
       },
       "long": {
         "load": "{atLeast, select, yes {at least } other {}}{percent} % of the frame time",
-        "over": "{percent} %, more than the frame time gives (at least {demandMinutes} of {capacityMinutes} minutes)",
+        "over": "at least {percent} %, more than the frame time gives (at least {demandMinutes} of {capacityMinutes} minutes)",
         "under": "under {below} % of the frame time",
         "unknown": "not counted, the count did not finish",
         "refused": "refused by another count than the week load"
@@ -1880,11 +1880,12 @@
     "whatIf": {
       "title": "A second teacher in a subject, with the subject's posts shared evenly (one example, not the best split)",
       "line": "A second teacher in {subject}: {from} → {to}",
+      "lineOver": "A second teacher in {subject}: the week is still over the frame time ({to})",
       "detail": "{qualified, plural, =0 {No qualified teacher today} one {# qualified teacher today: a second would have to be found} other {# qualified teachers today: the choice already exists}}. {moved} of {of} posts go to the second one.",
-      "stillOver": "The week is still over the frame time.",
+      "stillOver": "The engine stops counting at the first period it refuses, so the figure is a lower bound of the tightest period's and is not compared with the others.",
       "unranked": "The count did not finish, so it is not ranked."
     },
-    "limits": "The figures are lower bounds the engine can prove for the year's tightest part of the school year. They do not say a timetable exists. Qualifications count as they hold today.",
+    "limits": "The figures are lower bounds the engine can prove for the year's tightest part of the school year. A week over the frame time is counted only up to the first period the engine refuses, so that figure may be lower than the tightest period's and is not compared with others. They do not say a timetable exists. Qualifications count as they hold today.",
     "notRun": "{count, plural, one {# subject} other {# subjects}} could not be counted again in time."
   },
   "timetable": {

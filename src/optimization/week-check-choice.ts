@@ -60,6 +60,16 @@ export function qualifiedHolders(
   span: { min: number; max: number } | null,
   day: string,
 ): number {
+  return holdersOf(qualifications, subjectId, span, day).size;
+}
+
+/** The teachers qualified for a subject in a year on a day (qualifiedHolders, as people and not as a count). */
+export function holdersOf(
+  qualifications: readonly LoadQualification[],
+  subjectId: string,
+  span: { min: number; max: number } | null,
+  day: string,
+): Set<string> {
   const holders = new Set<string>();
   for (const qualification of qualifications) {
     if (qualification.subjectId !== subjectId) continue;
@@ -67,7 +77,18 @@ export function qualifiedHolders(
       holders.add(qualification.userId);
     }
   }
-  return holders.size;
+  return holders;
+}
+
+/**
+ * How many teachers a post could be led by in a choice: the qualified ones, and its lead as it is today even when they
+ * are not qualified (the school has put them there; a choice may leave them or replace them). The floor releases a post
+ * that has two or more. Counting only the qualified would leave a post led by someone unqualified, with ONE qualified
+ * teacher to give it to, as it is: and a choice that gives one of two such posts to the qualified one lifts the
+ * teacher's overlap, so the "floor" would lie above a week a choice can reach, and say "no choice helps".
+ */
+export function optionsFor(holders: ReadonlySet<string>, lead: string | null | undefined): number {
+  return holders.size + (lead !== null && lead !== undefined && !holders.has(lead) ? 1 : 0);
 }
 
 /** The day behörigheter are judged on: today, held inside the läsår (its first day before it, its last after it). */
@@ -128,17 +149,17 @@ function withRequirements(
 }
 
 /**
- * THE FLOOR: the payload with a teacher of its own on every post `qualifiedOf`
- * says has two or more qualified teachers. The posts released are returned too,
- * so that a floor that released nothing is not asked about.
+ * THE FLOOR: the payload with a teacher of its own on every post `optionsOf`
+ * says could be led by two or more teachers (optionsFor). The posts released are
+ * returned too, so that a floor that released nothing is not asked about.
  */
 export function releasePosts(
   payload: AiEngineScheduleRequest,
-  qualifiedOf: (requirement: AnonymousRequirement) => number,
+  optionsOf: (requirement: AnonymousRequirement) => number,
 ): { payload: AiEngineScheduleRequest; released: string[] } {
   const changes = new Map<string, AnonymousRequirement>();
   for (const requirement of payload.requirements) {
-    if (requirement.teacherId === null || qualifiedOf(requirement) < 2) continue;
+    if (requirement.teacherId === null || optionsOf(requirement) < 2) continue;
     changes.set(requirement.id, withLead(requirement, derivedId(requirement.id, 'own-teacher')));
   }
   return { payload: withRequirements(payload, changes), released: [...changes.keys()] };
@@ -159,14 +180,54 @@ export interface Candidate {
 }
 
 /**
+ * The weeks a post runs in, as a key: its periods and, in them, the odd weeks, the even ones or both (a post of the autumn
+ * and one of the spring never meet, nor an odd-week post and an even-week one).
+ */
+function cellOf(requirement: AnonymousRequirement): string {
+  return `${(requirement.periods ?? []).map((runs) => (runs ? '1' : '0')).join('')}|${requirement.recurrence ?? ''}`;
+}
+
+/**
+ * Which of a teacher's posts (heaviest first) a second teacher takes: in each set of weeks the posts run in, the posts are
+ * shared in the order of their minutes, each to whichever of the two has the least so far (the first stays with the
+ * teacher, the tie too). So the second teacher takes about half of what the teacher carries in EVERY period, and not
+ * whatever half the ids fall on: shared across periods, the second teacher could take all of the spring and none of the
+ * autumn, and a what-if about the autumn's tight week would show no relief at all.
+ *
+ * A set of weeks with one post of the teacher's has nothing to share, so it stays. Where no set has two (every one holds a
+ * post of its own), the posts are shared in one run as they were: the answer is never empty and never all.
+ */
+function splitOf(posts: readonly AnonymousRequirement[]): string[] {
+  const share = (cellOfPost: (post: AnonymousRequirement) => string): string[] => {
+    const kept = new Map<string, number>();
+    const taken = new Map<string, number>();
+    const moved: string[] = [];
+    for (const post of posts) {
+      const cell = cellOfPost(post);
+      const stays = kept.get(cell) ?? 0;
+      const goes = taken.get(cell) ?? 0;
+      if (goes < stays) {
+        moved.push(post.id);
+        taken.set(cell, goes + lessonMinutesOf(post));
+      } else {
+        kept.set(cell, stays + lessonMinutesOf(post));
+      }
+    }
+    return moved;
+  };
+  const byCell = share(cellOf);
+  return byCell.length > 0 ? byCell : share(() => '');
+}
+
+/**
  * The what-ifs worth asking: for each tight year and subject, the teacher who
  * carries most of it, if they have two or more posts there to share (one post
  * cannot be shared by posts), heaviest first, at most `limit`.
  *
  * The posts are shared in the order of their minutes, each to whichever of the
  * two has the least so far (the first to the teacher, the tie to the teacher
- * too), so the second teacher gets about half and the split is the same every
- * time.
+ * too), within each set of weeks they run in (splitOf), so the second teacher
+ * gets about half in every period and the split is the same every time.
  */
 export function candidatesOf(
   requirements: readonly AnonymousRequirement[],
@@ -201,17 +262,7 @@ export function candidatesOf(
       const posts = [...best.posts].sort(
         (a, b) => lessonMinutesOf(b) - lessonMinutesOf(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
       );
-      let kept = 0;
-      let taken = 0;
-      const moved: string[] = [];
-      for (const post of posts) {
-        if (taken < kept) {
-          moved.push(post.id);
-          taken += lessonMinutesOf(post);
-        } else {
-          kept += lessonMinutesOf(post);
-        }
-      }
+      const moved = splitOf(posts);
       out.push({
         year,
         subjectId,
@@ -362,12 +413,34 @@ export function countOf(
 
 /**
  * A count's figure for ranking, in percent of the frames, or null when it is not
- * one a ranking may use: cut, unknown or refused. A figure the seconds cut is a
- * lower bound at the deadline and ranks nobody. Not rounded, so that two weeks
- * in the same whole percent are still told apart.
+ * one a ranking may use: cut, unknown, refused, or OVER the supply. Not rounded,
+ * so that two weeks in the same whole percent are still told apart.
+ *
+ * A figure the seconds cut is a lower bound at the deadline and ranks nobody.
+ * So does a figure over the supply, and for another reason the engine does not
+ * say: it counts a year's periods one after the other and STOPS AT THE FIRST ONE
+ * IT REFUSES (_prechecks returns there), so an over figure is the heaviest of the
+ * periods up to and including that one, not of the läsår. Autumn 107 % and
+ * spring 144 % answer 107 %; give the autumn teachers of their own and the
+ * answer is 144 %, a "worse" week from a change that can only relax it. Two such
+ * figures are lower bounds of different quality and cannot be set in order.
+ * Only a week that finished and is not over (TIGHT or OK: every period counted)
+ * is a value.
  */
 export function rankingFigure(count: ChoiceCount): number | null {
-  if (count.kind === 'LOAD') return count.atLeast ? null : (count.demandMinutes * 100) / count.capacityMinutes;
+  if (count.kind === 'LOAD') return count.atLeast || count.over ? null : (count.demandMinutes * 100) / count.capacityMinutes;
   if (count.kind === 'UNDER') return count.below - 0.01;
   return null;
+}
+
+/**
+ * Whether a what-if's count may be set beside the week as it stands as "better":
+ * the count is a value, and so is the week as it stands, or the week as it
+ * stands is a bound ABOVE the supply, which any value (never over) is under.
+ * A cut week as it stands is a bound with no such floor and ranks nobody.
+ */
+export function rankable(today: ChoiceCount, count: ChoiceCount): boolean {
+  if (rankingFigure(count) === null) return false;
+  if (rankingFigure(today) !== null) return true;
+  return today.kind === 'LOAD' && today.over;
 }
