@@ -93,6 +93,21 @@ describe('EngineReleaseService (släppt för motorn)', () => {
       });
     });
 
+    it('treats a post named in upper case as the post: not released again, not logged again, and taken back (review of #363)', async () => {
+      const { world, service } = setup();
+      // The ids above are digits only; this one has letters, so that its spelling can differ. The database stores it in lower case.
+      const lower = '00000000-0000-4000-8000-0000000000ab';
+      const upper = lower.toUpperCase();
+      expect(upper).not.toBe(lower);
+      world.rows['teachingRequirement']!.push({ id: lower, academicYearId: YEAR, subjectId: 's9', studentGroupId: 'g1', teacherId: null });
+      expect(await service.set({ academicYearId: YEAR, requirementIds: [upper], released: true }, admin())).toEqual({ changed: 1, unchanged: 0 });
+      expect(await service.set({ academicYearId: YEAR, requirementIds: [upper], released: true }, admin())).toEqual({ changed: 0, unchanged: 1 });
+      expect(logs(world)).toHaveLength(1);
+      expect(releasesOf(world)).toEqual([lower]);
+      expect(await service.set({ academicYearId: YEAR, requirementIds: [upper], released: false }, admin())).toEqual({ changed: 1, unchanged: 0 });
+      expect(releasesOf(world)).toEqual([]);
+    });
+
     it('treats a post named twice as one', async () => {
       const { world, service } = setup();
       const result = await service.set({ academicYearId: YEAR, requirementIds: [P1, P1], released: true }, admin());

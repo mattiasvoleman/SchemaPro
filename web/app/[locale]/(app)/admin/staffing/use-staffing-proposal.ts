@@ -184,7 +184,7 @@ export interface StaffingProposal {
     openRequirements: number;
     keptRequirements: number;
     fixedRequirements: number;
-    /** Posts of the year the school has released for the engine (släppt för motorn), staffed or not. */
+    /** Posts of the year the school has released for the engine (släppt för motorn) that a teacher it chose leads: the ones a release is for. */
     releasedRequirements: number;
     vacated: number;
     inconsistent: number;

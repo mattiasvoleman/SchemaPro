@@ -72,7 +72,9 @@ export class EngineReleaseService {
   /** Sets, or takes back, the release of the posts. One transaction, all or nothing. */
   async set(dto: SetEngineReleaseDto, user: AuthenticatedUser): Promise<EngineReleaseResult> {
     const schoolId = requireSchoolId(user);
-    const ids = [...new Set(dto.requirementIds)].sort();
+    // A uuid has one value however it is spelled (the database compares it so, and what is read back from it is in lower case), so a post
+    // named in upper case is the post: otherwise it is released again and logged again, and a release is never taken back.
+    const ids = [...new Set(dto.requirementIds.map((id) => id.toLowerCase()))].sort();
     const result = await this.prisma.withRls(user, async (tx) => {
       await lockApplyYearKey(tx, 'staffing-proposal', dto.academicYearId);
       await this.requireYear(tx, dto.academicYearId);

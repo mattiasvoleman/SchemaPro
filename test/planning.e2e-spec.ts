@@ -7353,6 +7353,42 @@ describe('Planning surface (e2e)', () => {
       expect(world.rows['scheduleChangeLog']).toHaveLength(0);
     });
 
+    it('409s a request that says undo and reverses no apply, as an apply: undo:true is no way round the release or the second confirmation (review of #363)', async () => {
+      const world = givenStaff();
+      const proposal = await propose().expect(200);
+      // Anna's Ma 7A is staffed and not released: moved by hand with undo:true, it is refused as an apply refuses it.
+      const notReleased = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({
+          academicYearId: IDS.yearA,
+          basisSha256: proposal.body.basisSha256,
+          undo: true,
+          changes: [{ requirementId: r(1), fromTeacherId: IDS.anna, toTeacherId: IDS.cecilia }],
+        })
+        .expect(409);
+      expect(notReleased.body).toMatchObject({ code: 'STAFF_ROW_NOT_RELEASED', params: { requirementId: r(1) } });
+      expect(lead(world, r(1))).toBe(IDS.anna);
+      // The proposal's own changes give Cecilia a subject she does not teach: with undo:true and no confirmation, refused as an apply is.
+      const unconfirmed = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({
+          academicYearId: IDS.yearA,
+          basisSha256: proposal.body.basisSha256,
+          undo: true,
+          changes: proposal.body.assignments.map((a: Record<string, unknown>) => ({
+            requirementId: a['requirementId'],
+            fromTeacherId: a['fromTeacherId'],
+            toTeacherId: a['toTeacherId'],
+          })),
+        })
+        .expect(409);
+      expect(unconfirmed.body).toMatchObject({ code: 'STAFF_NEW_TEACHING_UNCONFIRMED', params: { count: 2 } });
+      expect([lead(world, r(2)), lead(world, r(6))]).toEqual([IDS.bo, null]);
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+    });
+
     it('409s STAFF_PROPOSAL_STALE when a release was set after the proposal, writing nothing', async () => {
       const world = givenStaff();
       const proposal = await propose().expect(200);

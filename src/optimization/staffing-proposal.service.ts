@@ -258,7 +258,7 @@ export interface StaffingProposal {
     openRequirements: number;
     keptRequirements: number;
     fixedRequirements: number;
-    /** Posts of the year the school has released for the engine (släppt för motorn), whether they are staffed or not. */
+    /** Posts of the year the school has released for the engine (släppt för motorn) that a teacher it chose leads: the ones a release is for. */
     releasedRequirements: number;
     /** Free rows whose lead is no longer active staff. */
     vacated: number;
@@ -464,7 +464,12 @@ export class StaffingProposalService {
         openRequirements: open.length,
         keptRequirements: kept.length,
         fixedRequirements: plan.rows.length - free.length,
-        releasedRequirements: state.released.size,
+        // Released AND led by somebody the school chose: the posts the release means anything for. A released post nobody teaches, or
+        // whose teacher has left, is open to the proposal with or without it, and counting it would have the dialog say that a post it
+        // offers is "left as it is" (releasedSkipped) or that a release is there when no staffed post has one (nothingToDoRelease).
+        releasedRequirements: plan.rows.filter(
+          (row) => state.released.has(row.row.id) && row.row.teacherId !== null && plan.staff.has(row.row.teacherId),
+        ).length,
         vacated: plan.rows.filter((row) => row.vacated).length,
         inconsistent: plan.rows.filter((row) => row.inconsistent).length,
         teachersSent: plan.teachers.length,
@@ -635,6 +640,9 @@ export class StaffingProposalService {
       const staff = new Set(state.staffIds);
       const candidates = new Set(state.candidateIds);
       const restoring: string[] = [];
+      /** A post whose teacher the school chose (active staff) and has not released for the engine. */
+      const isChosenAndNotReleased = (row: { id: string; teacherId: string | null }): boolean =>
+        row.teacherId !== null && staff.has(row.teacherId) && !state.released.has(row.id);
       for (const change of dto.changes) {
         const row = rows.get(change.requirementId);
         if (!row) throw new BadRequestException(`Requirement ${change.requirementId} is not in this academic year.`);
@@ -668,15 +676,7 @@ export class StaffingProposalService {
         if (row.teacherId !== change.fromTeacherId) throw stale();
         // A teacher the school chose is moved by nobody who has not been released for the engine. A proposal holds no such row
         // (planOf) and the basis covers the releases, so this is a request made by hand. An undo puts back what an apply moved.
-        if (dto.undo !== true && row.teacherId !== null && staff.has(row.teacherId) && !state.released.has(row.id)) {
-          throw new ConflictException({
-            message:
-              `${requirementName(row.subjectName, row.groupName)} har en lärare som skolan valt och är inte släppt för motorn. ` +
-              'Släpp posten först, eller ändra läraren för hand.',
-            code: STAFF_ROW_NOT_RELEASED,
-            params: { requirementId: row.id },
-          });
-        }
+        if (dto.undo !== true && isChosenAndNotReleased(row)) throw rowNotReleased(row);
       }
       if (restoring.length > 0) {
         const wanted = [...new Set(restoring)];
@@ -689,6 +689,7 @@ export class StaffingProposalService {
         }
       }
 
+      const reversal = dto.undo === true ? await this.appliedBefore(tx, dto) : undefined;
       const warnings = enforceRequirementBatch({
         input: state.read.input,
         policy: state.policy,
@@ -698,10 +699,22 @@ export class StaffingProposalService {
           const row = rows.get(requirementId)!;
           return requirementName(row.subjectName, row.groupName);
         },
-        restoring: dto.undo === true ? await this.appliedBefore(tx, dto) : undefined,
+        restoring: reversal,
       });
 
-      if (dto.undo !== true) {
+      // `undo: true` is what a caller says, and the log is what proves it: only a request that reverses the apply the log holds puts
+      // back what was, and asks nothing. One that says undo and reverses no apply is judged as any write, here as by the policy above
+      // (the REFUSE test "undo:true is no way round REFUSE"), so the two gates of the proposal hold for a call that does not come
+      // from the dialog as the manual says they do.
+      const reversing = dto.undo === true && reversal !== undefined;
+      if (dto.undo === true && !reversing) {
+        for (const change of dto.changes) {
+          const row = rows.get(change.requirementId)!;
+          if (isChosenAndNotReleased(row)) throw rowNotReleased(row);
+        }
+      }
+
+      if (!reversing) {
         // The second confirmation: a change that gives a teacher a subject or a årskurs they do not teach today (computed from the
         // rows as the basis says they are, as the proposal named them) is written only with the caller's yes for that very change.
         // After the policy's own judgement above, so a change the school's rules refuse is refused as that and not first asked about.
@@ -710,7 +723,8 @@ export class StaffingProposalService {
         const unconfirmed = [...dto.changes]
           .sort((a, b) => compareIds(a.requirementId, b.requirementId))
           .flatMap((change) => {
-            const given = newTeachingOf(teachingNow, rows.get(change.requirementId)!, change.toTeacherId!);
+            if (change.toTeacherId === null) return [];
+            const given = newTeachingOf(teachingNow, rows.get(change.requirementId)!, change.toTeacherId);
             return given !== null && !confirmed.has(`${change.requirementId}>${change.toTeacherId}`) ? [{ change, given }] : [];
           });
         if (unconfirmed.length > 0) {
@@ -1874,6 +1888,16 @@ export function basisOf(state: Pick<StaffingState, 'read' | 'policy' | 'staffIds
     ...(state.released.size > 0 ? { released: [...state.released].sort(compareIds) } : {}),
   };
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
+
+function rowNotReleased(row: { id: string; subjectName: string; groupName: string }): ConflictException {
+  return new ConflictException({
+    message:
+      `${requirementName(row.subjectName, row.groupName)} har en lärare som skolan valt och är inte släppt för motorn. ` +
+      'Släpp posten först, eller ändra läraren för hand.',
+    code: STAFF_ROW_NOT_RELEASED,
+    params: { requirementId: row.id },
+  });
 }
 
 function stale(): ConflictException {

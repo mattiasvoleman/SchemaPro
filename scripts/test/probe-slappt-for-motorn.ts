@@ -213,6 +213,16 @@ export async function slapptChecks(owner: Client, api: PrismaService, marker: st
       assert.deepEqual(await releasedIds(), []);
     });
 
+    await check('(sm1b) a post named in upper case is the post: released once, logged once, and taken back (review of #363)', async () => {
+      const upper = p2.toUpperCase();
+      assert.notEqual(upper, p2, 'the post id has no letter to spell in upper case');
+      assert.deepEqual(await releases.set({ academicYearId: yearA, requirementIds: [upper], released: true }, asFull), { changed: 1, unchanged: 0 });
+      assert.deepEqual(await releases.set({ academicYearId: yearA, requirementIds: [upper], released: true }, asFull), { changed: 0, unchanged: 1 });
+      assert.deepEqual(await releasedIds(), [p2]);
+      assert.deepEqual(await releases.set({ academicYearId: yearA, requirementIds: [upper], released: false }, asFull), { changed: 1, unchanged: 0 });
+      assert.deepEqual(await releasedIds(), []);
+    });
+
     await check('(sm2) a teacher reads no release, the läsare reads and writes none, the expedition writes none', async () => {
       await releases.set({ academicYearId: yearA, requirementIds: [p1], released: true }, asFull);
       assert.deepEqual((await releases.list(yearA, asTeacher)).releases, [], 'a teacher read a release');

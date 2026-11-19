@@ -2130,6 +2130,14 @@ describe('StaffingProposalService, släppt för motorn', () => {
       expect(sentRow(sent()[0]!, R_SV7, schoolRows()['teachingRequirement']!).fixed).toBe(false);
     });
 
+    it('counts only the released posts that a teacher the school chose leads: one nobody teaches, or whose teacher has left, is open anyway (review of #363)', async () => {
+      // Ma 7A is Anna's (chosen), Ma 8A has nobody and Sv 7A's teacher has left: all three released, one of them means anything.
+      const rows = releasing(schoolRows(), [R_MA7, R_MA8, R_SV7]);
+      const { service } = setup(rows);
+      const proposal = await service.propose(ask({ onlyUnstaffed: true }), admin());
+      expect(proposal.counts.releasedRequirements).toBe(1);
+    });
+
     it('does not count a release that names a post of no row of this year', async () => {
       const rows = schoolRows();
       rows['teachingRequirementRelease'] = [
@@ -2289,6 +2297,62 @@ describe('StaffingProposalService, släppt för motorn', () => {
         service.apply({ academicYearId: YEAR, basisSha256: applied.basisSha256, undo: true, changes: [{ requirementId: R_MA8, fromTeacherId: CY, toTeacherId: null }] }, admin()),
       ).resolves.toMatchObject({ updated: 1 });
       expect(lead(world, R_MA8)).toBeNull();
+    });
+
+    it('judges a request that says undo and reverses no apply as any apply: no way round the second confirmation (review of #363)', async () => {
+      const { service, world, proposal } = await proposeFrom(schoolRows());
+      // Ma 8A (open) to Cy gives him a subject and a årskurs; with undo:true and no apply behind it, it is asked about as any apply.
+      await expect(
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, undo: true, changes: toCy }, admin()),
+      ).rejects.toMatchObject({ status: 409, response: { code: STAFF_NEW_TEACHING_UNCONFIRMED, params: { count: 1, requirementId: R_MA8, userId: CY } } });
+      expect(lead(world, R_MA8)).toBeNull();
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+      // Confirmed, it goes through as an apply does.
+      await expect(
+        service.apply(
+          { academicYearId: YEAR, basisSha256: proposal.basisSha256, undo: true, confirmedNewTeaching: [{ requirementId: R_MA8, toTeacherId: CY }], changes: toCy },
+          admin(),
+        ),
+      ).resolves.toMatchObject({ updated: 1 });
+    });
+
+    it('judges a request that says undo and reverses no apply as any apply: no way round "släppt för motorn" (review of #363)', async () => {
+      const { service, world, proposal } = await proposeFrom(schoolRows());
+      await expect(
+        service.apply(
+          { academicYearId: YEAR, basisSha256: proposal.basisSha256, undo: true, changes: [{ requirementId: R_MA7, fromTeacherId: ANNA, toTeacherId: BO }] },
+          admin(),
+        ),
+      ).rejects.toMatchObject({ status: 409, response: { code: STAFF_ROW_NOT_RELEASED, params: { requirementId: R_MA7 } } });
+      expect(lead(world, R_MA7)).toBe(ANNA);
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+    });
+
+    it('judges the whole of an undo as an apply when one change of it is no reversal (review of #363)', async () => {
+      const { service, world, proposal } = await proposeFrom(schoolRows());
+      const applied = await service.apply(
+        { academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: [{ requirementId: R_MA8, toTeacherId: CY }], changes: toCy },
+        admin(),
+      );
+      // Cy's Ma 8A back to nobody is the reversal; Anna's Ma 7A to Bo, which the school has not released, is not. The batch is one
+      // write, so it is judged as an apply whole, as the policy judges it (the REFUSE test above), and nothing of it is written.
+      await expect(
+        service.apply(
+          {
+            academicYearId: YEAR,
+            basisSha256: applied.basisSha256,
+            undo: true,
+            changes: [
+              { requirementId: R_MA8, fromTeacherId: CY, toTeacherId: null },
+              { requirementId: R_MA7, fromTeacherId: ANNA, toTeacherId: BO },
+            ],
+          },
+          admin(),
+        ),
+      ).rejects.toMatchObject({ status: 409, response: { code: STAFF_ROW_NOT_RELEASED } });
+      expect(lead(world, R_MA8)).toBe(CY);
+      expect(lead(world, R_MA7)).toBe(ANNA);
+      expect(world.rows['scheduleChangeLog']).toHaveLength(1);
     });
 
     it('refuses to move a staffed post the school has not released, with the post named flat, and writes nothing', async () => {

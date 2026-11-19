@@ -6871,7 +6871,8 @@ section 546 holds that.
 
 A second confirmation, in the same change: an apply that gives a teacher a subject or a årskurs they do not teach today (a post they
 lead, co-lead or take lessons of) is refused `409 STAFF_NEW_TEACHING_UNCONFIRMED` (flat `params`) unless the request lists that very
-change in `confirmedNewTeaching`. The dialog lists those changes apart and asks twice. An undo asks for nothing.
+change in `confirmedNewTeaching`. The dialog lists those changes apart and asks twice. An undo asks for nothing, but only an undo that reverses the latest apply the log holds: a request that says
+`undo: true` and reverses none is judged as any apply, by the release rule (`STAFF_ROW_NOT_RELEASED`) and by this confirmation, as the policy already judges it.
 
 ### 31.1 Deploy order
 
@@ -6899,8 +6900,10 @@ it never names the table.
 - **"Bara obemannade" off changed meaning.** It used to let every unpinned post change hands; now it means unstaffed posts plus released
   ones, and a staffed post that is not released is never moved. A school that releases nothing sees exactly what "bara obemannade" always
   gave it, for either setting.
-- **Candidates are chosen as before** (`qualificationCovers` over the recorded behörigheter). When #361 (`Subjects.qualificationSubjectId`)
-  has merged, the reader it changes is the same one, so nothing here moves with it.
+- **Candidates are chosen as before** (`qualificationCovers` over the recorded behörigheter). #361 (`Subjects.qualificationSubjectId`) has
+  merged and is in this tree: the reader it changes (`readHeldQualifications`, through `readLoadInput`) is the one the proposal reads, so a
+  subject that uses another's behörighet is offered to its holders without anything here knowing of it. "New subject" in the second
+  confirmation is the post's own subject, though: a teacher who leads SO is given a new subject by an SO WS post.
 
 ### 31.4 Operations
 
