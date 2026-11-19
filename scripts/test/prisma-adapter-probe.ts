@@ -137,6 +137,7 @@ import { generateQueueChecks, sweepGenerateQueueSchool } from './probe-generera-
 import { leaveChecks, sweepLeaveSchool } from './probe-leave';
 import { skolenheterChecks, sweepSkolenheterSchool } from './probe-skolenheter';
 import { importTemplatesChecks, sweepImportTemplatesSchools } from './probe-import-templates';
+import { behorighetChecks, sweepBehorighetSchools } from './probe-behorighet-som-i-amne';
 import { adminAreaChecks, sweepRollerSchool } from './probe-admin-areas';
 import { huvudmanChecks } from './probe-huvudman';
 import { deladeChecks } from './probe-delade';
@@ -6149,6 +6150,8 @@ async function runChecks(
   await teachesPr4Checks(owner, api, MARKER, check);
   // Kolumnmappning: a school's saved column mappings through the real service and the arms, and the requirements import by signature.
   await importTemplatesChecks(owner, api, MARKER, check);
+  // Behörighet som i ett annat ämne: the pointer through the real service, the trigger's refusal through the adapter, two writers at once, and the readers on real rows.
+  await behorighetChecks(owner, api, MARKER, check);
 }
 
 
@@ -6666,6 +6669,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepAvbokningFlyttSchools(owner, MARKER);
   // Kolumnmappning's three schools, likewise.
   await sweepImportTemplatesSchools(owner, MARKER);
+  // Behörighet som i ett annat ämne's two schools, likewise.
+  await sweepBehorighetSchools(owner, MARKER);
   // Elevlistan i uppföljningen's school, likewise.
   await sweepElevlistanSchool(owner, MARKER);
   // Massåtgärder's school, likewise.

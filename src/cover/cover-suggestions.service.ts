@@ -10,6 +10,7 @@ import { enterGrundschemaWrite } from '../publication/publish-mode';
 import { dayOf, dutyRunsOn } from '../staffing/duty-dates';
 import { changesDuringYear, postOfWeek } from '../staffing/employment-periods';
 import { readsHr } from '../staffing/hr-visibility';
+import { readHeldQualifications } from '../staffing/qualification-inheritance';
 import { attendanceSpan } from '../staffing/staffing-enforcement';
 import { toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { gradesParam } from '../staffing/staffing-checks';
@@ -407,10 +408,9 @@ export class CoverSuggestionsService {
   ): Promise<RankContext> {
     const subjectIds = [...new Set(lessons.map((lesson) => lesson.subjectId))];
     const groupIds = [...new Set(lessons.flatMap((lesson) => [lesson.studentGroupId, ...lesson.extraGroupIds]))];
-    const qualifications = ((await tx.teacherSubjectQualification.findMany({
-      where: { subjectId: { in: subjectIds } },
-      select: { userId: true, subjectId: true, minGradeLevel: true, maxGradeLevel: true, kind: true, validFrom: true, validTo: true },
-    })) ?? []) as QualificationRow[];
+    // With the derived rows of a lesson's subject that uses another's
+    // behörighet (qualification-inheritance.ts): "SO WS" ranks the SO teachers.
+    const qualifications: QualificationRow[] = await readHeldQualifications(tx, { subjectIds });
     const spanOf = new Map<string, { min: number; max: number } | null>();
     if (year && qualifications.length > 0) {
       for (const lesson of lessons) {
