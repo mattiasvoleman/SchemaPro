@@ -83,9 +83,10 @@ export async function scheduleActivityChecks(owner: Client, api: PrismaService, 
   const one = async <T extends object>(sql: string, params: unknown[] = []): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
   const all = async <T extends object>(sql: string, params: unknown[] = []): Promise<T[]> => (await owner.query<T>(sql, params)).rows;
   const today = (await one<{ d: string }>(`SELECT ((now() AT TIME ZONE 'Europe/Stockholm')::date)::text AS d`)).d;
-  // (sa-j) runs over the weekend the clock goes forward, the last Sunday of March: the next one after today. The year below is
-  // stretched to hold its Friday and Monday, for from the end of April until the end of May no spring switch is inside
-  // [today - 30, today + 300].
+  // (sa-j) runs over the weekend the clock goes forward, the last Sunday of March: the next one whose Friday is after today. The
+  // year below is stretched to hold that Friday and the Monday after it. That is needed from the Friday itself until about the
+  // 7th–11th of June (some 75 days a year): in those days no switch with its Friday still ahead is inside [today - 30, today + 300],
+  // for the one that is, if any, is behind today, and the next is more than 300 days off.
   const shiftDay = (iso: string, days: number): string => {
     const d = new Date(`${iso}T00:00:00Z`);
     d.setUTCDate(d.getUTCDate() + days);
