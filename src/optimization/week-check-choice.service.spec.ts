@@ -90,6 +90,7 @@ describe('WeekCheckChoiceService', () => {
     academicYear: { findUnique: jest.Mock };
     teacherSubjectQualification: { findMany: jest.Mock; count: jest.Mock };
     subject: { findMany: jest.Mock };
+    user: { findMany: jest.Mock };
   };
   let proxy: { prepareSchedule: jest.Mock; callAiEngine: jest.Mock; realiseConflicts: jest.Mock };
   let service: WeekCheckChoiceService;
@@ -158,6 +159,8 @@ describe('WeekCheckChoiceService', () => {
           { id: BILD, name: 'Bild' },
         ]),
       },
+      // The deactivated teachers among the holders (qualification rows are read through readHeldQualifications).
+      user: { findMany: jest.fn(async () => []) },
     };
     proxy = {
       prepareSchedule: jest.fn(),
@@ -498,17 +501,52 @@ describe('WeekCheckChoiceService', () => {
       expect((await service.choice(YEAR_ID, user)).releasedPosts).toBe(0);
     });
 
-    it('reads the behörigheter of the week\'s own subjects and of active teachers only', async () => {
+    it('reads the behörigheter of the week\'s own subjects, and leaves out the teachers who are deactivated', async () => {
       answers(answer(), under(), answer(), answer());
+      tx.user.findMany.mockImplementation(async () => [{ id: USER_B }]);
 
-      await service.choice(YEAR_ID, user);
+      const view = await service.choice(YEAR_ID, user);
 
-      const where = tx.teacherSubjectQualification.findMany.mock.calls[0]![0].where as {
-        subjectId: { in: string[] };
-        user: { isActive: boolean };
-      };
+      const where = tx.teacherSubjectQualification.findMany.mock.calls[0]![0].where as { subjectId: { in: string[] } };
       expect([...where.subjectId.in].sort()).toEqual([HKK, MUSIK]);
-      expect(where.user).toEqual({ isActive: true });
+      // The deactivated one is asked of the holders, and is not counted: only teacher A holds Hemkunskap now.
+      expect(tx.user.findMany.mock.calls[0]![0]).toEqual({
+        where: { id: { in: expect.arrayContaining([USER_A, USER_B]) }, isActive: false },
+        select: { id: true },
+      });
+      expect(view.releasedPosts).toBe(0);
+    });
+
+    it('counts the teachers of the subject a subject uses the behörighet of ("Hemkunskap WS" -> "Hemkunskap"), as Föreslå bemanning does', async () => {
+      const HKK_WS = 'subject-hemkunskap-ws';
+      subjectsOf = new Map([
+        [1, HKK_WS],
+        [2, HKK_WS],
+        [3, HKK_WS],
+        [4, MUSIK],
+        [5, MUSIK],
+      ]);
+      build();
+      // Both teachers hold Hemkunskap; nobody holds "Hemkunskap WS", which uses Hemkunskap's behörighet.
+      qualifications = [qualification(USER_A, HKK), qualification(USER_B, HKK), qualification(USER_B, MUSIK)];
+      tx.teacherSubjectQualification.findMany.mockImplementation(async (args: { where: { subjectId: { in: string[] } } }) =>
+        qualifications.filter((row) => args.where.subjectId.in.includes(row.subjectId as string)),
+      );
+      tx.subject.findMany.mockImplementation(async (args: { where: Record<string, unknown> }) =>
+        args.where.qualificationSubjectId !== undefined
+          ? [{ id: HKK_WS, qualificationSubjectId: HKK }]
+          : [
+              { id: HKK_WS, name: 'Hemkunskap WS' },
+              { id: MUSIK, name: 'Musik' },
+            ],
+      );
+      answers(answer(), under(), answer({ years: [row(87)] }), answer({ years: [row(92)] }));
+
+      const view = await service.choice(YEAR_ID, user);
+
+      // Two teachers are qualified for the subject: three posts are released and the what-if says the choice exists.
+      expect(view.releasedPosts).toBe(3);
+      expect(view.years[0]!.whatIf.find((item) => item.subject === 'Hemkunskap WS')).toMatchObject({ qualified: 2 });
     });
   });
 

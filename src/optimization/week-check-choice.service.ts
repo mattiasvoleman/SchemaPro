@@ -3,6 +3,7 @@ import { HttpException, HttpStatus, Injectable, Logger, NotFoundException } from
 import { fromNioarig, type GradeNumbering } from '../common/grade-numbering';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
+import { readHeldQualifications } from '../staffing/qualification-inheritance';
 import type { LoadQualification } from '../staffing/teacher-load';
 import type {
   AiEngineScheduleRequest,
@@ -278,24 +279,18 @@ export class WeekCheckChoiceService {
       const subjectIds = [...new Set(subjectOf.values())];
       const day = judgedDay(isoDay(new Date()), isoDay(year.startDate), isoDay(year.endDate));
 
-      // WHO IS QUALIFIED: the behörigheter of the subjects the week teaches, of teachers who are active.
-      // The one read of the table, so that the reader Föreslå bemanning judges by can replace it here (it is
-      // classified by qualification-readers.inventory.spec.ts, from "Behörighet som i ett annat ämne" on).
-      const rows =
-        subjectIds.length === 0
+      // WHO IS QUALIFIED: the behörigheter of the subjects the week teaches, with the derived rows of a subject
+      // that uses another's ("SO WS" -> "SO", qualification-inheritance.ts): the one reader every judgement of
+      // behörighet goes through (qualification-readers.inventory.spec.ts holds this file to it). Teachers who
+      // are deactivated are left out, as load-input.ts leaves them out: what RLS narrows only narrows what is excluded.
+      const held = subjectIds.length === 0 ? [] : await readHeldQualifications(tx, { subjectIds });
+      const holderIds = [...new Set(held.map((row) => row.userId))];
+      const inactive =
+        holderIds.length === 0
           ? []
-          : await tx.teacherSubjectQualification.findMany({
-              where: { subjectId: { in: subjectIds }, user: { isActive: true } },
-              select: {
-                userId: true,
-                subjectId: true,
-                minGradeLevel: true,
-                maxGradeLevel: true,
-                kind: true,
-                validFrom: true,
-                validTo: true,
-              },
-            });
+          : await tx.user.findMany({ where: { id: { in: holderIds }, isActive: false }, select: { id: true } });
+      const inactiveIds = new Set(inactive.map((person) => person.id));
+      const rows = held.filter((row) => !inactiveIds.has(row.userId));
       const recorded = rows.length > 0 || (await tx.teacherSubjectQualification.count()) > 0;
       const subjects =
         subjectIds.length === 0
