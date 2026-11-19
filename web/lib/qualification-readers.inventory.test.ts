@@ -61,7 +61,9 @@ const COVERAGE_MODULES = new Set([
   "app/[locale]/(app)/admin/requirements/page.tsx",
 ]);
 
-const READS = /useTeacherQualifications\s*\(|["'`]\/api\/v1\/teacher-qualifications/;
+// The hook, the gateway's endpoint (also behind a `${base}` prefix), and PostgREST's table by name: a screen can read the rows
+// through any of the three, and only the first two are ones this file knew to look for.
+const READS = /useTeacherQualifications\s*\(|["'`]\/api\/v1\/teacher-qualifications|\$\{[^}]*\}\/api\/v1\/teacher-qualifications|["'`]TeacherSubjectQualifications["'`]/;
 const ASKS_INHERITED = /useTeacherQualifications\s*\(\s*[^)]*inherited\s*:\s*true/;
 const JUDGES_COVERAGE = /\b(?:qualificationCovers|candidateQualification|strongestCoveringQualification)\s*\(/;
 
@@ -80,6 +82,21 @@ const FILES = ROOTS.flatMap((root) => sources(path.join(WEB, root))).map((full) 
 const textOf = (file: string) => FILES.find((candidate) => candidate.path === file)?.text ?? "";
 
 describe("who on the web reads a behörighet", () => {
+  it("recognises every way a screen can read the rows, and nothing else", () => {
+    // The inventory is only as good as READS: a read it cannot see is a screen nobody classified.
+    const reads = [
+      "const { data } = useTeacherQualifications();",
+      'api.get<TeacherQualification[]>("/api/v1/teacher-qualifications")',
+      "api.get(`/api/v1/teacher-qualifications?userId=${id}`)",
+      "fetch(`${base}/api/v1/teacher-qualifications`)",
+      'await selectAll<Row>("TeacherSubjectQualifications", "userId, subjectId", "userId")',
+      "supabase.from('TeacherSubjectQualifications').select('*')",
+    ];
+    const notReads = ["const subjects = useSubjects();", 'api.get("/api/v1/teacher-employments")', "// the qualifications of one teacher"];
+    expect(reads.filter((text) => !READS.test(text))).toEqual([]);
+    expect(notReads.filter((text) => READS.test(text))).toEqual([]);
+  });
+
   it("has every reader of the endpoint classified", () => {
     const unclassified = FILES.filter((file) => READS.test(file.text) && !(file.path in CLASSIFIED)).map((file) => file.path);
     expect(unclassified).toEqual([]);

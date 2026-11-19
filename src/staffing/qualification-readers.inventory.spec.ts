@@ -89,8 +89,10 @@ const NAMES_ONLY = new Set([
   'src/import-templates/import-fields.ts',
 ]);
 
+// The relation is named `subjectQualifications` on User and `teacherQualifications` on Subject, and a SQL read may name the
+// schema (`FROM public."TeacherSubjectQualifications"`): each is a way to read the rows past the delegate.
 const READS_ROWS =
-  /teacherSubjectQualification\s*\.\s*(?:findMany|findFirst|findUnique|findFirstOrThrow|findUniqueOrThrow|groupBy|aggregate)\b|(?:FROM|JOIN)\s+"TeacherSubjectQualifications"|\bteacherQualifications\s*:\s*\{/;
+  /teacherSubjectQualification\s*\.\s*(?:findMany|findFirst|findUnique|findFirstOrThrow|findUniqueOrThrow|groupBy|aggregate)\b|(?:FROM|JOIN)\s+(?:"?public"?\s*\.\s*)?"TeacherSubjectQualifications"|\b(?:teacherQualifications|subjectQualifications)\s*:\s*(?:true\b|\{)/;
 const IMPORTS_READER = /from\s+'[^']*qualification-inheritance'/;
 const CALLS_READER = /\breadHeldQualifications\s*\(/;
 
@@ -109,6 +111,30 @@ const FILES = sources(SRC).map((path) => ({
 const textOf = (path: string) => FILES.find((file) => file.path === path)?.text ?? '';
 
 describe('who reads a behörighet', () => {
+  it('recognises every way the table can be read, and nothing that only writes or counts', () => {
+    // The inventory is only as good as READS_ROWS: a read it cannot see is a reader nobody classified, which is the
+    // silent "SO WS counts nobody" it exists to stop. One sample for each way Prisma and SQL can name the rows.
+    const reads = [
+      'await tx.teacherSubjectQualification.findMany({ where: {} })',
+      'await this.prisma.teacherSubjectQualification\n  .groupBy({ by: ["userId"] })',
+      'tx.$queryRaw`SELECT * FROM "TeacherSubjectQualifications" q`',
+      'tx.$queryRaw`SELECT * FROM public."TeacherSubjectQualifications" q`',
+      'tx.$queryRaw`SELECT 1 FROM x JOIN "public"."TeacherSubjectQualifications" q ON true`',
+      'tx.user.findMany({ include: { subjectQualifications: true } })',
+      'tx.user.findMany({ select: { subjectQualifications: { select: { kind: true } } } })',
+      'tx.subject.findMany({ include: { teacherQualifications: true } })',
+      'tx.subject.findMany({ where: { teacherQualifications: { some: {} } } })',
+    ];
+    const notReads = [
+      'await tx.teacherSubjectQualification.count()',
+      'await tx.teacherSubjectQualification.createMany({ data })',
+      'await tx.teacherSubjectQualification.deleteMany({ where: { userId } })',
+      'const qualifications = held.filter((row) => row.kind === "BEHORIG")',
+    ];
+    expect(reads.filter((text) => !READS_ROWS.test(text))).toEqual([]);
+    expect(notReads.filter((text) => READS_ROWS.test(text))).toEqual([]);
+  });
+
   it('has every reader of the table classified', () => {
     const unclassified = FILES.filter(
       (file) => READS_ROWS.test(file.text) && !(file.path in CLASSIFIED) && !NAMES_ONLY.has(file.path),

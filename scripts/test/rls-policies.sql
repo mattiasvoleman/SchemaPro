@@ -66963,8 +66963,10 @@ BEGIN
   SELECT p.oid INTO fn FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'app' AND p.proname = 'subjects_qualification_is_one_level';
   IF fn IS NULL THEN RAISE EXCEPTION 'bi 540: the trigger function is missing'; END IF;
   IF NOT (SELECT p.prosecdef FROM pg_proc p WHERE p.oid = fn) THEN RAISE EXCEPTION 'bi 540: the trigger function is not a definer'; END IF;
-  IF (SELECT coalesce(p.proconfig::text, '') FROM pg_proc p WHERE p.oid = fn) NOT LIKE '%search_path=%public%' THEN
-    RAISE EXCEPTION 'bi 540: the trigger function has no pinned search path';
+  -- Exactly "public, pg_temp", as every other definer's section asks: pg_temp LAST. A path without it, or with it first, lets a
+  -- temporary table the API role can create stand in for "Subjects" in the function's reads, past row security.
+  IF NOT coalesce((SELECT p.proconfig @> ARRAY['search_path=public, pg_temp'] AND cardinality(p.proconfig) = 1 FROM pg_proc p WHERE p.oid = fn), false) THEN
+    RAISE EXCEPTION 'bi 540: the trigger function does not pin search_path = public, pg_temp (it is %)', (SELECT p.proconfig::text FROM pg_proc p WHERE p.oid = fn);
   END IF;
   IF (SELECT p.prosrc FROM pg_proc p WHERE p.oid = fn) NOT LIKE '%pg_advisory_xact_lock%' THEN RAISE EXCEPTION 'bi 540: the trigger function takes no lock'; END IF;
   IF has_function_privilege('public', fn, 'EXECUTE') THEN RAISE EXCEPTION 'bi 540: PUBLIC may execute the trigger function'; END IF;
@@ -67160,6 +67162,10 @@ BEGIN
   PERFORM pg_temp.bi_refuses(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, foreign_so, ws), '23503', 'a pointer to another school''s subject, on update');
   PERFORM pg_temp.bi_refuses(format($q$INSERT INTO "Subjects" ("schoolId", name, "qualificationSubjectId", "updatedAt") VALUES (%L, 'bi korsad', %L, now())$q$, school, foreign_so), '23503', 'a pointer to another school''s subject, on insert');
   PERFORM pg_temp.bi_refuses(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, gen_random_uuid(), ws), '23503', 'a pointer to a subject that does not exist');
+  -- Another school's subject that itself has a pointer (foreign_ws -> foreign_so) is still the key's to refuse (23503). The trigger
+  -- reads only the subjects of the school the written row names, so it never meets that subject: a QS409 here would be the trigger
+  -- naming another school's rows (its DETAIL carries the id of the subject the other school's one points at).
+  PERFORM pg_temp.bi_refuses(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, foreign_ws, ws), '23503', 'a pointer to another school''s subject that itself has a pointer');
   -- And the other school's, the other way round.
   PERFORM pg_temp.bi_as('00000000-0000-4000-8000-e50000000031');
   PERFORM pg_temp.bi_refuses(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, so, foreign_ws), '23503', 'the other school pointing at this school''s subject');
