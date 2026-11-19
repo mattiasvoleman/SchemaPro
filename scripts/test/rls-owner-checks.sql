@@ -12,6 +12,61 @@
 \set ON_ERROR_STOP on
 
 -- ---------------------------------------------------------------------------
+-- Jobbens dörrar (20270224090000, avsnitt 520–523). Jobbets transaktion har ingen inloggning (withDeliveryService sätter inga
+-- claims), och dörrarna nekar nu varje session som har en. Ett avsnitt som planterar rader som en administratör och sedan kör
+-- en av dörrarna kör den som jobbet kör den: genom pg_temp.u12_<dörr>, som har samma argument och ger samma svar som dörren
+-- men sätter claims (request.jwt.claims och request.jwt.claim.sub) åt sidan medan dörren körs och sätter tillbaka dem efteråt,
+-- så avsnittets administratör är kvar. Nekar dörren går undantaget igenom, och den undertransaktion som fångar det (ett
+-- BEGIN … EXCEPTION, eller pg_temp-hjälparna som kör en sats och svarar med dess SQLSTATE) rullar också tillbaka claims till
+-- det de var. En funktion med SET-klausul vore enklare, men API-rollen får inte skapa en som sätter ett eget värde. Skapas ur
+-- katalogen, så ett argument eller en returtyp som ändras följer med.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  d record;
+  call text;
+BEGIN
+  FOR d IN
+    SELECT p.proname, pg_get_function_arguments(p.oid) AS args, pg_get_function_result(p.oid) AS res, p.proretset AS is_set,
+           (SELECT string_agg('$' || g, ', ' ORDER BY g) FROM generate_series(1, p.pronargs) g) AS pass
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'app'
+       AND p.proname = ANY (ARRAY[
+             'absence_stats_month', 'absence_stats_plan', 'absence_stats_trim', 'absence_watch_digest', 'absence_watch_digest_due',
+             'absence_watch_evaluate', 'absence_watch_schools', 'delivery_opt_outs', 'gallring_begin', 'gallring_claim_person',
+             'gallring_departed_due', 'gallring_finish', 'gallring_pseudonymise', 'gallring_purge', 'gallring_schools',
+             'job_claim_finished', 'job_claim_nightly', 'job_run_settled', 'job_runs_latest', 'push_due_receipts',
+             'push_receipts_settled', 'push_settle', 'push_targets', 'reporting_compute', 'reporting_digest',
+             'reporting_digest_due', 'reporting_remind', 'reporting_schools', 'schedule_candidates_sweep',
+             'school_export_claim', 'school_export_expire', 'school_export_fail', 'school_export_finish',
+             'school_export_heartbeat', 'school_export_put', 'ss12000_due_sources', 'ss12000_housekeeping'])
+  LOOP
+    call := format('app.%I(%s)', d.proname, coalesce(d.pass, ''));
+    EXECUTE format($f$
+      CREATE FUNCTION pg_temp.%I(%s) RETURNS %s LANGUAGE plpgsql VOLATILE AS $w$
+      DECLARE
+        u12_c text := coalesce(current_setting('request.jwt.claims', true), '');
+        u12_s text := coalesce(current_setting('request.jwt.claim.sub', true), '');
+        %s
+      BEGIN
+        PERFORM set_config('request.jwt.claims', '', true);
+        PERFORM set_config('request.jwt.claim.sub', '', true);
+        %s
+        PERFORM set_config('request.jwt.claims', u12_c, true);
+        PERFORM set_config('request.jwt.claim.sub', u12_s, true);
+        %s
+      END $w$ $f$,
+      'u12_' || d.proname, d.args, d.res,
+      CASE WHEN d.is_set OR d.res = 'void' THEN '' ELSE 'u12_r ' || d.res || ';' END,
+      CASE WHEN d.is_set THEN 'RETURN QUERY SELECT * FROM ' || call || ';'
+           WHEN d.res = 'void' THEN 'PERFORM ' || call || ';'
+           ELSE 'u12_r := ' || call || ';' END,
+      CASE WHEN d.is_set OR d.res = 'void' THEN '' ELSE 'RETURN u12_r;' END);
+  END LOOP;
+END $$;
+
+-- ---------------------------------------------------------------------------
 -- Section 263d: huvudmannens läsare skriver ingenting, på ägarsidan
 -- (20261212090000).
 --
@@ -3717,14 +3772,14 @@ BEGIN
   -- The activation: every pupil moves on and the classes are left empty. The months stand.
   UPDATE "Users" SET "studentGroupId" = NULL WHERE "schoolId" = s AND role = 'STUDENT';
   UPDATE "StudentEnrollments" SET "validTo" = '2026-02-28' WHERE "schoolId" = s AND "validTo" IS NULL;
-  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.u12_absence_stats_month(s, feb, '2026-03-01');
   PERFORM pg_temp.d6o_expect('391o the activation empties the classes and the month is the same', pg_temp.d6o_rows(s, feb), before);
   PERFORM pg_temp.d6o_login(s, 'd6o-cls');
   PERFORM pg_temp.d6o_expect('391o and so are the patterns of A',
     (SELECT string_agg(key || ' ' || recorded_minutes || '/' || absent_minutes, ' | ' ORDER BY key) FROM app.absence_stats_patterns(ga, NULL, '2026-02-01', '2026-02-28') WHERE dimension = 'WEEKDAY'), pa);
   -- And without the history it would not be: the marks would belong to no class.
   DELETE FROM "StudentEnrollments" WHERE "schoolId" = s;
-  PERFORM app.absence_stats_month(s, feb, '2026-03-01');
+  PERFORM pg_temp.u12_absence_stats_month(s, feb, '2026-03-01');
   PERFORM pg_temp.d6o_expect('391o with no history the classes have no pupils and no row', pg_temp.d6o_rows(s, feb), 'school 9/9 1000/0/100/0/0 4/4');
 END $$;
 ROLLBACK;
@@ -7523,5 +7578,142 @@ BEGIN
   PERFORM pg_temp.dv_expect('519o the letter: a teacher at another school', pg_temp.dv_scn(letter_, NULL, json_build_object('sub', anna)::text), 'NULL');
   PERFORM pg_temp.dv_expect('519o the letter: a teacher at another school, as a lone subject setting', pg_temp.dv_scn(letter_, NULL, '', anna), 'NULL');
   RAISE NOTICE 'dörrvakt 519o: the job gets the list and the letter, no login does';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Jobbens övriga dörrar (20270224090000), ägarsidan: 520o–521o. Sektionerna 520–523 i rls-policies.sql håller vaktens text,
+-- rättigheterna och svaret under varje inställning utan rader. Här planterar ägaren raderna, så att dörren har något att svara,
+-- och visar att jobbets dörr (inga claims) svarar det och att ingen inloggning gör det: de nio LANGUAGE sql-dörrarna svarar
+-- inget åt en inloggning, och gallringens dörr nekar (GL403) och skriver ingen körning. Varje scenario körs i en egen rullad
+-- transaktion (dv_scn). Allt rullas tillbaka.
+-- ---------------------------------------------------------------------------
+
+-- Ett scenario för jobbet, för varje inloggning som inte är en person (dv_logins) och för en person med Users-rad: dörrens svar
+-- (och p_effect, om den ges) för jobbet och för alla de andra.
+CREATE FUNCTION pg_temp.u12_scn(p_label text, p_roller uuid, p_person text, p_asks text, p_effect text, p_job text, p_login text) RETURNS void
+LANGUAGE plpgsql AS $f$
+DECLARE
+  w record;
+BEGIN
+  PERFORM pg_temp.dv_expect(p_label || ': the job', pg_temp.dv_scn(p_asks, p_effect), p_job);
+  FOR w IN SELECT * FROM pg_temp.dv_logins(p_roller::text) LOOP
+    PERFORM pg_temp.dv_expect(p_label || ': ' || w.label, pg_temp.dv_scn(p_asks, p_effect, w.claims, w.sub, w.chosen), p_login);
+  END LOOP;
+  PERFORM pg_temp.dv_expect(p_label || ': a person', pg_temp.dv_scn(p_asks, p_effect, json_build_object('sub', p_person)::text), p_login);
+  PERFORM pg_temp.dv_expect(p_label || ': a person, as a lone subject setting', pg_temp.dv_scn(p_asks, p_effect, '', p_person), p_login);
+  -- Synkens och integrationsnyckelns principal ensamma släpps in som jobbet (Dörrvaktens beslut 5, och 521 för de 28 plpgsql-dörrarna):
+  -- en sql-dörr vars villkor också nekade dem skulle bryta dem, och inget annat prov frågar de nio efter det.
+  PERFORM pg_temp.dv_expect(p_label || ': the sync principal alone', pg_temp.dv_scn(p_asks, p_effect, '', '', '', p_roller::text), p_job);
+  PERFORM pg_temp.dv_expect(p_label || ': the integration key''s principal alone', pg_temp.dv_scn(p_asks, p_effect, '', '', '', '', p_roller::text), p_job);
+END $f$;
+
+-- ---------------------------------------------------------------------------
+-- 520o: de nio sql-dörrarna, och personens. Primärskolan har en push-token, en avanmälan, en bevakning på, en rapporteringsvecka
+-- att skicka, en lektion i dag (så att den kommer med på rapporteringslistan), en jobbkörning och ett jobbanspråk; gallringsskolan
+-- står på nattlistan. Jobbet får dem; ingen inloggning får något, och jobbanspråket förblir öppet. login_is_held_elsewhere vänder
+-- på det: en inloggning får svaret, jobbet inget.
+-- ---------------------------------------------------------------------------
+BEGIN;
+DO $$
+DECLARE
+  ps uuid := (SELECT id FROM "Schools" WHERE slug <> 'rls-fixture-school' ORDER BY "createdAt" LIMIT 1);
+  gs uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-gallring-school');
+  roller uuid := (SELECT "schoolId" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000115');
+  person text;
+  u uuid;
+BEGIN
+  SELECT u2."authId"::text, u2.id INTO person, u FROM "Users" u2
+   WHERE u2."schoolId" = ps AND u2.role = 'SCHOOL_ADMIN' AND u2."isActive" AND u2."authId" IS NOT NULL ORDER BY u2."authId" LIMIT 1;
+  IF person IS NULL OR roller IS NULL OR gs IS NULL THEN RAISE EXCEPTION 'jobbdörrar 520o: the fixture people did not resolve'; END IF;
+
+  INSERT INTO "DevicePushTokens" ("schoolId", "userId", token, platform) VALUES (ps, u, 'ExponentPushToken[u12-520o]', 'IOS');
+  INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type) VALUES (u, ps, 'LESSON_CANCELLED');
+  -- The date a switch was turned on is written by a trigger (today), so the weeks due are asked of a day two weeks on.
+  INSERT INTO "AbsenceWatchSettings" ("schoolId", enabled) VALUES (ps, true) ON CONFLICT ("schoolId") DO UPDATE SET enabled = true;
+  DELETE FROM "AbsenceWatchLimits" WHERE "schoolId" = ps AND "recipientGroup" = 'MENTOR';
+  INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES (ps, 'MENTOR', 'SHARE', 'ALL', 10, 14);
+  INSERT INTO "ReportingSettings" ("schoolId", "rektorDigest") VALUES (ps, true) ON CONFLICT ("schoolId") DO UPDATE SET "rektorDigest" = true;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (ps, (SELECT id FROM "Subjects" WHERE "schoolId" = ps ORDER BY id LIMIT 1),
+          (SELECT id FROM "StudentGroups" WHERE "schoolId" = ps ORDER BY id LIMIT 1),
+          current_date, current_date + time '08:00', current_date + time '09:00', now());
+  INSERT INTO "JobRuns" (job, day, "lastStartedAt", "lastFinishedAt") VALUES ('u12-520o', current_date, now(), now());
+  INSERT INTO "JobClaims" (job, "schoolId", day, "claimedAt") VALUES ('u12-520o', ps, current_date, now());
+
+  PERFORM pg_temp.u12_scn('520o push_targets', roller, person,
+    format($q$SELECT count(*)::text FROM app.push_targets(%L, ARRAY[%L]::uuid[], 'LESSON_CANCELLED', true)$q$, ps, u), NULL, '1', '0');
+  PERFORM pg_temp.u12_scn('520o delivery_opt_outs', roller, person,
+    format($q$SELECT count(*)::text FROM app.delivery_opt_outs(%L, ARRAY[%L]::uuid[], 'LESSON_CANCELLED')$q$, ps, u), NULL, '1', '0');
+  PERFORM pg_temp.u12_scn('520o absence_watch_schools', roller, person,
+    format($q$SELECT count(*)::text FROM app.absence_watch_schools() g WHERE g = %L$q$, ps), NULL, '1', '0');
+  PERFORM pg_temp.u12_scn('520o absence_watch_digest_due', roller, person,
+    format($q$SELECT count(*)::text FROM app.absence_watch_digest_due(%L, current_date + 14) d WHERE d.recipient_group = 'MENTOR'$q$, ps), NULL, '1', '0');
+  PERFORM pg_temp.u12_scn('520o gallring_schools', roller, person,
+    format($q$SELECT count(*)::text FROM app.gallring_schools() g WHERE g = %L$q$, gs), NULL, '1', '0');
+  PERFORM pg_temp.u12_scn('520o reporting_schools', roller, person,
+    format($q$SELECT count(*)::text FROM app.reporting_schools() g WHERE g = %L$q$, ps), NULL, '1', '0');
+  PERFORM pg_temp.u12_scn('520o reporting_digest_due', roller, person,
+    format($q$SELECT count(*)::text FROM app.reporting_digest_due(%L, current_date + 14)$q$, ps), NULL, '1', '0');
+  PERFORM pg_temp.u12_scn('520o job_runs_latest', roller, person,
+    $q$SELECT count(*)::text FROM app.job_runs_latest() j WHERE j.job = 'u12-520o'$q$, NULL, '1', '0');
+  -- A write: the claim is finished for the job and left open for every login (the door answers a row either way).
+  PERFORM pg_temp.u12_scn('520o job_claim_finished', roller, person,
+    format($q$SELECT count(*)::text FROM (SELECT app.job_claim_finished('u12-520o', %L, current_date, now())) x$q$, ps),
+    format($q$SELECT (count(*) FILTER (WHERE "finishedAt" IS NOT NULL))::text FROM "JobClaims" WHERE job = 'u12-520o' AND "schoolId" = %L$q$, ps),
+    '1 | 1', '1 | 0');
+  -- The person's door: a login is told whether the login is held elsewhere; the job is told nothing.
+  PERFORM pg_temp.dv_expect('520o login_is_held_elsewhere: the job',
+    pg_temp.dv_scn($q$SELECT coalesce(app.login_is_held_elsewhere('fe000000-0000-4000-8000-000000000240', NULL)::text, 'NULL')$q$), 'NULL');
+  PERFORM pg_temp.dv_expect('520o login_is_held_elsewhere: a person',
+    pg_temp.dv_scn($q$SELECT coalesce(app.login_is_held_elsewhere('fe000000-0000-4000-8000-000000000240', NULL)::text, 'NULL')$q$, NULL, json_build_object('sub', person)::text), 'true');
+  PERFORM pg_temp.dv_expect('520o login_is_held_elsewhere: a lone subject setting',
+    pg_temp.dv_scn($q$SELECT coalesce(app.login_is_held_elsewhere('fe000000-0000-4000-8000-000000000240', NULL)::text, 'NULL')$q$, NULL, '', person), 'true');
+  PERFORM pg_temp.dv_expect('520o login_is_held_elsewhere: a login that holds nothing, asked about by a login',
+    pg_temp.dv_scn($q$SELECT coalesce(app.login_is_held_elsewhere(gen_random_uuid(), NULL)::text, 'NULL')$q$, NULL, '{}'), 'false');
+  RAISE NOTICE 'jobbdörrar 520o: the nine sql doors answer the job and no login; the login door answers a login and not the job';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- 521o: gallring. Gallringsskolan har avgångna personer som är förfallna. Jobbets dörr öppnar en körning och listar dem (Users.id,
+-- authId och om de har ett eget login att radera); ingen inloggning gör det: GL403, och ingen körning skrivs. Och historikens
+-- egen vakt (TL403) står kvar bakom dörren: med en körning öppen och en person i sessionen nekas ett DELETE av en tjänsts historik,
+-- medan det går utan person. Det var det avsnitt 83 prövade genom dörren förut; dörren stoppar nu personen före historiken.
+-- ---------------------------------------------------------------------------
+BEGIN;
+DO $$
+DECLARE
+  ps uuid := (SELECT id FROM "Schools" WHERE slug <> 'rls-fixture-school' ORDER BY "createdAt" LIMIT 1);
+  gs uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-gallring-school');
+  roller uuid := (SELECT "schoolId" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000115');
+  person text;
+  runs bigint := (SELECT count(*) FROM "GallringRuns");
+  run uuid;
+  deleted bigint;
+BEGIN
+  SELECT u2."authId"::text INTO person FROM "Users" u2
+   WHERE u2."schoolId" = ps AND u2.role = 'SCHOOL_ADMIN' AND u2."isActive" AND u2."authId" IS NOT NULL ORDER BY u2."authId" LIMIT 1;
+  IF person IS NULL OR roller IS NULL OR gs IS NULL THEN RAISE EXCEPTION 'jobbdörrar 521o: the fixture people did not resolve'; END IF;
+  PERFORM pg_temp.u12_scn('521o gallring_begin and the people due', roller, person,
+    format($q$SELECT (count(*) > 0)::text FROM app.gallring_departed_due(app.gallring_begin(%L, now()), 5)$q$, gs),
+    $q$SELECT count(*)::text FROM "GallringRuns"$q$,
+    'true | ' || (runs + 1), 'E:GL403 | ' || runs);
+
+  -- The history's guard behind the door: a run is open, and the session carries a person.
+  run := app.gallring_begin(gs, now());
+  PERFORM set_config('app.gallring', gs::text, true);   -- what gallring_purge sets for the batch that deletes the history
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000081')::text, true);
+  BEGIN
+    DELETE FROM "TeacherEmploymentLogs" WHERE "schoolId" = gs;
+    RAISE EXCEPTION 'jobbdörrar 521o: a person''s session deleted the tjänst history while a run was open';
+  EXCEPTION WHEN SQLSTATE 'TL403' THEN NULL;
+  END;
+  PERFORM set_config('request.jwt.claims', '', true);
+  DELETE FROM "TeacherEmploymentLogs" WHERE "schoolId" = gs;
+  GET DIAGNOSTICS deleted = ROW_COUNT;
+  IF deleted < 1 THEN RAISE EXCEPTION 'jobbdörrar 521o: the job''s session, with a run open, deleted nothing (the control)'; END IF;
+  PERFORM set_config('app.gallring', '', true);
+  RAISE NOTICE 'jobbdörrar 521o: the job opens a run and lists the people due, no login does; the history''s guard stands behind the door';
 END $$;
 ROLLBACK;

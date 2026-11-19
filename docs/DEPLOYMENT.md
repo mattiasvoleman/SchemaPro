@@ -6637,3 +6637,148 @@ Migration `20270223090000_en_skola_sparar_kolumnmallar_for_sina_importer` makes 
   SELECT, INSERT, UPDATE and DELETE and nothing more, `authenticated`, `anon` and `service_role` write nothing, nobody holds
   MAINTAIN, and no other table, function or arm changed. That a Planering administrator writes and a läsare does not is held
   by RLS sections 535 to 539, not asked of production.
+
+## 29. The job's other doors answer no login ("Jobbens övriga dörrar", omgång 12, A2)
+
+Section 26 closed six `SECURITY DEFINER` functions in the schema `app` that the API's role may run and that are for what runs
+with no login. 37 more are of the same kind and had no guard at all: the doors of the background jobs (absence statistics,
+absence watch, gallring, reporting rate, push and delivery, the school's export, the jobs' bookkeeping, the candidate sweep) and
+of the SS12000 scheduler. Every job opens its transaction with `withDeliveryService` (`src/database/prisma.service.ts`), which
+sets no claims; every login sets them. The doors take a school id, a run id or a lease as an argument and answer whoever asks.
+The review of #334 (U-3) and of #282 (U-1) left them untried; this is the inventory, one door at a time.
+
+What a login could do, measured as `app_authenticated` with claims for an ordinary teacher at another school, on real rows:
+
+- `app.gallring_begin` opened a gallring run for any school, and with it `app.gallring_departed_due` listed that school's
+  departed people with `Users.id`, `authId` and whether they have a login of their own to delete. `app.gallring_schools` listed the
+  schools on the nightly list. `gallring_purge` and `gallring_pseudonymise` took what had already fallen due by the school's
+  period, for any school, at any time of day.
+- `app.push_targets` answered a user's Expo push token, for any school. Whoever holds a token can send notices to the device.
+- `app.absence_watch_digest`, `app.reporting_digest` and `app.reporting_remind` answer the addresses of the school's rektor,
+  administrators and teachers (and write the notices the job writes); `app.school_export_claim` answers the ordering
+  administrator's login. Read in the body, not run on planted rows.
+- The rest count, book and tidy (absence statistics, reporting rate, `JobRuns` and `JobClaims`, the candidate sweep, the SS12000
+  scheduler) for any school. Their answers are smaller, but none of them tells a job from a login.
+
+No gateway route reaches one with a login: all go through `withDeliveryService`. What protected them was the gateway and not
+the database, the defence in depth that section 26 took back for six others. A mistake in a route that runs one in a `withRls`
+transaction, or an SQL injection in a person's request, would have reached every school's push tokens, departed people's login ids and
+the staff's addresses.
+
+Beside them, `app.login_is_held_elsewhere(authId, userId)` is a person's door (an administrator's `withRls` in
+`users.service.ts`) and answered a session with no login as well, a yes or no about whether a login id is held by any school.
+
+Migration `20270224090000_jobbens_ovriga_dorrar_svarar_inte_en_inloggning`: 38 `CREATE OR REPLACE FUNCTION` and 38
+`COMMENT ON FUNCTION`. **No table, no grant, no new object, no gateway change.** The guard is the one of section 26 (no claims, no
+lone subject setting, an empty string read as none), each door refusing the way it answers:
+
+| Doors | What they do now |
+|---|---|
+| 28 `plpgsql` doors | refuse a login with the family's own code, as the first statement: `AS403` (`absence_stats_*`), `AW403` (`absence_watch_digest`, `_evaluate`), `GL403` (`gallring_begin`, `_claim_person`, `_departed_due`, `_finish`, `_pseudonymise`, `_purge`), `JR403` (`job_claim_nightly`, `job_run_settled`), `PU403` (`push_due_receipts`, `_receipts_settled`, `_settle`), `RR403` (`reporting_compute`, `_digest`, `_remind`), `SC403` (`schedule_candidates_sweep`), `SS403` (`school_export_*`, `ss12000_due_sources`, `ss12000_housekeeping`). The job never sees them: it sets no claims |
+| 9 `LANGUAGE sql` doors (`absence_watch_digest_due`, `absence_watch_schools`, `delivery_opt_outs`, `gallring_schools`, `job_claim_finished`, `job_runs_latest`, `push_targets`, `reporting_digest_due`, `reporting_schools`) | answer nothing to a login: the guard is a condition of the query, so they stay `LANGUAGE sql` and the plan is the one it was (a `plpgsql` function is planned differently after five calls) |
+| `login_is_held_elsewhere` | the person's door asks for a login: it answers `NULL` to a session with none, and yes or no as before to one with. The caller (`loginIsHeldElsewhere`) already counts what is not `false` as held |
+
+The service principals alone (`app.service_school_id`, `app.sync_school_id`) are let in, as in section 26 (its decision 5): it is the
+principal's guard and not a person's, and no gateway route calls these doors with one. `app.schedule_candidate_runs_active()` is not
+changed: `schedule-candidates.service.ts` calls it inside a person's `withRls` transaction, and it answers a number.
+
+`md5(prosrc)` of the 38, before and after (the bodies differ by the guard and nothing else; language, volatility, `SECURITY DEFINER`,
+`search_path`, `jit = off` of `absence_stats_month`, owner and ACL are the same, `CREATE OR REPLACE` keeps owner and ACL; the
+"before" is main's `181cfc6f`, and production's is proved by the read-only query below):
+
+| Function | Before | After |
+|---|---|---|
+| `app.absence_stats_month` | `38e6f66e73a8b1463403a873a9b9ebb4` | `e3a13cf605064934b74680ace428f329` |
+| `app.absence_stats_plan` | `fe4be3f020bc5cafa67cae4e14920904` | `ee8384fd524d7533932084a5807a5499` |
+| `app.absence_stats_trim` | `7c04a5d9d6802015f590c8fd05360033` | `b56fcdcab451c1efc3dea6261e1e21c6` |
+| `app.absence_watch_digest` | `33b7080fd4cbcff036546330291131aa` | `e2faa250036d1172ed3b46246fb0ade5` |
+| `app.absence_watch_digest_due` | `0e2cc7e928e4968be9174bffaf5ff5db` | `56a3535b7028c910a2ab3cf696362f3f` |
+| `app.absence_watch_evaluate` | `6887434156b3653391f048c10e95102e` | `bce39e38a461202e20e3d5c83fe2cf71` |
+| `app.absence_watch_schools` | `ae5df619a12580140917f0eeb1e9780b` | `0612ff0195d813b026c6c15ab4a0ad2e` |
+| `app.delivery_opt_outs` | `afe39140c99747f71d7fa9801389f806` | `0c0f24e2c8d75f55eb6eab50f7b79ec8` |
+| `app.gallring_begin` | `a45f7e98dcc92f5521f246ecd21ca4cb` | `48c292e57cd0e053ef8e9c3c0745b131` |
+| `app.gallring_claim_person` | `544d8c822bcdc0a99b51197597431895` | `cb6f21244daa3afa0624c01def1a1e28` |
+| `app.gallring_departed_due` | `0c416d79e729340fda00835cd02b2248` | `484b71d8c84069271c45ea62abc84bcc` |
+| `app.gallring_finish` | `dac43dd28c3f774bddd131ae0ee3ffb0` | `7bc85742b38238441be0ee9234857e11` |
+| `app.gallring_pseudonymise` | `1f2b20ccf7e10b66c90664c235162a43` | `d852d535cb86226eb97b068fa3984014` |
+| `app.gallring_purge` | `6b5601ad006da9fa3309664e108f4720` | `2f5e9af613b6dc5ef6ea9ca361c21ee2` |
+| `app.gallring_schools` | `678de0508a29750b2b7a0ae39f239ad1` | `f88b5e2cbec1733626246bc7d4952080` |
+| `app.job_claim_finished` | `c0804d8e74853e8dc7e795e2aa185fd6` | `9ec4e83211895c0beb1c63c77e17d46d` |
+| `app.job_claim_nightly` | `59b6040f15120cf6530a4d0269618435` | `5332d1b162b9d57b3ddb58170dc52047` |
+| `app.job_run_settled` | `1b6f7e600d490460f9c3cba19e2d8caf` | `4121b2299b5154f28aaad8d0095df17c` |
+| `app.job_runs_latest` | `599f2227928c6c265b3ea0b88b234001` | `b67c758ec597e45636829a90c519360d` |
+| `app.login_is_held_elsewhere` | `f05324e3800a6efa51583b9c020058e5` | `5c87ea949eb907503cecab6094cfcf39` |
+| `app.push_due_receipts` | `9efa979a7c37d3b45431a54c7b3187a1` | `c5addc3a80a4f005f88f1e2737fd037e` |
+| `app.push_receipts_settled` | `086ae34de0257f0fcfc2aaa33cc872e4` | `70229119b7e03c03c231477745e371ab` |
+| `app.push_settle` | `1ab3678ea869179159bc3bb1bc5fffde` | `0e42ecff8947a041cd48e56718376f1a` |
+| `app.push_targets` | `65a2256aab3d0a8aba027c1f4a9096d4` | `b2a027b0d1583e974c08c1e4bd675c7e` |
+| `app.reporting_compute` | `9d22e8a75121c9a4f348f4cde6bc1c67` | `736a4557fc1654d5accd56c340cc4c19` |
+| `app.reporting_digest` | `a0d17f4d6d64b9d19afa544e4224887a` | `51289c0ffb8b3cd4410d5f375c07d7f0` |
+| `app.reporting_digest_due` | `e3f650c7a604bd699aa47d4061303a58` | `9bfdb918471abf398ac35a756f47ac04` |
+| `app.reporting_remind` | `08aa2c64014c626fbd98f70e9d82db5d` | `117b6e6aed8b4dae2b08602d8b915bda` |
+| `app.reporting_schools` | `5dc7b516803cd03a04a71bebf29a17d0` | `bd505c0aab88a4a2db25643067bd7529` |
+| `app.schedule_candidates_sweep` | `ea5aeeb4196a86bd5c12a5d0614bffca` | `3bfd9779243a25d1a6d7d00391f9fd01` |
+| `app.school_export_claim` | `d033c18afc4ffe9854476d92ca32ea53` | `3c79426fd33650a5b341b8446c5797fb` |
+| `app.school_export_expire` | `fc0178f3a5649fc4a13d43632fa45e47` | `15a062b3d4dc53c4454d3777e551f53a` |
+| `app.school_export_fail` | `80b05c872c038c2c577a33c9f9cf068a` | `9457e2025313b0d23521fce72bd0e587` |
+| `app.school_export_finish` | `b62862c5f2a2de574ccef7a685a5c07a` | `6c90611d521d3e02c75c21e7344d5cfc` |
+| `app.school_export_heartbeat` | `355710ca6aa22169320f6f8aec9267ee` | `a54d44f9d7a4258cb88b64bdb8f9a444` |
+| `app.school_export_put` | `c8bde3e2a8423f5cd5c281c867d8b90d` | `609642aa0572751dce7b6eed447b331f` |
+| `app.ss12000_due_sources` | `4656df9e139c56f1470035745bb2a998` | `9495a294971450b17d3f76c2370b1b0c` |
+| `app.ss12000_housekeeping` | `3444b63e1af391146fea30892c57a4fd` | `6ee3a36ae7c4abb8749f43ce5743f6d3` |
+
+### 29.1 Deploy order
+
+**The migration first, then the merge**, from a tree that has every applied migration and this one. The file writes and alters no table.
+It takes `ShareUpdateExclusive` on the 38 functions' rows in `pg_proc` and, for the ten `LANGUAGE sql` functions (checked when
+they are created), `ACCESS SHARE` on the tables they read until it commits: that blocks only an `ACCESS EXCLUSIVE` `ALTER TABLE`, which no request takes.
+
+1. Run the read-only query `fn|md5` for the 38 functions against production (`PGOPTIONS='-c default_transaction_read_only=on'`; `COLLATE "C"`
+   on its `ORDER BY`, because production sorts en_US). Every `md5` must equal the "Before" column. A row that does not means another change has
+   rewritten the function since this file was made: stop, and build the migration on the body production has (two migrations that
+   replace one function drop each other's change without a git conflict, so the later one is rebuilt on the earlier one's body).
+2. `prisma migrate deploy`. Then the same query: the "After" column.
+3. Merge. An API released before this one runs against the new database and the other way round without a difference: the jobs set
+   no claims, so the guard is open for them. After: the next ticks of the jobs log as before; `JobRuns` has no failed row for them.
+
+### 29.2 Rolling back
+
+- Nothing is written to a table, so there is no data to put back. The migration is one transaction: if it stops, nothing applied.
+- To put the old doors back (which reopens the gap), write a new migration that runs `CREATE OR REPLACE FUNCTION` with the old bodies and
+  `COMMENT ON FUNCTION` with the old comments. They are in the files that last wrote them, and `md5(prosrc)` of each must equal the
+  "Before" column: `delivery_opt_outs` in 20261013100000; `push_due_receipts`, `push_receipts_settled`, `push_settle`, `push_targets` in
+  20261013110000; `ss12000_due_sources`, `ss12000_housekeeping` in 20261014110000; `job_claim_finished`, `job_claim_nightly`,
+  `job_run_settled`, `job_runs_latest` in 20261021090000; `gallring_begin`, `gallring_departed_due`, `gallring_finish`,
+  `gallring_schools` in 20261021110000; `schedule_candidates_sweep` in 20261125090000; `gallring_claim_person`,
+  `login_is_held_elsewhere` in 20261212090000; `absence_watch_digest`, `_digest_due`, `_evaluate`, `_schools` in 20261231090100;
+  `reporting_compute`, `_digest`, `_digest_due`, `_remind`, `_schools` in 20270112090100; `school_export_*` in 20270114090000;
+  `absence_stats_month`, `_plan`, `_trim` in 20270121090000; `gallring_purge` in 20270204091000; `gallring_pseudonymise` in
+  20270206091000. The whole file is `scripts/prod-checks/jobbdorrar-aterstallning.sql`, built from those bodies and proved to restore bodies,
+  attributes and comments (`md5(prosrc)` of each of the 38 equals the "Before" column after it has run). Copy the whole statement, language and settings included, because `CREATE OR REPLACE` resets whatever it does not repeat.
+  Do not edit the migration after it has run: its checksum is in production's `_prisma_migrations`.
+
+### 29.3 What is not done here
+
+- **The service principals.** The guard asks for a login and not for no principal (section 26.3, the same boundary).
+- **`app.optimization_jobs_sweep()` is not in this migration.** Section 27 (#352) made it with the same guard (`GQ403`, as its first
+  statement) in its own migration, so it is not one of the 38. Sections 520 and 521 hold its guard's text and its answer under every
+  setting beside the other 28 `plpgsql` doors, so that one test file names every job door.
+- **The 24 other doors without a guard of their own** are not for a job: 16 are guarded by a helper (`huvudman_*`, the `ss12000_*`
+  secret doors and notification doors, the room loans), 7 answer by a secret in their argument (`calendar_feed`, `public_timetable`,
+  `public_timetable_embed`, `sign_in_provider_for_domain`) or are policy helpers that `anon` may run because the policies call them
+  (`school_grundschema_is_live`, `school_publish_mode`, `checklist_visible_ids`), and `schedule_candidate_runs_active` is a
+  person's. Run through the same form matrix, each refuses what it should.
+- **`login_is_held_elsewhere` changes for a session with no login**: `NULL` and not yes or no. Section 242b asked for the old answer
+  ("with nobody signed in, the shared login was nobody's"); it now asks for `NULL` there, and for the answer past row security from a
+  login that sees none of the rows.
+
+### 29.4 Operations
+
+- RLS sections 520 to 523 (and 520o, 521o in `rls-owner-checks.sql`) hold it: the guard's text in every door (and in the Generera sweep), the rights unchanged, what each
+  `plpgsql` door answers under every setting a session can carry and beside each principal, the school lists and the login door, and, with
+  rows planted as the owner, that the job's door answers a push token, an opt-out, a watch, a reporting week, a job run and a claim, and
+  the gallring school's people due, while no login does. The history's guard (`TL403`) behind the gallring door is held in 521o.
+- The suite runs the doors as the job does through `pg_temp.u12_<door>`, which the two suite files create from the catalogue: the same
+  arguments and answer, claims set aside while the door runs and put back after (a function-level `SET` would be simpler, but the API's
+  role may not create one that sets a custom parameter).
+- Sections 464 (the md5 of `gallring_pseudonymise`), 83, 242b and 268h changed with it; the others only call the doors through the helper.
