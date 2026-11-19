@@ -20401,6 +20401,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('TeachingBlockPlacements', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('TeachingBlocks', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('TeachingRequirementPlacements', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('TeachingRequirementReleases', '{PLANERING}', '{}', '{PLANERING}', '{}'),
   ('TeachingRequirementShares', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('TeachingRequirements', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('TimetablePublications', '{PUBLICERING}', '{}', '{}', '{}'),
@@ -66871,5 +66872,563 @@ BEGIN
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 0 THEN RAISE EXCEPTION 'km 539: a session with no principal removed % templates', n; END IF;
   RAISE NOTICE 'km 539: PostgREST''s roles and a session with no one behind it meet nothing';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Släppt för motorn (20270226090000), sections 545-549: the table TeachingRequirementReleases, one row for each timplanspost the
+-- school has released so that Föreslå bemanning may propose another teacher for it. Helpers are pg_temp functions with the prefix
+-- sm_, made outside any transaction so they outlive the sections' BEGIN ... ROLLBACK; every section plants its own rows in two
+-- schools through the schools' own administrators (the API's role, as the gateway writes them) and leaves nothing behind.
+--
+--   545  the catalogue: columns, keys with their actions, indexes, no CHECK, no trigger, row security, the three arms, the
+--        privileges (no UPDATE), and that the arms of TeachingRequirements itself did not move
+--   546  who reads and who writes, and the school boundary: two schools, every principal of the matrix school, and PostgREST's role
+--   547  the statements the gateway writes: INSERT ... ON CONFLICT DO NOTHING keeps the first person and time, nobody updates, a
+--        release that is taken back and given again is a new row, NOT NULL, a post that is not there
+--   548  what the rest of the world does to a row: the post removed takes its release, the person removed leaves it unsigned
+--   549  (rls-owner-checks.sql) the owner's side: the roles by name, the keys' ON UPDATE, the school removed
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.sm_tick() RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('sm.checks', (coalesce(nullif(current_setting('sm.checks', true), ''), '0')::integer + 1)::text, true);
+$f$;
+CREATE FUNCTION pg_temp.sm_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.sm_tick();
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'sm %: got\n%\nwanted\n%', p_label, p_got, p_want USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+CREATE FUNCTION pg_temp.sm_true(p_label text, p_cond boolean) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.sm_tick();
+  IF p_cond IS NOT TRUE THEN
+    RAISE EXCEPTION 'sm %: not true', p_label USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+CREATE FUNCTION pg_temp.sm_as(p_sub text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', p_sub)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+-- Runs a statement and says what became of it: ok, a row-security refusal, a missing privilege, or the SQLSTATE with the
+-- constraint's name. A failed statement leaves nothing.
+CREATE FUNCTION pg_temp.sm_try(p_stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  st text;
+  msg text;
+  con text;
+BEGIN
+  BEGIN
+    EXECUTE p_stmt;
+    RETURN 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, con = CONSTRAINT_NAME;
+  END;
+  IF st = '42501' AND msg LIKE '%row-level security%' THEN
+    RETURN '42501 rls';
+  ELSIF coalesce(con, '') <> '' AND st <> '23502' THEN
+    RETURN st || ' ' || con;
+  END IF;
+  RETURN st;
+END $f$;
+CREATE FUNCTION pg_temp.sm_case(p_label text, p_stmt text, p_want text) RETURNS void LANGUAGE sql AS $f$
+  SELECT pg_temp.sm_expect(p_label, pg_temp.sm_try(p_stmt), p_want);
+$f$;
+-- The rows a statement touched (an UPDATE or DELETE that row security leaves nothing to touch says 0).
+CREATE FUNCTION pg_temp.sm_rows(p_stmt text) RETURNS bigint LANGUAGE plpgsql AS $f$
+DECLARE n bigint;
+BEGIN
+  EXECUTE p_stmt;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END $f$;
+-- The statement the gateway writes to release posts (Prisma's createMany with skipDuplicates): one row per post, who and when.
+CREATE FUNCTION pg_temp.sm_rel(p_school uuid, p_post uuid, p_by uuid, p_at timestamptz DEFAULT now()) RETURNS text LANGUAGE sql AS $f$
+  SELECT format('INSERT INTO "TeachingRequirementReleases" ("requirementId", "schoolId", "releasedById", "releasedAt") VALUES (%L, %L, %L, %L) ON CONFLICT DO NOTHING',
+                p_post, p_school, p_by, p_at);
+$f$;
+-- One school's rows, planted as its own administrator: three posts (a subject of their own each), the second led by a teacher.
+-- Answers the ids.
+CREATE FUNCTION pg_temp.sm_plant(p_sub text, p_side text) RETURNS jsonb LANGUAGE plpgsql AS $f$
+DECLARE
+  school uuid;
+  y uuid;
+  grp uuid;
+  teacher uuid;
+  subj uuid;
+  post uuid;
+  posts jsonb := '{}';
+  spec record;
+BEGIN
+  PERFORM pg_temp.sm_as(p_sub);
+  school := app.current_school_id();
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_may('PLANERING', true) THEN
+    RAISE EXCEPTION 'sm: % is not an administrator who writes PLANERING', p_sub;
+  END IF;
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, "startDate" LIMIT 1;
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = school AND "academicYearId" = y ORDER BY id LIMIT 1;
+  SELECT id INTO teacher FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" AND "authId" IS NOT NULL ORDER BY "authId" LIMIT 1;
+  IF y IS NULL OR grp IS NULL OR teacher IS NULL THEN
+    RAISE EXCEPTION 'sm: school % lacks a year, a class or a teacher to plant on; fixtures did not run', p_side;
+  END IF;
+  FOR spec IN SELECT * FROM (VALUES ('one', false), ('two', true), ('three', false)) v(k, led) LOOP
+    INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt")
+    VALUES (school, 'sm ' || spec.k || ' ' || p_side, 'SM' || upper(spec.k) || upper(p_side), now()) RETURNING id INTO subj;
+    INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "lessonsPerWeek", "minutesPerLesson", "updatedAt")
+    VALUES (school, y, subj, grp, CASE WHEN spec.led THEN teacher END, 2, 60, now()) RETURNING id INTO post;
+    posts := posts || jsonb_build_object(spec.k, post);
+  END LOOP;
+  RETURN jsonb_build_object('school', school, 'year', y, 'group', grp, 'teacher', teacher, 'posts', posts, 'admin', p_sub, 'user', app.current_user_id());
+END $f$;
+
+-- ---------------------------------------------------------------------------
+-- Section 545: the catalogue as the migration wrote it (20270226090000).
+--
+-- Nothing here plants a row. What a name, a type, an action or a privilege is, as the catalogue holds it: a change made after
+-- the migration (a key re-made with another action, an arm moved to PUBLIC, an UPDATE or a grant to anon, MAINTAIN handed back by
+-- a default privilege) is named here. The primary key is the post and its school, so a post is released once and never
+-- conflicts with another school's row; there is no CHECK and no
+-- trigger, and nothing points at a release.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  tbl constant regclass := '"TeachingRequirementReleases"'::regclass;
+  got text;
+  want text;
+  k record;
+  r text;
+  priv text;
+BEGIN
+  SELECT string_agg(format('%s %s %s %s', a.attname, format_type(a.atttypid, a.atttypmod), CASE WHEN a.attnotnull THEN 'NN' ELSE 'N' END,
+                           coalesce(pg_get_expr(d.adbin, d.adrelid), '-')), E'\n' ORDER BY a.attnum) INTO got
+    FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = tbl AND a.attnum > 0 AND NOT a.attisdropped;
+  want := E'requirementId uuid NN -\nschoolId uuid NN -\nreleasedById uuid N -\nreleasedAt timestamp(6) with time zone NN CURRENT_TIMESTAMP';
+  PERFORM pg_temp.sm_expect('545 columns', got, want);
+  PERFORM pg_temp.sm_true('545 the table and its two columns that say who and when are commented', coalesce(obj_description(tbl, 'pg_class'), '') <> ''
+    AND coalesce(col_description(tbl, (SELECT attnum FROM pg_attribute WHERE attrelid = tbl AND attname = 'releasedById')), '') <> ''
+    AND coalesce(col_description(tbl, (SELECT attnum FROM pg_attribute WHERE attrelid = tbl AND attname = 'releasedAt')), '') <> '');
+
+  -- The three keys: the table they name, their columns, and what happens on delete and on update. confdeltype and confupdtype:
+  -- a = NO ACTION, c = CASCADE, n = SET NULL. pg_get_constraintdef leaves NO ACTION out, so the letters are read.
+  FOR k IN SELECT * FROM (VALUES
+      ('TeachingRequirementReleases_schoolId_fkey',              'Schools',              'schoolId',               'id',          'c', 'c'),
+      ('TeachingRequirementReleases_requirementId_schoolId_fkey', 'TeachingRequirements', 'requirementId,schoolId', 'id,schoolId', 'c', 'a'),
+      ('TeachingRequirementReleases_releasedById_schoolId_fkey',  'Users',                'releasedById,schoolId',  'id,schoolId', 'n', 'a')
+    ) v(name, ref, cols, refcols, del, upd) LOOP
+    SELECT format('%s>%s(%s) del %s upd %s %s', (SELECT string_agg(a.attname, ',' ORDER BY x.ord) FROM unnest(c.conkey) WITH ORDINALITY x(attnum, ord)
+                                                  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = x.attnum),
+                  c.confrelid::regclass::text, (SELECT string_agg(a.attname, ',' ORDER BY x.ord) FROM unnest(c.confkey) WITH ORDINALITY x(attnum, ord)
+                                                  JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = x.attnum),
+                  c.confdeltype, c.confupdtype, CASE WHEN c.convalidated THEN 'validated' ELSE 'NOT VALID' END)
+      INTO got FROM pg_constraint c WHERE c.conrelid = tbl AND c.conname = k.name AND c.contype = 'f';
+    PERFORM pg_temp.sm_expect('545 key ' || k.name, got,
+      format('%s>"%s"(%s) del %s upd %s validated', k.cols, k.ref, k.refcols, k.del, k.upd));
+  END LOOP;
+  PERFORM pg_temp.sm_expect('545 the table has those three keys and no other', (SELECT count(*) FROM pg_constraint WHERE conrelid = tbl AND contype = 'f')::text, '3');
+  -- SET NULL on the person's column alone: the school in the key is NOT NULL and the row stays in its school.
+  PERFORM pg_temp.sm_true('545 the person key clears "releasedById" alone',
+    (SELECT pg_get_constraintdef(c.oid) LIKE '%ON DELETE SET NULL ("releasedById")%' FROM pg_constraint c
+      WHERE c.conrelid = tbl AND c.conname = 'TeachingRequirementReleases_releasedById_schoolId_fkey'));
+  PERFORM pg_temp.sm_expect('545 no key names the table', (SELECT count(*) FROM pg_constraint WHERE confrelid = tbl)::text, '0');
+
+  -- Indexes: the three, valid, whole, with their columns and uniqueness.
+  FOR k IN SELECT * FROM (VALUES
+      ('TeachingRequirementReleases_pkey',                       'requirementId,schoolId', true),
+      ('TeachingRequirementReleases_schoolId_idx',               'schoolId',             false),
+      ('TeachingRequirementReleases_releasedById_schoolId_idx',  'releasedById,schoolId', false)
+    ) v(name, cols, uniq) LOOP
+    SELECT format('%s %s %s %s', (SELECT string_agg(a.attname, ',' ORDER BY x.ord) FROM unnest(i.indkey::int2[]) WITH ORDINALITY x(attnum, ord)
+                                  JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = x.attnum),
+                  CASE WHEN i.indisunique THEN 'unique' ELSE 'plain' END, CASE WHEN i.indisvalid AND i.indisready THEN 'valid' ELSE 'INVALID' END,
+                  CASE WHEN i.indpred IS NULL THEN 'whole' ELSE 'partial' END)
+      INTO got FROM pg_index i WHERE i.indexrelid = to_regclass(format('public.%I', k.name)) AND i.indrelid = tbl;
+    PERFORM pg_temp.sm_expect('545 index ' || k.name, got, format('%s %s valid whole', k.cols, CASE WHEN k.uniq THEN 'unique' ELSE 'plain' END));
+  END LOOP;
+  PERFORM pg_temp.sm_expect('545 the table has those three indexes and no other', (SELECT count(*) FROM pg_index WHERE indrelid = tbl)::text, '3');
+  PERFORM pg_temp.sm_expect('545 no CHECK on the table', (SELECT count(*) FROM pg_constraint WHERE conrelid = tbl AND contype = 'c')::text, '0');
+  PERFORM pg_temp.sm_expect('545 no trigger of its own on the table', (SELECT count(*) FROM pg_trigger WHERE tgrelid = tbl AND NOT tgisinternal)::text, '0');
+
+  -- Row security: on, and not forced, as the sibling tables.
+  PERFORM pg_temp.sm_true('545 row security is on', (SELECT relrowsecurity FROM pg_class WHERE oid = tbl));
+  PERFORM pg_temp.sm_expect('545 row security is forced as on the placements', (SELECT relforcerowsecurity::text FROM pg_class WHERE oid = tbl),
+                            (SELECT relforcerowsecurity::text FROM pg_class WHERE oid = '"TeachingRequirementPlacements"'::regclass));
+
+  -- The three arms: names, commands, TO app_authenticated and nobody else, and what each asks. No UPDATE arm: a release is not edited.
+  SELECT string_agg(policyname || ' ' || cmd || ' ' || roles::text, '; ' ORDER BY policyname COLLATE "C") INTO got
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'TeachingRequirementReleases';
+  PERFORM pg_temp.sm_expect('545 arms', got,
+    'teaching_requirement_releases_admin_delete DELETE {app_authenticated}; teaching_requirement_releases_admin_insert INSERT {app_authenticated}; '
+    || 'teaching_requirement_releases_admin_select SELECT {app_authenticated}');
+  FOR k IN SELECT * FROM pg_policies WHERE schemaname = 'public' AND tablename = 'TeachingRequirementReleases' LOOP
+    got := coalesce(k.qual, '') || ' ' || coalesce(k.with_check, '');
+    PERFORM pg_temp.sm_true('545 ' || k.policyname || ' keeps to the school', got LIKE '%"schoolId" = ( SELECT app.current_school_id()%');
+    PERFORM pg_temp.sm_true('545 ' || k.policyname || ' is an administrator''s', got LIKE '%current_user_role()%= ''SCHOOL_ADMIN''%');
+    PERFORM pg_temp.sm_true('545 ' || k.policyname || ' names no teacher, pupil or guardian', got !~ 'TEACHER|STUDENT|GUARDIAN');
+    PERFORM pg_temp.sm_true('545 ' || k.policyname || ' reaches no service or sync principal', got !~ 'current_service_school_id|current_sync_school_id|is_service_key_lookup|current_service_key_id');
+    -- The writes ask the area; the read does not.
+    PERFORM pg_temp.sm_expect('545 ' || k.policyname || ' asks PLANERING',
+      (k.cmd <> 'SELECT' AND coalesce(CASE WHEN k.cmd = 'DELETE' THEN k.qual ELSE k.with_check END, '') LIKE '%current_user_may(''PLANERING''::"AdminArea", true)%')::text,
+      (k.cmd <> 'SELECT')::text);
+    PERFORM pg_temp.sm_expect('545 ' || k.policyname || ' asks no area in USING unless it is the delete''s',
+      (coalesce(k.qual, '') LIKE '%current_user_may%')::text, (k.cmd = 'DELETE')::text);
+  END LOOP;
+
+  -- Privileges: the API's role SELECT, INSERT and DELETE (no UPDATE), nobody else anything, PUBLIC nothing, no column-only grant.
+  SELECT string_agg(g.who || '=' || g.privs, ';' ORDER BY g.who COLLATE "C") INTO got
+    FROM (SELECT coalesce(ro.rolname, 'PUBLIC')::text AS who, string_agg(a.privilege_type, ',' ORDER BY a.privilege_type COLLATE "C") AS privs
+            FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a LEFT JOIN pg_roles ro ON ro.oid = a.grantee
+           WHERE c.oid = tbl AND a.grantee <> c.relowner GROUP BY 1) g;
+  want := 'app_authenticated=DELETE,INSERT,SELECT' || CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN ';service_role=SELECT' ELSE '' END;
+  PERFORM pg_temp.sm_expect('545 who holds what on the table (the owner aside)', got, want);
+  FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    FOREACH priv IN ARRAY ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      PERFORM pg_temp.sm_true(format('545 %s holds %s on the table', r, priv) || ' (it must not)', NOT has_table_privilege(r, tbl, priv));
+    END LOOP;
+    IF current_setting('server_version_num')::int >= 170000 THEN
+      PERFORM pg_temp.sm_true(format('545 %s holds MAINTAIN on the table', r) || ' (it must not)', NOT has_table_privilege(r, tbl, 'MAINTAIN'));
+    END IF;
+    PERFORM pg_temp.sm_true(format('545 %s holds UPDATE on the table', r) || ' (it must not)', NOT has_table_privilege(r, tbl, 'UPDATE'));
+    IF r IN ('authenticated', 'anon') THEN
+      FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] LOOP
+        PERFORM pg_temp.sm_true(format('545 %s holds %s on a column', r, priv) || ' (it must not)', NOT has_any_column_privilege(r, tbl, priv));
+      END LOOP;
+    END IF;
+  END LOOP;
+  PERFORM pg_temp.sm_expect('545 no column of the table has a grant of its own', (SELECT count(*) FROM pg_attribute WHERE attrelid = tbl AND attacl IS NOT NULL)::text, '0');
+
+  -- The post's own arms did not move: the six of TeachingRequirements, as main wrote them (md5 over name, command, roles, USING
+  -- and WITH CHECK), and the privileges of the API's role on it. The teacher's read of a post is what it was.
+  SELECT md5(string_agg(policyname || '|' || cmd || '|' || roles::text || '|' || coalesce(qual, '') || '|' || coalesce(with_check, ''), ';' ORDER BY policyname COLLATE "C")) INTO got
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'TeachingRequirements';
+  PERFORM pg_temp.sm_expect('545 the arms of TeachingRequirements are main''s', got, '5ab6f53b16eb30b965cf449a102fa2bd');
+  PERFORM pg_temp.sm_expect('545 TeachingRequirements has no column the marking added',
+    (SELECT count(*) FROM pg_attribute WHERE attrelid = '"TeachingRequirements"'::regclass AND attnum > 0 AND NOT attisdropped
+        AND (attname ILIKE '%releas%' OR attname ILIKE '%slapp%'))::text, '0');
+  RAISE NOTICE 'sm 545: % checks', current_setting('sm.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 546: who reads and who writes, and the school boundary.
+--
+-- Two schools, each with posts of its own and a release planted by its own administrator. Then:
+--   * the administrator of either reads only its own school's rows, and a DELETE of the other's reaches no row;
+--   * a row written with the other school's schoolId is refused by the arm's WITH CHECK (row security); a row of the
+--     administrator's own school cannot name the other school's post, or the other school's person as the one who released:
+--     the composite keys refuse it (foreign_key_violation), with the same statement admitted when it names the school's own;
+--   * nobody can UPDATE a release, whoever they are: the privilege is not granted;
+--   * in the matrix school, each principal against a release planted by the full administrator: every administrator reads it,
+--     those who write PLANERING write and take back, the läsare and the expedition do not; a teacher, a pupil and a guardian
+--     read nothing and write nothing. And PostgREST's role, with the schemaläggare's claims, reads and writes nothing at all.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_sm_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  sub text;
+  side text;
+  t jsonb;
+  sides jsonb := '{}';
+BEGIN
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    sub := CASE side WHEN 'a' THEN current_setting('app.test_sm_admin_a') ELSE '00000000-0000-4000-8000-000000000006' END;
+    t := pg_temp.sm_plant(sub, side);
+    PERFORM pg_temp.sm_case('546 ' || side || ' plants its own release',
+      pg_temp.sm_rel((t ->> 'school')::uuid, (t #>> '{posts,one}')::uuid, (t ->> 'user')::uuid), 'ok');
+    sides := sides || jsonb_build_object(side, t);
+  END LOOP;
+  IF (sides -> 'a' ->> 'school') = (sides -> 'b' ->> 'school') THEN RAISE EXCEPTION 'sm 546: both administrators are in the same school'; END IF;
+  PERFORM set_config('app.test_sm_sides', sides::text, true);
+END $$;
+
+DO $$
+DECLARE
+  sides jsonb := current_setting('app.test_sm_sides')::jsonb;
+  side text;
+  m jsonb;
+  o jsonb;
+  mine uuid;
+  other uuid;
+  other_post uuid;
+BEGIN
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    m := sides -> side;
+    o := sides -> CASE side WHEN 'a' THEN 'b' ELSE 'a' END;
+    PERFORM pg_temp.sm_as(m ->> 'admin');
+    mine := (m ->> 'school')::uuid;
+    other := (o ->> 'school')::uuid;
+    other_post := (o #>> '{posts,one}')::uuid;
+    PERFORM pg_temp.sm_expect('546 ' || side || ' resolves in its own school', app.current_school_id()::text, mine::text);
+    PERFORM pg_temp.sm_expect('546 ' || side || ' reads its own release', (SELECT count(*) FROM "TeachingRequirementReleases" WHERE "schoolId" = mine)::text, '1');
+    PERFORM pg_temp.sm_expect('546 ' || side || ' reads none of the other school''s', (SELECT count(*) FROM "TeachingRequirementReleases" WHERE "schoolId" = other)::text, '0');
+    PERFORM pg_temp.sm_expect('546 ' || side || ' sees only its own among every row', (SELECT count(*) FROM "TeachingRequirementReleases" WHERE "schoolId" <> mine)::text, '0');
+    PERFORM pg_temp.sm_expect('546 ' || side || ' cannot read the other school''s release by the post''s id',
+      (SELECT count(*) FROM "TeachingRequirementReleases" WHERE "requirementId" = other_post)::text, '0');
+
+    -- A DELETE that names the other school's row reaches nothing, and a bulk DELETE reaches only its own.
+    PERFORM pg_temp.sm_expect('546 ' || side || ' DELETE of the other school''s release reaches none',
+      pg_temp.sm_rows(format($q$DELETE FROM "TeachingRequirementReleases" WHERE "requirementId" = %L$q$, other_post))::text, '0');
+    PERFORM pg_temp.sm_expect('546 ' || side || ' bulk DELETE reaches only its own', pg_temp.sm_rows($q$DELETE FROM "TeachingRequirementReleases"$q$)::text, '1');
+    PERFORM pg_temp.sm_case('546 ' || side || ' puts its release back',
+      pg_temp.sm_rel(mine, (m #>> '{posts,one}')::uuid, (m ->> 'user')::uuid), 'ok');
+
+    -- A row written for the other school: row security. Named by the other's post, so only the arm can be what refuses it.
+    PERFORM pg_temp.sm_case('546 ' || side || ' INSERT with the other school''s schoolId',
+      pg_temp.sm_rel(other, (o #>> '{posts,two}')::uuid, (o ->> 'user')::uuid), '42501 rls');
+    PERFORM pg_temp.sm_case('546 ' || side || ' INSERT with the other school''s schoolId and its own post',
+      pg_temp.sm_rel(other, (m #>> '{posts,two}')::uuid, (m ->> 'user')::uuid), '42501 rls');
+    -- A row of its own school that names the other's post, or the other's person: the composite keys.
+    PERFORM pg_temp.sm_case('546 ' || side || ' INSERT on the other school''s post',
+      pg_temp.sm_rel(mine, (o #>> '{posts,two}')::uuid, (m ->> 'user')::uuid), '23503 TeachingRequirementReleases_requirementId_schoolId_fkey');
+    PERFORM pg_temp.sm_case('546 ' || side || ' INSERT signed by the other school''s person',
+      pg_temp.sm_rel(mine, (m #>> '{posts,two}')::uuid, (o ->> 'user')::uuid), '23503 TeachingRequirementReleases_releasedById_schoolId_fkey');
+    PERFORM pg_temp.sm_case('546 ' || side || ' control: its own post and its own person',
+      pg_temp.sm_rel(mine, (m #>> '{posts,two}')::uuid, (m ->> 'user')::uuid), 'ok');
+    PERFORM pg_temp.sm_case('546 ' || side || ' control: released by nobody (a person removed leaves that)',
+      pg_temp.sm_rel(mine, (m #>> '{posts,three}')::uuid, NULL), 'ok');
+    -- Nobody updates a release: the privilege is not granted.
+    PERFORM pg_temp.sm_case('546 ' || side || ' UPDATE of its own release', $q$UPDATE "TeachingRequirementReleases" SET "releasedAt" = now()$q$, '42501');
+    PERFORM pg_temp.sm_case('546 ' || side || ' UPDATE moving a release to the other school',
+      format($q$UPDATE "TeachingRequirementReleases" SET "schoolId" = %L$q$, other), '42501');
+  END LOOP;
+  RAISE NOTICE 'sm 546 (two schools): % checks', current_setting('sm.checks');
+END $$;
+ROLLBACK;
+
+-- The matrix school's principals against a release the full administrator planted: reads, then INSERT and DELETE (a delete's
+-- arm has only USING, so a refused delete finds no row). The fixtures planted a release in this school too (for section 116), so a
+-- principal's reads are counted on the posts this section made.
+BEGIN;
+DO $$
+DECLARE
+  p record;
+  t jsonb;
+  roller uuid;
+  one uuid;
+  two uuid;
+  seen bigint;
+  me uuid;
+BEGIN
+  t := pg_temp.sm_plant('00000000-0000-4000-8000-000000000105', 'm');
+  roller := (t ->> 'school')::uuid;
+  one := (t #>> '{posts,one}')::uuid;
+  two := (t #>> '{posts,two}')::uuid;
+  PERFORM pg_temp.sm_case('546 the full administrator plants the release', pg_temp.sm_rel(roller, one, (t ->> 'user')::uuid), 'ok');
+  FOR p IN SELECT * FROM (VALUES
+      -- sub, who, reads, insert, delete
+      ('00000000-0000-4000-8000-000000000105', 'FULL',               1, 'ok',       1),
+      ('00000000-0000-4000-8000-000000000106', 'REKTOR',             1, 'ok',       1),
+      ('00000000-0000-4000-8000-000000000107', 'SCHEMALAGGARE',      1, 'ok',       1),
+      ('00000000-0000-4000-8000-000000000109', 'SCHEMALAGGARE + HR', 1, 'ok',       1),
+      ('00000000-0000-4000-8000-000000000108', 'EXPEDITION',         1, '42501 rls', 0),
+      ('00000000-0000-4000-8000-000000000110', 'EXPEDITION + HR',    1, '42501 rls', 0),
+      ('00000000-0000-4000-8000-000000000115', 'LASARE',             1, '42501 rls', 0),
+      ('00000000-0000-4000-8000-000000000116', 'LASARE + HR',        1, '42501 rls', 0),
+      ('00000000-0000-4000-8000-000000000111', 'a teacher',          0, '42501 rls', 0),
+      ('00000000-0000-4000-8000-000000000112', 'a pupil',            0, '42501 rls', 0),
+      ('00000000-0000-4000-8000-000000000113', 'a guardian',         0, '42501 rls', 0)
+    ) v(sub, who, reads, ins, del) LOOP
+    PERFORM pg_temp.sm_as(p.sub);
+    me := app.current_user_id();
+    PERFORM pg_temp.sm_expect('546 ' || p.who || ' is in the matrix school', app.current_school_id()::text, roller::text);
+    -- The release this section planted, by the post's id: the fixtures planted one more in this school, for the role matrix (section 116).
+    SELECT count(*) INTO seen FROM "TeachingRequirementReleases" WHERE "requirementId" = one;
+    PERFORM pg_temp.sm_expect('546 ' || p.who || ' reads', seen::text, p.reads::text);
+    -- A teacher reads the post and not the release: the post is the school's staff's, the release the administration's.
+    IF p.who = 'a teacher' THEN
+      PERFORM pg_temp.sm_expect('546 a teacher reads the post it is released on', (SELECT count(*) FROM "TeachingRequirements" WHERE id = one)::text, '1');
+    END IF;
+    PERFORM pg_temp.sm_case('546 ' || p.who || ' INSERT', pg_temp.sm_rel(roller, two, me), p.ins);
+    IF p.ins = 'ok' THEN
+      -- The row it wrote goes again, as the full administrator, so the next principal meets the same two posts.
+      PERFORM pg_temp.sm_as('00000000-0000-4000-8000-000000000105');
+      PERFORM pg_temp.sm_expect('546 ' || p.who || ' wrote a row', (SELECT count(*) FROM "TeachingRequirementReleases" WHERE "requirementId" = two)::text, '1');
+      PERFORM pg_temp.sm_expect('546 ' || p.who || ' signed it', (SELECT "releasedById"::text FROM "TeachingRequirementReleases" WHERE "requirementId" = two), me::text);
+      DELETE FROM "TeachingRequirementReleases" WHERE "requirementId" = two;
+      PERFORM pg_temp.sm_as(p.sub);
+    END IF;
+    IF p.del = 1 THEN
+      -- The delete that is admitted removes the row, which the next principal then finds gone: put it back as the full administrator.
+      PERFORM pg_temp.sm_expect('546 ' || p.who || ' DELETE reaches the row', pg_temp.sm_rows(format($q$DELETE FROM "TeachingRequirementReleases" WHERE "requirementId" = %L$q$, one))::text, '1');
+      PERFORM pg_temp.sm_as('00000000-0000-4000-8000-000000000105');
+      PERFORM pg_temp.sm_case('546 ' || p.who || ' the full administrator puts it back', pg_temp.sm_rel(roller, one, (t ->> 'user')::uuid), 'ok');
+    ELSE
+      PERFORM pg_temp.sm_expect('546 ' || p.who || ' DELETE reaches no row',
+        pg_temp.sm_rows(format($q$DELETE FROM "TeachingRequirementReleases" WHERE "requirementId" = %L$q$, one))::text, '0');
+    END IF;
+    PERFORM pg_temp.sm_as(p.sub);
+    PERFORM pg_temp.sm_case('546 ' || p.who || ' UPDATE', $q$UPDATE "TeachingRequirementReleases" SET "releasedAt" = now()$q$, '42501');
+  END LOOP;
+
+  -- PostgREST's role, with the schemaläggare's own claims: the role holds nothing on the table, so the claims are beside the point.
+  PERFORM pg_temp.sm_as('00000000-0000-4000-8000-000000000107');
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.sm_expect('546 as authenticated: acting as the role', current_user::text, 'authenticated');
+  PERFORM pg_temp.sm_case('546 PostgREST''s role SELECT', $q$SELECT count(*) FROM "TeachingRequirementReleases"$q$, '42501');
+  PERFORM pg_temp.sm_case('546 PostgREST''s role INSERT', pg_temp.sm_rel(roller, two, me), '42501');
+  PERFORM pg_temp.sm_case('546 PostgREST''s role DELETE', $q$DELETE FROM "TeachingRequirementReleases"$q$, '42501');
+  PERFORM pg_temp.sm_case('546 PostgREST''s role SELECT of one column', $q$SELECT "releasedById" FROM "TeachingRequirementReleases"$q$, '42501');
+  SET LOCAL ROLE app_authenticated;
+  PERFORM pg_temp.sm_expect('546 and back to the API''s role', current_user::text, 'app_authenticated');
+  RAISE NOTICE 'sm 546 (the matrix school): % checks', current_setting('sm.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 547: the statements the gateway writes.
+--
+-- The release is INSERT ... ON CONFLICT DO NOTHING (createMany with skipDuplicates) and the release taken back a DELETE.
+--   * a post released twice keeps the first person and the first time, whoever asks the second time: the statement says 0 rows;
+--   * a refused administrator is refused before the conflict is looked at (a post already released does not turn row
+--     security into a 0-row answer);
+--   * a release taken back and given again is a new row, with the new time;
+--   * two posts in one statement, one already released: one row is written, and the other is left as it was;
+--   * "releasedAt" is NOT NULL and "schoolId" cannot be said to be NULL; a post that is not there is a foreign_key_violation.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  t jsonb;
+  roller uuid;
+  one uuid;
+  two uuid;
+  full_id uuid;
+  schema_id uuid;
+  first_at timestamptz := '2031-01-10 10:00:00+00';
+  n bigint;
+  who uuid;
+  at timestamptz;
+BEGIN
+  t := pg_temp.sm_plant('00000000-0000-4000-8000-000000000105', 'm');
+  roller := (t ->> 'school')::uuid;
+  one := (t #>> '{posts,one}')::uuid;
+  two := (t #>> '{posts,two}')::uuid;
+  full_id := (t ->> 'user')::uuid;
+  PERFORM pg_temp.sm_as('00000000-0000-4000-8000-000000000107');
+  schema_id := app.current_user_id();
+  PERFORM pg_temp.sm_true('547 the two administrators are two persons', full_id <> schema_id);
+
+  PERFORM pg_temp.sm_as('00000000-0000-4000-8000-000000000105');
+  PERFORM pg_temp.sm_expect('547 the first release writes one row', pg_temp.sm_rows(pg_temp.sm_rel(roller, one, full_id, first_at))::text, '1');
+  PERFORM pg_temp.sm_as('00000000-0000-4000-8000-000000000107');
+  PERFORM pg_temp.sm_expect('547 the second administrator''s release of the same post writes none',
+    pg_temp.sm_rows(pg_temp.sm_rel(roller, one, schema_id, first_at + interval '1 day'))::text, '0');
+  SELECT "releasedById", "releasedAt" INTO who, at FROM "TeachingRequirementReleases" WHERE "requirementId" = one;
+  PERFORM pg_temp.sm_expect('547 the first person is kept', who::text, full_id::text);
+  PERFORM pg_temp.sm_expect('547 the first time is kept', at::text, first_at::text);
+
+  -- Two posts in one statement, one already released.
+  PERFORM pg_temp.sm_expect('547 two posts, one released: one row written',
+    pg_temp.sm_rows(format($q$INSERT INTO "TeachingRequirementReleases" ("requirementId", "schoolId", "releasedById", "releasedAt")
+                              VALUES (%L, %L, %L, now()), (%L, %L, %L, now()) ON CONFLICT DO NOTHING$q$, one, roller, schema_id, two, roller, schema_id))::text, '1');
+  SELECT "releasedById" INTO who FROM "TeachingRequirementReleases" WHERE "requirementId" = one;
+  PERFORM pg_temp.sm_expect('547 ... and the released one is still the first person''s', who::text, full_id::text);
+  PERFORM pg_temp.sm_expect('547 ... the other is the second administrator''s',
+    (SELECT "releasedById"::text FROM "TeachingRequirementReleases" WHERE "requirementId" = two), schema_id::text);
+  -- The same post twice in one statement: DO NOTHING says nothing more.
+  PERFORM pg_temp.sm_rows($q$DELETE FROM "TeachingRequirementReleases"$q$);
+  PERFORM pg_temp.sm_expect('547 the same post twice in one statement writes one row',
+    pg_temp.sm_rows(format($q$INSERT INTO "TeachingRequirementReleases" ("requirementId", "schoolId", "releasedById", "releasedAt")
+                              VALUES (%L, %L, %L, now()), (%L, %L, %L, now()) ON CONFLICT DO NOTHING$q$, one, roller, schema_id, one, roller, schema_id))::text, '1');
+
+  -- A refused administrator is refused before the conflict is looked at.
+  PERFORM pg_temp.sm_as('00000000-0000-4000-8000-000000000108');
+  PERFORM pg_temp.sm_case('547 the expedition''s release of an already released post is refused, not "0 rows"',
+    pg_temp.sm_rel(roller, one, app.current_user_id()), '42501 rls');
+
+  -- Taken back and given again: a new row with the new time.
+  PERFORM pg_temp.sm_as('00000000-0000-4000-8000-000000000107');
+  PERFORM pg_temp.sm_expect('547 the release taken back', pg_temp.sm_rows(format($q$DELETE FROM "TeachingRequirementReleases" WHERE "requirementId" = %L$q$, one))::text, '1');
+  PERFORM pg_temp.sm_expect('547 given again', pg_temp.sm_rows(pg_temp.sm_rel(roller, one, schema_id, first_at + interval '2 days'))::text, '1');
+  SELECT "releasedById", "releasedAt" INTO who, at FROM "TeachingRequirementReleases" WHERE "requirementId" = one;
+  PERFORM pg_temp.sm_expect('547 ... by the second administrator, at the new time', who::text || ' ' || at::text, schema_id::text || ' ' || (first_at + interval '2 days')::text);
+  -- Taking back what was never released reaches nothing, and is not an error.
+  PERFORM pg_temp.sm_rows($q$DELETE FROM "TeachingRequirementReleases"$q$);
+  PERFORM pg_temp.sm_expect('547 taking back a post that was not released reaches none',
+    pg_temp.sm_rows(format($q$DELETE FROM "TeachingRequirementReleases" WHERE "requirementId" = %L$q$, one))::text, '0');
+
+  -- The row's own edges.
+  PERFORM pg_temp.sm_case('547 "releasedAt" is NOT NULL',
+    format($q$INSERT INTO "TeachingRequirementReleases" ("requirementId", "schoolId", "releasedById", "releasedAt") VALUES (%L, %L, %L, NULL)$q$, one, roller, schema_id), '23502');
+  PERFORM pg_temp.sm_case('547 "releasedAt" defaults to now when it is left out',
+    format($q$INSERT INTO "TeachingRequirementReleases" ("requirementId", "schoolId") VALUES (%L, %L)$q$, one, roller), 'ok');
+  PERFORM pg_temp.sm_expect('547 ... and the person is then nobody''s, the time is the transaction''s',
+    (SELECT ("releasedById" IS NULL)::text || ' ' || ("releasedAt" = now())::text FROM "TeachingRequirementReleases" WHERE "requirementId" = one), 'true true');
+  PERFORM pg_temp.sm_case('547 a post that is not there', pg_temp.sm_rel(roller, gen_random_uuid(), schema_id), '23503 TeachingRequirementReleases_requirementId_schoolId_fkey');
+  PERFORM pg_temp.sm_case('547 the same statement without DO NOTHING says 23505 on the post',
+    format($q$INSERT INTO "TeachingRequirementReleases" ("requirementId", "schoolId", "releasedById") VALUES (%L, %L, %L)$q$, one, roller, schema_id),
+    '23505 TeachingRequirementReleases_pkey');
+  RAISE NOTICE 'sm 547: % checks', current_setting('sm.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 548: what the rest of the world does to a row.
+--
+--   * the post removed takes its release with it (CASCADE), and nothing of another post's;
+--   * the person who released removed: the release stays, released by nobody, still in its school, with the time it had. The
+--     administrator's own DELETE of a Users row, as users.service.ts remove() writes it. The same person is also the lead of a post,
+--     which the post's own key clears as before: the two keys act in one statement and neither disturbs the other;
+--   * the school's other posts are not touched by either.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_sm_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  side text;
+  sub text;
+  t jsonb;
+  school uuid;
+  teacher uuid;
+  one uuid;
+  two uuid;
+  three uuid;
+  at timestamptz := '2031-02-03 04:05:06+00';
+  l text;
+BEGIN
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    sub := CASE side WHEN 'a' THEN current_setting('app.test_sm_admin_a') ELSE '00000000-0000-4000-8000-000000000006' END;
+    t := pg_temp.sm_plant(sub, side);
+    l := '548 ' || side || ' ';
+    school := (t ->> 'school')::uuid;
+    teacher := (t ->> 'teacher')::uuid;
+    one := (t #>> '{posts,one}')::uuid;
+    two := (t #>> '{posts,two}')::uuid;
+    three := (t #>> '{posts,three}')::uuid;
+    PERFORM pg_temp.sm_case(l || 'releases the three posts, the second signed by the teacher it is led by',
+      pg_temp.sm_rel(school, one, (t ->> 'user')::uuid, at) || '; ' || pg_temp.sm_rel(school, two, teacher, at) || '; ' || pg_temp.sm_rel(school, three, (t ->> 'user')::uuid, at), 'ok');
+    PERFORM pg_temp.sm_expect(l || 'the three are released', (SELECT count(*) FROM "TeachingRequirementReleases" WHERE "requirementId" IN (one, two, three))::text, '3');
+
+    -- A post removed takes its release, and only its own.
+    PERFORM pg_temp.sm_expect(l || 'the first post removed', pg_temp.sm_rows(format($q$DELETE FROM "TeachingRequirements" WHERE id = %L$q$, one))::text, '1');
+    PERFORM pg_temp.sm_expect(l || 'its release went with it', (SELECT count(*) FROM "TeachingRequirementReleases" WHERE "requirementId" = one)::text, '0');
+    PERFORM pg_temp.sm_expect(l || 'the others'' stayed', (SELECT count(*) FROM "TeachingRequirementReleases" WHERE "requirementId" IN (two, three))::text, '2');
+
+    -- A person removed leaves the release, unsigned. The teacher leads the second post and signed its release.
+    PERFORM pg_temp.sm_expect(l || 'the teacher leads the second post', (SELECT "teacherId"::text FROM "TeachingRequirements" WHERE id = two), teacher::text);
+    PERFORM pg_temp.sm_case(l || 'the teacher is removed: the delete goes through', format($q$DELETE FROM "Users" WHERE id = %L$q$, teacher), 'ok');
+    PERFORM pg_temp.sm_expect(l || 'the teacher is gone', (SELECT count(*) FROM "Users" WHERE id = teacher)::text, '0');
+    PERFORM pg_temp.sm_expect(l || 'the second release stays, signed by nobody, in its school, at its time',
+      (SELECT format('%s %s %s', coalesce("releasedById"::text, 'nobody'), ("schoolId" = school)::text, "releasedAt")
+         FROM "TeachingRequirementReleases" WHERE "requirementId" = two),
+      format('nobody true %s', at));
+    PERFORM pg_temp.sm_expect(l || 'the post has no lead any more, as before the marking existed',
+      (SELECT coalesce("teacherId"::text, 'nobody') FROM "TeachingRequirements" WHERE id = two), 'nobody');
+    PERFORM pg_temp.sm_expect(l || 'the third release is not touched',
+      (SELECT format('%s %s', ("releasedById" = (t ->> 'user')::uuid)::text, "releasedAt") FROM "TeachingRequirementReleases" WHERE "requirementId" = three),
+      format('true %s', at));
+    -- An unsigned release is still the administration's: it is read, taken back, and not rewritten.
+    PERFORM pg_temp.sm_expect(l || 'the unsigned release is read', (SELECT count(*) FROM "TeachingRequirementReleases" WHERE "releasedById" IS NULL AND "schoolId" = school)::text, '1');
+    PERFORM pg_temp.sm_expect(l || 'and taken back', pg_temp.sm_rows(format($q$DELETE FROM "TeachingRequirementReleases" WHERE "requirementId" = %L$q$, two))::text, '1');
+  END LOOP;
+  RAISE NOTICE 'sm 548: % checks', current_setting('sm.checks');
 END $$;
 ROLLBACK;
