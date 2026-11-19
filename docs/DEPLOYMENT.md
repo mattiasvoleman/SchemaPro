@@ -6753,8 +6753,8 @@ they are created), `ACCESS SHARE` on the tables they read until it commits: that
   `login_is_held_elsewhere` in 20261212090000; `absence_watch_digest`, `_digest_due`, `_evaluate`, `_schools` in 20261231090100;
   `reporting_compute`, `_digest`, `_digest_due`, `_remind`, `_schools` in 20270112090100; `school_export_*` in 20270114090000;
   `absence_stats_month`, `_plan`, `_trim` in 20270121090000; `gallring_purge` in 20270204091000; `gallring_pseudonymise` in
-  20270206091000. The pull request carries the whole file, built from those bodies and proved to restore bodies, attributes and
-  comments. Copy the whole statement, language and settings included, because `CREATE OR REPLACE` resets whatever it does not repeat.
+  20270206091000. The whole file is `scripts/prod-checks/jobbdorrar-aterstallning.sql`, built from those bodies and proved to restore bodies,
+  attributes and comments (`md5(prosrc)` of each of the 38 equals the "Before" column after it has run). Copy the whole statement, language and settings included, because `CREATE OR REPLACE` resets whatever it does not repeat.
   Do not edit the migration after it has run: its checksum is in production's `_prisma_migrations`.
 
 ### 29.3 What is not done here

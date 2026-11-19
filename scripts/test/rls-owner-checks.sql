@@ -7602,6 +7602,10 @@ BEGIN
   END LOOP;
   PERFORM pg_temp.dv_expect(p_label || ': a person', pg_temp.dv_scn(p_asks, p_effect, json_build_object('sub', p_person)::text), p_login);
   PERFORM pg_temp.dv_expect(p_label || ': a person, as a lone subject setting', pg_temp.dv_scn(p_asks, p_effect, '', p_person), p_login);
+  -- Synkens och integrationsnyckelns principal ensamma släpps in som jobbet (Dörrvaktens beslut 5, och 521 för de 28 plpgsql-dörrarna):
+  -- en sql-dörr vars villkor också nekade dem skulle bryta dem, och inget annat prov frågar de nio efter det.
+  PERFORM pg_temp.dv_expect(p_label || ': the sync principal alone', pg_temp.dv_scn(p_asks, p_effect, '', '', '', p_roller::text), p_job);
+  PERFORM pg_temp.dv_expect(p_label || ': the integration key''s principal alone', pg_temp.dv_scn(p_asks, p_effect, '', '', '', '', p_roller::text), p_job);
 END $f$;
 
 -- ---------------------------------------------------------------------------
