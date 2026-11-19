@@ -3,6 +3,7 @@ import { gradeSpanOf, loadRosters } from '../optimization/room-eligibility';
 import { rostersOfYear, type RosterViewer } from '../year-rollover/projected-rosters';
 import { loadWeightOf, type GradeSpan, type JudgedYear, type LoadInput, type LoadModel } from './teacher-load';
 import type { LoadPeriod } from './employment-periods';
+import { readHeldQualifications } from './qualification-inheritance';
 import type { YearBounds } from './teaching-weeks';
 import { chargedShift, supervisionOfTeachers, withSupervision, type LoadShift, type TeacherSupervision } from '../supervision/supervision-load';
 
@@ -174,17 +175,10 @@ export async function readLoadInput(
     where: { academicYearId },
     select: { startDate: true, endDate: true, minGradeLevel: true, maxGradeLevel: true },
   });
-  const qualifications = await tx.teacherSubjectQualification.findMany({
-    select: {
-      userId: true,
-      subjectId: true,
-      minGradeLevel: true,
-      maxGradeLevel: true,
-      kind: true,
-      validFrom: true,
-      validTo: true,
-    },
-  });
+  // With the derived rows of a subject that uses another's behörighet
+  // (qualification-inheritance.ts): the one reader every consumer of this input
+  // — the report, the picker's ranking, the proposal, the checks — shares.
+  const qualifications = await readHeldQualifications(tx);
   // Holders who are deactivated: kept out of bottleneck capacity, as the
   // picker keeps them out of its candidates. A read that RLS narrows only
   // narrows what is excluded, never what is counted.

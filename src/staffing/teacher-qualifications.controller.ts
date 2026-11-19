@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  ParseBoolPipe,
   ParseUUIDPipe,
   Put,
   Query,
@@ -37,14 +38,21 @@ import { ReplaceTeacherQualificationsDto } from './dto/teacher-qualification.dto
 export class TeacherQualificationsController {
   constructor(private readonly qualifications: TeacherQualificationsService) {}
 
-  /** `?userId=` narrows to one teacher; without it, the school. */
+  /**
+   * `?userId=` narrows to one teacher; without it, the school. The stored rows,
+   * unless `?inherited=true` asks for the rows a subject that uses another's
+   * behörighet derives as well, marked `viaSubjectId` (for the screens that judge
+   * who is qualified; the form that edits a teacher's list never asks).
+   */
   @Get()
   list(
     @Query('userId', new ParseUUIDPipe({ version: '4', optional: true }))
     userId: string | undefined,
+    @Query('inherited', new ParseBoolPipe({ optional: true }))
+    inherited: boolean | undefined,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<TeacherQualificationResponse[]> {
-    return this.qualifications.list(userId, user);
+    return this.qualifications.list(userId, user, { inherited: inherited === true });
   }
 
   @Put(':userId')

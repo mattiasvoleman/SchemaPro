@@ -1684,6 +1684,7 @@ describe('CalendarLessonsService', () => {
       const TILLATEN_ID = '14141414-1414-4414-8414-141414141414';
       const qualification = (overrides: Record<string, unknown> = {}) => ({
         userId: LEGIT_ID,
+        subjectId: SUBJECT_ID,
         minGradeLevel: 7,
         maxGradeLevel: 9,
         kind: 'LEGITIMATION',
@@ -1739,7 +1740,7 @@ describe('CalendarLessonsService', () => {
           { teacherId: OTHER_ID, isPrimary: false, qualificationKind: null },
         ]);
         expect(tx.teacherSubjectQualification.findMany).toHaveBeenCalledWith(
-          expect.objectContaining({ where: { subjectId: SUBJECT_ID } }),
+          expect.objectContaining({ where: { subjectId: { in: [SUBJECT_ID] } } }),
         );
       });
 
@@ -1773,6 +1774,62 @@ describe('CalendarLessonsService', () => {
           { teacherId: OTHER_ID, isPrimary: false, qualificationKind: 'BEHORIG' },
           { teacherId: PRIMARY_ID, isPrimary: true, qualificationKind: null },
         ]);
+      });
+
+      describe('a subject that takes its behörighet from another (Behörighet som i ett annat ämne)', () => {
+        const SOURCE_ID = '99999999-9999-4999-8999-999999999999';
+        const usesSource = () =>
+          tx.subject.findMany.mockImplementation((query: { where?: { qualificationSubjectId?: unknown } }) =>
+            Promise.resolve(query.where?.qualificationSubjectId ? [{ id: SUBJECT_ID, qualificationSubjectId: SOURCE_ID }] : []),
+          );
+
+        it('lists and badges the teachers who hold the source subject, with the source row’s kind', async () => {
+          usesSource();
+          tx.teacherSubjectQualification.findMany.mockImplementation(
+            answerRows([
+              // Held in the source subject alone: derived for this lesson's subject.
+              qualification({ userId: LEGIT_ID, subjectId: SOURCE_ID }),
+              qualification({ userId: TILLATEN_ID, subjectId: SOURCE_ID, kind: 'TILLATEN' }),
+            ]),
+          );
+
+          await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
+            { teacherId: LEGIT_ID, isPrimary: false, qualificationKind: 'LEGITIMATION' },
+            { teacherId: TILLATEN_ID, isPrimary: false, qualificationKind: 'TILLATEN' },
+            { teacherId: PRIMARY_ID, isPrimary: true, qualificationKind: null },
+            { teacherId: OTHER_ID, isPrimary: false, qualificationKind: null },
+          ]);
+          expect(tx.teacherSubjectQualification.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({ where: { subjectId: { in: [SUBJECT_ID, SOURCE_ID] } } }),
+          );
+        });
+
+        it('keeps the source row’s årskurser and validity', async () => {
+          usesSource();
+          tx.teacherSubjectQualification.findMany.mockImplementation(
+            answerRows([
+              qualification({ userId: LEGIT_ID, subjectId: SOURCE_ID, minGradeLevel: 1, maxGradeLevel: 6 }),
+              qualification({ userId: TILLATEN_ID, subjectId: SOURCE_ID, kind: 'TILLATEN', validTo: new Date('2026-06-30T00:00:00.000Z') }),
+              qualification({ userId: OTHER_ID, subjectId: SOURCE_ID, kind: 'BEHORIG' }),
+            ]),
+          );
+
+          await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
+            { teacherId: OTHER_ID, isPrimary: false, qualificationKind: 'BEHORIG' },
+            { teacherId: PRIMARY_ID, isPrimary: true, qualificationKind: null },
+          ]);
+        });
+
+        it('without the pointer, a row of another subject badges nobody, as it always did', async () => {
+          tx.teacherSubjectQualification.findMany.mockImplementation(
+            answerRows([qualification({ userId: LEGIT_ID, subjectId: SOURCE_ID })]),
+          );
+
+          await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
+            { teacherId: PRIMARY_ID, isPrimary: true, qualificationKind: null },
+            { teacherId: OTHER_ID, isPrimary: false, qualificationKind: null },
+          ]);
+        });
       });
 
       it('reads the span from the lesson’s whole attendance, as the vikarie warning does', async () => {

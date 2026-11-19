@@ -150,6 +150,15 @@ export interface Subject {
    */
   notFirstInDay?: boolean;
   notLastInDay?: boolean;
+  /**
+   * Behörighet som i ett annat ämne: the school's subject whose teachers'
+   * behörigheter this one uses ("SO WS" → "SO"), with the same årskurser, kind
+   * and validity. Null is the subject's own behörighet, which is every subject
+   * until a school says otherwise. One level: a source inherits from nobody.
+   * Optional because only useSubjects names the columns, and an API from
+   * before the field sends none.
+   */
+  qualificationSubjectId?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -937,6 +946,12 @@ export interface TeacherQualification {
   validFrom: string | null;
   validTo: string | null;
   note: string | null;
+  /**
+   * Only on a row GET /teacher-qualifications?inherited=true derives, and only
+   * on one: the subject whose stored row this is a copy of, `subjectId` being
+   * the subject that uses it. Such a row is never one to save.
+   */
+  viaSubjectId?: string;
 }
 
 /** What an övrigt uppdrag is, as the gateway's TeacherDutyKind enum names it. */

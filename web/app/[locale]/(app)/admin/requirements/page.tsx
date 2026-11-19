@@ -569,7 +569,9 @@ export default function RequirementsPage() {
    * "saknar behörighet" on every name (lib/staffing-candidates.ts).
    */
   const { data: loadReport } = useStaffingLoad(activeYearId);
-  const { data: qualifications } = useTeacherQualifications();
+  // With the rows a subject that uses another's behörighet derives ("SO WS"
+  // counts the SO teachers): the candidate badges judge by what the gateway does.
+  const { data: qualifications } = useTeacherQualifications(null, { inherited: true });
 
   /**
    * One gate for every query this page prints a NUMBER from.

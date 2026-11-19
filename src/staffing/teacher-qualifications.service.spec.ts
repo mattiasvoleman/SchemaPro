@@ -84,6 +84,72 @@ describe('TeacherQualificationsService', () => {
         expect.objectContaining({ where: { userId: TEACHER } }),
       );
     });
+
+    describe('with ?inherited=true (Behörighet som i ett annat ämne)', () => {
+      const SO_WS = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+      const pointers = () => tx.subject.findMany.mockResolvedValue([{ id: SO_WS, qualificationSubjectId: MA }]);
+
+      it('lists the stored rows alone by default, which is what the form edits and saves', async () => {
+        pointers();
+        tx.teacherSubjectQualification.findMany.mockResolvedValue([storedRow()]);
+
+        const rows = await service.list(undefined, testUser());
+
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).not.toHaveProperty('viaSubjectId');
+        expect(tx.subject.findMany).not.toHaveBeenCalled();
+      });
+
+      it('adds a copy of each row of a source under the using subject, marked viaSubjectId, with an id of its own', async () => {
+        pointers();
+        tx.teacherSubjectQualification.findMany.mockResolvedValue([storedRow({ id: 'q-ma' })]);
+
+        const rows = await service.list(undefined, testUser(), { inherited: true });
+
+        expect(rows).toHaveLength(2);
+        expect(rows[0]).toMatchObject({ id: 'q-ma', subjectId: MA });
+        expect(rows[0]).not.toHaveProperty('viaSubjectId');
+        // Same span, kind and validity as the source row; never to be written back.
+        expect(rows[1]).toMatchObject({
+          id: `q-ma:${SO_WS}`,
+          subjectId: SO_WS,
+          viaSubjectId: MA,
+          userId: TEACHER,
+          minGradeLevel: 7,
+          maxGradeLevel: 9,
+          kind: 'LEGITIMATION',
+          validFrom: null,
+          validTo: '2030-06-30',
+        });
+      });
+
+      it('orders the rows by teacher and subject, the stored row before the derived one, with every id unique', async () => {
+        pointers();
+        tx.teacherSubjectQualification.findMany.mockResolvedValue([
+          storedRow({ id: 'q-1' }),
+          storedRow({ id: 'q-2', userId: 'another-teacher' }),
+        ]);
+
+        const rows = await service.list(undefined, testUser(), { inherited: true });
+
+        expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
+        expect(rows.map((row) => [row.userId, row.subjectId])).toEqual([
+          [TEACHER, MA],
+          [TEACHER, SO_WS],
+          ['another-teacher', MA],
+          ['another-teacher', SO_WS],
+        ]);
+      });
+
+      it('asks nothing of the subjects when the school has no stored row', async () => {
+        pointers();
+        tx.teacherSubjectQualification.findMany.mockResolvedValue([]);
+
+        await expect(service.list(undefined, testUser(), { inherited: true })).resolves.toEqual([]);
+
+        expect(tx.subject.findMany).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe('replace', () => {

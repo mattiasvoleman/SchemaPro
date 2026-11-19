@@ -119,7 +119,9 @@ export function useSubjects() {
             // dialog would open on "no rule" and the next save would clear it.
             // notFirstInDay and notLastInDay too (Placeringsregler): the
             // dialog's two boxes would open unticked and the next save clear them.
-            "id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan, loadFactor, maxLessonsPerDay, minDaysBetween, notFirstInDay, notLastInDay",
+            // qualificationSubjectId too (Behörighet som i ett annat ämne): the
+            // field would open on "Egen behörighet" and the next save clear it.
+            "id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan, loadFactor, maxLessonsPerDay, minDaysBetween, notFirstInDay, notLastInDay, qualificationSubjectId",
             "name",
           )
         ).map((subject) => ({
