@@ -150,6 +150,9 @@ SELECT count(*) AS open_lessons FROM app.reporting_open_lessons(30);
 SELECT count(*) AS open_lessons FROM app.reporting_open_lessons(30);
 SELECT count(*) AS open_lessons FROM app.reporting_open_lessons(30);
 RESET ROLE;
+-- The teacher's claims stay on the transaction after RESET ROLE; the night's count below is the job's, which sets none, and since
+-- 20270224090000 the door answers a login with RR403.
+SELECT set_config('request.jwt.claims', '', true), set_config('request.jwt.claim.sub', '', true);
 
 \echo -- the view the rektor opens: a lasar added up per teacher, and the teachers own list
 EXPLAIN (ANALYZE, BUFFERS, COSTS OFF, TIMING OFF, SUMMARY ON)

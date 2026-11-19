@@ -31,6 +31,61 @@
 \set ON_ERROR_STOP on
 
 -- ---------------------------------------------------------------------------
+-- Jobbens dörrar (20270224090000, avsnitt 520–523). Jobbets transaktion har ingen inloggning (withDeliveryService sätter inga
+-- claims), och dörrarna nekar nu varje session som har en. Ett avsnitt som planterar rader som en administratör och sedan kör
+-- en av dörrarna kör den som jobbet kör den: genom pg_temp.u12_<dörr>, som har samma argument och ger samma svar som dörren
+-- men sätter claims (request.jwt.claims och request.jwt.claim.sub) åt sidan medan dörren körs och sätter tillbaka dem efteråt,
+-- så avsnittets administratör är kvar. Nekar dörren går undantaget igenom, och den undertransaktion som fångar det (ett
+-- BEGIN … EXCEPTION, eller pg_temp-hjälparna som kör en sats och svarar med dess SQLSTATE) rullar också tillbaka claims till
+-- det de var. En funktion med SET-klausul vore enklare, men API-rollen får inte skapa en som sätter ett eget värde. Skapas ur
+-- katalogen, så ett argument eller en returtyp som ändras följer med.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  d record;
+  call text;
+BEGIN
+  FOR d IN
+    SELECT p.proname, pg_get_function_arguments(p.oid) AS args, pg_get_function_result(p.oid) AS res, p.proretset AS is_set,
+           (SELECT string_agg('$' || g, ', ' ORDER BY g) FROM generate_series(1, p.pronargs) g) AS pass
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'app'
+       AND p.proname = ANY (ARRAY[
+             'absence_stats_month', 'absence_stats_plan', 'absence_stats_trim', 'absence_watch_digest', 'absence_watch_digest_due',
+             'absence_watch_evaluate', 'absence_watch_schools', 'delivery_opt_outs', 'gallring_begin', 'gallring_claim_person',
+             'gallring_departed_due', 'gallring_finish', 'gallring_pseudonymise', 'gallring_purge', 'gallring_schools',
+             'job_claim_finished', 'job_claim_nightly', 'job_run_settled', 'job_runs_latest', 'push_due_receipts',
+             'push_receipts_settled', 'push_settle', 'push_targets', 'reporting_compute', 'reporting_digest',
+             'reporting_digest_due', 'reporting_remind', 'reporting_schools', 'schedule_candidates_sweep',
+             'school_export_claim', 'school_export_expire', 'school_export_fail', 'school_export_finish',
+             'school_export_heartbeat', 'school_export_put', 'ss12000_due_sources', 'ss12000_housekeeping'])
+  LOOP
+    call := format('app.%I(%s)', d.proname, coalesce(d.pass, ''));
+    EXECUTE format($f$
+      CREATE FUNCTION pg_temp.%I(%s) RETURNS %s LANGUAGE plpgsql VOLATILE AS $w$
+      DECLARE
+        u12_c text := coalesce(current_setting('request.jwt.claims', true), '');
+        u12_s text := coalesce(current_setting('request.jwt.claim.sub', true), '');
+        %s
+      BEGIN
+        PERFORM set_config('request.jwt.claims', '', true);
+        PERFORM set_config('request.jwt.claim.sub', '', true);
+        %s
+        PERFORM set_config('request.jwt.claims', u12_c, true);
+        PERFORM set_config('request.jwt.claim.sub', u12_s, true);
+        %s
+      END $w$ $f$,
+      'u12_' || d.proname, d.args, d.res,
+      CASE WHEN d.is_set OR d.res = 'void' THEN '' ELSE 'u12_r ' || d.res || ';' END,
+      CASE WHEN d.is_set THEN 'RETURN QUERY SELECT * FROM ' || call || ';'
+           WHEN d.res = 'void' THEN 'PERFORM ' || call || ';'
+           ELSE 'u12_r := ' || call || ';' END,
+      CASE WHEN d.is_set OR d.res = 'void' THEN '' ELSE 'RETURN u12_r;' END);
+  END LOOP;
+END $$;
+
+-- ---------------------------------------------------------------------------
 -- 1. No principal: the default must be deny, not allow.
 --
 -- This is the state `withSystemTransaction` leaves a transaction in. It used to
@@ -10028,7 +10083,7 @@ BEGIN
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 0 THEN RAISE EXCEPTION 'optout: the guardian deleted % row(s) of somebody else', n; END IF;
   -- The delivery's read, as the API calls it: the guardian's choice, by user.
-  SELECT array_agg(u) INTO got FROM app.delivery_opt_outs(app.current_school_id(), ARRAY[me, current_setting('app.test_rls29e_teacher')::uuid], 'LESSON_CANCELLED') u;
+  SELECT array_agg(u) INTO got FROM pg_temp.u12_delivery_opt_outs(app.current_school_id(), ARRAY[me, current_setting('app.test_rls29e_teacher')::uuid], 'LESSON_CANCELLED') u;
   IF got IS DISTINCT FROM ARRAY[me] THEN RAISE EXCEPTION 'optout: the delivery read %', got; END IF;
   SELECT count(*) INTO n FROM app.delivery_opt_outs(app.current_school_id(), ARRAY[me], 'SCHEDULE_CHANGED');
   IF n <> 0 THEN RAISE EXCEPTION 'optout: a type not chosen reads as chosen'; END IF;
@@ -10223,7 +10278,7 @@ DECLARE
   got text;
 BEGIN
   SELECT string_agg(user_id::text || ':' || locale || ':' || timezone, ',') INTO got
-    FROM app.push_targets(school, ARRAY[g], 'LESSON_CANCELLED', false);
+    FROM pg_temp.u12_push_targets(school, ARRAY[g], 'LESSON_CANCELLED', false);
   IF got IS DISTINCT FROM g::text || ':en:' || (SELECT coalesce(timezone, 'Europe/Stockholm') FROM "Schools" WHERE id = school) AND got IS DISTINCT FROM g::text || ':en:Europe/Stockholm' THEN
     RAISE EXCEPTION 'devices: the targets are %', got;
   END IF;
@@ -10235,24 +10290,24 @@ BEGIN
   INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type) VALUES (g, school, 'LESSON_CANCELLED');
   SELECT count(*) INTO n FROM app.push_targets(school, ARRAY[g], 'LESSON_CANCELLED', false);
   IF n <> 0 THEN RAISE EXCEPTION 'devices: an opted-out type still has a target'; END IF;
-  SELECT count(*) INTO n FROM app.push_targets(school, ARRAY[g], 'LESSON_CANCELLED', true);
+  SELECT count(*) INTO n FROM pg_temp.u12_push_targets(school, ARRAY[g], 'LESSON_CANCELLED', true);
   IF n <> 1 THEN RAISE EXCEPTION 'devices: a required notice lost its target to an opt-out'; END IF;
   -- Settling for another school changes nothing; for this one it revokes.
-  PERFORM app.push_settle(gen_random_uuid(), ARRAY[tok], '[]'::jsonb);
+  PERFORM pg_temp.u12_push_settle(gen_random_uuid(), ARRAY[tok], '[]'::jsonb);
   SELECT count(*) INTO n FROM "DevicePushTokens" WHERE id = tok AND "revokedAt" IS NULL;
   IF n <> 1 THEN RAISE EXCEPTION 'devices: another school''s settle revoked the guardian''s device'; END IF;
-  PERFORM app.push_settle(school, ARRAY[tok], jsonb_build_array(jsonb_build_object('id', 'rls29dticket01', 'tokenId', tok)));
+  PERFORM pg_temp.u12_push_settle(school, ARRAY[tok], jsonb_build_array(jsonb_build_object('id', 'rls29dticket01', 'tokenId', tok)));
   SELECT count(*) INTO n FROM "DevicePushTokens" WHERE id = tok AND "revokedReason" = 'DEVICE_NOT_REGISTERED';
   IF n <> 1 THEN RAISE EXCEPTION 'devices: settle did not revoke the dead device'; END IF;
   SELECT count(*) INTO n FROM app.push_targets(school, ARRAY[g], 'LESSON_CANCELLED', true);
   IF n <> 0 THEN RAISE EXCEPTION 'devices: a revoked device is still a target'; END IF;
   -- A fresh ticket is not due; settling receipts of unknown ids is harmless.
-  SELECT count(*) INTO n FROM app.push_due_receipts(1000) WHERE ticket_id = 'rls29dticket01';
+  SELECT count(*) INTO n FROM pg_temp.u12_push_due_receipts(1000) WHERE ticket_id = 'rls29dticket01';
   IF n <> 0 THEN RAISE EXCEPTION 'devices: a ticket was due at once'; END IF;
-  PERFORM app.push_receipts_settled(ARRAY['rls29dticket01', 'rls29dnothing'], ARRAY['rls29dnothing']);
+  PERFORM pg_temp.u12_push_receipts_settled(ARRAY['rls29dticket01', 'rls29dnothing'], ARRAY['rls29dnothing']);
   -- A registration revives the device.
   PERFORM app.claim_device_push_token('ExponentPushToken[rls29dAAAAAAAA]', 'IOS', 'sv');
-  SELECT count(*) INTO n FROM app.push_targets(school, ARRAY[g], 'LESSON_CANCELLED', true);
+  SELECT count(*) INTO n FROM pg_temp.u12_push_targets(school, ARRAY[g], 'LESSON_CANCELLED', true);
   IF n <> 1 THEN RAISE EXCEPTION 'devices: a new registration did not revive the device'; END IF;
   -- At most ten live devices per person.
   FOR n IN 1..11 LOOP
@@ -13238,7 +13293,7 @@ BEGIN
   INSERT INTO "NotificationOptOuts" ("userId", "schoolId", type)
   SELECT app.current_user_id(), app.current_school_id(), x FROM unnest(types) x;
   FOREACH t IN ARRAY types LOOP
-    SELECT count(*) INTO n FROM app.delivery_opt_outs(app.current_school_id(), ARRAY[app.current_user_id()], t) u
+    SELECT count(*) INTO n FROM pg_temp.u12_delivery_opt_outs(app.current_school_id(), ARRAY[app.current_user_id()], t) u
      WHERE u = app.current_user_id();
     IF n <> 1 THEN RAISE EXCEPTION 'roster: the delivery does not see the guardian''s opt-out of %', t; END IF;
   END LOOP;
@@ -14772,7 +14827,7 @@ DECLARE
   run uuid;
   p jsonb;
 BEGIN
-  run := app.gallring_begin(school, clock_timestamp());
+  run := pg_temp.u12_gallring_begin(school, clock_timestamp());
   SELECT periods INTO p FROM "GallringRuns" WHERE id = run;
   IF p <> '{"ATTENDANCE": 12, "ABSENCE_REPORTS": 6, "LEAVE_REQUESTS": 12, "CHANGE_LOGS": 24, "ABSENCE_REASONS": 12, "DEPARTED_PEOPLE": 12}'::jsonb THEN
     RAISE EXCEPTION 'period in force: the fixture''s decisions gave %', p;
@@ -14780,7 +14835,7 @@ BEGIN
 
   INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months) VALUES (school, 'ATTENDANCE', 'PURGE_AFTER', 1);
   INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months) VALUES (school, 'NOTIFICATIONS', 'PURGE_AFTER', 1);
-  run := app.gallring_begin(school, clock_timestamp());
+  run := pg_temp.u12_gallring_begin(school, clock_timestamp());
   SELECT periods INTO p FROM "GallringRuns" WHERE id = run;
   IF (p ->> 'ATTENDANCE')::int IS DISTINCT FROM 12 THEN
     RAISE EXCEPTION 'period in force: a shorter period applied at once (attendance %)', p ->> 'ATTENDANCE';
@@ -14793,7 +14848,7 @@ BEGIN
   END IF;
 
   INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision, months) VALUES (school, 'ATTENDANCE', 'PURGE_AFTER', 36);
-  run := app.gallring_begin(school, clock_timestamp());
+  run := pg_temp.u12_gallring_begin(school, clock_timestamp());
   SELECT periods INTO p FROM "GallringRuns" WHERE id = run;
   IF (p ->> 'ATTENDANCE')::int IS DISTINCT FROM 36 THEN
     RAISE EXCEPTION 'period in force: a longer period did not apply at once (attendance %)', p ->> 'ATTENDANCE';
@@ -14801,23 +14856,23 @@ BEGIN
 
   INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision) VALUES (school, 'ABSENCE_REPORTS', 'KEEP');
   INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision) VALUES (school, 'LEAVE_REQUESTS', 'UNDECIDED');
-  run := app.gallring_begin(school, clock_timestamp());
+  run := pg_temp.u12_gallring_begin(school, clock_timestamp());
   SELECT periods INTO p FROM "GallringRuns" WHERE id = run;
   IF p ? 'ABSENCE_REPORTS' OR p ? 'LEAVE_REQUESTS' THEN
     RAISE EXCEPTION 'period in force: KEEP or UNDECIDED did not stop the next run (%)', p;
   END IF;
 
   BEGIN
-    PERFORM app.gallring_begin(school, now() + interval '25 hours');
+    PERFORM pg_temp.u12_gallring_begin(school, now() + interval '25 hours');
     RAISE EXCEPTION 'period in force: a run was opened a day ahead, past the wait';
   EXCEPTION WHEN SQLSTATE 'GL400' THEN NULL;
   END;
 
   -- A decision recorded while a run is open spares what it spares: the run
   -- asks again before every batch.
-  run := app.gallring_begin(school, clock_timestamp());
+  run := pg_temp.u12_gallring_begin(school, clock_timestamp());
   INSERT INTO "RetentionDecisions" ("schoolId", "dataType", decision) VALUES (school, 'ABSENCE_REASONS', 'KEEP');
-  IF app.gallring_purge(run, 'ABSENCE_REASONS', 5000) <> 0 THEN
+  IF pg_temp.u12_gallring_purge(run, 'ABSENCE_REASONS', 5000) <> 0 THEN
     RAISE EXCEPTION 'period in force: an open run purged a kind the school had just decided to keep';
   END IF;
 END $$;
@@ -14833,15 +14888,15 @@ BEGIN
   IF EXISTS (SELECT 1 FROM "RetentionDecisions") THEN
     RAISE EXCEPTION 'unset period: school A has a decision; this section needs a school with none';
   END IF;
-  run := app.gallring_begin(school, clock_timestamp());
+  run := pg_temp.u12_gallring_begin(school, clock_timestamp());
   SELECT periods INTO p FROM "GallringRuns" WHERE id = run;
   IF p <> '{}'::jsonb THEN RAISE EXCEPTION 'unset period: a school with no decision got periods %', p; END IF;
   FOREACH kind IN ARRAY ARRAY['ATTENDANCE', 'ABSENCE_REPORTS', 'LEAVE_REQUESTS', 'NOTIFICATIONS', 'CHANGE_LOGS', 'ABSENCE_REASONS']::"RetentionDataType"[] LOOP
-    IF app.gallring_purge(run, kind, 5000) <> 0 THEN
+    IF pg_temp.u12_gallring_purge(run, kind, 5000) <> 0 THEN
       RAISE EXCEPTION 'unset period: % rows went from school A, which decided nothing', kind;
     END IF;
   END LOOP;
-  IF EXISTS (SELECT 1 FROM app.gallring_departed_due(run, 500)) THEN
+  IF EXISTS (SELECT 1 FROM pg_temp.u12_gallring_departed_due(run, 500)) THEN
     RAISE EXCEPTION 'unset period: school A has people due for pseudonymisation';
   END IF;
 END $$;
@@ -14858,8 +14913,8 @@ ROLLBACK;
 -- of the undecided kind is still there, the reason of an old absence is NULL
 -- while its cover stays, and school A has not moved. The run's counts are the
 -- rows that went, and "gallrat före" answers the cutoffs. Run under an admin
--- principal instead, the purge of the tjänst history is refused (TL403): the
--- guards let a purge through only with no principal set.
+-- principal instead, the purge is refused (GL403, the door's guard from
+-- 20270224090000; and the tjänst history's own guard, TL403, behind it).
 --
 -- The lesson ON the attendance cutoff is planted here, in this transaction,
 -- and the night runs at its now(): the counts, the lesson and the run's
@@ -14934,17 +14989,20 @@ BEGIN
   END IF;
 END $$;
 
--- Under the admin's own principal the history's guard holds. The run starts
--- at now(), as the night's does: the night interrupts it at its own now(), and
--- a run begun at clock_timestamp() would then finish before it started.
+-- Under the admin's own principal the purge is refused. The run starts at
+-- now(), as the night's does: the night interrupts it at its own now(), and a
+-- run begun at clock_timestamp() would then finish before it started. Since
+-- 20270224090000 the refusal is the door's (GL403: gallring is the job's, and a
+-- login is refused); the history's guard (TL403) stands behind it, and 521o in
+-- rls-owner-checks.sql holds that half, which the door now keeps a person from.
 DO $$
 DECLARE
-  run uuid := app.gallring_begin(app.current_school_id(), now());
+  run uuid := pg_temp.u12_gallring_begin(app.current_school_id(), now());
 BEGIN
   BEGIN
     PERFORM app.gallring_purge(run, 'CHANGE_LOGS', 5000);
-    RAISE EXCEPTION 'gallring: a purge under a person''s principal went past the tjänst history''s guard';
-  EXCEPTION WHEN SQLSTATE 'TL403' THEN NULL;
+    RAISE EXCEPTION 'gallring: a purge under a person''s principal went past the door''s guard';
+  EXCEPTION WHEN SQLSTATE 'GL403' THEN NULL;
   END;
 END $$;
 
@@ -27567,9 +27625,15 @@ BEGIN
   IF NOT app.login_is_held_elsewhere('00000000-0000-4000-8000-000000000105', NULL) THEN
     RAISE EXCEPTION 'flera 242b: a held login counted as nobody''s';
   END IF;
-  PERFORM set_config('request.jwt.claims', '', true);
+  -- The answer is read past row security: a login that sees none of these rows (it is nobody's) is told as well. With nobody
+  -- signed in the door answers nothing (20270224090000: a person's door, which asks for a login).
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid())::text, true);
   IF NOT app.login_is_held_elsewhere('fe000000-0000-4000-8000-000000000240', NULL) THEN
-    RAISE EXCEPTION 'flera 242b: with nobody signed in, the shared login was nobody''s';
+    RAISE EXCEPTION 'flera 242b: with a login that sees none of the rows, the shared login was nobody''s';
+  END IF;
+  PERFORM set_config('request.jwt.claims', '', true);
+  IF app.login_is_held_elsewhere('fe000000-0000-4000-8000-000000000240', NULL) IS NOT NULL THEN
+    RAISE EXCEPTION 'flera 242b: with nobody signed in, the door answered';
   END IF;
   SET LOCAL ROLE authenticated;
   BEGIN
@@ -32678,7 +32742,8 @@ BEGIN
   -- 268h
   PERFORM set_config('request.jwt.claims', json_build_object('sub', l)::text, true);
   l_row := app.current_user_id();
-  PERFORM set_config('request.jwt.claims', '', true);
+  -- The door answers a login (20270224090000): the roller school's administrator, who invites, is the one who asks.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text, true);
   IF l_row IS NULL THEN RAISE EXCEPTION 'huvudman 268h: L has no row at A'; END IF;
   IF NOT app.login_is_held_elsewhere(l::uuid, l_row) THEN
     wrong := wrong || '268h L''s login, which L''s membership holds, was taken for the row''s alone'::text;
@@ -37791,7 +37856,7 @@ BEGIN
   BEGIN
     -- The read log is asked in the loop's own statements: what the digest wrote
     -- is not in the snapshot of the statement that called it.
-    FOR r IN SELECT d.user_id, d.email, d.meta FROM app.absence_watch_digest(p_school, p_group, p_start, p_end, p_on) d ORDER BY d.email LOOP
+    FOR r IN SELECT d.user_id, d.email, d.meta FROM pg_temp.u12_absence_watch_digest(p_school, p_group, p_start, p_end, p_on) d ORDER BY d.email LOOP
       heard := concat_ws(', ', heard,
                          substr(r.email, 4, 2) || ' ' || (r.meta ->> 'open') || '/' || (r.meta ->> 'crossed')
                          || CASE WHEN p_pupils
@@ -37920,7 +37985,7 @@ BEGIN
   INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'Bevakning 305', 'FB305', now()) RETURNING id INTO subj;
   PERFORM pg_temp.fb_weekdays(subj, ka, p1, '2026-09-14', '2026-09-18', 'ABSENT');
   UPDATE "AbsenceWatchSettings" SET enabled = true;
-  IF (SELECT opened FROM app.absence_watch_evaluate(school, '2026-09-20')) <> 1 THEN
+  IF (SELECT opened FROM pg_temp.u12_absence_watch_evaluate(school, '2026-09-20')) <> 1 THEN
     RAISE EXCEPTION 'frånvarobevakning 305: the planted absence was not found';
   END IF;
   IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "clearedOn" IS NULL) <> 1 THEN RAISE EXCEPTION 'frånvarobevakning 305: no open finding'; END IF;
@@ -37934,14 +37999,14 @@ BEGIN
 
   INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays")
   VALUES (school, 'KANSLI', 'SHARE', 'INVALID', 10, 14) RETURNING id INTO lim2;
-  PERFORM app.absence_watch_evaluate(school, '2026-09-20');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-09-20');
   IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "clearedOn" IS NULL) <> 1 THEN RAISE EXCEPTION 'frånvarobevakning 305: the new limit found nobody'; END IF;
   UPDATE "AbsenceWatchSettings" SET enabled = false;
   IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "clearedOn" IS NULL) <> 0 THEN
     RAISE EXCEPTION 'frånvarobevakning 305: turning the bevakning off left a finding open in a view nothing feeds';
   END IF;
   -- An off school is not counted: nothing opens, whatever is planted.
-  IF (SELECT opened + kept + closed + pupils FROM app.absence_watch_evaluate(school, '2026-09-20')) <> 0 THEN
+  IF (SELECT opened + kept + closed + pupils FROM pg_temp.u12_absence_watch_evaluate(school, '2026-09-20')) <> 0 THEN
     RAISE EXCEPTION 'frånvarobevakning 305: a school with the bevakning off was counted';
   END IF;
 END $$;
@@ -38070,7 +38135,7 @@ BEGIN
   PERFORM pg_temp.fb_weekdays(subj, kb, p4, '2026-09-14', '2026-09-23', 'PRESENT');
   PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-24', ARRAY['ABSENT', 'ABSENT']);
 
-  SELECT * INTO r FROM app.absence_watch_evaluate(school, '2026-09-24');
+  SELECT * INTO r FROM pg_temp.u12_absence_watch_evaluate(school, '2026-09-24');
   IF r.opened <> 2 OR r.kept <> 0 OR r.closed <> 0 OR r.pupils <> 4 THEN
     RAISE EXCEPTION 'frånvarobevakning 306a: opened %, kept %, closed %, pupils %', r.opened, r.kept, r.closed, r.pupils;
   END IF;
@@ -38081,7 +38146,7 @@ BEGIN
   -- A day on (the 25th) loses the window's first day: P1's absence is out and the
   -- finding closes on the day it was found gone; P4 loses two present lessons and is
   -- kept at 120 of 600; and P3, whose 60 of 660 became 60 of 540, is over the limit and opens.
-  SELECT * INTO r FROM app.absence_watch_evaluate(school, '2026-09-25');
+  SELECT * INTO r FROM pg_temp.u12_absence_watch_evaluate(school, '2026-09-25');
   IF r.opened <> 1 OR r.kept <> 1 OR r.closed <> 1 THEN
     RAISE EXCEPTION 'frånvarobevakning 306a: the 25th: opened %, kept %, closed %', r.opened, r.kept, r.closed;
   END IF;
@@ -38127,7 +38192,7 @@ BEGIN
   -- P4: the absence is in a lesson of another class (a replacement lesson, a friluftsdag's) and a COMPLETED lesson counts too.
   PERFORM pg_temp.fb_plant(subj, ka, p4, '2026-09-15', ARRAY['ABSENT']);
   PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-16', ARRAY['PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT'], 'COMPLETED');
-  PERFORM app.absence_watch_evaluate(school, '2026-09-20');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-09-20');
   PERFORM pg_temp.fb_expect('306b', pg_temp.fb_findings(),
     E'p1 MENTOR SHARE INVALID 2026-09-20 2026-09-20 - 60/600\n' ||
     E'p2 MENTOR SHARE INVALID 2026-09-20 2026-09-20 - 10/100\n' ||
@@ -38135,7 +38200,7 @@ BEGIN
   -- A lesson that was rescheduled is not held either.
   UPDATE "CalendarLessons" SET status = 'RESCHEDULED' WHERE "studentGroupId" = ka
      AND id IN (SELECT "calendarLessonId" FROM "AttendanceRecords" WHERE "studentId" = p4);
-  PERFORM app.absence_watch_evaluate(school, '2026-09-20');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-09-20');
   IF EXISTS (SELECT 1 FROM "AbsenceWatchFindings" WHERE "studentId" = p4 AND "clearedOn" IS NULL)
      OR NOT EXISTS (SELECT 1 FROM "AbsenceWatchFindings" WHERE "studentId" = p4 AND "clearedOn" IS NOT NULL) THEN
     RAISE EXCEPTION 'frånvarobevakning 306b: a rescheduled lesson still counted as absence: %', pg_temp.fb_findings();
@@ -38171,7 +38236,7 @@ BEGIN
   -- P4: five late arrivals of ten lessons: 75 minutes of ogiltig absence (12.5 %), none giltig, and under all three limits.
   PERFORM pg_temp.fb_plant(subj, ka, p4, '2026-09-15', ARRAY['LATE', 'LATE', 'LATE', 'LATE', 'LATE']);
   PERFORM pg_temp.fb_plant(subj, ka, p4, '2026-09-16', ARRAY['PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT']);
-  PERFORM app.absence_watch_evaluate(school, '2026-09-20');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-09-20');
   PERFORM pg_temp.fb_expect('306c', pg_temp.fb_findings(),
     E'p1 MENTOR SHARE VALID 2026-09-20 2026-09-20 - 120/600\n' ||
     E'p2 REKTOR SHARE INVALID 2026-09-20 2026-09-20 - 120/600\n' ||
@@ -38230,18 +38295,18 @@ BEGIN
   PERFORM pg_temp.fb_plant(subj, ka, p5, '2026-09-24', ARRAY['ABSENT']);
   PERFORM pg_temp.fb_plant(subj, ka, p5, '2026-09-28', ARRAY['ABSENT']);
 
-  PERFORM app.absence_watch_evaluate(school, '2026-09-28');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-09-28');
   -- The run reaches three on the third day of it, the 25th for P1 and the 28th for P4.
   PERFORM pg_temp.fb_expect('306d', pg_temp.fb_findings(),
     E'p1 REKTOR CONSECUTIVE ALL 2026-09-25 2026-09-28 - 4d\n' ||
     E'p4 REKTOR CONSECUTIVE ALL 2026-09-28 2026-09-28 - 3d');
   -- A run that ended more than seven days ago is not a run going: the 6th of October.
-  PERFORM app.absence_watch_evaluate(school, '2026-10-06');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-10-06');
   IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "clearedOn" IS NULL) <> 0 THEN
     RAISE EXCEPTION 'frånvarobevakning 306d: a run whose last day is eight days old is still open: %', pg_temp.fb_findings();
   END IF;
   -- Seven days is going (the 5th of October is the 28th plus seven; the 4th would be six).
-  PERFORM app.absence_watch_evaluate(school, '2026-10-05');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-10-05');
   IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "clearedOn" IS NULL) <> 2 THEN
     RAISE EXCEPTION 'frånvarobevakning 306d: a run whose last day is seven days old was dropped: %', pg_temp.fb_findings();
   END IF;
@@ -38280,7 +38345,7 @@ BEGIN
   PERFORM pg_temp.fb_plant(subj, kb, p3, '2026-09-24', ARRAY['ABSENT', 'PRESENT']);
   PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-23', ARRAY['EXCUSED', 'EXCUSED']);
   PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-24', ARRAY['EXCUSED', 'PRESENT']);
-  PERFORM app.absence_watch_evaluate(school, '2026-09-25');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-09-25');
   PERFORM pg_temp.fb_expect('306e', pg_temp.fb_findings(),
     E'p1 MENTOR CONSECUTIVE VALID 2026-09-24 2026-09-25 - 2d\n' ||
     E'p2 KANSLI CONSECUTIVE ALL 2026-09-24 2026-09-25 - 3d\n'  ||
@@ -38310,49 +38375,49 @@ BEGIN
   PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-15', ARRAY['ABSENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT']);
   PERFORM pg_temp.fb_weekdays(subj, ka, p1, '2026-09-16', '2026-09-22', 'PRESENT');
 
-  SELECT * INTO r FROM app.absence_watch_evaluate(school, '2026-09-22');
+  SELECT * INTO r FROM pg_temp.u12_absence_watch_evaluate(school, '2026-09-22');
   IF r.opened <> 1 THEN RAISE EXCEPTION 'frånvarobevakning 306f: opened %', r.opened; END IF;
-  SELECT * INTO r FROM app.absence_watch_evaluate(school, '2026-09-22');
+  SELECT * INTO r FROM pg_temp.u12_absence_watch_evaluate(school, '2026-09-22');
   IF r.opened <> 0 OR r.kept <> 1 OR r.closed <> 0 THEN RAISE EXCEPTION 'frånvarobevakning 306f: the same day twice: opened %, kept %, closed %', r.opened, r.kept, r.closed; END IF;
   -- The next day it holds: found on the 22nd, seen on the 23rd.
   PERFORM pg_temp.fb_plant(subj, ka, p1, '2026-09-23', ARRAY['ABSENT']);
-  PERFORM app.absence_watch_evaluate(school, '2026-09-23');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-09-23');
   PERFORM pg_temp.fb_expect('306f, kept', pg_temp.fb_findings(), E'p1 MENTOR SHARE INVALID 2026-09-22 2026-09-23 - 120/660');
   -- The limit is raised to 20: the finding no longer holds and closes; the limit's figures were updated.
   UPDATE "AbsenceWatchLimits" SET percent = 20 WHERE id = lim;
-  SELECT * INTO r FROM app.absence_watch_evaluate(school, '2026-09-23');
+  SELECT * INTO r FROM pg_temp.u12_absence_watch_evaluate(school, '2026-09-23');
   IF r.closed <> 1 THEN RAISE EXCEPTION 'frånvarobevakning 306f: a raised limit left the finding open'; END IF;
   -- Lowered again: a new finding, and the closed one is as it was.
   UPDATE "AbsenceWatchLimits" SET percent = 10 WHERE id = lim;
-  PERFORM app.absence_watch_evaluate(school, '2026-09-24');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-09-24');
   PERFORM pg_temp.fb_expect('306f, again', pg_temp.fb_findings(),
     E'p1 MENTOR SHARE INVALID 2026-09-22 2026-09-23 2026-09-23 120/660\n' ||
     E'p1 MENTOR SHARE INVALID 2026-09-24 2026-09-24 - 120/660');
   -- A figure edited while the finding stays is shown as the limit stands now.
   UPDATE "AbsenceWatchLimits" SET percent = 11, "windowDays" = 28 WHERE id = lim;
-  PERFORM app.absence_watch_evaluate(school, '2026-09-25');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-09-25');
   IF (SELECT percent || '/' || "windowDays" FROM "AbsenceWatchFindings" WHERE "clearedOn" IS NULL) <> '11/28' THEN
     RAISE EXCEPTION 'frånvarobevakning 306f: an edited limit did not reach its finding';
   END IF;
 
   -- A day that has not passed is refused: today's lessons are not over.
   BEGIN
-    PERFORM app.absence_watch_evaluate(school, (now() AT TIME ZONE 'Europe/Stockholm')::date);
+    PERFORM pg_temp.u12_absence_watch_evaluate(school, (now() AT TIME ZONE 'Europe/Stockholm')::date);
     RAISE EXCEPTION 'frånvarobevakning 306f: today was counted';
   EXCEPTION WHEN SQLSTATE 'AW400' THEN NULL;
   END;
   BEGIN
-    PERFORM app.absence_watch_evaluate(school, (now() AT TIME ZONE 'Europe/Stockholm')::date + 1);
+    PERFORM pg_temp.u12_absence_watch_evaluate(school, (now() AT TIME ZONE 'Europe/Stockholm')::date + 1);
     RAISE EXCEPTION 'frånvarobevakning 306f: tomorrow was counted';
   EXCEPTION WHEN SQLSTATE 'AW400' THEN NULL;
   END;
   BEGIN
-    PERFORM app.absence_watch_evaluate(gen_random_uuid(), '2026-09-22');
+    PERFORM pg_temp.u12_absence_watch_evaluate(gen_random_uuid(), '2026-09-22');
     RAISE EXCEPTION 'frånvarobevakning 306f: a school that does not exist was counted';
   EXCEPTION WHEN SQLSTATE 'AW404' THEN NULL;
   END;
   -- Yesterday is the latest that counts, in the school's own dates.
-  PERFORM app.absence_watch_evaluate(school, (now() AT TIME ZONE 'Europe/Stockholm')::date - 1);
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, (now() AT TIME ZONE 'Europe/Stockholm')::date - 1);
 END $$;
 ROLLBACK;
 
@@ -38410,11 +38475,11 @@ BEGIN
   -- Fall: Friday and Monday absent all day across the extra hour.
   PERFORM pg_temp.fb_plant(subj, ka, p2, fall_mon - 3, ARRAY['ABSENT', 'ABSENT']);
   PERFORM pg_temp.fb_plant(subj, ka, p2, fall_mon, ARRAY['ABSENT', 'ABSENT']);
-  PERFORM app.absence_watch_evaluate(school, spring_mon);
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, spring_mon);
   PERFORM pg_temp.fb_expect('306g, spring', pg_temp.fb_findings(),
     format(E'p1 MENTOR SHARE INVALID %1$s %1$s - 60/240\n' ||
            E'p3 MENTOR SHARE INVALID %1$s %1$s - 60/120', spring_mon));
-  PERFORM app.absence_watch_evaluate(school, fall_mon);
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, fall_mon);
   PERFORM pg_temp.fb_expect('306g, fall', pg_temp.fb_findings(),
     format(E'p1 MENTOR SHARE INVALID %1$s %1$s %2$s 60/240\n' ||
            E'p2 MENTOR SHARE INVALID %2$s %2$s - 240/240\n' ||
@@ -38442,7 +38507,7 @@ BEGIN
   PERFORM pg_temp.fb_weekdays(subj, ka, p1, '2026-09-14', '2026-09-24', 'PRESENT');
   PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-10', ARRAY['ABSENT', 'ABSENT']);
   PERFORM pg_temp.fb_weekdays(subj, ka, p2, '2026-09-11', '2026-09-24', 'PRESENT');
-  PERFORM app.absence_watch_evaluate(school, '2026-09-24');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-09-24');
   PERFORM pg_temp.fb_expect('306h', pg_temp.fb_findings(), E'p1 MENTOR SHARE INVALID 2026-09-24 2026-09-24 - 60/600');
 END $$;
 ROLLBACK;
@@ -38475,7 +38540,7 @@ BEGIN
   PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-24', ARRAY['PRESENT', 'PRESENT']);
   PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-25', ARRAY['ABSENT', 'ABSENT']);
   PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-10-05', ARRAY['ABSENT', 'ABSENT']);
-  PERFORM app.absence_watch_evaluate(school, '2026-10-05');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-10-05');
   -- The 14 days ending the 5th have six lessons of P1's, all absent, and the run is three days that reach over the lov.
   PERFORM pg_temp.fb_expect('306i', pg_temp.fb_findings(),
     E'p1 MENTOR SHARE INVALID 2026-10-05 2026-10-05 - 360/360\n' ||
@@ -38506,12 +38571,12 @@ BEGIN
   PERFORM pg_temp.fb_weekdays(subj, ka, p1, '2026-09-14', '2026-09-18', 'ABSENT');
   PERFORM pg_temp.fb_weekdays(subj, ka, p2, '2026-09-14', '2026-09-17', 'ABSENT');
   PERFORM pg_temp.fb_weekdays(subj, ka, p3, '2026-08-17', '2026-08-21', 'ABSENT');
-  PERFORM app.absence_watch_evaluate(school, '2026-09-25');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-09-25');
   PERFORM pg_temp.fb_expect('306j', pg_temp.fb_findings(), E'p1 MENTOR SHARE INVALID 2026-09-25 2026-09-25 - 300/300');
   -- And when school starts again a pupil who is absent from the first day is found at once, while
   -- P1, who has not been registered for twelve days, is closed:
   PERFORM pg_temp.fb_weekdays(subj, ka, p2, '2026-09-28', '2026-09-29', 'ABSENT');
-  PERFORM app.absence_watch_evaluate(school, '2026-09-30');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-09-30');
   PERFORM pg_temp.fb_expect('306j, back', pg_temp.fb_findings(),
     E'p1 MENTOR SHARE INVALID 2026-09-25 2026-09-25 2026-09-30 300/300\n' ||
     E'p2 MENTOR SHARE INVALID 2026-09-30 2026-09-30 - 360/360');
@@ -38553,7 +38618,7 @@ BEGIN
   PERFORM pg_temp.fb_plant(subj, ka, p2, '2026-09-23', ARRAY['PRESENT', 'PRESENT']);
   PERFORM pg_temp.fb_plant(subj, kb, p3, '2026-09-23', ARRAY['ABSENT', 'PRESENT']);
   PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-23', ARRAY['ABSENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT', 'PRESENT']);
-  PERFORM app.absence_watch_evaluate(school, '2026-09-25');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-09-25');
   PERFORM pg_temp.fb_expect('307 school', pg_temp.fb_findings(),
     E'p1 GUARDIAN SHARE INVALID 2026-09-25 2026-09-25 - 240/240\n' ||
     E'p1 MENTOR SHARE INVALID 2026-09-25 2026-09-25 - 240/240\n' ||
@@ -38579,7 +38644,7 @@ BEGIN
   INSERT INTO "AbsenceWatchLimits" ("schoolId", "recipientGroup", kind, basis, percent, "windowDays") VALUES
     (school, 'MENTOR', 'SHARE', 'INVALID', 10, 14), (school, 'GUARDIAN', 'SHARE', 'INVALID', 10, 14);
   PERFORM pg_temp.fb_plant(subj, k9, po, '2026-09-23', ARRAY['ABSENT', 'ABSENT']);
-  PERFORM app.absence_watch_evaluate(school, '2026-09-25');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-09-25');
   IF (SELECT count(*) FROM "AbsenceWatchFindings") <> 2 THEN RAISE EXCEPTION 'frånvarobevakning 307: the other school''s findings'; END IF;
 END $$;
 
@@ -38861,11 +38926,11 @@ BEGIN
   PERFORM pg_temp.fb_weekdays(subj, ka, p5, '2026-09-21', '2026-09-25', 'ABSENT', 2);
   PERFORM pg_temp.fb_plant(subj, kb, p4, '2026-09-11', ARRAY['ABSENT', 'ABSENT']);
   PERFORM pg_temp.fb_weekdays(subj, kb, p4, '2026-09-14', '2026-09-18', 'PRESENT', 2);
-  PERFORM app.absence_watch_evaluate(school, '2026-09-20');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-09-20');
   IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "studentId" = p4 AND "clearedOn" IS NULL) <> 4 THEN
     RAISE EXCEPTION 'frånvarobevakning 308: P4 was not over all four limits on the 20th: %', pg_temp.fb_findings();
   END IF;
-  PERFORM app.absence_watch_evaluate(school, '2026-09-27');
+  PERFORM pg_temp.u12_absence_watch_evaluate(school, '2026-09-27');
   IF (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "studentId" = p4 AND "clearedOn" = '2026-09-27') <> 4
      OR (SELECT count(*) FROM "AbsenceWatchFindings" WHERE "studentId" <> p4 AND "clearedOn" IS NULL) <> 8 THEN
     RAISE EXCEPTION 'frånvarobevakning 308: after the 27th: %', pg_temp.fb_findings();
@@ -38895,13 +38960,13 @@ BEGIN
   END IF;
 
   -- Written once: the ledger says so, and the second call writes nothing.
-  FOR r IN SELECT * FROM app.absence_watch_digest(school, 'MENTOR', '2026-09-21', '2026-09-27', today) LOOP
+  FOR r IN SELECT * FROM pg_temp.u12_absence_watch_digest(school, 'MENTOR', '2026-09-21', '2026-09-27', today) LOOP
     n := coalesce(n, 0) + 1;
     texts := texts || ' ' || r.meta::text;
     IF r.email !~ '^fb-m[12]@' THEN RAISE EXCEPTION 'frånvarobevakning 308: a notice for %', r.email; END IF;
   END LOOP;
   IF n IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'frånvarobevakning 308: the mentors'' digest wrote % notices, not 2', n; END IF;
-  SELECT count(*) INTO n FROM app.absence_watch_digest(school, 'MENTOR', '2026-09-21', '2026-09-27', today);
+  SELECT count(*) INTO n FROM pg_temp.u12_absence_watch_digest(school, 'MENTOR', '2026-09-21', '2026-09-27', today);
   IF n <> 0 THEN RAISE EXCEPTION 'frånvarobevakning 308: the second call wrote % notices', n; END IF;
   -- The read log has a row for each mentor, written with the notices: ATTENDANCE,
   -- the mentor the reader, the pupil of their plan the subject, channel OTHER.
@@ -38920,7 +38985,7 @@ BEGIN
     RAISE EXCEPTION 'frånvarobevakning 308: the notice is not group, period, open and crossed: %', texts;
   END IF;
   -- Another period of the same group is another digest, and another group's is its own.
-  SELECT count(*) INTO n FROM app.absence_watch_digest(school, 'MENTOR', '2026-09-14', '2026-09-20', today);
+  SELECT count(*) INTO n FROM pg_temp.u12_absence_watch_digest(school, 'MENTOR', '2026-09-14', '2026-09-20', today);
   IF n <> 2 THEN RAISE EXCEPTION 'frånvarobevakning 308: the week before wrote % notices, not 2 (the two mentors hear of P4 and of the open ones)', n; END IF;
   -- ... and its log rows leave out what the same reader has from the last quarter-hour: M1's
   -- pupil was in the first digest, and M2 is logged for P4 only, though P3 and P4 are 2 of the read.
@@ -38928,7 +38993,7 @@ BEGIN
                             || '/' || a."readSize", '; ' ORDER BY m.email, a."at")
             FROM "PersonalDataAccess" a JOIN "Users" m ON m.id = a."actorId" WHERE a.kind = 'ATTENDANCE' AND a.channel = 'OTHER');
   PERFORM pg_temp.fb_expect('308 log, the week before', got, 'm1>p1/1; m2>p3/1; m2>p4/2');
-  SELECT count(*) INTO n FROM app.absence_watch_digest(school, 'REKTOR', '2026-09-21', '2026-09-27', today);
+  SELECT count(*) INTO n FROM pg_temp.u12_absence_watch_digest(school, 'REKTOR', '2026-09-21', '2026-09-27', today);
   IF n <> 2 THEN RAISE EXCEPTION 'frånvarobevakning 308: rektor''s digest wrote % notices, not 2', n; END IF;
   -- The administrators read the pupils, none of them themselves.
   got := (SELECT string_agg(substr(m.email, 4, 2) || '>' || (SELECT string_agg(substr(s.email, 4, 2), ',' ORDER BY s.email) FROM "Users" s WHERE s.id = ANY (a."subjectIds"))
@@ -38938,7 +39003,7 @@ BEGIN
 
   -- With the bevakning off, nothing is written and no ledger row; nobody has anything open.
   UPDATE "AbsenceWatchSettings" SET enabled = false;
-  SELECT count(*) INTO n FROM app.absence_watch_digest(school, 'GUARDIAN', '2026-09-21', '2026-09-27', today);
+  SELECT count(*) INTO n FROM pg_temp.u12_absence_watch_digest(school, 'GUARDIAN', '2026-09-21', '2026-09-27', today);
   IF n <> 0 OR EXISTS (SELECT 1 FROM "AbsenceWatchDigests" WHERE "recipientGroup" = 'GUARDIAN') THEN
     RAISE EXCEPTION 'frånvarobevakning 308: a school that is off had a digest written';
   END IF;
@@ -41395,10 +41460,10 @@ BEGIN
   -- Plant one finished file as the full administrator, through the job's functions (section 357 proves them).
   PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000001');
   INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, rektor) RETURNING id INTO mine;
-  PERFORM export_id FROM app.school_export_claim(interval '3 minutes') WHERE export_id = mine;
+  PERFORM export_id FROM pg_temp.u12_school_export_claim(interval '3 minutes') WHERE export_id = mine;
   IF NOT FOUND THEN RAISE EXCEPTION 'export 356: the claim did not take the planted order (is another export queued in the database?)'; END IF;
-  PERFORM app.school_export_put(mine, 0, '\x0102030405'::bytea);
-  PERFORM app.school_export_finish(mine, 5, 1, repeat('a', 64), '[]'::jsonb, '{"people":0,"links":0}'::jsonb, '{}'::jsonb, interval '72 hours');
+  PERFORM pg_temp.u12_school_export_put(mine, 0, '\x0102030405'::bytea);
+  PERFORM pg_temp.u12_school_export_finish(mine, 5, 1, repeat('a', 64), '[]'::jsonb, '{"people":0,"links":0}'::jsonb, '{}'::jsonb, interval '72 hours');
   PERFORM set_config('app.test_rls356_export', mine::text, true);
 
   -- The other school orders and reads its own; this school's it neither sees nor withdraws.
@@ -41500,9 +41565,9 @@ BEGIN
   full_id := app.current_user_id();
   INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
 
-  PERFORM pg_temp.se_refuses('SELECT app.school_export_claim(interval ''5 seconds'')', 'SS409', 'a lease of five seconds');
-  PERFORM pg_temp.se_refuses('SELECT app.school_export_claim(interval ''2 hours'')', 'SS409', 'a lease of two hours');
-  SELECT * INTO c FROM app.school_export_claim(interval '3 minutes');
+  PERFORM pg_temp.se_refuses('SELECT pg_temp.u12_school_export_claim(interval ''5 seconds'')', 'SS409', 'a lease of five seconds');
+  PERFORM pg_temp.se_refuses('SELECT pg_temp.u12_school_export_claim(interval ''2 hours'')', 'SS409', 'a lease of two hours');
+  SELECT * INTO c FROM pg_temp.u12_school_export_claim(interval '3 minutes');
   IF c.export_id IS DISTINCT FROM e OR c.school_id IS DISTINCT FROM school OR c.user_id IS DISTINCT FROM full_id
      OR c.auth_id IS DISTINCT FROM '00000000-0000-4000-8000-e50000000001'::uuid OR c.admin_profile IS DISTINCT FROM 'FULL' OR c.attempt <> 1 THEN
     RAISE EXCEPTION 'export 357: the claim returned % for the order of the full administrator', c;
@@ -41510,70 +41575,70 @@ BEGIN
   SELECT status::text, attempts INTO s, n FROM "SchoolExports" WHERE id = e;
   IF s <> 'RUNNING' OR n <> 1 THEN RAISE EXCEPTION 'export 357: the claimed order is % after % attempts', s, n; END IF;
   -- Nothing else to take: the order is running with a fresh heartbeat.
-  PERFORM 1 FROM app.school_export_claim(interval '3 minutes');
+  PERFORM 1 FROM pg_temp.u12_school_export_claim(interval '3 minutes');
   IF FOUND THEN RAISE EXCEPTION 'export 357: a second claim took an order with a fresh heartbeat'; END IF;
-  IF NOT app.school_export_heartbeat(e) THEN RAISE EXCEPTION 'export 357: the heartbeat of a running export said it was not'; END IF;
+  IF NOT pg_temp.u12_school_export_heartbeat(e) THEN RAISE EXCEPTION 'export 357: the heartbeat of a running export said it was not'; END IF;
 
   -- Pieces: counted from zero, to a running export only, small, and in the export's own school.
-  PERFORM app.school_export_put(e, 0, '\x010203'::bytea);
-  PERFORM app.school_export_put(e, 1, '\x0405'::bytea);
+  PERFORM pg_temp.u12_school_export_put(e, 0, '\x010203'::bytea);
+  PERFORM pg_temp.u12_school_export_put(e, 1, '\x0405'::bytea);
 
   -- A builder that was taken over and woke up holds an earlier attempt, and is fenced out of every function.
-  IF app.school_export_heartbeat(e, 2) THEN RAISE EXCEPTION 'export 357: the heartbeat answered an attempt that is not the current'; END IF;
-  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, 9, '\x01'::bytea, 2)$q$, e), 'SS409', 'a piece from an attempt that is not the current');
-  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_finish(%L, 5, 2, repeat('a', 64), '[]', '{}', '{}', interval '72 hours', 2)$q$, e), 'SS409', 'a finish by an attempt that is not the current');
-  PERFORM app.school_export_fail(e, 'Stale', 2);
+  IF pg_temp.u12_school_export_heartbeat(e, 2) THEN RAISE EXCEPTION 'export 357: the heartbeat answered an attempt that is not the current'; END IF;
+  PERFORM pg_temp.se_refuses(format($q$SELECT pg_temp.u12_school_export_put(%L, 9, '\x01'::bytea, 2)$q$, e), 'SS409', 'a piece from an attempt that is not the current');
+  PERFORM pg_temp.se_refuses(format($q$SELECT pg_temp.u12_school_export_finish(%L, 5, 2, repeat('a', 64), '[]', '{}', '{}', interval '72 hours', 2)$q$, e), 'SS409', 'a finish by an attempt that is not the current');
+  PERFORM pg_temp.u12_school_export_fail(e, 'Stale', 2);
   SELECT status::text INTO s FROM "SchoolExports" WHERE id = e;
   IF s <> 'RUNNING' THEN RAISE EXCEPTION 'export 357: a stale attempt failed the export (%)', s; END IF;
-  IF NOT app.school_export_heartbeat(e, 1) THEN RAISE EXCEPTION 'export 357: the current attempt was not recognised'; END IF;
-  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, 0, '\x01'::bytea, 1)$q$, e), '23505', 'a repeated piece by the current attempt (past the fence, stopped by the key)');
-  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, 0, '\x01'::bytea)$q$, e), '23505', 'a piece written twice');
-  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, -1, '\x01'::bytea)$q$, e), '23514', 'a piece before the first');
-  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, 2, ''::bytea)$q$, e), '23514', 'an empty piece');
-  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, 2, decode(repeat('00', 4194305), 'hex'))$q$, e), '23514', 'a piece over 4 MiB');
-  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, 0, '\x01'::bytea)$q$, gen_random_uuid()), 'SS409', 'a piece of an export that is not');
+  IF NOT pg_temp.u12_school_export_heartbeat(e, 1) THEN RAISE EXCEPTION 'export 357: the current attempt was not recognised'; END IF;
+  PERFORM pg_temp.se_refuses(format($q$SELECT pg_temp.u12_school_export_put(%L, 0, '\x01'::bytea, 1)$q$, e), '23505', 'a repeated piece by the current attempt (past the fence, stopped by the key)');
+  PERFORM pg_temp.se_refuses(format($q$SELECT pg_temp.u12_school_export_put(%L, 0, '\x01'::bytea)$q$, e), '23505', 'a piece written twice');
+  PERFORM pg_temp.se_refuses(format($q$SELECT pg_temp.u12_school_export_put(%L, -1, '\x01'::bytea)$q$, e), '23514', 'a piece before the first');
+  PERFORM pg_temp.se_refuses(format($q$SELECT pg_temp.u12_school_export_put(%L, 2, ''::bytea)$q$, e), '23514', 'an empty piece');
+  PERFORM pg_temp.se_refuses(format($q$SELECT pg_temp.u12_school_export_put(%L, 2, decode(repeat('00', 4194305), 'hex'))$q$, e), '23514', 'a piece over 4 MiB');
+  PERFORM pg_temp.se_refuses(format($q$SELECT pg_temp.u12_school_export_put(%L, 0, '\x01'::bytea)$q$, gen_random_uuid()), 'SS409', 'a piece of an export that is not');
   -- Finish: counted against the pieces, kept at most fourteen days, once.
-  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_finish(%L, 5, 3, repeat('a', 64), '[]', '{}', '{}', interval '72 hours')$q$, e), 'SS409', 'a finish naming three pieces of two');
-  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_finish(%L, 6, 2, repeat('a', 64), '[]', '{}', '{}', interval '72 hours')$q$, e), 'SS409', 'a finish naming six bytes of five');
-  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_finish(%L, 5, 2, repeat('a', 64), '[]', '{}', '{}', interval '15 days')$q$, e), 'SS409', 'a file kept fifteen days');
-  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_finish(%L, 5, 2, repeat('a', 64), '[]', '{}', '{}', interval '0 seconds')$q$, e), 'SS409', 'a file kept no time');
-  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_finish(%L, 5, 2, 'not hex', '[]', '{}', '{}', interval '72 hours')$q$, e), '23514', 'a checksum that is not a SHA-256');
-  PERFORM app.school_export_finish(e, 5, 2, repeat('a', 64), '[{"path":"x","rows":1,"bytes":1}]'::jsonb, '{"people":1,"links":0}'::jsonb, '{"PEOPLE":["x"]}'::jsonb, interval '72 hours');
+  PERFORM pg_temp.se_refuses(format($q$SELECT pg_temp.u12_school_export_finish(%L, 5, 3, repeat('a', 64), '[]', '{}', '{}', interval '72 hours')$q$, e), 'SS409', 'a finish naming three pieces of two');
+  PERFORM pg_temp.se_refuses(format($q$SELECT pg_temp.u12_school_export_finish(%L, 6, 2, repeat('a', 64), '[]', '{}', '{}', interval '72 hours')$q$, e), 'SS409', 'a finish naming six bytes of five');
+  PERFORM pg_temp.se_refuses(format($q$SELECT pg_temp.u12_school_export_finish(%L, 5, 2, repeat('a', 64), '[]', '{}', '{}', interval '15 days')$q$, e), 'SS409', 'a file kept fifteen days');
+  PERFORM pg_temp.se_refuses(format($q$SELECT pg_temp.u12_school_export_finish(%L, 5, 2, repeat('a', 64), '[]', '{}', '{}', interval '0 seconds')$q$, e), 'SS409', 'a file kept no time');
+  PERFORM pg_temp.se_refuses(format($q$SELECT pg_temp.u12_school_export_finish(%L, 5, 2, 'not hex', '[]', '{}', '{}', interval '72 hours')$q$, e), '23514', 'a checksum that is not a SHA-256');
+  PERFORM pg_temp.u12_school_export_finish(e, 5, 2, repeat('a', 64), '[{"path":"x","rows":1,"bytes":1}]'::jsonb, '{"people":1,"links":0}'::jsonb, '{"PEOPLE":["x"]}'::jsonb, interval '72 hours');
   SELECT status::text INTO s FROM "SchoolExports" WHERE id = e;
   IF s <> 'READY' THEN RAISE EXCEPTION 'export 357: the finished export is %', s; END IF;
   -- Its two pieces are the export's own, in its school, and readable now that the file is READY.
   SELECT count(*) INTO n FROM "SchoolExportChunks" WHERE "exportId" = e AND "schoolId" = school;
   IF n <> 2 THEN RAISE EXCEPTION 'export 357: % pieces are stored in the export''s school, not two', n; END IF;
-  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_finish(%L, 5, 2, repeat('a', 64), '[]', '{}', '{}', interval '72 hours')$q$, e), 'SS409', 'a second finish');
-  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_put(%L, 2, '\x01'::bytea)$q$, e), 'SS409', 'a piece of a finished file');
-  IF app.school_export_heartbeat(e) THEN RAISE EXCEPTION 'export 357: a finished export still has a heartbeat'; END IF;
+  PERFORM pg_temp.se_refuses(format($q$SELECT pg_temp.u12_school_export_finish(%L, 5, 2, repeat('a', 64), '[]', '{}', '{}', interval '72 hours')$q$, e), 'SS409', 'a second finish');
+  PERFORM pg_temp.se_refuses(format($q$SELECT pg_temp.u12_school_export_put(%L, 2, '\x01'::bytea)$q$, e), 'SS409', 'a piece of a finished file');
+  IF pg_temp.u12_school_export_heartbeat(e) THEN RAISE EXCEPTION 'export 357: a finished export still has a heartbeat'; END IF;
   SELECT count(*) INTO n FROM "SchoolExports" WHERE id = e AND "byteSize" = 5 AND "chunkCount" = 2 AND "expiresAt" > now() + interval '71 hours' AND "expiresAt" < now() + interval '73 hours';
   IF n <> 1 THEN RAISE EXCEPTION 'export 357: the finished export does not say 5 bytes in 2 pieces kept 72 hours'; END IF;
 
   -- A failed build leaves no piece, and names its class; a class that is a message becomes 'Error'.
   DELETE FROM "SchoolExports" WHERE id = e;
   INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
-  PERFORM 1 FROM app.school_export_claim(interval '3 minutes');
-  PERFORM app.school_export_put(e, 0, '\x01'::bytea);
-  PERFORM app.school_export_fail(e, 'ECONNRESET');
+  PERFORM 1 FROM pg_temp.u12_school_export_claim(interval '3 minutes');
+  PERFORM pg_temp.u12_school_export_put(e, 0, '\x01'::bytea);
+  PERFORM pg_temp.u12_school_export_fail(e, 'ECONNRESET');
   SELECT status::text || ':' || "errorClass" INTO s FROM "SchoolExports" WHERE id = e;
   IF s <> 'FAILED:ECONNRESET' THEN RAISE EXCEPTION 'export 357: the failed export is %', s; END IF;
   DELETE FROM "SchoolExports" WHERE id = e;
   INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
-  PERFORM 1 FROM app.school_export_claim(interval '3 minutes');
-  PERFORM app.school_export_fail(e, 'a message with spaces: person@example.com');
+  PERFORM 1 FROM pg_temp.u12_school_export_claim(interval '3 minutes');
+  PERFORM pg_temp.u12_school_export_fail(e, 'a message with spaces: person@example.com');
   SELECT "errorClass" INTO s FROM "SchoolExports" WHERE id = e;
   IF s <> 'Error' THEN RAISE EXCEPTION 'export 357: an error that is a message was stored as %', s; END IF;
   DELETE FROM "SchoolExports" WHERE id = e;
 
   -- A file kept a second expires: its pieces and its list of persons go, the order stays as EXPIRED.
   INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
-  PERFORM 1 FROM app.school_export_claim(interval '3 minutes');
-  PERFORM app.school_export_put(e, 0, '\x01'::bytea);
-  PERFORM app.school_export_finish(e, 1, 1, repeat('b', 64), '[]'::jsonb, '{}'::jsonb, '{"PEOPLE":["x"]}'::jsonb, interval '1 second');
+  PERFORM 1 FROM pg_temp.u12_school_export_claim(interval '3 minutes');
+  PERFORM pg_temp.u12_school_export_put(e, 0, '\x01'::bytea);
+  PERFORM pg_temp.u12_school_export_finish(e, 1, 1, repeat('b', 64), '[]'::jsonb, '{}'::jsonb, '{"PEOPLE":["x"]}'::jsonb, interval '1 second');
   PERFORM pg_sleep(1.2);
-  PERFORM pg_temp.se_refuses('SELECT app.school_export_expire(interval ''1 day'')', 'SS409', 'a ledger of one day');
-  SELECT expired INTO n FROM app.school_export_expire(interval '13 months');
+  PERFORM pg_temp.se_refuses('SELECT pg_temp.u12_school_export_expire(interval ''1 day'')', 'SS409', 'a ledger of one day');
+  SELECT expired INTO n FROM pg_temp.u12_school_export_expire(interval '13 months');
   IF n < 1 THEN RAISE EXCEPTION 'export 357: expire counted % expired files', n; END IF;
   SELECT status::text || ':' || coalesce("readAbout"::text, 'null') INTO s FROM "SchoolExports" WHERE id = e;
   IF s <> 'EXPIRED:null' THEN RAISE EXCEPTION 'export 357: the expired order is %', s; END IF;
@@ -41585,7 +41650,7 @@ BEGIN
   PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000001');
   -- The full administrator demotes the rektor to the expedition (a decision: a decider may).
   UPDATE "Users" SET "adminProfile" = 'EXPEDITION' WHERE "authId" = '00000000-0000-4000-8000-e50000000002';
-  PERFORM 1 FROM app.school_export_claim(interval '3 minutes');
+  PERFORM 1 FROM pg_temp.u12_school_export_claim(interval '3 minutes');
   IF FOUND THEN RAISE EXCEPTION 'export 357: the order of a demoted administrator was claimed'; END IF;
   SELECT status::text || ':' || "errorClass" INTO s FROM "SchoolExports" WHERE id = e;
   IF s <> 'FAILED:RequesterGone' THEN RAISE EXCEPTION 'export 357: the demoted administrator''s order is %', s; END IF;
@@ -41593,14 +41658,14 @@ BEGIN
 
   -- A RUNNING export whose heartbeat is older than the lease is taken over, with no pieces, as the second attempt.
   INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
-  PERFORM 1 FROM app.school_export_claim(interval '10 seconds');
-  PERFORM app.school_export_put(e, 0, '\x01'::bytea);
+  PERFORM 1 FROM pg_temp.u12_school_export_claim(interval '10 seconds');
+  PERFORM pg_temp.u12_school_export_put(e, 0, '\x01'::bytea);
   PERFORM pg_sleep(10.5);
-  SELECT * INTO c FROM app.school_export_claim(interval '10 seconds');
+  SELECT * INTO c FROM pg_temp.u12_school_export_claim(interval '10 seconds');
   IF c.export_id IS DISTINCT FROM e OR c.attempt <> 2 THEN RAISE EXCEPTION 'export 357: the stale export was claimed as %', c; END IF;
   -- It starts from nothing: a finish that names the half file's piece is refused, one that names none is whole.
-  PERFORM pg_temp.se_refuses(format($q$SELECT app.school_export_finish(%L, 1, 1, repeat('a', 64), '[]', '{}', '{}', interval '72 hours')$q$, e), 'SS409', 'a finish naming the piece of the attempt that was taken over');
-  PERFORM app.school_export_finish(e, 0, 0, repeat('a', 64), '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, interval '72 hours');
+  PERFORM pg_temp.se_refuses(format($q$SELECT pg_temp.u12_school_export_finish(%L, 1, 1, repeat('a', 64), '[]', '{}', '{}', interval '72 hours')$q$, e), 'SS409', 'a finish naming the piece of the attempt that was taken over');
+  PERFORM pg_temp.u12_school_export_finish(e, 0, 0, repeat('a', 64), '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, interval '72 hours');
 END $$;
 ROLLBACK;
 
@@ -41630,14 +41695,14 @@ BEGIN
   school := app.current_school_id();
   full_id := app.current_user_id();
   INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
-  PERFORM 1 FROM app.school_export_claim(interval '3 minutes') WHERE export_id = e;
+  PERFORM 1 FROM pg_temp.u12_school_export_claim(interval '3 minutes') WHERE export_id = e;
   IF NOT FOUND THEN RAISE EXCEPTION 'export 358: the claim did not take the order (is another export queued in the database?)'; END IF;
-  PERFORM app.school_export_put(e, 0, '\x0a0b'::bytea);
+  PERFORM pg_temp.u12_school_export_put(e, 0, '\x0a0b'::bytea);
 
   SELECT count(*) INTO n FROM "SchoolExportChunks" WHERE "exportId" = e;
   IF n <> 0 THEN RAISE EXCEPTION 'export 358: a file still being built shows % pieces', n; END IF;
 
-  PERFORM app.school_export_finish(e, 2, 1, repeat('c', 64), '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, interval '2 seconds');
+  PERFORM pg_temp.u12_school_export_finish(e, 2, 1, repeat('c', 64), '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, interval '2 seconds');
   SELECT count(*) INTO n FROM "SchoolExportChunks" WHERE "exportId" = e;
   IF n <> 1 THEN RAISE EXCEPTION 'export 358: a fresh file shows % pieces, not one', n; END IF;
 
@@ -41650,13 +41715,13 @@ BEGIN
   -- Withdrawing takes the pieces; a fresh file's pieces are read until then.
   DELETE FROM "SchoolExports" WHERE id = e;
   INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
-  PERFORM 1 FROM app.school_export_claim(interval '3 minutes') WHERE export_id = e;
-  PERFORM app.school_export_put(e, 0, '\x0a'::bytea);
-  PERFORM app.school_export_finish(e, 1, 1, repeat('c', 64), '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, interval '72 hours');
+  PERFORM 1 FROM pg_temp.u12_school_export_claim(interval '3 minutes') WHERE export_id = e;
+  PERFORM pg_temp.u12_school_export_put(e, 0, '\x0a'::bytea);
+  PERFORM pg_temp.u12_school_export_finish(e, 1, 1, repeat('c', 64), '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, interval '72 hours');
   SELECT count(*) INTO n FROM "SchoolExportChunks" WHERE "exportId" = e;
   IF n <> 1 THEN RAISE EXCEPTION 'export 358: a fresh file shows % pieces', n; END IF;
   -- A late failure of a build that has finished does nothing to the file.
-  PERFORM app.school_export_fail(e, 'Error');
+  PERFORM pg_temp.u12_school_export_fail(e, 'Error');
   SELECT count(*) INTO n FROM "SchoolExportChunks" WHERE "exportId" = e;
   IF n <> 1 THEN RAISE EXCEPTION 'export 358: a failure of a finished file took % pieces', 1 - n; END IF;
   DELETE FROM "SchoolExports" WHERE id = e;
@@ -41725,15 +41790,15 @@ BEGIN
   PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000002');
   PERFORM pg_temp.se_refuses(format($q$INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (%L, %L)$q$, school, rektor), '23505', 'rektor ordering while the full administrator''s is QUEUED');
   PERFORM pg_temp.se_as('00000000-0000-4000-8000-e50000000001');
-  PERFORM 1 FROM app.school_export_claim(interval '3 minutes') WHERE export_id = e;
+  PERFORM 1 FROM pg_temp.u12_school_export_claim(interval '3 minutes') WHERE export_id = e;
   PERFORM pg_temp.se_refuses(format($q$INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (%L, %L)$q$, school, full_id), '23505', 'a second order while one is RUNNING');
 
   -- Failed, then finished: not in hand.
-  PERFORM app.school_export_fail(e, 'Error');
+  PERFORM pg_temp.u12_school_export_fail(e, 'Error');
   INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id) RETURNING id INTO e;
-  PERFORM 1 FROM app.school_export_claim(interval '3 minutes') WHERE export_id = e;
-  PERFORM app.school_export_put(e, 0, '\x01'::bytea);
-  PERFORM app.school_export_finish(e, 1, 1, repeat('d', 64), '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, interval '72 hours');
+  PERFORM 1 FROM pg_temp.u12_school_export_claim(interval '3 minutes') WHERE export_id = e;
+  PERFORM pg_temp.u12_school_export_put(e, 0, '\x01'::bytea);
+  PERFORM pg_temp.u12_school_export_finish(e, 1, 1, repeat('d', 64), '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, interval '72 hours');
   INSERT INTO "SchoolExports" ("schoolId", "requestedById") VALUES (school, full_id);
   SELECT count(*) INTO n FROM "SchoolExports" WHERE "schoolId" = school AND status IN ('QUEUED', 'RUNNING');
   IF n <> 1 THEN RAISE EXCEPTION 'export 359: % orders are in hand, not one', n; END IF;
@@ -42293,7 +42358,7 @@ $$;
 -- The night's count, as the job asks it: what it wrote, removed, and the totals.
 CREATE FUNCTION pg_temp.rg_compute(p_as_of date) RETURNS text LANGUAGE sql AS $$
   SELECT 'written ' || written || ', removed ' || removed || ', teachers ' || teachers || ', held ' || held || ', reported ' || reported
-    FROM app.reporting_compute(app.current_school_id(), p_as_of)
+    FROM pg_temp.u12_reporting_compute(app.current_school_id(), p_as_of)
 $$;
 
 -- A statement a CHECK or a unique index must refuse, by the constraint's name.
@@ -42527,22 +42592,22 @@ BEGIN
 
   -- The night refuses a day that has not passed, and a school it does not know.
   BEGIN
-    PERFORM * FROM app.reporting_compute(school, (now() AT TIME ZONE 'Europe/Stockholm')::date);
+    PERFORM * FROM pg_temp.u12_reporting_compute(school, (now() AT TIME ZONE 'Europe/Stockholm')::date);
     RAISE EXCEPTION 'rapporteringsgrad 346: today was counted';
   EXCEPTION WHEN SQLSTATE 'RR400' THEN NULL;
   END;
   BEGIN
-    PERFORM * FROM app.reporting_compute(school, (now() AT TIME ZONE 'Europe/Stockholm')::date + 3);
+    PERFORM * FROM pg_temp.u12_reporting_compute(school, (now() AT TIME ZONE 'Europe/Stockholm')::date + 3);
     RAISE EXCEPTION 'rapporteringsgrad 346: a day to come was counted';
   EXCEPTION WHEN SQLSTATE 'RR400' THEN NULL;
   END;
   BEGIN
-    PERFORM * FROM app.reporting_compute(school, NULL);
+    PERFORM * FROM pg_temp.u12_reporting_compute(school, NULL);
     RAISE EXCEPTION 'rapporteringsgrad 346: no day was counted';
   EXCEPTION WHEN SQLSTATE 'RR400' THEN NULL;
   END;
   BEGIN
-    PERFORM * FROM app.reporting_compute(gen_random_uuid(), '2026-09-30');
+    PERFORM * FROM pg_temp.u12_reporting_compute(gen_random_uuid(), '2026-09-30');
     RAISE EXCEPTION 'rapporteringsgrad 346: an unknown school was counted';
   EXCEPTION WHEN SQLSTATE 'RR404' THEN NULL;
   END;
@@ -42674,7 +42739,7 @@ BEGIN
   PERFORM pg_temp.rg_lesson('2026-09-15', 14, ARRAY[t2], ARRAY['PRESENT'], 'SCHEDULED', ARRAY['SUBSTITUTE']);
   PERFORM pg_temp.rg_compute('2026-09-30');
   INSERT INTO "ReportingSettings" ("schoolId", "rektorDigest", "openAfterDays") VALUES (school, true, 3);
-  IF (SELECT count(*) FROM app.reporting_digest(school, '2026-09-14', '2026-09-20')) <> 2 THEN
+  IF (SELECT count(*) FROM pg_temp.u12_reporting_digest(school, '2026-09-14', '2026-09-20')) <> 2 THEN
     RAISE EXCEPTION 'rapporteringsgrad 347: the week was not told to the two who decide';
   END IF;
   -- The lessons of the teacher's own list, measured from today: the limit is three days.
@@ -43017,28 +43082,28 @@ BEGIN
   PERFORM pg_temp.rg_compute('2026-09-30');
 
   -- No row at all: both off. Nothing is told and nothing written.
-  IF EXISTS (SELECT 1 FROM app.reporting_digest(school, '2026-09-14', '2026-09-20')) OR EXISTS (SELECT 1 FROM "ReportingDigests") THEN
+  IF EXISTS (SELECT 1 FROM pg_temp.u12_reporting_digest(school, '2026-09-14', '2026-09-20')) OR EXISTS (SELECT 1 FROM "ReportingDigests") THEN
     RAISE EXCEPTION 'rapporteringsgrad 348: a school with no switch was told, or a ledger row written';
   END IF;
-  IF EXISTS (SELECT 1 FROM app.reporting_remind(school, '2026-09-23')) THEN RAISE EXCEPTION 'rapporteringsgrad 348: a school with no switch was reminded'; END IF;
+  IF EXISTS (SELECT 1 FROM pg_temp.u12_reporting_remind(school, '2026-09-23')) THEN RAISE EXCEPTION 'rapporteringsgrad 348: a school with no switch was reminded'; END IF;
   IF EXISTS (SELECT 1 FROM app.reporting_digest_due(school, next_monday + 7)) THEN RAISE EXCEPTION 'rapporteringsgrad 348: a notice was due for a school with no switch'; END IF;
 
   -- A row with both off is no different.
   INSERT INTO "ReportingSettings" ("schoolId") VALUES (school);
-  IF EXISTS (SELECT 1 FROM app.reporting_digest(school, '2026-09-14', '2026-09-20')) OR EXISTS (SELECT 1 FROM "ReportingDigests")
-     OR EXISTS (SELECT 1 FROM app.reporting_remind(school, '2026-09-23')) OR EXISTS (SELECT 1 FROM app.reporting_digest_due(school, next_monday + 7)) THEN
+  IF EXISTS (SELECT 1 FROM pg_temp.u12_reporting_digest(school, '2026-09-14', '2026-09-20')) OR EXISTS (SELECT 1 FROM "ReportingDigests")
+     OR EXISTS (SELECT 1 FROM pg_temp.u12_reporting_remind(school, '2026-09-23')) OR EXISTS (SELECT 1 FROM pg_temp.u12_reporting_digest_due(school, next_monday + 7)) THEN
     RAISE EXCEPTION 'rapporteringsgrad 348: a school with both off was told';
   END IF;
 
   -- On, today: the reminders skip every lesson dated before today, and the weekend.
   UPDATE "ReportingSettings" SET "teacherReminders" = true, "rektorDigest" = true;
-  IF EXISTS (SELECT 1 FROM app.reporting_remind(school, '2026-09-23')) THEN RAISE EXCEPTION 'rapporteringsgrad 348: a lesson from before the switch was reminded of'; END IF;
-  IF EXISTS (SELECT 1 FROM app.reporting_remind(school, '2026-09-26')) OR EXISTS (SELECT 1 FROM app.reporting_remind(school, '2026-09-27')) THEN
+  IF EXISTS (SELECT 1 FROM pg_temp.u12_reporting_remind(school, '2026-09-23')) THEN RAISE EXCEPTION 'rapporteringsgrad 348: a lesson from before the switch was reminded of'; END IF;
+  IF EXISTS (SELECT 1 FROM pg_temp.u12_reporting_remind(school, '2026-09-26')) OR EXISTS (SELECT 1 FROM pg_temp.u12_reporting_remind(school, '2026-09-27')) THEN
     RAISE EXCEPTION 'rapporteringsgrad 348: the weekend was reminded';
   END IF;
 
   -- Which week is due: the one that ended on or after the day the switch went on, and written once.
-  IF (SELECT period_start || ' ' || period_end FROM app.reporting_digest_due(school, next_monday)) IS DISTINCT FROM ((next_monday - 7) || ' ' || (next_monday - 1)) THEN
+  IF (SELECT period_start || ' ' || period_end FROM pg_temp.u12_reporting_digest_due(school, next_monday)) IS DISTINCT FROM ((next_monday - 7) || ' ' || (next_monday - 1)) THEN
     RAISE EXCEPTION 'rapporteringsgrad 348: the week due on % is %', next_monday, (SELECT period_start || ' ' || period_end FROM app.reporting_digest_due(school, next_monday));
   END IF;
   IF EXISTS (SELECT 1 FROM app.reporting_digest_due(school, next_monday - 1 - 7)) THEN
@@ -43047,7 +43112,7 @@ BEGIN
 
   -- The notice: to rektor and full alone, with the school's totals and nothing that names anyone.
   SELECT string_agg(split_part(d.email, '@', 1), ', ' ORDER BY d.email), jsonb_agg(DISTINCT d.meta)
-    INTO who, metas FROM app.reporting_digest(school, '2026-09-14', '2026-09-20') d;
+    INTO who, metas FROM pg_temp.u12_reporting_digest(school, '2026-09-14', '2026-09-20') d;
   PERFORM pg_temp.rg_expect('348 recipients', who, 'rg-full, rg-rektor');
   IF metas <> '[{"held": 4, "reported": 2, "teachers": 3, "periodEnd": "2026-09-20", "periodStart": "2026-09-14"}]'::jsonb THEN
     RAISE EXCEPTION 'rapporteringsgrad 348: the notice says %', metas;
@@ -43058,12 +43123,12 @@ BEGIN
     RAISE EXCEPTION 'rapporteringsgrad 348: the ledger says %', led;
   END IF;
   -- Written once: the same week again says nothing, and writes nothing.
-  IF EXISTS (SELECT 1 FROM app.reporting_digest(school, '2026-09-14', '2026-09-20')) OR (SELECT count(*) FROM "ReportingDigests") <> 1 THEN
+  IF EXISTS (SELECT 1 FROM pg_temp.u12_reporting_digest(school, '2026-09-14', '2026-09-20')) OR (SELECT count(*) FROM "ReportingDigests") <> 1 THEN
     RAISE EXCEPTION 'rapporteringsgrad 348: the same week was told twice';
   END IF;
 
   -- A week with no held lesson is entered and told to nobody; entered, it is not asked again.
-  IF EXISTS (SELECT 1 FROM app.reporting_digest(school, '2026-09-21', '2026-09-27')) THEN RAISE EXCEPTION 'rapporteringsgrad 348: an empty week was told'; END IF;
+  IF EXISTS (SELECT 1 FROM pg_temp.u12_reporting_digest(school, '2026-09-21', '2026-09-27')) THEN RAISE EXCEPTION 'rapporteringsgrad 348: an empty week was told'; END IF;
   SELECT * INTO led FROM "ReportingDigests" WHERE "periodEnd" = '2026-09-27';
   IF led.recipients <> 0 OR led.held <> 0 OR led.reported <> 0 OR led.teachers <> 0 THEN RAISE EXCEPTION 'rapporteringsgrad 348: the empty week''s ledger row says %', led; END IF;
 
@@ -43071,20 +43136,20 @@ BEGIN
   UPDATE "Users" SET "isActive" = false WHERE email = 'rg-rektor@example.invalid';
   PERFORM pg_temp.rg_lesson('2026-10-01', 8, ARRAY[t1], ARRAY['PRESENT']);
   PERFORM pg_temp.rg_compute('2026-10-04');
-  SELECT string_agg(split_part(d.email, '@', 1), ', ' ORDER BY d.email) INTO who FROM app.reporting_digest(school, '2026-09-28', '2026-10-04') d;
+  SELECT string_agg(split_part(d.email, '@', 1), ', ' ORDER BY d.email) INTO who FROM pg_temp.u12_reporting_digest(school, '2026-09-28', '2026-10-04') d;
   PERFORM pg_temp.rg_expect('348 recipients, one has left', who, 'rg-full');
 
   -- Off again: nothing is told, and no ledger row is written for the week.
   UPDATE "ReportingSettings" SET "rektorDigest" = false;
   PERFORM pg_temp.rg_lesson('2026-10-06', 8, ARRAY[t1], ARRAY['PRESENT']);
   PERFORM pg_temp.rg_compute('2026-10-11');
-  IF EXISTS (SELECT 1 FROM app.reporting_digest(school, '2026-10-05', '2026-10-11')) OR EXISTS (SELECT 1 FROM "ReportingDigests" WHERE "periodEnd" = '2026-10-11') THEN
+  IF EXISTS (SELECT 1 FROM pg_temp.u12_reporting_digest(school, '2026-10-05', '2026-10-11')) OR EXISTS (SELECT 1 FROM "ReportingDigests" WHERE "periodEnd" = '2026-10-11') THEN
     RAISE EXCEPTION 'rapporteringsgrad 348: a switch that is off was told';
   END IF;
   IF EXISTS (SELECT 1 FROM app.reporting_digest_due(school, next_monday + 7)) THEN RAISE EXCEPTION 'rapporteringsgrad 348: a notice was due with the switch off'; END IF;
   -- The reminders' switch is its own: the notice off, the reminders still on.
   UPDATE "ReportingSettings" SET "teacherReminders" = false;
-  IF EXISTS (SELECT 1 FROM app.reporting_remind(school, '2026-09-23')) THEN RAISE EXCEPTION 'rapporteringsgrad 348: a switch that is off reminded'; END IF;
+  IF EXISTS (SELECT 1 FROM pg_temp.u12_reporting_remind(school, '2026-09-23')) THEN RAISE EXCEPTION 'rapporteringsgrad 348: a switch that is off reminded'; END IF;
 END $$;
 ROLLBACK;
 
@@ -57189,8 +57254,9 @@ BEGIN
   IF src NOT LIKE '%UPDATE "TeacherEmploymentLogs" SET%jsonb_set("before", ''{payrollNumber}'', ''null''::jsonb)%' THEN
     RAISE EXCEPTION 'lid 464: pseudonymisation leaves the payroll number in the versions of the post';
   END IF;
-  IF md5(src) IS DISTINCT FROM '1f2b20ccf7e10b66c90664c235162a43' THEN
-    RAISE EXCEPTION 'lid 464: app.gallring_pseudonymise is not 20270206091000''s body (md5 %); a release that restates it must carry the lines marked "skyddad identitet" and "Löne-id"', md5(src);
+  -- 20270206091000's body with the job's guard (20270224090000) as its first statement: the same lines, and one more at the top.
+  IF md5(src) IS DISTINCT FROM 'd852d535cb86226eb97b068fa3984014' THEN
+    RAISE EXCEPTION 'lid 464: app.gallring_pseudonymise is not 20270224090000''s body (md5 %); a release that restates it must carry the lines marked "skyddad identitet" and "Löne-id"', md5(src);
   END IF;
   SELECT p.prosrc INTO src FROM pg_proc p WHERE p.oid = 'app.teacher_employment_logs_append_only()'::regprocedure;
   IF src NOT LIKE '%IF TG_OP = ''UPDATE'' AND app.gallring_in_progress(OLD."schoolId")%'
@@ -65052,7 +65118,7 @@ DECLARE r text;
 BEGIN
   PERFORM pg_temp.tk_a(6002);
   SELECT c.written || '/' || c.removed || '/' || c.teachers || '/' || c.held || '/' || c.reported
-    INTO r FROM app.reporting_compute(app.current_school_id(), app.school_today() - 1) c;
+    INTO r FROM pg_temp.u12_reporting_compute(app.current_school_id(), app.school_today() - 1) c;
   RETURN r;
 END $f$;
 
@@ -65549,6 +65615,251 @@ BEGIN
   PERFORM pg_temp.dv_shapes('519 the list', 'SELECT count(*)::text FROM app.meal_letter_schools(now(), 100000)',
                             '{"door": "^[0-9]+$", "login": "^0$"}'::jsonb);
   RAISE NOTICE 'dörrvakt 519: the letter and the list answer the job and no login';
+END $$;
+ROLLBACK;
+
+-- ===========================================================================
+-- Jobbens övriga dörrar (20270224090000): sections 520–523 (och 520o–521o i rls-owner-checks.sql).
+--
+-- 37 SECURITY DEFINER-funktioner som API-rollen får köra är till för det som körs utan inloggning: bakgrundsjobben
+-- (frånvarostatistiken, frånvarobevakningen, gallringen, rapporteringsgraden, push och utleverans, skolans export, jobbens
+-- bokföring, schemakandidaternas städning) och SS12000-schemaläggaren. Jobben kör dem i withDeliveryService, som sätter inga
+-- claims; varje inloggning sätter dem, och dörrarna frågade aldrig efter det. Mätt som en lärare på en annan skola gav de ett
+-- annat skolas avgångna personers id och login (gallring_begin, gallring_departed_due), en användares push-token (push_targets)
+-- och personalens e-postadresser (digesterna). Dörrvakten (515–519) gjorde det för sex andra dörrar; här är de övriga, och
+-- app.login_is_held_elsewhere, som är personens och nu kräver en inloggning.
+--
+--   520  vaktens text i varje dörr (28 plpgsql och Generera-städningen, som #352 vaktade själv: första satsen; 9 sql: villkoret i frågan; login_is_held_elsewhere:
+--        CASE-villkoret) och rättigheterna oförändrade (API-rollen kör dem, PostgREST-rollerna gör det inte)
+--   521  vad varje plpgsql-dörr svarar under varje inställning en session kan bära, som API-rollen och utan rader: jobbets
+--        dörr (inga claims, eller de tomma strängar en poolad anslutning läser) nekas inte av vakten, varje inloggning nekas
+--        med familjens kod; synkens och integrationsnyckelns principal ensamma släpps in (Dörrvaktens beslut 5)
+--   522  de tre dörrar som listar skolor (absence_watch_schools, gallring_schools, reporting_schools) och login_is_held_elsewhere
+--        under varje inställning: skolorna åt jobbet, inga åt en inloggning; ja eller nej åt en inloggning, inget åt jobbet
+--   523  pg_temp.u12_<dörr>, som sviten kör dörrarna med: samma svar som dörren, claims tomma medan den körs och tillbaka efteråt
+--
+-- Ägarsidan (520o–523o) planterar raderna för de nio sql-dörrarna och för gallringens avgångna personer, och visar att jobbet får
+-- dem och ingen inloggning gör det.
+-- ===========================================================================
+
+-- ---------------------------------------------------------------------------
+-- Section 520: vaktens text i varje dörr, och rättigheterna.
+--
+-- En vakt som frågar efter personraden, tappar en av de två inställningarna, binder dem med AND, läser en tom sträng som en
+-- inloggning, läser inställningen utan missing_ok eller är borta nekas här vid namn (som 515–519): första satsen i en plpgsql-
+-- dörr är vakten, ordagrant; en sql-dörr har villkoret i sin fråga; login_is_held_elsewhere svarar bara en session med en inloggning.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  r record;
+  guard text;
+  cond constant text := $c$nullif(current_setting('request.jwt.claims', true), '') IS NULL AND nullif(current_setting('request.jwt.claim.sub', true), '') IS NULL$c$;
+  n_pl int := 0;
+  n_sql int := 0;
+BEGIN
+  FOR r IN SELECT * FROM (VALUES
+      ('app.absence_stats_month(uuid, date, date)', 'AS403', 'ABSENCE_STATS_IS_THE_JOBS'),
+      ('app.absence_stats_plan(uuid, date, integer)', 'AS403', 'ABSENCE_STATS_IS_THE_JOBS'),
+      ('app.absence_stats_trim(uuid, date)', 'AS403', 'ABSENCE_STATS_IS_THE_JOBS'),
+      ('app.absence_watch_digest(uuid, "AbsenceWatchGroup", date, date, date)', 'AW403', 'ABSENCE_WATCH_IS_THE_JOBS'),
+      ('app.absence_watch_evaluate(uuid, date)', 'AW403', 'ABSENCE_WATCH_IS_THE_JOBS'),
+      ('app.gallring_begin(uuid, timestamp with time zone)', 'GL403', 'GALLRING_IS_THE_JOBS'),
+      ('app.gallring_claim_person(uuid, uuid)', 'GL403', 'GALLRING_IS_THE_JOBS'),
+      ('app.gallring_departed_due(uuid, integer)', 'GL403', 'GALLRING_IS_THE_JOBS'),
+      ('app.gallring_finish(uuid, jsonb, timestamp with time zone)', 'GL403', 'GALLRING_IS_THE_JOBS'),
+      ('app.gallring_pseudonymise(uuid, uuid[])', 'GL403', 'GALLRING_IS_THE_JOBS'),
+      ('app.gallring_purge(uuid, "RetentionDataType", integer)', 'GL403', 'GALLRING_IS_THE_JOBS'),
+      ('app.job_claim_nightly(text, integer, uuid[], integer, timestamp with time zone)', 'JR403', 'JOB_BOOKKEEPING_IS_THE_JOBS'),
+      ('app.job_run_settled(text, timestamp with time zone, timestamp with time zone, boolean, text, jsonb)', 'JR403', 'JOB_BOOKKEEPING_IS_THE_JOBS'),
+      ('app.push_due_receipts(integer)', 'PU403', 'PUSH_DELIVERY_IS_THE_JOBS'),
+      ('app.push_receipts_settled(text[], text[])', 'PU403', 'PUSH_DELIVERY_IS_THE_JOBS'),
+      ('app.push_settle(uuid, uuid[], jsonb)', 'PU403', 'PUSH_DELIVERY_IS_THE_JOBS'),
+      ('app.reporting_compute(uuid, date)', 'RR403', 'REPORTING_RATE_IS_THE_JOBS'),
+      ('app.reporting_digest(uuid, date, date)', 'RR403', 'REPORTING_RATE_IS_THE_JOBS'),
+      ('app.reporting_remind(uuid, date)', 'RR403', 'REPORTING_RATE_IS_THE_JOBS'),
+      ('app.schedule_candidates_sweep()', 'SC403', 'SCHEDULE_CANDIDATES_SWEEP_IS_THE_JOBS'),
+      ('app.school_export_claim(interval)', 'SS403', 'SCHOOL_EXPORT_IS_THE_JOBS'),
+      ('app.school_export_expire(interval)', 'SS403', 'SCHOOL_EXPORT_IS_THE_JOBS'),
+      ('app.school_export_fail(uuid, text, integer)', 'SS403', 'SCHOOL_EXPORT_IS_THE_JOBS'),
+      ('app.school_export_finish(uuid, bigint, integer, text, jsonb, jsonb, jsonb, interval, integer)', 'SS403', 'SCHOOL_EXPORT_IS_THE_JOBS'),
+      ('app.school_export_heartbeat(uuid, integer)', 'SS403', 'SCHOOL_EXPORT_IS_THE_JOBS'),
+      ('app.school_export_put(uuid, integer, bytea, integer)', 'SS403', 'SCHOOL_EXPORT_IS_THE_JOBS'),
+      ('app.ss12000_due_sources(integer, timestamp with time zone)', 'SS403', 'SS12000_SCHEDULER_IS_THE_JOBS'),
+      ('app.ss12000_housekeeping(timestamp with time zone)', 'SS403', 'SS12000_SCHEDULER_IS_THE_JOBS'),
+      -- Generera-körningarnas städning (#352, 20270222090000) har samma vakt i sin egen migrering och hör hit för formens skull.
+      ('app.optimization_jobs_sweep()', 'GQ403', 'The sweep of Generera runs takes no login')
+    ) v(door, code, msg)
+  LOOP
+    guard := format($g$IF nullif(current_setting('request.jwt.claims', true), '') IS NOT NULL OR nullif(current_setting('request.jwt.claim.sub', true), '') IS NOT NULL THEN RAISE EXCEPTION %L USING ERRCODE = %L; END IF;$g$, r.msg, r.code);
+    IF NOT starts_with(substring(pg_temp.dv_src(r.door) FROM 'BEGIN (.*)$'), guard) THEN
+      RAISE EXCEPTION 'jobbdörrar 520: the first statement of % is not the door''s guard', r.door;
+    END IF;
+    PERFORM pg_temp.dv_expect('520 rights of ' || r.door, pg_temp.dv_acl(r.door), 'true/false/false');
+    n_pl := n_pl + 1;
+  END LOOP;
+  IF n_pl <> 29 THEN RAISE EXCEPTION 'jobbdörrar 520: % plpgsql doors were checked, not 29', n_pl; END IF;
+
+  -- De nio dörrarna som är LANGUAGE sql har vakten som ett villkor i frågan, så att planen är den samma som förut. Villkoret
+  -- står i kroppen (kommentarerna borta, blanka tecken som ett mellanslag), och funktionen är kvar LANGUAGE sql.
+  FOR r IN SELECT * FROM (VALUES
+      ('app.absence_watch_digest_due(uuid, date)'), ('app.absence_watch_schools()'), ('app.delivery_opt_outs(uuid, uuid[], "NotificationType")'),
+      ('app.gallring_schools()'), ('app.job_claim_finished(text, uuid, date, timestamp with time zone)'), ('app.job_runs_latest()'),
+      ('app.push_targets(uuid, uuid[], "NotificationType", boolean)'), ('app.reporting_digest_due(uuid, date)'), ('app.reporting_schools()')
+    ) v(door)
+  LOOP
+    IF position(cond IN pg_temp.dv_src(r.door)) = 0 THEN
+      RAISE EXCEPTION 'jobbdörrar 520: % has not the guard as a condition of its query', r.door;
+    END IF;
+    IF (SELECT l.lanname FROM pg_proc p JOIN pg_language l ON l.oid = p.prolang WHERE p.oid = r.door::regprocedure) <> 'sql' THEN
+      RAISE EXCEPTION 'jobbdörrar 520: % is no longer LANGUAGE sql', r.door;
+    END IF;
+    PERFORM pg_temp.dv_expect('520 rights of ' || r.door, pg_temp.dv_acl(r.door), 'true/false/false');
+    n_sql := n_sql + 1;
+  END LOOP;
+  IF n_sql <> 9 THEN RAISE EXCEPTION 'jobbdörrar 520: % sql doors were checked, not 9', n_sql; END IF;
+
+  -- Personens dörr: svarar en session med en inloggning, och inget åt en utan.
+  IF position($c$CASE WHEN nullif(current_setting('request.jwt.claims', true), '') IS NOT NULL OR nullif(current_setting('request.jwt.claim.sub', true), '') IS NOT NULL THEN$c$
+              IN pg_temp.dv_src('app.login_is_held_elsewhere(uuid, uuid)')) = 0 THEN
+    RAISE EXCEPTION 'jobbdörrar 520: login_is_held_elsewhere does not ask for a login';
+  END IF;
+  PERFORM pg_temp.dv_expect('520 rights of login_is_held_elsewhere', pg_temp.dv_acl('app.login_is_held_elsewhere(uuid, uuid)'), 'true/false/false');
+  RAISE NOTICE 'jobbdörrar 520: the guard of 29 plpgsql doors (28 and the Generera sweep), the condition of 9 sql doors and the login door''s, and their rights';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 521: varje plpgsql-dörr under varje inställning en session kan bära.
+--
+-- Svaret är dörrens eget för jobbet (inga claims, eller de tomma strängar en poolad anslutning läser efter någon annans
+-- transaktion; med påhittade argument ofta en 404 eller 400 av familjens egen kod, och det duger: det är inte vaktens), och
+-- vaktens nekning för varje inloggning: huvudmannens läsare, kommunadministratören, en person, claims som {}, null, bara en roll,
+-- ett ensamt subjekt. Synkens och integrationsnyckelns principal ensamma släpps in, som i 515–519 (Dörrvaktens beslut 5); beside
+-- en inloggning nekas de som förut.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  r record;
+  ran int := 0;
+  roller text;
+  variant text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000115')::text, true);
+  roller := app.current_school_id()::text;
+  PERFORM set_config('request.jwt.claims', '', true);
+  FOR r IN SELECT * FROM (VALUES
+      ('AS403', $q$SELECT count(*)::text FROM app.absence_stats_month(gen_random_uuid(), date '2026-01-01', date '2026-01-31')$q$),
+      ('AS403', $q$SELECT count(*)::text FROM app.absence_stats_plan(gen_random_uuid(), date '2026-01-31', 1)$q$),
+      ('AS403', $q$SELECT app.absence_stats_trim(gen_random_uuid(), date '2026-01-31')::text$q$),
+      ('AW403', $q$SELECT count(*)::text FROM app.absence_watch_digest(gen_random_uuid(), 'MENTOR', date '2026-01-01', date '2026-01-07', date '2026-01-08')$q$),
+      ('AW403', $q$SELECT count(*)::text FROM app.absence_watch_evaluate(gen_random_uuid(), date '2026-01-07')$q$),
+      ('GL403', $q$SELECT app.gallring_begin(gen_random_uuid(), now())::text$q$),
+      ('GL403', $q$SELECT count(*)::text FROM app.gallring_claim_person(gen_random_uuid(), gen_random_uuid())$q$),
+      ('GL403', $q$SELECT count(*)::text FROM app.gallring_departed_due(gen_random_uuid(), 5)$q$),
+      ('GL403', $q$SELECT app.gallring_finish(gen_random_uuid(), '{}'::jsonb, now())::text$q$),
+      ('GL403', $q$SELECT app.gallring_pseudonymise(gen_random_uuid(), ARRAY[gen_random_uuid()])::text$q$),
+      ('GL403', $q$SELECT app.gallring_purge(gen_random_uuid(), 'ATTENDANCE', 5)::text$q$),
+      ('JR403', $q$SELECT count(*)::text FROM app.job_claim_nightly('u12-matrix', 1, ARRAY[gen_random_uuid()], 1, now())$q$),
+      ('JR403', $q$SELECT app.job_run_settled('u12-matrix', now(), now(), true, NULL, '{}'::jsonb)::text$q$),
+      ('PU403', $q$SELECT count(*)::text FROM app.push_due_receipts(1)$q$),
+      ('PU403', $q$SELECT app.push_receipts_settled(ARRAY['u12'], ARRAY['u12'])::text$q$),
+      ('PU403', $q$SELECT app.push_settle(gen_random_uuid(), ARRAY[gen_random_uuid()], '[]'::jsonb)::text$q$),
+      ('RR403', $q$SELECT count(*)::text FROM app.reporting_compute(gen_random_uuid(), date '2026-01-07')$q$),
+      ('RR403', $q$SELECT count(*)::text FROM app.reporting_digest(gen_random_uuid(), date '2026-01-01', date '2026-01-07')$q$),
+      ('RR403', $q$SELECT count(*)::text FROM app.reporting_remind(gen_random_uuid(), date '2026-01-07')$q$),
+      ('SC403', $q$SELECT app.schedule_candidates_sweep()::text$q$),
+      ('SS403', $q$SELECT count(*)::text FROM app.school_export_claim(interval '3 minutes')$q$),
+      ('SS403', $q$SELECT app.school_export_expire(interval '1 day')::text$q$),
+      ('SS403', $q$SELECT app.school_export_fail(gen_random_uuid(), 'u12', 1)::text$q$),
+      ('SS403', $q$SELECT app.school_export_finish(gen_random_uuid(), 1, 1, repeat('a', 64), '[]', '{}', '{}', interval '1 day', 1)::text$q$),
+      ('SS403', $q$SELECT app.school_export_heartbeat(gen_random_uuid(), 1)::text$q$),
+      ('SS403', $q$SELECT app.school_export_put(gen_random_uuid(), 0, '\x01'::bytea, 1)::text$q$),
+      ('SS403', $q$SELECT count(*)::text FROM app.ss12000_due_sources(1, now())$q$),
+      ('SS403', $q$SELECT app.ss12000_housekeeping(now())::text$q$),
+      ('GQ403', $q$SELECT app.optimization_jobs_sweep()::text$q$)
+    ) v(code, stmt)
+  LOOP
+    -- Jobbet och varje inloggning: dörren nekas inte av vakten för jobbet (vad den svarar annars är dess eget), och nekas med
+    -- familjens kod för varje inloggning.
+    PERFORM pg_temp.dv_shapes('521 ' || r.code || ' ' || left(r.stmt, 60), r.stmt,
+                              jsonb_build_object('door', '^(?!E:' || r.code || '$)', 'login', '^E:' || r.code || '$'));
+    -- Synkens och integrationsnyckelns principal, ensamma eller bredvid varandra: jobbets dörr går, en inloggning bredvid nekas.
+    PERFORM pg_temp.dv_shapes('521 ' || r.code || ' beside the sync principal ' || left(r.stmt, 60), r.stmt,
+                              jsonb_build_object('door', '^(?!E:' || r.code || '$)', 'login', '^E:' || r.code || '$'), roller);
+    PERFORM pg_temp.dv_shapes('521 ' || r.code || ' beside the integration key''s principal ' || left(r.stmt, 60), r.stmt,
+                              jsonb_build_object('door', '^(?!E:' || r.code || '$)', 'login', '^E:' || r.code || '$'), '', roller);
+    ran := ran + 1;
+  END LOOP;
+  IF ran <> 29 THEN RAISE EXCEPTION 'jobbdörrar 521: % doors were asked, not 29', ran; END IF;
+  RAISE NOTICE 'jobbdörrar 521: 29 plpgsql doors under every setting, and beside each principal';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 522: de tre dörrar som listar skolor, och personens dörr, under varje inställning.
+--
+-- absence_watch_schools, gallring_schools och reporting_schools (LANGUAGE sql) svarade alla skolor åt vem som helst; fixturen har
+-- skolor på alla tre listor, så jobbets svar är "minst en" och en inloggnings är noll. login_is_held_elsewhere vänder på det: en
+-- session med en inloggning får svaret (för ett login som två rader håller), jobbet inget.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+BEGIN
+  PERFORM pg_temp.dv_shapes('522 absence_watch_schools', 'SELECT count(*)::text FROM app.absence_watch_schools()',
+                            '{"door": "^[1-9][0-9]*$", "login": "^0$"}'::jsonb);
+  PERFORM pg_temp.dv_shapes('522 gallring_schools', 'SELECT count(*)::text FROM app.gallring_schools()',
+                            '{"door": "^[1-9][0-9]*$", "login": "^0$"}'::jsonb);
+  PERFORM pg_temp.dv_shapes('522 reporting_schools', 'SELECT count(*)::text FROM app.reporting_schools()',
+                            '{"door": "^[1-9][0-9]*$", "login": "^0$"}'::jsonb);
+  PERFORM pg_temp.dv_shapes('522 login_is_held_elsewhere, a login two rows hold',
+                            $q$SELECT coalesce(app.login_is_held_elsewhere('fe000000-0000-4000-8000-000000000240', NULL)::text, 'NULL')$q$,
+                            '{"door": "^NULL$", "login": "^true$"}'::jsonb);
+  PERFORM pg_temp.dv_shapes('522 login_is_held_elsewhere, a login nobody holds',
+                            $q$SELECT coalesce(app.login_is_held_elsewhere(gen_random_uuid(), NULL)::text, 'NULL')$q$,
+                            '{"door": "^NULL$", "login": "^false$"}'::jsonb);
+  RAISE NOTICE 'jobbdörrar 522: the school lists answer the job and no login; the login door answers a login and not the job';
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 523: pg_temp.u12_<dörr>, som resten av sviten kör dörrarna med som jobbet gör: samma svar som dörren, claims tomma
+-- medan den körs, tillbaka efteråt (också när dörren nekar och en undertransaktion fångar det).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  claims constant text := json_build_object('sub', '00000000-0000-4000-8000-000000000115', 'role', 'authenticated')::text;
+  n bigint;
+  code text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', claims, true);
+  PERFORM set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000115', true);
+  -- Dörren själv nekar en inloggning; genom hjälparen svarar den jobbet.
+  SELECT count(*) INTO n FROM app.gallring_schools();
+  IF n <> 0 THEN RAISE EXCEPTION 'jobbdörrar 523: the door answered a login (% schools)', n; END IF;
+  SELECT count(*) INTO n FROM pg_temp.u12_gallring_schools();
+  IF n < 1 THEN RAISE EXCEPTION 'jobbdörrar 523: the helper did not answer as the job'; END IF;
+  IF current_setting('request.jwt.claims') IS DISTINCT FROM claims OR current_setting('request.jwt.claim.sub') IS DISTINCT FROM '00000000-0000-4000-8000-000000000115' THEN
+    RAISE EXCEPTION 'jobbdörrar 523: the helper did not give the session''s claims back';
+  END IF;
+  -- Nekar dörren går undantaget igenom, och claims är tillbaka.
+  BEGIN
+    PERFORM pg_temp.u12_gallring_purge(gen_random_uuid(), 'ATTENDANCE', 5);
+    RAISE EXCEPTION 'jobbdörrar 523: the door accepted a run that does not exist';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS code = RETURNED_SQLSTATE;
+    IF code <> 'GL404' THEN RAISE EXCEPTION 'jobbdörrar 523: the helper answered % for a run that does not exist, not GL404', code; END IF;
+  END;
+  IF current_setting('request.jwt.claims') IS DISTINCT FROM claims THEN
+    RAISE EXCEPTION 'jobbdörrar 523: a refusal through the helper left the claims changed';
+  END IF;
+  RAISE NOTICE 'jobbdörrar 523: the helpers run a door as the job and give the claims back';
 END $$;
 ROLLBACK;
 
