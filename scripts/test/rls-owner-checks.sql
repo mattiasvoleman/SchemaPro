@@ -7719,6 +7719,106 @@ END $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
+-- Behörighet som i ett annat ämne (20270225090000), section 544o: what only the owner may do or see. The sections 540-544 of
+-- rls-policies.sql ran as the API's role under row security; here row security does not stand in the way, so what refuses is the
+-- database's own shape and nothing else. The owner makes the subjects of two schools, and:
+--   * a pointer across schools is refused by the composite key (23503), for the owner too: the key is the guard row security is not;
+--   * the trigger refuses a chain for the owner as it does for the API's role (QS409), and a subject pointed at itself meets the CHECK;
+--   * a link planted past the trigger (it is disabled for the planting, in this transaction only) is cleared by a write that holds
+--     no lock, and set again by one that holds the school's lock: the trigger is asked only about a write that SETS a link, which
+--     is what keeps the lock off every other write to Subjects.
+-- ---------------------------------------------------------------------------
+BEGIN;
+-- The school's advisory lock as this backend holds it: one bigint key, so classid/objid are its halves and objsubid is 1.
+CREATE FUNCTION pg_temp.bi_holds(school uuid) RETURNS bigint LANGUAGE sql AS $f$
+  SELECT count(*) FROM pg_locks l
+   WHERE l.locktype = 'advisory' AND l.pid = pg_backend_pid() AND l.objsubid = 1 AND l.granted
+     AND ((l.classid::bigint << 32) | l.objid::bigint) = hashtextextended('Subjects.qualificationSubjectId:' || school::text, 0)
+$f$;
+CREATE FUNCTION pg_temp.bi_outcome(stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  state text;
+  msg text;
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+    RETURN 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS state = RETURNED_SQLSTATE, msg = MESSAGE_TEXT;
+    RETURN state || '/' || split_part(msg, ':', 1);
+  END;
+END
+$f$;
+DO $$
+DECLARE
+  ps uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-skyddad-school');
+  os uuid := (SELECT "schoolId" FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-e50000000031');
+  a uuid; b uuid; c uuid; foreign_s uuid;
+  got text;
+  n bigint;
+BEGIN
+  IF ps IS NULL OR os IS NULL OR ps = os THEN RAISE EXCEPTION 'behörighet som i ämne 544o: the two schools did not resolve'; END IF;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (ps, 'bi o A', now()) RETURNING id INTO a;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (ps, 'bi o B', now()) RETURNING id INTO b;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (ps, 'bi o C', now()) RETURNING id INTO c;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (os, 'bi o annan', now()) RETURNING id INTO foreign_s;
+
+  -- The key, for the owner: another school's subject cannot be a source, on update or on insert.
+  got := pg_temp.bi_outcome(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, foreign_s, a));
+  IF got NOT LIKE '23503/%' THEN RAISE EXCEPTION 'behörighet som i ämne 544o: a pointer across schools, on update: %', got; END IF;
+  got := pg_temp.bi_outcome(format($q$INSERT INTO "Subjects" ("schoolId", name, "qualificationSubjectId", "updatedAt") VALUES (%L, 'bi o korsad', %L, now())$q$, ps, foreign_s));
+  IF got NOT LIKE '23503/%' THEN RAISE EXCEPTION 'behörighet som i ämne 544o: a pointer across schools, on insert: %', got; END IF;
+
+  -- The trigger, for the owner: one level, and not itself.
+  got := pg_temp.bi_outcome(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, b, a));
+  IF got <> 'ok' THEN RAISE EXCEPTION 'behörighet som i ämne 544o: A -> B: %', got; END IF;
+  got := pg_temp.bi_outcome(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, c, b));
+  IF got <> 'QS409/SUBJECT_QUALIFICATION_IS_INHERITED' THEN RAISE EXCEPTION 'behörighet som i ämne 544o: B -> C while A -> B: %', got; END IF;
+  got := pg_temp.bi_outcome(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, a, c));
+  IF got <> 'QS409/SUBJECT_QUALIFICATION_SOURCE_INHERITS' THEN RAISE EXCEPTION 'behörighet som i ämne 544o: C -> A while A -> B: %', got; END IF;
+  got := pg_temp.bi_outcome(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = id WHERE id = %L$q$, c));
+  IF got NOT LIKE '23514/%' THEN RAISE EXCEPTION 'behörighet som i ämne 544o: C -> C: %', got; END IF;
+  -- A refusal leaves nothing: exactly A -> B stands.
+  SELECT count(*) INTO n FROM "Subjects" WHERE id IN (a, b, c) AND "qualificationSubjectId" IS NOT NULL;
+  IF n <> 1 THEN RAISE EXCEPTION 'behörighet som i ämne 544o: % pointers stand after the refusals, not A -> B alone', n; END IF;
+  RAISE NOTICE 'behörighet som i ämne 544o: the key and the trigger refuse for the owner too';
+END $$;
+ROLLBACK;
+
+BEGIN;
+CREATE FUNCTION pg_temp.bi_holds(school uuid) RETURNS bigint LANGUAGE sql AS $f$
+  SELECT count(*) FROM pg_locks l
+   WHERE l.locktype = 'advisory' AND l.pid = pg_backend_pid() AND l.objsubid = 1 AND l.granted
+     AND ((l.classid::bigint << 32) | l.objid::bigint) = hashtextextended('Subjects.qualificationSubjectId:' || school::text, 0)
+$f$;
+DO $$
+DECLARE
+  ps uuid := (SELECT id FROM "Schools" WHERE slug = 'rls-skyddad-school');
+  a uuid; b uuid;
+  n bigint;
+BEGIN
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (ps, 'bi o A', now()) RETURNING id INTO a;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (ps, 'bi o B', now()) RETURNING id INTO b;
+  -- A -> B planted past the trigger, which is disabled for this planting alone (rolled back with the transaction).
+  ALTER TABLE "Subjects" DISABLE TRIGGER "Subjects_qualification_is_one_level";
+  UPDATE "Subjects" SET "qualificationSubjectId" = b WHERE id = a;
+  ALTER TABLE "Subjects" ENABLE TRIGGER "Subjects_qualification_is_one_level";
+  IF pg_temp.bi_holds(ps) <> 0 THEN RAISE EXCEPTION 'behörighet som i ämne 544o: the planting past the trigger took the lock'; END IF;
+
+  -- A write that CLEARS a link (this key's own SET NULL is one) is not asked about, and holds no lock.
+  UPDATE "Subjects" SET "qualificationSubjectId" = NULL WHERE id = a;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'behörighet som i ämne 544o: the clearing write found % rows', n; END IF;
+  IF pg_temp.bi_holds(ps) <> 0 THEN RAISE EXCEPTION 'behörighet som i ämne 544o: a write that clears a link took the school''s lock'; END IF;
+  -- And one that sets it holds the lock, to the end of the transaction.
+  UPDATE "Subjects" SET "qualificationSubjectId" = b WHERE id = a;
+  IF pg_temp.bi_holds(ps) <> 1 THEN RAISE EXCEPTION 'behörighet som i ämne 544o: a write that sets a link did not take the school''s lock'; END IF;
+  RAISE NOTICE 'behörighet som i ämne 544o: clearing a link holds no lock, setting one holds the school''s to the end of the transaction';
+END $$;
+ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
 -- Section 549: the owner's side of the marking "släppt för motorn" (20270226090000; the API's side is sections 545-548 of
 -- rls-policies.sql). What the API's role cannot ask of itself:
 --   * every role by name, past the claims: anon and PostgREST's role hold nothing on the table, the service role reads (it

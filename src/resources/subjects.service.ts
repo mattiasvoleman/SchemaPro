@@ -11,6 +11,7 @@ import {
 } from '../common/utils/prisma-errors';
 import { assertNationalCodeIsKnown, normalizeNationalCode } from './national-codes';
 import { assertRoomTypeIsTheSchools } from './room-type-ref';
+import { assertQualificationSourceIsAllowed } from './subject-qualification-source';
 import type { CreateSubjectDto, UpdateSubjectDto } from './dto/subject.dto';
 
 /**
@@ -37,6 +38,14 @@ export function toSubjectResponse(row: Subject): SubjectResponse {
  * service exists so an admin typing a code into the form gets a sentence about
  * the code and not a 409 about "a record". The response is the stored row, so
  * both new columns come back exactly as the database holds them.
+ *
+ * `qualificationSubjectId` (Behörighet som i ett annat ämne, 20270225090000)
+ * is asked the same way, in the same transaction, and answered with the
+ * subjects named (assertQualificationSourceIsAllowed): the subject itself, a
+ * source that itself inherits and a subject others inherit from taking a
+ * pointer of its own are each a 409 with a code of its own. Three states, as
+ * for `nationalCode`: absent leaves it, null clears it, a string sets it. A
+ * source subject that is deleted clears the pointers to it (the key's SET NULL).
  */
 @Injectable()
 export class SubjectsService {
@@ -51,6 +60,7 @@ export class SubjectsService {
           await assertNationalCodeIsKnown(tx, nationalCode);
         }
         await assertRoomTypeIsTheSchools(tx, dto.requiredRoomTypeId);
+        await assertQualificationSourceIsAllowed(tx, dto.qualificationSubjectId, null);
         const row = await tx.subject.create({
           data: {
             schoolId,
@@ -58,6 +68,8 @@ export class SubjectsService {
             code: dto.code ?? null,
             color: dto.color ?? null,
             requiredRoomTypeId: dto.requiredRoomTypeId ?? null,
+            // Behörighet som i ett annat ämne: the subject's own unless chosen.
+            qualificationSubjectId: dto.qualificationSubjectId ?? null,
             nationalCode,
             // Explicit rather than left to the column default, so the create
             // call states the whole row and a spec can read the default here.
@@ -94,10 +106,14 @@ export class SubjectsService {
           await assertNationalCodeIsKnown(tx, nationalCode);
         }
         await assertRoomTypeIsTheSchools(tx, dto.requiredRoomTypeId);
+        await assertQualificationSourceIsAllowed(tx, dto.qualificationSubjectId, id);
         const row = await tx.subject.update({
           where: { id },
           data: {
             ...(dto.name !== undefined ? { name: dto.name } : {}),
+            ...(dto.qualificationSubjectId !== undefined
+              ? { qualificationSubjectId: dto.qualificationSubjectId }
+              : {}),
             ...(dto.code !== undefined ? { code: dto.code } : {}),
             ...(dto.color !== undefined ? { color: dto.color } : {}),
             ...(dto.requiredRoomTypeId !== undefined

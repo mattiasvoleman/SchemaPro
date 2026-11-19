@@ -79,6 +79,14 @@ import { TIOARIG_TOO_EARLY } from '../grade-numbering';
  * and the person named in `params`, whichever writer met it: the users PATCH, the
  * post's removal, a läsår's removal. See teachesRefusal.
  *
+ * Behörighet som i ett annat ämne (migration 20270225090000): the Subjects trigger
+ * answers SQLSTATE QS409 with one of two reason tokens, each a 409 of the same
+ * name, whichever writer met it: a subject pointed at one that itself inherits
+ * (SUBJECT_QUALIFICATION_SOURCE_INHERITS), and a subject others inherit from
+ * given a pointer of its own (SUBJECT_QUALIFICATION_IS_INHERITED). The subjects
+ * service asks first and names the subjects; this is what any other path meets.
+ * See qualificationSourceRefusal.
+ *
  * The Halvklasser triggers (migration 20261113090000) answer SQLSTATE HC409
  * with a reason token, each a 409 of the same name, and a pupil placed in
  * both halves of one class meets the unique index
@@ -108,6 +116,10 @@ export function rethrowPrismaError(error: unknown): never {
   const rolloverLink = rolloverLinkRefusal(error);
   if (rolloverLink) {
     throw rolloverLinkConflict(rolloverLink);
+  }
+  const qualificationSource = qualificationSourceRefusal(error);
+  if (qualificationSource) {
+    throw qualificationSourceConflict(qualificationSource);
   }
   const block = teachingBlockRefusal(error);
   if (block) {
@@ -1044,6 +1056,64 @@ export function rolloverLinkConflict(refusal: Pick<RolloverLinkRefusal, 'reason'
   return new ConflictException({
     message: ROLLOVER_LINK_MESSAGES[refusal.reason],
     code: refusal.reason,
+  });
+}
+
+/** The problem `code` of a subject pointed at a subject that itself uses another's behörighet (SQLSTATE QS409). */
+export const SUBJECT_QUALIFICATION_SOURCE_INHERITS = 'SUBJECT_QUALIFICATION_SOURCE_INHERITS';
+/** The problem `code` of a subject that others use the behörighet of, given a pointer of its own (SQLSTATE QS409). */
+export const SUBJECT_QUALIFICATION_IS_INHERITED = 'SUBJECT_QUALIFICATION_IS_INHERITED';
+/** The problem `code` of a subject pointed at itself (the service's own sentence; the CHECK is the second line). */
+export const SUBJECT_QUALIFICATION_IS_ITSELF = 'SUBJECT_QUALIFICATION_IS_ITSELF';
+
+/** What the Subjects trigger of 20270225090000 names. */
+export interface QualificationSourceRefusal {
+  code: typeof SUBJECT_QUALIFICATION_SOURCE_INHERITS | typeof SUBJECT_QUALIFICATION_IS_INHERITED;
+  /** DETAIL subjectId=<uuid>: the subject written. */
+  subjectId: string | null;
+  /** DETAIL sourceId=<uuid>, on SOURCE_INHERITS: the subject chosen. */
+  sourceId: string | null;
+  /** DETAIL inheritorId=<uuid>, on IS_INHERITED: one subject that uses the written one. */
+  inheritorId: string | null;
+}
+
+const QUALIFICATION_SOURCE_REASON = /\b(SUBJECT_QUALIFICATION_SOURCE_INHERITS|SUBJECT_QUALIFICATION_IS_INHERITED)\b/;
+
+/**
+ * Recognises the Subjects trigger's refusal (QS409, a SQLSTATE PostgreSQL does
+ * not define: P2039 from a model call, P2010 from raw SQL, the driver's fields
+ * under meta.driverAdapterError.cause, the rendered "Code: `QS409`" as the
+ * fallback for both the code and the reason). A QS409 whose reason cannot be
+ * read is still a refusal of a chain, under SOURCE_INHERITS.
+ */
+export function qualificationSourceRefusal(error: unknown): QualificationSourceRefusal | null {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
+  const cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)
+    ?.driverAdapterError?.cause;
+  const byMeta = cause?.originalCode === 'QS409';
+  const byMessage = (error.code === 'P2039' || error.code === 'P2010') && error.message.includes('Code: `QS409`');
+  if (!byMeta && !byMessage) return null;
+  const text = typeof cause?.originalMessage === 'string' ? cause.originalMessage : error.message;
+  const code = (QUALIFICATION_SOURCE_REASON.exec(text)?.[1] ??
+    SUBJECT_QUALIFICATION_SOURCE_INHERITS) as QualificationSourceRefusal['code'];
+  const detail = typeof cause?.detail === 'string' ? cause.detail : '';
+  const read = (name: string) => new RegExp(`(?:^| )${name}=([0-9a-f-]{36})`, 'i').exec(detail)?.[1] ?? null;
+  return { code, subjectId: read('subjectId'), sourceId: read('sourceId'), inheritorId: read('inheritorId') };
+}
+
+/** The 409 for a pointer the database would not take, with the subjects it names as flat `params`. */
+export function qualificationSourceConflict(refusal: QualificationSourceRefusal): ConflictException {
+  const params: Record<string, string> = {};
+  if (refusal.subjectId) params['subjectId'] = refusal.subjectId;
+  if (refusal.sourceId) params['sourceId'] = refusal.sourceId;
+  if (refusal.inheritorId) params['inheritorId'] = refusal.inheritorId;
+  return new ConflictException({
+    message:
+      refusal.code === SUBJECT_QUALIFICATION_SOURCE_INHERITS
+        ? 'Ämnet du valde har själv behörighet som i ett annat ämne. Välj det ämnet i stället: behörighet följer bara ett steg.'
+        : 'Ett annat ämne har behörighet som i det här ämnet, så det kan inte självt ta sin behörighet från ett annat. Ta bort det andra ämnets val först.',
+    code: refusal.code,
+    ...(Object.keys(params).length > 0 ? { params } : {}),
   });
 }
 

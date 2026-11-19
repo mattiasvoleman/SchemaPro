@@ -200,8 +200,10 @@ describe("useSubjects", () => {
       // would clear a mapping, reset a factor to 1, or drop a rule on every
       // save. So are the two Placeringsregler boxes (not first / not last in
       // the day): missing here, the dialog would open unticked and clear them.
+      // And the pointer of Behörighet som i ett annat ämne: missing here, the
+      // field would open on "Egen behörighet" and the next save would clear it.
       [
-        "id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan, loadFactor, maxLessonsPerDay, minDaysBetween, notFirstInDay, notLastInDay",
+        "id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan, loadFactor, maxLessonsPerDay, minDaysBetween, notFirstInDay, notLastInDay, qualificationSubjectId",
       ],
     ]);
     // Paged reads sort by a tie-break column as well; see selectAll.

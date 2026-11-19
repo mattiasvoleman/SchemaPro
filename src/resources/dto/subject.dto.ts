@@ -105,6 +105,16 @@ export class CreateSubjectDto {
   @MaxLength(20)
   nationalCode?: string | null;
 
+  /**
+   * Behörighet som i ett annat ämne (20270225090000): the school's subject whose
+   * teachers' behörigheter this one uses. Null or absent: the subject's own.
+   * Only the shape is checked here; that it is one of the school's, is not a
+   * chain and is not the subject itself is the service's, with the subjects named.
+   */
+  @IsOptional()
+  @IsUUID('4')
+  qualificationSubjectId?: string | null;
+
   /** False for Resurs, Mentorstid and the like. Absent means true. */
   @ValidateIf((dto: CreateSubjectDto) => dto.countsTowardTimplan !== undefined)
   @IsBoolean({ message: COUNTS_MESSAGE })
@@ -167,6 +177,11 @@ export class UpdateSubjectDto {
   @IsString()
   @MaxLength(20)
   nationalCode?: string | null;
+
+  /** Null clears the pointer; absent leaves it as it is. See CreateSubjectDto. */
+  @IsOptional()
+  @IsUUID('4')
+  qualificationSubjectId?: string | null;
 
   @ValidateIf((dto: UpdateSubjectDto) => dto.countsTowardTimplan !== undefined)
   @IsBoolean({ message: COUNTS_MESSAGE })

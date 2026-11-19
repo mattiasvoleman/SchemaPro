@@ -269,6 +269,31 @@ describe('YearRolloverService — rollover preview', () => {
     expect(off.requirements.teachersCleared.every((row) => row.reason !== 'NOT_QUALIFIED')).toBe(true);
   });
 
+  it('judges a kept teacher by the behörighet a subject takes from another (Behörighet som i ett annat ämne), as it judges a row of the subject’s own', async () => {
+    const withRows = (pointer: boolean, heldIn: string) => {
+      const rows = defaultRolloverRows();
+      rows['staffingPolicy'] = [{ qualificationMode: 'REFUSE' }];
+      // Anna's 7–8 is the one the first test above states on Matematik itself;
+      // here it is held in Svenska, which Matematik takes its behörighet from.
+      rows['teacherSubjectQualification'] = [
+        { userId: IDS.anna, subjectId: heldIn, minGradeLevel: 7, maxGradeLevel: 8, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+      ];
+      rows['subject']!.find((subject) => subject['id'] === IDS.ma)!['qualificationSubjectId'] = pointer ? IDS.sv : null;
+      return rows;
+    };
+    const cleared = async (rows: Record<string, Record<string, unknown>[]>) =>
+      (await setup(rows).service.previewRollover(IDS.yearA, OPTIONS, admin)).requirements.teachersCleared
+        .filter((row) => row.reason === 'NOT_QUALIFIED')
+        .map((row) => row.groupName);
+
+    // Through the pointer: exactly what her own Matematik 7–8 clears.
+    expect(await cleared(withRows(true, IDS.sv))).toEqual(['9A', 'Ma8 grupp 1']);
+    // Without it, a Svenska row says nothing of Matematik: every one of her Matematik rows is cleared.
+    const without = await cleared(withRows(false, IDS.sv));
+    expect(without.length).toBeGreaterThan(2);
+    expect(without).toEqual(expect.arrayContaining(['9A', 'Ma8 grupp 1']));
+  });
+
   it('carries a split timplanspost with its lengths, measures its volume by them, and writes every uniform row as before', async () => {
     const rows = defaultRolloverRows();
     // 7A's Matematik as 1 × 80 + 1 × 40: 120 minutes, not 2 × 80.

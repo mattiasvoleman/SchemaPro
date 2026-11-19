@@ -356,7 +356,12 @@
     "tableCaption": "The school's subjects with code, national subject code and colour",
     "dialogHint": "The name and colour show in every schedule view. The national subject code decides which row of the timplan the subject's hours count toward.",
     "roomTypeDialogHint": "The room type can then be chosen for both subjects and rooms.",
-    "roomTypesUnavailable": "The list of room types could not be loaded. The subject's room type does not change if you save without choosing a new one."
+    "roomTypesUnavailable": "The list of room types could not be loaded. The subject's room type does not change if you save without choosing a new one.",
+    "qualificationSource": "Qualification as in subject",
+    "qualificationOwn": "Own qualification",
+    "qualificationSourceHint": "A teacher qualified in the chosen subject counts as qualified here, with the same grades, kind and validity. Nothing is recorded twice. One step only: a subject that others take their qualification from cannot take its own from another.",
+    "qualificationSourceLocked": "{names} take their qualification from this subject, so it cannot take its own from another. Remove their choice first.",
+    "qualificationLike": "Qualification as in {name}"
   },
   "distribution": {
     "title": "Distribution over the week",
@@ -4159,6 +4164,7 @@
     "qualificationsTitle": "Qualifications",
     "qualificationsHint": "The whole list is saved at once: what you see is what applies. One subject per row — maths 1–6 and 7–9 is written as 1–9.",
     "noQualifications": "No qualifications recorded. Substitute suggestions and the qualification check fall back to who has a curriculum entry in the subject.",
+    "alsoCovers": "also applies to {names}",
     "addQualification": "Add subject",
     "removeQualification": "Remove row {row}",
     "qualificationSubject": "Subject",

@@ -10,6 +10,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { PrismaService } from '../database/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { readHeldQualifications } from '../staffing/qualification-inheritance';
 import { attendanceSpan, lessonQualificationFindings } from '../staffing/staffing-enforcement';
 import { toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import type { RosterViewer } from '../year-rollover/projected-rosters';
@@ -859,17 +860,9 @@ export class CalendarLessonsService {
       const recorded = await tx.teacherSubjectQualification.count();
       if (recorded > 0) {
         const span = await this.gradeSpanOfLesson(tx, user, lesson);
-        const held = await tx.teacherSubjectQualification.findMany({
-          where: { subjectId: lesson.subjectId },
-          select: {
-            userId: true,
-            minGradeLevel: true,
-            maxGradeLevel: true,
-            kind: true,
-            validFrom: true,
-            validTo: true,
-          },
-        });
+        // With the derived rows of a subject that uses another's behörighet
+        // (qualification-inheritance.ts): a lesson in "SO WS" lists the SO teachers.
+        const held = await readHeldQualifications(tx, { subjectIds: [lesson.subjectId] });
         for (const qualification of held) {
           if (span && (qualification.minGradeLevel > span.min || qualification.maxGradeLevel < span.max)) {
             continue;

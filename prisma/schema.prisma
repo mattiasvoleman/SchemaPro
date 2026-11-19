@@ -1024,11 +1024,26 @@ model Subject {
   /// made before the rule is switched on changes nothing.
   notFirstInDay      Boolean  @default(false)
   notLastInDay       Boolean  @default(false)
+  /// Behörighet som i ett annat ämne (20270225090000): the subject whose
+  /// teachers' behörigheter this one uses — "SO WS" → "SO". A teacher who holds
+  /// SO is then qualified for SO WS with the same årskurser, kind and validity
+  /// as the SO row; nothing is stored twice (gateway: qualification-inheritance.ts).
+  /// One level only: a subject others inherit from inherits from nobody, and
+  /// none points at itself (CHECK and a trigger). Null — every subject until a
+  /// school says otherwise — is the behörighet the subject's own rows state.
+  /// The composite key (qualificationSubjectId, schoolId) keeps it in the
+  /// school; ON DELETE SET NULL ("qualificationSubjectId") — a column list Prisma
+  /// cannot say and the migration does — clears the pointer when the source goes
+  /// and leaves schoolId, which is NOT NULL, alone.
+  qualificationSubjectId String? @db.Uuid
   createdAt          DateTime @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime @updatedAt @db.Timestamptz(6)
 
   school               School                @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   requiredRoomType     RoomType?             @relation(fields: [requiredRoomTypeId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: NoAction)
+  qualificationSubject Subject?              @relation("SubjectQualificationSource", fields: [qualificationSubjectId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  /// The subjects that use this one's behörighet (their qualificationSubjectId).
+  qualificationInheritors Subject[]          @relation("SubjectQualificationSource")
   nationalSubject      NationalSubject?      @relation(fields: [nationalCode], references: [code], onDelete: Restrict)
   teachingRequirements TeachingRequirement[]
   masterLessons        MasterLesson[]
@@ -1045,6 +1060,8 @@ model Subject {
   /// The target a tenant-scoped composite foreign key needs; see User.
   @@unique([id, schoolId])
   @@index([schoolId])
+  /// The key's leading-column index: deleting a source subject finds the subjects that pointed at it.
+  @@index([qualificationSubjectId, schoolId])
   @@map("Subjects")
 }
 

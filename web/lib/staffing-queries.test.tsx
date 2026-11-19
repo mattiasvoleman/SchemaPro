@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { api } from "@/lib/api";
@@ -7,13 +7,14 @@ import {
   useReplaceTeacherQualifications,
   useTeacherDutyActions,
   useTeacherEmploymentActions,
+  useTeacherQualifications,
 } from "@/lib/staffing-queries";
 
 vi.mock("@/lib/api", () => ({
   api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() },
 }));
 
-const mockApi = api as unknown as Record<"put" | "delete" | "post", Mock>;
+const mockApi = api as unknown as Record<"get" | "put" | "delete" | "post", Mock>;
 
 function createHarness() {
   const queryClient = new QueryClient({
@@ -28,6 +29,42 @@ function createHarness() {
 
 const invalidatedKeys = (harness: ReturnType<typeof createHarness>) =>
   harness.invalidateSpy.mock.calls.map((call) => call[0]?.queryKey);
+
+/*
+ * Behörighet som i ett annat ämne: the stored rows are what a form edits and saves whole, and the
+ * derived rows are for the screens that judge. They are two asks, never one list, so a derived row
+ * cannot reach a form by sharing its cache entry — and both are under the prefix a write refetches.
+ */
+describe("useTeacherQualifications", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockApi.get.mockResolvedValue([]);
+  });
+
+  it("asks for the stored rows by default, the school's or one teacher's", async () => {
+    const harness = createHarness();
+    renderHook(() => useTeacherQualifications(), { wrapper: harness.wrapper });
+    renderHook(() => useTeacherQualifications("t-anna"), { wrapper: harness.wrapper });
+    await waitFor(() => expect(mockApi.get).toHaveBeenCalledTimes(2));
+    expect(mockApi.get.mock.calls.map((call) => call[0]).sort()).toEqual([
+      "/api/v1/teacher-qualifications",
+      "/api/v1/teacher-qualifications?userId=t-anna",
+    ]);
+  });
+
+  it("asks for the derived rows too, under a key of their own, when a screen judges by them", async () => {
+    const harness = createHarness();
+    renderHook(() => useTeacherQualifications(null, { inherited: true }), { wrapper: harness.wrapper });
+    renderHook(() => useTeacherQualifications("t-anna", { inherited: true }), { wrapper: harness.wrapper });
+    renderHook(() => useTeacherQualifications(), { wrapper: harness.wrapper });
+    await waitFor(() => expect(mockApi.get).toHaveBeenCalledTimes(3));
+    expect(mockApi.get.mock.calls.map((call) => call[0]).sort()).toEqual([
+      "/api/v1/teacher-qualifications",
+      "/api/v1/teacher-qualifications?inherited=true",
+      "/api/v1/teacher-qualifications?userId=t-anna&inherited=true",
+    ]);
+  });
+});
 
 /*
  * Föreslå lärare caches its ranking for 30 s (the app's staleTime). A post or

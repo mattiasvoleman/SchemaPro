@@ -11,6 +11,7 @@ import type {
 import { lydelseIsTioarig } from '../common/grade-numbering';
 import type { FrameWindow } from '../common/year-rollover';
 import { sortSlots, type DutySlot } from '../staffing/duty-slot';
+import { readHeldQualifications } from '../staffing/qualification-inheritance';
 import type { LoadQualification } from '../staffing/teacher-load';
 import { readDecidedTimplans, type DecidedTimplan } from '../timplan/year-timplans';
 import { pendingMoves, planActivation, readActivationSource } from './activation-plan';
@@ -374,20 +375,10 @@ export async function readRolloverSource(
         })
       : [];
   const policy = await tx.staffingPolicy.findFirst({ select: { qualificationMode: true } });
-  const qualifications =
-    teacherIds.length > 0
-      ? await tx.teacherSubjectQualification.findMany({
-          select: {
-            userId: true,
-            subjectId: true,
-            minGradeLevel: true,
-            maxGradeLevel: true,
-            kind: true,
-            validFrom: true,
-            validTo: true,
-          },
-        })
-      : [];
+  // With the derived rows of a subject that uses another's behörighet
+  // (qualification-inheritance.ts): the rollover judges the successor year's
+  // teachers by the same rule as the report.
+  const qualifications = teacherIds.length > 0 ? await readHeldQualifications(tx) : [];
 
   const masterLessons = await tx.masterLesson.count({ where: { academicYearId: sourceYearId } });
   const lockedLessons = await tx.masterLesson.count({
@@ -522,7 +513,11 @@ export async function readRolloverSource(
     activeTeacherIds: new Set((activeTeachers ?? []).map((teacher) => teacher.id)),
     qualificationMode: policy?.qualificationMode ?? 'WARN',
     qualifications: (qualifications ?? []).map((row) => ({
-      ...row,
+      userId: row.userId,
+      subjectId: row.subjectId,
+      minGradeLevel: row.minGradeLevel,
+      maxGradeLevel: row.maxGradeLevel,
+      kind: row.kind,
       validFrom: row.validFrom ? asDay(row.validFrom) : null,
       validTo: row.validTo ? asDay(row.validTo) : null,
     })),

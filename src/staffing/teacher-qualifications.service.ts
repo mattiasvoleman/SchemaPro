@@ -6,6 +6,7 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { parseDateString } from '../common/utils/time';
 import { lockStaffRow } from './staff-lock';
+import { expandInheritedQualifications, readQualificationLinks } from './qualification-inheritance';
 import type {
   ReplaceTeacherQualificationsDto,
   TeacherQualificationItemDto,
@@ -22,6 +23,12 @@ export type TeacherQualificationResponse = Omit<
 > & {
   validFrom: string | null;
   validTo: string | null;
+  /**
+   * Only on a derived row (GET ?inherited=true): the subject whose stored row
+   * this is a copy of, `subjectId` being the subject that uses it. Absent on a
+   * stored row, which is the only kind the form saves.
+   */
+  viaSubjectId?: string;
 };
 
 const asDay = (value: Date | null): string | null =>
@@ -43,19 +50,44 @@ export function toQualificationResponse(
 export class TeacherQualificationsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** The school's rows, or one teacher's. RLS confines the read to the school. */
+  /**
+   * The school's rows, or one teacher's. RLS confines the read to the school.
+   *
+   * These are the STORED rows, which is what the form edits and saves whole
+   * and what the CSV and the register extract print. `inherited` adds the rows
+   * a subject that uses another's behörighet derives (qualification-
+   * inheritance.ts), each marked `viaSubjectId`: for the screens that JUDGE who
+   * is qualified (the candidate badges and lists) and so need the rule the
+   * gateway applies, not a copy of it. A derived row has no id of its own;
+   * its id is the stored row's with the subject it holds for, so a list's ids
+   * stay unique, and it is never a row to write.
+   */
   async list(
     userId: string | undefined,
     user: AuthenticatedUser,
+    options: { inherited?: boolean } = {},
   ): Promise<TeacherQualificationResponse[]> {
     requireSchoolId(user);
-    const rows = await this.prisma.withRls(user, (tx) =>
-      tx.teacherSubjectQualification.findMany({
+    const rows = await this.prisma.withRls(user, async (tx) => {
+      const stored = await tx.teacherSubjectQualification.findMany({
         where: userId ? { userId } : {},
         orderBy: [{ userId: 'asc' }, { subjectId: 'asc' }],
-      }),
-    );
-    return rows.map(toQualificationResponse);
+      });
+      if (!options.inherited || stored.length === 0) return stored.map(toQualificationResponse);
+      const expanded = expandInheritedQualifications(
+        stored.map(toQualificationResponse),
+        await readQualificationLinks(tx),
+      );
+      return expanded
+        .map((row) => (row.viaSubjectId ? { ...row, id: `${row.id}:${row.subjectId}` } : row))
+        .sort(
+          (a, b) =>
+            a.userId.localeCompare(b.userId) ||
+            a.subjectId.localeCompare(b.subjectId) ||
+            Number(a.viaSubjectId !== undefined) - Number(b.viaSubjectId !== undefined),
+        );
+    });
+    return rows;
   }
 
   /**

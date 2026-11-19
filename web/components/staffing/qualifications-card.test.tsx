@@ -78,6 +78,22 @@ describe("QualificationsCard", () => {
     expect(screen.getByText("expired(2026-06-30)")).toBeInTheDocument();
   });
 
+  it("says a stored row also applies to a subject that takes its behörighet from it, and writes no second row (Behörighet som i ett annat ämne)", () => {
+    const withUsers: Subject[] = [
+      ...subjects,
+      { id: "s-ma-ws", name: "Matematik WS", code: null, color: null, requiredRoomTypeId: null, nationalCode: null, countsTowardTimplan: true, qualificationSubjectId: "s-ma" },
+      { id: "s-ma-f", name: "Matematik fördjupning", code: null, color: null, requiredRoomTypeId: null, nationalCode: null, countsTowardTimplan: true, qualificationSubjectId: "s-ma" },
+    ];
+    render(<QualificationsCard teacher={teacher} qualifications={stored} subjects={withUsers} today="2026-10-06" />);
+
+    // The row of Matematik says it counts for both; the row of NO, which nobody uses, says nothing.
+    expect(screen.getByText("(alsoCovers(Matematik WS, Matematik fördjupning))")).toBeInTheDocument();
+    expect(screen.getAllByText(/alsoCovers/)).toHaveLength(1);
+    // Two chips, as stored: the using subjects are named on the source's row, not listed as rows of their own.
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.queryByText("Matematik WS")).not.toBeInTheDocument();
+  });
+
   it("is shown without its edit button to a reader who does not write planering (Roller i skolan)", () => {
     render(<QualificationsCard teacher={teacher} qualifications={stored} subjects={subjects} today="2026-10-06" readOnly />);
     expect(screen.queryByRole("button", { name: "editQualifications" })).toBeNull();

@@ -121,7 +121,7 @@ function writingNested(world: RolloverWorld): PrismaService {
 }
 
 describe('the active year’s statement budget', () => {
-  it('a master lesson dragged to another day, with its teacher changed: 31 statements (30 before Schemaförslag’s edit lock, 29 before Halvklasser’s groups read, 28 before the block’s read, 27 before the ämnesfördelning’s read, 26 before Publicering’s mode read)', async () => {
+  it('a master lesson dragged to another day, with its teacher changed: 32 statements (31 before Behörighet som i ett annat ämne, 30 before Schemaförslag’s edit lock, 29 before Halvklasser’s groups read, 28 before the block’s read, 27 before the ämnesfördelning’s read, 26 before Publicering’s mode read)', async () => {
     const { world, prisma } = school();
     const service = new MasterLessonsService(
       prisma,
@@ -160,6 +160,10 @@ describe('the active year’s statement budget', () => {
       'availabilityConstraint.findMany',
       'staffingPolicy.findUnique',
       'teacherSubjectQualification.findMany',
+      // Behörighet som i ett annat ämne: the subjects' pointers, read beside the
+      // rows and only because the school has recorded a behörighet
+      // (qualification-inheritance.ts).
+      'subject.findMany',
       'subject.findUnique',
       'academicYear.findUnique',
       // attendanceSpan, on the basis the PATCH already holds.
@@ -185,7 +189,7 @@ describe('the active year’s statement budget', () => {
     ]);
   });
 
-  it('the same drag where the new teacher has a cap and a day limit: 34 statements, three where a rule is (33 before Schemaförslag’s edit lock)', async () => {
+  it('the same drag where the new teacher has a cap and a day limit: 35 statements, three where a rule is (34 before Behörighet som i ett annat ämne, 33 before Schemaförslag’s edit lock)', async () => {
     // What a school that sets Lärarens dag pays on a drag: the teachers' caps,
     // their posts' day limits for the lesson's year, and their week — after
     // the ämnesfördelning's read, before the change log. Anna's week holds
@@ -223,7 +227,7 @@ describe('the active year’s statement budget', () => {
     );
     expect(updated.warnings).toEqual([]);
     const statements = statementsOf(world.calls);
-    expect(statements).toHaveLength(34);
+    expect(statements).toHaveLength(35);
     expect(statements.slice(-5)).toEqual([
       '$queryRaw.$queryRaw',
       'teacherWorkRule.findMany',
@@ -306,7 +310,7 @@ describe('the active year’s statement budget', () => {
     ]);
   });
 
-  it('a timplanspost given a teacher under a WARN policy: 18 statements, and the two its shares are read with', async () => {
+  it('a timplanspost given a teacher under a WARN policy: 19 statements (18 before Behörighet som i ett annat ämne), and the two its shares are read with', async () => {
     const { world, prisma } = school();
     // r2 is Bo's (who has left): Anna is newly assigned, so behörighet is asked.
     const r2 = world.rows['teachingRequirement']![1]!['id'] as string;
@@ -329,6 +333,8 @@ describe('the active year’s statement budget', () => {
       'staffingPolicy.findUnique',
       'schoolBreak.findMany',
       'teacherSubjectQualification.findMany',
+      // The subjects' pointers (Behörighet som i ett annat ämne), as above.
+      'subject.findMany',
       'user.findMany',
       'teacherDuty.findMany',
       'studentGroup.findMany',

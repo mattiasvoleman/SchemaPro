@@ -525,6 +525,39 @@ describe('StaffingProposalService.propose', () => {
     expect(sentRow(payload, R_SV8, rows).eligibilitySetId).toBeNull();
   });
 
+  describe('behörighet som i ett annat ämne (Subjects.qualificationSubjectId)', () => {
+    const holders = (qualificationSubjectId: string | null) => {
+      const rows = schoolRows();
+      // Anna holds Ma 7–9 and nothing in Sv; Sv takes its behörighet from Ma, or from none.
+      rows['teacherSubjectQualification'] = [
+        { userId: ANNA, subjectId: MA, minGradeLevel: 7, maxGradeLevel: 9, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+      ];
+      rows['subject']!.find((subject) => subject['id'] === SV)!['qualificationSubjectId'] = qualificationSubjectId;
+      return rows;
+    };
+
+    it('sends the teachers who hold the source subject as eligible for the using subject’s open row', async () => {
+      const rows = holders(MA);
+      const { service, sent } = setup(rows);
+
+      await service.propose(ask({ respectQualifications: true }), admin());
+
+      const payload = sent()[0]!;
+      const sv8 = sentRow(payload, R_SV8, rows);
+      const members = payload.eligibilitySets.find((s) => s.id === sv8.eligibilitySetId)?.teacherIds;
+      expect(members).toEqual([payload.teachers[0]!.id]);
+    });
+
+    it('sends no set for the row when Sv takes its behörighet from none: the engine’s contract is unchanged, only its input', async () => {
+      const rows = holders(null);
+      const { service, sent } = setup(rows);
+
+      await service.propose(ask({ respectQualifications: true }), admin());
+
+      expect(sentRow(sent()[0]!, R_SV8, rows).eligibilitySetId).toBeNull();
+    });
+  });
+
   it('forces respect under REFUSE, and says it was forced', async () => {
     const rows = schoolRows();
     rows['staffingPolicy']![0]!['qualificationMode'] = 'REFUSE';

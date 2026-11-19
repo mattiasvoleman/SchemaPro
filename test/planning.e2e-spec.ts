@@ -2690,6 +2690,138 @@ describe('Planning surface (e2e)', () => {
       expect(harness.tx['nationalSubject']!['findUnique']).not.toHaveBeenCalled();
     });
 
+    describe('behörighet som i ett annat ämne (qualificationSubjectId)', () => {
+      const SO = 'bcbcbcbc-bcbc-4cbc-8cbc-bcbcbcbcbcbc';
+      const KEMI = 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd';
+      const subjectRows = (rows: Record<string, { id: string; name: string; qualificationSubjectId: string | null }>) => {
+        harness.tx['subject']!['findFirst']!.mockImplementation(({ where }: { where: { id: string } }) =>
+          Promise.resolve(rows[where.id] ?? null),
+        );
+        harness.tx['subject']!['findMany']!.mockImplementation(({ where }: { where: { qualificationSubjectId: string } }) =>
+          Promise.resolve(Object.values(rows).filter((row) => row.qualificationSubjectId === where.qualificationSubjectId)),
+        );
+      };
+
+      it('an admin points a subject at another and reads the pointer back; the write names the school’s own subject', async () => {
+        subjectRows({ [SO]: { id: SO, name: 'SO', qualificationSubjectId: null } });
+        harness.tx['subject']!['update']!.mockResolvedValue({ ...storedSubject(null), qualificationSubjectId: SO });
+
+        const response = await request(http())
+          .patch(`/api/v1/subjects/${NATIONAL_SUBJECT_ID}`)
+          .set('x-test-user', admin())
+          .send({ qualificationSubjectId: SO })
+          .expect(200);
+
+        expect(response.body).toMatchObject({ qualificationSubjectId: SO });
+        expect(harness.tx['subject']!['update']).toHaveBeenCalledWith({
+          where: { id: NATIONAL_SUBJECT_ID },
+          data: { qualificationSubjectId: SO },
+        });
+      });
+
+      it('an admin creates a subject that already takes its behörighet from another', async () => {
+        subjectRows({ [SO]: { id: SO, name: 'SO', qualificationSubjectId: null } });
+        harness.tx['subject']!['create']!.mockResolvedValue({ ...storedSubject(null), qualificationSubjectId: SO });
+
+        const response = await request(http())
+          .post('/api/v1/subjects')
+          .set('x-test-user', admin())
+          .send({ name: 'SO WS', qualificationSubjectId: SO })
+          .expect(201);
+
+        expect(response.body).toMatchObject({ qualificationSubjectId: SO });
+        const args = harness.tx['subject']!['create']!.mock.calls[0]?.[0] as { data: { schoolId: string; qualificationSubjectId: string } };
+        expect(args.data).toMatchObject({ schoolId: SCHOOL_ID, qualificationSubjectId: SO });
+      });
+
+      it('409s a chain with the code and the subjects named in Swedish, and writes nothing', async () => {
+        // SO already takes its behörighet from Kemi: pointing SO WS at SO would be a chain.
+        subjectRows({
+          [SO]: { id: SO, name: 'SO', qualificationSubjectId: KEMI },
+          [KEMI]: { id: KEMI, name: 'Kemi', qualificationSubjectId: null },
+        });
+
+        const response = await request(http())
+          .patch(`/api/v1/subjects/${NATIONAL_SUBJECT_ID}`)
+          .set('x-test-user', admin())
+          .send({ qualificationSubjectId: SO })
+          .expect(409);
+
+        expect(response.body.code).toBe('SUBJECT_QUALIFICATION_SOURCE_INHERITS');
+        expect(response.body.detail).toBe(
+          'Ämnet "SO" har själv behörighet som i "Kemi". Välj "Kemi" i stället: behörighet följer bara ett steg.',
+        );
+        expect(harness.tx['subject']!['update']).not.toHaveBeenCalled();
+      });
+
+      it('409s a subject others take their behörighet from when it asks for one of its own', async () => {
+        subjectRows({
+          [NATIONAL_SUBJECT_ID]: { id: NATIONAL_SUBJECT_ID, name: 'SO', qualificationSubjectId: null },
+          [SO]: { id: SO, name: 'SO WS', qualificationSubjectId: NATIONAL_SUBJECT_ID },
+          [KEMI]: { id: KEMI, name: 'Kemi', qualificationSubjectId: null },
+        });
+
+        const response = await request(http())
+          .patch(`/api/v1/subjects/${NATIONAL_SUBJECT_ID}`)
+          .set('x-test-user', admin())
+          .send({ qualificationSubjectId: KEMI })
+          .expect(409);
+
+        expect(response.body.code).toBe('SUBJECT_QUALIFICATION_IS_INHERITED');
+        expect(response.body.detail).toContain('"SO WS" har behörighet som i det här ämnet');
+        expect(harness.tx['subject']!['update']).not.toHaveBeenCalled();
+      });
+
+      it('409s a subject pointed at itself, and 400s an id that is no uuid, before the handler', async () => {
+        const itself = await request(http())
+          .patch(`/api/v1/subjects/${NATIONAL_SUBJECT_ID}`)
+          .set('x-test-user', admin())
+          .send({ qualificationSubjectId: NATIONAL_SUBJECT_ID })
+          .expect(409);
+        expect(itself.body.code).toBe('SUBJECT_QUALIFICATION_IS_ITSELF');
+
+        await request(http())
+          .patch(`/api/v1/subjects/${NATIONAL_SUBJECT_ID}`)
+          .set('x-test-user', admin())
+          .send({ qualificationSubjectId: 'SO' })
+          .expect(400);
+        expect(harness.tx['subject']!['update']).not.toHaveBeenCalled();
+      });
+
+      it('400s a source that is not one of the school’s subjects, and a teacher may not write the field at all', async () => {
+        subjectRows({});
+        const unknown = await request(http())
+          .patch(`/api/v1/subjects/${NATIONAL_SUBJECT_ID}`)
+          .set('x-test-user', admin())
+          .send({ qualificationSubjectId: SO })
+          .expect(400);
+        expect(unknown.body.code).toBe('SUBJECT_QUALIFICATION_SOURCE_NOT_FOUND');
+
+        await request(http())
+          .patch(`/api/v1/subjects/${NATIONAL_SUBJECT_ID}`)
+          .set('x-test-user', teacher())
+          .send({ qualificationSubjectId: SO })
+          .expect(403);
+        expect(harness.tx['subject']!['update']).not.toHaveBeenCalled();
+      });
+
+      it('clears the pointer with null, which asks nothing of the other subjects', async () => {
+        harness.tx['subject']!['update']!.mockResolvedValue({ ...storedSubject(null), qualificationSubjectId: null });
+
+        await request(http())
+          .patch(`/api/v1/subjects/${NATIONAL_SUBJECT_ID}`)
+          .set('x-test-user', admin())
+          .send({ qualificationSubjectId: null })
+          .expect(200);
+
+        expect(harness.tx['subject']!['update']).toHaveBeenCalledWith({
+          where: { id: NATIONAL_SUBJECT_ID },
+          data: { qualificationSubjectId: null },
+        });
+        expect(harness.tx['subject']!['findFirst']).not.toHaveBeenCalled();
+      });
+    });
+
     it('a PATCH writes the subject’s Faktor and answers it as a number; 3,5 and four decimals are 400 in Swedish, a teacher 403', async () => {
       harness.tx['subject']!['update']!.mockResolvedValue({
         ...storedSubject('SL'),
@@ -3503,6 +3635,40 @@ describe('Planning surface (e2e)', () => {
         expect(response.body).toEqual([
           expect.objectContaining({ userId: COLLEAGUE_ID, kind: 'LEGITIMATION', validTo: '2030-06-30' }),
         ]);
+      });
+
+      it('lists the stored rows alone by default and, with ?inherited=true, adds the derived ones marked viaSubjectId', async () => {
+        const SO_WS = 'dededede-dede-4ede-8ede-dededededede';
+        harness.tx['teacherSubjectQualification']!['findMany']!.mockResolvedValue([
+          { ...storedQualification(COLLEAGUE_ID), id: 'q-so' },
+        ]);
+        harness.tx['subject']!['findMany']!.mockResolvedValue([{ id: SO_WS, qualificationSubjectId: SUBJECT_ID }]);
+
+        const stored = await request(http())
+          .get('/api/v1/teacher-qualifications')
+          .set('x-test-user', admin())
+          .expect(200);
+        expect(stored.body).toHaveLength(1);
+        expect(stored.body[0]).not.toHaveProperty('viaSubjectId');
+
+        const withDerived = await request(http())
+          .get('/api/v1/teacher-qualifications?inherited=true')
+          .set('x-test-user', admin())
+          .expect(200);
+        expect(withDerived.body).toHaveLength(2);
+        expect(withDerived.body[1]).toMatchObject({
+          id: `q-so:${SO_WS}`,
+          subjectId: SO_WS,
+          viaSubjectId: SUBJECT_ID,
+          userId: COLLEAGUE_ID,
+          kind: 'LEGITIMATION',
+          validTo: '2030-06-30',
+        });
+
+        await request(http())
+          .get('/api/v1/teacher-qualifications?inherited=kanske')
+          .set('x-test-user', admin())
+          .expect(400);
       });
 
       it('an admin replaces a teacher’s list wholesale', async () => {

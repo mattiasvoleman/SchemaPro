@@ -69,6 +69,8 @@ describe('SubjectsService', () => {
           // No placement rule: a subject is unmarked until a school marks it.
           notFirstInDay: false,
           notLastInDay: false,
+          // Its own behörighet, until a school says "som i ett annat ämne".
+          qualificationSubjectId: null,
         },
       });
       // No code given, so the reference table is not consulted at all.
@@ -109,6 +111,7 @@ describe('SubjectsService', () => {
           minDaysBetween: null,
           notFirstInDay: false,
           notLastInDay: false,
+          qualificationSubjectId: null,
         },
       });
     });
@@ -388,6 +391,193 @@ describe('SubjectsService', () => {
       await expect(
         service.update(SUBJECT_ID, { name: 'Fysik' }, testUser()),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('behörighet som i ett annat ämne (qualificationSubjectId)', () => {
+    const SO = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const SO_WS = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const KEMI = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+
+    /** The subjects of the school as the three questions read them. */
+    const school = (rows: Record<string, { id: string; name: string; qualificationSubjectId: string | null }>) => {
+      tx.subject.findFirst.mockImplementation(({ where }: { where: { id: string } }) =>
+        Promise.resolve(rows[where.id] ?? null),
+      );
+      // The service asks the heirs in name order (orderBy name asc), as the database answers.
+      tx.subject.findMany.mockImplementation(({ where }: { where: { qualificationSubjectId: string } }) =>
+        Promise.resolve(
+          Object.values(rows)
+            .filter((row) => row.qualificationSubjectId === where.qualificationSubjectId)
+            .sort((a, b) => a.name.localeCompare(b.name, 'sv')),
+        ),
+      );
+    };
+    const so = { id: SO, name: 'SO', qualificationSubjectId: null };
+    const soWs = { id: SO_WS, name: 'SO WS', qualificationSubjectId: null };
+
+    const refusal = async (promise: Promise<unknown>) => {
+      const error = await promise.then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(ConflictException);
+      return (error as ConflictException).getResponse() as { code: string; message: string; params?: Record<string, string> };
+    };
+
+    it('writes the source a subject is created with, after asking that it is the school’s and inherits from nobody', async () => {
+      school({ [SO]: so });
+      tx.subject.create.mockResolvedValue({ id: SO_WS });
+
+      await service.create({ name: 'SO WS', qualificationSubjectId: SO }, testUser());
+
+      expect(tx.subject.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: SO } }));
+      expect(tx.subject.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ qualificationSubjectId: SO }),
+      });
+    });
+
+    it('refuses a source that is not one of the school’s own with a 400, and writes nothing', async () => {
+      school({});
+
+      const error = await service.create({ name: 'SO WS', qualificationSubjectId: SO }, testUser()).then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getResponse()).toMatchObject({
+        code: 'SUBJECT_QUALIFICATION_SOURCE_NOT_FOUND',
+      });
+      expect(tx.subject.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a source that itself inherits (a chain), naming both subjects, on create and on update', async () => {
+      school({ [SO]: { ...so, qualificationSubjectId: KEMI }, [KEMI]: { id: KEMI, name: 'Kemi', qualificationSubjectId: null } });
+
+      const onCreate = await refusal(service.create({ name: 'SO WS', qualificationSubjectId: SO }, testUser()));
+      expect(onCreate.code).toBe('SUBJECT_QUALIFICATION_SOURCE_INHERITS');
+      expect(onCreate.message).toBe(
+        'Ämnet "SO" har själv behörighet som i "Kemi". Välj "Kemi" i stället: behörighet följer bara ett steg.',
+      );
+      expect(onCreate.params).toEqual({ sourceId: SO });
+
+      const onUpdate = await refusal(service.update(SO_WS, { qualificationSubjectId: SO }, testUser()));
+      expect(onUpdate.code).toBe('SUBJECT_QUALIFICATION_SOURCE_INHERITS');
+      expect(onUpdate.params).toEqual({ subjectId: SO_WS, sourceId: SO });
+      expect(tx.subject.create).not.toHaveBeenCalled();
+      expect(tx.subject.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a subject pointed at itself, before anything is read', async () => {
+      school({ [SO]: so });
+
+      const body = await refusal(service.update(SO, { qualificationSubjectId: SO }, testUser()));
+
+      expect(body.code).toBe('SUBJECT_QUALIFICATION_IS_ITSELF');
+      expect(body.message).toBe(
+        'Ett ämne kan inte ta sin behörighet från sig självt. Välj ett annat ämne, eller lämna fältet tomt.',
+      );
+      expect(tx.subject.findFirst).not.toHaveBeenCalled();
+      expect(tx.subject.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a subject that others inherit from taking a pointer of its own, naming who uses it', async () => {
+      // SO is SO WS's source; making SO inherit from Kemi would chain Kemi ← SO ← SO WS.
+      school({
+        [SO]: so,
+        [KEMI]: { id: KEMI, name: 'Kemi', qualificationSubjectId: null },
+        [SO_WS]: { ...soWs, qualificationSubjectId: SO },
+      });
+
+      const body = await refusal(service.update(SO, { qualificationSubjectId: KEMI }, testUser()));
+
+      expect(body.code).toBe('SUBJECT_QUALIFICATION_IS_INHERITED');
+      expect(body.message).toBe(
+        'Ämnet "SO WS" har behörighet som i det här ämnet, så det kan inte självt ta sin behörighet från ett annat. Ta bort det andra ämnets val först.',
+      );
+      expect(body.params).toEqual({ subjectId: SO, inheritorId: SO_WS });
+      expect(tx.subject.update).not.toHaveBeenCalled();
+    });
+
+    it('says "ämnena" and names each when several use the subject', async () => {
+      school({
+        [SO]: so,
+        [KEMI]: { id: KEMI, name: 'Kemi', qualificationSubjectId: null },
+        [SO_WS]: { ...soWs, qualificationSubjectId: SO },
+        'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee': { id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', name: 'SO Fördjupning', qualificationSubjectId: SO },
+      });
+
+      const body = await refusal(service.update(SO, { qualificationSubjectId: KEMI }, testUser()));
+
+      expect(body.message).toContain('Ämnena "SO Fördjupning" och "SO WS" har behörighet som i det här ämnet');
+      expect(body.message).toContain('Ta bort de andra ämnenas val först.');
+    });
+
+    it('writes a valid pointer on update, clears it with null, and leaves it alone when absent', async () => {
+      school({ [SO]: so, [SO_WS]: soWs });
+      tx.subject.update.mockResolvedValue({ id: SO_WS });
+
+      await service.update(SO_WS, { qualificationSubjectId: SO }, testUser());
+      expect(tx.subject.update).toHaveBeenLastCalledWith({ where: { id: SO_WS }, data: { qualificationSubjectId: SO } });
+
+      // Null is a decision: back to the subject's own rows, and nothing is asked.
+      tx.subject.findFirst.mockClear();
+      await service.update(SO_WS, { qualificationSubjectId: null }, testUser());
+      expect(tx.subject.update).toHaveBeenLastCalledWith({ where: { id: SO_WS }, data: { qualificationSubjectId: null } });
+      expect(tx.subject.findFirst).not.toHaveBeenCalled();
+
+      // Absent leaves it as it is, and asks nothing.
+      await service.update(SO_WS, { name: 'SO arbetspass' }, testUser());
+      expect(tx.subject.update).toHaveBeenLastCalledWith({ where: { id: SO_WS }, data: { name: 'SO arbetspass' } });
+      expect(tx.subject.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('answers the database’s own refusal (QS409), met by a writer that did not ask, with the same 409', async () => {
+      // Two writers at once: each asked first and saw no chain; the trigger sees it.
+      const triggerRefusal = new Prisma.PrismaClientKnownRequestError('Invalid `prisma.subject.update()` invocation: Code: `QS409`', {
+        code: 'P2039',
+        clientVersion: Prisma.prismaVersion.client,
+        meta: {
+          driverAdapterError: {
+            cause: {
+              originalCode: 'QS409',
+              originalMessage: 'SUBJECT_QUALIFICATION_SOURCE_INHERITS: ämnet har själv behörighet som i ett annat ämne',
+              detail: `subjectId=${SO_WS} sourceId=${SO} sourceSourceId=${KEMI}`,
+            },
+          },
+        },
+      });
+      school({ [SO]: so, [SO_WS]: soWs });
+      tx.subject.update.mockRejectedValue(triggerRefusal);
+
+      const body = await refusal(service.update(SO_WS, { qualificationSubjectId: SO }, testUser()));
+
+      expect(body.code).toBe('SUBJECT_QUALIFICATION_SOURCE_INHERITS');
+      expect(body.params).toEqual({ subjectId: SO_WS, sourceId: SO });
+    });
+
+    it('reads the other reason token of the same SQLSTATE as the other 409', async () => {
+      const triggerRefusal = new Prisma.PrismaClientKnownRequestError('Code: `QS409`', {
+        code: 'P2039',
+        clientVersion: Prisma.prismaVersion.client,
+        meta: {
+          driverAdapterError: {
+            cause: {
+              originalCode: 'QS409',
+              originalMessage: 'SUBJECT_QUALIFICATION_IS_INHERITED: ett annat ämne har behörighet som i det här ämnet',
+              detail: `subjectId=${SO} inheritorId=${SO_WS}`,
+            },
+          },
+        },
+      });
+      school({ [SO]: so, [KEMI]: { id: KEMI, name: 'Kemi', qualificationSubjectId: null } });
+      tx.subject.update.mockRejectedValue(triggerRefusal);
+
+      const body = await refusal(service.update(SO, { qualificationSubjectId: KEMI }, testUser()));
+
+      expect(body.code).toBe('SUBJECT_QUALIFICATION_IS_INHERITED');
+      expect(body.params).toEqual({ subjectId: SO, inheritorId: SO_WS });
     });
   });
 

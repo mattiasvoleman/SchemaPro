@@ -3,6 +3,7 @@ import type { LessonShare } from '../common/lesson-shares';
 import type { LessonRecurrence, PrismaClient, UnstaffedGenerationMode } from '@prisma/client';
 import { gradeSpanOf, loadRosters } from '../optimization/room-eligibility';
 import { asDay, readLoadInput } from './load-input';
+import { readHeldQualifications } from './qualification-inheritance';
 import { rostersOfYear, type BasisOrYear, type RosterViewer } from '../year-rollover/projected-rosters';
 import {
   DEFAULT_CHECK_POLICY,
@@ -559,21 +560,17 @@ export async function lessonQualificationFindings(
   // Behörighet only: no load question, so no stretch to word.
   const policy = await readCheckPolicy(tx, args.schoolId, true);
   if (policy.qualificationMode === 'OFF') return [];
-  const rows = await tx.teacherSubjectQualification.findMany({
-    select: {
-      userId: true,
-      subjectId: true,
-      minGradeLevel: true,
-      maxGradeLevel: true,
-      kind: true,
-      validFrom: true,
-      validTo: true,
-    },
-  });
+  // The derived rows of a subject that uses another's behörighet are in
+  // (qualification-inheritance.ts), as in the report this check agrees with.
+  const rows = await readHeldQualifications(tx);
   // Nothing recorded, nothing asked — see staffing-checks.ts.
   if (rows.length === 0) return [];
   const qualifications: LoadQualification[] = rows.map((row) => ({
-    ...row,
+    userId: row.userId,
+    subjectId: row.subjectId,
+    minGradeLevel: row.minGradeLevel,
+    maxGradeLevel: row.maxGradeLevel,
+    kind: row.kind,
     validFrom: row.validFrom ? asDay(row.validFrom) : null,
     validTo: row.validTo ? asDay(row.validTo) : null,
   }));

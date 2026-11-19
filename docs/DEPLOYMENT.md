@@ -6782,6 +6782,68 @@ they are created), `ACCESS SHARE` on the tables they read until it commits: that
   arguments and answer, claims set aside while the door runs and put back after (a function-level `SET` would be simpler, but the API's
   role may not create one that sets a custom parameter).
 - Sections 464 (the md5 of `gallring_pseudonymise`), 83, 242b and 268h changed with it; the others only call the doors through the helper.
+
+## 30. A subject takes its behörighet from another ("Behörighet som i ett annat ämne", omgång 12)
+
+A school that makes its own subject for a work session in SO ("SO WS") found every SO teacher unqualified there: a behörighet
+belongs to the subject row it was recorded on. Migration `20270225090000_ett_amne_har_behorighet_som_i_ett_annat` adds
+`Subjects."qualificationSubjectId"`, the subject whose teachers' behörigheter this one uses, and the gateway counts a teacher
+who holds SO as qualified for SO WS with the SO row's grades, kind and validity, wherever behörighet is counted. Nothing is
+stored twice: the gateway derives the rows from the one pointer (`src/staffing/qualification-inheritance.ts`).
+
+- **What changes in the database.** One nullable column (NULL for every subject that exists), a CHECK (a subject is not its
+  own source), a composite key `("qualificationSubjectId", "schoolId")` to `Subjects("id", "schoolId")` with
+  `ON DELETE SET NULL ("qualificationSubjectId")` (the column list is what lets a source be deleted: a plain SET NULL would
+  null `schoolId` too, which is NOT NULL) and `ON UPDATE NO ACTION`, an index over the key, and a BEFORE trigger on a write
+  that sets a link (`app.subjects_qualification_is_one_level()`, SQLSTATE `QS409`). No arm changes and no grant changes.
+- **One level.** A subject others use inherits from nobody, and none points at itself. The gateway's service asks first and
+  answers 409 with a code and the subjects named (`SUBJECT_QUALIFICATION_SOURCE_INHERITS`, `SUBJECT_QUALIFICATION_IS_INHERITED`,
+  `SUBJECT_QUALIFICATION_IS_ITSELF`, and 400 `SUBJECT_QUALIFICATION_SOURCE_NOT_FOUND`); the trigger is what holds for a writer
+  that did not ask, and for two that ask at once (it takes one advisory lock per school, so the second sees the first's
+  commit). A deadlock with a key change on the same row (`UPDATE ... SET "code"` on a subject at the very moment another
+  transaction points at it) is possible in principle and answers 409 `WRITE_CONFLICT`, nothing written.
+- **Who reads the derived rows.** Every reader that asks who is qualified goes through one function,
+  `readHeldQualifications`: the staffing report and its checks, the picker's ranking, the staffing proposal (the engine's
+  contract is unchanged: it is sent the same eligibility sets, now including the derived holders), the hand-edit warning, the
+  cover board's ranking, the lesson's substitute picker and the rollover. The readers that list the table (the school
+  export, the register extract, the person's own form, the CSV) print the stored rows only. `GET /api/v1/teacher-qualifications`
+  answers the stored rows, and with `?inherited=true` also the derived ones, each marked `viaSubjectId`, for the web screens
+  that judge.
+
+### 30.1 Deploy order
+
+1. Run the migration before the merge (the gateway deploys on every merge, and the gateway after this reads the column). In
+   production, as the owner, from a tree that has every applied migration: the release's `prod-fore.sql`, `migrate deploy`,
+   the release's `prod-efter.sql` (read-only SQL kept with the release's notes, not in this repository). The migration takes
+   `ACCESS EXCLUSIVE` on `Subjects` once, `NOWAIT` in a retry loop (every 50 ms, giving up after 30 s with nothing changed:
+   `prisma migrate resolve --rolled-back …`, then deploy again). A gateway from before it names the columns of its own schema
+   and writes none of these, so it is unaffected between the migration and the merge.
+2. Merge. The gateway reads and writes the column; the web reads it through PostgREST's column list, so it needs the migration
+   first (a `select` naming a column the table lacks fails).
+
+### 30.2 Rolling back
+
+- The column is additive: a gateway that never writes it is unchanged. To remove the feature, `DROP TRIGGER
+  "Subjects_qualification_is_one_level" ON "Subjects"`, `DROP FUNCTION app.subjects_qualification_is_one_level()` and
+  `ALTER TABLE "Subjects" DROP COLUMN "qualificationSubjectId"` (the CHECK, the key and the index go with the column); every
+  subject then reads its own behörigheter, as before. Do not edit the migration after it has run.
+
+### 30.3 Operations
+
+- RLS sections 540 to 544 and 544o hold it, on PG 17 and PG 16: the catalogue (the column, the CHECK, the key with its column-list
+  SET NULL, the index, the trigger and its function, the six arms of `Subjects` as they were and none that names the column, the
+  API role's privileges on the column, nobody's MAINTAIN), who reads and who writes, the school (a pointer to another school's
+  subject is refused by the key even for the owner), one level, and the lock. The adapter probe's `bi1` to `bi5` run the service,
+  the trigger's refusal through the adapter, two writers at once (ten rounds, both orders), the readers and the load report on
+  real rows.
+- What `prod-efter.sql` asks of production, read-only and as the owner: the migration applied once with the checksum of the
+  file, the column, the CHECK validated, the key validated with `SET NULL ("qualificationSubjectId")` and NO ACTION on update,
+  the index valid and ready over the key's columns, the trigger enabled as BEFORE ... WHEN, the function a definer with a
+  pinned search path that takes the school's lock and that no role may execute, the API role reading and writing the column
+  and `anon` holding nothing on it, nobody holding MAINTAIN on `Subjects`, and no subject pointing at itself, at another school's
+  subject or in a chain; arms, grants, the other columns, constraints, indexes and triggers of the table, and every other
+  function are read as `record` rows and compared with `prod-fore.sql`'s.
+
 ## 31. A school releases a post for the engine ("Släppt för motorn", lärarval B1)
 
 Föreslå bemanning never moves a teacher the school chose. A post that is staffed is fixed, as a pinned one is, unless the school has
