@@ -153,6 +153,11 @@ describe('ImportRequirementRowDto, a teacher by signature', () => {
     ['empty', { teacherSignature: '' }, ['teacherSignature']],
     ['blank', { coTeacherSignature: '   ' }, ['coTeacherSignature']],
     ['not text', { teacherSignature: 7 }, ['teacherSignature']],
+    // The co-teacher's field has its own decorators, so each bound is held for it as well as for the lead's.
+    ['too long, the co-teacher\'s', { coTeacherSignature: 'ABCDEFGHI' }, ['coTeacherSignature']],
+    ['empty, the co-teacher\'s', { coTeacherSignature: '' }, ['coTeacherSignature']],
+    ['blank, the lead\'s', { teacherSignature: '   ' }, ['teacherSignature']],
+    ['not text, the co-teacher\'s', { coTeacherSignature: 7 }, ['coTeacherSignature']],
   ])('refuses a signature that is %s, naming the field', async (_what, patch, fields) => {
     await expect(failing({ ...base, ...patch })).resolves.toEqual(fields);
   });

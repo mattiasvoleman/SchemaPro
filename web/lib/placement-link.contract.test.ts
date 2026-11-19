@@ -50,6 +50,7 @@ describe("a refusal's link back to the week, from the gateway's own lines", () =
       const href = linkOf(entry.line)!;
       const target = linkTargetOf(href.slice(href.indexOf("?")));
       expect(target).toEqual({
+        yearId: "y2",
         postId: entry.postId,
         blockId: entry.blockId,
         day: entry.line.params!["day"],

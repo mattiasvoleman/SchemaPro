@@ -72,6 +72,15 @@ export const miscRoutes: GatewayRoute[] = [
   route("GET", "/api/v1/optimization/jobs/:id", ({ params }) => byId(OPTIMIZATION_JOBS, params.id) ?? notFound("Optimization job not found.")),
   // A run started from the page (A3's way-back scenarios): the refused run the scenario holds first, else the year's own. The stub runs nothing.
   route("POST", "/api/v1/optimization/jobs", ({ scenario }) => ({ jobId: (backCaseOf(scenario) === "refusal" ? OPTIMIZATION_JOBS.at(-1)! : OPTIMIZATION_JOBS[0]!).id })),
+  // Kontrollera veckan, asked by its own button and before every run on Generera: the stub finds nothing, so a run starts as it did before the check.
+  route("POST", "/api/v1/optimization/week-check", () => ({
+    verdict: "OK",
+    years: [],
+    conflicts: null,
+    skipped: ["LUNCH_STAGE"],
+    elapsedMs: 12,
+    checkedBy: "ENGINE",
+  })),
   route("GET", "/api/v1/room-types", () => ROOM_TYPES),
   route("GET", "/api/v1/room-preferences", () => ROOM_PREFERENCES),
   // Klasser's skolenheter card.

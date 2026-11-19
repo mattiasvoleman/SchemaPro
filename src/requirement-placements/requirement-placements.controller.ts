@@ -43,6 +43,18 @@ export class RequirementPlacementsController {
     return this.placements.boardOfYear(academicYearId, user);
   }
 
+  /**
+   * The lessons the last Generera laid and the next one replaces, for the week to draw behind its cards when the school asks.
+   * Declared before the `:id` routes, with the board.
+   */
+  @Get('placements/latest')
+  latestOfYear(
+    @Query('academicYearId', new ParseUUIDPipe({ version: '4' })) academicYearId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.placements.latestOfYear(academicYearId, user);
+  }
+
   /** One post's förläggningar with a verdict for each, judged now. */
   @Get(':id/placements')
   listOfPost(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @CurrentUser() user: AuthenticatedUser) {

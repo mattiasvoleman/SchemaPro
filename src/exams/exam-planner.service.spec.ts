@@ -138,7 +138,7 @@ describe('ExamPlannerService', () => {
     activities = { createWithin: jest.fn(), settleCreated: jest.fn(), remove: jest.fn() };
     service = new ExamPlannerService(
       createPrismaMock(tx) as unknown as PrismaService,
-      { callAiEngine: engine } as unknown as OptimizationProxyService,
+      { callAiEngine: engine, waitMsAtLeast: (_path: string, floorMs: number) => floorMs } as unknown as OptimizationProxyService,
       activities as unknown as ScheduleActivitiesService,
     );
     world = {
@@ -212,6 +212,21 @@ describe('ExamPlannerService', () => {
       world.settings = { ...world.settings, replacementSubjectId: PROV };
       world.examRooms = [];
       expect(await code(service.propose({ academicYearId: YEAR }, user))).toBe('EXAM_NO_ROOMS');
+    });
+
+    it('waits as long as the proxy says the engine needs when that is more than its own 90 s (an exam budget raised past it)', async () => {
+      const proxy = (service as unknown as { proxy: { waitMsAtLeast: jest.Mock } }).proxy;
+      proxy.waitMsAtLeast = jest.fn(() => 171_000);
+      answerFor(({ exam, rooms, teachers }) => ({
+        placed: [{ exam, slot: 0, rooms: [{ room: rooms.get(R1)!, writers: 28, invigilators: [teachers.get('t2')!] }] }],
+        invigilatorMinutes: [{ teacher: teachers.get('t2')!, minutes: 60 }],
+        metrics: { placed: 1, unplaced: 0, loss: 60, roomsUsed: 1, invigilatorPasses: 1, maxLoad: 60, minLoad: 0, solveSeconds: 0.2 },
+      }));
+
+      await service.propose({ academicYearId: YEAR }, user);
+
+      expect(proxy.waitMsAtLeast).toHaveBeenCalledWith('/api/v1/plan-exams', 90_000);
+      expect(engine.mock.calls[0][3]).toEqual({ timeoutMs: 171_000 });
     });
 
     it('has nothing to plan when no exam is left unplaced', async () => {

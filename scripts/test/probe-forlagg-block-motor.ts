@@ -963,7 +963,7 @@ async function run(owner: Client, app: INestApplicationContext, enginePins: bool
           await owner.query('BEGIN');
           try {
             await owner.query(sql, params);
-            await assert.rejects(blockOracle(sc, expected, `z, ${label}`), undefined, `domaren såg inte "${label}"`);
+            await assert.rejects(blockOracle(sc, expected, `z, ${label}`), () => true, `domaren såg inte "${label}"`);
           } finally {
             await owner.query('ROLLBACK');
           }

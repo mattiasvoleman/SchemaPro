@@ -804,6 +804,17 @@ export function givenRolloverWorld(
           const call: RecordedCall = { model: '$executeRaw', method: '$executeRaw', args: null, sql, values };
           calls.push(call);
           await world.afterExecuteRaw?.(call);
+          // A Generera run's heartbeat (OptimizationJobsService.beat): RUNNING, the claimant and the lease, where the run is
+          // still active, and the number of rows it changed. The first one starts the run: without it nothing runs.
+          if (sql.startsWith('UPDATE "OptimizationJobs" SET "status" = \'RUNNING\'')) {
+            const run = table('optimizationJob').find(
+              (row) => row['id'] === values[2] && ['PENDING', 'RUNNING'].includes(row['status'] as string),
+            );
+            if (!run) return 0;
+            run['status'] = 'RUNNING';
+            run['claimedBy'] = values[0];
+            return 1;
+          }
           return 0;
         };
       }

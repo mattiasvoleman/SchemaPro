@@ -135,6 +135,8 @@ describe('a cell of a dumped row', () => {
   it('is kept for anyone else, and a number or a boolean is its text', () => {
     expect(cellOf('decidedById', SUBJECT, marked)).toEqual({ text: SUBJECT, held: false });
     expect(cellOf('minutes', 60, marked)).toEqual({ text: '60', held: false });
+    // The process that ran a Generera run (OptimizationJobs.claimedBy) is the platform's name for an instance, not the person's.
+    expect(cellOf('claimedBy', 'host-7f9c:4242:3fa91c0e', marked)).toEqual({ text: '(dold)', held: false });
     expect(cellOf('active', false, marked)).toEqual({ text: 'false', held: false });
     expect(cellOf('note', null, marked)).toEqual({ text: '', held: false });
     expect(cellOf('meta', { a: 1 }, marked)).toEqual({ text: '{"a":1}', held: false });

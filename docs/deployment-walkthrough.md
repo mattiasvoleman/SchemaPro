@@ -268,7 +268,7 @@ GitHub repository.
 | `APP_ENV` | `production` |
 | `API_KEY` | a long random secret you invent now — save it as `SOLVER_SECRET` |
 | `ALLOWED_ORIGINS` | `http://localhost` for now; you will correct it in Step 8 |
-| `SOLVER_MAX_TIME_SECONDS` | `60` (the solve budget in seconds; a solve that times out answers after this plus `SOLVER_PROBE_SECONDS`, default `20`) |
+| `SOLVER_MAX_TIME_SECONDS` | `60` (the solve budget in seconds; a solve that times out answers after this plus `SOLVER_PROBE_SECONDS`, default `20`; the engine says its times and the API reads them, so there is nothing to set to match on the other side: DEPLOYMENT.md §5.1) |
 
 > `API_KEY` **must be at least 32 characters.** The solver refuses to start
 > with anything shorter and the only sign will be a container that keeps
@@ -330,7 +330,7 @@ log looks *fine* is the port problem described above, not a crash.
 | `SUPABASE_SERVICE_ROLE_KEY` | your `SUPABASE_SERVICE_KEY` from Step 2 |
 | `AI_ENGINE_URL` | your `SOLVER_URL` from Step 6a — including `https://`, e.g. `https://solver-prod-a1b2.up.railway.app` |
 | `AI_ENGINE_API_KEY` | your `SOLVER_SECRET` from Step 6a |
-| `AI_ENGINE_TIMEOUT_MS` | `120000` (more than `SOLVER_MAX_TIME_SECONDS` + `SOLVER_PROBE_SECONDS` + 30 s; at a 180 s budget `240000`) |
+| `AI_ENGINE_TIMEOUT_MS` | leave it out. The API then waits as long as the engine says it can take, and follows the engine if you raise `SOLVER_MAX_TIME_SECONDS` later. If you set it, `120000` at the defaults and at least the engine's budget + `SOLVER_PROBE_SECONDS` + 35 s (`240000` at a 180 s budget): a production start with a shorter one is refused and says which number to change |
 | `THROTTLE_TTL_SECONDS` | `60` |
 | `THROTTLE_LIMIT` | `120` |
 | `CORS_ORIGINS` | `http://localhost:3000` for now; corrected in Step 8 |

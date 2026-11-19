@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 
 from app.config import Settings
 from app.dependencies import get_app_settings, verify_api_key
+from app.exceptions import SolverTimeoutError
 from app.logging_config import get_logger
-from app.schemas.exams import PlanExamsRequest, PlanExamsResponse
+from app.schemas.exams import ExamSearch, PlanExamsRequest, PlanExamsResponse
 from app.solver.exam_solver import ExamSolver, budget_seconds
+from app.timing import BUILD_HEADROOM_SECONDS, RouteLimits
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["exams"])
@@ -16,21 +18,28 @@ router = APIRouter(prefix="/api/v1", tags=["exams"])
 # Head-room on top of the solver's own limit for what the limit does not
 # bound: the narrowing, the build, the Python re-check and the reasons, which
 # grow with the plan rather than the budget. The same figure as the other
-# routes: past it, the request fails rather than pin a worker.
-_BUILD_HEADROOM_SECONDS = 30.0
+# routes (app.timing.BUILD_HEADROOM_SECONDS, one number for every route): past
+# it, the request fails rather than pin a worker. The ceiling is the REQUEST's
+# budget (it can ask for less) and the headroom; GET /api/v1/timing reports it
+# for a request that asks for the deployment's.
+_BUILD_HEADROOM_SECONDS = BUILD_HEADROOM_SECONDS
+
+
+def route_limits(settings: Settings, search: ExamSearch | None = None) -> RouteLimits:
+    """The exam planner's times for a request: ITS budget (it can ask for less) and the headroom, no probe."""
+    return RouteLimits(budget_seconds(settings, search), 0.0, _BUILD_HEADROOM_SECONDS)
 
 
 async def run_exam_solver(payload: PlanExamsRequest, settings: Settings) -> PlanExamsResponse:
     """Run the CPU-bound solve off the event loop with a hard ceiling."""
     solver = ExamSolver(settings)
-    timeout = budget_seconds(settings, payload.search) + _BUILD_HEADROOM_SECONDS
+    timeout = route_limits(settings, payload.search).ceiling_seconds
     try:
         return await asyncio.wait_for(asyncio.to_thread(solver.solve, payload), timeout=timeout)
     except asyncio.TimeoutError:
         logger.error("exam_plan_timed_out", request_id=str(payload.request_id))
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Exam planning timed out.",
+        raise SolverTimeoutError(
+            "Exam planning timed out.", route="plan-exams", ceiling_seconds=timeout,
         ) from None
 
 

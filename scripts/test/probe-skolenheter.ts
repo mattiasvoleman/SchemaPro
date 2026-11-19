@@ -158,7 +158,7 @@ export async function skolenheterChecks(owner: Client, api: PrismaService, marke
         applyChanges(
           tx,
           s,
-          [{ id: randomUUID(), seq: 0, entity: 'ORGANISATION', op: 'CREATE', externalId: created, localId: null, after: { name: 'SE Fritids', code: '33333333', schoolTypes: ['FTH'], gradeFrom: null, gradeTo: null } }],
+          [{ id: randomUUID(), seq: 0, entity: 'ORGANISATION', op: 'CREATE', externalId: created, localId: null, after: { name: 'SE Fritids', code: '33333333', schoolTypes: ['FTH'], gradeFrom: null, gradeTo: null }, protectedIdentity: false }],
           new Date(),
         ),
       );

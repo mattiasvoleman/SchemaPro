@@ -77,7 +77,7 @@ services:
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
       AI_ENGINE_URL: http://solver:8000
       AI_ENGINE_API_KEY: ${AI_ENGINE_API_KEY:-local-dev-shared-key-not-a-secret-0000}
-      AI_ENGINE_TIMEOUT_MS: ${AI_ENGINE_TIMEOUT_MS:-60000}
+      AI_ENGINE_TIMEOUT_MS: ${AI_ENGINE_TIMEOUT_MS:-120000}
       # Overridable like every other value here. The latency benchmark drives
       # far more traffic than a dev limit allows, and a run that measures the
       # throttler instead of the API is worthless — see scripts/bench/.

@@ -1,10 +1,11 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import { rethrowPrismaError } from '../common/utils/prisma-errors';
+import { namedCheckViolation, rethrowPrismaError } from '../common/utils/prisma-errors';
 import { requireSchoolId } from '../common/utils/request-context';
 import { PrismaService } from '../database/prisma.service';
 import { hasPersonalNumber, scrubPersonalNumbers } from '../schedule-exchange/file-safety';
+import { IMPORT_TEMPLATE_MAX_PLACEMENTS } from './dto/import-template.dto';
 import type {
   CreateImportTemplateDto,
   ImportTemplatePlacementDto,
@@ -43,6 +44,7 @@ export const TEMPLATE_DUPLICATE_FIELD = 'TEMPLATE_DUPLICATE_FIELD';
 export const TEMPLATE_FIELDS_CONFLICT = 'TEMPLATE_FIELDS_CONFLICT';
 export const TEMPLATE_PERSONAL_NUMBER = 'TEMPLATE_PERSONAL_NUMBER';
 export const TEMPLATE_LABEL_INVALID = 'TEMPLATE_LABEL_INVALID';
+export const TEMPLATE_TOO_LARGE = 'TEMPLATE_TOO_LARGE';
 
 /** The longest name, in characters (the database's CHECK says the same in characters of the text). */
 export const TEMPLATE_NAME_MAX = 80;
@@ -129,7 +131,8 @@ export function checkPlacements(kind: ImportTemplateKind, placements: readonly I
   const placed = new Set<string>();
   const out: TemplatePlacement[] = [];
   placements.forEach((post, index) => {
-    if (hasPersonalNumber(post.key) || hasPersonalNumber(post.label)) {
+    // A field name is the client's own text too: one that has the shape is refused by its place, never quoted back.
+    if (hasPersonalNumber(post.key) || hasPersonalNumber(post.label) || (post.field !== null && hasPersonalNumber(post.field))) {
       throw new BadRequestException({
         message: 'placements: en rubrik ser ut som ett personnummer. En mall har bara rubriker, och aldrig något som liknar ett personnummer.',
         code: TEMPLATE_PERSONAL_NUMBER,
@@ -270,6 +273,15 @@ export class ImportTemplatesService {
   /** The race the check above cannot see: a second writer's name. */
   private rethrow(error: unknown): never {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw nameTaken();
+    // The posts' size is counted by the database alone (the CHECK reads jsonb's own text, which has more spaces than the
+    // request): a template within the DTO's bounds can still be over it, and that is a 400 with a code, not a 500.
+    if (namedCheckViolation(error)?.startsWith('placements: ')) {
+      throw new BadRequestException({
+        message: 'placements: mallen är för stor. Korta rubrikerna eller spara två mallar.',
+        code: TEMPLATE_TOO_LARGE,
+        params: { maxPlacements: IMPORT_TEMPLATE_MAX_PLACEMENTS, maxBytes: 40_000 },
+      });
+    }
     return rethrowPrismaError(error);
   }
 }

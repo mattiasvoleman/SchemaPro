@@ -1714,6 +1714,8 @@
       "refusalLink": "Visa i veckan",
       "refusalLinkLabel": "Visa i veckan: {sentence}"
     },
+    "runAgain": "Kör igen",
+    "blockedRunning": "Generera körs redan för läsåret, av någon annan eller i en annan flik. Den går att starta när körningen är klar.",
     "runningUpTo": "Optimerar… detta kan ta upp till {minutes, plural, one {en minut} other {# minuter}}",
     "lastRun": "Senaste körning",
     "statusOPTIMAL": "Optimal lösning hittad",
@@ -1785,10 +1787,49 @@
       "RUNNING": "Körs",
       "SUCCEEDED": "Klar",
       "UNSTAFFED": "Stoppad: lärare saknas",
-      "PARTLY_LOCKED": "Stoppad: block delvis låst"
+      "PARTLY_LOCKED": "Stoppad: block delvis låst",
+      "ABANDONED": "Avbröts"
     },
     "historyYearsLoadFailedHint": "Läsåren kunde inte hämtas, så sidan vet inte vilket läsårs körningar den ska visa. Tidigare körningar och schemat är orörda. Ladda om sidan.",
     "historyNoYear": "Det finns inget aktivt läsår, så det finns inga körningar att visa."
+  },
+  "weekCheck": {
+    "button": "Kontrollera veckan",
+    "checking": "Kontrollerar…",
+    "title": "Kontroll av veckan",
+    "hint": "Räknar på veckan utan att lägga något schema och svarar på några sekunder.",
+    "verdict": {
+      "OK": "Förkontrollen hittade inget som stoppar veckan.",
+      "TIGHT": "Veckan är trång",
+      "IMPOSSIBLE": "Veckan går inte att lägga"
+    },
+    "okBody": "Det är ingen garanti för att ett schema finns. Kontrollen kan visa att en vecka är omöjlig eller trång, men inte att den går att lägga.",
+    "okCutTitle": "Förkontrollen hann inte räkna klart veckan",
+    "okCutBody": "Ingen årskurs hittades över gränsen, men veckolasten hann inte räknas för alla årskurser, så en årskurs utan rad är inte räknad. Det är ingen garanti för att ett schema finns.",
+    "atLeast": "Procenttalen är lägst så höga: räkningen hann inte klart.",
+    "tightBody": "En så trång vecka är svår att lägga, och mer tid kanske inte räcker. Raderna nedan säger vad som tar tid.",
+    "impossibleBody": "Generera skulle neka veckan inom några sekunder. Rätta orsakerna nedan först.",
+    "yearTight": "{grades, select, any {Klasserna med okänd årskurs ligger} other {Åk {grades} ligger}} på {percent} % av ramtiden.",
+    "yearOver": "{grades, select, any {Klasserna med okänd årskurs behöver} other {Åk {grades} behöver}} mer än ramtiden ger: minst {demandMinutes} av {capacityMinutes} minuter.",
+    "refusedTitle": "Veckan kan inte läggas som den är",
+    "notRun": "Det här kördes inte",
+    "skipped": {
+      "LUNCH_STAGE": "Lunchstegets egen räkning kördes inte. Generera gör den.",
+      "PLACEMENTS_PROBE": "Frågan om förläggningarna är orsaken ställdes inte. Generera ställer den.",
+      "WEEK_LOAD_DEADLINE": "Veckolasten hann inte räknas för alla årskurser, så en årskurs utan rad är inte räknad.",
+      "ENGINE": "Motorn anropades inte: alla lektioner är handplacerade."
+    },
+    "unavailable": "Kontrollen kunde inte köras just nu. Du kan ändå generera schemat.",
+    "unavailableOlder": "Schemamotorn uppdateras och kan inte kontrollera veckan ännu. Försök igen om några minuter. Du kan ändå generera schemat.",
+    "ask": {
+      "titleTight": "{grades, select, any {Klasserna med okänd årskurs är} other {Åk {grades} är}} {percent} % full. Kör ändå?",
+      "titleTightPlain": "Veckan är trång. Kör ändå?",
+      "titleImpossible": "Veckan går inte att lägga. Kör ändå?",
+      "titleRefused": "Veckan kan inte läggas som den är. Kör ändå?",
+      "bodyTight": "Generera kan ta flera minuter på en så trång vecka och kan sluta i en tidsgräns i stället för ett svar.",
+      "bodyImpossible": "Generera skulle neka veckan inom några sekunder. Kör den ändå om du vill ha den nekade körningen i körhistoriken.",
+      "confirm": "Kör ändå"
+    }
   },
   "timetable": {
     "title": "Grundschema",
@@ -2166,6 +2207,17 @@
       "until": "t.o.m. {date}",
       "from": "fr.o.m. {date}",
       "period": "period"
+    },
+    "latest": {
+      "label": "Visa senaste schemat",
+      "hint": "Ritar de lektioner senaste Generera lade bleka bakom veckan, för det du valt ovan. Nästa Generera lägger om dem, och en förläggning prövas inte mot dem.",
+      "needsFilter": "Välj en klass, en lärare eller en sal för att se det senaste schemat.",
+      "loading": "Läser det senaste schemat …",
+      "failed": "Det senaste schemat gick inte att läsa.",
+      "none": "Inget i det senaste schemat för det du valt.",
+      "shown": "{count, plural, one {# lektion} other {# lektioner}} ur det senaste schemat visas bleka.",
+      "legend": "Blek, streckad: ur det senaste schemat",
+      "ghost": "Senaste schemat: {lesson}"
     },
     "warnings": {
       "title": "Varningar",
@@ -4951,7 +5003,7 @@
     "DEMAND_CLIQUE_HOURS_SHORT": "För många lektioner på timmarna: klassen {group} och {sharingGroups, plural, one {den andra grupp} other {de # andra grupper}} som delar dess elever får aldrig krocka, och tillsammans behöver de {demandMinutes} minuter lektion i veckan. Ramtiderna{lunch, select, none { och de låsta lektionerna} other {, de låsta lektionerna och lunchen}} lämnar högst {capacityMinutes}. Vidga ramtiden{lunch, select, none { eller lås upp en lektion mitt på dagen} other {, lås upp en lektion mitt på dagen, eller flytta lunchfönstret}}.",
     "DEMAND_REQUIREMENTS_EXCEED_WEEK": "Lektionerna i {requirements, plural, one {# timplanspost} other {# timplansposter}} behöver {demandMinutes} minuter i veckan, och veckan rymmer {capacityMinutes}.",
     "DEMAND_YEAR_WEEK_SHORT": "Veckan rymmer inte {grades, select, any {klasserna med okänd årskurs} other {åk {grades}}}: lektionerna, växlingstiden mellan dem och lunchen behöver minst {demandMinutes} minuter, även om lektionerna fick delas upp fritt, och ramtiderna lämnar {capacityMinutes}. Vidga ramtiderna eller ta bort lektioner{shared, select, none {} other {, och titta nedan efter lärare som står på grupper som annars skulle gå samtidigt}}.",
-    "TEACHER_SHARED_BY_PARALLEL_GROUPS": "En lärare undervisar {groups, plural, one {# grupp} other {# grupper}} i {grades, select, any {klasserna med okänd årskurs} other {åk {grades}}} som tar elever ur samma klasser, {minutes} minuter i veckan tillsammans. En lärare kan inte vara på två ställen, så grupperna kan inte gå samtidigt{classOwn, select, none {. Klasserna de delar har inga egna lektioner kvar att lägga, så det är lärarens kö och inte klasserna som fyller veckan. Ge varje grupp en egen lärare och kör dem som ett parallellt block.} some {. Ingen egen lektion för en klass de delar kan ligga medan en av grupperna går; en klass har högst {classMinutes} minuter egna lektioner kvar att lägga i veckan. Ge varje grupp en egen lärare och kör dem som ett parallellt block, eller låt varje grupp ta elever ur färre klasser.} other {, och varje klass de delar måste sitta igenom dem en i taget. Ge varje grupp en egen lärare och kör dem som ett parallellt block, eller låt varje grupp ta elever ur färre klasser.}}",
+    "TEACHER_SHARED_BY_PARALLEL_GROUPS": "En lärare undervisar {groups, plural, one {# grupp} other {# grupper}} i {grades, select, any {klasserna med okänd årskurs} other {åk {grades}}} som tar elever ur {classes, plural, one {samma klass} other {samma klasser}}, {minutes} minuter i veckan tillsammans. En lärare kan inte vara på två ställen, så grupperna kan inte gå samtidigt{classOwn, select, none {. {classes, plural, one {Klassen de delar har ingen egen lektion kvar att lägga, så det är lärarens kö och inte klassen som fyller veckan.} other {Klasserna de delar har inga egna lektioner kvar att lägga, så det är lärarens kö och inte klasserna som fyller veckan.}} Ge varje grupp en egen lärare och kör dem som ett parallellt block.} some {. Ingen egen lektion för en klass de delar kan ligga medan en av grupperna går; en klass har högst {classMinutes} minuter egna lektioner kvar att lägga i veckan. Ge varje grupp en egen lärare och kör dem som ett parallellt block, eller låt varje grupp ta elever ur färre klasser.} other {, och varje klass de delar måste sitta igenom dem en i taget. Ge varje grupp en egen lärare och kör dem som ett parallellt block, eller låt varje grupp ta elever ur färre klasser.}}",
     "DEMAND_TEACHER_HOURS_SHORT": "För många lektioner för {teachers, plural, one {en lärares timmar} other {# lärares timmar}}: en lärare har en lektion i taget, och lektionerna som nämns här behöver mer av veckan än skoldagen, ramtiderna, rasterna, marginalerna runt lektionerna och lärarens låsta lektioner lämnar åt dem. Ingen regel behöver ge vika, det är timmarna som inte räcker. Vidga ramtiderna, korta marginalerna, lås upp en lektion, eller ge några av lektionerna till en annan lärare.",
     "DEMAND_TEACHER_LESSONS_EXCEED_ROOM": "En lärare har lektionerna i {requirements, plural, one {# timplanspost} other {# timplansposter}}, och de behöver {demandMinutes} minuter i veckan. De kan ligga på {days, plural, one {# dag} other {# dagar}} av veckans {weekDays}, och där lämnar skoldagen, ramtiderna, rasterna, marginalerna runt lektionerna och lärarens låsta lektioner högst {capacityMinutes}.",
     "DEMAND_LESSONS_EXCEED_GAPS": "För många lektioner för luckorna: en lektion läggs hel, i ett sträck, och för {resources, plural, one {en lärare, grupp eller uppsättning salar} other {# lärare, grupper eller uppsättningar salar}} rymmer luckorna som skoldagen, ramtiderna, rasterna, marginalerna runt lektionerna, de låsta lektionerna och lunchen med sina sittningar lämnar inte lektionerna som nämns här. Vidga ramtiderna, korta marginalerna, lås upp en lektion, vidga lunchfönstret eller ett stadiums sittning, eller korta, flytta eller fördela om några av lektionerna.",
@@ -7465,6 +7517,8 @@
       "ENGINE_LACKS_PINNED_LESSONS": "Schemamotorn är äldre än resten av tjänsten och kan inte hålla förlagda lektioner utan sal ännu. Försök igen om några minuter.",
       "ENGINE_MEALS_INCONSISTENT": "Schemamotorn svarade med lunchtider som inte passar läsårets perioder, så ingenting skrevs. Försök igen, och hör av dig om det upprepas.",
       "ENGINE_TIMED_OUT": "Schemamotorn hann inte svara inom sin längsta väntetid, så inget schema sparades. Motorn kan räkna klart i bakgrunden en stund till, så vänta några minuter innan du kör Generera igen.",
+      "ENGINE_RUN_ABANDONED": "Körningen avbröts när tjänsten startades om. Kör Generera igen.",
+      "GENERATE_ALREADY_RUNNING": "Generera kör redan för läsåret. Vänta tills körningen är klar.",
       "CANDIDATES_RUNNING": "Schemaförslag tas fram för läsåret just nu. Generera går att starta när de är klara."
     },
     "page": {
