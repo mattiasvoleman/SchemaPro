@@ -157,9 +157,10 @@ export class EngineTimingService implements OnApplicationBootstrap, OnModuleDest
   /**
    * The start's check. Throws, which stops the API from starting, only when the
    * engine answered AND AI_ENGINE_TIMEOUT_MS was set AND is shorter than the
-   * engine can need AND this is production: the deploy then fails and the one
-   * before it keeps serving (Railway keeps the last good deploy), and the log
-   * says which number to change. Anywhere else it is a line in the log.
+   * engine can need AND this is production: the API is then down, for no service
+   * in Railway has a health check, so nothing keeps the deploy before it serving
+   * while this one is refused (docs/DEPLOYMENT.md §5.1), and the log says which
+   * number to change. Anywhere else it is a line in the log.
    */
   async onApplicationBootstrap(): Promise<void> {
     const nodeEnv = this.configService.get<AppConfig>('app')?.nodeEnv;
