@@ -271,6 +271,101 @@ describe("the Nationell ämneskod picker", () => {
   });
 });
 
+/*
+ * Behörighet som i ett annat ämne ("SO WS" -> "SO"). The field is one pick among the school's other
+ * subjects; the gateway refuses a chain or a subject pointed at itself, but the form does not offer
+ * either, and says why a source cannot take a pointer of its own.
+ */
+describe("the Behörighet som i ämnet field", () => {
+  const withPointer = (id: string, name: string, source: string | null): Subject => ({
+    ...subject(id, name, null),
+    qualificationSubjectId: source,
+  });
+  const sourcePicker = () => screen.getByRole("combobox", { name: /^qualificationSource/ });
+
+  it("starts a new subject on its own behörighet, and sends no pointer when none is chosen", async () => {
+    state.subjects = [subject("s-so", "SO", null)];
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await openCreate(user);
+
+    expect(sourcePicker()).toHaveTextContent("qualificationOwn");
+    await user.type(screen.getByLabelText("name"), "Resurs");
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    // Not the sentinel, and no key at all: a save that does not touch the field reaches an API from before it.
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(createMock.mock.calls[0]![0]).not.toHaveProperty("qualificationSubjectId");
+  });
+
+  it("offers the school's other subjects that take their behörighet from none, and sends the chosen one", async () => {
+    state.subjects = [subject("s-so", "SO", null), withPointer("s-ws", "SO WS", "s-so"), subject("s-ma", "Matematik", "MA")];
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await openCreate(user);
+    await user.type(screen.getByLabelText("name"), "SO arbetspass");
+
+    await user.click(sourcePicker());
+    // Own behörighet first, then the two that inherit nothing: SO WS inherits, so it is no source (one level).
+    expect((await screen.findAllByRole("option")).map((option) => option.textContent)).toEqual(
+      expect.arrayContaining(["qualificationOwn", "SO", "Matematik"]),
+    );
+    expect(screen.queryByRole("option", { name: "SO WS" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("option", { name: "SO" }));
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ name: "SO arbetspass", qualificationSubjectId: "s-so" }));
+  });
+
+  it("opens on the stored source, never offers the subject itself, and sends null when it goes back to its own", async () => {
+    state.subjects = [subject("s-so", "SO", null), withPointer("s-ws", "SO WS", "s-so")];
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(SO WS)" }));
+
+    expect(sourcePicker()).toHaveTextContent("SO");
+    expect(sourcePicker()).toBeEnabled();
+    await user.click(sourcePicker());
+    expect(screen.queryByRole("option", { name: "SO WS" })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("option", { name: "qualificationOwn" }));
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ id: "s-ws", qualificationSubjectId: null }));
+  });
+
+  it("sends no pointer on a save that leaves the field as it was", async () => {
+    state.subjects = [subject("s-so", "SO", null), withPointer("s-ws", "SO WS", "s-so")];
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(SO WS)" }));
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    expect(updateMock.mock.calls[0]![0]).not.toHaveProperty("qualificationSubjectId");
+  });
+
+  it("locks the field of a subject that others take their behörighet from, and names them", async () => {
+    state.subjects = [subject("s-so", "SO", null), withPointer("s-ws", "SO WS", "s-so"), withPointer("s-f", "SO fördjupning", "s-so")];
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(SO)" }));
+
+    expect(sourcePicker()).toBeDisabled();
+    expect(screen.getByText("qualificationSourceLocked(SO WS, SO fördjupning)")).toBeInTheDocument();
+    expect(screen.queryByText("qualificationSourceHint")).not.toBeInTheDocument();
+  });
+
+  it("says in the table which subject a row takes its behörighet from, and nothing on a row that takes none", () => {
+    state.subjects = [subject("s-so", "SO", null), withPointer("s-ws", "SO WS", "s-so")];
+    render(<SubjectsPage />);
+
+    const rowOf = (name: string) =>
+      screen.getAllByRole("row").find((candidate) => within(candidate).queryAllByRole("cell")[0]?.textContent?.startsWith(name))!;
+    expect(within(rowOf("SO WS")).getAllByRole("cell")[0]).toHaveTextContent("qualificationLike(SO)");
+    expect(within(rowOf("SO")).getAllByRole("cell")[0]).not.toHaveTextContent("qualificationLike");
+  });
+});
+
 describe("the Räknas som undervisningstid switch", () => {
   it("is on by default and sends false once turned off", async () => {
     const user = userEvent.setup();

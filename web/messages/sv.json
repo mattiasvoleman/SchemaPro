@@ -356,7 +356,12 @@
     "tableCaption": "Skolans ämnen med kod, nationell ämneskod och färg",
     "dialogHint": "Namnet och färgen visas i alla schemavyer. Den nationella ämneskoden avgör vilken rad i timplanen ämnets timmar räknas mot.",
     "roomTypeDialogHint": "Salstypen går sedan att välja både för ämnen och för salar.",
-    "roomTypesUnavailable": "Listan över salstyper kunde inte hämtas. Ämnets salstyp ändras inte om du sparar utan att välja en ny."
+    "roomTypesUnavailable": "Listan över salstyper kunde inte hämtas. Ämnets salstyp ändras inte om du sparar utan att välja en ny.",
+    "qualificationSource": "Behörighet som i ämnet",
+    "qualificationOwn": "Egen behörighet",
+    "qualificationSourceHint": "En lärare som är behörig i det valda ämnet räknas som behörig här, med samma årskurser, sort och giltighet. Inget registreras två gånger. Bara ett steg: ett ämne som andra hämtar behörighet från kan inte självt hämta den.",
+    "qualificationSourceLocked": "{names} har behörighet som i det här ämnet, så det kan inte självt hämta sin behörighet från ett annat. Ta bort deras val först.",
+    "qualificationLike": "Behörighet som i {name}"
   },
   "distribution": {
     "title": "Fördelning över veckan",
@@ -4159,6 +4164,7 @@
     "qualificationsTitle": "Behörigheter",
     "qualificationsHint": "Hela listan sparas på en gång: det du ser är det som gäller. Ett ämne per rad — Ma 1–6 och Ma 7–9 skrivs som 1–9.",
     "noQualifications": "Inga behörigheter registrerade. Vikarieförslag och behörighetskontroll faller tillbaka på vem som har en timplanspost i ämnet.",
+    "alsoCovers": "gäller också {names}",
     "addQualification": "Lägg till ämne",
     "removeQualification": "Ta bort rad {row}",
     "qualificationSubject": "Ämne",

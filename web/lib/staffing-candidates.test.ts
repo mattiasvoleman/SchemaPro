@@ -3,7 +3,7 @@ import { candidateQualification, candidateRemaining, strongestFirst, type Candid
 
 const YEAR = { startDate: "2026-08-17", endDate: "2027-06-11" };
 
-const row = (overrides: Partial<Parameters<typeof candidateQualification>[0][number]> = {}) => ({
+const row = (overrides: Partial<Parameters<typeof candidateQualification>[0][number]> & { viaSubjectId?: string } = {}) => ({
   userId: "t-anna",
   subjectId: "s-ma",
   minGradeLevel: 7,
@@ -46,6 +46,30 @@ describe("candidateQualification", () => {
     expect(
       candidateQualification([row({ validTo: "2026-06-30" })], "t-anna", "s-ma", { min: 7, max: 7 }, YEAR),
     ).toEqual(none);
+  });
+
+  /*
+   * Behörighet som i ett annat ämne. The page asks GET /teacher-qualifications
+   * ?inherited=true, which hands over the rows a subject that takes its
+   * behörighet from another derives, each marked viaSubjectId and carrying the
+   * using subject's id. The badge then judges them as any row: nothing here
+   * knows about the pointer, which is the gateway's rule, read and not copied.
+   */
+  it("badges a teacher by the derived row of a subject that takes its behörighet from another, with the source row's span and kind", () => {
+    const derived = row({ subjectId: "s-so-ws", kind: "LEGITIMATION", minGradeLevel: 7, maxGradeLevel: 9, viaSubjectId: "s-so" });
+    const stored = row({ subjectId: "s-so", kind: "LEGITIMATION", minGradeLevel: 7, maxGradeLevel: 9 });
+
+    // Without the derived row the SO teacher has no behörighet in SO WS: the badge the user saw.
+    expect(candidateQualification([stored], "t-anna", "s-so-ws", { min: 8, max: 8 }, YEAR)).toEqual({ recorded: true, kind: null });
+    // With it, she is legitimerad there, and for exactly the grades the SO row holds.
+    expect(candidateQualification([stored, derived], "t-anna", "s-so-ws", { min: 8, max: 8 }, YEAR)).toEqual({ recorded: true, kind: "LEGITIMATION" });
+    expect(candidateQualification([stored, derived], "t-anna", "s-so-ws", { min: 6, max: 8 }, YEAR)).toEqual({ recorded: true, kind: null });
+  });
+
+  it("takes the stronger of an own row and a derived one on the same subject", () => {
+    const own = row({ subjectId: "s-so-ws", kind: "TILLATEN" });
+    const derived = row({ subjectId: "s-so-ws", kind: "BEHORIG", viaSubjectId: "s-so" });
+    expect(candidateQualification([own, derived], "t-anna", "s-so-ws", { min: 7, max: 7 }, YEAR)).toEqual({ recorded: true, kind: "BEHORIG" });
   });
 
   it("covers a group with no derivable grade by any row in the subject", () => {

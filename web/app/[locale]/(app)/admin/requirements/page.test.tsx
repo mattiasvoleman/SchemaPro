@@ -297,6 +297,8 @@ const freshState = () => ({
    */
   load: disabled<LoadFixture>(),
   qualifications: loaded([] as QualificationFixture[]),
+  /** What the page asked useTeacherQualifications for: the teacher and the options, per render. */
+  qualificationAsks: [] as unknown[][],
   /**
    * Set only by the export tests, which are the ones that care WHICH year the
    * page asked for. Left null everywhere else so `useRequirements` keeps
@@ -441,7 +443,10 @@ vi.mock("@/lib/planning-year", () => ({
 // by this page.
 vi.mock("@/lib/staffing-queries", () => ({
   useStaffingLoad: () => state.load,
-  useTeacherQualifications: () => state.qualifications,
+  useTeacherQualifications: (...ask: unknown[]) => {
+    state.qualificationAsks.push(ask);
+    return state.qualifications;
+  },
 }));
 
 // Delade lektioner: the shares read, from its own module; the grouping is real.
@@ -2121,6 +2126,24 @@ describe("Timplan cell dialog candidates", () => {
 
     expect(optionNamed("Cilla Ek")?.textContent).toContain("kindTILLATEN");
     expect(optionNamed("Anna Svensson")?.textContent).toContain("candidateUnqualified");
+  });
+
+  it("asks for the derived rows and badges by them: a subject that takes its behörighet from another counts the source's teachers", async () => {
+    // Behörighet som i ett annat ämne. The gateway's rule makes a row held in the source subject count for
+    // the subject that uses it, and hands it over with `?inherited=true`, marked viaSubjectId and with the
+    // using subject's id. Bo holds "SO" 7–9 elsewhere; for this cell's subject, the derived row says so.
+    state.qualifications = loaded([
+      qualification({ id: "q-anna-so" }),
+      { ...qualification({ id: "q-bo-src:s-so", userId: "t-bo", kind: "BEHORIG", minGradeLevel: 7, maxGradeLevel: 9 }), viaSubjectId: "s-src" } as never,
+    ]);
+
+    await openTeacherPicker("cellLabelPeriod(7A|Samhällsorientering|2|60|badgeOdd)");
+
+    expect(optionNamed("Bo Lind")?.textContent).toContain("kindBEHORIG");
+    expect(optionNamed("Bo Lind")?.textContent).not.toContain("candidateUnqualified");
+    // The page asked the way a screen that judges must: with the school's list and the derived rows.
+    expect(state.qualificationAsks.length).toBeGreaterThan(0);
+    expect(state.qualificationAsks.every((ask) => ask[0] === null && JSON.stringify(ask[1]) === '{"inherited":true}')).toBe(true);
   });
 
   it("gives a teaching group the span of its members' home classes", async () => {
