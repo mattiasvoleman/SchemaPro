@@ -25118,6 +25118,14 @@
         "operationId": "TeacherQualificationsController_list",
         "parameters": [
           {
+            "name": "inherited",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "userId",
             "required": false,
             "in": "query",
@@ -30201,6 +30209,11 @@
             "nullable": true,
             "maxLength": 20
           },
+          "qualificationSubjectId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
           "countsTowardTimplan": {
             "type": "boolean"
           },
@@ -35266,6 +35279,11 @@
             "type": "string",
             "nullable": true,
             "maxLength": 20
+          },
+          "qualificationSubjectId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
           },
           "countsTowardTimplan": {
             "type": "boolean"

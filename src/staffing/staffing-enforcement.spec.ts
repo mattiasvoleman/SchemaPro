@@ -308,6 +308,28 @@ describe('lessonQualificationFindings and the läsår’s numbering', () => {
       ask(G10, { window: { startDate: '2028-09-05', endDate: '2028-09-05' }, gradeNumbering: 'TIOARIG' }),
     ).resolves.toEqual([]);
   });
+
+  describe('a subject that takes its behörighet from another (Behörighet som i ett annat ämne)', () => {
+    // The lesson is in "ma"; Anna holds the SO-like source "so" alone.
+    const holdsSource = (pointsAt: string | null) => {
+      tx.subject.findMany.mockResolvedValue([{ id: 'ma', qualificationSubjectId: pointsAt }]);
+      tx.teacherSubjectQualification.findMany.mockResolvedValue([
+        { userId: 'anna', subjectId: 'so', minGradeLevel: 7, maxGradeLevel: 9, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+      ]);
+    };
+
+    it('says nothing of a teacher who holds the source for the class, which the report agrees with', async () => {
+      storeYear('TIOARIG');
+      holdsSource('so');
+      await expect(ask(G10)).resolves.toEqual([]);
+    });
+
+    it('still warns when the subject takes its behörighet from none: the warning the pointer removes', async () => {
+      storeYear('TIOARIG');
+      holdsSource(null);
+      await expect(ask(G10)).resolves.toEqual(notQualified('10'));
+    });
+  });
 });
 
 /*

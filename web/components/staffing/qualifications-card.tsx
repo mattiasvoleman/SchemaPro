@@ -16,6 +16,7 @@ import {
   type QualificationProblem,
 } from "@/lib/staffing-forms";
 import type { Subject, TeacherQualification, TeacherQualificationKind } from "@/lib/types";
+import { qualificationUsers } from "@/lib/qualification-source";
 import { toDateString } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -146,6 +147,22 @@ export function QualificationsCard({
                   className="flex items-center gap-1.5 rounded-md border px-2 py-1 text-sm"
                 >
                   <span className="font-medium">{subjectName(row.subjectId)}</span>
+                  {/*
+                    A subject that takes its behörighet from this one (Behörighet som
+                    i ett annat ämne): the row is stored once and counts for it too,
+                    said here so nobody reads it as two rows or goes to add one.
+                  */}
+                  {qualificationUsers(subjects, row.subjectId).length > 0 ? (
+                    <span className="text-xs text-muted-foreground">
+                      (
+                      {t("alsoCovers", {
+                        names: qualificationUsers(subjects, row.subjectId)
+                          .map((user) => user.name)
+                          .join(", "),
+                      })}
+                      )
+                    </span>
+                  ) : null}
                   <span className="text-muted-foreground">
                     {spanLabel(row.minGradeLevel, row.maxGradeLevel, t)}
                   </span>

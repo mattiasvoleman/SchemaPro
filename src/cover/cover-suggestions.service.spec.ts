@@ -182,6 +182,58 @@ describe('CoverSuggestionsService', () => {
     });
   });
 
+  describe('behörighet som i ett annat ämne (Subjects.qualificationSubjectId)', () => {
+    it('ranks a teacher who holds only the source subject as behörig for the lesson’s subject, with the source row’s kind', async () => {
+      // The lesson is in "ma", which takes its behörighet from "mate"; S holds "mate" alone.
+      tx.subject.findMany.mockImplementation((query: { where?: { qualificationSubjectId?: unknown } }) =>
+        Promise.resolve(
+          query.where?.qualificationSubjectId
+            ? [{ id: 'ma', qualificationSubjectId: 'mate' }]
+            : [{ id: 'ma', name: 'Matematik' }],
+        ),
+      );
+      tx.teacherSubjectQualification.findMany.mockResolvedValue([
+        { userId: S, subjectId: 'mate', minGradeLevel: 7, maxGradeLevel: 9, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+      ]);
+
+      const answer = await service.candidates(LESSON, testUser());
+
+      expect(tx.teacherSubjectQualification.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { subjectId: { in: ['ma', 'mate'] } } }),
+      );
+      const s = answer.candidates.find((c) => c.userId === S)!;
+      expect(s.qualificationKind).toBe('LEGITIMATION');
+      expect(s.reasons.find((r) => r.code === 'QUAL_LEGITIMATION')?.params).toEqual({ subject: 'Matematik', grades: '7' });
+    });
+
+    it('keeps the source row’s årskurser: a 1–3 row of the source does not make S behörig for an åk 7 lesson', async () => {
+      tx.subject.findMany.mockImplementation((query: { where?: { qualificationSubjectId?: unknown } }) =>
+        Promise.resolve(
+          query.where?.qualificationSubjectId
+            ? [{ id: 'ma', qualificationSubjectId: 'mate' }]
+            : [{ id: 'ma', name: 'Matematik' }],
+        ),
+      );
+      tx.teacherSubjectQualification.findMany.mockResolvedValue([
+        { userId: S, subjectId: 'mate', minGradeLevel: 1, maxGradeLevel: 3, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+      ]);
+
+      const s = (await service.candidates(LESSON, testUser())).candidates.find((c) => c.userId === S)!;
+
+      expect(s.qualificationKind).toBeNull();
+    });
+
+    it('without a pointer, a row of another subject makes nobody behörig, as it always did', async () => {
+      tx.teacherSubjectQualification.findMany.mockResolvedValue([
+        { userId: S, subjectId: 'mate', minGradeLevel: 7, maxGradeLevel: 9, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+      ]);
+
+      const s = (await service.candidates(LESSON, testUser())).candidates.find((c) => c.userId === S)!;
+
+      expect(s.qualificationKind).toBeNull();
+    });
+  });
+
   it('candidates: the hard rules exclude with their codes; the rest ranked with reasons, behörig colleague before the pool', async () => {
     const answer = await service.candidates(LESSON, testUser());
     expect(answer.excluded).toEqual([

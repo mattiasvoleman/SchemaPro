@@ -66873,3 +66873,457 @@ BEGIN
   RAISE NOTICE 'km 539: PostgREST''s roles and a session with no one behind it meet nothing';
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Behörighet som i ett annat ämne (20270225090000), sections 540-544: "Subjects"."qualificationSubjectId", the subject whose
+-- teachers' behörigheter a subject uses ("SO WS" -> "SO"). The helpers made here have the prefix bi_, and every section runs in
+-- the school the skyddad identitet fixtures made (rls-skyddad-school), whose principals are the ones sections 436 and 535 use:
+-- …e50000000001 FULL, …02 REKTOR, …03 EXPEDITION, …04 SCHEMALAGGARE, …05 LASARE, …06 and …07 teachers, …11 and …12 pupils,
+-- …21 and …22 guardians, …31 the other school's FULL. The arms of Subjects are NOT changed by the migration and none is added:
+-- these sections prove the column is governed by the arms that were there, and that the database holds the shape the gateway's
+-- reader (src/staffing/qualification-inheritance.ts) assumes.
+--
+--   540  the catalogue: the column, the CHECK, the composite key with its column-list SET NULL, ON UPDATE NO ACTION, the index,
+--        the trigger and its function (definer, no EXECUTE for any role), the six arms of Subjects as they were, no policy that
+--        names the column, the API role's privileges on it and PostgREST's, nobody's MAINTAIN
+--   541  who reads and who writes: Planering (full, rektor, schemaläggare) sets and clears it; the expedition and the läsare are
+--        refused; every member of the school reads the value (the table's member arm); a teacher, a pupil and a guardian write
+--        nothing; the other school meets nothing
+--   542  the school and the source's end: a pointer to another school's subject is refused by the key (23503) though row security
+--        shows that subject to nobody; the source subject deleted clears the pointer, the row and its schoolId stay
+--   543  one level: a chain is refused (QS409) whichever end is written and whichever statement writes it; a subject is not its own
+--        source (23514, and QS409 when it already has an heir); the writes the trigger is not asked about pass
+--   544  the lock: a write that sets a link holds the school's advisory lock to the end of its transaction, one that touches no link
+--        holds none (a write that CLEARS one is 544o's, since it needs a link planted past the trigger); the trigger function is
+--        no API role's to call
+-- ---------------------------------------------------------------------------
+
+-- 540: the catalogue.
+BEGIN;
+DO $$
+DECLARE
+  def text;
+  n integer;
+  r text;
+  t text;
+  fn oid;
+BEGIN
+  SELECT format_type(a.atttypid, a.atttypmod) || ':' || a.attnotnull::text || ':' || coalesce(pg_get_expr(d.adbin, d.adrelid), '') INTO def
+    FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = 'public."Subjects"'::regclass AND a.attname = 'qualificationSubjectId' AND NOT a.attisdropped;
+  IF def IS DISTINCT FROM 'uuid:false:' THEN RAISE EXCEPTION 'bi 540: the column is %, not a nullable uuid with no default', def; END IF;
+
+  -- The CHECK: a subject is not its own source. Validated, and the one CHECK this migration added.
+  SELECT count(*) INTO n FROM pg_constraint c
+   WHERE c.conrelid = 'public."Subjects"'::regclass AND c.conname = 'Subjects_qualificationSubjectId_is_not_itself' AND c.contype = 'c' AND c.convalidated;
+  IF n <> 1 THEN RAISE EXCEPTION 'bi 540: the CHECK is missing or not validated'; END IF;
+  SELECT pg_get_constraintdef(c.oid) INTO def FROM pg_constraint c WHERE c.conname = 'Subjects_qualificationSubjectId_is_not_itself';
+  IF def NOT LIKE '%"qualificationSubjectId" IS NULL%' OR def NOT LIKE '%"qualificationSubjectId" <> id%' THEN RAISE EXCEPTION 'bi 540: the CHECK is %', def; END IF;
+
+  -- The key: composite with the school, to the tenant key, SET NULL on the column alone, NO ACTION on update, validated.
+  SELECT count(*) INTO n FROM pg_constraint c
+   WHERE c.conrelid = 'public."Subjects"'::regclass AND c.confrelid = 'public."Subjects"'::regclass AND c.contype = 'f'
+     AND c.conname = 'Subjects_qualificationSubjectId_schoolId_fkey' AND c.convalidated
+     AND (SELECT array_agg(a.attname::text ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum)
+         = ARRAY['qualificationSubjectId', 'schoolId']
+     AND (SELECT array_agg(a.attname::text ORDER BY k.ord) FROM unnest(c.confkey) WITH ORDINALITY k(attnum, ord) JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.attnum)
+         = ARRAY['id', 'schoolId']
+     AND c.confdeltype = 'n' AND c.confupdtype = 'a';
+  IF n <> 1 THEN RAISE EXCEPTION 'bi 540: the key is not (qualificationSubjectId, schoolId) -> Subjects(id, schoolId) ON DELETE SET NULL, ON UPDATE NO ACTION'; END IF;
+  -- The column list of the SET NULL: only qualificationSubjectId. A plain SET NULL on a composite key would null schoolId too
+  -- (NOT NULL) and refuse the delete of the source; the list is what lets it through (PostgreSQL 15+).
+  SELECT pg_get_constraintdef(c.oid) INTO def FROM pg_constraint c WHERE c.conname = 'Subjects_qualificationSubjectId_schoolId_fkey';
+  IF def NOT LIKE '%ON DELETE SET NULL ("qualificationSubjectId")%' THEN RAISE EXCEPTION 'bi 540: the SET NULL names no column list: %', def; END IF;
+  SELECT count(*) INTO n FROM pg_constraint c WHERE c.conname = 'Subjects_qualificationSubjectId_schoolId_fkey'
+     AND (SELECT array_agg(a.attname::text) FROM unnest(c.confdelsetcols) s(attnum) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = s.attnum) = ARRAY['qualificationSubjectId'];
+  IF n <> 1 THEN RAISE EXCEPTION 'bi 540: the SET NULL columns are not qualificationSubjectId alone'; END IF;
+  -- The only key out of Subjects to Subjects, and the tenant key it needs is there.
+  SELECT count(*) INTO n FROM pg_constraint c WHERE c.conrelid = 'public."Subjects"'::regclass AND c.confrelid = 'public."Subjects"'::regclass AND c.contype = 'f';
+  IF n <> 1 THEN RAISE EXCEPTION 'bi 540: % keys from Subjects to Subjects, not the one', n; END IF;
+  SELECT pg_get_constraintdef(c.oid) INTO def FROM pg_constraint c WHERE c.conrelid = 'public."Subjects"'::regclass AND c.contype = 'u' AND c.conname = 'Subjects_id_schoolId_key';
+  IF def IS DISTINCT FROM 'UNIQUE (id, "schoolId")' THEN RAISE EXCEPTION 'bi 540: the tenant key is %', def; END IF;
+
+  -- The key's leading-column index, which the delete of a source asks for.
+  SELECT indexdef INTO def FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'Subjects' AND indexname = 'Subjects_qualificationSubjectId_schoolId_idx';
+  IF def IS NULL OR def NOT LIKE '%("qualificationSubjectId", "schoolId")%' THEN RAISE EXCEPTION 'bi 540: the index is %', def; END IF;
+
+  -- The trigger: BEFORE, per row, INSERT and UPDATE OF the column alone, only for a write that sets a link.
+  SELECT count(*) INTO n FROM pg_trigger g
+   WHERE g.tgrelid = 'public."Subjects"'::regclass AND g.tgname = 'Subjects_qualification_is_one_level' AND NOT g.tgisinternal
+     AND (g.tgtype & 1) = 1 AND (g.tgtype & 2) = 2 AND (g.tgtype & 4) = 4 AND (g.tgtype & 16) = 16 AND (g.tgtype & 8) = 0 AND (g.tgtype & 32) = 0
+     AND g.tgenabled = 'O';
+  IF n <> 1 THEN RAISE EXCEPTION 'bi 540: the trigger is not BEFORE INSERT OR UPDATE, per row, enabled'; END IF;
+  SELECT pg_get_triggerdef(g.oid) INTO def FROM pg_trigger g WHERE g.tgrelid = 'public."Subjects"'::regclass AND g.tgname = 'Subjects_qualification_is_one_level';
+  IF def NOT LIKE '%UPDATE OF "qualificationSubjectId" ON%' OR def NOT LIKE '%WHEN ((new."qualificationSubjectId" IS NOT NULL))%'
+     OR def NOT LIKE '%app.subjects_qualification_is_one_level()%' THEN
+    RAISE EXCEPTION 'bi 540: the trigger is %', def;
+  END IF;
+  -- Its function: a definer with a pinned search path (it reads every subject of the school past row security), the lock named in
+  -- the source, and no EXECUTE for PUBLIC or any role: a trigger function is nobody's to call.
+  SELECT p.oid INTO fn FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace WHERE s.nspname = 'app' AND p.proname = 'subjects_qualification_is_one_level';
+  IF fn IS NULL THEN RAISE EXCEPTION 'bi 540: the trigger function is missing'; END IF;
+  IF NOT (SELECT p.prosecdef FROM pg_proc p WHERE p.oid = fn) THEN RAISE EXCEPTION 'bi 540: the trigger function is not a definer'; END IF;
+  -- Exactly "public, pg_temp", as every other definer's section asks: pg_temp LAST. A path without it, or with it first, lets a
+  -- temporary table the API role can create stand in for "Subjects" in the function's reads, past row security.
+  IF NOT coalesce((SELECT p.proconfig @> ARRAY['search_path=public, pg_temp'] AND cardinality(p.proconfig) = 1 FROM pg_proc p WHERE p.oid = fn), false) THEN
+    RAISE EXCEPTION 'bi 540: the trigger function does not pin search_path = public, pg_temp (it is %)', (SELECT p.proconfig::text FROM pg_proc p WHERE p.oid = fn);
+  END IF;
+  IF (SELECT p.prosrc FROM pg_proc p WHERE p.oid = fn) NOT LIKE '%pg_advisory_xact_lock%' THEN RAISE EXCEPTION 'bi 540: the trigger function takes no lock'; END IF;
+  IF has_function_privilege('public', fn, 'EXECUTE') THEN RAISE EXCEPTION 'bi 540: PUBLIC may execute the trigger function'; END IF;
+  FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_function_privilege(r, fn, 'EXECUTE') THEN
+      RAISE EXCEPTION 'bi 540: % may execute the trigger function', r;
+    END IF;
+  END LOOP;
+
+  -- The arms of Subjects, as they were: six, and none names the new column (a policy that read it would be a new arm).
+  SELECT string_agg(policyname || ':' || cmd || ':' || roles::text, ',' ORDER BY policyname COLLATE "C") INTO def
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'Subjects';
+  IF def IS DISTINCT FROM 'subjects_admin_delete:DELETE:{authenticated},subjects_admin_insert:INSERT:{authenticated},subjects_admin_select:SELECT:{authenticated},subjects_admin_update:UPDATE:{authenticated},subjects_member_select:SELECT:{authenticated},subjects_service_select:SELECT:{app_authenticated}' THEN
+    RAISE EXCEPTION 'bi 540: the arms of Subjects are %', def;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'Subjects'
+              AND (coalesce(qual, '') || coalesce(with_check, '')) LIKE '%qualificationSubjectId%') THEN
+    RAISE EXCEPTION 'bi 540: a policy of Subjects names the column';
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."Subjects"'::regclass) THEN RAISE EXCEPTION 'bi 540: row security is not on'; END IF;
+
+  -- Privileges on the column: the API role (through authenticated) reads and writes it as it does the table, PostgREST's anon
+  -- reads nothing, and PG 17's MAINTAIN is held by nobody.
+  FOREACH t IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE'] LOOP
+    IF NOT has_column_privilege('app_authenticated', 'public."Subjects"', 'qualificationSubjectId', t) THEN
+      RAISE EXCEPTION 'bi 540: the API role lacks % on the column', t;
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon')
+     AND (has_column_privilege('anon', 'public."Subjects"', 'qualificationSubjectId', 'SELECT')
+          OR has_column_privilege('anon', 'public."Subjects"', 'qualificationSubjectId', 'INSERT')
+          OR has_column_privilege('anon', 'public."Subjects"', 'qualificationSubjectId', 'UPDATE')) THEN
+    RAISE EXCEPTION 'bi 540: anon holds a privilege on the column';
+  END IF;
+  IF current_setting('server_version_num')::int >= 170000 THEN
+    FOREACH r IN ARRAY ARRAY['authenticated', 'app_authenticated', 'service_role', 'anon'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) AND has_table_privilege(r, 'public."Subjects"', 'MAINTAIN') THEN
+        RAISE EXCEPTION 'bi 540: % holds MAINTAIN on Subjects', r;
+      END IF;
+    END LOOP;
+  END IF;
+  RAISE NOTICE 'bi 540: the catalogue of Subjects.qualificationSubjectId is as the migration says, and the arms are the ones that were';
+END $$;
+ROLLBACK;
+
+-- 541: who reads and who writes.
+BEGIN;
+CREATE FUNCTION pg_temp.bi_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'bi: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+CREATE FUNCTION pg_temp.bi_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  other uuid;
+  who text;
+  n bigint;
+  so uuid;
+  ws uuid;
+  v uuid;
+BEGIN
+  PERFORM pg_temp.bi_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  IF school IS NULL OR (SELECT slug FROM "Schools" WHERE id = school) IS DISTINCT FROM 'rls-skyddad-school' THEN
+    RAISE EXCEPTION 'bi 541: the full administrator is not in rls-skyddad-school; fixtures did not run';
+  END IF;
+  PERFORM pg_temp.bi_as('00000000-0000-4000-8000-e50000000031');
+  other := app.current_school_id();
+  IF other IS NULL OR other = school THEN RAISE EXCEPTION 'bi 541: the other school''s administrator is not in another school'; END IF;
+  IF EXISTS (SELECT 1 FROM "Subjects" WHERE "qualificationSubjectId" IS NOT NULL) THEN
+    RAISE EXCEPTION 'bi 541: a school starts with a subject that takes its behörighet from another';
+  END IF;
+
+  -- The full administrator makes two subjects and points one at the other: the write of the column is the table's own write.
+  PERFORM pg_temp.bi_as('00000000-0000-4000-8000-e50000000001');
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (school, 'bi SO', now()) RETURNING id INTO so;
+  INSERT INTO "Subjects" ("schoolId", name, "qualificationSubjectId", "updatedAt") VALUES (school, 'bi SO WS', so, now()) RETURNING id INTO ws;
+  SELECT "qualificationSubjectId" INTO v FROM "Subjects" WHERE id = ws;
+  IF v IS DISTINCT FROM so THEN RAISE EXCEPTION 'bi 541: the pointer is not what the insert wrote'; END IF;
+
+  -- Planering sets and clears it, whoever wrote the row: rektor and the schemaläggare.
+  FOREACH who IN ARRAY ARRAY['02', '04'] LOOP
+    PERFORM pg_temp.bi_as('00000000-0000-4000-8000-e500000000' || who);
+    UPDATE "Subjects" SET "qualificationSubjectId" = NULL WHERE id = ws;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 1 THEN RAISE EXCEPTION 'bi 541: …% could not clear the pointer', who; END IF;
+    UPDATE "Subjects" SET "qualificationSubjectId" = so WHERE id = ws;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 1 THEN RAISE EXCEPTION 'bi 541: …% could not set the pointer', who; END IF;
+  END LOOP;
+
+  -- The expedition and the läsare read it and are refused every write of it (the update arm's check asks Planering), and the
+  -- insert of a subject that already carries one.
+  FOREACH who IN ARRAY ARRAY['03', '05'] LOOP
+    PERFORM pg_temp.bi_as('00000000-0000-4000-8000-e500000000' || who);
+    SELECT "qualificationSubjectId" INTO v FROM "Subjects" WHERE id = ws;
+    IF v IS DISTINCT FROM so THEN RAISE EXCEPTION 'bi 541: …% reads the pointer as %', who, v; END IF;
+    PERFORM pg_temp.bi_refuses(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = NULL WHERE id = %L$q$, ws), '42501', format('…%s clearing the pointer', who));
+    PERFORM pg_temp.bi_refuses(format($q$INSERT INTO "Subjects" ("schoolId", name, "qualificationSubjectId", "updatedAt") VALUES (%L, 'bi EGEN', %L, now())$q$, school, so), '42501', format('…%s making a subject with a pointer', who));
+  END LOOP;
+
+  -- Teachers, pupils and guardians read the value (the table's member arm: a colleague's behörighet is no secret, and the
+  -- gateway's readers run as a teacher too) and write nothing.
+  FOREACH who IN ARRAY ARRAY['06', '07', '11', '12', '21', '22'] LOOP
+    PERFORM pg_temp.bi_as('00000000-0000-4000-8000-e500000000' || who);
+    SELECT "qualificationSubjectId" INTO v FROM "Subjects" WHERE id = ws;
+    IF v IS DISTINCT FROM so THEN RAISE EXCEPTION 'bi 541: % …% reads the pointer as %', app.current_user_role(), who, v; END IF;
+    UPDATE "Subjects" SET "qualificationSubjectId" = NULL WHERE id = ws;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'bi 541: % …% cleared the pointer', app.current_user_role(), who; END IF;
+    PERFORM pg_temp.bi_refuses(format($q$INSERT INTO "Subjects" ("schoolId", name, "qualificationSubjectId", "updatedAt") VALUES (%L, 'bi EGEN', %L, now())$q$, school, so), '42501', format('%s …%s making a subject with a pointer', app.current_user_role(), who));
+  END LOOP;
+
+  -- The other school meets nothing of this school's, and changes nothing of it.
+  PERFORM pg_temp.bi_as('00000000-0000-4000-8000-e50000000031');
+  SELECT count(*) INTO n FROM "Subjects" WHERE id IN (so, ws);
+  IF n <> 0 THEN RAISE EXCEPTION 'bi 541: the other school reads % of this school''s subjects', n; END IF;
+  UPDATE "Subjects" SET "qualificationSubjectId" = NULL WHERE id = ws;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'bi 541: the other school cleared a pointer of this school''s'; END IF;
+
+  -- Nothing the sections above did changed what was there to begin with.
+  PERFORM pg_temp.bi_as('00000000-0000-4000-8000-e50000000001');
+  SELECT "qualificationSubjectId" INTO v FROM "Subjects" WHERE id = ws;
+  IF v IS DISTINCT FROM so THEN RAISE EXCEPTION 'bi 541: the pointer moved while only refusals were meant to happen'; END IF;
+  RAISE NOTICE 'bi 541: Planering writes the pointer; every member of the school reads it; the expedition, the läsare, teachers, pupils, guardians and the other school write nothing';
+END $$;
+ROLLBACK;
+
+-- 542: the school, and the source's end.
+BEGIN;
+CREATE FUNCTION pg_temp.bi_refuses(stmt text, expected text, what text) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE got text := 'none';
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM expected THEN
+    RAISE EXCEPTION 'bi: % should be refused with %, was %', what, expected, got USING ERRCODE = 'P0001';
+  END IF;
+END
+$f$;
+CREATE FUNCTION pg_temp.bi_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  other uuid;
+  n bigint;
+  so uuid;
+  ws uuid;
+  ws2 uuid;
+  foreign_so uuid;
+  foreign_ws uuid;
+  v uuid;
+  s uuid;
+BEGIN
+  PERFORM pg_temp.bi_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  PERFORM pg_temp.bi_as('00000000-0000-4000-8000-e50000000031');
+  other := app.current_school_id();
+  IF school IS NULL OR other IS NULL OR school = other THEN RAISE EXCEPTION 'bi 542: the two schools did not resolve'; END IF;
+
+  -- The other school's administrator makes a subject of their own. Its source is this school's subject, which row security
+  -- shows them nothing of: the composite key refuses it all the same (23503), and refuses it as a write of the column to one
+  -- that exists in their school as well.
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (other, 'bi SO annan', now()) RETURNING id INTO foreign_so;
+  INSERT INTO "Subjects" ("schoolId", name, "qualificationSubjectId", "updatedAt") VALUES (other, 'bi SO WS annan', foreign_so, now()) RETURNING id INTO foreign_ws;
+
+  PERFORM pg_temp.bi_as('00000000-0000-4000-8000-e50000000001');
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (school, 'bi SO', now()) RETURNING id INTO so;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (school, 'bi SO WS', now()) RETURNING id INTO ws;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (school, 'bi SO fördjupning', now()) RETURNING id INTO ws2;
+
+  -- This school's admin points at the other school's subject (an id they cannot see, which a client could still send):
+  PERFORM pg_temp.bi_refuses(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, foreign_so, ws), '23503', 'a pointer to another school''s subject, on update');
+  PERFORM pg_temp.bi_refuses(format($q$INSERT INTO "Subjects" ("schoolId", name, "qualificationSubjectId", "updatedAt") VALUES (%L, 'bi korsad', %L, now())$q$, school, foreign_so), '23503', 'a pointer to another school''s subject, on insert');
+  PERFORM pg_temp.bi_refuses(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, gen_random_uuid(), ws), '23503', 'a pointer to a subject that does not exist');
+  -- Another school's subject that itself has a pointer (foreign_ws -> foreign_so) is still the key's to refuse (23503). The trigger
+  -- reads only the subjects of the school the written row names, so it never meets that subject: a QS409 here would be the trigger
+  -- naming another school's rows (its DETAIL carries the id of the subject the other school's one points at).
+  PERFORM pg_temp.bi_refuses(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, foreign_ws, ws), '23503', 'a pointer to another school''s subject that itself has a pointer');
+  -- And the other school's, the other way round.
+  PERFORM pg_temp.bi_as('00000000-0000-4000-8000-e50000000031');
+  PERFORM pg_temp.bi_refuses(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, so, foreign_ws), '23503', 'the other school pointing at this school''s subject');
+  SELECT "qualificationSubjectId" INTO v FROM "Subjects" WHERE id = foreign_ws;
+  IF v IS DISTINCT FROM foreign_so THEN RAISE EXCEPTION 'bi 542: the other school''s pointer moved'; END IF;
+
+  -- The source's end. Two subjects use "SO"; deleting "SO" clears both pointers and leaves both rows, with their school.
+  PERFORM pg_temp.bi_as('00000000-0000-4000-8000-e50000000001');
+  UPDATE "Subjects" SET "qualificationSubjectId" = so WHERE id IN (ws, ws2);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 2 THEN RAISE EXCEPTION 'bi 542: % subjects took the pointer, not 2', n; END IF;
+  DELETE FROM "Subjects" WHERE id = so;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'bi 542: the source subject was not deleted (a plain SET NULL would have refused it: schoolId is NOT NULL)'; END IF;
+  SELECT count(*) INTO n FROM "Subjects" WHERE id IN (ws, ws2) AND "qualificationSubjectId" IS NULL AND "schoolId" = school;
+  IF n <> 2 THEN RAISE EXCEPTION 'bi 542: % of the two subjects kept their row with the pointer cleared and their school, not 2', n; END IF;
+
+  -- The using subject's end: deleting it takes no source with it.
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (school, 'bi SO igen', now()) RETURNING id INTO s;
+  UPDATE "Subjects" SET "qualificationSubjectId" = s WHERE id = ws;
+  DELETE FROM "Subjects" WHERE id = ws;
+  SELECT count(*) INTO n FROM "Subjects" WHERE id = s;
+  IF n <> 1 THEN RAISE EXCEPTION 'bi 542: the source went with the subject that used it'; END IF;
+  RAISE NOTICE 'bi 542: the key keeps a pointer in the school; the source going clears the pointer and leaves the row and its school';
+END $$;
+ROLLBACK;
+
+-- 543: one level.
+BEGIN;
+CREATE FUNCTION pg_temp.bi_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+-- A statement, the SQLSTATE it ended in, and the first word of the message and the DETAIL when it raised the trigger's.
+CREATE FUNCTION pg_temp.bi_outcome(stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  state text;
+  msg text;
+  det text;
+BEGIN
+  BEGIN
+    EXECUTE stmt;
+    RETURN 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS state = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL;
+    RETURN state || '/' || split_part(msg, ':', 1) || '/' || coalesce(det, '');
+  END;
+END
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  a uuid; b uuid; c uuid; d uuid; e uuid;
+  got text;
+  n bigint;
+BEGIN
+  PERFORM pg_temp.bi_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (school, 'bi A', now()) RETURNING id INTO a;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (school, 'bi B', now()) RETURNING id INTO b;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (school, 'bi C', now()) RETURNING id INTO c;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (school, 'bi D', now()) RETURNING id INTO d;
+
+  -- A -> B is one level, and is allowed.
+  got := pg_temp.bi_outcome(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, b, a));
+  IF got <> 'ok' THEN RAISE EXCEPTION 'bi 543: A -> B was refused: %', got; END IF;
+
+  -- B -> C would make B a link: A is B's heir. Refused as the second reason, naming B and the heir.
+  got := pg_temp.bi_outcome(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, c, b));
+  IF got <> format('QS409/SUBJECT_QUALIFICATION_IS_INHERITED/subjectId=%s inheritorId=%s', b, a) THEN RAISE EXCEPTION 'bi 543: B -> C while A -> B: %', got; END IF;
+
+  -- C -> A: A itself inherits, so the source is a link. Refused as the first reason, naming all three.
+  got := pg_temp.bi_outcome(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, a, c));
+  IF got <> format('QS409/SUBJECT_QUALIFICATION_SOURCE_INHERITS/subjectId=%s sourceId=%s sourceSourceId=%s', c, a, b) THEN RAISE EXCEPTION 'bi 543: C -> A while A -> B: %', got; END IF;
+
+  -- The same two refusals on INSERT: a new subject pointing at a subject that inherits; and, for the other end, a new subject
+  -- cannot be anyone's source yet, so only the first applies.
+  got := pg_temp.bi_outcome(format($q$INSERT INTO "Subjects" ("schoolId", name, "qualificationSubjectId", "updatedAt") VALUES (%L, 'bi E', %L, now())$q$, school, a));
+  IF got NOT LIKE 'QS409/SUBJECT_QUALIFICATION_SOURCE_INHERITS/%' THEN RAISE EXCEPTION 'bi 543: a new subject pointing at A: %', got; END IF;
+  got := pg_temp.bi_outcome(format($q$INSERT INTO "Subjects" ("schoolId", name, "qualificationSubjectId", "updatedAt") VALUES (%L, 'bi E', %L, now())$q$, school, b));
+  IF got <> 'ok' THEN RAISE EXCEPTION 'bi 543: a new subject pointing at the source B was refused: %', got; END IF;
+  SELECT id INTO e FROM "Subjects" WHERE "schoolId" = school AND name = 'bi E';
+
+  -- Not itself: a subject with no heir meets the CHECK (23514); one with an heir meets the trigger first (B is E's and A's source).
+  got := pg_temp.bi_outcome(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = id WHERE id = %L$q$, d));
+  IF got NOT LIKE '23514/%' THEN RAISE EXCEPTION 'bi 543: D -> D: %', got; END IF;
+  got := pg_temp.bi_outcome(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = id WHERE id = %L$q$, b));
+  IF got NOT LIKE 'QS409/SUBJECT_QUALIFICATION_IS_INHERITED/%' THEN RAISE EXCEPTION 'bi 543: B -> B while A and E use B: %', got; END IF;
+
+  -- The writes the trigger is not asked about pass: a source renamed, a source's own pointer written NULL (the clearing), a user
+  -- re-pointed at the same source (the column named, the value the same), and an UPDATE that touches no link at all.
+  got := pg_temp.bi_outcome(format($q$UPDATE "Subjects" SET name = 'bi B omdöpt' WHERE id = %L$q$, b));
+  IF got <> 'ok' THEN RAISE EXCEPTION 'bi 543: renaming a source: %', got; END IF;
+  got := pg_temp.bi_outcome(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = NULL WHERE id = %L$q$, b));
+  IF got <> 'ok' THEN RAISE EXCEPTION 'bi 543: writing NULL on a source: %', got; END IF;
+  got := pg_temp.bi_outcome(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, b, a));
+  IF got <> 'ok' THEN RAISE EXCEPTION 'bi 543: re-pointing A at the same source: %', got; END IF;
+  got := pg_temp.bi_outcome(format($q$UPDATE "Subjects" SET color = '#112233' WHERE id IN (%L, %L)$q$, a, b));
+  IF got <> 'ok' THEN RAISE EXCEPTION 'bi 543: a write that touches no link: %', got; END IF;
+
+  -- Clear the heirs and B takes a pointer of its own: the chain is gone, so it is allowed now.
+  UPDATE "Subjects" SET "qualificationSubjectId" = NULL WHERE id IN (a, e);
+  got := pg_temp.bi_outcome(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, c, b));
+  IF got <> 'ok' THEN RAISE EXCEPTION 'bi 543: B -> C once nobody uses B: %', got; END IF;
+  -- And now B is a link in the other direction: pointing a subject at B is refused.
+  got := pg_temp.bi_outcome(format($q$UPDATE "Subjects" SET "qualificationSubjectId" = %L WHERE id = %L$q$, b, a));
+  IF got NOT LIKE 'QS409/SUBJECT_QUALIFICATION_SOURCE_INHERITS/%' THEN RAISE EXCEPTION 'bi 543: A -> B once B -> C: %', got; END IF;
+
+  -- Nothing was written by a refusal: exactly B -> C stands among the four.
+  SELECT count(*) INTO n FROM "Subjects" WHERE id IN (a, b, c, d, e) AND "qualificationSubjectId" IS NOT NULL;
+  IF n <> 1 THEN RAISE EXCEPTION 'bi 543: % pointers stand, not B -> C alone', n; END IF;
+  RAISE NOTICE 'bi 543: a chain is refused whichever end is written, a subject is not its own source, and the writes the trigger is not asked about pass';
+END $$;
+ROLLBACK;
+
+-- 544: the lock, and nobody's call.
+BEGIN;
+CREATE FUNCTION pg_temp.bi_as(auth text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', auth)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+-- The school's advisory lock as this backend holds it: one bigint key, so classid/objid are its halves and objsubid is 1.
+CREATE FUNCTION pg_temp.bi_holds(school uuid) RETURNS bigint LANGUAGE sql AS $f$
+  SELECT count(*) FROM pg_locks l
+   WHERE l.locktype = 'advisory' AND l.pid = pg_backend_pid() AND l.objsubid = 1 AND l.granted
+     AND ((l.classid::bigint << 32) | l.objid::bigint) = hashtextextended('Subjects.qualificationSubjectId:' || school::text, 0)
+$f$;
+DO $$
+DECLARE
+  school uuid;
+  so uuid;
+  ws uuid;
+  got text := 'none';
+BEGIN
+  PERFORM pg_temp.bi_as('00000000-0000-4000-8000-e50000000001');
+  school := app.current_school_id();
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (school, 'bi SO', now()) RETURNING id INTO so;
+  INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES (school, 'bi SO WS', now()) RETURNING id INTO ws;
+
+  -- Nothing set a link yet in this transaction: the lock is not held, and a write that touches no link does not take it.
+  IF pg_temp.bi_holds(school) <> 0 THEN RAISE EXCEPTION 'bi 544: the school''s link lock is held before any link was set'; END IF;
+  UPDATE "Subjects" SET name = 'bi SO arbetspass' WHERE id = ws;
+  IF pg_temp.bi_holds(school) <> 0 THEN RAISE EXCEPTION 'bi 544: a write that touches no link took the lock'; END IF;
+
+  -- Setting a link takes it, and holds it to the end of the transaction: the second writer waits for the first's commit and so
+  -- reads the first's link (the two writers of one school take turns). The key is the school's, so another school's is not it.
+  UPDATE "Subjects" SET "qualificationSubjectId" = so WHERE id = ws;
+  IF pg_temp.bi_holds(school) <> 1 THEN RAISE EXCEPTION 'bi 544: setting a link did not hold the school''s lock'; END IF;
+  IF pg_temp.bi_holds(gen_random_uuid()) <> 0 THEN RAISE EXCEPTION 'bi 544: the lock is not keyed by the school'; END IF;
+
+  -- The trigger function is no API role's to call: a trigger function with EXECUTE would answer 0A000 ("can only be called as
+  -- triggers"); with none it is refused before it is run.
+  BEGIN
+    PERFORM app.subjects_qualification_is_one_level();
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM '42501' THEN RAISE EXCEPTION 'bi 544: calling the trigger function ended in %, not 42501', got; END IF;
+  RAISE NOTICE 'bi 544: a write that sets a link holds the school''s lock to the end of its transaction, one that does not set one holds none, and the function is nobody''s to call';
+END $$;
+ROLLBACK;

@@ -150,16 +150,26 @@ export function useTeacherEmploymentActions() {
   return { save, remove, createPeriod, updatePeriod, removePeriod };
 }
 
-/** The school's qualifications, or one teacher's when a userId is given. */
-export function useTeacherQualifications(userId?: string | null) {
+/**
+ * The school's qualifications, or one teacher's when a userId is given: the
+ * STORED rows, which is what a form edits and saves whole.
+ *
+ * `inherited` adds the rows a subject that uses another's behörighet derives
+ * (Behörighet som i ett annat ämne), each marked `viaSubjectId`, so a screen
+ * that JUDGES who is qualified for a subject reads the rule the gateway
+ * applies and does not copy it. Never for a list that is written back.
+ */
+export function useTeacherQualifications(userId?: string | null, options: { inherited?: boolean } = {}) {
+  const inherited = options.inherited === true;
   return useQuery({
-    queryKey: [...STAFFING_KEYS.qualifications, userId ?? "all"],
-    queryFn: () =>
-      api.get<TeacherQualification[]>(
-        userId
-          ? `/api/v1/teacher-qualifications?userId=${encodeURIComponent(userId)}`
-          : "/api/v1/teacher-qualifications",
-      ),
+    queryKey: [...STAFFING_KEYS.qualifications, userId ?? "all", ...(inherited ? ["inherited"] : [])],
+    queryFn: () => {
+      const query = [
+        ...(userId ? [`userId=${encodeURIComponent(userId)}`] : []),
+        ...(inherited ? ["inherited=true"] : []),
+      ].join("&");
+      return api.get<TeacherQualification[]>(`/api/v1/teacher-qualifications${query ? `?${query}` : ""}`);
+    },
   });
 }
 

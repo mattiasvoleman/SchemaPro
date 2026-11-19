@@ -14,6 +14,7 @@ import {
 import type { NationalSubject, RoomType, Subject } from "@/lib/types";
 import { sectionNationalSubjects } from "@/lib/national-subjects";
 import { formatLoadFactor, parseLoadFactor } from "@/lib/load-factor";
+import { qualificationSourceChoices, qualificationUsers } from "@/lib/qualification-source";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
 import { subjectsToCsv } from "@/lib/csv-export";
@@ -74,9 +75,13 @@ interface SubjectForm {
   /** Placeringsregler, Inte först eller sist på dagen: two markings, off by default. */
   notFirstInDay: boolean;
   notLastInDay: boolean;
+  /** Behörighet som i ett annat ämne: a subject id, or OWN_QUALIFICATION for none. */
+  qualificationSubjectId: string;
 }
 
 const ANY_ROOM = "__any__";
+/** The null option of the "Behörighet som i ämnet" picker; turned back into null at the API boundary. */
+const OWN_QUALIFICATION = "__own__";
 const ADD_NEW = "__add__";
 /**
  * The null option of the national-code picker. A Radix Select cannot hold an
@@ -101,6 +106,7 @@ const EMPTY_FORM: SubjectForm = {
   minDaysBetween: null,
   notFirstInDay: false,
   notLastInDay: false,
+  qualificationSubjectId: OWN_QUALIFICATION,
 };
 
 /** "Matematik (MA)" — the statute's name with the code the CSV column takes. */
@@ -126,9 +132,16 @@ export default function SubjectsPage() {
     minDaysBetween?: number | null;
     notFirstInDay?: boolean;
     notLastInDay?: boolean;
-    // A factor moves every teacher's load under FACTOR, so the report is
-    // refetched with the list.
-  }>("/api/v1/subjects", [["subjects"], [...STAFFING_KEYS.load]]);
+    qualificationSubjectId?: string | null;
+    // A factor moves every teacher's load under FACTOR, and a behörighet taken
+    // from another subject moves who is qualified, so the report, the derived
+    // behörigheter and the ranked suggestions are refetched with the list.
+  }>("/api/v1/subjects", [
+    ["subjects"],
+    [...STAFFING_KEYS.load],
+    [...STAFFING_KEYS.qualifications],
+    [...STAFFING_KEYS.suggestions],
+  ]);
 
   const { data: roomTypes, isError: roomTypesFailed } = useRoomTypes();
   const roomTypeActions = useRoomTypeActions();
@@ -178,10 +191,15 @@ export default function SubjectsPage() {
       minDaysBetween: subject.minDaysBetween ?? null,
       notFirstInDay: subject.notFirstInDay ?? false,
       notLastInDay: subject.notLastInDay ?? false,
+      qualificationSubjectId: subject.qualificationSubjectId ?? OWN_QUALIFICATION,
     });
     setDialogOpen(true);
   };
 
+  const subjectNameOf = new Map((subjects ?? []).map((subject) => [subject.id, subject.name]));
+  // The subjects that take their behörighet from this one: while there are any,
+  // this one takes none (one level), and the picker says whose choice stands in the way.
+  const qualificationHeirs = editing ? qualificationUsers(subjects ?? [], editing.id) : [];
   const loadFactor = parseLoadFactor(form.loadFactor);
   const perDayValid = perDayInRange(form.maxLessonsPerDay);
   const rule = {
@@ -214,6 +232,11 @@ export default function SubjectsPage() {
         : {}),
       ...(form.notLastInDay !== (editing?.notLastInDay ?? false)
         ? { notLastInDay: form.notLastInDay }
+        : {}),
+      // Behörighet som i ett annat ämne: sent only when it differs from what is
+      // stored, null ("Egen behörighet") included, for the same reason.
+      ...(form.qualificationSubjectId !== (editing?.qualificationSubjectId ?? OWN_QUALIFICATION)
+        ? { qualificationSubjectId: form.qualificationSubjectId === OWN_QUALIFICATION ? null : form.qualificationSubjectId }
         : {}),
     };
     try {
@@ -302,7 +325,14 @@ export default function SubjectsPage() {
           <TableBody>
             {subjects.map((subject) => (
               <TableRow key={subject.id}>
-                <TableCell className="font-medium">{subject.name}</TableCell>
+                <TableCell className="font-medium">
+                  {subject.name}
+                  {subject.qualificationSubjectId ? (
+                    <span className="block text-xs font-normal text-muted-foreground">
+                      {t("qualificationLike", { name: subjectNameOf.get(subject.qualificationSubjectId) ?? "—" })}
+                    </span>
+                  ) : null}
+                </TableCell>
                 <TableCell>
                   {subject.code ? (
                     <Badge variant="secondary">{subject.code}</Badge>
@@ -509,6 +539,36 @@ export default function SubjectsPage() {
                 </Button>
               ) : null}
             </div>
+            <FormField
+              id="subject-qualification-source"
+              label={t("qualificationSource")}
+              optional
+              hint={
+                qualificationHeirs.length > 0
+                  ? t("qualificationSourceLocked", { names: qualificationHeirs.map((heir) => heir.name).join(", ") })
+                  : t("qualificationSourceHint")
+              }
+            >
+              {(control) => (
+                <Select
+                  value={form.qualificationSubjectId}
+                  disabled={qualificationHeirs.length > 0}
+                  onValueChange={(value) => setForm({ ...form, qualificationSubjectId: value })}
+                >
+                  <SelectTrigger {...control}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={OWN_QUALIFICATION}>{t("qualificationOwn")}</SelectItem>
+                    {qualificationSourceChoices(subjects ?? [], editing).map((choice) => (
+                      <SelectItem key={choice.id} value={choice.id}>
+                        {choice.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </FormField>
             <div className="flex items-start justify-between gap-4 rounded-md border p-3">
               <div className="space-y-1">
                 <Label htmlFor="subject-counts-toward-timplan">{t("countsTowardTimplan")}</Label>

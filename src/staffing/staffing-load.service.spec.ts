@@ -173,6 +173,46 @@ describe('StaffingLoadService', () => {
     ]);
   });
 
+  describe('behörighet som i ett annat ämne (Subjects.qualificationSubjectId)', () => {
+    const SO = '99999999-9999-4999-8999-999999999999';
+    const heldIn = (subjectId: string) => [
+      { userId: ME, subjectId, minGradeLevel: 7, maxGradeLevel: 7, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+    ];
+
+    it('does not list a teacher as unqualified for a post in a subject that takes its behörighet from the one she holds', async () => {
+      // ME leads the 7A maths post and holds "SO" only; MA takes SO's behörighet.
+      tx.subject.findMany.mockResolvedValue([{ id: MA, qualificationSubjectId: SO }]);
+      tx.teacherSubjectQualification.findMany.mockResolvedValue(heldIn(SO));
+
+      const report = await service.load(YEAR_ID, undefined, testUser());
+
+      expect(report.qualificationsRecorded).toBe(true);
+      expect(report.unqualifiedAssignments).toEqual([]);
+    });
+
+    it('lists her as unqualified when the subject takes its behörighet from none: the report the pointer changes', async () => {
+      tx.subject.findMany.mockResolvedValue([{ id: MA, qualificationSubjectId: null }]);
+      tx.teacherSubjectQualification.findMany.mockResolvedValue(heldIn(SO));
+
+      const report = await service.load(YEAR_ID, undefined, testUser());
+
+      expect(report.unqualifiedAssignments).toEqual([
+        expect.objectContaining({ requirementId: 'req-1', userId: ME, subjectId: MA }),
+      ]);
+    });
+
+    it('keeps the source row’s årskurser: a row for åk 8 alone does not cover the åk 7 post', async () => {
+      tx.subject.findMany.mockResolvedValue([{ id: MA, qualificationSubjectId: SO }]);
+      tx.teacherSubjectQualification.findMany.mockResolvedValue([
+        { userId: ME, subjectId: SO, minGradeLevel: 8, maxGradeLevel: 9, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+      ]);
+
+      const report = await service.load(YEAR_ID, undefined, testUser());
+
+      expect(report.unqualifiedAssignments).toEqual([expect.objectContaining({ requirementId: 'req-1', userId: ME })]);
+    });
+  });
+
   it('reads a pupil’s home class from every group of the year, not only the ones with a requirement', async () => {
     // 7A's only pupil is a member whose home class is 8B, which has no
     // requirement of its own. The proxy hands loadRosters every group of the
@@ -998,6 +1038,30 @@ describe('StaffingLoadService', () => {
       // ME's room is read off her tjänst, and recorded as the load report's
       // is; the colleague has no post, and nothing of one is handed out.
       expect(recordedReads(tx)).toEqual([{ kind: 'EMPLOYMENT', channel: null, ids: [ME] }]);
+    });
+
+    it('ranks the teacher who holds the source subject by the source row’s kind, for a subject that takes its behörighet from another (Behörighet som i ett annat ämne)', async () => {
+      const SO = '99999999-9999-4999-8999-999999999999';
+      tx.teachingRequirement.findUnique.mockResolvedValue({
+        academicYearId: YEAR_ID,
+        subjectId: MA,
+        studentGroup: { predecessorId: null },
+      });
+      tx.user.findMany.mockResolvedValue([
+        { id: COLLEAGUE, role: 'TEACHER', teaches: false },
+        { id: ME, role: 'TEACHER', teaches: false },
+      ]);
+      // MA takes its behörighet from SO; the colleague holds SO alone, as BEHORIG for åk 7–9.
+      tx.subject.findMany.mockResolvedValue([{ id: MA, qualificationSubjectId: SO }]);
+      tx.teacherSubjectQualification.findMany.mockResolvedValue([
+        { userId: COLLEAGUE, subjectId: SO, minGradeLevel: 7, maxGradeLevel: 9, kind: 'BEHORIG', validFrom: null, validTo: null },
+      ]);
+
+      const answer = await service.suggestTeachers('req-2', testUser());
+
+      expect(answer.qualificationsRecorded).toBe(true);
+      expect(answer.candidates[0]).toMatchObject({ userId: COLLEAGUE, qualificationKind: 'BEHORIG' });
+      expect(answer.candidates.find((candidate) => candidate.userId === ME)!.qualificationKind).toBeNull();
     });
 
     it('ranks a teacher and an administrator who teaches, and leaves out one without the mark, though all are active staff', async () => {
