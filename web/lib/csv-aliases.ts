@@ -12,9 +12,8 @@
  * for it. A field's first spelling is the one the template writes, or the nearest (a template header carries
  * underscores that the normalisation drops: "elev_epost" reads "elevepost").
  *
- * The signature fields of the timplan (teacherSignature, coTeacherSignature, Kolumnmappning part 3) are not here
- * until the requirements mapper reads them: a column in this list that the mapper does not write would read as
- * "no teacher" and take the stored teacher off.
+ * A column in this list that its mapper does not write would read as "no teacher" (or no whatever) and take the stored
+ * value off: add a spelling only together with the mapper's reading of the field.
  */
 
 /** Telefon, as the pupils', guardians' and teachers' files spell it. */
@@ -91,7 +90,10 @@ export const CSV_ALIASES = {
     minutesBefore: ["minutesbefore", "ombytefore", "minuterfore"],
     minutesAfter: ["minutesafter", "duschefter", "ombyteefter", "minuterefter"],
     teacherEmail: ["larare", "undervisandelarare", "lararepost", "teacher", "teacheremail"],
+    // A teacher by the signature the staff list carries instead of by e-mail (a Skola24 Tjänstefördelning names no addresses).
+    teacherSignature: ["lararesignatur", "lararsignatur", "teachersignature"],
     coTeacherEmail: ["medlarare", "medlararepost", "andralarare", "larare2", "coteacher", "coteacheremail"],
+    coTeacherSignature: ["medlararesignatur", "medlarsignatur", "coteachersignature"],
     // Never a bare "procent": a school's own sheet may carry a tjänstegrad column under that word, and reading it as a charge
     // would quietly halve every row. Each spelling names whose percentage it is.
     teacherLoadPercent: ["larareprocent", "lararprocent", "lararensprocent", "raknasforlarare", "raknasforlararen", "teacherloadpercent"],

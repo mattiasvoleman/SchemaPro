@@ -1279,6 +1279,80 @@ describe("teaching requirements", () => {
     expect(columns).toEqual([]);
   });
 
+  describe("a teacher by signature (Kolumnmappning del 3)", () => {
+    const FILE = (rows: string[], header = "grupp;amne;lektioner_per_vecka;minuter_per_lektion;larare_signatur;medlarare_signatur") =>
+      parseCsv([header, ...rows].join("\r\n") + "\r\n");
+
+    it("reads the lead and the co-teacher by signature, and reports the columns the file had", () => {
+      const { rows, errors, columns } = mapRequirementRows(FILE(["7A;MA;3;60;KBE;BLU"]));
+      expect(errors).toEqual([]);
+      expect(rows[0]).toMatchObject({ teacherSignature: "KBE", coTeacherSignature: "BLU" });
+      expect(rows[0]).not.toHaveProperty("teacherEmail");
+      expect([...columns].sort()).toEqual([
+        "coTeacherSignature",
+        "groupName",
+        "lessonsPerWeek",
+        "minutesPerLesson",
+        "subject",
+        "teacherSignature",
+      ]);
+    });
+
+    it("posts null, never an empty text, for an empty cell in a column the file has (null clears, \"\" is a 400)", () => {
+      const { rows, errors } = mapRequirementRows(FILE(["7A;MA;3;60;;", "8B;SV;2;60;  ;"]));
+      expect(errors).toEqual([]);
+      expect(rows[0]!.teacherSignature).toBeNull();
+      expect(rows[0]!.coTeacherSignature).toBeNull();
+      expect(rows[1]!.teacherSignature).toBeNull();
+    });
+
+    it("leaves the signature keys out of a file without the columns, so a teacher already set stays", () => {
+      const { rows, columns } = mapRequirementRows(parseCsv("grupp;amne;lektioner_per_vecka;minuter_per_lektion\r\n7A;MA;3;60\r\n"));
+      expect(rows[0]).not.toHaveProperty("teacherSignature");
+      expect(rows[0]).not.toHaveProperty("coTeacherSignature");
+      expect(columns).not.toContain("teacherSignature");
+    });
+
+    it("reads the spellings the catalogue lists, whichever case and punctuation", () => {
+      for (const header of ["Lärare signatur", "LARARE_SIGNATUR", "Lärarsignatur", "teacher signature"]) {
+        const { rows, errors } = mapRequirementRows(FILE(["7A;MA;3;60;KBE"], `grupp;amne;lektioner_per_vecka;minuter_per_lektion;${header}`));
+        expect(errors, header).toEqual([]);
+        expect(rows[0]!.teacherSignature, header).toBe("KBE");
+      }
+    });
+
+    it("refuses a row that names the lead both by e-mail and by signature, naming the two columns", () => {
+      const { rows, errors } = mapRequirementRows(
+        FILE(["7A;MA;3;60;karin@s.se;KBE"], "grupp;amne;lektioner_per_vecka;minuter_per_lektion;larare;larare_signatur"),
+      );
+      expect(rows).toEqual([]);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]!.row).toBe(2);
+      expect(errors[0]!.message).toContain("larare");
+      expect(errors[0]!.message).toContain("larare_signatur");
+      expect(errors[0]!.message).toContain("läraren");
+    });
+
+    it("refuses the co-teacher both ways too, and takes one of each kind on one row", () => {
+      const header = "grupp;amne;lektioner_per_vecka;minuter_per_lektion;larare;medlarare;larare_signatur;medlarare_signatur";
+      const both = mapRequirementRows(FILE(["7A;MA;3;60;;bo@s.se;;BLU"], header));
+      expect(both.errors[0]?.message).toContain("medläraren");
+      const mixed = mapRequirementRows(FILE(["7A;MA;3;60;karin@s.se;;;BLU"], header));
+      expect(mixed.errors).toEqual([]);
+      expect(mixed.rows[0]).toMatchObject({ teacherEmail: "karin@s.se", coTeacherEmail: null, teacherSignature: null, coTeacherSignature: "BLU" });
+    });
+
+    it("holds a signature to eight characters, counted as the gateway counts them", () => {
+      const nine = mapRequirementRows(FILE(["7A;MA;3;60;ABCDEFGHI;"]));
+      expect(nine.rows).toEqual([]);
+      expect(nine.errors[0]!.message).toContain("larare_signatur");
+      expect(nine.errors[0]!.message).toContain("åtta");
+      expect(mapRequirementRows(FILE(["7A;MA;3;60;ABCDEFGH;"])).errors).toEqual([]);
+      // An emoji is one character to the gateway's @MaxLength.
+      expect(mapRequirementRows(FILE(["7A;MA;3;60;ABCDEFG😀;"])).errors).toEqual([]);
+    });
+  });
+
   it("ships a template that maps back through its own mapper with zero errors", () => {
     const { rows, errors } = mapRequirementRows(
       parseCsv(templateCsvContent("requirements")),

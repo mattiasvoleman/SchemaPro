@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Download } from "lucide-react";
-import { decodeCsvBytes, downloadCsv, fileProblems, parseCsv, type RowError } from "@/lib/csv";
+import { downloadCsv, fileProblems, type RowError } from "@/lib/csv";
+import type { MappingTemplate } from "@/lib/column-mapping";
+import { useImportTemplates } from "@/lib/column-template-queries";
 import {
   formatTimplanGrade,
   mapTimplanRows,
@@ -21,6 +23,9 @@ import {
   type TimplanImportReport,
   type TimplanImportRow,
 } from "@/lib/timplan-queries";
+import { ColumnMappingPanel } from "@/components/import/column-mapping-panel";
+import { PasteTable } from "@/components/import/paste-table";
+import { useTableReading } from "@/components/import/use-table-reading";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,6 +47,7 @@ import {
 } from "@/components/ui/table";
 
 const PREVIEW_ROWS = 5;
+const NO_TEMPLATES: MappingTemplate[] = [];
 
 interface FilePreview {
   headers: string[];
@@ -88,15 +94,19 @@ export interface TimplanImportDialogProps {
 export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportDialogProps) {
   const t = useTranslations("timplan");
   const tImport = useTranslations("csvImport");
+  const tMap = useTranslations("columnMapping");
   const tCommon = useTranslations("common");
   const importTimplan = useImportTimplan();
-  const [preview, setPreview] = useState<FilePreview | null>(null);
+  const { reading, mapping, setMapping, load, clear } = useTableReading((problem) => tMap(problem));
+  const [pasted, setPasted] = useState("");
   const [report, setReport] = useState<TimplanImportReport | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0);
   const decided = plan.status === "DECIDED";
+  const templates = useImportTemplates(open ? "timplan" : null);
 
   const reset = () => {
-    setPreview(null);
+    clear();
+    setPasted("");
     setReport(null);
     setFileInputKey((key) => key + 1);
   };
@@ -106,30 +116,35 @@ export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportD
     onOpenChange(next);
   };
 
-  const onFileChosen = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const onFileChosen = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    // Bytes, not file.text(): a file saved in Excel is Windows-1252, and
-    // read as UTF-8 its å, ä and ö would be lost before parsing (decodeCsvBytes).
-    const decoded = decodeCsvBytes(new Uint8Array(await file.arrayBuffer()));
-    const parsed = parseCsv(decoded.text);
-    const mapped = mapTimplanRows(parsed);
     setReport(null);
-    setPreview({
-      headers: parsed.headers,
-      previewRows: parsed.rows.slice(0, PREVIEW_ROWS),
-      rows: decoded.problem ? [] : mapped.rows,
-      errors: decoded.problem ? [{ row: 0, message: decoded.problem }] : [...fileProblems(parsed), ...mapped.errors],
+    void load({ file }, file.name);
+  };
+
+  // What the timplan's own mapper makes of the mapped table, which is what the preview shows and the import sends.
+  const preview = useMemo<FilePreview | null>(() => {
+    if (reading === null) return null;
+    if (reading.state === "problem") {
+      return { headers: [], previewRows: [], rows: [], errors: [{ row: 0, message: reading.problem }], rowNumbers: [], columns: [], legacyEncoding: null };
+    }
+    if (mapping === null) return null;
+    const { applied } = mapping;
+    const mapped = mapTimplanRows(applied.parsed);
+    return {
+      headers: applied.headers,
+      previewRows: applied.rows.slice(0, PREVIEW_ROWS),
+      rows: mapped.rows,
+      // A mapping that cannot be applied is told by the panel, with the columns to choose, and not a second time here.
+      errors: applied.problems.length > 0 ? [] : [...fileProblems(applied.parsed), ...mapped.errors],
       rowNumbers: mapped.rowNumbers,
       columns: mapped.columns,
-      legacyEncoding:
-        decoded.problem === null && decoded.encoding !== "utf-8"
-          ? decoded.encoding === "macintosh"
-            ? "Mac Roman"
-            : "Windows-1252"
-          : null,
-    });
-  };
+      legacyEncoding: reading.encoding,
+    };
+  }, [reading, mapping]);
+  // A row held back by the mapping (a personnummer in a column that is read) stops the import like any other row error.
+  const mappingHolds = mapping !== null && !mapping.applied.ok;
 
   const submit = async () => {
     if (!preview) return;
@@ -152,7 +167,7 @@ export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportD
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t("importTitle")}</DialogTitle>
         </DialogHeader>
@@ -187,7 +202,8 @@ export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportD
           </>
         ) : (
           <>
-            <div className="space-y-4">
+            {/* min-w-0: the dialog is a grid, and the column table inside would otherwise widen it past a phone's edge (it scrolls in its own box). */}
+            <div className="min-w-0 space-y-4">
               {decided ? (
                 // A decision to make (Öppna igen) before a file can be read: a warning.
                 <Notice tone="warning">{t("importNotDraft")}</Notice>
@@ -208,11 +224,38 @@ export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportD
                   key={fileInputKey}
                   id="timplan-import-file"
                   type="file"
-                  accept=".csv,text/csv"
+                  accept=".csv,.tsv,.txt,text/csv"
                   disabled={decided}
-                  onChange={(event) => void onFileChosen(event)}
+                  onChange={onFileChosen}
                 />
               </div>
+
+              {decided ? null : (
+                <div className="space-y-2">
+                  <PasteTable id="timplan-import-paste" label={tImport("pasteLabel")} hint={tImport("pasteHint")} value={pasted} onChange={setPasted} />
+                  <Button
+                    variant="outline"
+                    disabled={pasted.trim() === ""}
+                    onClick={() => {
+                      setReport(null);
+                      void load({ text: pasted }, tMap("pasted"));
+                    }}
+                  >
+                    {tImport("pasteRead")}
+                  </Button>
+                </div>
+              )}
+
+              {reading?.state === "table" ? (
+                <ColumnMappingPanel
+                  key={reading.serial}
+                  kind="timplan"
+                  table={reading.table}
+                  templates={templates.data ?? NO_TEMPLATES}
+                  onChange={setMapping}
+                  compact
+                />
+              ) : null}
 
               {preview ? (
                 <div className="space-y-3">
@@ -281,6 +324,7 @@ export function TimplanImportDialog({ plan, open, onOpenChange }: TimplanImportD
                   preview === null ||
                   preview.rows.length === 0 ||
                   preview.errors.length > 0 ||
+                  mappingHolds ||
                   importTimplan.isPending
                 }
               >

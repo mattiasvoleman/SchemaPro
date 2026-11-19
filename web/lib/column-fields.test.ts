@@ -107,7 +107,9 @@ const SAMPLE: Record<Exclude<TemplateKind, "scheduleLessons">, Record<string, st
     minutesBefore: "10",
     minutesAfter: "20",
     teacherEmail: "karin@skolan.se",
+    teacherSignature: "KBE",
     coTeacherEmail: "bo@skolan.se",
+    coTeacherSignature: "BLU",
     teacherLoadPercent: "100",
     coTeacherLoadPercent: "50",
     recurrence: "udda",
@@ -157,17 +159,22 @@ function fileOf(kind: (typeof KINDS_WITH_A_MAPPER)[number], headers: Record<stri
 
 /**
  * Fields the importer will not take in one row with another: a half of a class replaces no subject, so one row of `classes`
- * cannot show halfOf and replacesSubject together. Each is read in a file of its own, without its partner.
+ * cannot show halfOf and replacesSubject together, and a teacher is named by e-mail or by signature, not both. Each of the
+ * second ones is read in a file of its own, without its partner.
  */
-const EXCLUSIVE: Partial<Record<(typeof KINDS_WITH_A_MAPPER)[number], readonly [keep: string, drop: string]>> = {
-  classes: ["halfOf", "replacesSubject"],
+const EXCLUSIVE: Partial<Record<(typeof KINDS_WITH_A_MAPPER)[number], ReadonlyArray<readonly [keep: string, drop: string]>>> = {
+  classes: [["halfOf", "replacesSubject"]],
+  requirements: [
+    ["teacherEmail", "teacherSignature"],
+    ["coTeacherEmail", "coTeacherSignature"],
+  ],
 };
 
 describe.each(KINDS_WITH_A_MAPPER)("the %s fields are what its importer reads", (kind) => {
-  const all = FIELDS[kind].filter((field) => field.pendingInMapper !== true);
-  const exclusive = EXCLUSIVE[kind];
+  const all = FIELDS[kind];
+  const exclusive = EXCLUSIVE[kind] ?? [];
   // The fields one file can show together; the one the importer will not take beside another is read in the second file below.
-  const fields = exclusive === undefined ? all : all.filter((field) => field.id !== exclusive[1]);
+  const fields = all.filter((field) => !exclusive.some(([, drop]) => drop === field.id));
 
   it("has a sample for every field, and a header that is one of the field's own spellings", () => {
     for (const field of fields) {
@@ -211,16 +218,17 @@ describe.each(KINDS_WITH_A_MAPPER)("the %s fields are what its importer reads", 
     }
   });
 
-  it.runIf(exclusive !== undefined)("reads the field it cannot show beside another, in a file without its partner", () => {
-    const [keep, drop] = exclusive!;
-    const alone = all.filter((field) => field.id !== keep);
+  it.runIf(exclusive.length > 0)("reads the fields it cannot show beside another, in a file without their partners", () => {
+    const alone = all.filter((field) => !exclusive.some(([keep]) => keep === field.id));
     const mapped = MAPPER[kind](fileOf(kind, Object.fromEntries(alone.map((field) => [field.id, field.header]))));
     expect(mapped.errors).toEqual([]);
-    expect(mapped.rows[0]![drop]).toBeTruthy();
-    for (const alias of all.find((field) => field.id === drop)!.aliases) {
-      const renamed = MAPPER[kind](fileOf(kind, Object.fromEntries(alone.map((field) => [field.id, field.id === drop ? alias : field.header]))));
-      expect(renamed.errors, `${kind}.${drop} under "${alias}"`).toEqual([]);
-      expect(renamed.rows[0]![drop]).toBeTruthy();
+    for (const [, drop] of exclusive) expect(mapped.rows[0]![drop], `${kind}.${drop} was not read`).toBeTruthy();
+    for (const [, drop] of exclusive) {
+      for (const alias of all.find((field) => field.id === drop)!.aliases) {
+        const renamed = MAPPER[kind](fileOf(kind, Object.fromEntries(alone.map((field) => [field.id, field.id === drop ? alias : field.header]))));
+        expect(renamed.errors, `${kind}.${drop} under "${alias}"`).toEqual([]);
+        expect(renamed.rows[0]![drop], `${kind}.${drop} was not read from "${alias}"`).toBeTruthy();
+      }
     }
   });
 
@@ -229,18 +237,5 @@ describe.each(KINDS_WITH_A_MAPPER)("the %s fields are what its importer reads", 
     const mapped = MAPPER[kind](fileOf(kind, Object.fromEntries(required.map((field) => [field.id, field.header]))));
     expect(mapped.errors).toEqual([]);
     expect(mapped.rows).toHaveLength(1);
-  });
-});
-
-describe("what the catalogue is ahead of the importers in", () => {
-  it("is only the teacher by signature of the timplan, until the requirements mapper reads it (part 3)", () => {
-    const pending = TEMPLATE_KINDS.flatMap((kind) => FIELDS[kind].filter((field) => field.pendingInMapper === true).map((field) => `${kind}.${field.id}`));
-    expect(pending).toEqual(["requirements.teacherSignature", "requirements.coTeacherSignature"]);
-  });
-
-  it("has no field that is required and also pending", () => {
-    for (const kind of TEMPLATE_KINDS) {
-      for (const field of FIELDS[kind]) expect(field.required && field.pendingInMapper === true).toBe(false);
-    }
   });
 });

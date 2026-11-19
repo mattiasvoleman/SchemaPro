@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Download } from "lucide-react";
@@ -18,12 +18,9 @@ import {
   mapTeacherDutyRows,
   mapTeacherQualificationRows,
   mapTeacherRows,
-  decodeCsvBytes,
   fileProblems,
   guardianDetailsThatDiffer,
   namesWithQuestionMarks,
-  parseCsv,
-  type CsvEncoding,
   type ImportKind,
   type ParsedCsv,
   type RowError,
@@ -35,6 +32,12 @@ import {
   useImportCsv,
   type ImportReport,
 } from "@/lib/queries";
+import type { TableSource } from "@/lib/column-source";
+import { useImportTemplates } from "@/lib/column-template-queries";
+import type { MappingTemplate } from "@/lib/column-mapping";
+import { ColumnMappingPanel } from "@/components/import/column-mapping-panel";
+import { useTableReading } from "@/components/import/use-table-reading";
+import { PasteTable } from "@/components/import/paste-table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -109,11 +112,7 @@ const REFUSED_BODY = "One or more fields failed validation.";
  */
 const WITHOUT_CLASS = "IMPORT_STUDENT_WITHOUT_CLASS";
 
-/** The code page's name as a reader knows it, for the sentence that says the file was not UTF-8. */
-const ENCODING_NAME: Record<Exclude<CsvEncoding, "utf-8">, string> = {
-  "windows-1252": "Windows-1252",
-  macintosh: "Mac Roman",
-};
+const NO_TEMPLATES: MappingTemplate[] = [];
 
 interface FilePreview {
   fileName: string;
@@ -158,6 +157,11 @@ export interface CsvImportDialogProps {
   academicYearId?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * A table the page already holds, pasted or chosen there (the schedule exchange's card for a Tjänstefördelning): read as soon as
+   * the dialog opens, as if it had been chosen here, and the columns pointed out in the dialog like any other.
+   */
+  source?: TableSource | null;
 }
 
 /**
@@ -177,8 +181,10 @@ export function CsvImportDialog({
   academicYearId,
   open,
   onOpenChange,
+  source = null,
 }: CsvImportDialogProps) {
   const t = useTranslations("csvImport");
+  const tMap = useTranslations("columnMapping");
   const tCommon = useTranslations("common");
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
   const { data: years } = useAcademicYears();
@@ -189,14 +195,17 @@ export function CsvImportDialog({
   const importCsv = useImportCsv();
 
   const [kind, setKind] = useState<ImportKind>(kinds[0]);
-  const [preview, setPreview] = useState<FilePreview | null>(null);
+  const { reading, mapping, setMapping, load: readInto, clear } = useTableReading((problem) => tMap(problem));
+  const [pasted, setPasted] = useState("");
   const [report, setReport] = useState<ImportReport | null>(null);
   // Remounting the input is the reliable way to clear a picked file.
   const [fileInputKey, setFileInputKey] = useState(0);
+  const templates = useImportTemplates(open ? kind : null);
 
   const reset = () => {
-    setPreview(null);
+    clear();
     setReport(null);
+    setPasted("");
     setFileInputKey((key) => key + 1);
   };
 
@@ -207,56 +216,70 @@ export function CsvImportDialog({
 
   const changeKind = (value: string) => {
     setKind(value as ImportKind);
-    // A parsed file belongs to the kind it was mapped with — start over.
+    // A table belongs to the kind it was mapped with — start over.
     reset();
   };
 
-  const onFileChosen = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    // Bytes, not file.text(): a file saved in Excel is Windows-1252, and
-    // read as UTF-8 its å, ä and ö would be lost before parsing (decodeCsvBytes).
-    const decoded = decodeCsvBytes(new Uint8Array(await file.arrayBuffer()));
-    const parsed = parseCsv(decoded.text);
-    const mapped = MAPPERS[kind](parsed);
-    const warnings: FileWarning[] = [];
-    if (decoded.problem === null) {
-      // A name Excel wrote a "?" in, which only a file that is not UTF-8 can hold.
-      if (decoded.encoding !== "utf-8") {
-        for (const found of namesWithQuestionMarks(mapped.rows, mapped.rowNumbers)) {
-          warnings.push({ kind: "questionMarkInName", ...found });
-        }
-      }
-      if (kind === "guardians") {
-        for (const found of guardianDetailsThatDiffer(
-          mapped.rows as Parameters<typeof guardianDetailsThatDiffer>[0],
-          mapped.rowNumbers,
-        )) {
-          warnings.push({ kind: "guardianDetailsDiffer", ...found });
-        }
-      }
-      warnings.sort((a, b) => a.row - b.row);
-    }
+  /** Reads a file or a paste into a table; the panel below then asks which column is which field. */
+  const load = (from: TableSource, name: string) => {
     setReport(null);
-    setPreview({
-      fileName: file.name,
-      headers: parsed.headers,
-      previewRows: parsed.rows.slice(0, PREVIEW_ROWS),
-      rows: decoded.problem ? [] : mapped.rows,
-      // What the file itself says is wrong comes first: until it is fixed,
-      // the rows below it are not what the school wrote.
-      errors: decoded.problem
-        ? [{ row: 0, message: decoded.problem }]
-        : [...fileProblems(parsed), ...mapped.errors],
+    return readInto(from, name);
+  };
+
+  const onFileChosen = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) void load({ file }, file.name);
+  };
+
+  // The page's own table is read when the dialog opens, and again for another kind or another table.
+  useEffect(() => {
+    if (open && source !== null) void load(source, "file" in source ? source.file.name : tMap("pasted"));
+    // `load` and `tMap` are new functions every render; a new language or render is no new table.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, source, kind]);
+
+  // What the importer's own mapper makes of the mapped table, which is what the preview shows and the import sends.
+  const preview = useMemo<FilePreview | null>(() => {
+    if (reading === null) return null;
+    if (reading.state === "problem") {
+      return { fileName: reading.name, headers: [], previewRows: [], rows: [], errors: [{ row: 0, message: reading.problem }], rowNumbers: [], legacyEncoding: null, withoutClass: 0, warnings: [] };
+    }
+    if (mapping === null) return null;
+    const { applied } = mapping;
+    const mapped = MAPPERS[kind](applied.parsed);
+    const warnings: FileWarning[] = [];
+    // A name Excel wrote a "?" in, which only a file that is not UTF-8 can hold.
+    if (reading.encoding !== null) {
+      for (const found of namesWithQuestionMarks(mapped.rows, mapped.rowNumbers)) {
+        warnings.push({ kind: "questionMarkInName", ...found });
+      }
+    }
+    if (kind === "guardians") {
+      for (const found of guardianDetailsThatDiffer(
+        mapped.rows as Parameters<typeof guardianDetailsThatDiffer>[0],
+        mapped.rowNumbers,
+      )) {
+        warnings.push({ kind: "guardianDetailsDiffer", ...found });
+      }
+    }
+    warnings.sort((a, b) => a.row - b.row);
+    return {
+      fileName: reading.name,
+      headers: applied.headers,
+      previewRows: applied.rows.slice(0, PREVIEW_ROWS),
+      rows: mapped.rows,
+      // What the file itself says is wrong comes first: until it is fixed, the rows below it are not what the school wrote. A
+      // mapping that cannot be applied is told by the panel, with the columns to choose, and not a second time here.
+      errors: applied.problems.length > 0 ? [] : [...fileProblems(applied.parsed), ...mapped.errors],
       rowNumbers: mapped.rowNumbers,
       ...(mapped.columns ? { columns: mapped.columns } : {}),
-      legacyEncoding:
-        decoded.problem === null && decoded.encoding !== "utf-8" ? ENCODING_NAME[decoded.encoding] : null,
-      withoutClass:
-        kind === "students" ? mapped.rows.filter((row) => row.className === null).length : 0,
+      legacyEncoding: reading.encoding,
+      withoutClass: kind === "students" ? mapped.rows.filter((row) => row.className === null).length : 0,
       warnings,
-    });
-  };
+    };
+  }, [reading, mapping, kind]);
+  // A row held back by the mapping (a personnummer in a column that is read) stops the import like any other row error.
+  const mappingHolds = mapping !== null && !mapping.applied.ok;
 
   const missingYear = IMPORT_NEEDS_YEAR[kind] && targetYear === null;
   const createdWithoutClass = (report?.warnings ?? []).filter((warning) => warning.code === WITHOUT_CLASS).length;
@@ -305,7 +328,7 @@ export function CsvImportDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t("title")}</DialogTitle>
         </DialogHeader>
@@ -395,7 +418,8 @@ export function CsvImportDialog({
           </>
         ) : (
           <>
-            <div className="space-y-4">
+            {/* min-w-0: the dialog is a grid, and the column table inside would otherwise widen it past a phone's edge (it scrolls in its own box). */}
+            <div className="min-w-0 space-y-4">
               <div className="space-y-2">
                 <Label>{t("kindLabel")}</Label>
                 <div className="flex items-center gap-2">
@@ -439,9 +463,16 @@ export function CsvImportDialog({
                   key={fileInputKey}
                   id="csv-import-file"
                   type="file"
-                  accept=".csv,text/csv"
-                  onChange={(event) => void onFileChosen(event)}
+                  accept=".csv,.tsv,.txt,text/csv"
+                  onChange={onFileChosen}
                 />
+              </div>
+
+              <div className="space-y-2">
+                <PasteTable id="csv-import-paste" label={t("pasteLabel")} hint={t("pasteHint")} value={pasted} onChange={setPasted} />
+                <Button variant="outline" disabled={pasted.trim() === ""} onClick={() => void load({ text: pasted }, tMap("pasted"))}>
+                  {t("pasteRead")}
+                </Button>
               </div>
 
               {missingYear ? (
@@ -456,6 +487,17 @@ export function CsvImportDialog({
                 <p className="text-sm text-muted-foreground">
                   {t("importingIntoYear", { year: targetYear.name })}
                 </p>
+              ) : null}
+
+              {reading?.state === "table" ? (
+                <ColumnMappingPanel
+                  key={reading.serial}
+                  kind={kind}
+                  table={reading.table}
+                  templates={templates.data ?? NO_TEMPLATES}
+                  onChange={setMapping}
+                  compact
+                />
               ) : null}
 
               {preview ? (
@@ -541,6 +583,7 @@ export function CsvImportDialog({
                   preview === null ||
                   preview.rows.length === 0 ||
                   preview.errors.length > 0 ||
+                  mappingHolds ||
                   missingYear ||
                   importCsv.isPending
                 }

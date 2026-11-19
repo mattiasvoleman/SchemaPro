@@ -54,8 +54,6 @@ export interface FieldSpec {
   requiredUnless?: CombinedField;
   /** A field that splits one cell in two: what it writes is not under `header`. */
   combined?: CombinedField;
-  /** Not yet read by the kind's mapper: its catalogue entry is ahead of it (the signature fields of the timplan, until part 3). */
-  pendingInMapper?: true;
 }
 
 type Row = readonly [id: string, header: string, required?: true];
@@ -97,7 +95,9 @@ const CSV_ROWS: Record<CsvKind, readonly Row[]> = {
     ["minutesBefore", "minuter_fore"],
     ["minutesAfter", "minuter_efter"],
     ["teacherEmail", "larare"],
+    ["teacherSignature", "larare_signatur"],
     ["coTeacherEmail", "medlarare"],
+    ["coTeacherSignature", "medlarare_signatur"],
     ["teacherLoadPercent", "larare_procent"],
     ["coTeacherLoadPercent", "medlarare_procent"],
     ["recurrence", "veckor"],
@@ -165,16 +165,7 @@ const LESSON_ROWS: readonly (readonly [id: string, sv: string, en: string, alias
 
 function csvFields(kind: CsvKind): FieldSpec[] {
   const aliases = CSV_ALIASES[kind] as Record<string, readonly string[]>;
-  const fields = CSV_ROWS[kind].map(
-    ([id, header, required]): FieldSpec => ({ id, header, aliases: aliases[id] ?? [], required: required === true }),
-  );
-  if (kind !== "requirements") return fields;
-  // Ahead of the mapper (lib/csv.ts reads them in part 3): a teacher by signature instead of by e-mail. The gateway takes them already.
-  return [
-    ...fields,
-    { id: "teacherSignature", header: "larare_signatur", aliases: ["lararesignatur", "lararsignatur", "teachersignature"], required: false, pendingInMapper: true },
-    { id: "coTeacherSignature", header: "medlarare_signatur", aliases: ["medlararesignatur", "medlarsignatur", "coteachersignature"], required: false, pendingInMapper: true },
-  ];
+  return CSV_ROWS[kind].map(([id, header, required]): FieldSpec => ({ id, header, aliases: aliases[id] ?? [], required: required === true }));
 }
 
 function lessonFields(): FieldSpec[] {

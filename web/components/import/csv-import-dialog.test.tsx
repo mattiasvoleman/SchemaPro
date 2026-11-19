@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent, { type UserEvent } from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { toast } from "sonner";
@@ -246,17 +246,18 @@ describe("CsvImportDialog preview", () => {
 
     await uploadCsv(user, `${BOM}namn;epost\r\nAlma;alma@example.com\r\n`);
 
-    await screen.findByText(/Kolumner saknas/);
+    // The mapping says what is missing and where to point it out; the importer's own sentence is not said a second time.
+    await screen.findByText(/problems\.MISSING_REQUIRED\(field=fields\.students\.firstName/);
+    expect(screen.getByText(/problems\.MISSING_REQUIRED\(field=fields\.students\.className/)).toBeInTheDocument();
+    expect(screen.queryByText(/Kolumner saknas/)).not.toBeInTheDocument();
     expect(importButton()).toBeDisabled();
   });
 
-  it("a mojibake header is rejected with a clear missing-column message (by design)", async () => {
-    // web/lib/csv.ts:20-24 claims normalizeHeader makes a wrong-encoding
-    // "FÃ¶rnamn" resolve like "Förnamn". It does not: NFD of "Ã" is A + a
-    // combining tilde, so the header normalizes to "farnamn" — not "fornamn" —
-    // and the file fails with "Kolumner saknas". This test documents CURRENT
-    // behaviour; fixing it means either amending the doc comment or adding the
-    // mojibake spellings ("farnamn", "epostadress" variants…) to the aliases.
+  it("a mojibake header is not guessed at: it is named as a column nothing places, and the import waits", async () => {
+    // web/lib/csv.ts claims normalizeHeader makes a wrong-encoding "FÃ¶rnamn" resolve like "Förnamn". It does not: NFD of "Ã"
+    // is A + a combining tilde, so the header normalizes to "farnamn", not "fornamn". The importer used to fail with "Kolumner
+    // saknas"; the mapping now names the column that was not placed and the field nothing was placed on, and the user points
+    // it out (see "pointing out the columns").
     const user = userEvent.setup();
     renderDialog();
 
@@ -265,7 +266,8 @@ describe("CsvImportDialog preview", () => {
       "FÃ¶rnamn;efternamn;epost;klass\r\nAlma;Berg;alma@example.com;7A\r\n",
     );
 
-    await screen.findByText(/Kolumner saknas: fornamn/);
+    await screen.findByText(/problems\.MISSING_REQUIRED\(field=fields\.students\.firstName/);
+    expect(screen.getByText(/unplaced\(count=1\|names=FÃ¶rnamn\)/)).toBeInTheDocument();
     expect(importButton()).toBeDisabled();
   });
 });
@@ -906,8 +908,10 @@ describe("CsvImportDialog with files as schools save them", () => {
     await screen.findByText("rowsReady(count=1)");
     // Said, so a wrong guess is checked against the preview.
     expect(screen.getByText("readAs(encoding=Windows-1252)")).toBeInTheDocument();
-    expect(screen.getByText("Östen")).toBeInTheDocument();
-    expect(screen.getByText("7Ä")).toBeInTheDocument();
+    // In the preview table (the column panel's samples show the same cells).
+    const previewTable = screen.getAllByRole("table").at(-1)!;
+    expect(within(previewTable).getByText("Östen")).toBeInTheDocument();
+    expect(within(previewTable).getByText("7Ä")).toBeInTheDocument();
     await waitFor(() => expect(importButton()).toBeEnabled());
     await user.click(importButton());
     await waitFor(() => expect(mockPost).toHaveBeenCalled());
@@ -1092,3 +1096,244 @@ describe("CsvImportDialog: what the file itself says", () => {
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// Kolumnmappning (X2): the columns of a file or a paste are pointed out before anything is read
+// ---------------------------------------------------------------------------
+
+describe("CsvImportDialog: pointing out the columns", () => {
+  const mockGet = (api as unknown as { get: Mock }).get;
+  const COLUMN = (name: string) => screen.getByRole("combobox", { name: `columns.fieldOf(column=${name})` });
+
+  beforeEach(() => {
+    mockGet.mockReset();
+  });
+
+  it("folds the list of columns away for a file whose headers are the importer's own, and reads it as it always did", async () => {
+    mockPost.mockResolvedValue({ created: 2, skipped: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog();
+
+    await uploadCsv(user, STUDENTS_CSV);
+
+    await screen.findByText("rowsReady(count=2)");
+    const summary = screen.getByText("compact.allPlaced(placed=4|total=4)");
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    // Nothing is said of columns that need nothing said.
+    expect(screen.queryByText(/^unplaced\(/)).not.toBeInTheDocument();
+    await user.click(importButton());
+    await waitFor(() => expect(mockPost).toHaveBeenCalled());
+    expect(mockPost.mock.calls[0]?.[1]).toMatchObject({
+      rows: [
+        { firstName: "Alma", lastName: "Berg", email: "alma@example.com", className: "7A" },
+        { firstName: "Nils", lastName: "Ek", email: "nils@example.com", className: "7B" },
+      ],
+    });
+  });
+
+  it("opens the list for a column nothing places, names it, and imports once the user has pointed the columns out", async () => {
+    mockPost.mockResolvedValue({ created: 1, skipped: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog();
+
+    // "Mejladress" and "Grupp" are not spellings the importer takes; Rastra does not guess at them.
+    await uploadCsv(user, "fornamn;efternamn;Mejladress;Grupp\r\nAlma;Berg;alma@example.com;7A\r\n");
+
+    await screen.findByText("unplaced(count=2|names=Mejladress, Grupp)");
+    expect(screen.getByText("compact.needsSay(placed=2|total=4)").closest("details")).toHaveAttribute("open");
+    expect(importButton()).toBeDisabled();
+
+    await user.selectOptions(COLUMN("Mejladress"), "email");
+    await user.selectOptions(COLUMN("Grupp"), "className");
+
+    await screen.findByText("rowsReady(count=1)");
+    expect(screen.queryByText(/^unplaced\(/)).not.toBeInTheDocument();
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    // The list is still open: what the user has just done is not folded away under their hand.
+    expect(screen.getByText(/^compact\./).closest("details")).toHaveAttribute("open");
+    await user.click(importButton());
+    await waitFor(() => expect(mockPost).toHaveBeenCalled());
+    expect(mockPost.mock.calls[0]?.[1]).toMatchObject({
+      rows: [{ firstName: "Alma", lastName: "Berg", email: "alma@example.com", className: "7A" }],
+    });
+  });
+
+  it("reads a table pasted from another program, tab-separated, and sends the same rows as a file would", async () => {
+    mockPost.mockResolvedValue({ created: 1, skipped: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.click(screen.getByLabelText("pasteLabel"));
+    await user.paste("fornamn\tefternamn\tepost\tklass\nAlma\tBerg\talma@example.com\t7A\n");
+    await user.click(screen.getByRole("button", { name: "pasteRead" }));
+
+    await screen.findByText("rowsReady(count=1)");
+    // A paste has no code page to name.
+    expect(screen.queryByText(/^readAs\(/)).not.toBeInTheDocument();
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+    await waitFor(() => expect(mockPost).toHaveBeenCalled());
+    expect(mockPost.mock.calls[0]?.[1]).toMatchObject({
+      rows: [{ firstName: "Alma", lastName: "Berg", email: "alma@example.com", className: "7A" }],
+    });
+  });
+
+  it("offers nothing to read until something is pasted, and says so when the paste holds no table", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    expect(screen.getByRole("button", { name: "pasteRead" })).toBeDisabled();
+
+    await user.click(screen.getByLabelText("pasteLabel"));
+    await user.paste("   \n  ");
+    expect(screen.getByRole("button", { name: "pasteRead" })).toBeDisabled();
+  });
+
+  it("drops a personnummer column in the browser: it is said, and nothing of it is sent", async () => {
+    mockPost.mockResolvedValue({ created: 1, skipped: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog();
+
+    await uploadCsv(user, "fornamn;efternamn;epost;klass;Personnummer\r\nAlma;Berg;alma@example.com;7A;19800101-1234\r\n");
+
+    await screen.findByText("rowsReady(count=1)");
+    expect(screen.getByText("dropped(count=1)")).toBeInTheDocument();
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+    await waitFor(() => expect(mockPost).toHaveBeenCalled());
+    expect(JSON.stringify(mockPost.mock.calls[0])).not.toMatch(/19800101|1234/);
+  });
+
+  it("holds the import back for a personnummer in a column that is read, naming the row and the column, never the value", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    // One cell in three: fewer than half, so the column is an e-mail column with a stray number in it, not a personnummer column.
+    await uploadCsv(
+      user,
+      "fornamn;efternamn;epost;klass\r\nAlma;Berg;alma@example.com;7A\r\nNils;Ek;19800101-1234;7B\r\nEva;Lind;eva@example.com;7C\r\n",
+    );
+
+    await screen.findByText("rowProblems.title");
+    expect(screen.getByText(/Rad 3/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/19800101-1234/);
+    expect(importButton()).toBeDisabled();
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("places the columns of a file by the school's saved template, and says which", async () => {
+    mockPost.mockResolvedValue({ created: 1, skipped: 0, errors: [] });
+    mockGet.mockImplementation(async (url: string) =>
+      url.startsWith("/api/v1/import-templates")
+        ? [
+            {
+              id: "t1",
+              kind: "students",
+              name: "Skolans elevlista",
+              headerRow: null,
+              placements: [
+                { key: "fn", label: "Fn", field: "firstName" },
+                { key: "en", label: "En", field: "lastName" },
+                { key: "mejl", label: "Mejl", field: "email" },
+                { key: "kl", label: "Kl", field: "className" },
+              ],
+            },
+          ]
+        : undefined,
+    );
+    const user = userEvent.setup();
+    renderDialog();
+
+    await uploadCsv(user, "Fn;En;Mejl;Kl\r\nAlma;Berg;alma@example.com;7A\r\n");
+
+    await screen.findByText("template.applied(name=Skolans elevlista)");
+    await screen.findByText("rowsReady(count=1)");
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+    await waitFor(() => expect(mockPost).toHaveBeenCalled());
+    expect(mockPost.mock.calls[0]?.[1]).toMatchObject({
+      rows: [{ firstName: "Alma", lastName: "Berg", email: "alma@example.com", className: "7A" }],
+    });
+  });
+
+  it("works as before when the templates cannot be read", async () => {
+    mockGet.mockRejectedValue(new Error("down"));
+    const user = userEvent.setup();
+    renderDialog();
+
+    await uploadCsv(user, STUDENTS_CSV);
+
+    await screen.findByText("rowsReady(count=2)");
+    await waitFor(() => expect(importButton()).toBeEnabled());
+  });
+
+  it("reads a table the page already holds as soon as the dialog opens", async () => {
+    renderDialog({ kinds: ["students"], source: { text: "fornamn;efternamn;epost;klass\nAlma;Berg;alma@example.com;7A\n" } });
+
+    await screen.findByText("rowsReady(count=1)");
+    await waitFor(() => expect(importButton()).toBeEnabled());
+  });
+
+  describe("a timplan post with the teacher by signature (a Skola24 Tjänstefördelning names no addresses)", () => {
+    it("sends the signatures, and tells the API the file had those columns", async () => {
+      mockPost.mockResolvedValue({ created: 1, skipped: 0, updated: 0, errors: [] });
+      const user = userEvent.setup();
+      renderDialog({ kinds: ["requirements"] });
+
+      await uploadCsv(user, "grupp;amne;lektioner_per_vecka;minuter_per_lektion;larare_signatur;medlarare_signatur\r\n7A;MA;3;60;KBE;BLU\r\n");
+
+      await screen.findByText("rowsReady(count=1)");
+      await waitFor(() => expect(importButton()).toBeEnabled());
+      await user.click(importButton());
+      await waitFor(() => expect(mockPost).toHaveBeenCalled());
+      const [, body] = mockPost.mock.calls[0] as [string, { rows: Array<Record<string, unknown>>; columns: string[] }];
+      expect(body.rows[0]).toMatchObject({ teacherSignature: "KBE", coTeacherSignature: "BLU" });
+      expect(body.columns).toEqual(expect.arrayContaining(["teacherSignature", "coTeacherSignature"]));
+    });
+
+    it("refuses a row that names the same teacher both ways, as the gateway would", async () => {
+      const user = userEvent.setup();
+      renderDialog({ kinds: ["requirements"] });
+
+      await uploadCsv(user, "grupp;amne;lektioner_per_vecka;minuter_per_lektion;larare;larare_signatur\r\n7A;MA;3;60;karin@example.com;KBE\r\n");
+
+      expect(await screen.findByText(/läraren står både i larare och i larare_signatur/)).toBeInTheDocument();
+      expect(importButton()).toBeDisabled();
+    });
+  });
+});
+
+describe("CsvImportDialog telephone numbers written without hyphens", () => {
+  it("sends the numbers of a guardians file: ten digits are no personnummer in the telephone column", async () => {
+    mockPost.mockResolvedValue({ created: 3, linked: 3, skipped: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["guardians"] });
+
+    await uploadCsv(
+      user,
+      "fornamn;efternamn;epost;telefon;elev_epost\r\nGun;Berg;gun@example.com;0701234567;alma@example.com\r\nOla;Ek;ola@example.com;0709876543;nils@example.com\r\nEva;Li;eva@example.com;070 123 45 67;bo@example.com\r\n",
+    );
+
+    await screen.findByText("rowsReady(count=3)");
+    expect(screen.queryByText(/^dropped\(/)).not.toBeInTheDocument();
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+    await waitFor(() => expect(mockPost).toHaveBeenCalled());
+    const [, body] = mockPost.mock.calls[0] as [string, { rows: Array<{ phone: string | null }> }];
+    expect(body.rows.map((row) => row.phone)).toEqual(["0701234567", "0709876543", "070 123 45 67"]);
+  });
+
+  it("still holds a row back for a personnummer written as one in the telephone column", async () => {
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["students"] });
+
+    await uploadCsv(
+      user,
+      "fornamn;efternamn;epost;telefon;klass\r\nAlma;Berg;alma@example.com;0701234567;7A\r\nNils;Ek;nils@example.com;800101-1234;7B\r\nEva;Lind;eva@example.com;031-123456;7C\r\n",
+    );
+
+    await screen.findByText("rowProblems.title");
+    expect(screen.getByText(/Rad 3/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/800101-1234/);
+    expect(importButton()).toBeDisabled();
+  });
+});

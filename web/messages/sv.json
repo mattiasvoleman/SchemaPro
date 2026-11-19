@@ -3506,6 +3506,9 @@
     },
     "downloadTemplate": "Ladda ner mall",
     "chooseFile": "Välj fil",
+    "pasteLabel": "Eller klistra in tabellen här",
+    "pasteHint": "Markera tabellen i det andra programmet, kopiera och klistra in. Rubrikerna ska stå överst.",
+    "pasteRead": "Läs in det inklistrade",
     "noActiveYear": "Inget aktivt läsår. Aktivera ett läsår innan du importerar.",
     "importingIntoYear": "Raderna läggs in i läsåret {year}.",
     "mappingErrors": "Fel i filen",
@@ -8120,6 +8123,9 @@
       "fileHint": "En Excelfil (.xlsx) läses här genom att du markerar cellerna och klistrar in dem, eller sparar den som CSV.",
       "read": "Läs in tabellen",
       "kindLessons": "Lektioner (schemat)",
+      "kindRequirements": "Tjänstefördelning (postimporten)",
+      "kindLabel": "Vad innehåller tabellen?",
+      "requirementsHint": "En tjänstefördelning blir poster i timplanen: lärarna anges på signatur, och grupp, ämne, lektioner per vecka och minuter per lektion pekar du ut själv. Förhandsvisningen och Importera ligger i nästa steg.",
       "used": "Tabellen {name} är läst: {count, plural, one {# rad} other {# rader}}. Förhandsvisningen står nedan.",
       "tooLarge": "Filen är för stor: högst {size} kB tas emot."
     },
@@ -11056,9 +11062,13 @@
   },
   "columnMapping": {
     "intro": "Säg vilken kolumn i tabellen som är vilket fält. Det du inte pekar ut läses inte in, och Rastra gissar aldrig vilken kolumn som är vilken.",
+    "compact": {
+      "allPlaced": "Alla kolumner är utpekade ({placed} av {total} läses). Visa eller ändra",
+      "needsSay": "Kolumner att peka ut ({placed} av {total} läses)"
+    },
     "pasted": "Inklistrad tabell",
     "empty": "Det fanns ingen tabell i texten. Klistra in raderna, med rubrikerna överst.",
-    "tooLong": "Texten är för lång för att vara en tabell med lektioner. Dela upp den, eller spara tabellen som en CSV-fil.",
+    "tooLong": "Texten är för lång för att vara en tabell. Dela upp den, eller spara tabellen som en CSV-fil.",
     "readAs": "Filen lästes som {encoding}. Är å, ä och ö fel nedan, spara filen som CSV UTF-8 och välj den igen.",
     "dialog": {
       "title": "Läs in en tabell",

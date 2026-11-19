@@ -203,7 +203,7 @@ describe("applyMapping, over random tables", () => {
 
   seeded("reads a file whose headers are the kind's own as it is, in the catalogue's order, with nothing named", 505, (r) => {
     const kind = r.pick(["students", "requirements", "rooms", "classes", "teacherDuties", "subjects", "timplan"] as const);
-    const fields = FIELDS[kind].filter((field) => field.pendingInMapper !== true);
+    const fields = FIELDS[kind];
     const chosen = r.shuffle(fields.filter((field) => field.required || r.bool(0.5)));
     const records = [chosen.map((field) => field.header), ...Array.from({ length: 1 + r.int(5) }, () => chosen.map(() => r.pick(SAFE.filter((cell) => cell !== ""))))];
     const b = chooseHeaderRow(readTable(records.map((record) => record.map((cell) => quote(cell, ";")).join(";")).join("\n")), null)!;
