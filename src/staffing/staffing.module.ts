@@ -6,6 +6,8 @@ import { TeacherEmploymentsService } from './teacher-employments.service';
 import { TeacherQualificationsController } from './teacher-qualifications.controller';
 import { TeacherQualificationsService } from './teacher-qualifications.service';
 import { StaffingLoadController } from './staffing-load.controller';
+import { EngineReleaseController } from './engine-release.controller';
+import { EngineReleaseService } from './engine-release.service';
 import { StaffingLoadService } from './staffing-load.service';
 import { TeacherDutiesController } from './teacher-duties.controller';
 import { TeacherDutiesService } from './teacher-duties.service';
@@ -38,6 +40,7 @@ import { ScbFileService } from './scb/scb-file.service';
     TeacherEmploymentsController,
     TeacherQualificationsController,
     StaffingLoadController,
+    EngineReleaseController,
     TeacherDutiesController,
     ScbFileController,
   ],
@@ -46,6 +49,7 @@ import { ScbFileService } from './scb/scb-file.service';
     TeacherEmploymentsService,
     TeacherQualificationsService,
     StaffingLoadService,
+    EngineReleaseService,
     TeacherDutiesService,
     ScbFileService,
   ],

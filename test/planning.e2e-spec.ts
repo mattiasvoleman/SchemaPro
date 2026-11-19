@@ -6821,8 +6821,17 @@ describe('Planning surface (e2e)', () => {
     const r = (n: number) => `00000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`;
     const V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-    const givenStaff = (policy: Row | null = null) => {
+    /** `released`: the posts the school has let the engine move (släppt för motorn); a staffed post that is not one is never moved. */
+    const givenStaff = (policy: Row | null = null, released: string[] = []) => {
       const rows = staffingRows();
+      if (released.length > 0) {
+        rows['teachingRequirementRelease'] = released.map((requirementId) => ({
+          requirementId,
+          schoolId: IDS.school,
+          releasedById: null,
+          releasedAt: new Date('2026-11-19T08:00:00.000Z'),
+        }));
+      }
       if (policy) {
         rows['staffingPolicy'] = [
           {
@@ -6880,6 +6889,11 @@ describe('Planning surface (e2e)', () => {
     };
     const lead = (world: ReturnType<typeof givenRolloverWorld>, id: string) =>
       world.rows['teachingRequirement']!.find((row) => row['id'] === id)!['teacherId'];
+    /** What the dialog's second confirmation sends: each change of the proposal that gives a teacher a subject or a årskurs they do not teach. */
+    const confirmedOf = (assignments: Record<string, unknown>[]) =>
+      assignments
+        .filter((a) => a['newTeaching'] !== undefined)
+        .map((a) => ({ requirementId: a['requirementId'], toTeacherId: a['toTeacherId'] }));
     const propose = (body: Record<string, unknown> = {}) =>
       request(http())
         .post(PROPOSAL)
@@ -6925,10 +6939,46 @@ describe('Planning surface (e2e)', () => {
         fromTeacherId: a['fromTeacherId'],
         toTeacherId: a['toTeacherId'],
       }));
-      const applied = await request(http())
+      // Cecilia teaches nothing today: both changes give her a subject (and a year), and the proposal says so.
+      for (const assignment of proposal.body.assignments) {
+        expect(assignment.newTeaching).toMatchObject({ subject: true });
+      }
+      // The second confirmation: an apply without it is refused, nothing written, and what a client acts on survives the filter flat.
+      const unconfirmed = await request(http())
         .post(APPLY)
         .set('x-test-user', admin())
         .send({ academicYearId: IDS.yearA, basisSha256: proposal.body.basisSha256, changes })
+        .expect(409);
+      expect(unconfirmed.body).toMatchObject({
+        code: 'STAFF_NEW_TEACHING_UNCONFIRMED',
+        params: { count: 2, requirementId: r(2), userId: IDS.cecilia, newSubject: 1 },
+      });
+      expect(Object.keys(unconfirmed.body.params).sort()).toEqual(['count', 'newSubject', 'newYears', 'requirementId', 'userId']);
+      expect(unconfirmed.body.detail ?? unconfirmed.body.message).toMatch(/ett ämne eller en årskurs/);
+      expect([lead(world, r(2)), lead(world, r(6))]).toEqual([IDS.bo, null]);
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+      // Confirmed for one of the two only: still refused, and for the other.
+      const halfConfirmed = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({ academicYearId: IDS.yearA, basisSha256: proposal.body.basisSha256, confirmedNewTeaching: confirmedOf(proposal.body.assignments).slice(0, 1), changes })
+        .expect(409);
+      expect(halfConfirmed.body).toMatchObject({ code: 'STAFF_NEW_TEACHING_UNCONFIRMED', params: { count: 1, requirementId: r(6) } });
+      // Confirmed for the row but for another teacher: not confirmed.
+      await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({
+          academicYearId: IDS.yearA,
+          basisSha256: proposal.body.basisSha256,
+          confirmedNewTeaching: confirmedOf(proposal.body.assignments).map((entry) => ({ ...entry, toTeacherId: IDS.anna })),
+          changes,
+        })
+        .expect(409);
+      const applied = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({ academicYearId: IDS.yearA, basisSha256: proposal.body.basisSha256, confirmedNewTeaching: confirmedOf(proposal.body.assignments), changes })
         .expect(200);
       expect(applied.body).toMatchObject({ updated: 2, warnings: [] });
       expect([lead(world, r(2)), lead(world, r(6))]).toEqual([IDS.cecilia, IDS.cecilia]);
@@ -6971,7 +7021,7 @@ describe('Planning surface (e2e)', () => {
       const applied = await request(http())
         .post(APPLY)
         .set('x-test-user', admin())
-        .send({ academicYearId: IDS.yearA, basisSha256: proposal.body.basisSha256, changes })
+        .send({ academicYearId: IDS.yearA, basisSha256: proposal.body.basisSha256, confirmedNewTeaching: confirmedOf(proposal.body.assignments), changes })
         .expect(200);
       // Somebody places Cecilia's lesson of r(6) before the undo.
       world.rows['teachingRequirementPlacement'] = [
@@ -7047,7 +7097,13 @@ describe('Planning surface (e2e)', () => {
       const warned = await request(http())
         .post(APPLY)
         .set('x-test-user', admin())
-        .send({ academicYearId: IDS.yearA, basisSha256: again.body.basisSha256, changes: [{ requirementId: r(6), fromTeacherId: null, toTeacherId: IDS.anna }] })
+        .send({
+          academicYearId: IDS.yearA,
+          basisSha256: again.body.basisSha256,
+          // Anna teaches no Teknik today.
+          confirmedNewTeaching: [{ requirementId: r(6), toTeacherId: IDS.anna }],
+          changes: [{ requirementId: r(6), fromTeacherId: null, toTeacherId: IDS.anna }],
+        })
         .expect(200);
       expect(warned.body.warnings).toEqual([
         expect.objectContaining({ code: 'STAFF_TEACHER_OVER_TARGET', userId: IDS.anna, requirementIds: [r(6)] }),
@@ -7059,12 +7115,18 @@ describe('Planning surface (e2e)', () => {
       // Riktmärke 600: Anna (70.5 %) 425, already far over. The apply hands her
       // Ma 7A to Cecilia; putting it back grows her from today's minutes, but
       // to no more than she had before the apply, so the undo is not refused.
-      const world = givenStaff({ overAllocationMode: 'REFUSE' });
+      // Anna's Ma 7A is released: the school lets the engine move it.
+      const world = givenStaff({ overAllocationMode: 'REFUSE' }, [r(1)]);
       const proposal = await propose().expect(200);
       const applied = await request(http())
         .post(APPLY)
         .set('x-test-user', admin())
-        .send({ academicYearId: IDS.yearA, basisSha256: proposal.body.basisSha256, changes: [{ requirementId: r(1), fromTeacherId: IDS.anna, toTeacherId: IDS.cecilia }] })
+        .send({
+          academicYearId: IDS.yearA,
+          basisSha256: proposal.body.basisSha256,
+          confirmedNewTeaching: [{ requirementId: r(1), toTeacherId: IDS.cecilia }],
+          changes: [{ requirementId: r(1), fromTeacherId: IDS.anna, toTeacherId: IDS.cecilia }],
+        })
         .expect(200);
       expect(lead(world, r(1))).toBe(IDS.cecilia);
       const undone = await request(http())
@@ -7080,6 +7142,73 @@ describe('Planning surface (e2e)', () => {
       expect(lead(world, r(1))).toBe(IDS.anna);
       expect(undone.body.basisSha256).toBe(proposal.body.basisSha256);
       expect(world.rows['scheduleChangeLog']).toHaveLength(2);
+    });
+
+    it('never moves a teacher the school chose: a staffed post is fixed whatever "bara obemannade" says, and free once the school has released it', async () => {
+      // Anna leads Ma 7A (r(1)). "Bara obemannade" off used to hand every staffed row to the engine; now only the released ones.
+      // With a riktmärke: a lead with no target keeps her rows fixed whatever is asked.
+      givenStaff({});
+      const notReleased = await propose({ onlyUnstaffed: false }).expect(200);
+      expect(notReleased.body.counts).toMatchObject({ releasedRequirements: 0, keptRequirements: 0 });
+      const [, sentNot] = harness.http.post.mock.calls[0] as [string, StaffRequest];
+      expect(sentNot.requirements.filter((row) => row.currentTeacherId !== null && !row.fixed)).toEqual([]);
+
+      harness.http.post.mockClear();
+      givenStaff({}, [r(1)]);
+      const released = await propose({ onlyUnstaffed: false }).expect(200);
+      expect(released.body.counts).toMatchObject({ releasedRequirements: 1, keptRequirements: 1 });
+      const [, sentReleased] = harness.http.post.mock.calls[0] as [string, StaffRequest];
+      expect(sentReleased.requirements.filter((row) => row.currentTeacherId !== null && !row.fixed)).toHaveLength(1);
+      // The same school asked "bara obemannade": a release does not override the narrower question.
+      harness.http.post.mockClear();
+      givenStaff({}, [r(1)]);
+      const onlyOpen = await propose({ onlyUnstaffed: true }).expect(200);
+      expect(onlyOpen.body.counts).toMatchObject({ releasedRequirements: 1, keptRequirements: 0 });
+      // A release changes what the proposal read, so it changes the basis.
+      expect(released.body.basisSha256).not.toBe(notReleased.body.basisSha256);
+    });
+
+    it('409s STAFF_ROW_NOT_RELEASED for a change of a staffed post the school has not released, and writes nothing', async () => {
+      const world = givenStaff();
+      const proposal = await propose().expect(200);
+      const refused = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({
+          academicYearId: IDS.yearA,
+          basisSha256: proposal.body.basisSha256,
+          confirmedNewTeaching: [{ requirementId: r(1), toTeacherId: IDS.cecilia }],
+          changes: [{ requirementId: r(1), fromTeacherId: IDS.anna, toTeacherId: IDS.cecilia }],
+        })
+        .expect(409);
+      expect(refused.body).toMatchObject({ code: 'STAFF_ROW_NOT_RELEASED', params: { requirementId: r(1) } });
+      expect(Object.keys(refused.body.params)).toEqual(['requirementId']);
+      expect(lead(world, r(1))).toBe(IDS.anna);
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+    });
+
+    it('409s STAFF_PROPOSAL_STALE when a release was set after the proposal, writing nothing', async () => {
+      const world = givenStaff();
+      const proposal = await propose().expect(200);
+      world.rows['teachingRequirementRelease'] = [
+        { requirementId: r(1), schoolId: IDS.school, releasedById: null, releasedAt: new Date('2026-11-19T08:00:00.000Z') },
+      ];
+      const stale = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({
+          academicYearId: IDS.yearA,
+          basisSha256: proposal.body.basisSha256,
+          confirmedNewTeaching: confirmedOf(proposal.body.assignments),
+          changes: proposal.body.assignments.map((a: Record<string, unknown>) => ({
+            requirementId: a['requirementId'],
+            fromTeacherId: a['fromTeacherId'],
+            toTeacherId: a['toTeacherId'],
+          })),
+        })
+        .expect(409);
+      expect(stale.body).toMatchObject({ code: 'STAFF_PROPOSAL_STALE' });
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
     });
 
     it('400s a co-teacher made lead, and 409s a change from a lead the row does not have', async () => {
@@ -7139,6 +7268,10 @@ describe('Planning surface (e2e)', () => {
         academicYearId: yearB,
         teachingTargetMinutesPerWeek: 900,
       });
+      // The school has released B's posts that have a teacher, so "bara obemannade" off lets the engine look at them.
+      world.rows['teachingRequirementRelease'] = world.rows['teachingRequirement']!
+        .filter((row) => row['academicYearId'] === yearB && row['teacherId'] !== null)
+        .map((row) => ({ requirementId: row['id'], schoolId: IDS.school, releasedById: null, releasedAt: new Date('2027-01-10T08:00:00.000Z') }));
       harness.http.post.mockClear();
       const proposal = await propose({ academicYearId: yearB, onlyUnstaffed: false }).expect(200);
       const [, payload] = harness.http.post.mock.calls[0] as [string, StaffRequest];

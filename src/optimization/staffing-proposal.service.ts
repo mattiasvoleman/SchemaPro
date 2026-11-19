@@ -18,6 +18,7 @@ import { changesDuringYear } from '../staffing/employment-periods';
 import { readLoadInput, type LoadRead } from '../staffing/load-input';
 import { lastYearKey, readLastYearTeachers } from '../staffing/last-year-teachers';
 import { readActiveStaff } from '../staffing/staff-candidates';
+import { newTeachingOf, teachingToday, type NewTeaching } from '../staffing/new-teaching';
 import {
   SAME_TEACHER_TWICE,
   enforceRequirementBatch,
@@ -73,6 +74,16 @@ export const STAFF_PROPOSAL_STALE = 'STAFF_PROPOSAL_STALE';
 export const STAFF_ENGINE_UNAVAILABLE = 'STAFF_ENGINE_UNAVAILABLE';
 /** The engine's own refusal of a model it will not build, said here before the call too. */
 export const STAFF_MODEL_TOO_LARGE = 'STAFF_MODEL_TOO_LARGE';
+/**
+ * An apply that gives a teacher a subject or a årskurs they do not teach today, for a row the caller has not confirmed. The
+ * dialog lists such changes apart and asks twice; an apply that skips the second answer is refused, with nothing written.
+ */
+export const STAFF_NEW_TEACHING_UNCONFIRMED = 'STAFF_NEW_TEACHING_UNCONFIRMED';
+/**
+ * An apply that moves a post whose teacher the school chose and has not released for the engine. A proposal never holds one, and
+ * the basis covers the releases, so only a request made by hand gets here.
+ */
+export const STAFF_ROW_NOT_RELEASED = 'STAFF_ROW_NOT_RELEASED';
 /**
  * More staff, or more rows in play, than the engine's lists take. The
  * gateway's own code: STAFF_MODEL_TOO_LARGE's "about N variables against
@@ -177,6 +188,12 @@ export interface ProposalAssignment {
    */
   toStretchCharges?: number[];
   fromStretchCharges?: number[];
+  /**
+   * What the lead gives `toTeacherId` that they do not teach today (leads, co-leads or take lessons of): the subject, and the
+   * years (a grade each). Absent when it gives nothing new, which is the usual case. The apply asks the caller to confirm every
+   * such row (ApplyStaffingDto.confirmedNewTeaching).
+   */
+  newTeaching?: NewTeaching;
   reasons: {
     /** The strongest covering behörighet; null when none or none recorded. */
     qualificationKind: LoadQualification['kind'] | null;
@@ -241,6 +258,8 @@ export interface StaffingProposal {
     openRequirements: number;
     keptRequirements: number;
     fixedRequirements: number;
+    /** Posts of the year the school has released for the engine (släppt för motorn), whether they are staffed or not. */
+    releasedRequirements: number;
     /** Free rows whose lead is no longer active staff. */
     vacated: number;
     /** Rows naming one person as lead and co-teacher: kept as they are. */
@@ -299,6 +318,11 @@ interface StaffingState {
   candidateIds: string[];
   /** Last year's teachers (Fas 5's fold) per requirement id, for rows whose group has a predecessor. */
   lastYear: Map<string, LastYearTeachers>;
+  /**
+   * The year's posts the school has released for the engine (TeachingRequirementReleases): only these, once they are staffed, may
+   * be given to somebody else. In the basis, so an apply is refused as stale when a release has been set or taken back since.
+   */
+  released: ReadonlySet<string>;
 }
 
 type RowKind = 'FIXED' | 'KEPT' | 'OPEN';
@@ -440,6 +464,7 @@ export class StaffingProposalService {
         openRequirements: open.length,
         keptRequirements: kept.length,
         fixedRequirements: plan.rows.length - free.length,
+        releasedRequirements: state.released.size,
         vacated: plan.rows.filter((row) => row.vacated).length,
         inconsistent: plan.rows.filter((row) => row.inconsistent).length,
         teachersSent: plan.teachers.length,
@@ -641,6 +666,17 @@ export class StaffingProposalService {
           throw requirementSharesConflict('TEACHER_ON_POST');
         }
         if (row.teacherId !== change.fromTeacherId) throw stale();
+        // A teacher the school chose is moved by nobody who has not been released for the engine. A proposal holds no such row
+        // (planOf) and the basis covers the releases, so this is a request made by hand. An undo puts back what an apply moved.
+        if (dto.undo !== true && row.teacherId !== null && staff.has(row.teacherId) && !state.released.has(row.id)) {
+          throw new ConflictException({
+            message:
+              `${requirementName(row.subjectName, row.groupName)} har en lärare som skolan valt och är inte släppt för motorn. ` +
+              'Släpp posten först, eller ändra läraren för hand.',
+            code: STAFF_ROW_NOT_RELEASED,
+            params: { requirementId: row.id },
+          });
+        }
       }
       if (restoring.length > 0) {
         const wanted = [...new Set(restoring)];
@@ -664,6 +700,37 @@ export class StaffingProposalService {
         },
         restoring: dto.undo === true ? await this.appliedBefore(tx, dto) : undefined,
       });
+
+      if (dto.undo !== true) {
+        // The second confirmation: a change that gives a teacher a subject or a årskurs they do not teach today (computed from the
+        // rows as the basis says they are, as the proposal named them) is written only with the caller's yes for that very change.
+        // After the policy's own judgement above, so a change the school's rules refuse is refused as that and not first asked about.
+        const teachingNow = teachingToday(state.read.input.requirements);
+        const confirmed = new Set((dto.confirmedNewTeaching ?? []).map((entry) => `${entry.requirementId}>${entry.toTeacherId}`));
+        const unconfirmed = [...dto.changes]
+          .sort((a, b) => compareIds(a.requirementId, b.requirementId))
+          .flatMap((change) => {
+            const given = newTeachingOf(teachingNow, rows.get(change.requirementId)!, change.toTeacherId!);
+            return given !== null && !confirmed.has(`${change.requirementId}>${change.toTeacherId}`) ? [{ change, given }] : [];
+          });
+        if (unconfirmed.length > 0) {
+          const first = unconfirmed[0]!;
+          throw new ConflictException({
+            message:
+              `Förslaget ger ${unconfirmed.length} ${unconfirmed.length === 1 ? 'ändring' : 'ändringar'} en lärare ett ämne eller en årskurs ` +
+              'som läraren inte undervisar i i dag. Bekräfta dem särskilt innan förslaget tillämpas.',
+            code: STAFF_NEW_TEACHING_UNCONFIRMED,
+            // Flat: a nested value never reaches the client (http-exception.filter.ts keeps a code and flat params).
+            params: {
+              count: unconfirmed.length,
+              requirementId: first.change.requirementId,
+              userId: first.change.toTeacherId!,
+              newSubject: first.given.subject ? 1 : 0,
+              newYears: first.given.years.join(','),
+            },
+          });
+        }
+      }
 
       // One statement per (from, to) pair, each still carrying the from-lead:
       // the basis says every row has it, and this makes the write itself
@@ -842,7 +909,14 @@ export class StaffingProposalService {
       const teachers = folded.get(lastYearKey(row.predecessorId, row.subjectId));
       if (teachers) lastYear.set(row.id, teachers);
     }
-    return { schoolId, read, policy, staffIds, candidateIds, lastYear };
+    // Släppt för motorn: this year's posts only (the post's own year), through the administrators' read arm.
+    const releases = await tx.teachingRequirementRelease.findMany({
+      where: { requirement: { academicYearId } },
+      select: { requirementId: true },
+    });
+    const yearPosts = new Set(read.input.requirements.map((row) => row.id));
+    const released = new Set(releases.map((release) => release.requirementId).filter((id) => yearPosts.has(id)));
+    return { schoolId, read, policy, staffIds, candidateIds, lastYear, released };
   }
 
   /**
@@ -1076,6 +1150,9 @@ export class StaffingProposalService {
       ).map((stretch) => round2(stretch.counted));
     };
     const assignments: ProposalAssignment[] = [];
+    // What each teacher teaches TODAY, from the rows as they are read: a change that gives a teacher a subject or a årskurs they
+    // do not teach is named, so the dialog can ask for a second confirmation (new-teaching.ts).
+    const teachingNow = teachingToday(input.requirements);
     for (const plannedRow of plan.rows) {
       const to = leads.get(plannedRow.row.id);
       if (to === undefined || to === plannedRow.row.teacherId) continue;
@@ -1083,6 +1160,7 @@ export class StaffingProposalService {
       const lastYear = state.lastYear.get(row.id) ?? null;
       const toStretch = stretchCharges(to, plannedRow);
       const fromStretch = stretchCharges(row.teacherId, plannedRow);
+      const newTeaching = newTeachingOf(teachingNow, row, to);
       assignments.push({
         requirementId: row.id,
         subjectId: row.subjectId,
@@ -1092,6 +1170,7 @@ export class StaffingProposalService {
         chargeMinutesPerWeek: round2(plannedRow.chargeExact),
         ...(toStretch !== undefined ? { toStretchCharges: toStretch } : {}),
         ...(fromStretch !== undefined ? { fromStretchCharges: fromStretch } : {}),
+        ...(newTeaching !== null ? { newTeaching } : {}),
         reasons: {
           qualificationKind: plan.recorded
             ? strongestCoveringQualification(input.qualifications, to, row, input.year)
@@ -1218,7 +1297,7 @@ export function toTenthsUp(minutes: number): number {
  * fixed load. Pure; the order is canonical (rows and teachers by real id).
  */
 export function planOf(
-  state: Pick<StaffingState, 'read' | 'policy' | 'staffIds' | 'candidateIds' | 'lastYear'>,
+  state: Pick<StaffingState, 'read' | 'policy' | 'staffIds' | 'candidateIds' | 'lastYear' | 'released'>,
   dto: Pick<StaffingProposalDto, 'onlyUnstaffed' | 'respectQualifications' | 'pinnedRequirementIds'>,
 ): Plan {
   const input = state.read.input;
@@ -1291,12 +1370,16 @@ export function planOf(
     const untargetedLead = row.teacherId !== null && staff.has(row.teacherId) && roomUnknown.has(row.teacherId);
     // A dated row led by a changing post stays: see changingPost above.
     const datedOfChanging = isDatedRow(row) && row.teacherId !== null && changingPost.has(row.teacherId);
+    // A teacher the school chose is never moved by the engine. Only a post nobody teaches (or whose teacher has left) may be given
+    // to somebody, and a post the school has RELEASED (släppt för motorn) once "bara obemannade" is off. Every other staffed post is
+    // fixed, as a pinned one is, so the engine's request is what it always was and its contract unchanged.
+    const staffedBySchool = row.teacherId !== null && staff.has(row.teacherId);
     const free =
       !inconsistent &&
       !untargetedLead &&
       !datedOfChanging &&
       !pinnedAsked.has(row.id) &&
-      (!dto.onlyUnstaffed || row.teacherId === null || !staff.has(row.teacherId));
+      (!staffedBySchool || (!dto.onlyUnstaffed && state.released.has(row.id)));
     const current = !inconsistent && row.teacherId !== null && staff.has(row.teacherId) ? row.teacherId : null;
     const co = !inconsistent && row.coTeacherId !== null && staff.has(row.coTeacherId) ? row.coTeacherId : null;
     const charged = chargedMinutes(row, input.year, input.closures);
@@ -1702,7 +1785,7 @@ function overlay(input: LoadInput, plan: Plan, leads: Map<string, string>): Load
  * every apply. The options are not in it: they are the question, not the
  * state. Names are not in it: a renamed group asks nothing new.
  */
-export function basisOf(state: Pick<StaffingState, 'read' | 'policy' | 'staffIds' | 'lastYear'>): string {
+export function basisOf(state: Pick<StaffingState, 'read' | 'policy' | 'staffIds' | 'lastYear' | 'released'>): string {
   const input = state.read.input;
   const loadPolicy = input.policy ?? DEFAULT_LOAD_POLICY;
   const counted = new Map<string, number>();
@@ -1785,6 +1868,10 @@ export function basisOf(state: Pick<StaffingState, 'read' | 'policy' | 'staffIds
       .map((row) => [row.startDate, row.endDate, row.minGradeLevel ?? null, row.maxGradeLevel ?? null])
       .sort(byFirst),
     staff: [...state.staffIds].sort(compareIds),
+    // Släppt för motorn (20270226090000) only when the year has any, so the basis of a school that releases nothing is the digest
+    // it always was. The ids of the released posts: who released them and when decides nothing, and the proposal that read them
+    // is refused as stale when a post is released or taken back before it is applied.
+    ...(state.released.size > 0 ? { released: [...state.released].sort(compareIds) } : {}),
   };
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }
