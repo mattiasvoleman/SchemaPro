@@ -7,8 +7,11 @@ import {
   STAFFING_SEARCH_POLL_MS,
   classifyProposalError,
   classifyStartError,
+  endedKey,
+  failedKey,
   isActiveSearch,
   latestSearchKey,
+  leftOutLines,
   splitDuration,
   tightestPercent,
   useCancelStaffingSearch,
@@ -17,6 +20,7 @@ import {
   useStartStaffingSearch,
   yearLines,
   type StaffingSearchFiguresDoc,
+  type StaffingSearchLeftOut,
   type StaffingSearchStatus,
   type StaffingSearchView,
   type StaffingSearchWeekFigure,
@@ -362,6 +366,65 @@ describe("the statuses a run is polled in", () => {
   });
 });
 
+describe("how a run that has ended is worded", () => {
+  it("words a run the engine kept waiting too long as SEARCH_ENGINE_BUSY, by its code and by its stop, like one the engine kept failing", () => {
+    expect(failedKey(view("FAILED", { errorCode: "SEARCH_ENGINE_BUSY", stopReason: "ENGINE_BUSY" }))).toBe("SEARCH_ENGINE_BUSY");
+    // The code is what the gateway wrote; a run without one still says what stopped it.
+    expect(failedKey(view("FAILED", { errorCode: null, stopReason: "ENGINE_BUSY" }))).toBe("SEARCH_ENGINE_BUSY");
+    expect(failedKey(view("FAILED", { errorCode: "SEARCH_ENGINE_FAILING", stopReason: "ENGINE_FAILING" }))).toBe("SEARCH_ENGINE_FAILING");
+    expect(failedKey(view("FAILED", { errorCode: "SEARCH_ENGINE_OLDER", stopReason: "ENGINE_OLDER" }))).toBe("SEARCH_ENGINE_OLDER");
+    // A code from a newer gateway is a plain failure, whatever the stop.
+    expect(failedKey(view("FAILED", { errorCode: "SOMETHING_NEWER", stopReason: null }))).toBe("SEARCH_FAILED");
+  });
+
+  it("gives a run that stopped on the engine without failing the plain 'done' sentence, with or without moves", () => {
+    expect(endedKey(view("SUCCEEDED", { stopReason: "ENGINE_BUSY", acceptedMoves: 0 }))).toBe("DONE");
+    expect(endedKey(view("SUCCEEDED", { stopReason: "ENGINE_BUSY", acceptedMoves: 3 }))).toBe("DONE");
+    expect(endedKey(view("SUCCEEDED", { stopReason: "BUDGET", acceptedMoves: 3 }))).toBe("BUDGET");
+    expect(endedKey(view("SUCCEEDED", { stopReason: "BUDGET", acceptedMoves: 0 }))).toBe("BUDGET_NONE");
+  });
+});
+
+describe("what the search left out", () => {
+  const leftOut = (over: Partial<StaffingSearchLeftOut> = {}): StaffingSearchLeftOut => ({ posts: [], years: [], ...over });
+
+  it("is nothing to print when nothing was left out, when the run has no figures yet, and for a count of nothing", () => {
+    expect(leftOutLines(null)).toEqual([]);
+    expect(leftOutLines(undefined)).toEqual([]);
+    expect(leftOutLines(leftOut())).toEqual([]);
+    expect(leftOutLines(leftOut({ posts: [{ reason: "NOT_FREE", count: 0 }] }))).toEqual([]);
+  });
+
+  it("gives a line for each reason with posts, in the gateway's order, and then each year, the lowest first", () => {
+    const lines = leftOutLines(
+      leftOut({
+        posts: [
+          { reason: "NOT_FREE", count: 4 },
+          { reason: "UNSTAFFED", count: 2 },
+          { reason: "YEAR_LIMIT", count: 1 },
+        ],
+        years: [
+          { year: 9, reason: "YEAR_NOT_COUNTED" },
+          { year: 7, reason: "YEAR_LIMIT" },
+        ],
+      }),
+    );
+    expect(lines).toEqual([
+      { kind: "posts", reason: "NOT_FREE", count: 4 },
+      { kind: "posts", reason: "UNSTAFFED", count: 2 },
+      { kind: "posts", reason: "YEAR_LIMIT", count: 1 },
+      { kind: "year", reason: "YEAR_LIMIT", year: 7 },
+      { kind: "year", reason: "YEAR_NOT_COUNTED", year: 9 },
+    ]);
+  });
+
+  it("does not reorder or change what it is given", () => {
+    const given = leftOut({ years: [{ year: 9, reason: "YEAR_LIMIT" }, { year: 7, reason: "YEAR_LIMIT" }] });
+    leftOutLines(given);
+    expect(given.years.map((entry) => entry.year)).toEqual([9, 7]);
+  });
+});
+
 describe("the figures", () => {
   const week = (before: [number, number], after: [number, number], period: number | null = null): StaffingSearchWeekFigure => ({
     period,
@@ -393,8 +456,7 @@ describe("the figures", () => {
         { year: 7, weeks: [week([2000, 2275], [2000, 2275])] },
         { year: 8, weeks: [week([5, 0], [5, 0])] },
       ],
-      skippedPosts: 0,
-      immovablePosts: 0,
+      leftOut: { posts: [], years: [] },
     };
     const lines = yearLines(figures);
     expect(lines.map((line) => line.year)).toEqual([7, 9]);

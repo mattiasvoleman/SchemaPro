@@ -4800,8 +4800,19 @@
       "yearLine": "Åk {year}: {before} % → {after} %",
       "yearLineSoFar": "Åk {year}: {before} % → {after} % hittills",
       "yearLineSame": "Åk {year}: {percent} %",
-      "skipped": "{count, plural, one {# släppt post ingår inte: en årskurs den spänner över är inte bland dem sökningen värderar.} other {# släppta poster ingår inte: en årskurs de spänner över är inte bland dem sökningen värderar.}}",
-      "immovable": "{count, plural, one {# släppt post kan inte byta lärare: ingen annan får ta den, eller den ligger inte i veckan.} other {# släppta poster kan inte byta lärare: ingen annan får ta dem, eller de ligger inte i veckan.}}",
+      "leftOutTitle": "Det sökningen lämnade orört",
+      "leftOutPost": {
+        "NOT_FREE": "{count, plural, one {# post är inte släppt åt motorn, eller är fäst, och behåller sin lärare.} other {# poster är inte släppta åt motorn, eller är fästa, och behåller sina lärare.}}",
+        "UNSTAFFED": "{count, plural, one {# post saknar lärare och söks inte: att bemanna den är en fråga för Föreslå bemanning, som du kan köra efter att du har tillämpat det här förslaget.} other {# poster saknar lärare och söks inte: att bemanna dem är en fråga för Föreslå bemanning, som du kan köra efter att du har tillämpat det här förslaget.}}",
+        "NO_CHOICE": "{count, plural, one {# post har ingen annan som får ta den (behörighet, tjänstgrad eller medlärare) och kan inte byta lärare.} other {# poster har ingen annan som får ta dem (behörighet, tjänstgrad eller medlärare) och kan inte byta lärare.}}",
+        "NOT_IN_WEEK": "{count, plural, one {# post ligger inte i veckan som sökningen räknar (alla dess lektioner är handplacerade, eller årskurserna är okända) och flyttades inte.} other {# poster ligger inte i veckan som sökningen räknar (alla deras lektioner är handplacerade, eller årskurserna är okända) och flyttades inte.}}",
+        "YEAR_LIMIT": "{count, plural, one {# post flyttades inte: en årskurs den spänner över är inte bland de fyra trängsta, som är de årskurser sökningen värderar.} other {# poster flyttades inte: en årskurs de spänner över är inte bland de fyra trängsta, som är de årskurser sökningen värderar.}}",
+        "YEAR_NOT_COUNTED": "{count, plural, one {# post flyttades inte: en årskurs den spänner över kunde inte räknas till slut som veckan är i dag, så det går inte att avgöra där om veckan blir trängre än i dag.} other {# poster flyttades inte: en årskurs de spänner över kunde inte räknas till slut som veckan är i dag, så det går inte att avgöra där om veckan blir trängre än i dag.}}"
+      },
+      "leftOutYear": {
+        "YEAR_LIMIT": "Åk {year} värderades inte: sökningen värderar högst fyra årskurser, de trängsta.",
+        "YEAR_NOT_COUNTED": "Åk {year} värderades inte: veckan kunde inte räknas till slut som den är i dag."
+      },
       "limits": "Siffrorna är motorns nedre gräns för varje årskurs och vecka. De visar att veckan går att lätta, inte att ett schema finns, och lärarnas lektioner i andra årskurser syns inte i dem. Poster som ingen leder är inte med.",
       "ended": {
         "NOT_TIGHT": "Veckan ligger redan under 85 % i de årskurser som kan påverkas: det finns inget att vinna.",
@@ -4825,6 +4836,7 @@
         "SEARCH_START_NOT_EXACT": "Ingen årskurs hann räknas till slut inom de sekunder motorn har för en räkning, så sökningen har inget att jämföra med. Försök igen om en stund.",
         "SEARCH_ENGINE_OLDER": "Schemamotorn är äldre än API:t och kan inte räkna veckan för en sökning ännu. Det brukar vara uppdaterat inom några minuter: försök igen då.",
         "SEARCH_ENGINE_FAILING": "Motorn misslyckades med flera räkningar i rad, så sökningen stannade. Försök igen om en stund.",
+        "SEARCH_ENGINE_BUSY": "Motorn var upptagen för länge (den delas med andra skolor), så sökningen stannade. Väntan räknas inte in i sökningens tid. Försök igen om en stund.",
         "SEARCH_FAILED": "Sökningen misslyckades. Ingenting har ändrats. Försök igen."
       },
       "failedBest": "Bästa läget den hann hitta har {count, plural, one {# byte} other {# byten}} och kan visas.",

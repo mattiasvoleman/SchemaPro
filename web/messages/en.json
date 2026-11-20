@@ -4800,8 +4800,19 @@
       "yearLine": "Year {year}: {before} % → {after} %",
       "yearLineSoFar": "Year {year}: {before} % → {after} % so far",
       "yearLineSame": "Year {year}: {percent} %",
-      "skipped": "{count, plural, one {# released entry is not included: a year it spans is not among those the search judges.} other {# released entries are not included: a year they span is not among those the search judges.}}",
-      "immovable": "{count, plural, one {# released entry cannot change teacher: nobody else may take it, or it is not in the week.} other {# released entries cannot change teacher: nobody else may take them, or they are not in the week.}}",
+      "leftOutTitle": "What the search left alone",
+      "leftOutPost": {
+        "NOT_FREE": "{count, plural, one {# entry is not released for the engine, or is pinned, and keeps its teacher.} other {# entries are not released for the engine, or are pinned, and keep their teachers.}}",
+        "UNSTAFFED": "{count, plural, one {# entry has no teacher and is not searched: staffing it is a question for Propose staffing, which you can run after you apply this proposal.} other {# entries have no teacher and are not searched: staffing them is a question for Propose staffing, which you can run after you apply this proposal.}}",
+        "NO_CHOICE": "{count, plural, one {# entry has nobody else who may take it (qualification, employment rate or co-teacher) and cannot change teacher.} other {# entries have nobody else who may take them (qualification, employment rate or co-teacher) and cannot change teacher.}}",
+        "NOT_IN_WEEK": "{count, plural, one {# entry is not in the week the search counts (all its lessons are hand-placed, or its years are unknown) and was not moved.} other {# entries are not in the week the search counts (all their lessons are hand-placed, or their years are unknown) and were not moved.}}",
+        "YEAR_LIMIT": "{count, plural, one {# entry was not moved: a year it spans is not among the four tightest, which are the years the search judges.} other {# entries were not moved: a year they span is not among the four tightest, which are the years the search judges.}}",
+        "YEAR_NOT_COUNTED": "{count, plural, one {# entry was not moved: a year it spans could not be counted to the end as the week stands today, so whether the week gets tighter than today cannot be decided there.} other {# entries were not moved: a year they span could not be counted to the end as the week stands today, so whether the week gets tighter than today cannot be decided there.}}"
+      },
+      "leftOutYear": {
+        "YEAR_LIMIT": "Year {year} was not judged: the search judges at most four years, the tightest.",
+        "YEAR_NOT_COUNTED": "Year {year} was not judged: the week could not be counted to the end as it stands today."
+      },
       "limits": "The figures are the engine's lower bound for each year and week. They show that the week can be eased, not that a timetable exists, and the teachers' lessons in other years are not visible in them. Entries nobody leads are not included.",
       "ended": {
         "NOT_TIGHT": "The week is already below 85 % in the years that can be affected: there is nothing to gain.",
@@ -4825,6 +4836,7 @@
         "SEARCH_START_NOT_EXACT": "No year was counted to the end in the seconds the engine has for a count, so the search has nothing to compare with. Try again in a moment.",
         "SEARCH_ENGINE_OLDER": "The scheduling engine is older than the API and cannot count the week for a search yet. It is usually updated within a few minutes: try again then.",
         "SEARCH_ENGINE_FAILING": "The engine failed several counts in a row, so the search stopped. Try again in a moment.",
+        "SEARCH_ENGINE_BUSY": "The engine was busy for too long (it is shared with other schools), so the search stopped. The wait is not counted in the search's time. Try again in a moment.",
         "SEARCH_FAILED": "The search failed. Nothing has changed. Try again."
       },
       "failedBest": "The best state it found has {count, plural, one {# change} other {# changes}} and can be shown.",

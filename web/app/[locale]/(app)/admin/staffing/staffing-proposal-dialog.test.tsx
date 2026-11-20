@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -7,6 +9,7 @@ import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 import { ApiError, api } from "@/lib/api";
 import type { StaffingSearchProps } from "@/components/staffing/staffing-search";
+import type { StaffingSearchFiguresDoc } from "@/lib/staffing-search";
 import type { StaffingWeekProps } from "@/components/staffing/staffing-week";
 import { StaffingProposalDialog, type StaffingProposalDialogProps } from "./staffing-proposal-dialog";
 import type { StaffingApplyResult, StaffingProposal } from "./use-staffing-proposal";
@@ -55,16 +58,21 @@ vi.mock("@/components/staffing/staffing-week", () => ({
 /*
  * The search for teacher choice is a panel of its own, with its own tests (components/staffing/staffing-search.test.tsx): here it
  * is a stand-in that shows it was asked for, what it was handed, and lets a test play the part of its answer (the proposal it
- * read), so that what this file holds is the dialog's side: when the entry is offered, how a proposal that came from a search
- * is taken, and what its week and its apply carry.
+ * read and the figures the run kept), so that what this file holds is the dialog's side: when the entry is offered, how a
+ * proposal that came from a search is taken, and what its week and its apply carry. The lines of what the search left out are
+ * the panel's own component, not a stand-in: the dialog shows the very lines the panel says, and a test of it should see them.
  */
-const search = vi.hoisted(() => ({ props: [] as unknown[], answer: null as unknown }));
-vi.mock("@/components/staffing/staffing-search", () => ({
+const search = vi.hoisted(() => ({ props: [] as unknown[], answer: null as unknown, figures: null as unknown }));
+vi.mock("@/components/staffing/staffing-search", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/staffing/staffing-search")>()),
   StaffingSearch: (props: StaffingSearchProps) => {
     search.props.push(props);
     return (
       <section aria-label="Sökningen (stand-in)">
-        <button type="button" onClick={() => props.onProposal(search.answer as StaffingProposal)}>
+        <button
+          type="button"
+          onClick={() => props.onProposal(search.answer as StaffingProposal, search.figures as StaffingSearchFiguresDoc | null)}
+        >
           search hands over
         </button>
         <button type="button" onClick={props.onBack}>
@@ -1503,8 +1511,27 @@ describe("StaffingProposalDialog", () => {
       search.answer = answer;
     };
 
+    /** What the run kept besides the proposal: no year was judged here, but two reasons and a year are named as left out. */
+    const keptFigures = (): StaffingSearchFiguresDoc => ({
+      years: [],
+      leftOut: {
+        posts: [
+          { reason: "UNSTAFFED", count: 2 },
+          { reason: "NO_CHOICE", count: 1 },
+        ],
+        years: [{ year: 7, reason: "YEAR_LIMIT" }],
+      },
+    });
+    const LEFT_OUT_TITLE = "Det sökningen lämnade orört";
+    const LEFT_OUT_LINES = [
+      "2 poster saknar lärare och söks inte: att bemanna dem är en fråga för Föreslå bemanning, som du kan köra efter att du har tillämpat det här förslaget.",
+      "1 post har ingen annan som får ta den (behörighet, tjänstgrad eller medlärare) och kan inte byta lärare.",
+      "Åk 7 värderades inte: sökningen värderar högst fyra årskurser, de trängsta.",
+    ];
+
     beforeEach(() => {
       search.props.length = 0;
+      search.figures = null;
       answerWith(searchProposal());
       post.mockImplementation(async (path: string) => (path === PROPOSE ? releasedProposal() : applied()));
     });
@@ -1638,6 +1665,40 @@ describe("StaffingProposalDialog", () => {
         expect(asks()).toHaveLength(1);
       });
 
+      it("says what the search left untouched under the note of where it came from: the panel's own lines, with a heading of the proposal's level", async () => {
+        const user = userEvent.setup();
+        search.figures = keptFigures();
+        renderDialog();
+        await takeSearchProposal(user);
+
+        const heading = await screen.findByRole("heading", { name: LEFT_OUT_TITLE, level: 3 });
+        const section = heading.closest("section")!;
+        expect(within(section).getAllByRole("listitem").map((item) => item.textContent)).toEqual(LEFT_OUT_LINES);
+        // Under the note, above the rows, and in a region named by its heading.
+        const note = screen.getByText(/Det här är förslaget från sökningen efter lärarval/);
+        expect(note.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(section.compareDocumentPosition(screen.getByRole("heading", { name: "Förslag per post" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(screen.getByRole("region", { name: LEFT_OUT_TITLE })).toBe(section);
+      });
+
+      it("says nothing of what was left out when the run's figures did not come with the proposal, or when nothing was left out", async () => {
+        const user = userEvent.setup();
+        search.figures = null;
+        renderDialog();
+        await takeSearchProposal(user);
+        expect(screen.getByText(/Det här är förslaget från sökningen efter lärarval/)).toBeInTheDocument();
+        expect(screen.queryByText(LEFT_OUT_TITLE)).toBeNull();
+      });
+
+      it("renders no section for figures that left nothing out", async () => {
+        const user = userEvent.setup();
+        search.figures = { years: [], leftOut: { posts: [], years: [] } } satisfies StaffingSearchFiguresDoc;
+        renderDialog();
+        await takeSearchProposal(user);
+        expect(screen.getByText(/Det här är förslaget från sökningen efter lärarval/)).toBeInTheDocument();
+        expect(screen.queryByText(LEFT_OUT_TITLE)).toBeNull();
+      });
+
       it("is applied with its own basis AND coversWeek when no figure was shown for it, because its basis already covers the week", async () => {
         const user = userEvent.setup();
         renderDialog();
@@ -1716,8 +1777,10 @@ describe("StaffingProposalDialog", () => {
     describe("an ordinary proposal after a search", () => {
       it("is asked about and applied exactly as it always was: nothing of the search's flag is carried over", async () => {
         const user = userEvent.setup();
+        search.figures = keptFigures();
         renderDialog();
         await takeSearchProposal(user);
+        expect(await screen.findByText(LEFT_OUT_TITLE)).toBeInTheDocument();
         await user.click(screen.getByRole("button", { name: "Ändra val" }));
         await computeProposal(user);
 
@@ -1726,6 +1789,8 @@ describe("StaffingProposalDialog", () => {
         // Behåll is back for a proposal the engine made, and the note is gone.
         expect(screen.getByRole("button", { name: "Behåll som nu och beräkna om: Musik för 8B" })).toBeInTheDocument();
         expect(screen.queryByText(/Det här är förslaget från sökningen/)).toBeNull();
+        // What the search left out belongs to its proposal: it is gone with it.
+        expect(screen.queryByText(LEFT_OUT_TITLE)).toBeNull();
         await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
         await waitFor(() => expect(applies()).toHaveLength(1));
 
@@ -1740,8 +1805,19 @@ describe("StaffingProposalDialog", () => {
 
         expect(lastWeek()).not.toHaveProperty("coversWeek");
         expect(screen.queryByText(/Det här är förslaget från sökningen/)).toBeNull();
+        expect(screen.queryByText(LEFT_OUT_TITLE)).toBeNull();
         expect(screen.getAllByRole("button", { name: /Behåll som nu och beräkna om/ })).toHaveLength(3);
       });
+    });
+  });
+
+  describe("the bundle", () => {
+    it("holds the left-out lines only through a lazy import of the panel's module: nothing of it is in the dialog's own chunk", () => {
+      const source = readFileSync(join(__dirname, "staffing-proposal-dialog.tsx"), "utf8");
+      // No static import of the panel's module (a type-only import from lib is erased and is not it).
+      expect(source).not.toMatch(/^import\s[^;]*from\s+"@\/components\/staffing\/staffing-search"/m);
+      expect(source).toMatch(/lazy\(\(\) =>\s*import\("@\/components\/staffing\/staffing-search"\)\.then\(\(module\) => \(\{ default: module\.StaffingSearchLeftOut \}\)\)/);
+      expect(source).not.toMatch(/^import\s(?!type)[^;]*from\s+"@\/lib\/staffing-search"/m);
     });
   });
 

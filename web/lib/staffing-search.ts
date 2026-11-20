@@ -33,6 +33,7 @@ export type StaffingSearchStop =
   | "MAX_ROUNDS"
   | "MAX_EVALUATIONS"
   | "ENGINE_OLDER"
+  | "ENGINE_BUSY"
   | "ENGINE_FAILING";
 
 export interface StaffingSearchCell {
@@ -56,12 +57,27 @@ export interface StaffingSearchYearFigures {
   weeks: StaffingSearchWeekFigure[];
 }
 
+/**
+ * Why a post was not searched (the gateway's StaffingSearchLeftOutPostReason), each post under the one reason that kept it:
+ * NOT_FREE (not released for the engine, or pinned in the dialog), UNSTAFFED (nobody leads it: Föreslå bemannings fråga),
+ * NO_CHOICE (nobody else may lead it), NOT_IN_WEEK (the week holds none of its lessons, or its years are unknown),
+ * YEAR_LIMIT (a year it spans is not among the four tightest) and YEAR_NOT_COUNTED (a year it spans could not be counted to
+ * the end as it stands).
+ */
+export type StaffingSearchLeftOutPostReason = "NOT_FREE" | "UNSTAFFED" | "NO_CHOICE" | "NOT_IN_WEEK" | "YEAR_LIMIT" | "YEAR_NOT_COUNTED";
+export type StaffingSearchLeftOutYearReason = "YEAR_LIMIT" | "YEAR_NOT_COUNTED";
+
+/** What the search did not move, and why: nothing it leaves out is left out in silence. */
+export interface StaffingSearchLeftOut {
+  /** Only the reasons that have posts, in the gateway's order. */
+  posts: { reason: StaffingSearchLeftOutPostReason; count: number }[];
+  /** The years a post with a choice spans that were not judged, ascending, in the läsår's own numbering (as `StaffingSearchYearFigures.year`). */
+  years: { year: number; reason: StaffingSearchLeftOutYearReason }[];
+}
+
 export interface StaffingSearchFiguresDoc {
   years: StaffingSearchYearFigures[];
-  /** Released posts left out because a year they span is not among the judged. */
-  skippedPosts: number;
-  /** Released posts with nobody else to be given to, or not in the week. */
-  immovablePosts: number;
+  leftOut: StaffingSearchLeftOut;
 }
 
 export interface StaffingSearchTally {
@@ -128,6 +144,7 @@ export const SEARCH_START_REFUSED = "SEARCH_START_REFUSED";
 export const SEARCH_START_NOT_EXACT = "SEARCH_START_NOT_EXACT";
 export const SEARCH_ENGINE_OLDER = "SEARCH_ENGINE_OLDER";
 export const SEARCH_ENGINE_FAILING = "SEARCH_ENGINE_FAILING";
+export const SEARCH_ENGINE_BUSY = "SEARCH_ENGINE_BUSY";
 export const SEARCH_FAILED = "SEARCH_FAILED";
 
 /** How often an active run is read: a search is minutes, and a figure moves only when a move is accepted. */
@@ -253,6 +270,7 @@ const FAILED_CODES: ReadonlySet<string> = new Set([
   SEARCH_START_NOT_EXACT,
   SEARCH_ENGINE_OLDER,
   SEARCH_ENGINE_FAILING,
+  SEARCH_ENGINE_BUSY,
   SEARCH_FAILED,
 ]);
 
@@ -262,6 +280,7 @@ export function failedKey(view: StaffingSearchView): string {
   if (code !== null && FAILED_CODES.has(code)) return code;
   if (view.stopReason === "ENGINE_OLDER") return SEARCH_ENGINE_OLDER;
   if (view.stopReason === "ENGINE_FAILING") return SEARCH_ENGINE_FAILING;
+  if (view.stopReason === "ENGINE_BUSY") return SEARCH_ENGINE_BUSY;
   return SEARCH_FAILED;
 }
 
@@ -319,6 +338,23 @@ export function yearLines(figures: StaffingSearchFiguresDoc | null): YearLine[] 
       return before === null || after === null ? [] : [{ year: entry.year, before, after }];
     })
     .sort((a, b) => a.year - b.year);
+}
+
+/** One line of what the search left out: a count of posts under a reason, or a year that was not judged. */
+export type LeftOutLine =
+  | { kind: "posts"; reason: StaffingSearchLeftOutPostReason; count: number }
+  | { kind: "year"; reason: StaffingSearchLeftOutYearReason; year: number };
+
+/**
+ * What the search left out, as the lines to print: a line for each reason that has posts (the gateway's order), then one for
+ * each year that was not judged, lowest first. Empty when nothing was left out, and for a run with no figures yet.
+ */
+export function leftOutLines(leftOut: StaffingSearchLeftOut | null | undefined): LeftOutLine[] {
+  if (!leftOut) return [];
+  return [
+    ...leftOut.posts.filter((entry) => entry.count > 0).map((entry): LeftOutLine => ({ kind: "posts", reason: entry.reason, count: entry.count })),
+    ...[...leftOut.years].sort((a, b) => a.year - b.year).map((entry): LeftOutLine => ({ kind: "year", reason: entry.reason, year: entry.year })),
+  ];
 }
 
 /** Whole minutes and the seconds over, of a time in milliseconds (rounded to the second, never negative). */

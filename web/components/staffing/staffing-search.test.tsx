@@ -4,11 +4,12 @@ import userEvent from "@testing-library/user-event";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StaffingProposal } from "@/app/[locale]/(app)/admin/staffing/use-staffing-proposal";
-import { StaffingSearch, type StaffingSearchProps } from "@/components/staffing/staffing-search";
+import { StaffingSearch, StaffingSearchLeftOut, type StaffingSearchProps } from "@/components/staffing/staffing-search";
 import { ApiError } from "@/lib/api";
 import {
   STAFFING_SEARCH_POLL_MS,
   latestSearchKey,
+  type StaffingSearchLeftOut as LeftOut,
   type StaffingSearchStatus,
   type StaffingSearchStop,
   type StaffingSearchView,
@@ -43,15 +44,44 @@ const week = (before: [number, number], after: [number, number], period: number 
   after: { demandMinutes: after[0], capacityMinutes: after[1] },
 });
 
+const NOTHING_LEFT_OUT: LeftOut = { posts: [], years: [] };
+
 /** Åk 9 from 100,2 % to 96,4 %, Åk 8 from 91,2 % to 91,2 % (nothing moved it). */
-const figures = (counts: { skippedPosts?: number; immovablePosts?: number } = {}) => ({
+const figures = (leftOut: LeftOut = NOTHING_LEFT_OUT) => ({
   years: [
     { year: 9, weeks: [week([2280, 2275], [2193, 2275], 0), week([1000, 2275], [1000, 2275], 1)] },
     { year: 8, weeks: [week([2075, 2275], [2075, 2275])] },
   ],
-  skippedPosts: counts.skippedPosts ?? 0,
-  immovablePosts: counts.immovablePosts ?? 0,
+  leftOut,
 });
+
+/** Every reason a post can be left out for, each with a count, and two years that were not judged. */
+const EVERYTHING_LEFT_OUT: LeftOut = {
+  posts: [
+    { reason: "NOT_FREE", count: 3 },
+    { reason: "UNSTAFFED", count: 1 },
+    { reason: "NO_CHOICE", count: 2 },
+    { reason: "NOT_IN_WEEK", count: 1 },
+    { reason: "YEAR_LIMIT", count: 2 },
+    { reason: "YEAR_NOT_COUNTED", count: 1 },
+  ],
+  years: [
+    { year: 6, reason: "YEAR_LIMIT" },
+    { year: 7, reason: "YEAR_NOT_COUNTED" },
+  ],
+};
+const LEFT_OUT_TITLE = "Det sökningen lämnade orört";
+/** The lines of EVERYTHING_LEFT_OUT in Swedish, in order. */
+const LEFT_OUT_LINES = [
+  "3 poster är inte släppta åt motorn, eller är fästa, och behåller sina lärare.",
+  "1 post saknar lärare och söks inte: att bemanna den är en fråga för Föreslå bemanning, som du kan köra efter att du har tillämpat det här förslaget.",
+  "2 poster har ingen annan som får ta dem (behörighet, tjänstgrad eller medlärare) och kan inte byta lärare.",
+  "1 post ligger inte i veckan som sökningen räknar (alla dess lektioner är handplacerade, eller årskurserna är okända) och flyttades inte.",
+  "2 poster flyttades inte: en årskurs de spänner över är inte bland de fyra trängsta, som är de årskurser sökningen värderar.",
+  "1 post flyttades inte: en årskurs den spänner över kunde inte räknas till slut som veckan är i dag, så det går inte att avgöra där om veckan blir trängre än i dag.",
+  "Åk 6 värderades inte: sökningen värderar högst fyra årskurser, de trängsta.",
+  "Åk 7 värderades inte: veckan kunde inte räknas till slut som den är i dag.",
+];
 
 const view = (status: StaffingSearchStatus, overrides: Partial<StaffingSearchView> = {}): StaffingSearchView => ({
   id: "run-1",
@@ -275,7 +305,7 @@ describe("a search that goes on", () => {
     // Nothing accepted: every week's figure now is the one it began with.
     server.latest = view("RUNNING", {
       acceptedMoves: 0,
-      figures: { years: [{ year: 9, weeks: [week([2280, 2275], [2280, 2275])] }], skippedPosts: 0, immovablePosts: 0 },
+      figures: { years: [{ year: 9, weeks: [week([2280, 2275], [2280, 2275])] }], leftOut: NOTHING_LEFT_OUT },
     });
     renderPanel();
 
@@ -320,12 +350,69 @@ describe("a search that goes on", () => {
     expect(screen.getByText(/Siffrorna är motorns nedre gräns/)).toBeInTheDocument();
   });
 
-  it("counts the released posts left out, and says why", async () => {
-    server.latest = view("RUNNING", { figures: figures({ skippedPosts: 2, immovablePosts: 1 }) });
+  it("says what the search left untouched while it goes on: how many posts under each reason, and each year it did not judge, in a section of its own", async () => {
+    server.latest = view("RUNNING", { figures: figures(EVERYTHING_LEFT_OUT) });
     renderPanel();
 
-    expect(await screen.findByText("2 släppta poster ingår inte: en årskurs de spänner över är inte bland dem sökningen värderar.")).toBeInTheDocument();
-    expect(screen.getByText("1 släppt post kan inte byta lärare: ingen annan får ta den, eller den ligger inte i veckan.")).toBeInTheDocument();
+    const heading = await screen.findByRole("heading", { name: LEFT_OUT_TITLE, level: 4 });
+    const section = heading.closest("section")!;
+    // One line per reason and one per year, in order, and nothing else in the list.
+    const items = within(section).getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual(LEFT_OUT_LINES);
+    // The section is its own: neither the figures' nor the honest limit sits in it, and it is not a live region.
+    expect(within(section).queryByText(/nedre gräns/)).toBeNull();
+    expect(within(section).queryByRole("status")).toBeNull();
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    // The old sentences are gone.
+    expect(screen.queryByText(/släppt post ingår inte|kan inte byta lärare: ingen annan får ta den, eller/)).toBeNull();
+  });
+
+  it("says one post in the singular, and only the reasons that have posts", async () => {
+    server.latest = view("RUNNING", {
+      figures: figures({ posts: [{ reason: "UNSTAFFED", count: 1 }], years: [] }),
+    });
+    renderPanel();
+
+    const heading = await screen.findByRole("heading", { name: LEFT_OUT_TITLE });
+    const items = within(heading.closest("section")!).getAllByRole("listitem");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toHaveTextContent(/^1 post saknar lärare och söks inte: att bemanna den är en fråga för Föreslå bemanning/);
+  });
+
+  it("says a year that was not judged although no post is counted, and a post count although no year is named", async () => {
+    server.latest = view("RUNNING", { figures: figures({ posts: [], years: [{ year: 6, reason: "YEAR_LIMIT" }] }) });
+    renderPanel();
+    const heading = await screen.findByRole("heading", { name: LEFT_OUT_TITLE });
+    expect(within(heading.closest("section")!).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "Åk 6 värderades inte: sökningen värderar högst fyra årskurser, de trängsta.",
+    ]);
+    cleanup();
+
+    server.latest = view("RUNNING", { figures: figures({ posts: [{ reason: "NO_CHOICE", count: 5 }], years: [] }) });
+    renderPanel();
+    const again = await screen.findByRole("heading", { name: LEFT_OUT_TITLE });
+    expect(within(again.closest("section")!).getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.queryByText(/Åk \d+ värderades inte/)).toBeNull();
+  });
+
+  it("renders nothing, not even the heading, when nothing was left out or the run has no figures yet", async () => {
+    server.latest = view("RUNNING", { figures: figures(NOTHING_LEFT_OUT) });
+    renderPanel();
+    await screen.findByText("Åk 9: 100,2 % → 96,4 % hittills");
+    expect(screen.queryByText(LEFT_OUT_TITLE)).toBeNull();
+    cleanup();
+
+    server.latest = view("PENDING", { figures: null, acceptedMoves: 0, round: 0, evaluations: 0, elapsedMs: 0, startedAt: null });
+    renderPanel();
+    await screen.findByText("Sökningen har inte räknat veckan än.");
+    expect(screen.queryByText(LEFT_OUT_TITLE)).toBeNull();
+    cleanup();
+
+    // A reason with a count of nothing is not a line.
+    server.latest = view("RUNNING", { figures: figures({ posts: [{ reason: "NOT_FREE", count: 0 }], years: [] }) });
+    renderPanel();
+    await screen.findByText("Åk 9: 100,2 % → 96,4 % hittills");
+    expect(screen.queryByText(LEFT_OUT_TITLE)).toBeNull();
   });
 
   it("stops it when asked, says it is being cancelled and takes the button away: the run goes on until its task sees it", async () => {
@@ -500,6 +587,10 @@ describe("a search that has ended", () => {
       "Schemamotorn är äldre än API:t och kan inte räkna veckan för en sökning ännu. Det brukar vara uppdaterat inom några minuter: försök igen då.",
     ],
     ["SEARCH_ENGINE_FAILING", "Motorn misslyckades med flera räkningar i rad, så sökningen stannade. Försök igen om en stund."],
+    [
+      "SEARCH_ENGINE_BUSY",
+      "Motorn var upptagen för länge (den delas med andra skolor), så sökningen stannade. Väntan räknas inte in i sökningens tid. Försök igen om en stund.",
+    ],
     ["SEARCH_FAILED", "Sökningen misslyckades. Ingenting har ändrats. Försök igen."],
     ["SOME_CODE_FROM_A_NEWER_GATEWAY", "Sökningen misslyckades. Ingenting har ändrats. Försök igen."],
   ])("says a failed search by its code (%s), never by the gateway's English", async (code, text) => {
@@ -522,6 +613,60 @@ describe("a search that has ended", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Visa det hittills bästa" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Sök igen" })).toBeEnabled();
+  });
+
+  it("says a search the engine kept waiting too long, by its stop as well as its code, and still offers the best it had found", async () => {
+    server.latest = ended("FAILED", "ENGINE_BUSY", { errorCode: "SEARCH_ENGINE_BUSY", acceptedMoves: 2, hasProposal: true });
+    renderPanel();
+
+    expect(
+      await screen.findByText(
+        /Motorn var upptagen för länge \(den delas med andra skolor\), så sökningen stannade\. Väntan räknas inte in i sökningens tid\. Försök igen om en stund\. Bästa läget den hann hitta har 2 byten och kan visas\./,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Visa det hittills bästa" })).toBeEnabled();
+    cleanup();
+
+    // Without the code, the stop alone gives the same sentence.
+    server.latest = ended("FAILED", "ENGINE_BUSY", { errorCode: null, acceptedMoves: 0, figures: null });
+    renderPanel();
+    expect(await screen.findByText(/Motorn var upptagen för länge/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Visa/ })).toBeNull();
+  });
+
+  it.each([
+    ["it ended with a proposal", ended("SUCCEEDED", "LOCAL_OPTIMUM", { acceptedMoves: 3, hasProposal: true, figures: figures(EVERYTHING_LEFT_OUT) })],
+    ["it was cancelled", ended("CANCELLED", "CANCELLED", { acceptedMoves: 1, hasProposal: true, figures: figures(EVERYTHING_LEFT_OUT) })],
+    ["it failed with moves in hand", ended("FAILED", "ENGINE_BUSY", { errorCode: "SEARCH_ENGINE_BUSY", acceptedMoves: 1, hasProposal: true, figures: figures(EVERYTHING_LEFT_OUT) })],
+    ["it found nothing", ended("SUCCEEDED", "LOCAL_OPTIMUM", { acceptedMoves: 0, figures: figures(EVERYTHING_LEFT_OUT) })],
+  ])("says what the search left untouched when %s, in the same lines as while it went on", async (_name, run) => {
+    server.latest = run;
+    renderPanel();
+
+    const heading = await screen.findByRole("heading", { name: LEFT_OUT_TITLE, level: 4 });
+    expect(within(heading.closest("section")!).getAllByRole("listitem").map((item) => item.textContent)).toEqual(LEFT_OUT_LINES);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("says what a search with no judged year left untouched: no year line, but the posts it did not search, and the honest limit", async () => {
+    // NO_MOVES: the figures hold no year (nothing was counted), but the posts were still counted under their reasons.
+    server.latest = ended("SUCCEEDED", "NO_MOVES", {
+      acceptedMoves: 0,
+      figures: { years: [], leftOut: { posts: [{ reason: "NOT_FREE", count: 4 }, { reason: "UNSTAFFED", count: 2 }], years: [] } },
+    });
+    renderPanel();
+
+    const heading = await screen.findByRole("heading", { name: LEFT_OUT_TITLE });
+    expect(within(heading.closest("section")!).getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.getByText("4 poster är inte släppta åt motorn, eller är fästa, och behåller sina lärare.")).toBeInTheDocument();
+    expect(screen.getByText(/Siffrorna är motorns nedre gräns/)).toBeInTheDocument();
+  });
+
+  it("renders nothing of it for an ended search that left nothing out", async () => {
+    server.latest = ended("SUCCEEDED", "LOCAL_OPTIMUM", { acceptedMoves: 3, hasProposal: true });
+    renderPanel();
+    await screen.findByText("Åk 9: 100,2 % → 96,4 %");
+    expect(screen.queryByText(LEFT_OUT_TITLE)).toBeNull();
   });
 
   it("searches again with Sök igen: a new start, and the new run replaces the ended one", async () => {
@@ -560,8 +705,32 @@ describe("the proposal", () => {
     await user.click(await screen.findByRole("button", { name: "Visa förslaget" }));
 
     await waitFor(() => expect(onProposal).toHaveBeenCalledTimes(1));
-    expect(onProposal).toHaveBeenCalledWith(PROPOSAL);
+    // The run's figures are not in the answer here: the dialog is told so, with null, and says nothing of what was left out.
+    expect(onProposal).toHaveBeenCalledWith(PROPOSAL, null);
     expect(gateway.get).toHaveBeenCalledWith(`${BASE}/run-1/proposal`);
+  });
+
+  it("hands over the figures the run kept with it, so that the dialog can say what was left out beside the proposal", async () => {
+    server.latest = ended("SUCCEEDED", "LOCAL_OPTIMUM", { acceptedMoves: 3, hasProposal: true });
+    const kept = figures(EVERYTHING_LEFT_OUT);
+    server.proposal = { proposal: PROPOSAL, figures: kept };
+    const user = userEvent.setup();
+    const { onProposal } = renderPanel();
+    await user.click(await screen.findByRole("button", { name: "Visa förslaget" }));
+
+    await waitFor(() => expect(onProposal).toHaveBeenCalledTimes(1));
+    expect(onProposal).toHaveBeenCalledWith(PROPOSAL, kept);
+  });
+
+  it("hands over null for figures a gateway left out of its answer", async () => {
+    server.latest = ended("SUCCEEDED", "LOCAL_OPTIMUM", { acceptedMoves: 3, hasProposal: true });
+    server.proposal = { proposal: PROPOSAL };
+    const user = userEvent.setup();
+    const { onProposal } = renderPanel();
+    await user.click(await screen.findByRole("button", { name: "Visa förslaget" }));
+
+    await waitFor(() => expect(onProposal).toHaveBeenCalledTimes(1));
+    expect(onProposal).toHaveBeenCalledWith(PROPOSAL, null);
   });
 
   it("says a proposal that has gone old, offers a new search and no proposal, and hands nothing over", async () => {
@@ -636,9 +805,84 @@ describe("in English", () => {
     expect(screen.getByRole("button", { name: "Search again" })).toBeInTheDocument();
   });
 
+  it("says what the search left untouched, with the plural where there are several", async () => {
+    server.latest = ended("SUCCEEDED", "LOCAL_OPTIMUM", {
+      acceptedMoves: 1,
+      hasProposal: true,
+      figures: figures({
+        posts: [
+          { reason: "NOT_FREE", count: 1 },
+          { reason: "NO_CHOICE", count: 2 },
+        ],
+        years: [{ year: 7, reason: "YEAR_NOT_COUNTED" }],
+      }),
+    });
+    renderPanel({}, { locale: "en", messages: en as unknown as Messages });
+
+    const heading = await screen.findByRole("heading", { name: "What the search left alone" });
+    expect(within(heading.closest("section")!).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "1 entry is not released for the engine, or is pinned, and keeps its teacher.",
+      "2 entries have nobody else who may take them (qualification, employment rate or co-teacher) and cannot change teacher.",
+      "Year 7 was not judged: the week could not be counted to the end as it stands today.",
+    ]);
+  });
+
+  it("says a search the engine kept waiting too long", async () => {
+    server.latest = ended("FAILED", "ENGINE_BUSY", { errorCode: "SEARCH_ENGINE_BUSY", acceptedMoves: 0, figures: null });
+    renderPanel({}, { locale: "en", messages: en as unknown as Messages });
+    expect(await screen.findByText(/The engine was busy for too long \(it is shared with other schools\)/)).toBeInTheDocument();
+  });
+
   it("says each refusal of a start and each failure of a run in a sentence", async () => {
     server.latest = ended("FAILED", null, { errorCode: "SEARCH_ENGINE_OLDER", acceptedMoves: 0, figures: null });
     renderPanel({}, { locale: "en", messages: en as unknown as Messages });
     expect(await screen.findByText(/The scheduling engine is older than the API/)).toBeInTheDocument();
+  });
+});
+
+describe("StaffingSearchLeftOut, the lines the dialog shows under a proposal too", () => {
+  function renderLeftOut(props: Parameters<typeof StaffingSearchLeftOut>[0], { locale = "sv", messages = sv }: { locale?: string; messages?: Messages } = {}) {
+    render(
+      <NextIntlClientProvider
+        locale={locale}
+        messages={messages}
+        timeZone="Europe/Stockholm"
+        onError={(error) => {
+          throw error;
+        }}
+      >
+        <StaffingSearchLeftOut {...props} />
+      </NextIntlClientProvider>,
+    );
+  }
+
+  it("is a heading and a list of the same lines the panel says, labelled by the heading", () => {
+    renderLeftOut({ leftOut: EVERYTHING_LEFT_OUT });
+
+    const section = screen.getByRole("region", { name: LEFT_OUT_TITLE });
+    expect(within(section).getByRole("heading", { name: LEFT_OUT_TITLE, level: 4 })).toBeInTheDocument();
+    expect(within(section).getAllByRole("listitem").map((item) => item.textContent)).toEqual(LEFT_OUT_LINES);
+  });
+
+  it("takes the heading's level from where it is shown", () => {
+    renderLeftOut({ leftOut: EVERYTHING_LEFT_OUT, level: 3 });
+    expect(screen.getByRole("heading", { name: LEFT_OUT_TITLE, level: 3 })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 4 })).toBeNull();
+  });
+
+  it.each([
+    ["null", null],
+    ["undefined", undefined],
+    ["an empty answer", NOTHING_LEFT_OUT],
+  ])("renders nothing for %s", (_name, leftOut) => {
+    renderLeftOut({ leftOut });
+    expect(screen.queryByRole("region")).toBeNull();
+    expect(screen.queryByRole("heading")).toBeNull();
+    expect(document.body.textContent).toBe("");
+  });
+
+  it("names no teacher, no post and no id: counts and years only", () => {
+    renderLeftOut({ leftOut: EVERYTHING_LEFT_OUT });
+    expect(document.body.textContent).not.toMatch(/Anna|Bo |[0-9a-f]{8}-[0-9a-f]{4}/);
   });
 });

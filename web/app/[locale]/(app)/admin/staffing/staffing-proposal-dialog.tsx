@@ -9,6 +9,7 @@ import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import { warningText } from "@/lib/staffing-warnings";
 import { placementChangeSentence } from "@/lib/requirement-placement-text";
 import { DEFAULT_LOAD_POLICY } from "@/lib/teacher-load";
+import type { StaffingSearchFiguresDoc } from "@/lib/staffing-search";
 import type { StaffingPolicy } from "@/lib/types";
 import { StatusBadge } from "@/components/staffing/staffing-matrix";
 import { Badge } from "@/components/ui/badge";
@@ -67,6 +68,14 @@ const StaffingWeek = lazy(() =>
  */
 const StaffingSearch = lazy(() =>
   import("@/components/staffing/staffing-search").then((module) => ({ default: module.StaffingSearch })),
+);
+
+/**
+ * What the search left untouched and why, under the proposal it gave: the panel's own component, so that the two say the same lines.
+ * A lazy import of the module the panel is already loaded from, never a static one: none of it is in this dialog's chunk.
+ */
+const StaffingSearchLeftOut = lazy(() =>
+  import("@/components/staffing/staffing-search").then((module) => ({ default: module.StaffingSearchLeftOut })),
 );
 
 /**
@@ -194,6 +203,8 @@ export function StaffingProposalDialog({
    * or not a figure was shown. Every other proposal is asked and applied exactly as it always was.
    */
   const [fromSearch, setFromSearch] = useState(false);
+  /** The figures the search kept, with what it left out: the proposal's, when it came from a search, and cleared with `fromSearch`. */
+  const [searchFigures, setSearchFigures] = useState<StaffingSearchFiguresDoc | null>(null);
   /** The search's panel is showing in place of the options or the proposal, which stay as they were behind it. */
   const [searching, setSearching] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
@@ -267,13 +278,14 @@ export function StaffingProposalDialog({
    * asked afresh; every change selected; no figure carried over from the last proposal). Nothing else of the dialog is told
    * where it came from but the apply and the week's question, which say `coversWeek`.
    */
-  const takeSearchProposal = (answer: StaffingProposal) => {
+  const takeSearchProposal = (answer: StaffingProposal, figures: StaffingSearchFiguresDoc | null) => {
     ask.current += 1;
     setProblem(null);
     setStale(false);
     setConfirming(false);
     setWeekBasis(null);
     setFromSearch(true);
+    setSearchFigures(figures);
     setSerial((current) => current + 1);
     setProposal(answer);
     setSelected(new Set(answer.assignments.map((assignment) => assignment.requirementId)));
@@ -330,6 +342,7 @@ export function StaffingProposalDialog({
       setStale(false);
       setWeekBasis(null);
       setFromSearch(false);
+      setSearchFigures(null);
       setSerial((current) => current + 1);
       setProposal(answer);
       setSelected(
@@ -700,6 +713,13 @@ export function StaffingProposalDialog({
             onKeep={keep}
             busy={busy}
             fromSearch={fromSearch}
+            searchLeftOut={
+              fromSearch ? (
+                <Suspense fallback={null}>
+                  <StaffingSearchLeftOut leftOut={searchFigures?.leftOut} level={3} />
+                </Suspense>
+              ) : null
+            }
             rowsHeadingRef={rowsHeading}
             week={
               proposal.assignments.length > 0 ? (
@@ -824,6 +844,7 @@ function ProposalResult({
   onKeep,
   busy,
   fromSearch,
+  searchLeftOut,
   rowsHeadingRef,
   week,
   children,
@@ -841,6 +862,8 @@ function ProposalResult({
   busy: boolean;
   /** The proposal is the search for teacher choice's: said so, and "Behåll" (which asks the engine for another proposal) is not offered. */
   fromSearch: boolean;
+  /** What the search left untouched and why (the panel's own lines, lazy), under the note; null for any other proposal. */
+  searchLeftOut: ReactNode;
   /** The heading of the rows: where focus goes when a search's proposal has been taken. */
   rowsHeadingRef: RefObject<HTMLHeadingElement | null>;
   /** The week before and after the selection (advice): under the unstaffed rows and the engine's explanations, before the buttons. */
@@ -914,6 +937,7 @@ function ProposalResult({
         {!recorded ? <p className="text-muted-foreground">{t("respectNoRecords")}</p> : null}
       </div>
       {fromSearch ? <p className="max-w-prose text-sm text-muted-foreground">{t("searchNote")}</p> : null}
+      {searchLeftOut}
 
       {proposal.assignments.length > 0 ? (
         <section aria-labelledby="proposal-rows" className="space-y-2">

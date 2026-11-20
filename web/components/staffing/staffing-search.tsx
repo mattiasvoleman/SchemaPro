@@ -15,6 +15,7 @@ import {
   endedKey,
   failedKey,
   isActiveSearch,
+  leftOutLines,
   splitDuration,
   useCancelStaffingSearch,
   useLatestStaffingSearch,
@@ -23,7 +24,8 @@ import {
   yearLines,
   type ProposalProblem,
   type StartProblem,
-  type StaffingSearchView,
+  type StaffingSearchFiguresDoc,
+  type StaffingSearchLeftOut as LeftOutFigures,
   type YearLine,
 } from "@/lib/staffing-search";
 
@@ -50,8 +52,11 @@ export interface StaffingSearchProps {
   academicYearId: string;
   /** The posts the admin asked the dialog to keep as they are: the search leaves them be. */
   pinnedRequirementIds?: readonly string[];
-  /** The proposal the search gave, read from the gateway once the run has ended: the dialog takes it as its own. */
-  onProposal: (proposal: StaffingProposal) => void;
+  /**
+   * The proposal the search gave, read from the gateway once the run has ended: the dialog takes it as its own. With it the
+   * figures the run kept (null when it has none), so that the dialog can say what the search left out beside the proposal.
+   */
+  onProposal: (proposal: StaffingProposal, figures: StaffingSearchFiguresDoc | null) => void;
   /** Back to what the dialog showed before the panel. The search goes on at the gateway. */
   onBack: () => void;
 }
@@ -133,7 +138,7 @@ export function StaffingSearch({ academicYearId, pinnedRequirementIds = [], onPr
     setProposalProblem(null);
     try {
       const answer = await read.mutateAsync(view.id);
-      onProposal(answer.proposal);
+      onProposal(answer.proposal, answer.figures ?? null);
     } catch (error) {
       const problem = classifyProposalError(error);
       setProposalProblem(problem);
@@ -216,7 +221,8 @@ export function StaffingSearch({ academicYearId, pinnedRequirementIds = [], onPr
           <p className="text-sm">
             {t("rounds", { round: view.round, evaluations: view.evaluations })} {t("moves", { count: view.acceptedMoves })}
           </p>
-          <Figures id={ids} view={view} lines={lines} percent={percent} running />
+          <Figures id={ids} lines={lines} percent={percent} running />
+          <StaffingSearchLeftOut leftOut={view.figures?.leftOut} />
           {view.acceptedMoves > 0 ? <p className="max-w-prose text-sm text-muted-foreground">{t("bestLater")}</p> : null}
           {cancel.isError ? <Notice tone="warning" role="alert">{t("cancelFailed")}</Notice> : null}
         </div>
@@ -231,7 +237,8 @@ export function StaffingSearch({ academicYearId, pinnedRequirementIds = [], onPr
             {view.status === "FAILED" && view.hasProposal ? ` ${t("failedBest", { count: view.acceptedMoves })}` : ""}
           </Notice>
           {proposalNotice}
-          <Figures id={ids} view={view} lines={lines} percent={percent} running={false} />
+          <Figures id={ids} lines={lines} percent={percent} running={false} />
+          <StaffingSearchLeftOut leftOut={view.figures?.leftOut} />
         </div>
       ) : null}
 
@@ -327,20 +334,16 @@ function StartNotice({ problem }: { problem: StartProblem }) {
  */
 function Figures({
   id,
-  view,
   lines,
   percent,
   running,
 }: {
   id: string;
-  view: StaffingSearchView;
   lines: readonly YearLine[];
   percent: Intl.NumberFormat;
   running: boolean;
 }) {
   const t = useTranslations("staffing.search");
-  const skipped = view.figures?.skippedPosts ?? 0;
-  const immovable = view.figures?.immovablePosts ?? 0;
   return (
     <section aria-labelledby={`${id}-figures`} className="space-y-2">
       <h4 id={`${id}-figures`} className="text-sm font-semibold">
@@ -366,9 +369,45 @@ function Figures({
           })}
         </ul>
       )}
-      {skipped > 0 ? <p className="max-w-prose text-sm text-muted-foreground">{t("skipped", { count: skipped })}</p> : null}
-      {immovable > 0 ? <p className="max-w-prose text-sm text-muted-foreground">{t("immovable", { count: immovable })}</p> : null}
       <p className="max-w-prose text-sm text-muted-foreground">{t("limits")}</p>
+    </section>
+  );
+}
+
+/**
+ * WHAT THE SEARCH LEFT UNTOUCHED, AND WHY: how many posts, under the reason that kept each from being searched, and each year a
+ * post with a choice spans that was not judged. Nothing it skips is skipped in silence. The panel shows it while the search goes
+ * on and when it has ended, and the dialog shows the same lines under the proposal the search gave (lazily, from this module:
+ * the dialog's own chunk holds none of it). Counts and years only, no names; nothing is rendered when nothing was left out.
+ * The years are the läsår's own numbering, as the figures' are: the gateway has turned the engine's.
+ */
+export function StaffingSearchLeftOut({
+  leftOut,
+  level = 4,
+}: {
+  leftOut: LeftOutFigures | null | undefined;
+  /** The heading's level: under the panel's own heading it is a 4, under the dialog's sections a 3. */
+  level?: 3 | 4;
+}) {
+  const t = useTranslations("staffing.search");
+  const titleId = useId();
+  const lines = leftOutLines(leftOut);
+  if (lines.length === 0) return null;
+  const Heading = level === 3 ? "h3" : "h4";
+  return (
+    <section aria-labelledby={titleId} className="space-y-2">
+      <Heading id={titleId} className="text-sm font-semibold">
+        {t("leftOutTitle")}
+      </Heading>
+      <ul className="max-w-prose space-y-1 text-sm">
+        {lines.map((line) =>
+          line.kind === "posts" ? (
+            <li key={`posts-${line.reason}`}>{t(`leftOutPost.${line.reason}`, { count: line.count })}</li>
+          ) : (
+            <li key={`year-${line.year}`}>{t(`leftOutYear.${line.reason}`, { year: line.year })}</li>
+          ),
+        )}
+      </ul>
     </section>
   );
 }

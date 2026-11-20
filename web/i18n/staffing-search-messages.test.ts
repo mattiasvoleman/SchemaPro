@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import {
   endedKey,
   failedKey,
+  type StaffingSearchLeftOutPostReason,
+  type StaffingSearchLeftOutYearReason,
   type StaffingSearchStatus,
   type StaffingSearchStop,
   type StaffingSearchView,
@@ -37,9 +39,20 @@ const STOPS: (StaffingSearchStop | null)[] = [
   "MAX_ROUNDS",
   "MAX_EVALUATIONS",
   "ENGINE_OLDER",
+  "ENGINE_BUSY",
   "ENGINE_FAILING",
   null,
 ];
+/** Every reason the gateway counts a post under, and every reason it names a year with: a reason added to the type is a key missing here. */
+const POST_REASONS = Object.keys({
+  NOT_FREE: true,
+  UNSTAFFED: true,
+  NO_CHOICE: true,
+  NOT_IN_WEEK: true,
+  YEAR_LIMIT: true,
+  YEAR_NOT_COUNTED: true,
+} satisfies Record<StaffingSearchLeftOutPostReason, true>) as StaffingSearchLeftOutPostReason[];
+const YEAR_REASONS = Object.keys({ YEAR_LIMIT: true, YEAR_NOT_COUNTED: true } satisfies Record<StaffingSearchLeftOutYearReason, true>) as StaffingSearchLeftOutYearReason[];
 const view = (status: StaffingSearchStatus, stopReason: StaffingSearchStop | null, acceptedMoves: number, errorCode: string | null): StaffingSearchView => ({
   id: "r",
   academicYearId: "y",
@@ -112,7 +125,7 @@ describe("staffing.search", () => {
     for (const status of STATUSES) {
       for (const stop of STOPS) {
         for (const moves of [0, 3]) {
-          for (const code of [null, "SEARCH_ABANDONED", "SEARCH_INTERRUPTED", "SEARCH_START_REFUSED", "SEARCH_START_NOT_EXACT", "SEARCH_ENGINE_OLDER", "SEARCH_ENGINE_FAILING", "SEARCH_FAILED", "A_CODE_NOBODY_KNOWS"]) {
+          for (const code of [null, "SEARCH_ABANDONED", "SEARCH_INTERRUPTED", "SEARCH_START_REFUSED", "SEARCH_START_NOT_EXACT", "SEARCH_ENGINE_OLDER", "SEARCH_ENGINE_FAILING", "SEARCH_ENGINE_BUSY", "SEARCH_FAILED", "A_CODE_NOBODY_KNOWS"]) {
             const run = view(status, stop, moves, code);
             const key = status === "FAILED" ? `failed.${failedKey(run)}` : `ended.${endedKey(run)}`;
             for (const [language, catalogue] of [
@@ -140,14 +153,70 @@ describe("staffing.search", () => {
     expect(swedish("failed.SEARCH_ENGINE_OLDER", {})).toContain("Schemamotorn är äldre än API:t");
   });
 
+  it("says a search that the engine kept waiting too long as that, and that the wait is not part of the search's time", () => {
+    expect(swedish("failed.SEARCH_ENGINE_BUSY", {})).toBe(
+      "Motorn var upptagen för länge (den delas med andra skolor), så sökningen stannade. Väntan räknas inte in i sökningens tid. Försök igen om en stund.",
+    );
+    expect(english("failed.SEARCH_ENGINE_BUSY", {})).toBe(
+      "The engine was busy for too long (it is shared with other schools), so the search stopped. The wait is not counted in the search's time. Try again in a moment.",
+    );
+    // The run stopped on the engine's side and the wording says so: never "failed" as of the school's own doing.
+    expect(sv.staffing.search.failed.SEARCH_ENGINE_BUSY).not.toBe(sv.staffing.search.failed.SEARCH_FAILED);
+  });
+
+  it("has a sentence, in the singular and the plural and in both languages, for every reason a post or a year is left out", () => {
+    for (const [language, catalogue] of [
+      ["sv", swedish],
+      ["en", english],
+    ] as const) {
+      const has = (catalogue as unknown as { has(key: string): boolean }).has;
+      expect(has.call(catalogue, "leftOutTitle"), `${language}: leftOutTitle`).toBe(true);
+      for (const reason of POST_REASONS) {
+        expect(has.call(catalogue, `leftOutPost.${reason}`), `${language}: leftOutPost.${reason}`).toBe(true);
+        const one = (catalogue as unknown as (key: string, values: object) => string)(`leftOutPost.${reason}`, { count: 1 });
+        const many = (catalogue as unknown as (key: string, values: object) => string)(`leftOutPost.${reason}`, { count: 4 });
+        // The count leads each sentence, and the singular and the plural are not the same words.
+        expect(one, `${language}: ${reason}`).toMatch(/^1 /);
+        expect(many, `${language}: ${reason}`).toMatch(/^4 /);
+        expect(many).not.toBe(one.replace(/^1/, "4"));
+      }
+      for (const reason of YEAR_REASONS) {
+        expect(has.call(catalogue, `leftOutYear.${reason}`), `${language}: leftOutYear.${reason}`).toBe(true);
+      }
+    }
+    // Every key the catalogue holds for it is a reason the gateway has (and the other way round).
+    expect(Object.keys(sv.staffing.search.leftOutPost).sort()).toEqual([...POST_REASONS].sort());
+    expect(Object.keys(en.staffing.search.leftOutPost).sort()).toEqual([...POST_REASONS].sort());
+    expect(Object.keys(sv.staffing.search.leftOutYear).sort()).toEqual([...YEAR_REASONS].sort());
+    expect(Object.keys(en.staffing.search.leftOutYear).sort()).toEqual([...YEAR_REASONS].sort());
+  });
+
+  it("says what was left out in the words the phase was written for, in the plural where there are several", () => {
+    expect(swedish("leftOutTitle")).toBe("Det sökningen lämnade orört");
+    expect(swedish("leftOutPost.NOT_FREE", { count: 1 })).toBe("1 post är inte släppt åt motorn, eller är fäst, och behåller sin lärare.");
+    expect(swedish("leftOutPost.NOT_FREE", { count: 3 })).toBe("3 poster är inte släppta åt motorn, eller är fästa, och behåller sina lärare.");
+    expect(swedish("leftOutPost.UNSTAFFED", { count: 2 })).toContain("2 poster saknar lärare och söks inte");
+    expect(swedish("leftOutPost.UNSTAFFED", { count: 2 })).toContain("Föreslå bemanning");
+    expect(swedish("leftOutPost.NO_CHOICE", { count: 1 })).toContain("behörighet, tjänstgrad eller medlärare");
+    expect(swedish("leftOutPost.NOT_IN_WEEK", { count: 5 })).toContain("handplacerade");
+    expect(swedish("leftOutPost.YEAR_LIMIT", { count: 1 })).toContain("inte bland de fyra trängsta");
+    expect(swedish("leftOutPost.YEAR_NOT_COUNTED", { count: 1 })).toContain("kunde inte räknas till slut");
+    expect(swedish("leftOutYear.YEAR_LIMIT", { year: 8 })).toBe("Åk 8 värderades inte: sökningen värderar högst fyra årskurser, de trängsta.");
+    expect(swedish("leftOutYear.YEAR_NOT_COUNTED", { year: 9 })).toBe("Åk 9 värderades inte: veckan kunde inte räknas till slut som den är i dag.");
+    expect(english("leftOutTitle")).toBe("What the search left alone");
+    expect(english("leftOutPost.NOT_FREE", { count: 1 })).toBe("1 entry is not released for the engine, or is pinned, and keeps its teacher.");
+    expect(english("leftOutPost.NOT_FREE", { count: 2 })).toBe("2 entries are not released for the engine, or are pinned, and keep their teachers.");
+    expect(english("leftOutYear.YEAR_LIMIT", { year: 8 })).toBe("Year 8 was not judged: the search judges at most four years, the tightest.");
+  });
+
   it("has no sentence that nothing says", () => {
     // The panel is the only reader of staffing.search; the dialog reads its own two keys of staffing.proposal.
     const panel = readFileSync(join(ROOT, "components/staffing/staffing-search.tsx"), "utf8");
     const dialog = readFileSync(join(ROOT, "app/[locale]/(app)/admin/staffing/staffing-proposal-dialog.tsx"), "utf8");
-    // status.*, refused.*, ended.*, failed.*, proposalProblem.* and duration.* are said through a template or a computed key
-    // (the panel's tests and the test above hold them).
+    // status.*, refused.*, ended.*, failed.*, proposalProblem.*, duration.* and leftOutPost.* / leftOutYear.* are said through a
+    // template or a computed key (the panel's tests and the tests above hold them).
     const unused = flat(sv.staffing.search).filter(
-      (key) => !/^(status|refused|ended|failed|proposalProblem|duration)\./.test(key) && !panel.includes(`("${key}"`) && !panel.includes(`t("${key}"`),
+      (key) => !/^(status|refused|ended|failed|proposalProblem|duration|leftOutPost|leftOutYear)\./.test(key) && !panel.includes(`("${key}"`) && !panel.includes(`t("${key}"`),
     );
     expect(unused).toEqual([]);
     expect(dialog).toContain('t("searchEntry")');
