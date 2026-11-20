@@ -528,7 +528,8 @@ describe('runSearch', () => {
 
     const outcome = await runSearch(open, figuresOf(open, new Map(), [9]), LIMITS, d);
 
-    expect(outcome).toMatchObject({ stop: 'BUDGET', accepted: 0, evaluations: 0 });
+    // Not even a round is begun: the stop is asked before it, and not only before each evaluation.
+    expect(outcome).toMatchObject({ stop: 'BUDGET', accepted: 0, evaluations: 0, round: 0 });
     expect(calls).toEqual([]);
   });
 

@@ -515,6 +515,43 @@ describe('StaffingSearchService', () => {
     });
   });
 
+  describe('a run that stops being the task\'s while it works', () => {
+    it('stops asking the engine for it, and finishes nothing over what took it (the sweep, a restart on another instance)', async () => {
+      jest.useFakeTimers();
+      const h = harness();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let beats = 0;
+      h.tx.$queryRaw!.mockImplementation(async (query: Prisma.Sql) => {
+        if (!String(query.sql).includes('"heartbeatAt"')) return [{ changed: 0 }];
+        beats += 1;
+        // The first renewal holds the run, the second finds it taken: no row is still active.
+        return beats === 1 ? [{ status: 'RUNNING' }] : [];
+      });
+      let calls = 0;
+      h.proxy.callAiEngine.mockImplementation(async (_p: string, payload: AiEngineScheduleRequest) => {
+        calls += 1;
+        if (calls > 1) await gate;
+        return fakeBounds(payload as never);
+      });
+
+      await h.service.start({ academicYearId: YEAR }, user);
+      await jest.advanceTimersByTimeAsync(6_000);
+      expect(beats).toBeGreaterThanOrEqual(2);
+      const asked = h.proxy.callAiEngine.mock.calls.length;
+      release();
+      for (let i = 0; i < 100 && h.service.running.length > 0; i += 1) await jest.advanceTimersByTimeAsync(10);
+
+      expect(h.service.running).toEqual([]);
+      // The candidates in flight were answered, and nothing more was asked once the run was seen to be gone.
+      expect(h.proxy.callAiEngine.mock.calls.length).toBeLessThanOrEqual(asked + 3);
+      // Nothing was written to a run that is no longer the task's but its checkpoint writes, which a status guard turns away.
+      expect(finishing(h).every((q) => q.sql.includes("\"status\" IN ('PENDING', 'RUNNING', 'CANCELLING')"))).toBe(true);
+    });
+  });
+
   // -------------------------------------------------------------------------
   describe('a cancel', () => {
     it('is told to a task on this instance at once, which then ends CANCELLED with what it has', async () => {
@@ -583,6 +620,35 @@ describe('StaffingSearchService', () => {
       await new Promise((resolve) => setImmediate(resolve));
       await new Promise((resolve) => setImmediate(resolve));
       expect(h.proxy.callAiEngine.mock.calls.length).toBeLessThanOrEqual(before + 1);
+    });
+
+    it('stops renewing the lease of a run it has just failed: a timer must not outlive the restart', async () => {
+      jest.useFakeTimers();
+      const h = harness();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let beats = 0;
+      h.tx.$queryRaw!.mockImplementation(async (query: Prisma.Sql) => {
+        if (String(query.sql).includes('"heartbeatAt"')) beats += 1;
+        return [{ status: 'RUNNING' }];
+      });
+      h.proxy.callAiEngine.mockImplementation(async (_p: string, payload: AiEngineScheduleRequest) => {
+        await gate;
+        return fakeBounds(payload as never);
+      });
+
+      await h.service.start({ academicYearId: YEAR }, user);
+      await jest.advanceTimersByTimeAsync(6_000);
+      const before = beats;
+      expect(before).toBeGreaterThanOrEqual(2);
+      await h.service.onModuleDestroy();
+      await jest.advanceTimersByTimeAsync(30_000);
+
+      expect(beats).toBe(before);
+      release();
+      await jest.advanceTimersByTimeAsync(10);
     });
 
     it('survives a write that fails: a restart must not hang on it', async () => {
