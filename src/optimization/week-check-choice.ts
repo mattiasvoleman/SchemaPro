@@ -370,7 +370,11 @@ export interface RealisedAnswer {
  *
  *  - a row for the year: `LOAD`, `atLeast` when the week load's seconds ran
  *    out (its figure is then at most what was proved by the deadline, and the
- *    year's true bound may be higher);
+ *    year's true bound may be higher), and also when the engine REFUSED THE
+ *    WEEK and the row is not the year that is over: the engine counts the weeks
+ *    one after the other, every year in each, and stops at the first week any
+ *    verdict refuses (_prechecks), so the row of another year holds the weeks up
+ *    to and including that one and not the year's tightest;
  *  - no row and the count finished: `UNDER` the tight threshold, unless another
  *    count refused the week, which is `REFUSED`;
  *  - no row and the seconds ran out: `UNKNOWN`, never "under".
@@ -383,6 +387,8 @@ export function countOf(
   stretches: readonly (readonly PeriodStretch[])[] | null,
 ): ChoiceCount {
   const cut = response.skipped.includes('WEEK_LOAD_DEADLINE');
+  // The week was refused: the count stopped at the first week that was, for every year (see above).
+  const stopped = response.verdict === 'IMPOSSIBLE';
   const row = response.years.find((candidate) => candidate.year === year);
   if (row) {
     let period: ChoicePeriod | null = null;
@@ -401,7 +407,7 @@ export function countOf(
       capacityMinutes: row.capacityMinutes,
       percent: percentOf(row.demandMinutes, row.capacityMinutes),
       over: row.over,
-      atLeast: cut,
+      atLeast: cut || (stopped && !row.over),
       period,
     };
   }
@@ -417,6 +423,9 @@ export function countOf(
  * so that two weeks in the same whole percent are still told apart.
  *
  * A figure the seconds cut is a lower bound at the deadline and ranks nobody.
+ * So does the row of a year in an answer that refuses the week, unless it is the
+ * year that is over (countOf: the count stopped at the first week refused, for
+ * every year, so the row holds only the weeks before it).
  * So does a figure over the supply, and for another reason the engine does not
  * say: it counts a year's periods one after the other and STOPS AT THE FIRST ONE
  * IT REFUSES (_prechecks returns there), so an over figure is the heaviest of the

@@ -164,6 +164,41 @@ describe("what is asked", () => {
   });
 });
 
+describe("what is asked, continued", () => {
+  it("asks about a new proposal at once and for its own selection only, not for the selection of the proposal it replaces", async () => {
+    answer(done([year(load(95), load(95), "SAME")]));
+    const { rerender } = renderWeek();
+    await waitFor(() => expect(asked).toHaveBeenCalledTimes(1));
+    const next = "b".repeat(64);
+
+    // "Behåll som nu och beräkna om": the panel stays, and gets the next proposal, its basis and its selection at once.
+    rerender({ serial: 2, basisSha256: next, changes: [change(3)] });
+    await waitFor(() => expect(asked).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, STAFFING_WEEK_SETTLE_MS + 300));
+
+    expect(asked).toHaveBeenCalledTimes(2);
+    expect(asked.mock.calls[1]![1]).toEqual({ academicYearId: "year-1", basisSha256: next, changes: [change(3)] });
+  });
+
+  it("asks again for a selection whose answer was a failure when it comes back, and keeps an answer it made", async () => {
+    asked.mockRejectedValueOnce(new Error("network"));
+    asked.mockResolvedValue(done([year(load(95), load(95), "SAME")]));
+    const { rerender } = renderWeek();
+    await screen.findByText(/Veckan kunde inte räknas just nu/);
+
+    rerender({ changes: [change(1)] });
+    await waitFor(() => expect(asked).toHaveBeenCalledTimes(2), { timeout: STAFFING_WEEK_SETTLE_MS * 4 });
+    rerender({ changes: [change(1), change(2)] });
+    await waitFor(() => expect(asked).toHaveBeenCalledTimes(3), { timeout: STAFFING_WEEK_SETTLE_MS * 4 });
+    expect(await screen.findByText("95 % → 95 %: den trängsta perioden är oförändrad")).toBeInTheDocument();
+
+    // The answer that was a figure is kept: back to the selection it was made for asks nothing.
+    rerender({ changes: [change(1)] });
+    await new Promise((resolve) => setTimeout(resolve, STAFFING_WEEK_SETTLE_MS + 300));
+    expect(asked).toHaveBeenCalledTimes(3);
+  });
+});
+
 describe("the figures", () => {
   it("says a week that gets tighter in words, with both figures and the warning above them, and never as an improvement", async () => {
     answer(done([year(load(95), load(98), "TIGHTER")]));
@@ -249,6 +284,40 @@ describe("the figures", () => {
     renderWeek();
 
     expect(await screen.findByText(/ligger vid 85 % av ramtiden eller mer, varken före eller efter förslaget/)).toBeInTheDocument();
+  });
+
+  it("does not say that no year is at the threshold when the engine refused the week by a count that names no year: nothing was counted, so nothing is under", async () => {
+    answer(done([], { verdicts: { before: "IMPOSSIBLE", after: "IMPOSSIBLE" } }));
+    renderWeek();
+
+    expect(await screen.findByText(/Motorn nekar veckan både före och efter förslaget av en räkning som inte gäller en enskild årskurs/)).toBeInTheDocument();
+    expect(screen.queryByText(/ligger vid 85 % av ramtiden eller mer/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/inte den trängsta veckan trängre/)).not.toBeInTheDocument();
+  });
+
+  it("says that a week refused before and not with the proposal is counted after, and that no year it touches is at the threshold then", async () => {
+    answer(done([], { verdicts: { before: "IMPOSSIBLE", after: "OK" } }));
+    renderWeek();
+
+    expect(await screen.findByText(/Motorn nekade veckan före förslaget, men nekar den inte med det/)).toBeInTheDocument();
+    expect(screen.getByText(/Med förslaget ligger ingen av årskurserna som ändringarna rör vid 85 % av ramtiden eller mer/)).toBeInTheDocument();
+  });
+
+  it("says a week the engine refuses after the proposal and did not before, by a count that names no year, as that and not as a week closer to its limit", async () => {
+    answer(done([], { verdicts: { before: "TIGHT", after: "IMPOSSIBLE" }, worse: true }));
+    renderWeek();
+
+    expect(await screen.findByText("Förslaget gör att motorn nekar veckan")).toBeInTheDocument();
+    expect(screen.getByText(/nekar motorn veckan av en räkning som inte gäller en enskild årskurs/)).toBeInTheDocument();
+    expect(screen.queryByText(/ligger veckan närmare gränsen/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the usual warning when a year is tighter, whatever else the engine refuses", async () => {
+    answer(done([year(load(95), load(98), "TIGHTER")], { verdicts: { before: "TIGHT", after: "IMPOSSIBLE" }, worse: true }));
+    renderWeek();
+
+    expect(await screen.findByText("Förslaget gör veckan trängre")).toBeInTheDocument();
+    expect(screen.queryByText("Förslaget gör att motorn nekar veckan")).not.toBeInTheDocument();
   });
 
   it("says what the figures are and are not, and what the proposal's posts were counted as", async () => {

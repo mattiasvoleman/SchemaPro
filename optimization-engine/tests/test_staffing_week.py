@@ -15,7 +15,9 @@ These tests hold what the gateway leans on and cannot check itself, with the eng
   dialog says a post nobody teaches is counted with no teacher "before", and why it counts the teachers who are new to
   the week;
 * THAT THE FIGURE IS THE TIGHTEST PERIOD'S: a change in a period that is not the tightest does not move the year's
-  figure, however much it tightens that period. The dialog says so ("den trängsta perioden").
+  figure, however much it tightens that period. The dialog says so ("den trängsta perioden");
+* THAT A WEEK THE ENGINE REFUSES IS COUNTED ONLY UP TO THE FIRST WEEK IT REFUSES, FOR EVERY YEAR: another year's row is
+  then a lower bound of its tightest period and not its value (the gateway says "at least" of it, countOf).
 
 The numbers are arithmetic, as in tests/test_week_load.py and tests/test_week_check_choice.py: a class's 27 lessons are
 27 x 55, a Hemkunskap group's four lessons 4 x 40 = 160 (the fixture's posts), the spring's three groups of one teacher
@@ -26,6 +28,7 @@ from __future__ import annotations
 
 import copy
 import json
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -175,3 +178,70 @@ def test_asking_twice_about_one_payload_gives_one_answer(client: TestClient, cas
     first = _check(client, copy.deepcopy(cases["cases"]["staffedMixed"]["payload"]))
     second = _check(client, copy.deepcopy(cases["cases"]["staffedMixed"]["payload"]))
     assert first["years"] == second["years"]
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# A week refused in one year: the other years' rows hold only the weeks counted before the refusal.
+# ---------------------------------------------------------------------------------------------------------------------
+
+
+def _years_8_and_9(nine: dict[str, Any], eight: dict[str, Any]) -> dict[str, Any]:
+    """Year 9 as `nine` has it, and a copy of `eight`'s groups, posts, rooms and conflicts as year 8, under ids of their own."""
+    ids: dict[str, str] = {}
+
+    def fresh(old: str) -> str:
+        ids.setdefault(old, str(uuid.uuid4()))
+        return ids[old]
+
+    payload = copy.deepcopy(nine)
+    for group in eight["groups"]:
+        payload["groups"].append(dict(group, id=fresh(group["id"]), minGradeLevel=8, maxGradeLevel=8))
+    for post in eight["requirements"]:
+        copied = dict(post, id=fresh(post["id"]), studentGroupId=fresh(post["studentGroupId"]), minGradeLevel=8, maxGradeLevel=8)
+        if copied.get("teacherId"):
+            copied["teacherId"] = fresh(copied["teacherId"])
+        payload["requirements"].append(copied)
+    payload["rooms"] += [dict(room, id=fresh(room["id"])) for room in eight["rooms"]]
+    payload["groupConflicts"] += [[fresh(a), fresh(b)] for a, b in eight["groupConflicts"]]
+    payload["frameTimes"] = payload["frameTimes"] + [dict(payload["frameTimes"][0], minGradeLevel=8, maxGradeLevel=8)]
+    return payload
+
+
+def _with_lessons(payload: dict[str, Any], autumn: int | None = None, spring: int | None = None) -> dict[str, Any]:
+    """The fixture's two periods with the autumn's posts on one teacher at `autumn` lessons and the spring's at `spring`."""
+    out = copy.deepcopy(payload)
+    for post in out["requirements"]:
+        if post.get("periods") == [True, False]:
+            post["teacherId"] = "cd22fde1-0000-4000-8000-000000000001"
+            if autumn is not None:
+                post["lessonsPerWeek"] = autumn
+        if post.get("periods") == [False, True] and spring is not None:
+            post["lessonsPerWeek"] = spring
+    return out
+
+
+def test_a_refusal_in_one_year_stops_the_count_for_the_others_so_their_rows_are_lower_bounds(
+    client: TestClient, cases: dict[str, Any],
+) -> None:
+    """Year 8 over in the autumn (107 %) and year 9 at 91 % in the autumn and 95 % in the spring: year 9's row is 91 %.
+
+    The engine counts the weeks one after the other, every year in each, and returns at the first week any verdict
+    refuses (_prechecks). Year 9's spring is never counted, so a proposal that takes it from 95 % to 144 % (over the
+    supply) leaves the row at 91 %: the same answer. That is why the gateway says "at least" of a row in an answer that
+    refuses the week and does not set it beside another (countOf), and why this test fails the day the engine counts the
+    years to the end.
+    """
+    year_8 = _with_lessons(cases["base"], autumn=9, spring=4)  # 107 % in the autumn, the fixture's 95 % in the spring
+    nine = _with_lessons(cases["base"], autumn=5)  # 91 % in the autumn, 95 % in the spring
+    assert _figure(_check(client, nine)) == (2100, 2200, 95)
+
+    answer = _check(client, _years_8_and_9(nine, year_8))
+
+    assert answer["verdict"] == "IMPOSSIBLE"
+    assert _year(answer, 8) == {"year": 8, "demandMinutes": 2370, "capacityMinutes": 2200, "percent": 107, "over": True}
+    assert _year(answer, 9) == {"year": 9, "demandMinutes": 2010, "capacityMinutes": 2200, "percent": 91, "over": False}
+
+    over_in_the_spring = _with_lessons(cases["base"], autumn=5, spring=12)  # year 9 alone: the spring is 144 %, over
+    assert _year(_check(client, over_in_the_spring), 9)["over"] is True
+    hidden = _check(client, _years_8_and_9(over_in_the_spring, year_8))
+    assert _year(hidden, 9) == {"year": 9, "demandMinutes": 2010, "capacityMinutes": 2200, "percent": 91, "over": False}

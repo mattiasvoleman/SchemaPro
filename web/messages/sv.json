@@ -4621,7 +4621,7 @@
       "compute": "Beräkna förslag",
       "computing": "Beräknar … upp till tio sekunder",
       "recompute": "Beräkna om",
-      "stale": "Tjänstefördelningen har ändrats sedan förslaget beräknades. Ingenting sparades. Beräkna ett nytt förslag.",
+      "stale": "Tjänstefördelningen eller veckan har ändrats sedan förslaget beräknades. Ingenting sparades. Beräkna ett nytt förslag.",
       "statusOPTIMAL": "Optimalt",
       "statusFEASIBLE": "Bästa hittills inom tidsgränsen",
       "feasibleHint": "Ett nytt försök kan ge ett lika bra förslag med andra lärare.",
@@ -4721,6 +4721,9 @@
         "worseBody": "I minst en årskurs ligger veckan närmare gränsen, eller över den, med förslaget än utan. Tillämpa det bara om du vill ha det ändå.",
         "notWorse": "Förslaget gör inte den trängsta veckan trängre i någon av årskurserna nedan.",
         "noYears": "Ingen av årskurserna som ändringarna rör ligger vid 85 % av ramtiden eller mer, varken före eller efter förslaget.",
+        "refusedTitle": "Förslaget gör att motorn nekar veckan",
+        "refusedBody": "Med förslaget nekar motorn veckan av en räkning som inte gäller en enskild årskurs (till exempel en klass eller en lärares timmar), och utan det gjorde den inte det. Tillämpa det bara om du vill ha det ändå.",
+        "noYearsRefused": "{which, select, both {Motorn nekar veckan både före och efter förslaget} other {Motorn nekade veckan före förslaget, men nekar den inte med det}} av en räkning som inte gäller en enskild årskurs. {which, select, both {Veckans fullhet är inte räknad, så den går inte att jämföra före och efter.} other {Med förslaget ligger ingen av årskurserna som ändringarna rör vid 85 % av ramtiden eller mer.}}",
         "year": "Åk {year}",
         "line": {
           "TIGHTER": "{before} → {after}: veckan blir trängre",

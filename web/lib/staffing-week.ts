@@ -133,8 +133,13 @@ export function useStaffingWeek(request: StaffingWeekRequest | null, serial: num
     queryFn: () => askStaffingWeek(request!),
     enabled: request !== null,
     retry: false,
-    // The figure belongs to the week as it was when it was asked: asking again is the admin's, by pressing Beräkna igen.
-    staleTime: Number.POSITIVE_INFINITY,
+    // The figure belongs to the week as it was when it was asked, so it is kept: asking again is the admin's, by pressing
+    // Beräkna igen. What is not a figure (a throttled ask, an engine that did not answer, a check that ran out of time) is
+    // not an answer to keep: the same selection, when it comes back, is asked again.
+    staleTime: (query) => {
+      const outcome = query.state.data;
+      return outcome?.kind === "result" && outcome.view.status === "DONE" ? Number.POSITIVE_INFINITY : 0;
+    },
     gcTime: 5 * 60_000,
     refetchOnWindowFocus: false,
   });

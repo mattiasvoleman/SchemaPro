@@ -493,6 +493,51 @@ describe('countOf: one year of one answer', () => {
     const other = { ...row, year: 8 };
     expect(countOf(answer({ years: [other] }), 9, noAnswer, requirements, stretches)).toEqual({ kind: 'UNDER', below: 85 });
   });
+
+  /*
+   * THE ENGINE STOPS AT THE FIRST WEEK IT REFUSES, FOR EVERY YEAR AT ONCE (_prechecks: one loop over the weeks, each week
+   * counting all its years, and a `return` at the first verdict). A year that is not the one refused has a row that holds the
+   * weeks counted up to and including that one, so it is a lower bound of its tightest period and not its value. Numbers
+   * are the engine's own (optimization-engine/tests/test_staffing_week.py): year 8 over in the autumn at 107 %, year 9 at
+   * 91 % in the autumn and 95 % in the spring, answered (8: 107 % over, 9: 91 %).
+   */
+  describe('a week the engine refuses is counted only up to the week it refuses', () => {
+    const refusedAutumn: RealisedAnswer = {
+      details: [],
+      summary: { code: 'DEMAND_YEAR_WEEK_SHORT', params: { periodFrom: '2026-08-17', periodTo: '2026-12-18', periodStretches: 1 } },
+    };
+    const answerRefusedInYear8 = (): AiEngineWeekCheckResponse =>
+      answer({
+        verdict: 'IMPOSSIBLE',
+        years: [
+          { year: 8, demandMinutes: 2370, capacityMinutes: 2200, percent: 107, over: true },
+          { year: 9, demandMinutes: 2010, capacityMinutes: 2200, percent: 91, over: false },
+        ],
+      });
+
+    it('says "at least" of the row of a year that is not the one refused, and ranks nobody by it', () => {
+      const count = countOf(answerRefusedInYear8(), 9, refusedAutumn, requirements, stretches);
+
+      expect(count).toMatchObject({ kind: 'LOAD', over: false, atLeast: true, percent: 91 });
+      expect(rankingFigure(count)).toBeNull();
+    });
+
+    it('leaves the year that is over what it was: an over figure is a lower bound of its own kind', () => {
+      expect(countOf(answerRefusedInYear8(), 8, refusedAutumn, requirements, stretches)).toMatchObject({ kind: 'LOAD', over: true, atLeast: false, percent: 107 });
+    });
+
+    it('keeps the rows of a week that is not refused as values: every period was counted', () => {
+      const tight = answer({ verdict: 'TIGHT', years: [row, { ...row, year: 8 }] });
+      expect(countOf(tight, 9, noAnswer, requirements, stretches)).toMatchObject({ atLeast: false });
+      expect(countOf(tight, 8, noAnswer, requirements, stretches)).toMatchObject({ atLeast: false });
+    });
+
+    it('says it too of a week another count refuses after the first period: the rows hold the periods before it', () => {
+      const refusedByHours: RealisedAnswer = { details: [], summary: { code: 'DEMAND_CLIQUE_HOURS_SHORT', params: { grades: '8' } } };
+      const count = countOf(answer({ verdict: 'IMPOSSIBLE', years: [row] }), 9, refusedByHours, requirements, stretches);
+      expect(count).toMatchObject({ kind: 'LOAD', over: false, atLeast: true });
+    });
+  });
 });
 
 describe('rankingFigure', () => {

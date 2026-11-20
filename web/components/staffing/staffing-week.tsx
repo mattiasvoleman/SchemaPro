@@ -56,13 +56,16 @@ export function StaffingWeek({ academicYearId, serial, basisSha256, changes, onB
   const key = changesKey(changes);
   const latest = useRef(changes);
   latest.current = changes;
-  // The selection the question was last asked for, and the one on the screen: they differ for a moment after a click.
-  const [settled, setSettled] = useState({ key, changes });
+  // The selection the question was last asked for, and the one on the screen: they differ for a moment after a click. A new
+  // proposal (`serial`) is asked about at once and for its own selection: the selection settled for the proposal it replaces
+  // is not its, and asking about that one under the new basis would be two checks of the engine for nothing.
+  const [settled, setSettled] = useState({ serial, key, changes });
+  if (settled.serial !== serial) setSettled({ serial, key, changes });
   useEffect(() => {
     if (key === settled.key) return;
-    const timer = setTimeout(() => setSettled({ key, changes: latest.current }), STAFFING_WEEK_SETTLE_MS);
+    const timer = setTimeout(() => setSettled({ serial, key, changes: latest.current }), STAFFING_WEEK_SETTLE_MS);
     return () => clearTimeout(timer);
-  }, [key, settled.key]);
+  }, [key, settled.key, serial]);
 
   const week = useStaffingWeek(
     settled.changes.length > 0 ? { academicYearId, basisSha256, changes: settled.changes } : null,
@@ -114,15 +117,26 @@ const NOT_TIGHTER = new Set(["LOOSER", "SAME"]);
 function Answer({ view }: { view: StaffingWeekView }) {
   const t = useTranslations("staffing.proposal.week");
   const allNotTighter = view.years.length > 0 && view.years.every((year) => NOT_TIGHTER.has(year.verdict));
+  // A week refused by a count that names no year has no year row to say it in: the engine stops at the first refusal, and
+  // the loads are not counted at all before a count of the classes' hours or a teacher's refuses (nothing is "under 85 %").
+  const refusedBefore = view.verdicts?.before === "IMPOSSIBLE";
+  const refusedAfter = view.verdicts?.after === "IMPOSSIBLE";
+  const refusedOnly = refusedAfter && !refusedBefore && !view.years.some((year) => year.verdict === "TIGHTER" || year.verdict === "NEWLY_REFUSED");
   return (
     <div className="space-y-3">
       {view.worse ? (
-        <Notice tone="warning" role="status" title={t("worseTitle")}>
-          {t("worseBody")}
-        </Notice>
+        refusedOnly ? (
+          <Notice tone="warning" role="status" title={t("refusedTitle")}>
+            {t("refusedBody")}
+          </Notice>
+        ) : (
+          <Notice tone="warning" role="status" title={t("worseTitle")}>
+            {t("worseBody")}
+          </Notice>
+        )
       ) : view.years.length === 0 ? (
         <p role="status" className="max-w-prose text-sm">
-          {t("noYears")}
+          {refusedBefore ? t("noYearsRefused", { which: refusedAfter ? "both" : "before" }) : t("noYears")}
         </p>
       ) : allNotTighter ? (
         <p role="status" className="max-w-prose text-sm">

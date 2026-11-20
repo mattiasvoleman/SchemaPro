@@ -15,7 +15,7 @@ import { WEEK_CHECK_VERDICTS, type AiEngineWeekCheckResponse } from './interface
 import type { ChoiceCount } from './interfaces/week-check-choice.interface';
 import { OptimizationProxyService, type AnonMaps } from './optimization-proxy.service';
 import { StaffingProposalService, stale } from './staffing-proposal.service';
-import { compareCounts, isWorse, overlayLeads, weekBasisOf, withWeekBasis, yearsToShow, type PayloadIds } from './staffing-week';
+import { MAX_YEARS_SHOWN, compareCounts, isWorse, overlayLeads, weekBasisOf, withWeekBasis, yearsToShow, type PayloadIds } from './staffing-week';
 import { countOf } from './week-check-choice';
 import { realisedAnswerOf } from './week-check-choice.service';
 import { WEEK_CHECK_PATH, WEEK_CHECK_TIMEOUT_MS } from './week-check.service';
@@ -143,24 +143,28 @@ export class StaffingWeekService {
       Math.max(
         ...[before, after].map((response) => response.years.find((row) => row.year === year)?.percent ?? 0),
       );
-    const shown = yearsToShow(
+    // Every year the changes touch, and the heaviest of them shown: the warning is about all of them, so a year that is
+    // tighter after the proposal is not left out of it because six heavier ones fit on the screen.
+    const touched = yearsToShow(
       before.years.map((row) => row.year),
       after.years.map((row) => row.year),
       laid.years,
       heaviest,
+      Number.POSITIVE_INFINITY,
     );
-    const years: StaffingWeekYear[] = shown.map((year) => {
+    const counted: StaffingWeekYear[] = touched.map((year) => {
       const was = countFor(before, read.payload, year);
       const is = countFor(after, laid.payload, year);
       return { year: fromNioarig(year, read.numbering) ?? year, before: was, after: is, verdict: compareCounts(was, is) };
     });
+    const years = counted.slice(0, MAX_YEARS_SHOWN);
     // The engine refuses the whole week after the proposal and did not before, whether or not it names a year.
     const refusedNow = after.verdict === 'IMPOSSIBLE' && before.verdict !== 'IMPOSSIBLE';
     const view: StaffingWeekView = {
       status: 'DONE',
       years,
       verdicts: { before: before.verdict, after: after.verdict },
-      worse: refusedNow || years.some((year) => isWorse(year.verdict)),
+      worse: refusedNow || counted.some((year) => isWorse(year.verdict)),
       basisSha256: read.basisSha256,
       overlay: laid.overlay,
       calls,

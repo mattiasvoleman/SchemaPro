@@ -189,6 +189,22 @@ describe('StaffingWeekService', () => {
       expect(waits[1]).toBeGreaterThanOrEqual(STAFFING_WEEK_MIN_CALL_MS);
     });
 
+    it('gives the second check only what is left of the budget: a slow first check shortens the wait of the second, so the two never outlast the web\'s own wait', async () => {
+      jest.useFakeTimers({ now: new Date('2026-11-20T10:00:00Z') });
+      // The first check takes ten seconds. The second, begun with twenty left, may wait twenty at most: the budget is for both.
+      proxy.callAiEngine.mockImplementationOnce(async () => {
+        jest.setSystemTime(Date.now() + 10_000);
+        return answer();
+      });
+
+      await service.check(dto([change(1, REAL.eva, REAL.ola)]), user);
+
+      const waits = proxy.callAiEngine.mock.calls.map((call) => (call[3] as { timeoutMs: number }).timeoutMs);
+      expect(waits).toHaveLength(2);
+      expect(waits[1]).toBeLessThanOrEqual(STAFFING_WEEK_BUDGET_MS - 10_000);
+      expect(waits[1]).toBeGreaterThanOrEqual(STAFFING_WEEK_MIN_CALL_MS);
+    });
+
     it('asks nothing and fetches nothing when nothing is selected', async () => {
       const view = await service.check(dto([]), user);
 
@@ -255,6 +271,28 @@ describe('StaffingWeekService', () => {
       }
     });
 
+    /*
+     * THE ENGINE STOPS AT THE FIRST WEEK IT REFUSES, FOR EVERY YEAR (_prechecks). The numbers are the engine's own
+     * (optimization-engine/tests/test_staffing_week.py): year 8 over in the autumn at 107 %, year 9 at 91 % in the autumn
+     * and 95 % in the spring answers (8: 107 % over, 9: 91 %); with year 9's spring raised to 144 % the answer is the same.
+     */
+    it('does not set a year\'s figure beside another when the week is refused in ANOTHER year: its row holds only the weeks counted before the refusal', async () => {
+      const refusedInYear8 = () => answer({ verdict: 'IMPOSSIBLE', years: [row(107, true, 8), row(91, false, 9)] });
+      // A proposal that takes year 9's spring over the supply cannot be seen: both answers say 91 %.
+      answers(refusedInYear8(), refusedInYear8());
+
+      const same = await service.check(dto([change(1, REAL.eva, REAL.ola)]), user);
+
+      expect(same.years).toHaveLength(1);
+      expect(same.years[0]).toMatchObject({ year: 9, verdict: 'NOT_COMPARED', before: { atLeast: true, percent: 91 }, after: { atLeast: true, percent: 91 } });
+
+      // And a year counted to its end before is not "lighter" because the week after is refused in another year and counted less.
+      answers(answer({ years: [row(95, false, 9)] }), refusedInYear8());
+      const lighter = await service.check(dto([change(1, REAL.eva, REAL.ola)]), user);
+
+      expect(lighter.years[0]).toMatchObject({ year: 9, verdict: 'NOT_COMPARED', after: { atLeast: true, percent: 91 } });
+    });
+
     it('says a week that goes over the supply is TIGHTER and one that comes under it LOOSER', async () => {
       answers(answer({ years: [row(97)] }), answer({ verdict: 'IMPOSSIBLE', years: [row(102, true)] }));
       const over = await service.check(dto([change(1, REAL.eva, REAL.ola)]), user);
@@ -311,6 +349,23 @@ describe('StaffingWeekService', () => {
       const view = await service.check(dto([change(1, REAL.eva, REAL.ola)]), user);
 
       expect(view.years).toEqual([]);
+      expect(view.worse).toBe(true);
+    });
+
+    it('warns of a year that is tighter after the proposal although more years than fit on the screen are touched: the warning is about all of them', async () => {
+      // One post for years 1 to 9. The nine years' rows: year 1 is the lightest and the only one that gets tighter; the heavier eight get lighter.
+      requirements = [post(1, { minGradeLevel: 1, maxGradeLevel: 9 })];
+      build();
+      const years = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+      answers(
+        answer({ years: years.map((year) => row(year === 1 ? 86 : 95, false, year)) }),
+        answer({ years: years.map((year) => row(year === 1 ? 88 : 93, false, year)) }),
+      );
+
+      const view = await service.check(dto([change(1, REAL.eva, REAL.ola)]), user);
+
+      expect(view.years).toHaveLength(6);
+      expect(view.years.map((year) => year.year)).not.toContain(1);
       expect(view.worse).toBe(true);
     });
 

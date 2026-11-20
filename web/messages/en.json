@@ -4621,7 +4621,7 @@
       "compute": "Compute proposal",
       "computing": "Computing … up to ten seconds",
       "recompute": "Compute again",
-      "stale": "The staffing has changed since the proposal was computed. Nothing was saved. Compute a new proposal.",
+      "stale": "The staffing or the week has changed since the proposal was computed. Nothing was saved. Compute a new proposal.",
       "statusOPTIMAL": "Optimal",
       "statusFEASIBLE": "Best found within the time limit",
       "feasibleHint": "Another try may give an equally good proposal with other teachers.",
@@ -4721,6 +4721,9 @@
         "worseBody": "In at least one year the week is closer to its limit, or over it, with the proposal than without. Apply it only if you want it anyway.",
         "notWorse": "The proposal does not make the tightest week tighter in any of the years below.",
         "noYears": "None of the years the changes touch is at 85 % of the frame time or more, before or after the proposal.",
+        "refusedTitle": "The proposal makes the engine refuse the week",
+        "refusedBody": "With the proposal the engine refuses the week by a count that is not about a single year (a class's or a teacher's hours, for example), and it did not without it. Apply it only if you want it anyway.",
+        "noYearsRefused": "{which, select, both {The engine refuses the week both before and after the proposal} other {The engine refused the week before the proposal but does not with it}} by a count that is not about a single year. {which, select, both {The week's load was not counted, so it cannot be compared before and after.} other {With the proposal none of the years the changes touch is at 85 % of the frame time or more.}}",
         "year": "Year {year}",
         "line": {
           "TIGHTER": "{before} → {after}: the week gets tighter",

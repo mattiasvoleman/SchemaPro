@@ -116,7 +116,9 @@ const isOver = (count: ChoiceCount): boolean => count.kind === 'LOAD' && count.o
  * How a year after a proposal stands to the year before it. Built on the two rules that say when two counts may be set
  * in order (rankingFigure, rankable), so that nothing is called better or worse that the engine cannot say:
  *
- *  - two VALUES (a week counted to its end and not over the supply: every period) are compared by their figures;
+ *  - two VALUES (a week counted to its end and not over the supply: every period, and the week not refused in another
+ *    year, for the engine stops every year's count at the first week any verdict refuses: countOf) are compared by their
+ *    figures;
  *  - a value and a figure OVER the supply: the value is lighter, whichever it is, because an over figure is a bound
  *    above the supply that no value reaches;
  *  - two figures OVER the supply are never compared: the engine counts a year's periods in turn and stops at the first
@@ -151,19 +153,20 @@ export const isWorse = (verdict: StaffingWeekVerdict): boolean => verdict === 'T
  * The years to show: those a change touches (every year of a post's span; all of them when a post's years are not
  * known) that have a row in either answer, the heaviest first, at most MAX_YEARS_SHOWN. A year without a row in an
  * answer is under the engine's tight threshold there, which is said, not left out: it is the one that can go from
- * "under" to over.
+ * "under" to over. `limit` is for the caller that needs every one (the warning is about all of them, not the ones that fit).
  */
 export function yearsToShow(
   beforeYears: readonly (number | null)[],
   afterYears: readonly (number | null)[],
   touched: readonly number[] | null,
   heaviest: (year: number) => number,
+  limit: number = MAX_YEARS_SHOWN,
 ): number[] {
   const seen = new Set<number>();
   for (const year of [...beforeYears, ...afterYears]) {
     if (year !== null && (touched === null || touched.includes(year))) seen.add(year);
   }
-  return [...seen].sort((a, b) => heaviest(b) - heaviest(a) || a - b).slice(0, MAX_YEARS_SHOWN);
+  return [...seen].sort((a, b) => heaviest(b) - heaviest(a) || a - b).slice(0, limit);
 }
 
 /**
