@@ -1,3 +1,4 @@
+import type { EngineReleaseList, EngineReleaseResult, SetEngineReleaseBody } from "../../../lib/engine-release-queries";
 import type { ScbFile } from "../../../lib/scb-file";
 import type { HistoryResponse } from "../../../lib/staffing-history-queries";
 import type { StaffingNotice, StaffingReconciliationResponse } from "../../../lib/staffing-reconciliation";
@@ -16,13 +17,14 @@ import type { SignedInPerson } from "../sessions";
 import { addDays, TODAY } from "./calendar";
 import { scbFileOf } from "./scb-file";
 import { delivered, loadReport, ownLoad, suggestTeachers, type LoadResponse } from "./staffing-load";
-import { DUTIES, EMPLOYMENTS, historyOf, QUALIFICATIONS, STAFFING_POLICY } from "./staffing-rows";
+import { DUTIES, EMPLOYMENTS, ENGINE_RELEASES, historyOf, QUALIFICATIONS, STAFFING_POLICY } from "./staffing-rows";
 import { SUPERVISION_AREAS, SUPERVISION_LOAD, supervisionRota } from "./supervision";
-import { NEXT_YEAR, YEAR } from "./world";
+import { NEXT_YEAR, REQUIREMENTS, YEAR } from "./world";
 
 /**
  * Tjänstefördelningen (src/staffing): the policy, the posts, behörigheter,
- * uppdrag and their history, and the computed report. Data in
+ * uppdrag and their history, the posts released for the engine (släppta
+ * poster), and the computed report. Data in
  * staffing-rows.ts, arithmetic in staffing-load.ts.
  *
  * The role cuts are the gateway's own: the policy and the admin's lists are
@@ -82,6 +84,37 @@ export const staffingRoutes: GatewayRoute[] = [
     if (person!.role === "SCHOOL_ADMIN") return report;
     const own = ownLoad(report, person!.userId);
     return { ...own, supervision: report.supervision && { teachers: report.supervision.teachers.filter((row) => row.userId === person!.userId) } };
+  }),
+
+  // Släppta poster: the administrators read the year's, and a PUT is answered and not kept, like the other settings
+  // routes, so no spec leaves a release behind for the next. A post outside the year is the gateway's 400.
+  route("GET", "/api/v1/staffing/engine-release", ({ person, query }): EngineReleaseList | Reply => {
+    const refused = refusal(person, ADMIN_ONLY);
+    if (refused) return refused;
+    const year = yearOf(query);
+    if (year instanceof Reply) return year;
+    const posts = new Set(REQUIREMENTS.filter((post) => post.academicYearId === year.id).map((post) => post.id));
+    return { releases: ENGINE_RELEASES.filter((release) => posts.has(release.requirementId)) };
+  }),
+  route("PUT", "/api/v1/staffing/engine-release", ({ person, body }): EngineReleaseResult | Reply => {
+    const refused = refusal(person, ADMIN_ONLY);
+    if (refused) return refused;
+    const { academicYearId, requirementIds, released } = body as SetEngineReleaseBody;
+    const year = [YEAR, NEXT_YEAR].find((candidate) => candidate.id === academicYearId);
+    if (!year) return new Reply(404, { statusCode: 404, message: "Academic year not found." });
+    const posts = new Set(REQUIREMENTS.filter((post) => post.academicYearId === year.id).map((post) => post.id));
+    const outside = requirementIds.filter((id) => !posts.has(id)).length;
+    if (outside > 0) {
+      return new Reply(400, {
+        statusCode: 400,
+        message: "En av posterna hör inte till läsåret. Läs om sidan och försök igen.",
+        code: "ENGINE_RELEASE_POST_NOT_IN_YEAR",
+        params: { count: outside },
+      });
+    }
+    const already = new Set(ENGINE_RELEASES.map((release) => release.requirementId));
+    const changed = requirementIds.filter((id) => already.has(id) !== released).length;
+    return { changed, unchanged: requirementIds.length - changed };
   }),
 
   // Rastvaktsschema (supervision.ts): the areas, and a year's schedule, the administrator's.

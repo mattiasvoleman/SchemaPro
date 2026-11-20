@@ -276,6 +276,8 @@ model School {
   requirementPlacements     TeachingRequirementPlacement[]
   /// Förlagda block (20270218090000).
   blockPlacements           TeachingBlockPlacement[]
+  /// Släppt för motorn (20270226090000).
+  requirementReleases       TeachingRequirementRelease[]
   blockPlacementRooms       TeachingBlockPlacementRoom[]
   teachingBlocks          TeachingBlock[]
   masterLessons           MasterLesson[]
@@ -442,6 +444,8 @@ model User {
   /// Delade lektioner: the lessons of other teachers' posts this user takes.
   requirementShares       TeachingRequirementShare[] @relation("RequirementShareTeacher")
   requirementPlacements   TeachingRequirementPlacement[] @relation("RequirementPlacementTeacher")
+  /// Släppt för motorn: the posts this user released (20270226090000). The mark stays, without them, when they are removed.
+  requirementReleases     TeachingRequirementRelease[] @relation("RequirementReleasedBy")
   masterLessons           MasterLesson[]           @relation("MasterLessonTeacher")
   coMasterLessons         MasterLesson[]           @relation("MasterLessonCoTeacher")
   calendarLessonTeachers  CalendarLessonTeacher[]  @relation("AssignedTeacher")
@@ -2442,6 +2446,9 @@ model TeachingRequirement {
   /// Förlagda poster: the lessons of this post the school placed before
   /// Generera. See TeachingRequirementPlacement.
   placements   TeachingRequirementPlacement[]
+  /// Släppt för motorn (20270226090000): none or one row, one when the school has released the post so that Föreslå bemanning
+  /// may propose another teacher for it. Not carried by the rollover.
+  release      TeachingRequirementRelease?
   /// Förlagda block (20270218090000): this post's own room for each lesson its
   /// block's förläggningar place. CASCADE; a post that leaves its block loses
   /// them by trigger.
@@ -2567,6 +2574,34 @@ model TeachingRequirementPlacement {
   @@index([teacherId, schoolId])
   @@index([schoolId])
   @@map("TeachingRequirementPlacements")
+}
+
+/// Släppt för motorn: the school has released this post, so that Föreslå bemanning (the staffing proposal) may propose another
+/// qualified teacher for it. A post without a row is never moved by the proposal when it is staffed. One row per post, so
+/// releasing twice keeps the first person and time; unreleasing deletes the row.
+///
+/// A table of its own and not a column on TeachingRequirement, because the school's teachers read the post
+/// (teaching_requirement_staff_select) and must not read this: "may be moved" is the administration's to know. The API role
+/// reads and writes it, for the school's administrators only (SELECT; INSERT and DELETE with PLANERING); no other role
+/// touches it. The person key keeps the row without them (ON DELETE SET NULL ("releasedById"), which the SetNull below cannot
+/// say and the migration does). Not carried by the rollover. See migration 20270226090000.
+model TeachingRequirementRelease {
+  requirementId String   @db.Uuid
+  schoolId      String   @db.Uuid
+  /// Null when the person who released the post has been removed.
+  releasedById  String?  @db.Uuid
+  releasedAt    DateTime @default(now()) @db.Timestamptz(6)
+
+  school        School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  requirement   TeachingRequirement @relation(fields: [requirementId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+  releasedBy    User?               @relation("RequirementReleasedBy", fields: [releasedById, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+
+  /// The post and its school, not the post alone: the post decides the school, so it is still one row a post, but a row of
+  /// another school never conflicts with this one (see the migration).
+  @@id([requirementId, schoolId])
+  @@index([schoolId])
+  @@index([releasedById, schoolId])
+  @@map("TeachingRequirementReleases")
 }
 
 /// Parallella block: rows of one läsår whose lessons are placed at the same

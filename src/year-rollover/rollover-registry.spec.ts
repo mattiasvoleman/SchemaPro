@@ -288,6 +288,8 @@ describe('the rollover registry', () => {
       'ClassTeacherChange',
       // Förlagda poster (20270207090000): a post's day, time and room belong to the year they were given against.
       'TeachingRequirementPlacement',
+      // Släppt för motorn (20270226090000): the school's yes for this year's posts is not carried to a new year's.
+      'TeachingRequirementRelease',
       // Förlagda block (20270218090000): a block's lesson and each member's room for it belong to the year they were given against.
       'TeachingBlockPlacement',
       'TeachingBlockPlacementRoom',
@@ -314,6 +316,9 @@ describe('the rollover registry', () => {
       expect.objectContaining({ model: 'Ss12000DutyLink', counted: false }),
       expect.objectContaining({ model: 'SupervisionShift', counted: false }),
       expect.objectContaining({ model: 'AbsenceStatsMonth', counted: false }),
+    ]);
+    expect(skipped.filter((entry) => entry.model === 'TeachingRequirementRelease')).toEqual([
+      expect.objectContaining({ model: 'TeachingRequirementRelease', counted: false }),
     ]);
     expect(skipped.filter((entry) => entry.model === 'TeachingRequirementPlacement')).toEqual([
       expect.objectContaining({ model: 'TeachingRequirementPlacement', counted: false }),

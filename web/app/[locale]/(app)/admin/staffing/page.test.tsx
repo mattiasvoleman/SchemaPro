@@ -120,6 +120,7 @@ vi.mock("@/lib/queries", () => ({
   usePeople: () => ({
     data: [
       { id: "t-bo", role: "TEACHER", firstName: "Bo", lastName: "Alm", email: "bo@s.se", phone: null, isActive: true, invitedAt: null, studentGroupId: null },
+      { id: "t-left", role: "TEACHER", firstName: "Gun", lastName: "Gone", email: "gun@s.se", phone: null, isActive: false, invitedAt: null, studentGroupId: null },
     ],
   }),
   useGroups: () => ({ data: [{ id: "g-7a", academicYearId: "y1", name: "7A", kind: "CLASS", gradeLevel: 7 }] }),
@@ -249,6 +250,18 @@ vi.mock("./staffing-proposal-dialog", () => ({
   },
 }));
 
+/*
+ * Släppta poster: the card's own behaviour is engine-release-card.test.tsx's. Here only what the page decides — where it
+ * sits, when it is drawn, and what it is handed.
+ */
+const releaseProps = vi.hoisted(() => [] as Record<string, unknown>[]);
+vi.mock("@/components/staffing/engine-release-card", () => ({
+  EngineReleaseCard: (props: Record<string, unknown>) => {
+    releaseProps.push(props);
+    return <section aria-label="released-posts" />;
+  },
+}));
+
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
   useTranslations: (namespace: string) => {
@@ -263,6 +276,7 @@ vi.mock("next-intl", () => ({
 
 describe("StaffingPage", () => {
   beforeEach(() => {
+    releaseProps.length = 0;
     state.policy = null;
     state.report = report;
     state.reportLoading = false;
@@ -529,6 +543,59 @@ describe("StaffingPage", () => {
       act(() => (proposalProps.at(-1)!.onOpenChange as (open: boolean) => void)(false));
       expect(screen.queryByRole("dialog", { name: "proposal" })).toBeNull();
       expect(proposalProps.at(-1)).toMatchObject({ open: false });
+    });
+  });
+
+  describe("Släppta poster", () => {
+    it("draws the card after the unstaffed rows and before the bottlenecks, and loads it behind a skeleton", async () => {
+      render(<StaffingPage />);
+      const card = await screen.findByRole("region", { name: "released-posts" });
+      const before = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(before(document.getElementById("unstaffed")!, card)).toBe(true);
+      expect(before(card, document.getElementById("staffing-bottlenecks")!)).toBe(true);
+    });
+
+    it("hands it the year, the posts, the groups and the subjects the page holds", async () => {
+      render(<StaffingPage />);
+      await screen.findByRole("region", { name: "released-posts" });
+      const props = releaseProps.at(-1)!;
+      expect(props.academicYearId).toBe("y1");
+      expect((props.requirements as { id: string }[]).map((row) => row.id)).toEqual(["r-bo-ma"]);
+      expect(props.groups).toEqual([{ id: "g-7a", academicYearId: "y1", name: "7A", kind: "CLASS", gradeLevel: 7 }]);
+      expect(props.subjects).toEqual([expect.objectContaining({ id: "s-ma", name: "Matematik" })]);
+    });
+
+    it("names teachers as the page does, and the person who released a post by their name or by none", async () => {
+      render(<StaffingPage />);
+      await screen.findByRole("region", { name: "released-posts" });
+      const props = releaseProps.at(-1)!;
+      expect((props.teacherName as (id: string) => string)("t-bo")).toBe("Bo Alm");
+      expect((props.personName as (id: string) => string | null)("t-bo")).toBe("Bo Alm");
+      // A person the roster does not hold is not named by their id's head: the card says so in words.
+      expect((props.personName as (id: string) => string | null)("u-removed")).toBeNull();
+    });
+
+    it("counts a teacher as staff unless their account is switched off, so a post whose teacher has left is open", async () => {
+      render(<StaffingPage />);
+      await screen.findByRole("region", { name: "released-posts" });
+      const activeStaff = releaseProps.at(-1)!.activeStaff as (id: string) => boolean;
+      expect(activeStaff("t-bo")).toBe(true);
+      expect(activeStaff("t-left")).toBe(false);
+      // The roster has not named them (yet): not taken for having left.
+      expect(activeStaff("t-unlisted")).toBe(true);
+    });
+
+    it("draws it for no year, and not before the report has", () => {
+      state.reportLoading = true;
+      const { unmount } = render(<StaffingPage />);
+      expect(screen.queryByRole("region", { name: "released-posts" })).toBeNull();
+      expect(releaseProps).toEqual([]);
+      unmount();
+
+      state.reportLoading = false;
+      state.years = [];
+      render(<StaffingPage />);
+      expect(screen.queryByRole("region", { name: "released-posts" })).toBeNull();
     });
   });
 

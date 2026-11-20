@@ -6910,3 +6910,75 @@ stored twice: the gateway derives the rows from the one pointer (`src/staffing/q
   and `anon` holding nothing on it, nobody holding MAINTAIN on `Subjects`, and no subject pointing at itself, at another school's
   subject or in a chain; arms, grants, the other columns, constraints, indexes and triggers of the table, and every other
   function are read as `record` rows and compared with `prod-fore.sql`'s.
+
+## 31. A school releases a post for the engine ("Släppt för motorn", lärarval B1)
+
+Föreslå bemanning never moves a teacher the school chose. A post that is staffed is fixed, as a pinned one is, unless the school has
+**released** it; only then may a proposal give it to another qualified teacher. The release is one row per post in the new table
+`TeachingRequirementReleases` (migration `20270226090000_en_skola_slapper_en_post_for_motorn`): the post, its school, who released it
+(`releasedById`, null when the person has been removed) and when. Nothing is written without the school's approval, and the engine's
+contract is unchanged: a staffed post that is not released goes to the engine as a fixed one, exactly as a pinned post always did.
+
+A table of its own and not a column on `TeachingRequirements`, for three reasons that matter to an operator:
+
+1. **Who may read it.** The school's teachers read `TeachingRequirements`; "this post may be moved" is the administration's to know. The
+   table has no arm for a teacher, a pupil or a guardian, and none for a PostgREST role: `app_authenticated` holds `SELECT`, `INSERT`
+   and `DELETE` (no `UPDATE`), the school's `SCHOOL_ADMIN` reads, and an administrator who writes `PLANERING` writes. `service_role` keeps
+   `SELECT` as on the shares and the placements (it bypasses row security).
+2. **The lock.** `ADD COLUMN` would take `ACCESS EXCLUSIVE` on the table every timplan read goes through. The new table's keys take
+   `Schools`, `TeachingRequirements` and `Users` in `SHARE ROW EXCLUSIVE` (writes wait, reads do not), `NOWAIT` and all at once in a retry
+   loop (as the förlagda poster's migration, 20270207090000): a refusal rolls the subtransaction back and tries again 50 ms later, and after 30 s the migration stops with
+   nothing changed.
+3. **The year.** A rollover makes new posts with new ids, so no release is carried (`TeachingRequirementRelease` is `SKIPPED` in the
+   rollover registry); the school decides again each year what the engine may touch.
+
+The primary key is `("requirementId", "schoolId")`, not the post alone: with the post alone `INSERT … ON CONFLICT DO NOTHING` skips the
+key check when the row conflicts, and an administrator of another school who knew a post id could tell whether it was released. RLS
+section 546 holds that.
+
+A second confirmation, in the same change: an apply that gives a teacher a subject or a årskurs they do not teach today (a post they
+lead, co-lead or take lessons of) is refused `409 STAFF_NEW_TEACHING_UNCONFIRMED` (flat `params`) unless the request lists that very
+change in `confirmedNewTeaching`. The dialog lists those changes apart and asks twice. An undo asks for nothing, but only an undo that reverses the latest apply the log holds: a request that says
+`undo: true` and reverses none is judged as any apply, by the release rule (`STAFF_ROW_NOT_RELEASED`) and by this confirmation, as the policy already judges it.
+
+### 31.1 Deploy order
+
+**The migration first, then the merge**, from a tree that has every applied migration and this one. The new API reads the table on every
+proposal and apply; against a database without it they fail. An API released before this one runs against the new database as it did:
+it never names the table.
+
+1. The read-only checks before (`prod-fore.sql`, kept with the migration's files): the table, its keys, indexes and arms are not there, the
+   latest applied migration has a lower stamp, the keys' targets exist, the server is Postgres 17 — every `ok` row must be `true`.
+2. `prisma migrate deploy` (the file waits for no lock: see above). Then `prod-efter.sql`, and the `record` rows compared before to after.
+3. Merge. Railway deploys the gateway within about two minutes. **The engine is not deployed with this change**; nothing in `/staff` moved.
+
+### 31.2 Rolling back
+
+- The table is new and nothing points at it: `DROP TABLE "TeachingRequirementReleases"` (its policies, keys and indexes go with it), and
+  `DELETE FROM "_prisma_migrations" WHERE migration_name = '20270226090000_en_skola_slapper_en_post_for_motorn'` if the file is to run again.
+  Revert the API first: after the drop the new API's proposal and apply fail on the missing table.
+- The releases are the school's own decisions and are lost with the table; the posts and their teachers are untouched.
+
+### 31.3 What is not done here
+
+- **The shortcut "the whole subject in an årskurs" is not stored.** The page expands it to the posts' ids and writes them one by one; a
+  post made afterwards is not released. One write path, one truth.
+- **An apply does not take a release back.** A post stays released until the school withdraws it, whoever has the post after an apply.
+- **"Bara obemannade" off changed meaning.** It used to let every unpinned post change hands; now it means unstaffed posts plus released
+  ones, and a staffed post that is not released is never moved. A school that releases nothing sees exactly what "bara obemannade" always
+  gave it, for either setting.
+- **Candidates are chosen as before** (`qualificationCovers` over the recorded behörigheter). #361 (`Subjects.qualificationSubjectId`) has
+  merged and is in this tree: the reader it changes (`readHeldQualifications`, through `readLoadInput`) is the one the proposal reads, so a
+  subject that uses another's behörighet is offered to its holders without anything here knowing of it. "New subject" in the second
+  confirmation is the post's own subject, though: a teacher who leads SO is given a new subject by an SO WS post.
+
+### 31.4 Operations
+
+- RLS sections 545 to 549 hold it: the catalogue (columns, keys and their actions, indexes, no CHECK, no trigger, the three arms, the
+  privileges per role, the arms of `TeachingRequirements` unchanged by md5), every principal of the matrix school and two schools' isolation,
+  the statements the gateway writes (`ON CONFLICT DO NOTHING` keeps the first person and time; no `UPDATE`), the person and the post removed,
+  and, as the owner, every role by name, the school removed and every row. The fixtures plant one release in the matrix school so that the
+  role matrix (section 116) has a row to probe, and the generated area matrix lists the table (`INSERT` and `DELETE` are `PLANERING`'s).
+- The adapter probe's checks `sm1`–`sm6` (`scripts/test/probe-slappt-for-motorn.ts`) run the services through the real adapter: a release
+  twice and at once, the arms, another school's 404 and 400, the proposal's reads, the second confirmation, and a person, a post and a school
+  removed.

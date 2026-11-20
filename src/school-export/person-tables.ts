@@ -160,6 +160,8 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   TeachingRequirementShares: dump(['teacherId']),
   // Förlägg delade lektioner (20270208090000): the lessons placed as the teacher's, at the day, time and room the school chose.
   TeachingRequirementPlacements: dump(['teacherId']),
+  // Släppt för motorn (20270226090000): who released a post, and when. The mark itself is the school's.
+  TeachingRequirementReleases: dump(['releasedById']),
   MasterLessons: dump(['teacherId', 'coTeacherId']),
   Ss12000DutyLinks: dump(['userId']),
   SupervisionShifts: away(['userId']),

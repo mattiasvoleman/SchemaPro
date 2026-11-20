@@ -7816,3 +7816,133 @@ BEGIN
   RAISE NOTICE 'behörighet som i ämne 544o: clearing a link holds no lock, setting one holds the school''s to the end of the transaction';
 END $$;
 ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 549: the owner's side of the marking "släppt för motorn" (20270226090000; the API's side is sections 545-548 of
+-- rls-policies.sql). What the API's role cannot ask of itself:
+--   * every role by name, past the claims: anon and PostgREST's role hold nothing on the table, the service role reads (it
+--     bypasses row security, as on the shares and the placements) and writes nothing, the API's role with no principal, or with a
+--     teacher's, reads nothing and writes nothing;
+--   * a school removed takes its releases (the key to the school is CASCADE);
+--   * over every row, the owner's view: no release names another school's post or person.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.sm_try(p_stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  st text;
+  msg text;
+  con text;
+BEGIN
+  BEGIN
+    EXECUTE p_stmt;
+    RETURN 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, con = CONSTRAINT_NAME;
+  END;
+  IF st = '42501' AND msg LIKE '%row-level security%' THEN
+    RETURN '42501 rls';
+  ELSIF coalesce(con, '') <> '' AND st <> '23502' THEN
+    RETURN st || ' ' || con;
+  END IF;
+  RETURN st;
+END $f$;
+CREATE FUNCTION pg_temp.sm_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'sm %: got\n%\nwanted\n%', p_label, p_got, p_want USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+-- The rows a SELECT count answers, as a role, with a person's claims or none: a role that may not read says its SQLSTATE.
+CREATE FUNCTION pg_temp.sm_as_role(p_role text, p_sub text, p_stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  out text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', CASE WHEN p_sub IS NULL THEN '' ELSE json_build_object('sub', p_sub)::text END, true);
+  EXECUTE format('SET LOCAL ROLE %I', p_role);
+  out := pg_temp.sm_try(p_stmt);
+  RESET ROLE;
+  RETURN out;
+END $f$;
+
+BEGIN;
+DO $$
+DECLARE
+  school uuid;
+  year uuid;
+  grp uuid;
+  subj uuid;
+  post uuid;
+  post2 uuid;
+  by_user uuid;
+  teacher_sub text := '00000000-0000-4000-8000-000000000111';
+  admin_sub text := '00000000-0000-4000-8000-000000000105';
+  role_name text;
+  roller uuid;
+  n bigint;
+BEGIN
+  -- The matrix school and a school of its own for the removal below.
+  SELECT id INTO roller FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF roller IS NULL THEN RAISE EXCEPTION 'sm 549: the matrix school is missing; the fixtures did not run'; END IF;
+  SELECT id, "authId" INTO by_user FROM "Users" WHERE "schoolId" = roller AND "authId" = admin_sub::uuid;
+  SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = roller ORDER BY "isActive" DESC LIMIT 1;
+  SELECT id INTO grp FROM "StudentGroups" WHERE "schoolId" = roller AND "academicYearId" = year ORDER BY id LIMIT 1;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (roller, 'sm 549 a', 'SM549A', now()) RETURNING id INTO subj;
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "updatedAt") VALUES (roller, year, subj, grp, now()) RETURNING id INTO post;
+  INSERT INTO "TeachingRequirementReleases" ("requirementId", "schoolId", "releasedById") VALUES (post, roller, by_user);
+
+  -- Every role by name. The claims are the full administrator's, so a role that reads nothing does so for want of a privilege.
+  FOREACH role_name IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+    PERFORM pg_temp.sm_expect('549 ' || role_name || ' SELECT', pg_temp.sm_as_role(role_name, admin_sub, $q$SELECT count(*) FROM "TeachingRequirementReleases"$q$), '42501');
+    PERFORM pg_temp.sm_expect('549 ' || role_name || ' INSERT', pg_temp.sm_as_role(role_name, admin_sub,
+      format($q$INSERT INTO "TeachingRequirementReleases" ("requirementId", "schoolId") VALUES (%L, %L)$q$, gen_random_uuid(), roller)), '42501');
+    PERFORM pg_temp.sm_expect('549 ' || role_name || ' DELETE', pg_temp.sm_as_role(role_name, admin_sub, $q$DELETE FROM "TeachingRequirementReleases"$q$), '42501');
+    PERFORM pg_temp.sm_expect('549 ' || role_name || ' UPDATE', pg_temp.sm_as_role(role_name, admin_sub, $q$UPDATE "TeachingRequirementReleases" SET "releasedAt" = now()$q$), '42501');
+  END LOOP;
+  -- The service role: reads (BYPASSRLS, like every table its SELECT stays on), writes nothing.
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    PERFORM pg_temp.sm_expect('549 service_role SELECT', pg_temp.sm_as_role('service_role', NULL, $q$SELECT count(*) FROM "TeachingRequirementReleases"$q$), 'ok');
+    PERFORM pg_temp.sm_expect('549 service_role INSERT', pg_temp.sm_as_role('service_role', NULL,
+      format($q$INSERT INTO "TeachingRequirementReleases" ("requirementId", "schoolId") VALUES (%L, %L)$q$, gen_random_uuid(), roller)), '42501');
+    PERFORM pg_temp.sm_expect('549 service_role DELETE', pg_temp.sm_as_role('service_role', NULL, $q$DELETE FROM "TeachingRequirementReleases"$q$), '42501');
+    PERFORM pg_temp.sm_expect('549 service_role UPDATE', pg_temp.sm_as_role('service_role', NULL, $q$UPDATE "TeachingRequirementReleases" SET "releasedAt" = now()$q$), '42501');
+  END IF;
+  -- The API's role with no principal and with a teacher's: it reads the table (a privilege) and the policies show it no row.
+  FOREACH role_name IN ARRAY ARRAY['no principal', 'a teacher'] LOOP
+    PERFORM set_config('request.jwt.claims', CASE role_name WHEN 'a teacher' THEN json_build_object('sub', teacher_sub)::text ELSE '' END, true);
+    SET LOCAL ROLE app_authenticated;
+    SELECT count(*) INTO n FROM "TeachingRequirementReleases";
+    PERFORM pg_temp.sm_expect('549 the API''s role as ' || role_name || ' reads no row', n::text, '0');
+    PERFORM pg_temp.sm_expect('549 the API''s role as ' || role_name || ' INSERT', pg_temp.sm_try(
+      format($q$INSERT INTO "TeachingRequirementReleases" ("requirementId", "schoolId") VALUES (%L, %L)$q$, gen_random_uuid(), roller)), '42501 rls');
+    PERFORM pg_temp.sm_expect('549 the API''s role as ' || role_name || ' DELETE reaches no row', (SELECT pg_temp.sm_try($q$DELETE FROM "TeachingRequirementReleases"$q$)), 'ok');
+    RESET ROLE;
+  END LOOP;
+  PERFORM pg_temp.sm_expect('549 the release is still there after every refusal above',
+    (SELECT count(*) FROM "TeachingRequirementReleases" WHERE "requirementId" = post)::text, '1');
+
+  -- ON UPDATE NO ACTION is read from the catalogue (section 545 of rls-policies.sql, confupdtype = 'a'): a person cannot be moved to
+  -- another school in a way this key could be asked of, because Users' own guard (AR403) refuses the move first, and a post cannot
+  -- be moved either, because its own keys to its year, subject and class refuse it.
+
+  -- A school removed takes its releases: a school of its own, a post, a release that nobody signed.
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ('sm 549 skola', 'sm-549-skola', 'Europe/Stockholm', now()) RETURNING id INTO school;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt") VALUES (school, 'sm 549 år', '2031-08-15', '2032-06-15', true, now()) RETURNING id INTO year;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt") VALUES (school, year, 'sm 549 7A', 7, now()) RETURNING id INTO grp;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt") VALUES (school, 'sm 549 b', 'SM549B', now()) RETURNING id INTO subj;
+  INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "updatedAt") VALUES (school, year, subj, grp, now()) RETURNING id INTO post2;
+  INSERT INTO "TeachingRequirementReleases" ("requirementId", "schoolId") VALUES (post2, school);
+  PERFORM pg_temp.sm_expect('549 the new school has its release', (SELECT count(*) FROM "TeachingRequirementReleases" WHERE "schoolId" = school)::text, '1');
+  DELETE FROM "Schools" WHERE id = school;
+  PERFORM pg_temp.sm_expect('549 the school removed took its release', (SELECT count(*) FROM "TeachingRequirementReleases" WHERE "schoolId" = school)::text, '0');
+  PERFORM pg_temp.sm_expect('549 ... and not the matrix school''s (this section''s release, and the fixtures'' one planted for section 116)',
+    (SELECT count(*) FROM "TeachingRequirementReleases" WHERE "schoolId" = roller)::text, '2');
+
+  -- Over every row, past row security: a release names the post and the person of its own school, and a post of its own year's school.
+  PERFORM pg_temp.sm_expect('549 no release names another school''s post',
+    (SELECT count(*) FROM "TeachingRequirementReleases" r JOIN "TeachingRequirements" p ON p.id = r."requirementId" WHERE p."schoolId" <> r."schoolId")::text, '0');
+  PERFORM pg_temp.sm_expect('549 no release is signed by another school''s person',
+    (SELECT count(*) FROM "TeachingRequirementReleases" r JOIN "Users" u ON u.id = r."releasedById" WHERE u."schoolId" <> r."schoolId")::text, '0');
+  RAISE NOTICE 'sm 549: the roles by name, the school removed and every row hold';
+END $$;
+ROLLBACK;
