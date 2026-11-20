@@ -502,6 +502,11 @@ describe('the roster-reader inventory', () => {
       // with teacher choice (askChoice) builds the same week by the same fetch, and answers the same 409 for the same year.
       // So does Föreslå bemanning's week before and after a proposal (weekOfProposal), which counts the very week the check does
       // with the proposed leads laid over it.
+      //
+      // The search for the choice of teachers that eases the week (lärarval F3) counts the same week, by the same fetch, for each
+      // candidate it tries: its start reads the week once, and the proposal it gives reads it again to see that it is the one
+      // the search counted (the basis covers the week), so both answer the same 409 for the same year. Its status, its latest
+      // run and its cancel read only its own row.
       expect(reached.map((entry) => entry.route).sort()).toEqual([
         'AnalysisController.costBasis',
         'AnalysisController.keyFigures',
@@ -549,6 +554,8 @@ describe('the roster-reader inventory', () => {
         'StaffingLoadController.load',
         'StaffingLoadController.suggestTeachers',
         'StaffingLoadController.unstaffed',
+        'StaffingSearchController.proposal',
+        'StaffingSearchController.start',
         'StaffingWeekController.weekOfProposal',
         'SwapsController.apply',
         'SwapsController.suggest',

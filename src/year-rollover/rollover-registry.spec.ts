@@ -278,6 +278,8 @@ describe('the rollover registry', () => {
       'Ss12000DutyLink',
       'ScheduleCandidateRun',
       'ScheduleCandidate',
+      // Lärarval F3 (20270227090000): a search made against the old year's week, kept a day.
+      'StaffingSearchRun',
       'LessonLog',
       'LessonSubstituteNote',
       'SupervisionShift',

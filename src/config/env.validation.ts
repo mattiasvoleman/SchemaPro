@@ -360,6 +360,27 @@ export class EnvironmentVariables {
   CANDIDATES_BACKGROUND: string = 'on';
 
   /**
+   * Lärarval F3 (src/optimization/staffing-search.service.ts): how long a search for the choice of teachers that eases the week
+   * may run, in seconds. It is an anytime search (the best state so far is always a valid proposal), so the budget only decides
+   * how far it gets: 15 minutes by default, which reaches a local optimum on a year of the size the study measured. It does not
+   * count the time the search waits for a Generera run of the year.
+   */
+  @IsInt()
+  @Min(60)
+  @Max(3600)
+  STAFFING_SEARCH_BUDGET_SECONDS: number = 900;
+
+  /**
+   * Evaluations a search asks of the engine at once (each is a count of the year's exact least week, 5-9 s of one core). The
+   * engine holds its own gate (WEEK_BOUNDS_CONCURRENCY, 2): a request beyond it is answered 429 and waited for, so this is the
+   * most one search takes of it, and a second search of another school takes the rest.
+   */
+  @IsInt()
+  @Min(1)
+  @Max(6)
+  STAFFING_SEARCH_CONCURRENCY: number = 3;
+
+  /**
    * "Logga in med skolkonto" (src/sign-in, migration 20261020090000). `off`,
    * the default and what an unset variable means, keeps it inert: no school
    * can save a school-account row (409 SIGN_IN_NOT_AVAILABLE), so with no
