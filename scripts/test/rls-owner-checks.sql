@@ -7946,3 +7946,232 @@ BEGIN
   RAISE NOTICE 'sm 549: the roles by name, the school removed and every row hold';
 END $$;
 ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 554: the owner's side of the search table StaffingSearchRuns and its sweep (20270227090000; the API's side is sections
+-- 550-553 of rls-policies.sql). What the API's role cannot ask of itself:
+--   * every role by name, past the claims: anon and PostgREST's role hold nothing on the table and run nothing, the service role reads
+--     (it bypasses row security, as on the other job tables) and writes nothing, the API's role with no principal, or with a teacher's,
+--     reads nothing and writes nothing, and may run the sweep only with no login on it;
+--   * the keys' ON UPDATE read from the catalogue: the school's CASCADE, the year's NO ACTION (and what the second does: a year that
+--     a search names cannot be moved to another school, which the same move of a year with no search shows is the search's key);
+--   * a school removed takes its searches, a year removed takes the year's searches and nothing else;
+--   * a person removed leaves the search: it has no key to the person (the row lives a day and holds nobody);
+--   * over every row, the owner's view: no search names another school's year.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.vo_tick() RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('vo.checks', (coalesce(nullif(current_setting('vo.checks', true), ''), '0')::integer + 1)::text, true);
+$f$;
+CREATE FUNCTION pg_temp.vo_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.vo_tick();
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'vo %: got\n%\nwanted\n%', p_label, p_got, p_want USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+-- Runs a statement and says what became of it: ok, a row-security refusal, a missing privilege, or the SQLSTATE with the constraint's name.
+CREATE FUNCTION pg_temp.vo_try(p_stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  st text;
+  msg text;
+  con text;
+BEGIN
+  BEGIN
+    EXECUTE p_stmt;
+    RETURN 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, con = CONSTRAINT_NAME;
+  END;
+  IF st = '42501' AND msg LIKE '%row-level security%' THEN
+    RETURN '42501 rls';
+  ELSIF coalesce(con, '') <> '' AND st <> '23502' THEN
+    RETURN st || ' ' || con;
+  END IF;
+  RETURN st;
+END $f$;
+-- The rows a statement touched, or what became of it when it was refused (as vo_try says it).
+CREATE FUNCTION pg_temp.vo_did(p_stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  n bigint;
+  st text;
+  msg text;
+  con text;
+BEGIN
+  BEGIN
+    EXECUTE p_stmt;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RETURN n::text;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, con = CONSTRAINT_NAME;
+  END;
+  IF st = '42501' AND msg LIKE '%row-level security%' THEN
+    RETURN '42501 rls';
+  ELSIF coalesce(con, '') <> '' AND st <> '23502' THEN
+    RETURN st || ' ' || con;
+  END IF;
+  RETURN st;
+END $f$;
+-- A statement as a role, with a person's claims or none: a role that may not run it says its SQLSTATE.
+CREATE FUNCTION pg_temp.vo_as_role(p_role text, p_sub text, p_stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  out text;
+BEGIN
+  PERFORM set_config('request.jwt.claims', CASE WHEN p_sub IS NULL THEN '' ELSE json_build_object('sub', p_sub)::text END, true);
+  EXECUTE format('SET LOCAL ROLE %I', p_role);
+  out := pg_temp.vo_try(p_stmt);
+  RESET ROLE;
+  RETURN out;
+END $f$;
+
+BEGIN;
+DO $$
+DECLARE
+  tbl constant regclass := '"StaffingSearchRuns"'::regclass;
+  teacher_sub text := '00000000-0000-4000-8000-000000000111';
+  admin_sub text := '00000000-0000-4000-8000-000000000105';
+  role_name text;
+  roller uuid;
+  yr uuid;
+  by_user uuid;
+  run uuid;
+  ins text;
+  beat constant text := $q$UPDATE "StaffingSearchRuns" SET "heartbeatAt" = now()$q$;
+  school uuid;
+  y1 uuid;
+  y2 uuid;
+  y3 uuid;
+  u uuid;
+  r2 uuid;
+  r3 uuid;
+  n bigint;
+  held bigint;
+BEGIN
+  -- The matrix school's year, with a running search the owner plants.
+  SELECT id INTO roller FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF roller IS NULL THEN RAISE EXCEPTION 'vo 554: the matrix school is missing; the fixtures did not run'; END IF;
+  SELECT id INTO by_user FROM "Users" WHERE "schoolId" = roller AND "authId" = admin_sub::uuid;
+  -- What the database already holds for the sweep is done first (a finished search of the fixtures that has aged past a day, say), so that
+  -- the counts below are this section's rows alone. The owner has no login, which is what the door asks of a session.
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM app.staffing_search_sweep();
+  -- A year of its own, so that the fixtures' search (a finished one, for section 116) is nothing to the place of the one planted here.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt") VALUES (roller, 'vo 554 matrix', '2071-08-15', '2072-06-10', false, now()) RETURNING id INTO yr;
+  SELECT count(*) INTO held FROM "StaffingSearchRuns" WHERE "schoolId" = roller;
+  INSERT INTO "StaffingSearchRuns" ("schoolId", "academicYearId", "staffingBasis", "weekBasis", status, "createdById", "startedAt")
+  VALUES (roller, yr, repeat('a', 64), repeat('b', 64), 'RUNNING', by_user, now()) RETURNING id INTO run;
+  ins := format($q$INSERT INTO "StaffingSearchRuns" ("schoolId", "academicYearId", "staffingBasis", "weekBasis") VALUES (%L, %L, %L, %L)$q$, roller, yr, repeat('c', 64), repeat('d', 64));
+
+  -- Every role by name. The claims are the full administrator's, so a role that reads nothing does so for want of a privilege.
+  FOREACH role_name IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+    PERFORM pg_temp.vo_expect('554 ' || role_name || ' SELECT', pg_temp.vo_as_role(role_name, admin_sub, $q$SELECT count(*) FROM "StaffingSearchRuns"$q$), '42501');
+    PERFORM pg_temp.vo_expect('554 ' || role_name || ' INSERT', pg_temp.vo_as_role(role_name, admin_sub, ins), '42501');
+    PERFORM pg_temp.vo_expect('554 ' || role_name || ' DELETE', pg_temp.vo_as_role(role_name, admin_sub, $q$DELETE FROM "StaffingSearchRuns"$q$), '42501');
+    PERFORM pg_temp.vo_expect('554 ' || role_name || ' UPDATE', pg_temp.vo_as_role(role_name, admin_sub, beat), '42501');
+    PERFORM pg_temp.vo_expect('554 ' || role_name || ' row lock', pg_temp.vo_as_role(role_name, admin_sub, $q$SELECT 1 FROM "StaffingSearchRuns" FOR UPDATE$q$), '42501');
+    PERFORM pg_temp.vo_expect('554 ' || role_name || ' runs the sweep: no', pg_temp.vo_as_role(role_name, NULL, 'SELECT app.staffing_search_sweep()'), '42501');
+  END LOOP;
+  -- The service role: reads (BYPASSRLS, like every job table its SELECT stays on), writes nothing, and runs no sweep.
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    PERFORM pg_temp.vo_expect('554 service_role SELECT', pg_temp.vo_as_role('service_role', NULL, $q$SELECT count(*) FROM "StaffingSearchRuns"$q$), 'ok');
+    PERFORM set_config('request.jwt.claims', '', true);
+    SET LOCAL ROLE service_role;
+    SELECT count(*) INTO n FROM "StaffingSearchRuns" WHERE id = run;
+    RESET ROLE;
+    PERFORM pg_temp.vo_expect('554 service_role reads the row past row security, with no principal at all', n::text, '1');
+    PERFORM pg_temp.vo_expect('554 service_role INSERT', pg_temp.vo_as_role('service_role', NULL, ins), '42501');
+    PERFORM pg_temp.vo_expect('554 service_role DELETE', pg_temp.vo_as_role('service_role', NULL, $q$DELETE FROM "StaffingSearchRuns"$q$), '42501');
+    PERFORM pg_temp.vo_expect('554 service_role UPDATE', pg_temp.vo_as_role('service_role', NULL, beat), '42501');
+    PERFORM pg_temp.vo_expect('554 service_role row lock', pg_temp.vo_as_role('service_role', NULL, $q$SELECT 1 FROM "StaffingSearchRuns" FOR UPDATE$q$), '42501');
+    PERFORM pg_temp.vo_expect('554 service_role runs the sweep: no', pg_temp.vo_as_role('service_role', NULL, 'SELECT app.staffing_search_sweep()'), '42501');
+  END IF;
+  -- The API's role with no principal and with a teacher's: it reads the table (a privilege) and the policies show it no row.
+  FOREACH role_name IN ARRAY ARRAY['no principal', 'a teacher'] LOOP
+    PERFORM set_config('request.jwt.claims', CASE role_name WHEN 'a teacher' THEN json_build_object('sub', teacher_sub)::text ELSE '' END, true);
+    SET LOCAL ROLE app_authenticated;
+    SELECT count(*) INTO n FROM "StaffingSearchRuns";
+    PERFORM pg_temp.vo_expect('554 the API''s role as ' || role_name || ' reads no row', n::text, '0');
+    PERFORM pg_temp.vo_expect('554 the API''s role as ' || role_name || ' INSERT', pg_temp.vo_try(ins), '42501 rls');
+    PERFORM pg_temp.vo_expect('554 the API''s role as ' || role_name || ' DELETE reaches no row', pg_temp.vo_did($q$DELETE FROM "StaffingSearchRuns"$q$), '0');
+    PERFORM pg_temp.vo_expect('554 the API''s role as ' || role_name || ' UPDATE reaches no row', pg_temp.vo_did(beat), '0');
+    PERFORM pg_temp.vo_expect('554 the API''s role as ' || role_name || ' row lock reaches no row', pg_temp.vo_did($q$SELECT 1 FROM "StaffingSearchRuns" FOR UPDATE$q$), '0');
+    RESET ROLE;
+  END LOOP;
+  PERFORM pg_temp.vo_expect('554 the search is still there after every refusal above',
+    (SELECT format('%s %s', count(*), min(status::text)) FROM "StaffingSearchRuns" WHERE id = run), '1 RUNNING');
+  PERFORM pg_temp.vo_expect('554 ... and nothing else was written or removed in the matrix school', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "schoolId" = roller)::text, (held + 1)::text);
+  -- The sweep, as the API's role: with no login it runs (and finds nothing to do: the one search is fresh), with an administrator's claims
+  -- on it the door refuses (VO403), and nothing about the role's rights changes that.
+  PERFORM pg_temp.vo_expect('554 the API''s role runs the sweep with no login', pg_temp.vo_as_role('app_authenticated', NULL, 'SELECT app.staffing_search_sweep()'), 'ok');
+  PERFORM pg_temp.vo_expect('554 the API''s role is refused with a login on it', pg_temp.vo_as_role('app_authenticated', admin_sub, 'SELECT app.staffing_search_sweep()'), 'VO403');
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM app.staffing_search_sweep();
+  PERFORM pg_temp.vo_expect('554 the sweep, as the owner with no login, called twice, finds nothing to do the second time', (SELECT app.staffing_search_sweep())::text, '0');
+  PERFORM pg_temp.vo_expect('554 the fresh search is as it was', (SELECT status::text FROM "StaffingSearchRuns" WHERE id = run), 'RUNNING');
+
+  -- The keys' ON UPDATE as the catalogue holds them (section 550 reads the rest): the school's key CASCADEs, the year's does not.
+  PERFORM pg_temp.vo_expect('554 the key to the school is ON UPDATE CASCADE',
+    (SELECT confupdtype::text FROM pg_constraint WHERE conrelid = tbl AND conname = 'StaffingSearchRuns_schoolId_fkey'), 'c');
+  PERFORM pg_temp.vo_expect('554 the key to the year is ON UPDATE NO ACTION',
+    (SELECT confupdtype::text FROM pg_constraint WHERE conrelid = tbl AND conname = 'StaffingSearchRuns_academicYearId_schoolId_fkey'), 'a');
+
+  -- A school of its own with three years, a person, and searches in two of the years.
+  INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ('vo 554 skola', 'vo-554-skola', 'Europe/Stockholm', now()) RETURNING id INTO school;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt") VALUES (school, 'vo 554 år 1', '2031-08-15', '2032-06-15', true, now()) RETURNING id INTO y1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt") VALUES (school, 'vo 554 år 2', '2032-08-15', '2033-06-15', false, now()) RETURNING id INTO y2;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt") VALUES (school, 'vo 554 år 3', '2033-08-15', '2034-06-15', false, now()) RETURNING id INTO y3;
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "updatedAt")
+  VALUES (school, 'vo-554@example.invalid', 'Vo', 'Lärare', 'TEACHER', gen_random_uuid(), now()) RETURNING id INTO u;
+  INSERT INTO "StaffingSearchRuns" ("schoolId", "academicYearId", "staffingBasis", "weekBasis") VALUES (school, y1, repeat('a', 64), repeat('b', 64));
+  INSERT INTO "StaffingSearchRuns" ("schoolId", "academicYearId", "staffingBasis", "weekBasis", status, "finishedAt") VALUES (school, y1, repeat('a', 64), repeat('b', 64), 'SUCCEEDED', now());
+  INSERT INTO "StaffingSearchRuns" ("schoolId", "academicYearId", "staffingBasis", "weekBasis", status, "finishedAt", "errorCode") VALUES (school, y1, repeat('a', 64), repeat('b', 64), 'FAILED', now(), 'SOME_CODE');
+  INSERT INTO "StaffingSearchRuns" ("schoolId", "academicYearId", "staffingBasis", "weekBasis", status) VALUES (school, y2, repeat('a', 64), repeat('b', 64), 'RUNNING') RETURNING id INTO r2;
+  INSERT INTO "StaffingSearchRuns" ("schoolId", "academicYearId", "staffingBasis", "weekBasis", status, "finishedAt", "createdById")
+  VALUES (school, y2, repeat('a', 64), repeat('b', 64), 'CANCELLED', now(), u) RETURNING id INTO r3;
+  PERFORM pg_temp.vo_expect('554 the new school holds its five searches', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "schoolId" = school)::text, '5');
+
+  -- NO ACTION on the year's key: a year a search names cannot be moved to another school (the school in the key would no longer match),
+  -- and the same move of a year with no search goes through, so it is the search's key that refuses. Rolled back with the rest.
+  PERFORM pg_temp.vo_expect('554 a year that a search names cannot be moved to another school',
+    pg_temp.vo_try(format($q$UPDATE "AcademicYears" SET "schoolId" = %L WHERE id = %L$q$, roller, y2)), '23503 StaffingSearchRuns_academicYearId_schoolId_fkey');
+  PERFORM pg_temp.vo_expect('554 a year no search names can be moved', pg_temp.vo_try(format($q$UPDATE "AcademicYears" SET "schoolId" = %L WHERE id = %L$q$, roller, y3)), 'ok');
+  PERFORM pg_temp.vo_expect('554 ... and the searches of the other years stay where they were',
+    (SELECT count(*) FROM "StaffingSearchRuns" WHERE "schoolId" = school)::text, '5');
+
+  -- A person removed leaves the search: the row has no key to the person, and keeps the id it was given.
+  PERFORM pg_temp.vo_expect('554 the person who asked is removed: the delete goes through', pg_temp.vo_try(format($q$DELETE FROM "Users" WHERE id = %L$q$, u)), 'ok');
+  PERFORM pg_temp.vo_expect('554 the person is gone', (SELECT count(*) FROM "Users" WHERE id = u)::text, '0');
+  PERFORM pg_temp.vo_expect('554 the search stays, still in its school and year, and still naming the person who is gone',
+    (SELECT format('%s %s %s', status, ("academicYearId" = y2)::text, ("createdById" = u)::text) FROM "StaffingSearchRuns" WHERE id = r3), 'CANCELLED true true');
+  -- (the third year goes back to its school, so that the removal of the school below finds its years where they were)
+  PERFORM pg_temp.vo_expect('554 the third year goes back to its school', pg_temp.vo_try(format($q$UPDATE "AcademicYears" SET "schoolId" = %L WHERE id = %L$q$, school, y3)), 'ok');
+
+  -- A year removed takes the year's searches (all four states, the active one too) and nothing else.
+  PERFORM pg_temp.vo_expect('554 the first year is removed', pg_temp.vo_did(format($q$DELETE FROM "AcademicYears" WHERE id = %L$q$, y1)), '1');
+  PERFORM pg_temp.vo_expect('554 its three searches went with it', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "academicYearId" = y1)::text, '0');
+  PERFORM pg_temp.vo_expect('554 the second year''s two stayed', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "academicYearId" = y2)::text, '2');
+  PERFORM pg_temp.vo_expect('554 the school and its second year stayed', (SELECT count(*) FROM "AcademicYears" WHERE id = y2 AND "schoolId" = school)::text, '1');
+  PERFORM pg_temp.vo_expect('554 the matrix school''s searches are as they were', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "schoolId" = roller)::text, (held + 1)::text);
+
+  -- A school removed takes its searches, and not the matrix school's.
+  PERFORM pg_temp.vo_expect('554 the new school is removed', pg_temp.vo_did(format($q$DELETE FROM "Schools" WHERE id = %L$q$, school)), '1');
+  PERFORM pg_temp.vo_expect('554 its searches went with it', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "schoolId" = school OR "academicYearId" = y2)::text, '0');
+  PERFORM pg_temp.vo_expect('554 ... and not the matrix school''s', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "schoolId" = roller)::text, (held + 1)::text);
+
+  -- The key to the person is no key at all: a search may name a person who never was (the gateway's own rows name the asker, and the
+  -- table does not care).
+  PERFORM pg_temp.vo_expect('554 a search naming nobody who exists goes through (there is no key to Users)',
+    pg_temp.vo_try(format($q$INSERT INTO "StaffingSearchRuns" ("schoolId", "academicYearId", "staffingBasis", "weekBasis", status, "finishedAt", "createdById")
+                             VALUES (%L, %L, %L, %L, 'SUCCEEDED', now(), %L)$q$, roller, yr, repeat('e', 64), repeat('f', 64), gen_random_uuid())), 'ok');
+
+  -- Over every row, past row security: a search names the year of its own school.
+  PERFORM pg_temp.vo_expect('554 no search names another school''s year',
+    (SELECT count(*) FROM "StaffingSearchRuns" r JOIN "AcademicYears" y ON y.id = r."academicYearId" WHERE y."schoolId" <> r."schoolId")::text, '0');
+  PERFORM pg_temp.vo_expect('554 no search names a year that is not there',
+    (SELECT count(*) FROM "StaffingSearchRuns" r WHERE NOT EXISTS (SELECT 1 FROM "AcademicYears" y WHERE y.id = r."academicYearId"))::text, '0');
+  PERFORM pg_temp.vo_expect('554 no search names a school that is not there',
+    (SELECT count(*) FROM "StaffingSearchRuns" r WHERE NOT EXISTS (SELECT 1 FROM "Schools" s WHERE s.id = r."schoolId"))::text, '0');
+  RAISE NOTICE 'vo 554: % checks', current_setting('vo.checks');
+END $$;
+ROLLBACK;

@@ -48,8 +48,9 @@
 --
 --   staffing_search_runs_admin_select   skolans SCHOOL_ADMIN: varje administratör läser.
 --   staffing_search_runs_admin_insert   skolans SCHOOL_ADMIN som skriver SCHEMALAGGNING.
---   staffing_search_runs_admin_update   skolans SCHOOL_ADMIN (USING och WITH CHECK frågar inte området: en radlåsning för
---                                       en läsning ska fungera för varje administratör; vad som får ändras avgör gatewayn).
+--   staffing_search_runs_admin_update   skolans SCHOOL_ADMIN som skriver SCHEMALAGGNING i WITH CHECK. USING frågar inte området:
+--                                       en radlåsning för en läsning ska fungera för varje administratör, och en ändring
+--                                       som området inte tillåter nekas ändå av WITH CHECK.
 --   staffing_search_runs_admin_delete   skolans SCHOOL_ADMIN som skriver SCHEMALAGGNING.
 --
 -- Ingen arm för lärare, mentor, vårdnadshavare, elev, anon, authenticated eller servicen. FORCE ROW LEVEL SECURITY är av,
@@ -192,13 +193,14 @@ BEGIN
         WITH CHECK ("schoolId" = (select app.current_school_id())
                     AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
                     AND (select app.current_user_may('SCHEMALAGGNING', true)));
-    -- USING frågar inte området (avsnitt 106 c): en radlåsning för en läsning ska fungera för varje administratör.
+    -- USING frågar inte området (avsnitt 106 c): en radlåsning för en läsning ska fungera för varje administratör; WITH CHECK frågar det.
     CREATE POLICY "staffing_search_runs_admin_update" ON "StaffingSearchRuns"
         FOR UPDATE TO "app_authenticated"
         USING ("schoolId" = (select app.current_school_id())
                AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
         WITH CHECK ("schoolId" = (select app.current_school_id())
-                    AND (select app.current_user_role()) = 'SCHOOL_ADMIN');
+                    AND (select app.current_user_role()) = 'SCHOOL_ADMIN'
+                    AND (select app.current_user_may('SCHEMALAGGNING', true)));
     CREATE POLICY "staffing_search_runs_admin_delete" ON "StaffingSearchRuns"
         FOR DELETE TO "app_authenticated"
         USING ("schoolId" = (select app.current_school_id())

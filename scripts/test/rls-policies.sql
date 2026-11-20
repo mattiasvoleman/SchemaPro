@@ -20376,6 +20376,7 @@ INSERT INTO area_gates (tbl, ins, upd, del, rd) VALUES
   ('Ss12000SyncRuns', '{INTEGRATIONER}', '{INTEGRATIONER}', '{}', '{}'),
   ('StaffCostRates', '{DECIDES}', '{DECIDES}', '{DECIDES}', '{}'),
   ('StaffingPolicies', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
+  ('StaffingSearchRuns', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{SCHEMALAGGNING}', '{}'),
   ('StudentEnrollments', '{}', '{}', '{}', '{}'),
   ('StudentGroupMembers', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
   ('StudentGroups', '{PLANERING}', '{PLANERING}', '{PLANERING}', '{}'),
@@ -67887,3 +67888,1236 @@ BEGIN
   RAISE NOTICE 'sm 548: % checks', current_setting('sm.checks');
 END $$;
 ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- En sökning efter lärarval är ett jobb med lease (20270227090000), sections 550-554: the table StaffingSearchRuns, one row for each
+-- search that Föreslå bemanning starts in the background, and the job door app.staffing_search_sweep(), which fails the searches a
+-- lost process left behind and clears the finished ones. Helpers are pg_temp functions with the prefix vo_, made outside any
+-- transaction so they outlive the sections' BEGIN ... ROLLBACK; every section plants its own rows in two schools through the
+-- schools' own administrators (the API's role, as the gateway writes them) and leaves nothing behind.
+--
+--   550  the catalogue: columns, enum, keys with their actions, constraints by name and text, indexes with the active-run
+--        predicate, row security, the four arms, the privileges, no trigger, the comments, and the sweep's definition, rights
+--        and the guard in its body
+--   551  who reads and who writes, and the school boundary: two schools, every principal of the matrix school, and PostgREST's role
+--   552  the constraints: every CHECK at its edge, NOT NULL, the keys, one active search per year (and what frees the place)
+--   553  the sweep: the guard under every setting a session can carry, then what it does as the job (no login) to what an
+--        administrator planted, in both schools, at every boundary of the lease, the hour and the day
+--   554  (rls-owner-checks.sql) the owner's side: the roles by name, the keys' ON UPDATE, the school and the year removed, the person
+--        removed
+--
+-- A note on the update arm, which section 106 of this file reads for every other table: the four arms of StaffingSearchRuns ask the
+-- area as the sibling job tables' do (INSERT and DELETE ask SCHEMALAGGNING), except the UPDATE arm, which asks it in neither USING nor
+-- WITH CHECK (the migration says why: a row lock for a read must work for every administrator, and the gateway decides what may be
+-- changed). 551 states what the database does: every administrator's UPDATE reaches the row.
+-- ---------------------------------------------------------------------------
+
+CREATE FUNCTION pg_temp.vo_tick() RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('vo.checks', (coalesce(nullif(current_setting('vo.checks', true), ''), '0')::integer + 1)::text, true);
+$f$;
+CREATE FUNCTION pg_temp.vo_expect(p_label text, p_got text, p_want text) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.vo_tick();
+  IF p_got IS DISTINCT FROM p_want THEN
+    RAISE EXCEPTION E'vo %: got\n%\nwanted\n%', p_label, p_got, p_want USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+CREATE FUNCTION pg_temp.vo_true(p_label text, p_cond boolean) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  PERFORM pg_temp.vo_tick();
+  IF p_cond IS NOT TRUE THEN
+    RAISE EXCEPTION 'vo %: not true', p_label USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+CREATE FUNCTION pg_temp.vo_as(p_sub text) RETURNS void LANGUAGE sql AS $f$
+  SELECT set_config('request.jwt.claims', json_build_object('sub', p_sub)::text, true);
+  SELECT set_config('request.headers', '', true);
+$f$;
+-- Runs a statement and says what became of it: the rows it touched, a row-security refusal, a missing privilege, or the SQLSTATE
+-- with the constraint's name. A failed statement leaves nothing.
+CREATE FUNCTION pg_temp.vo_did(p_stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  n bigint;
+  st text;
+  msg text;
+  con text;
+BEGIN
+  BEGIN
+    EXECUTE p_stmt;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RETURN n::text;
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, con = CONSTRAINT_NAME;
+  END;
+  IF st = '42501' AND msg LIKE '%row-level security%' THEN
+    RETURN '42501 rls';
+  ELSIF coalesce(con, '') <> '' AND st <> '23502' THEN
+    RETURN st || ' ' || con;
+  END IF;
+  RETURN st;
+END $f$;
+-- As vo_did, but a statement that went through says ok whatever it touched.
+CREATE FUNCTION pg_temp.vo_try(p_stmt text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  st text;
+  msg text;
+  con text;
+BEGIN
+  BEGIN
+    EXECUTE p_stmt;
+    RETURN 'ok';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT, con = CONSTRAINT_NAME;
+  END;
+  IF st = '42501' AND msg LIKE '%row-level security%' THEN
+    RETURN '42501 rls';
+  ELSIF coalesce(con, '') <> '' AND st <> '23502' THEN
+    RETURN st || ' ' || con;
+  END IF;
+  RETURN st;
+END $f$;
+CREATE FUNCTION pg_temp.vo_case(p_label text, p_stmt text, p_want text) RETURNS void LANGUAGE sql AS $f$
+  SELECT pg_temp.vo_expect(p_label, pg_temp.vo_try(p_stmt), p_want);
+$f$;
+-- The rows a statement touched (an UPDATE, DELETE or SELECT ... FOR UPDATE that row security leaves nothing to touch says 0).
+CREATE FUNCTION pg_temp.vo_rows(p_stmt text) RETURNS bigint LANGUAGE plpgsql AS $f$
+DECLARE n bigint;
+BEGIN
+  EXECUTE p_stmt;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END $f$;
+-- A value out of a statement, or its SQLSTATE as 'E:<code>': a refusal is also an answer to compare.
+CREATE FUNCTION pg_temp.vo_val(p_sql text) RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  got text;
+BEGIN
+  BEGIN
+    EXECUTE p_sql INTO got;
+    RETURN coalesce(got, 'NULL');
+  EXCEPTION WHEN OTHERS THEN
+    RETURN 'E:' || SQLSTATE;
+  END;
+END $f$;
+-- A function's body without comments and with every run of blanks as one space.
+CREATE FUNCTION pg_temp.vo_src(p_fn text) RETURNS text LANGUAGE sql AS $f$
+  SELECT btrim(regexp_replace(regexp_replace((SELECT p.prosrc FROM pg_proc p WHERE p.oid = p_fn::regprocedure), '--[^\n]*', '', 'g'), '\s+', ' ', 'g'))
+$f$;
+-- A constraint's or an index predicate's text with every parenthesis a blank, so that a deparse that parenthesises otherwise reads the same.
+CREATE FUNCTION pg_temp.vo_flat(p_def text) RETURNS text LANGUAGE sql AS $f$
+  SELECT btrim(regexp_replace(regexp_replace(coalesce(p_def, '-'), '[()]', ' ', 'g'), '\s+', ' ', 'g'))
+$f$;
+
+-- The statement that writes one search. The columns every row must have are given values (a school, a year, two digests), and a
+-- pair of arguments after them sets or replaces a column: its name, then the SQL for its value, so that vo_ins(s, y, 'status',
+-- $$'RUNNING'$$, 'leaseUntil', $$now() - interval '10 minutes'$$) is a running search with an expired lease.
+CREATE FUNCTION pg_temp.vo_ins(p_school uuid, p_year uuid, VARIADIC p_kv text[] DEFAULT '{}') RETURNS text LANGUAGE plpgsql AS $f$
+DECLARE
+  cols text[] := ARRAY['schoolId', 'academicYearId', 'staffingBasis', 'weekBasis'];
+  vals text[] := ARRAY[quote_literal(p_school), quote_literal(p_year), quote_literal(repeat('a', 64)), quote_literal(repeat('b', 64))];
+  i integer;
+  at integer;
+BEGIN
+  FOR i IN 1 .. coalesce(cardinality(p_kv), 0) BY 2 LOOP
+    at := array_position(cols, p_kv[i]);
+    IF at IS NULL THEN
+      cols := cols || p_kv[i];
+      vals := vals || p_kv[i + 1];
+    ELSE
+      vals[at] := p_kv[i + 1];
+    END IF;
+  END LOOP;
+  RETURN 'INSERT INTO "StaffingSearchRuns" (' || (SELECT string_agg(quote_ident(c), ', ') FROM unnest(cols) c) || ') VALUES (' || array_to_string(vals, ', ') || ')';
+END $f$;
+-- The same, run, and the new search's id.
+CREATE FUNCTION pg_temp.vo_run(p_school uuid, p_year uuid, VARIADIC p_kv text[] DEFAULT '{}') RETURNS uuid LANGUAGE plpgsql AS $f$
+DECLARE rid uuid;
+BEGIN
+  EXECUTE pg_temp.vo_ins(p_school, p_year, VARIADIC p_kv) || ' RETURNING "id"' INTO rid;
+  RETURN rid;
+END $f$;
+-- A search planted with its heartbeat, its lease's end and its creation each a time from now() (an interval as text: '-20 minutes').
+-- An expired lease is a heartbeat of 20 minutes ago and a lease that ended 10 minutes ago: the lease may not end before the heartbeat
+-- (and not an hour after it).
+CREATE FUNCTION pg_temp.vo_at(p_school uuid, p_year uuid, p_status text, p_beat text, p_lease text, p_made text, VARIADIC p_kv text[] DEFAULT '{}') RETURNS uuid LANGUAGE plpgsql AS $f$
+BEGIN
+  RETURN pg_temp.vo_run(p_school, p_year, VARIADIC ARRAY['status', quote_literal(p_status), 'heartbeatAt', format('now() + interval %L', p_beat),
+                                                         'leaseUntil', format('now() + interval %L', p_lease), 'createdAt', format('now() + interval %L', p_made)] || p_kv);
+END $f$;
+-- A year of the current principal's school with a name of its own, in which a search may be active beside the other years'.
+CREATE FUNCTION pg_temp.vo_year(p_label text) RETURNS uuid LANGUAGE plpgsql AS $f$
+DECLARE y uuid;
+BEGIN
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (app.current_school_id(), 'vo ' || p_label, DATE '2071-08-15', DATE '2072-06-10', false, now()) RETURNING id INTO y;
+  RETURN y;
+END $f$;
+-- One school's rows, planted as its own administrator: two years of its own (a and b). Answers the ids and the administrator's.
+CREATE FUNCTION pg_temp.vo_plant(p_sub text, p_label text) RETURNS jsonb LANGUAGE plpgsql AS $f$
+DECLARE
+  school uuid;
+  ya uuid;
+  yb uuid;
+BEGIN
+  PERFORM pg_temp.vo_as(p_sub);
+  school := app.current_school_id();
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' OR NOT app.current_user_may('PLANERING', true) OR NOT app.current_user_may('SCHEMALAGGNING', true) THEN
+    RAISE EXCEPTION 'vo: % is not an administrator who writes PLANERING and SCHEMALAGGNING', p_sub;
+  END IF;
+  ya := pg_temp.vo_year(p_label || ' a');
+  yb := pg_temp.vo_year(p_label || ' b');
+  RETURN jsonb_build_object('school', school, 'a', ya, 'b', yb, 'admin', p_sub, 'user', app.current_user_id());
+END $f$;
+-- The sweep as the job runs it: with no login. The administrator's claims are set aside while the door runs and set back after, so
+-- that the section's administrator is still there (the pattern of pg_temp.u12_<door> at the top of this file).
+CREATE FUNCTION pg_temp.vo_sweep() RETURNS integer LANGUAGE plpgsql VOLATILE AS $f$
+DECLARE
+  vo_c text := coalesce(current_setting('request.jwt.claims', true), '');
+  vo_s text := coalesce(current_setting('request.jwt.claim.sub', true), '');
+  vo_n integer;
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  vo_n := app.staffing_search_sweep();
+  PERFORM set_config('request.jwt.claims', vo_c, true);
+  PERFORM set_config('request.jwt.claim.sub', vo_s, true);
+  RETURN vo_n;
+END $f$;
+-- What a session can carry, each as the guard of a job door reads it, and what the statement answers under it. p_want holds one
+-- regular expression for 'door' (the job: nothing set, or what a pooled connection leaves behind) and one for 'login' (every
+-- other shape).
+CREATE FUNCTION pg_temp.vo_shapes(p_label text, p_sql text, p_want jsonb) RETURNS void LANGUAGE plpgsql AS $f$
+DECLARE
+  c0 text := coalesce(current_setting('request.jwt.claims', true), '');
+  s0 text := coalesce(current_setting('request.jwt.claim.sub', true), '');
+  shape text[];
+  got text;
+BEGIN
+  FOREACH shape SLICE 1 IN ARRAY ARRAY[
+    ARRAY['', '', 'door', 'no claims and no subject'],
+    ARRAY[' ', '', 'login', 'claims of one space'],
+    ARRAY['{}', '', 'login', 'claims {}'],
+    ARRAY['null', '', 'login', 'claims null'],
+    ARRAY['{"role":"authenticated"}', '', 'login', 'claims with a role only'],
+    ARRAY['', 'fe000000-0000-4000-8000-000000000260', 'login', 'a lone subject setting'],
+    ARRAY['', ' ', 'login', 'a lone subject of one space'],
+    ARRAY['{"sub":"fe000000-0000-4000-8000-000000000260","role":"authenticated"}', 'fe000000-0000-4000-8000-000000000260', 'login', 'claims and a subject'],
+    ARRAY['{"sub":"00000000-0000-4000-8000-000000000105","role":"authenticated"}', '', 'login', 'an administrator with a Users row'],
+    ARRAY['{"sub":"00000000-0000-4000-8000-000000000111","role":"authenticated"}', '', 'login', 'a teacher with a Users row']
+  ] LOOP
+    PERFORM set_config('request.jwt.claims', shape[1], true);
+    PERFORM set_config('request.jwt.claim.sub', shape[2], true);
+    got := pg_temp.vo_val(p_sql);
+    PERFORM pg_temp.vo_tick();
+    IF got !~ (p_want ->> shape[3]) THEN
+      RAISE EXCEPTION 'vo %: % (claims [%], subject [%]) answered [%], not [%]', p_label, shape[4], shape[1], shape[2], got, p_want ->> shape[3];
+    END IF;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', c0, true);
+  PERFORM set_config('request.jwt.claim.sub', s0, true);
+END $f$;
+
+-- ---------------------------------------------------------------------------
+-- Section 550: the catalogue as the migration wrote it (20270227090000).
+--
+-- Nothing here plants a row. What a name, a type, a default, an action, an index predicate, a privilege or a function's definition
+-- is, as the catalogue holds it: a CHECK dropped or loosened, the partial unique index re-made without its predicate, a key
+-- re-made with another action, a fifth arm or an arm moved to PUBLIC, a grant to anon, MAINTAIN handed back by a default
+-- privilege, the sweep made callable by PostgREST's roles or its guard taken out of its body is named here. There is no trigger,
+-- the person who asked for a search is not a key (the row lives a day and holds nobody), and nothing points at a search.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  tbl constant regclass := '"StaffingSearchRuns"'::regclass;
+  fn constant text := 'app.staffing_search_sweep()';
+  got text;
+  want text;
+  k record;
+  r text;
+  priv text;
+  src text;
+  -- Whether the UPDATE arm's WITH CHECK asks SCHEMALAGGNING as the INSERT and DELETE arms do. The migration says it does not (the note at the
+  -- head of these sections); section 106 of this file reads the arms of every table in the generated matrix and expects it to. When the arm
+  -- is changed, this is the one line to change here, and the one in section 551.
+  update_asks_the_area constant boolean := true;
+  part record;
+  guard constant text := $g$IF nullif(current_setting('request.jwt.claims', true), '') IS NOT NULL OR nullif(current_setting('request.jwt.claim.sub', true), '') IS NOT NULL THEN RAISE EXCEPTION 'Sweepen av lärarvalssökningar tar ingen inloggning' USING ERRCODE = 'VO403'; END IF;$g$;
+BEGIN
+  -- Columns: name, type, NOT NULL and default, in the table's order.
+  SELECT string_agg(format('%s %s %s %s', a.attname, format_type(a.atttypid, a.atttypmod), CASE WHEN a.attnotnull THEN 'NN' ELSE 'N' END,
+                           coalesce(pg_get_expr(d.adbin, d.adrelid), '-')), E'\n' ORDER BY a.attnum) INTO got
+    FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = tbl AND a.attnum > 0 AND NOT a.attisdropped;
+  want := E'id uuid NN gen_random_uuid()\nschoolId uuid NN -\nacademicYearId uuid NN -\ncreatedById uuid N -\n'
+       || E'status "StaffingSearchRunStatus" NN ''PENDING''::"StaffingSearchRunStatus"\nstopReason text N -\noptions jsonb NN ''{}''::jsonb\n'
+       || E'staffingBasis text NN -\nweekBasis text NN -\nround integer NN 0\nevaluations integer NN 0\nacceptedMoves integer NN 0\n'
+       || E'figures jsonb N -\ncheckpoint jsonb N -\nerror text N -\nerrorCode text N -\nerrorParams jsonb N -\nclaimedBy text N -\n'
+       || E'heartbeatAt timestamp(6) with time zone NN now()\nleaseUntil timestamp(6) with time zone NN (now() + ''00:05:00''::interval)\n'
+       || E'createdAt timestamp(6) with time zone NN now()\nstartedAt timestamp(6) with time zone N -\nfinishedAt timestamp(6) with time zone N -';
+  PERFORM pg_temp.vo_expect('550 columns', got, want);
+  PERFORM pg_temp.vo_expect('550 the status type: its labels, in order',
+    (SELECT string_agg(enumlabel, ',' ORDER BY enumsortorder) FROM pg_enum WHERE enumtypid = '"StaffingSearchRunStatus"'::regtype),
+    'PENDING,RUNNING,CANCELLING,SUCCEEDED,CANCELLED,FAILED');
+  PERFORM pg_temp.vo_expect('550 the status type is in public',
+    (SELECT n.nspname FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE t.oid = '"StaffingSearchRunStatus"'::regtype), 'public');
+  PERFORM pg_temp.vo_expect('550 the table lives in public and is an ordinary table',
+    (SELECT n.nspname || ' ' || c.relkind::text || ' ' || c.relpersistence::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = tbl), 'public r p');
+  PERFORM pg_temp.vo_true('550 the table and the columns that carry the contract are commented',
+    coalesce(obj_description(tbl, 'pg_class'), '') <> ''
+    AND (SELECT count(*) FROM pg_attribute a WHERE a.attrelid = tbl AND a.attname IN ('createdById', 'staffingBasis', 'weekBasis', 'checkpoint', 'leaseUntil')
+                AND coalesce(col_description(tbl, a.attnum), '') <> '') = 5);
+
+  -- The two keys: the table they name, their columns, and what happens on delete and on update. confdeltype and confupdtype:
+  -- a = NO ACTION, c = CASCADE. pg_get_constraintdef leaves NO ACTION out, so the letters are read.
+  FOR k IN SELECT * FROM (VALUES
+      ('StaffingSearchRuns_schoolId_fkey',                'Schools',       'schoolId',               'id',          'c', 'c'),
+      ('StaffingSearchRuns_academicYearId_schoolId_fkey', 'AcademicYears', 'academicYearId,schoolId', 'id,schoolId', 'c', 'a')
+    ) v(name, ref, cols, refcols, del, upd) LOOP
+    SELECT format('%s>%s(%s) del %s upd %s %s', (SELECT string_agg(a.attname, ',' ORDER BY x.ord) FROM unnest(c.conkey) WITH ORDINALITY x(attnum, ord)
+                                                  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = x.attnum),
+                  c.confrelid::regclass::text, (SELECT string_agg(a.attname, ',' ORDER BY x.ord) FROM unnest(c.confkey) WITH ORDINALITY x(attnum, ord)
+                                                  JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = x.attnum),
+                  c.confdeltype, c.confupdtype, CASE WHEN c.convalidated THEN 'validated' ELSE 'NOT VALID' END)
+      INTO got FROM pg_constraint c WHERE c.conrelid = tbl AND c.conname = k.name AND c.contype = 'f';
+    PERFORM pg_temp.vo_expect('550 key ' || k.name, got,
+      format('%s>"%s"(%s) del %s upd %s validated', k.cols, k.ref, k.refcols, k.del, k.upd));
+  END LOOP;
+  PERFORM pg_temp.vo_expect('550 the table has those two keys and no other', (SELECT count(*) FROM pg_constraint WHERE conrelid = tbl AND contype = 'f')::text, '2');
+  -- The year's key carries the school: a year of another school is not a year of this one (551 meets the refusal).
+  PERFORM pg_temp.vo_expect('550 the year key is the composite one, to the year''s own school',
+    (SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conrelid = tbl AND c.conname = 'StaffingSearchRuns_academicYearId_schoolId_fkey'),
+    'FOREIGN KEY ("academicYearId", "schoolId") REFERENCES "AcademicYears"(id, "schoolId") ON DELETE CASCADE');
+  -- No key on the person who asked, and none to Users at all: a row that lives a day does not hold a person.
+  PERFORM pg_temp.vo_expect('550 no key names Users or the person''s column',
+    (SELECT count(*) FROM pg_constraint c WHERE c.conrelid = tbl AND c.contype = 'f'
+        AND (c.confrelid = '"Users"'::regclass
+             OR EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey) AND a.attname = 'createdById')))::text, '0');
+  PERFORM pg_temp.vo_expect('550 no key names the table', (SELECT count(*) FROM pg_constraint WHERE confrelid = tbl)::text, '0');
+
+  -- Constraints: all seventeen by name and kind, validated, and each CHECK as the migration wrote it (parentheses aside).
+  SELECT string_agg(conname || ' ' || contype::text, E'\n' ORDER BY conname COLLATE "C") INTO got FROM pg_constraint WHERE conrelid = tbl;
+  PERFORM pg_temp.vo_expect('550 the constraints by name', got,
+    E'StaffingSearchRuns_academicYearId_schoolId_fkey f\nStaffingSearchRuns_bases_are_sha256 c\nStaffingSearchRuns_checkpoint_is_an_object c\n'
+    || E'StaffingSearchRuns_claimedBy_is_short c\nStaffingSearchRuns_counters_are_not_negative c\nStaffingSearchRuns_errorCode_is_a_name c\n'
+    || E'StaffingSearchRuns_error_is_short c\nStaffingSearchRuns_failed_has_a_code c\nStaffingSearchRuns_figures_is_an_object c\n'
+    || E'StaffingSearchRuns_finished_has_a_time c\nStaffingSearchRuns_id_schoolId_key u\nStaffingSearchRuns_lease_follows_the_heartbeat c\n'
+    || E'StaffingSearchRuns_moves_are_of_the_rounds c\nStaffingSearchRuns_options_is_an_object c\nStaffingSearchRuns_pkey p\n'
+    || E'StaffingSearchRuns_schoolId_fkey f\nStaffingSearchRuns_stopReason_is_a_name c');
+  PERFORM pg_temp.vo_expect('550 every constraint is validated and none is deferrable',
+    (SELECT count(*) FROM pg_constraint WHERE conrelid = tbl AND (NOT convalidated OR condeferrable))::text, '0');
+  FOR k IN SELECT * FROM (VALUES
+      ('StaffingSearchRuns_bases_are_sha256', 'CHECK "staffingBasis" ~ ''^[0-9a-f]{64}$''::text AND "weekBasis" ~ ''^[0-9a-f]{64}$''::text'),
+      ('StaffingSearchRuns_checkpoint_is_an_object', 'CHECK checkpoint IS NULL OR jsonb_typeof checkpoint = ''object''::text'),
+      ('StaffingSearchRuns_claimedBy_is_short', 'CHECK "claimedBy" IS NULL OR char_length "claimedBy" >= 1 AND char_length "claimedBy" <= 100'),
+      ('StaffingSearchRuns_counters_are_not_negative', 'CHECK round >= 0 AND evaluations >= 0 AND "acceptedMoves" >= 0'),
+      ('StaffingSearchRuns_errorCode_is_a_name', 'CHECK "errorCode" IS NULL OR "errorCode" ~ ''^[A-Z][A-Z0-9_]{0,63}$''::text'),
+      ('StaffingSearchRuns_error_is_short', 'CHECK error IS NULL OR char_length error <= 2000'),
+      ('StaffingSearchRuns_failed_has_a_code', 'CHECK status <> ''FAILED''::"StaffingSearchRunStatus" OR "errorCode" IS NOT NULL'),
+      ('StaffingSearchRuns_figures_is_an_object', 'CHECK figures IS NULL OR jsonb_typeof figures = ''object''::text'),
+      ('StaffingSearchRuns_finished_has_a_time', 'CHECK status = ANY ARRAY[''SUCCEEDED''::"StaffingSearchRunStatus", ''CANCELLED''::"StaffingSearchRunStatus", ''FAILED''::"StaffingSearchRunStatus"] = "finishedAt" IS NOT NULL'),
+      ('StaffingSearchRuns_lease_follows_the_heartbeat', 'CHECK "leaseUntil" >= "heartbeatAt" AND "leaseUntil" <= "heartbeatAt" + ''01:00:00''::interval'),
+      ('StaffingSearchRuns_moves_are_of_the_rounds', 'CHECK "acceptedMoves" <= round'),
+      ('StaffingSearchRuns_options_is_an_object', 'CHECK jsonb_typeof options = ''object''::text'),
+      ('StaffingSearchRuns_stopReason_is_a_name', 'CHECK "stopReason" IS NULL OR "stopReason" ~ ''^[A-Z][A-Z0-9_]{0,31}$''::text')
+    ) v(name, def) LOOP
+    PERFORM pg_temp.vo_expect('550 check ' || k.name,
+      (SELECT pg_temp.vo_flat(pg_get_constraintdef(c.oid)) FROM pg_constraint c WHERE c.conrelid = tbl AND c.conname = k.name AND c.contype = 'c'), k.def);
+  END LOOP;
+
+  -- Indexes: the five, valid, with their columns, uniqueness and predicate. The partial unique index is what makes a search the
+  -- year's only active one: PENDING, RUNNING and CANCELLING hold the place, a finished search holds nothing.
+  FOR k IN SELECT * FROM (VALUES
+      ('StaffingSearchRuns_pkey',                                  'id',                               true,  '-'),
+      ('StaffingSearchRuns_id_schoolId_key',                       'id,schoolId',                      true,  '-'),
+      ('StaffingSearchRuns_one_active_per_year',                   'schoolId,academicYearId',          true,
+         'status = ANY ARRAY[''PENDING''::"StaffingSearchRunStatus", ''RUNNING''::"StaffingSearchRunStatus", ''CANCELLING''::"StaffingSearchRunStatus"]'),
+      ('StaffingSearchRuns_schoolId_academicYearId_createdAt_idx', 'schoolId,academicYearId,createdAt', false, '-'),
+      ('StaffingSearchRuns_finishedAt_idx',                        'finishedAt',                       false, '"finishedAt" IS NOT NULL')
+    ) v(name, cols, uniq, pred) LOOP
+    SELECT format('%s %s %s %s %s', (SELECT string_agg(a.attname, ',' ORDER BY x.ord) FROM unnest(i.indkey::int2[]) WITH ORDINALITY x(attnum, ord)
+                                     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = x.attnum),
+                  CASE WHEN i.indisunique THEN 'unique' ELSE 'plain' END, CASE WHEN i.indisvalid AND i.indisready THEN 'valid' ELSE 'INVALID' END,
+                  (SELECT am.amname FROM pg_class ic JOIN pg_am am ON am.oid = ic.relam WHERE ic.oid = i.indexrelid),
+                  pg_temp.vo_flat(pg_get_expr(i.indpred, i.indrelid)))
+      INTO got FROM pg_index i WHERE i.indexrelid = to_regclass(format('public.%I', k.name)) AND i.indrelid = tbl;
+    PERFORM pg_temp.vo_expect('550 index ' || k.name, got,
+      format('%s %s valid btree %s', k.cols, CASE WHEN k.uniq THEN 'unique' ELSE 'plain' END, k.pred));
+  END LOOP;
+  PERFORM pg_temp.vo_expect('550 the table has those five indexes and no other', (SELECT count(*) FROM pg_index WHERE indrelid = tbl)::text, '5');
+  PERFORM pg_temp.vo_expect('550 no trigger of its own on the table', (SELECT count(*) FROM pg_trigger WHERE tgrelid = tbl AND NOT tgisinternal)::text, '0');
+
+  -- Row security: on, and not forced, as on every table of the schema.
+  PERFORM pg_temp.vo_true('550 row security is on', (SELECT relrowsecurity FROM pg_class WHERE oid = tbl));
+  PERFORM pg_temp.vo_expect('550 row security is not forced', (SELECT relforcerowsecurity::text FROM pg_class WHERE oid = tbl), 'false');
+
+  -- The four arms: names, commands, TO app_authenticated and nobody else, permissive, and what each asks.
+  SELECT string_agg(policyname || ' ' || cmd || ' ' || roles::text || ' ' || permissive, '; ' ORDER BY policyname COLLATE "C") INTO got
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'StaffingSearchRuns';
+  PERFORM pg_temp.vo_expect('550 arms', got,
+    'staffing_search_runs_admin_delete DELETE {app_authenticated} PERMISSIVE; staffing_search_runs_admin_insert INSERT {app_authenticated} PERMISSIVE; '
+    || 'staffing_search_runs_admin_select SELECT {app_authenticated} PERMISSIVE; staffing_search_runs_admin_update UPDATE {app_authenticated} PERMISSIVE');
+  FOR k IN SELECT * FROM pg_policies WHERE schemaname = 'public' AND tablename = 'StaffingSearchRuns' LOOP
+    got := coalesce(k.qual, '') || ' ' || coalesce(k.with_check, '');
+    -- Each part of an arm (what it lets through, USING, and what it lets be written, WITH CHECK) keeps to the school and to an administrator:
+    -- a USING without the school lets a statement that reads no column (an UPDATE with no WHERE) reach every school's rows, and a WITH
+    -- CHECK without it lets a row be moved to another school.
+    FOR part IN SELECT * FROM (VALUES ('USING', k.qual), ('WITH CHECK', k.with_check)) v(kind, expr) WHERE expr IS NOT NULL LOOP
+      PERFORM pg_temp.vo_true('550 ' || k.policyname || ' ' || part.kind || ' keeps to the school', part.expr LIKE '%"schoolId" = ( SELECT app.current_school_id()%');
+      PERFORM pg_temp.vo_true('550 ' || k.policyname || ' ' || part.kind || ' is an administrator''s', part.expr LIKE '%current_user_role()%= ''SCHOOL_ADMIN''%');
+    END LOOP;
+    PERFORM pg_temp.vo_true('550 ' || k.policyname || ' names no teacher, pupil or guardian', got !~ 'TEACHER|STUDENT|GUARDIAN');
+    PERFORM pg_temp.vo_true('550 ' || k.policyname || ' reaches no service or sync principal', got !~ 'current_service_school_id|current_sync_school_id|is_service_key_lookup|current_service_key_id');
+    -- The writes that make or remove a search ask SCHEMALAGGNING, and only that area; the read does not ask.
+    PERFORM pg_temp.vo_expect('550 ' || k.policyname || ' asks SCHEMALAGGNING',
+      (got LIKE '%current_user_may(''SCHEMALAGGNING''::"AdminArea", true)%')::text, (k.cmd IN ('INSERT', 'DELETE') OR (k.cmd = 'UPDATE' AND update_asks_the_area))::text);
+    PERFORM pg_temp.vo_expect('550 ' || k.policyname || ' asks no other area and not the decisions',
+      (SELECT coalesce(string_agg(DISTINCT m[1], ','), '') FROM regexp_matches(got, 'current_user_may\(''(\w+)''', 'g') m) || (got ~ 'current_user_decides')::text,
+      CASE WHEN k.cmd IN ('INSERT', 'DELETE') OR (k.cmd = 'UPDATE' AND update_asks_the_area) THEN 'SCHEMALAGGNING' ELSE '' END || 'false');
+    -- The update arm's USING never asks the area, so a row lock for a read works for every administrator; the migration's
+    -- WITH CHECK does not ask it either (see the note above section 550 and the matrix of section 551).
+    IF k.cmd = 'UPDATE' THEN
+      PERFORM pg_temp.vo_expect('550 ' || k.policyname || ' asks the area in its WITH CHECK', (coalesce(k.with_check, '') LIKE '%current_user_may%')::text, update_asks_the_area::text);
+    END IF;
+    PERFORM pg_temp.vo_expect('550 ' || k.policyname || ' asks no area in USING unless it is the delete''s',
+      (coalesce(k.qual, '') LIKE '%current_user_may%')::text, (k.cmd = 'DELETE')::text);
+  END LOOP;
+
+  -- Privileges: the API's role SELECT, INSERT, UPDATE and DELETE, the service role SELECT, nobody else anything, PUBLIC nothing, no
+  -- grant option, no column-only grant, and no TRUNCATE, REFERENCES, TRIGGER or (Postgres 17) MAINTAIN for anyone.
+  SELECT string_agg(g.who || '=' || g.privs, ';' ORDER BY g.who COLLATE "C") INTO got
+    FROM (SELECT coalesce(ro.rolname, 'PUBLIC')::text AS who, string_agg(a.privilege_type, ',' ORDER BY a.privilege_type COLLATE "C") AS privs
+            FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a LEFT JOIN pg_roles ro ON ro.oid = a.grantee
+           WHERE c.oid = tbl AND a.grantee <> c.relowner GROUP BY 1) g;
+  want := 'app_authenticated=DELETE,INSERT,SELECT,UPDATE' || CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN ';service_role=SELECT' ELSE '' END;
+  PERFORM pg_temp.vo_expect('550 who holds what on the table (the owner aside)', got, want);
+  PERFORM pg_temp.vo_expect('550 no grant carries the grant option',
+    (SELECT count(*) FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a WHERE c.oid = tbl AND a.is_grantable)::text, '0');
+  FOREACH r IN ARRAY ARRAY['app_authenticated', 'authenticated', 'anon', 'service_role'] LOOP
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r);
+    FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] LOOP
+      PERFORM pg_temp.vo_expect(format('550 %s holds %s on the table', r, priv), has_table_privilege(r, tbl, priv)::text,
+        (priv IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE') AND r = 'app_authenticated' OR priv = 'SELECT' AND r = 'service_role')::text);
+    END LOOP;
+    IF current_setting('server_version_num')::int >= 170000 THEN
+      PERFORM pg_temp.vo_true(format('550 %s holds MAINTAIN on the table', r) || ' (it must not)', NOT has_table_privilege(r, tbl, 'MAINTAIN'));
+    END IF;
+    IF r IN ('authenticated', 'anon') THEN
+      FOREACH priv IN ARRAY ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] LOOP
+        PERFORM pg_temp.vo_true(format('550 %s holds %s on a column', r, priv) || ' (it must not)', NOT has_any_column_privilege(r, tbl, priv));
+      END LOOP;
+    END IF;
+  END LOOP;
+  PERFORM pg_temp.vo_expect('550 no column of the table has a grant of its own', (SELECT count(*) FROM pg_attribute WHERE attrelid = tbl AND attacl IS NOT NULL)::text, '0');
+
+  -- The sweep: one function of its name, SECURITY DEFINER, owned by the table's owner (which row security does not bind: the table
+  -- is not forced), with a search path that leaves out the caller's schemas, returning how many rows it changed.
+  PERFORM pg_temp.vo_expect('550 one function of that name', (SELECT count(*) FROM pg_proc WHERE proname = 'staffing_search_sweep')::text, '1');
+  SELECT format('%s %s %s %s [%s] (%s)', p.prosecdef::text, l.lanname, pg_get_function_result(p.oid), p.provolatile, array_to_string(p.proconfig, ','),
+                pg_get_function_arguments(p.oid))
+    INTO got FROM pg_proc p JOIN pg_language l ON l.oid = p.prolang WHERE p.oid = fn::regprocedure;
+  PERFORM pg_temp.vo_expect('550 the sweep: definer, plpgsql, integer, volatile, its search path', got, 'true plpgsql integer v [search_path=public, pg_temp] ()');
+  PERFORM pg_temp.vo_expect('550 the sweep is owned by the table''s owner',
+    (SELECT (p.proowner = c.relowner)::text FROM pg_proc p, pg_class c WHERE p.oid = fn::regprocedure AND c.oid = tbl), 'true');
+  PERFORM pg_temp.vo_true('550 the sweep is commented', coalesce(obj_description(fn::regprocedure, 'pg_proc'), '') <> '');
+  -- Who may run it: the API's role alone. PUBLIC would let PostgREST's roles run it (and anon is PUBLIC); the guard in its body
+  -- refuses a login, but a function nobody but the API's role can reach is the first fence.
+  SELECT string_agg(coalesce(ro.rolname, 'PUBLIC')::text || '=' || a.privilege_type || CASE WHEN a.is_grantable THEN '+' ELSE '' END, ';' ORDER BY coalesce(ro.rolname, 'PUBLIC')::text COLLATE "C")
+    INTO got FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a LEFT JOIN pg_roles ro ON ro.oid = a.grantee
+   WHERE p.oid = fn::regprocedure AND a.grantee <> p.proowner;
+  PERFORM pg_temp.vo_expect('550 who holds EXECUTE on the sweep (the owner aside)', got, 'app_authenticated=EXECUTE');
+  PERFORM pg_temp.vo_expect('550 the rights of the sweep: the API''s role, and not PostgREST''s roles or the service',
+    format('%s/%s/%s/%s', has_function_privilege('app_authenticated', fn, 'EXECUTE')::text, has_function_privilege('authenticated', fn, 'EXECUTE')::text,
+           has_function_privilege('anon', fn, 'EXECUTE')::text,
+           CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN has_function_privilege('service_role', fn, 'EXECUTE')::text ELSE 'false' END),
+    'true/false/false/false');
+  -- The guard: the first statement of the body, word for word (comments gone, blanks one space). A guard that asks for the person's
+  -- row, loses one of the two settings, joins them with AND, reads an empty string as a login, reads a setting without missing_ok
+  -- or is gone is named here, as in sections 515-520.
+  src := pg_temp.vo_src(fn);
+  PERFORM pg_temp.vo_true('550 the first statement of the sweep is the door''s guard', starts_with(substring(src FROM 'BEGIN (.*)$'), guard));
+  PERFORM pg_temp.vo_true('550 the guard is in the sweep once', (length(src) - length(replace(src, 'ERRCODE = ''VO403''', ''))) = length('ERRCODE = ''VO403'''));
+  -- Both statements skip a row another transaction holds (a heartbeat in the middle of its update): a sweep that waited would hold
+  -- every school's start behind one school's search.
+  PERFORM pg_temp.vo_expect('550 both statements of the sweep skip the rows another transaction holds',
+    ((length(src) - length(replace(src, 'FOR UPDATE SKIP LOCKED', ''))) / length('FOR UPDATE SKIP LOCKED'))::text, '2');
+  RAISE NOTICE 'vo 550: % checks', current_setting('vo.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 551: who reads and who writes, and the school boundary.
+--
+-- Two schools, each with a running search planted by its own administrator in a year of its own. Then:
+--   * the administrator of either reads only its own school's rows, and an UPDATE, a DELETE or a row lock that names the other's
+--     reaches no row; a bulk statement reaches only its own;
+--   * a row written with the other school's schoolId is refused by the arm's WITH CHECK (row security); a row of the
+--     administrator's own school that names the other school's year is refused by the composite key (foreign_key_violation), with
+--     the same statement admitted when it names the school's own year;
+--   * an UPDATE that moves a search to the other school is refused by the update arm's WITH CHECK;
+--   * in the matrix school, each principal against a search planted by the full administrator: every administrator reads it, those
+--     who write SCHEMALAGGNING (FULL, REKTOR, SCHEMALAGGARE) make one and remove one, the expedition and the läsare do not; a
+--     teacher, a pupil and a guardian read nothing, make nothing and reach nothing. And PostgREST's role, with the schemaläggare's
+--     claims, reads and writes nothing at all.
+--
+-- The UPDATE arm asks the area in its WITH CHECK and not in its USING, as the sibling job tables' do (OptimizationJobs,
+-- ScheduleCandidateRuns; section 106 checks that for every table the generated matrix lists): a row lock for a read (SELECT ... FOR
+-- UPDATE) asks only USING, so it works for every administrator, and what an update would WRITE needs SCHEMALAGGNING. The heartbeat and
+-- the status of a search therefore reach the row for the administrators who write the area, and meet '42501 rls' from the expedition's
+-- and the läsare's (HR variants included), as the matrix below says in its `upd` column. A migration that missed this (the first
+-- version of 20270227090000 left the WITH CHECK without the area) is what section 106 and the matrix in 116 caught; `update_asks_the_area`
+-- below (and the one in section 550) pins the arm as it is.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('app.test_vo_admin_a', :'admin_auth_id', true);
+DO $$
+DECLARE
+  sub text;
+  side text;
+  t jsonb;
+  rid uuid;
+  sides jsonb := '{}';
+BEGIN
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    sub := CASE side WHEN 'a' THEN current_setting('app.test_vo_admin_a') ELSE '00000000-0000-4000-8000-000000000006' END;
+    t := pg_temp.vo_plant(sub, '551 ' || side);
+    PERFORM pg_temp.vo_case('551 ' || side || ' plants its own running search',
+      pg_temp.vo_ins((t ->> 'school')::uuid, (t ->> 'a')::uuid, 'status', $q$'RUNNING'$q$, 'startedAt', 'now()', 'claimedBy', $q$'api-1'$q$,
+                     'createdById', quote_literal(t ->> 'user')), 'ok');
+    SELECT id INTO rid FROM "StaffingSearchRuns" WHERE "academicYearId" = (t ->> 'a')::uuid;
+    sides := sides || jsonb_build_object(side, t || jsonb_build_object('run', rid));
+  END LOOP;
+  IF (sides -> 'a' ->> 'school') = (sides -> 'b' ->> 'school') THEN RAISE EXCEPTION 'vo 551: both administrators are in the same school'; END IF;
+  PERFORM set_config('app.test_vo_sides', sides::text, true);
+END $$;
+
+DO $$
+DECLARE
+  sides jsonb := current_setting('app.test_vo_sides')::jsonb;
+  side text;
+  m jsonb;
+  o jsonb;
+  mine uuid;
+  other uuid;
+  other_run uuid;
+  l text;
+BEGIN
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    m := sides -> side;
+    o := sides -> CASE side WHEN 'a' THEN 'b' ELSE 'a' END;
+    PERFORM pg_temp.vo_as(m ->> 'admin');
+    mine := (m ->> 'school')::uuid;
+    other := (o ->> 'school')::uuid;
+    other_run := (o ->> 'run')::uuid;
+    l := '551 ' || side || ' ';
+    PERFORM pg_temp.vo_expect(l || 'resolves in its own school', app.current_school_id()::text, mine::text);
+    PERFORM pg_temp.vo_expect(l || 'reads its own search', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "schoolId" = mine AND "academicYearId" IN ((m ->> 'a')::uuid, (m ->> 'b')::uuid))::text, '1');
+    PERFORM pg_temp.vo_expect(l || 'reads none of the other school''s', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "schoolId" = other)::text, '0');
+    PERFORM pg_temp.vo_expect(l || 'sees only its own among every row', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "schoolId" <> mine)::text, '0');
+    PERFORM pg_temp.vo_expect(l || 'cannot read the other school''s search by its id', (SELECT count(*) FROM "StaffingSearchRuns" WHERE id = other_run)::text, '0');
+    PERFORM pg_temp.vo_expect(l || 'cannot read the other school''s year''s search by the year', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "academicYearId" = (o ->> 'a')::uuid)::text, '0');
+
+    -- Statements that name the other school's search reach nothing, and a bulk statement reaches only its own.
+    PERFORM pg_temp.vo_expect(l || 'UPDATE of the other school''s search reaches none',
+      pg_temp.vo_did(format($q$UPDATE "StaffingSearchRuns" SET "heartbeatAt" = now() WHERE id = %L$q$, other_run)), '0');
+    PERFORM pg_temp.vo_expect(l || 'DELETE of the other school''s search reaches none',
+      pg_temp.vo_did(format($q$DELETE FROM "StaffingSearchRuns" WHERE id = %L$q$, other_run)), '0');
+    PERFORM pg_temp.vo_expect(l || 'a row lock on the other school''s search reaches none',
+      pg_temp.vo_did(format($q$SELECT 1 FROM "StaffingSearchRuns" WHERE id = %L FOR UPDATE$q$, other_run)), '0');
+    PERFORM pg_temp.vo_expect(l || 'a row lock on its own search reaches it',
+      pg_temp.vo_did(format($q$SELECT 1 FROM "StaffingSearchRuns" WHERE id = %L FOR UPDATE$q$, m ->> 'run')), '1');
+    PERFORM pg_temp.vo_expect(l || 'bulk UPDATE reaches only its own',
+      pg_temp.vo_did($q$UPDATE "StaffingSearchRuns" SET "heartbeatAt" = "heartbeatAt"$q$), '1');
+
+    -- A row written for the other school: row security. Named by the other's year, so the arm is what refuses it, not the key.
+    PERFORM pg_temp.vo_case(l || 'INSERT with the other school''s schoolId and year', pg_temp.vo_ins(other, (o ->> 'b')::uuid), '42501 rls');
+    PERFORM pg_temp.vo_case(l || 'INSERT with the other school''s schoolId and its own year', pg_temp.vo_ins(other, (m ->> 'b')::uuid), '42501 rls');
+    -- A row of its own school that names the other's year: the composite key.
+    PERFORM pg_temp.vo_case(l || 'INSERT on the other school''s year', pg_temp.vo_ins(mine, (o ->> 'b')::uuid),
+      '23503 StaffingSearchRuns_academicYearId_schoolId_fkey');
+    PERFORM pg_temp.vo_case(l || 'control: its own school and its own year', pg_temp.vo_ins(mine, (m ->> 'b')::uuid, 'createdById', quote_literal(m ->> 'user')), 'ok');
+    PERFORM pg_temp.vo_expect(l || 'reads the two it has', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "academicYearId" IN ((m ->> 'a')::uuid, (m ->> 'b')::uuid))::text, '2');
+    PERFORM pg_temp.vo_expect(l || 'bulk UPDATE reaches the two it has', pg_temp.vo_did($q$UPDATE "StaffingSearchRuns" SET "heartbeatAt" = "heartbeatAt"$q$), '2');
+    -- A blind UPDATE (no WHERE, and nothing in SET reads a column) needs no read of the row, so no SELECT arm is asked: the update arm's
+    -- USING alone keeps it in its school, and its WITH CHECK alone keeps a row from being moved out.
+    PERFORM pg_temp.vo_expect(l || 'a blind bulk UPDATE reaches the two it has and no other school''s', pg_temp.vo_did($q$UPDATE "StaffingSearchRuns" SET "claimedBy" = 'blind'$q$), '2');
+    PERFORM pg_temp.vo_expect(l || 'a blind UPDATE that moves every search it reaches to the other school', pg_temp.vo_did(format($q$UPDATE "StaffingSearchRuns" SET "schoolId" = %L$q$, other)), '42501 rls');
+    -- A search moved to the other school is refused by the update arm's WITH CHECK (the check on the row as it would become).
+    PERFORM pg_temp.vo_expect(l || 'UPDATE moving its search to the other school',
+      pg_temp.vo_did(format($q$UPDATE "StaffingSearchRuns" SET "schoolId" = %L WHERE id = %L$q$, other, m ->> 'run')), '42501 rls');
+    PERFORM pg_temp.vo_expect(l || 'UPDATE moving its search to the other school''s year',
+      pg_temp.vo_did(format($q$UPDATE "StaffingSearchRuns" SET "academicYearId" = %L WHERE id = %L$q$, o ->> 'b', m ->> 'run')),
+      '23503 StaffingSearchRuns_academicYearId_schoolId_fkey');
+  END LOOP;
+
+  -- The other side's rows are as they were: each administrator's statements above reached its own school's rows and no others.
+  FOREACH side IN ARRAY ARRAY['a', 'b'] LOOP
+    m := sides -> side;
+    PERFORM pg_temp.vo_as(m ->> 'admin');
+    PERFORM pg_temp.vo_expect('551 ' || side || ' still holds its two', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "schoolId" = (m ->> 'school')::uuid AND "academicYearId" IN ((m ->> 'a')::uuid, (m ->> 'b')::uuid))::text, '2');
+    PERFORM pg_temp.vo_expect('551 ' || side || ' its running search is still running, in its own school and year',
+      (SELECT format('%s %s %s', status, ("schoolId" = (m ->> 'school')::uuid)::text, ("academicYearId" = (m ->> 'a')::uuid)::text) FROM "StaffingSearchRuns" WHERE id = (m ->> 'run')::uuid),
+      'RUNNING true true');
+  END LOOP;
+  -- A bulk DELETE reaches only its own, and the other school's two are still there when it is done.
+  PERFORM pg_temp.vo_as(sides -> 'a' ->> 'admin');
+  PERFORM pg_temp.vo_expect('551 a: bulk DELETE reaches only its own', pg_temp.vo_did($q$DELETE FROM "StaffingSearchRuns"$q$), '2');
+  PERFORM pg_temp.vo_as(sides -> 'b' ->> 'admin');
+  PERFORM pg_temp.vo_expect('551 b: its two are still there after a''s bulk DELETE',
+    (SELECT count(*) FROM "StaffingSearchRuns" WHERE "academicYearId" IN ((sides -> 'b' ->> 'a')::uuid, (sides -> 'b' ->> 'b')::uuid))::text, '2');
+  PERFORM pg_temp.vo_expect('551 b: bulk DELETE reaches only its own', pg_temp.vo_did($q$DELETE FROM "StaffingSearchRuns"$q$), '2');
+  RAISE NOTICE 'vo 551 (two schools): % checks', current_setting('vo.checks');
+END $$;
+ROLLBACK;
+
+-- The matrix school's principals against a search the full administrator planted: reads, a row lock, INSERT, UPDATE, a move to another
+-- school, and DELETE (a delete's arm has only USING, so a refused delete finds no row). Each principal's own change is undone as the
+-- full administrator, so that the next one meets the same row. `upd` is what an UPDATE of the heartbeat meets: the rows it reaches,
+-- or the refusal (see the note at the head of this section: the WITH CHECK asks the area, the USING does not).
+BEGIN;
+DO $$
+DECLARE
+  p record;
+  t jsonb;
+  tb jsonb;
+  roller uuid;
+  other uuid;
+  ya uuid;
+  yb uuid;
+  run uuid;
+  full_id uuid;
+  me uuid;
+  seen bigint;
+  l text;
+  full_sub constant text := '00000000-0000-4000-8000-000000000105';
+  -- Whether the UPDATE arm's WITH CHECK asks SCHEMALAGGNING (see the note at the head of this section and the one in section 550): the
+  -- expedition's and the läsare's heartbeat then meets the refusal where it now reaches the row. The one line to change here.
+  update_asks_the_area constant boolean := true;
+  want_upd text;
+BEGIN
+  -- The other school, only for its id (a move to it is asked below); its administrator's own rows are rolled back with the rest.
+  tb := pg_temp.vo_plant('00000000-0000-4000-8000-000000000006', '551 m other');
+  other := (tb ->> 'school')::uuid;
+  t := pg_temp.vo_plant(full_sub, '551 m');
+  roller := (t ->> 'school')::uuid;
+  ya := (t ->> 'a')::uuid;
+  yb := (t ->> 'b')::uuid;
+  full_id := (t ->> 'user')::uuid;
+  run := pg_temp.vo_run(roller, ya, 'status', $q$'RUNNING'$q$, 'startedAt', 'now()', 'createdById', quote_literal(full_id));
+  PERFORM pg_temp.vo_true('551 the matrix school is not the other school', roller <> other);
+  FOR p IN SELECT * FROM (VALUES
+      -- sub, who, reads, locks, insert, update ('unasked': what a heartbeat meets from an administrator who does not write the area: refused by the WITH CHECK), delete
+      ('00000000-0000-4000-8000-000000000105', 'FULL',               1, '1', 'ok',        '1',        '1'),
+      ('00000000-0000-4000-8000-000000000106', 'REKTOR',             1, '1', 'ok',        '1',        '1'),
+      ('00000000-0000-4000-8000-000000000107', 'SCHEMALAGGARE',      1, '1', 'ok',        '1',        '1'),
+      ('00000000-0000-4000-8000-000000000109', 'SCHEMALAGGARE + HR', 1, '1', 'ok',        '1',        '1'),
+      ('00000000-0000-4000-8000-000000000108', 'EXPEDITION',         1, '1', '42501 rls', 'unasked', '0'),
+      ('00000000-0000-4000-8000-000000000110', 'EXPEDITION + HR',    1, '1', '42501 rls', 'unasked', '0'),
+      ('00000000-0000-4000-8000-000000000115', 'LASARE',             1, '1', '42501 rls', 'unasked', '0'),
+      ('00000000-0000-4000-8000-000000000116', 'LASARE + HR',        1, '1', '42501 rls', 'unasked', '0'),
+      ('00000000-0000-4000-8000-000000000111', 'a teacher',          0, '0', '42501 rls', '0',        '0'),
+      ('00000000-0000-4000-8000-000000000112', 'a pupil',            0, '0', '42501 rls', '0',        '0'),
+      ('00000000-0000-4000-8000-000000000113', 'a guardian',         0, '0', '42501 rls', '0',        '0')
+    ) v(sub, who, reads, locks, ins, upd, del) LOOP
+    PERFORM pg_temp.vo_as(p.sub);
+    me := app.current_user_id();
+    l := '551 ' || p.who || ' ';
+    PERFORM pg_temp.vo_expect(l || 'is in the matrix school', app.current_school_id()::text, roller::text);
+    -- The search this section planted, by its id.
+    SELECT count(*) INTO seen FROM "StaffingSearchRuns" WHERE id = run;
+    PERFORM pg_temp.vo_expect(l || 'reads', seen::text, p.reads::text);
+    PERFORM pg_temp.vo_expect(l || 'reads the year''s searches: the planted one', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "academicYearId" = ya)::text, p.reads::text);
+    -- A row lock (SELECT ... FOR UPDATE) asks the update arm's USING: every administrator takes it, which is why USING asks no area.
+    PERFORM pg_temp.vo_expect(l || 'row lock', pg_temp.vo_did(format($q$SELECT 1 FROM "StaffingSearchRuns" WHERE id = %L FOR UPDATE$q$, run)), p.locks);
+    -- INSERT, in a year of its own so that the planted search is not the year's active one in its way.
+    PERFORM pg_temp.vo_case(l || 'INSERT', pg_temp.vo_ins(roller, yb, 'createdById', quote_literal(me)), p.ins);
+    IF p.ins = 'ok' THEN
+      PERFORM pg_temp.vo_expect(l || 'wrote a row, in its name',
+        (SELECT count(*) FROM "StaffingSearchRuns" WHERE "academicYearId" = yb AND "createdById" = me)::text, '1');
+      -- The row it wrote goes again, as the full administrator, so the next principal meets the same year.
+      PERFORM pg_temp.vo_as(full_sub);
+      DELETE FROM "StaffingSearchRuns" WHERE "academicYearId" = yb;
+      PERFORM pg_temp.vo_as(p.sub);
+    END IF;
+    -- UPDATE of the heartbeat, which is what the gateway writes every half minute.
+    want_upd := CASE WHEN p.upd = 'unasked' THEN CASE WHEN update_asks_the_area THEN '42501 rls' ELSE '1' END ELSE p.upd END;
+    PERFORM pg_temp.vo_expect(l || 'UPDATE of the heartbeat',
+      pg_temp.vo_did(format($q$UPDATE "StaffingSearchRuns" SET "heartbeatAt" = now(), "leaseUntil" = now() + interval '5 minutes' WHERE id = %L$q$, run)), want_upd);
+    -- UPDATE that moves it to the other school: the arm's WITH CHECK for an administrator, no row at all for the rest.
+    PERFORM pg_temp.vo_expect(l || 'UPDATE moving the search to the other school',
+      pg_temp.vo_did(format($q$UPDATE "StaffingSearchRuns" SET "schoolId" = %L WHERE id = %L$q$, other, run)),
+      CASE WHEN p.reads = 1 THEN '42501 rls' ELSE '0' END);
+    PERFORM pg_temp.vo_expect(l || 'a blind UPDATE that moves every search it reaches to the other school',
+      pg_temp.vo_did(format($q$UPDATE "StaffingSearchRuns" SET "schoolId" = %L$q$, other)), CASE WHEN p.reads = 1 THEN '42501 rls' ELSE '0' END);
+    -- DELETE: the rows it reaches.
+    PERFORM pg_temp.vo_expect(l || 'DELETE', pg_temp.vo_did(format($q$DELETE FROM "StaffingSearchRuns" WHERE id = %L$q$, run)), p.del);
+    IF p.del = '1' THEN
+      -- The delete that is admitted removes the row, which the next principal then finds gone: put it back as the full administrator.
+      PERFORM pg_temp.vo_as(full_sub);
+      PERFORM pg_temp.vo_case(l || 'the full administrator puts it back',
+        pg_temp.vo_ins(roller, ya, 'id', quote_literal(run), 'status', $q$'RUNNING'$q$, 'startedAt', 'now()', 'createdById', quote_literal(full_id)), 'ok');
+    END IF;
+    PERFORM pg_temp.vo_as(full_sub);
+    PERFORM pg_temp.vo_expect(l || 'left the search where it was: running, in the school, in the year',
+      (SELECT format('%s %s %s', status, ("schoolId" = roller)::text, ("academicYearId" = ya)::text) FROM "StaffingSearchRuns" WHERE id = run), 'RUNNING true true');
+  END LOOP;
+
+  -- PostgREST's role, with the schemaläggare's own claims: the role holds nothing on the table, so the claims are beside the point.
+  PERFORM pg_temp.vo_as('00000000-0000-4000-8000-000000000107');
+  me := app.current_user_id();
+  SET LOCAL ROLE authenticated;
+  PERFORM pg_temp.vo_expect('551 as authenticated: acting as the role', current_user::text, 'authenticated');
+  PERFORM pg_temp.vo_case('551 PostgREST''s role SELECT', $q$SELECT count(*) FROM "StaffingSearchRuns"$q$, '42501');
+  PERFORM pg_temp.vo_case('551 PostgREST''s role INSERT', pg_temp.vo_ins(roller, yb, 'createdById', quote_literal(me)), '42501');
+  PERFORM pg_temp.vo_case('551 PostgREST''s role UPDATE', $q$UPDATE "StaffingSearchRuns" SET "heartbeatAt" = now()$q$, '42501');
+  PERFORM pg_temp.vo_case('551 PostgREST''s role DELETE', $q$DELETE FROM "StaffingSearchRuns"$q$, '42501');
+  PERFORM pg_temp.vo_case('551 PostgREST''s role SELECT of one column', $q$SELECT "checkpoint" FROM "StaffingSearchRuns"$q$, '42501');
+  PERFORM pg_temp.vo_case('551 PostgREST''s role row lock', $q$SELECT 1 FROM "StaffingSearchRuns" FOR UPDATE$q$, '42501');
+  SET LOCAL ROLE app_authenticated;
+  PERFORM pg_temp.vo_expect('551 and back to the API''s role', current_user::text, 'app_authenticated');
+  RAISE NOTICE 'vo 551 (the matrix school): % checks', current_setting('vo.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 552: the constraints, through the statements the gateway writes, as an administrator who writes SCHEMALAGGNING.
+--
+-- Every CHECK at its edge (the value that is just refused and the value that is just allowed), each statement breaking exactly one
+-- of them so that the name in the answer is the constraint's own; NOT NULL; the columns that take NULL; the defaults; a row that
+-- satisfies every constraint at once. Then the partial unique index: PENDING, RUNNING and CANCELLING hold the year's place against
+-- each other (23505), a finished search holds nothing and any number of them stand beside the active one, another school's year has
+-- a place of its own, and a search that finishes frees its year. "createdById" needs no person (it is not a key).
+--
+-- A failed statement leaves nothing, so the same year serves each refusal; the rows that go through are finished searches (which
+-- hold no place) or are planted in a year of their own.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  t jsonb := pg_temp.vo_plant('00000000-0000-4000-8000-000000000105', '552');
+  s constant uuid := (t ->> 'school')::uuid;
+  y constant uuid := (t ->> 'a')::uuid;
+  n constant text := 'StaffingSearchRuns_';
+  -- A finished search, the base of every row that goes through: it holds no place, so any number of them stand in one year.
+  fin constant text[] := ARRAY['status', $q$'SUCCEEDED'$q$, 'finishedAt', 'now()'];
+  c record;
+  y2 uuid;
+  y3 uuid;
+  y4 uuid;
+  y5 uuid;
+  tb jsonb;
+  active uuid;
+  fresh uuid;
+  st text;
+BEGIN
+  -- Digests: 64 lower-case hex digits, each of the two, not a digit more or less, not a newline after.
+  FOR c IN SELECT * FROM (VALUES
+      ('staffingBasis', 'a word', 'xyz'), ('staffingBasis', 'empty', ''), ('staffingBasis', '63 digits', repeat('a', 63)),
+      ('staffingBasis', '65 digits', repeat('a', 65)), ('staffingBasis', 'upper case', repeat('A', 64)), ('staffingBasis', 'not hex', repeat('g', 64)),
+      ('staffingBasis', 'a newline after 64 digits', repeat('a', 64) || E'\n'), ('staffingBasis', 'a space before', ' ' || repeat('a', 64)),
+      ('weekBasis', 'a word', 'xyz'), ('weekBasis', 'empty', ''), ('weekBasis', '63 digits', repeat('b', 63)),
+      ('weekBasis', '65 digits', repeat('b', 65)), ('weekBasis', 'upper case', repeat('B', 64)), ('weekBasis', 'not hex', repeat('z', 64)),
+      ('weekBasis', 'a newline before 64 digits', E'\n' || repeat('b', 64))
+    ) v(col, what, val) LOOP
+    PERFORM pg_temp.vo_case('552 ' || c.col || ' as ' || c.what, pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY[c.col, quote_literal(c.val)]), '23514 ' || n || 'bases_are_sha256');
+  END LOOP;
+  PERFORM pg_temp.vo_case('552 control: two digests of 64 lower-case hex digits',
+    pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['staffingBasis', quote_literal(encode(sha256('a'::bytea), 'hex')), 'weekBasis', quote_literal(encode(sha256('b'::bytea), 'hex'))]), 'ok');
+
+  -- Counters: none negative, and no more moves than rounds (every accepted move was found in a round of its own).
+  PERFORM pg_temp.vo_case('552 round below 0', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['round', '-1', 'acceptedMoves', '-1']), '23514 ' || n || 'counters_are_not_negative');
+  PERFORM pg_temp.vo_case('552 round below 0 alone (moves then exceed it, and the counters come first)', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['round', '-1']), '23514 ' || n || 'counters_are_not_negative');
+  PERFORM pg_temp.vo_case('552 evaluations below 0', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['evaluations', '-1']), '23514 ' || n || 'counters_are_not_negative');
+  PERFORM pg_temp.vo_case('552 acceptedMoves below 0', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['acceptedMoves', '-1']), '23514 ' || n || 'counters_are_not_negative');
+  PERFORM pg_temp.vo_case('552 acceptedMoves above round', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['round', '1', 'acceptedMoves', '2']), '23514 ' || n || 'moves_are_of_the_rounds');
+  PERFORM pg_temp.vo_case('552 a move before any round', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['acceptedMoves', '1']), '23514 ' || n || 'moves_are_of_the_rounds');
+  PERFORM pg_temp.vo_case('552 control: as many moves as rounds', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['round', '2', 'acceptedMoves', '2', 'evaluations', '0']), 'ok');
+  PERFORM pg_temp.vo_case('552 control: fewer moves than rounds, counters at the integer''s top',
+    pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['round', '2147483647', 'acceptedMoves', '0', 'evaluations', '2147483647']), 'ok');
+
+  -- Finished exactly when it has a finishing time.
+  FOREACH st IN ARRAY ARRAY['SUCCEEDED', 'CANCELLED', 'FAILED'] LOOP
+    PERFORM pg_temp.vo_case('552 ' || st || ' without a finishing time',
+      pg_temp.vo_ins(s, y, 'status', quote_literal(st), 'errorCode', quote_literal('SOME_CODE')), '23514 ' || n || 'finished_has_a_time');
+    PERFORM pg_temp.vo_case('552 control: ' || st || ' with a finishing time',
+      pg_temp.vo_ins(s, y, 'status', quote_literal(st), 'finishedAt', 'now()', 'errorCode', quote_literal('SOME_CODE')), 'ok');
+  END LOOP;
+  FOREACH st IN ARRAY ARRAY['PENDING', 'RUNNING', 'CANCELLING'] LOOP
+    PERFORM pg_temp.vo_case('552 ' || st || ' with a finishing time', pg_temp.vo_ins(s, y, 'status', quote_literal(st), 'finishedAt', 'now()'),
+      '23514 ' || n || 'finished_has_a_time');
+  END LOOP;
+  PERFORM pg_temp.vo_case('552 a status that is not one', pg_temp.vo_ins(s, y, 'status', $q$'DONE'$q$), '22P02');
+  PERFORM pg_temp.vo_case('552 a status that is lower case', pg_temp.vo_ins(s, y, 'status', $q$'pending'$q$), '22P02');
+
+  -- A failed search says why.
+  PERFORM pg_temp.vo_case('552 FAILED without a code', pg_temp.vo_ins(s, y, 'status', $q$'FAILED'$q$, 'finishedAt', 'now()'), '23514 ' || n || 'failed_has_a_code');
+  PERFORM pg_temp.vo_case('552 FAILED with an error and no code',
+    pg_temp.vo_ins(s, y, 'status', $q$'FAILED'$q$, 'finishedAt', 'now()', 'error', $q$'it broke'$q$), '23514 ' || n || 'failed_has_a_code');
+  PERFORM pg_temp.vo_case('552 control: FAILED with a code', pg_temp.vo_ins(s, y, 'status', $q$'FAILED'$q$, 'finishedAt', 'now()', 'errorCode', $q$'SEARCH_ABANDONED'$q$), 'ok');
+  PERFORM pg_temp.vo_case('552 control: a code on a search that did not fail', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['errorCode', $q$'NOTE'$q$]), 'ok');
+
+  -- Why a search stopped is an open code (a new reason needs no migration): an upper-case name of up to 32 characters.
+  FOR c IN SELECT * FROM (VALUES ('lower case', 'not_tight'), ('mixed case', 'Not_tight'), ('a hyphen', 'NOT-TIGHT'), ('a leading digit', '1ABC'),
+      ('a leading underscore', '_ABC'), ('empty', ''), ('a space', 'NOT TIGHT'), ('33 characters', 'A' || repeat('B', 32)), ('a newline after', E'ABC\n')) v(what, val) LOOP
+    PERFORM pg_temp.vo_case('552 stopReason, ' || c.what, pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['stopReason', quote_literal(c.val)]), '23514 ' || n || 'stopReason_is_a_name');
+  END LOOP;
+  PERFORM pg_temp.vo_case('552 control: stopReason of 32 characters', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['stopReason', quote_literal('A' || repeat('B', 31))]), 'ok');
+  PERFORM pg_temp.vo_case('552 control: stopReason with digits and underscores', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['stopReason', $q$'LOCAL_OPTIMUM_2'$q$]), 'ok');
+  PERFORM pg_temp.vo_case('552 control: stopReason of one letter', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['stopReason', $q$'X'$q$]), 'ok');
+
+  -- The code of an error: an upper-case name of up to 64 characters.
+  FOR c IN SELECT * FROM (VALUES ('lower case', 'search_abandoned'), ('a hyphen', 'SEARCH-ABANDONED'), ('a leading digit', '1CODE'), ('empty', ''),
+      ('65 characters', 'A' || repeat('B', 64)), ('a space', 'SEARCH ABANDONED')) v(what, val) LOOP
+    PERFORM pg_temp.vo_case('552 errorCode, ' || c.what, pg_temp.vo_ins(s, y, 'status', $q$'FAILED'$q$, 'finishedAt', 'now()', 'errorCode', quote_literal(c.val)),
+      '23514 ' || n || 'errorCode_is_a_name');
+  END LOOP;
+  PERFORM pg_temp.vo_case('552 control: errorCode of 64 characters', pg_temp.vo_ins(s, y, 'status', $q$'FAILED'$q$, 'finishedAt', 'now()', 'errorCode', quote_literal('A' || repeat('B', 63))), 'ok');
+
+  -- The error text: up to 2000 characters (characters, not bytes).
+  PERFORM pg_temp.vo_case('552 error of 2001 characters', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['error', quote_literal(repeat('x', 2001))]), '23514 ' || n || 'error_is_short');
+  PERFORM pg_temp.vo_case('552 error of 2001 two-byte characters', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['error', quote_literal(repeat('ä', 2001))]), '23514 ' || n || 'error_is_short');
+  PERFORM pg_temp.vo_case('552 control: error of 2000 characters', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['error', quote_literal(repeat('x', 2000))]), 'ok');
+  PERFORM pg_temp.vo_case('552 control: error of 2000 two-byte characters (4000 bytes)', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['error', quote_literal(repeat('ä', 2000))]), 'ok');
+
+  -- The three documents are objects (the page reads them as such): not an array, a scalar or a JSON null; options always, the others or NULL.
+  FOR c IN SELECT * FROM (VALUES ('options', 'an array', '[]'), ('options', 'a number', '1'), ('options', 'a string', '"x"'), ('options', 'a JSON null', 'null'),
+      ('figures', 'an array', '[{}]'), ('figures', 'a number', '3'), ('figures', 'a string', '"x"'), ('figures', 'a JSON null', 'null'),
+      ('checkpoint', 'an array', '[]'), ('checkpoint', 'a number', '5'), ('checkpoint', 'a string', '"a"'), ('checkpoint', 'a JSON null', 'null')) v(col, what, val) LOOP
+    PERFORM pg_temp.vo_case('552 ' || c.col || ' as ' || c.what, pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY[c.col, quote_literal(c.val) || '::jsonb']), '23514 ' || n || c.col || '_is_an_object');
+  END LOOP;
+  PERFORM pg_temp.vo_case('552 control: the three documents as objects',
+    pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['options', $q$'{"pinned": []}'$q$, 'figures', $q$'{"before": {}, "after": {}}'$q$, 'checkpoint', $q$'{"moves": [], "round": 0}'$q$]), 'ok');
+  PERFORM pg_temp.vo_case('552 control: figures and checkpoint NULL', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['figures', 'NULL', 'checkpoint', 'NULL']), 'ok');
+  PERFORM pg_temp.vo_case('552 control: errorParams is any JSON (it has no CHECK)', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['errorParams', $q$'[1, "a"]'$q$]), 'ok');
+
+  -- The lease follows the heartbeat: not before it, and not more than an hour after it. timestamptz(6): the microsecond decides.
+  PERFORM pg_temp.vo_case('552 a lease a microsecond before the heartbeat', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['heartbeatAt', $q$'2031-01-01 10:00:00+00'$q$, 'leaseUntil', $q$'2031-01-01 09:59:59.999999+00'$q$]),
+    '23514 ' || n || 'lease_follows_the_heartbeat');
+  PERFORM pg_temp.vo_case('552 a lease an hour and a microsecond after the heartbeat', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['heartbeatAt', $q$'2031-01-01 10:00:00+00'$q$, 'leaseUntil', $q$'2031-01-01 11:00:00.000001+00'$q$]),
+    '23514 ' || n || 'lease_follows_the_heartbeat');
+  PERFORM pg_temp.vo_case('552 a lease a second before the default heartbeat', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['leaseUntil', $q$now() - interval '1 second'$q$]),
+    '23514 ' || n || 'lease_follows_the_heartbeat');
+  PERFORM pg_temp.vo_case('552 a lease two hours after the heartbeat',
+    pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['heartbeatAt', $q$now() - interval '2 hours'$q$, 'leaseUntil', $q$now()$q$]), '23514 ' || n || 'lease_follows_the_heartbeat');
+  PERFORM pg_temp.vo_case('552 control: a lease that ends with the heartbeat', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['heartbeatAt', $q$'2031-01-01 10:00:00+00'$q$, 'leaseUntil', $q$'2031-01-01 10:00:00+00'$q$]), 'ok');
+  PERFORM pg_temp.vo_case('552 control: a lease of exactly an hour', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['heartbeatAt', $q$'2031-01-01 10:00:00+00'$q$, 'leaseUntil', $q$'2031-01-01 11:00:00+00'$q$]), 'ok');
+  PERFORM pg_temp.vo_case('552 control: an expired lease (heartbeat 20 minutes ago, lease 10 minutes ago)',
+    pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['heartbeatAt', $q$now() - interval '20 minutes'$q$, 'leaseUntil', $q$now() - interval '10 minutes'$q$]), 'ok');
+
+  -- Who claimed it: 1 to 100 characters, or nobody.
+  PERFORM pg_temp.vo_case('552 claimedBy empty', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['claimedBy', $q$''$q$]), '23514 ' || n || 'claimedBy_is_short');
+  PERFORM pg_temp.vo_case('552 claimedBy of 101 characters', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['claimedBy', quote_literal(repeat('c', 101))]), '23514 ' || n || 'claimedBy_is_short');
+  PERFORM pg_temp.vo_case('552 control: claimedBy of 100 characters', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['claimedBy', quote_literal(repeat('c', 100))]), 'ok');
+  PERFORM pg_temp.vo_case('552 control: claimedBy of one character', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['claimedBy', $q$'c'$q$]), 'ok');
+
+  -- NOT NULL: the columns that must be there, and the columns that may be left out.
+  FOR c IN SELECT * FROM (VALUES ('academicYearId'), ('staffingBasis'), ('weekBasis'), ('status'), ('options'), ('round'), ('evaluations'), ('acceptedMoves'),
+      ('heartbeatAt'), ('leaseUntil'), ('createdAt'), ('id')) v(col) LOOP
+    PERFORM pg_temp.vo_case('552 ' || c.col || ' NULL', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY[c.col, 'NULL']), '23502');
+  END LOOP;
+  PERFORM pg_temp.vo_case('552 control: every nullable column NULL',
+    pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['createdById', 'NULL', 'stopReason', 'NULL', 'figures', 'NULL', 'checkpoint', 'NULL', 'error', 'NULL', 'errorCode', 'NULL',
+                                              'errorParams', 'NULL', 'claimedBy', 'NULL', 'startedAt', 'NULL']), 'ok');
+  PERFORM pg_temp.vo_case('552 control: createdById names nobody (it is not a key)', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['createdById', quote_literal(gen_random_uuid())]), 'ok');
+  PERFORM pg_temp.vo_case('552 an id given twice is the primary key''s', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['id', $q$'00000000-0000-4000-8000-000000005521'$q$]), 'ok');
+  PERFORM pg_temp.vo_case('552 ... and the second time', pg_temp.vo_ins(s, y, VARIADIC fin || ARRAY['id', $q$'00000000-0000-4000-8000-000000005521'$q$]), '23505 ' || n || 'pkey');
+  PERFORM pg_temp.vo_case('552 a year that is not there', pg_temp.vo_ins(s, gen_random_uuid(), VARIADIC fin), '23503 ' || n || 'academicYearId_schoolId_fkey');
+
+  -- A row that satisfies every constraint at once, every column given: it goes through and reads back as written.
+  PERFORM pg_temp.vo_case('552 control: every column given, every constraint met',
+    pg_temp.vo_ins(s, y, 'id', $q$'00000000-0000-4000-8000-000000005522'$q$, 'createdById', quote_literal(t ->> 'user'), 'status', $q$'FAILED'$q$,
+                   'stopReason', $q$'BUDGET'$q$, 'options', $q$'{"pinned": ["a"]}'$q$, 'staffingBasis', quote_literal(repeat('1', 64)), 'weekBasis', quote_literal(repeat('f', 64)),
+                   'round', '5', 'evaluations', '40', 'acceptedMoves', '3', 'figures', $q$'{"before": {"min": 1}}'$q$, 'checkpoint', $q$'{"moves": [1, 2, 3]}'$q$,
+                   'error', $q$'It stopped.'$q$, 'errorCode', $q$'SOME_CODE'$q$, 'errorParams', $q$'{"x": 1}'$q$, 'claimedBy', $q$'api-1'$q$,
+                   'heartbeatAt', $q$now() - interval '30 minutes'$q$, 'leaseUntil', $q$now() - interval '25 minutes'$q$, 'createdAt', $q$now() - interval '1 hour'$q$,
+                   'startedAt', $q$now() - interval '59 minutes'$q$, 'finishedAt', $q$now() - interval '25 minutes'$q$), 'ok');
+  PERFORM pg_temp.vo_expect('552 ... and reads back as written',
+    (SELECT format('%s %s %s %s %s %s %s %s %s %s %s', status, "stopReason", options, round, evaluations, "acceptedMoves", figures, checkpoint, "errorCode", "claimedBy",
+                   ("leaseUntil" - "heartbeatAt")::text)
+       FROM "StaffingSearchRuns" WHERE id = '00000000-0000-4000-8000-000000005522'),
+    'FAILED BUDGET {"pinned": ["a"]} 5 40 3 {"before": {"min": 1}} {"moves": [1, 2, 3]} SOME_CODE api-1 00:05:00');
+
+  -- The defaults, from a row that gives a school, a year and two digests and nothing else.
+  fresh := pg_temp.vo_year('552 defaults');
+  PERFORM pg_temp.vo_case('552 a search with the four columns that must be given', pg_temp.vo_ins(s, fresh), 'ok');
+  PERFORM pg_temp.vo_expect('552 its defaults: pending, an empty object, nothing counted, nothing written, a lease of five minutes from now',
+    (SELECT format('%s %s %s %s %s %s %s %s %s %s %s %s %s %s', status, options, round, evaluations, "acceptedMoves", (figures IS NULL)::text, (checkpoint IS NULL)::text,
+                   (error IS NULL AND "errorCode" IS NULL AND "errorParams" IS NULL AND "stopReason" IS NULL)::text, ("claimedBy" IS NULL)::text,
+                   ("heartbeatAt" = now())::text, ("leaseUntil" = now() + interval '5 minutes')::text, ("createdAt" = now())::text,
+                   ("startedAt" IS NULL AND "finishedAt" IS NULL AND "createdById" IS NULL)::text, (id IS NOT NULL)::text)
+       FROM "StaffingSearchRuns" WHERE "academicYearId" = fresh),
+    'PENDING {} 0 0 0 true true true true true true true true true');
+
+  -- One active search per year. fresh now holds a PENDING one.
+  PERFORM pg_temp.vo_case('552 a second PENDING in the year', pg_temp.vo_ins(s, fresh), '23505 ' || n || 'one_active_per_year');
+  PERFORM pg_temp.vo_case('552 a RUNNING one beside the PENDING', pg_temp.vo_ins(s, fresh, 'status', $q$'RUNNING'$q$, 'startedAt', 'now()'), '23505 ' || n || 'one_active_per_year');
+  PERFORM pg_temp.vo_case('552 a CANCELLING one beside the PENDING', pg_temp.vo_ins(s, fresh, 'status', $q$'CANCELLING'$q$), '23505 ' || n || 'one_active_per_year');
+  -- A finished search of any kind stands beside the active one, and any number of them.
+  FOREACH st IN ARRAY ARRAY['SUCCEEDED', 'CANCELLED', 'FAILED', 'SUCCEEDED', 'FAILED', 'CANCELLED'] LOOP
+    PERFORM pg_temp.vo_case('552 a ' || st || ' search beside the active one',
+      pg_temp.vo_ins(s, fresh, 'status', quote_literal(st), 'finishedAt', 'now()', 'errorCode', quote_literal('SOME_CODE')), 'ok');
+  END LOOP;
+  PERFORM pg_temp.vo_expect('552 the year holds the active one and six finished', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "academicYearId" = fresh)::text, '7');
+  PERFORM pg_temp.vo_expect('552 ... of which one is active', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "academicYearId" = fresh AND status IN ('PENDING', 'RUNNING', 'CANCELLING'))::text, '1');
+
+  -- Each of the three states holds the place against each of the three.
+  y2 := pg_temp.vo_year('552 running first');
+  y3 := pg_temp.vo_year('552 cancelling first');
+  PERFORM pg_temp.vo_case('552 RUNNING in a year of its own', pg_temp.vo_ins(s, y2, 'status', $q$'RUNNING'$q$, 'startedAt', 'now()'), 'ok');
+  PERFORM pg_temp.vo_case('552 PENDING beside RUNNING', pg_temp.vo_ins(s, y2), '23505 ' || n || 'one_active_per_year');
+  PERFORM pg_temp.vo_case('552 RUNNING beside RUNNING', pg_temp.vo_ins(s, y2, 'status', $q$'RUNNING'$q$), '23505 ' || n || 'one_active_per_year');
+  PERFORM pg_temp.vo_case('552 CANCELLING beside RUNNING', pg_temp.vo_ins(s, y2, 'status', $q$'CANCELLING'$q$), '23505 ' || n || 'one_active_per_year');
+  PERFORM pg_temp.vo_case('552 CANCELLING in a year of its own', pg_temp.vo_ins(s, y3, 'status', $q$'CANCELLING'$q$), 'ok');
+  PERFORM pg_temp.vo_case('552 PENDING beside CANCELLING', pg_temp.vo_ins(s, y3), '23505 ' || n || 'one_active_per_year');
+  PERFORM pg_temp.vo_case('552 RUNNING beside CANCELLING', pg_temp.vo_ins(s, y3, 'status', $q$'RUNNING'$q$), '23505 ' || n || 'one_active_per_year');
+  PERFORM pg_temp.vo_case('552 CANCELLING beside CANCELLING', pg_temp.vo_ins(s, y3, 'status', $q$'CANCELLING'$q$), '23505 ' || n || 'one_active_per_year');
+
+  -- A finished search frees the year: the active one made FAILED (what the sweep does), CANCELLED or SUCCEEDED.
+  SELECT id INTO active FROM "StaffingSearchRuns" WHERE "academicYearId" = y2 AND status = 'RUNNING';
+  PERFORM pg_temp.vo_expect('552 the running search is made FAILED',
+    pg_temp.vo_did(format($q$UPDATE "StaffingSearchRuns" SET status = 'FAILED', "errorCode" = 'SEARCH_ABANDONED', "finishedAt" = now() WHERE id = %L$q$, active)), '1');
+  PERFORM pg_temp.vo_case('552 ... and the year takes a new PENDING', pg_temp.vo_ins(s, y2), 'ok');
+  PERFORM pg_temp.vo_expect('552 ... and a finished one cannot be made active again beside it',
+    pg_temp.vo_did(format($q$UPDATE "StaffingSearchRuns" SET status = 'RUNNING', "finishedAt" = NULL WHERE id = %L$q$, active)), '23505 ' || n || 'one_active_per_year');
+  PERFORM pg_temp.vo_expect('552 ... and made CANCELLED, the pending one frees the year again',
+    pg_temp.vo_did(format($q$UPDATE "StaffingSearchRuns" SET status = 'CANCELLED', "finishedAt" = now() WHERE "academicYearId" = %L AND status = 'PENDING'$q$, y2)), '1');
+  PERFORM pg_temp.vo_expect('552 ... and a finished one can be made active when no other is',
+    pg_temp.vo_did(format($q$UPDATE "StaffingSearchRuns" SET status = 'RUNNING', "finishedAt" = NULL, "errorCode" = NULL WHERE id = %L$q$, active)), '1');
+  PERFORM pg_temp.vo_expect('552 an active search cannot be moved into a year that has an active one',
+    pg_temp.vo_did(format($q$UPDATE "StaffingSearchRuns" SET "academicYearId" = %L WHERE id = %L$q$, y3, active)), '23505 ' || n || 'one_active_per_year');
+  PERFORM pg_temp.vo_expect('552 CANCELLING made SUCCEEDED frees its year',
+    pg_temp.vo_did(format($q$UPDATE "StaffingSearchRuns" SET status = 'SUCCEEDED', "finishedAt" = now() WHERE "academicYearId" = %L AND status = 'CANCELLING'$q$, y3)), '1');
+  PERFORM pg_temp.vo_case('552 ... and that year takes a new RUNNING', pg_temp.vo_ins(s, y3, 'status', $q$'RUNNING'$q$), 'ok');
+
+  -- The place is the year's: another year of the school has its own, and so has another school's year.
+  y4 := pg_temp.vo_year('552 another year');
+  PERFORM pg_temp.vo_case('552 an active search in another year of the school, beside the active ones above', pg_temp.vo_ins(s, y4), 'ok');
+  tb := pg_temp.vo_plant('00000000-0000-4000-8000-000000000006', '552 other');
+  PERFORM pg_temp.vo_case('552 an active search in the other school''s year, beside the first school''s', pg_temp.vo_ins((tb ->> 'school')::uuid, (tb ->> 'a')::uuid), 'ok');
+  PERFORM pg_temp.vo_case('552 ... and a second one there is refused as here', pg_temp.vo_ins((tb ->> 'school')::uuid, (tb ->> 'a')::uuid), '23505 ' || n || 'one_active_per_year');
+  PERFORM pg_temp.vo_expect('552 the other school''s administrator reads only its own', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "schoolId" <> s)::text, '1');
+  PERFORM pg_temp.vo_expect('552 ... and none of the first school''s', (SELECT count(*) FROM "StaffingSearchRuns" WHERE "schoolId" = s)::text, '0');
+  PERFORM pg_temp.vo_as('00000000-0000-4000-8000-000000000105');
+  y5 := pg_temp.vo_year('552 the last');
+  PERFORM pg_temp.vo_case('552 back as the first school''s administrator: a year of its own takes its search', pg_temp.vo_ins(s, y5), 'ok');
+  RAISE NOTICE 'vo 552: % checks', current_setting('vo.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 553: the sweep, app.staffing_search_sweep(), the job's door.
+--
+-- The gateway's runner and a start call it with no login at all, in a transaction of their own (the job doors of 20270224090000,
+-- sections 515-523); every login is refused with VO403. Here:
+--   a. the guard's text, word for word, the first statement of the body, and the rights;
+--   b. what the door answers under every setting a session can carry (an empty string after another request's transaction, claims
+--      {}, null, a role only, a lone subject, a person): the job's is a number, each other is VO403;
+--   c. what it does, planted by the schools' own administrators and then run as the job: an active search whose lease ran out, or
+--      that began more than an hour ago, is FAILED with SEARCH_ABANDONED (finishing time its lease's end, never later than now) with
+--      its checkpoint and counters as they were; a search with a live lease, a lease that ends exactly now and one begun exactly an
+--      hour ago is left alone; a finished search is deleted when it finished more than 24 hours ago, never earlier, whatever its age
+--      or its lease; the count is the rows changed; a second call changes nothing; both schools' rows are swept (the door has no
+--      school); the neighbours' tables (Generera runs, candidate runs) are not touched.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+DO $$
+DECLARE
+  fn constant text := 'app.staffing_search_sweep()';
+  guard constant text := $g$IF nullif(current_setting('request.jwt.claims', true), '') IS NOT NULL OR nullif(current_setting('request.jwt.claim.sub', true), '') IS NOT NULL THEN RAISE EXCEPTION 'Sweepen av lärarvalssökningar tar ingen inloggning' USING ERRCODE = 'VO403'; END IF;$g$;
+BEGIN
+  -- a. The first statement of the body is the guard. A guard that asks for the person's row, loses one of the two settings, joins
+  -- them with AND, reads an empty string as a login, reads a setting without missing_ok, answers with another code or is gone is
+  -- named here, as 515-520 do for the other doors.
+  PERFORM pg_temp.vo_true('553 the first statement of the sweep is the door''s guard', starts_with(substring(pg_temp.vo_src(fn) FROM 'BEGIN (.*)$'), guard));
+  PERFORM pg_temp.vo_expect('553 rights: the API''s role runs it, PostgREST''s roles and the service do not',
+    format('%s/%s/%s/%s', has_function_privilege('app_authenticated', fn, 'EXECUTE')::text, has_function_privilege('authenticated', fn, 'EXECUTE')::text,
+           has_function_privilege('anon', fn, 'EXECUTE')::text,
+           CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN has_function_privilege('service_role', fn, 'EXECUTE')::text ELSE 'false' END),
+    'true/false/false/false');
+
+  -- b. Under every setting a session can carry, as the API's role and with no rows planted.
+  PERFORM pg_temp.vo_shapes('553', 'SELECT app.staffing_search_sweep()::text', '{"door": "^[0-9]+$", "login": "^E:VO403$"}'::jsonb);
+  RAISE NOTICE 'vo 553 (the guard): % checks', current_setting('vo.checks');
+END $$;
+ROLLBACK;
+
+BEGIN;
+DO $$
+DECLARE
+  full_sub constant text := '00000000-0000-4000-8000-000000000105';
+  b_sub constant text := '00000000-0000-4000-8000-000000000006';
+  claims constant text := json_build_object('sub', '00000000-0000-4000-8000-000000000105')::text;
+  abandoned_text constant text := 'The search stopped before it finished: the service that ran it was restarted or lost.';
+  tm jsonb;
+  tb jsonb;
+  sm uuid;
+  sb uuid;
+  yf uuid;
+  yfb uuid;
+  ids jsonb := '{}';
+  snap jsonb := '{}';
+  rec record;
+  before jsonb;
+  after jsonb;
+  n integer;
+  swept integer;
+  opt_job uuid;
+  cand_run uuid;
+  cand_old uuid;
+  neighbours jsonb;
+  keep text[] := ARRAY['status', 'error', 'errorCode', 'errorParams', 'finishedAt'];
+BEGIN
+  tm := pg_temp.vo_plant(full_sub, '553 m');
+  sm := (tm ->> 'school')::uuid;
+  yf := (tm ->> 'a')::uuid;
+  -- Whatever the database already holds for the sweep is done first, so that its count below is this section's rows alone.
+  swept := pg_temp.vo_sweep();
+  PERFORM pg_temp.vo_true('553 the sweep, as the job, answers a number', swept >= 0);
+
+  -- The matrix school: active searches in a year of their own each, and finished ones in one year (they hold no place).
+  -- A search the sweep marks (the lease ran out, or it began more than an hour ago):
+  ids := ids || jsonb_build_object(
+    'm1_lease_ended_10_min_ago', pg_temp.vo_at(sm, pg_temp.vo_year('553 m1'), 'RUNNING', '-20 minutes', '-10 minutes', '-30 minutes',
+        'startedAt', $q$now() - interval '29 minutes'$q$, 'claimedBy', $q$'api-1'$q$, 'round', '3', 'acceptedMoves', '2', 'evaluations', '12',
+        'stopReason', $q$'BUDGET'$q$, 'figures', $q$'{"before": {"min": 1}}'$q$, 'checkpoint', $q$'{"moves": [{"requirementId": "a", "fromTeacherId": "b", "toTeacherId": "c"}], "round": 3}'$q$,
+        'error', $q$'an earlier note'$q$, 'errorCode', $q$'EARLIER'$q$, 'errorParams', $q$'{"x": 1}'$q$),
+    'm2_pending_61_min_old_live_lease', pg_temp.vo_at(sm, pg_temp.vo_year('553 m2'), 'PENDING', '0 seconds', '5 minutes', '-61 minutes'),
+    'm3_pending_an_hour_and_a_microsecond_old', pg_temp.vo_at(sm, pg_temp.vo_year('553 m3'), 'PENDING', '0 seconds', '5 minutes', '-1 hour -1 microsecond'),
+    'm4_cancelling_lease_ended', pg_temp.vo_at(sm, pg_temp.vo_year('553 m4'), 'CANCELLING', '-20 minutes', '-10 minutes', '-30 minutes',
+        'startedAt', $q$now() - interval '29 minutes'$q$, 'claimedBy', $q$'api-1'$q$, 'round', '1', 'acceptedMoves', '1', 'checkpoint', $q$'{"moves": [{"requirementId": "a"}]}'$q$),
+    'm5_pending_never_taken_lease_ended', pg_temp.vo_at(sm, pg_temp.vo_year('553 m5'), 'PENDING', '-11 minutes', '-6 minutes', '-11 minutes'),
+    'm6_lease_ended_a_microsecond_ago', pg_temp.vo_at(sm, pg_temp.vo_year('553 m6'), 'RUNNING', '-5 minutes', '-1 microsecond', '-6 minutes', 'startedAt', $q$now() - interval '5 minutes'$q$),
+    'm7_three_days_old_live_lease', pg_temp.vo_at(sm, pg_temp.vo_year('553 m7'), 'RUNNING', '0 seconds', '5 minutes', '-3 days', 'startedAt', $q$now() - interval '3 days'$q$,
+        'checkpoint', $q$'{"moves": []}'$q$),
+    -- A search left alone: a live lease, a lease that ends exactly now, one begun exactly an hour ago.
+    'u1_live_lease', pg_temp.vo_at(sm, pg_temp.vo_year('553 u1'), 'RUNNING', '0 seconds', '5 minutes', '-10 minutes', 'startedAt', $q$now() - interval '10 minutes'$q$,
+        'claimedBy', $q$'api-2'$q$, 'round', '2', 'acceptedMoves', '1'),
+    'u2_pending_exactly_an_hour_old', pg_temp.vo_at(sm, pg_temp.vo_year('553 u2'), 'PENDING', '0 seconds', '5 minutes', '-1 hour'),
+    'u3_lease_ends_exactly_now', pg_temp.vo_at(sm, pg_temp.vo_year('553 u3'), 'RUNNING', '-5 minutes', '0 seconds', '-6 minutes', 'startedAt', $q$now() - interval '5 minutes'$q$),
+    -- A search whose lease ended three days ago: marked, and, its finishing time being its lease's end, removed by the second statement
+    -- of the same call (it counts twice).
+    'e1_lease_ended_three_days_ago', pg_temp.vo_at(sm, pg_temp.vo_year('553 e1'), 'RUNNING', '-3 days', '-71 hours -55 minutes', '-3 days', 'startedAt', $q$now() - interval '3 days'$q$,
+        'checkpoint', $q$'{"moves": []}'$q$));
+  -- Finished searches in one year: when they finished decides, and not when they began or what their lease says.
+  ids := ids || jsonb_build_object(
+    'r1_succeeded_25_h', pg_temp.vo_run(sm, yf, 'status', $q$'SUCCEEDED'$q$, 'finishedAt', $q$now() - interval '25 hours'$q$),
+    'r2_failed_25_h', pg_temp.vo_run(sm, yf, 'status', $q$'FAILED'$q$, 'errorCode', $q$'SEARCH_ABANDONED'$q$, 'finishedAt', $q$now() - interval '25 hours'$q$),
+    'r3_cancelled_25_h', pg_temp.vo_run(sm, yf, 'status', $q$'CANCELLED'$q$, 'finishedAt', $q$now() - interval '25 hours'$q$),
+    'r4_succeeded_24_h_and_a_microsecond', pg_temp.vo_run(sm, yf, 'status', $q$'SUCCEEDED'$q$, 'finishedAt', $q$now() - interval '24 hours' - interval '1 microsecond'$q$),
+    'k1_succeeded_23_h', pg_temp.vo_run(sm, yf, 'status', $q$'SUCCEEDED'$q$, 'finishedAt', $q$now() - interval '23 hours'$q$),
+    'k2_succeeded_exactly_24_h', pg_temp.vo_run(sm, yf, 'status', $q$'SUCCEEDED'$q$, 'finishedAt', $q$now() - interval '24 hours'$q$),
+    'k3_finished_an_hour_ago_with_a_lease_long_out', pg_temp.vo_run(sm, yf, 'status', $q$'SUCCEEDED'$q$, 'finishedAt', $q$now() - interval '1 hour'$q$,
+        'heartbeatAt', $q$now() - interval '2 hours'$q$, 'leaseUntil', $q$now() - interval '90 minutes'$q$, 'createdAt', $q$now() - interval '3 days'$q$, 'claimedBy', $q$'api-1'$q$),
+    'k4_failed_2_h', pg_temp.vo_run(sm, yf, 'status', $q$'FAILED'$q$, 'errorCode', $q$'SOME_CODE'$q$, 'finishedAt', $q$now() - interval '2 hours'$q$,
+        'checkpoint', $q$'{"moves": []}'$q$));
+
+  -- The neighbours: a Generera run and two candidate runs the other job sweeps' rules would take (a lease long out, a run eight days old).
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", status, "heartbeatAt", "leaseUntil")
+  VALUES (sm, pg_temp.vo_year('553 optimization'), 'RUNNING', now() - interval '20 minutes', now() - interval '10 minutes') RETURNING id INTO opt_job;
+  INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, progress, "heartbeatAt", "leaseSeconds", "createdAt", error, "errorCode", "errorParams")
+  VALUES (sm, pg_temp.vo_year('553 candidates'), 'RUNNING', 2, 1, now() - interval '2 hours', 600, now() - interval '3 hours', 'earlier', 'EARLIER', '{"x": 1}') RETURNING id INTO cand_run;
+  INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested, progress, "heartbeatAt", "leaseSeconds", "createdAt", error, "errorCode", "errorParams")
+  VALUES (sm, pg_temp.vo_year('553 old candidates'), 'FAILED', 2, 1, now() - interval '8 days', 600, now() - interval '8 days', 'earlier', 'EARLIER', '{"x": 1}') RETURNING id INTO cand_old;
+  neighbours := jsonb_build_object('opt', (SELECT to_jsonb(o) FROM "OptimizationJobs" o WHERE id = opt_job),
+                                   'cand', (SELECT to_jsonb(c) FROM "ScheduleCandidateRuns" c WHERE id = cand_run),
+                                   'old', (SELECT to_jsonb(c) FROM "ScheduleCandidateRuns" c WHERE id = cand_old));
+
+  -- The other school: its own searches, planted by its own administrator.
+  tb := pg_temp.vo_plant(b_sub, '553 b');
+  sb := (tb ->> 'school')::uuid;
+  yfb := (tb ->> 'a')::uuid;
+  ids := ids || jsonb_build_object(
+    'b1_lease_ended_10_min_ago', pg_temp.vo_at(sb, pg_temp.vo_year('553 b1'), 'RUNNING', '-20 minutes', '-10 minutes', '-30 minutes', 'startedAt', $q$now() - interval '29 minutes'$q$,
+        'round', '2', 'acceptedMoves', '2', 'checkpoint', $q$'{"moves": [{"requirementId": "z"}]}'$q$),
+    'bu_live_lease', pg_temp.vo_at(sb, pg_temp.vo_year('553 bu'), 'RUNNING', '0 seconds', '5 minutes', '-10 minutes', 'startedAt', $q$now() - interval '10 minutes'$q$),
+    'br_succeeded_25_h', pg_temp.vo_run(sb, yfb, 'status', $q$'SUCCEEDED'$q$, 'finishedAt', $q$now() - interval '25 hours'$q$),
+    'bk_succeeded_23_h', pg_temp.vo_run(sb, yfb, 'status', $q$'SUCCEEDED'$q$, 'finishedAt', $q$now() - interval '23 hours'$q$));
+
+  -- The rows as planted, each as its own school's administrator reads it.
+  FOR rec IN SELECT k AS name, CASE WHEN k LIKE 'b%' THEN b_sub ELSE full_sub END AS sub FROM jsonb_object_keys(ids) k LOOP
+    PERFORM pg_temp.vo_as(rec.sub);
+    snap := snap || jsonb_build_object(rec.name, (SELECT to_jsonb(r) FROM "StaffingSearchRuns" r WHERE id = (ids ->> rec.name)::uuid));
+    PERFORM pg_temp.vo_true('553 planted ' || rec.name, snap -> rec.name IS NOT NULL AND snap ->> rec.name <> 'null');
+  END LOOP;
+  PERFORM pg_temp.vo_as(full_sub);
+  -- Counted in the years this section made (the fixtures planted a finished search in this school too, for section 116).
+  PERFORM pg_temp.vo_expect('553 the matrix school holds the nineteen it was given',
+    (SELECT count(*) FROM "StaffingSearchRuns" r JOIN "AcademicYears" y ON y.id = r."academicYearId" WHERE y.name LIKE 'vo 553 %')::text, '19');
+  PERFORM pg_temp.vo_as(b_sub);
+  PERFORM pg_temp.vo_expect('553 the other school holds its four',
+    (SELECT count(*) FROM "StaffingSearchRuns" r JOIN "AcademicYears" y ON y.id = r."academicYearId" WHERE y.name LIKE 'vo 553 %')::text, '4');
+
+  -- The sweep, as the job, with an administrator's claims in place that it sets aside and puts back.
+  PERFORM pg_temp.vo_as(full_sub);
+  n := pg_temp.vo_sweep();
+  PERFORM pg_temp.vo_expect('553 the claims are back after the door', current_setting('request.jwt.claims') || '|' || coalesce(current_setting('request.jwt.claim.sub', true), ''), claims || '|');
+  -- Marked: m1 m2 m3 m4 m5 m6 m7, e1 and the other school's b1 (nine); removed: r1 r2 r3 r4, e1 again and br (six).
+  PERFORM pg_temp.vo_expect('553 the sweep changed 9 searches and removed 6, and e1 is both', n::text, '15');
+
+  FOR rec IN SELECT * FROM (VALUES
+      ('m1_lease_ended_10_min_ago', 'ABANDONED'), ('m2_pending_61_min_old_live_lease', 'ABANDONED'), ('m3_pending_an_hour_and_a_microsecond_old', 'ABANDONED'),
+      ('m4_cancelling_lease_ended', 'ABANDONED'), ('m5_pending_never_taken_lease_ended', 'ABANDONED'), ('m6_lease_ended_a_microsecond_ago', 'ABANDONED'),
+      ('m7_three_days_old_live_lease', 'ABANDONED'),
+      ('u1_live_lease', 'KEPT'), ('u2_pending_exactly_an_hour_old', 'KEPT'), ('u3_lease_ends_exactly_now', 'KEPT'),
+      ('e1_lease_ended_three_days_ago', 'GONE'),
+      ('r1_succeeded_25_h', 'GONE'), ('r2_failed_25_h', 'GONE'), ('r3_cancelled_25_h', 'GONE'), ('r4_succeeded_24_h_and_a_microsecond', 'GONE'),
+      ('k1_succeeded_23_h', 'KEPT'), ('k2_succeeded_exactly_24_h', 'KEPT'), ('k3_finished_an_hour_ago_with_a_lease_long_out', 'KEPT'), ('k4_failed_2_h', 'KEPT'),
+      ('b1_lease_ended_10_min_ago', 'ABANDONED'), ('bu_live_lease', 'KEPT'), ('br_succeeded_25_h', 'GONE'), ('bk_succeeded_23_h', 'KEPT')
+    ) v(name, outcome) LOOP
+    PERFORM pg_temp.vo_as(CASE WHEN rec.name LIKE 'b%' THEN b_sub ELSE full_sub END);
+    before := snap -> rec.name;
+    after := (SELECT to_jsonb(r) FROM "StaffingSearchRuns" r WHERE id = (ids ->> rec.name)::uuid);
+    IF rec.outcome = 'GONE' THEN
+      PERFORM pg_temp.vo_true('553 ' || rec.name || ' is gone', after IS NULL);
+    ELSIF rec.outcome = 'KEPT' THEN
+      PERFORM pg_temp.vo_expect('553 ' || rec.name || ' is as it was', after::text, before::text);
+    ELSE
+      PERFORM pg_temp.vo_expect('553 ' || rec.name || ' is FAILED, SEARCH_ABANDONED, with the text for the page and no parameters',
+        format('%s %s %s %s', after ->> 'status', after ->> 'errorCode', after ->> 'error', jsonb_typeof(after -> 'errorParams')),
+        format('FAILED SEARCH_ABANDONED %s null', abandoned_text));
+      -- Finished when its lease ended, and never later than now (a live lease, or a search too old, finishes now).
+      PERFORM pg_temp.vo_expect('553 ' || rec.name || ' finished when its lease ended, or now if the lease is still out',
+        (after ->> 'finishedAt')::timestamptz::text, least((before ->> 'leaseUntil')::timestamptz, now())::text);
+      -- Everything else as planted: its checkpoint and counters, who ran it, its beat and lease, when it began.
+      PERFORM pg_temp.vo_expect('553 ' || rec.name || ' keeps its checkpoint, counters, stop reason, figures, claim and times',
+        (after - keep)::text, (before - keep)::text);
+    END IF;
+  END LOOP;
+  -- What the best-so-far search a lost process left behind says: the moves it had accepted are still there to show.
+  PERFORM pg_temp.vo_as(full_sub);
+  PERFORM pg_temp.vo_expect('553 m1 keeps the moves it had accepted and the rounds it had made',
+    (SELECT format('%s %s %s %s', "acceptedMoves", round, evaluations, jsonb_array_length(checkpoint -> 'moves')) FROM "StaffingSearchRuns" WHERE id = (ids ->> 'm1_lease_ended_10_min_ago')::uuid), '2 3 12 1');
+  PERFORM pg_temp.vo_expect('553 m1 finished at the end of its lease: ten minutes ago',
+    (SELECT (now() - "finishedAt")::text FROM "StaffingSearchRuns" WHERE id = (ids ->> 'm1_lease_ended_10_min_ago')::uuid), '00:10:00');
+  PERFORM pg_temp.vo_expect('553 m7, three days old, is marked and not deleted by the age rule: it finished now',
+    (SELECT ("finishedAt" = now())::text FROM "StaffingSearchRuns" WHERE id = (ids ->> 'm7_three_days_old_live_lease')::uuid), 'true');
+  PERFORM pg_temp.vo_expect('553 the matrix school holds what is left: seven marked, three left alone, four finished that stay',
+    (SELECT count(*) FROM "StaffingSearchRuns" r JOIN "AcademicYears" y ON y.id = r."academicYearId" WHERE y.name LIKE 'vo 553 %')::text, '14');
+  PERFORM pg_temp.vo_as(b_sub);
+  PERFORM pg_temp.vo_expect('553 the other school holds what is left: the marked one, the live one, the finished one that stays',
+    (SELECT count(*) FROM "StaffingSearchRuns" r JOIN "AcademicYears" y ON y.id = r."academicYearId" WHERE y.name LIKE 'vo 553 %')::text, '3');
+
+  -- The neighbours are not the sweep's: the Generera run and the candidate runs are as they were, to the last column.
+  PERFORM pg_temp.vo_as(full_sub);
+  PERFORM pg_temp.vo_expect('553 the Generera run is as it was', (SELECT to_jsonb(o)::text FROM "OptimizationJobs" o WHERE id = opt_job), (neighbours -> 'opt')::text);
+  PERFORM pg_temp.vo_expect('553 the candidate run whose lease is out is as it was', (SELECT to_jsonb(c)::text FROM "ScheduleCandidateRuns" c WHERE id = cand_run), (neighbours -> 'cand')::text);
+  PERFORM pg_temp.vo_expect('553 the candidate run eight days old is as it was', (SELECT to_jsonb(c)::text FROM "ScheduleCandidateRuns" c WHERE id = cand_old), (neighbours -> 'old')::text);
+
+  -- Nothing is left for a second call; the marked searches' years are free, and a live search's year is not.
+  PERFORM pg_temp.vo_expect('553 a second call changes nothing', pg_temp.vo_sweep()::text, '0');
+  PERFORM pg_temp.vo_expect('553 ... and the claims are back', current_setting('request.jwt.claims'), claims);
+  PERFORM pg_temp.vo_case('553 the year of a marked search takes a new search', pg_temp.vo_ins(sm, (SELECT "academicYearId" FROM "StaffingSearchRuns" WHERE id = (ids ->> 'm1_lease_ended_10_min_ago')::uuid)), 'ok');
+  PERFORM pg_temp.vo_case('553 the year of a search that is still alive does not',
+    pg_temp.vo_ins(sm, (SELECT "academicYearId" FROM "StaffingSearchRuns" WHERE id = (ids ->> 'u1_live_lease')::uuid)), '23505 StaffingSearchRuns_one_active_per_year');
+  PERFORM pg_temp.vo_expect('553 ... nor does one after the new search was made (it is fresh, and its lease is out)', pg_temp.vo_sweep()::text, '0');
+  RAISE NOTICE 'vo 553 (the sweep at work): % checks', current_setting('vo.checks');
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 553, d: the sweep never waits for a row another transaction holds (FOR UPDATE SKIP LOCKED in both of its statements).
+--
+-- A search's own process holds its row while it writes a heartbeat or a checkpoint, and the gateway sweeps before every start. A
+-- sweep that waited on that lock would hold every school's start behind one school's search. Showing that it does not takes a second
+-- transaction, so this part opens a second connection, as section 176 does: \o pipes this connection's output through a shell that
+-- starts one more psql (connected the same way, by the \setenv lines; the password is the runner's PGPASSWORD) and passes the output
+-- on through cat. That psql commits two searches of the matrix school that the sweep would change, one active with its lease out and
+-- one that finished 25 hours ago, in a year it makes for the purpose (and removes at the end); locks both FOR UPDATE; says so with the advisory lock (553, 2); and, until this transaction's
+-- (553, 1) is gone, polls rather than waits for it, so that a sweep waiting on its rows is no deadlock the server would break by ending
+-- the second connection. Here, with lock_timeout 5 s, the sweep returns, changes nothing, and both rows are as they were, still held. A
+-- sweep that waited would end in 55P03, whichever of its two statements lost its SKIP LOCKED.
+--
+-- The shell waits for its psql, and \o waits for the shell, so the second connection is this one's child to the end and is never left
+-- to the container's init. Its searches and its year are gone before the next section, and are cleared first if an earlier run left them.
+-- ---------------------------------------------------------------------------
+
+\set vo553 'SET statement_timeout = ''120s''; '
+\set vo553 :vo553 'SELECT set_config(''request.jwt.claims'', ''{"sub": "00000000-0000-4000-8000-000000000105"}'', false); '
+\set vo553 :vo553 'DELETE FROM "AcademicYears" WHERE name = ''vo held 553'' AND "schoolId" = app.current_school_id(); '
+\set vo553 :vo553 'INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt") VALUES (app.current_school_id(), ''vo held 553'', DATE ''2071-08-15'', DATE ''2072-06-10'', false, now()); '
+\set vo553 :vo553 'INSERT INTO "StaffingSearchRuns" (id, "schoolId", "academicYearId", status, "staffingBasis", "weekBasis", "heartbeatAt", "leaseUntil", "createdAt", "finishedAt") '
+\set vo553 :vo553 'SELECT x.id, y."schoolId", y.id, x.status, repeat(''a'', 64), repeat(''b'', 64), x.beat, x.lease, x.made, x.fin FROM "AcademicYears" y, (VALUES '
+\set vo553 :vo553 '(''00000000-0000-4000-8000-000000005531''::uuid, ''RUNNING''::"StaffingSearchRunStatus", now() - interval ''20 minutes'', now() - interval ''10 minutes'', now() - interval ''30 minutes'', NULL::timestamptz), '
+\set vo553 :vo553 '(''00000000-0000-4000-8000-000000005532''::uuid, ''SUCCEEDED''::"StaffingSearchRunStatus", now(), now() + interval ''5 minutes'', now() - interval ''2 days'', now() - interval ''25 hours'')) '
+\set vo553 :vo553 'x(id, status, beat, lease, made, fin) WHERE y."schoolId" = app.current_school_id() AND y.name = ''vo held 553''; '
+\set vo553 :vo553 'BEGIN; '
+\set vo553 :vo553 'SELECT count(*) FROM (SELECT 1 FROM "StaffingSearchRuns" WHERE id IN (''00000000-0000-4000-8000-000000005531'', ''00000000-0000-4000-8000-000000005532'') FOR UPDATE) held; '
+\set vo553 :vo553 'SELECT pg_advisory_xact_lock(553, 2); '
+\set vo553 :vo553 'DO $$ BEGIN WHILE EXISTS (SELECT 1 FROM pg_locks WHERE locktype = ''advisory'' AND classid = 553 AND objid = 1 AND objsubid = 2) '
+\set vo553 :vo553 'LOOP PERFORM pg_sleep(0.05); END LOOP; END $$; '
+\set vo553 :vo553 'DELETE FROM "AcademicYears" WHERE name = ''vo held 553'' AND "schoolId" = app.current_school_id(); '
+\set vo553 :vo553 'COMMIT;'
+\setenv VO553_SQL :vo553
+\setenv PGHOST :HOST
+\setenv PGPORT :PORT
+\setenv PGUSER :USER
+\setenv PGDATABASE :DBNAME
+
+BEGIN;
+SELECT pg_advisory_xact_lock(553, 1);
+-- What the database already holds for the sweep is done first (a finished search of the fixtures that has aged past a day, say), so that
+-- the count below is the held rows' alone.
+SELECT set_config('request.jwt.claims', '', true);
+SELECT app.staffing_search_sweep() >= 0;
+\o | printf '%s\n' "$VO553_SQL" | psql -X -q -v ON_ERROR_STOP=1 -f - >/dev/null & cat; wait; exit 0
+
+-- The second connection holds its rows.
+DO $$
+DECLARE
+  deadline constant timestamptz := clock_timestamp() + interval '60 seconds';
+BEGIN
+  LOOP
+    EXIT WHEN EXISTS (SELECT 1 FROM pg_locks
+                       WHERE locktype = 'advisory' AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                         AND classid = 553 AND objid = 2 AND objsubid = 2 AND granted AND pid <> pg_backend_pid());
+    IF clock_timestamp() > deadline THEN
+      RAISE EXCEPTION 'vo 553 and held rows: the second connection never held its searches (its error, if any, is above)';
+    END IF;
+    PERFORM pg_sleep(0.05);
+  END LOOP;
+END $$;
+
+DO $$
+DECLARE
+  stale constant uuid := '00000000-0000-4000-8000-000000005531';
+  old constant uuid := '00000000-0000-4000-8000-000000005532';
+  n integer;
+  k integer;
+BEGIN
+  PERFORM set_config('lock_timeout', '5s', true);
+  PERFORM set_config('request.jwt.claims', '', true);
+  BEGIN
+    n := app.staffing_search_sweep();
+  EXCEPTION WHEN lock_not_available THEN
+    RAISE EXCEPTION 'vo 553 and held rows: the sweep waited on a search another transaction holds (%)', SQLERRM;
+  END;
+  PERFORM set_config('lock_timeout', '0', true);
+  PERFORM pg_temp.vo_expect('553 a sweep that finds both rows held changes nothing', n::text, '0');
+
+  PERFORM pg_temp.vo_as('00000000-0000-4000-8000-000000000105');
+  PERFORM pg_temp.vo_expect('553 the held search whose lease is out is still RUNNING, with no error, and its lease is still out',
+    (SELECT format('%s %s %s', status, ("errorCode" IS NULL)::text, ("leaseUntil" < now())::text) FROM "StaffingSearchRuns" WHERE id = stale), 'RUNNING true true');
+  PERFORM pg_temp.vo_expect('553 the held finished search from 25 hours ago is still there',
+    (SELECT (count(*) FILTER (WHERE "finishedAt" < now() - interval '24 hours'))::text FROM "StaffingSearchRuns" WHERE id = old), '1');
+  -- And they are held, which is why the sweep left them.
+  FOREACH k IN ARRAY ARRAY[1, 2] LOOP
+    BEGIN
+      PERFORM 1 FROM "StaffingSearchRuns" WHERE id = (CASE k WHEN 1 THEN stale ELSE old END) FOR UPDATE NOWAIT;
+      RAISE EXCEPTION 'vo 553 and held rows: search % is not held by the second connection', k;
+    EXCEPTION WHEN lock_not_available THEN NULL;
+    END;
+  END LOOP;
+  RAISE NOTICE 'vo 553 (held rows): % checks', current_setting('vo.checks');
+END $$;
+ROLLBACK;
+\o
+\setenv VO553_SQL
+\setenv PGHOST
+\setenv PGPORT
+\setenv PGUSER
+\setenv PGDATABASE
