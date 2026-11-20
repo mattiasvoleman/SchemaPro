@@ -14,6 +14,7 @@ import type { Plan, RowPlan, StaffingProposalService, TeacherPlan } from './staf
 import {
   BOUNDS_SECONDS,
   SEARCH_ABANDONED,
+  SEARCH_ENGINE_BUSY,
   SEARCH_ENGINE_OLDER,
   SEARCH_INTERRUPTED,
   SEARCH_LEASE_SECONDS,
@@ -26,6 +27,7 @@ import {
   STAFFING_SEARCH_SWEEP_JOB,
   StaffingSearchService,
   WEEK_BOUNDS_PATH,
+  BUSY_GIVE_UP_MS,
   figuresDocOf,
 } from './staffing-search.service';
 import { weekBasisOf, withWeekBasis } from './staffing-week';
@@ -333,7 +335,9 @@ describe('StaffingSearchService', () => {
         expect(move.fromTeacherId).toBe(T.a.real);
         expect([T.b.real, T.c.real]).toContain(move.toTeacherId);
       }
-      const figures = JSON.parse(done.values.find((v) => typeof v === 'string' && v.includes('"skippedPosts"')) as string) as ReturnType<typeof figuresDocOf>;
+      const figures = JSON.parse(done.values.find((v) => typeof v === 'string' && v.includes('"leftOut"')) as string) as ReturnType<typeof figuresDocOf>;
+      // Four posts, all of them searched: nothing is left out, and the doc says so rather than saying nothing.
+      expect(figures.leftOut).toEqual({ posts: [], years: [] });
       expect(figures.years[0]!.weeks[0]!.before).toEqual({ demandMinutes: 1500, capacityMinutes: CAPACITY });
       expect(figures.years[0]!.weeks[0]!.after.demandMinutes).toBeLessThan(1500);
       expect(h.tx.staffingSearchRun!.updateMany).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ teacherId: expect.anything() }) }));
@@ -416,6 +420,198 @@ describe('StaffingSearchService', () => {
 
       expect(finishing(h).at(-1)!.values).toContain('SUCCEEDED');
       expect(h.proxy.callAiEngine.mock.calls.length).toBeGreaterThan(3);
+    });
+
+    it('backs off from an engine that stays busy WITHOUT spending the search\'s time: the wait is not counted in the budget', async () => {
+      const h = harness();
+      (h.service as unknown as { settings: () => { budgetSeconds: number; concurrency: number } }).settings = () => ({ budgetSeconds: 60, concurrency: 1 });
+      // A clock that only the waits move: the search is kept waiting five minutes (its whole budget is one).
+      let waited = 0;
+      const real = Date.now.bind(Date);
+      const clock = jest.spyOn(Date, 'now').mockImplementation(() => real() + waited);
+      (h.service as unknown as { delay: (ms: number) => Promise<void> }).delay = async (ms) => {
+        waited += ms;
+      };
+      h.proxy.callAiEngine.mockImplementation(async (_p: string, payload: AiEngineScheduleRequest) => {
+        if (waited < 300_000) throw new HttpException('busy', HttpStatus.TOO_MANY_REQUESTS);
+        return fakeBounds(payload as never);
+      });
+
+      try {
+        await h.service.start({ academicYearId: YEAR }, user);
+        await settled(h.service);
+      } finally {
+        clock.mockRestore();
+      }
+
+      expect(waited).toBeGreaterThanOrEqual(300_000);
+      const done = finishing(h).at(-1)!;
+      // It went on with the search after the wait, to its own end: the budget did not run out on the time spent waiting.
+      expect(done.values).toContain('SUCCEEDED');
+      expect(done.values).not.toContain('BUDGET');
+      expect(done.values).not.toContain(SEARCH_ENGINE_BUSY);
+    });
+
+    it('gives a wait for the engine up after 45 minutes in all: the run ends FAILED with the code, never left RUNNING, with the best it had', async () => {
+      const h = harness();
+      let calls = 0;
+      let waited = 0;
+      (h.service as unknown as { delay: (ms: number) => Promise<void> }).delay = async (ms) => {
+        waited += ms;
+      };
+      // The engine counts the baseline and the first round, and is busy from then on for ever.
+      h.proxy.callAiEngine.mockImplementation(async (_p: string, payload: AiEngineScheduleRequest) => {
+        calls += 1;
+        if (calls > 20) throw new HttpException('busy', HttpStatus.TOO_MANY_REQUESTS);
+        return fakeBounds(payload as never);
+      });
+
+      await h.service.start({ academicYearId: YEAR }, user);
+      await settled(h.service);
+
+      const failed = finishing(h).at(-1)!;
+      expect(failed.sql).toContain("'FAILED'");
+      expect(failed.values).toContain(SEARCH_ENGINE_BUSY);
+      expect(waited).toBeGreaterThanOrEqual(BUSY_GIVE_UP_MS);
+      // The moves accepted before the engine went busy are kept: a proposal can still be read.
+      const checkpoint = JSON.parse(failed.values.find((v) => typeof v === 'string' && v.includes('"changes"')) as string) as { changes: unknown[] };
+      expect(checkpoint.changes.length).toBeGreaterThan(0);
+    });
+
+    it('gives up at the baseline too, when the engine is busy for ever before a single year was counted', async () => {
+      const h = harness();
+      h.proxy.callAiEngine.mockRejectedValue(new HttpException('busy', HttpStatus.TOO_MANY_REQUESTS));
+
+      await h.service.start({ academicYearId: YEAR }, user);
+      await settled(h.service);
+
+      expect(finishing(h).at(-1)!.values).toContain(SEARCH_ENGINE_BUSY);
+    });
+
+    it('is told to stop while it waits for the engine, and stops within the slice it is in', async () => {
+      const h = harness();
+      h.state.row = { id: RUN, status: 'CANCELLING', academicYearId: YEAR, round: 0, evaluations: 0, acceptedMoves: 0, leaseUntil: new Date(Date.now() + 60_000), createdAt: new Date(), startedAt: new Date(), finishedAt: null, errorParams: null, figures: null, checkpoint: null, stopReason: null, error: null, errorCode: null };
+      h.proxy.callAiEngine.mockRejectedValue(new HttpException('busy', HttpStatus.TOO_MANY_REQUESTS));
+      let slices = 0;
+      (h.service as unknown as { delay: (ms: number) => Promise<void> }).delay = async () => {
+        slices += 1;
+        if (slices === 3) await h.service.cancel(RUN, user);
+      };
+
+      await h.service.start({ academicYearId: YEAR }, user);
+      await settled(h.service);
+
+      expect(finishing(h).at(-1)!.values).toEqual(expect.arrayContaining(['CANCELLED']));
+      // The cancel was heard inside the wait: no more slices, and no more asks than the first two.
+      expect(slices).toBeLessThanOrEqual(4);
+      expect(h.proxy.callAiEngine.mock.calls.length).toBeLessThanOrEqual(2);
+    });
+
+    it('backs off from an engine that cannot answer just now (503) and asks again, a few times, and then counts it as a failure to count', async () => {
+      const retried = harness();
+      let down = 3;
+      retried.proxy.callAiEngine.mockImplementation(async (_p: string, payload: AiEngineScheduleRequest) => {
+        if (down-- > 0) throw new HttpException('unavailable', HttpStatus.SERVICE_UNAVAILABLE);
+        return fakeBounds(payload as never);
+      });
+      await retried.service.start({ academicYearId: YEAR }, user);
+      await settled(retried.service);
+      expect(finishing(retried).at(-1)!.values).toContain('SUCCEEDED');
+
+      const down503 = harness();
+      down503.proxy.callAiEngine.mockRejectedValue(new HttpException('unavailable', HttpStatus.SERVICE_UNAVAILABLE));
+      await down503.service.start({ academicYearId: YEAR }, user);
+      await settled(down503.service);
+      // Nothing was counted (every try was refused): the run is over and says so, not left RUNNING.
+      expect(finishing(down503).at(-1)!.sql).toContain("'FAILED'");
+      expect(finishing(down503).at(-1)!.values).toContain(SEARCH_START_NOT_EXACT);
+      expect(down503.proxy.callAiEngine.mock.calls.length).toBeLessThanOrEqual(10);
+    });
+
+    it('ends the run, with the best it had, when the engine turns out to be an older one in the middle of a search (a deploy)', async () => {
+      const h = harness();
+      let calls = 0;
+      h.proxy.callAiEngine.mockImplementation(async (_p: string, payload: AiEngineScheduleRequest) => {
+        calls += 1;
+        // The API is newer than the engine for a few minutes of a rolling deploy: the route is gone from the next count on.
+        if (calls > 15) throw new HttpException('Not Found', HttpStatus.NOT_FOUND);
+        return fakeBounds(payload as never);
+      });
+
+      await h.service.start({ academicYearId: YEAR }, user);
+      await settled(h.service);
+
+      const failed = finishing(h).at(-1)!;
+      expect(failed.sql).toContain("'FAILED'");
+      expect(failed.values).toContain(SEARCH_ENGINE_OLDER);
+      const checkpoint = JSON.parse(failed.values.find((v) => typeof v === 'string' && v.includes('"changes"')) as string) as { changes: unknown[] };
+      expect(checkpoint.changes.length).toBeGreaterThan(0);
+    });
+
+    it('says what it left out, by reason, in the figures it keeps: nothing is dropped in silence', async () => {
+      // Seven posts the plan holds: four a search can move, one not released, one nobody leads, one the week does not carry.
+      const rows = [planned(1), planned(2), planned(3), planned(4), planned(5, { kind: 'FIXED' }), planned(6, { kind: 'OPEN', current: null }), planned(7)];
+      const h = harness({ plan: planOf(rows, [teacher(T.a.real), teacher(T.b.real), teacher(T.c.real)]) });
+
+      await h.service.start({ academicYearId: YEAR }, user);
+      await settled(h.service);
+
+      const done = finishing(h).at(-1)!;
+      const figures = JSON.parse(done.values.find((v) => typeof v === 'string' && v.includes('"leftOut"')) as string) as ReturnType<typeof figuresDocOf>;
+      expect(figures.leftOut).toEqual({
+        posts: [
+          { reason: 'NOT_FREE', count: 1 },
+          { reason: 'UNSTAFFED', count: 1 },
+          { reason: 'NOT_IN_WEEK', count: 1 },
+        ],
+        years: [],
+      });
+    });
+
+    it('judges at most four years and names the others and their posts; a year that could not be counted to the end as it stands is not searched, and is said', async () => {
+      // Posts of the years 4 to 9, one each: six years, each with a choice. The engine counts years 4–8 exactly and not year 9 (the seconds ran out).
+      const posts = [4, 5, 6, 7, 8, 9].map((grade, i) => post(i + 1, T.a.engine, { minGradeLevel: grade, maxGradeLevel: grade }));
+      const h = harness({ posts });
+      h.proxy.callAiEngine.mockImplementation(async (_p: string, payload: AiEngineScheduleRequest & { years?: number[] }) => {
+        const answer = fakeBounds(payload as never);
+        return payload.years?.includes(9) ? { ...answer, deadlineHit: true } : answer;
+      });
+
+      await h.service.start({ academicYearId: YEAR }, user);
+      await settled(h.service);
+
+      const figures = JSON.parse(finishing(h).at(-1)!.values.find((v) => typeof v === 'string' && v.includes('"leftOut"')) as string) as ReturnType<typeof figuresDocOf>;
+      // Year 9: no exact figure as it stands, so "no tighter than today" cannot be decided there. Year 8: the fifth of five counted years, past the limit of four.
+      expect(figures.leftOut.years).toEqual([
+        { year: 8, reason: 'YEAR_LIMIT' },
+        { year: 9, reason: 'YEAR_NOT_COUNTED' },
+      ]);
+      expect(figures.leftOut.posts).toEqual([
+        { reason: 'YEAR_LIMIT', count: 1 },
+        { reason: 'YEAR_NOT_COUNTED', count: 1 },
+      ]);
+      expect(figures.years.map((entry) => entry.year)).toEqual([4, 5, 6, 7]);
+      // No candidate was ever asked for a year that was left out, and a year that was not counted was asked for once, at the baseline.
+      const asked = (h.proxy.callAiEngine.mock.calls as [string, { years: number[] }][]).map(([, body]) => body.years);
+      expect(asked.filter((years) => years.includes(9))).toHaveLength(1);
+      expect(asked.filter((years) => years.includes(8))).toHaveLength(1);
+    });
+
+    it('says every year, when no year could be counted to the end as it stands', async () => {
+      const posts = [8, 9].map((grade, i) => post(i + 1, T.a.engine, { minGradeLevel: grade, maxGradeLevel: grade }));
+      const h = harness({ posts });
+      h.proxy.callAiEngine.mockImplementation(async (_p: string, payload: AiEngineScheduleRequest) => ({ ...fakeBounds(payload as never), deadlineHit: true }));
+
+      await h.service.start({ academicYearId: YEAR }, user);
+      await settled(h.service);
+
+      const failed = finishing(h).at(-1)!;
+      expect(failed.values).toContain(SEARCH_START_NOT_EXACT);
+      const figures = JSON.parse(failed.values.find((v) => typeof v === 'string' && v.includes('"leftOut"')) as string) as ReturnType<typeof figuresDocOf>;
+      expect(figures.leftOut.years).toEqual([
+        { year: 8, reason: 'YEAR_NOT_COUNTED' },
+        { year: 9, reason: 'YEAR_NOT_COUNTED' },
+      ]);
     });
 
     it('gives way to a Generera run of the year: it asks the engine nothing while one is going', async () => {
@@ -709,7 +905,7 @@ describe('StaffingSearchService', () => {
       round: 3,
       evaluations: 41,
       acceptedMoves: 2,
-      figures: { years: [{ year: 9, weeks: [] }], skippedPosts: 0, immovablePosts: 1 },
+      figures: { years: [{ year: 9, weeks: [] }], leftOut: { posts: [{ reason: 'NO_CHOICE', count: 1 }], years: [{ year: 8, reason: 'YEAR_LIMIT' }] } },
       checkpoint: { changes: [{ requirementId: real(1), fromTeacherId: T.a.real, toTeacherId: T.b.real }], tally: { better: 2, notBetter: 30, worse: 4, refused: 0, unranked: 5 } },
       error: null,
       errorCode: null,
@@ -731,6 +927,8 @@ describe('StaffingSearchService', () => {
       expect(view).toMatchObject({ id: RUN, status: 'RUNNING', round: 3, evaluations: 41, acceptedMoves: 2, hasProposal: false, budgetMs: 900_000 });
       // The payload's 9 is the school's 10 in a ten-year numbering.
       expect(view.figures!.years[0]!.year).toBe(10);
+      // What was left out is said in the same numbering, with its reasons: the year the search did not judge (8) is the school's 9.
+      expect(view.figures!.leftOut).toEqual({ posts: [{ reason: 'NO_CHOICE', count: 1 }], years: [{ year: 9, reason: 'YEAR_LIMIT' }] });
       expect(view.tally).toEqual({ better: 2, notBetter: 30, worse: 4, refused: 0, unranked: 5 });
       expect(view.elapsedMs).toBeGreaterThan(90_000);
     });
@@ -778,7 +976,7 @@ describe('StaffingSearchService', () => {
       staffingBasis: STAFFING_BASIS,
       weekBasis: weekBasisOf(parts()),
       options: { pinnedRequirementIds: [] },
-      figures: { years: [], skippedPosts: 0, immovablePosts: 0 },
+      figures: { years: [], leftOut: { posts: [], years: [] } },
       checkpoint: { changes: [{ requirementId: real(1), fromTeacherId: T.a.real, toTeacherId: T.b.real }], tally: { better: 1, notBetter: 0, worse: 0, refused: 0, unranked: 0 } },
       ...patch,
     });
@@ -799,6 +997,22 @@ describe('StaffingSearchService', () => {
       expect(leads.get(real(1))).toBe(T.b.real);
       expect(leads.get(real(2))).toBe(T.a.real);
       expect(result.proposal).toMatchObject({ basisSha256: basis });
+    });
+
+    it('comes with what the search left out, in the school\'s own numbering: the proposal says it as the panel does', async () => {
+      const h = harness();
+      h.tx.academicYear!.findUnique!.mockResolvedValue({ gradeNumbering: 'TIOARIG' });
+      h.state.row = run({
+        figures: { years: [{ year: 8, weeks: [] }], leftOut: { posts: [{ reason: 'UNSTAFFED', count: 4 }, { reason: 'YEAR_NOT_COUNTED', count: 1 }], years: [{ year: 9, reason: 'YEAR_NOT_COUNTED' }] } },
+      });
+
+      const result = await h.service.proposal(RUN, user);
+
+      expect(result.figures!.years[0]!.year).toBe(9);
+      expect(result.figures!.leftOut).toEqual({
+        posts: [{ reason: 'UNSTAFFED', count: 4 }, { reason: 'YEAR_NOT_COUNTED', count: 1 }],
+        years: [{ year: 10, reason: 'YEAR_NOT_COUNTED' }],
+      });
     });
 
     it('is old (409 STAFF_PROPOSAL_STALE) when the tjänstefördelning or the releases have changed since the search read them', async () => {
@@ -857,10 +1071,10 @@ describe('figuresDocOf', () => {
     const now = new Map([[9, new Map([['0:x', cell(950)], ['1:ODD_WEEKS', cell(900)]])]]);
     const stretches = [[{ from: '2026-08-18', to: '2026-12-21' }], [{ from: '2027-01-11', to: '2027-06-10' }]];
 
-    const doc = figuresDocOf(start, now, stretches as never, { skippedPosts: 2, immovablePosts: 3 });
+    const doc = figuresDocOf(start, now, stretches as never, { posts: [{ reason: 'NO_CHOICE', count: 3 }, { reason: 'YEAR_LIMIT', count: 2 }], years: [{ year: 5, reason: 'YEAR_LIMIT' }] });
 
-    expect(doc.skippedPosts).toBe(2);
-    expect(doc.immovablePosts).toBe(3);
+    // What was left out is kept with the figures, by reason: the dialog and the proposal say it.
+    expect(doc.leftOut).toEqual({ posts: [{ reason: 'NO_CHOICE', count: 3 }, { reason: 'YEAR_LIMIT', count: 2 }], years: [{ year: 5, reason: 'YEAR_LIMIT' }] });
     expect(doc.years).toHaveLength(1);
     const [autumn, spring] = doc.years[0]!.weeks;
     expect(autumn).toMatchObject({ period: 0, parity: null, from: '2026-08-18', to: '2026-12-21', before: { demandMinutes: 1100 }, after: { demandMinutes: 950 } });
@@ -870,7 +1084,7 @@ describe('figuresDocOf', () => {
   it('has no dates for a year without periods', () => {
     const start = new Map([[9, new Map([['x:x', cell(1100)]])]]);
 
-    const doc = figuresDocOf(start, start, null, { skippedPosts: 0, immovablePosts: 0 });
+    const doc = figuresDocOf(start, start, null, { posts: [], years: [] });
 
     expect(doc.years[0]!.weeks[0]).toMatchObject({ period: null, parity: null, from: null, to: null });
   });

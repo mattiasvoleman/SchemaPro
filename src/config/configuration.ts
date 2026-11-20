@@ -135,13 +135,13 @@ export interface CandidatesConfig {
 export interface StaffingSearchConfig {
   /** STAFFING_SEARCH_BUDGET_SECONDS: how long a search may run, 60..3600 (900). */
   budgetSeconds: number;
-  /** STAFFING_SEARCH_CONCURRENCY: evaluations asked of the engine at once, 1..6 (3). */
+  /** STAFFING_SEARCH_CONCURRENCY: evaluations asked of the engine at once, 1..6 (1: the engine counts one at a time for every school). */
   concurrency: number;
 }
 
 export const DEFAULT_STAFFING_SEARCH_CONFIG: Readonly<StaffingSearchConfig> = {
   budgetSeconds: 900,
-  concurrency: 3,
+  concurrency: 1,
 };
 
 /** The defaults env.validation states, for a caller handed an environment without them. */

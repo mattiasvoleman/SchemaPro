@@ -120,7 +120,7 @@ describe('Lärarval F3: sökningen (e2e)', () => {
     round: 4,
     evaluations: 31,
     acceptedMoves: 1,
-    figures: { years: [{ year: 9, weeks: [{ period: null, parity: null, from: null, to: null, before: { demandMinutes: 1300, capacityMinutes: CAPACITY }, after: { demandMinutes: 1100, capacityMinutes: CAPACITY } }] }], skippedPosts: 0, immovablePosts: 0 },
+    figures: { years: [{ year: 9, weeks: [{ period: null, parity: null, from: null, to: null, before: { demandMinutes: 1300, capacityMinutes: CAPACITY }, after: { demandMinutes: 1100, capacityMinutes: CAPACITY } }] }], leftOut: { posts: [{ reason: 'UNSTAFFED', count: 2 }], years: [{ year: 8, reason: 'YEAR_LIMIT' }] } },
     checkpoint: { changes: [{ requirementId: real(1), fromTeacherId: TEACHERS.a.real, toTeacherId: TEACHERS.b.real }], tally: { better: 1, notBetter: 9, worse: 2, refused: 0, unranked: 1 } },
     error: null,
     errorCode: null,
@@ -241,6 +241,8 @@ describe('Lärarval F3: sökningen (e2e)', () => {
       expect(latest.body).toMatchObject({ id: RUN_ID, status: 'SUCCEEDED', stopReason: 'LOCAL_OPTIMUM', round: 4, evaluations: 31, acceptedMoves: 1, hasProposal: true });
       // The figures are in the school's numbering and carry no name or id.
       expect(latest.body.figures.years[0].year).toBe(9);
+      // And what the search left out is said, with its reasons: two posts nobody leads, a year past the limit.
+      expect(latest.body.figures.leftOut).toEqual({ posts: [{ reason: 'UNSTAFFED', count: 2 }], years: [{ year: 8, reason: 'YEAR_LIMIT' }] });
       expect(JSON.stringify(latest.body)).not.toContain(TEACHERS.a.real);
 
       const one = await request(http()).get(`/api/v1/optimization/staffing/search/${RUN_ID}`).set('x-test-user', admin()).expect(200);
@@ -248,6 +250,8 @@ describe('Lärarval F3: sökningen (e2e)', () => {
 
       const proposed = await request(http()).get(`/api/v1/optimization/staffing/search/${RUN_ID}/proposal`).set('x-test-user', admin()).expect(200);
       expect(proposed.body.proposal.basisSha256).toBe(withWeekBasis(STAFFING_BASIS, weekBasisOf(weekParts)));
+      // The proposal carries the same account of what was left out.
+      expect(proposed.body.figures.leftOut).toEqual({ posts: [{ reason: 'UNSTAFFED', count: 2 }], years: [{ year: 8, reason: 'YEAR_LIMIT' }] });
       const leads = new Map<string, string>(proposed.body.proposal.leads);
       expect(leads.get(real(1))).toBe(TEACHERS.b.real);
       expect(leads.get(real(2))).toBe(TEACHERS.a.real);

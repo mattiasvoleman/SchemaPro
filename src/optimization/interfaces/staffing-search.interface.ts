@@ -59,6 +59,7 @@ export type StaffingSearchStop =
   | 'MAX_ROUNDS'
   | 'MAX_EVALUATIONS'
   | 'ENGINE_OLDER' // the engine has no such route yet
+  | 'ENGINE_BUSY' // the engine was too busy to take a count for too long (the school's own wait is not counted in the budget)
   | 'ENGINE_FAILING'; // the engine failed several evaluations in a row
 
 // ---------------------------------------------------------------------------
@@ -82,13 +83,31 @@ export interface StaffingSearchYearFigures {
   weeks: StaffingSearchWeekFigure[];
 }
 
+/**
+ * WHAT THE SEARCH DID NOT MOVE, AND WHY. Nothing it leaves out is left out in silence: a post is counted under the one reason
+ * that kept it from being searched, and a year a post with a choice spans that was not judged is named, with its reason.
+ */
+export type StaffingSearchLeftOutPostReason =
+  | 'NOT_FREE' // not released for the engine, or pinned in the dialog: it keeps its lead
+  | 'UNSTAFFED' // nobody leads it: Föreslå bemanning's question, not this search's
+  | 'NO_CHOICE' // nobody else may lead it by the plan's rules (behörighet, tjänstgrad, medlärare, excluded)
+  | 'NOT_IN_WEEK' // the week carries none of its lessons (all hand-placed), or its years are not known: nothing in the week can change by it
+  | 'YEAR_LIMIT' // a year it spans is not among the (at most four) tightest, which are the years judged
+  | 'YEAR_NOT_COUNTED'; // a year it spans could not be counted to the end as it stands, so "no tighter than today" cannot be decided there
+
+export type StaffingSearchLeftOutYearReason = 'YEAR_LIMIT' | 'YEAR_NOT_COUNTED';
+
+export interface StaffingSearchLeftOut {
+  /** Only the reasons that have posts, in the order of the type above. */
+  posts: { reason: StaffingSearchLeftOutPostReason; count: number }[];
+  /** The years a post with a choice spans that were not judged, ascending, in the payload's numbering (NIOARIG): the view turns it into the school's. */
+  years: { year: number; reason: StaffingSearchLeftOutYearReason }[];
+}
+
 /** What the run stores of its figures, and what a poll gives back: only minutes, week keys and counts. */
 export interface StaffingSearchFiguresDoc {
   years: StaffingSearchYearFigures[];
-  /** Released posts left out because a year they span is not among the judged. */
-  skippedPosts: number;
-  /** Released posts with nobody else to be given to, or not in the week. */
-  immovablePosts: number;
+  leftOut: StaffingSearchLeftOut;
 }
 
 export interface StaffingSearchTally {

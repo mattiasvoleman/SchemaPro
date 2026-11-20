@@ -9,6 +9,7 @@ import {
   isNotTight,
   judge,
   judgedYearsOf,
+  leftOutOf,
   movableRows,
   moveKey,
   movesOf,
@@ -292,6 +293,100 @@ describe('movesOf', () => {
 });
 
 // ---------------------------------------------------------------------------
+// What the search leaves, said
+
+describe('leftOutOf', () => {
+  const none = { notFree: 0, unstaffed: 0, noChoice: 0, notInWeek: 0 };
+  const teachers = { A: { current: 100, limit: 1000 }, B: { current: 0, limit: 1000 } };
+
+  it('says nothing when every post a search could move is moved and the plan holds nothing else', () => {
+    const open = model([row('p1', 'A', ['A', 'B'], [9])], teachers);
+
+    expect(leftOutOf(open, none, figures({ 9: { '0:x': cell(900) } }), [9])).toEqual({ posts: [], years: [] });
+  });
+
+  it('counts the posts the plan holds that a search does not look at, each under its reason and in a fixed order', () => {
+    const open = model([row('p1', 'A', ['A', 'B'], [9])], teachers);
+
+    const said = leftOutOf(open, { notFree: 5, unstaffed: 3, noChoice: 2, notInWeek: 1 }, figures({ 9: { '0:x': cell(900) } }), [9]);
+
+    expect(said.posts).toEqual([
+      { reason: 'NOT_FREE', count: 5 },
+      { reason: 'UNSTAFFED', count: 3 },
+      { reason: 'NO_CHOICE', count: 2 },
+      { reason: 'NOT_IN_WEEK', count: 1 },
+    ]);
+    expect(said.years).toEqual([]);
+  });
+
+  it('names a year past the limit and the posts that span it: five years with a figure, four judged', () => {
+    const wide = model(
+      [
+        row('p1', 'A', ['A', 'B'], [5]),
+        row('p2', 'A', ['A', 'B'], [9]),
+        row('p3', 'A', ['A', 'B'], [8, 9]),
+        row('p4', 'A', ['A', 'B'], [5, 9]),
+        row('p5', 'A', ['A', 'B'], [6]),
+        row('p6', 'A', ['A', 'B'], [7]),
+      ],
+      teachers,
+    );
+    const start = figures({ 5: { '0:x': cell(100) }, 6: { '0:x': cell(300) }, 7: { '0:x': cell(500) }, 8: { '0:x': cell(700) }, 9: { '0:x': cell(900) } });
+    const judged = judgedYearsOf(wide, start, 4);
+
+    const said = leftOutOf(wide, none, start, judged);
+
+    // The four tightest are judged (9, 8, 7, 6); year 5, the slackest, is named, and so are the two posts that span it.
+    expect(judged).toEqual([9, 8, 7, 6]);
+    expect(said.years).toEqual([{ year: 5, reason: 'YEAR_LIMIT' }]);
+    expect(said.posts).toEqual([{ reason: 'YEAR_LIMIT', count: 2 }]);
+  });
+
+  it('says a year whose figure was not counted to the end, and counts its posts under that reason before the limit', () => {
+    const wide = model(
+      [row('p1', 'A', ['A', 'B'], [8]), row('p2', 'A', ['A', 'B'], [9]), row('p3', 'A', ['A', 'B'], [8, 9]), row('p4', 'A', ['A', 'B'], [7])],
+      teachers,
+    );
+    // Years 8 and 9 were counted exactly; 7 was not (no figure): its post is "not counted", the others are judged.
+    const start = figures({ 8: { '0:x': cell(700) }, 9: { '0:x': cell(900) } });
+
+    const said = leftOutOf(wide, none, start, judgedYearsOf(wide, start, 4));
+
+    expect(said.years).toEqual([{ year: 7, reason: 'YEAR_NOT_COUNTED' }]);
+    expect(said.posts).toEqual([{ reason: 'YEAR_NOT_COUNTED', count: 1 }]);
+  });
+
+  it('counts a post under YEAR_NOT_COUNTED when one of its years was not counted and another is past the limit', () => {
+    const wide = model([row('p1', 'A', ['A', 'B'], [5, 6, 7])], teachers);
+    // 5 has a figure but the limit is 1 and 6 is tighter; 7 has no figure.
+    const start = figures({ 5: { '0:x': cell(100) }, 6: { '0:x': cell(900) } });
+
+    const said = leftOutOf(wide, none, start, judgedYearsOf(wide, start, 1));
+
+    expect(said.years).toEqual([
+      { year: 5, reason: 'YEAR_LIMIT' },
+      { year: 7, reason: 'YEAR_NOT_COUNTED' },
+    ]);
+    expect(said.posts).toEqual([{ reason: 'YEAR_NOT_COUNTED', count: 1 }]);
+  });
+
+  it('says every year of a search that could count none: all of them not counted, and every post with a choice', () => {
+    const wide = model([row('p1', 'A', ['A', 'B'], [8]), row('p2', 'A', ['A', 'B'], [9])], teachers);
+
+    const said = leftOutOf(wide, { ...none, unstaffed: 2 }, new Map(), []);
+
+    expect(said.years).toEqual([
+      { year: 8, reason: 'YEAR_NOT_COUNTED' },
+      { year: 9, reason: 'YEAR_NOT_COUNTED' },
+    ]);
+    expect(said.posts).toEqual([
+      { reason: 'UNSTAFFED', count: 2 },
+      { reason: 'YEAR_NOT_COUNTED', count: 2 },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The model from a plan
 
 describe('searchModelOf', () => {
@@ -334,21 +429,44 @@ describe('searchModelOf', () => {
       [teacher('A'), teacher('B'), teacher('C', { keepOrShed: true })],
     );
 
-    const { model: built, immovable } = searchModelOf(plan, () => [9]);
+    const { model: built, excluded } = searchModelOf(plan, () => [9]);
 
     // p1: A (keeps) and B; C is excluded. p2: only A is eligible, so nobody to move it to. p3 is fixed and p4 has nobody to move.
     expect(built.rows.map((r) => [r.requirementId, r.options])).toEqual([['p1', ['A', 'B']]]);
-    expect(immovable).toBe(1);
+    // Every post the search does not look at is counted under its own reason: none is left out in silence.
+    expect(excluded).toEqual({ notFree: 1, unstaffed: 1, noChoice: 1, notInWeek: 0 });
     expect(built.teachers.get('A')).toEqual({ currentTenths: 500, limitTenths: 11000 });
   });
 
   it('leaves a post that is not in the week, or whose years are not known, out of the search', () => {
     const plan = planOf([planned('p1'), planned('p2'), planned('p3')], [teacher('A'), teacher('B')]);
 
-    const { model: built, immovable } = searchModelOf(plan, (id) => (id === 'p1' ? [9] : id === 'p2' ? null : []));
+    const { model: built, excluded } = searchModelOf(plan, (id) => (id === 'p1' ? [9] : id === 'p2' ? null : []));
 
     expect(built.rows.map((r) => r.requirementId)).toEqual(['p1']);
-    expect(immovable).toBe(2);
+    expect(excluded).toEqual({ notFree: 0, unstaffed: 0, noChoice: 0, notInWeek: 2 });
+  });
+
+  it('counts a free post nobody leads as unstaffed, a post the school keeps as not free, and a staffed one in a year no week carries as not in the week (a post of every kind is counted once)', () => {
+    const plan = planOf(
+      [
+        planned('free-a'),
+        planned('free-b', { kind: 'FIXED' }),
+        planned('free-c', { kind: 'FIXED' }),
+        planned('open-a', { kind: 'OPEN', current: null }),
+        planned('open-b', { kind: 'OPEN', current: null }),
+        planned('open-c', { kind: 'OPEN', current: null }),
+        planned('kept-no-lead', { current: null }),
+        planned('lonely', { eligible: ['A'] }),
+        planned('no-week'),
+      ],
+      [teacher('A'), teacher('B')],
+    );
+
+    const { model: built, excluded } = searchModelOf(plan, (id) => (id === 'no-week' ? null : [9]));
+
+    expect(built.rows.map((r) => r.requirementId)).toEqual(['free-a']);
+    expect(excluded).toEqual({ notFree: 2, unstaffed: 4, noChoice: 1, notInWeek: 1 });
   });
 
   it('never offers a post to its co-teacher', () => {
@@ -555,6 +673,21 @@ describe('runSearch', () => {
     expect(failing.stop).toBe('ENGINE_FAILING');
     expect(failing.evaluations).toBe(6);
     expect(failing.accepted).toBe(0);
+  });
+
+  it('ends at once, with what it has, when the engine stays too busy to count (not as a failure, and not after six tries)', async () => {
+    const { figuresOf } = oracle(posts, base);
+    const start = figuresOf(open, new Map(), [9]);
+
+    const busy = await runSearch(open, start, { ...LIMITS, concurrency: 1 }, {
+      evaluate: async () => ({ kind: 'UNRANKED', reason: 'ENGINE_BUSY' }),
+      stopped: () => null,
+    });
+
+    expect(busy.stop).toBe('ENGINE_BUSY');
+    expect(busy.evaluations).toBe(1);
+    expect(busy.accepted).toBe(0);
+    expect(busy.tally.unranked.ENGINE_BUSY).toBe(1);
   });
 
   it('stops at the number of evaluations it was given', async () => {

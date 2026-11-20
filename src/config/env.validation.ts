@@ -371,14 +371,15 @@ export class EnvironmentVariables {
   STAFFING_SEARCH_BUDGET_SECONDS: number = 900;
 
   /**
-   * Evaluations a search asks of the engine at once (each is a count of the year's exact least week, 5-9 s of one core). The
-   * engine holds its own gate (WEEK_BOUNDS_CONCURRENCY, 2): a request beyond it is answered 429 and waited for, so this is the
-   * most one search takes of it, and a second search of another school takes the rest.
+   * Evaluations a search asks of the engine at once. ONE, and the engine is why: it is shared by every school (production has one
+   * replica) and counts one candidate at a time in a gate of its own that cannot be raised (optimization-engine
+   * app/api/v1/week_bounds.py): a request beyond it is answered 429 and the search waits, outside its own time. A number above one
+   * only pays when the engine has more replicas than one, each with its own gate; with one replica it is waiting in more places.
    */
   @IsInt()
   @Min(1)
   @Max(6)
-  STAFFING_SEARCH_CONCURRENCY: number = 3;
+  STAFFING_SEARCH_CONCURRENCY: number = 1;
 
   /**
    * "Logga in med skolkonto" (src/sign-in, migration 20261020090000). `off`,

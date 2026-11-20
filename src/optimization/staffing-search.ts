@@ -1,5 +1,9 @@
-import type { AiEngineWeekBoundsResponse } from './interfaces/staffing-search.interface';
-import type { StaffingSearchStop } from './interfaces/staffing-search.interface';
+import type {
+  AiEngineWeekBoundsResponse,
+  StaffingSearchLeftOut,
+  StaffingSearchLeftOutPostReason,
+  StaffingSearchStop,
+} from './interfaces/staffing-search.interface';
 import { leadRefusal, type Plan } from './staffing-proposal.service';
 
 /*
@@ -101,7 +105,9 @@ export type UnrankedReason =
   | 'MISSING_YEAR' // a year asked for has no figure
   | 'INCONSISTENT' // the weeks counted are not the weeks of the state it is compared with
   | 'ENGINE_ERROR'
-  | 'ENGINE_OLDER';
+  | 'ENGINE_OLDER'
+  /** The engine's gate stayed busy (429, or 503 that went on) for as long as the search waits in all: nothing was counted. */
+  | 'ENGINE_BUSY';
 
 /** What an evaluation of one candidate came to. Only FIGURES has figures to rank by. */
 export type Evaluation =
@@ -218,26 +224,49 @@ export interface SearchModel {
   teachers: ReadonlyMap<string, SearchTeacher>;
 }
 
+/** The posts of the plan a search does not look at, and why (the dialog and the proposal say each of them: nothing is left out in silence). */
+export interface ExcludedPosts {
+  /** Not free: not released for the engine, or pinned in the dialog. They keep their lead. */
+  notFree: number;
+  /** Free but nobody leads them: Föreslå bemannings question. */
+  unstaffed: number;
+  /** Released and staffed, with nobody else the plan lets lead them. */
+  noChoice: number;
+  /** Released and staffed, but the week carries none of their lessons or their years are not known: nothing in the week can change by them. */
+  notInWeek: number;
+}
+
 /**
  * The model a plan gives: the released posts that have somebody else they may be given to, and every teacher's room. A post
  * the payload does not carry (every lesson of it hand-placed) is not searched, since nothing in the week can change by it;
- * a post whose years are unknown is not either, because a year it may change cannot be judged. `skipped` says how many were
- * left out for either, and for having nobody to be given to.
+ * a post whose years are unknown is not either, because a year it may change cannot be judged. `excluded` says how many
+ * posts the plan holds that are left out, by the reason (ExcludedPosts).
  */
 export function searchModelOf(
   plan: Plan,
   yearsOf: (requirementId: string) => readonly number[] | null,
-): { model: SearchModel; immovable: number } {
+): { model: SearchModel; excluded: ExcludedPosts } {
   const rows: SearchRow[] = [];
-  let immovable = 0;
+  const excluded: ExcludedPosts = { notFree: 0, unstaffed: 0, noChoice: 0, notInWeek: 0 };
   for (const planned of plan.rows) {
-    if (planned.kind !== 'KEPT' || planned.current === null) continue;
+    if (planned.kind === 'FIXED') {
+      excluded.notFree += 1;
+      continue;
+    }
+    if (planned.kind === 'OPEN' || planned.current === null) {
+      excluded.unstaffed += 1;
+      continue;
+    }
     const years = yearsOf(planned.row.id);
+    if (years === null || years.length === 0) {
+      excluded.notInWeek += 1;
+      continue;
+    }
     const options = plan.teachers
       .map((teacher) => teacher.userId)
       .filter((userId) => leadRefusal(plan, planned, userId) === null);
-    if (years === null || years.length === 0 || options.length < 2) {
-      immovable += 1;
+    if (options.length < 2) {
+      excluded.noChoice += 1;
       continue;
     }
     rows.push({
@@ -252,7 +281,7 @@ export function searchModelOf(
   const teachers = new Map<string, SearchTeacher>(
     plan.teachers.map((teacher) => [teacher.userId, { currentTenths: teacher.currentTenths, limitTenths: teacher.limitTenths }]),
   );
-  return { model: { rows, teachers }, immovable };
+  return { model: { rows, teachers }, excluded };
 }
 
 /** A post's lead in a state: the one a move gave it, else the one it has today. */
@@ -396,6 +425,49 @@ export function judgedYearsOf(model: SearchModel, baseline: Figures, limit: numb
     .slice(0, Math.max(0, limit));
 }
 
+/**
+ * WHAT THE SEARCH LEAVES, SAID. The posts the plan holds that it does not look at (`excluded`), the posts with a choice that it
+ * does not move because a year they span is not judged, and those years, each with its reason:
+ *
+ *  - YEAR_NOT_COUNTED: the year has no exact figure as it stands (the count did not finish in the engine's seconds, or a pricing
+ *    step was not proved), so "no tighter than today" cannot be decided there and it is not searched. The figure of today is
+ *    never a bound or a first refused period's: week-bounds counts every week to the end and says per figure whether it is exact;
+ *  - YEAR_LIMIT: the year has a figure but is not among the `judged` (the tightest MAX_JUDGED_YEARS).
+ *
+ * A post is counted under the first reason that applies (a year not counted before a year past the limit).
+ */
+export function leftOutOf(
+  model: SearchModel,
+  excluded: ExcludedPosts,
+  baseline: Figures,
+  judged: readonly number[],
+): StaffingSearchLeftOut {
+  const judgedSet = new Set(judged);
+  const years = [...new Set(model.rows.flatMap((row) => row.years))]
+    .filter((year) => !judgedSet.has(year))
+    .sort((a, b) => a - b)
+    .map((year) => ({ year, reason: (baseline.has(year) ? 'YEAR_LIMIT' : 'YEAR_NOT_COUNTED') as 'YEAR_LIMIT' | 'YEAR_NOT_COUNTED' }));
+  const reasonOfYear = new Map(years.map(({ year, reason }) => [year, reason]));
+  const counts: Record<StaffingSearchLeftOutPostReason, number> = {
+    NOT_FREE: excluded.notFree,
+    UNSTAFFED: excluded.unstaffed,
+    NO_CHOICE: excluded.noChoice,
+    NOT_IN_WEEK: excluded.notInWeek,
+    YEAR_LIMIT: 0,
+    YEAR_NOT_COUNTED: 0,
+  };
+  for (const row of model.rows) {
+    const reasons = row.years.map((year) => reasonOfYear.get(year)).filter((reason) => reason !== undefined);
+    if (reasons.length === 0) continue;
+    counts[reasons.includes('YEAR_NOT_COUNTED') ? 'YEAR_NOT_COUNTED' : 'YEAR_LIMIT'] += 1;
+  }
+  const order: StaffingSearchLeftOutPostReason[] = ['NOT_FREE', 'UNSTAFFED', 'NO_CHOICE', 'NOT_IN_WEEK', 'YEAR_LIMIT', 'YEAR_NOT_COUNTED'];
+  return {
+    posts: order.filter((reason) => counts[reason] > 0).map((reason) => ({ reason, count: counts[reason] })),
+    years,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // The search
 
@@ -463,6 +535,7 @@ function emptyTally(): SearchTally {
       INCONSISTENT: 0,
       ENGINE_ERROR: 0,
       ENGINE_OLDER: 0,
+      ENGINE_BUSY: 0,
     },
   };
 }
@@ -554,6 +627,9 @@ export async function runSearch(
           results[index] = evaluation;
           if (evaluation.kind === 'UNRANKED' && evaluation.reason === 'ENGINE_OLDER') {
             round_.stop = 'ENGINE_OLDER';
+          } else if (evaluation.kind === 'UNRANKED' && evaluation.reason === 'ENGINE_BUSY') {
+            // The wait for the engine is over (the service gave it up): the search ends with what it has.
+            round_.stop = 'ENGINE_BUSY';
           } else if (evaluation.kind === 'UNRANKED' && evaluation.reason === 'ENGINE_ERROR') {
             engineFailures += 1;
             if (engineFailures >= ENGINE_FAILURES_IN_A_ROW) round_.stop = 'ENGINE_FAILING';

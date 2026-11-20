@@ -92,7 +92,7 @@ describe('loadConfiguration', () => {
       // Unset: 30 s a candidate, two runs at once, four workers, the sweep on.
       candidates: { maxSeconds: 30, runsMax: 2, solverWorkers: 4, background: true },
       // Unset: a search may run 15 minutes and asks the engine for three counts at once.
-      staffingSearch: { budgetSeconds: 900, concurrency: 3 },
+      staffingSearch: { budgetSeconds: 900, concurrency: 1 },
     });
   });
 

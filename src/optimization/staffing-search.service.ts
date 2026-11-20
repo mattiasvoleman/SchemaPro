@@ -27,6 +27,7 @@ import {
   type AiEngineWeekBoundsResponse,
   type StaffingSearchCheckpoint,
   type StaffingSearchFiguresDoc,
+  type StaffingSearchLeftOut,
   type StaffingSearchStatus,
   type StaffingSearchStop,
   type StaffingSearchTally,
@@ -45,7 +46,7 @@ import {
 import {
   cutoffsOf,
   judgedYearsOf,
-  movableRows,
+  leftOutOf,
   readEvaluation,
   runSearch,
   searchModelOf,
@@ -81,6 +82,8 @@ export const SEARCH_START_REFUSED = 'SEARCH_START_REFUSED';
 export const SEARCH_START_NOT_EXACT = 'SEARCH_START_NOT_EXACT';
 export const SEARCH_ENGINE_OLDER = 'SEARCH_ENGINE_OLDER';
 export const SEARCH_ENGINE_FAILING = 'SEARCH_ENGINE_FAILING';
+/** The engine's gate (429) or the engine itself (503) did not take a count for as long as the search waits in all. */
+export const SEARCH_ENGINE_BUSY = 'SEARCH_ENGINE_BUSY';
 export const SEARCH_FAILED = 'SEARCH_FAILED';
 
 /** The sweep's name in the runner and in JobRuns. */
@@ -98,9 +101,22 @@ export const BOUNDS_WAIT_MS = (BOUNDS_SECONDS + 15) * 1000;
 export const SEARCH_LEASE_SECONDS = 90;
 /** How often the task renews its lease and looks for a cancellation: much shorter than a Generera run's, so a cancel is answered at once. */
 export const SEARCH_HEARTBEAT_MS = Math.min(HEARTBEAT_INTERVAL_MS, 5_000);
-/** Waits for an engine that says it is busy (429), before the evaluation is given up as not counted. */
-const BUSY_RETRIES = 6;
+/**
+ * THE ENGINE IS SHARED BY EVERY SCHOOL (one replica in production) and counts one search's candidate at a time (its own gate,
+ * optimization-engine/app/api/v1/week_bounds.py), so a 429 is the ordinary answer when another school's search, or the same
+ * school's, holds it. The search backs off and asks again (BUSY_WAIT_MS, growing to BUSY_WAIT_MAX_MS), in slices that a
+ * cancellation interrupts, and THE WAIT IS NOT COUNTED IN THE SEARCH'S TIME (as the wait for a Generera run is not): a search
+ * that was kept waiting has as much to count with as one that was not. A wait that lasts BUSY_GIVE_UP_MS in all ends the search
+ * with what it has (ENGINE_BUSY): a job that waits for ever is a job stuck in RUNNING.
+ *
+ * A 503 is the engine unreachable or a count that did not finish; it is asked again a few times (BUSY_503_RETRIES) and then
+ * given up as an engine failure, since the same candidate may be what the engine cannot finish.
+ */
 const BUSY_WAIT_MS = 2_000;
+const BUSY_WAIT_MAX_MS = 10_000;
+const BUSY_SLICE_MS = 1_000;
+export const BUSY_GIVE_UP_MS = 45 * 60 * 1000;
+const BUSY_503_RETRIES = 8;
 /** How long the search waits, in all, for a Generera run of the year to end before it goes on beside it. */
 export const YIELD_MAX_MS = 10 * 60 * 1000;
 const YIELD_POLL_MS = 10_000;
@@ -160,6 +176,16 @@ function tallyOf(progress: SearchProgress['tally']): StaffingSearchTally {
   };
 }
 
+/** The figures as the school reads them: every year in the school's own numbering (the doc keeps the payload's). */
+export function inSchoolsNumbering(figures: StaffingSearchFiguresDoc, numbering: GradeNumbering): StaffingSearchFiguresDoc {
+  const convert = (year: number): number => fromNioarig(year, numbering) ?? year;
+  return {
+    ...figures,
+    years: figures.years.map((entry) => ({ ...entry, year: convert(entry.year) })),
+    leftOut: { posts: figures.leftOut?.posts ?? [], years: (figures.leftOut?.years ?? []).map((entry) => ({ ...entry, year: convert(entry.year) })) },
+  };
+}
+
 /**
  * The figures a run keeps: each judged year's weeks before the search and as far as it has come, with the week's dates when the
  * year has periods. Only minutes and week keys.
@@ -168,7 +194,7 @@ export function figuresDocOf(
   start: Figures,
   now: Figures,
   stretches: readonly (readonly PeriodStretch[])[] | null,
-  counts: { skippedPosts: number; immovablePosts: number },
+  leftOut: StaffingSearchLeftOut,
 ): StaffingSearchFiguresDoc {
   return {
     years: [...start.keys()]
@@ -197,8 +223,7 @@ export function figuresDocOf(
           };
         }),
       })),
-    skippedPosts: counts.skippedPosts,
-    immovablePosts: counts.immovablePosts,
+    leftOut,
   };
 }
 
@@ -505,18 +530,37 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
         if (!span) return null;
         return Array.from({ length: span.max - span.min + 1 }, (_, index) => span.min + index);
       };
-      const { model, immovable } = searchModelOf(context.plan, yearsOf);
+      const { model, excluded } = searchModelOf(context.plan, yearsOf);
       const spanned = [...new Set(model.rows.flatMap((row) => row.years))].sort((a, b) => a - b);
-      const counts = { skippedPosts: 0, immovablePosts: immovable };
 
       if (model.rows.length === 0) {
-        await this.finish(runId, context.user, write, { status: 'SUCCEEDED', stop: 'NO_MOVES', doc: figuresDocOf(new Map(), new Map(), context.stretches, counts), checkpoint: null, progress: null });
+        const nothing = leftOutOf(model, excluded, new Map(), []);
+        await this.finish(runId, context.user, write, { status: 'SUCCEEDED', stop: 'NO_MOVES', doc: figuresDocOf(new Map(), new Map(), context.stretches, nothing), checkpoint: null, progress: null });
         return;
       }
 
       // The oracle: one candidate state (the leads it moves) counted for the years it touches.
       const rowOf = new Map(model.rows.map((row) => [row.requirementId, row]));
       let start: Figures = new Map();
+      // The waits for the engine's gate: counted once however many callers wait together (the first in line is credited), and not counted in the search's time.
+      const waiting = new Set<symbol>();
+      let busyMs = 0;
+      const backOff = async (ms: number): Promise<void> => {
+        const me = Symbol('busy');
+        waiting.add(me);
+        try {
+          for (let left = ms; left > 0 && stop() === null && !control.interrupted; left -= BUSY_SLICE_MS) {
+            const slice = Math.min(left, BUSY_SLICE_MS);
+            await this.delay(slice);
+            if (waiting.values().next().value === me) {
+              pausedMs += slice;
+              busyMs += slice;
+            }
+          }
+        } finally {
+          waiting.delete(me);
+        }
+      };
       const askEngine = async (leads: ReadonlyMap<string, string>, years: readonly number[], guard: Figures | null): Promise<Evaluation> => {
         const changes: LeadChange[] = [...leads].map(([requirementId, toTeacherId]) => ({
           requirementId,
@@ -531,6 +575,7 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
           ...(guard ? { cutoffs: cutoffsOf(guard, years) } : {}),
           seconds: BOUNDS_SECONDS,
         };
+        let unavailable = 0;
         for (let attempt = 0; ; attempt += 1) {
           await this.pauseWhileGenerating(context, control, () => stop(), (ms) => {
             pausedMs += ms;
@@ -551,9 +596,11 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
             if (error instanceof HttpException) {
               const status = error.getStatus();
               if (status === HttpStatus.NOT_FOUND || status === HttpStatus.METHOD_NOT_ALLOWED) return { kind: 'UNRANKED', reason: 'ENGINE_OLDER' };
-              // The engine's gate (WEEK_BOUNDS_CONCURRENCY): wait and ask again, a few times.
-              if (status === HttpStatus.TOO_MANY_REQUESTS && attempt < BUSY_RETRIES) {
-                await this.delay(BUSY_WAIT_MS * (attempt + 1));
+              // The engine's gate (it takes one count at a time, for every school) or the engine unable just now: back off and ask again.
+              // The wait is not the search's time; it ends the search (ENGINE_BUSY) only when it has lasted BUSY_GIVE_UP_MS in all.
+              if (status === HttpStatus.TOO_MANY_REQUESTS || (status === HttpStatus.SERVICE_UNAVAILABLE && (unavailable += 1) <= BUSY_503_RETRIES)) {
+                if (busyMs >= BUSY_GIVE_UP_MS) return { kind: 'UNRANKED', reason: 'ENGINE_BUSY' };
+                await backOff(Math.min(BUSY_WAIT_MS * (attempt + 1), BUSY_WAIT_MAX_MS));
                 continue;
               }
             }
@@ -566,9 +613,10 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
       const baseline = new Map<number, Map<string, WeekCell>>();
       let refusedAt: string | null = null;
       let older = false;
+      let busy = false;
       let next = 0;
       const baselineWorker = async (): Promise<void> => {
-        while (refusedAt === null && !older && stop() === null) {
+        while (refusedAt === null && !older && !busy && stop() === null) {
           const index = next;
           next += 1;
           const year = spanned[index];
@@ -576,6 +624,7 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
           const answer = await askEngine(new Map(), [year], null);
           if (answer.kind === 'REFUSED') refusedAt = answer.code;
           else if (answer.kind === 'UNRANKED' && answer.reason === 'ENGINE_OLDER') older = true;
+          else if (answer.kind === 'UNRANKED' && answer.reason === 'ENGINE_BUSY') busy = true;
           else if (answer.kind === 'FIGURES') baseline.set(year, new Map(answer.figures.get(year)!));
         }
       };
@@ -583,6 +632,10 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
 
       if (older) {
         await this.fail(runId, context.user, write, SEARCH_ENGINE_OLDER, 'The engine cannot count the week for a search yet.', null, null, doc);
+        return;
+      }
+      if (busy && stop() === null) {
+        await this.fail(runId, context.user, write, SEARCH_ENGINE_BUSY, 'The engine was busy for too long to count the week as it stands.', null, null, doc);
         return;
       }
       const early = stop();
@@ -595,14 +648,14 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
         return;
       }
       const judgedYears = judgedYearsOf(model, baseline, MAX_JUDGED_YEARS);
+      // WHAT THE SEARCH WILL NOT MOVE, said (every year not counted to the end as it stands, and every year past the limit, and their posts).
+      const leftOut: StaffingSearchLeftOut = leftOutOf(model, excluded, baseline, judgedYears);
       if (judgedYears.length === 0) {
-        await this.fail(runId, context.user, write, SEARCH_START_NOT_EXACT, 'No year could be counted to the end in the engine\'s seconds.', null, null, doc);
+        await this.fail(runId, context.user, write, SEARCH_START_NOT_EXACT, 'No year could be counted to the end in the engine\'s seconds.', null, null, figuresDocOf(new Map(), new Map(), context.stretches, leftOut));
         return;
       }
       start = new Map(judgedYears.map((year) => [year, baseline.get(year)!]));
-      const judged = new Set(judgedYears);
-      counts.skippedPosts = movableRows(model, judged).skipped;
-      doc = figuresDocOf(start, start, context.stretches, counts);
+      doc = figuresDocOf(start, start, context.stretches, leftOut);
 
       const search = (limits: { concurrency: number; maxRounds: number; maxEvaluations: number; batch: number }, searched: SearchModel): Promise<SearchOutcome> =>
         runSearch(searched, start, limits, {
@@ -613,7 +666,7 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
           },
           accepted: async (state) => {
             progress = state;
-            doc = figuresDocOf(start, state.figures, context.stretches, counts);
+            doc = figuresDocOf(start, state.figures, context.stretches, leftOut);
             await write(() => this.storeProgress(runId, context, rowOf, state, doc!));
           },
         });
@@ -628,20 +681,16 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
         model,
       );
       progress = outcome;
-      doc = figuresDocOf(start, outcome.figures, context.stretches, counts);
+      doc = figuresDocOf(start, outcome.figures, context.stretches, leftOut);
       const checkpoint = this.checkpointOf(rowOf, outcome);
-      if (outcome.stop === 'ENGINE_OLDER' || outcome.stop === 'ENGINE_FAILING') {
-        await this.fail(
-          runId,
-          context.user,
-          write,
-          outcome.stop === 'ENGINE_OLDER' ? SEARCH_ENGINE_OLDER : SEARCH_ENGINE_FAILING,
-          outcome.stop === 'ENGINE_OLDER' ? 'The engine cannot count the week for a search yet.' : 'The engine failed to count several candidates in a row.',
-          null,
-          checkpoint,
-          doc,
-          outcome,
-        );
+      if (outcome.stop === 'ENGINE_OLDER' || outcome.stop === 'ENGINE_FAILING' || outcome.stop === 'ENGINE_BUSY') {
+        const [code, message] =
+          outcome.stop === 'ENGINE_OLDER'
+            ? [SEARCH_ENGINE_OLDER, 'The engine cannot count the week for a search yet.']
+            : outcome.stop === 'ENGINE_BUSY'
+              ? [SEARCH_ENGINE_BUSY, 'The engine was busy for too long to count more candidates: the search stopped with what it had found.']
+              : [SEARCH_ENGINE_FAILING, 'The engine failed to count several candidates in a row.'];
+        await this.fail(runId, context.user, write, code, message, null, checkpoint, doc, outcome);
         return;
       }
       await this.finish(runId, context.user, write, {
@@ -844,9 +893,7 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
       round: row.round,
       evaluations: row.evaluations,
       acceptedMoves: row.acceptedMoves,
-      figures: figures
-        ? { ...figures, years: figures.years.map((entry) => ({ ...entry, year: fromNioarig(entry.year, numbering) ?? entry.year })) }
-        : null,
+      figures: figures ? inSchoolsNumbering(figures, numbering) : null,
       tally: checkpoint?.tally ?? null,
       errorCode: lost ? SEARCH_ABANDONED : row.errorCode,
       errorParams: (row.errorParams ?? null) as Record<string, string | number> | null,
@@ -890,7 +937,10 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
       if (!prepared.ready || weekBasisOf(prepared.basisParts) !== row.weekBasis) throw stale();
 
       const leads = this.leadsOf(state, plan, checkpoint);
-      const figures = (row.figures ?? null) as StaffingSearchFiguresDoc | null;
+      // The figures come with the proposal (what the search left out is said beside it), in the school's own numbering like a poll's.
+      const year = await tx.academicYear.findUnique({ where: { id: row.academicYearId }, select: { gradeNumbering: true } });
+      const stored = (row.figures ?? null) as StaffingSearchFiguresDoc | null;
+      const figures = stored ? inSchoolsNumbering(stored, year?.gradeNumbering === 'TIOARIG' ? 'TIOARIG' : 'NIOARIG') : null;
       const proposal = this.staffing.proposalFromLeads(state, plan, leads, withWeekBasis(row.staffingBasis, row.weekBasis), user);
       return { proposal, figures };
     });
