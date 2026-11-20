@@ -1496,6 +1496,8 @@ ROUTES_BEFORE = {
     "/api/v1/staff": {"post"},
     # M1 (Tidskedjan): the engine says its times. A route of its own, read-only.
     "/api/v1/timing": {"get"},
+    # Lärarval F3: each year's exact least week, the oracle of the gateway's search for the teacher choice that eases the week.
+    "/api/v1/week-bounds": {"post"},
     "/health": {"get"},
 }
 
