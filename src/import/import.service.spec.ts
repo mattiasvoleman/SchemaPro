@@ -2782,6 +2782,8 @@ describe('ImportService', () => {
         expect(tx.scheduleChangeLog.create.mock.calls[0]![0]).toMatchObject({
           data: {
             academicYearId: YEAR_ID,
+            // Who uploaded the file: the log row says whose choice it was.
+            actorId: testUser().userId,
             after: { kind: 'ENGINE_RELEASE', released: false, requirementIds: ['req-1'], because: 'TEACHER_CHANGED_BY_HAND' },
           },
         });

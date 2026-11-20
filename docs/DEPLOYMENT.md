@@ -6905,6 +6905,11 @@ it never names the table.
   move that teacher. A save that sends the lead the post already has, and a file that names it, leave the release. No migration: it is the
   gateway's. `src/staffing/engine-release-writers.inventory.spec.ts` lists every file that updates `TeachingRequirements` and what each does
   to a release, so a new writer of the lead has to say. A term split makes new posts (no release) and a rollover carries none.
+  **The take-back is the gateway's, and only the gateway's.** The spec reads the TypeScript in `src/`. A write of `"teacherId"` that does not
+  go through it skips the take-back: PostgREST's `authenticated` role holds UPDATE on `TeachingRequirements` and the administrators' policy
+  admits it, so an administrator who calls PostgREST by hand with her own token leaves a release on the post she picked (no client of ours
+  does, and the staffing policy's checks are skipped the same way), and a SQL function in a migration that updated the table
+  would not be found by the spec. Neither exists today.
 - **"Bara obemannade" off changed meaning.** It used to let every unpinned post change hands; now it means unstaffed posts plus released
   ones, and a staffed post that is not released is never moved. A school that releases nothing sees exactly what "bara obemannade" always
   gave it, for either setting.

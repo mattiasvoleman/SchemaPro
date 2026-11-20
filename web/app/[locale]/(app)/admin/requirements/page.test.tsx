@@ -3607,6 +3607,12 @@ describe("Förlagda poster on the timplan", () => {
     expect(state.mutationKeys).toContainEqual(["requirementPlacements", "y1"]);
   });
 
+  it("reads the releases for the engine again after a post is saved: a teacher chosen in the dialog takes the post's release back", () => {
+    render(<RequirementsPage />);
+
+    expect(state.mutationKeys).toContainEqual(["engineReleases"]);
+  });
+
   describe("in the post's dialog", () => {
     it("lists where the post's lessons are placed", async () => {
       state.placements = loaded([placed()]);

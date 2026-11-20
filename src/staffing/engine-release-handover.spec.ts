@@ -1,5 +1,6 @@
 import { createTxMock, type TxMock } from '../../test/utils/prisma-mock';
 import type { PrismaClient } from '@prisma/client';
+import { PROFILE_WRITES } from '../auth/admin-areas';
 import { takeBackReleasesAfterHandChange } from './engine-release-handover';
 
 const SCHOOL = '33333333-3333-4333-8333-333333333333';
@@ -50,6 +51,18 @@ describe('takeBackReleasesAfterHandChange (släppt för motorn)', () => {
         after: { kind: 'ENGINE_RELEASE', released: false, requirementIds: [P1, P3], because: 'TEACHER_CHANGED_BY_HAND' },
       },
     });
+  });
+
+  it('is only reachable by a profile that may also write the log row: PLANERING (the post, the release) comes with SCHEMALAGGNING (ScheduleChangeLogs)', () => {
+    // The delete arm of TeachingRequirementReleases asks PLANERING and the insert policy of ScheduleChangeLogs asks SCHEMALAGGNING, and the helper
+    // does both in the one transaction of a hand-picked lead. A profile with the first and not the second would have its PATCH of a released
+    // post refused (AREA_NOT_YOURS) while the same PATCH of an unreleased post went through.
+    for (const [profile, areas] of Object.entries(PROFILE_WRITES)) {
+      expect({ profile, planeringWithoutSchemalaggning: areas.includes('PLANERING') && !areas.includes('SCHEMALAGGNING') }).toEqual({
+        profile,
+        planeringWithoutSchemalaggning: false,
+      });
+    }
   });
 
   it('keeps the log row shape the card’s own take-back writes, with one field more', async () => {

@@ -16,7 +16,9 @@ import type { PrismaClient } from '@prisma/client';
  *
  * `requirementIds` are posts whose lead has just been changed in `tx`. Reads before it deletes, so only the posts that were released
  * are logged, and a change of a post nobody released costs one read and writes nothing. The caller is an administrator who writes
- * PLANERING (a post is written under the same area), so the table's delete arm admits it.
+ * PLANERING (a post is written under the same area), so the table's delete arm admits it, and SCHEMALAGGNING too, which the insert policy
+ * of ScheduleChangeLogs asks for the log row: every profile that writes the one writes the other today (PROFILE_WRITES, pinned in
+ * engine-release-handover.spec.ts), and a profile that did not would be told AREA_NOT_YOURS when it chose a teacher for a released post.
  *
  * Returns the posts whose release was taken back, in id order.
  */
