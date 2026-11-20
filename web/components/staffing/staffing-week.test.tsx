@@ -130,6 +130,32 @@ describe("what is asked", () => {
     expect(asked).not.toHaveBeenCalled();
   });
 
+  it("says the proposal's basis covers the week when the proposal came from the search for teacher choice, and says nothing of it for any other", async () => {
+    answer(done([year(load(95), load(95), "SAME")]));
+    renderWeek({ coversWeek: true, basisSha256: WITH_WEEK });
+    await screen.findByText("95 % → 95 %: den trängsta perioden är oförändrad");
+    expect(asked.mock.calls[0]![1]).toEqual({
+      academicYearId: "year-1",
+      basisSha256: WITH_WEEK,
+      coversWeek: true,
+      changes: [change(1), change(2)],
+    });
+    cleanup();
+
+    asked.mockClear();
+    renderWeek();
+    await screen.findByText("95 % → 95 %: den trängsta perioden är oförändrad");
+    // Not `coversWeek: false`, not undefined: the key is not in the body, so every other proposal is asked byte for byte as before.
+    expect(Object.keys(asked.mock.calls[0]![1] as object).sort()).toEqual(["academicYearId", "basisSha256", "changes"]);
+  });
+
+  it("hands the digest the gateway returned for the search's proposal to the dialog, which applies against it", async () => {
+    answer(done([year(load(95), load(95), "SAME")], { basisSha256: WITH_WEEK }));
+    renderWeek({ coversWeek: true, basisSha256: WITH_WEEK });
+    await screen.findByText("95 % → 95 %: den trängsta perioden är oförändrad");
+    await waitFor(() => expect(onBasis).toHaveBeenLastCalledWith(WITH_WEEK));
+  });
+
   it("waits for the selection to stand still before it asks again, asks once for a burst of clicks, and says it is counting again", async () => {
     answer(done([year(load(95), load(97), "TIGHTER")]));
     const { rerender } = renderWeek();

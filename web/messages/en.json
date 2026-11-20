@@ -4698,6 +4698,8 @@
       "confirmApply": "Confirm and apply {count, plural, one {# selected} other {# selected}}",
       "newTeachingUnconfirmed": "The proposal gives {count, plural, one {one change} other {# changes}} new teaching that has not been confirmed. Nothing was saved. Go back and compute a new proposal.",
       "rowNotReleased": "The entry has a teacher the school chose and is not released for the engine. Nothing was saved.",
+      "searchEntry": "Search for a teacher choice that eases the week",
+      "searchNote": "This is the proposal from the search for teacher choice: changes of teacher on released entries that make the week lighter. The week before and after is counted on the same week as the search, and nothing is saved until you apply it. To keep an entry as it is, untick it.",
       "week": {
         "title": "The week before and after",
         "noSelection": "Select at least one change above to see what it does to the week.",
@@ -4751,6 +4753,87 @@
           "notLaidOver": "{count, plural, one {# selected change does not show in the week the engine counts and is left out} other {# selected changes do not show in the week the engine counts and are left out}}."
         },
         "limits": "The figures are lower bounds that the engine can prove for the year's tightest part of the school year, and they do not say that a timetable exists. A lighter period can get heavier without the figure changing. A week over the frame time is only counted up to the first period the engine refuses, so it is not compared with another. The week is counted as it is now: if it changes before you apply, nothing is saved and you calculate again."
+      }
+    },
+    "search": {
+      "title": "Search for teacher choice",
+      "intro": "Search for the changes of teacher on released entries that make the week lighter. It takes a few minutes; you can close this window and the search carries on.",
+      "introNote": "The search changes nothing. The proposal it gives goes through the same steps as any other proposal, and nothing is saved until you apply it.",
+      "pinned": "{count, plural, one {# entry you chose to keep as it is will not be moved.} other {# entries you chose to keep as they are will not be moved.}}",
+      "start": "Search for teacher choice",
+      "starting": "Starting …",
+      "again": "Search again",
+      "cancel": "Cancel the search",
+      "cancelFailed": "The search could not be cancelled right now. Try again.",
+      "reading": "Fetching the proposal …",
+      "showProposal": "Show the proposal",
+      "showBest": "Show the best so far",
+      "loadFailed": "The search could not be fetched right now. Nothing has changed.",
+      "pollFailed": "The search could not be read right now, so what is shown may be out of date. It carries on at the service.",
+      "status": {
+        "PENDING": "The search is waiting to start.",
+        "RUNNING": "The search is running.",
+        "CANCELLING": "The search is being cancelled …",
+        "SUCCEEDED": "The search is done.",
+        "CANCELLED": "The search was cancelled.",
+        "FAILED": "The search stopped."
+      },
+      "refused": {
+        "ALREADY_RUNNING": "A search is already running for the year. It is shown here.",
+        "NO_QUALIFICATIONS": "The search cannot start without recorded qualifications: nobody is then known to be allowed to take an entry. Record the qualifications and try again.",
+        "NOT_READY": "The search cannot start: the week cannot be counted as it stands, because Generera refuses it for a reason that is not about teacher choice (a block that is partly locked, for example). Fix that and try again.",
+        "NO_POSTS": "The search cannot start: every entry is placed by hand, so there is no week to count.",
+        "THROTTLED": "Asked too often. Wait a minute and try again.",
+        "UNAVAILABLE": "The engine cannot answer right now. Try again in a moment."
+      },
+      "timeUsed": "Time used: {used} of {budget}",
+      "duration": {
+        "seconds": "{seconds} s",
+        "minutes": "{minutes} min",
+        "both": "{minutes} min {seconds} s"
+      },
+      "rounds": "Round {round}, {evaluations, plural, one {# evaluation} other {# evaluations}}.",
+      "moves": "So far: {count, plural, =0 {no change that eases the week} one {# change that eases the week} other {# changes that ease the week}}.",
+      "bestLater": "The best proposal so far can be shown when the search is done or has been cancelled.",
+      "figuresTitle": "The tightest week in each year",
+      "figuresNone": "The search has not counted the week yet.",
+      "yearLine": "Year {year}: {before} % → {after} %",
+      "yearLineSoFar": "Year {year}: {before} % → {after} % so far",
+      "yearLineSame": "Year {year}: {percent} %",
+      "skipped": "{count, plural, one {# released entry is not included: a year it spans is not among those the search judges.} other {# released entries are not included: a year they span is not among those the search judges.}}",
+      "immovable": "{count, plural, one {# released entry cannot change teacher: nobody else may take it, or it is not in the week.} other {# released entries cannot change teacher: nobody else may take them, or they are not in the week.}}",
+      "limits": "The figures are the engine's lower bound for each year and week. They show that the week can be eased, not that a timetable exists, and the teachers' lessons in other years are not visible in them. Entries nobody leads are not included.",
+      "ended": {
+        "NOT_TIGHT": "The week is already below 85 % in the years that can be affected: there is nothing to gain.",
+        "NO_MOVES": "No released entry has another teacher who may take it, so there is no change to try.",
+        "LOCAL_OPTIMUM_NONE": "No single change or swap of two makes the week lighter.",
+        "LOCAL_OPTIMUM": "No single change or swap of two makes the week lighter than this. The best state the search found has {count, plural, one {# change} other {# changes}}.",
+        "BUDGET_NONE": "The search stopped because the time ran out before it found a change that makes the week lighter. With more time it could find some.",
+        "BUDGET": "The search stopped because the time ran out, not because nothing more could be gained: with more time it could find more changes. The best state so far has {count, plural, one {# change} other {# changes}}.",
+        "MAX_ROUNDS_NONE": "The search stopped at its limit on rounds without finding a change that makes the week lighter.",
+        "MAX_ROUNDS": "The search stopped at its limit on rounds: more rounds could find more changes. The best state so far has {count, plural, one {# change} other {# changes}}.",
+        "MAX_EVALUATIONS_NONE": "The search stopped at its limit on evaluations without finding a change that makes the week lighter.",
+        "MAX_EVALUATIONS": "The search stopped at its limit on evaluations: more evaluations could find more changes. The best state so far has {count, plural, one {# change} other {# changes}}.",
+        "CANCELLED_NONE": "The search was cancelled before it found a change that makes the week lighter.",
+        "CANCELLED": "The search was cancelled. The best state it had found has {count, plural, one {# change} other {# changes}}.",
+        "DONE": "The search is done."
+      },
+      "failed": {
+        "SEARCH_ABANDONED": "The service was restarted while the search was running, so the search stopped.",
+        "SEARCH_INTERRUPTED": "The service was restarted while the search was running, so the search stopped.",
+        "SEARCH_START_REFUSED": "The engine refuses the week as it stands, already at a quick count, so teacher choice is not what is wrong. Fix that first (Check the week shows what is refused) and search again.",
+        "SEARCH_START_NOT_EXACT": "No year was counted to the end in the seconds the engine has for a count, so the search has nothing to compare with. Try again in a moment.",
+        "SEARCH_ENGINE_OLDER": "The scheduling engine is older than the API and cannot count the week for a search yet. It is usually updated within a few minutes: try again then.",
+        "SEARCH_ENGINE_FAILING": "The engine failed several counts in a row, so the search stopped. Try again in a moment.",
+        "SEARCH_FAILED": "The search failed. Nothing has changed. Try again."
+      },
+      "failedBest": "The best state it found has {count, plural, one {# change} other {# changes}} and can be shown.",
+      "proposalProblem": {
+        "STALE": "The proposal is out of date: the staffing, the releases or the week has changed since the search. Search again.",
+        "GONE": "The search no longer exists. Search again.",
+        "NOT_DONE": "The search is still running. The proposal can be shown when it is done.",
+        "NO_PROPOSAL": "The search found no change that eases the week.",
+        "OTHER": "{message}"
       }
     },
     "engineRelease": {

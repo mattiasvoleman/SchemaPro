@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -57,6 +58,15 @@ import { TableScroll } from "@/components/ui/table-scroll";
  */
 const StaffingWeek = lazy(() =>
   import("@/components/staffing/staffing-week").then((module) => ({ default: module.StaffingWeek })),
+);
+
+/**
+ * The search for the choice of teachers that eases the week (lärarval F3): a panel of its own, loaded when the admin opens it.
+ * The dialog holds only the button that opens it and what takes its answer; the panel, its hooks and its texts are a chunk
+ * of their own, and what it hands back is an ordinary proposal.
+ */
+const StaffingSearch = lazy(() =>
+  import("@/components/staffing/staffing-search").then((module) => ({ default: module.StaffingSearch })),
 );
 
 /**
@@ -178,6 +188,14 @@ export function StaffingProposalDialog({
    * and the week's together, so that an apply is refused as stale if the week has changed since. Null: the proposal's own.
    */
   const [weekBasis, setWeekBasis] = useState<string | null>(null);
+  /**
+   * The proposal on the screen came from the search for teacher choice. Its basis already covers the week (the tjänstefördelning's,
+   * the releases' and the week's together), so the week before and after is asked, and the apply sent, with `coversWeek` whether
+   * or not a figure was shown. Every other proposal is asked and applied exactly as it always was.
+   */
+  const [fromSearch, setFromSearch] = useState(false);
+  /** The search's panel is showing in place of the options or the proposal, which stay as they were behind it. */
+  const [searching, setSearching] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [showAllTeachers, setShowAllTeachers] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -187,6 +205,11 @@ export function StaffingProposalDialog({
   const confirmHeading = useRef<HTMLHeadingElement>(null);
   const applyButton = useRef<HTMLButtonElement>(null);
   const wasConfirming = useRef(false);
+  const searchEntry = useRef<HTMLButtonElement>(null);
+  const rowsHeading = useRef<HTMLHeadingElement>(null);
+  const wasSearching = useRef(false);
+  /** Set when a search's proposal has been taken: its heading of rows takes focus once it is on the screen. */
+  const focusRows = useRef(false);
   /*
    * Which ask an answer belongs to — the room dialog's guard. Closing abandons
    * the ask in flight, but the solve goes on and would otherwise land in a
@@ -211,6 +234,21 @@ export function StaffingProposalDialog({
     wasConfirming.current = confirming;
   }, [confirming]);
 
+  /*
+   * The search's panel comes and goes as a step does. Back from it, focus returns to the button that opened it. When a search's
+   * proposal has been taken, the proposal's heading of rows is where a keyboard user starts: the panel, and the button that
+   * took it, are gone.
+   */
+  useEffect(() => {
+    if (focusRows.current && proposal !== null && !searching) {
+      focusRows.current = false;
+      (rowsHeading.current ?? searchEntry.current)?.focus();
+    } else if (wasSearching.current && !searching) {
+      searchEntry.current?.focus();
+    }
+    wasSearching.current = searching;
+  }, [searching, proposal]);
+
   const changeOpen = (next: boolean) => {
     if (!next) {
       ask.current += 1;
@@ -219,8 +257,28 @@ export function StaffingProposalDialog({
       setProblem(null);
       setStale(false);
       setConfirming(false);
+      setSearching(false);
     }
     onOpenChange(next);
+  };
+
+  /**
+   * The search's proposal, read by the panel, becomes the dialog's own as any computed one does (a new serial, so the week is
+   * asked afresh; every change selected; no figure carried over from the last proposal). Nothing else of the dialog is told
+   * where it came from but the apply and the week's question, which say `coversWeek`.
+   */
+  const takeSearchProposal = (answer: StaffingProposal) => {
+    ask.current += 1;
+    setProblem(null);
+    setStale(false);
+    setConfirming(false);
+    setWeekBasis(null);
+    setFromSearch(true);
+    setSerial((current) => current + 1);
+    setProposal(answer);
+    setSelected(new Set(answer.assignments.map((assignment) => assignment.requirementId)));
+    focusRows.current = true;
+    setSearching(false);
   };
 
   /** A failed ask or apply, as one sentence for the dialog's alert. */
@@ -271,6 +329,7 @@ export function StaffingProposalDialog({
       if (mine !== ask.current) return;
       setStale(false);
       setWeekBasis(null);
+      setFromSearch(false);
       setSerial((current) => current + 1);
       setProposal(answer);
       setSelected(
@@ -398,7 +457,8 @@ export function StaffingProposalDialog({
         academicYearId,
         // The week's digest too when the week was shown for this selection: refused as stale if the week has changed since.
         basisSha256: weekBasis ?? proposal.basisSha256,
-        ...(weekBasis ? { coversWeek: true } : {}),
+        // A search's proposal covers the week in its own basis, so it says so even when no figure was shown for the selection.
+        ...(weekBasis || fromSearch ? { coversWeek: true } : {}),
         changes,
         ...(toConfirm.length > 0 ? { confirmedNewTeaching: confirmedNewTeaching(toConfirm) } : {}),
       });
@@ -445,8 +505,13 @@ export function StaffingProposalDialog({
     <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent
         className="max-w-4xl"
-        // Escape leaves the second step the way Tillämpa came in, not the whole dialog with the proposal.
+        // Escape leaves the second step the way Tillämpa came in, not the whole dialog with the proposal; and the search's panel likewise.
         onEscapeKeyDown={(event) => {
+          if (searching) {
+            event.preventDefault();
+            setSearching(false);
+            return;
+          }
           if (!confirming) return;
           event.preventDefault();
           setConfirming(false);
@@ -459,7 +524,16 @@ export function StaffingProposalDialog({
 
         {problem ? <Notice tone="destructive">{problem}</Notice> : null}
 
-        {proposal === null ? (
+        {searching ? (
+          <Suspense fallback={<Skeleton className="h-24 w-full" />}>
+            <StaffingSearch
+              academicYearId={academicYearId}
+              pinnedRequirementIds={pinned}
+              onProposal={takeSearchProposal}
+              onBack={() => setSearching(false)}
+            />
+          </Suspense>
+        ) : proposal === null ? (
           <>
             {stale ? <Notice>{t("stale")}</Notice> : null}
             <fieldset className="space-y-3" disabled={propose.isPending}>
@@ -625,6 +699,8 @@ export function StaffingProposalDialog({
             rowName={rowName}
             onKeep={keep}
             busy={busy}
+            fromSearch={fromSearch}
+            rowsHeadingRef={rowsHeading}
             week={
               proposal.assignments.length > 0 ? (
                 <Suspense fallback={null}>
@@ -632,6 +708,7 @@ export function StaffingProposalDialog({
                     academicYearId={academicYearId}
                     serial={serial}
                     basisSha256={proposal.basisSha256}
+                    {...(fromSearch ? { coversWeek: true } : {})}
                     changes={weekChanges}
                     onBasis={setWeekBasis}
                   />
@@ -640,6 +717,20 @@ export function StaffingProposalDialog({
             }
           >
             <DialogFooter className="flex-wrap gap-2">
+              {/* The search reads the school itself and needs only that a post is released: the count says whether one is. */}
+              {proposal.counts.releasedRequirements > 0 ? (
+                <Button
+                  ref={searchEntry}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-auto min-h-8 whitespace-normal py-1.5 sm:mr-auto"
+                  onClick={() => setSearching(true)}
+                  disabled={busy}
+                >
+                  {t("searchEntry")}
+                </Button>
+              ) : null}
               <Button variant="outline" onClick={() => setProposal(null)} disabled={busy}>
                 {t("back")}
               </Button>
@@ -732,6 +823,8 @@ function ProposalResult({
   rowName,
   onKeep,
   busy,
+  fromSearch,
+  rowsHeadingRef,
   week,
   children,
 }: {
@@ -746,6 +839,10 @@ function ProposalResult({
   rowName: (subjectId: string, groupId: string) => string;
   onKeep: (requirementId: string) => void;
   busy: boolean;
+  /** The proposal is the search for teacher choice's: said so, and "Behåll" (which asks the engine for another proposal) is not offered. */
+  fromSearch: boolean;
+  /** The heading of the rows: where focus goes when a search's proposal has been taken. */
+  rowsHeadingRef: RefObject<HTMLHeadingElement | null>;
   /** The week before and after the selection (advice): under the unstaffed rows and the engine's explanations, before the buttons. */
   week: ReactNode;
   children: ReactNode;
@@ -816,10 +913,16 @@ function ProposalResult({
         ) : null}
         {!recorded ? <p className="text-muted-foreground">{t("respectNoRecords")}</p> : null}
       </div>
+      {fromSearch ? <p className="max-w-prose text-sm text-muted-foreground">{t("searchNote")}</p> : null}
 
       {proposal.assignments.length > 0 ? (
         <section aria-labelledby="proposal-rows" className="space-y-2">
-          <h3 id="proposal-rows" className="text-sm font-semibold">
+          <h3
+            id="proposal-rows"
+            ref={fromSearch ? rowsHeadingRef : undefined}
+            tabIndex={fromSearch ? -1 : undefined}
+            className={fromSearch ? "text-sm font-semibold focus:outline-none" : "text-sm font-semibold"}
+          >
             {t("rowsTitle")}
           </h3>
           <TableScroll>
@@ -910,18 +1013,20 @@ function ProposalResult({
                         ) : null}
                       </td>
                       <td className="py-1.5">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-auto px-2 py-1 text-xs"
-                          disabled={busy}
-                          aria-label={t("keepRow", { row: name })}
-                          onClick={() => onKeep(assignment.requirementId)}
-                          data-writes="SCHEMALAGGNING DRIFT"
-                        >
-                          {t("keep")}
-                        </Button>
+                        {fromSearch ? null : (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-auto px-2 py-1 text-xs"
+                            disabled={busy}
+                            aria-label={t("keepRow", { row: name })}
+                            onClick={() => onKeep(assignment.requirementId)}
+                            data-writes="SCHEMALAGGNING DRIFT"
+                          >
+                            {t("keep")}
+                          </Button>
+                        )}
                       </td>
                     </tr>
                   );

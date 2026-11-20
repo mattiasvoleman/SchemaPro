@@ -66,6 +66,11 @@ export interface StaffingWeekRequest {
   academicYearId: string;
   /** The basis the proposal returned. */
   basisSha256: string;
+  /**
+   * The proposal's basis already covers the week (a search's proposal: its basis is the tjänstefördelning's and the week's
+   * together). Sent only when true, so that every other proposal is asked exactly as it always was.
+   */
+  coversWeek?: boolean;
   changes: StaffingWeekChange[];
 }
 
