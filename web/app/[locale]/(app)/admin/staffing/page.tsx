@@ -48,6 +48,13 @@
 // here with #propose, which opens it once the report has drawn. A school that
 // never presses the button reads and writes exactly what it did before.
 //
+// A TEACHER THE SCHOOL CHOSE IS NEVER MOVED BY THE PROPOSAL. The card "Släppta
+// poster" (engine-release-card.tsx, React.lazy, below the unstaffed rows) is
+// where a school lets it: releasing a post, or the staffed posts of a subject
+// in an årskurs, for the engine. The dialog then offers those posts too, when
+// "Bara obemannade" is off, and asks twice before it gives a teacher a subject
+// or an årskurs they do not teach today.
+//
 // The settings card lives on THIS page, behind the settings button, rather
 // than on tillgänglighet beside the lunch card it is built like: the lunch
 // card's reader is the solver, this card's only reader is the matrix above
@@ -123,6 +130,15 @@ const StaffingCarryDialog = lazy(() =>
 );
 const YearComparison = lazy(() =>
   import("./year-comparison").then((module) => ({ default: module.YearComparison })),
+);
+/**
+ * Släppta poster: not click-opened, but nothing the first screen needs — the
+ * card reads its own list and draws a table of every subject and årskurs, so
+ * it loads after the page has hydrated, behind a skeleton, and the route's
+ * first load carries only this import.
+ */
+const EngineReleaseCard = lazy(() =>
+  import("@/components/staffing/engine-release-card").then((module) => ({ default: module.EngineReleaseCard })),
 );
 /**
  * Föreslå bemanning (staffing Fas 4), click-opened like the carry: the
@@ -233,6 +249,11 @@ export default function StaffingPage() {
   };
   const groupName = (groupId: string) =>
     groups?.find((group) => group.id === groupId)?.name ?? "—";
+  /** A person by name, or null for one the roster does not hold (a removed account). */
+  const personName = (userId: string) => {
+    const person = personOf.get(userId);
+    return person ? `${person.firstName} ${person.lastName}` : null;
+  };
   /** The läsår's own groups: two years may both own a "7A". */
   const yearGroups = useMemo(
     () => (groups ?? []).filter((group) => group.academicYearId === activeYearId),
@@ -455,6 +476,19 @@ export default function StaffingPage() {
             sharesOf={(id) => sharesOfPost.get(id) ?? []}
           />
 
+          <Suspense fallback={<Skeleton className="h-40 w-full" aria-busy="true" />}>
+            <EngineReleaseCard
+              academicYearId={activeYearId}
+              requirements={requirements}
+              groups={groups}
+              subjects={subjects ?? []}
+              teacherName={teacherName}
+              personName={personName}
+              // A teacher the roster cannot find counts as staff; only an account that is switched off has left.
+              activeStaff={(userId) => personOf.get(userId)?.isActive !== false}
+            />
+          </Suspense>
+
           <BottlenecksPanel report={report} />
 
           {settingsOpen ? <StaffingPolicyCard /> : null}
@@ -521,10 +555,7 @@ export default function StaffingPage() {
             loadModel={report?.loadModel ?? "MINUTES"}
             travel={travelOf(report, openTeacher.id)}
             supervision={supervisionOf(report, openTeacher.id)}
-            personName={(userId) => {
-              const person = personOf.get(userId);
-              return person ? `${person.firstName} ${person.lastName}` : null;
-            }}
+            personName={personName}
           />
         </Suspense>
       ) : null}

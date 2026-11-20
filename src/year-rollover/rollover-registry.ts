@@ -347,6 +347,14 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       'A förläggning is a day, a time and a room the school gave one of a post’s lessons against this year’s ramtider, sittningar and classes; the new year has others, so the post is carried without them and its lessons are placed again where they still must be.',
   },
 
+  // Släppt för motorn (20270226090000): the school's statement that Föreslå bemanning may move a post this year. A new year is a new
+  // post with a new id and no row: the school decides again what the engine may touch, never inheriting a yes from last year.
+  TeachingRequirementRelease: {
+    kind: 'SKIPPED',
+    reason:
+      'Att en post är släppt för motorn är skolans besked för det här läsåret: det nya läsåret är nya poster, och skolan avgör på nytt vad Föreslå bemanning får flytta.',
+  },
+
   // Förlagda block (20270218090000): as a post's förläggning, and for the same reason: a lesson of a block is a day and a time against this
   // year's ramtider and classes, and the room rows are the members' own choices for it. The block is carried without them.
   TeachingBlockPlacement: {

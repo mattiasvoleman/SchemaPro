@@ -79,6 +79,9 @@
       "name": "Devices"
     },
     {
+      "name": "EngineRelease"
+    },
+    {
       "name": "Exams"
     },
     {
@@ -22353,6 +22356,108 @@
         ]
       }
     },
+    "/api/v1/staffing/engine-release": {
+      "get": {
+        "tags": [
+          "EngineRelease"
+        ],
+        "operationId": "EngineReleaseController_list",
+        "parameters": [
+          {
+            "name": "academicYearId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ]
+      },
+      "put": {
+        "tags": [
+          "EngineRelease"
+        ],
+        "operationId": "EngineReleaseController_set",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetEngineReleaseDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "PLANERING"
+          ]
+        }
+      }
+    },
     "/api/v1/staffing/load": {
       "get": {
         "tags": [
@@ -28038,6 +28143,13 @@
             "items": {
               "$ref": "#/components/schemas/StaffingChangeDto"
             }
+          },
+          "confirmedNewTeaching": {
+            "type": "array",
+            "maxItems": 5000,
+            "items": {
+              "$ref": "#/components/schemas/ConfirmedNewTeachingDto"
+            }
           }
         },
         "required": [
@@ -28482,6 +28594,23 @@
         },
         "required": [
           "selfPublish"
+        ]
+      },
+      "ConfirmedNewTeachingDto": {
+        "type": "object",
+        "properties": {
+          "requirementId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "toTeacherId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "requirementId",
+          "toTeacherId"
         ]
       },
       "CopyLocalTimplanDto": {
@@ -33602,6 +33731,33 @@
         },
         "required": [
           "teacherView"
+        ]
+      },
+      "SetEngineReleaseDto": {
+        "type": "object",
+        "properties": {
+          "academicYearId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "requirementIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5000,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "released": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "academicYearId",
+          "requirementIds",
+          "released"
         ]
       },
       "SetGroupMembersDto": {

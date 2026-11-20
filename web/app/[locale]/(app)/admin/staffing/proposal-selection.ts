@@ -1,5 +1,11 @@
 import { loadStatus, percentOfTarget, type LoadStatus } from "@/lib/teacher-load";
-import type { ProposalAssignment, ProposalTeacher, StaffingChange, StaffingProposal } from "./use-staffing-proposal";
+import type {
+  ConfirmedNewTeaching,
+  ProposalAssignment,
+  ProposalTeacher,
+  StaffingChange,
+  StaffingProposal,
+} from "./use-staffing-proposal";
 
 /*
  * What the dialog's selection does to each teacher, in the gateway's own
@@ -163,6 +169,26 @@ export function selectedChanges(
       fromTeacherId: assignment.fromTeacherId,
       toTeacherId: assignment.toTeacherId,
     }));
+}
+
+/** Whether the change gives its teacher a subject or a year they do not teach today (the gateway names only those). */
+const givesNewTeaching = (assignment: ProposalAssignment): boolean =>
+  assignment.newTeaching !== undefined && (assignment.newTeaching.subject || assignment.newTeaching.years.length > 0);
+
+/**
+ * The selected rows that give their teacher new teaching: what the second confirmation lists, and the only rows the
+ * apply asks to have confirmed. Empty for a selection of ordinary changes, which is applied at once.
+ */
+export function newTeachingRows(
+  assignments: readonly ProposalAssignment[],
+  selected: ReadonlySet<string>,
+): ProposalAssignment[] {
+  return assignments.filter((assignment) => selected.has(assignment.requirementId) && givesNewTeaching(assignment));
+}
+
+/** The apply body's confirmedNewTeaching: one entry for each row of newTeachingRows, the row and the teacher it is given to. */
+export function confirmedNewTeaching(rows: readonly ProposalAssignment[]): ConfirmedNewTeaching[] {
+  return rows.map((row) => ({ requirementId: row.requirementId, toTeacherId: row.toTeacherId }));
 }
 
 /**

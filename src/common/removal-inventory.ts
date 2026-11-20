@@ -266,6 +266,8 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   // Förlägg delade lektioner (20270208090000): the lesson a school placed on a post that shares its lessons is its teacher's, and
   // stays, unstaffed, when the person goes (the post's and the share's own keys do the same): the row keeps its day, time and room.
   key('TeachingRequirementPlacements', ['teacherId', 'schoolId'], 'SET NULL', kept),
+  // Släppt för motorn (20270226090000): who released a post. The post stays released, without them; that is the school's decision.
+  key('TeachingRequirementReleases', ['releasedById', 'schoolId'], 'SET NULL', kept),
   key('SupervisionCovers', ['decidedByUserId', 'schoolId'], 'SET NULL', kept),
   key('AckRequests', ['authorId', 'schoolId'], 'SET NULL', kept),
   // Klasslärarens schema (20270128090000): who appointed, who wrote a draft and who published it; the rows stay without them.
@@ -378,6 +380,8 @@ export const GROUP_BELOW: readonly BelowKey<GroupBelowKind>[] = [
   below('TeachingRequirements', 'TeachingRequirementShares', ['requirementId', 'schoolId'], 'CASCADE', onTheLessons),
   // Förlagda poster (20270207090000): the day, time and room given to a post's lessons go with the post.
   below('TeachingRequirements', 'TeachingRequirementPlacements', ['requirementId', 'schoolId'], 'CASCADE', onTheLessons),
+  // Släppt för motorn (20270226090000): the mark goes with the post.
+  below('TeachingRequirements', 'TeachingRequirementReleases', ['requirementId', 'schoolId'], 'CASCADE', onTheLessons),
   // Förlagda block (20270218090000): a member's own room for a block's lesson goes with the post.
   below('TeachingRequirements', 'TeachingBlockPlacementRooms', ['requirementId', 'schoolId'], 'CASCADE', onTheLessons),
   below('TimplanCredits', 'CancellationBatchCredits', ['creditId', 'schoolId'], 'CASCADE', onTheLessons),

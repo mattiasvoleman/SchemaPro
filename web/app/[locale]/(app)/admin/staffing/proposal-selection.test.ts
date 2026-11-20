@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  confirmedNewTeaching,
   loadsUnderSelection,
+  newTeachingRows,
   orderedTeachers,
   reversed,
   selectedChanges,
@@ -217,5 +219,35 @@ describe("the lists", () => {
       { requirementId: "r1", fromTeacherId: "a", toTeacherId: null },
       { requirementId: "r3", fromTeacherId: "d", toTeacherId: "c" },
     ]);
+  });
+});
+
+describe("new teaching: what the second confirmation lists and what the apply names", () => {
+  const given = (id: string, to: string, newTeaching?: ProposalAssignment["newTeaching"]): ProposalAssignment => ({
+    ...move(id, null, to, 1),
+    ...(newTeaching ? { newTeaching } : {}),
+  });
+  const rows = [
+    given("r1", "a"),
+    given("r2", "a", { subject: true, years: [] }),
+    given("r3", "b", { subject: false, years: [8, 9] }),
+    // Nothing new in it, though the key is there: the gateway sends none such, and one would only be a question with no content.
+    given("r4", "b", { subject: false, years: [] }),
+  ];
+
+  it("lists the selected rows that give their teacher a subject or a year, and no others", () => {
+    expect(newTeachingRows(rows, new Set(["r1", "r2", "r3", "r4"])).map((row) => row.requirementId)).toEqual(["r2", "r3"]);
+    // A row left out of the selection is not asked about.
+    expect(newTeachingRows(rows, new Set(["r1", "r3"])).map((row) => row.requirementId)).toEqual(["r3"]);
+    expect(newTeachingRows(rows, new Set(["r1", "r4"]))).toEqual([]);
+    expect(newTeachingRows(rows, new Set())).toEqual([]);
+  });
+
+  it("names each such row with the teacher it is given to, and nothing else of it", () => {
+    expect(confirmedNewTeaching(newTeachingRows(rows, new Set(["r1", "r2", "r3"])))).toEqual([
+      { requirementId: "r2", toTeacherId: "a" },
+      { requirementId: "r3", toTeacherId: "b" },
+    ]);
+    expect(confirmedNewTeaching([])).toEqual([]);
   });
 });

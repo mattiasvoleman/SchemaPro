@@ -60,8 +60,10 @@ export class StaffingProposalDto {
 
   /**
    * Only rows nobody teaches — and rows whose teacher has left (is no longer
-   * active staff). Off: every row not pinned may change hands, though none
-   * that is staffed today ends unstaffed.
+   * active staff). Off: also the posts the school has released for the engine
+   * (släppt för motorn), though none that is staffed today ends unstaffed. A
+   * teacher the school chose is never moved, whichever this is: a staffed
+   * post that is not released stays as it is.
    */
   @IsBoolean()
   onlyUnstaffed!: boolean;
@@ -107,6 +109,15 @@ export class StaffingChangeDto {
   toTeacherId!: string | null;
 }
 
+/** One change the caller confirms gives the teacher a subject or a årskurs they do not teach today. */
+export class ConfirmedNewTeachingDto {
+  @IsUUID('4')
+  requirementId!: string;
+
+  @IsUUID('4')
+  toTeacherId!: string;
+}
+
 /** Body for `POST /api/v1/optimization/staffing/apply`, and for its undo. */
 export class ApplyStaffingDto {
   @IsUUID('4', { message: 'academicYearId must be a valid UUIDv4.' })
@@ -131,4 +142,17 @@ export class ApplyStaffingDto {
   @ValidateNested({ each: true })
   @Type(() => StaffingChangeDto)
   changes!: StaffingChangeDto[];
+
+  /**
+   * The changes the caller has confirmed give a teacher a subject or a årskurs they do not teach today (the proposal names them in
+   * `assignments[].newTeaching`): the second confirmation of the dialog, one entry for each row and the teacher it is given to.
+   * An apply that holds such a change not listed here is refused 409 STAFF_NEW_TEACHING_UNCONFIRMED, and a row confirmed for one
+   * teacher and given to another is not confirmed. Ignored on an undo, which puts back what was.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5000)
+  @ValidateNested({ each: true })
+  @Type(() => ConfirmedNewTeachingDto)
+  confirmedNewTeaching?: ConfirmedNewTeachingDto[];
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
@@ -24,7 +24,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  confirmedNewTeaching,
   loadsUnderSelection,
+  newTeachingRows,
   orderedTeachers,
   reversed,
   selectedChanges,
@@ -33,10 +35,13 @@ import {
 import {
   DEFAULT_STAFF_WEIGHTS,
   STAFF_ENGINE_UNAVAILABLE,
+  STAFF_NEW_TEACHING_UNCONFIRMED,
   STAFF_PROPOSAL_STALE,
+  STAFF_ROW_NOT_RELEASED,
   STAFF_WEIGHT_KEYS,
   useApplyStaffing,
   useStaffingProposal,
+  type NewTeaching,
   type ProposalAssignment,
   type StaffingApplyResult,
   type StaffingChange,
@@ -100,11 +105,20 @@ export interface StaffingProposalDialogProps {
  * school asks for it — and says why the rest stays unstaffed.
  *
  * TWO STEPS, like the room optimisation: first what may change (only the
- * unstaffed rows, or every row; behörighet; the weights under Avancerat),
- * then the answer — each teacher before → after, each row with its proposed
- * lead and why, the rows left unstaffed with the reason — and only then a
- * write. The admin can leave rows out (the figures follow the selection), pin
- * a row as it is and ask again, apply, and undo from the toast.
+ * unstaffed rows, or those and the posts the school has released for the
+ * engine; behörighet; the weights under Avancerat), then the answer — each
+ * teacher before → after, each row with its proposed lead and why, the rows
+ * left unstaffed with the reason — and only then a write. The admin can leave
+ * rows out (the figures follow the selection), pin a row as it is and ask
+ * again, apply, and undo from the toast.
+ *
+ * A TEACHER THE SCHOOL CHOSE IS NEVER MOVED. Only a post nobody teaches (or
+ * whose teacher has left) and, with "Bara obemannade" off, a post the school
+ * has released ("släppt för motorn", the card on the page) is the proposal's
+ * to give to somebody else. And a change that gives a teacher a subject or an
+ * årskurs they do not teach today is asked about TWICE: Tillämpa switches to a
+ * second step that lists those changes apart, and only its own button sends
+ * them, with confirmedNewTeaching, which the gateway demands.
  *
  * NOTHING HERE DECIDES. Which rows may change, the limits, who is qualified
  * and the loads are the gateway's; the dialog only re-adds the charges of the
@@ -138,7 +152,8 @@ export function StaffingProposalDialog({
   const qualificationMode = policy?.qualificationMode ?? DEFAULT_LOAD_POLICY.qualificationMode;
   const tolerancePercent = policy?.overAllocationTolerancePercent ?? DEFAULT_LOAD_POLICY.overAllocationTolerancePercent;
   const forced = qualificationsRecorded && qualificationMode === "REFUSE";
-  const [onlyUnstaffed, setOnlyUnstaffed] = useState(true);
+  // Off: the posts the school has released are proposed too. Nothing else that is staffed ever is.
+  const [onlyUnstaffed, setOnlyUnstaffed] = useState(false);
   const [respectChoice, setRespectChoice] = useState(true);
   const respect = qualificationsRecorded && (forced || respectChoice);
   const [weights, setWeights] = useState<StaffWeights>(DEFAULT_STAFF_WEIGHTS);
@@ -148,6 +163,11 @@ export function StaffingProposalDialog({
   const [showAllTeachers, setShowAllTeachers] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
+  /** The second confirmation of new teaching is showing: nothing has been written, and only its button writes. */
+  const [confirming, setConfirming] = useState(false);
+  const confirmHeading = useRef<HTMLHeadingElement>(null);
+  const applyButton = useRef<HTMLButtonElement>(null);
+  const wasConfirming = useRef(false);
   /*
    * Which ask an answer belongs to — the room dialog's guard. Closing abandons
    * the ask in flight, but the solve goes on and would otherwise land in a
@@ -162,12 +182,23 @@ export function StaffingProposalDialog({
   const rowName = (subjectId: string, groupId: string) =>
     t("rowName", { subject: subjectName(subjectId), group: groupName(groupId) });
 
+  /*
+   * The step's heading takes focus when the confirmation opens, and Tillämpa gets it back when the admin
+   * goes back: the button that opened the step is gone with the step, and focus would fall to the dialog.
+   */
+  useEffect(() => {
+    if (confirming) confirmHeading.current?.focus();
+    else if (wasConfirming.current) applyButton.current?.focus();
+    wasConfirming.current = confirming;
+  }, [confirming]);
+
   const changeOpen = (next: boolean) => {
     if (!next) {
       ask.current += 1;
       setProposal(null);
       setProblem(null);
       setStale(false);
+      setConfirming(false);
     }
     onOpenChange(next);
   };
@@ -261,6 +292,13 @@ export function StaffingProposalDialog({
     const requirementId = typeof params.requirementId === "string" ? params.requirementId : null;
     const row = proposal?.assignments.find((assignment) => assignment.requirementId === requirementId);
     const who = userId ? teacherName(userId) : null;
+    // New teaching the request did not confirm: the proposal and the apply disagree about who gets what, so the
+    // admin is sent back to ask again. Not the teacher's name in front: the first of several is no better than any.
+    if (error.code === STAFF_NEW_TEACHING_UNCONFIRMED) return t("newTeachingUnconfirmed", { count: Number(params.count) || 1 });
+    // A post whose teacher the school chose and has not released: only a request made by hand gets here.
+    if (error.code === STAFF_ROW_NOT_RELEASED) {
+      return row ? `${rowName(row.subjectId, row.studentGroupId)}: ${t("rowNotReleased")}` : t("rowNotReleased");
+    }
     if (error.code && tEngine.has(error.code)) {
       const sentence = engineMessage(tEngine, { code: error.code, message: error.message, params });
       const where = row ? rowName(row.subjectId, row.studentGroupId) : null;
@@ -316,13 +354,30 @@ export function StaffingProposalDialog({
     }
   };
 
-  const doApply = async () => {
+  /**
+   * `confirmed`: the admin has answered the second question. A selection that holds new teaching goes no further without
+   * it — the step opens instead and nothing is sent — and with it the request names every such change, the row and the
+   * teacher it is given to, which is what the gateway matches. A selection without any is applied at once and sends
+   * exactly what it always did.
+   */
+  const doApply = async (confirmed = false) => {
     if (!proposal) return;
     const changes = selectedChanges(proposal.assignments, selected);
     if (changes.length === 0) return;
+    const toConfirm = newTeachingRows(proposal.assignments, selected);
+    if (toConfirm.length > 0 && !confirmed) {
+      setProblem(null);
+      setConfirming(true);
+      return;
+    }
     setProblem(null);
     try {
-      const result = await apply.mutateAsync({ academicYearId, basisSha256: proposal.basisSha256, changes });
+      const result = await apply.mutateAsync({
+        academicYearId,
+        basisSha256: proposal.basisSha256,
+        changes,
+        ...(toConfirm.length > 0 ? { confirmedNewTeaching: confirmedNewTeaching(toConfirm) } : {}),
+      });
       const title = t("applied", { count: result.updated });
       const options = {
         duration: UNDO_TOAST_MS,
@@ -337,6 +392,7 @@ export function StaffingProposalDialog({
         // button that asks again.
         ask.current += 1;
         setProposal(null);
+        setConfirming(false);
         setStale(true);
         return;
       }
@@ -346,10 +402,19 @@ export function StaffingProposalDialog({
 
   const noTargets = teachersWithTarget === 0;
   const busy = propose.isPending || apply.isPending;
+  const newTeaching = proposal ? newTeachingRows(proposal.assignments, selected) : [];
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogContent className="max-w-4xl">
+      <DialogContent
+        className="max-w-4xl"
+        // Escape leaves the second step the way Tillämpa came in, not the whole dialog with the proposal.
+        onEscapeKeyDown={(event) => {
+          if (!confirming) return;
+          event.preventDefault();
+          setConfirming(false);
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{t("title", { year: academicYearName })}</DialogTitle>
           <DialogDescription>{t("body")}</DialogDescription>
@@ -492,6 +557,24 @@ export function StaffingProposalDialog({
               </Button>
             </DialogFooter>
           </>
+        ) : confirming ? (
+          <NewTeachingConfirmation
+            rows={newTeaching}
+            others={selected.size - newTeaching.length}
+            teacherName={teacherName}
+            rowName={rowName}
+            headingRef={confirmHeading}
+          >
+            <DialogFooter className="flex-wrap gap-2">
+              <Button variant="outline" onClick={() => setConfirming(false)} disabled={busy}>
+                {t("confirmBack")}
+              </Button>
+              <Button onClick={() => void doApply(true)} disabled={busy} data-writes="SCHEMALAGGNING PLANERING">
+                {apply.isPending ? <Loader2 className="animate-spin" /> : null}
+                {t("confirmApply", { count: selected.size })}
+              </Button>
+            </DialogFooter>
+          </NewTeachingConfirmation>
         ) : (
           <ProposalResult
             proposal={proposal}
@@ -514,6 +597,7 @@ export function StaffingProposalDialog({
                 <Button onClick={() => changeOpen(false)}>{tCommon("close")}</Button>
               ) : (
                 <Button
+                  ref={applyButton}
                   onClick={() => void doApply()}
                   disabled={busy || selected.size === 0}
                   data-writes="SCHEMALAGGNING PLANERING"
@@ -527,6 +611,61 @@ export function StaffingProposalDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * The second question: the selected changes that give a teacher a subject or an årskurs they do not teach today,
+ * listed apart with what is new, and a plain sentence to take it up with the teacher first. A step of the dialog, not a
+ * dialog of its own: the proposal stays behind it, and Tillbaka (or Escape) returns to it as it was. Its heading takes
+ * focus when it opens (the dialog's effect), so a screen reader starts at the question.
+ */
+function NewTeachingConfirmation({
+  rows,
+  others,
+  teacherName,
+  rowName,
+  headingRef,
+  children,
+}: {
+  rows: readonly ProposalAssignment[];
+  /** The selected changes that give nobody new teaching, applied in the same request. */
+  others: number;
+  teacherName: (userId: string) => string;
+  rowName: (subjectId: string, groupId: string) => string;
+  headingRef: RefObject<HTMLHeadingElement | null>;
+  children: ReactNode;
+}) {
+  const t = useTranslations("staffing.proposal");
+  const locale = useLocale();
+  const list = new Intl.ListFormat(locale, { type: "conjunction" });
+  const what = (teaching: NewTeaching) =>
+    list.format([
+      ...(teaching.subject ? [t("newSubjectWhat")] : []),
+      ...(teaching.years.length > 0
+        ? [t("newYearsWhat", { count: teaching.years.length, years: teaching.years.join(", ") })]
+        : []),
+    ]);
+  return (
+    <section aria-labelledby="proposal-confirm" className="space-y-4">
+      <h3 id="proposal-confirm" ref={headingRef} tabIndex={-1} className="text-base font-semibold focus:outline-none">
+        {t("confirmTitle")}
+      </h3>
+      <p className="text-sm">{t("confirmBody")}</p>
+      <ul className="space-y-1 text-sm">
+        {rows.map((row) => (
+          <li key={row.requirementId} className="rounded-md border bg-card p-2">
+            {t("confirmLine", {
+              teacher: teacherName(row.toTeacherId),
+              row: rowName(row.subjectId, row.studentGroupId),
+              what: what(row.newTeaching!),
+            })}
+          </li>
+        ))}
+      </ul>
+      {others > 0 ? <p className="text-xs text-muted-foreground">{t("confirmOthers", { count: others })}</p> : null}
+      {children}
+    </section>
   );
 }
 
@@ -569,6 +708,7 @@ function ProposalResult({
   const staff = new Set(proposal.teachers.map((teacher) => teacher.userId));
   const allSelected = proposal.assignments.length > 0 && selected.size === proposal.assignments.length;
   const recorded = proposal.options.qualificationsRecorded;
+  const newTeachingCount = newTeachingRows(proposal.assignments, selected).length;
 
   const toggle = (requirementId: string, on: boolean) => {
     const next = new Set(selected);
@@ -596,10 +736,24 @@ function ProposalResult({
         </p>
         {proposal.status === "FEASIBLE" ? <p className="text-muted-foreground">{t("feasibleHint")}</p> : null}
         {proposal.counts.freeRequirements === 0 ? (
-          <p>{t("nothingToDo")}</p>
+          <>
+            <p>{t("nothingToDo")}</p>
+            {proposal.counts.releasedRequirements === 0 ? (
+              <p className="text-muted-foreground">{t("nothingToDoRelease")}</p>
+            ) : null}
+          </>
         ) : (
           <p>{t("summary", { changes: proposal.assignments.length, unstaffed: proposal.unstaffed.length })}</p>
         )}
+        {proposal.counts.releasedRequirements > 0 ? (
+          // With "Bara obemannade" on, the released posts were never offered: said, so a school that released a post
+          // and sees it untouched knows why.
+          <p>
+            {t(proposal.options.onlyUnstaffed ? "releasedSkipped" : "releasedCount", {
+              count: proposal.counts.releasedRequirements,
+            })}
+          </p>
+        ) : null}
         {proposal.counts.vacated > 0 ? <p>{t("vacated", { count: proposal.counts.vacated })}</p> : null}
         {proposal.counts.inconsistent > 0 ? (
           <p>{t("inconsistent", { count: proposal.counts.inconsistent })}</p>
@@ -679,9 +833,29 @@ function ProposalResult({
                           {reasons.teachesGroupAlready ? (
                             <Badge variant="outline">{t("badgeGroup")}</Badge>
                           ) : null}
+                          {/* What the teacher does not teach today: asked about once more before it is written. */}
+                          {assignment.newTeaching?.subject ? (
+                            <Badge variant="warning">{t("badgeNewSubject")}</Badge>
+                          ) : null}
+                          {assignment.newTeaching && assignment.newTeaching.years.length > 0 ? (
+                            <Badge variant="warning">
+                              {t("badgeNewYears", {
+                                count: assignment.newTeaching.years.length,
+                                years: assignment.newTeaching.years.join(", "),
+                              })}
+                            </Badge>
+                          ) : null}
                         </div>
                       </td>
-                      <td className="py-1.5 pr-3">{nowText(assignment)}</td>
+                      <td className="py-1.5 pr-3">
+                        {nowText(assignment)}
+                        {/* A post with a teacher the school chose is here only because the school released it. */}
+                        {assignment.fromTeacherId !== null && staff.has(assignment.fromTeacherId) ? (
+                          <div className="mt-1">
+                            <Badge variant="secondary">{t("badgeReleased")}</Badge>
+                          </div>
+                        ) : null}
+                      </td>
                       <td className="py-1.5">
                         <Button
                           type="button"
@@ -702,6 +876,9 @@ function ProposalResult({
               </tbody>
             </table>
           </TableScroll>
+          {newTeachingCount > 0 ? (
+            <p className="text-xs text-muted-foreground">{t("newTeachingHint", { count: newTeachingCount })}</p>
+          ) : null}
         </section>
       ) : null}
 
