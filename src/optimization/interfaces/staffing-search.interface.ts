@@ -61,27 +61,71 @@ export type StaffingSearchStop =
   | 'ENGINE_OLDER' // the engine has no such route yet
   | 'ENGINE_FAILING'; // the engine failed several evaluations in a row
 
-/** One week's figure, in minutes of the week's own supply. */
-export interface StaffingSearchWeek {
-  /** The first day of the period the week is in, as a refusal names it, when the year has periods; null otherwise. */
+// ---------------------------------------------------------------------------
+// The run and its proposal, as the dialog reads them
+
+/** One real week's figure in a judged year, before the search and as far as it has come. */
+export interface StaffingSearchWeekFigure {
+  /** Index of the period, null for a year without periods. */
   period: number | null;
   parity: 'ODD_WEEKS' | 'EVEN_WEEKS' | null;
-  demandMinutes: number;
-  capacityMinutes: number;
+  /** The week's first stretch of days, as a refusal names its period; null when the year has no periods. */
+  from: string | null;
+  to: string | null;
+  before: { demandMinutes: number; capacityMinutes: number };
+  after: { demandMinutes: number; capacityMinutes: number };
 }
 
-/** A judged year's figures: its tightest week and every week. In the school's numbering (the proposal's own). */
-export interface StaffingSearchYear {
+export interface StaffingSearchYearFigures {
+  /** In the payload's numbering (NIOARIG): the view turns it into the school's. */
   year: number;
-  /** As the search began (the week as it stands), and as it ended (the best it found). */
-  before: StaffingSearchWeek[];
-  after: StaffingSearchWeek[];
+  weeks: StaffingSearchWeekFigure[];
 }
 
-export interface StaffingSearchFigures {
-  years: StaffingSearchYear[];
-  /** The years a released post could have moved in that the search did not judge (past the cap), so those posts were left. */
+/** What the run stores of its figures, and what a poll gives back: only minutes, week keys and counts. */
+export interface StaffingSearchFiguresDoc {
+  years: StaffingSearchYearFigures[];
+  /** Released posts left out because a year they span is not among the judged. */
   skippedPosts: number;
-  /** Posts that were not searched because nobody but their lead may take them. */
+  /** Released posts with nobody else to be given to, or not in the week. */
   immovablePosts: number;
+}
+
+export interface StaffingSearchTally {
+  better: number;
+  notBetter: number;
+  worse: number;
+  refused: number;
+  /** Evaluations the engine could not count to the end, which rank nothing. */
+  unranked: number;
+}
+
+export interface StaffingSearchCheckpoint {
+  changes: { requirementId: string; fromTeacherId: string; toTeacherId: string }[];
+  tally: StaffingSearchTally;
+}
+
+/** The run as a poll reads it (no proposal: that is its own route, read once when the run has ended). */
+export interface StaffingSearchView {
+  id: string;
+  academicYearId: string;
+  status: StaffingSearchStatus;
+  stopReason: StaffingSearchStop | null;
+  /** The search's own time budget in milliseconds, and how much of it has been used (waiting for a Generera run is not counted). */
+  budgetMs: number;
+  elapsedMs: number;
+  round: number;
+  evaluations: number;
+  acceptedMoves: number;
+  figures: StaffingSearchFiguresDoc | null;
+  tally: StaffingSearchTally | null;
+  /** A failed run's code (SEARCH_ABANDONED, SEARCH_INTERRUPTED, ...), its values and its English. */
+  errorCode: string | null;
+  errorParams: Record<string, string | number> | null;
+  error: string | null;
+  /** Whether a proposal can be read: at least one move was accepted and the run has ended. */
+  hasProposal: boolean;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
 }
