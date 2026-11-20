@@ -295,7 +295,9 @@ Run it with (see `.env.example` for the full annotated list):
 | `INTEGRATION_SECRETS_KEY_PREVIOUS` | optional, same shape: the key before a rotation, which still decrypts and never encrypts. Rotate by moving the current key here, setting a new one, letting each school's admin save its credential again (or waiting for the next save), then clearing it |
 | `SS12000_BACKGROUND` | `on` (default) or `off`: the 5-minute tick that runs scheduled syncs and marks stale and expired runs, and the 1-minute tick that delivers v2.0 subscription notices and purges old tombstones and delivery rows. A school's sync runs at night only once its admin turns the schedule on, and auto-applies only once the admin turns that on too; a notice goes out only once a consumer has registered a subscription |
 | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` | recommended `15` (Railway's own default is `0`): the seconds between SIGTERM and SIGKILL when a deploy replaces the instance. On SIGTERM the API marks a Schemaförslag run that was solving as interrupted, stops taking requests, lets the ones in flight finish, and only then closes its database pool. With `0` it is killed before any of that: the run is left to its lease (about three minutes), and a request in flight is cut off as before |
-| `CANDIDATES_BACKGROUND` | `on` (default) or `off`: the quarter-hourly sweep that marks abandoned candidate runs FAILED, deletes runs older than seven days, and deletes the emptied rows "Ta bort förslagen" left of runs whose engine call was still out, once that call could have ended. Every start in any school sweeps first, so off only delays those deletions. It also turns off the five-minute `generate-runs-sweep` that fails Generera runs whose lease has run out (§27.1); a Generera start sweeps first too, and the page reads an expired lease as abandoned, so that is delayed in the same way |
+| `CANDIDATES_BACKGROUND` | `on` (default) or `off`: the quarter-hourly sweep that marks abandoned candidate runs FAILED, deletes runs older than seven days, and deletes the emptied rows "Ta bort förslagen" left of runs whose engine call was still out, once that call could have ended. Every start in any school sweeps first, so off only delays those deletions. It also turns off the five-minute `generate-runs-sweep` that fails Generera runs whose lease has run out (§27.1); a Generera start sweeps first too, and the page reads an expired lease as abandoned, so that is delayed in the same way |; it turns off the `staffing-search-sweep` of §32 as well
+| `STAFFING_SEARCH_BUDGET_SECONDS` | optional, `60`–`3600`, default `900`: how long a search for the choice of teachers (§32) may run. It is an anytime search, so the budget only decides how far it gets; time spent waiting for a Generera run of the year is not counted |
+| `STAFFING_SEARCH_CONCURRENCY` | optional, `1`–`6`, default `3`: counts one search asks of the engine at once (each is one core for about 5–9 s). The engine has a gate of its own, `WEEK_BOUNDS_CONCURRENCY` (default `2`, set on the engine service): a count beyond it is answered 429 and the search waits and asks again, so the effective parallelism is the smaller of the two |
 | `COVER_REQUESTS_BACKGROUND` | `on` (default) or `off`: the 5-minute tick that settles the open vikarieförfrågningar: the ones whose time is out end `EXPIRED` and the administrator who asked is told nobody said yes, the ones whose lesson or absence went away end `CLOSED` and the colleagues they waited on are told. A question past its time cannot be answered whether or not it has run; the tick settles the stored status, frees the lesson for a new question and tells who it concerns |
 | `CRISIS_BACKGROUND` | `on` (default) or `off`: the quarter-hourly look at alarms left open in Krisläge. A real alarm that has stood open for 12 hours, or an exercise for 3, is ended (`autoEnded`), because only one of each kind can be open and a forgotten one would stop the next. Nobody is told; the app reads the alarm again when it is opened. With `off` an alarm is ended by an administrator or not at all |
 | `GALLRING_BACKGROUND` | `on` (default) or `off`: the 5-minute tick of the nightly gallring. A school's run starts at 03:00 its local time, once a night, and only for the kinds its admin has given a period on `/admin/dataskydd`; a school that has decided nothing loses nothing |
@@ -325,6 +327,7 @@ A generation passes through several limits, and until the Generera runs of 2026-
 | The explanation's first try on a large week | 10 s of a 15 s cap | engine `SOLVER_EXPLAIN_SHARP_SECONDS`; the cap is code | yes, optional |
 | The room, staffing and exam budgets | 10, 10 and 20 s | engine `ROOM_SOLVER_MAX_TIME_SECONDS`, `STAFF_SOLVER_MAX_TIME_SECONDS`, `EXAM_SOLVER_MAX_TIME_SECONDS` | yes, optional |
 | A schemaförslag candidate's budget | 30 s | API `CANDIDATE_MAX_SECONDS` (the engine takes the smaller of it and its own budget) | yes, optional |
+| A count of a week's exact bound (§32) | 25 s, and 40 s the API's wait | the request's `seconds` (at most 30) and the code; the engine's gate is `WEEK_BOUNDS_CONCURRENCY` (default 2) | gate yes, optional; the times are code, and the route is not one of `GET /api/v1/timing`'s four |
 | The API's wait, as a cap | none | API `AI_ENGINE_TIMEOUT_MS` | optional, best left unset |
 | The build headroom | 30 s | code (`optimization-engine/app/timing.py`) | no |
 | The transfer margin between the API and the engine | 5 s | code | no |
@@ -6997,3 +7000,82 @@ it never names the table.
 - The adapter probe's checks `sm1`–`sm7` (`scripts/test/probe-slappt-for-motorn.ts`) run the services through the real adapter: a release
   twice and at once, the arms, another school's 404 and 400, the proposal's reads, the second confirmation, a person, a post and a school
   removed, and a teacher chosen by hand (the post's PATCH and a file) taking the release back with its log row.
+
+## 32. A search for the choice of teachers that eases the week ("Sök lärarval", lärarval F3)
+
+Föreslå bemanning can ask the engine for the change of teachers, among the posts the school has **released** (§31), that makes the week
+easier. It is a **background job**: it takes minutes, runs in the API process that took the request, keeps its state in a row, and hands the
+school an ordinary proposal at the end, to be applied by Föreslå bemannings own apply (its policy, its second confirmation of new teaching,
+its basis). Nothing is written to the school's tjänstefördelning by a search.
+
+**Why a route of the engine's own.** `/check-week` cannot rank two weeks that are both over the supply: it counts the periods one after
+the other and stops at the first it refuses, so an over figure is "the first refused period's" (relieving the autumn makes the answer *rise*
+from 107 % to 144 %), and its week load has four seconds and one second of pricing. The engine now has
+`POST /api/v1/week-bounds` (`optimization-engine/app/api/v1/week_bounds.py`): the payload Generera sends, plus `years`, `cutoffs` and
+`seconds`, answered with each year's **exact** least week, week by week (`rows`), where every figure says whether it is exact
+(`converged`) and whether it was stopped at its cutoff (`cutoff`). A pricing step CP-SAT did not finish proving makes a figure not exact
+(the old count would have called it done: measured under load, 2 365 minutes for a graph whose bound is 2 730). The route never solves
+and never refuses a week for being over the supply; a week one of the quick arithmetic counts refuses has `refusal` and no figures.
+
+**The gateway drives the search**, one candidate per call: it counts each year a released post spans on its own (the baseline), judges the
+tightest four, and tries every single re-lead and, where room is all that stops a move, every swap, keeping a candidate only if every
+figure of every year it touches was counted to the end, no year's tightest week is worse than when the search began, and the weeks as
+a whole are lower, tightest first (`src/optimization/staffing-search.ts`). The rules for who may take a post (behörighet, tjänstgrad,
+the post's co-teacher, shares, pinned and unreleased posts) are the plan's, the one Föreslå bemanning is judged by; the result is judged by
+them again when it is read (`leadRefusal`, `growthRefusal`).
+
+### 32.1 The queue entry
+
+`StaffingSearchRuns` (migration `20270227090000_en_sokning_efter_lararval_ar_ett_jobb_med_lease`) has what a Generera run's row has (§27):
+`claimedBy`, `heartbeatAt`, `leaseUntil` (the task renews it every five seconds, which is also when it sees a cancellation), one active run
+per year (a partial unique index, `409 STAFFING_SEARCH_ALREADY_RUNNING`), and `app.staffing_search_sweep()`: a job door that takes no login
+(`VO403`) and fails a run whose lease has run out (`SEARCH_ABANDONED`) or that began more than an hour ago, and deletes finished runs after
+24 hours. It runs every five minutes (`staffing-search-sweep`, switched with `CANDIDATES_BACKGROUND`), and every start sweeps first.
+
+**A run is not resumed.** A restart fails the runs of the instance at once (`SEARCH_INTERRUPTED`) and the sweep takes one that is lost: another
+process has not got the administrator's login, which every read of the school needs. The run keeps its **checkpoint**, the moves accepted so far
+(written after each), and every state the search accepts is a proven improvement on the one before, so what a lost run has is a proposal that can
+still be shown. The table keeps ids and numbers only; the school's one finished run is replaced by the next start.
+
+**The proposal's basis** (`basisSha256`) is the tjänstefördelning's with its releases, and the week's, together (`withWeekBasis`), as they were when
+the search read them. The dialog applies it with `coversWeek: true`, and the week route (`POST …/staffing/proposal/week`) takes the same flag: a
+change of the staffing, a release or the week between the search and the apply is `409 STAFF_PROPOSAL_STALE`.
+
+### 32.2 Deploy order
+
+**The migration first, then the merge**, from a tree that has every applied migration and this one. **The engine deploys with the API on every merge**,
+and the contract change is additive (a new route, new classes named `WeekBounds*`, no other path or schema changed: the OpenAPI test compares every
+other key against an engine without the route). In the minutes when the API is the newer of the two the route is a 404, which the search reads as
+`SEARCH_ENGINE_OLDER` and says ("Schemamotorn är äldre än API:t…"); an engine that is the newer meets an API that never asks. The route is not one of
+the four the engine times on `GET /api/v1/timing`: its wait is its own (the engine's 25 s plus the transfer, 40 s), and `AI_ENGINE_TIMEOUT_MS` does not touch it.
+
+1. Read-only checks before: the table, its type, keys, indexes, arms and the function are not there, the latest applied migration has a lower stamp, the
+   server is Postgres 17. 2. `prisma migrate deploy` (it waits for no lock: `Schools` and `AcademicYears` `NOWAIT`, together, 30 s). 3. Merge.
+
+### 32.3 Rolling back
+
+`DROP TABLE "StaffingSearchRuns"`, `DROP TYPE "StaffingSearchRunStatus"`, `DROP FUNCTION app.staffing_search_sweep()`, and
+`DELETE FROM "_prisma_migrations" WHERE migration_name = '20270227090000_en_sokning_efter_lararval_ar_ett_jobb_med_lease'` if the file is to run again. Revert the
+API first: after the drop its start and its sweep fail on the missing table. The runs are findings, not decisions: nothing of the school's is lost.
+
+### 32.4 What the search cannot say, and what is not done here
+
+- **It proves a lower bound, not a timetable.** The figure is the engine's own bound for each year and real week (`week_load`), the same relaxation
+  `/check-week` uses. Lowering it does not promise a schedule (the study's 91.7 % still gave a `TIMEOUT` on a whole solve).
+- **A teacher's lessons in other years are not in a year's graph.** A teacher who receives a post is charged for their whole tjänst (the plan counts every
+  year) and their lesson hours across years are checked by the engine's own count (`_teacher_hours_verdict` is among the quick counts a candidate is
+  refused by), but a clash with lessons in another year is not seen: the bound is optimistic there, as it always was.
+- **Posts nobody leads are not searched.** Staffing them is Föreslå bemannings own question (and makes the week tighter by construction); a school applies a
+  search's result and then runs Föreslå bemanning for the rest.
+- **At most four years are judged** (the tightest of those a released post spans); a post whose years are not all among them is left (counted as `skippedPosts`).
+- **More than 16 real weeks** in a year are counted to 16 and the answer says so; such a figure ranks nothing.
+- **Generera has priority** over the year: the search waits (up to ten minutes, not counted against its budget) while a Generera run of the year goes on. A Generera
+  start does not look for a search, and another school's Generera run is not seen: the engine's gate (`WEEK_BOUNDS_CONCURRENCY`) is what keeps a search from taking every core.
+
+### 32.5 Operations
+
+- RLS sections 550 to 554 hold it: the catalogue (columns, keys and their actions, every constraint by name, indexes, the four arms, the privileges per role, the sweep's
+  grants and guard), who reads and writes with every principal of the matrix school and two schools' isolation, every constraint, the sweep's behaviour, and, as the owner,
+  every role by name and the cascades.
+- Logs: `Staffing search started`, `Staffing search finished [stop, rounds, evaluations, moves, ms]`, and on the engine `week_bounds_*` with the elapsed milliseconds of each count.
+  A search that ends `BUDGET` with moves was cut off while it still found improvements; raising `STAFFING_SEARCH_BUDGET_SECONDS` lets it go on.

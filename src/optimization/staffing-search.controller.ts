@@ -18,9 +18,10 @@ import { StaffingSearchService } from './staffing-search.service';
  * controller under the optimization prefix, as Kontrollera veckan's and the week before and after a proposal are, so that the
  * routes of a run and of a proposal are not touched by it.
  *
- * Guarded as a schemaläggare is: school administrators who write Schemaläggning (the table's own policies say the same). A search
- * reads the school as a proposal does, and writes only its own row; the proposal it gives is applied by Föreslå bemannings own
- * apply, with that route's guard, its policy and its second confirmation.
+ * Guarded as the table's own policies are: every school administrator reads (as a proposal is read), and writing (starting and
+ * cancelling) needs Schemaläggning, which the Area guard asks of every route that is not a read. A search reads the school as a
+ * proposal does and writes only its own row; the proposal it gives is applied by Föreslå bemannings own apply, with that route's
+ * guard, its policy and its second confirmation.
  */
 @Controller('api/v1/optimization')
 @UseGuards(JwtAuthGuard, RolesGuard)
