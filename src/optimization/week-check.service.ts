@@ -39,7 +39,7 @@ export const ENGINE_LACKS_WEEK_CHECK = 'ENGINE_LACKS_WEEK_CHECK';
  * in which a school meets one, and what it should read is that the function is
  * coming, not "The AI engine returned an error."
  */
-function engineLacksWeekCheck(): HttpException {
+export function engineLacksWeekCheck(): HttpException {
   return new HttpException(
     {
       message:
