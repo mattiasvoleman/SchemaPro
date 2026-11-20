@@ -45,6 +45,7 @@ import {
   SHARES_DO_NOT_FIT_IN_FILE,
   sameTeacherTwice,
 } from '../staffing/staffing-enforcement';
+import { takeBackReleasesAfterHandChange } from '../staffing/engine-release-handover';
 import { staffingSentence } from '../staffing/staffing-checks';
 import {
   followOfChanges,
@@ -2019,6 +2020,12 @@ export class ImportService {
         value === undefined ? undefined : value === null ? null : value.toISOString().slice(0, 10);
 
       const seenAtRow = new Map<string, number>();
+      /**
+       * The posts the file gives another lead than they have, by id, with the lead they had: a teacher chosen by file is the school
+       * choosing, which takes the post's release for the engine back (engine-release-handover.ts). Checked against what is written when
+       * the upload is done, because a row held for its block may end as an error and write nothing.
+       */
+      const leadsChanged = new Map<string, string | null>();
       /** Rows that change a block member's lessons or weeks, by block, in file order. */
       const heldForBlock = new Map<
         string,
@@ -2381,6 +2388,7 @@ export class ImportService {
           report.skipped += 1;
           continue;
         }
+        if ('teacherId' in values && (values.teacherId ?? null) !== current.teacherId) leadsChanged.set(current.id, current.teacherId);
         if (current.blockId && !sameBlockShape(shapeAfter(current, values), shapeAfter(current))) {
           heldForBlock.set(current.blockId, [
             ...(heldForBlock.get(current.blockId) ?? []),
@@ -2406,6 +2414,20 @@ export class ImportService {
       }
       // The database's rules per teacher on the posts as the file leaves them, as a statement (not the COMMIT).
       if (placementsMoved) await judgePlacementTeachersNow(tx);
+
+      // Släppt för motorn: a post the file really gave another lead is the school's choice, and its release goes.
+      if (leadsChanged.size > 0) {
+        const now = await tx.teachingRequirement.findMany({
+          where: { id: { in: [...leadsChanged.keys()] } },
+          select: { id: true, teacherId: true },
+        });
+        await takeBackReleasesAfterHandChange(tx, {
+          schoolId,
+          academicYearId: dto.academicYearId,
+          actorId: user.userId ?? null,
+          requirementIds: now.filter((post) => post.teacherId !== leadsChanged.get(post.id)).map((post) => post.id),
+        });
+      }
 
       return report;
     });

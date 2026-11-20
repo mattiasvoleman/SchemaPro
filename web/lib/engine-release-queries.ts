@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { STAFFING_KEYS } from "@/lib/staffing-keys";
 
 /*
  * Släppta poster (src/staffing/engine-release.controller.ts): the timplansposter a school has released so that Föreslå
@@ -14,7 +15,7 @@ import { api } from "@/lib/api";
  */
 
 /** The prefix react-query invalidates on; the full key carries the läsår. */
-export const ENGINE_RELEASE_KEY = ["engineReleases"] as const;
+export const ENGINE_RELEASE_KEY = STAFFING_KEYS.releases;
 
 /** The gateway's code for a post named in a release that is not the year's (400, params `{ count }`). */
 export const ENGINE_RELEASE_POST_NOT_IN_YEAR = "ENGINE_RELEASE_POST_NOT_IN_YEAR";

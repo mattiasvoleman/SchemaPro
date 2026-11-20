@@ -1673,4 +1673,116 @@ describe('TeachingRequirementsService', () => {
       ).rejects.toThrow(NotFoundException);
     });
   });
+
+  /*
+   * Släppt för motorn: a teacher chosen by hand is the school's choice, which takes the post's release for the engine back, in the
+   * same transaction as the change and with a log row, as taking it back on the card does. A PATCH that leaves the lead as it is leaves
+   * the release alone, and one that touches no staffing field reads nothing of it.
+   */
+  describe('släppt för motorn', () => {
+    const OTHER_TEACHER = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const ROW = {
+      id: REQUIREMENT_ID,
+      schoolId: SCHOOL_ID,
+      academicYearId: YEAR_ID,
+      subjectId: SUBJECT_ID,
+      studentGroupId: GROUP_ID,
+      teacherId: TEACHER_ID,
+      coTeacherId: null,
+      lessonsPerWeek: 3,
+      minutesPerLesson: 60,
+      lessonLengths: [],
+      startDate: null,
+      endDate: null,
+      recurrence: 'ALL_WEEKS',
+      blockId: null,
+      shares: [],
+    };
+    const givenStored = (row: Record<string, unknown>): void => {
+      tx.teachingRequirement.findUnique.mockImplementation(
+        ({ where, select }: { where: { id: string }; select?: Selection }) =>
+          Promise.resolve(where.id === REQUIREMENT_ID ? selected(row, select) : null),
+      );
+    };
+    const givenReleased = (): void => {
+      tx.teachingRequirementRelease.findMany.mockResolvedValue([{ requirementId: REQUIREMENT_ID }]);
+    };
+    const user = () => testUser({ schoolId: SCHOOL_ID, userId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' });
+
+    it('takes the release back when somebody chooses another teacher, and says so in the log', async () => {
+      givenStored(ROW);
+      givenReleased();
+      tx.teachingRequirement.update.mockResolvedValue({ ...ROW, teacherId: OTHER_TEACHER });
+
+      await service.update(REQUIREMENT_ID, { teacherId: OTHER_TEACHER }, user());
+
+      expect(tx.teachingRequirementRelease.deleteMany).toHaveBeenCalledWith({ where: { requirementId: { in: [REQUIREMENT_ID] } } });
+      expect(tx.scheduleChangeLog.create).toHaveBeenCalledTimes(1);
+      expect(tx.scheduleChangeLog.create.mock.calls[0]![0]).toMatchObject({
+        data: {
+          schoolId: SCHOOL_ID,
+          academicYearId: YEAR_ID,
+          masterLessonId: null,
+          actorId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+          action: 'UPDATE',
+          before: { kind: 'ENGINE_RELEASE', released: true, requirementIds: [REQUIREMENT_ID] },
+          after: { kind: 'ENGINE_RELEASE', released: false, requirementIds: [REQUIREMENT_ID], because: 'TEACHER_CHANGED_BY_HAND' },
+        },
+      });
+    });
+
+    it('takes it back too when the lead is taken away by hand: the school has chosen "nobody"', async () => {
+      givenStored(ROW);
+      givenReleased();
+      tx.teachingRequirement.update.mockResolvedValue({ ...ROW, teacherId: null });
+      await service.update(REQUIREMENT_ID, { teacherId: null }, user());
+      expect(tx.teachingRequirementRelease.deleteMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('writes the release away after the post, in the same transaction', async () => {
+      givenStored(ROW);
+      givenReleased();
+      tx.teachingRequirement.update.mockResolvedValue({ ...ROW, teacherId: OTHER_TEACHER });
+      await service.update(REQUIREMENT_ID, { teacherId: OTHER_TEACHER }, user());
+      const order = (mock: jest.Mock): number => mock.mock.invocationCallOrder[0] ?? Number.NaN;
+      expect(order(tx.teachingRequirementRelease.deleteMany)).toBeGreaterThan(order(tx.teachingRequirement.update));
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves a release that nobody made alone: one read, no delete, no log row', async () => {
+      givenStored(ROW);
+      tx.teachingRequirement.update.mockResolvedValue({ ...ROW, teacherId: OTHER_TEACHER });
+      await service.update(REQUIREMENT_ID, { teacherId: OTHER_TEACHER }, user());
+      expect(tx.teachingRequirementRelease.findMany).toHaveBeenCalledTimes(1);
+      expect(tx.teachingRequirementRelease.deleteMany).not.toHaveBeenCalled();
+      expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
+    });
+
+    it('leaves the release when a save sends the lead the post already has', async () => {
+      givenStored(ROW);
+      givenReleased();
+      tx.teachingRequirement.update.mockResolvedValue(ROW);
+      await service.update(REQUIREMENT_ID, { teacherId: TEACHER_ID, lessonsPerWeek: 4 }, user());
+      expect(tx.teachingRequirementRelease.findMany).not.toHaveBeenCalled();
+      expect(tx.teachingRequirementRelease.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('leaves it for a PATCH that names no teacher, and reads nothing of it', async () => {
+      givenStored(ROW);
+      givenReleased();
+      tx.teachingRequirement.update.mockResolvedValue(ROW);
+      await service.update(REQUIREMENT_ID, { lessonsPerWeek: 4 }, user());
+      await service.update(REQUIREMENT_ID, { coTeacherId: OTHER_TEACHER }, user());
+      expect(tx.teachingRequirementRelease.findMany).not.toHaveBeenCalled();
+      expect(tx.teachingRequirementRelease.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('does not take it back for a PATCH that fails: nothing is written', async () => {
+      givenStored(ROW);
+      givenReleased();
+      tx.teachingRequirement.update.mockRejectedValue(new Error('boom'));
+      await expect(service.update(REQUIREMENT_ID, { teacherId: OTHER_TEACHER }, user())).rejects.toThrow('boom');
+      expect(tx.teachingRequirementRelease.deleteMany).not.toHaveBeenCalled();
+    });
+  });
 });
