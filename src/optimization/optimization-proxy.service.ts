@@ -555,6 +555,14 @@ export interface PreparedSchedule {
   storedRules: ScheduleRules | null;
   /** The maps an engine answer and a refusal are turned back through. No teacher map: see AnonMaps. */
   anonMaps: AnonMaps;
+  /**
+   * A teacher's real id -> the id the payload names them by, for the teachers the payload names at all (a post's lead,
+   * co-teacher or lesson teacher, a lock's teacher, a reservation's). NOT in anonMaps, for the reason AnonMaps gives:
+   * no refusal is turned back through it and no sentence may name a person. It is here for the one reader that lays a
+   * lead over the payload before the engine is asked (staffing-week.ts, Föreslå bemanning's week before and after),
+   * which has real ids to translate and sends the engine nothing but the payload's own ids. It never leaves the gateway.
+   */
+  teacherAnonMap: ReadonlyMap<string, string>;
   /** Every free-day wish of the school's teachers, in real ids, for Generera's notes. Never sent. */
   freeDayWishes: FreeDayWish[];
   /**
@@ -1617,7 +1625,17 @@ export class OptimizationProxyService {
     tx: PrismaClient,
     academicYearId: string,
     user: AuthenticatedUser,
-    options: { requestId?: string; coverage?: boolean; employmentReads?: string[] } = {},
+    options: {
+      requestId?: string;
+      coverage?: boolean;
+      employmentReads?: string[];
+      /**
+       * Build the week although posts have no teacher and the school's policy refuses to generate then
+       * (StaffingPolicy.unstaffedGeneration REFUSE). For a reader that asks what the week would be with a teacher on
+       * them (Föreslå bemanning's week before and after): its question is about those very posts. Never set by a run.
+       */
+      skipUnstaffedRefusal?: boolean;
+    } = {},
   ): Promise<PrepareResult> {
     const requestId = options.requestId ?? randomUUID();
     // Whose classes these are: for a rolled year not yet activated, the
@@ -1627,7 +1645,9 @@ export class OptimizationProxyService {
     // through an unactivated year is not what activating it does.
     const rosterBasis = await rostersOfYear(tx, user, academicYearId);
     const schoolId = requireSchoolId(user);
-    const unstaffed = await this.unstaffedRefusal(tx, academicYearId, schoolId, requestId);
+    const unstaffed = options.skipUnstaffedRefusal
+      ? null
+      : await this.unstaffedRefusal(tx, academicYearId, schoolId, requestId);
     if (unstaffed) {
       return {
         ready: false,
@@ -1885,6 +1905,7 @@ export class OptimizationProxyService {
       payload,
       storedRules: data.storedRules,
       anonMaps,
+      teacherAnonMap: data.teacherAnonMap,
       freeDayWishes: data.freeDayWishes,
       consecutiveWishes: data.consecutiveWishes,
       // The förläggningar that are locks too: every candidate writes them where they stand. A pinned

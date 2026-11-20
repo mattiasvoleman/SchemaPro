@@ -7166,6 +7166,157 @@ describe('Planning surface (e2e)', () => {
       expect(world.rows['scheduleChangeLog']).toHaveLength(2);
     });
 
+    describe('the week before and after the proposal (admin round-trip)', () => {
+      const WEEK = '/api/v1/optimization/staffing/proposal/week';
+      const CHECK = /\/api\/v1\/check-week$/;
+      const tight = (year: number, percent: number) => ({ year, demandMinutes: percent * 20, capacityMinutes: 2000, percent, over: false });
+      /** The engine's answer to a check of the week: its rows, nothing refused. */
+      const weekAnswer = (years: ReturnType<typeof tight>[]) => ({
+        requestId: 'check',
+        verdict: years.length > 0 ? 'TIGHT' : 'OK',
+        years,
+        conflicts: null,
+        skipped: ['LUNCH_STAGE'],
+        elapsedMs: 5,
+      });
+      /** The staffing stub givenStaff installed, and the check beside it: `checks` answers /check-week in order (an Error is the engine failing). */
+      const withChecks = (checks: (ReturnType<typeof weekAnswer> | Error)[]) => {
+        const staff = harness.http.post.getMockImplementation()!;
+        const asked: AiEngineScheduleRequest[] = [];
+        harness.http.post.mockImplementation((url: string, payload: unknown) => {
+          if (!CHECK.test(url)) return staff(url, payload);
+          asked.push(payload as AiEngineScheduleRequest);
+          const next = checks[asked.length - 1] ?? checks[checks.length - 1]!;
+          return next instanceof Error ? throwError(() => next) : of({ data: next });
+        });
+        return asked;
+      };
+      const changesOf = (body: { assignments: Record<string, unknown>[] }) =>
+        body.assignments.map((a) => ({ requirementId: a['requirementId'], fromTeacherId: a['fromTeacherId'], toTeacherId: a['toTeacherId'] }));
+      const weekOf = (body: Record<string, unknown>) => request(http()).post(WEEK).set('x-test-user', admin()).send({ academicYearId: IDS.yearA, ...body });
+
+      it('shows the week before and after, warns when the proposal makes it tighter, asks the engine only with what a Generera is sent, and applies with the digest that covers the week', async () => {
+        const world = givenStaff();
+        const asked = withChecks([weekAnswer([tight(7, 90), tight(8, 92)]), weekAnswer([tight(7, 97), tight(8, 92)])]);
+        const proposal = await propose().expect(200);
+        const changes = changesOf(proposal.body);
+
+        const week = await weekOf({ basisSha256: proposal.body.basisSha256, changes }).expect(200);
+
+        // The week as it stands, then with the proposal; both at the engine's check, and nothing written.
+        expect(asked).toHaveLength(2);
+        expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+        expect(week.body).toMatchObject({ status: 'DONE', worse: true, verdicts: { before: 'TIGHT', after: 'TIGHT' } });
+        const [shown] = week.body.years;
+        expect(shown).toMatchObject({ verdict: 'TIGHTER', before: { kind: 'LOAD', percent: 90 }, after: { kind: 'LOAD', percent: 97 } });
+        // The proposal's changes were laid over the week: the two payloads differ in the leads and in nothing else, and no real id crossed.
+        const [before, after] = asked as [AiEngineScheduleRequest, AiEngineScheduleRequest];
+        expect({ ...after, requirements: [] }).toEqual({ ...before, requirements: [] });
+        const differing = before.requirements.filter((row, index) => JSON.stringify(row) !== JSON.stringify(after.requirements[index]));
+        expect(differing.length).toBeGreaterThan(0);
+        for (const row of differing) {
+          const twin = after.requirements.find((other) => other.id === row.id)!;
+          expect({ ...twin, teacherId: row.teacherId, lessonTeacherIds: row.lessonTeacherIds }).toEqual(row);
+        }
+        expect(JSON.stringify(asked)).not.toContain(IDS.cecilia);
+        // Both posts are in the week the engine is asked about (one of them was Bo's, who has left, the other nobody's), and the payload
+        // already names Cecilia by an id of its own (the world gives her a reservation), so she is not new to the week.
+        expect(week.body.overlay).toEqual({ given: 2, laidOver: 2, notLaidOver: 0, fromNobody: 1, newToTheWeek: 0 });
+        expect(week.body.basisSha256).toMatch(/^[0-9a-f]{64}$/);
+        expect(week.body.basisSha256).not.toBe(proposal.body.basisSha256);
+
+        // Applied with the digest the week returned: the same apply as ever, and an undo with the basis it answers.
+        const applied = await request(http())
+          .post(APPLY)
+          .set('x-test-user', admin())
+          .send({ academicYearId: IDS.yearA, basisSha256: week.body.basisSha256, confirmedNewTeaching: confirmedOf(proposal.body.assignments), changes })
+          .expect(200);
+        expect(applied.body).toMatchObject({ updated: 2 });
+        expect([lead(world, r(2)), lead(world, r(6))]).toEqual([IDS.cecilia, IDS.cecilia]);
+        expect(world.rows['scheduleChangeLog']).toHaveLength(1);
+      });
+
+      it('refuses an apply that carries the week\'s digest when the week has changed since, though the tjänstefördelning has not, writing nothing', async () => {
+        const world = givenStaff();
+        withChecks([weekAnswer([tight(7, 90)]), weekAnswer([tight(7, 91)])]);
+        const proposal = await propose().expect(200);
+        const changes = changesOf(proposal.body);
+        const week = await weekOf({ basisSha256: proposal.body.basisSha256, changes }).expect(200);
+        expect(week.body.basisSha256).toMatch(/^[0-9a-f]{64}$/);
+
+        // Somebody shortens the school day by half an hour: the proposal's own basis does not read the frames, the week does.
+        world.rows['frameTime']![0]!['endTime'] = new Date('1970-01-01T15:00:00.000Z');
+
+        const refused = await request(http())
+          .post(APPLY)
+          .set('x-test-user', admin())
+          .send({ academicYearId: IDS.yearA, basisSha256: week.body.basisSha256, confirmedNewTeaching: confirmedOf(proposal.body.assignments), changes })
+          .expect(409);
+        expect(refused.body).toMatchObject({ code: 'STAFF_PROPOSAL_STALE' });
+        expect([lead(world, r(2)), lead(world, r(6))]).toEqual([IDS.bo, null]);
+        expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+        // The proposal's own basis is judged as it always was: nobody has changed the tjänstefördelning.
+        await request(http())
+          .post(APPLY)
+          .set('x-test-user', admin())
+          .send({ academicYearId: IDS.yearA, basisSha256: proposal.body.basisSha256, confirmedNewTeaching: confirmedOf(proposal.body.assignments), changes })
+          .expect(200);
+      });
+
+      it('goes on without the figure when the check cannot be made: 200, NOT_CHECKED, no digest, and the apply with the proposal\'s own basis is what it was', async () => {
+        const world = givenStaff();
+        const asked = withChecks([new Error('socket hang up')]);
+        const proposal = await propose().expect(200);
+        const changes = changesOf(proposal.body);
+
+        const week = await weekOf({ basisSha256: proposal.body.basisSha256, changes }).expect(200);
+
+        expect(asked).toHaveLength(1);
+        expect(week.body).toMatchObject({ status: 'NOT_CHECKED', reason: 'ENGINE_ERROR', years: [], basisSha256: null, worse: false });
+        await request(http())
+          .post(APPLY)
+          .set('x-test-user', admin())
+          .send({ academicYearId: IDS.yearA, basisSha256: proposal.body.basisSha256, confirmedNewTeaching: confirmedOf(proposal.body.assignments), changes })
+          .expect(200);
+        expect([lead(world, r(2)), lead(world, r(6))]).toEqual([IDS.cecilia, IDS.cecilia]);
+      });
+
+      it('answers NO_CHANGES, asking the engine nothing, for an empty selection', async () => {
+        givenStaff();
+        const asked = withChecks([weekAnswer([])]);
+        const proposal = await propose().expect(200);
+
+        const week = await weekOf({ basisSha256: proposal.body.basisSha256, changes: [] }).expect(200);
+
+        expect(week.body).toMatchObject({ status: 'NOT_CHECKED', reason: 'NO_CHANGES', basisSha256: null });
+        expect(asked).toHaveLength(0);
+      });
+
+      it('is a 409 STAFF_PROPOSAL_STALE for a proposal that has gone old, before the engine is asked', async () => {
+        const world = givenStaff();
+        const asked = withChecks([weekAnswer([])]);
+        const proposal = await propose().expect(200);
+        world.rows['teachingRequirement']!.find((row) => row['id'] === r(1))!['lessonsPerWeek'] = 4;
+
+        const week = await weekOf({ basisSha256: proposal.body.basisSha256, changes: changesOf(proposal.body) }).expect(409);
+
+        expect(week.body).toMatchObject({ code: 'STAFF_PROPOSAL_STALE' });
+        expect(asked).toHaveLength(0);
+      });
+
+      it('is a school administrator\'s: a teacher is refused at the guard, and a body that is no body at all is a 400', async () => {
+        givenStaff();
+        const asked = withChecks([weekAnswer([])]);
+        await request(http())
+          .post(WEEK)
+          .set('x-test-user', asUser({ role: Role.TEACHER }))
+          .send({ academicYearId: IDS.yearA, basisSha256: 'a'.repeat(64), changes: [] })
+          .expect(403);
+        await weekOf({ basisSha256: 'not-a-digest', changes: [] }).expect(400);
+        expect(asked).toHaveLength(0);
+      });
+    });
+
     it('delade lektioner: an undo that would leave a förläggning nobody’s is a 409 naming the post and the förläggning, flat, and no person', async () => {
       const world = givenStaff();
       // r(6) shares one of its two lessons with Bo; its lead is nobody until the proposal gives it Cecilia.

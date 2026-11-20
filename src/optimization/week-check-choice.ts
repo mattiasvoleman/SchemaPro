@@ -127,7 +127,7 @@ function inYear(requirement: AnonymousRequirement, year: number): boolean {
 }
 
 /** A post with its lead changed: and the lessons of a shared post that the old lead held. */
-function withLead(requirement: AnonymousRequirement, to: string): AnonymousRequirement {
+export function withLead(requirement: AnonymousRequirement, to: string): AnonymousRequirement {
   const from = requirement.teacherId;
   return {
     ...requirement,

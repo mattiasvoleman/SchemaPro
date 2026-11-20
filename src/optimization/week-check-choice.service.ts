@@ -228,18 +228,7 @@ export class WeekCheckChoiceService {
 
   /** The answer's rows and refusal, ids still anonymous where the period is inferred from them, and the summary realised. */
   private answerOf(response: AiEngineWeekCheckResponse, maps: AnonMaps): RealisedAnswer {
-    const realised = this.proxy.realiseConflicts(response.conflicts, maps);
-    return {
-      details: (response.conflicts?.conflicts ?? []).map((detail) => ({
-        code: detail.code,
-        params: detail.params ?? {},
-        requirementIds: detail.requirementIds ?? [],
-      })),
-      summary:
-        realised && realised.summaryCode
-          ? { code: realised.summaryCode, params: realised.summaryParams ?? {} }
-          : null,
-    };
+    return realisedAnswerOf(this.proxy, response, maps);
   }
 
   /** The week as Generera would send it, and what the analysis needs beside it, read in one transaction. */
@@ -320,6 +309,30 @@ export class WeekCheckChoiceService {
       };
     });
   }
+}
+
+/**
+ * An engine answer as countOf reads it: its rows and refusal, ids still anonymous where the period is inferred from
+ * them, and the summary realised (a refusal's period in dates). Shared with Föreslå bemanning's week before and after
+ * (staffing-week.service.ts), which counts a year of an answer the same way.
+ */
+export function realisedAnswerOf(
+  proxy: Pick<OptimizationProxyService, 'realiseConflicts'>,
+  response: AiEngineWeekCheckResponse,
+  maps: AnonMaps,
+): RealisedAnswer {
+  const realised = proxy.realiseConflicts(response.conflicts, maps);
+  return {
+    details: (response.conflicts?.conflicts ?? []).map((detail) => ({
+      code: detail.code,
+      params: detail.params ?? {},
+      requirementIds: detail.requirementIds ?? [],
+    })),
+    summary:
+      realised && realised.summaryCode
+        ? { code: realised.summaryCode, params: realised.summaryParams ?? {} }
+        : null,
+  };
 }
 
 /**

@@ -500,6 +500,8 @@ describe('the roster-reader inventory', () => {
       // (prepareSchedule), so a year two steps ahead answers R6's 409 there as POST jobs does: a check that read a week no
       // Generera may be run for would answer about pupils the year does not have. Its question what the week would be
       // with teacher choice (askChoice) builds the same week by the same fetch, and answers the same 409 for the same year.
+      // So does Föreslå bemanning's week before and after a proposal (weekOfProposal), which counts the very week the check does
+      // with the proposed leads laid over it.
       expect(reached.map((entry) => entry.route).sort()).toEqual([
         'AnalysisController.costBasis',
         'AnalysisController.keyFigures',
@@ -547,6 +549,7 @@ describe('the roster-reader inventory', () => {
         'StaffingLoadController.load',
         'StaffingLoadController.suggestTeachers',
         'StaffingLoadController.unstaffed',
+        'StaffingWeekController.weekOfProposal',
         'SwapsController.apply',
         'SwapsController.suggest',
         'TeachingBlocksController.update',
