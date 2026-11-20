@@ -37,6 +37,7 @@ from ortools.sat.python import cp_model
 
 from app.main import create_app
 from app.schemas.schedule import OptimizeScheduleRequest
+from app.schemas.week_bounds import WeekBoundsResponse
 from app.solver import week_load
 from app.solver.scheduler_solver import SchedulerSolver
 from tests import test_optimize as to
@@ -388,12 +389,50 @@ def test_a_second_count_while_the_gate_is_held_is_answered_429(client: TestClien
     assert "busy" in response.json()["message"]
 
 
-def test_the_gate_lets_the_configured_number_through(client: TestClient) -> None:
+def test_counts_one_after_the_other_all_get_through(client: TestClient) -> None:
     payload = wl._year(class_lessons=20, shared=False)
 
-    # Two in a row, one after the other: the gate is released when a count ends.
+    # The gate is released when a count ends.
     assert client.post(URL, json=payload, headers=HEADERS).status_code == 200
     assert client.post(URL, json=payload, headers=HEADERS).status_code == 200
+
+
+def test_the_route_never_runs_more_than_one_count_at_once_whatever_the_deployment_says(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """THE ENGINE IS SHARED BY EVERY SCHOOL, AND PRODUCTION HAS ONE REPLICA. A search asks for hundreds of counts; the route
+    takes one worker at a time however many callers ask and whatever an environment variable of an older deployment says
+    (WEEK_BOUNDS_CONCURRENCY, which is no longer a setting): the others are answered 429 at once, never queued, so a Generera
+    run or a week check is never behind them."""
+    import httpx
+
+    monkeypatch.setenv("WEEK_BOUNDS_CONCURRENCY", "8")
+    running = 0
+    most = 0
+
+    def slow(self: SchedulerSolver, request: Any, **kwargs: Any) -> Any:
+        nonlocal running, most
+        running += 1
+        most = max(most, running)
+        time.sleep(0.3)
+        running -= 1
+        return WeekBoundsResponse(
+            requestId=request.request_id, weeksTotal=0, weeksCounted=0, rows=[], refusal=None, deadlineHit=False, elapsedMs=0,
+        )
+
+    monkeypatch.setattr(SchedulerSolver, "week_bounds", slow)
+    payload = wl._year(class_lessons=20, shared=False)
+
+    async def ask() -> list[int]:
+        transport = httpx.ASGITransport(app=create_app(to._settings()))
+        async with httpx.AsyncClient(transport=transport, base_url="http://engine") as http:
+            answers = await asyncio.gather(*[http.post(URL, json=payload, headers=HEADERS) for _ in range(4)])
+        return sorted(answer.status_code for answer in answers)
+
+    statuses = asyncio.run(ask())
+
+    assert most == 1
+    assert statuses == [200, 429, 429, 429]
 
 
 def test_a_count_that_is_not_done_by_the_ceiling_is_answered_503(

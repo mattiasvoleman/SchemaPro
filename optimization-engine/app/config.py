@@ -94,11 +94,6 @@ class Settings(BaseSettings):
     staff_solver_max_time_seconds: float = Field(
         default=10.0, alias="STAFF_SOLVER_MAX_TIME_SECONDS",
     )
-    # How many exact week counts (POST /api/v1/week-bounds) run at once in this process. A search for
-    # the teacher choice that eases the week asks for hundreds of them in a row; each is CPU the next
-    # Generera run wants, so the route answers 429 beyond this and the caller waits. The count has
-    # its own seconds in the request, so this is a bound on how much of the engine a search can take.
-    week_bounds_concurrency: int = Field(default=2, alias="WEEK_BOUNDS_CONCURRENCY", ge=1, le=8)
     # The exam planner's budget (POST /api/v1/plan-exams), its own for the room
     # budget's reason: a provvecka is planned behind a button with someone
     # watching the spinner, and leaving every exam unplaced is a valid answer

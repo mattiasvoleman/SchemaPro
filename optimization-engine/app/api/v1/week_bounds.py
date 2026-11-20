@@ -7,10 +7,16 @@ says why /check-week cannot be): the gateway asks for one candidate at a time, a
 few at once, and decides from the figures.
 
 It never solves and builds no timetable model. It is CPU all the same, and a
-search asks for hundreds, so the route holds a gate (`week_bounds_concurrency`):
-beyond it the answer is 429 and the caller backs off. The ceiling is the same as
-the week check's: a count that has not finished by then answers 503 and its
-thread, which cannot be cancelled, finishes on its own.
+search asks for hundreds, so the route holds a gate of ONE: at most one count runs
+in this process at a time, whatever a caller sends and whatever the deployment is
+configured with (there is no setting for it). The engine is shared by every school
+and a production deployment has one replica, so a search from one school must not
+be able to take more of it than one single-threaded count (the pricing is one
+CP-SAT worker): /optimize and /check-week are never queued behind it and have no
+gate of this kind. Beyond the gate the answer is 429, never a queue, and the caller
+backs off (the gateway waits, and a search's time does not run while it does). The ceiling is the same as the week check's: a
+count that has not finished by then answers 503 and its thread, which cannot be
+cancelled, finishes on its own.
 """
 
 from __future__ import annotations
@@ -29,17 +35,20 @@ from app.solver.scheduler_solver import SchedulerSolver
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["optimization"])
 
+#: How many counts this process runs at once. One, and not a setting: a number that could be raised by an environment
+#: variable is a number a school's search could be given the engine's other cores by.
+WEEK_BOUNDS_AT_ONCE = 1
 #: The count's own seconds are in the request; this is what the thread may take beyond them (the graphs and
 #: the arithmetic counts before and between the weeks are built synchronously and cannot be interrupted).
 _BUILD_HEADROOM_SECONDS = _CHECK_CEILING_SECONDS
 
 
-def _gate(request: Request, settings: Settings) -> asyncio.Semaphore:
+def _gate(request: Request) -> asyncio.Semaphore:
     """The gate of this application (one per app instance, so a test's app is its own)."""
     state = request.app.state
     gate = getattr(state, "week_bounds_gate", None)
     if gate is None:
-        gate = asyncio.Semaphore(settings.week_bounds_concurrency)
+        gate = asyncio.Semaphore(WEEK_BOUNDS_AT_ONCE)
         state.week_bounds_gate = gate
     return gate  # type: ignore[no-any-return]
 
@@ -57,7 +66,7 @@ async def week_bounds(
     settings: Settings = Depends(get_app_settings),
 ) -> WeekBoundsResponse:
     """Accept the payload Generera sends and answer the exact figures of its weeks."""
-    gate = _gate(request, settings)
+    gate = _gate(request)
     if gate.locked():
         # Not queued: a caller that waits here holds a connection for as long as the counts before it take.
         logger.warning("week_bounds_busy", request_id=str(payload.request_id))
