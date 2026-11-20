@@ -301,7 +301,7 @@ export interface StaffingApplyResult {
 // What a proposal reads, and what it decides before the engine is asked
 
 /** Everything a proposal reads, and so everything its basis covers. */
-interface StaffingState {
+export interface StaffingState {
   schoolId: string;
   read: LoadRead;
   policy: EnforcedPolicy;
@@ -328,7 +328,7 @@ interface StaffingState {
 
 type RowKind = 'FIXED' | 'KEPT' | 'OPEN';
 
-interface RowPlan {
+export interface RowPlan {
   row: LoadRequirement;
   kind: RowKind;
   inconsistent: boolean;
@@ -353,7 +353,7 @@ interface RowPlan {
   excluded: string[];
 }
 
-interface TeacherPlan {
+export interface TeacherPlan {
   userId: string;
   target: number | null;
   targetTenths: number | null;
@@ -370,7 +370,7 @@ interface TeacherPlan {
   changing?: { employment: LoadEmployment; index: number; from: string; to: string };
 }
 
-interface Plan {
+export interface Plan {
   recorded: boolean;
   respect: boolean;
   respectForcedByPolicy: boolean;
@@ -435,7 +435,6 @@ export class StaffingProposalService {
     // Whether the reader may see when and how a post changes (Roller i
     // skolan). The plan is the same either way; only what it says differs.
     const showsPeriods = readsHr(user);
-    const shownTarget = (teacher: TeacherPlan) => shownTargetOf(state.read.input, teacher, showsPeriods);
 
     const free = plan.rows.filter((row) => row.kind !== 'FIXED');
     const open = free.filter((row) => row.kind === 'OPEN');
@@ -448,48 +447,20 @@ export class StaffingProposalService {
       unstaffed: Map<string, StaffUnstaffedReason>,
       conflicts: ProposalConflict[],
       terms: StaffingProposal['terms'],
-    ): StaffingProposal => ({
-      status,
-      unstaffedProven,
-      basisSha256,
-      options: {
+    ): StaffingProposal =>
+      this.proposalOf({
+        state,
+        plan,
         onlyUnstaffed: dto.onlyUnstaffed,
-        respectQualifications: plan.respect,
-        respectForcedByPolicy: plan.respectForcedByPolicy,
-        qualificationsRecorded: plan.recorded,
-        pinnedRequirementIds: plan.pinned,
-      },
-      loadModel: state.read.loadModel,
-      counts: {
-        freeRequirements: free.length,
-        openRequirements: open.length,
-        keptRequirements: kept.length,
-        fixedRequirements: plan.rows.length - free.length,
-        // Released AND led by somebody the school chose: the posts the release means anything for. A released post nobody teaches, or
-        // whose teacher has left, is open to the proposal with or without it, and counting it would have the dialog say that a post it
-        // offers is "left as it is" (releasedSkipped) or that a release is there when no staffed post has one (nothingToDoRelease).
-        releasedRequirements: plan.rows.filter(
-          (row) => state.released.has(row.row.id) && row.row.teacherId !== null && plan.staff.has(row.row.teacherId),
-        ).length,
-        vacated: plan.rows.filter((row) => row.vacated).length,
-        inconsistent: plan.rows.filter((row) => row.inconsistent).length,
-        teachersSent: plan.teachers.length,
-        teachersWithTarget: plan.teachers.filter((t) => shownTarget(t) !== null).length,
-        teachersWithZeroTarget: plan.teachers.filter((t) => shownTarget(t) === 0).length,
-        teachersWithoutTarget: plan.teachers.filter((t) => shownTarget(t) === null).length,
-      },
-      ...this.compose(state, plan, leads, unstaffed, showsPeriods),
-      // A conflict that names a changing post states its plan's stretch (the
-      // engine's STAFF_TEACHER_CAPACITY_ZERO: what it carries against the
-      // stretch's limit), which would give back the post's level in it. Left
-      // out for a reader who may not see that; the rows it would have
-      // explained still say why they stay unstaffed.
-      conflicts: showsPeriods
-        ? conflicts
-        : conflicts.filter((conflict) => !conflict.teacherIds.some((id) => plan.teacherById.get(id)?.changing)),
-      terms,
-      ...(showsPeriods ? {} : { hrHidden: true as const }),
-    });
+        basisSha256,
+        showsPeriods,
+        status,
+        unstaffedProven,
+        leads,
+        unstaffed,
+        conflicts,
+        terms,
+      });
 
     // Nothing to decide: every row is fixed (staffed, pinned or inconsistent).
     if (free.length === 0) {
@@ -975,6 +946,115 @@ export class StaffingProposalService {
   }
 
   /**
+   * The year's plan as a search for a choice of leads reads it (staffing-search.service.ts): the state in the caller's
+   * transaction, the plan of the posts the school has released (`onlyUnstaffed` off) with behörighet always respected, and
+   * the proposal's own basis. Nothing is asked of the engine.
+   */
+  async readPlan(
+    tx: PrismaClient,
+    user: AuthenticatedUser,
+    dto: Pick<StaffingProposalDto, 'academicYearId' | 'pinnedRequirementIds'>,
+  ): Promise<{ state: StaffingState; plan: Plan; basisSha256: string }> {
+    const state = await this.readState(tx, user, dto.academicYearId);
+    const plan = planOf(state, {
+      onlyUnstaffed: false,
+      respectQualifications: true,
+      pinnedRequirementIds: dto.pinnedRequirementIds,
+    });
+    return { state, plan, basisSha256: basisOf(state) };
+  }
+
+  /**
+   * The proposal a choice of leads makes, in the shape every proposal has (dialog, apply, week before and after), for leads the
+   * caller chose and judged itself: it is no answer of the engine, so `terms` is null and the status FEASIBLE. `leads` holds
+   * the lead of every free row the choice moved, and the others as they are.
+   */
+  proposalFromLeads(
+    state: StaffingState,
+    plan: Plan,
+    leads: Map<string, string>,
+    basisSha256: string,
+    user: AuthenticatedUser,
+  ): StaffingProposal {
+    return this.proposalOf({
+      state,
+      plan,
+      onlyUnstaffed: false,
+      basisSha256,
+      showsPeriods: readsHr(user),
+      status: 'FEASIBLE',
+      unstaffedProven: false,
+      leads,
+      unstaffed: new Map(),
+      conflicts: [],
+      terms: null,
+    });
+  }
+
+  /** The proposal object, from a plan and the leads an answer gives its free rows (what `propose` and a search both return). */
+  private proposalOf(args: {
+    state: StaffingState;
+    plan: Plan;
+    onlyUnstaffed: boolean;
+    basisSha256: string;
+    showsPeriods: boolean;
+    status: StaffSolveStatus;
+    unstaffedProven: boolean;
+    leads: Map<string, string>;
+    unstaffed: Map<string, StaffUnstaffedReason>;
+    conflicts: ProposalConflict[];
+    terms: StaffingProposal['terms'];
+  }): StaffingProposal {
+    const { state, plan, onlyUnstaffed, basisSha256, showsPeriods, status, unstaffedProven, leads, unstaffed, conflicts, terms } = args;
+    const shownTarget = (teacher: TeacherPlan) => shownTargetOf(state.read.input, teacher, showsPeriods);
+    const free = plan.rows.filter((row) => row.kind !== 'FIXED');
+    const open = free.filter((row) => row.kind === 'OPEN');
+    const kept = free.filter((row) => row.kind === 'KEPT');
+    return {
+      status,
+      unstaffedProven,
+      basisSha256,
+      options: {
+        onlyUnstaffed,
+        respectQualifications: plan.respect,
+        respectForcedByPolicy: plan.respectForcedByPolicy,
+        qualificationsRecorded: plan.recorded,
+        pinnedRequirementIds: plan.pinned,
+      },
+      loadModel: state.read.loadModel,
+      counts: {
+        freeRequirements: free.length,
+        openRequirements: open.length,
+        keptRequirements: kept.length,
+        fixedRequirements: plan.rows.length - free.length,
+        // Released AND led by somebody the school chose: the posts the release means anything for. A released post nobody teaches, or
+        // whose teacher has left, is open to the proposal with or without it, and counting it would have the dialog say that a post it
+        // offers is "left as it is" (releasedSkipped) or that a release is there when no staffed post has one (nothingToDoRelease).
+        releasedRequirements: plan.rows.filter(
+          (row) => state.released.has(row.row.id) && row.row.teacherId !== null && plan.staff.has(row.row.teacherId),
+        ).length,
+        vacated: plan.rows.filter((row) => row.vacated).length,
+        inconsistent: plan.rows.filter((row) => row.inconsistent).length,
+        teachersSent: plan.teachers.length,
+        teachersWithTarget: plan.teachers.filter((t) => shownTarget(t) !== null).length,
+        teachersWithZeroTarget: plan.teachers.filter((t) => shownTarget(t) === 0).length,
+        teachersWithoutTarget: plan.teachers.filter((t) => shownTarget(t) === null).length,
+      },
+      ...this.compose(state, plan, leads, unstaffed, showsPeriods),
+      // A conflict that names a changing post states its plan's stretch (the
+      // engine's STAFF_TEACHER_CAPACITY_ZERO: what it carries against the
+      // stretch's limit), which would give back the post's level in it. Left
+      // out for a reader who may not see that; the rows it would have
+      // explained still say why they stay unstaffed.
+      conflicts: showsPeriods
+        ? conflicts
+        : conflicts.filter((conflict) => !conflict.teacherIds.some((id) => plan.teacherById.get(id)?.changing)),
+      terms,
+      ...(showsPeriods ? {} : { hrHidden: true as const }),
+    };
+  }
+
+  /**
    * The engine's answer in real ids — refused whole (502) when it is not an
    * answer to the question asked. Every rule the engine was given is checked
    * again here, where the write will be made: a proposal that broke one would
@@ -1005,18 +1085,9 @@ export class StaffingProposalService {
       const teacherId = realTeacher.get(assignment.teacherId);
       if (!requirementId || !teacherId) throw bad('an unknown id');
       const row = plan.rowById.get(requirementId)!;
-      if (row.kind === 'FIXED') throw bad(`fixed row ${assignment.requirementId} assigned`);
       if (leads.has(requirementId)) throw bad(`row ${assignment.requirementId} assigned twice`);
-      if (teacherId === row.co) throw bad(`row ${assignment.requirementId} given its co-teacher`);
-      const teacher = plan.teacherById.get(teacherId)!;
-      const keeps = teacherId === row.current;
-      if (!keeps && teacher.keepOrShed) throw bad(`a keep-or-shed teacher given row ${assignment.requirementId}`);
-      if (!keeps && plan.respect && !row.eligible.includes(teacherId)) {
-        throw bad(`row ${assignment.requirementId} given an unqualified teacher`);
-      }
-      if (!keeps && row.excluded.includes(teacherId)) {
-        throw bad(`row ${assignment.requirementId} given a teacher it excludes`);
-      }
+      const refusal = leadRefusal(plan, row, teacherId);
+      if (refusal !== null) throw bad(`row ${assignment.requirementId}: ${refusal}`);
       leads.set(requirementId, teacherId);
     }
 
@@ -1042,30 +1113,13 @@ export class StaffingProposalService {
     // The recount the write will be judged by: nobody whose minutes grow may
     // end OVER (enforcement's question, with its rounding).
     const input = state.read.input;
-    const afterInput = overlay(input, plan, leads);
-    const before = countedMinutesByTeacher(input);
-    const after = countedMinutesByTeacher(afterInput);
-    for (const teacher of plan.teachers) {
-      if (teacher.changing) {
-        // A post that changes during the year: every stretch with teaching
-        // weeks, as overTargetFindingByStretch asks the apply. planOf planned
-        // it on its tightest stretch, and offered it only the dated rows that
-        // fit each stretch's slack (allowedDatedRows). An undated row charges
-        // every stretch the flat figure it charges the year — stretchWeight
-        // and standardWeekWeight both give 1, or 0.5 on odd or even weeks —
-        // and both sides of the room are rounded up. So an answer inside the
-        // tightest stretch's limit is inside every stretch's, and one past a
-        // stretch broke the question it was asked, as for any teacher.
-        if (growsPastAStretch(input, afterInput, teacher.changing.employment, plan.tolerance)) {
-          throw bad(`changing post ${maps.teachers.get(teacher.userId)} grows past a period`);
-        }
-        continue;
-      }
-      const was = before.get(teacher.userId) ?? 0;
-      const is = after.get(teacher.userId) ?? 0;
-      if (is > was + 1e-9 && loadStatus(is, teacher.target, plan.tolerance) === 'OVER') {
-        throw bad(`teacher ${maps.teachers.get(teacher.userId)} grows past the limit`);
-      }
+    const growth = growthRefusal(state, plan, leads);
+    if (growth !== null) {
+      throw bad(
+        growth.kind === 'PERIOD'
+          ? `changing post ${maps.teachers.get(growth.userId)} grows past a period`
+          : `teacher ${maps.teachers.get(growth.userId)} grows past the limit`,
+      );
     }
 
     // Conflicts, realised by this service from its own maps — subjects to
@@ -1820,6 +1874,64 @@ function weightsOf(weights: StaffWeights | undefined): StaffWeights {
     if (typeof value === 'number') out[key] = value;
   }
   return out;
+}
+
+/**
+ * Whether a lead may be given to a free row: the engine's answer is judged by it (realise), and so is a choice a search made
+ * (staffing-search.ts), so that one rule decides it and not two. Null when it may; else why not, in words for a log.
+ *
+ * The row is not fixed (planOf never lets a fixed row move), the teacher is not its co-teacher, and unless it is the lead the
+ * row has: not a teacher who only keeps or sheds, and (when behörigheter are respected) a covering behörighet, and not a teacher
+ * the row excludes (a share's teacher, an administrator without Users.teaches, a dated post the row does not fit).
+ */
+export function leadRefusal(plan: Plan, row: RowPlan, teacherId: string): string | null {
+  if (row.kind === 'FIXED') return 'a fixed row was given a lead';
+  if (teacherId === row.co) return 'given its co-teacher';
+  const teacher = plan.teacherById.get(teacherId);
+  if (!teacher) return 'given somebody who is not staff';
+  const keeps = teacherId === row.current;
+  if (!keeps && teacher.keepOrShed) return 'a keep-or-shed teacher was given it';
+  if (!keeps && plan.respect && !row.eligible.includes(teacherId)) return 'given an unqualified teacher';
+  if (!keeps && row.excluded.includes(teacherId)) return 'given a teacher it excludes';
+  return null;
+}
+
+/**
+ * The recount the write is judged by: nobody whose minutes grow may end OVER (enforcement's question, with its rounding), and
+ * a post that changes during the year is judged on every stretch with teaching weeks. Null when nobody does; else who.
+ */
+export function growthRefusal(
+  state: Pick<StaffingState, 'read'>,
+  plan: Plan,
+  leads: Map<string, string>,
+): { kind: 'PERIOD' | 'LIMIT'; userId: string } | null {
+  const input = state.read.input;
+  const afterInput = overlay(input, plan, leads);
+  const before = countedMinutesByTeacher(input);
+  const after = countedMinutesByTeacher(afterInput);
+  for (const teacher of plan.teachers) {
+    if (teacher.changing) {
+      // A post that changes during the year: every stretch with teaching
+      // weeks, as overTargetFindingByStretch asks the apply. planOf planned
+      // it on its tightest stretch, and offered it only the dated rows that
+      // fit each stretch's slack (allowedDatedRows). An undated row charges
+      // every stretch the flat figure it charges the year — stretchWeight
+      // and standardWeekWeight both give 1, or 0.5 on odd or even weeks —
+      // and both sides of the room are rounded up. So an answer inside the
+      // tightest stretch's limit is inside every stretch's, and one past a
+      // stretch broke the question it was asked, as for any teacher.
+      if (growsPastAStretch(input, afterInput, teacher.changing.employment, plan.tolerance)) {
+        return { kind: 'PERIOD', userId: teacher.userId };
+      }
+      continue;
+    }
+    const was = before.get(teacher.userId) ?? 0;
+    const is = after.get(teacher.userId) ?? 0;
+    if (is > was + 1e-9 && loadStatus(is, teacher.target, plan.tolerance) === 'OVER') {
+      return { kind: 'LIMIT', userId: teacher.userId };
+    }
+  }
+  return null;
 }
 
 /** The year with the proposal's leads laid over its free rows. */
