@@ -1836,6 +1836,63 @@
       "confirm": "Run anyway"
     }
   },
+  "weekCheckChoice": {
+    "title": "If teachers could be chosen",
+    "hint": "Counts the week again as if the teachers of the subjects that have several qualified could be chosen freely, and as if a subject had a second teacher. It can take up to half a minute. Nothing in the timetable changes.",
+    "button": "See what teacher choice gives",
+    "again": "Count again",
+    "asking": "Counting the week with teacher choice…",
+    "unavailable": {
+      "ENGINE_OLDER": "The scheduling engine is being updated and cannot work this out yet. Try again in a few minutes.",
+      "THROTTLED": "It has been asked too often. Wait a minute and try again.",
+      "ERROR": "Could not work out what teacher choice gives right now. The week check above still stands."
+    },
+    "status": {
+      "NO_TIGHT_YEAR": "No year is near its limit, so there is nothing to count again with teacher choice.",
+      "NOT_ASKED": "The week was not counted again: the engine was given no week to count."
+    },
+    "year": "Year {year}",
+    "today": "The week as it is: {figure}.",
+    "count": {
+      "short": {
+        "load": "{atLeast, select, yes {at least } other {}}{percent} %",
+        "over": "at least {percent} %",
+        "under": "under {below} %",
+        "unknown": "not counted",
+        "refused": "refused by another count"
+      },
+      "long": {
+        "load": "{atLeast, select, yes {at least } other {}}{percent} % of the frame time",
+        "over": "at least {percent} %, more than the frame time gives (at least {demandMinutes} of {capacityMinutes} minutes)",
+        "under": "under {below} % of the frame time",
+        "unknown": "not counted, the count did not finish",
+        "refused": "refused by another count than the week load"
+      }
+    },
+    "period": "Counted for the weeks {from} – {to}{more, select, yes { and the other weeks with the same entries} other {}}.",
+    "floor": {
+      "load": "Even if every group in the subjects that have several qualified teachers got a teacher of its own, year {year} is at least {percent} % full.",
+      "over": "Even if every group in the subjects that have several qualified teachers got a teacher of its own, year {year} needs more than the frame time gives: at least {demandMinutes} of {capacityMinutes} minutes.",
+      "under": "Even if every group in the subjects that have several qualified teachers got a teacher of its own, the check finds nothing over {below} % for year {year}. It is not proved any tighter than that.",
+      "unknown": "The count did not finish for year {year}, so the floor with free teacher choice cannot be said.",
+      "refused": "The week is refused even with free teacher choice, by another count than the week load.",
+      "cut": "The count did not finish, so the figure is only a lower bound and may be higher.",
+      "overBody": "No choice of teachers can solve the week. It needs more teaching time or fewer hours.",
+      "mayHelp": "A choice of teachers might help. It does not mean the week can be laid.",
+      "noQualifications": "The school has not entered any qualifications, so the check does not know which teachers could be chosen. Enter them first.",
+      "nothingToRelease": "No subject has more than one qualified teacher in this year, so a choice of teachers cannot change the week. What could help is more qualified teachers."
+    },
+    "whatIf": {
+      "title": "A second teacher in a subject, with the subject's posts shared evenly (one example, not the best split)",
+      "line": "A second teacher in {subject}: {from} → {to}",
+      "lineOver": "A second teacher in {subject}: the week is still over the frame time ({to})",
+      "detail": "{qualified, plural, =0 {No qualified teacher today} one {# qualified teacher today: a second would have to be found} other {# qualified teachers today: the choice already exists}}. {moved} of {of} posts go to the second one.",
+      "stillOver": "The engine stops counting at the first period it refuses, so the figure is a lower bound of the tightest period's and is not compared with the others.",
+      "unranked": "The count did not finish, so it is not ranked."
+    },
+    "limits": "The figures are lower bounds the engine can prove for the year's tightest part of the school year. A week over the frame time is counted only up to the first period the engine refuses, so that figure may be lower than the tightest period's and is not compared with others. They do not say a timetable exists. Qualifications count as they hold today.",
+    "notRun": "{count, plural, one {# subject} other {# subjects}} could not be counted again in time."
+  },
   "timetable": {
     "title": "Master timetable",
     "subtitle": "The recurring weekly template produced by the AI engine",

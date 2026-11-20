@@ -61,6 +61,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     basis: 'THROUGH',
     why: 'the cover board’s ranking of a day’s candidates',
   },
+  'src/optimization/week-check-choice.service.ts': {
+    basis: 'THROUGH',
+    why: 'Kontrollera veckan with teacher choice: which posts have two or more qualified teachers, as the proposal judges it',
+  },
   'src/calendar/calendar-lessons.service.ts': {
     basis: 'THROUGH',
     why: 'the substitute picker of one lesson; its `count` only asks whether any behörighet is recorded',

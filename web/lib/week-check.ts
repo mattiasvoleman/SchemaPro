@@ -66,8 +66,12 @@ export interface WeekCheckResult {
  * caller reads.
  */
 export type WeekCheckOutcome =
-  /** The engine's (or the gateway's) answer. */
-  | { kind: "result"; result: WeekCheckResult }
+  /**
+   * The engine's (or the gateway's) answer. `academicYearId` is the year it is about, so that a follow-up question
+   * (what the week would be with teacher choice, components/schedule/week-check-choice.tsx) is asked about the same
+   * year without the page having to pass it on.
+   */
+  | { kind: "result"; result: WeekCheckResult; academicYearId?: string }
   /** The payload itself is refused, in the sentence a Generera is refused with ("locked lessons leave 7A no lunch"). */
   | { kind: "refused"; code: string | null; message: string; params: Record<string, string | number> | null }
   /** No answer: the engine is older than the API, the API older than this page, or something failed. */
@@ -130,7 +134,7 @@ export async function askWeekCheck(academicYearId: string): Promise<WeekCheckOut
       { academicYearId },
       waitOf(WEEK_CHECK_WAIT_MS),
     );
-    return { kind: "result", result };
+    return { kind: "result", result, academicYearId };
   } catch (error) {
     return classifyWeekCheckError(error);
   }

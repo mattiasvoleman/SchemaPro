@@ -1,0 +1,1059 @@
+{
+ "about": "Kontrollera veckan med lärarval: a two-period week (year 9, five classes, five Hemkunskap groups, the spring's three led by ONE teacher), and the payloads the gateway makes of it. Written by src/optimization/week-check-choice.spec.ts (WEEK_CHECK_CHOICE_WRITE=1) and read by optimization-engine/tests/test_week_check_choice.py, which asks the engine's /check-week about each.",
+ "base": {
+  "academicYearId": "b71f1139-9a9f-45f9-a207-7a6fd84a596c",
+  "frameTimes": [
+   {
+    "changeoverMinutes": 5,
+    "dayOfWeek": null,
+    "endTime": "15:40:00",
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "startTime": "08:25:00"
+   }
+  ],
+  "groupConflicts": [
+   [
+    "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+    "13bb3b87-532c-479f-8bbf-63aa261ac4e1"
+   ],
+   [
+    "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+    "239183f4-97a9-4df1-b3b7-6f358c5ae30f"
+   ],
+   [
+    "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+    "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5"
+   ],
+   [
+    "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+    "987c44c1-dbf3-4171-843b-7ddf4906ced0"
+   ],
+   [
+    "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+    "56e81a0b-bc2c-4a5f-8f11-b41624bd036b"
+   ],
+   [
+    "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+    "13bb3b87-532c-479f-8bbf-63aa261ac4e1"
+   ],
+   [
+    "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+    "239183f4-97a9-4df1-b3b7-6f358c5ae30f"
+   ],
+   [
+    "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+    "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5"
+   ],
+   [
+    "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+    "987c44c1-dbf3-4171-843b-7ddf4906ced0"
+   ],
+   [
+    "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+    "56e81a0b-bc2c-4a5f-8f11-b41624bd036b"
+   ],
+   [
+    "afd6495b-242a-4d43-bc4e-6d57668702d8",
+    "13bb3b87-532c-479f-8bbf-63aa261ac4e1"
+   ],
+   [
+    "afd6495b-242a-4d43-bc4e-6d57668702d8",
+    "239183f4-97a9-4df1-b3b7-6f358c5ae30f"
+   ],
+   [
+    "afd6495b-242a-4d43-bc4e-6d57668702d8",
+    "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5"
+   ],
+   [
+    "afd6495b-242a-4d43-bc4e-6d57668702d8",
+    "987c44c1-dbf3-4171-843b-7ddf4906ced0"
+   ],
+   [
+    "afd6495b-242a-4d43-bc4e-6d57668702d8",
+    "56e81a0b-bc2c-4a5f-8f11-b41624bd036b"
+   ],
+   [
+    "4b05cb66-7952-48ee-9758-a11a9239819c",
+    "13bb3b87-532c-479f-8bbf-63aa261ac4e1"
+   ],
+   [
+    "4b05cb66-7952-48ee-9758-a11a9239819c",
+    "239183f4-97a9-4df1-b3b7-6f358c5ae30f"
+   ],
+   [
+    "4b05cb66-7952-48ee-9758-a11a9239819c",
+    "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5"
+   ],
+   [
+    "4b05cb66-7952-48ee-9758-a11a9239819c",
+    "987c44c1-dbf3-4171-843b-7ddf4906ced0"
+   ],
+   [
+    "4b05cb66-7952-48ee-9758-a11a9239819c",
+    "56e81a0b-bc2c-4a5f-8f11-b41624bd036b"
+   ],
+   [
+    "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+    "13bb3b87-532c-479f-8bbf-63aa261ac4e1"
+   ],
+   [
+    "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+    "239183f4-97a9-4df1-b3b7-6f358c5ae30f"
+   ],
+   [
+    "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+    "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5"
+   ],
+   [
+    "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+    "987c44c1-dbf3-4171-843b-7ddf4906ced0"
+   ],
+   [
+    "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+    "56e81a0b-bc2c-4a5f-8f11-b41624bd036b"
+   ]
+  ],
+  "groups": [
+   {
+    "id": "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+    "lunchHeadcount": 24,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9
+   },
+   {
+    "id": "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+    "lunchHeadcount": 24,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9
+   },
+   {
+    "id": "afd6495b-242a-4d43-bc4e-6d57668702d8",
+    "lunchHeadcount": 24,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9
+   },
+   {
+    "id": "4b05cb66-7952-48ee-9758-a11a9239819c",
+    "lunchHeadcount": 24,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9
+   },
+   {
+    "id": "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+    "lunchHeadcount": 24,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9
+   }
+  ],
+  "periodOddWeeks": [
+   10,
+   10
+  ],
+  "periodWeeks": [
+   20,
+   20
+  ],
+  "requestId": "4c7537e7-78f6-406e-b46c-9c3e640ac056",
+  "requirements": [
+   {
+    "id": "e5416d5b-9fc9-4274-a936-e53b1a28afd2",
+    "lessonsPerWeek": 27,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 50,
+    "studentGroupId": "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+    "studentGroupSize": 24,
+    "subjectId": "bed181c9-181c-405c-9271-6bf9c697d631",
+    "teacherId": "d60a89ab-d65f-4241-a33c-93e3040f6e9a"
+   },
+   {
+    "id": "cf83b07c-0ff9-4df0-a7c1-c20563373e09",
+    "lessonsPerWeek": 27,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 50,
+    "studentGroupId": "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+    "studentGroupSize": 24,
+    "subjectId": "5f8b91e7-8a02-4dc0-8e4c-1dcaf50bdaae",
+    "teacherId": "55ef0337-2363-4b5c-8050-c1d30e06a4ea"
+   },
+   {
+    "id": "dfb0c79c-a639-4f8e-9e4b-e970cf8c5c27",
+    "lessonsPerWeek": 27,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 50,
+    "studentGroupId": "afd6495b-242a-4d43-bc4e-6d57668702d8",
+    "studentGroupSize": 24,
+    "subjectId": "39979922-20ad-463c-8d55-27cd3ab4f623",
+    "teacherId": "fa464a07-42ab-48d2-9a45-b1127af4dd05"
+   },
+   {
+    "id": "d3cdfe5c-0b99-4b30-8ecc-579b7a0ab23f",
+    "lessonsPerWeek": 27,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 50,
+    "studentGroupId": "4b05cb66-7952-48ee-9758-a11a9239819c",
+    "studentGroupSize": 24,
+    "subjectId": "63f77f56-6847-415d-ae7b-c3368d368178",
+    "teacherId": "bec09bf1-3ff7-4e44-ba12-72bf8f76e489"
+   },
+   {
+    "id": "2ccb8e79-da54-481c-a8a0-82c32da3bfca",
+    "lessonsPerWeek": 27,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 50,
+    "studentGroupId": "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+    "studentGroupSize": 24,
+    "subjectId": "d5f42610-b760-4c6d-bebb-6740e56ead86",
+    "teacherId": "ac993005-9f91-4fb6-96e9-b2b550386349"
+   },
+   {
+    "id": "17a4629e-c921-4385-a933-156210481f74",
+    "lessonsPerWeek": 4,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 40,
+    "periods": [
+     false,
+     true
+    ],
+    "studentGroupId": "13bb3b87-532c-479f-8bbf-63aa261ac4e1",
+    "studentGroupSize": 20,
+    "subjectId": "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7",
+    "teacherId": "cde57a8f-8e46-40e8-9a4b-0f158fd0b3af"
+   },
+   {
+    "id": "44483944-4d4b-4ebc-ba38-54ef0774515a",
+    "lessonsPerWeek": 4,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 40,
+    "periods": [
+     false,
+     true
+    ],
+    "studentGroupId": "239183f4-97a9-4df1-b3b7-6f358c5ae30f",
+    "studentGroupSize": 20,
+    "subjectId": "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7",
+    "teacherId": "cde57a8f-8e46-40e8-9a4b-0f158fd0b3af"
+   },
+   {
+    "id": "b7658eac-b05e-4629-a733-93c1010b1778",
+    "lessonsPerWeek": 4,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 40,
+    "periods": [
+     false,
+     true
+    ],
+    "studentGroupId": "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5",
+    "studentGroupSize": 20,
+    "subjectId": "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7",
+    "teacherId": "cde57a8f-8e46-40e8-9a4b-0f158fd0b3af"
+   },
+   {
+    "id": "cd22fde1-e55f-4436-907d-305aab12c64c",
+    "lessonsPerWeek": 4,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 40,
+    "periods": [
+     true,
+     false
+    ],
+    "studentGroupId": "987c44c1-dbf3-4171-843b-7ddf4906ced0",
+    "studentGroupSize": 20,
+    "subjectId": "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7",
+    "teacherId": "96e47a01-dc76-44a3-bf8f-3fdab8ca641b"
+   },
+   {
+    "id": "1dcf6c59-e660-4ff9-82d2-f3a88224506b",
+    "lessonsPerWeek": 4,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 40,
+    "periods": [
+     true,
+     false
+    ],
+    "studentGroupId": "56e81a0b-bc2c-4a5f-8f11-b41624bd036b",
+    "studentGroupSize": 20,
+    "subjectId": "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7",
+    "teacherId": "d92d3747-760b-40eb-983a-28787d7d0e67"
+   }
+  ],
+  "rooms": [
+   {
+    "capacity": 30,
+    "id": "f5f46c74-331f-4a1b-9699-7487fb733920"
+   },
+   {
+    "capacity": 30,
+    "id": "a97d3ef0-e3e1-4e22-be84-92bfad25b975"
+   },
+   {
+    "capacity": 30,
+    "id": "1b6d3f60-67a3-4e68-a9b7-fe1503dc2bea"
+   },
+   {
+    "capacity": 30,
+    "id": "a05e5598-c447-4672-a74b-0d3793d85a77"
+   },
+   {
+    "capacity": 30,
+    "id": "c6f8e339-b2dd-4958-ab84-5be1c6040cd9"
+   },
+   {
+    "capacity": 30,
+    "id": "261e7db3-bc96-4cba-b730-1fba53434ba1"
+   },
+   {
+    "capacity": 30,
+    "id": "694f4413-b276-48ca-b943-04316a856b15"
+   },
+   {
+    "capacity": 30,
+    "id": "dac4b128-e0c5-4e1e-a99e-90ed8cc5bf7c"
+   },
+   {
+    "capacity": 30,
+    "id": "0c13cc7c-73d0-4457-be40-5b41723dbcdd"
+   },
+   {
+    "capacity": 30,
+    "id": "e6270f70-8422-46c2-a0fa-ea1c8e820522"
+   }
+  ],
+  "rules": {
+   "lunchEndTime": "13:00:00",
+   "lunchMinutes": 15,
+   "lunchStartTime": "11:20:00"
+  }
+ },
+ "qualified": {
+  "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7": 2
+ },
+ "stretches": [
+  [
+   {
+    "from": "2026-08-17",
+    "to": "2026-12-18"
+   }
+  ],
+  [
+   {
+    "from": "2027-01-11",
+    "to": "2027-06-11"
+   }
+  ]
+ ],
+ "tightWeek": {
+  "heldIds": [
+   "e5416d5b-9fc9-4274-a936-e53b1a28afd2",
+   "cf83b07c-0ff9-4df0-a7c1-c20563373e09",
+   "dfb0c79c-a639-4f8e-9e4b-e970cf8c5c27",
+   "d3cdfe5c-0b99-4b30-8ecc-579b7a0ab23f",
+   "2ccb8e79-da54-481c-a8a0-82c32da3bfca",
+   "17a4629e-c921-4385-a933-156210481f74",
+   "44483944-4d4b-4ebc-ba38-54ef0774515a",
+   "b7658eac-b05e-4629-a733-93c1010b1778"
+  ],
+  "year": 9,
+  "period": {
+   "from": "2027-01-11",
+   "to": "2027-06-11",
+   "more": false
+  }
+ },
+ "floor": {
+  "academicYearId": "b71f1139-9a9f-45f9-a207-7a6fd84a596c",
+  "frameTimes": [
+   {
+    "changeoverMinutes": 5,
+    "dayOfWeek": null,
+    "endTime": "15:40:00",
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "startTime": "08:25:00"
+   }
+  ],
+  "groupConflicts": [
+   [
+    "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+    "13bb3b87-532c-479f-8bbf-63aa261ac4e1"
+   ],
+   [
+    "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+    "239183f4-97a9-4df1-b3b7-6f358c5ae30f"
+   ],
+   [
+    "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+    "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5"
+   ],
+   [
+    "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+    "987c44c1-dbf3-4171-843b-7ddf4906ced0"
+   ],
+   [
+    "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+    "56e81a0b-bc2c-4a5f-8f11-b41624bd036b"
+   ],
+   [
+    "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+    "13bb3b87-532c-479f-8bbf-63aa261ac4e1"
+   ],
+   [
+    "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+    "239183f4-97a9-4df1-b3b7-6f358c5ae30f"
+   ],
+   [
+    "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+    "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5"
+   ],
+   [
+    "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+    "987c44c1-dbf3-4171-843b-7ddf4906ced0"
+   ],
+   [
+    "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+    "56e81a0b-bc2c-4a5f-8f11-b41624bd036b"
+   ],
+   [
+    "afd6495b-242a-4d43-bc4e-6d57668702d8",
+    "13bb3b87-532c-479f-8bbf-63aa261ac4e1"
+   ],
+   [
+    "afd6495b-242a-4d43-bc4e-6d57668702d8",
+    "239183f4-97a9-4df1-b3b7-6f358c5ae30f"
+   ],
+   [
+    "afd6495b-242a-4d43-bc4e-6d57668702d8",
+    "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5"
+   ],
+   [
+    "afd6495b-242a-4d43-bc4e-6d57668702d8",
+    "987c44c1-dbf3-4171-843b-7ddf4906ced0"
+   ],
+   [
+    "afd6495b-242a-4d43-bc4e-6d57668702d8",
+    "56e81a0b-bc2c-4a5f-8f11-b41624bd036b"
+   ],
+   [
+    "4b05cb66-7952-48ee-9758-a11a9239819c",
+    "13bb3b87-532c-479f-8bbf-63aa261ac4e1"
+   ],
+   [
+    "4b05cb66-7952-48ee-9758-a11a9239819c",
+    "239183f4-97a9-4df1-b3b7-6f358c5ae30f"
+   ],
+   [
+    "4b05cb66-7952-48ee-9758-a11a9239819c",
+    "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5"
+   ],
+   [
+    "4b05cb66-7952-48ee-9758-a11a9239819c",
+    "987c44c1-dbf3-4171-843b-7ddf4906ced0"
+   ],
+   [
+    "4b05cb66-7952-48ee-9758-a11a9239819c",
+    "56e81a0b-bc2c-4a5f-8f11-b41624bd036b"
+   ],
+   [
+    "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+    "13bb3b87-532c-479f-8bbf-63aa261ac4e1"
+   ],
+   [
+    "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+    "239183f4-97a9-4df1-b3b7-6f358c5ae30f"
+   ],
+   [
+    "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+    "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5"
+   ],
+   [
+    "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+    "987c44c1-dbf3-4171-843b-7ddf4906ced0"
+   ],
+   [
+    "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+    "56e81a0b-bc2c-4a5f-8f11-b41624bd036b"
+   ]
+  ],
+  "groups": [
+   {
+    "id": "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+    "lunchHeadcount": 24,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9
+   },
+   {
+    "id": "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+    "lunchHeadcount": 24,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9
+   },
+   {
+    "id": "afd6495b-242a-4d43-bc4e-6d57668702d8",
+    "lunchHeadcount": 24,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9
+   },
+   {
+    "id": "4b05cb66-7952-48ee-9758-a11a9239819c",
+    "lunchHeadcount": 24,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9
+   },
+   {
+    "id": "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+    "lunchHeadcount": 24,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9
+   }
+  ],
+  "periodOddWeeks": [
+   10,
+   10
+  ],
+  "periodWeeks": [
+   20,
+   20
+  ],
+  "requestId": "4c7537e7-78f6-406e-b46c-9c3e640ac056",
+  "requirements": [
+   {
+    "id": "e5416d5b-9fc9-4274-a936-e53b1a28afd2",
+    "lessonsPerWeek": 27,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 50,
+    "studentGroupId": "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+    "studentGroupSize": 24,
+    "subjectId": "bed181c9-181c-405c-9271-6bf9c697d631",
+    "teacherId": "d60a89ab-d65f-4241-a33c-93e3040f6e9a"
+   },
+   {
+    "id": "cf83b07c-0ff9-4df0-a7c1-c20563373e09",
+    "lessonsPerWeek": 27,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 50,
+    "studentGroupId": "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+    "studentGroupSize": 24,
+    "subjectId": "5f8b91e7-8a02-4dc0-8e4c-1dcaf50bdaae",
+    "teacherId": "55ef0337-2363-4b5c-8050-c1d30e06a4ea"
+   },
+   {
+    "id": "dfb0c79c-a639-4f8e-9e4b-e970cf8c5c27",
+    "lessonsPerWeek": 27,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 50,
+    "studentGroupId": "afd6495b-242a-4d43-bc4e-6d57668702d8",
+    "studentGroupSize": 24,
+    "subjectId": "39979922-20ad-463c-8d55-27cd3ab4f623",
+    "teacherId": "fa464a07-42ab-48d2-9a45-b1127af4dd05"
+   },
+   {
+    "id": "d3cdfe5c-0b99-4b30-8ecc-579b7a0ab23f",
+    "lessonsPerWeek": 27,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 50,
+    "studentGroupId": "4b05cb66-7952-48ee-9758-a11a9239819c",
+    "studentGroupSize": 24,
+    "subjectId": "63f77f56-6847-415d-ae7b-c3368d368178",
+    "teacherId": "bec09bf1-3ff7-4e44-ba12-72bf8f76e489"
+   },
+   {
+    "id": "2ccb8e79-da54-481c-a8a0-82c32da3bfca",
+    "lessonsPerWeek": 27,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 50,
+    "studentGroupId": "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+    "studentGroupSize": 24,
+    "subjectId": "d5f42610-b760-4c6d-bebb-6740e56ead86",
+    "teacherId": "ac993005-9f91-4fb6-96e9-b2b550386349"
+   },
+   {
+    "id": "17a4629e-c921-4385-a933-156210481f74",
+    "lessonsPerWeek": 4,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 40,
+    "periods": [
+     false,
+     true
+    ],
+    "studentGroupId": "13bb3b87-532c-479f-8bbf-63aa261ac4e1",
+    "studentGroupSize": 20,
+    "subjectId": "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7",
+    "teacherId": "5222a0c3-1cb4-412f-b503-7c543ca2c538"
+   },
+   {
+    "id": "44483944-4d4b-4ebc-ba38-54ef0774515a",
+    "lessonsPerWeek": 4,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 40,
+    "periods": [
+     false,
+     true
+    ],
+    "studentGroupId": "239183f4-97a9-4df1-b3b7-6f358c5ae30f",
+    "studentGroupSize": 20,
+    "subjectId": "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7",
+    "teacherId": "c6ca807e-efa5-49a2-a13b-0799764c6453"
+   },
+   {
+    "id": "b7658eac-b05e-4629-a733-93c1010b1778",
+    "lessonsPerWeek": 4,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 40,
+    "periods": [
+     false,
+     true
+    ],
+    "studentGroupId": "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5",
+    "studentGroupSize": 20,
+    "subjectId": "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7",
+    "teacherId": "5e18f7e8-1f9a-4b75-be6f-94bf368c6193"
+   },
+   {
+    "id": "cd22fde1-e55f-4436-907d-305aab12c64c",
+    "lessonsPerWeek": 4,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 40,
+    "periods": [
+     true,
+     false
+    ],
+    "studentGroupId": "987c44c1-dbf3-4171-843b-7ddf4906ced0",
+    "studentGroupSize": 20,
+    "subjectId": "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7",
+    "teacherId": "78fba7ca-e41c-4a32-b7a0-9cc3b0f83239"
+   },
+   {
+    "id": "1dcf6c59-e660-4ff9-82d2-f3a88224506b",
+    "lessonsPerWeek": 4,
+    "maxGradeLevel": 9,
+    "minGradeLevel": 9,
+    "minutesPerLesson": 40,
+    "periods": [
+     true,
+     false
+    ],
+    "studentGroupId": "56e81a0b-bc2c-4a5f-8f11-b41624bd036b",
+    "studentGroupSize": 20,
+    "subjectId": "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7",
+    "teacherId": "cb599dbc-08dc-4c37-a5f4-115d38a596bc"
+   }
+  ],
+  "rooms": [
+   {
+    "capacity": 30,
+    "id": "f5f46c74-331f-4a1b-9699-7487fb733920"
+   },
+   {
+    "capacity": 30,
+    "id": "a97d3ef0-e3e1-4e22-be84-92bfad25b975"
+   },
+   {
+    "capacity": 30,
+    "id": "1b6d3f60-67a3-4e68-a9b7-fe1503dc2bea"
+   },
+   {
+    "capacity": 30,
+    "id": "a05e5598-c447-4672-a74b-0d3793d85a77"
+   },
+   {
+    "capacity": 30,
+    "id": "c6f8e339-b2dd-4958-ab84-5be1c6040cd9"
+   },
+   {
+    "capacity": 30,
+    "id": "261e7db3-bc96-4cba-b730-1fba53434ba1"
+   },
+   {
+    "capacity": 30,
+    "id": "694f4413-b276-48ca-b943-04316a856b15"
+   },
+   {
+    "capacity": 30,
+    "id": "dac4b128-e0c5-4e1e-a99e-90ed8cc5bf7c"
+   },
+   {
+    "capacity": 30,
+    "id": "0c13cc7c-73d0-4457-be40-5b41723dbcdd"
+   },
+   {
+    "capacity": 30,
+    "id": "e6270f70-8422-46c2-a0fa-ea1c8e820522"
+   }
+  ],
+  "rules": {
+   "lunchEndTime": "13:00:00",
+   "lunchMinutes": 15,
+   "lunchStartTime": "11:20:00"
+  }
+ },
+ "released": [
+  "17a4629e-c921-4385-a933-156210481f74",
+  "44483944-4d4b-4ebc-ba38-54ef0774515a",
+  "b7658eac-b05e-4629-a733-93c1010b1778",
+  "cd22fde1-e55f-4436-907d-305aab12c64c",
+  "1dcf6c59-e660-4ff9-82d2-f3a88224506b"
+ ],
+ "whatIf": [
+  {
+   "subjectId": "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7",
+   "year": 9,
+   "moved": [
+    "44483944-4d4b-4ebc-ba38-54ef0774515a"
+   ],
+   "payload": {
+    "academicYearId": "b71f1139-9a9f-45f9-a207-7a6fd84a596c",
+    "frameTimes": [
+     {
+      "changeoverMinutes": 5,
+      "dayOfWeek": null,
+      "endTime": "15:40:00",
+      "maxGradeLevel": 9,
+      "minGradeLevel": 9,
+      "startTime": "08:25:00"
+     }
+    ],
+    "groupConflicts": [
+     [
+      "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+      "13bb3b87-532c-479f-8bbf-63aa261ac4e1"
+     ],
+     [
+      "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+      "239183f4-97a9-4df1-b3b7-6f358c5ae30f"
+     ],
+     [
+      "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+      "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5"
+     ],
+     [
+      "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+      "987c44c1-dbf3-4171-843b-7ddf4906ced0"
+     ],
+     [
+      "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+      "56e81a0b-bc2c-4a5f-8f11-b41624bd036b"
+     ],
+     [
+      "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+      "13bb3b87-532c-479f-8bbf-63aa261ac4e1"
+     ],
+     [
+      "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+      "239183f4-97a9-4df1-b3b7-6f358c5ae30f"
+     ],
+     [
+      "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+      "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5"
+     ],
+     [
+      "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+      "987c44c1-dbf3-4171-843b-7ddf4906ced0"
+     ],
+     [
+      "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+      "56e81a0b-bc2c-4a5f-8f11-b41624bd036b"
+     ],
+     [
+      "afd6495b-242a-4d43-bc4e-6d57668702d8",
+      "13bb3b87-532c-479f-8bbf-63aa261ac4e1"
+     ],
+     [
+      "afd6495b-242a-4d43-bc4e-6d57668702d8",
+      "239183f4-97a9-4df1-b3b7-6f358c5ae30f"
+     ],
+     [
+      "afd6495b-242a-4d43-bc4e-6d57668702d8",
+      "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5"
+     ],
+     [
+      "afd6495b-242a-4d43-bc4e-6d57668702d8",
+      "987c44c1-dbf3-4171-843b-7ddf4906ced0"
+     ],
+     [
+      "afd6495b-242a-4d43-bc4e-6d57668702d8",
+      "56e81a0b-bc2c-4a5f-8f11-b41624bd036b"
+     ],
+     [
+      "4b05cb66-7952-48ee-9758-a11a9239819c",
+      "13bb3b87-532c-479f-8bbf-63aa261ac4e1"
+     ],
+     [
+      "4b05cb66-7952-48ee-9758-a11a9239819c",
+      "239183f4-97a9-4df1-b3b7-6f358c5ae30f"
+     ],
+     [
+      "4b05cb66-7952-48ee-9758-a11a9239819c",
+      "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5"
+     ],
+     [
+      "4b05cb66-7952-48ee-9758-a11a9239819c",
+      "987c44c1-dbf3-4171-843b-7ddf4906ced0"
+     ],
+     [
+      "4b05cb66-7952-48ee-9758-a11a9239819c",
+      "56e81a0b-bc2c-4a5f-8f11-b41624bd036b"
+     ],
+     [
+      "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+      "13bb3b87-532c-479f-8bbf-63aa261ac4e1"
+     ],
+     [
+      "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+      "239183f4-97a9-4df1-b3b7-6f358c5ae30f"
+     ],
+     [
+      "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+      "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5"
+     ],
+     [
+      "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+      "987c44c1-dbf3-4171-843b-7ddf4906ced0"
+     ],
+     [
+      "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+      "56e81a0b-bc2c-4a5f-8f11-b41624bd036b"
+     ]
+    ],
+    "groups": [
+     {
+      "id": "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+      "lunchHeadcount": 24,
+      "maxGradeLevel": 9,
+      "minGradeLevel": 9
+     },
+     {
+      "id": "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+      "lunchHeadcount": 24,
+      "maxGradeLevel": 9,
+      "minGradeLevel": 9
+     },
+     {
+      "id": "afd6495b-242a-4d43-bc4e-6d57668702d8",
+      "lunchHeadcount": 24,
+      "maxGradeLevel": 9,
+      "minGradeLevel": 9
+     },
+     {
+      "id": "4b05cb66-7952-48ee-9758-a11a9239819c",
+      "lunchHeadcount": 24,
+      "maxGradeLevel": 9,
+      "minGradeLevel": 9
+     },
+     {
+      "id": "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+      "lunchHeadcount": 24,
+      "maxGradeLevel": 9,
+      "minGradeLevel": 9
+     }
+    ],
+    "periodOddWeeks": [
+     10,
+     10
+    ],
+    "periodWeeks": [
+     20,
+     20
+    ],
+    "requestId": "4c7537e7-78f6-406e-b46c-9c3e640ac056",
+    "requirements": [
+     {
+      "id": "e5416d5b-9fc9-4274-a936-e53b1a28afd2",
+      "lessonsPerWeek": 27,
+      "maxGradeLevel": 9,
+      "minGradeLevel": 9,
+      "minutesPerLesson": 50,
+      "studentGroupId": "33e22f9b-818d-4e3e-8ca0-b0e6050862db",
+      "studentGroupSize": 24,
+      "subjectId": "bed181c9-181c-405c-9271-6bf9c697d631",
+      "teacherId": "d60a89ab-d65f-4241-a33c-93e3040f6e9a"
+     },
+     {
+      "id": "cf83b07c-0ff9-4df0-a7c1-c20563373e09",
+      "lessonsPerWeek": 27,
+      "maxGradeLevel": 9,
+      "minGradeLevel": 9,
+      "minutesPerLesson": 50,
+      "studentGroupId": "53c3f844-4c1e-476c-a9cb-ff4e6e70ff3d",
+      "studentGroupSize": 24,
+      "subjectId": "5f8b91e7-8a02-4dc0-8e4c-1dcaf50bdaae",
+      "teacherId": "55ef0337-2363-4b5c-8050-c1d30e06a4ea"
+     },
+     {
+      "id": "dfb0c79c-a639-4f8e-9e4b-e970cf8c5c27",
+      "lessonsPerWeek": 27,
+      "maxGradeLevel": 9,
+      "minGradeLevel": 9,
+      "minutesPerLesson": 50,
+      "studentGroupId": "afd6495b-242a-4d43-bc4e-6d57668702d8",
+      "studentGroupSize": 24,
+      "subjectId": "39979922-20ad-463c-8d55-27cd3ab4f623",
+      "teacherId": "fa464a07-42ab-48d2-9a45-b1127af4dd05"
+     },
+     {
+      "id": "d3cdfe5c-0b99-4b30-8ecc-579b7a0ab23f",
+      "lessonsPerWeek": 27,
+      "maxGradeLevel": 9,
+      "minGradeLevel": 9,
+      "minutesPerLesson": 50,
+      "studentGroupId": "4b05cb66-7952-48ee-9758-a11a9239819c",
+      "studentGroupSize": 24,
+      "subjectId": "63f77f56-6847-415d-ae7b-c3368d368178",
+      "teacherId": "bec09bf1-3ff7-4e44-ba12-72bf8f76e489"
+     },
+     {
+      "id": "2ccb8e79-da54-481c-a8a0-82c32da3bfca",
+      "lessonsPerWeek": 27,
+      "maxGradeLevel": 9,
+      "minGradeLevel": 9,
+      "minutesPerLesson": 50,
+      "studentGroupId": "4477e296-b792-45ea-a3a8-0a4b7dd8c918",
+      "studentGroupSize": 24,
+      "subjectId": "d5f42610-b760-4c6d-bebb-6740e56ead86",
+      "teacherId": "ac993005-9f91-4fb6-96e9-b2b550386349"
+     },
+     {
+      "id": "17a4629e-c921-4385-a933-156210481f74",
+      "lessonsPerWeek": 4,
+      "maxGradeLevel": 9,
+      "minGradeLevel": 9,
+      "minutesPerLesson": 40,
+      "periods": [
+       false,
+       true
+      ],
+      "studentGroupId": "13bb3b87-532c-479f-8bbf-63aa261ac4e1",
+      "studentGroupSize": 20,
+      "subjectId": "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7",
+      "teacherId": "cde57a8f-8e46-40e8-9a4b-0f158fd0b3af"
+     },
+     {
+      "id": "44483944-4d4b-4ebc-ba38-54ef0774515a",
+      "lessonsPerWeek": 4,
+      "maxGradeLevel": 9,
+      "minGradeLevel": 9,
+      "minutesPerLesson": 40,
+      "periods": [
+       false,
+       true
+      ],
+      "studentGroupId": "239183f4-97a9-4df1-b3b7-6f358c5ae30f",
+      "studentGroupSize": 20,
+      "subjectId": "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7",
+      "teacherId": "81ebe275-e41b-4b65-b296-dead92288fdf"
+     },
+     {
+      "id": "b7658eac-b05e-4629-a733-93c1010b1778",
+      "lessonsPerWeek": 4,
+      "maxGradeLevel": 9,
+      "minGradeLevel": 9,
+      "minutesPerLesson": 40,
+      "periods": [
+       false,
+       true
+      ],
+      "studentGroupId": "f8f61ea4-5524-48b4-b4dd-ee4ba05b01c5",
+      "studentGroupSize": 20,
+      "subjectId": "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7",
+      "teacherId": "cde57a8f-8e46-40e8-9a4b-0f158fd0b3af"
+     },
+     {
+      "id": "cd22fde1-e55f-4436-907d-305aab12c64c",
+      "lessonsPerWeek": 4,
+      "maxGradeLevel": 9,
+      "minGradeLevel": 9,
+      "minutesPerLesson": 40,
+      "periods": [
+       true,
+       false
+      ],
+      "studentGroupId": "987c44c1-dbf3-4171-843b-7ddf4906ced0",
+      "studentGroupSize": 20,
+      "subjectId": "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7",
+      "teacherId": "96e47a01-dc76-44a3-bf8f-3fdab8ca641b"
+     },
+     {
+      "id": "1dcf6c59-e660-4ff9-82d2-f3a88224506b",
+      "lessonsPerWeek": 4,
+      "maxGradeLevel": 9,
+      "minGradeLevel": 9,
+      "minutesPerLesson": 40,
+      "periods": [
+       true,
+       false
+      ],
+      "studentGroupId": "56e81a0b-bc2c-4a5f-8f11-b41624bd036b",
+      "studentGroupSize": 20,
+      "subjectId": "1344ae7e-3e81-4cd3-8f46-d13cccd7e3a7",
+      "teacherId": "d92d3747-760b-40eb-983a-28787d7d0e67"
+     }
+    ],
+    "rooms": [
+     {
+      "capacity": 30,
+      "id": "f5f46c74-331f-4a1b-9699-7487fb733920"
+     },
+     {
+      "capacity": 30,
+      "id": "a97d3ef0-e3e1-4e22-be84-92bfad25b975"
+     },
+     {
+      "capacity": 30,
+      "id": "1b6d3f60-67a3-4e68-a9b7-fe1503dc2bea"
+     },
+     {
+      "capacity": 30,
+      "id": "a05e5598-c447-4672-a74b-0d3793d85a77"
+     },
+     {
+      "capacity": 30,
+      "id": "c6f8e339-b2dd-4958-ab84-5be1c6040cd9"
+     },
+     {
+      "capacity": 30,
+      "id": "261e7db3-bc96-4cba-b730-1fba53434ba1"
+     },
+     {
+      "capacity": 30,
+      "id": "694f4413-b276-48ca-b943-04316a856b15"
+     },
+     {
+      "capacity": 30,
+      "id": "dac4b128-e0c5-4e1e-a99e-90ed8cc5bf7c"
+     },
+     {
+      "capacity": 30,
+      "id": "0c13cc7c-73d0-4457-be40-5b41723dbcdd"
+     },
+     {
+      "capacity": 30,
+      "id": "e6270f70-8422-46c2-a0fa-ea1c8e820522"
+     }
+    ],
+    "rules": {
+     "lunchEndTime": "13:00:00",
+     "lunchMinutes": 15,
+     "lunchStartTime": "11:20:00"
+    }
+   }
+  }
+ ]
+}

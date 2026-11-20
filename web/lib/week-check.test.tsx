@@ -96,7 +96,8 @@ describe("askWeekCheck", () => {
     const answer = { verdict: "OK", years: [], conflicts: null, skipped: ["LUNCH_STAGE"], elapsedMs: 4, checkedBy: "ENGINE" };
     apiPost.mockResolvedValueOnce(answer);
 
-    await expect(askWeekCheck("y-1")).resolves.toEqual({ kind: "result", result: answer });
+    // The year comes back with the answer, so that the follow-up question (with teacher choice) is about the same year.
+    await expect(askWeekCheck("y-1")).resolves.toEqual({ kind: "result", result: answer, academicYearId: "y-1" });
     expect(apiPost).toHaveBeenCalledWith("/api/v1/optimization/week-check", { academicYearId: "y-1" }, expect.any(AbortSignal));
   });
 
@@ -133,8 +134,8 @@ describe("useWeekCheck", () => {
     });
 
     expect(apiPost).toHaveBeenCalledWith("/api/v1/optimization/week-check", { academicYearId: "y-1" }, expect.any(AbortSignal));
-    expect(outcome).toEqual({ kind: "result", result: answer });
-    await waitFor(() => expect(hook.current.outcome).toEqual({ kind: "result", result: answer }));
+    expect(outcome).toEqual({ kind: "result", result: answer, academicYearId: "y-1" });
+    await waitFor(() => expect(hook.current.outcome).toEqual({ kind: "result", result: answer, academicYearId: "y-1" }));
   });
 
   it("never rejects, and never asks twice: a failure is an outcome", async () => {
