@@ -5680,7 +5680,12 @@ async function runChecks(
           // +1 since Behörighet som i ett annat ämne: the subjects' pointers,
           // read beside the behörigheter the new teacher is judged by (one
           // SELECT, and only because the school has recorded a behörighet).
-          'PATCH a new teacher': 37,
+          // +1 on 'a new teacher' and on 'a drag back beside 8A' since Veckor utan skoldag
+          // (school-weeks.ts): the lesson shares its hour with a lesson of another class, so the clash rule asks
+          // whether the two can meet only in the weeks of a lov, which is one SELECT of the year's breaks, and
+          // (empty here, as in a school with no lov) nothing more; a school with a lov pays two more, the year's
+          // days and its groups' years. 'a drag' lands on an hour nobody else has and asks nothing.
+          'PATCH a new teacher': 38,
           // +1 each since Ämnesfördelning: a drag to another weekday asks the
           // lesson's timplanspost for its distribution rule (one indexed
           // SELECT), and stops there when the post has none, as here. A
@@ -5704,7 +5709,7 @@ async function runChecks(
           // has made none. A PATCH that moves no row to another day (the new
           // teacher above, a new hour) asks nothing.
           'PATCH a drag': 25,
-          'PATCH a drag back beside 8A': 29,
+          'PATCH a drag back beside 8A': 30,
           // +1 since Klassens måltid per del av läsåret (20270209090000): a
           // class has one meal on a DATE, which the table's exclusion
           // constraint says, so the placing reads the class's meals of the

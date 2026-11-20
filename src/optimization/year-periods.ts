@@ -88,21 +88,35 @@
  *     weeks such an entry lies in stay weeks of the cut, as they were before
  *     lov were read, for it and the entries that run in them.
  *
- * WHAT THIS LOOSENS. Two entries that share a week with no school only — an
- * autumn post to the 10th of January and a spring post from the 4th — met in
- * that week and no other, so the engine held them apart there, which is what
- * the board's clash read (detectConflicts, year-clashes.ts, findConflicts:
- * weeksCanOverlap on the dates alone, no break read) flags too. Now no week
- * with a lesson holds both, so the engine may place them together and the
- * board still flags it: red for a week in which neither is taught. The cut
- * is no longer "never looser than weeksCanOverlap" for the weeks of a lov.
- * Teaching the board and the gate about breaks is a change of its own.
+ * WHAT THIS LOOSENS, AND WHAT READS IT TOO. Two entries that share a week with
+ * no school only — an autumn post to the 10th of January and a spring post
+ * from the 4th — met in that week and no other, so the engine held them apart
+ * there. Now no week with a lesson holds both, so the engine may place them
+ * together. The clash readers read the same weeks, so that nothing calls it a
+ * double booking: the hand edit (findConflicts), the publish check PUB_CLASHES
+ * (year-clashes.ts) and the board (detectConflicts) take two lessons for a clash
+ * when their dates let them meet (weeksCanOverlap) AND a week they can meet in
+ * has a school day (school-weeks.ts, meetOnlyInClosedWeeks; the board's copy is
+ * web/lib/closed-weeks.ts). The cut is no longer "never looser than
+ * weeksCanOverlap" for the weeks of a lov, and neither is the rest of the
+ * system: they are the one relation. The readers that still ask weeksCanOverlap
+ * alone (swaps, room optimisation, shared rooms, travel warnings, the placement
+ * search) are the stricter, which is the safe side.
  */
 import { isoWeekNumber } from '../calendar/lesson-recurrence';
-import { noSchoolDays, type PublishBreak } from '../calendar/publish-days';
+import {
+  addDays,
+  dayOf,
+  mondayOf,
+  parseDay,
+  weeksOfYear,
+  weeksWithSchool,
+  type SchoolDays,
+} from '../calendar/school-weeks';
 import type { YearSpan } from '../common/teacher-day';
 
-const DAY_MS = 86_400_000;
+// Which weeks have a school day is the calendar's (school-weeks.ts); the periods and the clash readers ask the one rule.
+export { weeksWithSchool, type SchoolDays };
 
 /** The most periods a payload may carry: the engine's MAX_PERIODS, a läsår's weeks. */
 export const MAX_PERIODS = 53;
@@ -117,14 +131,6 @@ export interface HeldWindow {
 export interface PeriodStretch {
   from: string;
   to: string;
-}
-
-/** What tells a week with school in it from a week without (weeksWithSchool). */
-export interface SchoolDays {
-  /** The läsår's SchoolBreaks, whatever their kind. */
-  breaks: readonly PublishBreak[];
-  /** The årskurs of every group of the läsår, null for a group with no year (a nivågrupp). */
-  grades: readonly (number | null)[];
 }
 
 export interface YearPeriods {
@@ -163,21 +169,6 @@ export interface YearPeriods {
   masks: (boolean[] | undefined)[];
 }
 
-const parseDay = (value: string): Date => new Date(`${value}T00:00:00.000Z`);
-const dayOf = (date: Date): string => date.toISOString().slice(0, 10);
-const addDays = (date: Date, days: number): Date => new Date(date.getTime() + days * DAY_MS);
-const mondayOf = (date: Date): Date => addDays(date, 1 - (date.getUTCDay() || 7));
-
-/** The läsår's weeks, each as its Monday and its Sunday. */
-function weeksOfYear(year: YearSpan): { monday: string; sunday: string }[] {
-  const weeks: { monday: string; sunday: string }[] = [];
-  const last = parseDay(year.endDate).getTime();
-  for (let monday = mondayOf(parseDay(year.startDate)); monday.getTime() <= last; monday = addDays(monday, 7)) {
-    weeks.push({ monday: dayOf(monday), sunday: dayOf(addDays(monday, 6)) });
-  }
-  return weeks;
-}
-
 /**
  * The läsår as ONE period: the period of each of its weeks, all the first. What a year that nothing
  * dates is read as, for what is read week by week (a teacher's kept weekdays, which differ by parity
@@ -195,35 +186,6 @@ const touches = (windows: readonly HeldWindow[], week: { monday: string; sunday:
       (window.endDate === null || window.endDate >= week.monday),
   );
 
-/** The weekdays the engine plans: Monday to Friday (SCHEDULE_DAYS in optimization-engine/app/config.py). */
-const SCHEDULE_WEEKDAYS = 5;
-
-/**
- * Which weeks of the läsår have a school day in them, from the week of its first day: false for a
- * week every weekday of which (Monday to Friday, those that lie in the läsår) is a day no årskurs
- * has school (noSchoolDays: a lov closes a day for a group by publish's rule, breakCoversGroup).
- * No break, or none read, closes nothing, and every week is true — what a school that has no
- * breaks always was.
- *
- * A week with no weekday in the läsår (it starts on a Saturday, or ends on a Sunday that is no
- * weekday of the läsår's last week) is true: no break closed it, and the cut reads it as it did.
- */
-export function weeksWithSchool(year: YearSpan, schoolDays: SchoolDays | undefined): boolean[] {
-  const weeks = weeksOfYear(year);
-  if (!schoolDays || schoolDays.breaks.length === 0) return weeks.map(() => true);
-  const off = noSchoolDays(schoolDays.breaks, schoolDays.grades, year.startDate, year.endDate);
-  return weeks.map(({ monday }) => {
-    let weekdaysInYear = 0;
-    for (let offset = 0; offset < SCHEDULE_WEEKDAYS; offset += 1) {
-      const day = dayOf(addDays(parseDay(monday), offset));
-      if (day < year.startDate || day > year.endDate) continue;
-      weekdaysInYear += 1;
-      if (!off.has(day)) return true;
-    }
-    return weekdaysInYear === 0;
-  });
-}
-
 /**
  * The läsår cut into periods by the entries' windows, and each entry's mask.
  *
@@ -232,8 +194,8 @@ export function weeksWithSchool(year: YearSpan, schoolDays: SchoolDays | undefin
  * leader post of two blocks on the same times: same-times.ts).
  *
  * `schoolDays` are the breaks of the läsår and the årskurser of its groups,
- * and take the weeks with no school day out of the cut (the header says how). Without them every week of the läsår is one, and the cut is what
- * it was.
+ * and take the weeks with no school day out of the cut (the header says how).
+ * Without them every week of the läsår is one, and the cut is what it was.
  *
  * Null when the entries do not tell two weeks apart, which is every school
  * until one dates a post: nothing is then sent, and the payload is the one it

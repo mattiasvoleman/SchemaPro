@@ -40,6 +40,7 @@ import {
   useLunchSittingMutations,
   useRoomPreferences,
   useRasts,
+  useSchoolBreaks,
 } from "@/lib/queries";
 /*
  * The two exports are imported where they are pressed, not here, and so are
@@ -49,6 +50,7 @@ import {
  * same distance.
  */
 import { useTimetableRealtime } from "@/lib/use-timetable-realtime";
+import { closedWeeksOf } from "@/lib/closed-weeks";
 import { usePlanningYear } from "@/lib/planning-year";
 import { withProjectedHomes } from "@/lib/projected-rosters";
 import {
@@ -547,6 +549,23 @@ export default function TimetablePage() {
     () => (groups ?? []).filter((group) => group.academicYearId === shownYear?.id),
     [groups, shownYear?.id],
   );
+  /*
+   * The weeks of the läsår no lesson is written in (jullov, sportlov): two lessons that can meet only in
+   * such weeks are no clash, as the gateway's hand edit and the publish gate read them (lib/closed-weeks.ts).
+   * Undefined until the breaks are read and for a year none of whose weeks a lov closes.
+   */
+  const { data: schoolBreaks } = useSchoolBreaks(shownYear?.id ?? null);
+  const closedWeeks = useMemo(
+    () =>
+      shownYear && schoolBreaks
+        ? closedWeeksOf(
+            { startDate: shownYear.startDate, endDate: shownYear.endDate },
+            schoolBreaks,
+            yearGroups.map((group) => group.gradeLevel),
+          )
+        : undefined,
+    [shownYear, schoolBreaks, yearGroups],
+  );
   const groupSections = useMemo(() => {
     const named = (group: { id: string; name: string }) => ({ id: group.id, name: group.name });
     // The schedule on screen is one year's, so its groups are the filter's:
@@ -806,6 +825,7 @@ export default function TimetablePage() {
         lunchOf,
         roomLock,
         pupilBuffers,
+        closedWeeks,
       ),
     [
       lessons,
@@ -817,6 +837,7 @@ export default function TimetablePage() {
       lunchOf,
       roomLock,
       pupilBuffers,
+      closedWeeks,
     ],
   );
 
@@ -892,6 +913,9 @@ export default function TimetablePage() {
           // already sitting elsewhere becomes undraggable in time — silently,
           // for a reason that has nothing to do with the move. The violation
           // shows as a conflict on the grid instead.
+          undefined,
+          // The weeks of a lov: a lesson dragged beside one it meets only in jullov is no clash.
+          closedWeeks,
         ).length === 0
       );
     },
@@ -905,6 +929,7 @@ export default function TimetablePage() {
       frameTimes,
       lunchOf,
       pupilBuffers,
+      closedWeeks,
     ],
   );
 
@@ -1547,6 +1572,8 @@ export default function TimetablePage() {
         gradeSpanOf,
         frameTimes,
         lunchOf,
+        undefined,
+        closedWeeks,
       );
       if (hits.length > 0 && hits.every((hit) => hit.pupilBufferOnly)) {
         toast.info(t("pupilTimeRefused"));
@@ -1573,6 +1600,7 @@ export default function TimetablePage() {
       frameTimes,
       lunchOf,
       pupilBuffers,
+      closedWeeks,
       showError,
       t,
       blockKit,

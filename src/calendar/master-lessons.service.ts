@@ -9,6 +9,7 @@ import type { PrismaClient, Prisma } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { weeksCanOverlap } from './lesson-recurrence';
+import { meetOnlyInClosedWeeks, readClosedWeeks } from './school-weeks';
 import type { ConflictReads } from './conflict-reads';
 import type { LessonRecurrence } from '@prisma/client';
 import { RealtimeService } from '../realtime/realtime.service';
@@ -2405,7 +2406,7 @@ export class MasterLessonsService {
     // rule as the candidate's: the widest wins on both sides, or a guest class's
     // longer rule would hold on the lesson being placed and be forgotten on the
     // lesson it is placed against.
-    const clashing = others.filter((other) => {
+    const sameTime = others.filter((other) => {
       if (!weeksCanOverlap(candidateWeeks, other)) return false;
       const buffer = widestBufferOf(groupsAttending(other), other.subjectId);
       return (
@@ -2413,6 +2414,29 @@ export class MasterLessonsService {
         pupilStart < toMinutes(other.endTime) + buffer.minutesAfter
       );
     });
+    // Two lessons that can meet ONLY in weeks no lesson is written in — a jullov between an autumn lesson to
+    // the 10th of January and a spring lesson from the 4th — are no double booking: nobody sits either that
+    // week, and the generator may lay them on one hour for that reason (year-periods.ts). Asked of what
+    // already shares the clock, so a day with no overlap reads nothing, and of a year that has a lov only
+    // (readClosedWeeks is one query for the rest).
+    const closedWeeks =
+      sameTime.length === 0
+        ? null
+        : reads
+          ? await reads.once(`closedWeeks|${lesson.academicYearId}`, () => readClosedWeeks(tx, lesson.academicYearId))
+          : await readClosedWeeks(tx, lesson.academicYearId);
+    const heldWeeks = (window: {
+      recurrence: LessonRecurrence;
+      startDate: Date | null;
+      endDate: Date | null;
+    }) => ({
+      recurrence: window.recurrence,
+      startDate: window.startDate ? window.startDate.toISOString().slice(0, 10) : null,
+      endDate: window.endDate ? window.endDate.toISOString().slice(0, 10) : null,
+    });
+    const clashing = closedWeeks
+      ? sameTime.filter((other) => !meetOnlyInClosedWeeks(heldWeeks(candidateWeeks), heldWeeks(other), closedWeeks))
+      : sameTime;
 
     /**
      * Which pupils each group in play holds.

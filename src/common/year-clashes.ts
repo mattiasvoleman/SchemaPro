@@ -19,6 +19,7 @@
  * PURE. Times are 'HH:MM' (or 'HH:MM:SS'), dates 'YYYY-MM-DD'.
  */
 
+import { meetOnlyInClosedWeeks } from '../calendar/school-weeks';
 import { halfPairs, type GroupHalf } from './class-halves';
 import {
   keysShare,
@@ -103,6 +104,14 @@ export interface YearClashInput {
    * is, as it was before the rule.
    */
   sharedRooms?: Array<{ roomId: string; seats: number }>;
+  /**
+   * The weeks of the läsår in which no lesson is written (school-weeks.ts, ClosedWeeks): the Mondays of
+   * the weeks with no school day (jullov, höstlov, sportlov, påsklov), and the läsår's own first and
+   * last day. Two lessons that can meet only in such weeks are no clash: nobody sits either, and the
+   * generator may lay them on one hour for that reason. Absent: every week is one with school, as it
+   * was, and two lessons clash wherever their dates and parities let them meet.
+   */
+  closedWeeks?: { from: string; to: string; mondays: readonly string[] };
 }
 
 export interface YearClashHit {
@@ -202,6 +211,11 @@ function groupConflictMap(input: YearClashInput): {
  * detectConflicts returns, restricted to the four kinds above.
  */
 export function yearClashes(input: YearClashInput): Map<string, YearClashHit[]> {
+  const closed = input.closedWeeks
+    ? { from: input.closedWeeks.from, to: input.closedWeeks.to, mondays: new Set(input.closedWeeks.mondays) }
+    : null;
+  /** Whether two lessons can meet in a week anybody sits: their weeks overlap, and not only in weeks with no school day. */
+  const canMeet = (a: Placement, b: Placement): boolean => weeksCanOverlap(a, b) && !meetOnlyInClosedWeeks(a, b, closed);
   const buffers = new Map<string, { before: number; after: number }>();
   for (const row of input.pupilBuffers) {
     if (row.minutesBefore === 0 && row.minutesAfter === 0) continue;
@@ -334,7 +348,7 @@ export function yearClashes(input: YearClashInput): Map<string, YearClashHit[]> 
           other.id !== candidate.id &&
           other.roomId === candidate.roomId &&
           overlaps(candidate.start, candidate.end, other.start, other.end) &&
-          weeksCanOverlap(candidate, other),
+          canMeet(candidate, other),
       );
       crowded =
         mates.length === 0
@@ -351,7 +365,7 @@ export function yearClashes(input: YearClashInput): Map<string, YearClashHit[]> 
         other.end + other.after,
       );
       if (!shareTheClock && !sharePupilTime) continue;
-      if (!weeksCanOverlap(candidate, other)) continue;
+      if (!canMeet(candidate, other)) continue;
       if (shareTheClock && candidate.teachers.some((id) => other.teachers.includes(id))) {
         hits.push({ kind: 'TEACHER', otherLessonId: other.id });
       }

@@ -206,6 +206,8 @@ export function fakeTx(
     },
     teachingRequirement: { findMany: jest.fn(async () => []) },
     availabilityConstraint: { findMany: jest.fn(async () => []) },
+    // A school with no lov: the clash rule reads the year's breaks (school-weeks.ts) and finds none.
+    schoolBreak: { findMany: jest.fn(async () => []) },
     studentGroup: {
       findMany: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
         const or = (where['OR'] as Array<Record<string, unknown>> | undefined) ?? [where];

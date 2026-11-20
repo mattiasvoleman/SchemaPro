@@ -11,6 +11,7 @@ import type {
   LessonRecurrence,
   MasterLesson,
 } from "@/lib/types";
+import { meetOnlyInClosedWeeks, type ClosedWeeks } from "@/lib/closed-weeks";
 import { breaksFrame, type FrameTime } from "@/lib/frame-times";
 import { spanMeetsRule, type GradeSpan } from "@/lib/grade-span";
 import { mealMeetsWindow, type MealWindow } from "@/lib/lunch-window";
@@ -550,6 +551,13 @@ export function validatePlacement(
    * A lock violation is a visible conflict; see detectConflicts.
    */
   roomLock?: RoomLockCheck,
+  /**
+   * The weeks of the läsår no lesson is written in (lib/closed-weeks.ts): two lessons that can meet
+   * only in such weeks — an autumn lesson to the 10th of January and a spring lesson from the 4th share
+   * a jullov — are no clash, as the API's findConflicts and the publish gate read them. Omitted, every
+   * week is one with school, as it was.
+   */
+  closedWeeks?: ClosedWeeks,
 ): ConflictHit[] {
   const hits: ConflictHit[] = [];
   // What the candidate's room holds beside it, asked once and only of a shared
@@ -588,6 +596,8 @@ export function validatePlacement(
     // Sharing a time slot is only a clash if some week holds both: slöjd on
     // odd weeks and hemkunskap on even weeks may share slot, room and teacher.
     if (!weeksCanOverlap(candidate, other)) continue;
+    // ... in a week anybody sits: two that meet only in a lov's weeks are no double booking.
+    if (meetOnlyInClosedWeeks(candidate, other, closedWeeks)) continue;
 
     const candidateTeachers = teacherIdsOf(candidate);
     const otherTeachers = teacherIdsOf(other);
@@ -765,6 +775,8 @@ export function detectConflicts(
    * them to placements itself: a caller has no seam to inject them through.
    */
   pupilBuffers?: PupilBufferMap,
+  /** The weeks no lesson is written in; see validatePlacement. Without them every week has school. */
+  closedWeeks?: ClosedWeeks,
 ): Map<string, ConflictHit[]> {
   const placements = lessons.map((lesson) => toPlacement(lesson, pupilBuffers));
   const result = new Map<string, ConflictHit[]>();
@@ -780,6 +792,7 @@ export function detectConflicts(
       frames,
       lunchOf,
       roomLock,
+      closedWeeks,
     );
     if (hits.length > 0 && placement.id) {
       result.set(placement.id, hits);

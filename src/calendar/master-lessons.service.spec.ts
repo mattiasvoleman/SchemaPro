@@ -1363,6 +1363,61 @@ describe('MasterLessonsService', () => {
       );
     });
 
+    describe('lessons that meet only in the weeks of a lov (school-weeks.ts)', () => {
+      // The läsår 2026-08-17 to 2027-06-11 and its jullov, 22 December to 9 January: the weeks of 28 December and
+      // 4 January have no school day. The candidate is a spring lesson from 4 January; the other is an autumn one
+      // to 10 January in the same hour with the same teacher.
+      const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
+      const arrangeYearWithJullov = () => {
+        tx.academicYear.findUnique.mockImplementation(
+          answerUnique([
+            { id: YEAR_ID, schoolId: SCHOOL_ID, startDate: day('2026-08-17'), endDate: day('2027-06-11') },
+          ]),
+        );
+        tx.masterLesson.create.mockResolvedValue(lessonRecord({ startDate: day('2027-01-04') }));
+        tx.schoolBreak.findMany.mockResolvedValue([
+          { startDate: day('2026-12-22'), endDate: day('2027-01-09'), minGradeLevel: null, maxGradeLevel: null },
+        ]);
+        tx.studentGroup.findMany.mockResolvedValue([{ gradeLevel: 9 }]);
+      };
+      const autumnLesson = (endDate: string) => otherLesson({ teacherId: TEACHER_ID, endDate: day(endDate), startDate: null });
+
+      it('does not refuse a lesson that shares an hour, a teacher and a room with one only through the lov', async () => {
+        arrangeYearWithJullov();
+        sameDay([autumnLesson('2027-01-10')]);
+        await expect(service.create(createDto({ startDate: '2027-01-04' }), testUser())).resolves.toMatchObject({ id: LESSON_ID });
+        expect(tx.masterLesson.create).toHaveBeenCalledTimes(1);
+      });
+
+      it('still refuses one that meets in a week with school', async () => {
+        arrangeYearWithJullov();
+        sameDay([autumnLesson('2027-01-17')]);
+        await expect(service.create(createDto({ startDate: '2027-01-04' }), testUser())).rejects.toThrow(
+          new ConflictException('Teacher already teaches Math in this slot.'),
+        );
+        expect(tx.masterLesson.create).not.toHaveBeenCalled();
+      });
+
+      it('refuses the pair where the school has no lov, and asks nothing more of a year with none', async () => {
+        arrangeCreate();
+        sameDay([autumnLesson('2027-01-10')]);
+        await expect(service.create(createDto({ startDate: '2027-01-04' }), testUser())).rejects.toThrow(
+          new ConflictException('Teacher already teaches Math in this slot.'),
+        );
+        // The year has no break: one query, and the läsår's days are never read for it.
+        expect(tx.schoolBreak.findMany).toHaveBeenCalledTimes(1);
+        const yearReads = tx.academicYear.findUnique.mock.calls as Array<[{ select?: Record<string, unknown> }]>;
+        expect(yearReads.filter(([read]) => read.select && 'endDate' in read.select)).toEqual([]);
+      });
+
+      it('reads the lov of a day with no overlap at all as nothing', async () => {
+        arrangeYearWithJullov();
+        sameDay([otherLesson({ startTime: t('13:00'), endTime: t('14:00'), teacherId: TEACHER_ID })]);
+        await expect(service.create(createDto({ startDate: '2027-01-04' }), testUser())).resolves.toMatchObject({ id: LESSON_ID });
+        expect(tx.schoolBreak.findMany).not.toHaveBeenCalled();
+      });
+    });
+
     it('409s when the teacher already teaches in the slot and creates nothing', async () => {
       arrangeCreate();
       sameDay([

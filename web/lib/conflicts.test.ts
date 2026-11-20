@@ -2661,3 +2661,50 @@ describe("validatePlacement lunch sittings that hold weeks", () => {
     expect(check(11 * 60, 11 * 60 + 30, spring, one)).toEqual([{ kind: "LUNCH" }]);
   });
 });
+
+describe("validatePlacement and the weeks of a lov (lib/closed-weeks.ts)", () => {
+  // Jullov 22 December to 9 January: the weeks of 28 December and 4 January have no school day.
+  const closedWeeks = { from: "2026-08-17", to: "2027-06-11", mondays: new Set(["2026-12-28", "2027-01-04"]) };
+  const autumn = () => makePlacement({ id: "music", teacherId: "t1", roomId: "r1", endDate: "2027-01-10" });
+  const spring = () => makePlacement({ id: "slojd", teacherId: "t1", roomId: "r1", startDate: "2027-01-04" });
+
+  it("lets two lessons that meet only in the lov share a slot, a teacher and a room", () => {
+    // Without the weeks they clash: the dates overlap from the 4th to the 10th.
+    expect(validatePlacement(autumn(), [spring()], []).map((hit) => hit.kind).sort()).toEqual(["ROOM", "TEACHER"]);
+    expect(validatePlacement(autumn(), [spring()], [], undefined, undefined, undefined, undefined, undefined, undefined, closedWeeks)).toEqual([]);
+  });
+
+  it("still holds two lessons that meet in a week with school to the clash", () => {
+    const later = makePlacement({ id: "slojd", teacherId: "t1", roomId: "r1", startDate: "2027-01-04", endDate: null });
+    const reaches = makePlacement({ id: "music", teacherId: "t1", roomId: "r1", endDate: "2027-01-17" });
+    expect(
+      validatePlacement(reaches, [later], [], undefined, undefined, undefined, undefined, undefined, undefined, closedWeeks).map((hit) => hit.kind).sort(),
+    ).toEqual(["ROOM", "TEACHER"]);
+  });
+
+  it("paints nothing for such a pair, through the clash map the board draws", () => {
+    const lesson = (id: string, group: string, extra: Partial<MasterLesson>) =>
+      ({
+        id,
+        academicYearId: "y",
+        dayOfWeek: 1,
+        startTime: "09:00:00",
+        endTime: "10:00:00",
+        teacherId: "t1",
+        coTeacherId: null,
+        roomId: "r1",
+        studentGroupId: group,
+        extraGroupIds: [],
+        studentIds: [],
+        recurrence: "ALL_WEEKS",
+        startDate: null,
+        endDate: null,
+        isLocked: false,
+        isParked: false,
+        ...extra,
+      }) as unknown as MasterLesson;
+    const lessons = [lesson("a", "g-a", { endDate: "2027-01-10" }), lesson("b", "g-b", { startDate: "2027-01-04" })];
+    expect([...detectConflicts(lessons, []).keys()].sort()).toEqual(["a", "b"]);
+    expect(detectConflicts(lessons, [], undefined, undefined, undefined, undefined, undefined, undefined, undefined, closedWeeks).size).toBe(0);
+  });
+});
