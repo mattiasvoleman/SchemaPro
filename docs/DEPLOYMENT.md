@@ -6896,7 +6896,20 @@ it never names the table.
 
 - **The shortcut "the whole subject in an årskurs" is not stored.** The page expands it to the posts' ids and writes them one by one; a
   post made afterwards is not released. One write path, one truth.
-- **An apply does not take a release back.** A post stays released until the school withdraws it, whoever has the post after an apply.
+- **An apply does not take a release back.** The teacher an applied proposal gives is the engine's answer approved by the school, and the
+  post stays released until the school withdraws it, whoever has the post after an apply.
+- **A teacher chosen by hand takes the release back.** A PATCH of the post that leaves another lead (the post's dialog, the teacher's card,
+  the unstaffed panel, the suggestions) and a requirements import that gives a post another lead delete the post's release in the same
+  transaction and write one `ScheduleChangeLogs` row (`ENGINE_RELEASE`, `released: false`, `because: TEACHER_CHANGED_BY_HAND`), through
+  `takeBackReleasesAfterHandChange` (`src/staffing/engine-release-handover.ts`). The school has then chosen, and the next proposal must not
+  move that teacher. A save that sends the lead the post already has, and a file that names it, leave the release. No migration: it is the
+  gateway's. `src/staffing/engine-release-writers.inventory.spec.ts` lists every file that updates `TeachingRequirements` and what each does
+  to a release, so a new writer of the lead has to say. A term split makes new posts (no release) and a rollover carries none.
+  **The take-back is the gateway's, and only the gateway's.** The spec reads the TypeScript in `src/`. A write of `"teacherId"` that does not
+  go through it skips the take-back: PostgREST's `authenticated` role holds UPDATE on `TeachingRequirements` and the administrators' policy
+  admits it, so an administrator who calls PostgREST by hand with her own token leaves a release on the post she picked (no client of ours
+  does, and the staffing policy's checks are skipped the same way), and a SQL function in a migration that updated the table
+  would not be found by the spec. Neither exists today.
 - **"Bara obemannade" off changed meaning.** It used to let every unpinned post change hands; now it means unstaffed posts plus released
   ones, and a staffed post that is not released is never moved. A school that releases nothing sees exactly what "bara obemannade" always
   gave it, for either setting.
@@ -6912,6 +6925,6 @@ it never names the table.
   the statements the gateway writes (`ON CONFLICT DO NOTHING` keeps the first person and time; no `UPDATE`), the person and the post removed,
   and, as the owner, every role by name, the school removed and every row. The fixtures plant one release in the matrix school so that the
   role matrix (section 116) has a row to probe, and the generated area matrix lists the table (`INSERT` and `DELETE` are `PLANERING`'s).
-- The adapter probe's checks `sm1`–`sm6` (`scripts/test/probe-slappt-for-motorn.ts`) run the services through the real adapter: a release
-  twice and at once, the arms, another school's 404 and 400, the proposal's reads, the second confirmation, and a person, a post and a school
-  removed.
+- The adapter probe's checks `sm1`–`sm7` (`scripts/test/probe-slappt-for-motorn.ts`) run the services through the real adapter: a release
+  twice and at once, the arms, another school's 404 and 400, the proposal's reads, the second confirmation, a person, a post and a school
+  removed, and a teacher chosen by hand (the post's PATCH and a file) taking the release back with its log row.

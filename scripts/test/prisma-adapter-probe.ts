@@ -5722,7 +5722,13 @@ async function runChecks(
           // +1 since Behörighet som i ett annat ämne: the subjects' pointers,
           // read beside the behörigheter the load read asks (one SELECT, and
           // only because the school has recorded a behörighet).
-          'give a timplanspost a teacher': 26,
+          // +1 since Släppt för motorn (LÅG-4 of the review of #363): a teacher
+          // chosen by hand takes the post's release back, so a PATCH that leaves
+          // another lead looks for one (a SELECT on TeachingRequirementReleases by
+          // requirementId, the primary key's first column); nothing more is sent
+          // when the post is not released, as here, and a PATCH that leaves the
+          // lead as it is sends nothing of it.
+          'give a timplanspost a teacher': 27,
           // +1 since Lärarens dag (20261123090000) on a create that names a
           // teacher, in a school without a cap, as here, and the one thing a
           // create pays for it: the teachers' caps, one indexed SELECT,

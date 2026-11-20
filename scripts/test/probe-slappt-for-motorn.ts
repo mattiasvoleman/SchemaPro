@@ -17,7 +17,10 @@
  *        that is not released is refused STAFF_ROW_NOT_RELEASED, a release set after the proposal makes it stale, and an
  *        undo puts the lead back with no confirmation;
  *   sm6  a person removed leaves the release they made, signed by nobody; a post removed takes its release; a school removed takes
- *        the releases it had.
+ *        the releases it had;
+ *   sm7  a teacher chosen by hand takes the release back, in the same transaction and with a log row: a PATCH of the post through
+ *        TeachingRequirementsService and a file through the requirements import, each on the real adapter. A save that sends the lead
+ *        the post already has, and a file that names it, leave the release; the apply of a proposal still keeps it.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
@@ -35,7 +38,10 @@ import {
   STAFF_ROW_NOT_RELEASED,
   StaffingProposalService,
 } from '../../src/optimization/staffing-proposal.service';
+import { ImportService } from '../../src/import/import.service';
+import { TeachingRequirementsService } from '../../src/resources/teaching-requirements.service';
 import { ENGINE_RELEASE_POST_NOT_IN_YEAR, EngineReleaseService } from '../../src/staffing/engine-release.service';
+import type { UsersService } from '../../src/users/users.service';
 
 type Check = (label: string, body: () => Promise<void>) => Promise<void>;
 
@@ -343,6 +349,58 @@ export async function slapptChecks(owner: Client, api: PrismaService, marker: st
       await owner.query(`DELETE FROM "Schools" WHERE id = $1`, [c]);
       assert.deepEqual(await releasedIds(c), []);
       assert.deepEqual(await releasedIds(a), [p1]);
+    });
+
+    await check('(sm7) a teacher chosen by hand, in the post’s PATCH or by file, takes the release back with a log row', async () => {
+      const posts = new TeachingRequirementsService(api);
+      const imports = new ImportService(api, {} as UsersService);
+      const take = async () =>
+        Number((await one<{ n: string }>(`SELECT count(*)::text AS n FROM "ScheduleChangeLogs" WHERE "schoolId" = $1 AND after ->> 'because' = 'TEACHER_CHANGED_BY_HAND'`, [a])).n);
+      await owner.query(`UPDATE "TeachingRequirements" SET "teacherId" = $1 WHERE id = $2`, [t1.id, p1]);
+      await releases.set({ academicYearId: yearA, requirementIds: [p1], released: false }, asFull);
+      await releases.set({ academicYearId: yearA, requirementIds: [p1], released: true }, asFull);
+      assert.deepEqual(await releasedIds(), [p1]);
+      const before = await take();
+
+      // A save that sends the lead the post already has leaves the release: the school has chosen nothing new.
+      await posts.update(p1, { teacherId: t1.id, lessonsPerWeek: 3 }, asFull);
+      assert.deepEqual(await releasedIds(), [p1], 'a save that left the lead took the release back');
+      assert.equal(await take(), before);
+
+      // Another teacher chosen in the post's PATCH: the release goes with the change, and the log says why.
+      await posts.update(p1, { teacherId: t3.id }, asFull);
+      assert.equal(await leadOf(p1), t3.id);
+      assert.deepEqual(await releasedIds(), [], 'the release outlived a teacher chosen by hand');
+      assert.equal(await take(), before + 1);
+      const logged = await one<{ ids: string; released: string; actor: string }>(
+        `SELECT after -> 'requirementIds' ->> 0 AS ids, after ->> 'released' AS released, "actorId"::text AS actor FROM "ScheduleChangeLogs"
+          WHERE "schoolId" = $1 AND after ->> 'because' = 'TEACHER_CHANGED_BY_HAND' ORDER BY "createdAt" DESC LIMIT 1`,
+        [a],
+      );
+      assert.deepEqual(logged, { ids: p1, released: 'false', actor: full.id });
+      // A post nobody released: the same PATCH writes nothing about releases.
+      await posts.update(p1, { teacherId: t1.id }, asFull);
+      assert.equal(await take(), before + 1, 'a post nobody released was logged');
+
+      // A file: the same post, released again, given another teacher by e-mail; and a file that names the lead it has.
+      await releases.set({ academicYearId: yearA, requirementIds: [p1], released: true }, asFull);
+      const columns = ['teacherEmail'] as const;
+      const file = (teacherEmail: string) => ({ groupName: '7A', subject: 'MA', lessonsPerWeek: 2, minutesPerLesson: 60, recurrence: 'ALL_WEEKS' as const, teacherEmail });
+      const same = await imports.importRequirements({ academicYearId: yearA, columns: [...columns], rows: [file(`${marker}-slappt-karin@example.invalid`)] }, asFull);
+      assert.deepEqual(same.errors, []);
+      assert.deepEqual(await releasedIds(), [p1], 'a file naming the lead the post has took the release back');
+      const moved = await imports.importRequirements({ academicYearId: yearA, columns: [...columns], rows: [file(`${marker}-slappt-lars@example.invalid`)] }, asFull);
+      assert.deepEqual(moved.errors, []);
+      assert.equal(moved.updated, 1);
+      assert.equal(await leadOf(p1), t2.id);
+      assert.deepEqual(await releasedIds(), [], 'the release outlived a teacher chosen by file');
+      assert.equal(await take(), before + 2);
+
+      // The proposal that follows treats the post as the school's choice, and the apply of a proposal still keeps a release.
+      const after = await staffing.propose({ academicYearId: yearA, onlyUnstaffed: false, respectQualifications: false }, asFull);
+      assert.equal(after.counts.releasedRequirements, 0);
+      assert.equal(after.counts.keptRequirements, 0);
+      await owner.query(`UPDATE "TeachingRequirements" SET "teacherId" = $1 WHERE id = $2`, [t1.id, p1]);
     });
   } finally {
     await sweepSlapptSchools(owner, marker);

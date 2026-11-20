@@ -7334,6 +7334,49 @@ describe('Planning surface (e2e)', () => {
       expect(released.body.basisSha256).not.toBe(notReleased.body.basisSha256);
     });
 
+    it('takes a post’s release back when somebody chooses its teacher by hand, so the next proposal leaves that teacher alone (admin round-trip)', async () => {
+      const world = givenStaff({});
+      const RELEASE = '/api/v1/staffing/engine-release';
+      const releasedIds = async (): Promise<string[]> => {
+        // The database stamps releasedAt; this world's createMany has no default to apply.
+        for (const row of world.rows['teachingRequirementRelease'] ?? []) row['releasedAt'] ??= new Date('2026-11-20T08:00:00.000Z');
+        const listed = await request(http()).get(`${RELEASE}?academicYearId=${IDS.yearA}`).set('x-test-user', admin()).expect(200);
+        return listed.body.releases.map((release: { requirementId: string }) => release.requirementId);
+      };
+      // The school releases Anna's Ma 7A, and a proposal with "bara obemannade" off may now look at it.
+      await request(http()).put(RELEASE).set('x-test-user', admin()).send({ academicYearId: IDS.yearA, requirementIds: [r(1)], released: true }).expect(200);
+      expect(await releasedIds()).toEqual([r(1)]);
+      expect((await propose({ onlyUnstaffed: false }).expect(200)).body.counts).toMatchObject({ releasedRequirements: 1, keptRequirements: 1 });
+
+      // A save that sends the lead the post already has, with another field, leaves the release alone.
+      await request(http())
+        .patch(`/api/v1/teaching-requirements/${r(1)}`)
+        .set('x-test-user', admin())
+        .send({ teacherId: IDS.anna, lessonsPerWeek: 4 })
+        .expect(200);
+      expect(await releasedIds()).toEqual([r(1)]);
+
+      // The school then chooses Cecilia for the post by hand: the release goes, in the PATCH's own transaction, with a log row.
+      const patched = await request(http())
+        .patch(`/api/v1/teaching-requirements/${r(1)}`)
+        .set('x-test-user', admin())
+        .send({ teacherId: IDS.cecilia })
+        .expect(200);
+      expect(patched.body).toMatchObject({ teacherId: IDS.cecilia });
+      expect(lead(world, r(1))).toBe(IDS.cecilia);
+      expect(await releasedIds()).toEqual([]);
+      const logs = (world.rows['scheduleChangeLog'] ?? []).filter((row) => (row['after'] as { kind?: string } | null)?.kind === 'ENGINE_RELEASE');
+      expect(logs.map((row) => row['after'])).toEqual([
+        { kind: 'ENGINE_RELEASE', released: true, requirementIds: [r(1)] },
+        { kind: 'ENGINE_RELEASE', released: false, requirementIds: [r(1)], because: 'TEACHER_CHANGED_BY_HAND' },
+      ]);
+
+      // The next proposal treats Cecilia's post as the school's choice: fixed, and nothing is released.
+      const next = await propose({ onlyUnstaffed: false }).expect(200);
+      expect(next.body.counts).toMatchObject({ releasedRequirements: 0, keptRequirements: 0 });
+      expect(next.body.assignments.map((a: { requirementId: string }) => a.requirementId)).not.toContain(r(1));
+    });
+
     it('409s STAFF_ROW_NOT_RELEASED for a change of a staffed post the school has not released, and writes nothing', async () => {
       const world = givenStaff();
       const proposal = await propose().expect(200);

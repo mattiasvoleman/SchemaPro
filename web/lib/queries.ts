@@ -2187,6 +2187,8 @@ export function useImportCsv() {
       // ranking's figures.
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.unstaffed });
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.suggestions });
+      // A requirements file that gives a post another teacher takes the post's release for the engine back.
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.releases });
       // The catalogues a file can add to: salar.csv on the Salar page (and a
       // salstyper.csv beside it), amnen.csv on Ämnen. Without these the page
       // showed the list from before the import for staleTime's 30 s.

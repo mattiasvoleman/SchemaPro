@@ -310,7 +310,7 @@ describe('the active year’s statement budget', () => {
     ]);
   });
 
-  it('a timplanspost given a teacher under a WARN policy: 19 statements (18 before Behörighet som i ett annat ämne), and the two its shares are read with', async () => {
+  it('a timplanspost given a teacher under a WARN policy: 20 statements (19 before Släppt för motorn, 18 before Behörighet som i ett annat ämne), and the two its shares are read with', async () => {
     const { world, prisma } = school();
     // r2 is Bo's (who has left): Anna is newly assigned, so behörighet is asked.
     const r2 = world.rows['teachingRequirement']![1]!['id'] as string;
@@ -342,6 +342,9 @@ describe('the active year’s statement budget', () => {
       'studentGroupMember.findMany',
       'user.findMany',
       'teachingRequirement.update',
+      // Släppt för motorn: a teacher chosen by hand is the school's choice, so the post's release is looked for and taken back. One read
+      // when the lead changed (this PATCH), none for a PATCH that leaves it; a post nobody released writes nothing more.
+      'teachingRequirementRelease.findMany',
     ]);
   });
 

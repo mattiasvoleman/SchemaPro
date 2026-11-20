@@ -1934,6 +1934,8 @@ describe("useImportCsv", () => {
     // a target: the unstaffed list and the cached rankings go stale too.
     ["staffingUnstaffed"],
     ["staffingSuggestions"],
+    // A requirements file that gives a post another teacher takes the post's release for the engine back (släppt för motorn).
+    ["engineReleases"],
     // The Salar page's two lists and Ämnen's, which a rooms, room-type or
     // subject file adds to (granskning-260-r2, N1).
     ["rooms"],

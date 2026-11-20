@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { api } from "@/lib/api";
 import {
+  useAssignTeacher,
   useReplaceTeacherQualifications,
   useTeacherDutyActions,
   useTeacherEmploymentActions,
@@ -14,7 +15,7 @@ vi.mock("@/lib/api", () => ({
   api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() },
 }));
 
-const mockApi = api as unknown as Record<"get" | "put" | "delete" | "post", Mock>;
+const mockApi = api as unknown as Record<"get" | "put" | "delete" | "post" | "patch", Mock>;
 
 function createHarness() {
   const queryClient = new QueryClient({
@@ -128,5 +129,30 @@ describe("every write to a tjänst refetches its Historik (staffing Fas 3)", () 
     harness.invalidateSpy.mockClear();
     await act(() => result.current.remove.mutateAsync("d-1"));
     expect(invalidatedKeys(harness)).toContainEqual(["teacherEmploymentHistory"]);
+  });
+});
+
+/*
+ * Släppt för motorn: a teacher chosen by hand takes the post's release back on the gateway, in the same write, so the card that lists the
+ * releases must read them again.
+ */
+describe("a teacher chosen by hand refetches the releases", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockApi.patch.mockResolvedValue({});
+  });
+
+  it("assigning a teacher invalidates the releases beside the load report, the unstaffed list and the suggestions", async () => {
+    const harness = createHarness();
+    const { result } = renderHook(() => useAssignTeacher(), { wrapper: harness.wrapper });
+    await act(() => result.current.mutateAsync({ requirementId: "r-1", teacherId: "t-1" }));
+    expect(mockApi.patch).toHaveBeenCalledWith("/api/v1/teaching-requirements/r-1", { teacherId: "t-1" });
+    expect(invalidatedKeys(harness)).toEqual([
+      ["requirements"],
+      ["staffingLoad"],
+      ["staffingUnstaffed"],
+      ["staffingSuggestions"],
+      ["engineReleases"],
+    ]);
   });
 });

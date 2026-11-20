@@ -2753,6 +2753,90 @@ describe('ImportService', () => {
       });
     });
 
+    /*
+     * Släppt för motorn: a teacher chosen by file is the school's choice, which takes the post's release back (engine-release-handover.ts),
+     * in the transaction of the upload and with one log row for the posts. A post whose lead the file leaves alone keeps its release, and a
+     * row that is not written (a block member held back) takes nothing back.
+     */
+    describe('släppt för motorn', () => {
+      const BO = CO_TEACHER_ID;
+      /** The upload's two reads of the posts: the year's stored rows first, and then the leads as the upload left them. */
+      const givenPosts = (before: Record<string, unknown>[], after: Record<string, unknown>[]) => {
+        tx.teachingRequirement.findMany.mockImplementation((args?: { where?: { id?: unknown } }) =>
+          Promise.resolve(args?.where?.id !== undefined ? after.map((p) => ({ id: p['id'], teacherId: p['teacherId'] })) : before),
+        );
+      };
+      const givenReleased = (...ids: string[]) =>
+        tx.teachingRequirementRelease.findMany.mockResolvedValue(ids.map((requirementId) => ({ requirementId })));
+
+      it('takes the release back for a post the file gives another teacher, and logs it', async () => {
+        const before = [stored({ teacherId: TEACHER_ID })];
+        givenPosts(before, [{ id: 'req-1', teacherId: BO }]);
+        givenReleased('req-1');
+
+        const report = await run(row({ teacherEmail: 'bo@example.com' }));
+
+        expect(report).toMatchObject({ updated: 1, errors: [] });
+        expect(tx.teachingRequirementRelease.deleteMany).toHaveBeenCalledWith({ where: { requirementId: { in: ['req-1'] } } });
+        expect(tx.scheduleChangeLog.create).toHaveBeenCalledTimes(1);
+        expect(tx.scheduleChangeLog.create.mock.calls[0]![0]).toMatchObject({
+          data: {
+            academicYearId: YEAR_ID,
+            // Who uploaded the file: the log row says whose choice it was.
+            actorId: testUser().userId,
+            after: { kind: 'ENGINE_RELEASE', released: false, requirementIds: ['req-1'], because: 'TEACHER_CHANGED_BY_HAND' },
+          },
+        });
+      });
+
+      it('takes it back when the file empties the teacher cell: the school has chosen nobody', async () => {
+        givenPosts([stored({ teacherId: TEACHER_ID })], [{ id: 'req-1', teacherId: null }]);
+        givenReleased('req-1');
+        await run(row({ teacherEmail: null }));
+        expect(tx.teachingRequirementRelease.deleteMany).toHaveBeenCalledTimes(1);
+      });
+
+      it('leaves the release of a post whose teacher the file names as it already is', async () => {
+        givenPosts([stored({ teacherId: TEACHER_ID })], [{ id: 'req-1', teacherId: TEACHER_ID }]);
+        givenReleased('req-1');
+        const report = await run(row({ teacherEmail: 'karin@example.com', lessonsPerWeek: 4 }));
+        expect(report).toMatchObject({ updated: 1 });
+        expect(tx.teachingRequirementRelease.findMany).not.toHaveBeenCalled();
+        expect(tx.teachingRequirementRelease.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it('leaves it for a file with no teacher column, which leaves the teachers alone', async () => {
+        givenPosts([stored({ teacherId: TEACHER_ID })], [{ id: 'req-1', teacherId: TEACHER_ID }]);
+        givenReleased('req-1');
+        await runWithColumns([], row({ lessonsPerWeek: 4 }));
+        expect(tx.teachingRequirementRelease.findMany).not.toHaveBeenCalled();
+        expect(tx.teachingRequirementRelease.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it('takes back only the posts that were released, one log row for all of them, and none for a post the file creates', async () => {
+        const before = [stored({ id: 'req-1', teacherId: TEACHER_ID }), stored({ id: 'req-2', studentGroupId: GROUP_7B, teacherId: TEACHER_ID })];
+        givenPosts(before, [{ id: 'req-1', teacherId: BO }, { id: 'req-2', teacherId: BO }]);
+        givenReleased('req-2');
+        const report = await run(
+          row({ teacherEmail: 'bo@example.com' }),
+          row({ groupName: '7B', teacherEmail: 'bo@example.com' }),
+          row({ groupName: '7A', subject: 'SV', teacherEmail: 'bo@example.com' }),
+        );
+        expect(report).toMatchObject({ updated: 2, created: 1 });
+        expect(tx.teachingRequirementRelease.deleteMany).toHaveBeenCalledWith({ where: { requirementId: { in: ['req-2'] } } });
+        expect(tx.scheduleChangeLog.create).toHaveBeenCalledTimes(1);
+      });
+
+      it('takes nothing back for a row that is not written: a refused file changes nothing', async () => {
+        // The lead is the same after the upload as before, whatever the file asked: the row never reached the table.
+        givenPosts([stored({ teacherId: TEACHER_ID })], [{ id: 'req-1', teacherId: TEACHER_ID }]);
+        givenReleased('req-1');
+        await run(row({ teacherEmail: 'bo@example.com' }));
+        expect(tx.teachingRequirementRelease.deleteMany).not.toHaveBeenCalled();
+        expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
+      });
+    });
+
     describe('resolution', () => {
       it('creates a requirement from a row with no counterpart, stamped with the school of the caller and the posted year', async () => {
         const report = await run(

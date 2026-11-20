@@ -289,6 +289,8 @@ export function useAssignTeacher() {
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.load });
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.unstaffed });
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.suggestions });
+      // A teacher chosen by hand takes the post's release for the engine back (the gateway does it in the same write).
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.releases });
     },
   });
 }

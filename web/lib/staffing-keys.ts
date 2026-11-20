@@ -31,4 +31,9 @@ export const STAFFING_KEYS = {
    * uppdrag adds one, so every writer below invalidates it.
    */
   history: ["teacherEmploymentHistory"],
+  /**
+   * The posts a school has released for the engine (släppt för motorn), per läsår. A teacher chosen by hand, in a post's PATCH or by a
+   * file, takes the post's release back on the gateway, so the writers of a post's teacher invalidate it.
+   */
+  releases: ["engineReleases"],
 } as const;

@@ -17,6 +17,7 @@ import { readsHr } from '../staffing/hr-visibility';
 import { isMixed } from '../common/lesson-lengths';
 import { sharesProblem, type LessonShare, type SharedRow } from '../common/lesson-shares';
 import { carryPlacementTeachers, type PostTeachersChange } from '../requirement-placements/placement-teachers';
+import { takeBackReleasesAfterHandChange } from '../staffing/engine-release-handover';
 import {
   SHARE_SELECT,
   clearShares,
@@ -302,6 +303,9 @@ export class TeachingRequirementsService {
         // this PATCH leaves them, which its förläggningar follow or refuse
         // (placement-teachers.ts). Null when the PATCH touches no staffing field.
         let teachersChange: PostTeachersChange | null = null;
+        // The lead the row has now, when the staffing read has it in hand: a PATCH that leaves it another one is the school choosing a
+        // teacher, which takes the post's release back (engine-release-handover.ts). Undefined when nothing was read.
+        let leadBefore: string | null | undefined;
         let lengthWrite: Record<string, unknown> = {
           ...(dto.lessonsPerWeek !== undefined ? { lessonsPerWeek: dto.lessonsPerWeek } : {}),
           ...(dto.minutesPerLesson !== undefined ? { minutesPerLesson: dto.minutesPerLesson } : {}),
@@ -337,6 +341,7 @@ export class TeachingRequirementsService {
             : null;
           if (resolved) lengthWrite = resolved.write;
           if (stored) {
+            leadBefore = stored.teacherId;
             storedShares = stored.shares ?? [];
             // Delade lektioner, against the row as it will end up: its lead,
             // its medlärare and its lessons after this PATCH. Shares sent are
@@ -477,6 +482,16 @@ export class TeachingRequirementsService {
           },
         });
         if (sharesWrite !== null) await insertShares(tx, updated.schoolId, id, sharesWrite);
+        // A teacher chosen by hand is the school's choice: a release of the post, made before it, goes (släppt för motorn). The lead only,
+        // and only when it changed: a save of the lessons that sends the lead it already has leaves the release alone.
+        if (leadBefore !== undefined && dto.teacherId !== undefined && updated.teacherId !== leadBefore) {
+          await takeBackReleasesAfterHandChange(tx, {
+            schoolId: updated.schoolId,
+            academicYearId: updated.academicYearId,
+            actorId: user.userId ?? null,
+            requirementIds: [id],
+          });
+        }
         // Förlagda poster on a shared post: after the post and its shares, so
         // the database judges the förläggningar on the post as this PATCH
         // leaves it. Nothing is read for a post that shares nothing.

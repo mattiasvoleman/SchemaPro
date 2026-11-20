@@ -675,6 +675,9 @@ export default function RequirementsPage() {
     [...STAFFING_KEYS.load],
     [...STAFFING_KEYS.unstaffed],
     [...STAFFING_KEYS.suggestions],
+    // A teacher chosen here takes the post's release for the engine back (the gateway does it in the same write), and the card of
+    // released posts on Tjänstefördelning would otherwise show it for staleTime's 30 s.
+    [...STAFFING_KEYS.releases],
   ]);
   /**
    * What the policy said about the last save, in the two shapes it can say it.
