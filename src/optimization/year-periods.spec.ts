@@ -925,8 +925,8 @@ describe('yearPeriodsOf: a week with no school day is no week of the cut', () =>
       expect(periodSentence(named)).toBe(expected);
       expect(named).toMatchObject({ periodStretches: 1 });
     }
-    // A refusal that counts the odd weeks of both terms names the whole läsår in two runs: the lov is no
-    // week of either period, so the terms do not meet in the dates, and the sentence says there is more.
+    // A refusal that counts the odd weeks of both terms names the whole läsår as one run: the lov is held by the
+    // autumn, so the stretches tile the läsår, the terms meet in their dates and the sentence does not say there is more.
     const both = withPeriodDates({ period: 0, periods: '0,1', parity: 'ODD_WEEKS' }, periods.stretches);
     expect(both).toMatchObject({ periodFrom: '2026-08-17', periodTo: '2027-06-11', periodStretches: 1 });
     // The klassens lunch's sentence names the two parts as they come.
@@ -942,6 +942,29 @@ describe('yearPeriodsOf: a week with no school day is no week of the cut', () =>
     expect(days[0]!.from).toBe(YEAR.startDate);
     expect(days[days.length - 1]!.to).toBe(YEAR.endDate);
     expect(addDays(days[0]!.to, 1)).toBe(days[1]!.from);
+  });
+
+  it('holds a week with no school by the period of the school week before it, in a later period too', () => {
+    // The four lov of the school this was found at: höstlov (26 October), jullov, sportlov (1 March) and påsklov
+    // (29 March). The höstlov and the jullov follow the autumn, the sportlov and the påsklov the spring: a week of
+    // no school is held by the period whose school week comes before it, and not by the first period.
+    const four = [
+      lov('2026-10-26', '2026-10-30'),
+      JULLOV,
+      lov('2027-03-01', '2027-03-05'),
+      lov('2027-03-29', '2027-04-02'),
+    ];
+    const periods = yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school(four))!;
+    // The autumn is 19 weeks less the höstlov; the spring 22 weeks less the sportlov and the påsklov.
+    expect(periods.weeks).toEqual([18, 20]);
+    // One run of days each: no stretch of the autumn lies in the spring, and the spring is not cut at its lov.
+    expect(periods.stretches).toEqual([
+      [{ from: '2026-08-17', to: '2027-01-10' }],
+      [{ from: '2027-01-11', to: '2027-06-11' }],
+    ]);
+    const named = withPeriodDates({ period: 1 }, periods.stretches);
+    expect(named).toMatchObject({ periodFrom: '2027-01-11', periodTo: '2027-06-11', periodStretches: 1 });
+    expect(periodSentence(named)).toBe(' Counted for the weeks from 2027-01-11 to 2027-06-11, which is when these run together.');
   });
 
   it('leaves a week that is only partly a lov a school week, whichever of its days the lov takes', () => {
@@ -1033,21 +1056,40 @@ describe('yearPeriodsOf: a week with no school day is no week of the cut', () =>
     const exceptTheLov = [{ startDate: null, endDate: '2026-12-20' }, { startDate: '2027-01-11', endDate: null }];
     expect(yearPeriodsOf(YEAR, [exceptTheLov])!.weeks).toEqual([40, 3]);
     expect(yearPeriodsOf(YEAR, [exceptTheLov], school([lov('2026-12-21', '2027-01-10')]))).toBeNull();
-    // A post that starts on the 28th, inside the lov, is held in every week of school from the 11th.
-    expect(yearPeriodsOf(YEAR, [[{ startDate: '2026-12-28', endDate: '2027-01-03' }]], school([JULLOV]))).toBeNull();
+    // A post that starts on the 28th and ends on the 3rd, inside the lov, is a week of its own as it was (the engine cannot
+    // be told it runs in none): the week it lies in is kept, and the school weeks are one period beside it.
+    expect(yearPeriodsOf(YEAR, [[{ startDate: '2026-12-28', endDate: '2027-01-03' }]], school([JULLOV]))!.weeks).toEqual([41, 1]);
     expect(yearPeriodsOf(YEAR, [[{ startDate: null, endDate: '2027-06-12' }]], school([JULLOV]))).toBeNull();
     // A lov over the whole läsår has no school week to cut.
     expect(yearPeriodsOf(YEAR, KUNSKAPSSKOLAN, school([lov('2026-01-01', '2027-12-31')]))).toBeNull();
   });
 
-  it('reads an entry whose dates are all in the lov as running in every period, the stricter reading', () => {
-    // It has no week with school in it: nothing is written for it, and as an entry outside the läsår it is every week.
+  it('keeps the weeks of a lov that an entry is dated in alone: a lovskola is a week, as it was, and not every week', () => {
+    // It has no week with school in it and nothing is written for it, but a mask cannot say "no period" (the engine
+    // refuses one): read as every period it would take its hour in every week of the year. Its week stays a week of
+    // the cut, for it and the entries that run in it; the other week of the lov is none.
     const inLov = [{ startDate: '2026-12-28', endDate: '2027-01-03' }];
     const periods = yearPeriodsOf(YEAR, [...KUNSKAPSSKOLAN, inLov], school([JULLOV]))!;
-    expect(periods.weeks).toEqual([19, 22]);
-    expect(periods.masks[periods.masks.length - 1]).toBeUndefined();
-    // Where it is dated against school weeks it is cut: a post of the autumn that ends in the lov is the autumn's.
-    expect(periods.masks[0]).toEqual([true, false]);
+    expect(periods.weeks).toEqual([19, 1, 22]);
+    expect(periods.weekPeriods.slice(18, 23)).toEqual([0, 1, null, 2, 2]);
+    expect(periods.masks[periods.masks.length - 1]).toEqual([false, true, false]);
+    // The lov's other week is held by the period before it, as every week of no school is.
+    expect(periods.stretches).toEqual([
+      [{ from: '2026-08-17', to: '2026-12-27' }],
+      [{ from: '2026-12-28', to: '2027-01-10' }],
+      [{ from: '2027-01-11', to: '2027-06-11' }],
+    ]);
+    // A post outside the läsår is every period, as it was.
+    const outside = yearPeriodsOf(YEAR, [...KUNSKAPSSKOLAN, [{ startDate: '2027-07-01', endDate: '2027-07-10' }]], school([JULLOV]))!;
+    expect(outside.weeks).toEqual([19, 22]);
+    expect(outside.masks[outside.masks.length - 1]).toBeUndefined();
+    // An entry that touches a week with school as well is dated against the school weeks alone: no week of the lov is kept.
+    const across = yearPeriodsOf(YEAR, [...KUNSKAPSSKOLAN, [{ startDate: '2026-12-28', endDate: '2027-01-12' }]], school([JULLOV]))!;
+    expect(across.weeks).toEqual([19, 1, 21]);
+    expect(across.weekPeriods.filter((period) => period === null)).toHaveLength(2);
+    // Where it is dated against school weeks it is cut: a post of the autumn that ends in the lov is the autumn's, and
+    // runs in the kept week of the lov it ends in.
+    expect(periods.masks[0]).toEqual([true, true, false]);
   });
 
   describe('the weeks at the läsår’s edges', () => {
@@ -1203,6 +1245,12 @@ describe('yearPeriodsOf: a week with no school day is no week of the cut', () =>
         const without = yearPeriodsOf(year, entries);
         const read = weeksWithSchool(year, days);
         const weeks = mondays(year);
+        // The weeks of the cut: those with school, and a week with none that an entry lies in alone (a lovskola).
+        const kept = read.map(
+          (has, week) =>
+            has ||
+            windows.some((window) => touches(window, weeks[week]!) && !weeks.some((monday, other) => read[other] && touches(window, monday))),
+        );
         // A lov takes weeks away, never adds one: no more periods than the cut that reads every week.
         expect(periods?.weeks.length ?? 1).toBeLessThanOrEqual(without?.weeks.length ?? 1);
         if (periods && without && periods.weeks.length < without.weeks.length) seen.fewer += 1;
@@ -1210,8 +1258,8 @@ describe('yearPeriodsOf: a week with no school day is no week of the cut', () =>
           // Not told apart by the school weeks: every entry is in all of them or in none.
           if (!read.some(Boolean)) seen.none += 1;
           for (const window of windows) {
-            const held = weeks.filter((monday, week) => read[week] && touches(window, monday));
-            expect([0, read.filter(Boolean).length]).toContain(held.length);
+            const held = weeks.filter((monday, week) => kept[week] && touches(window, monday));
+            expect([0, kept.filter(Boolean).length]).toContain(held.length);
           }
           continue;
         }
@@ -1220,8 +1268,8 @@ describe('yearPeriodsOf: a week with no school day is no week of the cut', () =>
         expect(count).toBeGreaterThanOrEqual(2);
         // The school weeks are in exactly one period each; the others are in none.
         expect(periods.weekPeriods).toHaveLength(weeks.length);
-        periods.weekPeriods.forEach((period, week) => expect(period === null).toBe(!read[week]));
-        expect(periods.weeks.reduce((sum, weeksIn) => sum + weeksIn, 0)).toBe(read.filter(Boolean).length);
+        periods.weekPeriods.forEach((period, week) => expect(period === null).toBe(!kept[week]));
+        expect(periods.weeks.reduce((sum, weeksIn) => sum + weeksIn, 0)).toBe(kept.filter(Boolean).length);
         expect(Math.min(...periods.weeks)).toBeGreaterThanOrEqual(1);
         // Two periods never hold the same entries.
         const signatures = new Set(
@@ -1247,6 +1295,21 @@ describe('yearPeriodsOf: a week with no school day is no week of the cut', () =>
         }
         expect(previousEnd).toBe(year.endDate);
         expect(covered).toBe((day(year.endDate).getTime() - day(year.startDate).getTime()) / DAY_MS + 1);
+        // And each day is held by the period of the school week before it (the first period for the weeks before
+        // the first school week): the tiling above would also hold with every lov week given to the first period.
+        const holder = (week: number): number => {
+          for (let earlier = week; earlier >= 0; earlier -= 1) {
+            if (periods.weekPeriods[earlier] !== null) return periods.weekPeriods[earlier]!;
+          }
+          return periods.weekPeriods.find((period) => period !== null)!;
+        };
+        weeks.forEach((monday, week) => {
+          const firstDay = monday < year.startDate ? year.startDate : monday;
+          const holding = periods.stretches.flatMap((stretches, period) =>
+            stretches.some((stretch) => stretch.from <= firstDay && firstDay <= stretch.to) ? [period] : [],
+          );
+          expect(holding).toEqual([holder(week)]);
+        });
         // Two entries meet in the engine where some school week holds a date of each: never looser than
         // that, and never stricter than that for two that are both dated against the school weeks.
         for (let a = 0; a < windows.length; a += 1) {
@@ -1255,14 +1318,14 @@ describe('yearPeriodsOf: a week with no school day is no week of the cut', () =>
             const second = periods.masks[b];
             if (!first || !second) continue;
             const engine = first.some((runs, period) => runs && second[period]);
-            const schoolWeek = weeks.some((monday, week) => read[week] && touches(windows[a]!, monday) && touches(windows[b]!, monday));
+            const schoolWeek = weeks.some((monday, week) => kept[week] && touches(windows[a]!, monday) && touches(windows[b]!, monday));
             expect(engine).toBe(schoolWeek);
             seen[engine ? 'meet' : 'apart'] += 1;
           }
         }
       }
       expect(seen.dated).toBeGreaterThan(800);
-      expect(seen.fewer).toBeGreaterThan(10);
+      expect(seen.fewer).toBeGreaterThan(5);
       expect(seen.meet).toBeGreaterThan(1000);
       expect(seen.apart).toBeGreaterThan(1000);
     });

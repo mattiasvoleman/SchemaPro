@@ -79,6 +79,14 @@
  *     (a meal is written as the rows of its periods' weeks, lunch-parts.ts)
  *     and so hold such a week in the period of the school week before it, the
  *     first period for the weeks before the first.
+ *   - THE ONE EXCEPTION IS A WEEK AN ENTRY LIES IN ALONE. A post dated to the
+ *     days of a lov only (a lovskola) runs in no week with school, which the
+ *     engine cannot be told (a mask that names no period is refused); read as
+ *     running in every period it would take an hour in every week of the year
+ *     and refuse a year every school week of which fits (the review
+ *     of #364: a year laid before the lov were read and refused after). The
+ *     weeks such an entry lies in stay weeks of the cut, as they were before
+ *     lov were read, for it and the entries that run in them.
  *
  * WHAT THIS LOOSENS. Two entries that share a week with no school only — an
  * autumn post to the 10th of January and a spring post from the 4th — met in
@@ -243,11 +251,16 @@ export function yearPeriodsOf(
   const school = weeksWithSchool(year, schoolDays);
   if (!school.some(Boolean)) return null;
   const runs = entries.map((windows) => weeks.map((week) => touches(windows, week)));
-  // An entry in every week that has school, or in none of them, tells no two weeks apart. The weeks of a
-  // lov are not read: an entry that runs in none of the school weeks (its dates are all in the lov) is
-  // read as running in all of them, as an entry outside the läsår is.
+  // The weeks the cut reads: those with school, and a week with none that some entry is dated in and in no week with
+  // school (a lovskola). The engine cannot say of an entry that it runs in no week (it refuses a mask that names no
+  // period), and read as running in every week it would take its hour in all of them and refuse a year every school
+  // week of which fits. Such a week is a week of the cut, as it was, for that entry and the ones that run in it.
+  const kept = school.map(
+    (has, week) => has || runs.some((inWeek) => inWeek[week] && !inWeek.some((there, other) => there && school[other])),
+  );
+  // An entry in every week that is read, or in none of them, tells no two weeks apart.
   const dated = runs.map((inWeek) => {
-    const read = inWeek.filter((_, week) => school[week]);
+    const read = inWeek.filter((_, week) => kept[week]);
     return read.some(Boolean) && !read.every(Boolean);
   });
   if (!dated.some(Boolean)) return null;
@@ -257,7 +270,7 @@ export function yearPeriodsOf(
   const weeksIn: number[][] = [];
   const weekPeriods: (number | null)[] = [];
   weeks.forEach((_, week) => {
-    if (!school[week]) {
+    if (!kept[week]) {
       weekPeriods.push(null);
       return;
     }
