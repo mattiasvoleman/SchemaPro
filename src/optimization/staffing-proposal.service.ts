@@ -635,8 +635,13 @@ export class StaffingProposalService {
       `;
 
       const state = await this.readState(tx, user, dto.academicYearId);
-      const staffingBasis = basisOf(state);
-      if (staffingBasis !== dto.basisSha256 && !(await this.weekBasisHolds(tx, user, dto, staffingBasis))) throw stale();
+      // The proposal's own basis, or (coversWeek) that and the week's together: the week is read again only when the caller says
+      // it showed it, so every other apply, a stale one included, is judged by the one digest it always was and fetches nothing.
+      const basisHolds =
+        dto.coversWeek === true
+          ? await this.weekBasisHolds(tx, user, dto, basisOf(state))
+          : basisOf(state) === dto.basisSha256;
+      if (!basisHolds) throw stale();
 
       const rows = new Map(state.read.input.requirements.map((row) => [row.id, row]));
       const staff = new Set(state.staffIds);
@@ -902,15 +907,14 @@ export class StaffingProposalService {
   }
 
   /**
-   * An apply's basis is the proposal's own, or, when the dialog showed the week before and after the proposal
-   * (staffing-week.service.ts), that and the week's (withWeekBasis). It is tried the second way only when it is not the
-   * first, under the same lock and in the same transaction, and refuses a difference in EITHER: a proposal judged
-   * against one week is not applied to another, whatever changed it (a room, a reservation, a lunch rule, a pupil).
-   * The week is read as Kontrollera veckan reads it, so it is what the check read, and it is read BEFORE the apply writes.
+   * An apply that says it covers the week (ApplyStaffingDto.coversWeek) carries the proposal's basis AND the week's together
+   * (withWeekBasis, staffing-week.service.ts): this reads the week as Kontrollera veckan reads it, under the same lock and
+   * in the same transaction and BEFORE the apply writes, and holds only if both are as they were. A proposal judged against
+   * one week is not applied to another, whatever changed it (a room, a reservation, a lunch rule, a pupil).
    *
-   * Not a gate on its own: an apply that carries the proposal's basis alone is judged as it always was, and a week the
-   * gateway cannot build (a refusal of its own pre-flight, a year that is not open) is one that has changed since a
-   * figure was made of it, so it is stale.
+   * Not a gate on its own: an apply that does not say it covers the week is judged by the proposal's own basis and never
+   * gets here, and a week the gateway cannot build (a refusal of its own pre-flight, a year that is not open) is one that
+   * has changed since a figure was made of it, so it is stale. A fault that is not a refusal is not "stale": it is thrown.
    */
   private async weekBasisHolds(
     tx: PrismaClient,

@@ -7225,11 +7225,11 @@ describe('Planning surface (e2e)', () => {
         expect(week.body.basisSha256).toMatch(/^[0-9a-f]{64}$/);
         expect(week.body.basisSha256).not.toBe(proposal.body.basisSha256);
 
-        // Applied with the digest the week returned: the same apply as ever, and an undo with the basis it answers.
+        // Applied with the digest the week returned, said to cover the week: the same apply as ever.
         const applied = await request(http())
           .post(APPLY)
           .set('x-test-user', admin())
-          .send({ academicYearId: IDS.yearA, basisSha256: week.body.basisSha256, confirmedNewTeaching: confirmedOf(proposal.body.assignments), changes })
+          .send({ academicYearId: IDS.yearA, basisSha256: week.body.basisSha256, coversWeek: true, confirmedNewTeaching: confirmedOf(proposal.body.assignments), changes })
           .expect(200);
         expect(applied.body).toMatchObject({ updated: 2 });
         expect([lead(world, r(2)), lead(world, r(6))]).toEqual([IDS.cecilia, IDS.cecilia]);
@@ -7250,7 +7250,7 @@ describe('Planning surface (e2e)', () => {
         const refused = await request(http())
           .post(APPLY)
           .set('x-test-user', admin())
-          .send({ academicYearId: IDS.yearA, basisSha256: week.body.basisSha256, confirmedNewTeaching: confirmedOf(proposal.body.assignments), changes })
+          .send({ academicYearId: IDS.yearA, basisSha256: week.body.basisSha256, coversWeek: true, confirmedNewTeaching: confirmedOf(proposal.body.assignments), changes })
           .expect(409);
         expect(refused.body).toMatchObject({ code: 'STAFF_PROPOSAL_STALE' });
         expect([lead(world, r(2)), lead(world, r(6))]).toEqual([IDS.bo, null]);

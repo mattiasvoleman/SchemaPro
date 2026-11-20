@@ -105,8 +105,8 @@ export interface StaffingWeekView {
   worse: boolean;
   /**
    * The digest to apply with when this figure was shown: the proposal's own basis and the week's (withWeekBasis). An
-   * apply that sends it is refused as stale if the week has changed since. Null when no figure was made; the proposal's
-   * own basis then stands, as it did before this existed.
+   * apply that sends it as its `basisSha256`, with `coversWeek: true`, is refused as stale if the week has changed since.
+   * Null when no figure was made; the proposal's own basis then stands, as it did before this existed.
    */
   basisSha256: string | null;
   overlay: StaffingWeekOverlay;

@@ -1346,6 +1346,8 @@ describe("StaffingProposalDialog", () => {
       await waitFor(() => expect(applies()).toHaveLength(1));
 
       expect(applies()[0]!.basisSha256).toBe(BASIS);
+      // Not said to cover the week: it does not, and the gateway then never reads it.
+      expect(applies()[0]).not.toHaveProperty("coversWeek");
     });
 
     it("applies against the basis that covers the week when the week was shown for the selection, and only then", async () => {
@@ -1356,7 +1358,7 @@ describe("StaffingProposalDialog", () => {
       await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
       await waitFor(() => expect(applies()).toHaveLength(1));
 
-      expect(applies()[0]).toMatchObject({ academicYearId: "y1", basisSha256: week.WITH_WEEK });
+      expect(applies()[0]).toMatchObject({ academicYearId: "y1", basisSha256: week.WITH_WEEK, coversWeek: true });
       expect(applies()[0]!.changes).toHaveLength(3);
     });
 
@@ -1370,6 +1372,7 @@ describe("StaffingProposalDialog", () => {
       await waitFor(() => expect(applies()).toHaveLength(1));
 
       expect(applies()[0]!.basisSha256).toBe(BASIS);
+      expect(applies()[0]).not.toHaveProperty("coversWeek");
     });
 
     it("an undo carries the basis the apply answered with and none of the week: it puts back what was", async () => {
@@ -1382,6 +1385,7 @@ describe("StaffingProposalDialog", () => {
       await pressUndo();
 
       expect(applies()[1]).toMatchObject({ basisSha256: BASIS_AFTER, undo: true });
+      expect(applies()[1]).not.toHaveProperty("coversWeek");
     });
 
     it("keeps the figure through the second confirmation: the step takes the panel's place and the apply still carries the week", async () => {
@@ -1394,7 +1398,7 @@ describe("StaffingProposalDialog", () => {
       await user.click(await screen.findByRole("button", { name: "Bekräfta och tillämpa 3 valda" }));
       await waitFor(() => expect(applies()).toHaveLength(1));
 
-      expect(applies()[0]).toMatchObject({ basisSha256: week.WITH_WEEK });
+      expect(applies()[0]).toMatchObject({ basisSha256: week.WITH_WEEK, coversWeek: true });
       expect(applies()[0]!.confirmedNewTeaching).toHaveLength(2);
     });
 

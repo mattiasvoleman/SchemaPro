@@ -28256,6 +28256,9 @@
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
           },
+          "coversWeek": {
+            "type": "boolean"
+          },
           "undo": {
             "type": "boolean"
           },

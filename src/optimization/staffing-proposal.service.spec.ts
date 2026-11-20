@@ -2401,8 +2401,9 @@ describe('StaffingProposalService, släppt för motorn', () => {
 
 describe('StaffingProposalService.apply, the week the dialog showed (staffing-week.ts)', () => {
   /**
-   * An apply that carries the proposal's basis and the week's (withWeekBasis) is judged against both, under the year's lock
-   * and before it writes; one that carries the proposal's own is judged as it always was and never fetches the week.
+   * An apply that says it covers the week (coversWeek) and carries the proposal's basis and the week's (withWeekBasis) is
+   * judged against both, under the year's lock and before it writes; one that does not say so is judged by the proposal's own
+   * basis as it always was and never fetches the week, a stale one included.
    */
   const parts = (overrides: Partial<BasisParts> = {}): BasisParts =>
     ({ ...Object.fromEntries(BASIS_PARTS.map((part) => [part, `${part}-digest`])), ...overrides }) as BasisParts;
@@ -2447,9 +2448,11 @@ describe('StaffingProposalService.apply, the week the dialog showed (staffing-we
   };
   /** The lead the proposal gives Ma 8A, the one post nobody teaches. */
   const proposedFor = (proposal: StaffingProposal) => proposal.assignments.find((a) => a.requirementId === R_MA8)!.toTeacherId;
-  const applying = (proposal: StaffingProposal, basisSha256: string) => ({
+  /** An apply of the whole proposal; `coversWeek` is what the dialog says when the digest it carries is the week's as well. */
+  const applying = (proposal: StaffingProposal, basisSha256: string, coversWeek = false) => ({
     academicYearId: YEAR,
     basisSha256,
+    ...(coversWeek ? { coversWeek: true } : {}),
     confirmedNewTeaching: confirmedBy(proposal),
     changes: changesOf(proposal),
   });
@@ -2466,7 +2469,7 @@ describe('StaffingProposalService.apply, the week the dialog showed (staffing-we
   it('applies with the proposal\'s basis and the week\'s together when the week is the one that was judged, having fetched it as Generera does but with the posts nobody teaches', async () => {
     const { service, world, proposal, fetch, withWeek } = await given();
 
-    await expect(service.apply(applying(proposal, withWeek()), admin())).resolves.toMatchObject({ updated: 3 });
+    await expect(service.apply(applying(proposal, withWeek(), true), admin())).resolves.toMatchObject({ updated: 3 });
 
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch.mock.calls[0]![3]).toMatchObject({ skipUnstaffedRefusal: true });
@@ -2476,7 +2479,7 @@ describe('StaffingProposalService.apply, the week the dialog showed (staffing-we
   it('reads the week BEFORE it writes: the post still has the lead it had when the figure was made', async () => {
     const { service, world, proposal, seenLeads, withWeek } = await given();
 
-    await service.apply(applying(proposal, withWeek()), admin());
+    await service.apply(applying(proposal, withWeek(), true), admin());
 
     expect(seenLeads).toEqual([null]);
     expect(leadOf(world, R_MA8)).toBe(proposedFor(proposal));
@@ -2487,7 +2490,7 @@ describe('StaffingProposalService.apply, the week the dialog showed (staffing-we
     const judged = withWeek();
     for (const part of ['requirements', 'preserved', 'rooms', 'rules', 'rosters'] as const) {
       setWeek(parts({ [part]: 'moved since' }));
-      await expect(service.apply(applying(proposal, judged), admin())).rejects.toMatchObject({
+      await expect(service.apply(applying(proposal, judged, true), admin())).rejects.toMatchObject({
         status: 409,
         response: { code: STAFF_PROPOSAL_STALE },
       });
@@ -2500,7 +2503,7 @@ describe('StaffingProposalService.apply, the week the dialog showed (staffing-we
     const { service, proposal, setWeek, withWeek } = await given();
     setWeek(parts({ draft: 'a lesson moved by hand' }));
 
-    await expect(service.apply(applying(proposal, withWeek()), admin())).resolves.toMatchObject({ updated: 3 });
+    await expect(service.apply(applying(proposal, withWeek(), true), admin())).resolves.toMatchObject({ updated: 3 });
   });
 
   it('refuses as stale when the tjänstefördelning has changed even if the week digest is the one judged', async () => {
@@ -2508,7 +2511,7 @@ describe('StaffingProposalService.apply, the week the dialog showed (staffing-we
     const judged = withWeek();
     world.rows['teachingRequirement']!.find((row) => row['id'] === R_MA7)!['lessonsPerWeek'] = 4;
 
-    await expect(service.apply(applying(proposal, judged), admin())).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
+    await expect(service.apply(applying(proposal, judged, true), admin())).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
     expect(leadOf(world, R_MA8)).toBeNull();
   });
 
@@ -2516,25 +2519,47 @@ describe('StaffingProposalService.apply, the week the dialog showed (staffing-we
     const { service, world, proposal, setWeek, fetch, withWeek } = await given();
     const judged = withWeek();
     setWeek(null);
-    await expect(service.apply(applying(proposal, judged), admin())).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
+    await expect(service.apply(applying(proposal, judged, true), admin())).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
 
     fetch.mockRejectedValueOnce(new HttpException({ message: 'not activated', code: 'ROLLOVER_NOT_ACTIVATED' }, 409));
-    await expect(service.apply(applying(proposal, judged), admin())).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
+    await expect(service.apply(applying(proposal, judged, true), admin())).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
     expect(leadOf(world, R_MA8)).toBeNull();
   });
 
   it('is stale for a basis that is neither, and does not swallow an error of the fetch that is not a refusal', async () => {
     const { service, world, proposal, fetch } = await given();
-    await expect(service.apply(applying(proposal, 'f'.repeat(64)), admin())).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
+    await expect(service.apply(applying(proposal, 'f'.repeat(64), true), admin())).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
 
     fetch.mockRejectedValueOnce(new Error('connection lost'));
-    await expect(service.apply(applying(proposal, 'e'.repeat(64)), admin())).rejects.toThrow('connection lost');
+    await expect(service.apply(applying(proposal, 'e'.repeat(64), true), admin())).rejects.toThrow('connection lost');
+    expect(leadOf(world, R_MA8)).toBeNull();
+  });
+
+  it('never fetches the week for an apply that does not say it covers it, a stale one included: it is judged by the one digest it always was', async () => {
+    const { service, world, proposal, fetch } = await given();
+    world.rows['teachingRequirement']!.find((row) => row['id'] === R_MA7)!['lessonsPerWeek'] = 4;
+
+    await expect(service.apply(applying(proposal, proposal.basisSha256), admin())).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
+    await expect(service.apply(applying(proposal, 'f'.repeat(64)), admin())).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(leadOf(world, R_MA8)).toBeNull();
+  });
+
+  it('does not take the week\'s digest for the proposal\'s without the flag, nor the proposal\'s own basis for the week\'s with it', async () => {
+    const { service, world, proposal, fetch, withWeek } = await given();
+
+    // The digest that covers the week, sent as the proposal's own: stale, and the week is not fetched to find out.
+    await expect(service.apply(applying(proposal, withWeek()), admin())).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
+    expect(fetch).not.toHaveBeenCalled();
+    // The proposal's own, said to cover the week: it does not, so it is stale.
+    await expect(service.apply(applying(proposal, proposal.basisSha256, true), admin())).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
     expect(leadOf(world, R_MA8)).toBeNull();
   });
 
   it('answers with the proposal\'s own basis for what is now stored, so that an undo (which carries none of the week) is judged as it always was', async () => {
     const { service, world, proposal, fetch, withWeek } = await given();
-    const applied = await service.apply(applying(proposal, withWeek()), admin());
+    const applied = await service.apply(applying(proposal, withWeek(), true), admin());
     fetch.mockClear();
 
     const undo = proposal.assignments.map((a) => ({ requirementId: a.requirementId, fromTeacherId: a.toTeacherId, toTeacherId: a.fromTeacherId }));

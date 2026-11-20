@@ -398,6 +398,7 @@ export function StaffingProposalDialog({
         academicYearId,
         // The week's digest too when the week was shown for this selection: refused as stale if the week has changed since.
         basisSha256: weekBasis ?? proposal.basisSha256,
+        ...(weekBasis ? { coversWeek: true } : {}),
         changes,
         ...(toConfirm.length > 0 ? { confirmedNewTeaching: confirmedNewTeaching(toConfirm) } : {}),
       });
