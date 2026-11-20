@@ -139,6 +139,7 @@ import { skolenheterChecks, sweepSkolenheterSchool } from './probe-skolenheter';
 import { importTemplatesChecks, sweepImportTemplatesSchools } from './probe-import-templates';
 import { behorighetChecks, sweepBehorighetSchools } from './probe-behorighet-som-i-amne';
 import { slapptChecks, sweepSlapptSchools } from './probe-slappt-for-motorn';
+import { sokningChecks, sweepSokningSchools } from './probe-lararval-sokning';
 import { adminAreaChecks, sweepRollerSchool } from './probe-admin-areas';
 import { huvudmanChecks } from './probe-huvudman';
 import { deladeChecks } from './probe-delade';
@@ -6180,6 +6181,8 @@ async function runChecks(
   await behorighetChecks(owner, api, MARKER, check);
   // Släppt för motorn: a school's release of posts through the real service and the arms, and the second confirmation of Föreslå bemanning.
   await slapptChecks(owner, api, MARKER, check);
+  // Lärarval F3: the search for the choice of teachers that eases the week, through the real services, the lease, the arms and the sweep's door.
+  await sokningChecks(owner, api, MARKER, check);
 }
 
 
@@ -6701,6 +6704,7 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await sweepBehorighetSchools(owner, MARKER);
   // Släppt för motorn's three schools, likewise.
   await sweepSlapptSchools(owner, MARKER);
+  await sweepSokningSchools(owner, MARKER);
   // Elevlistan i uppföljningen's school, likewise.
   await sweepElevlistanSchool(owner, MARKER);
   // Massåtgärder's school, likewise.
