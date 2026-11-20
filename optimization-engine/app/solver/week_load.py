@@ -212,10 +212,59 @@ class StageLoad:
     shared: tuple[SharedTeacher, ...] = ()
     #: True when the bound is proved above the supply (the week is impossible).
     over: bool = False
+    #: Only an EXACT count (Exactness) says anything else: that the bound is the
+    #: year's exact least week, every pricing step proved. A count against a
+    #: threshold stops where it is decided, so for it the flag has no meaning
+    #: and stays True.
+    converged: bool = True
+    #: An exact count that was stopped because its proved lower bound passed the
+    #: cutoff it was given (Exactness.cutoff_slots). `demand_minutes` is then a
+    #: lower bound that only says "above the cutoff", and ranks nobody.
+    cutoff: bool = False
 
     @property
     def load(self) -> float:
         return self.demand_minutes / self.capacity_minutes if self.capacity_minutes else math.inf
+
+
+@dataclass
+class _Proof:
+    """The pricing steps of one count that CP-SAT did not prove (see Exactness)."""
+
+    unproven: int = 0
+
+
+@dataclass(frozen=True)
+class Exactness:
+    """week_loads asked for each year's EXACT least week, not for a decision against a threshold.
+
+    WHY THERE IS A SECOND MODE. The count above stops where it has decided
+    whether a year is above the threshold, and says nothing of a year it did
+    not take that far: right for "is this week tight", useless for ranking two
+    weeks that are both over the supply (the figure of a week that is refused
+    is only a bound at the moment of refusal). A search for the teacher choice
+    that eases the week ranks exactly such weeks, so it asks for the value
+    itself: column generation until no column improves, with nothing stopping
+    it short but the deadline and the cutoff.
+
+    THE PRICING IS PROVED, OR THE COUNT SAYS IT WAS NOT. The heaviest
+    independent set (_heaviest_set) gets `pricing_seconds` here, not one second,
+    and a pricing step CP-SAT did not finish proving makes the year's count
+    `converged=False`. Without that, under load, column generation can declare
+    itself finished on a column it already holds while the proof is missing
+    (`mask in columns`), and the figure is a weak lower bound that looks exact:
+    2 365 minutes for a graph whose bound is 2 730, measured under host load.
+
+    `years` limits the count to those years (None: all), so a move that touches
+    one year is not charged for the others. `cutoff_slots` stops a year's count
+    once its PROVED lower bound passes the given number of slots: the figure
+    then only says "above the cutoff" (`StageLoad.cutoff`), which rejects a
+    candidate and ranks nobody.
+    """
+
+    pricing_seconds: float
+    years: frozenset[int | None] | None = None
+    cutoff_slots: Mapping[int | None, Fraction] = field(default_factory=dict)
 
 
 @dataclass
@@ -292,6 +341,7 @@ def week_loads(
     *,
     threshold: float,
     deadline: float,
+    exact: Exactness | None = None,
 ) -> list[StageLoad]:
     """The years whose proven least week exceeds `threshold` of their supply.
 
@@ -299,6 +349,11 @@ def week_loads(
     neither is one the deadline stopped short of the threshold: what is not
     proved is not said. `deadline` is a time.monotonic() instant. `over` on a
     returned year means the bound exceeds the supply itself.
+
+    With `exact` the count is the other one (Exactness): every year asked for is
+    returned with its exact least week, whatever it is, and `threshold` is not
+    read. A year the deadline did not reach has no row, which the caller reads as
+    "not counted".
     """
     if not requirements:
         return []
@@ -329,6 +384,8 @@ def week_loads(
     for year in sorted(years, key=lambda y: (y is None, y or 0)):
         if time.monotonic() >= deadline:
             break
+        if exact is not None and exact.years is not None and year not in exact.years:
+            continue
         members = [
             requirement
             for requirement in requirements
@@ -353,16 +410,34 @@ def week_loads(
         # is not tight. It saves the graph only for a year with little in it:
         # the classes of a year run side by side and this sum lines them up
         # one after the other, so a year of several classes passes it rarely.
-        if sum(piece.weight for member in members for piece in pieces_of[member.id]) <= threshold * supply:
+        if exact is None and sum(piece.weight for member in members for piece in pieces_of[member.id]) <= threshold * supply:
             continue
 
         graph = _stage_graph(members, pieces_of, relations, supply_by_day, lunch, year)
-        bound = _stage_bound(
-            graph, stop_at_or_below=threshold * supply, stop_above=supply, deadline=deadline,
-        )
-        if bound.lower <= threshold * supply:
-            continue
-        shared = _shared_teachers(members, pieces_of, relations)
+        converged = True
+        cut = False
+        if exact is None:
+            bound = _stage_bound(
+                graph, stop_at_or_below=threshold * supply, stop_above=supply, deadline=deadline,
+            )
+            if bound.lower <= threshold * supply:
+                continue
+            shared = _shared_teachers(members, pieces_of, relations)
+        else:
+            proof = _Proof()
+            cutoff = exact.cutoff_slots.get(year)
+            bound = _stage_bound(
+                graph,
+                stop_at_or_below=-1.0,
+                stop_above=math.inf if cutoff is None else cutoff,
+                deadline=deadline,
+                pricing_seconds=exact.pricing_seconds,
+                proof=proof,
+            )
+            cut = cutoff is not None and bound.lower > cutoff
+            converged = bound.converged and proof.unproven == 0 and not cut
+            # The sentence about shared teachers is a refusal's; an exact count is asked for a figure.
+            shared = ()
         loads.append(
             StageLoad(
                 year=year,
@@ -371,6 +446,8 @@ def week_loads(
                 requirement_ids=tuple(member.id for member in members),
                 shared=shared,
                 over=bound.lower > supply,
+                converged=converged,
+                cutoff=cut,
             ),
         )
     loads.sort(key=lambda load: -load.load)
@@ -544,6 +621,8 @@ def _stage_bound(
     stop_at_or_below: float,
     stop_above: float,
     deadline: float,
+    pricing_seconds: float = _PRICING_SECONDS,
+    proof: _Proof | None = None,
 ) -> _Bound:
     """The largest bound over the graph's components: a year needs its heaviest."""
     best = _Bound(lower=Fraction(0), upper=0.0, converged=True)
@@ -572,6 +651,8 @@ def _stage_bound(
             stop_at_or_below=stop_at_or_below,
             stop_above=stop_above,
             deadline=deadline,
+            pricing_seconds=pricing_seconds,
+            proof=proof,
         )
         if bound.lower > best.lower:
             best.lower = bound.lower
@@ -611,6 +692,8 @@ def _fractional_cover(
     stop_at_or_below: float,
     stop_above: float,
     deadline: float,
+    pricing_seconds: float = _PRICING_SECONDS,
+    proof: _Proof | None = None,
 ) -> _Bound:
     """Weighted fractional chromatic number of one connected piece, bounded.
 
@@ -696,7 +779,9 @@ def _fractional_cover(
 
         # None found by hand: prove the heaviest set, which is also the bound.
         scaled = [max(0, round(duals[v] * _DUAL_SCALE)) for v in range(n)]
-        proved = _heaviest_set(scaled, graph.cliques, deadline=deadline)
+        proved = _heaviest_set(
+            scaled, graph.cliques, deadline=deadline, pricing_seconds=pricing_seconds, proof=proof,
+        )
         if proved is None:
             break
         heaviest, mask = proved
@@ -719,7 +804,12 @@ def _fractional_cover(
 
 
 def _heaviest_set(
-    scaled: Sequence[int], cliques: Sequence[Sequence[int]], *, deadline: float,
+    scaled: Sequence[int],
+    cliques: Sequence[Sequence[int]],
+    *,
+    deadline: float,
+    pricing_seconds: float = _PRICING_SECONDS,
+    proof: _Proof | None = None,
 ) -> tuple[int, int] | None:
     """(an upper bound on the heaviest independent set, a set reaching its best).
 
@@ -727,6 +817,9 @@ def _heaviest_set(
     best-objective bound when it does not. Either is at least the true
     maximum, which is all the certificate needs. None when CP-SAT found no set
     at all (out of time before one): there is then no bound to claim.
+
+    `proof`, given, counts every step that was not finished proving (an exact
+    count, see Exactness, then says its figure is not exact).
     """
     model = cp_model.CpModel()
     chosen = [model.NewBoolVar(f"z{v}") for v in range(len(scaled))]
@@ -737,14 +830,18 @@ def _heaviest_set(
     solver = cp_model.CpSolver()
     solver.parameters.num_workers = 1
     solver.parameters.max_time_in_seconds = max(
-        0.05, min(_PRICING_SECONDS, deadline - time.monotonic()),
+        0.05, min(pricing_seconds, deadline - time.monotonic()),
     )
     status = solver.Solve(model)
     if status == cp_model.OPTIMAL:
         bound = round(solver.ObjectiveValue())
     elif status == cp_model.FEASIBLE:
+        if proof is not None:
+            proof.unproven += 1
         bound = math.ceil(solver.BestObjectiveBound() - 1e-6)
     else:
+        if proof is not None:
+            proof.unproven += 1
         return None
     mask = 0
     for v, variable in enumerate(chosen):
