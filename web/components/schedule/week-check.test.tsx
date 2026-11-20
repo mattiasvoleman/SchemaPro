@@ -1,4 +1,5 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WeekCheckPanel } from "@/components/schedule/week-check";
@@ -283,5 +284,62 @@ describe("the question before a run", () => {
     );
     dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("weekCheck.ask.titleRefused")).toBeInTheDocument();
+  });
+
+  describe("the question what the week would be with teacher choice", () => {
+    // `null` for a page that did not say the year (an explicit undefined would take the default).
+    const tightEngine = (over: Partial<WeekCheckResult> = {}, academicYearId: string | null = "year-1"): WeekCheckOutcome => ({
+      kind: "result",
+      result: {
+        ...base,
+        verdict: "TIGHT",
+        years: [{ year: 9, demandMinutes: 2120, capacityMinutes: 2275, percent: 93, over: false }],
+        ...over,
+      },
+      ...(academicYearId === null ? {} : { academicYearId }),
+    });
+    const draw = (outcome: WeekCheckOutcome) =>
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <WeekCheckPanel {...props(outcome)} />
+        </QueryClientProvider>,
+      );
+    const question = () => screen.queryByRole("button", { name: "weekCheckChoice.button" });
+
+    it("is offered under a tight week and an impossible one the engine counted, and asks nothing until pressed", () => {
+      draw(tightEngine());
+      expect(question()).toBeInTheDocument();
+      cleanup();
+
+      draw(tightEngine({ verdict: "IMPOSSIBLE", years: [{ year: 9, demandMinutes: 2365, capacityMinutes: 2275, percent: 103, over: true }] }));
+      expect(question()).toBeInTheDocument();
+    });
+
+    it("is not offered under an OK week, which has nothing to rescue", () => {
+      draw(tightEngine({ verdict: "OK", years: [] }));
+      expect(question()).toBeNull();
+    });
+
+    it("is not offered when no year has a row to ask about, when the gateway answered itself, or when the page did not say the year", () => {
+      draw(tightEngine({ verdict: "IMPOSSIBLE", years: [] }));
+      expect(question()).toBeNull();
+      cleanup();
+
+      draw(tightEngine({ checkedBy: "GATEWAY" }));
+      expect(question()).toBeNull();
+      cleanup();
+
+      draw(tightEngine({}, null));
+      expect(question()).toBeNull();
+    });
+
+    it("is not in the question before a run, which must not wait for it", () => {
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <WeekCheckPanel {...props(tightEngine(), { asking: true })} />
+        </QueryClientProvider>,
+      );
+      expect(within(screen.getByRole("dialog")).queryByRole("button", { name: "weekCheckChoice.button" })).toBeNull();
+    });
   });
 });

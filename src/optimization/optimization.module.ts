@@ -12,6 +12,7 @@ import { ScheduleCandidatesService } from './schedule-candidates.service';
 import { EngineTimingService } from './engine-timing.service';
 import { FALLBACK_WAIT_MS } from './engine-timing';
 import { WeekCheckController } from './week-check.controller';
+import { WeekCheckChoiceService } from './week-check-choice.service';
 import { WeekCheckService } from './week-check.service';
 
 @Module({
@@ -48,6 +49,7 @@ import { WeekCheckService } from './week-check.service';
     // CANDIDATES_BACKGROUND is on; the runner is @Optional, as GallringJob's.
     ScheduleCandidatesService,
     WeekCheckService,
+    WeekCheckChoiceService,
   ],
   // Provplanering (src/exams) asks the engine through the same call.
   exports: [OptimizationProxyService],

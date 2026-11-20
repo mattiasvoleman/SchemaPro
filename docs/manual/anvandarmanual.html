@@ -3877,7 +3877,8 @@
       lägga, med samma rader som en nekad körning ger. Svaret gäller veckan som
       den stod när du frågade, så en ändring du sparar tar bort det. Kontrollen
       kan visa att en vecka är omöjlig eller trång, aldrig att ett schema
-      finns (5.2). Knappen syns för dem som får köra Generera.</li>
+      finns (5.2). Under svaret på en trång vecka finns också frågan vad
+      lärarval skulle ge (5.2). Knappen syns för dem som får köra Generera.</li>
     <li><strong>Varningar.</strong> Medan du lägger visar sidan, på rutan och på
       posten, vad det som ligger fast redan bryter: läraren går över sitt tak
       per dag, sitt antal undervisningsdagar eller sin gräns för undervisning i
@@ -5844,6 +5845,37 @@
     kontrollen inte körde står under svaret: lunchstegets egen räkning, och
     frågan om förläggningarna är orsaken, gör bara
     <span class="ui">Generera schema</span>.
+  </p>
+  <p>
+    Är veckan trång eller omöjlig finns under svaret knappen
+    <span class="ui">Se vad lärarval ger</span>. Den räknar om samma vecka med
+    motorns förkontroller, men som om lärarna kunde väljas. Först
+    <em>golvet</em>: varje grupp i de ämnen där fler än en lärare är behörig i
+    årskursen får en egen lärare, vilket är det bästa något lärarval kan ge.
+    Sedan ett exempel per ämne där den lärare som bär mest får en andra lärare
+    som tar ungefär hälften av ämnets poster. Svaret säger till exempel ”Även om
+    varje grupp i de ämnen där flera lärare är behöriga fick en egen lärare är
+    åk 9 minst 94 % full” och ”En andra lärare i Hemkunskap: minst 114 % →
+    97 %”, med ämnena i ordning efter veckan de ger, och för varje ämne hur
+    många behöriga lärare det har i dag, så att du ser om en andra lärare måste
+    hittas eller om valet redan finns. Ligger golvet över 100 % hjälper inget
+    lärarval och veckan går inte att lägga. Ligger det under kan ett lärarval
+    hjälpa, men det betyder inte att veckan går att lägga. Exemplets delning är
+    ett exempel, inte den bästa.
+  </p>
+  <p>
+    Siffrorna är nedre gränser som motorn kan bevisa, och gäller årskursens
+    trängsta del av läsåret: har skolan poster för olika delar av läsåret
+    står perioden under siffran, och veckan räknas aldrig ihop till en. En
+    vecka som ligger över ramtiden räknas bara till den första period motorn
+    nekar, så den siffran står som ”minst” och kan vara lägre än den trängsta
+    periodens. Därför sätts två veckor över ramtiden aldrig i ordning: ett ämne
+    där veckan ligger kvar över ramtiden står som det, och bara de veckor som
+    går under ramtiden rangordnas. Hann räkningen inte klart står siffran som
+    ”minst” och rangordnas inte. Bara
+    lärare med behörighet som gäller i dag räknas, och svaret nämner ämnen,
+    aldrig personer. Schemat och tjänstefördelningen ändras inte, och frågan
+    tar upp till en halv minut och kan ställas tre gånger i minuten.
   </p>
   <p>
     Samma kontroll görs när du klickar <span class="ui">Generera schema</span>.

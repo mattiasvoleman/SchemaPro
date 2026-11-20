@@ -16,6 +16,7 @@ import {
 import { Notice } from "@/components/ui/notice";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { WeekCheckChoice } from "@/components/schedule/week-check-choice";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import type { WeekCheckOutcome, WeekCheckResult, WeekCheckYear } from "@/lib/week-check";
 
@@ -123,14 +124,16 @@ function Outcome({ outcome }: { outcome: WeekCheckOutcome }) {
       </div>
     );
   }
-  return <Result result={outcome.result} engineText={engineText} />;
+  return <Result result={outcome.result} academicYearId={outcome.academicYearId} engineText={engineText} />;
 }
 
 function Result({
   result,
+  academicYearId,
   engineText,
 }: {
   result: WeekCheckResult;
+  academicYearId?: string;
   engineText: (sentence: Parameters<typeof engineMessage>[1]) => string;
 }) {
   const t = useTranslations("weekCheck");
@@ -191,6 +194,11 @@ function Result({
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {/* What the week would be if teachers could be chosen: only for a year the check counted tight, by a button. */}
+      {academicYearId && result.checkedBy === "ENGINE" && result.verdict !== "OK" && result.years.some((year) => year.year !== null) ? (
+        <WeekCheckChoice academicYearId={academicYearId} result={result} engineText={engineText} />
       ) : null}
 
       {result.skipped.length > 0 ? (

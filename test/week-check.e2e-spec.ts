@@ -290,6 +290,172 @@ describe('Kontrollera veckan (e2e)', () => {
     });
   });
 
+  /*
+   * WHAT THE WEEK WOULD BE IF TEACHERS COULD BE CHOSEN (/week-check/choice): the
+   * same fetch, up to twelve checks of the engine in a row, and an answer that
+   * names subjects, years and figures and nothing the engine saw. The engine is
+   * stubbed, so these pin what a unit spec cannot: the route through the real
+   * table and guards, the real fetch, that every payload asked about is
+   * anonymous, that nothing is written, and which profiles may ask.
+   */
+  describe('what the week would be with teacher choice', () => {
+    const ANNA = '15151515-eeee-4eee-8eee-151515151515';
+    const postChoice = () => request(http()).post('/api/v1/optimization/week-check/choice');
+    const tightAnswer = (percent: number, years = [9]) => ({
+      requestId: 'r',
+      verdict: 'TIGHT',
+      years: years.map((year) => ({ year, demandMinutes: Math.round((percent * 2275) / 100), capacityMinutes: 2275, percent, over: false })),
+      conflicts: null,
+      skipped: ['LUNCH_STAGE'],
+      elapsedMs: 5,
+    });
+
+    beforeEach(() => {
+      // The year with the columns the choice reads (and only those): the fetch's own reads of it stay as they were.
+      harness.tx['academicYear']!['findUnique']!.mockReset().mockImplementation(async (args: { select?: Record<string, boolean> }) => {
+        const keys = Object.keys(args.select ?? {}).join();
+        if (keys === 'id') return { id: YEAR_ID };
+        if (keys === 'id,startDate,endDate,gradeNumbering') {
+          return { id: YEAR_ID, startDate: new Date('2026-08-17'), endDate: new Date('2027-06-11'), gradeNumbering: 'NIOARIG' };
+        }
+        return undefined;
+      });
+      // Two teachers qualified for the post's subject, in every year, with no end.
+      harness.tx['teacherSubjectQualification']!['findMany']!.mockResolvedValue(
+        [EVA, ANNA].map((userId) => ({
+          userId,
+          subjectId: SUBJECT_ID,
+          minGradeLevel: 1,
+          maxGradeLevel: 9,
+          kind: 'BEHORIG',
+          validFrom: null,
+          validTo: null,
+        })),
+      );
+      harness.tx['subject']!['findMany']!.mockImplementation(async (args: { select?: Record<string, boolean> }) =>
+        Object.keys(args?.select ?? {}).join() === 'id,name' ? [{ id: SUBJECT_ID, name: 'Matematik' }] : [],
+      );
+    });
+
+    afterEach(() => {
+      harness.tx['teacherSubjectQualification']!['findMany']!.mockReset().mockResolvedValue([]);
+      harness.tx['subject']!['findMany']!.mockReset().mockResolvedValue([]);
+    });
+
+    it('asks the week as it stands and then the floor, and answers with the year\'s figures and no id of anyone\'s', async () => {
+      givenAWeek();
+      engineAnswers(tightAnswer(93));
+      engineAnswers({ requestId: 'r', verdict: 'OK', years: [], conflicts: null, skipped: ['LUNCH_STAGE'], elapsedMs: 3 });
+
+      const response = await postChoice().set('x-test-user', admin()).send({ academicYearId: YEAR_ID }).expect(200);
+
+      expect(response.body).toMatchObject({
+        status: 'DONE',
+        qualificationsRecorded: true,
+        releasedPosts: 1,
+        notRun: 0,
+        calls: 2,
+        years: [
+          {
+            year: 9,
+            today: { kind: 'LOAD', percent: 93, atLeast: false, over: false },
+            floor: { kind: 'UNDER', below: 85 },
+            whatIf: [],
+          },
+        ],
+      });
+      expect(harness.http.post).toHaveBeenCalledTimes(2);
+      const sent = harness.http.post.mock.calls.map((call) => call as unknown as [string, { requirements: { teacherId: string }[] }]);
+      for (const [url] of sent) expect(url).toMatch(/\/api\/v1\/check-week$/);
+      // The floor's post has a teacher of its own: not the one the week as it stands has.
+      expect(sent[1]![1].requirements[0]!.teacherId).not.toBe(sent[0]![1].requirements[0]!.teacherId);
+      // The year's own id goes to the engine as it does in Generera's request; nothing else of the school's does.
+      for (const real of [EVA, ANNA, GROUP_ID, SUBJECT_ID]) expect(JSON.stringify(sent)).not.toContain(real);
+      for (const real of [EVA, ANNA, GROUP_ID, SUBJECT_ID, YEAR_ID]) expect(JSON.stringify(response.body)).not.toContain(real);
+    });
+
+    it('writes nothing: no run is stored, no lesson is deleted or created', async () => {
+      givenAWeek();
+      engineAnswers(tightAnswer(93));
+      engineAnswers(tightAnswer(90));
+
+      await postChoice().set('x-test-user', admin()).send({ academicYearId: YEAR_ID }).expect(200);
+
+      expect(harness.tx['optimizationJob']!['create']).not.toHaveBeenCalled();
+      expect(harness.tx['masterLesson']!['deleteMany']).not.toHaveBeenCalled();
+      expect(harness.tx['masterLesson']!['createMany']).not.toHaveBeenCalled();
+    });
+
+    it('says there is no year to ask about when the check counted none tight, after one engine call', async () => {
+      givenAWeek();
+      engineAnswers({ requestId: 'r', verdict: 'OK', years: [], conflicts: null, skipped: ['LUNCH_STAGE'], elapsedMs: 3 });
+
+      const response = await postChoice().set('x-test-user', admin()).send({ academicYearId: YEAR_ID }).expect(200);
+
+      expect(response.body).toMatchObject({ status: 'NO_TIGHT_YEAR', years: [], calls: 1 });
+      expect(harness.http.post).toHaveBeenCalledTimes(1);
+    });
+
+    it('asks the engine nothing about a week with nothing to place', async () => {
+      const response = await postChoice().set('x-test-user', admin()).send({ academicYearId: YEAR_ID }).expect(200);
+
+      expect(response.body).toMatchObject({ status: 'NOT_ASKED', years: [], calls: 0 });
+      expect(harness.http.post).not.toHaveBeenCalled();
+    });
+
+    it('answers 404 for a year the school has not got, and wakes nothing', async () => {
+      harness.tx['academicYear']!['findUnique']!.mockReset().mockResolvedValue(null);
+
+      await postChoice().set('x-test-user', admin()).send({ academicYearId: YEAR_ID }).expect(404);
+
+      expect(harness.http.post).not.toHaveBeenCalled();
+    });
+
+    it('says an older engine\'s 404 as the function that is coming, as the check does', async () => {
+      givenAWeek();
+      engineRefuses(404, { code: 'HTTP_ERROR', message: 'Not Found' });
+
+      const response = await postChoice().set('x-test-user', admin()).send({ academicYearId: YEAR_ID }).expect(503);
+
+      expect(response.body).toMatchObject({ code: 'ENGINE_LACKS_WEEK_CHECK' });
+    });
+
+    it.each([
+      ['a teacher', asUser({ role: 'TEACHER', adminProfile: undefined, hrRead: undefined } as never)],
+      ['an expedition administrator, who writes no Schemaläggning', as('EXPEDITION')],
+      ['a läsare, who writes no area', as('LASARE')],
+    ])('refuses %s at the guard, before anything is read or asked', async (_who, principal) => {
+      await postChoice().set('x-test-user', principal).send({ academicYearId: YEAR_ID }).expect(403);
+
+      expect(harness.tx['teachingRequirement']!['findMany']).not.toHaveBeenCalled();
+      expect(harness.http.post).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a full administrator', as('FULL')],
+      ['a rektor', as('REKTOR')],
+      ['a schemaläggare', as('SCHEMALAGGARE')],
+    ])('lets %s through to the handler', async (_who, principal) => {
+      givenAWeek();
+      engineAnswers({ requestId: 'r', verdict: 'OK', years: [], conflicts: null, skipped: ['LUNCH_STAGE'], elapsedMs: 3 });
+
+      const response = await postChoice().set('x-test-user', principal).send({ academicYearId: YEAR_ID }).expect(200);
+
+      expect(response.body.status).toBe('NO_TIGHT_YEAR');
+    });
+
+    it.each([
+      ['no year', {}],
+      ['a year that is no uuid', { academicYearId: 'latest' }],
+      ['a field the route does not read', { academicYearId: YEAR_ID, weights: { spread: 4 } }],
+    ])('refuses %s with 400 and reads nothing', async (_label, body) => {
+      await postChoice().set('x-test-user', admin()).send(body).expect(400);
+
+      expect(harness.tx['teachingRequirement']!['findMany']).not.toHaveBeenCalled();
+      expect(harness.http.post).not.toHaveBeenCalled();
+    });
+  });
+
   describe('who may ask, and what is refused first', () => {
     it.each([
       ['a teacher', asUser({ role: 'TEACHER', adminProfile: undefined, hrRead: undefined } as never)],
