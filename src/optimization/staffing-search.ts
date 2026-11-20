@@ -468,6 +468,38 @@ export function leftOutOf(
   };
 }
 
+/**
+ * THE TIME A SEARCH SPENDS WAITING FOR THE ENGINE, kept apart from the time it spends searching. A wait is made in slices, so that
+ * a cancel is heard inside it (`stopped` is asked before each); the time waited is credited to the search (the budget does not run
+ * while it waits). Several workers may wait at once: the first of them in line at the start of a slice is the one credited, so the time they wait together
+ * is counted once and a search with more workers than one is not given more time by waiting in more places.
+ */
+export class WaitLedger {
+  private readonly waiting = new Set<symbol>();
+  private creditedMs = 0;
+
+  /** The time waited so far, each moment counted once. */
+  get credited(): number {
+    return this.creditedMs;
+  }
+
+  async wait(ms: number, sliceMs: number, pause: (slice: number) => Promise<void>, stopped: () => boolean): Promise<void> {
+    const me = Symbol('wait');
+    this.waiting.add(me);
+    try {
+      for (let left = ms; left > 0 && !stopped(); left -= sliceMs) {
+        const slice = Math.min(left, sliceMs);
+        // First in line when the slice BEGINS: whoever waits beside an earlier waiter for a slice is not credited for it.
+        const first = this.waiting.values().next().value === me;
+        await pause(slice);
+        if (first) this.creditedMs += slice;
+      }
+    } finally {
+      this.waiting.delete(me);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The search
 

@@ -50,6 +50,7 @@ import {
   readEvaluation,
   runSearch,
   searchModelOf,
+  WaitLedger,
   type Evaluation,
   type Figures,
   type SearchModel,
@@ -477,6 +478,8 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
     const settings = this.settings();
     const budgetMs = settings.budgetSeconds * 1000;
     let pausedMs = 0;
+    // The waits for the engine's gate: counted once however many callers wait together, and not counted in the search's time.
+    const ledger = new WaitLedger();
     let progress: SearchProgress | null = null;
     let doc: StaffingSearchFiguresDoc | null = null;
     // Every write of the run goes through one chain, so that a late progress write never lands after the finishing one.
@@ -488,7 +491,7 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
     };
 
     const stop = (): StaffingSearchStop | null =>
-      control.interrupted ? 'CANCELLED' : control.cancel ? 'CANCELLED' : Date.now() - startedAt - pausedMs > budgetMs ? 'BUDGET' : null;
+      control.interrupted ? 'CANCELLED' : control.cancel ? 'CANCELLED' : Date.now() - startedAt - pausedMs - ledger.credited > budgetMs ? 'BUDGET' : null;
 
     const beat = async (): Promise<boolean> => {
       const state = progress;
@@ -542,25 +545,7 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
       // The oracle: one candidate state (the leads it moves) counted for the years it touches.
       const rowOf = new Map(model.rows.map((row) => [row.requirementId, row]));
       let start: Figures = new Map();
-      // The waits for the engine's gate: counted once however many callers wait together (the first in line is credited), and not counted in the search's time.
-      const waiting = new Set<symbol>();
-      let busyMs = 0;
-      const backOff = async (ms: number): Promise<void> => {
-        const me = Symbol('busy');
-        waiting.add(me);
-        try {
-          for (let left = ms; left > 0 && stop() === null && !control.interrupted; left -= BUSY_SLICE_MS) {
-            const slice = Math.min(left, BUSY_SLICE_MS);
-            await this.delay(slice);
-            if (waiting.values().next().value === me) {
-              pausedMs += slice;
-              busyMs += slice;
-            }
-          }
-        } finally {
-          waiting.delete(me);
-        }
-      };
+      const backOff = (ms: number): Promise<void> => ledger.wait(ms, BUSY_SLICE_MS, (slice) => this.delay(slice), () => stop() !== null || control.interrupted);
       const askEngine = async (leads: ReadonlyMap<string, string>, years: readonly number[], guard: Figures | null): Promise<Evaluation> => {
         const changes: LeadChange[] = [...leads].map(([requirementId, toTeacherId]) => ({
           requirementId,
@@ -599,7 +584,7 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
               // The engine's gate (it takes one count at a time, for every school) or the engine unable just now: back off and ask again.
               // The wait is not the search's time; it ends the search (ENGINE_BUSY) only when it has lasted BUSY_GIVE_UP_MS in all.
               if (status === HttpStatus.TOO_MANY_REQUESTS || (status === HttpStatus.SERVICE_UNAVAILABLE && (unavailable += 1) <= BUSY_503_RETRIES)) {
-                if (busyMs >= BUSY_GIVE_UP_MS) return { kind: 'UNRANKED', reason: 'ENGINE_BUSY' };
+                if (ledger.credited >= BUSY_GIVE_UP_MS) return { kind: 'UNRANKED', reason: 'ENGINE_BUSY' };
                 await backOff(Math.min(BUSY_WAIT_MS * (attempt + 1), BUSY_WAIT_MAX_MS));
                 continue;
               }

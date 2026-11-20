@@ -407,6 +407,16 @@ describe('StaffingSearchService', () => {
       expect(h.proxy.callAiEngine.mock.calls.length).toBeLessThanOrEqual(3);
     });
 
+    it('reads a 405 as an older engine too (a route that is not there for the method asked)', async () => {
+      const h = harness();
+      h.proxy.callAiEngine.mockRejectedValue(new HttpException('Method Not Allowed', HttpStatus.METHOD_NOT_ALLOWED));
+
+      await h.service.start({ academicYearId: YEAR }, user);
+      await settled(h.service);
+
+      expect(finishing(h).at(-1)!.values).toContain(SEARCH_ENGINE_OLDER);
+    });
+
     it('waits and asks again when the engine says it is busy (429), and counts nothing it did not answer', async () => {
       const h = harness();
       let busy = 2;
@@ -472,7 +482,10 @@ describe('StaffingSearchService', () => {
       const failed = finishing(h).at(-1)!;
       expect(failed.sql).toContain("'FAILED'");
       expect(failed.values).toContain(SEARCH_ENGINE_BUSY);
+      // Given up after 45 minutes of waiting in all, and not a moment after the wait that passed it: a threshold a thousand times higher would be waited out too.
+      expect(BUSY_GIVE_UP_MS).toBe(45 * 60 * 1000);
       expect(waited).toBeGreaterThanOrEqual(BUSY_GIVE_UP_MS);
+      expect(waited).toBeLessThanOrEqual(BUSY_GIVE_UP_MS + 60_000);
       // The moves accepted before the engine went busy are kept: a proposal can still be read.
       const checkpoint = JSON.parse(failed.values.find((v) => typeof v === 'string' && v.includes('"changes"')) as string) as { changes: unknown[] };
       expect(checkpoint.changes.length).toBeGreaterThan(0);
@@ -639,7 +652,11 @@ describe('StaffingSearchService', () => {
       await settled(h.service);
 
       expect(h.proxy.callAiEngine).not.toHaveBeenCalled();
-      expect(finishing(h).at(-1)!.values).toEqual(expect.arrayContaining(['SUCCEEDED', 'NO_MOVES']));
+      const done = finishing(h).at(-1)!;
+      expect(done.values).toEqual(expect.arrayContaining(['SUCCEEDED', 'NO_MOVES']));
+      // Nothing to search, and it says why: the one post the plan holds is not released.
+      const figures = JSON.parse(done.values.find((v) => typeof v === 'string' && v.includes('"leftOut"')) as string) as ReturnType<typeof figuresDocOf>;
+      expect(figures.leftOut).toEqual({ posts: [{ reason: 'NOT_FREE', count: 1 }], years: [] });
     });
   });
 

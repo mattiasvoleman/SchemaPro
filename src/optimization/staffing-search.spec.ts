@@ -27,6 +27,7 @@ import {
   type SearchModel,
   type SearchRow,
   type WeekCell,
+  WaitLedger,
 } from './staffing-search';
 
 /*
@@ -289,6 +290,53 @@ describe('movesOf', () => {
 
     expect(Object.fromEntries(tenthsIn(open, state))).toEqual({ A: 200, B: 100, C: 100 });
     expect(afterMove(open, state, { changes: [{ requirementId: 'p1', toTeacherId: 'A' }], years: [9] }).size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The time spent waiting for the engine
+
+describe('WaitLedger', () => {
+  const immediately = async (): Promise<void> => undefined;
+
+  it('credits each slice it waited, and no more than the wait it was asked for', async () => {
+    const ledger = new WaitLedger();
+
+    await ledger.wait(2500, 1000, immediately, () => false);
+
+    // Slices of 1,000, 1,000 and 500.
+    expect(ledger.credited).toBe(2500);
+  });
+
+  it('stops at the slice it is in when it is told to stop: a cancel is heard inside a wait', async () => {
+    const ledger = new WaitLedger();
+    let slices = 0;
+
+    await ledger.wait(10_000, 1000, async () => { slices += 1; }, () => slices >= 2);
+
+    expect(slices).toBe(2);
+    expect(ledger.credited).toBe(2000);
+  });
+
+  it('counts the time several waiters wait together once, not once each: more workers do not buy more time', async () => {
+    const ledger = new WaitLedger();
+    // Two waiters begin together and wait three slices each; their slices end in the same moments.
+    await Promise.all([ledger.wait(3000, 1000, immediately, () => false), ledger.wait(3000, 1000, immediately, () => false)]);
+
+    expect(ledger.credited).toBe(3000);
+
+    // A wait on its own afterwards is credited in full again.
+    await ledger.wait(1000, 1000, immediately, () => false);
+    expect(ledger.credited).toBe(4000);
+  });
+
+  it('keeps crediting while one waiter is left of two: the later one is credited when the first has gone', async () => {
+    const ledger = new WaitLedger();
+
+    await Promise.all([ledger.wait(1000, 1000, immediately, () => false), ledger.wait(4000, 1000, immediately, () => false)]);
+
+    // One slice together, three of the longer one alone: 4,000 of wall time, not 5,000.
+    expect(ledger.credited).toBe(4000);
   });
 });
 
