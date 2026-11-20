@@ -33,6 +33,7 @@ const STATUSES: StaffingSearchStatus[] = ["PENDING", "RUNNING", "CANCELLING", "S
 const STOPS: (StaffingSearchStop | null)[] = [
   "NOT_TIGHT",
   "LOCAL_OPTIMUM",
+  "NOT_ALL_COUNTED",
   "NO_MOVES",
   "CANCELLED",
   "BUDGET",

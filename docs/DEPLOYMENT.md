@@ -295,7 +295,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `INTEGRATION_SECRETS_KEY_PREVIOUS` | optional, same shape: the key before a rotation, which still decrypts and never encrypts. Rotate by moving the current key here, setting a new one, letting each school's admin save its credential again (or waiting for the next save), then clearing it |
 | `SS12000_BACKGROUND` | `on` (default) or `off`: the 5-minute tick that runs scheduled syncs and marks stale and expired runs, and the 1-minute tick that delivers v2.0 subscription notices and purges old tombstones and delivery rows. A school's sync runs at night only once its admin turns the schedule on, and auto-applies only once the admin turns that on too; a notice goes out only once a consumer has registered a subscription |
 | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` | recommended `15` (Railway's own default is `0`): the seconds between SIGTERM and SIGKILL when a deploy replaces the instance. On SIGTERM the API marks a Schemaförslag run that was solving as interrupted, stops taking requests, lets the ones in flight finish, and only then closes its database pool. With `0` it is killed before any of that: the run is left to its lease (about three minutes), and a request in flight is cut off as before |
-| `CANDIDATES_BACKGROUND` | `on` (default) or `off`: the quarter-hourly sweep that marks abandoned candidate runs FAILED, deletes runs older than seven days, and deletes the emptied rows "Ta bort förslagen" left of runs whose engine call was still out, once that call could have ended. Every start in any school sweeps first, so off only delays those deletions. It also turns off the five-minute `generate-runs-sweep` that fails Generera runs whose lease has run out (§27.1); a Generera start sweeps first too, and the page reads an expired lease as abandoned, so that is delayed in the same way |; it turns off the `staffing-search-sweep` of §32 as well
+| `CANDIDATES_BACKGROUND` | `on` (default) or `off`: the quarter-hourly sweep that marks abandoned candidate runs FAILED, deletes runs older than seven days, and deletes the emptied rows "Ta bort förslagen" left of runs whose engine call was still out, once that call could have ended. Every start in any school sweeps first, so off only delays those deletions. It also turns off the five-minute `generate-runs-sweep` that fails Generera runs whose lease has run out (§27.1); a Generera start sweeps first too, and the page reads an expired lease as abandoned, so that is delayed in the same way. It turns off the `staffing-search-sweep` of §32 as well |
 | `STAFFING_SEARCH_BUDGET_SECONDS` | optional, `60`–`3600`, default `900`: how long a search for the choice of teachers (§32) may run. It is an anytime search, so the budget only decides how far it gets; time spent waiting for a Generera run of the year is not counted |
 | `STAFFING_SEARCH_CONCURRENCY` | optional, `1`–`6`, default `1`: counts one search asks of the engine at once (each is one core for about 3–9 s). The engine is shared by every school (production has one replica) and counts ONE candidate at a time in a gate of its own that is not a setting (`optimization-engine/app/api/v1/week_bounds.py`): a count beyond it is answered 429, the search waits and asks again, and the wait is not counted in its budget (§32.4). A number above one only pays when the engine has more replicas, each with its own gate; the old `WEEK_BOUNDS_CONCURRENCY` is ignored if it is still set |
 | `COVER_REQUESTS_BACKGROUND` | `on` (default) or `off`: the 5-minute tick that settles the open vikarieförfrågningar: the ones whose time is out end `EXPIRED` and the administrator who asked is told nobody said yes, the ones whose lesson or absence went away end `CLOSED` and the colleagues they waited on are told. A question past its time cannot be answered whether or not it has run; the tick settles the stored status, frees the lesson for a new question and tells who it concerns |
@@ -7018,7 +7018,7 @@ from 107 % to 144 %), and its week load has four seconds and one second of prici
 and never refuses a week for being over the supply; a week one of the quick arithmetic counts refuses has `refusal` and no figures.
 
 **The gateway drives the search**, one candidate per call: it counts each year a released post spans on its own (the baseline), judges the
-tightest four, and tries every single re-lead and, where room is all that stops a move, every swap, keeping a candidate only if every
+tightest four, and tries every single re-lead and, where room is all that stops a move, a swap with the receiver's post nearest in charge (one partner for each such move, so a local optimum is the optimum of these moves and not of every swap), keeping a candidate only if every
 figure of every year it touches was counted to the end, no year's tightest week is worse than when the search began, and the weeks as
 a whole are lower, tightest first (`src/optimization/staffing-search.ts`). The rules for who may take a post (behörighet, tjänstgrad,
 the post's co-teacher, shares, pinned and unreleased posts) are the plan's, the one Föreslå bemanning is judged by; the result is judged by
@@ -7031,6 +7031,9 @@ them again when it is read (`leadRefusal`, `growthRefusal`).
 per year (a partial unique index, `409 STAFFING_SEARCH_ALREADY_RUNNING`), and `app.staffing_search_sweep()`: a job door that takes no login
 (`VO403`) and fails a run whose lease has run out (`SEARCH_ABANDONED`) or that began more than an hour ago, and deletes finished runs after
 24 hours. It runs every five minutes (`staffing-search-sweep`, switched with `CANDIDATES_BACKGROUND`), and every start sweeps first.
+
+**A run ends by the clock after 55 minutes** (`SEARCH_WALL_CLOCK_MAX_MS`), whatever `STAFFING_SEARCH_BUDGET_SECONDS` (up to 3600) and its waits (not counted in the budget) say:
+it stops as `BUDGET` with the best it has, before the sweep's own hour calls a run that is still working lost.
 
 **A run is not resumed.** A restart fails the runs of the instance at once (`SEARCH_INTERRUPTED`) and the sweep takes one that is lost: another
 process has not got the administrator's login, which every read of the school needs. The run keeps its **checkpoint**, the moves accepted so far
@@ -7073,16 +7076,18 @@ API first: after the drop its start and its sweep fail on the missing table. The
   (`NOT_FREE`, `UNSTAFFED`, `NO_CHOICE`, `NOT_IN_WEEK`, `YEAR_LIMIT`, `YEAR_NOT_COUNTED`) and the years that were not judged with `YEAR_LIMIT` or `YEAR_NOT_COUNTED`; the panel and
   the proposal say it in words.
 - **More than 16 real weeks** in a year are counted to 16 and the answer says so; such a figure ranks nothing.
-- **Generera has priority** over the year: the search waits (up to ten minutes, not counted against its budget) while a Generera run of the year goes on. A Generera
-  start does not look for a search, and another school's Generera run is not seen.
+- **Generera and Schemaförslag have priority** over the year: the search waits (up to ten minutes IN ALL, not for each count, and not counted against its budget; after
+  that it goes on beside them) while a Generera run or a schemaförslag run of the year is alive (a schemaförslag run as Generera's own start counts it,
+  `yearHasActiveCandidateRun`). A Generera start does not look for a search, and another school's Generera run is not seen.
 - **The engine is shared by every school, and a search never takes more of it than one count at a time.** The route holds a gate of one (not a setting, whatever
   the deployment says), answers 429 beyond it and never queues, so `/optimize` and `/check-week` are not behind it; a pricing is one CP-SAT worker. The gateway backs
   off from a 429 (2 s growing to 10 s, in one-second slices that a cancel interrupts) and from a 503 (up to eight times in a row for one candidate, then it is
   an engine failure), and **that wait is not counted in the search's time**: a search that was kept waiting has as much to count with as one that was not. A wait
   that has lasted 45 minutes in all ends the search (`SEARCH_ENGINE_BUSY`, stop `ENGINE_BUSY`) with the moves it has accepted, which can still be read as a proposal:
   a job that waits for ever is a job stuck in RUNNING. An older engine (404 or 405) ends it at once with `SEARCH_ENGINE_OLDER`, also in the middle of a search.
-  The cost in time: a count of the study's åk 9 (89 posts) takes about 4 s with one count at a time (3 s median on a quiet host, 4.6 s at a load of 15–30), so the study's
-  twelve-move search (450 counts) takes about half an hour of its own time, twice the default budget of 15 minutes; `STAFFING_SEARCH_BUDGET_SECONDS=1800` gives it room.
+  The cost in time: a count of the study's åk 9 (89 posts) takes about 2.6 s with one count at a time (median at a load of 3–15; 3–4.6 s at 15–30), so the study's
+  twelve-move search (450 counts) takes about 20 minutes of its own time (19.6 measured), a little over the default budget of 15 minutes: its tightest figure (91.7 %) is reached
+  at about nine minutes (move 8) and the last moves and the exhaustive round that proves a local optimum come after; `STAFFING_SEARCH_BUDGET_SECONDS=1800` gives it the whole round.
   A search that runs out of budget keeps the best state it reached (every accepted move is a proven improvement).
 
 ### 32.5 Operations

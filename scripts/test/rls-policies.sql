@@ -67908,9 +67908,10 @@ ROLLBACK;
 --        removed
 --
 -- A note on the update arm, which section 106 of this file reads for every other table: the four arms of StaffingSearchRuns ask the
--- area as the sibling job tables' do (INSERT and DELETE ask SCHEMALAGGNING), except the UPDATE arm, which asks it in neither USING nor
--- WITH CHECK (the migration says why: a row lock for a read must work for every administrator, and the gateway decides what may be
--- changed). 551 states what the database does: every administrator's UPDATE reaches the row.
+-- area as the sibling job tables' do (INSERT and DELETE ask SCHEMALAGGNING), and the UPDATE arm asks it in its WITH CHECK and not in its
+-- USING (the migration says why: a row lock for a read must work for every administrator, and what an update would write needs the
+-- area). 551 states what the database does: every administrator's SELECT ... FOR UPDATE reaches the row, and only an administrator who
+-- writes SCHEMALAGGNING changes it.
 -- ---------------------------------------------------------------------------
 
 CREATE FUNCTION pg_temp.vo_tick() RETURNS void LANGUAGE sql AS $f$

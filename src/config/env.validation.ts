@@ -363,7 +363,8 @@ export class EnvironmentVariables {
    * Lärarval F3 (src/optimization/staffing-search.service.ts): how long a search for the choice of teachers that eases the week
    * may run, in seconds. It is an anytime search (the best state so far is always a valid proposal), so the budget only decides
    * how far it gets: 15 minutes by default, which reaches a local optimum on a year of the size the study measured. It does not
-   * count the time the search waits for a Generera run of the year.
+   * count the time the search waits for a Generera run or a schemaförslag run of the year, nor for the engine; a run is ended by the
+   * clock after 55 minutes whatever this says (SEARCH_WALL_CLOCK_MAX_MS), before the sweep's own hour.
    */
   @IsInt()
   @Min(60)

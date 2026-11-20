@@ -505,11 +505,21 @@ describe("a search that has ended", () => {
       ended("SUCCEEDED", "NO_MOVES", { acceptedMoves: 0, figures: null }),
       "Ingen släppt post har en annan lärare som får ta den, så det finns inget byte att pröva.",
     ],
-    ["a local optimum with nothing found", ended("SUCCEEDED", "LOCAL_OPTIMUM", { acceptedMoves: 0 }), "Inget enskilt byte eller parbyte gör veckan lättare."],
+    ["a local optimum with nothing found", ended("SUCCEEDED", "LOCAL_OPTIMUM", { acceptedMoves: 0 }), "Inget av de byten och parbyten som sökningen prövade gör veckan lättare."],
     [
       "a local optimum with moves",
       ended("SUCCEEDED", "LOCAL_OPTIMUM", { acceptedMoves: 3, hasProposal: true }),
-      "Inget enskilt byte eller parbyte gör veckan lättare än så här. Bästa läget sökningen hittade har 3 byten.",
+      "Inget av de byten och parbyten som sökningen prövade gör veckan lättare än så här. Bästa läget sökningen hittade har 3 byten.",
+    ],
+    [
+      "some moves could not be counted to the end: no local optimum is claimed",
+      ended("SUCCEEDED", "NOT_ALL_COUNTED", { acceptedMoves: 3, hasProposal: true }),
+      /Inget fler byte som motorn räknade klart gör veckan lättare än så här, men en del byten gick inte att räkna till slut.*Bästa läget sökningen hittade har 3 byten\./,
+    ],
+    [
+      "none could be counted to the end and nothing was found",
+      ended("SUCCEEDED", "NOT_ALL_COUNTED", { acceptedMoves: 0 }),
+      /Det är alltså inte visat att inget byte hjälper/,
     ],
     [
       "the time ran out",
@@ -694,7 +704,7 @@ describe("the proposal", () => {
 
     server.latest = ended("SUCCEEDED", "LOCAL_OPTIMUM", { acceptedMoves: 0, hasProposal: false });
     renderPanel();
-    await screen.findByText("Inget enskilt byte eller parbyte gör veckan lättare.");
+    await screen.findByText("Inget av de byten och parbyten som sökningen prövade gör veckan lättare.");
     expect(screen.queryByRole("button", { name: /Visa/ })).toBeNull();
   });
 

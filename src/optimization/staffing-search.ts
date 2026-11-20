@@ -316,9 +316,11 @@ export interface Move {
 
 /**
  * Every move from a state: one post to somebody else who may lead it and has room for it, and, where room is all that
- * stops a move, a SWAP: the receiver's own post (the one nearest in charge) comes back to the giver. Room is the plan's:
- * a teacher who only keeps or sheds is never a receiver (leadRefusal), the rest may lead up to their limit (limitTenths),
- * and a lead may always go back to the post they have today.
+ * stops a move, a SWAP: the receiver's own post (the one nearest in charge) comes back to the giver. Room is the plan's
+ * and the write's (growthRefusal): a teacher who only keeps or sheds is never a receiver (leadRefusal), and anybody ends
+ * with no more than their limit (limitTenths) OR no more than they began with. A post going back to the lead it began with
+ * is judged the same way: it is free when that lead holds no more than they began with, and not when they were given
+ * something else meanwhile (the state, not the post, is what is counted).
  *
  * In a stable order (posts by id, receivers by id), so that a search is the same every time and a test can say what it did.
  */
@@ -329,10 +331,12 @@ export function movesOf(
 ): Move[] {
   const { rows } = movableRows(model, judged);
   const tenths = tenthsIn(model, leads);
-  const room = (userId: string, extra: number, row: SearchRow): boolean => {
-    if (userId === row.leadId) return true;
-    const limit = model.teachers.get(userId)?.limitTenths ?? null;
-    return limit !== null && (tenths.get(userId) ?? 0) + extra <= limit;
+  /** Whether `userId` ends with no more than they began with, or within their limit, after `delta` more tenths. */
+  const room = (userId: string, delta: number): boolean => {
+    const teacher = model.teachers.get(userId);
+    if (teacher === undefined) return false;
+    const after = (tenths.get(userId) ?? 0) + delta;
+    return after <= teacher.currentTenths || (teacher.limitTenths !== null && after <= teacher.limitTenths);
   };
   const yearsOf = (...posts: SearchRow[]): number[] => [...new Set(posts.flatMap((post) => post.years))].sort((a, b) => a - b);
 
@@ -342,7 +346,7 @@ export function movesOf(
     const lead = leadIn(row, leads);
     for (const to of row.options) {
       if (to === lead) continue;
-      if (room(to, row.chargeTenths, row)) {
+      if (room(to, row.chargeTenths)) {
         moves.push({ changes: [{ requirementId: row.requirementId, toTeacherId: to }], years: yearsOf(row) });
         continue;
       }
@@ -350,11 +354,8 @@ export function movesOf(
       let partner: SearchRow | null = null;
       for (const other of rows) {
         if (other === row || leadIn(other, leads) !== to || !other.options.includes(lead)) continue;
-        const giverFits = room(lead, other.chargeTenths - row.chargeTenths, other) || lead === other.leadId;
-        const receiverFits = (() => {
-          const limit = model.teachers.get(to)?.limitTenths ?? null;
-          return to === row.leadId || (limit !== null && (tenths.get(to) ?? 0) - other.chargeTenths + row.chargeTenths <= limit);
-        })();
+        const giverFits = room(lead, other.chargeTenths - row.chargeTenths);
+        const receiverFits = room(to, row.chargeTenths - other.chargeTenths);
         if (!giverFits || !receiverFits) continue;
         const gap = Math.abs(other.chargeTenths - row.chargeTenths);
         const best = partner === null ? Number.POSITIVE_INFINITY : Math.abs(partner.chargeTenths - row.chargeTenths);
@@ -616,9 +617,15 @@ export async function runSearch(
     if (moves.length === 0) return finish(accepted === 0 ? 'NO_MOVES' : 'LOCAL_OPTIMUM');
 
     // Held in objects: the workers below write them, and a `let` written in a closure is narrowed to its first value.
-    const round_: { best: { index: number; figures: Figures; changes: number } | null; stop: StaffingSearchStop | null } = {
+    const round_: {
+      best: { index: number; figures: Figures; changes: number } | null;
+      stop: StaffingSearchStop | null;
+      /** Moves of this round the engine could not count to the end: they rank nobody, and the round has not shown them not to help. */
+      uncounted: number;
+    } = {
       best: null,
       stop: null,
+      uncounted: 0,
     };
     let cursor = 0;
 
@@ -657,6 +664,7 @@ export async function runSearch(
             if (evaluation.kind !== 'UNRANKED') memo.set(key, evaluation);
           }
           results[index] = evaluation;
+          if (evaluation.kind === 'UNRANKED') round_.uncounted += 1;
           if (evaluation.kind === 'UNRANKED' && evaluation.reason === 'ENGINE_OLDER') {
             round_.stop = 'ENGINE_OLDER';
           } else if (evaluation.kind === 'UNRANKED' && evaluation.reason === 'ENGINE_BUSY') {
@@ -703,7 +711,9 @@ export async function runSearch(
       continue;
     }
     if (round_.stop !== null) return finish(round_.stop);
-    // Every move was asked and none improves: the state is a local optimum of single moves and swaps.
-    return finish('LOCAL_OPTIMUM');
+    // Every move was asked and none improves: a local optimum of single moves and swaps, if every one of them was counted. A move the
+    // engine could not count to the end (the seconds, a pricing step not proved, a failed call) was not shown not to help, and saying
+    // "no single move or swap eases the week" of it would be saying something nobody proved.
+    return finish(round_.uncounted > 0 ? 'NOT_ALL_COUNTED' : 'LOCAL_OPTIMUM');
   }
 }

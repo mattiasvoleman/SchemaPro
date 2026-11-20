@@ -276,6 +276,44 @@ describe('movesOf', () => {
     expect(back).toEqual([[{ requirementId: 'p1', toTeacherId: 'A' }]]);
   });
 
+  it('lets a post go back to its first lead only while that lead is no busier than they began or within their room (a lead given another post meanwhile is not exempt)', () => {
+    // A leads p1 (100 of 150). p1 went to C, and B's p2 went to A, who had room for it while p1 was away. p1 coming back would give A
+    // 200 of 150, more than they began with and past their limit: growthRefusal (the write's own question) refuses that state.
+    const m = model(
+      [row('p1', 'A', ['A', 'B', 'C']), row('p2', 'B', ['A', 'B'])],
+      { A: { current: 100, limit: 150 }, B: { current: 100, limit: 100 }, C: { current: 0, limit: 1000 } },
+    );
+    const state = new Map([['p1', 'C'], ['p2', 'A']]);
+
+    const asked = movesOf(m, state, judged).map((move) => move.changes.map((c) => `${c.requirementId}>${c.toTeacherId}`).join('+'));
+
+    expect(asked).not.toContain('p1>A');
+    // The same post back to A when A has nothing else is still allowed, whatever A's room: it is what they began with.
+    const over = model([row('p1', 'A', ['A', 'B'])], { A: { current: 100, limit: 0 }, B: { current: 0, limit: 1000 } });
+    expect(movesOf(over, new Map([['p1', 'B']]), judged)).toHaveLength(1);
+  });
+
+  it('does not swap a post back to its first lead when that lead holds more by now than their room allows', () => {
+    // A began with o (200 of 250). o went to C, and z and r (100 each) came to A meanwhile: 200 of 250. C is full (o, 200 of 200), so
+    // r to C is a swap with o, which A "may take back": but A would then hold z and o, 300 of 250, more than they began with.
+    const m = model(
+      [row('o', 'A', ['A', 'C'], [9], 200), row('z', 'D', ['A', 'D']), row('r', 'B', ['A', 'B', 'C'])],
+      { A: { current: 200, limit: 250 }, B: { current: 100, limit: 100 }, C: { current: 0, limit: 200 }, D: { current: 100, limit: 100 } },
+    );
+    const state = new Map([['o', 'C'], ['z', 'A'], ['r', 'A']]);
+
+    const asked = movesOf(m, state, judged);
+
+    for (const move of asked) {
+      const after = tenthsIn(m, afterMove(m, state, move));
+      for (const [id, teacher] of m.teachers) {
+        const held = after.get(id) ?? 0;
+        // growthRefusal's question: nobody who ends with more than they began with ends over their limit.
+        expect(held > teacher.currentTenths && teacher.limitTenths !== null && held > teacher.limitTenths).toBe(false);
+      }
+    }
+  });
+
   it('keeps a post out of a move when a year it spans is not judged', () => {
     const wide = model([row('p1', 'A', ['A', 'B'], [8, 9])], { A: { current: 100, limit: 1000 }, B: { current: 0, limit: 1000 } });
 
@@ -665,10 +703,34 @@ describe('runSearch', () => {
     expect(outcome.accepted).toBe(0);
     expect(outcome.leads.size).toBe(0);
     expect(outcome.figures).toBe(start);
-    expect(outcome.stop).toBe('LOCAL_OPTIMUM');
+    // Not a local optimum: some of what was asked could not be counted, and a move that was not counted was not shown not to help.
+    expect(outcome.stop).toBe('NOT_ALL_COUNTED');
     expect(outcome.tally.unranked.DEADLINE + outcome.tally.unranked.NOT_EXACT + outcome.tally.unranked.FEWER_WEEKS).toBeGreaterThan(0);
     expect(outcome.tally.refused).toBeGreaterThan(0);
     expect(outcome.tally.worse).toBeGreaterThan(0);
+  });
+
+  it('says a local optimum only when every move of the last round was counted to the end', async () => {
+    const { figuresOf } = oracle(posts, base);
+    const start = figuresOf(open, new Map(), [9]);
+    const worse = (leads: ReadonlyMap<string, string>, years: readonly number[]): Evaluation => ({
+      kind: 'FIGURES',
+      figures: new Map([...figuresOf(open, leads, years)].map(([y, weeks]) => [y, new Map([...weeks].map(([k, c]) => [k, cell(c.demand + 10_000)]))])),
+    });
+    const allCounted = await runSearch(open, start, LIMITS, { evaluate: async (leads, years) => worse(leads, years), stopped: () => null });
+    expect(allCounted.stop).toBe('LOCAL_OPTIMUM');
+    expect(allCounted.tally.better).toBe(0);
+    // The same, but one move of the round is one the engine could not count to the end, whatever the reason it gives.
+    for (const reason of ['DEADLINE', 'NOT_EXACT', 'FEWER_WEEKS', 'MISSING_YEAR', 'INCONSISTENT', 'ENGINE_ERROR'] as const) {
+      let asked = 0;
+      const oneUncounted = await runSearch(open, start, LIMITS, {
+        evaluate: async (leads, years) => (asked++ === 3 ? { kind: 'UNRANKED', reason } : worse(leads, years)),
+        stopped: () => null,
+      });
+
+      expect([reason, oneUncounted.stop]).toEqual([reason, 'NOT_ALL_COUNTED']);
+      expect([reason, oneUncounted.tally.unranked[reason]]).toEqual([reason, 1]);
+    }
   });
 
   it('keeps the best state so far when the school cancels, and says so', async () => {

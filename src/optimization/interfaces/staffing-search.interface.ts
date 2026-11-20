@@ -52,7 +52,8 @@ export type StaffingSearchStatus = 'PENDING' | 'RUNNING' | 'CANCELLING' | 'SUCCE
 /** Why a search stopped, in the order the search checks them. */
 export type StaffingSearchStop =
   | 'NOT_TIGHT' // every year it judged is under the engine's tight threshold: nothing is left to win
-  | 'LOCAL_OPTIMUM' // no single move or swap eases the weeks any further
+  | 'LOCAL_OPTIMUM' // no single move or swap eases the weeks any further, and every one of them was counted to the end
+  | 'NOT_ALL_COUNTED' // no counted move or swap eases the weeks, but some could not be counted to the end (the seconds, a pricing not proved, the engine failing): not shown to be a local optimum
   | 'NO_MOVES' // no released post has a teacher to move to
   | 'CANCELLED' // the school stopped it
   | 'BUDGET' // the time it was given ran out

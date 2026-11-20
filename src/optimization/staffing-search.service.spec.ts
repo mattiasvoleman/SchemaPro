@@ -28,6 +28,8 @@ import {
   StaffingSearchService,
   WEEK_BOUNDS_PATH,
   BUSY_GIVE_UP_MS,
+  SEARCH_WALL_CLOCK_MAX_MS,
+  YIELD_MAX_MS,
   figuresDocOf,
 } from './staffing-search.service';
 import { weekBasisOf, withWeekBasis } from './staffing-week';
@@ -645,6 +647,67 @@ describe('StaffingSearchService', () => {
       expect(h.proxy.callAiEngine).toHaveBeenCalled();
     });
 
+    it('gives way to a schemaförslag run of the year as it does to a Generera run: it asks the engine nothing while one is alive', async () => {
+      const h = harness();
+      let candidates = 2;
+      // The same definition of "alive" as Generera's start refuses by (yearHasActiveCandidateRun): active, inside its lease and its half hour.
+      h.tx.$queryRaw!.mockImplementation(async (query: Prisma.Sql) => {
+        const text = String(query.sql ?? '');
+        if (text.includes('app.staffing_search_sweep')) return [{ changed: 0 }];
+        if (text.includes('"ScheduleCandidateRuns"')) return [{ active: candidates-- > 0 ? 1 : 0 }];
+        return [{ status: 'RUNNING' }];
+      });
+      const waits: number[] = [];
+      (h.service as unknown as { delay: (ms: number) => Promise<void> }).delay = async (ms) => {
+        waits.push(ms);
+        expect(h.proxy.callAiEngine).not.toHaveBeenCalled();
+      };
+
+      await h.service.start({ academicYearId: YEAR }, user);
+      await settled(h.service);
+
+      expect(waits.length).toBeGreaterThanOrEqual(2);
+      expect(h.proxy.callAiEngine).toHaveBeenCalled();
+    });
+
+    it('waits for a Generera run at most YIELD_MAX_MS in ALL, not for each count: a run that never ends is then gone on beside', async () => {
+      const h = harness();
+      h.tx.optimizationJob!.count!.mockResolvedValue(1);
+      let waited = 0;
+      (h.service as unknown as { delay: (ms: number) => Promise<void> }).delay = async (ms) => {
+        waited += ms;
+      };
+
+      await h.service.start({ academicYearId: YEAR }, user);
+      await settled(h.service);
+
+      // The search did run (several counts), and its wait for the Generera run is the cap once, not the cap for every count.
+      expect(h.proxy.callAiEngine.mock.calls.length).toBeGreaterThan(2);
+      expect(waited).toBeGreaterThanOrEqual(YIELD_MAX_MS);
+      expect(waited).toBeLessThanOrEqual(YIELD_MAX_MS + 60_000);
+    });
+
+    it('ends by the clock after SEARCH_WALL_CLOCK_MAX_MS whatever the budget and the waits say, before the sweep calls a live run lost at an hour', async () => {
+      const h = harness();
+      // The most the environment allows (3600 s): the hour the sweep gives a run would be reached before the budget.
+      (h.service as unknown as { config: unknown }).config = { get: () => ({ budgetSeconds: 3600, concurrency: 1 }) };
+      let now = Date.now();
+      jest.spyOn(Date, 'now').mockImplementation(() => now);
+      h.proxy.callAiEngine.mockImplementation(async (_path: string, payload: AiEngineScheduleRequest) => {
+        now += 10 * 60 * 1000;
+        return fakeBounds(payload as never);
+      });
+
+      await h.service.start({ academicYearId: YEAR }, user);
+      await settled(h.service);
+
+      // Ten minutes a count: the sixth count ends the hour's first 55 minutes, so none is asked after it.
+      expect(h.proxy.callAiEngine.mock.calls.length).toBeLessThanOrEqual(6);
+      const done = finishing(h).at(-1)!;
+      expect(done.values).toEqual(expect.arrayContaining(['SUCCEEDED', 'BUDGET']));
+      expect(SEARCH_WALL_CLOCK_MAX_MS).toBe(55 * 60 * 1000);
+    });
+
     it('leaves no post out that has somewhere to go: a school with nothing released has nothing to search and says so', async () => {
       const h = harness({ plan: planOf([planned(1, { kind: 'FIXED' })], [teacher(T.a.real), teacher(T.b.real)]) });
 
@@ -666,7 +729,8 @@ describe('StaffingSearchService', () => {
       const h = harness();
       const order: string[] = [];
       h.tx.$queryRaw!.mockImplementation(async (query: Prisma.Sql) => {
-        if (String(query.sql).includes('"heartbeatAt"')) order.push('heartbeat');
+        // The run's own heartbeat (not the look for a schemaförslag run of the year, which names its own table's heartbeat too).
+        if (String(query.sql).includes('"heartbeatAt"') && String(query.sql).includes('"StaffingSearchRuns"')) order.push('heartbeat');
         return [{ status: 'RUNNING' }];
       });
       h.proxy.callAiEngine.mockImplementation(async (_p: string, payload: AiEngineScheduleRequest) => {
@@ -683,6 +747,20 @@ describe('StaffingSearchService', () => {
       expect(beat.sql).toContain("'PENDING', 'RUNNING', 'CANCELLING'");
       expect(beat.sql).toContain('make_interval(secs =>');
       expect(beat.values).toContain(SEARCH_LEASE_SECONDS);
+    });
+
+    it('renews without overwriting a cancel (CANCELLING stays CANCELLING: a cancel made on another process is seen by the renewal), and a late progress write lands only on an active run', async () => {
+      const h = harness();
+
+      await h.service.start({ academicYearId: YEAR }, user);
+      await settled(h.service);
+
+      const beat = h.tx.$queryRaw!.mock.calls.map(sqlOf).find((q) => q.sql.includes('"heartbeatAt" = now()') && q.sql.includes('"StaffingSearchRuns"'))!;
+      // The compare-and-set: whatever the row says it is, CANCELLING is kept, and the status that is read back is what the task acts on.
+      expect(beat.sql).toContain(`"status" = CASE WHEN "status" = 'CANCELLING' THEN 'CANCELLING' ELSE 'RUNNING' END`);
+      expect(beat.sql).toContain('RETURNING "status"');
+      const progress = h.tx.$executeRaw!.mock.calls.map(sqlOf).find((q) => q.sql.includes('"checkpoint" =') && q.sql.includes('"leaseUntil" ='))!;
+      expect(progress.sql).toContain(`"status" IN ('RUNNING', 'CANCELLING')`);
     });
 
     it('runs nothing when the first heartbeat finds the run no longer active (the sweep took it, or a restart failed it)', async () => {
@@ -967,6 +1045,16 @@ describe('StaffingSearchService', () => {
 
       expect(view).toMatchObject({ status: 'FAILED', errorCode: SEARCH_ABANDONED, hasProposal: true });
       expect(view.finishedAt).not.toBeNull();
+    });
+
+    it('shows a run that began more than an hour ago as what the sweep will make it, whatever its lease says (the sweep fails it at the hour)', async () => {
+      const h = harness();
+      h.state.row = row({ createdAt: new Date(Date.now() - 61 * 60_000), startedAt: new Date(Date.now() - 61 * 60_000), leaseUntil: new Date(Date.now() + 60_000) });
+
+      expect(await h.service.view(RUN, user)).toMatchObject({ status: 'FAILED', errorCode: SEARCH_ABANDONED });
+
+      h.state.row = row({ createdAt: new Date(Date.now() - 59 * 60_000), startedAt: new Date(Date.now() - 59 * 60_000), leaseUntil: new Date(Date.now() + 60_000) });
+      expect(await h.service.view(RUN, user)).toMatchObject({ status: 'RUNNING', errorCode: null });
     });
 
     it('leaves a run that has ended exactly as it ended, however old its lease', async () => {

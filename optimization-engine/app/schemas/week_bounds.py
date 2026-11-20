@@ -9,7 +9,7 @@ The answer is FIGURES, not a verdict: each year's exact least week for each real
 week (SchedulerSolver.week_bounds says why that is not what /check-week gives),
 and for each figure whether it is exact. A week one of the quick arithmetic counts
 refuses has no figures and a `refusal`. Every name below is also listed by hand in
-tests/test_week_bounds.py and in the gateway's src/optimization/ai-engine-contract.spec.ts.
+tests/test_week_bounds.py and in the gateway's src/optimization/week-bounds-contract.spec.ts.
 CamelModel forbids extra fields, so change both lists in the commit that deploys the engine.
 
 THE NAMES ARE THIS MODULE'S OWN (`WeekBounds*`): the OpenAPI document names a

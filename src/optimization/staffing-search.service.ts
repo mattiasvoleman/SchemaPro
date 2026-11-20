@@ -34,6 +34,7 @@ import {
   type StaffingSearchView,
 } from './interfaces/staffing-search.interface';
 import { OptimizationProxyService, type AnonMaps } from './optimization-proxy.service';
+import { yearHasActiveCandidateRun } from './schedule-candidates.service';
 import {
   leadRefusal,
   growthRefusal,
@@ -118,9 +119,20 @@ const BUSY_WAIT_MAX_MS = 10_000;
 const BUSY_SLICE_MS = 1_000;
 export const BUSY_GIVE_UP_MS = 45 * 60 * 1000;
 const BUSY_503_RETRIES = 8;
-/** How long the search waits, in all, for a Generera run of the year to end before it goes on beside it. */
+/**
+ * How long the search waits, IN ALL (every wait of its task counted once: the first of several waiters in line, as the engine's wait is
+ * counted), for a Generera run or a schemaförslag run of the year to end before it goes on beside it. Not for each count: a search asks
+ * the engine hundreds of times, and a wait that began afresh at every count would be a search kept off for hours.
+ */
 export const YIELD_MAX_MS = 10 * 60 * 1000;
 const YIELD_POLL_MS = 10_000;
+/**
+ * The longest a task runs by the clock, whatever its budget and its waits say (the budget is up to an hour and the waits are not counted
+ * in it). It ends before the sweep's own hour (app.staffing_search_sweep fails an active run that began more than an hour ago, and the
+ * page then says the service was restarted): a search that is still working is ended as one that ran out of time (BUDGET), with the
+ * best it has, and not as one that was lost.
+ */
+export const SEARCH_WALL_CLOCK_MAX_MS = 55 * 60 * 1000;
 /** The posts and the proposal a search reads are the plan's; a run keeps its figures a day (the sweep). */
 const ACTIVE: StaffingSearchStatus[] = ['PENDING', 'RUNNING', 'CANCELLING'];
 
@@ -144,6 +156,8 @@ interface SearchControl {
   /** The last look for a Generera run of the year (pauseWhileGenerating), and what it found. */
   generatingCheckedAt?: number;
   generating?: boolean;
+  /** What the task has waited, in all, for a Generera run or a schemaförslag run of the year (YIELD_MAX_MS). */
+  yielded: WaitLedger;
   /** The task's heartbeat, stopped by a restart so that nothing renews a lease the restart has just ended. */
   timer?: ReturnType<typeof setInterval>;
 }
@@ -452,7 +466,7 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
    * because an unhandled rejection of this unawaited promise would end the process for every school on the instance.
    */
   private launch(context: SearchContext): void {
-    const control: SearchControl = { user: context.user, cancel: false, interrupted: false };
+    const control: SearchControl = { user: context.user, cancel: false, interrupted: false, yielded: new WaitLedger() };
     this.inFlight.set(context.runId, control);
     void this.run(context, control)
       .catch((error: unknown) => {
@@ -491,7 +505,13 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
     };
 
     const stop = (): StaffingSearchStop | null =>
-      control.interrupted ? 'CANCELLED' : control.cancel ? 'CANCELLED' : Date.now() - startedAt - pausedMs - ledger.credited > budgetMs ? 'BUDGET' : null;
+      control.interrupted
+        ? 'CANCELLED'
+        : control.cancel
+          ? 'CANCELLED'
+          : Date.now() - startedAt - pausedMs - ledger.credited > budgetMs || Date.now() - startedAt > SEARCH_WALL_CLOCK_MAX_MS
+            ? 'BUDGET'
+            : null;
 
     const beat = async (): Promise<boolean> => {
       const state = progress;
@@ -699,7 +719,10 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Waits while a Generera run of the year is going: its CP-SAT solve takes every core, and a search should not slow it. */
+  /**
+   * Waits while a Generera run or a schemaförslag run of the year is going: their CP-SAT solves take every core, and a search should not
+   * slow them. At most YIELD_MAX_MS in all: after that the search goes on beside them, a count at a time (the engine's own gate).
+   */
   private async pauseWhileGenerating(
     context: SearchContext,
     control: SearchControl,
@@ -713,23 +736,25 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
       control.generating = await this.generatingNow(context);
       return control.generating;
     };
-    let waited = 0;
-    while (waited < YIELD_MAX_MS && stopped() === null && !control.interrupted && (await generating())) {
-      await this.delay(YIELD_POLL_MS);
-      waited += YIELD_POLL_MS;
+    while (control.yielded.credited < YIELD_MAX_MS && stopped() === null && !control.interrupted && (await generating())) {
+      await control.yielded.wait(YIELD_POLL_MS, YIELD_POLL_MS, (slice) => this.delay(slice), () => stopped() !== null || control.interrupted);
       paused(YIELD_POLL_MS);
     }
   }
 
-  /** Whether a Generera run of the year is going (alive: its lease has not run out). */
+  /**
+   * Whether a Generera run or a schemaförslag run of the year is going (alive: its lease has not run out). A candidate run is asked as
+   * Generera's own start asks it (yearHasActiveCandidateRun): its candidates are CP-SAT solves on the engine's cores like Generera's.
+   */
   private generatingNow(context: SearchContext): Promise<boolean> {
     return this.prisma
-        .withRls(context.user, (tx) =>
-          tx.optimizationJob.count({
-            where: { academicYearId: context.academicYearId, status: { in: ['PENDING', 'RUNNING'] }, leaseUntil: { gte: new Date() } },
-          }),
-        )
-      .then((count) => count > 0)
+      .withRls(context.user, async (tx) => {
+        const jobs = await tx.optimizationJob.count({
+          where: { academicYearId: context.academicYearId, status: { in: ['PENDING', 'RUNNING'] }, leaseUntil: { gte: new Date() } },
+        });
+        if (jobs > 0) return true;
+        return yearHasActiveCandidateRun(tx, context.academicYearId);
+      })
       .catch(() => false);
   }
 

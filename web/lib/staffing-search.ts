@@ -27,6 +27,7 @@ export type StaffingSearchStatus = "PENDING" | "RUNNING" | "CANCELLING" | "SUCCE
 export type StaffingSearchStop =
   | "NOT_TIGHT"
   | "LOCAL_OPTIMUM"
+  | "NOT_ALL_COUNTED"
   | "NO_MOVES"
   | "CANCELLED"
   | "BUDGET"
@@ -166,8 +167,8 @@ export function isActiveSearch(status: StaffingSearchStatus | null | undefined):
 
 /**
  * The year's newest search, or null when it has none. Polled while that search is active and only then, and never after a
- * read has failed through its retries: the admin's "Försök igen" (or the window coming back into focus) reads it again, and a
- * read that succeeds takes the poll up where it was.
+ * read has failed through its retries: the admin's "Försök igen" reads it again (the window coming back into focus does not: the app's query client has
+ * refetchOnWindowFocus off), and a read that succeeds takes the poll up where it was.
  */
 export function useLatestStaffingSearch(academicYearId: string | null) {
   return useQuery({
@@ -293,6 +294,7 @@ export function endedKey(view: StaffingSearchView): string {
     case "NO_MOVES":
       return stop;
     case "LOCAL_OPTIMUM":
+    case "NOT_ALL_COUNTED":
     case "BUDGET":
     case "MAX_ROUNDS":
     case "MAX_EVALUATIONS":

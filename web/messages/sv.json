@@ -4817,8 +4817,10 @@
       "ended": {
         "NOT_TIGHT": "Veckan ligger redan under 85 % i de årskurser som kan påverkas: det finns inget att vinna.",
         "NO_MOVES": "Ingen släppt post har en annan lärare som får ta den, så det finns inget byte att pröva.",
-        "LOCAL_OPTIMUM_NONE": "Inget enskilt byte eller parbyte gör veckan lättare.",
-        "LOCAL_OPTIMUM": "Inget enskilt byte eller parbyte gör veckan lättare än så här. Bästa läget sökningen hittade har {count, plural, one {# byte} other {# byten}}.",
+        "LOCAL_OPTIMUM_NONE": "Inget av de byten och parbyten som sökningen prövade gör veckan lättare.",
+        "LOCAL_OPTIMUM": "Inget av de byten och parbyten som sökningen prövade gör veckan lättare än så här. Bästa läget sökningen hittade har {count, plural, one {# byte} other {# byten}}.",
+        "NOT_ALL_COUNTED_NONE": "Inget byte som motorn räknade klart gör veckan lättare, men en del byten gick inte att räkna till slut (tiden räckte inte, eller motorn var hårt belastad). Det är alltså inte visat att inget byte hjälper. Försök igen om en stund.",
+        "NOT_ALL_COUNTED": "Inget fler byte som motorn räknade klart gör veckan lättare än så här, men en del byten gick inte att räkna till slut (tiden räckte inte, eller motorn var hårt belastad). Det är alltså inte visat att det här är det bästa. Bästa läget sökningen hittade har {count, plural, one {# byte} other {# byten}}.",
         "BUDGET_NONE": "Sökningen stannade för att tiden tog slut innan den hittade något byte som gör veckan lättare. Med mer tid kan den hitta fler.",
         "BUDGET": "Sökningen stannade för att tiden tog slut, inte för att inget mer gick att vinna: med mer tid kan den hitta fler byten. Bästa läget hittills har {count, plural, one {# byte} other {# byten}}.",
         "MAX_ROUNDS_NONE": "Sökningen stannade vid sin gräns för antal varv utan att hitta något byte som gör veckan lättare.",

@@ -4817,8 +4817,10 @@
       "ended": {
         "NOT_TIGHT": "The week is already below 85 % in the years that can be affected: there is nothing to gain.",
         "NO_MOVES": "No released entry has another teacher who may take it, so there is no change to try.",
-        "LOCAL_OPTIMUM_NONE": "No single change or swap of two makes the week lighter.",
-        "LOCAL_OPTIMUM": "No single change or swap of two makes the week lighter than this. The best state the search found has {count, plural, one {# change} other {# changes}}.",
+        "LOCAL_OPTIMUM_NONE": "None of the changes and swaps the search tried makes the week lighter.",
+        "LOCAL_OPTIMUM": "None of the changes and swaps the search tried makes the week lighter than this. The best state the search found has {count, plural, one {# change} other {# changes}}.",
+        "NOT_ALL_COUNTED_NONE": "No change the engine counted to the end makes the week lighter, but some changes could not be counted to the end (the time ran out, or the engine was under heavy load). So it is not shown that no change helps. Try again in a while.",
+        "NOT_ALL_COUNTED": "No further change the engine counted to the end makes the week lighter than this, but some changes could not be counted to the end (the time ran out, or the engine was under heavy load). So it is not shown that this is the best. The best state the search found has {count, plural, one {# change} other {# changes}}.",
         "BUDGET_NONE": "The search stopped because the time ran out before it found a change that makes the week lighter. With more time it could find some.",
         "BUDGET": "The search stopped because the time ran out, not because nothing more could be gained: with more time it could find more changes. The best state so far has {count, plural, one {# change} other {# changes}}.",
         "MAX_ROUNDS_NONE": "The search stopped at its limit on rounds without finding a change that makes the week lighter.",
