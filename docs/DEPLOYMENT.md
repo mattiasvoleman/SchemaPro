@@ -7081,8 +7081,9 @@ API first: after the drop its start and its sweep fail on the missing table. The
   an engine failure), and **that wait is not counted in the search's time**: a search that was kept waiting has as much to count with as one that was not. A wait
   that has lasted 45 minutes in all ends the search (`SEARCH_ENGINE_BUSY`, stop `ENGINE_BUSY`) with the moves it has accepted, which can still be read as a proposal:
   a job that waits for ever is a job stuck in RUNNING. An older engine (404 or 405) ends it at once with `SEARCH_ENGINE_OLDER`, also in the middle of a search.
-  The cost in time: one search is counted at about 3–4 s a candidate (measured, §32.6), so the study's twelve-move search (450 counts) takes 25–30 minutes of its own
-  time with one count at a time, beyond the 15 minutes of the default budget; `STAFFING_SEARCH_BUDGET_SECONDS=1800` gives it room.
+  The cost in time: a count of the study's åk 9 (89 posts) takes about 4 s with one count at a time (3 s median on a quiet host, 4.6 s at a load of 15–30), so the study's
+  twelve-move search (450 counts) takes about half an hour of its own time, twice the default budget of 15 minutes; `STAFFING_SEARCH_BUDGET_SECONDS=1800` gives it room.
+  A search that runs out of budget keeps the best state it reached (every accepted move is a proven improvement).
 
 ### 32.5 Operations
 
