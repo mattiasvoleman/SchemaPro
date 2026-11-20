@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 import { ApiError, api } from "@/lib/api";
+import type { StaffingWeekProps } from "@/components/staffing/staffing-week";
 import { StaffingProposalDialog, type StaffingProposalDialogProps } from "./staffing-proposal-dialog";
 import type { StaffingApplyResult, StaffingProposal } from "./use-staffing-proposal";
 
@@ -25,6 +26,30 @@ vi.mock("@/lib/api", async (importOriginal) => {
 const post = api.post as unknown as Mock;
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
+
+/*
+ * The week before and after the proposal is advice in a panel of its own, with its own tests
+ * (components/staffing/staffing-week.test.tsx): here it is a stand-in that shows what the dialog hands it and lets a test
+ * play the part of its answer, so that what this file holds is the dialog's side: when the panel is there, what it is
+ * asked about, and which basis an apply carries.
+ */
+const week = vi.hoisted(() => ({ WITH_WEEK: "d".repeat(64), props: [] as unknown[] }));
+vi.mock("@/components/staffing/staffing-week", () => ({
+  StaffingWeek: (props: StaffingWeekProps) => {
+    week.props.push(props);
+    return (
+      <section aria-label="Veckan (stand-in)">
+        <p>{`week for ${props.changes.map((change) => change.requirementId).join(",") || "nothing"} of proposal ${props.serial}`}</p>
+        <button type="button" onClick={() => props.onBasis(week.WITH_WEEK)}>
+          figure shown
+        </button>
+        <button type="button" onClick={() => props.onBasis(null)}>
+          figure withdrawn
+        </button>
+      </section>
+    );
+  },
+}));
 
 const PROPOSE = "/api/v1/optimization/staffing/proposal";
 const APPLY = "/api/v1/optimization/staffing/apply";
@@ -258,6 +283,7 @@ function pressUndo(kind: "success" | "warning" = "success") {
 describe("StaffingProposalDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    week.props.length = 0;
     post.mockImplementation(async (path: string) => (path === PROPOSE ? proposal() : applied()));
   });
 
@@ -1263,6 +1289,164 @@ describe("StaffingProposalDialog", () => {
         "Bo Alm: NO for 7A — new year group 7",
       ]);
       expect(screen.getByRole("button", { name: "Confirm and apply 3 selected" })).toBeInTheDocument();
+    });
+  });
+
+  describe("the week before and after the proposal", () => {
+    const lastProps = () => week.props.at(-1) as StaffingWeekProps;
+
+    it("shows the panel with the answer and not before it, asking about the proposal's own basis and the rows that are selected", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      expect(screen.queryByRole("region", { name: "Veckan (stand-in)" })).toBeNull();
+
+      await computeProposal(user);
+
+      expect(await screen.findByRole("region", { name: "Veckan (stand-in)" })).toBeInTheDocument();
+      expect(lastProps()).toMatchObject({ academicYearId: "y1", basisSha256: BASIS });
+      expect(lastProps().changes).toEqual([
+        { requirementId: "r-ma-7a", fromTeacherId: null, toTeacherId: "t-anna" },
+        { requirementId: "r-mu-8b", fromTeacherId: "t-gone", toTeacherId: "t-anna" },
+        { requirementId: "r-no-7a", fromTeacherId: "t-cilla", toTeacherId: "t-bo" },
+      ]);
+    });
+
+    it("follows the selection: a row left out is a row the week is not asked about", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("checkbox", { name: "Ta med NO för 7A" }));
+
+      expect(lastProps().changes.map((change) => change.requirementId)).toEqual(["r-ma-7a", "r-mu-8b"]);
+      // Ta med alla förslag takes every row in when one is out, and leaves every row out when all are in.
+      await user.click(screen.getByRole("checkbox", { name: "Ta med alla förslag" }));
+      expect(lastProps().changes).toHaveLength(3);
+      await user.click(screen.getByRole("checkbox", { name: "Ta med alla förslag" }));
+      expect(lastProps().changes).toEqual([]);
+    });
+
+    it("is not shown when the proposal changes nothing: there is no week to compare", async () => {
+      const user = userEvent.setup();
+      const base = proposal();
+      post.mockResolvedValue(
+        proposal({ assignments: [], unstaffed: [], conflicts: [], counts: { ...base.counts, freeRequirements: 0 } }),
+      );
+      renderDialog();
+      await user.click(screen.getByRole("button", { name: "Beräkna förslag" }));
+      await screen.findByText("Det finns inget att föreslå: varje post är bemannad eller låst.");
+
+      expect(screen.queryByRole("region", { name: "Veckan (stand-in)" })).toBeNull();
+    });
+
+    it("applies against the proposal's own basis when the week was not shown, as it always did", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await waitFor(() => expect(applies()).toHaveLength(1));
+
+      expect(applies()[0]!.basisSha256).toBe(BASIS);
+      // Not said to cover the week: it does not, and the gateway then never reads it.
+      expect(applies()[0]).not.toHaveProperty("coversWeek");
+    });
+
+    it("applies against the basis that covers the week when the week was shown for the selection, and only then", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await computeProposal(user);
+      await user.click(await screen.findByRole("button", { name: "figure shown" }));
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await waitFor(() => expect(applies()).toHaveLength(1));
+
+      expect(applies()[0]).toMatchObject({ academicYearId: "y1", basisSha256: week.WITH_WEEK, coversWeek: true });
+      expect(applies()[0]!.changes).toHaveLength(3);
+    });
+
+    it("goes back to the proposal's own basis when the figure is withdrawn (a new selection is being counted, or no figure could be made)", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await computeProposal(user);
+      await user.click(await screen.findByRole("button", { name: "figure shown" }));
+      await user.click(screen.getByRole("button", { name: "figure withdrawn" }));
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await waitFor(() => expect(applies()).toHaveLength(1));
+
+      expect(applies()[0]!.basisSha256).toBe(BASIS);
+      expect(applies()[0]).not.toHaveProperty("coversWeek");
+    });
+
+    it("an undo carries the basis the apply answered with and none of the week: it puts back what was", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await computeProposal(user);
+      await user.click(await screen.findByRole("button", { name: "figure shown" }));
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await waitFor(() => expect(toast.success).toHaveBeenCalled());
+      await pressUndo();
+
+      expect(applies()[1]).toMatchObject({ basisSha256: BASIS_AFTER, undo: true });
+      expect(applies()[1]).not.toHaveProperty("coversWeek");
+    });
+
+    it("keeps the figure through the second confirmation: the step takes the panel's place and the apply still carries the week", async () => {
+      const user = userEvent.setup();
+      post.mockImplementation(async (path: string) => (path === PROPOSE ? withNewTeaching() : applied()));
+      renderDialog();
+      await computeProposal(user);
+      await user.click(await screen.findByRole("button", { name: "figure shown" }));
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await user.click(await screen.findByRole("button", { name: "Bekräfta och tillämpa 3 valda" }));
+      await waitFor(() => expect(applies()).toHaveLength(1));
+
+      expect(applies()[0]).toMatchObject({ basisSha256: week.WITH_WEEK, coversWeek: true });
+      expect(applies()[0]!.confirmedNewTeaching).toHaveLength(2);
+    });
+
+    it("asks the week afresh for every proposal, even with the same basis, and does not carry a figure from the last one", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await computeProposal(user);
+      const first = lastProps().serial;
+      await user.click(await screen.findByRole("button", { name: "figure shown" }));
+      await user.click(screen.getByRole("button", { name: "Ändra val" }));
+      await computeProposal(user);
+
+      expect(lastProps().serial).toBe(first + 1);
+      expect(lastProps().basisSha256).toBe(BASIS);
+      // The figure of the first proposal is not the second's: an apply without a new figure carries the proposal's own.
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await waitFor(() => expect(applies()).toHaveLength(1));
+      expect(applies()[0]!.basisSha256).toBe(BASIS);
+    });
+
+    it("sends the admin back to the options on a stale apply that carried the week, and does not carry its digest into the next proposal", async () => {
+      const user = userEvent.setup();
+      post.mockImplementation(async (path: string) => {
+        if (path === PROPOSE) return proposal();
+        throw new ApiError(409, "Tjänstefördelningen har ändrats", "STAFF_PROPOSAL_STALE");
+      });
+      renderDialog();
+      await computeProposal(user);
+      await user.click(await screen.findByRole("button", { name: "figure shown" }));
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      expect(await screen.findByRole("button", { name: "Beräkna om" })).toBeInTheDocument();
+      expect(applies()[0]!.basisSha256).toBe(week.WITH_WEEK);
+
+      post.mockImplementation(async (path: string) => (path === PROPOSE ? proposal() : applied()));
+      await user.click(screen.getByRole("button", { name: "Beräkna om" }));
+      await screen.findByText("Förslag per post");
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await waitFor(() => expect(applies()).toHaveLength(2));
+      expect(applies()[1]!.basisSha256).toBe(BASIS);
+    });
+
+    it("is not asked about at all by the dialog itself: the panel is the one that asks, so a proposal whose week cannot be counted costs the dialog nothing", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await computeProposal(user);
+
+      expect(post.mock.calls.filter(([path]) => String(path).endsWith("/week"))).toEqual([]);
+      expect(screen.getByRole("button", { name: "Tillämpa 3 valda" })).toBeEnabled();
     });
   });
 

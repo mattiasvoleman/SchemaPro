@@ -4621,7 +4621,7 @@
       "compute": "Beräkna förslag",
       "computing": "Beräknar … upp till tio sekunder",
       "recompute": "Beräkna om",
-      "stale": "Tjänstefördelningen har ändrats sedan förslaget beräknades. Ingenting sparades. Beräkna ett nytt förslag.",
+      "stale": "Tjänstefördelningen eller veckan har ändrats sedan förslaget beräknades. Ingenting sparades. Beräkna ett nytt förslag.",
       "statusOPTIMAL": "Optimalt",
       "statusFEASIBLE": "Bästa hittills inom tidsgränsen",
       "feasibleHint": "Ett nytt försök kan ge ett lika bra förslag med andra lärare.",
@@ -4697,7 +4697,61 @@
       "confirmBack": "Tillbaka",
       "confirmApply": "Bekräfta och tillämpa {count, plural, one {# vald} other {# valda}}",
       "newTeachingUnconfirmed": "Förslaget ger {count, plural, one {en ändring} other {# ändringar}} ny undervisning som inte är bekräftad. Ingenting sparades. Gå tillbaka och beräkna ett nytt förslag.",
-      "rowNotReleased": "Posten har en lärare som skolan valt och är inte släppt för motorn. Ingenting sparades."
+      "rowNotReleased": "Posten har en lärare som skolan valt och är inte släppt för motorn. Ingenting sparades.",
+      "week": {
+        "title": "Veckan före och efter",
+        "noSelection": "Välj minst en ändring ovan för att se vad den gör med veckan.",
+        "asking": "Räknar veckan före och efter förslaget…",
+        "updating": "Räknar om veckan för ditt urval…",
+        "unavailable": {
+          "ENGINE_OLDER": "Schemamotorn uppdateras och kan inte räkna veckan ännu. Förslaget går att tillämpa ändå.",
+          "THROTTLED": "Det har frågats för ofta. Vänta en minut. Förslaget går att tillämpa ändå.",
+          "STALE": "Tjänstefördelningen har ändrats sedan förslaget beräknades, så veckan räknas inte. Beräkna ett nytt förslag.",
+          "ERROR": "Veckan kunde inte räknas just nu. Förslaget går att tillämpa ändå."
+        },
+        "notChecked": {
+          "NO_CHANGES": "Ingen av de valda ändringarna ändrar veckan som motorn räknar på (till exempel poster som läggs samtidigt med en annan post), så veckan är som den är.",
+          "NOT_READY": "Veckan går inte att räkna på just nu: schemat är i ett läge som Generera också nekar, till exempel ett block som är delvis låst. Förslaget går att tillämpa ändå.",
+          "NO_POSTS": "Alla poster är förlagda för hand, så motorn har ingen vecka att räkna på.",
+          "ENGINE_OLDER": "Schemamotorn uppdateras och kan inte räkna veckan ännu. Förslaget går att tillämpa ändå.",
+          "ENGINE_ERROR": "Motorn svarade inte på veckan just nu. Förslaget går att tillämpa ändå.",
+          "TOO_SLOW": "Veckan hann inte räknas inom tiden, så vi kan inte säga hur förslaget påverkar den. Förslaget går att tillämpa ändå."
+        },
+        "worseTitle": "Förslaget gör veckan trängre",
+        "worseBody": "I minst en årskurs ligger veckan närmare gränsen, eller över den, med förslaget än utan. Tillämpa det bara om du vill ha det ändå.",
+        "notWorse": "Förslaget gör inte den trängsta veckan trängre i någon av årskurserna nedan.",
+        "noYears": "Ingen av årskurserna som ändringarna rör ligger vid 85 % av ramtiden eller mer, varken före eller efter förslaget.",
+        "refusedTitle": "Förslaget gör att motorn nekar veckan",
+        "refusedBody": "Med förslaget nekar motorn veckan av en räkning som inte gäller en enskild årskurs (till exempel en klass eller en lärares timmar), och utan det gjorde den inte det. Tillämpa det bara om du vill ha det ändå.",
+        "noYearsRefused": "{which, select, both {Motorn nekar veckan både före och efter förslaget} other {Motorn nekade veckan före förslaget, men nekar den inte med det}} av en räkning som inte gäller en enskild årskurs. {which, select, both {Veckans fullhet är inte räknad, så den går inte att jämföra före och efter.} other {Med förslaget ligger ingen av årskurserna som ändringarna rör vid 85 % av ramtiden eller mer.}}",
+        "year": "Åk {year}",
+        "line": {
+          "TIGHTER": "{before} → {after}: veckan blir trängre",
+          "LOOSER": "{before} → {after}: den trängsta perioden blir lättare",
+          "SAME": "{before} → {after}: den trängsta perioden är oförändrad",
+          "STILL_OVER": "Före: {before}. Efter: {after}. Veckan ligger över ramtiden både före och efter, så vi kan inte säga om förslaget gör den bättre eller sämre.",
+          "NEWLY_REFUSED": "Före: {before}. Efter: motorn nekar veckan av en annan räkning än veckolasten.",
+          "NOT_COMPARED": "Före: {before}. Efter: {after}. De två går inte att jämföra."
+        },
+        "note": {
+          "STILL_OVER": "Motorn slutar räkna vid den första period den nekar, så de två siffrorna är nedre gränser för olika perioder.",
+          "NOT_COMPARED": "Minst en av siffrorna är en nedre gräns eller saknas, så de sätts inte i ordning."
+        },
+        "count": {
+          "load": "{atLeast, select, yes {minst } other {}}{percent} %",
+          "over": "minst {percent} %",
+          "under": "under {below} %",
+          "unknown": "inte räknad",
+          "refused": "nekas av en annan räkning"
+        },
+        "period": "{when, select, before {Före} other {Efter}}: räknat för veckorna {from} – {to}{more, select, yes { och övriga veckor med samma poster} other {}}.",
+        "overlay": {
+          "fromNobody": "{count, plural, one {# post saknar lärare i dag} other {# poster saknar lärare i dag}}. Veckan före är räknad utan lärare på dem, så en trängre vecka efteråt är väntad.",
+          "newToTheWeek": "{count, plural, one {# lärare har} other {# lärare har}} inget annat i veckan i dag. Veckan efter räknar bara de nya posterna.",
+          "notLaidOver": "{count, plural, one {# vald ändring syns} other {# valda ändringar syns}} inte i veckan motorn räknar på och är inte med."
+        },
+        "limits": "Siffrorna är nedre gränser som motorn kan bevisa för årskursens trängsta del av läsåret, och de säger inte att ett schema finns. En lättare period kan bli tyngre utan att siffran ändras. En vecka över ramtiden räknas bara till den första period motorn nekar och jämförs därför inte med en annan. Veckan är räknad som den är nu: ändras den innan du tillämpar sparas ingenting och du får beräkna om."
+      }
     },
     "engineRelease": {
       "title": "Släppta poster",

@@ -20,24 +20,30 @@
  *        the releases it had;
  *   sm7  a teacher chosen by hand takes the release back, in the same transaction and with a log row: a PATCH of the post through
  *        TeachingRequirementsService and a file through the requirements import, each on the real adapter. A save that sends the lead
- *        the post already has, and a file that names it, leave the release; the apply of a proposal still keeps it.
+ *        the post already has, and a file that names it, leave the release; the apply of a proposal still keeps it;
+ *   sm8  the week before and after a proposal through the REAL fetch (Kontrollera veckan's, prepareSchedule) on the API's role: the
+ *        digest that covers the week is applied when the week is as it was, an apply that carries it is refused 409
+ *        STAFF_PROPOSAL_STALE when the week has changed since (a frame time) though the tjänstefördelning has not, nothing written,
+ *        and an apply that does not say it covers the week is judged by the proposal's own basis, as ever.
  *
  * Imported by prisma-adapter-probe.ts, which hands in its `check`.
  */
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import type { Client } from 'pg';
+import { from } from 'rxjs';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import type { PrismaService } from '../../src/database/prisma.service';
 import type { StaffRequest, StaffResponse } from '../../src/optimization/interfaces/staffing.interface';
-import type { OptimizationProxyService } from '../../src/optimization/optimization-proxy.service';
+import { OptimizationProxyService } from '../../src/optimization/optimization-proxy.service';
 import {
   STAFF_NEW_TEACHING_UNCONFIRMED,
   STAFF_PROPOSAL_STALE,
   STAFF_ROW_NOT_RELEASED,
   StaffingProposalService,
 } from '../../src/optimization/staffing-proposal.service';
+import { StaffingWeekService } from '../../src/optimization/staffing-week.service';
 import { ImportService } from '../../src/import/import.service';
 import { TeachingRequirementsService } from '../../src/resources/teaching-requirements.service';
 import { ENGINE_RELEASE_POST_NOT_IN_YEAR, EngineReleaseService } from '../../src/staffing/engine-release.service';
@@ -401,6 +407,77 @@ export async function slapptChecks(owner: Client, api: PrismaService, marker: st
       assert.equal(after.counts.releasedRequirements, 0);
       assert.equal(after.counts.keptRequirements, 0);
       await owner.query(`UPDATE "TeachingRequirements" SET "teacherId" = $1 WHERE id = $2`, [t1.id, p1]);
+    });
+    await check('(sm8) the week before and after through the real fetch: a digest that covers the week is applied, and one whose week moved since is stale', async () => {
+      // The REAL proxy, so the week is fetched as Generera fetches it; the engine is the probe's stand-in, and /check-week answers a week under the threshold.
+      const stub = stubEngine();
+      const http = {
+        post: (url: string, payload: unknown) =>
+          from(
+            (async () => ({
+              data: url.endsWith('/check-week')
+                ? { requestId: 'probe', verdict: 'OK', years: [], conflicts: null, skipped: ['LUNCH_STAGE'], elapsedMs: 1 }
+                : await stub.callAiEngine(url, payload as StaffRequest, {} as never),
+            }))(),
+          ),
+      };
+      const proxy = new OptimizationProxyService(
+        api,
+        http as never,
+        { getOrThrow: () => ({ baseUrl: 'http://engine.invalid', apiKey: 'k'.repeat(32), timeoutMs: 5000 }) } as never,
+      );
+      const real = new StaffingProposalService(api, proxy);
+      const weeks = new StaffingWeekService(api, proxy, real);
+      await owner.query(`UPDATE "TeachingRequirements" SET "teacherId" = NULL WHERE id = $1`, [p2]);
+      await owner.query(`DELETE FROM "FrameTimes" WHERE "schoolId" = $1`, [a]);
+      const figure = async () => {
+        const proposal = await real.propose({ academicYearId: yearA, onlyUnstaffed: true, respectQualifications: false }, asFull);
+        const changes = proposal.assignments.map((x) => ({ requirementId: x.requirementId, fromTeacherId: x.fromTeacherId, toTeacherId: x.toTeacherId }));
+        const confirmed = proposal.assignments
+          .filter((x) => x.newTeaching !== undefined)
+          .map((x) => ({ requirementId: x.requirementId, toTeacherId: x.toTeacherId }));
+        const week = await weeks.check({ academicYearId: yearA, basisSha256: proposal.basisSha256, changes }, asFull);
+        return { proposal, changes, confirmed, week };
+      };
+
+      const first = await figure();
+      assert.ok(first.changes.length > 0, 'the proposal staffs nothing');
+      assert.equal(first.week.status, 'DONE', JSON.stringify(first.week));
+      assert.match(first.week.basisSha256 ?? '', /^[0-9a-f]{64}$/);
+      assert.notEqual(first.week.basisSha256, first.proposal.basisSha256);
+      assert.equal(first.week.overlay.given, first.changes.length);
+      assert.ok(first.week.overlay.laidOver > 0, 'no change of the proposal was laid over a post of the week');
+      // The digest does not move for a second look at the same week (two reads of an unchanged school agree).
+      const again = await weeks.check({ academicYearId: yearA, basisSha256: first.proposal.basisSha256, changes: first.changes }, asFull);
+      assert.equal(again.basisSha256, first.week.basisSha256);
+
+      // The week moves and the tjänstefördelning does not: a school day is set. The proposal's own basis is what it was.
+      await owner.query(
+        `INSERT INTO "FrameTimes" ("schoolId", "minGradeLevel", "maxGradeLevel", "startTime", "endTime", "updatedAt") VALUES ($1, 7, 9, '08:00', '15:30', now())`,
+        [a],
+      );
+      const covering = { academicYearId: yearA, basisSha256: first.week.basisSha256!, coversWeek: true, confirmedNewTeaching: first.confirmed, changes: first.changes };
+      await rejectsWith(() => real.apply(covering, asFull), 409, STAFF_PROPOSAL_STALE);
+      assert.equal(await leadOf(p2), null, 'an apply of a week that had moved wrote');
+      // The same digest, not said to cover the week, is not the proposal's basis: stale at once.
+      await rejectsWith(() => real.apply({ ...covering, coversWeek: undefined }, asFull), 409, STAFF_PROPOSAL_STALE);
+
+      // A figure for the week as it is now is applied, and its undo is judged by the basis the apply answers with, as ever.
+      const second = await figure();
+      assert.equal(second.week.status, 'DONE', JSON.stringify(second.week));
+      assert.notEqual(second.week.basisSha256, first.week.basisSha256, 'the week moved and the digest did not');
+      const applied = await real.apply(
+        { academicYearId: yearA, basisSha256: second.week.basisSha256!, coversWeek: true, confirmedNewTeaching: second.confirmed, changes: second.changes },
+        asFull,
+      );
+      assert.equal(applied.updated, second.changes.length);
+      assert.notEqual(await leadOf(p2), null);
+      await real.apply(
+        { academicYearId: yearA, basisSha256: applied.basisSha256, undo: true, changes: second.changes.map((x) => ({ requirementId: x.requirementId, fromTeacherId: x.toTeacherId, toTeacherId: x.fromTeacherId })) },
+        asFull,
+      );
+      assert.equal(await leadOf(p2), null);
+      await owner.query(`DELETE FROM "FrameTimes" WHERE "schoolId" = $1`, [a]);
     });
   } finally {
     await sweepSlapptSchools(owner, marker);

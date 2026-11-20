@@ -222,6 +222,12 @@ export interface ConfirmedNewTeaching {
 export interface ApplyStaffingRequest {
   academicYearId: string;
   basisSha256: string;
+  /**
+   * `basisSha256` is the digest that covers the week as well as the proposal (the one the week before and after returned
+   * for the figure shown): the apply reads the week again under its lock and is refused as stale if it has changed since.
+   * Left out, the proposal's own basis, as it always was.
+   */
+  coversWeek?: boolean;
   undo?: boolean;
   changes: StaffingChange[];
   /**

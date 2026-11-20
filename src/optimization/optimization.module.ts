@@ -14,6 +14,8 @@ import { FALLBACK_WAIT_MS } from './engine-timing';
 import { WeekCheckController } from './week-check.controller';
 import { WeekCheckChoiceService } from './week-check-choice.service';
 import { WeekCheckService } from './week-check.service';
+import { StaffingWeekController } from './staffing-week.controller';
+import { StaffingWeekService } from './staffing-week.service';
 
 @Module({
   imports: [
@@ -36,8 +38,8 @@ import { WeekCheckService } from './week-check.service';
       },
     }),
   ],
-  // Kontrollera veckan has a controller of its own, beside the run's.
-  controllers: [OptimizationController, WeekCheckController],
+  // Kontrollera veckan has a controller of its own, beside the run's, and so has the week before and after a staffing proposal.
+  controllers: [OptimizationController, WeekCheckController, StaffingWeekController],
   providers: [
     // The engine's times, read from the engine (M1): the proxy waits by them.
     EngineTimingService,
@@ -50,6 +52,7 @@ import { WeekCheckService } from './week-check.service';
     ScheduleCandidatesService,
     WeekCheckService,
     WeekCheckChoiceService,
+    StaffingWeekService,
   ],
   // Provplanering (src/exams) asks the engine through the same call.
   exports: [OptimizationProxyService],

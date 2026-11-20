@@ -123,9 +123,19 @@ export class ApplyStaffingDto {
   @IsUUID('4', { message: 'academicYearId must be a valid UUIDv4.' })
   academicYearId!: string;
 
-  /** The sha256 hex digest the proposal (or the previous apply) returned. */
+  /** The sha256 hex digest the proposal (or the previous apply) returned, or the one the week before and after returned (coversWeek). */
   @Matches(/^[0-9a-f]{64}$/, { message: 'basisSha256 must be a sha256 hex digest.' })
   basisSha256!: string;
+
+  /**
+   * `basisSha256` is the digest that covers the week as well as the proposal: the one staffing/proposal/week returned for the
+   * figure the dialog showed. The apply then reads the week again under its lock and refuses it as stale (409
+   * STAFF_PROPOSAL_STALE) if anything in it has changed since, though the tjänstefördelning has not. Absent, which is every
+   * client that has not shown the week, the basis is the proposal's own and the week is never read: as it always was.
+   */
+  @IsOptional()
+  @IsBoolean()
+  coversWeek?: boolean;
 
   /** Reverses an apply: the only body whose changes may leave a row with nobody. */
   @IsOptional()

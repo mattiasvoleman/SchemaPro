@@ -62,6 +62,7 @@ import {
   type StaffWeights,
 } from './interfaces/staffing.interface';
 import { OptimizationProxyService, requirementName, type AnonMaps } from './optimization-proxy.service';
+import { weekBasisOf, withWeekBasis } from './staffing-week';
 import { lockApplyYearKey } from './regeneration-lock';
 import { canonicalShares } from '../common/lesson-shares';
 import { carryPlacementTeachers } from '../requirement-placements/placement-teachers';
@@ -634,7 +635,13 @@ export class StaffingProposalService {
       `;
 
       const state = await this.readState(tx, user, dto.academicYearId);
-      if (basisOf(state) !== dto.basisSha256) throw stale();
+      // The proposal's own basis, or (coversWeek) that and the week's together: the week is read again only when the caller says
+      // it showed it, so every other apply, a stale one included, is judged by the one digest it always was and fetches nothing.
+      const basisHolds =
+        dto.coversWeek === true
+          ? await this.weekBasisHolds(tx, user, dto, basisOf(state))
+          : basisOf(state) === dto.basisSha256;
+      if (!basisHolds) throw stale();
 
       const rows = new Map(state.read.input.requirements.map((row) => [row.id, row]));
       const staff = new Set(state.staffIds);
@@ -897,6 +904,40 @@ export class StaffingProposalService {
       if (reverses) return was;
     }
     return undefined;
+  }
+
+  /**
+   * An apply that says it covers the week (ApplyStaffingDto.coversWeek) carries the proposal's basis AND the week's together
+   * (withWeekBasis, staffing-week.service.ts): this reads the week as Kontrollera veckan reads it, under the same lock and
+   * in the same transaction and BEFORE the apply writes, and holds only if both are as they were. A proposal judged against
+   * one week is not applied to another, whatever changed it (a room, a reservation, a lunch rule, a pupil).
+   *
+   * Not a gate on its own: an apply that does not say it covers the week is judged by the proposal's own basis and never
+   * gets here, and a week the gateway cannot build (a refusal of its own pre-flight, a year that is not open) is one that
+   * has changed since a figure was made of it, so it is stale. A fault that is not a refusal is not "stale": it is thrown.
+   */
+  private async weekBasisHolds(
+    tx: PrismaClient,
+    user: AuthenticatedUser,
+    dto: ApplyStaffingDto,
+    staffingBasis: string,
+  ): Promise<boolean> {
+    try {
+      const prepared = await this.proxy.prepareSchedule(tx, dto.academicYearId, user, { skipUnstaffedRefusal: true });
+      return prepared.ready && withWeekBasis(staffingBasis, weekBasisOf(prepared.basisParts)) === dto.basisSha256;
+    } catch (error) {
+      // A refusal the fetch makes of its own (a year not yet activated) is a week that cannot be judged: stale, not a 500.
+      if (error instanceof HttpException) return false;
+      throw error;
+    }
+  }
+
+  /**
+   * The basis of the year's tjänstefördelning as it stands in the caller's transaction: what a proposal read earlier is
+   * compared with, by the one reader that must not judge a proposal that has gone old (staffing-week.service.ts).
+   */
+  async currentBasis(tx: PrismaClient, user: AuthenticatedUser, academicYearId: string): Promise<string> {
+    return basisOf(await this.readState(tx, user, academicYearId));
   }
 
   /** One read, in the caller's transaction, of everything the proposal and its basis depend on. */
@@ -1900,7 +1941,7 @@ function rowNotReleased(row: { id: string; subjectName: string; groupName: strin
   });
 }
 
-function stale(): ConflictException {
+export function stale(): ConflictException {
   return new ConflictException({
     message: 'Tjänstefördelningen har ändrats sedan förslaget beräknades. Beräkna ett nytt förslag.',
     code: STAFF_PROPOSAL_STALE,

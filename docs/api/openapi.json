@@ -244,6 +244,9 @@
       "name": "StaffingPolicy"
     },
     {
+      "name": "StaffingWeek"
+    },
+    {
       "name": "StudentGroups"
     },
     {
@@ -15644,6 +15647,66 @@
         }
       }
     },
+    "/api/v1/optimization/staffing/proposal/week": {
+      "post": {
+        "tags": [
+          "StaffingWeek"
+        ],
+        "operationId": "StaffingWeekController_weekOfProposal",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffingWeekDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING",
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 6,
+          "ttlSeconds": 60
+        }
+      }
+    },
     "/api/v1/optimization/trigger": {
       "post": {
         "tags": [
@@ -28193,6 +28256,9 @@
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
           },
+          "coversWeek": {
+            "type": "boolean"
+          },
           "undo": {
             "type": "boolean"
           },
@@ -34135,6 +34201,55 @@
           "academicYearId",
           "onlyUnstaffed",
           "respectQualifications"
+        ]
+      },
+      "StaffingWeekChangeDto": {
+        "type": "object",
+        "properties": {
+          "requirementId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "fromTeacherId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "toTeacherId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "requirementId",
+          "fromTeacherId",
+          "toTeacherId"
+        ]
+      },
+      "StaffingWeekDto": {
+        "type": "object",
+        "properties": {
+          "academicYearId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "basisSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "changes": {
+            "type": "array",
+            "maxItems": 5000,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/StaffingWeekChangeDto"
+            }
+          }
+        },
+        "required": [
+          "academicYearId",
+          "basisSha256",
+          "changes"
         ]
       },
       "StaffingWeightsDto": {
