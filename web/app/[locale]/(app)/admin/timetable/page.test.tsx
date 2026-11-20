@@ -49,6 +49,8 @@ const state = vi.hoisted(() => ({
   people: null as unknown[] | null,
   /** ROOMS unless a row brings its own; null between tests. */
   rooms: null as unknown[] | null,
+  /** The läsår's lov (SchoolBreaks), for the weeks no lesson is written in. */
+  breaks: [] as unknown[],
 }));
 
 /*
@@ -165,8 +167,8 @@ vi.mock("@/lib/queries", () => ({
   useLunchSittingMutations: () => lunch,
   useRoomPreferences: () => ({ data: [] }),
   useRasts: () => ({ data: RASTS }),
-  // Read by the Lektionstid panel once it is opened.
-  useSchoolBreaks: () => ({ data: [] }),
+  // Read by the Lektionstid panel once it is opened, and by the page for the weeks no lesson is written in: of one year.
+  useSchoolBreaks: (yearId: string | null) => ({ data: yearId === "y-1" ? state.breaks : undefined }),
   useScheduleVersions: () => ({ data: state.versions }),
   useScheduleVersionDetail: (id: string | null) => ({ data: id ? state.snapshot : null }),
   useScheduleVersionActions: () => ({
@@ -566,6 +568,7 @@ beforeEach(() => {
   state.groups = null;
   state.people = null;
   state.rooms = null;
+  state.breaks = [];
   planning.successor = null;
   planning.rosters = null;
 });
@@ -3841,5 +3844,52 @@ describe("what a profile that does not write the grundschema is spared (Läsbeh�
       expect(screen.getByRole("button", { name })).toHaveAttribute("data-writes", "SCHEMALAGGNING DRIFT");
     }
     expect(screen.getByRole("button", { name: "timetable.bulkClear" })).not.toHaveAttribute("data-writes");
+  });
+});
+
+describe("two lessons that meet only in the weeks of a lov (lib/closed-weeks.ts)", () => {
+  // Matematik to the 10th of January and Slöjd from the 4th, Monday 08:00, one teacher: the jullov (22 December to 9 January)
+  // is the only week they share, and no lesson is written in it.
+  const jullov = {
+    id: "b-jul",
+    academicYearId: "y-1",
+    name: "Jullov",
+    kind: "HOLIDAY",
+    startDate: "2026-12-22",
+    endDate: "2027-01-09",
+    minGradeLevel: null,
+    maxGradeLevel: null,
+  };
+  const arrange = (autumnEnds: string) => {
+    state.lessons = [
+      { ...lesson("l-ma-ht", "s-ma", "g-41", "08:00"), endDate: autumnEnds },
+      { ...lesson("l-sl-vt", "s-sl", "g-42", "08:00"), startDate: "2027-01-04" },
+    ];
+  };
+  const ringed = (subject: string) =>
+    screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes(subject))
+      ?.className.includes("ring-destructive") ?? false;
+
+  it("draws the clash where the school has no lov, and none where the jullov is the only week they share", async () => {
+    arrange("2027-01-10");
+    render(<TimetablePage />);
+    await waitFor(() => expect(ringed("Matematik")).toBe(true));
+    expect(ringed("Slöjd")).toBe(true);
+    cleanup();
+    state.breaks = [jullov];
+    render(<TimetablePage />);
+    await waitFor(() => expect(screen.queryAllByRole("button").some((el) => el.textContent?.includes("Matematik"))).toBe(true));
+    expect(ringed("Matematik")).toBe(false);
+    expect(ringed("Slöjd")).toBe(false);
+  });
+
+  it("still draws the clash where they also share a week with school", async () => {
+    arrange("2027-01-17");
+    state.breaks = [jullov];
+    render(<TimetablePage />);
+    await waitFor(() => expect(ringed("Matematik")).toBe(true));
+    expect(ringed("Slöjd")).toBe(true);
   });
 });

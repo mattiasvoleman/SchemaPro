@@ -267,3 +267,71 @@ describe('PUB_CLASHES in a shared room (Delade salar)', () => {
     expect(tx.lunchSetting.findFirst).not.toHaveBeenCalled();
   });
 });
+
+describe('PUB_CLASHES and the weeks of a lov (school-weeks.ts)', () => {
+  // An autumn lesson to the 10th of January and a spring lesson from the 4th, in one hour with one teacher and one
+  // room. The jullov (22 December to 9 January) is the only week they share, and nobody sits it.
+  let tx: TxMock;
+  const client = () => tx as unknown as PrismaClient;
+  const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
+  const together = { teacherId: 'musikläraren', roomId: 'salen' };
+  const lessonsMeeting = (autumnEnds: string) => [
+    gateLesson('a', '9A', 'MU', { ...together, endDate: autumnEnds }),
+    gateLesson('b', '9B', 'SL', { ...together, startDate: '2027-01-04' }),
+  ];
+
+  const arrange = (breaks: Row[], grades: Array<number | null> = [9]) => {
+    tx.availabilityConstraint.findMany.mockResolvedValue([]);
+    tx.teachingRequirement.findMany.mockResolvedValue([]);
+    tx.academicYear.findUnique.mockImplementation((query: { select?: Record<string, unknown> } = {}) =>
+      Promise.resolve(
+        query.select && 'endDate' in query.select
+          ? { startDate: day('2026-08-17'), endDate: day('2027-06-11') }
+          : { isActive: true, predecessorId: null },
+      ),
+    );
+    // The year's groups answer only the question of their years; no other read finds a group.
+    tx.studentGroup.findMany.mockImplementation((query: { select?: Record<string, unknown> } = {}) =>
+      Promise.resolve(query.select && Object.keys(query.select).join() === 'gradeLevel' ? grades.map((gradeLevel) => ({ gradeLevel })) : []),
+    );
+    tx.studentGroupMember.findMany.mockResolvedValue([]);
+    tx.user.findMany.mockResolvedValue([]);
+    tx.schoolBreak.findMany.mockResolvedValue(breaks);
+  };
+  const jullov = { startDate: day('2026-12-22'), endDate: day('2027-01-09'), minGradeLevel: null, maxGradeLevel: null };
+
+  beforeEach(() => {
+    tx = createTxMock();
+  });
+
+  it('counts no clash for two lessons that meet only in the jullov', async () => {
+    arrange([jullov]);
+    expect((await clashFinding(client(), testUser(), YEAR, lessonsMeeting('2027-01-10'))).count).toBe(0);
+  });
+
+  it('counts them where the school has no lov, and where they also meet in a week with school', async () => {
+    arrange([]);
+    const without = await clashFinding(client(), testUser(), YEAR, lessonsMeeting('2027-01-10'));
+    // The teacher and the room, one pair named once for each kind.
+    expect(without.count).toBe(2);
+    arrange([jullov]);
+    expect((await clashFinding(client(), testUser(), YEAR, lessonsMeeting('2027-01-17'))).count).toBe(2);
+  });
+
+  it('asks the läsår being published for its lov, its days and its groups, and no other year', async () => {
+    arrange([jullov]);
+    await clashFinding(client(), testUser(), YEAR, lessonsMeeting('2027-01-10'));
+    expect(tx.schoolBreak.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { academicYearId: YEAR } }));
+    expect(tx.studentGroup.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { academicYearId: YEAR }, select: { gradeLevel: true } }),
+    );
+  });
+
+  it('asks the year’s groups: a lov for åk 7–9 leaves the weeks open while the school has an åk 3 class', async () => {
+    const upper = { ...jullov, minGradeLevel: 7, maxGradeLevel: 9 };
+    arrange([upper], [9]);
+    expect((await clashFinding(client(), testUser(), YEAR, lessonsMeeting('2027-01-10'))).count).toBe(0);
+    arrange([upper], [9, 3]);
+    expect((await clashFinding(client(), testUser(), YEAR, lessonsMeeting('2027-01-10'))).count).toBe(2);
+  });
+});

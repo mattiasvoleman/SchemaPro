@@ -4956,7 +4956,8 @@ Two changes, in two releases. No migration in either.
 
    A läsår is cut by every dated post, so a term is several periods (the
    school this was built for has six, the first of them the two days before
-   the first Monday). A refusal some weeks share says each of them: `period`
+   the first Monday), and by nothing else: a week with no school day is no
+   period (19.9). A refusal some weeks share says each of them: `period`
    is the first and `periods` all of them ("0,1,2,3"), the form a week that
    lies in several periods already had, and the gateway reads their
    stretches together, so a teacher over her hours all autumn is told the
@@ -5064,15 +5065,19 @@ its own release, merged and verified before the gateway's.
   every week of its link, so such a year has no week unlike another. A link
   with a whole week between its terms that neither post covers (a jullov
   outside both windows) does tell weeks apart: the leader post lets those
-  weeks go, and the school is sent periods like any other. "Dela terminsvis
+  weeks go, and the school is sent periods like any other, unless the
+  school's own lov closes every weekday of those weeks (19.9): they are then
+  no weeks of the cut, no week with school tells the terms apart, and none
+  is sent. "Dela terminsvis
   i halvklass" writes windows that meet when only the spring's first day is
   given; two periods of one's own, or dates edited by hand, can leave a gap.
 
 ### 19.3 What is still read more strictly
 
 Never more leniently than a lesson placed by hand
-(`weeksCanOverlap`, `src/calendar/lesson-recurrence.ts`), and in these places
-more strictly than the real weeks:
+(`weeksCanOverlap`, `src/calendar/lesson-recurrence.ts`), except in a week
+with no school day (19.9), and in these places more strictly than the real
+weeks:
 
 - A week is Monday to Sunday. Two posts whose windows share a week without
   sharing a date (one ends on a Tuesday, the other starts on the Wednesday)
@@ -5424,8 +5429,8 @@ between odd and even weeks).
   is sent). A period with weeks of one parity alone is the first, incomplete
   week of a läsår that starts on a Saturday once a post is dated from the
   first Monday (its two first days are then a period of their own, one odd
-  week: the production's läsår), and a test week or the weeks between two
-  terms. The engine takes a post of a parity out of the
+  week: the production's läsår), and a test week or a week between two
+  terms in which school is taught (a week the lov closes is no period, 19.9). The engine takes a post of a parity out of the
   periods that have none of it (one that would then run in no week at all is
   left as it came), asks nothing of a cell no week is in (the counts, the
   lunch read week by week, the lines of Bästa möjliga schema), says a period
@@ -5460,6 +5465,70 @@ and no dated post that has such a teacher is told to try again as the others
 are), and production had no post with a day limit and no
 locked lesson when this was written. Schemaförslag of a school that is sent
 either field go stale once, as in 19.4: the candidate basis reads them.
+
+### 19.9 A week with no school day is no week of the cut ("Lovveckor")
+
+A fifth release, on top of 19.8; no migration. The engine is untouched: no
+field is added, and `periods`, `periodWeeks` and `periodOddWeeks` say what
+they said, of fewer weeks. The gateway alone is the release, so rolling it
+back is 19.2's. The jullov of 2026 (22 December to 9 January) had made the
+two weeks inside it periods of their own, solved and checked as school weeks
+(`_solved_weeks`): six real weeks for the school it was found at where four
+have school, and a refusal a week no lesson is written in gave (for example
+`DEMAND_REQUIREMENTS_EXCEED_WEEK` for 4 January to 10 January) could block the
+whole year.
+
+- **The rule.** A week is without school when every weekday of it that lies
+  in the läsår (Monday to Friday) is a day no årskurs has school: a break of
+  the whole school, or breaks for years that together take every group of the
+  läsår. It is publish's own reading (`noSchoolDays`,
+  `src/calendar/publish-days.ts`, on `breakCoversGroup`): `kind` is not read (a
+  studiedag closes a day as a lov does), a class closed on a date
+  (`AvailabilityConstraint`) is not, and a group with no årskurs (a
+  nivågrupp) is closed only by a break of the whole school. A week with one open
+  weekday is a school week, so is a week no break touches, and so is the
+  läsår's first, incomplete week when it has no weekday in the läsår (it
+  starts on a Saturday: still a period of its own, 19.5).
+- **What is sent.** Such a week is in no period: not in `periodWeeks` or
+  `periodOddWeeks`, no entry is read against it and a teacher's days are not
+  read in it (`weekPeriods` has null there). The one exception is a week that
+  some entry is dated in and in no week with school (a post for the days of a
+  lov only): the engine cannot be told that an entry runs in no week (it
+  refuses a mask that names no period), and read as every period it would take
+  its hour in every week of the year, so the weeks such an entry lies in stay
+  weeks of the cut, as they were. An entry dated outside the läsår is still
+  every period. The `stretches` that name days (a refusal's
+  `periodFrom` and `periodTo`, a meal's rows) still tile the läsår: the week
+  belongs to the period of the school week before it, so a period's dates run
+  to the Sunday before the next one starts. A school whose school weeks do not
+  tell apart any more is sent no periods. A school that dates nothing reads no
+  break, and sends the payload it always sent.
+- **What it loosens, and what reads it too.** Two posts that meet in no week but
+  one with no school (an autumn post to 10 January and a spring post from 4
+  January, for the same class, teacher or room) were held apart there. They
+  are not now, and the generator may place them at one hour. So that nothing
+  else calls that a double booking, the readers of the clash rule read the
+  same weeks (`src/calendar/school-weeks.ts`, `meetOnlyInClosedWeeks`; the
+  board's copy is `web/lib/closed-weeks.ts`, and one fixture,
+  `src/calendar/__fixtures__/school-weeks-cases.json`, holds the two together):
+  the hand edit (`findConflicts`), the year's clash read behind the publish
+  check PUB_CLASHES (`yearClashes`), and the board (`detectConflicts`, on
+  `/admin/timetable`, including its drag check). Two lessons are a clash when
+  their dates and parities let them meet (`weeksCanOverlap`) **and** some week
+  they can meet in has a school day; a clash in a week with school is still
+  one. A lesson on a Saturday or a Sunday (`dayOfWeek` 6 and 7, which the
+  hand edit and the imports take) is never narrowed: a week is closed by its
+  Monday to Friday, and the weekend is written on a day no lov need take. `findConflicts` and the publish check read the year's breaks, its days
+  and its groups when two lessons share an hour (one query for a year with no
+  break). The other readers of `weeksCanOverlap` — the swap board
+  (`swap-units.ts`), the room optimisation, the shared-room reads, the travel
+  warnings, the placement search and the Förlägg i veckan mirror — still read
+  the dates alone, the stricter reading: a slot they refuse is one the hand
+  edit accepts.
+- **Operations.** Every school with a dated post and a lov that takes a whole
+  week (höstlov, sportlov, påsklov, jullov) is sent other `periodWeeks` and
+  `periodOddWeeks`, so its schemaförslag go stale once, as in 19.4: the
+  candidate basis reads both.
 
 ## 20. An administrator who teaches ("Administratör som undervisar", `Users.teaches`)
 

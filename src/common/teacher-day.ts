@@ -484,7 +484,10 @@ export interface LockedWeekdaysInPeriods {
  *
  * `weekPeriods` is the period of each week of the läsår, from its first
  * (YearPeriods.weekPeriods): a period is the weeks in which the same entries
- * of the payload have a date, so every week is in one, and every lesson the
+ * of the payload have a date, so every week is in one — but a week with no
+ * school day (a jullov; null) is in none, and is not read: nothing is written
+ * in it, and a lesson that starts or ends in it would hand the period around
+ * it a set no week of it holds — and every lesson the
  * generator places in a week of a period runs in the whole period. The set
  * of a week is read as lockedWeekdaySets reads it — the lessons that run on
  * their own weekday's date of that week — and EVERY week of the läsår is
@@ -518,10 +521,12 @@ export function lockedWeekdaySetsByPeriod(
   lessons: readonly TeachingLesson[],
   maxDaysPerWeek: number,
   year: YearSpan,
-  weekPeriods: readonly number[],
+  weekPeriods: readonly (number | null)[],
 ): LockedWeekdaysInPeriods[] | null {
   const taking = lessons.filter((lesson) => lesson.endMinutes > lesson.startMinutes);
-  const periods = Math.max(...weekPeriods) + 1;
+  const inPeriod = weekPeriods.filter((period): period is number => period !== null);
+  if (inPeriod.length === 0) return null;
+  const periods = Math.max(...inPeriod) + 1;
   // The sets of each period's odd weeks and of its even ones, by their weekdays.
   const held: [Map<string, number[]>, Map<string, number[]>][] = Array.from({ length: periods }, () => [
     new Map<string, number[]>(),
@@ -529,6 +534,8 @@ export function lockedWeekdaySetsByPeriod(
   ]);
   const first = mondayOf(parseDay(year.startDate));
   weekPeriods.forEach((period, week) => {
+    // A week with no school day (YearPeriods.weekPeriods) is read in no period: no lesson is written in it.
+    if (period === null) return;
     const monday = addDays(first, 7 * week);
     const days = [...new Set(taking.filter((lesson) => runsInWeek(lesson, monday)).map((lesson) => lesson.dayOfWeek))].sort(
       (a, b) => a - b,

@@ -153,6 +153,32 @@ export function breakDaysOf<T extends PublishBreak>(
   return days;
 }
 
+/**
+ * The days of [from, to] no årskurs of the year has school: a school-wide lov,
+ * or lov that together cover every group's årskurs (a group without one, a
+ * teaching group, only by a school-wide lov, as the publish reads them).
+ *
+ * One reading for the three that ask: the salslån, which need no loan on such a day
+ * (other-school-holds.ts), and the generator's periods, in which a week of only such
+ * days is no week (src/optimization/year-periods.ts, weeksWithSchool).
+ */
+export function noSchoolDays(
+  breaks: readonly PublishBreak[],
+  grades: readonly (number | null)[],
+  from: string,
+  to: string,
+): Set<string> {
+  const distinct = [...new Set(grades)];
+  const off = new Set<string>();
+  for (const [date, entries] of breakDaysOf(breaks, from, to)) {
+    const everyone =
+      entries.some((entry) => entry.minGradeLevel === null && entry.maxGradeLevel === null) ||
+      (distinct.length > 0 && distinct.every((grade) => entries.some((entry) => breakCoversGroup(entry, grade))));
+    if (everyone) off.add(date);
+  }
+  return off;
+}
+
 /** Dated closures by their day; a closure without a date is not one. */
 export function closuresByDateOf<T extends PublishClosure>(closures: readonly T[]): Map<string, T[]> {
   const byDate = new Map<string, T[]>();

@@ -2994,6 +2994,248 @@
           }
         ]
       }
+    },
+    {
+      "name": "jullov: lessons that meet only in the weeks of the lov are no clash",
+      "input": {
+        "constraints": [],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": [],
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "mu",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "r1",
+            "studentGroupId": "g-a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": "2027-01-10"
+          },
+          {
+            "id": "b",
+            "subjectId": "mu",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "r1",
+            "studentGroupId": "g-b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": "2027-01-04",
+            "endDate": null
+          }
+        ],
+        "closedWeeks": {
+          "from": "2026-08-17",
+          "to": "2027-06-11",
+          "mondays": [
+            "2026-12-28",
+            "2027-01-04"
+          ]
+        }
+      },
+      "clashes": {}
+    },
+    {
+      "name": "jullov: the same lessons clash where the school has no lov",
+      "input": {
+        "constraints": [],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": [],
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "mu",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "r1",
+            "studentGroupId": "g-a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": "2027-01-10"
+          },
+          {
+            "id": "b",
+            "subjectId": "mu",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "r1",
+            "studentGroupId": "g-b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": "2027-01-04",
+            "endDate": null
+          }
+        ]
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "TEACHER",
+            "otherLessonId": "b"
+          },
+          {
+            "kind": "ROOM",
+            "otherLessonId": "b"
+          }
+        ],
+        "b": [
+          {
+            "kind": "TEACHER",
+            "otherLessonId": "a"
+          },
+          {
+            "kind": "ROOM",
+            "otherLessonId": "a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "jullov: lessons that also meet in a week with school still clash",
+      "input": {
+        "constraints": [],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": [],
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "mu",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "r1",
+            "studentGroupId": "g-a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": "2027-01-17"
+          },
+          {
+            "id": "b",
+            "subjectId": "mu",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "r1",
+            "studentGroupId": "g-b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": "2027-01-04",
+            "endDate": null
+          }
+        ],
+        "closedWeeks": {
+          "from": "2026-08-17",
+          "to": "2027-06-11",
+          "mondays": [
+            "2026-12-28",
+            "2027-01-04"
+          ]
+        }
+      },
+      "clashes": {
+        "a": [
+          {
+            "kind": "TEACHER",
+            "otherLessonId": "b"
+          },
+          {
+            "kind": "ROOM",
+            "otherLessonId": "b"
+          }
+        ],
+        "b": [
+          {
+            "kind": "TEACHER",
+            "otherLessonId": "a"
+          },
+          {
+            "kind": "ROOM",
+            "otherLessonId": "a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "jullov: odd weeks meet only in the lov while the even week of school is not theirs",
+      "input": {
+        "constraints": [],
+        "studentGroupOf": [],
+        "memberships": [],
+        "pupilBuffers": [],
+        "lessons": [
+          {
+            "id": "a",
+            "subjectId": "mu",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "r1",
+            "studentGroupId": "g-a",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ODD_WEEKS",
+            "startDate": null,
+            "endDate": "2027-01-17"
+          },
+          {
+            "id": "b",
+            "subjectId": "mu",
+            "dayOfWeek": 1,
+            "startTime": "08:00",
+            "endTime": "09:00",
+            "teacherId": "t1",
+            "coTeacherId": null,
+            "roomId": "r1",
+            "studentGroupId": "g-b",
+            "extraGroupIds": [],
+            "studentIds": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": "2027-01-04",
+            "endDate": null
+          }
+        ],
+        "closedWeeks": {
+          "from": "2026-08-17",
+          "to": "2027-06-11",
+          "mondays": [
+            "2026-12-28",
+            "2027-01-04"
+          ]
+        }
+      },
+      "clashes": {}
     }
   ]
 }

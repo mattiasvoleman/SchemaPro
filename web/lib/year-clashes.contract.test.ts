@@ -34,6 +34,8 @@ interface FixtureCase {
     replacing?: Array<{ id: string; replacesSubjectId: string }>;
     /** Delade salar: the rooms that may hold several lessons at once, with their seats. */
     sharedRooms?: Array<{ roomId: string; seats: number }>;
+    /** The weeks no lesson is written in (jullov): two lessons that meet only there are no clash. */
+    closedWeeks?: { from: string; to: string; mondays: string[] };
   };
   clashes: Record<string, ConflictHit[]>;
 }
@@ -91,6 +93,9 @@ describe("the board paints what the publish gate counts", () => {
       undefined,
       undefined,
       buildPupilBufferMap(c.input.pupilBuffers),
+      c.input.closedWeeks
+        ? { from: c.input.closedWeeks.from, to: c.input.closedWeeks.to, mondays: new Set(c.input.closedWeeks.mondays) }
+        : undefined,
     );
     expect(Object.fromEntries([...found.entries()].sort(([a], [b]) => (a < b ? -1 : 1)))).toEqual(c.clashes);
   });

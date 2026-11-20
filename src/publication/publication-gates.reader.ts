@@ -1,6 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { readClosedWeeks } from '../calendar/school-weeks';
 import { readSharedMode, readSharedSeats } from '../common/shared-rooms.reader';
 import { clashPairs, yearClashes, type YearClashKind } from '../common/year-clashes';
 import { constraintsOfYear } from '../staffing/duty-slot-year';
@@ -218,6 +219,9 @@ export async function clashFinding(
   const sharedMode = roomIds.length === 0 ? 'OFF' : await readSharedMode(tx, { academicYearId });
   const sharedRooms = [...(await readSharedSeats(tx, sharedMode, roomIds))].map(([roomId, seats]) => ({ roomId, seats }));
 
+  // The weeks of a lov no lesson is written in: two lessons that meet only there are no double booking, as the
+  // board and the hand edit read them (school-weeks.ts). One query for a year with no break.
+  const closedWeeks = await readClosedWeeks(tx, academicYearId);
   const clashes = yearClashes({
     lessons: placed,
     constraints: constraints.map((row) => ({
@@ -232,6 +236,7 @@ export async function clashFinding(
     halves: allHalves,
     ...(replacing.length > 0 ? { replacing, academicYearId, kept } : {}),
     ...(sharedRooms.length > 0 ? { sharedRooms } : {}),
+    ...(closedWeeks ? { closedWeeks: { from: closedWeeks.from, to: closedWeeks.to, mondays: [...closedWeeks.mondays] } } : {}),
   });
   const byId = new Map(placed.map((lesson) => [lesson.id, lesson]));
   const pairs = clashPairs(clashes);

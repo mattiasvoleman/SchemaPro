@@ -121,7 +121,7 @@ function writingNested(world: RolloverWorld): PrismaService {
 }
 
 describe('the active year’s statement budget', () => {
-  it('a master lesson dragged to another day, with its teacher changed: 32 statements (31 before Behörighet som i ett annat ämne, 30 before Schemaförslag’s edit lock, 29 before Halvklasser’s groups read, 28 before the block’s read, 27 before the ämnesfördelning’s read, 26 before Publicering’s mode read)', async () => {
+  it('a master lesson dragged to another day, with its teacher changed: 35 statements (32 before Veckor utan skoldag’s three reads of the year’s lov, 31 before Behörighet som i ett annat ämne, 30 before Schemaförslag’s edit lock, 29 before Halvklasser’s groups read, 28 before the block’s read, 27 before the ämnesfördelning’s read, 26 before Publicering’s mode read)', async () => {
     const { world, prisma } = school();
     const service = new MasterLessonsService(
       prisma,
@@ -150,6 +150,12 @@ describe('the active year’s statement budget', () => {
       'masterLesson.findMany › extraGroups',
       'masterLesson.findMany › participants',
       'teachingRequirement.findMany',
+      // Veckor utan skoldag (school-weeks.ts): two lessons share the hour, so the rule asks whether they can meet only
+      // in the weeks of a lov — the year's breaks and, this school having some, the year's days and its groups' years.
+      // A school with no break pays the first only; a day nothing overlaps on pays none.
+      'schoolBreak.findMany',
+      'academicYear.findUnique',
+      'studentGroup.findMany',
       // rosterOf: which of the groups in play are halves or have halves
       // (Halvklasser, class-halves.ts), one statement; this school has none,
       // so no second read for a half's siblings. Then, CURRENT, the reader's
@@ -189,7 +195,7 @@ describe('the active year’s statement budget', () => {
     ]);
   });
 
-  it('the same drag where the new teacher has a cap and a day limit: 35 statements, three where a rule is (34 before Behörighet som i ett annat ämne, 33 before Schemaförslag’s edit lock)', async () => {
+  it('the same drag where the new teacher has a cap and a day limit: 38 statements, three where a rule is (35 before Veckor utan skoldag’s three reads of the year’s lov, 34 before Behörighet som i ett annat ämne, 33 before Schemaförslag’s edit lock)', async () => {
     // What a school that sets Lärarens dag pays on a drag: the teachers' caps,
     // their posts' day limits for the lesson's year, and their week — after
     // the ämnesfördelning's read, before the change log. Anna's week holds
@@ -227,7 +233,7 @@ describe('the active year’s statement budget', () => {
     );
     expect(updated.warnings).toEqual([]);
     const statements = statementsOf(world.calls);
-    expect(statements).toHaveLength(35);
+    expect(statements).toHaveLength(38);
     expect(statements.slice(-5)).toEqual([
       '$queryRaw.$queryRaw',
       'teacherWorkRule.findMany',

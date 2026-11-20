@@ -1613,6 +1613,147 @@ describe('AI engine wire contract', () => {
       ]);
     });
 
+    describe('a jullov between the terms is no period (SchoolBreaks)', () => {
+      // The post to 18 December and the locks, as the first test has them: three periods without a break, the
+      // autumn, the three weeks between the terms and the spring.
+      const dated = { recurrence: 'ALL_WEEKS', startDate: null, endDate: day('2026-12-18') };
+      const locks = () => [lock('ml-spring', day('2027-01-11'), null), lock('ml-year', null, null)];
+      const breakRow = (startDate: string, endDate: string, extra: Record<string, unknown> = {}) => ({
+        id: `break-${startDate}`,
+        startDate: day(startDate),
+        endDate: day(endDate),
+        minGradeLevel: null,
+        maxGradeLevel: null,
+        ...extra,
+      });
+      // `others` are groups of the läsår no post of the week is held for: classes of other years.
+      const withBreaks = (
+        rows: Record<string, unknown>[],
+        group: Record<string, unknown> | null = null,
+        others: Record<string, unknown>[] = [],
+      ) =>
+        (tx: ReturnType<typeof createTxMock>) => {
+          year(tx);
+          tx['schoolBreak']!['findMany']!.mockResolvedValue(rows);
+          if (group) {
+            tx['studentGroup']!['findMany']!.mockResolvedValue([
+              { id: 'g1', kind: 'CLASS', ...group },
+              ...others.map((other, index) => ({ id: `g-other-${index}`, kind: 'CLASS', ...other })),
+            ]);
+          }
+        };
+
+      it('sends the engine two periods where it was three, and none of the three weeks to solve for the lov', async () => {
+        const payload = await buildPayload(dated, locks(), [], withBreaks([breakRow('2026-12-19', '2027-01-10')]));
+        // The autumn (18 weeks) and the spring (22); 21 December, 28 December and 4 January are the lov's.
+        expect(payload['periodWeeks']).toEqual([18, 22]);
+        expect(payload['periodOddWeeks']).toEqual([9, 11]);
+        const requirement = (payload['requirements'] as Array<Record<string, unknown>>)[0]!;
+        expect(requirement['periods']).toEqual([true, false]);
+        const fixed = payload['fixedLessons'] as Array<Record<string, unknown>>;
+        expect(fixed.map((lesson) => lesson['periods'])).toEqual([[false, true], undefined]);
+        // The breaks are the school's own, of this läsår, and read without their kind: a studiedag closes a day as a
+        // lov does, which is publish's rule too (CalendarService.publish).
+        const reads = lastTx['schoolBreak']!['findMany']!.mock.calls as [
+          { where: Record<string, unknown>; select: Record<string, unknown> },
+        ][];
+        // Once for each reading of the week the run makes (the läsår is read as often), and always the same read.
+        expect(reads.length).toBeGreaterThan(0);
+        for (const [read] of reads) {
+          expect(read.where).toEqual({ academicYearId: 'year-1' });
+          expect(Object.keys(read.select).sort()).toEqual(['endDate', 'maxGradeLevel', 'minGradeLevel', 'startDate']);
+        }
+        // And the lessons the run writes are the post's own dates, as they always were.
+        const written = (
+          lastTx['masterLesson']!['createMany']!.mock.calls as [{ data: { startDate: Date | null; endDate: Date | null }[] }][]
+        ).flatMap(([call]) => call.data);
+        expect(written.map((lesson) => [lesson.startDate, lesson.endDate])).toEqual([[null, day('2026-12-18')]]);
+      });
+
+      it('takes a studiedag week and a lov week alike, and a post’s days their periods without the lov’s weeks', async () => {
+        const payload = await buildPayload(
+          dated,
+          [lock('ml-spring', day('2027-01-11'), null)],
+          [],
+          (tx) => {
+            withBreaks([
+              breakRow('2026-12-19', '2027-01-03', { kind: 'HOLIDAY' }),
+              breakRow('2027-01-04', '2027-01-10', { kind: 'STAFF_DAY' }),
+            ])(tx);
+            tx['teacherEmployment']!['findMany']!.mockResolvedValue([{ id: 'post-1', userId: 't1', maxTeachingDaysPerWeek: 2 }]);
+          },
+        );
+        expect(payload['periodWeeks']).toEqual([18, 22]);
+        const limits = payload['teacherDayLimits'] as Array<Record<string, unknown>>;
+        // Two periods: the autumn has no kept weekday, the spring its Tuesday; the lov is read in neither.
+        expect(limits[0]!['lockedWeekdayPeriods']).toEqual([
+          { weekdays: [], periods: [true, false] },
+          { weekdays: [2], periods: [false, true] },
+        ]);
+      });
+
+      it('leaves a week with a day of school a week: a lov that ends on the Thursday, and a break for other years', async () => {
+        // The lov to Thursday 7 January leaves the Friday: the week of 4 January stays, one period of its own.
+        const partly = await buildPayload(dated, locks(), [], withBreaks([breakRow('2026-12-19', '2027-01-07')]));
+        expect(partly['periodWeeks']).toEqual([18, 1, 22]);
+        // The class is åk 9 and the break åk 1 to 6: its weeks are taught, and the payload is the one it was.
+        const lower = await buildPayload(
+          dated,
+          locks(),
+          [],
+          withBreaks([breakRow('2026-12-19', '2027-01-10', { minGradeLevel: 1, maxGradeLevel: 6 })], { gradeLevel: 9 }),
+        );
+        expect(lower['periodWeeks']).toEqual([18, 3, 22]);
+        // The same break for åk 7 to 9 closes the class's days: the lov's weeks are not periods.
+        const upper = await buildPayload(
+          dated,
+          locks(),
+          [],
+          withBreaks([breakRow('2026-12-19', '2027-01-10', { minGradeLevel: 7, maxGradeLevel: 9 })], { gradeLevel: 9 }),
+        );
+        expect(upper['periodWeeks']).toEqual([18, 22]);
+        // A class of åk 3 the school also has, with no post of this week, is taught in the lov's weeks too: the cut is
+        // the school's, the same for every payload of it, and a week is never hidden where some årskurs has school.
+        const withThird = await buildPayload(
+          dated,
+          locks(),
+          [],
+          withBreaks([breakRow('2026-12-19', '2027-01-10', { minGradeLevel: 7, maxGradeLevel: 9 })], { gradeLevel: 9 }, [{ gradeLevel: 3 }]),
+        );
+        expect(withThird['periodWeeks']).toEqual([18, 3, 22]);
+        // A group with no year is taken out of a break for years only a school-wide break closes (as publish keeps its lessons).
+        const nivagrupp = await buildPayload(
+          dated,
+          locks(),
+          [],
+          withBreaks([breakRow('2026-12-19', '2027-01-10', { minGradeLevel: 1, maxGradeLevel: 9 })], { gradeLevel: null }),
+        );
+        expect(nivagrupp['periodWeeks']).toEqual([18, 3, 22]);
+      });
+
+      it('reads no break for a school that dates nothing, and sends it the payload it always sent', async () => {
+        const payload = await buildPayload(
+          { recurrence: 'ALL_WEEKS', startDate: null, endDate: null },
+          [lock('ml-year', null, null)],
+          [],
+          withBreaks([breakRow('2026-12-19', '2027-01-10')]),
+        );
+        expect(Object.keys(payload).sort()).toEqual(PAYLOAD_FIELDS);
+        expect(lastTx['schoolBreak']!['findMany']!.mock.calls).toHaveLength(0);
+      });
+
+      it('sends the payload it was where the school has breaks and none closes a week', async () => {
+        const rows = [breakRow('2026-10-26', '2026-10-28'), breakRow('2027-06-20', '2027-08-10')];
+        const without = await buildPayload(dated, locks(), [], year);
+        const withSome = await buildPayload(dated, locks(), [], withBreaks(rows));
+        expect(withSome['periodWeeks']).toEqual([18, 3, 22]);
+        // Byte for byte but the anonymous ids, which differ from one read to the next.
+        const bare = (value: Record<string, unknown>) =>
+          JSON.stringify(value).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, 'ID');
+        expect(bare(withSome)).toBe(bare(without));
+      });
+    });
+
     it('sends a school that dates nothing the payload it always sent, and reads no läsår for it', async () => {
       const payload = await buildPayload({ recurrence: 'ALL_WEEKS', startDate: null, endDate: null }, [
         lock('ml-year', null, null),
