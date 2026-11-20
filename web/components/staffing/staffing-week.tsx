@@ -41,6 +41,12 @@ export interface StaffingWeekProps {
   serial: number;
   /** The basis the proposal returned. */
   basisSha256: string;
+  /**
+   * The basis already covers the week: the proposal came from the search for teacher choice, whose basis is the
+   * tjänstefördelning's and the week's together. The question then says so (`coversWeek`), and the gateway compares both as
+   * they are now. Left out for every other proposal, which is asked exactly as it always was.
+   */
+  coversWeek?: boolean;
   /** The selected part of the proposal. */
   changes: StaffingWeekChange[];
   /**
@@ -51,7 +57,7 @@ export interface StaffingWeekProps {
   onBasis: (basis: string | null) => void;
 }
 
-export function StaffingWeek({ academicYearId, serial, basisSha256, changes, onBasis }: StaffingWeekProps) {
+export function StaffingWeek({ academicYearId, serial, basisSha256, coversWeek = false, changes, onBasis }: StaffingWeekProps) {
   const t = useTranslations("staffing.proposal.week");
   const key = changesKey(changes);
   const latest = useRef(changes);
@@ -68,7 +74,9 @@ export function StaffingWeek({ academicYearId, serial, basisSha256, changes, onB
   }, [key, settled.key, serial]);
 
   const week = useStaffingWeek(
-    settled.changes.length > 0 ? { academicYearId, basisSha256, changes: settled.changes } : null,
+    settled.changes.length > 0
+      ? { academicYearId, basisSha256, ...(coversWeek ? { coversWeek: true } : {}), changes: settled.changes }
+      : null,
     serial,
   );
   const settling = key !== settled.key;

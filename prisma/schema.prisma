@@ -231,6 +231,15 @@ enum ScheduleCandidateRunStatus {
   FAILED
 }
 
+enum StaffingSearchRunStatus {
+  PENDING
+  RUNNING
+  CANCELLING
+  SUCCEEDED
+  CANCELLED
+  FAILED
+}
+
 // -----------------------------------------------------------------------------
 // Tenant root
 // -----------------------------------------------------------------------------
@@ -298,6 +307,7 @@ model School {
   scheduleVersions        ScheduleVersion[]
   optimizationJobs        OptimizationJob[]
   scheduleCandidateRuns   ScheduleCandidateRun[]
+  staffingSearchRuns      StaffingSearchRun[]
   guardianStudents        GuardianStudent[]
   absenceWatchSettings    AbsenceWatchSetting?
   absenceWatchLimits      AbsenceWatchLimit[]
@@ -2148,6 +2158,7 @@ model AcademicYear {
   timetablePublications TimetablePublication[]
   /// Schemaförslag: the year's candidate runs, deleted with it.
   scheduleCandidateRuns ScheduleCandidateRun[]
+  staffingSearchRuns    StaffingSearchRun[]
 
   @@unique([schoolId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.
@@ -3367,6 +3378,60 @@ model ScheduleCandidate {
 
   @@unique([runId, ordinal])
   @@map("ScheduleCandidates")
+}
+
+// -----------------------------------------------------------------------------
+// Lärarval F3: a search for the choice of teachers that eases the week (20270227090000)
+// -----------------------------------------------------------------------------
+
+/// One search, run in the background by the API process that took the request (claimedBy, heartbeatAt, leaseUntil, like a
+/// Generera run's, 20270222090000). Every administrator reads it; SCHEMALAGGNING writes it. One active (PENDING, RUNNING,
+/// CANCELLING) run per year, by a partial unique index; app.staffing_search_sweep() marks a run past its lease FAILED
+/// (SEARCH_ABANDONED, its checkpoint kept) and deletes finished runs after 24 hours. It writes nothing of the school's
+/// tjänstefördelning: a proposal it gives is applied by Föreslå bemannings own apply.
+model StaffingSearchRun {
+  id             String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String                  @db.Uuid
+  academicYearId String                  @db.Uuid
+  /// Who asked (no key, like ScheduleCandidateRun.createdById; the row lives a day).
+  createdById    String?                 @db.Uuid
+  status         StaffingSearchRunStatus @default(PENDING)
+  /// Why a finished search stopped (an open code: NOT_TIGHT, LOCAL_OPTIMUM, BUDGET, CANCELLED, ...).
+  stopReason     String?
+  /// What it was asked: the posts the school pinned.
+  options        Json                    @default("{}")
+  /// sha256 (hex) of the tjänstefördelning with its releases, and of the week, as the search read them; the proposal's own
+  /// basis is the two together (withWeekBasis), and an apply that does not find it is stale.
+  staffingBasis  String
+  weekBasis      String
+  round          Int                     @default(0)
+  evaluations    Int                     @default(0)
+  acceptedMoves  Int                     @default(0)
+  /// The judged years' weeks before and as far as the search has come (minutes, week keys).
+  figures        Json?
+  /// The moves accepted so far, {requirementId, fromTeacherId, toTeacherId}, and counters: written after each accepted move.
+  checkpoint     Json?
+  error          String?
+  errorCode      String?
+  errorParams    Json?
+  /// The API process that runs it, for the log.
+  claimedBy      String?
+  /// The database's clock at the run's last sign of life; the process renews it every half minute.
+  heartbeatAt    DateTime                @default(dbgenerated("now()")) @db.Timestamptz(6)
+  /// Until when the run holds its year; past it an active run is abandoned. DB CHECK: at most an hour past the heartbeat.
+  leaseUntil     DateTime                @default(dbgenerated("(now() + '00:05:00'::interval)")) @db.Timestamptz(6)
+  createdAt      DateTime                @default(now()) @db.Timestamptz(6)
+  startedAt      DateTime?               @db.Timestamptz(6)
+  finishedAt     DateTime?               @db.Timestamptz(6)
+
+  school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade, onUpdate: NoAction)
+
+  // And, in the migration alone (Prisma cannot say a partial index): StaffingSearchRuns_one_active_per_year, UNIQUE
+  // (schoolId, academicYearId) WHERE status IN ('PENDING', 'RUNNING', 'CANCELLING') — at most one active search per year.
+  @@unique([id, schoolId])
+  @@index([schoolId, academicYearId, createdAt])
+  @@map("StaffingSearchRuns")
 }
 
 // -----------------------------------------------------------------------------

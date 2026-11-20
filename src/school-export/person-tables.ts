@@ -234,6 +234,8 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
   IntegrationApiKeys: dump(['createdById']),
   OptimizationJobs: dump(['actorId']),
   ScheduleCandidateRuns: dump(['createdById']),
+  // Lärarval F3 (20270227090000): who asked for a search, and the moves it kept (a lead's teacher id, in json) for a day.
+  StaffingSearchRuns: dump(['createdById'], 'PEOPLE', [], ['checkpoint']),
   ScheduleChangeLogs: dump(['actorId']),
   ScheduleVersions: dump(['createdById']),
   Ss12000Sources: dump(['createdById']),
@@ -274,6 +276,7 @@ export const WITHOUT_KEY: Readonly<Record<string, readonly string[]>> = {
   PersonProtectionEvents: ['actorId', 'userId'],
   PublishedLessons: ['coTeacherId', 'studentIds', 'teacherId'],
   ScheduleCandidateRuns: ['createdById'],
+  StaffingSearchRuns: ['createdById'],
   ScheduleChangeLogs: ['actorId'],
   ScheduleVersions: ['createdById'],
   Ss12000SourceSecrets: ['setById'],

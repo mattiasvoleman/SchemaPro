@@ -4698,6 +4698,8 @@
       "confirmApply": "Bekräfta och tillämpa {count, plural, one {# vald} other {# valda}}",
       "newTeachingUnconfirmed": "Förslaget ger {count, plural, one {en ändring} other {# ändringar}} ny undervisning som inte är bekräftad. Ingenting sparades. Gå tillbaka och beräkna ett nytt förslag.",
       "rowNotReleased": "Posten har en lärare som skolan valt och är inte släppt för motorn. Ingenting sparades.",
+      "searchEntry": "Sök lärarval som underlättar veckan",
+      "searchNote": "Det här är förslaget från sökningen efter lärarval: byten av lärare på släppta poster som gör veckan lättare. Veckan före och efter är räknad på samma vecka som sökningen, och inget sparas förrän du tillämpar det. Vill du behålla en post som den är, ta bort bocken för den.",
       "week": {
         "title": "Veckan före och efter",
         "noSelection": "Välj minst en ändring ovan för att se vad den gör med veckan.",
@@ -4751,6 +4753,101 @@
           "notLaidOver": "{count, plural, one {# vald ändring syns} other {# valda ändringar syns}} inte i veckan motorn räknar på och är inte med."
         },
         "limits": "Siffrorna är nedre gränser som motorn kan bevisa för årskursens trängsta del av läsåret, och de säger inte att ett schema finns. En lättare period kan bli tyngre utan att siffran ändras. En vecka över ramtiden räknas bara till den första period motorn nekar och jämförs därför inte med en annan. Veckan är räknad som den är nu: ändras den innan du tillämpar sparas ingenting och du får beräkna om."
+      }
+    },
+    "search": {
+      "title": "Sök lärarval",
+      "intro": "Sök de byten av lärare på släppta poster som gör veckan lättare. Det tar några minuter; du kan stänga rutan, sökningen fortsätter.",
+      "introNote": "Sökningen ändrar ingenting. Förslaget den ger går igenom samma steg som andra förslag, och inget sparas förrän du tillämpar det.",
+      "pinned": "{count, plural, one {# post du har valt att behålla som den är flyttas inte.} other {# poster du har valt att behålla som de är flyttas inte.}}",
+      "start": "Sök lärarval",
+      "starting": "Startar …",
+      "again": "Sök igen",
+      "cancel": "Avbryt sökningen",
+      "cancelFailed": "Sökningen kunde inte avbrytas just nu. Försök igen.",
+      "reading": "Hämtar förslaget …",
+      "showProposal": "Visa förslaget",
+      "showBest": "Visa det hittills bästa",
+      "loadFailed": "Sökningen kunde inte hämtas just nu. Ingenting har ändrats.",
+      "pollFailed": "Sökningen kunde inte läsas just nu, så det som visas kan vara äldre. Den fortsätter hos tjänsten.",
+      "status": {
+        "PENDING": "Sökningen väntar på att få börja.",
+        "RUNNING": "Sökningen pågår.",
+        "CANCELLING": "Sökningen avbryts …",
+        "SUCCEEDED": "Sökningen är klar.",
+        "CANCELLED": "Sökningen avbröts.",
+        "FAILED": "Sökningen stannade."
+      },
+      "refused": {
+        "ALREADY_RUNNING": "En sökning pågår redan för läsåret. Den visas här.",
+        "NO_QUALIFICATIONS": "Sökningen kan inte starta utan registrerade behörigheter: ingen vet då vem som får ta en post. Registrera behörigheterna och försök igen.",
+        "NOT_READY": "Sökningen kan inte starta: veckan går inte att räkna som den står, eftersom Generera nekar den av ett skäl som inte handlar om lärarval (till exempel ett block som är delvis låst). Åtgärda det och försök igen.",
+        "NO_POSTS": "Sökningen kan inte starta: alla poster är förlagda för hand, så det finns ingen vecka att räkna på.",
+        "THROTTLED": "Det har frågats för ofta. Vänta en minut och försök igen.",
+        "UNAVAILABLE": "Motorn kan inte svara just nu. Försök igen om en stund."
+      },
+      "timeUsed": "Tid använd: {used} av {budget}",
+      "duration": {
+        "seconds": "{seconds} s",
+        "minutes": "{minutes} min",
+        "both": "{minutes} min {seconds} s"
+      },
+      "rounds": "Varv {round}, {evaluations, plural, one {# värdering} other {# värderingar}}.",
+      "moves": "Hittills: {count, plural, =0 {inget byte som underlättar veckan} one {# byte som underlättar veckan} other {# byten som underlättar veckan}}.",
+      "bestLater": "Det hittills bästa förslaget kan visas när sökningen är klar eller har avbrutits.",
+      "figuresTitle": "Tyngsta veckan i varje årskurs",
+      "figuresNone": "Sökningen har inte räknat veckan än.",
+      "yearLine": "Åk {year}: {before} % → {after} %",
+      "yearLineSoFar": "Åk {year}: {before} % → {after} % hittills",
+      "yearLineSame": "Åk {year}: {percent} %",
+      "leftOutTitle": "Det sökningen lämnade orört",
+      "leftOutPost": {
+        "NOT_FREE": "{count, plural, one {# post är inte släppt åt motorn, eller är fäst, och behåller sin lärare.} other {# poster är inte släppta åt motorn, eller är fästa, och behåller sina lärare.}}",
+        "UNSTAFFED": "{count, plural, one {# post saknar lärare och söks inte: att bemanna den är en fråga för Föreslå bemanning, som du kan köra efter att du har tillämpat det här förslaget.} other {# poster saknar lärare och söks inte: att bemanna dem är en fråga för Föreslå bemanning, som du kan köra efter att du har tillämpat det här förslaget.}}",
+        "NO_CHOICE": "{count, plural, one {# post har ingen annan som får ta den (behörighet, tjänstgrad eller medlärare) och kan inte byta lärare.} other {# poster har ingen annan som får ta dem (behörighet, tjänstgrad eller medlärare) och kan inte byta lärare.}}",
+        "NOT_IN_WEEK": "{count, plural, one {# post ligger inte i veckan som sökningen räknar (alla dess lektioner är handplacerade, eller årskurserna är okända) och flyttades inte.} other {# poster ligger inte i veckan som sökningen räknar (alla deras lektioner är handplacerade, eller årskurserna är okända) och flyttades inte.}}",
+        "YEAR_LIMIT": "{count, plural, one {# post flyttades inte: en årskurs den spänner över är inte bland de fyra trängsta, som är de årskurser sökningen värderar.} other {# poster flyttades inte: en årskurs de spänner över är inte bland de fyra trängsta, som är de årskurser sökningen värderar.}}",
+        "YEAR_NOT_COUNTED": "{count, plural, one {# post flyttades inte: en årskurs den spänner över kunde inte räknas till slut som veckan är i dag, så det går inte att avgöra där om veckan blir trängre än i dag.} other {# poster flyttades inte: en årskurs de spänner över kunde inte räknas till slut som veckan är i dag, så det går inte att avgöra där om veckan blir trängre än i dag.}}"
+      },
+      "leftOutYear": {
+        "YEAR_LIMIT": "Åk {year} värderades inte: sökningen värderar högst fyra årskurser, de trängsta.",
+        "YEAR_NOT_COUNTED": "Åk {year} värderades inte: veckan kunde inte räknas till slut som den är i dag."
+      },
+      "limits": "Siffrorna är motorns nedre gräns för varje årskurs och vecka. De visar att veckan går att lätta, inte att ett schema finns, och lärarnas lektioner i andra årskurser syns inte i dem. Poster som ingen leder är inte med.",
+      "ended": {
+        "NOT_TIGHT": "Veckan ligger redan under 85 % i de årskurser som kan påverkas: det finns inget att vinna.",
+        "NO_MOVES": "Ingen släppt post har en annan lärare som får ta den, så det finns inget byte att pröva.",
+        "LOCAL_OPTIMUM_NONE": "Inget av de byten och parbyten som sökningen prövade gör veckan lättare.",
+        "LOCAL_OPTIMUM": "Inget av de byten och parbyten som sökningen prövade gör veckan lättare än så här. Bästa läget sökningen hittade har {count, plural, one {# byte} other {# byten}}.",
+        "NOT_ALL_COUNTED_NONE": "Inget byte som motorn räknade klart gör veckan lättare, men en del byten gick inte att räkna till slut (tiden räckte inte, eller motorn var hårt belastad). Det är alltså inte visat att inget byte hjälper. Försök igen om en stund.",
+        "NOT_ALL_COUNTED": "Inget fler byte som motorn räknade klart gör veckan lättare än så här, men en del byten gick inte att räkna till slut (tiden räckte inte, eller motorn var hårt belastad). Det är alltså inte visat att det här är det bästa. Bästa läget sökningen hittade har {count, plural, one {# byte} other {# byten}}.",
+        "BUDGET_NONE": "Sökningen stannade för att tiden tog slut innan den hittade något byte som gör veckan lättare. Med mer tid kan den hitta fler.",
+        "BUDGET": "Sökningen stannade för att tiden tog slut, inte för att inget mer gick att vinna: med mer tid kan den hitta fler byten. Bästa läget hittills har {count, plural, one {# byte} other {# byten}}.",
+        "MAX_ROUNDS_NONE": "Sökningen stannade vid sin gräns för antal varv utan att hitta något byte som gör veckan lättare.",
+        "MAX_ROUNDS": "Sökningen stannade vid sin gräns för antal varv: fler varv kan hitta fler byten. Bästa läget hittills har {count, plural, one {# byte} other {# byten}}.",
+        "MAX_EVALUATIONS_NONE": "Sökningen stannade vid sin gräns för antal värderingar utan att hitta något byte som gör veckan lättare.",
+        "MAX_EVALUATIONS": "Sökningen stannade vid sin gräns för antal värderingar: fler värderingar kan hitta fler byten. Bästa läget hittills har {count, plural, one {# byte} other {# byten}}.",
+        "CANCELLED_NONE": "Sökningen avbröts innan den hann hitta något byte som gör veckan lättare.",
+        "CANCELLED": "Sökningen avbröts. Bästa läget den hann hitta har {count, plural, one {# byte} other {# byten}}.",
+        "DONE": "Sökningen är klar."
+      },
+      "failed": {
+        "SEARCH_ABANDONED": "Tjänsten startades om medan sökningen pågick, så sökningen stannade.",
+        "SEARCH_INTERRUPTED": "Tjänsten startades om medan sökningen pågick, så sökningen stannade.",
+        "SEARCH_START_REFUSED": "Motorn nekar veckan som den står redan vid en snabb räkning, så det är inte valet av lärare som är problemet. Åtgärda det först (Kontrollera veckan visar vad som nekas) och sök igen.",
+        "SEARCH_START_NOT_EXACT": "Ingen årskurs hann räknas till slut inom de sekunder motorn har för en räkning, så sökningen har inget att jämföra med. Försök igen om en stund.",
+        "SEARCH_ENGINE_OLDER": "Schemamotorn är äldre än API:t och kan inte räkna veckan för en sökning ännu. Det brukar vara uppdaterat inom några minuter: försök igen då.",
+        "SEARCH_ENGINE_FAILING": "Motorn misslyckades med flera räkningar i rad, så sökningen stannade. Försök igen om en stund.",
+        "SEARCH_ENGINE_BUSY": "Motorn var upptagen för länge (den delas med andra skolor), så sökningen stannade. Väntan räknas inte in i sökningens tid. Försök igen om en stund.",
+        "SEARCH_FAILED": "Sökningen misslyckades. Ingenting har ändrats. Försök igen."
+      },
+      "failedBest": "Bästa läget den hann hitta har {count, plural, one {# byte} other {# byten}} och kan visas.",
+      "proposalProblem": {
+        "STALE": "Förslaget är gammalt: tjänstefördelningen, släppningarna eller veckan har ändrats sedan sökningen. Sök igen.",
+        "GONE": "Sökningen finns inte längre. Sök igen.",
+        "NOT_DONE": "Sökningen pågår ännu. Förslaget kan visas när den är klar.",
+        "NO_PROPOSAL": "Sökningen hittade inget byte som underlättar veckan.",
+        "OTHER": "{message}"
       }
     },
     "engineRelease": {

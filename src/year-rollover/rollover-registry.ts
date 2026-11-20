@@ -687,6 +687,10 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     parent: 'ScheduleCandidateRun',
     reason: 'A candidate belongs to its run, which is not carried.',
   },
+  StaffingSearchRun: {
+    kind: 'SKIPPED',
+    reason: 'A search for the choice of teachers was made against the old year’s week; it lives a day and is never a starting point.',
+  },
   /**
    * Klasslärarens schema (20270128090000). An appointment names a teacher for
    * ONE class of ONE läsår, in the name of the administrator who made it, and

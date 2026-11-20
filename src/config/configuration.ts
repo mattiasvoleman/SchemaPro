@@ -131,6 +131,19 @@ export interface CandidatesConfig {
   background: boolean;
 }
 
+/** Lärarval F3 (src/optimization/staffing-search.service.ts). */
+export interface StaffingSearchConfig {
+  /** STAFFING_SEARCH_BUDGET_SECONDS: how long a search may run, 60..3600 (900). */
+  budgetSeconds: number;
+  /** STAFFING_SEARCH_CONCURRENCY: evaluations asked of the engine at once, 1..6 (1: the engine counts one at a time for every school). */
+  concurrency: number;
+}
+
+export const DEFAULT_STAFFING_SEARCH_CONFIG: Readonly<StaffingSearchConfig> = {
+  budgetSeconds: 900,
+  concurrency: 1,
+};
+
 /** The defaults env.validation states, for a caller handed an environment without them. */
 export const DEFAULT_CANDIDATES_CONFIG: Readonly<CandidatesConfig> = {
   maxSeconds: 30,
@@ -163,6 +176,7 @@ export interface Configuration {
   ack: AckConfig;
   leaveConsent: LeaveConsentConfig;
   candidates: CandidatesConfig;
+  staffingSearch: StaffingSearchConfig;
 }
 
 /**
@@ -257,6 +271,10 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
       runsMax: env.CANDIDATE_RUNS_MAX ?? DEFAULT_CANDIDATES_CONFIG.runsMax,
       solverWorkers: env.CANDIDATE_SOLVER_WORKERS ?? DEFAULT_CANDIDATES_CONFIG.solverWorkers,
       background: env.CANDIDATES_BACKGROUND !== 'off',
+    },
+    staffingSearch: {
+      budgetSeconds: env.STAFFING_SEARCH_BUDGET_SECONDS ?? DEFAULT_STAFFING_SEARCH_CONFIG.budgetSeconds,
+      concurrency: env.STAFFING_SEARCH_CONCURRENCY ?? DEFAULT_STAFFING_SEARCH_CONFIG.concurrency,
     },
   };
 }

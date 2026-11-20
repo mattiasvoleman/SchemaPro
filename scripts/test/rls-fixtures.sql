@@ -5105,6 +5105,26 @@ BEGIN
   INSERT INTO "TeachingRequirementReleases" ("requirementId", "schoolId", "releasedById") VALUES (post, m, who);
 END $$;
 
+-- The matrix school's finished search for Lärarval F3 (20270227090000), so the role matrix (section 116) has a row of
+-- StaffingSearchRuns to probe: one run of the school's first year, SUCCEEDED and finished a moment ago (an active row would hold
+-- the year's one place; a finished one is kept a day). Written by the owner, once, and guarded by the row itself.
+DO $$
+DECLARE
+  m uuid;
+  y uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "StaffingSearchRuns" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = m ORDER BY "isActive" DESC, "startDate" LIMIT 1;
+  IF y IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the matrix school lacks a year for a search';
+  END IF;
+  INSERT INTO "StaffingSearchRuns" ("schoolId", "academicYearId", status, "stopReason", "staffingBasis", "weekBasis", "finishedAt")
+  VALUES (m, y, 'SUCCEEDED', 'LOCAL_OPTIMUM', repeat('a', 64), repeat('b', 64), now());
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

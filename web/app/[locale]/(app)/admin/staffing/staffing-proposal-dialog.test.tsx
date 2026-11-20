@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -6,6 +8,8 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 import { ApiError, api } from "@/lib/api";
+import type { StaffingSearchProps } from "@/components/staffing/staffing-search";
+import type { StaffingSearchFiguresDoc } from "@/lib/staffing-search";
 import type { StaffingWeekProps } from "@/components/staffing/staffing-week";
 import { StaffingProposalDialog, type StaffingProposalDialogProps } from "./staffing-proposal-dialog";
 import type { StaffingApplyResult, StaffingProposal } from "./use-staffing-proposal";
@@ -45,6 +49,34 @@ vi.mock("@/components/staffing/staffing-week", () => ({
         </button>
         <button type="button" onClick={() => props.onBasis(null)}>
           figure withdrawn
+        </button>
+      </section>
+    );
+  },
+}));
+
+/*
+ * The search for teacher choice is a panel of its own, with its own tests (components/staffing/staffing-search.test.tsx): here it
+ * is a stand-in that shows it was asked for, what it was handed, and lets a test play the part of its answer (the proposal it
+ * read and the figures the run kept), so that what this file holds is the dialog's side: when the entry is offered, how a
+ * proposal that came from a search is taken, and what its week and its apply carry. The lines of what the search left out are
+ * the panel's own component, not a stand-in: the dialog shows the very lines the panel says, and a test of it should see them.
+ */
+const search = vi.hoisted(() => ({ props: [] as unknown[], answer: null as unknown, figures: null as unknown }));
+vi.mock("@/components/staffing/staffing-search", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/staffing/staffing-search")>()),
+  StaffingSearch: (props: StaffingSearchProps) => {
+    search.props.push(props);
+    return (
+      <section aria-label="Sökningen (stand-in)">
+        <button
+          type="button"
+          onClick={() => props.onProposal(search.answer as StaffingProposal, search.figures as StaffingSearchFiguresDoc | null)}
+        >
+          search hands over
+        </button>
+        <button type="button" onClick={props.onBack}>
+          search goes back
         </button>
       </section>
     );
@@ -1447,6 +1479,345 @@ describe("StaffingProposalDialog", () => {
 
       expect(post.mock.calls.filter(([path]) => String(path).endsWith("/week"))).toEqual([]);
       expect(screen.getByRole("button", { name: "Tillämpa 3 valda" })).toBeEnabled();
+    });
+  });
+
+  describe("the search for teacher choice", () => {
+    const ENTRY = "Sök lärarval som underlättar veckan";
+    const SEARCH_BASIS = "e".repeat(64);
+    const lastSearch = () => search.props.at(-1) as StaffingSearchProps;
+    const lastWeek = () => week.props.at(-1) as StaffingWeekProps;
+    const NO_7A = { requirementId: "r-no-7a", fromTeacherId: "t-cilla", toTeacherId: "t-bo" };
+
+    /** What Föreslå bemanning answers when the school has released posts a teacher it chose leads. */
+    const releasedProposal = (count = 3) => {
+      const base = proposal();
+      return proposal({ counts: { ...base.counts, releasedRequirements: count } });
+    };
+    /** What the search read: one change, NO 7A from Cilla to Bo, under a basis that covers the week. */
+    const searchProposal = (overrides: Partial<StaffingProposal> = {}) => {
+      const base = proposal();
+      return proposal({
+        basisSha256: SEARCH_BASIS,
+        unstaffedProven: false,
+        counts: { ...base.counts, releasedRequirements: 2 },
+        assignments: [base.assignments[2]!],
+        unstaffed: [],
+        conflicts: [],
+        ...overrides,
+      });
+    };
+    const answerWith = (answer: StaffingProposal) => {
+      search.answer = answer;
+    };
+
+    /** What the run kept besides the proposal: no year was judged here, but two reasons and a year are named as left out. */
+    const keptFigures = (): StaffingSearchFiguresDoc => ({
+      years: [],
+      leftOut: {
+        posts: [
+          { reason: "UNSTAFFED", count: 2 },
+          { reason: "NO_CHOICE", count: 1 },
+        ],
+        years: [{ year: 7, reason: "YEAR_LIMIT" }],
+      },
+    });
+    const LEFT_OUT_TITLE = "Det sökningen lämnade orört";
+    const LEFT_OUT_LINES = [
+      "2 poster saknar lärare och söks inte: att bemanna dem är en fråga för Föreslå bemanning, som du kan köra efter att du har tillämpat det här förslaget.",
+      "1 post har ingen annan som får ta den (behörighet, tjänstgrad eller medlärare) och kan inte byta lärare.",
+      "Åk 7 värderades inte: sökningen värderar högst fyra årskurser, de trängsta.",
+    ];
+
+    beforeEach(() => {
+      search.props.length = 0;
+      search.figures = null;
+      answerWith(searchProposal());
+      post.mockImplementation(async (path: string) => (path === PROPOSE ? releasedProposal() : applied()));
+    });
+
+    async function openSearch(user: ReturnType<typeof userEvent.setup>) {
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: ENTRY }));
+      return screen.findByRole("region", { name: "Sökningen (stand-in)" });
+    }
+    async function takeSearchProposal(user: ReturnType<typeof userEvent.setup>) {
+      await openSearch(user);
+      await user.click(screen.getByRole("button", { name: "search hands over" }));
+      return screen.findByText("Förslag per post");
+    }
+
+    describe("the entry", () => {
+      it("is a button beside the proposal when the school has released posts, and is not there before there is a proposal", async () => {
+        const user = userEvent.setup();
+        renderDialog();
+        expect(screen.queryByRole("button", { name: ENTRY })).toBeNull();
+
+        await computeProposal(user);
+        expect(screen.getByRole("button", { name: ENTRY })).toBeEnabled();
+      });
+
+      it("is not offered when no post is released: there is nothing for a search to move", async () => {
+        const user = userEvent.setup();
+        post.mockImplementation(async (path: string) => (path === PROPOSE ? proposal() : applied()));
+        renderDialog();
+        await computeProposal(user);
+
+        expect(screen.queryByRole("button", { name: ENTRY })).toBeNull();
+      });
+
+      it("is offered beside a proposal that changes nothing, so long as a post is released", async () => {
+        const user = userEvent.setup();
+        const base = releasedProposal();
+        post.mockResolvedValue(
+          proposal({ assignments: [], unstaffed: [], conflicts: [], counts: { ...base.counts, freeRequirements: 0, releasedRequirements: 2 } }),
+        );
+        renderDialog();
+        await user.click(screen.getByRole("button", { name: "Beräkna förslag" }));
+        await screen.findByText("Det finns inget att föreslå: varje post är bemannad eller låst.");
+
+        expect(screen.getByRole("button", { name: ENTRY })).toBeEnabled();
+      });
+
+      it("loads nothing of the panel until it is pressed", async () => {
+        const user = userEvent.setup();
+        renderDialog();
+        await computeProposal(user);
+        expect(search.props).toHaveLength(0);
+
+        await user.click(screen.getByRole("button", { name: ENTRY }));
+        await screen.findByRole("region", { name: "Sökningen (stand-in)" });
+        expect(search.props.length).toBeGreaterThan(0);
+      });
+    });
+
+    describe("the panel", () => {
+      it("takes the proposal's place and keeps it behind it: back from the panel is the proposal as it was, with focus on the button that opened it", async () => {
+        const user = userEvent.setup();
+        renderDialog();
+        await openSearch(user);
+
+        expect(lastSearch()).toMatchObject({ academicYearId: "y1", pinnedRequirementIds: [] });
+        expect(screen.queryByText("Förslag per post")).toBeNull();
+        expect(screen.queryByRole("button", { name: "Tillämpa 3 valda" })).toBeNull();
+
+        await user.click(screen.getByRole("button", { name: "search goes back" }));
+        expect(await screen.findByText("Förslag per post")).toBeInTheDocument();
+        expect(screen.getByRole("checkbox", { name: "Ta med NO för 7A" })).toBeChecked();
+        expect(screen.getByRole("button", { name: ENTRY })).toHaveFocus();
+      });
+
+      it("is told which posts the admin asked to keep as they are", async () => {
+        const user = userEvent.setup();
+        renderDialog();
+        await computeProposal(user);
+        await user.click(screen.getByRole("button", { name: "Behåll som nu och beräkna om: Musik för 8B" }));
+        await waitFor(() => expect(asks()).toHaveLength(2));
+        await user.click(await screen.findByRole("button", { name: ENTRY }));
+        await screen.findByRole("region", { name: "Sökningen (stand-in)" });
+
+        expect(lastSearch().pinnedRequirementIds).toEqual(["r-mu-8b"]);
+      });
+
+      it("is left with Escape the way the second step is, and not the whole dialog with the proposal", async () => {
+        const user = userEvent.setup();
+        const { onOpenChange } = renderDialog();
+        await openSearch(user);
+        await user.keyboard("{Escape}");
+
+        expect(onOpenChange).not.toHaveBeenCalled();
+        expect(await screen.findByText("Förslag per post")).toBeInTheDocument();
+        expect(screen.queryByRole("region", { name: "Sökningen (stand-in)" })).toBeNull();
+      });
+
+      it("does not survive the dialog being closed: the next opening starts from the options", async () => {
+        const user = userEvent.setup();
+        const { onOpenChange } = renderDialog();
+        await openSearch(user);
+        await user.click(screen.getByRole("button", { name: "Stäng" }));
+
+        expect(onOpenChange).toHaveBeenCalledWith(false);
+        expect(screen.queryByRole("region", { name: "Sökningen (stand-in)" })).toBeNull();
+        expect(screen.getByRole("button", { name: "Beräkna förslag" })).toBeInTheDocument();
+      });
+    });
+
+    describe("a proposal from a search", () => {
+      it("is shown as any proposal is, with every change selected, a note of where it came from, and no Behåll (which would ask the engine for another proposal); focus goes to its rows", async () => {
+        const user = userEvent.setup();
+        renderDialog();
+        await computeProposal(user);
+        const before = lastWeek().serial;
+        await user.click(screen.getByRole("button", { name: ENTRY }));
+        await user.click(await screen.findByRole("button", { name: "search hands over" }));
+
+        const heading = await screen.findByRole("heading", { name: "Förslag per post" });
+        expect(screen.getByText(/Det här är förslaget från sökningen efter lärarval/)).toBeInTheDocument();
+        expect(screen.getByRole("checkbox", { name: "Ta med NO för 7A" })).toBeChecked();
+        expect(screen.queryByRole("button", { name: /Behåll som nu/ })).toBeNull();
+        expect(screen.getByRole("button", { name: "Tillämpa 1 vald" })).toBeEnabled();
+        await waitFor(() => expect(heading).toHaveFocus());
+        // A new proposal for the week, which is asked afresh for it, under the digest that already covers the week, and says so.
+        expect(lastWeek().serial).toBeGreaterThan(before);
+        expect(lastWeek()).toMatchObject({ academicYearId: "y1", basisSha256: SEARCH_BASIS, coversWeek: true });
+        expect(lastWeek().changes).toEqual([NO_7A]);
+        // The search is not asked again, and nothing was asked of the engine for it.
+        expect(asks()).toHaveLength(1);
+      });
+
+      it("says what the search left untouched under the note of where it came from: the panel's own lines, with a heading of the proposal's level", async () => {
+        const user = userEvent.setup();
+        search.figures = keptFigures();
+        renderDialog();
+        await takeSearchProposal(user);
+
+        const heading = await screen.findByRole("heading", { name: LEFT_OUT_TITLE, level: 3 });
+        const section = heading.closest("section")!;
+        expect(within(section).getAllByRole("listitem").map((item) => item.textContent)).toEqual(LEFT_OUT_LINES);
+        // Under the note, above the rows, and in a region named by its heading.
+        const note = screen.getByText(/Det här är förslaget från sökningen efter lärarval/);
+        expect(note.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(section.compareDocumentPosition(screen.getByRole("heading", { name: "Förslag per post" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(screen.getByRole("region", { name: LEFT_OUT_TITLE })).toBe(section);
+      });
+
+      it("says nothing of what was left out when the run's figures did not come with the proposal, or when nothing was left out", async () => {
+        const user = userEvent.setup();
+        search.figures = null;
+        renderDialog();
+        await takeSearchProposal(user);
+        expect(screen.getByText(/Det här är förslaget från sökningen efter lärarval/)).toBeInTheDocument();
+        expect(screen.queryByText(LEFT_OUT_TITLE)).toBeNull();
+      });
+
+      it("renders no section for figures that left nothing out", async () => {
+        const user = userEvent.setup();
+        search.figures = { years: [], leftOut: { posts: [], years: [] } } satisfies StaffingSearchFiguresDoc;
+        renderDialog();
+        await takeSearchProposal(user);
+        expect(screen.getByText(/Det här är förslaget från sökningen efter lärarval/)).toBeInTheDocument();
+        expect(screen.queryByText(LEFT_OUT_TITLE)).toBeNull();
+      });
+
+      it("is applied with its own basis AND coversWeek when no figure was shown for it, because its basis already covers the week", async () => {
+        const user = userEvent.setup();
+        renderDialog();
+        await takeSearchProposal(user);
+        await user.click(screen.getByRole("button", { name: "Tillämpa 1 vald" }));
+        await waitFor(() => expect(applies()).toHaveLength(1));
+
+        expect(applies()[0]).toEqual({ academicYearId: "y1", basisSha256: SEARCH_BASIS, coversWeek: true, changes: [NO_7A] });
+      });
+
+      it("is applied with the digest of the figure shown for the selection, and coversWeek, as any proposal whose week was shown is", async () => {
+        const user = userEvent.setup();
+        renderDialog();
+        await takeSearchProposal(user);
+        await user.click(await screen.findByRole("button", { name: "figure shown" }));
+        await user.click(screen.getByRole("button", { name: "Tillämpa 1 vald" }));
+        await waitFor(() => expect(applies()).toHaveLength(1));
+
+        expect(applies()[0]).toMatchObject({ basisSha256: week.WITH_WEEK, coversWeek: true });
+      });
+
+      it("goes back to its own basis, still covering the week, when the figure is withdrawn", async () => {
+        const user = userEvent.setup();
+        renderDialog();
+        await takeSearchProposal(user);
+        await user.click(await screen.findByRole("button", { name: "figure shown" }));
+        await user.click(screen.getByRole("button", { name: "figure withdrawn" }));
+        await user.click(screen.getByRole("button", { name: "Tillämpa 1 vald" }));
+        await waitFor(() => expect(applies()).toHaveLength(1));
+
+        expect(applies()[0]).toMatchObject({ basisSha256: SEARCH_BASIS, coversWeek: true });
+      });
+
+      it("asks the second question for new teaching before it writes, as any proposal does, and the apply still covers the week", async () => {
+        const user = userEvent.setup();
+        answerWith(withNewTeaching({ basisSha256: SEARCH_BASIS }));
+        renderDialog();
+        await takeSearchProposal(user);
+        await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+        expect(await screen.findByRole("heading", { name: "Bekräfta ny undervisning" })).toBeInTheDocument();
+        expect(applies()).toEqual([]);
+        await user.click(screen.getByRole("button", { name: "Bekräfta och tillämpa 3 valda" }));
+        await waitFor(() => expect(applies()).toHaveLength(1));
+
+        expect(applies()[0]).toMatchObject({ basisSha256: SEARCH_BASIS, coversWeek: true });
+        expect(applies()[0]!.confirmedNewTeaching).toHaveLength(2);
+      });
+
+      it("is undone against the basis the apply answered with, and none of the week, as any apply is", async () => {
+        const user = userEvent.setup();
+        renderDialog();
+        await takeSearchProposal(user);
+        await user.click(screen.getByRole("button", { name: "Tillämpa 1 vald" }));
+        await waitFor(() => expect(toast.success).toHaveBeenCalled());
+        await pressUndo();
+
+        expect(applies()[1]).toMatchObject({ basisSha256: BASIS_AFTER, undo: true });
+        expect(applies()[1]).not.toHaveProperty("coversWeek");
+      });
+
+      it("sends the admin back to the options when the apply finds it old, as any proposal's is", async () => {
+        const user = userEvent.setup();
+        post.mockImplementation(async (path: string) => {
+          if (path === PROPOSE) return releasedProposal();
+          throw new ApiError(409, "Tjänstefördelningen har ändrats", "STAFF_PROPOSAL_STALE");
+        });
+        renderDialog();
+        await takeSearchProposal(user);
+        await user.click(screen.getByRole("button", { name: "Tillämpa 1 vald" }));
+
+        expect(await screen.findByRole("button", { name: "Beräkna om" })).toBeInTheDocument();
+        expect(applies()[0]).toMatchObject({ basisSha256: SEARCH_BASIS, coversWeek: true });
+      });
+    });
+
+    describe("an ordinary proposal after a search", () => {
+      it("is asked about and applied exactly as it always was: nothing of the search's flag is carried over", async () => {
+        const user = userEvent.setup();
+        search.figures = keptFigures();
+        renderDialog();
+        await takeSearchProposal(user);
+        expect(await screen.findByText(LEFT_OUT_TITLE)).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "Ändra val" }));
+        await computeProposal(user);
+
+        expect(lastWeek().basisSha256).toBe(BASIS);
+        expect(lastWeek()).not.toHaveProperty("coversWeek");
+        // Behåll is back for a proposal the engine made, and the note is gone.
+        expect(screen.getByRole("button", { name: "Behåll som nu och beräkna om: Musik för 8B" })).toBeInTheDocument();
+        expect(screen.queryByText(/Det här är förslaget från sökningen/)).toBeNull();
+        // What the search left out belongs to its proposal: it is gone with it.
+        expect(screen.queryByText(LEFT_OUT_TITLE)).toBeNull();
+        await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+        await waitFor(() => expect(applies()).toHaveLength(1));
+
+        expect(applies()[0]!.basisSha256).toBe(BASIS);
+        expect(applies()[0]).not.toHaveProperty("coversWeek");
+      });
+
+      it("is asked about without the flag from the first: a proposal nobody searched for never says it covers the week", async () => {
+        const user = userEvent.setup();
+        renderDialog();
+        await computeProposal(user);
+
+        expect(lastWeek()).not.toHaveProperty("coversWeek");
+        expect(screen.queryByText(/Det här är förslaget från sökningen/)).toBeNull();
+        expect(screen.queryByText(LEFT_OUT_TITLE)).toBeNull();
+        expect(screen.getAllByRole("button", { name: /Behåll som nu och beräkna om/ })).toHaveLength(3);
+      });
+    });
+  });
+
+  describe("the bundle", () => {
+    it("holds the left-out lines only through a lazy import of the panel's module: nothing of it is in the dialog's own chunk", () => {
+      const source = readFileSync(join(__dirname, "staffing-proposal-dialog.tsx"), "utf8");
+      // No static import of the panel's module (a type-only import from lib is erased and is not it).
+      expect(source).not.toMatch(/^import\s[^;]*from\s+"@\/components\/staffing\/staffing-search"/m);
+      expect(source).toMatch(/lazy\(\(\) =>\s*import\("@\/components\/staffing\/staffing-search"\)\.then\(\(module\) => \(\{ default: module\.StaffingSearchLeftOut \}\)\)/);
+      expect(source).not.toMatch(/^import\s(?!type)[^;]*from\s+"@\/lib\/staffing-search"/m);
     });
   });
 

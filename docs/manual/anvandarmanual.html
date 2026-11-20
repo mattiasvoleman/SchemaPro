@@ -4617,6 +4617,60 @@
     sparar ingenting, och det gäller varje anrop som inte kommer från dialogen
     också. <span class="ui">Ångra</span> frågar inget.
   </p>
+  <h4>Sök lärarval som underlättar veckan</h4>
+  <p>
+    <span class="ui">Sök lärarval som underlättar veckan</span> står bredvid
+    <span class="ui">Ändra val</span> när förslaget är beräknat och skolan har
+    släppta poster som en lärare du har valt leder. Sökningen letar bland just
+    de posterna efter de byten av lärare som gör veckan lättare. Den flyttar
+    bara släppta, bemannade poster, bara inom lärarens tjänst och behörighet,
+    efter samma regler som förslaget, och rör aldrig en lärare du har valt och
+    inte släppt. Ett byte, eller ett parbyte, behålls bara om motorn har
+    räknat veckan till slut och veckorna sammantagna blivit lättare utan att
+    någon årskurs blivit trängre än när sökningen började.
+  </p>
+  <p>
+    Sökningen tar några minuter och körs i bakgrunden: du kan stänga rutan,
+    och hittar den igen när du öppnar den. Panelen visar tiden som gått, hur
+    många varv och värderingar som gjorts, hur många byten som hittats och för
+    varje årskurs dess trängsta vecka före sökningen och hittills, som andel
+    av veckans eget utrymme (”Åk 9: 100,2 % → 96,4 % hittills”).
+    <span class="ui">Avbryt sökningen</span> stoppar den inom några sekunder,
+    med det bästa den hunnit hitta. Den stannar också själv när inget av de
+    byten och parbyten den prövar gör veckan lättare, när tiden är slut (mer tid kan då
+    hitta fler byten), eller när veckan redan ligger under 85 % i de årskurser
+    som kan påverkas. Bara den senaste sökningen för läsåret sparas. Motorn
+    delas med andra skolor: är den upptagen väntar sökningen på den, och väntan
+    räknas inte in i sökningens tid. Är den upptagen för länge stannar
+    sökningen med det den hunnit hitta.
+  </p>
+  <p>
+    Det sökningen inte rör sägs alltid, i panelen och under förslaget:
+    <span class="ui">Det sökningen lämnade orört</span> räknar posterna som
+    inte söktes och säger varför (de saknar lärare, ingen annan får ta dem, de
+    är inte släppta eller är fästa, eller de ligger inte i veckan som räknas)
+    och nämner årskurser som inte värderades, för att de inte är bland de fyra
+    trängsta eller för att veckan inte gick att räkna till slut som den är i
+    dag.
+  </p>
+  <p>
+    När sökningen är klar eller avbruten visar <span class="ui">Visa
+    förslaget</span> det den hittade som ett vanligt förslag: lärarnas siffror
+    före och efter, <span class="ui">Veckan före och efter</span> räknad på
+    samma vecka som sökningen, bocka ur de byten du inte vill ha, och en andra
+    bekräftelse (<span class="ui">Bekräfta ny undervisning</span>) när en
+    lärare får ett nytt ämne eller en ny årskurs. Sökningen sparar ingenting:
+    det gör först <span class="ui">Tillämpa</span>, som vilket förslag som
+    helst, och <span class="ui">Ångra</span> gäller som vanligt. Har
+    tjänstefördelningen, släppningarna eller veckan ändrats sedan sökningen står
+    <em>Förslaget är gammalt</em> och du söker igen.
+  </p>
+  <p>
+    Siffrorna är motorns nedre gräns för varje årskurs och vecka. De visar att
+    veckan går att lätta, inte att ett schema finns: sökningen lovar inget
+    schema. En lärares lektioner i andra årskurser syns inte i dem, och poster
+    som ingen leder är inte med.
+  </p>
   <div class="note">
     <span class="label">Grundschemat ändras inte</span>
     <p>

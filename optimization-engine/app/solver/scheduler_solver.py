@@ -13,6 +13,7 @@ from collections.abc import Callable
 from collections.abc import Collection, Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date as date_type
+from fractions import Fraction
 from typing import TypeVar
 from uuid import UUID
 
@@ -82,6 +83,11 @@ from app.schemas.schedule import (
     SearchOptions,
     SolverStatus,
 )
+from app.schemas.week_bounds import (
+    WeekBoundsRefusal,
+    WeekBoundsResponse,
+    WeekBoundsRow,
+)
 from app.schemas.week_check import (
     WeekCheckResponse,
     WeekCheckSkipped,
@@ -122,6 +128,7 @@ from app.solver.time_grid import TimeGrid
 from app.timing import Deadline, ceiling_seconds, generation_limits
 from app.solver.week_load import (
     MAX_SHARED_TEACHERS_NAMED,
+    Exactness,
     LunchFacts,
     Relations,
     StageLoad,
@@ -2948,6 +2955,7 @@ class SchedulerSolver:
         *,
         cut: list[bool] | None = None,
         deadline: float | None = None,
+        exact: Exactness | None = None,
     ) -> list[StageLoad]:
         """The years whose least week passes TIGHT_WEEK_LOAD of their frame time.
 
@@ -3016,6 +3024,7 @@ class SchedulerSolver:
             lunch,
             threshold=self.TIGHT_WEEK_LOAD,
             deadline=deadline,
+            exact=exact,
         )
         if cut is not None and time.monotonic() >= deadline:
             cut.append(True)
@@ -5412,6 +5421,17 @@ class SchedulerSolver:
         status = _solve_guarded(probe, model, what=what, request_id=request.request_id)
         return status, probe
 
+    def _arithmetic_counts(
+        self,
+    ) -> tuple[Callable[[OptimizeScheduleRequest], ConflictAnalysis | None], ...]:
+        """The counts that decide a week in microseconds, in the order they are asked (_prechecks, week_bounds)."""
+        return (
+            self._dining_hall_verdict,
+            self._clique_hours_verdict,
+            self._teacher_hours_verdict,
+            self._lesson_gaps_verdict,
+        )
+
     def _prechecks(
         self,
         request: OptimizeScheduleRequest,
@@ -5483,12 +5503,7 @@ class SchedulerSolver:
         # The years found tight by the count below, heaviest first across
         # the weeks: carried to a TIMEOUT, which then says so.
         nearly_full: dict[int | None, StageLoad] = {}
-        counts = (
-            self._dining_hall_verdict,
-            self._clique_hours_verdict,
-            self._teacher_hours_verdict,
-            self._lesson_gaps_verdict,
-        )
+        counts = self._arithmetic_counts()
         # Arithmetic first, models second: a hall the school cannot fit in
         # is decided here in microseconds and reported the way a solve
         # would have. In this order within a week, the first that refuses.
@@ -5619,6 +5634,95 @@ class SchedulerSolver:
             ],
             conflicts=conflicts,
             skipped=skipped,
+            elapsed_ms=round((time.monotonic() - started) * 1000),
+        )
+
+    #: The longest a bound is counted for: the engine's own ceiling for the route is its caller's. The
+    #: exact count's pricing steps get this much each (week_load.Exactness).
+    EXACT_PRICING_SECONDS = 20.0
+    #: How many real weeks an exact count takes in (the heaviest, as _solved_weeks chooses them). Past it the
+    #: answer says `weeks_counted < weeks_total` and a caller must not rank by it.
+    MAX_BOUNDS_WEEKS = 16
+
+    def week_bounds(
+        self,
+        request: OptimizeScheduleRequest,
+        *,
+        years: Collection[int] | None,
+        cutoffs: Mapping[int, tuple[int, int]],
+        seconds: float,
+    ) -> WeekBoundsResponse:
+        """EACH YEAR'S EXACT LEAST WEEK, week by week: what a search for the best choice of teachers ranks by.
+
+        check_week answers a decision: it stops at the first week any verdict
+        refuses, so a week over the supply gives the figure of the first period
+        refused and nothing about the others, and its week load has four seconds
+        and one second of pricing. Neither can order two weeks that are both too
+        full. This counts every real week of the year (up to MAX_BOUNDS_WEEKS),
+        every year asked for, to the end (week_load.Exactness), and says for each
+        figure whether it is exact (`converged`) and whether it was stopped at the
+        cutoff it was given (`cutoff`: then it is only "above the cutoff", a share
+        of the week's supply, given per year as (demand, capacity) in minutes).
+
+        What it does NOT do is refuse: a week over the supply is a figure (`over`).
+        The arithmetic counts that decide a week in microseconds (a class with more
+        hours than the week, a teacher with more lessons than their days hold) are
+        still asked, because a choice of teachers can bring one of them about:
+        a week one of them refuses has no figures, and `refusal` says which.
+
+        Reads nothing but `request`, writes nothing, never builds the scheduling model.
+        """
+        started = time.monotonic()
+        self._validate_request(request)
+        weeks = _weeks_and_requests(request)
+        refusal = self._counted_refusal(weeks, self._arithmetic_counts(), request)
+        if refusal is not None:
+            return WeekBoundsResponse(
+                request_id=request.request_id,
+                weeks_total=len(weeks),
+                weeks_counted=0,
+                rows=[],
+                refusal=WeekBoundsRefusal(code=refusal.summary_code, params=refusal.summary_params),
+                deadline_hit=False,
+                elapsed_ms=round((time.monotonic() - started) * 1000),
+            )
+        counted = weeks
+        if len(weeks) > self.MAX_BOUNDS_WEEKS:
+            heaviest = sorted(
+                range(len(weeks)),
+                key=lambda index: -sum(r.lessons_per_week for r in weeks[index][1].requirements),
+            )[: self.MAX_BOUNDS_WEEKS]
+            counted = [weeks[index] for index in sorted(heaviest)]
+        exact = Exactness(
+            pricing_seconds=self.EXACT_PRICING_SECONDS,
+            years=None if years is None else frozenset(years),
+            cutoff_ratio={year: Fraction(demand, capacity) for year, (demand, capacity) in cutoffs.items()},
+        )
+        deadline = started + seconds
+        rows: list[WeekBoundsRow] = []
+        for label, week in counted:
+            if time.monotonic() >= deadline:
+                break
+            for load in self._week_loads(week, deadline=deadline, exact=exact):
+                rows.append(
+                    WeekBoundsRow(
+                        year=load.year,
+                        period=None if label is None else label.period(),
+                        parity=None if label is None else label.parity(),
+                        demand_minutes=load.demand_minutes,
+                        capacity_minutes=load.capacity_minutes,
+                        over=load.over,
+                        converged=load.converged,
+                        cutoff=load.cutoff,
+                    ),
+                )
+        return WeekBoundsResponse(
+            request_id=request.request_id,
+            weeks_total=len(weeks),
+            weeks_counted=len(counted),
+            rows=rows,
+            refusal=None,
+            deadline_hit=time.monotonic() >= deadline,
             elapsed_ms=round((time.monotonic() - started) * 1000),
         )
 

@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayUnique, IsArray, IsUUID, Matches, ValidateIf, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsOptional, IsUUID, Matches, ValidateIf, ValidateNested } from 'class-validator';
 
 /**
  * One lead change of a proposal, as the dialog holds it: the post, the lead it has now (null: nobody), and the one the
@@ -32,6 +32,15 @@ export class StaffingWeekDto {
    */
   @Matches(/^[0-9a-f]{64}$/, { message: 'basisSha256 must be a sha256 hex digest.' })
   basisSha256!: string;
+
+  /**
+   * The proposal's basis already covers the week (a search's proposal: its basis is the tjänstefördelning's and the week's
+   * together, withWeekBasis). The route then compares the digest of both as they are now, not the tjänstefördelning's alone,
+   * and 409s when either has moved; the digest it returns is that same one.
+   */
+  @IsOptional()
+  @IsBoolean()
+  coversWeek?: boolean;
 
   /**
    * The selected changes, at most as many as an apply takes. Empty is a question with an answer (the week as it

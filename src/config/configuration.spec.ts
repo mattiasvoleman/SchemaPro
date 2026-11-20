@@ -91,6 +91,8 @@ describe('loadConfiguration', () => {
       leaveConsent: { background: true },
       // Unset: 30 s a candidate, two runs at once, four workers, the sweep on.
       candidates: { maxSeconds: 30, runsMax: 2, solverWorkers: 4, background: true },
+      // Unset: a search may run 15 minutes and asks the engine for one count at a time (the engine counts one at a time for every school).
+      staffingSearch: { budgetSeconds: 900, concurrency: 1 },
     });
   });
 

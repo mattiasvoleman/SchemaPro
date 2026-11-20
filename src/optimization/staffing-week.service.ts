@@ -191,7 +191,9 @@ export class StaffingWeekService {
       const numbering: GradeNumbering = year.gradeNumbering === 'TIOARIG' ? 'TIOARIG' : 'NIOARIG';
 
       const staffingBasis = await this.staffing.currentBasis(tx, user, dto.academicYearId);
-      if (staffingBasis !== dto.basisSha256) throw stale();
+      // A proposal that covers the week itself (a search's) carries the tjänstefördelning's digest and the week's together, so it is
+      // compared once the week is read, below; every other proposal carries the tjänstefördelning's alone.
+      if (dto.coversWeek !== true && staffingBasis !== dto.basisSha256) throw stale();
 
       // The week as a Generera would be sent it, with the posts nobody teaches in it as they are: the question is about
       // them, so a school whose policy refuses to generate with posts unstaffed is asked about too.
@@ -204,6 +206,9 @@ export class StaffingWeekService {
       // Every post hand-placed: nothing is sent to the engine, and nothing to ask.
       if (prepared.payload.requirements.length === 0) return { ready: false, reason: 'NO_POSTS' } as const;
 
+      const basisSha256 = withWeekBasis(staffingBasis, weekBasisOf(prepared.basisParts));
+      // The proposal's basis covers the week: it holds only while the tjänstefördelning, the releases and the week are as they were.
+      if (dto.coversWeek === true && basisSha256 !== dto.basisSha256) throw stale();
       return {
         ready: true,
         // The school's saved lunch rules, as the check sends them (WeekCheckService.check).
@@ -212,7 +217,7 @@ export class StaffingWeekService {
         ids: { requirementOf: prepared.anonMaps.requirementAnonMap, teacherOf: prepared.teacherAnonMap },
         stretches: prepared.periodStretches,
         numbering,
-        basisSha256: withWeekBasis(staffingBasis, weekBasisOf(prepared.basisParts)),
+        basisSha256,
       } as const;
     });
   }
