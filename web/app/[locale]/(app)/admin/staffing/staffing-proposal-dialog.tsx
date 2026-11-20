@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
@@ -49,6 +49,15 @@ import {
   type StaffWeights,
 } from "./use-staffing-proposal";
 import { TableScroll } from "@/components/ui/table-scroll";
+
+/**
+ * The week before and after the proposal: advice under the teachers' figures, asked of the engine when the proposal
+ * appears and when the selection settles. A lazy chunk of its own: this dialog is lazy from the page, and the panel
+ * (with its request and its texts) is not part of what the dialog costs.
+ */
+const StaffingWeek = lazy(() =>
+  import("@/components/staffing/staffing-week").then((module) => ({ default: module.StaffingWeek })),
+);
 
 /**
  * How long the applied toast, and with it Ångra, stays up — the room
@@ -159,6 +168,16 @@ export function StaffingProposalDialog({
   const [weights, setWeights] = useState<StaffWeights>(DEFAULT_STAFF_WEIGHTS);
   const [pinned, setPinned] = useState<string[]>([]);
   const [proposal, setProposal] = useState<StaffingProposal | null>(null);
+  /**
+   * Which proposal is on the screen, counted up for every answer: the week before and after is asked afresh for each,
+   * even when the tjänstefördelning has not moved (the week may have).
+   */
+  const [serial, setSerial] = useState(0);
+  /**
+   * The basis an apply carries when the week before and after was shown for the selection on the screen: the proposal's
+   * and the week's together, so that an apply is refused as stale if the week has changed since. Null: the proposal's own.
+   */
+  const [weekBasis, setWeekBasis] = useState<string | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [showAllTeachers, setShowAllTeachers] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -196,6 +215,7 @@ export function StaffingProposalDialog({
     if (!next) {
       ask.current += 1;
       setProposal(null);
+      setWeekBasis(null);
       setProblem(null);
       setStale(false);
       setConfirming(false);
@@ -250,6 +270,8 @@ export function StaffingProposalDialog({
       });
       if (mine !== ask.current) return;
       setStale(false);
+      setWeekBasis(null);
+      setSerial((current) => current + 1);
       setProposal(answer);
       setSelected(
         new Set(
@@ -374,7 +396,8 @@ export function StaffingProposalDialog({
     try {
       const result = await apply.mutateAsync({
         academicYearId,
-        basisSha256: proposal.basisSha256,
+        // The week's digest too when the week was shown for this selection: refused as stale if the week has changed since.
+        basisSha256: weekBasis ?? proposal.basisSha256,
         changes,
         ...(toConfirm.length > 0 ? { confirmedNewTeaching: confirmedNewTeaching(toConfirm) } : {}),
       });
@@ -392,6 +415,7 @@ export function StaffingProposalDialog({
         // button that asks again.
         ask.current += 1;
         setProposal(null);
+        setWeekBasis(null);
         setConfirming(false);
         setStale(true);
         return;
@@ -403,6 +427,18 @@ export function StaffingProposalDialog({
   const noTargets = teachersWithTarget === 0;
   const busy = propose.isPending || apply.isPending;
   const newTeaching = proposal ? newTeachingRows(proposal.assignments, selected) : [];
+  /** The selected part of the proposal as the week before and after is asked about it. */
+  const weekChanges = useMemo(
+    () =>
+      (proposal?.assignments ?? [])
+        .filter((assignment) => selected.has(assignment.requirementId))
+        .map((assignment) => ({
+          requirementId: assignment.requirementId,
+          fromTeacherId: assignment.fromTeacherId,
+          toTeacherId: assignment.toTeacherId,
+        })),
+    [proposal, selected],
+  );
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
@@ -588,6 +624,19 @@ export function StaffingProposalDialog({
             rowName={rowName}
             onKeep={keep}
             busy={busy}
+            week={
+              proposal.assignments.length > 0 ? (
+                <Suspense fallback={null}>
+                  <StaffingWeek
+                    academicYearId={academicYearId}
+                    serial={serial}
+                    basisSha256={proposal.basisSha256}
+                    changes={weekChanges}
+                    onBasis={setWeekBasis}
+                  />
+                </Suspense>
+              ) : null
+            }
           >
             <DialogFooter className="flex-wrap gap-2">
               <Button variant="outline" onClick={() => setProposal(null)} disabled={busy}>
@@ -682,6 +731,7 @@ function ProposalResult({
   rowName,
   onKeep,
   busy,
+  week,
   children,
 }: {
   proposal: StaffingProposal;
@@ -695,6 +745,8 @@ function ProposalResult({
   rowName: (subjectId: string, groupId: string) => string;
   onKeep: (requirementId: string) => void;
   busy: boolean;
+  /** The week before and after the selection (advice): under the unstaffed rows and the engine's explanations, before the buttons. */
+  week: ReactNode;
   children: ReactNode;
 }) {
   const t = useTranslations("staffing.proposal");
@@ -1006,6 +1058,8 @@ function ProposalResult({
           </ul>
         </section>
       ) : null}
+
+      {week}
 
       <p className="text-xs text-muted-foreground">{t("unchanged")}</p>
       {children}

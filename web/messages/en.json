@@ -4697,7 +4697,58 @@
       "confirmBack": "Back",
       "confirmApply": "Confirm and apply {count, plural, one {# selected} other {# selected}}",
       "newTeachingUnconfirmed": "The proposal gives {count, plural, one {one change} other {# changes}} new teaching that has not been confirmed. Nothing was saved. Go back and compute a new proposal.",
-      "rowNotReleased": "The entry has a teacher the school chose and is not released for the engine. Nothing was saved."
+      "rowNotReleased": "The entry has a teacher the school chose and is not released for the engine. Nothing was saved.",
+      "week": {
+        "title": "The week before and after",
+        "noSelection": "Select at least one change above to see what it does to the week.",
+        "asking": "Counting the week before and after the proposal…",
+        "updating": "Counting the week again for your selection…",
+        "unavailable": {
+          "ENGINE_OLDER": "The scheduling engine is being updated and cannot count the week yet. The proposal can still be applied.",
+          "THROTTLED": "Asked too often. Wait a minute. The proposal can still be applied.",
+          "STALE": "The staffing has changed since the proposal was calculated, so the week is not counted. Calculate a new proposal.",
+          "ERROR": "The week could not be counted right now. The proposal can still be applied."
+        },
+        "notChecked": {
+          "NO_CHANGES": "None of the selected changes changes the week the engine counts (posts placed at the same time as another post, for example), so the week is as it is.",
+          "NOT_READY": "The week cannot be counted right now: the timetable is in a state Generera refuses too, for example a block that is partly locked. The proposal can still be applied.",
+          "NO_POSTS": "Every post is placed by hand, so the engine has no week to count.",
+          "ENGINE_OLDER": "The scheduling engine is being updated and cannot count the week yet. The proposal can still be applied.",
+          "ENGINE_ERROR": "The engine did not answer for the week right now. The proposal can still be applied.",
+          "TOO_SLOW": "The week did not get counted in time, so we cannot say how the proposal affects it. The proposal can still be applied."
+        },
+        "worseTitle": "The proposal makes the week tighter",
+        "worseBody": "In at least one year the week is closer to its limit, or over it, with the proposal than without. Apply it only if you want it anyway.",
+        "notWorse": "The proposal does not make the tightest week tighter in any of the years below.",
+        "noYears": "None of the years the changes touch is at 85 % of the frame time or more, before or after the proposal.",
+        "year": "Year {year}",
+        "line": {
+          "TIGHTER": "{before} → {after}: the week gets tighter",
+          "LOOSER": "{before} → {after}: the tightest period gets lighter",
+          "SAME": "{before} → {after}: the tightest period is unchanged",
+          "STILL_OVER": "Before: {before}. After: {after}. The week is over the frame time both before and after, so we cannot say whether the proposal makes it better or worse.",
+          "NEWLY_REFUSED": "Before: {before}. After: the engine refuses the week by another count than the week load.",
+          "NOT_COMPARED": "Before: {before}. After: {after}. The two cannot be compared."
+        },
+        "note": {
+          "STILL_OVER": "The engine stops counting at the first period it refuses, so the two figures are lower bounds for different periods.",
+          "NOT_COMPARED": "At least one of the figures is a lower bound or is missing, so they are not put in order."
+        },
+        "count": {
+          "load": "{atLeast, select, yes {at least } other {}}{percent} %",
+          "over": "at least {percent} %",
+          "under": "under {below} %",
+          "unknown": "not counted",
+          "refused": "refused by another count"
+        },
+        "period": "{when, select, before {Before} other {After}}: counted for the weeks {from} – {to}{more, select, yes { and the other weeks with the same posts} other {}}.",
+        "overlay": {
+          "fromNobody": "{count, plural, one {# post has no teacher today. The week before is counted with no teacher on it} other {# posts have no teacher today. The week before is counted with no teacher on them}}, so a tighter week afterwards is expected.",
+          "newToTheWeek": "{count, plural, one {# teacher has} other {# teachers have}} nothing else in the week today. The week after counts only the new posts.",
+          "notLaidOver": "{count, plural, one {# selected change does not show in the week the engine counts and is left out} other {# selected changes do not show in the week the engine counts and are left out}}."
+        },
+        "limits": "The figures are lower bounds that the engine can prove for the year's tightest part of the school year, and they do not say that a timetable exists. A lighter period can get heavier without the figure changing. A week over the frame time is only counted up to the first period the engine refuses, so it is not compared with another. The week is counted as it is now: if it changes before you apply, nothing is saved and you calculate again."
+      }
     },
     "engineRelease": {
       "title": "Released entries",
