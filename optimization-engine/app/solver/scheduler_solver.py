@@ -5649,7 +5649,7 @@ class SchedulerSolver:
         request: OptimizeScheduleRequest,
         *,
         years: Collection[int] | None,
-        cutoff_minutes: Mapping[int, int],
+        cutoffs: Mapping[int, tuple[int, int]],
         seconds: float,
     ) -> WeekBoundsResponse:
         """EACH YEAR'S EXACT LEAST WEEK, week by week: what a search for the best choice of teachers ranks by.
@@ -5661,7 +5661,8 @@ class SchedulerSolver:
         full. This counts every real week of the year (up to MAX_BOUNDS_WEEKS),
         every year asked for, to the end (week_load.Exactness), and says for each
         figure whether it is exact (`converged`) and whether it was stopped at the
-        cutoff it was given (`cutoff`: then it is only "above the cutoff").
+        cutoff it was given (`cutoff`: then it is only "above the cutoff", a share
+        of the week's supply, given per year as (demand, capacity) in minutes).
 
         What it does NOT do is refuse: a week over the supply is a figure (`over`).
         The arithmetic counts that decide a week in microseconds (a class with more
@@ -5692,11 +5693,10 @@ class SchedulerSolver:
                 key=lambda index: -sum(r.lessons_per_week for r in weeks[index][1].requirements),
             )[: self.MAX_BOUNDS_WEEKS]
             counted = [weeks[index] for index in sorted(heaviest)]
-        slot_minutes = self._grid.slot_minutes
         exact = Exactness(
             pricing_seconds=self.EXACT_PRICING_SECONDS,
             years=None if years is None else frozenset(years),
-            cutoff_slots={year: Fraction(minutes, slot_minutes) for year, minutes in cutoff_minutes.items()},
+            cutoff_ratio={year: Fraction(demand, capacity) for year, (demand, capacity) in cutoffs.items()},
         )
         deadline = started + seconds
         rows: list[WeekBoundsRow] = []

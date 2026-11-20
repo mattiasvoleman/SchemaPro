@@ -31,10 +31,15 @@ MAX_BOUNDS_SECONDS = 30.0
 
 
 class WeekBoundsCutoff(CamelModel):
-    """Stop counting a year once its proved lower bound passes this many minutes."""
+    """Stop counting a year's week once its proved lower bound passes this share of the week's supply.
+
+    The share is `demandMinutes / capacityMinutes`: the tightest week the caller already has for the year,
+    so that a candidate whose bound is proved above it is known to make the year's tightest week worse.
+    """
 
     year: int = Field(ge=0, le=20)
-    minutes: int = Field(ge=0, le=1_000_000)
+    demand_minutes: int = Field(alias="demandMinutes", ge=0, le=1_000_000)
+    capacity_minutes: int = Field(alias="capacityMinutes", ge=1, le=1_000_000)
 
 
 class WeekBoundsRequest(OptimizeScheduleRequest):
@@ -42,7 +47,7 @@ class WeekBoundsRequest(OptimizeScheduleRequest):
 
     #: The years to count (the payload's own numbering); every year when left out.
     years: list[int] | None = Field(default=None, max_length=16)
-    #: Per year: stop at a figure above this. The figure is then `cutoff` and only a lower bound.
+    #: Per year: stop at a week above this share of its supply. The figure is then `cutoff` and only a lower bound.
     cutoffs: list[WeekBoundsCutoff] = Field(default_factory=list, max_length=16)
     #: The whole count's seconds, from the request's arrival. A figure the seconds cut is not exact.
     seconds: float = Field(default=25.0, gt=0, le=MAX_BOUNDS_SECONDS)

@@ -256,15 +256,18 @@ class Exactness:
     2 365 minutes for a graph whose bound is 2 730, measured under host load.
 
     `years` limits the count to those years (None: all), so a move that touches
-    one year is not charged for the others. `cutoff_slots` stops a year's count
-    once its PROVED lower bound passes the given number of slots: the figure
-    then only says "above the cutoff" (`StageLoad.cutoff`), which rejects a
-    candidate and ranks nobody.
+    one year is not charged for the others. `cutoff_ratio` stops a year's count
+    in a week once its PROVED lower bound passes that share of the week's supply:
+    the figure then only says "above the cutoff" (`StageLoad.cutoff`), which
+    rejects a candidate and ranks nobody. A share and not a number of minutes,
+    because the weeks of a year can have supplies of their own (a post of years
+    8-9 that runs only in the spring), and "worse than the tightest week it was"
+    is a share of what the week offers.
     """
 
     pricing_seconds: float
     years: frozenset[int | None] | None = None
-    cutoff_slots: Mapping[int | None, Fraction] = field(default_factory=dict)
+    cutoff_ratio: Mapping[int | None, Fraction] = field(default_factory=dict)
 
 
 @dataclass
@@ -425,7 +428,8 @@ def week_loads(
             shared = _shared_teachers(members, pieces_of, relations)
         else:
             proof = _Proof()
-            cutoff = exact.cutoff_slots.get(year)
+            ratio = exact.cutoff_ratio.get(year)
+            cutoff = None if ratio is None else ratio * supply
             bound = _stage_bound(
                 graph,
                 stop_at_or_below=-1.0,

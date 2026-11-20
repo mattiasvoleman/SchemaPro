@@ -164,12 +164,13 @@ def test_a_cutoff_stops_a_year_and_says_the_figure_is_only_above_it(
     """A bound already above the cutoff is "worse than that": it rejects a candidate and ranks nobody."""
     today = wcc._autumn_over_and_spring_more(cases)
 
-    stopped = _bounds(client, today, cutoffs=[{"year": 9, "minutes": 1500}])
-    roomy = _bounds(client, today, cutoffs=[{"year": 9, "minutes": 100_000}])
+    stopped = _bounds(client, today, cutoffs=[{"year": 9, "demandMinutes": 1500, "capacityMinutes": 2200}])
+    roomy = _bounds(client, today, cutoffs=[{"year": 9, "demandMinutes": 100_000, "capacityMinutes": 2200}])
 
     for row in stopped["rows"]:
         assert row["cutoff"] is True and row["converged"] is False
-        assert row["demandMinutes"] > 1500
+        # Above the share it was given, whatever the bound it stopped at.
+        assert row["demandMinutes"] * 2200 > 1500 * row["capacityMinutes"]
     for row, exact in zip(roomy["rows"], _bounds(client, today)["rows"], strict=True):
         assert row["cutoff"] is False and row["converged"] is True
         assert row == exact
@@ -178,7 +179,20 @@ def test_a_cutoff_stops_a_year_and_says_the_figure_is_only_above_it(
 def test_a_cutoff_of_another_year_changes_nothing(client: TestClient, cases: dict[str, Any]) -> None:
     today = wcc._autumn_over_and_spring_more(cases)
 
-    assert _bounds(client, today, cutoffs=[{"year": 3, "minutes": 10}])["rows"] == _bounds(client, today)["rows"]
+    other = [{"year": 3, "demandMinutes": 10, "capacityMinutes": 2200}]
+    assert _bounds(client, today, cutoffs=other)["rows"] == _bounds(client, today)["rows"]
+
+
+def test_a_cutoff_is_a_share_of_the_weeks_supply_not_a_number_of_minutes(client: TestClient, cases: dict[str, Any]) -> None:
+    """The autumn is 2,370 of 2,200 (107.7 %) and the spring 3,180 of 2,200: a cutoff at exactly the autumn's share
+    leaves the autumn's figure (it is not above it) and stops the spring's."""
+    today = wcc._autumn_over_and_spring_more(cases)
+
+    answer = _bounds(client, today, cutoffs=[{"year": 9, "demandMinutes": 2370, "capacityMinutes": 2200}])
+
+    autumn, spring = _figure(answer, 9, 0), _figure(answer, 9, 1)
+    assert (autumn["cutoff"], autumn["converged"], autumn["demandMinutes"]) == (False, True, 2370)
+    assert (spring["cutoff"], spring["converged"]) == (True, False)
 
 
 def _five_cycle() -> week_load._Graph:
@@ -233,10 +247,10 @@ def test_a_year_whose_pricing_was_not_proved_is_not_exact_and_one_that_was_is(mo
         kwargs["proof"].unproven += 1
         return real(*args, **kwargs)
 
-    exact = _solver().week_bounds(request, years=None, cutoff_minutes={}, seconds=20.0)
+    exact = _solver().week_bounds(request, years=None, cutoffs={}, seconds=20.0)
     decided = _solver()._week_loads(request)
     monkeypatch.setattr(week_load, "_stage_bound", unproven)
-    inexact = _solver().week_bounds(request, years=None, cutoff_minutes={}, seconds=20.0)
+    inexact = _solver().week_bounds(request, years=None, cutoffs={}, seconds=20.0)
 
     assert [row.converged for row in exact.rows] == [True]
     assert [row.converged for row in inexact.rows] == [False]
@@ -249,7 +263,7 @@ def test_a_year_whose_pricing_was_not_proved_is_not_exact_and_one_that_was_is(mo
 def test_the_deadline_leaves_a_year_without_a_row_and_says_so() -> None:
     request = _request(wl._year(class_lessons=27))
 
-    answer = _solver().week_bounds(request, years=None, cutoff_minutes={}, seconds=1e-9)
+    answer = _solver().week_bounds(request, years=None, cutoffs={}, seconds=1e-9)
 
     assert answer.rows == []
     assert answer.deadline_hit is True
@@ -261,7 +275,7 @@ def test_more_weeks_than_the_cap_are_counted_to_the_cap_and_say_so(
     """A figure of fewer weeks than exist ranks nothing: the caller compares the two numbers."""
     monkeypatch.setattr(SchedulerSolver, "MAX_BOUNDS_WEEKS", 1)
 
-    answer = _solver().week_bounds(_request(wcc._autumn_over_and_spring_more(cases)), years=None, cutoff_minutes={}, seconds=20.0)
+    answer = _solver().week_bounds(_request(wcc._autumn_over_and_spring_more(cases)), years=None, cutoffs={}, seconds=20.0)
 
     assert (answer.weeks_total, answer.weeks_counted) == (2, 1)
     assert len(answer.rows) == 1
@@ -272,7 +286,7 @@ def test_a_week_the_quick_counts_refuse_has_no_figures_and_names_the_count() -> 
     request = _request(payload)
     config = to._settings(**settings)
 
-    answer = SchedulerSolver(config).week_bounds(request, years=None, cutoff_minutes={}, seconds=20.0)
+    answer = SchedulerSolver(config).week_bounds(request, years=None, cutoffs={}, seconds=20.0)
     refused = SchedulerSolver(config).check_week(request)
 
     assert answer.rows == []
@@ -289,7 +303,7 @@ def test_nothing_is_solved_and_no_model_is_built(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(SchedulerSolver, "_build_model", forbidden)
     monkeypatch.setattr(SchedulerSolver, "_solve_guarded", forbidden, raising=False)
 
-    answer = _solver().week_bounds(_request(wl._year(class_lessons=27)), years=None, cutoff_minutes={}, seconds=20.0)
+    answer = _solver().week_bounds(_request(wl._year(class_lessons=27)), years=None, cutoffs={}, seconds=20.0)
 
     assert answer.rows
 
@@ -345,6 +359,7 @@ def test_the_route_refuses_a_field_it_does_not_know_and_a_bad_second_count(clien
     assert client.post(URL, json={**payload, "seconds": 0}, headers=HEADERS).status_code == 422
     assert client.post(URL, json={**payload, "seconds": 31}, headers=HEADERS).status_code == 422
     assert client.post(URL, json={**payload, "cutoffs": [{"year": 9}]}, headers=HEADERS).status_code == 422
+    assert client.post(URL, json={**payload, "cutoffs": [{"year": 9, "demandMinutes": 1, "capacityMinutes": 0}]}, headers=HEADERS).status_code == 422
 
 
 def test_a_refusal_of_the_payload_is_the_400_generera_gives(client: TestClient) -> None:

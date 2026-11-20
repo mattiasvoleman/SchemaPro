@@ -80,7 +80,7 @@ async def week_bounds(
                     solver.week_bounds,
                     payload,
                     years=payload.years,
-                    cutoff_minutes={cutoff.year: cutoff.minutes for cutoff in payload.cutoffs},
+                    cutoffs={cutoff.year: (cutoff.demand_minutes, cutoff.capacity_minutes) for cutoff in payload.cutoffs},
                     seconds=payload.seconds,
                 ),
                 timeout=payload.seconds + _BUILD_HEADROOM_SECONDS,
