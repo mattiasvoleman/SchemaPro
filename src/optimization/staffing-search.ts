@@ -347,6 +347,25 @@ export function movesOf(
   return moves;
 }
 
+/** A move by what it does, so that moves can be put in order and found again after the state has changed. */
+export function moveKey(move: Move): string {
+  return move.changes.map((change) => `${change.requirementId}>${change.toTeacherId}`).join('+');
+}
+
+/**
+ * The moves in the order a round asks them: by key, beginning after `after` (the move the last round took) and going round.
+ * A round that asked the same first moves every time would ask the moves that did not help again and again (their state is
+ * the one the last move changed, so nothing is remembered of them), and never reach the ones at the end of the list before
+ * the budget was spent. Beginning after the last move taken spreads the evaluations over every move in turn, and a round
+ * that finds nothing has still asked every one of them.
+ */
+export function inRoundOrder(moves: readonly Move[], after: string | null): Move[] {
+  const sorted = [...moves].sort((a, b) => (moveKey(a) < moveKey(b) ? -1 : moveKey(a) > moveKey(b) ? 1 : 0));
+  if (after === null) return sorted;
+  const first = sorted.findIndex((move) => moveKey(move) > after);
+  return first <= 0 ? sorted : [...sorted.slice(first), ...sorted.slice(0, first)];
+}
+
 /** The leads a state has after a move, never carrying a post that is back with the lead it started with. */
 export function afterMove(
   model: SearchModel,
@@ -389,7 +408,8 @@ export interface SearchLimits {
    * Moves evaluated before one is taken: the best improvement found among the first `batch` of a round is accepted and the
    * rest of the round is not asked. An exhaustive round (the steepest step) costs as many evaluations as there are moves
    * each time; a local optimum is only known after a round that finds no improvement in ALL of them, so the last round is
-   * exhaustive either way.
+   * exhaustive either way. A batch of a few moves takes whatever helps first, in small steps (measured on the study's åk 9:
+   * 19 moves and 800 evaluations for what a batch of 24 does in fewer).
    */
   batch: number;
 }
@@ -475,6 +495,8 @@ export async function runSearch(
   const snapshot = (): SearchProgress => ({ round, evaluations, accepted, leads, figures, tally });
   const finish = (stop: StaffingSearchStop): SearchOutcome => ({ ...snapshot(), stop, start });
   const memo = new Map<string, Evaluation>();
+  /** The move the last round took: the next round begins after it (inRoundOrder). */
+  let resumeAfter: string | null = null;
   const keyOf = (state: ReadonlyMap<string, string>, years: readonly number[]): string =>
     `${years.join(',')}|${[...state].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([post, teacher]) => `${post}>${teacher}`).join(';')}`;
 
@@ -485,7 +507,7 @@ export async function runSearch(
     if (round >= limits.maxRounds) return finish('MAX_ROUNDS');
     round += 1;
 
-    const moves = movesOf(model, leads, judged);
+    const moves = inRoundOrder(movesOf(model, leads, judged), resumeAfter);
     if (moves.length === 0) return finish(accepted === 0 ? 'NO_MOVES' : 'LOCAL_OPTIMUM');
 
     // Held in objects: the workers below write them, and a `let` written in a closure is narrowed to its first value.
@@ -565,6 +587,7 @@ export async function runSearch(
     const taken = round_.best;
     if (taken !== null) {
       leads = afterMove(model, leads, moves[taken.index]!);
+      resumeAfter = moveKey(moves[taken.index]!);
       figures = taken.figures;
       accepted += 1;
       await deps.accepted?.(snapshot());

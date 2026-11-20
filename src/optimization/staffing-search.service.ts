@@ -622,7 +622,8 @@ export class StaffingSearchService implements OnModuleInit, OnModuleDestroy {
           concurrency: Math.max(1, settings.concurrency),
           maxRounds: MAX_SEARCH_ROUNDS,
           maxEvaluations: MAX_SEARCH_EVALUATIONS,
-          batch: Math.max(1, settings.concurrency) * 3,
+          // The best of 24 moves is taken (several rounds of the study's åk 9 measured: a batch of 9 spent 800 evaluations for 19 small steps).
+          batch: Math.max(24, Math.max(1, settings.concurrency) * 3),
         },
         model,
       );

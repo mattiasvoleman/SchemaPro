@@ -5,10 +5,12 @@ import {
   compareCells,
   compareVectors,
   cutoffsOf,
+  inRoundOrder,
   isNotTight,
   judge,
   judgedYearsOf,
   movableRows,
+  moveKey,
   movesOf,
   readEvaluation,
   runSearch,
@@ -574,6 +576,43 @@ describe('runSearch', () => {
     await runSearch(open, start, { ...LIMITS, concurrency: 1, batch: 2 }, batched.d);
 
     expect(batched.calls.length).toBeLessThan(all.calls.length);
+  });
+
+  it('begins each round after the move the last round took, so that the moves that did not help are not asked first again and again', async () => {
+    const { figuresOf } = oracle(posts, base);
+    const start = figuresOf(open, new Map(), [9]);
+    const rounds: string[][] = [];
+    let seen = 0;
+    const { d } = deps({
+      evaluate: async (leads, years) => {
+        const key = [...leads].sort().map(([post, to]) => `${post}>${to}`).join('+');
+        if (seen === 0) rounds.push([]);
+        rounds.at(-1)!.push(key);
+        seen += 1;
+        return { kind: 'FIGURES', figures: figuresOf(open, leads, years) };
+      },
+      accepted: () => {
+        seen = 0;
+      },
+    });
+
+    await runSearch(open, start, { ...LIMITS, concurrency: 1, batch: 3 }, d);
+
+    expect(rounds.length).toBeGreaterThan(1);
+    // The first round begins with the first move of the list; the second does not begin with it again.
+    const first = rounds[0]![0]!;
+    expect(rounds[1]![0]).not.toBe(first);
+  });
+
+  it('puts the moves in order by key, and goes round from the one after the last taken', () => {
+    const move = (post: string, to: string) => ({ changes: [{ requirementId: post, toTeacherId: to }], years: [9] });
+    const moves = [move('p3', 'B'), move('p1', 'B'), move('p2', 'C'), move('p2', 'B')];
+
+    expect(inRoundOrder(moves, null).map(moveKey)).toEqual(['p1>B', 'p2>B', 'p2>C', 'p3>B']);
+    expect(inRoundOrder(moves, 'p2>B').map(moveKey)).toEqual(['p2>C', 'p3>B', 'p1>B', 'p2>B']);
+    // After the last of them it goes round to the first, and a key not in the list is found by where it would be.
+    expect(inRoundOrder(moves, 'p3>B').map(moveKey)).toEqual(['p1>B', 'p2>B', 'p2>C', 'p3>B']);
+    expect(inRoundOrder(moves, 'p2>BB').map(moveKey)).toEqual(['p2>C', 'p3>B', 'p1>B', 'p2>B']);
   });
 
   it('asks only the years a move touches, and each candidate state once', async () => {
