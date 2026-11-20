@@ -5516,7 +5516,9 @@ whole year.
   `/admin/timetable`, including its drag check). Two lessons are a clash when
   their dates and parities let them meet (`weeksCanOverlap`) **and** some week
   they can meet in has a school day; a clash in a week with school is still
-  one. `findConflicts` and the publish check read the year's breaks, its days
+  one. A lesson on a Saturday or a Sunday (`dayOfWeek` 6 and 7, which the
+  hand edit and the imports take) is never narrowed: a week is closed by its
+  Monday to Friday, and the weekend is written on a day no lov need take. `findConflicts` and the publish check read the year's breaks, its days
   and its groups when two lessons share an hour (one query for a year with no
   break). The other readers of `weeksCanOverlap` — the swap board
   (`swap-units.ts`), the room optimisation, the shared-room reads, the travel

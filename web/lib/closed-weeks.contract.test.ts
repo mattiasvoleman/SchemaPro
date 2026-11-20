@@ -49,6 +49,15 @@ describe("the board reads the closed weeks as the gateway does", () => {
     }
   });
 
+  it("is no answer for a Saturday or a Sunday, as the gateway's: a week is closed Monday to Friday", () => {
+    const year = { startDate: "2026-08-17", endDate: "2027-06-11" };
+    const closed = closedWeeksOf(year, [{ startDate: "2026-10-26", endDate: "2026-10-30", minGradeLevel: null, maxGradeLevel: null }], [9]);
+    const autumn = { startDate: null, endDate: "2026-11-01", recurrence: "ALL_WEEKS" as const };
+    const spring = { startDate: "2026-10-26", endDate: null, recurrence: "ALL_WEEKS" as const };
+    for (const weekday of [1, 3, 5, undefined]) expect(meetOnlyInClosedWeeks(autumn, spring, closed, weekday)).toBe(true);
+    for (const weekend of [6, 7]) expect(meetOnlyInClosedWeeks(autumn, spring, closed, weekend)).toBe(false);
+  });
+
   it("is undefined where the school has no break, and none that closes a week", () => {
     const year = { startDate: "2026-08-17", endDate: "2027-06-11" };
     expect(closedWeeksOf(year, [], [9])).toBeUndefined();

@@ -29,6 +29,8 @@ interface BreakSpan {
 }
 
 const DAY_MS = 86_400_000;
+/** The weekdays a week is closed by: Monday to Friday (the engine's SCHEDULE_DAYS). */
+const SCHEDULE_WEEKDAYS = 5;
 const parse = (day: string): Date => new Date(`${day}T00:00:00.000Z`);
 const text = (date: Date): string => date.toISOString().slice(0, 10);
 const plus = (date: Date, days: number): Date => new Date(date.getTime() + days * DAY_MS);
@@ -92,10 +94,20 @@ interface HeldWeeks {
  * overlap that is empty or reaches outside the läsår, or no week of a parity both run in. Asked after
  * weeksCanOverlap, which it only narrows:
  *
- *     clash  =  weeksCanOverlap(a, b)  &&  !meetOnlyInClosedWeeks(a, b, closed)
+ *     clash  =  weeksCanOverlap(a, b)  &&  !meetOnlyInClosedWeeks(a, b, closed, dayOfWeek)
+ *
+ * Only for a weekday: a week is closed by its Monday to Friday, and a lesson on a Saturday or a Sunday
+ * (`dayOfWeek` 6 and 7) is written on a weekend no lov need take, so a pair of the weekend is never narrowed
+ * (false). Left out, `dayOfWeek` is a weekday's. The gateway's copy says the same (src/calendar/school-weeks.ts).
  */
-export function meetOnlyInClosedWeeks(a: HeldWeeks, b: HeldWeeks, closed: ClosedWeeks | undefined): boolean {
+export function meetOnlyInClosedWeeks(
+  a: HeldWeeks,
+  b: HeldWeeks,
+  closed: ClosedWeeks | undefined,
+  dayOfWeek?: number,
+): boolean {
   if (!closed) return false;
+  if (dayOfWeek !== undefined && dayOfWeek > SCHEDULE_WEEKDAYS) return false;
   const aStart = a.startDate ?? closed.from;
   const bStart = b.startDate ?? closed.from;
   const aEnd = a.endDate ?? closed.to;

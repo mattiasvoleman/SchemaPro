@@ -268,3 +268,45 @@ describe('year clashes in a shared room (Delade salar)', () => {
     expect(clashPairs(yearClashes(input))).toEqual([]);
   });
 });
+
+describe('year clashes in the weeks of a lov (school-weeks.ts)', () => {
+  // A höstlov of Monday to Friday, the 26th to the 30th of October, closes the week of the 26th. An autumn lesson to the
+  // 1st of November and a spring lesson from the 26th meet only in it, and in the weekend that no lov takes.
+  const closedWeeks = { from: '2026-08-17', to: '2027-06-11', mondays: ['2026-10-26'] };
+  const pair = (dayOfWeek: number): YearClashInput =>
+    base({
+      lessons: [
+        lesson('a', '7A', 'S-a', { dayOfWeek, teacherId: 't', roomId: 'r', endDate: '2026-11-01' }),
+        lesson('b', '7B', 'S-b', { dayOfWeek, teacherId: 't', roomId: 'r', startDate: '2026-10-26' }),
+      ],
+      closedWeeks,
+    });
+
+  const kindsOf = (input: YearClashInput): string[] => clashPairs(yearClashes(input)).map((entry) => entry.kind).sort();
+
+  it('counts no clash for two lessons of a weekday that meet only in a week with no school day', () => {
+    expect(kindsOf(pair(3))).toEqual([]);
+    expect(kindsOf({ ...pair(3), closedWeeks: undefined })).toEqual(['ROOM', 'TEACHER']);
+  });
+
+  it('counts no pupil of a lesson that meets the hall only in a lov: they are not in it with the others', () => {
+    // 7A to the 10th of January, 7B from the 4th and 7C to the 3rd, in a hall of four seats. 7A meets 7B only in the jullov and
+    // 7C in the autumn, 7B and 7C never meet: no week holds more than two classes, though the three share the hour.
+    const hall = { roomId: 'hall' };
+    const lessons = [
+      lesson('a', '7A', 'S-a', { ...hall, endDate: '2027-01-10' }),
+      lesson('b', '7B', 'S-b', { ...hall, startDate: '2027-01-04' }),
+      lesson('c', '7C', 'S-c', { ...hall, endDate: '2027-01-03' }),
+    ];
+    const pupils: Array<[string, string | null]> = [['a1', '7A'], ['a2', '7A'], ['b1', '7B'], ['b2', '7B'], ['c1', '7C'], ['c2', '7C']];
+    const jullov = { from: '2026-08-17', to: '2027-06-11', mondays: ['2026-12-28', '2027-01-04'] };
+    const input = base({ lessons, studentGroupOf: pupils, sharedRooms: [{ roomId: 'hall', seats: 4 }], closedWeeks: jullov });
+    expect(kindsOf(input)).toEqual([]);
+    // With no weeks closed 7A shares the hall with both of them in the week of the 4th: six pupils in four seats.
+    expect(kindsOf({ ...input, closedWeeks: undefined })).not.toEqual([]);
+  });
+
+  it('keeps two lessons of a Saturday or a Sunday a clash: the weekend is written, the lov took none of it', () => {
+    for (const weekend of [6, 7]) expect(kindsOf(pair(weekend))).toEqual(['ROOM', 'TEACHER']);
+  });
+});

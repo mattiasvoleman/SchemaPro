@@ -2682,6 +2682,23 @@ describe("validatePlacement and the weeks of a lov (lib/closed-weeks.ts)", () =>
     ).toEqual(["ROOM", "TEACHER"]);
   });
 
+  it("holds two lessons of a Saturday to the clash: a week is closed Monday to Friday, and the weekend is written", () => {
+    const hostlov = { from: "2026-08-17", to: "2027-06-11", mondays: new Set(["2026-10-26"]) };
+    const pair = (dayOfWeek: number) => [
+      makePlacement({ id: "a", dayOfWeek, teacherId: "t1", roomId: "r1", endDate: "2026-11-01" }),
+      makePlacement({ id: "b", dayOfWeek, teacherId: "t1", roomId: "r1", startDate: "2026-10-26" }),
+    ];
+    const kinds = (dayOfWeek: number) => {
+      const [candidate, other] = pair(dayOfWeek);
+      return validatePlacement(candidate!, [other!], [], undefined, undefined, undefined, undefined, undefined, undefined, hostlov)
+        .map((hit) => hit.kind)
+        .sort();
+    };
+    expect(kinds(3)).toEqual([]);
+    expect(kinds(6)).toEqual(["ROOM", "TEACHER"]);
+    expect(kinds(7)).toEqual(["ROOM", "TEACHER"]);
+  });
+
   it("paints nothing for such a pair, through the clash map the board draws", () => {
     const lesson = (id: string, group: string, extra: Partial<MasterLesson>) =>
       ({

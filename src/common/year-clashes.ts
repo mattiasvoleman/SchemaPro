@@ -215,7 +215,8 @@ export function yearClashes(input: YearClashInput): Map<string, YearClashHit[]> 
     ? { from: input.closedWeeks.from, to: input.closedWeeks.to, mondays: new Set(input.closedWeeks.mondays) }
     : null;
   /** Whether two lessons can meet in a week anybody sits: their weeks overlap, and not only in weeks with no school day. */
-  const canMeet = (a: Placement, b: Placement): boolean => weeksCanOverlap(a, b) && !meetOnlyInClosedWeeks(a, b, closed);
+  const canMeet = (a: Placement, b: Placement): boolean =>
+    weeksCanOverlap(a, b) && !meetOnlyInClosedWeeks(a, b, closed, a.dayOfWeek);
   const buffers = new Map<string, { before: number; after: number }>();
   for (const row of input.pupilBuffers) {
     if (row.minutesBefore === 0 && row.minutesAfter === 0) continue;

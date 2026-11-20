@@ -143,9 +143,21 @@ export interface HeldWeeks {
  *
  * It is the generator's relation (year-periods.ts: two entries meet where a week with school holds a
  * date of each), so the generator may lay two posts on one hour exactly where the board accepts them.
+ *
+ * ONLY FOR A WEEKDAY. A week is closed by its Monday to Friday, so what it says is of a lesson on one of
+ * those: a lesson on a Saturday or a Sunday (`dayOfWeek` 6 and 7, which the DTO takes and the aSc and Untis
+ * imports read) is written on a weekend no lov need take (a höstlov of the 26th to the 30th leaves the 31st),
+ * and two of them meet there. They are never narrowed: pass the lessons' `dayOfWeek`, and a pair of the weekend
+ * is answered false. Left out, the answer is the weekday's (Monday to Friday), as it was.
  */
-export function meetOnlyInClosedWeeks(a: HeldWeeks, b: HeldWeeks, closed: ClosedWeeks | null | undefined): boolean {
+export function meetOnlyInClosedWeeks(
+  a: HeldWeeks,
+  b: HeldWeeks,
+  closed: ClosedWeeks | null | undefined,
+  dayOfWeek?: number,
+): boolean {
   if (!closed) return false;
+  if (dayOfWeek !== undefined && dayOfWeek > SCHEDULE_WEEKDAYS) return false;
   const aStart = a.startDate ?? closed.from;
   const bStart = b.startDate ?? closed.from;
   const aEnd = a.endDate ?? closed.to;

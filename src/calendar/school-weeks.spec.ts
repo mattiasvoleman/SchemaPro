@@ -97,6 +97,19 @@ describe('meetOnlyInClosedWeeks', () => {
     expect(meetOnlyInClosedWeeks(held('2027-01-04', '2027-08-01'), held('2027-01-01', '2027-08-01'), closed)).toBe(false);
   });
 
+  it('is no answer for a lesson of the weekend: a week is closed Monday to Friday, and a Saturday is written', () => {
+    // A höstlov of Monday to Friday closes the week of the 26th, and leaves its Saturday and Sunday.
+    const hostlov = closedOf([lov('2026-10-26', '2026-10-30')]);
+    const autumn = held(null, '2026-11-01');
+    const spring = held('2026-10-26', null);
+    for (const weekday of [1, 2, 3, 4, 5, undefined]) {
+      expect(meetOnlyInClosedWeeks(autumn, spring, hostlov, weekday)).toBe(true);
+    }
+    for (const weekend of [6, 7]) {
+      expect(meetOnlyInClosedWeeks(autumn, spring, hostlov, weekend)).toBe(false);
+    }
+  });
+
   it('agrees with a lesson-by-lesson reading of the dates, over random windows', () => {
     const next = random(20261120);
     const pick = <T>(values: readonly T[]): T => values[Math.floor(next() * values.length)]!;

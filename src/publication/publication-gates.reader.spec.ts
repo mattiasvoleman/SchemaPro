@@ -318,6 +318,15 @@ describe('PUB_CLASHES and the weeks of a lov (school-weeks.ts)', () => {
     expect((await clashFinding(client(), testUser(), YEAR, lessonsMeeting('2027-01-17'))).count).toBe(2);
   });
 
+  it('asks the läsår being published for its lov, its days and its groups, and no other year', async () => {
+    arrange([jullov]);
+    await clashFinding(client(), testUser(), YEAR, lessonsMeeting('2027-01-10'));
+    expect(tx.schoolBreak.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { academicYearId: YEAR } }));
+    expect(tx.studentGroup.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { academicYearId: YEAR }, select: { gradeLevel: true } }),
+    );
+  });
+
   it('asks the year’s groups: a lov for åk 7–9 leaves the weeks open while the school has an åk 3 class', async () => {
     const upper = { ...jullov, minGradeLevel: 7, maxGradeLevel: 9 };
     arrange([upper], [9]);

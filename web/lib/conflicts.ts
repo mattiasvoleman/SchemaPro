@@ -597,7 +597,7 @@ export function validatePlacement(
     // odd weeks and hemkunskap on even weeks may share slot, room and teacher.
     if (!weeksCanOverlap(candidate, other)) continue;
     // ... in a week anybody sits: two that meet only in a lov's weeks are no double booking.
-    if (meetOnlyInClosedWeeks(candidate, other, closedWeeks)) continue;
+    if (meetOnlyInClosedWeeks(candidate, other, closedWeeks, candidate.dayOfWeek)) continue;
 
     const candidateTeachers = teacherIdsOf(candidate);
     const otherTeachers = teacherIdsOf(other);

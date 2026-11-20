@@ -2435,7 +2435,9 @@ export class MasterLessonsService {
       endDate: window.endDate ? window.endDate.toISOString().slice(0, 10) : null,
     });
     const clashing = closedWeeks
-      ? sameTime.filter((other) => !meetOnlyInClosedWeeks(heldWeeks(candidateWeeks), heldWeeks(other), closedWeeks))
+      ? sameTime.filter(
+          (other) => !meetOnlyInClosedWeeks(heldWeeks(candidateWeeks), heldWeeks(other), closedWeeks, candidate.dayOfWeek),
+        )
       : sameTime;
 
     /**

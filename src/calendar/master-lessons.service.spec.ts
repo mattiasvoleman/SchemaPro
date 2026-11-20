@@ -1410,6 +1410,23 @@ describe('MasterLessonsService', () => {
         expect(yearReads.filter(([read]) => read.select && 'endDate' in read.select)).toEqual([]);
       });
 
+      it('still refuses two lessons of a Saturday that meet only in a lov of Monday to Friday: the weekend is written', async () => {
+        arrangeYearWithJullov();
+        // A höstlov, the 26th to the 30th of October, closes the week of the 26th and leaves its Saturday.
+        tx.schoolBreak.findMany.mockResolvedValue([
+          { startDate: day('2026-10-26'), endDate: day('2026-10-30'), minGradeLevel: null, maxGradeLevel: null },
+        ]);
+        sameDay([autumnLesson('2026-11-01')]);
+        await expect(service.create(createDto({ dayOfWeek: 6, startDate: '2026-10-26' }), testUser())).rejects.toThrow(
+          new ConflictException('Teacher already teaches Math in this slot.'),
+        );
+        // The same pair on a Wednesday is no clash: nobody sits that week.
+        sameDay([autumnLesson('2026-11-01')]);
+        await expect(service.create(createDto({ dayOfWeek: 3, startDate: '2026-10-26' }), testUser())).resolves.toMatchObject({
+          id: LESSON_ID,
+        });
+      });
+
       it('reads the lov of a day with no overlap at all as nothing', async () => {
         arrangeYearWithJullov();
         sameDay([otherLesson({ startTime: t('13:00'), endTime: t('14:00'), teacherId: TEACHER_ID })]);
