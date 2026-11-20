@@ -13,7 +13,9 @@ import * as placementTeachers from '../requirement-placements/placement-teachers
 import {
   MAX_STAFF_BODY_BYTES,
   STAFF_ENGINE_UNAVAILABLE,
+  STAFF_NEW_TEACHING_UNCONFIRMED,
   STAFF_PROPOSAL_STALE,
+  STAFF_ROW_NOT_RELEASED,
   StaffingProposalService,
   floorTenthsOf,
   limitMinutes,
@@ -315,6 +317,23 @@ const ask = (overrides: Partial<StaffingProposalDto> = {}): StaffingProposalDto 
 
 const admin = () => testUser({ schoolId: SCHOOL, userId: REKTOR });
 
+/**
+ * The school lets the engine move the posts named (släppt för motorn), all of the school's without a list: the state of a school
+ * that has released what it wants the engine to move. A staffed post that is not released is never moved by a proposal.
+ */
+const releasing = (rows: Record<string, Row[]> = schoolRows(), only?: string[]): Record<string, Row[]> => {
+  rows['teachingRequirementRelease'] = (rows['teachingRequirement'] ?? [])
+    .filter((row) => only === undefined || only.includes(row['id'] as string))
+    .map((row) => ({ requirementId: row['id'], schoolId: SCHOOL, releasedById: REKTOR, releasedAt: day('2026-11-19') }));
+  return rows;
+};
+
+/** The second confirmation the dialog collects: each change of the proposal that gives a teacher a subject or a årskurs they do not teach. */
+const confirmedBy = (proposal: StaffingProposal) =>
+  proposal.assignments
+    .filter((assignment) => assignment.newTeaching !== undefined)
+    .map((assignment) => ({ requirementId: assignment.requirementId, toTeacherId: assignment.toTeacherId }));
+
 /** The payload row (and its set) of a real requirement, through the order the gateway sends in. */
 const sentRow = (payload: StaffRequest, realId: string, rows: Row[] | Record<string, Row[]>) => {
   const list = Array.isArray(rows) ? rows : rows['teachingRequirement']!;
@@ -378,6 +397,7 @@ describe('StaffingProposalService.propose', () => {
       openRequirements: 3,
       keptRequirements: 0,
       fixedRequirements: 2,
+      releasedRequirements: 0,
       vacated: 1,
       inconsistent: 1,
       teachersSent: 5,
@@ -398,8 +418,8 @@ describe('StaffingProposalService.propose', () => {
     expect(payload.teachers[1]!.fixedTenths).toBe(600);
   });
 
-  it('with onlyUnstaffed off, keeps every staffed row free and KEPT, never unstaffable', async () => {
-    const { service, sent } = setup();
+  it('with onlyUnstaffed off, keeps every RELEASED staffed row free and KEPT, never unstaffable', async () => {
+    const { service, sent } = setup(releasing());
     const proposal = await service.propose(ask({ onlyUnstaffed: false }), admin());
     expect(proposal.counts).toMatchObject({ freeRequirements: 4, keptRequirements: 1, openRequirements: 3, fixedRequirements: 1 });
     const payload = sent()[0]!;
@@ -423,7 +443,7 @@ describe('StaffingProposalService.propose', () => {
       requirement(R_CY, G7A, SV, { teacherId: CY, lessonsPerWeek: 4 }),
       requirement(R_DAG, G8A, MA, { teacherId: DAG }),
     );
-    const { service, sent } = setup(rows);
+    const { service, sent } = setup(releasing(rows));
     const proposal = await service.propose(ask({ onlyUnstaffed: false }), admin());
     const payload = sent()[0]!;
     expect(sentRow(payload, R_CY, rows)).toMatchObject({ fixed: true, currentTeacherId: payload.teachers[2]!.id });
@@ -921,7 +941,7 @@ describe('StaffingProposalService.propose', () => {
         return rows;
       };
       const sentFor = async (rows: Record<string, Row[]>) => {
-        const { service, sent } = setup(rows);
+        const { service, sent } = setup(releasing(rows));
         await service.propose(ask({ onlyUnstaffed: false, respectQualifications: true }), admin());
         const payload = sent()[0]!;
         const ma8 = sentRow(payload, R_MA8, rows);
@@ -1170,7 +1190,7 @@ describe('StaffingProposalService.propose', () => {
 
       it('keeps every row the post leads where it is, as for a post without a target — never shed', async () => {
         const rows = unknownFromNovember();
-        const { service, sent } = setup(rows);
+        const { service, sent } = setup(releasing(rows));
         const proposal = await service.propose(ask({ onlyUnstaffed: false }), admin());
         const payload = sent()[0]!;
         const anna = payload.teachers[0]!;
@@ -1180,7 +1200,7 @@ describe('StaffingProposalService.propose', () => {
         expect(proposal.assignments.filter((a) => a.fromTeacherId === ANNA)).toEqual([]);
         // The same post without the period: her own 600 is known room, and her row may move.
         const steadyRows = unknownFromNovember(false);
-        const steady = setup(steadyRows);
+        const steady = setup(releasing(steadyRows));
         await steady.service.propose(ask({ onlyUnstaffed: false }), admin());
         expect(sentRow(steady.sent()[0]!, R_MA7, steadyRows)).toMatchObject({ fixed: false });
       });
@@ -1191,7 +1211,7 @@ describe('StaffingProposalService.propose', () => {
         rows['teacherEmploymentPeriod'] = [
           periodOf(ANNA, { validFrom: day('2026-08-17'), employmentPercent: new Prisma.Decimal('50.000'), teachingTargetMinutesPerWeek: 300 }),
         ];
-        const { service, sent } = setup(rows);
+        const { service, sent } = setup(releasing(rows));
         await service.propose(ask({ onlyUnstaffed: false }), admin());
         const payload = sent()[0]!;
         expect(sentRow(payload, R_MA7, rows)).toMatchObject({ fixed: false, currentTeacherId: payload.teachers[0]!.id });
@@ -1432,7 +1452,7 @@ describe('StaffingProposalService.propose, an administrator who is not marked as
     });
     expect(proposal.counts).toMatchObject({ vacated: 1 }); // Eva's, and not hers
 
-    const movable = setup(leading());
+    const movable = setup(releasing(leading()));
     const open = await movable.service.propose(ask({ onlyUnstaffed: false }), admin());
     const sentMovable = movable.sent()[0]!;
     expect(sentRow(sentMovable, R_MA8, leading()['teachingRequirement']!)).toMatchObject({
@@ -1571,7 +1591,7 @@ describe('StaffingProposalService.apply', () => {
     const { service, world, proposal } = await proposeThenApply(rows);
     expect(proposal.assignments.find((a) => a.requirementId === R_MA8)?.toTeacherId).toBe(ANNA);
     await expect(
-      service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: changesOf(proposal) }, admin()),
+      service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: changesOf(proposal) }, admin()),
     ).resolves.toMatchObject({ warnings: [] });
     expect(leadOf(world, R_MA8)).toBe(ANNA);
   });
@@ -1583,10 +1603,10 @@ describe('StaffingProposalService.apply', () => {
     // Planned on the year's start (600), Anna would take Ma 8A too: 420 in the spring, past 330, and a 409.
     const tooMuch = [...changesOf(proposal).filter((c) => c.requirementId !== R_MA8), { requirementId: R_MA8, fromTeacherId: null, toTeacherId: ANNA }];
     await expect(
-      service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: tooMuch }, admin()),
+      service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: tooMuch }, admin()),
     ).rejects.toMatchObject({ status: 409, response: { code: 'STAFF_TEACHER_OVER_TARGET_IN_PERIOD' } });
     await expect(
-      service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: changesOf(proposal) }, admin()),
+      service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: changesOf(proposal) }, admin()),
     ).resolves.toMatchObject({ updated: 3 });
     expect(leadOf(world, R_SV7)).toBe(ANNA);
     expect(leadOf(world, R_MA8)).toBe(BO);
@@ -1606,7 +1626,7 @@ describe('StaffingProposalService.apply', () => {
       after: { countedMinutesPerWeek: 330, status: 'OK' },
     });
     await expect(
-      service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: changesOf(proposal) }, admin()),
+      service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: changesOf(proposal) }, admin()),
     ).resolves.toMatchObject({ updated: 3 });
     expect(leadOf(world, R_SV7)).toBe(ANNA);
   });
@@ -1615,7 +1635,7 @@ describe('StaffingProposalService.apply', () => {
     const { service, world, proposal } = await proposeThenApply();
     const start = world.calls.length;
     const result = await service.apply(
-      { academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: changesOf(proposal) },
+      { academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: changesOf(proposal) },
       admin(),
     );
     const calls = world.calls.slice(start);
@@ -1704,7 +1724,7 @@ describe('StaffingProposalService.apply', () => {
     const carry = jest.spyOn(placementTeachers, 'carryPlacementTeachers').mockRejectedValueOnce(refusal);
     try {
       await expect(
-        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: changesOf(proposal) }, admin()),
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: changesOf(proposal) }, admin()),
       ).rejects.toMatchObject({
         status: 409,
         // The post the trigger's DETAIL names, which the proposal dialog names the row by (review of #298, LÅG-8).
@@ -1721,7 +1741,7 @@ describe('StaffingProposalService.apply', () => {
     const minutes = ma8['minutesPerLesson'] as number;
     Object.assign(ma8, { lessonsPerWeek: 3, lessonLengths: [], shares: [{ teacherId: CY, lessons: 1, minutes }] });
     const { service, world, proposal } = await proposeThenApply(rows);
-    const applied = await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: changesOf(proposal) }, admin());
+    const applied = await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: changesOf(proposal) }, admin());
     const given = changesOf(proposal).find((change) => change.requirementId === R_MA8)!;
     expect(given.fromTeacherId).toBeNull();
     world.rows['teachingRequirementPlacement'] = [
@@ -1743,7 +1763,7 @@ describe('StaffingProposalService.apply', () => {
 
   it('undoes an apply with the changes swapped and the returned basis — putting back a lead who has left, and nobody', async () => {
     const { service, world, proposal } = await proposeThenApply();
-    const applied = await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: changesOf(proposal) }, admin());
+    const applied = await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: changesOf(proposal) }, admin());
     const undo = changesOf(proposal).map((c) => ({ requirementId: c.requirementId, fromTeacherId: c.toTeacherId, toTeacherId: c.fromTeacherId }));
     const undone = await service.apply({ academicYearId: YEAR, basisSha256: applied.basisSha256, undo: true, changes: undo }, admin());
     expect([leadOf(world, R_SV7), leadOf(world, R_MA8), leadOf(world, R_SV8)]).toEqual([EVA, null, null]);
@@ -1766,9 +1786,15 @@ describe('StaffingProposalService.apply', () => {
     const shed = { requirementId: R_BO, fromTeacherId: BO, toTeacherId: REKTOR };
     const back = { requirementId: R_BO, fromTeacherId: REKTOR, toTeacherId: BO };
 
+    // Bo's post is released: the school lets the engine move it, and the rektor, who teaches no Svenska today, is told so first.
+    const shedWithYes = [{ requirementId: R_BO, toTeacherId: REKTOR }];
+
     it('undoes it: Bo gets back no more than he had a minute ago', async () => {
-      const { service, world, proposal } = await proposeThenApply(overloaded(true));
-      const applied = await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: [shed] }, admin());
+      const { service, world, proposal } = await proposeThenApply(releasing(overloaded(true), [R_BO]));
+      const applied = await service.apply(
+        { academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: shedWithYes, changes: [shed] },
+        admin(),
+      );
       expect(leadOf(world, R_BO)).toBe(REKTOR);
       const undone = await service.apply(
         { academicYearId: YEAR, basisSha256: applied.basisSha256, undo: true, changes: [back] },
@@ -1789,8 +1815,11 @@ describe('StaffingProposalService.apply', () => {
     });
 
     it('judges the part of an undo that is not a reversal as any write', async () => {
-      const { service, world, proposal } = await proposeThenApply(overloaded(true));
-      const applied = await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: [shed] }, admin());
+      const { service, world, proposal } = await proposeThenApply(releasing(overloaded(true), [R_BO]));
+      const applied = await service.apply(
+        { academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: shedWithYes, changes: [shed] },
+        admin(),
+      );
       // Back to Bo, and Ma 8A (120, open before and after) to him as well.
       await expect(
         service.apply(
@@ -1814,7 +1843,7 @@ describe('StaffingProposalService.apply', () => {
     it('409s STAFF_PROPOSAL_STALE for a change that gives her a post, writing nothing: the proposal is old, and the dialog says so (review of #340, LÅG-3)', async () => {
       const { service, world, proposal } = await proposeThenApply(withOffice());
       await expect(
-        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: giveMa8To(OFFICE) }, admin()),
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: giveMa8To(OFFICE) }, admin()),
       ).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
       expect(leadOf(world, R_MA8)).toBeNull();
       expect(world.rows['scheduleChangeLog']).toHaveLength(0);
@@ -1827,7 +1856,7 @@ describe('StaffingProposalService.apply', () => {
       // Marked: the same change is let through, so the 409 below is the mark taken off and nothing else.
       world.rows['user']!.find((row) => row['id'] === OFFICE)!['teaches'] = false;
       await expect(
-        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: giveMa8To(OFFICE) }, admin()),
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: giveMa8To(OFFICE) }, admin()),
       ).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
       expect(leadOf(world, R_MA8)).toBeNull();
     });
@@ -1835,7 +1864,7 @@ describe('StaffingProposalService.apply', () => {
     it('says nothing in English with a uuid any more: the sentence of the old 400 is gone from the answer', async () => {
       const { service, proposal } = await proposeThenApply(withOffice());
       const refused = await service
-        .apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: giveMa8To(OFFICE) }, admin())
+        .apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: giveMa8To(OFFICE) }, admin())
         .catch((error: unknown) => error as { response?: { message?: string } });
       expect(JSON.stringify(refused)).not.toMatch(/does not teach|Users\.teaches/);
       expect(JSON.stringify(refused)).not.toContain(OFFICE);
@@ -1845,7 +1874,16 @@ describe('StaffingProposalService.apply', () => {
       const { service, world, proposal } = await proposeThenApply(withOffice());
       world.rows['user']!.find((row) => row['id'] === OFFICE)!['teaches'] = true;
       await expect(
-        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: giveMa8To(OFFICE) }, admin()),
+        service.apply(
+          {
+            academicYearId: YEAR,
+            basisSha256: proposal.basisSha256,
+            // She teaches nothing today, so Matematik in åk 8 is new to her and is confirmed.
+            confirmedNewTeaching: [{ requirementId: R_MA8, toTeacherId: OFFICE }],
+            changes: giveMa8To(OFFICE),
+          },
+          admin(),
+        ),
       ).resolves.toMatchObject({ updated: 1 });
       expect(leadOf(world, R_MA8)).toBe(OFFICE);
     });
@@ -1853,17 +1891,17 @@ describe('StaffingProposalService.apply', () => {
     it('still says "not active staff" of one who has left, as before', async () => {
       const { service, proposal } = await proposeThenApply(withOffice());
       await expect(
-        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: giveMa8To(EVA) }, admin()),
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: giveMa8To(EVA) }, admin()),
       ).rejects.toThrow(/not active staff/);
     });
 
     it('lets an undo put back a post on her, though she is offered none, and refuses the same change as no undo', async () => {
       const rows = withOffice();
       rows['teachingRequirement']!.push(requirement(R_X, G7A, SV, { teacherId: OFFICE }));
-      const { service, world, proposal } = await proposeThenApply(rows);
+      const { service, world, proposal } = await proposeThenApply(releasing(rows, [R_X]));
       const away = { requirementId: R_X, fromTeacherId: OFFICE, toTeacherId: ANNA };
       const back = { requirementId: R_X, fromTeacherId: ANNA, toTeacherId: OFFICE };
-      const applied = await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: [away] }, admin());
+      const applied = await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: [away] }, admin());
       expect(leadOf(world, R_X)).toBe(ANNA);
       await expect(
         service.apply({ academicYearId: YEAR, basisSha256: applied.basisSha256, changes: [back] }, admin()),
@@ -1877,7 +1915,7 @@ describe('StaffingProposalService.apply', () => {
     const { service, world, proposal } = await proposeThenApply();
     world.rows['teachingRequirement']!.find((row) => row['id'] === R_MA7)!['lessonsPerWeek'] = 4;
     await expect(
-      service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: changesOf(proposal) }, admin()),
+      service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: changesOf(proposal) }, admin()),
     ).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
     expect(leadOf(world, R_MA8)).toBeNull();
     expect(world.rows['scheduleChangeLog']).toHaveLength(0);
@@ -1887,7 +1925,7 @@ describe('StaffingProposalService.apply', () => {
     const { service, proposal } = await proposeThenApply();
     await expect(
       service.apply(
-        { academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: [{ requirementId: R_MA8, fromTeacherId: BO, toTeacherId: ANNA }] },
+        { academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: [{ requirementId: R_MA8, fromTeacherId: BO, toTeacherId: ANNA }] },
         admin(),
       ),
     ).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
@@ -1917,14 +1955,21 @@ describe('StaffingProposalService.apply', () => {
       requirement('00000000-0000-4000-8000-0000000000b1', G7A, SV, { teacherId: BO, lessonsPerWeek: 5 }),
       requirement('00000000-0000-4000-8000-0000000000b2', G8A, SV, { teacherId: REKTOR, lessonsPerWeek: 5 }),
     );
-    const { service, world, proposal } = await proposeThenApply(rows);
+    // Both posts are released: the school lets the engine move them, so a swap between two teachers who chose them is its own to make.
+    const swapped = ['00000000-0000-4000-8000-0000000000b1', '00000000-0000-4000-8000-0000000000b2'];
+    const { service, world, proposal } = await proposeThenApply(releasing(rows, swapped));
     const result = await service.apply(
       {
         academicYearId: YEAR,
         basisSha256: proposal.basisSha256,
+        // Rektor teaches no Svenska today, and Bo no 7A's.
+        confirmedNewTeaching: [
+          { requirementId: swapped[0]!, toTeacherId: REKTOR },
+          { requirementId: swapped[1]!, toTeacherId: BO },
+        ],
         changes: [
-          { requirementId: '00000000-0000-4000-8000-0000000000b1', fromTeacherId: BO, toTeacherId: REKTOR },
-          { requirementId: '00000000-0000-4000-8000-0000000000b2', fromTeacherId: REKTOR, toTeacherId: BO },
+          { requirementId: swapped[0]!, fromTeacherId: BO, toTeacherId: REKTOR },
+          { requirementId: swapped[1]!, fromTeacherId: REKTOR, toTeacherId: BO },
         ],
       },
       admin(),
@@ -1941,7 +1986,7 @@ describe('StaffingProposalService.apply', () => {
     let thrown: unknown;
     try {
       await service.apply(
-        { academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: [{ requirementId: R_MA8, fromTeacherId: null, toTeacherId: BO }] },
+        { academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: [{ requirementId: R_MA8, fromTeacherId: null, toTeacherId: BO }] },
         admin(),
       );
     } catch (error) {
@@ -1962,7 +2007,12 @@ describe('StaffingProposalService.apply', () => {
     rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!['lessonsPerWeek'] = 5;
     const { service, world, proposal } = await proposeThenApply(rows);
     const result = await service.apply(
-      { academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: [{ requirementId: R_MA8, fromTeacherId: null, toTeacherId: BO }] },
+      {
+        academicYearId: YEAR,
+        basisSha256: proposal.basisSha256,
+        confirmedNewTeaching: [{ requirementId: R_MA8, toTeacherId: BO }],
+        changes: [{ requirementId: R_MA8, fromTeacherId: null, toTeacherId: BO }],
+      },
       admin(),
     );
     expect(result.warnings).toEqual([
@@ -1982,7 +2032,7 @@ describe('StaffingProposalService.apply', () => {
       rows['staffingPolicy']![0]!['qualificationMode'] = 'REFUSE';
       const { service, world, proposal } = await proposeThenApply(rows);
       const applied = service.apply(
-        { academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: [{ requirementId: R_MA8, fromTeacherId: null, toTeacherId: ANNA }] },
+        { academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: confirmedBy(proposal), changes: [{ requirementId: R_MA8, fromTeacherId: null, toTeacherId: ANNA }] },
         admin(),
       );
       return { world, applied };
@@ -2015,6 +2065,334 @@ describe('StaffingProposalService.apply', () => {
         response: { code: 'STAFF_TEACHER_NOT_QUALIFIED', params: expect.objectContaining({ grades: '10' }) },
       });
       expect(leadOf(world, R_MA8)).toBeNull();
+    });
+  });
+});
+
+/*
+ * Släppt för motorn (20270226090000): a teacher the school chose is never moved by the engine. Only a post nobody teaches, and a
+ * post the school has RELEASED once "bara obemannade" is off, may be given to somebody else; every other staffed post is fixed, as
+ * a pinned one is. The basis covers the releases. Whoever receives a post gets a second confirmation for a subject or a årskurs
+ * they do not teach today, which the apply asks for (the second confirmation of the dialog).
+ */
+describe('StaffingProposalService, släppt för motorn', () => {
+  const sentFixed = (sent: () => StaffRequest[], realId: string, rows: Record<string, Row[]>) =>
+    sentRow(sent()[0]!, realId, rows['teachingRequirement']!).fixed;
+
+  describe('what a proposal may change', () => {
+    it('fixes every staffed post, whatever "bara obemannade" says, until the school has released it', async () => {
+      const rows = schoolRows();
+      const { service, sent } = setup(rows);
+      const proposal = await service.propose(ask({ onlyUnstaffed: false }), admin());
+      expect(proposal.counts).toMatchObject({ freeRequirements: 3, keptRequirements: 0, fixedRequirements: 2, releasedRequirements: 0 });
+      expect(sentFixed(sent, R_MA7, rows)).toBe(true);
+    });
+
+    it('frees a released staffed post when "bara obemannade" is off, as a kept row that is never left without a teacher', async () => {
+      const rows = releasing(schoolRows(), [R_MA7]);
+      const { service, sent } = setup(rows);
+      const proposal = await service.propose(ask({ onlyUnstaffed: false }), admin());
+      expect(proposal.counts).toMatchObject({ freeRequirements: 4, keptRequirements: 1, openRequirements: 3, fixedRequirements: 1, releasedRequirements: 1 });
+      expect(sentFixed(sent, R_MA7, rows)).toBe(false);
+      // The lead it has is Anna's, on the wire as a kept row, so the engine can only keep it or give it to somebody.
+      expect(sentRow(sent()[0]!, R_MA7, rows['teachingRequirement']!).currentTeacherId).toBe(sent()[0]!.teachers[0]!.id);
+    });
+
+    it('does not let a release override "bara obemannade": the narrower question wins', async () => {
+      const rows = releasing(schoolRows(), [R_MA7]);
+      const { service, sent } = setup(rows);
+      const proposal = await service.propose(ask({ onlyUnstaffed: true }), admin());
+      expect(proposal.counts).toMatchObject({ freeRequirements: 3, keptRequirements: 0, releasedRequirements: 1 });
+      expect(sentFixed(sent, R_MA7, rows)).toBe(true);
+    });
+
+    it('lets a pinned row stay as it is whatever is released', async () => {
+      const rows = releasing(schoolRows(), [R_MA7]);
+      const { service, sent } = setup(rows);
+      const proposal = await service.propose(ask({ onlyUnstaffed: false, pinnedRequirementIds: [R_MA7] }), admin());
+      expect(proposal.options.pinnedRequirementIds).toEqual([R_MA7]);
+      expect(sentFixed(sent, R_MA7, rows)).toBe(true);
+      expect(proposal.counts).toMatchObject({ keptRequirements: 0, releasedRequirements: 1 });
+    });
+
+    it('keeps a row that names one person twice fixed, released or not: it is nobody’s to move', async () => {
+      const rows = releasing(schoolRows(), [R_ODD]);
+      const { service, sent } = setup(rows);
+      const proposal = await service.propose(ask({ onlyUnstaffed: false }), admin());
+      expect(sentFixed(sent, R_ODD, rows)).toBe(true);
+      expect(proposal.counts).toMatchObject({ inconsistent: 1 });
+    });
+
+    it('frees a post whose teacher has left whether or not it is released', async () => {
+      const { service, sent } = setup();
+      const proposal = await service.propose(ask({ onlyUnstaffed: false }), admin());
+      expect(proposal.counts.vacated).toBe(1);
+      expect(sentRow(sent()[0]!, R_SV7, schoolRows()['teachingRequirement']!).fixed).toBe(false);
+    });
+
+    it('counts only the released posts that a teacher the school chose leads: one nobody teaches, or whose teacher has left, is open anyway (review of #363)', async () => {
+      // Ma 7A is Anna's (chosen), Ma 8A has nobody and Sv 7A's teacher has left: all three released, one of them means anything.
+      const rows = releasing(schoolRows(), [R_MA7, R_MA8, R_SV7]);
+      const { service } = setup(rows);
+      const proposal = await service.propose(ask({ onlyUnstaffed: true }), admin());
+      expect(proposal.counts.releasedRequirements).toBe(1);
+    });
+
+    it('does not count a release that names a post of no row of this year', async () => {
+      const rows = schoolRows();
+      rows['teachingRequirementRelease'] = [
+        { requirementId: R_MA7, schoolId: SCHOOL, releasedById: REKTOR, releasedAt: day('2026-11-19') },
+        { requirementId: '00000000-0000-4000-8000-0000000000ee', schoolId: SCHOOL, releasedById: REKTOR, releasedAt: day('2026-11-19') },
+      ];
+      const { service } = setup(rows);
+      const proposal = await service.propose(ask({ onlyUnstaffed: false }), admin());
+      expect(proposal.counts.releasedRequirements).toBe(1);
+    });
+
+    it('sends the engine no more than it was sent before: a released post is a kept row, nothing new on the wire', async () => {
+      const { service: plain, sent: plainSent } = setup(schoolRows());
+      await plain.propose(ask({ onlyUnstaffed: true }), admin());
+      const { service: freed, sent: freedSent } = setup(releasing(schoolRows(), [R_MA7]));
+      await freed.propose(ask({ onlyUnstaffed: false }), admin());
+      const [one, two] = [plainSent()[0]!, freedSent()[0]!];
+      expect(Object.keys(two).sort()).toEqual(Object.keys(one).sort());
+      expect(Object.keys(two.requirements[0]!).sort()).toEqual(Object.keys(one.requirements[0]!).sort());
+    });
+  });
+
+  describe('the basis', () => {
+    it('changes when a post is released or taken back, and returns when the release goes', async () => {
+      const bare = await setup().service.propose(ask(), admin());
+      const released = await setup(releasing(schoolRows(), [R_MA7])).service.propose(ask(), admin());
+      const taken = await setup(releasing(schoolRows(), [])).service.propose(ask(), admin());
+      expect(released.basisSha256).not.toBe(bare.basisSha256);
+      expect(taken.basisSha256).toBe(bare.basisSha256);
+    });
+
+    it('does not depend on the order the releases are read in, nor on who released or when', async () => {
+      const forward = releasing(schoolRows(), [R_MA7, R_ODD]);
+      const backward = releasing(schoolRows(), [R_MA7, R_ODD]);
+      backward['teachingRequirementRelease'] = [...backward['teachingRequirementRelease']!].reverse().map((row) => ({ ...row, releasedById: ANNA, releasedAt: day('2027-01-01') }));
+      const a = await setup(forward).service.propose(ask(), admin());
+      const b = await setup(backward).service.propose(ask(), admin());
+      expect(a.basisSha256).toBe(b.basisSha256);
+    });
+  });
+
+  describe('the apply', () => {
+    const givenLocks = (world: RolloverWorld) => {
+      const fallback = world.queryRaw;
+      world.queryRaw = (sql, values) => {
+        if (sql.includes('"TeacherEmployments"')) {
+          const ids = values[0] as string[];
+          return (world.rows['teacherEmployment'] ?? []).filter((row) => ids.includes(row['id'] as string)).map((row) => ({ id: row['id'] }));
+        }
+        if (sql.includes('"TeachingRequirements"')) return (values[0] as string[]).map((id) => ({ id }));
+        return fallback(sql, values);
+      };
+    };
+    const proposeFrom = async (rows: Record<string, Row[]>, dto: Partial<StaffingProposalDto> = {}) => {
+      const context = setup(rows);
+      givenLocks(context.world);
+      const proposal: StaffingProposal = await context.service.propose(ask(dto), admin());
+      return { ...context, proposal };
+    };
+    const lead = (world: RolloverWorld, id: string) => world.rows['teachingRequirement']!.find((row) => row['id'] === id)!['teacherId'];
+    /** Ma 8A (open) to Cy, who teaches nothing: a new subject and a new årskurs. */
+    const toCy = [{ requirementId: R_MA8, fromTeacherId: null, toTeacherId: CY }];
+
+    it('names, in the proposal, what a change gives a teacher that they do not teach today', async () => {
+      const rows = schoolRows();
+      // The odd-week Svenska 8A row is Bo's, so Anna teaches Matematik in åk 7 and nothing else.
+      Object.assign(rows['teachingRequirement']!.find((row) => row['id'] === R_ODD)!, { teacherId: BO, coTeacherId: BO });
+      const { proposal } = await proposeFrom(rows);
+      const ma8 = proposal.assignments.find((a) => a.requirementId === R_MA8)!;
+      // The stand-in engine's first pick is Anna: åk 8 is new to her, Matematik is not.
+      expect(ma8.toTeacherId).toBe(ANNA);
+      expect(ma8.newTeaching).toEqual({ subject: false, years: [8] });
+      // Svenska 7A to her is a new subject in a year she teaches.
+      const sv7 = proposal.assignments.find((a) => a.requirementId === R_SV7)!;
+      expect(sv7.toTeacherId).toBe(ANNA);
+      expect(sv7.newTeaching).toEqual({ subject: true, years: [] });
+    });
+
+    it('names nothing that the teacher teaches already: Anna leads and co-leads Sv 8A and leads Ma 7A, so Ma 8A and Sv 7A are not new', async () => {
+      const { proposal } = await proposeFrom(schoolRows());
+      expect(proposal.assignments.map((a) => [a.requirementId, a.newTeaching])).toEqual(
+        proposal.assignments.map((a) => [a.requirementId, undefined]),
+      );
+    });
+
+    it('refuses a change that gives a teacher a new subject or a new årskurs without the confirmation, flat, and writes nothing', async () => {
+      const { service, world, proposal } = await proposeFrom(schoolRows());
+      let thrown: unknown;
+      try {
+        await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: toCy }, admin());
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ConflictException);
+      const response = (thrown as ConflictException).getResponse() as { code: string; params: Record<string, unknown>; message: string };
+      expect(response.code).toBe(STAFF_NEW_TEACHING_UNCONFIRMED);
+      expect(response.params).toEqual({ count: 1, requirementId: R_MA8, userId: CY, newSubject: 1, newYears: '8' });
+      expect(response.message).toMatch(/ett ämne eller en årskurs/);
+      expect(lead(world, R_MA8)).toBeNull();
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+    });
+
+    it('lets the change through once it is confirmed for that very teacher, and not when it is confirmed for another', async () => {
+      const { service, world, proposal } = await proposeFrom(schoolRows());
+      await expect(
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: [{ requirementId: R_MA8, toTeacherId: BO }], changes: toCy }, admin()),
+      ).rejects.toMatchObject({ status: 409, response: { code: STAFF_NEW_TEACHING_UNCONFIRMED } });
+      await expect(
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: [{ requirementId: R_SV7, toTeacherId: CY }], changes: toCy }, admin()),
+      ).rejects.toMatchObject({ status: 409, response: { code: STAFF_NEW_TEACHING_UNCONFIRMED } });
+      await expect(
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: [{ requirementId: R_MA8, toTeacherId: CY }], changes: toCy }, admin()),
+      ).resolves.toMatchObject({ updated: 1 });
+      expect(lead(world, R_MA8)).toBe(CY);
+    });
+
+    it('asks for no confirmation of a change that gives nothing new', async () => {
+      const { service, world, proposal } = await proposeFrom(schoolRows());
+      // Sv 7A to Anna: she teaches Svenska (Sv 8A) and åk 7 (Ma 7A).
+      await expect(
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: [{ requirementId: R_SV7, fromTeacherId: EVA, toTeacherId: ANNA }] }, admin()),
+      ).resolves.toMatchObject({ updated: 1 });
+      expect(lead(world, R_SV7)).toBe(ANNA);
+    });
+
+    it('counts a teacher of a share as teaching the subject and the year: Matematik is not new to Cy, who takes a lesson of Ma 7A', async () => {
+      const rows = schoolRows();
+      Object.assign(rows['teachingRequirement']!.find((row) => row['id'] === R_MA7)!, { shares: [{ teacherId: CY, lessons: 1, minutes: 60 }] });
+      const { service, proposal } = await proposeFrom(rows);
+      let thrown: unknown;
+      try {
+        await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: toCy }, admin());
+      } catch (error) {
+        thrown = error;
+      }
+      // Åk 8 is new to him, the subject is not.
+      expect((thrown as ConflictException).getResponse()).toMatchObject({
+        code: STAFF_NEW_TEACHING_UNCONFIRMED,
+        params: { count: 1, requirementId: R_MA8, userId: CY, newSubject: 0, newYears: '8' },
+      });
+    });
+
+    it('is judged by the school’s rules first: a change REFUSE refuses is refused as that, not first asked about', async () => {
+      const rows = schoolRows();
+      rows['staffingPolicy']![0]!['overAllocationMode'] = 'REFUSE';
+      rows['teachingRequirement']!.find((row) => row['id'] === R_MA8)!['lessonsPerWeek'] = 5;
+      const { service, proposal } = await proposeFrom(rows);
+      await expect(
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: [{ requirementId: R_MA8, fromTeacherId: null, toTeacherId: BO }] }, admin()),
+      ).rejects.toMatchObject({ status: 409, response: { code: 'STAFF_TEACHER_OVER_TARGET' } });
+    });
+
+    it('asks no confirmation of an undo, which puts back what was', async () => {
+      const { service, world, proposal } = await proposeFrom(schoolRows());
+      const applied = await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: [{ requirementId: R_MA8, toTeacherId: CY }], changes: toCy }, admin());
+      await expect(
+        service.apply({ academicYearId: YEAR, basisSha256: applied.basisSha256, undo: true, changes: [{ requirementId: R_MA8, fromTeacherId: CY, toTeacherId: null }] }, admin()),
+      ).resolves.toMatchObject({ updated: 1 });
+      expect(lead(world, R_MA8)).toBeNull();
+    });
+
+    it('judges a request that says undo and reverses no apply as any apply: no way round the second confirmation (review of #363)', async () => {
+      const { service, world, proposal } = await proposeFrom(schoolRows());
+      // Ma 8A (open) to Cy gives him a subject and a årskurs; with undo:true and no apply behind it, it is asked about as any apply.
+      await expect(
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, undo: true, changes: toCy }, admin()),
+      ).rejects.toMatchObject({ status: 409, response: { code: STAFF_NEW_TEACHING_UNCONFIRMED, params: { count: 1, requirementId: R_MA8, userId: CY } } });
+      expect(lead(world, R_MA8)).toBeNull();
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+      // Confirmed, it goes through as an apply does.
+      await expect(
+        service.apply(
+          { academicYearId: YEAR, basisSha256: proposal.basisSha256, undo: true, confirmedNewTeaching: [{ requirementId: R_MA8, toTeacherId: CY }], changes: toCy },
+          admin(),
+        ),
+      ).resolves.toMatchObject({ updated: 1 });
+    });
+
+    it('judges a request that says undo and reverses no apply as any apply: no way round "släppt för motorn" (review of #363)', async () => {
+      const { service, world, proposal } = await proposeFrom(schoolRows());
+      await expect(
+        service.apply(
+          { academicYearId: YEAR, basisSha256: proposal.basisSha256, undo: true, changes: [{ requirementId: R_MA7, fromTeacherId: ANNA, toTeacherId: BO }] },
+          admin(),
+        ),
+      ).rejects.toMatchObject({ status: 409, response: { code: STAFF_ROW_NOT_RELEASED, params: { requirementId: R_MA7 } } });
+      expect(lead(world, R_MA7)).toBe(ANNA);
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+    });
+
+    it('judges the whole of an undo as an apply when one change of it is no reversal (review of #363)', async () => {
+      const { service, world, proposal } = await proposeFrom(schoolRows());
+      const applied = await service.apply(
+        { academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: [{ requirementId: R_MA8, toTeacherId: CY }], changes: toCy },
+        admin(),
+      );
+      // Cy's Ma 8A back to nobody is the reversal; Anna's Ma 7A to Bo, which the school has not released, is not. The batch is one
+      // write, so it is judged as an apply whole, as the policy judges it (the REFUSE test above), and nothing of it is written.
+      await expect(
+        service.apply(
+          {
+            academicYearId: YEAR,
+            basisSha256: applied.basisSha256,
+            undo: true,
+            changes: [
+              { requirementId: R_MA8, fromTeacherId: CY, toTeacherId: null },
+              { requirementId: R_MA7, fromTeacherId: ANNA, toTeacherId: BO },
+            ],
+          },
+          admin(),
+        ),
+      ).rejects.toMatchObject({ status: 409, response: { code: STAFF_ROW_NOT_RELEASED } });
+      expect(lead(world, R_MA8)).toBe(CY);
+      expect(lead(world, R_MA7)).toBe(ANNA);
+      expect(world.rows['scheduleChangeLog']).toHaveLength(1);
+    });
+
+    it('refuses to move a staffed post the school has not released, with the post named flat, and writes nothing', async () => {
+      const { service, world, proposal } = await proposeFrom(schoolRows());
+      let thrown: unknown;
+      try {
+        await service.apply(
+          { academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: [{ requirementId: R_MA7, toTeacherId: BO }], changes: [{ requirementId: R_MA7, fromTeacherId: ANNA, toTeacherId: BO }] },
+          admin(),
+        );
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ConflictException);
+      expect((thrown as ConflictException).getResponse()).toMatchObject({ code: STAFF_ROW_NOT_RELEASED, params: { requirementId: R_MA7 } });
+      expect(lead(world, R_MA7)).toBe(ANNA);
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+    });
+
+    it('moves it once the school has released it, and leaves the release where it was', async () => {
+      const rows = releasing(schoolRows(), [R_MA7]);
+      const { service, world, proposal } = await proposeFrom(rows, { onlyUnstaffed: false });
+      const before = JSON.stringify(world.rows['teachingRequirementRelease']);
+      await expect(
+        service.apply(
+          { academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: [{ requirementId: R_MA7, toTeacherId: BO }], changes: [{ requirementId: R_MA7, fromTeacherId: ANNA, toTeacherId: BO }] },
+          admin(),
+        ),
+      ).resolves.toMatchObject({ updated: 1 });
+      expect(lead(world, R_MA7)).toBe(BO);
+      expect(JSON.stringify(world.rows['teachingRequirementRelease'])).toBe(before);
+    });
+
+    it('is stale when a release was set or taken back after the proposal was read', async () => {
+      const { service, world, proposal } = await proposeFrom(schoolRows());
+      world.rows['teachingRequirementRelease'] = [{ requirementId: R_MA7, schoolId: SCHOOL, releasedById: REKTOR, releasedAt: day('2026-11-19') }];
+      await expect(
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, confirmedNewTeaching: [{ requirementId: R_MA8, toTeacherId: CY }], changes: toCy }, admin()),
+      ).rejects.toMatchObject({ status: 409, response: { code: STAFF_PROPOSAL_STALE } });
+      expect(lead(world, R_MA8)).toBeNull();
     });
   });
 });

@@ -102,6 +102,17 @@ export interface ProposalStretch {
   after: number;
 }
 
+/**
+ * What a change of lead gives the teacher that they do not teach today (leads, co-leads or take lessons of a post):
+ * the subject, and the years (a grade each, ascending). The gateway's new-teaching.ts.
+ */
+export interface NewTeaching {
+  /** The teacher teaches no post of this subject today. */
+  subject: boolean;
+  /** Years of the post the teacher teaches none of today; empty when the post has no year. */
+  years: number[];
+}
+
 export interface ProposalAssignment {
   requirementId: string;
   subjectId: string;
@@ -117,6 +128,11 @@ export interface ProposalAssignment {
    */
   toStretchCharges?: number[];
   fromStretchCharges?: number[];
+  /**
+   * Present only when the change gives `toTeacherId` a subject or a year they do not teach today. The apply asks for a
+   * second confirmation of every such row (ApplyStaffingRequest.confirmedNewTeaching).
+   */
+  newTeaching?: NewTeaching;
   reasons: {
     qualificationKind: TeacherQualificationKind | null;
     familiarWithSubject: boolean;
@@ -168,6 +184,8 @@ export interface StaffingProposal {
     openRequirements: number;
     keptRequirements: number;
     fixedRequirements: number;
+    /** Posts of the year the school has released for the engine (släppt för motorn) that a teacher it chose leads: the ones a release is for. */
+    releasedRequirements: number;
     vacated: number;
     inconsistent: number;
     teachersSent: number;
@@ -195,11 +213,22 @@ export interface StaffingChange {
   toTeacherId: string | null;
 }
 
+/** The second confirmation of one change that gives a teacher new teaching: the row, and the teacher it is given to. */
+export interface ConfirmedNewTeaching {
+  requirementId: string;
+  toTeacherId: string;
+}
+
 export interface ApplyStaffingRequest {
   academicYearId: string;
   basisSha256: string;
   undo?: boolean;
   changes: StaffingChange[];
+  /**
+   * One entry for every change of `changes` that has `newTeaching` in the proposal; an apply without a matching entry
+   * is refused 409 STAFF_NEW_TEACHING_UNCONFIRMED. Left out on an undo, which puts back what was.
+   */
+  confirmedNewTeaching?: ConfirmedNewTeaching[];
 }
 
 /** A WARN the batch was saved with: whom it is about, and the rows that put it there. */
@@ -218,6 +247,16 @@ export interface StaffingApplyResult {
 
 /** The gateway's code for "the tjänstefördelning moved since the proposal was read". */
 export const STAFF_PROPOSAL_STALE = "STAFF_PROPOSAL_STALE";
+/**
+ * An apply that gives a teacher a subject or a year they do not teach today, for a change the request has not confirmed.
+ * Flat params: `count`, `requirementId`, `userId`, `newSubject` (0|1) and `newYears` ("8,9") of the first.
+ */
+export const STAFF_NEW_TEACHING_UNCONFIRMED = "STAFF_NEW_TEACHING_UNCONFIRMED";
+/**
+ * An apply that moves a post whose teacher the school chose and has not released for the engine (params `requirementId`).
+ * A proposal never holds one, so only a request made by hand gets this.
+ */
+export const STAFF_ROW_NOT_RELEASED = "STAFF_ROW_NOT_RELEASED";
 /** An engine without /staff yet (deployed separately): "not yet", not the year's 404. */
 export const STAFF_ENGINE_UNAVAILABLE = "STAFF_ENGINE_UNAVAILABLE";
 

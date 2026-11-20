@@ -5084,6 +5084,27 @@ BEGIN
   INSERT INTO "CrisisSettings" ("schoolId", "startProfiles", "updatedAt") VALUES (s, ARRAY['FULL', 'REKTOR']::"AdminProfile"[], now());
 END $$;
 
+-- The matrix school's release for Släppt för motorn (20270226090000), so the role matrix (section 116) has a row of the table
+-- to probe: the school's first post, released by its full administrator. Written by the owner, once, and guarded by the row
+-- itself.
+DO $$
+DECLARE
+  m uuid;
+  post uuid;
+  who uuid;
+BEGIN
+  SELECT id INTO m FROM "Schools" WHERE slug = 'rls-roller-school';
+  IF m IS NULL OR EXISTS (SELECT 1 FROM "TeachingRequirementReleases" WHERE "schoolId" = m) THEN
+    RETURN;
+  END IF;
+  SELECT id INTO post FROM "TeachingRequirements" WHERE "schoolId" = m ORDER BY "createdAt", id LIMIT 1;
+  SELECT id INTO who FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000105';
+  IF post IS NULL OR who IS NULL THEN
+    RAISE EXCEPTION 'rls-fixtures: the matrix school lacks a post or its full administrator for a release';
+  END IF;
+  INSERT INTO "TeachingRequirementReleases" ("requirementId", "schoolId", "releasedById") VALUES (post, m, who);
+END $$;
+
 -- The policy tests run as the unprivileged role, which by design cannot see
 -- any school until a principal is set — so it cannot discover these ids for
 -- itself. The runner reads them here (as owner) and passes them in with -v.

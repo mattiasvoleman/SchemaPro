@@ -204,6 +204,8 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   TeachingRequirementShares: only('PLANERING'),
   // Förlagda poster: the day, time and room a school gave one of a post's lessons, as the post.
   TeachingRequirementPlacements: only('PLANERING'),
+  // Släppt för motorn: which posts the school lets Föreslå bemanning propose another teacher for. A mark is set and taken back, never updated.
+  TeachingRequirementReleases: just('PLANERING', 'insert', 'delete'),
   // Förlagda block: the lessons of a parallel block the school placed, and each member's own room for them, as the block and the post.
   TeachingBlockPlacements: only('PLANERING'),
   TeachingBlockPlacementRooms: only('PLANERING'),
