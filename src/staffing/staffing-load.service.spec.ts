@@ -988,6 +988,137 @@ describe('StaffingLoadService', () => {
     expect(rows).toEqual([expect.objectContaining({ requirementId: 'req-2', subjectName: 'Matematik' })]);
   });
 
+  /*
+   * Undervisningsuppdragets omfattning (SFS 2026:1487, assignment-scope.ts): the response's `scope` block. The default year here is
+   * 2026-08-17 to 2027-06-11, 43 weeks, and ME is a 80 % ferietjänst teaching 10 × 60 min a week to 7A (årskurs 7): 430 hours,
+   * against the ordinance's 600 × 0.8 = 480 for åk 7-9, and a planning floor of 430 × 110 % = 473 hours.
+   */
+  describe('undervisningsuppdragets omfattning (SFS 2026:1487)', () => {
+    const band = (overrides: Record<string, unknown>) => ({
+      schoolForm: 'GRUNDSKOLA',
+      gradeNumbering: 'NIOARIG',
+      gradeFrom: 1,
+      gradeTo: 6,
+      teachingHoursLow: 550,
+      teachingHoursHigh: 650,
+      planningFloorPercent: 100,
+      teachingSection: '3 § p. 1',
+      planningSection: '4 § p. 1',
+      note: null,
+      ...overrides,
+    });
+    const ordinance = (validFrom: string) => ({
+      code: 'SFS2026:1487',
+      sfs: 'SFS 2026:1487',
+      title: 'Förordning om omfattning av tiden för lärares och förskollärares undervisningsuppdrag',
+      validFrom: new Date(`${validFrom}T00:00:00.000Z`),
+      validTo: null,
+      source: 'https://svenskforfattningssamling.se/sites/default/files/sfs/2026-06/SFS2026-1487.pdf',
+      bands: [
+        band({}),
+        band({ gradeFrom: 7, gradeTo: 9, teachingHoursLow: 500, teachingHoursHigh: 600, planningFloorPercent: 110, teachingSection: '3 § p. 2', planningSection: '4 § p. 1 och 5 § p. 1', note: 'Tolkning' }),
+      ],
+    });
+    /** The ordinance in force from before the default year, so that the year is judged. */
+    const inForce = () => tx.assignmentScopeVersion.findMany.mockResolvedValue([ordinance('2020-01-01')]);
+    const scopeOf = (report: Awaited<ReturnType<typeof service.load>>, userId = ME) =>
+      report.scope!.teachers.find((row) => row.userId === userId)!;
+
+    it('says that no lydelse holds in a year that begins before the ordinance does (2026/27), and judges nobody', async () => {
+      tx.assignmentScopeVersion.findMany.mockResolvedValue([ordinance('2027-07-01')]);
+      const report = await service.load(YEAR_ID, 'planned', testUser());
+      expect(report.scope).toMatchObject({ version: null, yearReason: 'NOT_IN_FORCE' });
+      expect(scopeOf(report)).toMatchObject({ verdict: 'NOT_JUDGED', teachingHours: 430 });
+    });
+
+    it('reads the lydelser in the report\'s own transaction, with their bands, and judges the year against the one that holds', async () => {
+      inForce();
+      const report = await service.load(YEAR_ID, 'planned', testUser());
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+      expect(tx.assignmentScopeVersion.findMany).toHaveBeenCalledTimes(1);
+      expect(tx.assignmentScopeVersion.findMany).toHaveBeenCalledWith({ include: { bands: true }, orderBy: { validFrom: 'asc' } });
+      expect(report.scope!.version).toMatchObject({ code: 'SFS2026:1487', validFrom: '2020-01-01' });
+      expect(report.scope!.yearReason).toBeNull();
+      expect(scopeOf(report)).toMatchObject({
+        verdict: 'INSIDE',
+        teachingHours: 430,
+        fullTimeHighestHours: 600,
+        ordinanceHighestHours: 480,
+        highestHours: 480,
+        planningFloorHours: 473,
+      });
+      expect(report.scope!.interpretations).toEqual([{ section: '4 § p. 1 och 5 § p. 1', note: 'Tolkning' }]);
+    });
+
+    it('leaves the counted minutes, the saldo and the status exactly as they were (the riktmärke is the school\'s, the ordinance the law\'s)', async () => {
+      const without = await service.load(YEAR_ID, 'planned', testUser());
+      inForce();
+      const withScope = await service.load(YEAR_ID, 'planned', testUser());
+      expect(withScope.teachers).toEqual(without.teachers);
+      expect(withScope.totals).toEqual(without.totals);
+    });
+
+    it('says OVER_MAX when the lessons take the teacher past the part-time edge: 14 × 60 × 43 = 602 h against 480', async () => {
+      inForce();
+      tx.teachingRequirement.findMany.mockResolvedValue([requirementRow({ lessonsPerWeek: 14 })]);
+      expect(scopeOf(await service.load(YEAR_ID, 'planned', testUser()))).toMatchObject({ verdict: 'OVER_MAX', teachingHours: 602 });
+    });
+
+    it('is asked of the same rows the horizon charges: scheduled lessons are judged too', async () => {
+      inForce();
+      const report = await service.load(YEAR_ID, 'scheduled', testUser());
+      expect(report.horizon).toBe('scheduled');
+      expect(report.scope).not.toBeNull();
+    });
+
+    it('is left out, and not read, for a caller that never asks for it (the publication check)', async () => {
+      inForce();
+      const report = await service.load(YEAR_ID, 'planned', testUser(), { record: false, travel: false, scope: false });
+      expect(report.scope).toBeNull();
+      expect(tx.assignmentScopeVersion.findMany).not.toHaveBeenCalled();
+    });
+
+    it('keeps the verdict and loses every figure that gives the post back, for a planner without HR-läs reading somebody else\'s row', async () => {
+      inForce();
+      const planner = testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false, userId: COLLEAGUE });
+      const report = await service.load(YEAR_ID, 'planned', planner);
+      expect(report.hrHidden).toBe(true);
+      expect(scopeOf(report)).toMatchObject({
+        verdict: 'INSIDE',
+        teachingHours: 430,
+        fullTimeHighestHours: 600,
+        planningFloorHours: 473,
+        highestHours: null,
+        ordinanceHighestHours: null,
+        remainingHours: null,
+        planningFits: null,
+      });
+    });
+
+    it('hands a planner without HR-läs their own row whole (mayReadHrOf), as the rest of the report does', async () => {
+      inForce();
+      const planner = testUser({ adminProfile: 'SCHEMALAGGARE', hrRead: false, userId: ME });
+      const report = await service.load(YEAR_ID, 'planned', planner);
+      expect(scopeOf(report)).toMatchObject({ highestHours: 480, ordinanceHighestHours: 480 });
+    });
+
+    it('hands a teacher their own row of it and nobody else\'s', async () => {
+      inForce();
+      tx.teachingRequirement.findMany.mockResolvedValue([
+        requirementRow(),
+        requirementRow({ id: 'req-3', teacherId: COLLEAGUE, lessonsPerWeek: 5 }),
+      ]);
+      tx.teacherEmployment.findMany.mockResolvedValue([
+        { id: 'emp-me', userId: ME, employmentPercent: new Prisma.Decimal('80.000'), reductionPercent: new Prisma.Decimal('0.000'), contractKind: 'FERIE', teachingTargetMinutesPerWeek: null, signature: 'ME' },
+      ]);
+      const report = await service.load(YEAR_ID, 'planned', testUser({ role: Role.TEACHER, userId: ME }));
+      expect(report.scope!.teachers.map((row) => row.userId)).toEqual([ME]);
+      expect(scopeOf(report)).toMatchObject({ highestHours: 480, verdict: 'INSIDE' });
+      // The year's lydelse is not about anybody.
+      expect(report.scope!.version).toMatchObject({ code: 'SFS2026:1487' });
+    });
+  });
+
   describe('suggestTeachers', () => {
     it('reads the row’s year in the same transaction and ranks the school’s active staff', async () => {
       tx.teachingRequirement.findUnique.mockResolvedValue({

@@ -4928,6 +4928,15 @@ async function runChecks(
       assert.deepEqual(seen.duties.map((row) => row.userId), Array(duties).fill(who.id));
       const load = await new StaffingLoadService(api).load(yearId, 'planned', principal);
       assert.deepEqual(load.teachers.map((row) => row.userId), [who.id]);
+      // Undervisningsuppdragets omfattning (20270301090000) is read through the API's own role and the school principal's
+      // arm (app.current_school_id()), as a teacher, in the report's transaction: the lydelse and its bands come back as
+      // rows of two tables, the year's first day picks one or none, and the block is cut to the teacher's own row.
+      assert.ok(load.scope, 'the load report carries the ordinance\'s omfattning');
+      assert.ok(load.scope.teachers.every((row) => row.userId === who.id), 'a teacher reads their own omfattning and nobody else\'s');
+      assert.ok(
+        load.scope.version === null || load.scope.version.code === 'SFS2026:1487',
+        `the only lydelse there is is SFS2026:1487, got ${load.scope.version?.code}`,
+      );
     }
     await clearTarget();
 

@@ -6,6 +6,8 @@ import { recordRead } from '../access-log/access-log';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
 import { readLoadInput, type LoadRead } from './load-input';
+import { buildScopeReport, hideScopeHr, type ScopeReport } from './assignment-scope';
+import { readScopeVersions } from './assignment-scope-reader';
 import {
   buildTeacherLoadReport,
   type LoadInput,
@@ -70,6 +72,14 @@ export interface TeacherLoadReportResponse extends TeacherLoadReport {
    * Null when the year has no pass, whatever the horizon.
    */
   supervision: { teachers: TeacherSupervision[] } | null;
+  /**
+   * Undervisningsuppdragets omfattning (assignment-scope.ts, SFS 2026:1487): each teacher's teaching hours over the
+   * läsår against the ordinance's span for their stage, the planning floor, and a verdict. Judged on the rows the
+   * horizon charges. NOT the counted minutes, the saldo or the status, which are the school's riktmärke and stay what
+   * they were; this is the law's own measure, in clock hours, unweighted. Null for a caller that never reads it
+   * (the publication check).
+   */
+  scope: ScopeReport | null;
 }
 
 /** GET /staffing/delivered's answer. */
@@ -112,13 +122,14 @@ export class StaffingLoadService {
    * teachers it stops on and records those itself). Every route that returns
    * the report records it. `travel: false` leaves the restid out (null) for a
    * caller that never reads it, the same check: it is a walk through the
-   * whole grundschema, and the check judges the counted minutes alone.
+   * whole grundschema, and the check judges the counted minutes alone. `scope: false` leaves the ordinance's
+   * omfattning out (null), for the same caller: one read of the reference tables it never uses.
    */
   async load(
     academicYearId: string,
     horizon: string | undefined,
     user: AuthenticatedUser,
-    options: { record?: boolean; travel?: boolean } = {},
+    options: { record?: boolean; travel?: boolean; scope?: boolean } = {},
   ): Promise<TeacherLoadReportResponse> {
     requireSchoolId(user);
     const chosen = horizon ?? 'planned';
@@ -129,7 +140,7 @@ export class StaffingLoadService {
     }
 
     const scheduled = chosen === 'scheduled';
-    const { year, report, travel, supervision } = await this.prisma.withRls(user, async (tx) => {
+    const { year, report, travel, supervision, scope } = await this.prisma.withRls(user, async (tx) => {
       const read = scheduled
         ? await this.readScheduledInput(tx, academicYearId, user)
         : await this.readInput(tx, academicYearId, user);
@@ -147,7 +158,11 @@ export class StaffingLoadService {
       const travel = walks && { teachers: walks.teachers.filter((row) => reported.has(row.userId)) };
       // Every teacher with a pass has a row: the passes are their uppdrag.
       const supervision = read.supervision && { teachers: read.supervision.filter((row) => reported.has(row.userId)) };
-      return { year: read.year, report: built, travel, supervision };
+      // The ordinance's omfattning over the same rows, in the same transaction, so that its hours and the report's minutes
+      // are about one moment.
+      const scope =
+        options.scope === false ? null : buildScopeReport(read.input, built, await readScopeVersions(tx));
+      return { year: read.year, report: built, travel, supervision, scope };
     });
 
     const response: TeacherLoadReportResponse = {
@@ -158,6 +173,7 @@ export class StaffingLoadService {
       listsComputed: !scheduled,
       travel,
       supervision,
+      scope,
       ...(scheduled
         ? { unstaffedRequirements: [], unqualifiedAssignments: [], subjectBottlenecks: [], bottlenecksComputed: false }
         : {}),
@@ -175,6 +191,11 @@ export class StaffingLoadService {
       return {
         ...response,
         hrHidden: true,
+        // The span times the post, and the working time less the teaching, give the percentage back: the verdict stays.
+        scope: scope && {
+          ...scope,
+          teachers: scope.teachers.map((row) => (mayReadHrOf(user, row.userId) ? row : hideScopeHr(row))),
+        },
         teachers: response.teachers.map((row) => mayReadHrOf(user, row.userId) ? row : ({
           ...row,
           employment: row.employment ? (hideHr(row.employment) as unknown as typeof row.employment) : null,
@@ -198,6 +219,7 @@ export class StaffingLoadService {
       teachers: report.teachers.filter((row) => row.userId === own),
       travel: travel && { teachers: travel.teachers.filter((row) => row.userId === own) },
       supervision: supervision && { teachers: supervision.teachers.filter((row) => row.userId === own) },
+      scope: scope && { ...scope, teachers: scope.teachers.filter((row) => row.userId === own) },
       unstaffedRequirements: [],
       unqualifiedAssignments: report.unqualifiedAssignments.filter(
         (row) => row.userId === own,
