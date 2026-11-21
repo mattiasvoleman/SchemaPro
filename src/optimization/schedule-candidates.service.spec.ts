@@ -45,7 +45,13 @@ import {
   SWEEP_JOB,
   yearHasActiveCandidateRun,
 } from './schedule-candidates.service';
-import { ENGINE_LACKS_BEST_EFFORT, ENGINE_LACKS_CANDIDATES, ENGINE_TIMED_OUT } from './optimization-proxy.service';
+import {
+  ENGINE_LACKS_BEST_EFFORT,
+  ENGINE_LACKS_CANDIDATES,
+  ENGINE_NOT_REACHED,
+  ENGINE_TIMED_OUT,
+  ENGINE_WAIT_EXPIRED,
+} from './optimization-proxy.service';
 import {
   CONSECUTIVE_TEACHING_HIDDEN_MESSAGE,
   TEACHER_WORK_DAYS_HIDDEN,
@@ -881,6 +887,22 @@ describe('ScheduleCandidatesService', () => {
 
     it.each([
       ['a gateway timeout', new ServiceUnavailableException('The AI engine did not respond in time.'), CANDIDATE_ENGINE_TIMEOUT],
+      // What the proxy throws since omgång 13 M2: the same failures with a code of their own (and, for Generera, figures).
+      [
+        'a gateway timeout, coded',
+        new ServiceUnavailableException({ message: 'The AI engine did not respond in time.', code: ENGINE_WAIT_EXPIRED, params: { waitSeconds: 95 } }),
+        CANDIDATE_ENGINE_TIMEOUT,
+      ],
+      [
+        'an engine that was not reached, coded',
+        new ServiceUnavailableException({ message: 'The AI engine could not be reached.', code: ENGINE_NOT_REACHED }),
+        CANDIDATE_ENGINE_TIMEOUT,
+      ],
+      [
+        'the engine’s own ceiling, with where its solve was',
+        new HttpException({ message: 'x', code: ENGINE_TIMED_OUT, params: { ceilingSeconds: 75, stage: 'SEARCH_CLEAN', stageSeconds: 30, elapsedSeconds: 75 } }, 503),
+        CANDIDATE_ENGINE_TIMEOUT,
+      ],
       ['an engine older than search', new HttpException({ message: 'older', code: ENGINE_LACKS_CANDIDATES }, 503), ENGINE_LACKS_CANDIDATES],
       ['an engine that broke', new HttpException('The AI engine returned an error.', 500), CANDIDATE_ENGINE_FAILED],
       ['a named engine refusal', new HttpException({ message: 'Lunch has no room.', code: 'LUNCH_WINDOW_EMPTY', params: { group: '7A' } }, 400), 'LUNCH_WINDOW_EMPTY'],
@@ -2212,6 +2234,18 @@ describe('the pieces', () => {
     expect(engineFailureOf(new HttpException({ message: 'x', code: 'not a code' }, 504))).toMatchObject({ code: CANDIDATE_ENGINE_TIMEOUT });
     // The engine's own ceiling has its own name for Generera; a candidate run says it as every engine 503.
     expect(engineFailureOf(new HttpException({ message: 'x', code: ENGINE_TIMED_OUT }, 503))).toMatchObject({ code: CANDIDATE_ENGINE_TIMEOUT });
+    // Said as every engine 503 was before the codes: the sentence of the failure and no figures, which the candidates page has no text for.
+    for (const [code, params] of [
+      [ENGINE_TIMED_OUT, { ceilingSeconds: 75 }],
+      [ENGINE_WAIT_EXPIRED, { waitSeconds: 95, engineCeilingSeconds: 75 }],
+      [ENGINE_NOT_REACHED, undefined],
+    ] as const) {
+      expect(engineFailureOf(new HttpException({ message: 'the sentence', code, ...(params ? { params } : {}) }, 503))).toEqual({
+        message: 'the sentence',
+        code: CANDIDATE_ENGINE_TIMEOUT,
+        params: null,
+      });
+    }
   });
 
   it('names an engine that broke, and a 3xx that reached the run as one, CANDIDATE_ENGINE_FAILED', () => {
