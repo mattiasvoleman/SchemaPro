@@ -51,6 +51,25 @@ describe("what the core of the pseudonymiser can reach", () => {
   });
 });
 
+describe("what the page's tool, the part that runs in the browser, can reach", () => {
+  const closure: Closure = closureOf(["app/[locale]/pseudonymisera/tool.tsx"]);
+
+  it("reaches one package, react, and no HTTP client, store, router, query cache or socket", () => {
+    expect(closure.packages).toEqual(["react"]);
+  });
+
+  it("reaches only the tool's own files and the page's pure modules: nothing from the app's shell, its gateway client, its session or its components", () => {
+    for (const file of closure.files) {
+      expect(file, file).toMatch(/^(app\/\[locale\]\/pseudonymisera\/(tool|entry|file-card|result-view|styles)\.tsx?|lib\/(pseudonym-[a-z]+|column-source|column-table|csv-encoding|personal-number)\.ts)$/);
+    }
+    expect(closure.files).toEqual(expect.arrayContaining(["app/[locale]/pseudonymisera/tool.tsx", "lib/pseudonym-run.ts", "lib/pseudonym-download.ts", "lib/pseudonym-report.ts"]));
+  });
+
+  it("holds no call, name or element that sends, loads, stores or navigates", () => {
+    expect(closure.findings).toEqual([]);
+  });
+});
+
 describe("the tool that looks (it must find what it is looking for)", () => {
   it("finds a network call in a file that has one, and not in a comment or a string that names one", () => {
     const found = closureOf(["lib/__fixtures__/offline-probe.ts"]);

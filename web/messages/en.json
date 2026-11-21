@@ -11613,5 +11613,229 @@
         "teacherList": "Teachers, several in one cell"
       }
     }
+  },
+  "pseudonymiserare": {
+    "metaTitle": "Remove personal data from a file",
+    "metaDescription": "Replace personal identity numbers, names, e-mail addresses and phone numbers in a file with markers, in your browser, before you send it. Nothing leaves your computer.",
+    "title": "Remove personal data from a file",
+    "intro": "Need to send an example file without sending the people in it? This tool replaces personal identity numbers, coordination numbers, names, e-mail addresses and phone numbers with markers such as PNR-0001 and NAMN-0001. The same person gets the same marker throughout the run, so the structure of the file stays visible. You get a safe file and a report of what was replaced.",
+    "promise": {
+      "heading": "The file never leaves your computer",
+      "offline": "Everything happens in this browser tab. The file is not sent to Rastra or anyone else, and no server sees it.",
+      "policy": "The page has a security policy that makes the browser refuse every network request from it (connect-src 'none'). You or your IT department can read the policy in the browser's developer tools under Network, and try it yourselves: disconnect the network once the page has loaded and the tool still works.",
+      "nothingKept": "Nothing about your file is stored, neither in the browser's storage nor in cookies. The only thing the page may set is a cookie for the language you chose. When you close the tab or press Clear everything, everything you added is gone.",
+      "cannotJudge": "The tool finds personal identity numbers, coordination numbers, e-mail addresses and phone numbers by how they look, and names in the columns you or the header point out. It cannot judge everything: read the list What the tool cannot judge, and the preview, before you send anything."
+    },
+    "formats": "Reads text files and CSV (.csv, .txt, .tsv), a table you paste from Excel or Skola24, and Excel files (.xlsx). Old Excel files (.xls), Access files (.mdb), PDFs and pictures cannot be made safe here. An Excel file becomes a CSV file of the cells' values: document properties, comments, hidden sheets and formulas do not come along.",
+    "footer": {
+      "toApp": "To the app",
+      "accessibility": "Accessibility statement",
+      "otherLanguage": "Svenska"
+    },
+    "tool": {
+      "addHeading": "1. Add files",
+      "chooseFiles": "Choose one or more files",
+      "accepted": "Text file, CSV or Excel (.csv, .txt, .tsv, .xlsx). At most about 5 million characters per file.",
+      "pasteLabel": "Or paste a table",
+      "pasteHint": "Copy from Excel or from Skola24 (Table) and paste here.",
+      "addPaste": "Add what was pasted",
+      "pastedName": "Pasted table",
+      "reading": "Reading…",
+      "filesHeading": "2. Decide what happens to each column",
+      "wordsHeading": "3. Names and words that must always go",
+      "wordsLabel": "One name or word per line (optional)",
+      "wordsHint": "Names in columns that are marked as names are already looked for in running text (if they have at least three letters). Add here what the tool cannot know: names in a file with no name column, a name that stands in a column you keep, or a short name such as Bo. The words in the list are looked for everywhere, from two letters.",
+      "runHeading": "4. Remove the personal data",
+      "run": "Remove personal data",
+      "clearAll": "Clear everything",
+      "working": "Working…",
+      "undecided": "{count, plural, one {# column is waiting} other {# columns are waiting}} for your choice. Choose what happens to the waiting columns before you go on."
+    },
+    "problem": {
+      "line": "{name}: {reason}",
+      "tooLong": "The file is too long to read here (over 5 million characters). Split it, or remove columns you do not need to send.",
+      "empty": "There is nothing in the file to read.",
+      "utf16": "The file is saved as Unicode text (UTF-16), which the tool does not read. Save it again as CSV UTF-8 or CSV (semicolon delimited) and choose it again.",
+      "msdos": "The file is saved as CSV (MS-DOS), where å, ä and ö cannot be read reliably. Save it again as CSV UTF-8 or CSV (semicolon delimited) and choose it again.",
+      "access": "This is an Access database (.mdb). It cannot be made safe here. Export to a text file or a table instead.",
+      "pdf": "This is a PDF. It cannot be made safe here.",
+      "image": "This is a picture. It cannot be made safe here.",
+      "zip": "This is a zip file, or a file that cannot be read as an Excel workbook. Unpack it, or save the table as CSV.",
+      "binary": "The file does not look like text and cannot be made safe here.",
+      "hiddenSheets": "{name}: {count, plural, one {# hidden sheet was not read} other {# hidden sheets were not read}}.",
+      "workbook": {
+        "legacy": "The file is in the old Excel format (.xls) or another older file type. Open it in Excel and save as an Excel workbook (.xlsx), or save the table as CSV.",
+        "encrypted": "The Excel file is password protected. Remove the password and save it again, or save the table as CSV.",
+        "unavailable": "This browser cannot read Excel files here. Save the table as CSV, or use a newer browser.",
+        "tooBig": "The Excel file is too large, or has too many rows or columns, to be read here. Save the table as CSV.",
+        "damaged": "The Excel file cannot be read. Save it again in Excel, or save the table as CSV."
+      }
+    },
+    "file": {
+      "heading": "File {n}: {name}",
+      "facts": "{origin}, encoding {encoding}, {delimiter}. {rows, plural, one {# row} other {# rows}}, {columns, plural, one {# column} other {# columns}}.",
+      "remove": "Remove",
+      "notTable": "This file does not look like a table, so columns cannot be judged. Only what looks like personal identity numbers, e-mail addresses and phone numbers, and the words in the list below, are replaced. Look extra carefully at the preview.",
+      "headerRow": "The header row",
+      "headerNone": "No header row",
+      "headerRowOption": "Row {n}: {cells}",
+      "titleRows": "{count, plural, one {# row} other {# rows}} above the header count as free text and are searched in full.",
+      "headerLooksLikeData": "Row {n} looks like a record and not a header: it has numbers, times or dates. If the file has no header row, choose No header row.",
+      "headersAreNames": "The header row holds names (for example a matrix with one teacher to a column). Headers such as Time and Day are kept.",
+      "undecided": "{count, plural, one {# column in this file has} other {# columns in this file have}} no proposal. Choose in the table below what happens to them."
+    },
+    "col": {
+      "caption": "Columns in file {n}",
+      "number": "No.",
+      "header": "Header",
+      "examples": "Examples (shown only here)",
+      "contents": "Contents",
+      "proposal": "Proposal",
+      "choice": "Choice",
+      "noHeader": "(no header)",
+      "empty": "empty",
+      "shape": "{shape} {count}",
+      "hasPnr": "personal identity number in {count, plural, one {# cell} other {# cells}}",
+      "hasEmail": "e-mail address in {count, plural, one {# cell} other {# cells}}",
+      "hasTel": "phone number in {count, plural, one {# cell} other {# cells}}",
+      "choiceLabel": "What should happen to column {n}?",
+      "dateSpan": "dates over {days, plural, one {# day} other {# days}}: may be birth dates"
+    },
+    "shape": {
+      "number": "numbers",
+      "time": "times",
+      "date": "dates",
+      "code": "short codes",
+      "word": "words",
+      "text": "running text"
+    },
+    "proposal": {
+      "none": "Needs your choice",
+      "header": "The header says {group}",
+      "content": "The contents are {kind}",
+      "numbers": "Only numbers, times and dates",
+      "empty": "The column is empty"
+    },
+    "group": {
+      "pnr": "personal identity number",
+      "epost": "e-mail",
+      "tel": "phone",
+      "sign": "signature",
+      "fornamn": "first name",
+      "efternamn": "surname",
+      "namn": "name",
+      "text": "personal text (for example address or comment)",
+      "structure": "structure (for example day or class)"
+    },
+    "choice": {
+      "pick": "Choose…",
+      "keep": "Keep",
+      "clear": "Clear (keep the header)",
+      "mark": "Replace with marker: {kind}"
+    },
+    "kind": {
+      "pnr": "personal identity number",
+      "sam": "coordination number",
+      "epost": "e-mail address",
+      "tel": "phone number",
+      "namn": "name",
+      "fornamn": "first name",
+      "efternamn": "surname",
+      "sign": "signature",
+      "text": "other text"
+    },
+    "treatment": {
+      "keep": "kept",
+      "clear": "cleared",
+      "mark": "replaced with marker ({kind})"
+    },
+    "by": {
+      "header": "the header",
+      "content": "the contents",
+      "values": "the values",
+      "user": "your choice"
+    },
+    "result": {
+      "heading": "5. Result",
+      "countsHeading": "What was replaced",
+      "kind": "Kind",
+      "occurrences": "Occurrences",
+      "distinct": "Different values",
+      "checkDigit": "Of the personal identity numbers and coordination numbers, the check digit held for {holds} and did not for {fails}. Those that did not were replaced all the same.",
+      "limitsHeading": "What the tool cannot judge",
+      "previewHeading": "Preview of the safe files",
+      "previewHint": "This is what is sent: title rows, the header row and the first rows. Look for anything that looks personal.",
+      "previewOf": "Safe file {n}",
+      "sendHeading": "Download and send",
+      "checkPassed": "Check: nothing that looks like a personal identity number, e-mail address or phone number is left in the safe files. The check searches the same way the tool itself does, so it cannot find what the tool cannot see: look at the preview.",
+      "checkFailed": "The check found something left that looks personal. No file is handed out.",
+      "checkFailedFile": "Safe file {file}: {count, plural, one {# hit} other {# hits}}. Try clearing or replacing the column it concerns, or tell us.",
+      "confirm": "I have looked through the preview and see no personal data left.",
+      "fileName": "File name for safe file {n}",
+      "fileNameHint": "The original's file name is not used, because a file name can hold a name.",
+      "downloadFile": "Download safe file {n}",
+      "downloadReport": "Download the report",
+      "sendNote": "Send the safe files and the report. Do not send the original files: they stay on your computer, and this page has not stored them.",
+      "ready": "The result is below.",
+      "reportShown": "The report that goes with them (this is what it says)"
+    },
+    "note": {
+      "lines": "File {file}: the file is not a table, so columns could not be judged.",
+      "titleRows": "File {file}: {rows, plural, one {# row above the header is} other {# rows above the header are}} free text. Look at them in the preview.",
+      "freeText": "File {file}, column {column}: the column was kept and has running text. Names in running text are only found if they are in a name column or in your list.",
+      "manyReplaced": "File {file}, column {column}: over a third of the cells were replaced by their contents, although the column was kept. Check that these are not ids that happen to look like personal identity numbers.",
+      "unterminated": "File {file}: a quote was never closed, so the rest of the file may have been read as a single cell.",
+      "encodingFellBack": "File {file}: the file's own encoding could not hold the words in your list, so the safe file is saved as UTF-8.",
+      "unterminatedOnPage": "A quote in this file is never closed. The rest of the file may be read as a single cell. Look at the preview."
+    },
+    "report": {
+      "title": "Report: pseudonymised file",
+      "purpose": "This report belongs with the safe file. It holds counts, kinds and patterns, never any original value and not the original's file name.",
+      "summary": "Summary",
+      "kindLine": "{kind}: {count, plural, one {# occurrence} other {# occurrences}}, {distinct, plural, one {# different value} other {# different values}}",
+      "kindLineShort": "{kind}: {count, plural, one {# occurrence} other {# occurrences}}",
+      "nothingReplaced": "Nothing was replaced.",
+      "checkDigit": "{kind}: the check digit held for {holds} and did not for {fails} (the latter were replaced all the same).",
+      "spellings": "How personal identity numbers were written (patterns, never values):",
+      "spellingLine": "{spelling}: {count, plural, one {# time} other {# times}}",
+      "knownNames": "Words searched for in running text, from name columns and your list: {count}.",
+      "file": "File {n}",
+      "form": "Form: {origin}, encoding {encoding}, {delimiter}, line ending {eol}, {bom}.",
+      "origin": {
+        "file": "file",
+        "paste": "pasted text",
+        "xlsx": "Excel sheet (written as CSV)"
+      },
+      "delimiter": {
+        "semicolon": "delimiter semicolon",
+        "comma": "delimiter comma",
+        "tab": "delimiter tab",
+        "none": "no delimiter (the text is not a table)"
+      },
+      "bom": {
+        "yes": "with byte order mark",
+        "no": "without byte order mark"
+      },
+      "encodingChanged": "The encoding was changed from {from} to {to}, because the original could not hold the text.",
+      "sheet": "Sheet: {name}",
+      "size": "{rows, plural, one {# row} other {# rows}}, {columns, plural, one {# column} other {# columns}}. The header row is row {headerRow}, with {titleRows, plural, one {# row} other {# rows}} above it.",
+      "sizeNoHeader": "{rows, plural, one {# row} other {# rows}}, {columns, plural, one {# column} other {# columns}}. No header row.",
+      "sizeLines": "{rows, plural, one {# row} other {# rows}}. The text is not a table.",
+      "noHeaderCell": "no header",
+      "columnLine": "Column {n} ({header}): {treatment}, by {by}; {filled, plural, one {# filled cell} other {# filled cells}}, {changed} changed.",
+      "fileTally": "Replaced in this file: {list}.",
+      "extras": "The formula guard was put on {guarded, plural, one {# cell} other {# cells}}. {cleared, plural, one {# cell was} other {# cells were}} cleared.",
+      "notes": "To look at in particular",
+      "limits": "What the tool cannot judge",
+      "limit1": "Names in running text that are not in a name column or in the list of words to remove.",
+      "limit2": "E-mail addresses and phone numbers written in words, or split over several cells. Personal identity numbers split over two cells.",
+      "limit3": "Digits written in other characters than ordinary and full-width digits.",
+      "limit4": "Columns you chose to keep yourself. Look in the preview at what you keep.",
+      "limit5": "Fixed-width formats: the markers are not as long as what they replace, so column positions may shift.",
+      "limit6": "The markers' numbers follow the order of the file. A file sorted by surname therefore reveals where in the alphabet a person falls.",
+      "limit7": "Names of fewer than three letters are not looked for in running text unless they are in your own list (where the limit is two letters). A name such as Bo otherwise stays in a comment.",
+      "numbering": "The markers are PNR (personal identity number), SAM (coordination number), TEL (phone), NAMN (name), FORNAMN (first name), EFTERNAMN (surname), SIGN (signature), TEXT (other text) and epost-…@exempel.invalid. The same value has the same marker throughout the run.",
+      "offline": "The file and this report were made in the browser. Nothing was sent anywhere."
+    }
   }
 }

@@ -98,9 +98,13 @@ export class KnownNames {
     if (this.size === 0) return [];
     const markers = [...text.matchAll(MARKER_PATTERN)].map((match) => [match.index, match.index + match[0].length] as const);
     const hits: NameHit[] = [];
+    // Words and markers both come in order of position, so one pointer through the markers serves every word: a cell of a hundred thousand of each took
+    // minutes when every word looked through every marker (found in the review of #377, L-7).
+    let at = 0;
     for (const { word, start, end } of wordsOf(text)) {
+      while (at < markers.length && markers[at]![1] <= start) at += 1;
       // The words a marker is made of are not names.
-      if (markers.some(([from, to]) => start < to && end > from)) continue;
+      if (at < markers.length && markers[at]![0] < end) continue;
       const found = this.lookUp(word, running);
       if (found !== null) hits.push({ start, end, kind: found.kind, key: found.key });
     }
