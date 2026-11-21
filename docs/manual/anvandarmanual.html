@@ -11168,6 +11168,26 @@
         <td>Läs raden om restiden. Säger den att ett schema hittades utan restiden är det restiden som är skillnaden: låt fler lektioner använda salar på ett skolområde, till exempel med en salsregel (4.4), och kör om, eller stäng av restiden i generatorn under Skolregler (5.1). Säger den att inget schema hittades utan restiden heller är skillnaden inte mätt. En körning med restiden avstängd visar om den är det, och en stor skola kan behöva en längre körning.</td>
       </tr>
       <tr>
+        <td class="k">Schemamotorn hann inte svara inom sin längsta väntetid, så inget schema sparades</td>
+        <td>Motorn svarade inte alls inom den tid den får, så det finns inte ens en förklaring att visa. Meddelandet säger vilket steg motorn var i när tiden tog slut och hur länge steget hade pågått, till exempel <em>den andra sökningen efter ett schema, 160 s av 230 s</em>. Motorn kan räkna klart i bakgrunden en stund till.</td>
+        <td>Vänta några minuter och kör om. Upprepas det på samma underlag: kör <span class="ui">Kontrollera veckan</span> (5.2) först, och hör av dig till den som driver tjänsten och ange vilket steg meddelandet nämnde.</td>
+      </tr>
+      <tr>
+        <td class="k">Tjänsten väntade ett antal sekunder på schemamotorn och fick inget svar</td>
+        <td>Tjänsten slutade vänta innan motorn svarade. Står det också att motorn kan behöva upp till ett högre antal sekunder är det väntetiden som är för kort. Den är en inställning i tjänsten och inget i schemat.</td>
+        <td>Vänta några minuter och kör om. Är väntetiden för kort: hör av dig till den som driver tjänsten.</td>
+      </tr>
+      <tr>
+        <td class="k">Tjänsten nådde inte schemamotorn</td>
+        <td>Motorn var nere eller startades om medan körningen pågick. Det händer vid en driftsättning av tjänsten.</td>
+        <td>Vänta en stund och kör om. Inget schema skrevs, och schemat är som det var.</td>
+      </tr>
+      <tr>
+        <td class="k">Körningen avbröts när tjänsten startades om</td>
+        <td>Varje driftsättning startar om tjänsten, och en körning som pågår då avbryts. Meddelandet säger ungefär hur länge den hade pågått när tjänsten sist hördes av.</td>
+        <td>Kör Generera igen. Inget schema skrevs, och schemat är som det var.</td>
+      </tr>
+      <tr>
         <td class="k">Läraren ser inget schema</td>
         <td>Grundschemat är inte publicerat, eller läraren har inga timplansposter.</td>
         <td>Kontrollera att publicering skett för aktuell period, och att läraren är angiven på poster i timplanen.</td>

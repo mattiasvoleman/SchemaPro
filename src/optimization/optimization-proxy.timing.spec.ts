@@ -23,7 +23,7 @@ import type { PrismaService } from '../database/prisma.service';
 
 const SHARED = JSON.parse(
   readFileSync(join(__dirname, '../../optimization-engine/tests/data/solver_timeout_body.json'), 'utf8'),
-) as { code: string; sentences: Record<string, string> };
+) as { code: string; sentences: Record<string, string>; detailsWithStage: Record<string, string | number> };
 
 const maps = () => ({
   requirementAnonMap: new Map<string, string>(),
@@ -358,6 +358,99 @@ describe('OptimizationProxyService: the wait and the deadline', () => {
       await call('/v1/schedule').catch(() => undefined);
 
       expect(get).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('what a run is told when no answer came (omgång 13, M2)', () => {
+    it('carries where the engine’s solve was when its ceiling fell, as flat params (the body both sides read)', async () => {
+      const { call, post } = await build();
+      post.mockReturnValue(
+        throwError(() => refusedWith(503, { code: SHARED.code, message: SHARED.sentences.optimize, details: SHARED.detailsWithStage })),
+      );
+
+      const thrown = (await call('/v1/schedule').catch((error: unknown) => error)) as HttpException;
+
+      expect(thrown.getResponse()).toEqual({
+        message: expect.stringContaining('did not answer within its longest wait'),
+        code: 'ENGINE_TIMED_OUT',
+        params: { ceilingSeconds: 230, stage: 'SEARCH_CLONE', stageSeconds: 160, elapsedSeconds: 230 },
+      });
+    });
+
+    it('carries the ceiling alone from an engine that names no step, and nothing from one that sends no details', async () => {
+      const { call, post } = await build();
+      post.mockReturnValueOnce(
+        throwError(() => refusedWith(503, { code: SHARED.code, message: SHARED.sentences.optimize, details: { route: 'optimize', ceilingSeconds: 230 } })),
+      );
+      post.mockReturnValueOnce(throwError(() => refusedWith(503, { code: SHARED.code, message: SHARED.sentences.optimize })));
+      post.mockReturnValueOnce(throwError(() => refusedWith(503, { code: 'HTTP_ERROR', message: SHARED.sentences.optimize })));
+
+      const withCeiling = (await call('/v1/schedule').catch((error: unknown) => error)) as HttpException;
+      const withoutDetails = (await call('/v1/schedule').catch((error: unknown) => error)) as HttpException;
+      const olderThanTheCode = (await call('/v1/schedule').catch((error: unknown) => error)) as HttpException;
+
+      expect(withCeiling.getResponse()).toMatchObject({ code: 'ENGINE_TIMED_OUT', params: { ceilingSeconds: 230 } });
+      // No `params` at all, not an empty one: the run's error is what it was before the field.
+      expect(Object.keys(withoutDetails.getResponse() as object)).toEqual(['message', 'code']);
+      expect(Object.keys(olderThanTheCode.getResponse() as object)).toEqual(['message', 'code']);
+    });
+
+    it('says the API’s own wait ran out as ENGINE_WAIT_EXPIRED, with the wait and the engine’s own ceiling', async () => {
+      jest.useFakeTimers();
+      try {
+        const { call, post } = await build();
+        post.mockReturnValue(NEVER);
+
+        const pending = call('/v1/schedule').catch((error: unknown) => error);
+        await jest.advanceTimersByTimeAsync(240_000);
+        const thrown = (await pending) as HttpException;
+
+        expect(thrown.getStatus()).toBe(503);
+        expect(thrown.getResponse()).toEqual({
+          message: 'The AI engine did not respond in time.',
+          code: 'ENGINE_WAIT_EXPIRED',
+          params: { waitSeconds: 240, engineCeilingSeconds: 230 },
+        });
+        // The engine may still be solving for it, as it was before the code.
+        expect(engineMayStillBeSolving(thrown)).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('leaves out the engine’s ceiling when it has not said it, and for a route that is not the generator’s', async () => {
+      jest.useFakeTimers();
+      try {
+        const older = await build({ body: null });
+        older.post.mockReturnValue(NEVER);
+        const pendingOlder = older.call('/v1/schedule').catch((error: unknown) => error);
+        await jest.advanceTimersByTimeAsync(120_000);
+
+        const rooms = await build();
+        rooms.post.mockReturnValue(NEVER);
+        const pendingRooms = rooms.call('/api/v1/optimize-rooms').catch((error: unknown) => error);
+        await jest.advanceTimersByTimeAsync(240_000);
+
+        expect(((await pendingOlder) as HttpException).getResponse()).toMatchObject({ params: { waitSeconds: 120 } });
+        expect((((await pendingOlder) as HttpException).getResponse() as { params: object }).params).not.toHaveProperty('engineCeilingSeconds');
+        expect((((await pendingRooms) as HttpException).getResponse() as { params: object }).params).not.toHaveProperty('engineCeilingSeconds');
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('says a call that never reached the engine as ENGINE_NOT_REACHED, with the sentence it always had', async () => {
+      const { call, post } = await build();
+      const refused = new AxiosError('connect ECONNREFUSED 127.0.0.1:8000');
+      refused.code = 'ECONNREFUSED';
+      post.mockReturnValue(throwError(() => refused));
+
+      const thrown = (await call('/v1/schedule').catch((error: unknown) => error)) as HttpException;
+
+      expect(thrown.getStatus()).toBe(503);
+      expect(thrown.getResponse()).toEqual({ message: 'The AI engine could not be reached.', code: 'ENGINE_NOT_REACHED' });
+      // Nothing is solving: the call never arrived.
+      expect(engineMayStillBeSolving(thrown)).toBe(false);
     });
   });
 

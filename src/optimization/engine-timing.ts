@@ -239,3 +239,47 @@ export function isEngineCeilingBody(body: { message?: unknown; code?: unknown } 
   if (body.code === ENGINE_CEILING_CODE) return true;
   return typeof body.message === 'string' && ENGINE_CEILING_SENTENCES.includes(body.message);
 }
+
+/**
+ * The steps a generation solve says it was in when its ceiling fell: the engine's `TimeoutStageName`
+ * (optimization-engine/app/schemas/schedule.py), the closed set the page has a sentence for.
+ */
+export const ENGINE_STAGES: readonly string[] = ['PRECHECKS', 'BUILD', 'SITES', 'SEARCH_CLEAN', 'SEARCH_CLONE', 'PROBE'];
+
+/**
+ * What an engine's ceiling 503 says of the solve it gave up on (omgång 13, M2), as the FLAT params of the
+ * run's error: the ceiling that passed, and where the solve was: the step, the seconds in it and the seconds
+ * since the request came in. The page says them ("the engine was in its second search, 160 s of 230").
+ *
+ * Only what can be said is carried: a figure that is not a finite number of seconds is left out, and the
+ * three figures of a step go together or not at all (a step with no seconds is not a sentence). An engine
+ * older than the field sends no details beyond the route and the ceiling, which are carried as they are,
+ * and one older than the code sends none: undefined, and the error is what it always was.
+ * optimization-engine/tests/data/solver_timeout_body.json is the body both sides read.
+ */
+export function engineCeilingParams(
+  body: { details?: unknown } | null | undefined,
+): Record<string, string | number> | undefined {
+  const details = body?.details;
+  if (typeof details !== 'object' || details === null || Array.isArray(details)) return undefined;
+  const read = details as Record<string, unknown>;
+  // A tenth of a second, the engine's own unit: what a school can read.
+  const seconds = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.round(value * 10) / 10 : undefined;
+  const params: Record<string, string | number> = {};
+  const ceiling = seconds(read.ceilingSeconds);
+  if (ceiling !== undefined) params.ceilingSeconds = ceiling;
+  const stageSeconds = seconds(read.stageSeconds);
+  const elapsedSeconds = seconds(read.elapsedSeconds);
+  if (
+    typeof read.stage === 'string' &&
+    ENGINE_STAGES.includes(read.stage) &&
+    stageSeconds !== undefined &&
+    elapsedSeconds !== undefined
+  ) {
+    params.stage = read.stage;
+    params.stageSeconds = stageSeconds;
+    params.elapsedSeconds = elapsedSeconds;
+  }
+  return Object.keys(params).length > 0 ? params : undefined;
+}

@@ -23,7 +23,15 @@ import { todayInZone } from '../common/utils/time';
 import { schoolTimezone } from '../cover/cover-context';
 import { gradeSpanOf, loadRosters, roomNeedsOf, type RoomNeeds } from './room-eligibility';
 import { EngineTimingService } from './engine-timing.service';
-import { FALLBACK_WAIT_MS, deadlineSecondsOf, isEngineCeilingBody, routeOf, waitMsAtLeast, type EngineRoute } from './engine-timing';
+import {
+  FALLBACK_WAIT_MS,
+  deadlineSecondsOf,
+  engineCeilingParams,
+  isEngineCeilingBody,
+  routeOf,
+  waitMsAtLeast,
+  type EngineRoute,
+} from './engine-timing';
 import { fromNioarig, toNioarig, toNioarigSpan, type GradeNumbering } from '../common/grade-numbering';
 import { dayNumberingOf, yearNumberingOf } from '../common/year-numbering';
 import { lockCoversDemand } from './locked-coverage';
@@ -744,6 +752,18 @@ const ENGINE_ERROR = 'The AI engine returned an error.';
  * (engineFailureOf), as it read every engine 503 before.
  */
 export const ENGINE_TIMED_OUT = 'ENGINE_TIMED_OUT';
+/**
+ * The API's own wait for the engine ran out before the engine answered (a call's timeout): the run says it, and
+ * for how long the API waited, so that a wait set shorter than the engine needs is read off the page. It was an
+ * English sentence with no code, which a Swedish page showed as it stood. The sentence is kept beside the code.
+ */
+export const ENGINE_WAIT_EXPIRED = 'ENGINE_WAIT_EXPIRED';
+/**
+ * The call never reached the engine (a refused or reset connection, an address that does not resolve): the engine
+ * was down or restarted, and nothing was solved. Its own code, for the same reason; the sentence is unchanged,
+ * since engineMayStillBeSolving reads it.
+ */
+export const ENGINE_NOT_REACHED = 'ENGINE_NOT_REACHED';
 const ENGINE_TIMED_OUT_MESSAGE =
   'The scheduling engine did not answer within its longest wait, so no timetable was saved. It may go on working in the background for a while, so wait a few minutes before you run Generate again.';
 /**
@@ -4843,16 +4863,24 @@ export class OptimizationProxyService {
              */
             catchError((error: unknown) => {
               if (error instanceof TimeoutError) {
-                throw new ServiceUnavailableException(
-                  'The AI engine did not respond in time.',
-                );
+                // How long this call waited, and how long the engine says a plain request can take when it has
+                // said (a wait shorter than that is the whole explanation).
+                const engineSays = route === 'optimize' ? this.engineCeilingSeconds : undefined;
+                throw new ServiceUnavailableException({
+                  message: 'The AI engine did not respond in time.',
+                  code: ENGINE_WAIT_EXPIRED,
+                  params: {
+                    waitSeconds: Math.round(waitMs / 1000),
+                    ...(engineSays !== undefined ? { engineCeilingSeconds: Math.round(engineSays) } : {}),
+                  },
+                });
               }
               if (error instanceof AxiosError) {
                 if (error.response === undefined) {
                   this.logger.error(
                     `AI engine unreachable at ${this.aiConfig.baseUrl} [${error.code ?? 'no code'}]`,
                   );
-                  throw new ServiceUnavailableException(ENGINE_UNREACHABLE);
+                  throw new ServiceUnavailableException({ message: ENGINE_UNREACHABLE, code: ENGINE_NOT_REACHED });
                 }
                 /*
                  * A 3xx is no answer to this request. None is followed
@@ -4955,8 +4983,15 @@ export class OptimizationProxyService {
                   // What the engine said of its times may have changed, which is what a ceiling that was not
                   // expected says: read them again, and do not wait for it.
                   void this.timing?.refresh();
+                  // Where the engine's solve was when its ceiling fell, said in the run's params (flat, as a
+                  // refusal's are): an engine older than the field sends none, and the error is then as it was.
+                  const where = engineCeilingParams(body);
                   throw new HttpException(
-                    { message: route === 'optimize' || route === null ? ENGINE_TIMED_OUT_MESSAGE : ENGINE_TIMED_OUT_OTHER_MESSAGE, code: ENGINE_TIMED_OUT },
+                    {
+                      message: route === 'optimize' || route === null ? ENGINE_TIMED_OUT_MESSAGE : ENGINE_TIMED_OUT_OTHER_MESSAGE,
+                      code: ENGINE_TIMED_OUT,
+                      ...(where !== undefined ? { params: where } : {}),
+                    },
                     HttpStatus.SERVICE_UNAVAILABLE,
                   );
                 }
