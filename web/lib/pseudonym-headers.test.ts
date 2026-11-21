@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { columnStats, foldHeader, headerGroup, KEEP, mark, proposalFor, shapeOf, type HeaderGroup } from "@/lib/pseudonym-headers";
+import { columnStats, DATE_SPAN_ASKED, foldHeader, headerGroup, headerLooksLikeData, KEEP, mark, proposalFor, shapeOf, type HeaderGroup } from "@/lib/pseudonym-headers";
 
 describe("headerGroup", () => {
   const cases: [string, HeaderGroup | null][] = [
@@ -135,5 +135,36 @@ describe("proposalFor", () => {
     expect(proposalFor("", columnStats(["Anna", "Bo", "Cia"]))).toBeNull();
     expect(proposalFor("Okänd", columnStats(["ANSV", "BOEK"]))).toBeNull();
     expect(proposalFor("Antal lärare", columnStats(["1", "x"]))).toBeNull();
+  });
+});
+
+describe("a column of dates", () => {
+  it("has a span in days when it holds two dates or more, written YYYY-MM-DD", () => {
+    expect(columnStats(["2026-08-17", "2026-12-18", ""]).dateSpanDays).toBe(123);
+    expect(columnStats(["2026-08-17 08:10", "2026-08-18"]).dateSpanDays).toBe(1);
+    expect(columnStats(["2026-08-17"]).dateSpanDays).toBeNull();
+    expect(columnStats(["17/08/2026", "18/08/2026"]).dateSpanDays).toBeNull();
+    expect(columnStats(["2026-13-40", "2026-02-30x"]).dateSpanDays).toBeNull();
+  });
+
+  it("is kept without a question when it spans a term, and asked about when it spans more than a year: lesson dates and birth dates look alike", () => {
+    expect(proposalFor("Gäller", columnStats(["2026-08-17", "2026-12-18", "2027-06-10"]))).toEqual({ treatment: KEEP, reason: "values", detail: "numbers" });
+    expect(DATE_SPAN_ASKED).toBe(366);
+    const births = columnStats(["2010-03-04", "2011-11-30", "2012-07-01", "2013-01-22"]);
+    expect(births.dateSpanDays!).toBeGreaterThan(DATE_SPAN_ASKED);
+    expect(proposalFor("F-datum", births)).toBeNull();
+    // A header the lists know still goes first.
+    expect(proposalFor("Födelsedatum", births)?.treatment).toEqual(mark("text"));
+  });
+});
+
+describe("headerLooksLikeData", () => {
+  it("is true for a row with a number, a time or a date, which a header does not have, and false for words and codes", () => {
+    expect(headerLooksLikeData(["Mån", "08:10", "Anna Exempel", "7A"])).toBe(true);
+    expect(headerLooksLikeData(["Klass", "2026-08-17"])).toBe(true);
+    expect(headerLooksLikeData(["Vecka", "34"])).toBe(true);
+    expect(headerLooksLikeData(["Lärare", "Ämne", "Klass", "Notis"])).toBe(false);
+    expect(headerLooksLikeData(["Sal", "", "7A"])).toBe(false);
+    expect(headerLooksLikeData([])).toBe(false);
   });
 });

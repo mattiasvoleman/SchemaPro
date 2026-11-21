@@ -4,12 +4,16 @@ import { routing } from "./i18n/routing";
 import { updateSession } from "@/utils/supabase/middleware";
 import { embedOriginsOf, embedTokenOf, frameAncestorsOf } from "@/lib/embed-policy";
 import { trustedHopsOf, viewerFetchOf } from "@/lib/public-timetable";
+import { isPseudonymiseraPath, pseudonymiserarePolicy } from "@/lib/pseudonym-policy";
 
 const intlMiddleware = createIntlMiddleware(routing);
 
 // /tillganglighet: the tillgänglighetsredogörelse, which Digg says nobody
-// should have to sign in to read.
-const PUBLIC_PATHS = ["/login", "/forgot-password", "/update-password", "/auth", "/tillganglighet"];
+// should have to sign in to read. /pseudonymisera: the tool a school that is not
+// a customer yet uses to take the personal data out of a file before it is sent
+// to us (Pseudonymiseraren, X1); it makes no request, and says so to the
+// browser with a policy of its own, below.
+const PUBLIC_PATHS = ["/login", "/forgot-password", "/update-password", "/auth", "/tillganglighet", "/pseudonymisera"];
 
 /** Whether the request already holds a Supabase session: its auth cookies are named sb-<project>-auth-token, in chunks when long. */
 const carriesSession = (request: NextRequest): boolean => request.cookies.getAll().some(({ name }) => name.startsWith("sb-"));
@@ -102,6 +106,13 @@ export async function proxy(request: NextRequest) {
     url.pathname = `/${locale}/login`;
     url.search = "";
     return NextResponse.redirect(url);
+  }
+
+  // The pseudonymiser's page: the browser itself refuses every request it could make (connect-src 'none', lib/pseudonym-policy.ts), so that
+  // "the file never leaves your computer" is something a school's IT can see in the response and not only something we say. No referrer either.
+  if (isPseudonymiseraPath(pathname)) {
+    response.headers.set("Content-Security-Policy", pseudonymiserarePolicy({ development: process.env.NODE_ENV === "development" }));
+    response.headers.set("Referrer-Policy", "no-referrer");
   }
 
   return response;

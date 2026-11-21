@@ -108,6 +108,7 @@
       <li><span>7.5 Logga in med skolkonto</span><span class="dots"></span><span class="pg" data-pg="s75"></span></li>
       <li><span>7.6 Kalenderprenumeration</span><span class="dots"></span><span class="pg" data-pg="s76"></span></li>
       <li><span>7.7 Schema som fil: tabell, Untis och aSc</span><span class="dots"></span><span class="pg" data-pg="s77"></span></li>
+      <li><span>7.8 Skicka en exempelfil utan personuppgifter</span><span class="dots"></span><span class="pg" data-pg="s78"></span></li>
     </ol>
     <li><span>8 · Årscykel</span><span class="dots"></span><span class="pg" data-pg="ch8"></span></li>
     <ol>
@@ -10983,12 +10984,139 @@
       export större än 700 kB säger sidan det när filen hämtas: den går att
       öppna i andra program men inte läsa in hit igen, och för tabellen är
       Excel-filen betydligt mindre. Skolans <em>egna</em> filer från Skola24
-      läser Rastra Schema inte ännu: de saknar öppen beskrivning. Delade
+      läser Rastra Schema inte ännu: de saknar öppen beskrivning. Vill ni skicka
+      en sådan fil till oss, så att vi kan lära oss läsa den, tar ni först bort
+      personuppgifterna ur den (7.8). Delade
       lektioner (flera lärare på en post) härleds inte; tjänstefördelningens
       varna- eller vägra-regler (4.3) körs inte för de poster importen gör, så
       se över dem under <span class="path">Tjänstefördelning</span> efteråt.
       Lunchkontrollen gäller klasser och deras egna lektioner; en
       undervisningsgrupps lektioner tar elever från klassen utan att räknas.
+    </p>
+  </div>
+
+  <h3 id="s78"><span class="num">7.8</span>Skicka en exempelfil utan personuppgifter</h3>
+  <p>
+    Filer ur Skola24 och andra program har personnummer, namn, e-postadresser
+    och telefonnummer i sig, och en skola kan inte skicka dem utan att skicka
+    med människorna. <strong>Pseudonymiseraren</strong> är ett verktyg som tar
+    bort det i din egen webbläsare, innan filen lämnar dig. Du får en säker
+    fil och en rapport, och det är dem du skickar. Verktyget är en öppen sida,
+    <span class="path">/sv/pseudonymisera</span> på samma adress som Rastra
+    Schema, och kräver <strong>ingen inloggning</strong>: den som ska skicka en
+    fil behöver inte vara kund. Det är därför den inte ligger i menyn.
+  </p>
+
+  <h4>Filen lämnar aldrig din dator</h4>
+  <ul>
+    <li><strong>Allt sker i webbläsarfliken.</strong> Filen läses med
+      webbläsarens egna funktioner och skrivs om i minnet. Den skickas inte till
+      Rastra eller någon annan, och ingen server ser den.</li>
+    <li><strong>Webbläsaren vägrar själv.</strong> Sidan har en
+      säkerhetspolicy (<em>Content-Security-Policy</em>, med
+      <em>connect-src 'none'</em>) som gör att webbläsaren avvisar alla
+      nätverksanrop från den. Skolans IT-avdelning kan läsa policyn i
+      webbläsarens utvecklarverktyg under <em>Nätverk</em>, och prova själv: koppla
+      bort nätverket när sidan har laddats, och verktyget fungerar ändå.</li>
+    <li><strong>Ingenting om filen sparas.</strong> Varken i webbläsarens lagring eller
+      i kakor; det enda sidan kan sätta är en kaka för vilket språk du valt.
+      Stänger du fliken, eller trycker <em>Rensa allt</em>, är allt du lagt in
+      borta. Originalfilen ligger kvar där den låg.</li>
+  </ul>
+
+  <h4>Så här gör du</h4>
+  <ol>
+    <li><strong>Lägg till filer.</strong> Välj en eller flera filer, eller klistra in
+      en tabell som du kopierat ur Excel eller Skola24. Verktyget läser
+      textfiler och CSV (.csv, .txt, .tsv, med rätt kodning, också Windows-1252 från
+      Excel) och Excel-filer (.xlsx). Gamla Excel-filer (.xls), Access-filer
+      (.mdb), PDF och bilder går inte att göra säkra här, och verktyget säger det i stället
+      för att läsa dem fel. Flera filer i samma körning delar sina märken, så att en
+      lärare är samma märke i lektionsfilen och i tjänstefördelningsfilen.</li>
+    <li><strong>Bestäm vad som händer med varje kolumn.</strong> Verktyget listar
+      kolumnerna med några exempelvärden (som visas bara på din skärm), vad de
+      innehåller och ett förslag med skälet: en rubrik som säger
+      <em>Efternamn</em> eller <em>E-post</em> ersätts, en kolumn av bara tal, tider
+      och datum behålls. <strong>En kolumn varken rubriken eller värdena
+      placerar får inget förslag</strong>, och du väljer: <em>Behåll</em>,
+      <em>Ersätt med märke</em> (namn, förnamn, efternamn, signatur, e-post, telefon, personnummer
+      eller övrig text) eller <em>Töm</em> (kolumnen och rubriken finns kvar,
+      cellerna är tomma). Verktyget gissar aldrig vilken kolumn som har namn. En kolumn av långa tal
+      (ett telefonnummer utan inledande 0 sparas som tal) och en kolumn av datum som
+      sträcker sig över mer än ett år (födelsedatum ser ut som lektionsdatum) får
+      heller inget förslag. Står det en titel
+      ovanför tabellen väljer du vilken rad rubrikerna står på; innehåller rubrikraden
+      namn (en matris med en lärare per kolumn) kryssar du i det.</li>
+    <li><strong>Namn och ord som alltid ska bort.</strong> Valfritt. Namn i kolumner
+      som pekats ut som namn söks redan upp i löpande text, och här lägger du till
+      sådant verktyget inte kan veta.</li>
+    <li><strong>Ta bort personuppgifterna.</strong> Knappen kan tryckas först när
+      varje kolumn har ett val.</li>
+    <li><strong>Titta igenom.</strong> Verktyget visar vad som byttes ut, per slag,
+      vad det <em>inte</em> kan bedöma, och en förhandsvisning av de säkra filerna
+      (titelrader, rubrikrad och de första raderna). Filerna kan hämtas först när du
+      har bockat i att du tittat igenom förhandsvisningen, och verktyget har sökt
+      igenom resultatet en gång till: hittar det något kvar som ser ut som personnummer, e-postadress
+      eller telefonnummer lämnas ingen fil ut. Det är <em>samma sökning</em> som
+      ersättningen, så den fångar fel i ersättningen men inte det verktyget inte kan se:
+      titta i förhandsvisningen.</li>
+    <li><strong>Hämta och skicka.</strong> Hämta den säkra filen och rapporten.
+      Skicka dem, och inte originalet. Filnamnet på den säkra filen är neutralt
+      (<em>exempelfil-1.csv</em>), eftersom ett filnamn kan innehålla ett namn;
+      du kan ändra det.</li>
+  </ol>
+
+  <h4>Vad som byts ut, och mot vad</h4>
+  <table>
+    <thead><tr><th style="width:24%">Slag</th><th style="width:22%">Märke</th><th>Hur det hittas</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Personnummer, samordningsnummer</td><td>PNR-0001, SAM-0001</td><td>På hur de ser ut, i varje cell, rubrik och rad ovanför rubriken: tio eller tolv siffror, med eller utan sekel, med bindestreck, plus eller blanksteg. Kontrollsiffran avgör inte vad som tas bort, bara hur det räknas i rapporten (&rdquo;stämmer&rdquo; eller &rdquo;stämmer inte, ersatt ändå&rdquo;): ett felskrivet nummer är ändå någons nummer. Allt som har formen tas bort, också ett id-nummer som råkar se ut som ett datum.</td></tr>
+      <tr><td class="k">E-post</td><td>epost-0001@exempel.invalid</td><td>På hur de ser ut: allt som är <em>text@text</em>.</td></tr>
+      <tr><td class="k">Telefon</td><td>TEL-0001</td><td>På hur de ser ut: <em>070-123 45 67</em>, <em>08-123 456 78</em>, <em>+46 70 123 45 67</em>. Datum och tider tas inte för telefonnummer.</td></tr>
+      <tr><td class="k">Namn</td><td>NAMN-0001, FORNAMN-0001, EFTERNAMN-0001</td><td>Genom rubriken (<em>Namn</em>, <em>Förnamn</em>, <em>Efternamn</em>, <em>Lärare</em>, <em>Elev</em>, <em>Vårdnadshavare</em> …) eller ditt val, aldrig genom gissning. En lista i en cell, delad på semikolon eller snedstreck, byts namn för namn.</td></tr>
+      <tr><td class="k">Signatur</td><td>SIGN-0001</td><td>Genom rubriken <em>Signatur</em>. En signatur är ett namn i förkortning i en liten skola, så den ersätts som förval; du kan välja att behålla den.</td></tr>
+      <tr><td class="k">Annan personlig text</td><td>TEXT-0001</td><td>Genom rubriken: <em>Födelsedatum</em>, <em>Adress</em>, <em>Postnummer</em>, <em>Ort</em>, <em>Anteckning</em>, <em>Kommentar</em> och liknande.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    <strong>Samma värde får samma märke</strong> i hela körningen, hur det än är
+    skrivet: <em>800101-1234</em>, <em>19800101-1234</em> och <em>8001011234</em> är en person,
+    <em>+46 70 123 45 67</em> och <em>070-123 45 67</em> ett nummer, <em>SVENSSON</em> och
+    <em>Svensson</em> ett namn. Olika värden får olika märken. Därför syns filens uppbyggnad
+    kvar: vilken lärare som har vilka lektioner, och vilka kolumner som hör ihop.
+    Märkena numreras i den ordning de förekommer i filen.
+  </p>
+
+  <h4>Vad den säkra filen behåller</h4>
+  <p>
+    Det som den som ska läsa filen först måste lära sig: <strong>avgränsare,
+    radslut, byte order mark och kodning</strong> (en Windows-1252-fil skrivs tillbaka som
+    Windows-1252) och <strong>radnumren</strong> (en tom rad i originalet är en tom rad i
+    kopian, så att &rdquo;rad 12&rdquo; är rad 12 i båda). En Excel-fil blir en
+    CSV-fil, ett blad per fil, av cellernas värden: dokumentegenskaper (författare,
+    företag), kommentarer, dolda blad, formler och format följer <em>aldrig</em> med,
+    eftersom de inte ens öppnas. Celler som ett kalkylprogram skulle köra som formler får ett
+    skyddstecken, så att filen är säker att öppna också.
+  </p>
+
+  <div class="note">
+    <span class="label">Det här kan verktyget inte bedöma</span>
+    <p>
+      Verktyget hittar personuppgifter på hur de ser ut, och namn i de kolumner du eller
+      rubriken pekar ut. Det kan inte avgöra allt, och det säger det i sidan, i
+      rapporten och här: <strong>namn i löpande text</strong> som inte finns i en
+      namnkolumn eller i din lista; e-postadresser och telefonnummer skrivna med ord eller
+      delade över flera celler, och personnummer delade över två celler; siffror i andra
+      tecken än vanliga och helbredd-siffror; kolumner du själv har valt att behålla;
+      och filer med fast bredd, där märkena inte är lika långa som det de ersätter.
+      Namn på färre än tre bokstäver söks inte i löpande text, om de inte står i din
+      egen lista (där gränsen är två). Ett personnummer med plus (född före 1900) och
+      samma siffror hos någon född hundra år senare får samma märke.
+      Märkenas nummer följer filens ordning, så en fil sorterad på efternamn avslöjar
+      vilken plats i bokstavsordningen en person har. <strong>Titta därför alltid i
+      förhandsvisningen</strong>, och skicka inte filen om något som ser personligt ut finns
+      kvar. Verktyget gör inte en fil &rdquo;anonym&rdquo; i dataskyddsförordningens mening:
+      det byter personuppgifter mot märken, och vad som är kvar är skolans att bedöma.
     </p>
   </div>
 </section>
