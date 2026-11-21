@@ -9,9 +9,12 @@ import { Component, type ReactNode } from "react";
  * whole page (the app has no error.tsx). It draws nothing once it has caught:
  * the page reports the error, closes the dialogs and remounts this boundary
  * under a new key, so the next open fetches again.
+ *
+ * `fallback` is what stands where the failed part was, for a part that answers a question the page has already asked (the
+ * hint under a run that ran out of time): without one it draws nothing.
  */
 export class DialogLoadBoundary extends Component<
-  { onError: (error: unknown) => void; children: ReactNode },
+  { onError: (error: unknown) => void; children: ReactNode; fallback?: ReactNode },
   { failed: boolean }
 > {
   state = { failed: false };
@@ -25,6 +28,6 @@ export class DialogLoadBoundary extends Component<
   }
 
   render() {
-    return this.state.failed ? null : this.props.children;
+    return this.state.failed ? (this.props.fallback ?? null) : this.props.children;
   }
 }

@@ -78,6 +78,13 @@ const WeekCheckPanel = lazy(() =>
 );
 
 /**
+ * What a run that ran out of time says for itself: where the time went, how far the search got, the likely cause and the next
+ * step (M2). Drawn only when a run ended in TIMEOUT and carries the engine's report, so a route near its bundle budget pays for it
+ * when somebody needs it.
+ */
+const TimeoutAccount = lazy(() => import("./timeout-account").then((module) => ({ default: module.TimeoutAccount })));
+
+/**
  * How long the gateway counts a PENDING or RUNNING job as running when it
  * refuses a candidate run beside it (GENERATE_RUNNING): a job older than
  * this is one whose task was lost, and refusing for it would refuse for ever.
@@ -1173,7 +1180,19 @@ export default function GeneratePage() {
           ) : solverStatus === "INFEASIBLE" ? (
             <p className="max-w-prose text-sm text-muted-foreground">{t("infeasibleHint")}</p>
           ) : solverStatus === "TIMEOUT" ? (
-            <p className="max-w-prose text-sm text-muted-foreground">{t("timeoutHint")}</p>
+            job.report ? (
+              // The account replaces the one-sentence hint; while its chunk is on its way, and where it never arrives, the hint stands.
+              <DialogLoadBoundary
+                onError={() => undefined}
+                fallback={<p className="max-w-prose text-sm text-muted-foreground">{t("timeoutHint")}</p>}
+              >
+                <Suspense fallback={<p className="max-w-prose text-sm text-muted-foreground">{t("timeoutHint")}</p>}>
+                  <TimeoutAccount report={job.report} conflicts={job.conflicts} />
+                </Suspense>
+              </DialogLoadBoundary>
+            ) : (
+              <p className="max-w-prose text-sm text-muted-foreground">{t("timeoutHint")}</p>
+            )
           ) : null}
 
           {offersBestEffort ? (
