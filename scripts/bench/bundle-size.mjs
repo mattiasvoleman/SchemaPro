@@ -220,11 +220,15 @@ const kb = (bytes) => Math.round((bytes / 1024) * 10) / 10;
 const TIERS = [
   // measured max 22.1KB (/[locale] locale-redirect page; error pages are 3.6KB)
   { name: 'system', budgetKb: 50, match: (r) => /^\/_/.test(r) || /^\/\[locale\]\/page$/.test(r) },
-  // measured 3.6KB (/v/[token], Schemavisaren, 2026-10-10): Next's own error
-  // and not-found boundaries and nothing of ours — the page is a server
-  // component and sends the week as HTML. A login-free page a family opens on
-  // a phone; anything that makes it ship script should fail here first.
-  { name: 'public', budgetKb: 5, match: (r) => /^\/v\//.test(r) },
+  // measured 3 534 B (/v/[token], its embed and /v/, Schemavisaren, 2026-11-21):
+  // Next's own error and not-found boundaries and nothing of ours — the page is
+  // a server component and sends the week as HTML. A login-free page a family
+  // opens on a phone; anything that makes it ship script should fail here first.
+  // 6 KB since 2026-11-22 (5 KB before): those boundaries left 1 586 B, so the
+  // margin warning (bundle-margin.mjs) stood on every build for a tier no change
+  // of ours can move. 2 610 B above what Next ships is still less than any script
+  // of our own would be.
+  { name: 'public', budgetKb: 6, match: (r) => /^\/v\//.test(r) },
   // measured max 96.6KB (all four auth pages are within 1KB of each other)
   { name: 'auth', budgetKb: 110, match: (r) => r.includes('/(auth)/') },
   // measured max 177.8KB (/admin/timetable)
@@ -238,8 +242,19 @@ const TIERS = [
   { name: 'other', budgetKb: 170, match: () => true },
 ];
 
-/** The framework floor plus whatever the root layout adds. */
-const SHARED_BUDGET_KB = 130;
+/**
+ * The framework floor plus whatever the root layout adds.
+ *
+ * Today that is Next and React and nothing of ours: 131 780 B on 2026-11-21
+ * (main 1516129a), of which `next` is 127 589 B (react-dom's client alone
+ * 63 572, the Flight client 6 656, the segment cache ≈13 000), the Turbopack
+ * runtime 3 908 and @swc/helpers 192 — attributed with browser source maps, and
+ * no byte from this repository. It therefore moves with the Next and React
+ * versions and cannot be given room by lazy-loading our code; the 130 KB it had
+ * left 1 340 B, so the margin warning stood on every build. 132 KB since
+ * 2026-11-22, which is 3 388 B above what it measures, a Next upgrade's worth.
+ */
+const SHARED_BUDGET_KB = 132;
 
 const tierFor = (route) => TIERS.find((t) => t.match(route));
 

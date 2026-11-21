@@ -30,7 +30,7 @@ import {
 
 const SCRIPT = resolve(dirname(fileURLToPath(import.meta.url)), 'bundle-size.mjs');
 const ADMIN_CAP = 190 * 1024; // 194 560
-const SHARED_CAP = 130 * 1024; // 133 120
+const SHARED_CAP = 132 * 1024; // 135 168, raised from 130 KB on 2026-11-22
 
 // ---- the arithmetic --------------------------------------------------------
 
@@ -81,7 +81,7 @@ test('under 2 048 B warns, exactly 2 048 B does not, and the default is 2 KB', (
   assert.deepEqual(at(0), ['/r/admin/x']);
 });
 
-test('on main today the shared runtime, timetable and people warn and requirements does not', () => {
+test('on main on 2026-11-21 the shared runtime, timetable and people warn and requirements does not', () => {
   assert.deepEqual(
     warningsOf(marginsOf(MAIN)).map((row) => row.scope),
     ['shared runtime', '/[locale]/(app)/admin/timetable/page', '/[locale]/(app)/admin/people/page'],
@@ -168,7 +168,7 @@ function chunkOfGzipSize(target, seed) {
  * plus the sizes the gate will read (it counts the route's chunks minus the
  * shared ones, both gzipped).
  */
-function fixture({ sharedLeft = 20000, routeLeft = 20000 }) {
+function fixture({ sharedLeft = 20000, routeLeft = 20000, publicBytes = null }) {
   const dir = mkdtempSync(join(tmpdir(), 'bundle-margin-'));
   const next = join(dir, '.next');
   mkdirSync(join(next, 'static', 'chunks'), { recursive: true });
@@ -189,6 +189,19 @@ function fixture({ sharedLeft = 20000, routeLeft = 20000 }) {
       `globalThis.__RSC_MANIFEST["/[locale]/(app)/admin/x/page"] = ` +
       `{"entryJSFiles":{"/x":["static/chunks/shared.js","static/chunks/route.js"]}};\n`,
   );
+  if (publicBytes !== null) {
+    // A page of the public tier (/v/…): Next's own boundaries, nothing else.
+    const pub = chunkOfGzipSize(publicBytes, 3);
+    writeFileSync(join(next, 'static', 'chunks', 'pub.js'), pub.bytes);
+    const pubDir = join(next, 'server', 'app', 'v', '[token]');
+    mkdirSync(pubDir, { recursive: true });
+    writeFileSync(
+      join(pubDir, 'page_client-reference-manifest.js'),
+      `globalThis.__RSC_MANIFEST = globalThis.__RSC_MANIFEST || {};\n` +
+        `globalThis.__RSC_MANIFEST["/v/[token]/page"] = ` +
+        `{"entryJSFiles":{"/v":["static/chunks/shared.js","static/chunks/pub.js"]}};\n`,
+    );
+  }
   return {
     dir: next,
     sharedLeft: SHARED_CAP - shared.size,
@@ -227,7 +240,7 @@ test('the shared runtime with 1 340 B left warns the same way', () => {
   try {
     const run = gate(f.dir);
     assert.equal(run.code, 0, run.err);
-    assert.match(run.err, /WARNING: the shared runtime — 1 3\d\d B left of 133 120 B/);
+    assert.match(run.err, /WARNING: the shared runtime — 1 3\d\d B left of 135 168 B/);
     assert.equal((run.err.match(/WARNING:/g) ?? []).length, 1);
   } finally {
     f.cleanup();
@@ -313,5 +326,26 @@ test('outside GitHub Actions there is no annotation', () => {
     assert.doesNotMatch(gate(f.dir).err, /::warning/);
   } finally {
     f.cleanup();
+  }
+});
+
+test('the public tier is 6 KB: Next\'s own 3 534 B has room, and 5 000 B does not', () => {
+  const roomy = fixture({ publicBytes: 3534, routeLeft: 20000, sharedLeft: 20000 });
+  const tight = fixture({ publicBytes: 5000, routeLeft: 20000, sharedLeft: 20000 });
+  try {
+    const ok = gate(roomy.dir, ['--json']);
+    assert.equal(ok.code, 0, ok.err);
+    const report = JSON.parse(ok.out.slice(0, ok.out.lastIndexOf('\n}') + 2));
+    const page = report.routes.find((r) => r.route === '/v/[token]/page');
+    assert.equal(page.tier, 'public');
+    assert.equal(page.budgetKb, 6);
+    assert.doesNotMatch(ok.err, /WARNING/, 'Next\'s own boundaries leave 2 610 B, which is not a warning');
+
+    const warned = gate(tight.dir);
+    assert.equal(warned.code, 0, warned.err);
+    assert.match(warned.err, /WARNING: \/v\/\[token\]\/page — 1 1\d\d B left of 6 144 B \(public, 6 KB\)/);
+  } finally {
+    roomy.cleanup();
+    tight.cleanup();
   }
 });
