@@ -56,6 +56,33 @@ export function redactPersonalNumbers(text: string): string {
   return from === 0 ? text : out + text.slice(from);
 }
 
+/** A personnummer-shaped part of a text: where it stands, its digits and the text as it was folded (for the spelling). */
+export interface PersonalNumberMatch {
+  /** Index of the first character in the text it was found in. */
+  start: number;
+  /** Index after the last character. */
+  end: number;
+  /** The digits and nothing else: ten, or twelve with a century. */
+  digits: string;
+  /** The matched text with the spellings folded as above (one character to one): what `digits` was taken from. */
+  folded: string;
+}
+
+/**
+ * Every personnummer-shaped part of the text, where redactPersonalNumbers replaces them: the same expressions and the same
+ * folding, so that the two agree on what a number is (personal-number.test.ts replays the shared cases against both).
+ * Added for the pseudonymiser (X1), which has to know WHICH number it replaced, to give the same person the same marker
+ * however it was written. Nothing here changes what the other functions do.
+ */
+export function findPersonalNumbers(text: string): PersonalNumberMatch[] {
+  if (text.length < 10) return [];
+  const found: PersonalNumberMatch[] = [];
+  for (const match of fold(text).matchAll(SHAPE_ALL)) {
+    found.push({ start: match.index, end: match.index + match[0].length, digits: match[0].replace(/\D/g, ""), folded: match[0] });
+  }
+  return found;
+}
+
 /** Headers of a personal-number column, as the gateway's reader knows them: exact for the short forms, contained for the long. */
 const PERSONAL_EXACT = new Set(["pnr", "personnr", "ssn"]);
 const PERSONAL_CONTAINS = ["personnummer", "samordningsnummer", "socialsecuritynumber", "civicnumber", "personalnumber"];
