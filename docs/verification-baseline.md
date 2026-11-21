@@ -48,7 +48,7 @@ could be evaluated at all.
 | Mutation score | `stryker.conf.json` | `quality-gates.yml` → mutation (nightly) |
 | Visual regression | `web/e2e/visual.spec.ts` | `ci.yml` → web |
 | Accessibility | `web/e2e/a11y.spec.ts` (axe-core) + `web/lighthouserc.json` | `ci.yml` → web, `quality-gates.yml` → lighthouse |
-| Bundle size | `scripts/bench/bundle-size.mjs` | `ci.yml` → web |
+| Bundle size | `scripts/bench/bundle-size.mjs` (fails over a budget; warns, never fails, under 2 KB left: `bundle-margin.mjs`, tested by `bundle-margin.test.mjs`) | `ci.yml` → web |
 | Frontend performance | `web/lighthouserc.json` | `quality-gates.yml` → lighthouse (nightly) |
 | API latency | `scripts/bench/api-latency.mjs` (measures), `scripts/bench/latency-gate.mjs` (verdict) | `quality-gates.yml` → api-latency (nightly); the verdict's tests in `ci.yml` → api |
 | Solver wall clock | `optimization-engine/benchmarks/solve_2000_students.py` | `quality-gates.yml` → solver-benchmark (nightly) |

@@ -25,29 +25,52 @@
  *   node scripts/bench/bundle-size.mjs                 # report every route
  *   node scripts/bench/bundle-size.mjs --max-kb 150    # exit 1 if over budget
  *   node scripts/bench/bundle-size.mjs --json
+ *   node scripts/bench/bundle-size.mjs --warn-bytes N  # warn under N bytes left (default 2048)
+ *   node scripts/bench/bundle-size.mjs --next-dir DIR  # read DIR instead of web/.next
  *
  * Requires a completed `next build` in web/.
+ *
+ * A route or the shared runtime with under 2 KB left under its budget is
+ * WARNED about (stderr, a `::warning` annotation in GitHub Actions, and the
+ * run's step summary), so the change that makes the next one fail is seen
+ * while there is room. A warning never changes the exit code: see
+ * bundle-margin.mjs.
  */
 
 import { gzipSync } from 'node:zlib';
-import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
+import { appendFileSync, readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  WARN_MARGIN_BYTES,
+  annotationOf,
+  describe,
+  marginsOf,
+  summaryOf,
+  warningsOf,
+} from './bundle-margin.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const NEXT_DIR = join(REPO_ROOT, 'web', '.next');
 
 const args = process.argv.slice(2);
 const flag = (name) => {
   const i = args.indexOf(name);
   return i === -1 ? undefined : args[i + 1];
 };
+const NEXT_DIR = flag('--next-dir')
+  ? resolve(flag('--next-dir'))
+  : join(REPO_ROOT, 'web', '.next');
 const maxKb = flag('--max-kb') ? Number(flag('--max-kb')) : undefined;
+const warnBytes = flag('--warn-bytes') ? Number(flag('--warn-bytes')) : WARN_MARGIN_BYTES;
 const asJson = args.includes('--json');
 
 function fail(message) {
   console.error(message);
   process.exit(2);
+}
+
+if (!Number.isFinite(warnBytes) || warnBytes < 0) {
+  fail(`--warn-bytes needs a number of bytes (0 turns the warning off), got "${flag('--warn-bytes')}".`);
 }
 
 if (!existsSync(NEXT_DIR)) {
@@ -280,6 +303,32 @@ const report = {
 };
 report.failures = report.routes.filter(overBudget).length;
 
+// Bytes left under each budget (see bundle-margin.mjs). Only in the tiered
+// mode: a flat budget on the total payload is a different question.
+const margins = flatMode
+  ? []
+  : marginsOf({
+      sharedBytes,
+      sharedBudgetKb: SHARED_BUDGET_KB,
+      sharedFailing: report.sharedOverBudget,
+      routes: routes.map((r) => ({
+        route: r.route,
+        tier: r.tier,
+        budgetKb: r.budgetKb,
+        routeOnlyBytes: r.routeOnlyBytes,
+        failing: overBudget({ routeOnlyKb: kb(r.routeOnlyBytes), budgetKb: r.budgetKb }),
+      })),
+    });
+const warnings = warnBytes > 0 ? warningsOf(margins, warnBytes) : [];
+report.sharedMarginBytes = margins.find((row) => row.kind === 'shared')?.marginBytes ?? null;
+report.warnBytes = warnBytes;
+report.nearBudget = warnings.map((row) => ({
+  scope: row.scope,
+  tier: row.tier,
+  budgetKb: row.budgetKb,
+  marginBytes: row.marginBytes,
+}));
+
 if (asJson) {
   console.log(JSON.stringify(report, null, 2));
 } else {
@@ -352,6 +401,38 @@ if (exitCode === 0) {
       : `\nPASS: all ${report.routeCount} routes within their tier budgets, ` +
           `shared runtime ${report.sharedGzipKb}/${SHARED_BUDGET_KB}KB.`,
   );
+}
+
+// Room left, tightest first. Always printed in the tiered mode, not only when
+// something is close: the number is what a reviewer wants to see before a web
+// change lands, and the warning below is only the case where it is small.
+if (!flatMode && !asJson) {
+  console.log('\nTightest margins (bytes left under the budget):');
+  for (const row of margins.slice(0, 6)) {
+    console.log(
+      `  ${String(row.marginBytes).padStart(7)} B  ${row.kind === 'shared' ? 'shared runtime' : row.scope}`,
+    );
+  }
+}
+
+for (const row of warnings) {
+  console.error(`\nWARNING: ${describe(row)}. Under ${warnBytes} B left.`);
+  // Shown on the run and on the pull request's checks, which a build log is not.
+  if (process.env.GITHUB_ACTIONS === 'true') console.error(annotationOf(row, warnBytes));
+}
+if (warnings.length > 0) {
+  console.error(
+    `\n${warnings.length} budget(s) with under ${warnBytes} B left. Not a failure: the next change that ` +
+      'adds more than that to one of them is. See scripts/bench/bundle-margin.mjs.',
+  );
+}
+
+if (process.env.GITHUB_STEP_SUMMARY && !flatMode) {
+  try {
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, summaryOf(margins));
+  } catch {
+    // The summary is a courtesy; a runner without one must not fail the gate.
+  }
 }
 
 process.exit(exitCode);
