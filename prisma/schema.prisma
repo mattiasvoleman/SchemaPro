@@ -4171,6 +4171,11 @@ model StaffingPolicy {
   /// Whether GET /ss12000/v1/duties emits dutyPercent and hoursPerYear. Off by
   /// default: see migration 20261010110000.
   shareEmploymentWithIntegrations Boolean @default(false)
+  /// Undervisningsuppdragets omfattning (20270301090000): what a WRITE that
+  /// takes a teacher past the ordinance's highest level of teaching time
+  /// (SFS 2026:1487 3 §, AssignmentScopeBands) may do. WARN by default; REFUSE
+  /// is the school's own choice. No level under the upper edge is ever refused.
+  assignmentScopeMode            StaffingCheckMode @default(WARN)
 
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
@@ -4180,6 +4185,65 @@ model StaffingPolicy {
   // One row per school; the unique index is the schoolId index.
   @@unique([schoolId])
   @@map("StaffingPolicies")
+}
+
+/// The ordinance on the extent of a teacher's teaching assignment, as
+/// versioned reference data (20270301090000): SFS 2026:1487, in force from
+/// 2027-07-01. Global like NationalTimplanVersion, read-only for every API role,
+/// written by migrations. NOT the pupil's guaranteed teaching time (the
+/// timplan) and NOT TeacherDuty (mentorskap, rastvakt). A change of the
+/// ordinance is a NEW version with all its bands. A läsår is judged against the
+/// version in force on its first day. See the migration for every argued
+/// decision, and what has no row on purpose (förskoleklass, the ten-year
+/// numbering, fritidshem, gymnasium).
+model AssignmentScopeVersion {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// 'SFS2026:1487'.
+  code             String    @unique
+  sfs              String
+  title            String
+  validFrom        DateTime  @db.Date
+  /// The last day it holds, inclusive; null while it has no successor.
+  validTo          DateTime? @db.Date
+  supersededByCode String?
+  source           String
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+
+  supersededBy AssignmentScopeVersion?  @relation("AssignmentScopeSupersession", fields: [supersededByCode], references: [code], onDelete: Restrict)
+  supersedes   AssignmentScopeVersion[] @relation("AssignmentScopeSupersession")
+  bands        AssignmentScopeBand[]
+
+  @@map("AssignmentScopeVersions")
+}
+
+/// One row per version, school form, numbering and grade span: the span of the
+/// HIGHEST teaching time per läsår at full time (3 §) and the floor for planning
+/// and follow-up as a percentage of the teaching time (4-5 §). The span is not a
+/// cap: a teacher's own highest level lies in it and the rektor decides where
+/// (8 §); only the upper edge is a limit.
+model AssignmentScopeBand {
+  id                   String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  versionId            String         @db.Uuid
+  schoolForm           SchoolForm
+  /// The numbering the grades are stated in: the ordinance's 1-6 and 7-9 are NIOARIG.
+  gradeNumbering       GradeNumbering
+  gradeFrom            Int
+  gradeTo              Int
+  /// The bottom of the span, not a floor for teaching: a teacher may teach as little as they do.
+  teachingHoursLow     Int
+  /// The upper edge: the most a teacher in the band ever teaches, except under an 11 § exception.
+  teachingHoursHigh    Int
+  /// Planning and follow-up, at least this many per cent of the teaching time.
+  planningFloorPercent Int
+  teachingSection      String
+  planningSection      String
+  /// An interpretation of the text, when the band rests on one; null when it is the ordinance's own.
+  note                 String?
+
+  version AssignmentScopeVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@unique([versionId, schoolForm, gradeNumbering, gradeFrom], map: "AssignmentScopeBands_version_form_numbering_from_key")
+  @@map("AssignmentScopeBands")
 }
 
 /// A teacher's post for one läsår. Per year, unlike TeacherWorkRule: a
