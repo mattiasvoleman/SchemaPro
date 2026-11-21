@@ -53,6 +53,7 @@ import {
   isUniqueViolation,
   leaseSecondsFor,
 } from './generate-runs';
+import { timeoutReportOf, type TimeoutReportView } from './timeout-report';
 
 /**
  * What a failed run has to say for itself.
@@ -98,6 +99,15 @@ function refusalOf(error: unknown): {
     params: null,
     subjectIds: [],
   };
+}
+
+/**
+ * The column a run's end writes: the engine's report, rebuilt from the closed set it may hold, for a TIMEOUT and for no other
+ * answer (a run with a timetable or a refusal carries none, even from an engine that sent one), and a database null otherwise.
+ */
+function reportToStore(solverStatus: string, report: unknown): Prisma.InputJsonValue | typeof Prisma.DbNull {
+  const view = solverStatus === 'TIMEOUT' ? timeoutReportOf(report) : null;
+  return view === null ? Prisma.DbNull : (view as unknown as Prisma.InputJsonValue);
 }
 
 /** A params blob to store, with its teachers kept beside the figures when it has any. */
@@ -150,6 +160,12 @@ export interface OptimizationJobView {
    */
   errorNames: string[];
   /**
+   * Where a run that ran out of time spent it and how far its search got (timeout-report.ts), or null: every run
+   * that did not end in TIMEOUT, a TIMEOUT from an engine older than the field, and every run before the column.
+   * Measured, never a rule; the page says what a TIMEOUT has always said where there is none.
+   */
+  report: TimeoutReportView | null;
+  /**
    * The schemaförslag applied over the year since this run — the newest —
    * whose timetable its notes no longer describe, as the apply's own
    * REGENERATE entry names it; null when none was. Read by GET jobs/:id for a
@@ -200,6 +216,8 @@ const JOB_SELECT = {
   errorParams: true,
   createdAt: true,
   finishedAt: true,
+  // Where a run that ran out of time spent it (timeout-report.ts); null for every other run.
+  report: true,
   // For a run whose lease has run out before the sweep has come round (abandonedAt).
   leaseUntil: true,
 } as const;
@@ -221,6 +239,8 @@ interface JobRow {
   errorParams?: unknown;
   createdAt: Date;
   finishedAt: Date | null;
+  /** Where a TIMEOUT's time went, as stored: read through timeoutReportOf, never as it stands. Absent before the column. */
+  report?: unknown;
   /** Absent from a row read before the column: such a run is never read as abandoned. */
   leaseUntil?: Date | null;
 }
@@ -402,6 +422,7 @@ export function jobView(
       // reader with HR-läs (notesShown).
       notes: notesShown(job.notes, names, say),
       error: failure.message,
+      report: timeoutReportOf(job.report),
       supersededBy: null,
       createdAt: job.createdAt.toISOString(),
       finishedAt: abandoned ? abandoned.toISOString() : job.finishedAt ? job.finishedAt.toISOString() : null,
@@ -920,6 +941,9 @@ export class OptimizationJobsService implements OnModuleInit, OnModuleDestroy {
         error: null,
         errorCode: null,
         errorParams: Prisma.DbNull,
+        // Where a TIMEOUT's time went, whitelisted (timeout-report.ts): only on a TIMEOUT, so no other run carries
+        // one, and null where the engine sent none (an older one) or what it sent is not wholly well formed.
+        report: reportToStore(response.status, response.report),
         finishedAt: new Date(),
       });
     } catch (error) {

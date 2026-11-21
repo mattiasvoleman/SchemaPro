@@ -1014,6 +1014,12 @@ export interface AiEngineScheduleResponse {
    * wrote no timetable.
    */
   notes?: AiEngineConflictDetail[];
+  /**
+   * Where a TIMEOUT's time went and how far its search got (the engine's TimeoutReport, omgång 13 M2). Only on a
+   * TIMEOUT, and only from an engine that has it. Typed unknown on purpose: the reply is read with no runtime
+   * validation, and what is stored is what timeoutReportOf rebuilt from it (timeout-report.ts).
+   */
+  report?: unknown;
 }
 
 /**

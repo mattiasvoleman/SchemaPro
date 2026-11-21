@@ -171,6 +171,38 @@ describe('Scheduling surface (e2e)', () => {
         ]);
       });
 
+      it('carries where a TIMEOUT’s time went on the wire, as it was whitelisted, and null for a run that did not run out of time (omgång 13, M2)', async () => {
+        const stored = {
+          totalSeconds: 109,
+          budgetSeconds: 100,
+          configuredBudgetSeconds: 100,
+          callerWaitSeconds: null,
+          stages: [
+            { stage: 'BUILD', seconds: 4 },
+            { stage: 'SEARCH_CLEAN', seconds: 60 },
+          ],
+          search: { solutions: 0, phases: [{ phase: 'CLEAN', seconds: 60, conflicts: 118344, branches: null }] },
+          weekLoadCut: false,
+        };
+        harness.tx['optimizationJob']!['findMany']!.mockResolvedValue([
+          runningRow({ id: 'timed-out', status: 'SUCCEEDED', solverStatus: 'TIMEOUT', finishedAt: new Date(), report: { ...stored, injected: 'x'.repeat(300) } }),
+          runningRow({ id: 'plain', status: 'SUCCEEDED', solverStatus: 'OPTIMAL', finishedAt: new Date(), report: null }),
+          runningRow({ id: 'broken', status: 'SUCCEEDED', solverStatus: 'TIMEOUT', finishedAt: new Date(), report: { totalSeconds: 'soon' } }),
+        ]);
+
+        const history = await request(http())
+          .get(`/api/v1/optimization/jobs?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .expect(200);
+
+        expect(history.body.map((run: { id: string; report: unknown }) => [run.id, run.report])).toEqual([
+          ['timed-out', stored],
+          ['plain', null],
+          ['broken', null],
+        ]);
+        expect(JSON.stringify(history.body)).not.toContain('injected');
+      });
+
       it('never puts the claimant or the lease on the wire', async () => {
         harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(
           runningRow({ claimedBy: 'host:1:abcd', heartbeatAt: new Date() }),

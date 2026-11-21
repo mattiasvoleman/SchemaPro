@@ -280,8 +280,64 @@ describe('OptimizationJobsService', () => {
           error: null,
           errorCode: null,
           errorParams: DbNull,
+          // Only a TIMEOUT carries an account of its time (timeout-report.ts).
+          report: DbNull,
           finishedAt: expect.any(Date),
         },
+      });
+    });
+
+    describe('where a run that ran out of time spent it (omgång 13, M2)', () => {
+      const report = {
+        totalSeconds: 109,
+        budgetSeconds: 100,
+        configuredBudgetSeconds: 100,
+        callerWaitSeconds: null,
+        stages: [
+          { stage: 'PRECHECKS', seconds: 0.4 },
+          { stage: 'BUILD', seconds: 4 },
+          { stage: 'SEARCH_CLEAN', seconds: 60 },
+          { stage: 'SEARCH_CLONE', seconds: 40 },
+          { stage: 'PROBE', seconds: 5 },
+        ],
+        search: { solutions: 0, phases: [{ phase: 'CLEAN', seconds: 60, conflicts: 118344, branches: null }] },
+        weekLoadCut: false,
+      };
+      const lastWrite = () => tx.optimizationJob.update.mock.calls.at(-1)![0].data as { report: unknown };
+
+      it('stores the engine’s report, rebuilt from the names it may hold, when the answer is a TIMEOUT', async () => {
+        proxy.triggerScheduling.mockResolvedValue(
+          engineResponse({ status: 'TIMEOUT', lessons: [], report: { ...report, injected: 'x'.repeat(500), search: { ...report.search, extra: 1 } } }),
+        );
+
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+
+        expect(lastWrite().report).toEqual(report);
+        expect(JSON.stringify(lastWrite().report)).not.toContain('injected');
+      });
+
+      it.each(['FEASIBLE', 'OPTIMAL', 'INFEASIBLE'])('stores none for a %s answer, even from an engine that sent one', async (status) => {
+        proxy.triggerScheduling.mockResolvedValue(engineResponse({ status: status as 'FEASIBLE', lessons: [], report }));
+
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+
+        expect(lastWrite().report).toBe(DbNull);
+      });
+
+      it('stores none for a TIMEOUT from an engine older than the field, and for a report that is not wholly well formed', async () => {
+        proxy.triggerScheduling.mockResolvedValueOnce(engineResponse({ status: 'TIMEOUT', lessons: [] }));
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+        expect(lastWrite().report).toBe(DbNull);
+
+        proxy.triggerScheduling.mockResolvedValueOnce(
+          engineResponse({ status: 'TIMEOUT', lessons: [], report: { ...report, stages: [{ stage: 'THINKING', seconds: 1 }] } }),
+        );
+        await service.start(YEAR_ID, testUser());
+        await flushBackgroundRun();
+        expect(lastWrite().report).toBe(DbNull);
       });
     });
 
@@ -976,12 +1032,43 @@ describe('OptimizationJobsService', () => {
         errorCode: null,
         errorParams: null,
         errorNames: [],
+        // Not a TIMEOUT: no account of its time.
+        report: null,
         // No notes, so no change log read: nothing to say they were replaced.
         supersededBy: null,
         createdAt: '2026-08-07T10:00:00.000Z',
         finishedAt: '2026-08-07T10:00:42.000Z',
       });
       expect(tx.scheduleChangeLog.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('reads a TIMEOUT’s report back through the same door: a stored value the page may not trust is a null', async () => {
+      const report = {
+        totalSeconds: 109,
+        budgetSeconds: 100,
+        configuredBudgetSeconds: 100,
+        callerWaitSeconds: null,
+        stages: [{ stage: 'BUILD', seconds: 4 }],
+        search: { solutions: 0, phases: [] },
+        weekLoadCut: false,
+      };
+      tx.optimizationJob.findUnique.mockResolvedValue(
+        row({ solverStatus: 'TIMEOUT', report: { ...report, extra: 'x', stages: [...report.stages] } }),
+      );
+      expect((await service.get(JOB_ID, testUser())).report).toEqual(report);
+
+      tx.optimizationJob.findUnique.mockResolvedValue(row({ solverStatus: 'TIMEOUT', report: ['not', 'an', 'object'] }));
+      expect((await service.get(JOB_ID, testUser())).report).toBeNull();
+
+      tx.optimizationJob.findUnique.mockResolvedValue(row({ solverStatus: 'TIMEOUT' }));
+      expect((await service.get(JOB_ID, testUser())).report).toBeNull();
+    });
+
+    it('asks for the report with the run, in the one statement the poll costs', async () => {
+      tx.optimizationJob.findUnique.mockResolvedValue(row());
+      await service.get(JOB_ID, testUser());
+      expect(tx.optimizationJob.findUnique.mock.calls[0]![0].select.report).toBe(true);
+      expect(prisma.queryWithRls).toHaveBeenCalledTimes(1);
     });
 
     it('drops a stored value that is not a scalar rather than rendering it', async () => {
@@ -1096,6 +1183,7 @@ describe('OptimizationJobsService', () => {
           errorCode: null,
           errorParams: null,
           errorNames: [],
+          report: null,
           supersededBy: null,
           createdAt: '2026-08-07T09:00:00.000Z',
           finishedAt: null,

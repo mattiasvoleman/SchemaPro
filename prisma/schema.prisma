@@ -3264,6 +3264,11 @@ model OptimizationJob {
   /// active run is abandoned (app.optimization_jobs_sweep: FAILED, ENGINE_RUN_ABANDONED). DB CHECK: at most an hour past the
   /// heartbeat. The default is the fifteen minutes an API from before the column gives a run.
   leaseUntil            DateTime              @default(dbgenerated("(now() + '00:15:00'::interval)")) @db.Timestamptz(6)
+  /// Where a run that ended in TIMEOUT spent its time and how far its search got (omgång 13, M2; 20270228090000): the engine's
+  /// TimeoutReport, kept as the gateway whitelisted it (src/optimization/timeout-report.ts). Null for every run that did not end
+  /// in TIMEOUT, for a TIMEOUT from an engine older than the field, and for every run before the column. Measured, never a rule:
+  /// no number in it was read back by anything but the page. DB CHECK: a JSON object, at most 8 KiB.
+  report                Json?
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 
