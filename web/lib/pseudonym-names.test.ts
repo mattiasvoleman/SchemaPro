@@ -62,6 +62,20 @@ describe("nothing is looked for when nothing is known", () => {
   });
 });
 
+describe("a cell of a hundred thousand markers and words", () => {
+  it("is searched in seconds: every word looked through every marker took minutes (found in the review of #377)", () => {
+    const names = new KnownNames();
+    names.addCell("Anna Svensson", "namn");
+    const text = Array.from({ length: 100_000 }, (_, i) => `NAMN-${String(i + 1).padStart(4, "0")} ordet Anna`).join(" ");
+    const started = Date.now();
+    const hits = names.find(text, true);
+    expect(Date.now() - started).toBeLessThan(20_000);
+    // The name in each "ordet Anna" is found, and the words a marker is made of are not.
+    expect(hits).toHaveLength(100_000);
+    expect(hits.every((hit) => text.slice(hit.start, hit.end) === "Anna")).toBe(true);
+  }, 60_000);
+});
+
 describe("runningWords", () => {
   it.each([
     ["", 0],

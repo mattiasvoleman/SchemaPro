@@ -11613,5 +11613,229 @@
         "teacherList": "Lärare, flera i en cell"
       }
     }
+  },
+  "pseudonymiserare": {
+    "metaTitle": "Pseudonymisera en fil",
+    "metaDescription": "Byt personnummer, namn, e-postadresser och telefonnummer i en fil mot markörer, i din webbläsare, innan du skickar den. Ingenting lämnar din dator.",
+    "title": "Pseudonymisera en fil",
+    "intro": "Ska du skicka en exempelfil utan att skicka med människorna i den? Verktyget byter personnummer, samordningsnummer, namn, e-postadresser och telefonnummer mot märken som PNR-0001 och NAMN-0001. Samma person får samma märke genom hela körningen, så att filens uppbyggnad syns kvar. Du får en säker fil och en rapport över vad som byttes ut.",
+    "promise": {
+      "heading": "Filen lämnar aldrig din dator",
+      "offline": "Allt sker i den här webbläsarfliken. Filen skickas inte till Rastra eller någon annan, och ingen server ser den.",
+      "policy": "Sidan har en säkerhetspolicy som gör att webbläsaren vägrar alla nätverksanrop från den (connect-src 'none'). Du eller er IT-avdelning kan läsa policyn i webbläsarens utvecklarverktyg under Nätverk, och prova själva: koppla bort nätverket när sidan har laddats, så fungerar verktyget ändå.",
+      "nothingKept": "Ingenting om din fil sparas, varken i webbläsarens lagring eller i kakor. Det enda sidan kan sätta är en kaka för vilket språk du valt. När du stänger fliken eller trycker Rensa allt är allt du lagt in borta.",
+      "cannotJudge": "Verktyget hittar personnummer, samordningsnummer, e-postadresser och telefonnummer på hur de ser ut, och namn i de kolumner du eller rubriken pekar ut. Det kan inte avgöra allt: läs listan Det här kan verktyget inte bedöma, och förhandsvisningen, innan du skickar något."
+    },
+    "formats": "Läser textfiler och CSV (.csv, .txt, .tsv), en tabell som du klistrar in från Excel eller Skola24, och Excel-filer (.xlsx). Gamla Excel-filer (.xls), Access-filer (.mdb), PDF och bilder går inte att göra säkra här. En Excel-fil blir en CSV-fil av cellernas värden: dokumentegenskaper, kommentarer, dolda blad och formler följer inte med.",
+    "footer": {
+      "toApp": "Till appen",
+      "accessibility": "Tillgänglighetsredogörelse",
+      "otherLanguage": "English"
+    },
+    "tool": {
+      "addHeading": "1. Lägg till filer",
+      "chooseFiles": "Välj en eller flera filer",
+      "accepted": "Textfil, CSV eller Excel (.csv, .txt, .tsv, .xlsx). Högst ungefär 5 miljoner tecken per fil.",
+      "pasteLabel": "Eller klistra in en tabell",
+      "pasteHint": "Kopiera från Excel eller från Skola24 (Tabell) och klistra in här.",
+      "addPaste": "Lägg till det inklistrade",
+      "pastedName": "Inklistrad tabell",
+      "reading": "Läser…",
+      "filesHeading": "2. Bestäm vad som händer med varje kolumn",
+      "wordsHeading": "3. Namn och ord som alltid ska bort",
+      "wordsLabel": "Ett namn eller ord per rad (valfritt)",
+      "wordsHint": "Namn i kolumner som är pekade som namn söks redan upp i löpande text (om de har minst tre bokstäver). Här lägger du till sådant verktyget inte kan veta: namn i en fil utan namnkolumn, ett namn som står i en kolumn du behåller, eller ett kort namn som Bo. Orden i listan söks överallt, från två bokstäver.",
+      "runHeading": "4. Ta bort personuppgifterna",
+      "run": "Ta bort personuppgifter",
+      "clearAll": "Rensa allt",
+      "working": "Arbetar…",
+      "undecided": "{count, plural, one {# kolumn väntar} other {# kolumner väntar}} på ditt val. Välj vad som ska hända med dem innan du går vidare."
+    },
+    "problem": {
+      "line": "{name}: {reason}",
+      "tooLong": "Filen är för lång för att läsas här (över 5 miljoner tecken). Dela upp den, eller ta bort kolumner du inte behöver skicka.",
+      "empty": "Det finns inget i filen att läsa.",
+      "utf16": "Filen är sparad som Unicode-text (UTF-16), som verktyget inte läser. Spara om den som CSV UTF-8 eller CSV (semikolonavgränsad) och välj den igen.",
+      "msdos": "Filen är sparad som CSV (MS-DOS), där å, ä och ö inte går att läsa säkert. Spara om den som CSV UTF-8 eller CSV (semikolonavgränsad) och välj den igen.",
+      "access": "Det här är en Access-databas (.mdb). Den går inte att göra säker här. Exportera i stället till en textfil eller en tabell.",
+      "pdf": "Det här är en PDF. Den går inte att göra säker här.",
+      "image": "Det här är en bild. Den går inte att göra säker här.",
+      "zip": "Det här är en zip-fil eller en fil som inte går att läsa som Excel-arbetsbok. Packa upp den, eller spara tabellen som CSV.",
+      "binary": "Filen ser inte ut som text och kan inte göras säker här.",
+      "hiddenSheets": "{name}: {count, plural, one {# dolt blad lästes inte} other {# dolda blad lästes inte}}.",
+      "workbook": {
+        "legacy": "Filen är i det gamla Excel-formatet (.xls) eller en annan äldre filtyp. Öppna den i Excel och spara som Excel-arbetsbok (.xlsx), eller spara tabellen som CSV.",
+        "encrypted": "Excel-filen är lösenordsskyddad. Ta bort lösenordet och spara om den, eller spara tabellen som CSV.",
+        "unavailable": "Den här webbläsaren kan inte läsa Excel-filer här. Spara tabellen som CSV, eller använd en nyare webbläsare.",
+        "tooBig": "Excel-filen är för stor, eller har för många rader eller kolumner, för att läsas här. Spara tabellen som CSV.",
+        "damaged": "Excel-filen går inte att läsa. Spara om den i Excel, eller spara tabellen som CSV."
+      }
+    },
+    "file": {
+      "heading": "Fil {n}: {name}",
+      "facts": "{origin}, kodning {encoding}, {delimiter}. {rows, plural, one {# rad} other {# rader}}, {columns, plural, one {# kolumn} other {# kolumner}}.",
+      "remove": "Ta bort",
+      "notTable": "Den här filen ser inte ut som en tabell, så kolumner kan inte bedömas. Bara det som ser ut som personnummer, e-postadresser och telefonnummer, och orden i listan nedan, byts ut. Titta extra noga på förhandsvisningen.",
+      "headerRow": "Rubrikraden",
+      "headerNone": "Ingen rubrikrad",
+      "headerRowOption": "Rad {n}: {cells}",
+      "titleRows": "{count, plural, one {# rad} other {# rader}} ovanför rubriken räknas som fri text och söks igenom helt.",
+      "headerLooksLikeData": "Rad {n} ser ut som en post och inte som en rubrik: den har tal, tider eller datum. Saknar filen rubrikrad, välj Ingen rubrikrad.",
+      "headersAreNames": "Rubrikraden innehåller namn (till exempel en matris med en lärare per kolumn). Rubriker som Tid och Dag behålls.",
+      "undecided": "{count, plural, one {# kolumn} other {# kolumner}} i den här filen saknar förslag. Välj vad som ska hända med dem i tabellen nedan."
+    },
+    "col": {
+      "caption": "Kolumner i fil {n}",
+      "number": "Nr",
+      "header": "Rubrik",
+      "examples": "Exempel (visas bara här)",
+      "contents": "Innehåll",
+      "proposal": "Förslag",
+      "choice": "Val",
+      "noHeader": "(ingen rubrik)",
+      "empty": "tom",
+      "shape": "{shape} {count}",
+      "hasPnr": "personnummer i {count, plural, one {# cell} other {# celler}}",
+      "hasEmail": "e-postadress i {count, plural, one {# cell} other {# celler}}",
+      "hasTel": "telefonnummer i {count, plural, one {# cell} other {# celler}}",
+      "choiceLabel": "Vad ska hända med kolumn {n}?",
+      "dateSpan": "datum över {days, plural, one {# dag} other {# dagar}}: kan vara födelsedatum"
+    },
+    "shape": {
+      "number": "tal",
+      "time": "tid",
+      "date": "datum",
+      "code": "kort kod",
+      "word": "ord",
+      "text": "löpande text"
+    },
+    "proposal": {
+      "none": "Behöver ditt val",
+      "header": "Rubriken säger {group}",
+      "content": "Innehållet är {kind}",
+      "numbers": "Bara tal, tider och datum",
+      "empty": "Kolumnen är tom"
+    },
+    "group": {
+      "pnr": "personnummer",
+      "epost": "e-post",
+      "tel": "telefon",
+      "sign": "signatur",
+      "fornamn": "förnamn",
+      "efternamn": "efternamn",
+      "namn": "namn",
+      "text": "personlig text (till exempel adress eller kommentar)",
+      "structure": "struktur (till exempel dag eller klass)"
+    },
+    "choice": {
+      "pick": "Välj…",
+      "keep": "Behåll",
+      "clear": "Töm (behåll rubriken)",
+      "mark": "Ersätt med märke: {kind}"
+    },
+    "kind": {
+      "pnr": "personnummer",
+      "sam": "samordningsnummer",
+      "epost": "e-postadress",
+      "tel": "telefonnummer",
+      "namn": "namn",
+      "fornamn": "förnamn",
+      "efternamn": "efternamn",
+      "sign": "signatur",
+      "text": "övrig text"
+    },
+    "treatment": {
+      "keep": "behålls",
+      "clear": "töms",
+      "mark": "ersätts med märke ({kind})"
+    },
+    "by": {
+      "header": "rubriken",
+      "content": "innehållet",
+      "values": "värdena",
+      "user": "ditt val"
+    },
+    "result": {
+      "heading": "5. Resultat",
+      "countsHeading": "Det som byttes ut",
+      "kind": "Slag",
+      "occurrences": "Antal förekomster",
+      "distinct": "Olika värden",
+      "checkDigit": "Av personnumren och samordningsnumren stämde kontrollsiffran för {holds} och inte för {fails}. De som inte stämde byttes ut ändå.",
+      "limitsHeading": "Det här kan verktyget inte bedöma",
+      "previewHeading": "Förhandsvisning av de säkra filerna",
+      "previewHint": "Det här är vad som skickas: titelrader, rubrikrad och de första raderna. Titta efter allt som ser personligt ut.",
+      "previewOf": "Säker fil {n}",
+      "sendHeading": "Hämta och skicka",
+      "checkPassed": "Kontroll: inget som ser ut som personnummer, e-postadress eller telefonnummer finns kvar i de säkra filerna. Kontrollen söker på samma sätt som verktyget själv, så den hittar inte det verktyget inte kan se: titta i förhandsvisningen.",
+      "checkFailed": "Kontrollen hittade kvar något som ser personligt ut. Ingen fil lämnas ut.",
+      "checkFailedFile": "Säker fil {file}: {count, plural, one {# träff} other {# träffar}}. Pröva att tömma eller ersätta den kolumn det gäller, eller berätta för oss.",
+      "confirm": "Jag har tittat igenom förhandsvisningen och ser inga personuppgifter kvar.",
+      "fileName": "Filnamn för säker fil {n}",
+      "fileNameHint": "Originalets filnamn används inte, eftersom ett filnamn kan innehålla ett namn.",
+      "downloadFile": "Hämta säker fil {n}",
+      "downloadReport": "Hämta rapporten",
+      "sendNote": "Skicka de säkra filerna och rapporten. Skicka inte originalfilerna: de ligger kvar på din dator, och den här sidan har inte sparat dem.",
+      "ready": "Resultatet finns nedan.",
+      "reportShown": "Rapporten som följer med (det här står i den)"
+    },
+    "note": {
+      "lines": "Fil {file}: filen är inte en tabell, så kolumner kunde inte bedömas.",
+      "titleRows": "Fil {file}: {rows, plural, one {# rad} other {# rader}} ovanför rubriken är fri text. Titta på dem i förhandsvisningen.",
+      "freeText": "Fil {file}, kolumn {column}: kolumnen behölls och har löpande text. Namn i löpande text hittas bara om de finns i en namnkolumn eller i din lista.",
+      "manyReplaced": "Fil {file}, kolumn {column}: över en tredjedel av cellerna ersattes ur innehållet, fast kolumnen behölls. Kontrollera att det inte är id-nummer som råkar se ut som personnummer.",
+      "unterminated": "Fil {file}: ett citattecken stängdes aldrig, så resten av filen kan ha lästs som en enda cell.",
+      "encodingFellBack": "Fil {file}: filens egen kodning kunde inte rymma orden i din lista, så den säkra filen är sparad som UTF-8.",
+      "unterminatedOnPage": "Ett citattecken i den här filen stängs aldrig. Resten av filen kan läsas som en enda cell. Titta på förhandsvisningen."
+    },
+    "report": {
+      "title": "Rapport: pseudonymiserad fil",
+      "purpose": "Den här rapporten hör ihop med den säkra filen. Den har antal, slag och mönster, aldrig något ursprungligt värde och inte originalets filnamn.",
+      "summary": "Sammanfattning",
+      "kindLine": "{kind}: {count, plural, one {# förekomst} other {# förekomster}}, {distinct, plural, one {# olika värde} other {# olika värden}}",
+      "kindLineShort": "{kind}: {count, plural, one {# förekomst} other {# förekomster}}",
+      "nothingReplaced": "Inget byttes ut.",
+      "checkDigit": "{kind}: kontrollsiffran stämde för {holds} och stämde inte för {fails} (de senare byttes ut ändå).",
+      "spellings": "Så skrevs personnummer (mönster, aldrig värden):",
+      "spellingLine": "{spelling}: {count, plural, one {# gång} other {# gånger}}",
+      "knownNames": "Ord som söktes i löpande text, ur namnkolumner och din lista: {count}.",
+      "file": "Fil {n}",
+      "form": "Form: {origin}, kodning {encoding}, {delimiter}, radslut {eol}, {bom}.",
+      "origin": {
+        "file": "fil",
+        "paste": "inklistrad text",
+        "xlsx": "Excel-blad (skrivs som CSV)"
+      },
+      "delimiter": {
+        "semicolon": "avgränsare semikolon",
+        "comma": "avgränsare komma",
+        "tab": "avgränsare tabb",
+        "none": "ingen avgränsare (texten är inte en tabell)"
+      },
+      "bom": {
+        "yes": "med byte order mark",
+        "no": "utan byte order mark"
+      },
+      "encodingChanged": "Kodningen ändrades från {from} till {to}, eftersom den ursprungliga inte kunde rymma texten.",
+      "sheet": "Blad: {name}",
+      "size": "{rows, plural, one {# rad} other {# rader}}, {columns, plural, one {# kolumn} other {# kolumner}}. Rubrikraden är rad {headerRow}, {titleRows, plural, one {# rad} other {# rader}} ligger ovanför den.",
+      "sizeNoHeader": "{rows, plural, one {# rad} other {# rader}}, {columns, plural, one {# kolumn} other {# kolumner}}. Ingen rubrikrad.",
+      "sizeLines": "{rows, plural, one {# rad} other {# rader}}. Texten är inte en tabell.",
+      "noHeaderCell": "ingen rubrik",
+      "columnLine": "Kolumn {n} ({header}): {treatment}, enligt {by}; {filled, plural, one {# ifylld cell} other {# ifyllda celler}}, {changed} ändrade.",
+      "fileTally": "I den här filen byttes ut: {list}.",
+      "extras": "Formelskydd sattes på {guarded, plural, one {# cell} other {# celler}}. {cleared, plural, one {# cell} other {# celler}} tömdes.",
+      "notes": "Att titta extra på",
+      "limits": "Det verktyget inte kan bedöma",
+      "limit1": "Namn i löpande text som inte finns i en namnkolumn eller i listan över ord som ska bort.",
+      "limit2": "E-postadresser och telefonnummer skrivna med ord, eller delade över flera celler. Personnummer delade över två celler.",
+      "limit3": "Siffror skrivna med andra tecken än vanliga siffror och helbredd-siffror.",
+      "limit4": "Kolumner du själv har valt att behålla. Titta i förhandsvisningen på det du behåller.",
+      "limit5": "Fast breddformat: märkena är inte lika långa som det de ersätter, så kolumnpositioner kan ändras.",
+      "limit6": "Märkenas nummer följer ordningen i filen. En fil sorterad på efternamn avslöjar därför vilken plats i bokstavsordningen en person har.",
+      "limit7": "Namn på färre än tre bokstäver söks inte i löpande text, om de inte står i din egen lista (där gränsen är två bokstäver). Ett namn som Bo står annars kvar i en kommentar.",
+      "numbering": "Märkena är PNR (personnummer), SAM (samordningsnummer), TEL (telefon), NAMN, FORNAMN, EFTERNAMN, SIGN (signatur), TEXT (övrig text) och epost-…@exempel.invalid. Samma värde har samma märke i hela körningen.",
+      "offline": "Filen och den här rapporten gjordes i webbläsaren. Ingenting skickades någonstans."
+    }
   }
 }

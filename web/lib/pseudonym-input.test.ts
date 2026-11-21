@@ -108,6 +108,21 @@ describe("parseSource: a file of text", () => {
   });
 });
 
+describe("parseSource: a file too large to be read", () => {
+  it("turns back a workbook over the reader's total, and text over four bytes a character, by the file's size and before any of it is read", async () => {
+    // A zip's first bytes, then nothing: it is the size that is refused, so nothing is unpacked.
+    const workbook = new Uint8Array(33 * 1024 * 1024);
+    workbook.set([0x50, 0x4b, 0x03, 0x04]);
+    expect(await parseSource({ file: fileOf(workbook, "stor.xlsx") })).toEqual({ ok: false, reason: "workbook", problem: "tooBig" });
+    expect(await parseSource({ file: fileOf(new Uint8Array(20_000_001).fill(0x41), "stor.csv") })).toEqual({ ok: false, reason: "tooLong" });
+  });
+
+  it("still reads a file just under the limits", async () => {
+    const result = await parseSource({ file: fileOf(bytesOf("A;B\n1;2\n"), "liten.csv") });
+    expect(result.ok).toBe(true);
+  });
+});
+
 describe("parseSource: a workbook", () => {
   it("reads every visible sheet as a table of values, UTF-8 with a byte order mark and semicolons as its safe copy is written, and counts the hidden ones", async () => {
     const bytes = await makeXlsx({

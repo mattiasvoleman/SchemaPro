@@ -187,6 +187,16 @@ export const PEOPLE_FILES: Readonly<Record<string, PeopleFile>> = {
     rule: "ONE_PERSON",
     why: "One person's own data (GDPR art. 15), built by the gateway: the person is never held out of their own extract, but an extract of a marked person carries no one else, and a marked relative is left out and counted.",
   },
+  "lib/pseudonym-download.ts": {
+    files: "the pseudonymised file and its report (Pseudonymiseraren, /pseudonymisera)",
+    rule: "PRIMITIVE",
+    why: "saveBytes and saveText. The page is public and reads nothing of a school's: the file is the visitor's own, made safe in their browser, and there is no mark of a protected identity on that page to read.",
+  },
+  "lib/pseudonym-policy.ts": {
+    files: "—",
+    rule: "NAMES_NOBODY",
+    why: "No file is made here: this is the text of the pseudonymiser's Content-Security-Policy, which names data: as a source of pictures, and the scan reads a quoted data: as a data URL.",
+  },
   "lib/csv-export.ts": { files: "—", rule: "PRIMITIVE", why: "downloadCsv." },
   "lib/ics.ts": { files: "—", rule: "PRIMITIVE", why: "downloadIcs." },
   "lib/pdf.ts": { files: "—", rule: "PRIMITIVE", why: "The PDF's save." },
