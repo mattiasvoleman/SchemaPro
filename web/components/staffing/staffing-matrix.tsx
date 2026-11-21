@@ -32,6 +32,11 @@ export interface StaffingMatrixProps {
   week: WeekView;
   unit: UnitView;
   onOpenTeacher: (userId: string) => void;
+  /**
+   * The teachers over the ordinance's highest level of teaching time (overScopeIds, SFS 2026:1487 3 §): marked beside
+   * the status. The status itself is the school's riktmärke and is not touched.
+   */
+  overScope?: ReadonlySet<string>;
 }
 
 /** The colours the manual names (OVER red, UNDER amber, OK green, NO_TARGET outline), from the app's one map. */
@@ -75,6 +80,7 @@ export function StaffingMatrix({
   week,
   unit,
   onOpenTeacher,
+  overScope,
 }: StaffingMatrixProps) {
   const t = useTranslations("staffing");
   const tAreas = useTranslations("adminAreas");
@@ -206,6 +212,11 @@ export function StaffingMatrix({
                   >
                     <span>{name}</span>
                     <StatusBadge status={teacher.status} />
+                    {overScope?.has(teacher.userId) ? (
+                      <Badge variant="destructive" title={t("scopeOverBadgeTitle")}>
+                        {t("scopeOverBadge")}
+                      </Badge>
+                    ) : null}
                   </button>
                   {/* A post that changes during the year (20261022120000): the
                       status above is its worst stretch, so the row says how

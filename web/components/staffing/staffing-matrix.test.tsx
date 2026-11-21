@@ -176,6 +176,16 @@ describe("StaffingMatrix", () => {
     expect(rowNames()).toEqual(["Bo AlmstatusOVER", "Anna EkstatusOK", "Cilla ÖststatusNO_TARGET"]);
   });
 
+  it("marks the teachers over the ordinance's highest level beside their status, and nobody else (SFS 2026:1487 3 §)", () => {
+    renderMatrix({ overScope: new Set(["t-anna"]) });
+    expect(rowNames()).toEqual(["Bo AlmstatusOVER", "Anna EkstatusOKscopeOverBadge", "Cilla ÖststatusNO_TARGET"]);
+    // The status is the school's riktmärke and is the report's, untouched by the mark.
+    expect(within(screen.getByText("Anna Ek").closest("tr")!).getByText("scopeOverBadge")).toHaveAttribute("title", "scopeOverBadgeTitle");
+    cleanup();
+    renderMatrix();
+    expect(screen.queryByText("scopeOverBadge")).not.toBeInTheDocument();
+  });
+
   it("shows only taught subjects as columns, by code, and minutes in the cells", () => {
     renderMatrix();
     const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
