@@ -179,6 +179,10 @@ export function writeMappedTable(headerRowNumber: number, headers: readonly stri
   let last = headerRowNumber;
   for (const number of rowNumbers) if (number > last) last = number;
   const lines: string[] = [];
+  // A file with no header row (headerRowNumber 0: lib/skola24-format.ts blockWithoutHeader) has its header written FIRST, on a record of
+  // its own, and every row one record later: there is no record number before the first row to put the header on. The reader at the other
+  // end then numbers a row one higher than the user's file does. Only the flat timetable is read there, and no file of it lacks a header.
+  if (headerRowNumber === 0) lines.push(line(headers));
   for (let n = 1; n <= last; n += 1) {
     lines.push(n === headerRowNumber ? line(headers) : byNumber.has(n) ? line(byNumber.get(n)!) : "");
   }

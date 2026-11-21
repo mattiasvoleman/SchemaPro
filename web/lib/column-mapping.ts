@@ -43,6 +43,12 @@ export interface Block {
   rowNumbers: number[];
   overflowRows: number[];
   unterminated: boolean;
+  /**
+   * Columns the caller KNOWS hold telephone numbers, whatever their header says (a file the description of lib/skola24-formats.ts
+   * knows: its mobile column is called "Mobilnummer för vårdnadshavare", and no header-only test says that is a telephone). Without
+   * it a column of bare ten-digit numbers is a personnummer column and is dropped (isBareTelephone).
+   */
+  telephone?: readonly number[];
 }
 
 /** The longest key a template may hold (the gateway's DTO). */
@@ -83,7 +89,7 @@ export const isBareTelephone = (cell: string): boolean => BARE_TELEPHONE.test(ce
 
 /** The columns whose header the importers read as a telephone number (lib/csv-aliases.ts: the one list). */
 function telephoneColumns(block: Block): Set<number> {
-  const found = new Set<number>();
+  const found = new Set<number>(block.telephone ?? []);
   block.keys.forEach((key, index) => {
     if (PHONE_ALIASES.includes(baseOf(key))) found.add(index);
   });
@@ -160,7 +166,7 @@ export function personalNumberColumns(block: Block): Set<number> {
 const DROPPED = new WeakMap<Block, Set<number>>();
 
 /** A header as a message may show it: redacted, one line, at most 40 characters; null for a header that is itself a number (not named). */
-function labelOf(header: string): string | null {
+export function labelOf(header: string): string | null {
   // As keysOf: a header that has the shape of a number once its punctuation is gone ("19800101(1234)") is not named either.
   if (hasPersonalNumber(header) || hasPersonalNumber(normalizeHeader(header))) return null;
   const flat = redactPersonalNumbers(header).replace(/\s+/g, " ").trim();
