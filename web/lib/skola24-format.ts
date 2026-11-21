@@ -29,8 +29,8 @@
  * keeps them in memory as X2's does; the personnummer columns in it are dropped before anything is shown or sent, by X2's applyMapping.)
  */
 
-import { FIELDS } from "@/lib/column-fields";
-import { chooseHeaderRow, labelOf, personalNumberColumns, type Assignment, type Block } from "@/lib/column-mapping";
+import { FIELDS, type TemplateKind } from "@/lib/column-fields";
+import { aliasAssignment, chooseHeaderRow, labelOf, personalNumberColumns, type Assignment, type Block } from "@/lib/column-mapping";
 import type { RawTable } from "@/lib/column-table";
 import { hasPersonalNumber } from "@/lib/personal-number";
 import { SKOLA24_FORMATS } from "@/lib/skola24-formats";
@@ -215,6 +215,21 @@ export function readFormat(table: RawTable, descriptor: FormatDescriptor, option
     block.keys.every((key, index) => placed[index]?.synonyms[0] === baseOf(key));
 
   return { format: descriptor.id, by: mode === "present" ? "header" : "position", block, columns: result, missing, assignment, heldRows: heldRowsOf(block, placed), exact };
+}
+
+/** The descriptions that read into a kind of Rastra's imports: the ones with columns, and a kind of their own. Empty for most kinds. */
+export function formatsOfKind(kind: TemplateKind): FormatDescriptor[] {
+  return SKOLA24_FORMATS.filter((format) => format.kind === kind && format.columns !== null);
+}
+
+/**
+ * The reading's assignment, with X2's own placement under it: a column the description does not know, whose header the importer
+ * already reads (lib/csv-aliases.ts), is placed as it would be without a description. A column the description DOES know is as the
+ * description says, whatever the importer would have made of its header.
+ */
+export function formatAssignment(reading: FormatReading, kind: TemplateKind): Assignment {
+  const alias = aliasAssignment(reading.block, kind);
+  return reading.assignment.map((entry, at) => (entry === undefined ? alias[at] : entry));
 }
 
 /**

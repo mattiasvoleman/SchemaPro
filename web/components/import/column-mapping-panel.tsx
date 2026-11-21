@@ -19,6 +19,9 @@ import {
 import type { RawTable } from "@/lib/column-table";
 import { useCreateImportTemplate, useDeleteImportTemplate, useUpdateImportTemplate } from "@/lib/column-template-queries";
 import { hasPersonalNumber } from "@/lib/personal-number";
+import { detectFormats, formatAssignment, formatsOfKind, readFormat } from "@/lib/skola24-format";
+import type { UnreadReason } from "@/lib/skola24-format-types";
+import { FormatNotices, FormatSelect, NO_FORMAT, type FormatView, type HeaderMode } from "@/components/import/column-mapping-format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -64,13 +67,41 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
   // Everything else is DERIVED from the table and the templates, so a template that arrives late places the columns the user has not touched.
   const [headerRow, setHeaderRow] = useState<number | null>(null);
   const [chosen, setChosen] = useState<{ assignment: Assignment; applied: MappingTemplate | null; touched: boolean } | null>(null);
+  // Which Skola24 file the table is (Formatbeskrivare, X3): a description's id, NO_FORMAT, or null while the user has not chosen.
+  const [formatChoice, setFormatChoice] = useState<string | null>(null);
+  const [headerMode, setHeaderMode] = useState<HeaderMode>("auto");
 
   const recognition = useMemo(() => recognise(table, kind, templates, headerRow), [table, kind, templates, headerRow]);
-  const block = recognition?.block ?? null;
-  const assignment: Assignment = chosen?.assignment ?? recognition?.assignment ?? [];
-  const applied = chosen ? chosen.applied : (recognition?.template ?? null);
+  const formats = useMemo(() => formatsOfKind(kind), [kind]);
+  const detected = useMemo(() => (formats.length === 0 ? [] : detectFormats(table, formats)), [table, formats]);
+  // A description is applied by itself only when the table has exactly its documented headers, and no saved template fits: a school's own
+  // template is what the school said. Every other fit is OFFERED. A description the user chose is applied, template or not.
+  const automatic = recognition?.template == null ? (detected.find((fit) => fit.exact)?.format ?? null) : null;
+  const formatId = formatChoice === NO_FORMAT ? null : (formatChoice ?? automatic);
+  const inUse = useMemo<FormatView | null>(() => {
+    const descriptor = formats.find((format) => format.id === formatId);
+    if (descriptor === undefined) return null;
+    const reading = readFormat(table, descriptor, { header: headerMode, ...(headerRow !== null ? { headerRow } : {}) });
+    return reading === null ? null : { descriptor, reading };
+  }, [table, formats, formatId, headerMode, headerRow]);
+  const formatState = useMemo(() => (inUse === null ? null : { block: inUse.reading.block, assignment: formatAssignment(inUse.reading, kind) }), [inUse, kind]);
+  const block = formatState?.block ?? recognition?.block ?? null;
+  const assignment: Assignment = chosen?.assignment ?? formatState?.assignment ?? recognition?.assignment ?? [];
+  const applied = chosen ? chosen.applied : inUse !== null ? null : (recognition?.template ?? null);
   const columns = useMemo(() => (block ? describeColumns(block, kind, assignment) : []), [block, kind, assignment]);
-  const result = useMemo(() => (block && assignment.length === block.headers.length ? applyMapping(block, kind, assignment) : null), [block, kind, assignment]);
+  const result = useMemo(
+    () => (block && assignment.length === block.headers.length ? applyMapping(block, kind, assignment, { held: inUse?.reading.heldRows }) : null),
+    [block, kind, assignment, inUse],
+  );
+  // Why a column the description knows is not read, shown under it while the user has not placed it.
+  const reasons = useMemo(() => {
+    const found = new Map<number, UnreadReason>();
+    inUse?.reading.columns.forEach((column) => {
+      if (column.verdict.status === "unread") found.set(column.index, column.verdict.reason);
+    });
+    return found;
+  }, [inUse]);
+  const placedFields = useMemo(() => new Set(assignment.filter((field): field is string => typeof field === "string")), [assignment]);
 
   // Folded away while nothing needs the user's say; opened by a missing field, a column nothing places or a row held back, and then
   // kept open (a column the user has just placed must not fold the list away under their hand) until they close it themselves.
@@ -102,6 +133,12 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
     setChosen({ assignment: assignment.map((entry, at) => (at === index ? (value === NONE ? undefined : value === SKIP ? null : value) : entry)), applied, touched: true });
   }
 
+  function chooseFormat(next: string | null) {
+    // The columns the user placed are for another reading of the table.
+    setFormatChoice(next);
+    setChosen(null);
+  }
+
   function useTemplate(template: MappingTemplate) {
     if (block) setChosen({ assignment: templateAssignment(block, template), applied: template, touched: false });
   }
@@ -115,7 +152,19 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
 
   const columnsView = (
     <>
-      {candidates.length > 1 ? (
+      <FormatSelect
+        formats={formats}
+        choice={formatChoice}
+        headerMode={headerMode}
+        inUse={inUse}
+        onChoose={chooseFormat}
+        onHeaderMode={(mode) => {
+          setHeaderMode(mode);
+          setChosen(null);
+        }}
+      />
+      {/* A file read with no header row has none to choose. */}
+      {candidates.length > 1 && inUse?.reading.by !== "position" ? (
         <div className="space-y-1">
           <Label htmlFor="mapping-header-row">{t("headerRow.label")}</Label>
           <NativeSelect id="mapping-header-row" value={String(block.headerRowNumber)} onChange={(event) => {
@@ -177,6 +226,7 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
                         ))}
                       </NativeSelect>
                       {column.status === "duplicate" ? <p className="mt-1 text-sm">{t("status.duplicate")}</p> : null}
+                      {assignment[column.index] === null && reasons.has(column.index) ? <p className="mt-1 text-sm text-muted-foreground">{t(`format.unread.${reasons.get(column.index)}`)}</p> : null}
                     </>
                   )}
                 </td>
@@ -186,7 +236,10 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
         </table>
       </div>
 
-      <TemplateControls kind={kind} block={block} assignment={assignment} applied={applied} headerRow={block.headerRowNumber === table.rowNumbers[0] ? null : block.headerRowNumber} onSaved={(template) => setChosen({ assignment, applied: template, touched: false })} onDeleted={() => setChosen({ assignment, applied: null, touched: false })} />
+      {/* A file with no header row (read by a Skola24 description) has no header row to save: the description is what recognises it. */}
+      {block.headerRowNumber === 0 ? null : (
+        <TemplateControls kind={kind} block={block} assignment={assignment} applied={applied} headerRow={block.headerRowNumber === table.rowNumbers[0] ? null : block.headerRowNumber} onSaved={(template) => setChosen({ assignment, applied: template, touched: false })} onDeleted={() => setChosen({ assignment, applied: null, touched: false })} />
+      )}
     </>
   );
 
@@ -195,7 +248,8 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
     const readable = columns.filter((column) => column.status !== "personalNumber").length;
     return (
       <div className="space-y-3">
-        <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} />
+        {inUse === null ? <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} /> : null}
+        <FormatNotices kind={kind} inUse={inUse} offered={detected} formats={formats} placed={placedFields} onUse={chooseFormat} />
         <details
           open={userOpen ?? (latched || needsSay)}
           onToggle={(event) => setUserOpen(event.currentTarget.open)}
@@ -207,7 +261,7 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
             {columnsView}
           </div>
         </details>
-        {result ? <Summary result={result} label={label} columnName={columnName} compact /> : null}
+        {result ? <Summary result={result} label={label} columnName={columnName} fromFormat={inUse !== null} compact /> : null}
       </div>
     );
   }
@@ -215,9 +269,10 @@ export function ColumnMappingPanel({ kind, table, templates, onChange, compact =
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">{t("intro")}</p>
-      <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} />
+      {inUse === null ? <TemplateNotices recognition={recognition} applied={applied} touched={chosen?.touched === true} onUse={useTemplate} /> : null}
+      <FormatNotices kind={kind} inUse={inUse} offered={detected} formats={formats} placed={placedFields} onUse={chooseFormat} />
       {columnsView}
-      {result ? <Summary result={result} label={label} columnName={columnName} /> : null}
+      {result ? <Summary result={result} label={label} columnName={columnName} fromFormat={inUse !== null} /> : null}
     </div>
   );
 }
@@ -273,11 +328,14 @@ function Summary({
   result,
   label,
   columnName,
+  fromFormat = false,
   compact = false,
 }: {
   result: Applied;
   label: (id: string) => string;
   columnName: (index: number) => string;
+  /** A Skola24 description is in use: the columns it skips are not "as you chose". */
+  fromFormat?: boolean;
   compact?: boolean;
 }) {
   const t = useTranslations("columnMapping");
@@ -314,9 +372,10 @@ function Summary({
       ) : null}
 
       {result.unplaced.length > 0 ? <Notice tone="warning">{t("unplaced", { count: result.unplaced.length, names: names(result.unplaced) })}</Notice> : null}
-      {result.skipped.length > 0 ? <Notice tone="neutral">{t("skipped", { count: result.skipped.length, names: names(result.skipped) })}</Notice> : null}
+      {result.skipped.length > 0 ? <Notice tone="neutral">{t(fromFormat ? "format.skipped" : "skipped", { count: result.skipped.length, names: names(result.skipped) })}</Notice> : null}
       {result.dropped.length > 0 ? <Notice tone="neutral">{t("dropped", { count: result.dropped.length })}</Notice> : null}
       {result.emptied.length > 0 ? <Notice tone="neutral">{t("emptied", { count: result.emptied.length })}</Notice> : null}
+      {result.held.length > 0 ? <Notice tone="neutral">{t("held", { count: result.held.length, rows: result.held.slice(0, 20).join(", ") })}</Notice> : null}
       {result.warnings.filter((warning) => !compact || warning.code === "REPLACEMENT_CHARACTER").map((warning) => (
         <Notice key={warning.code} tone="warning">
           {t(`warnings.${warning.code}`, { rows: (warning.rows ?? []).join(", ") })}

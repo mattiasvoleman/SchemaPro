@@ -6,7 +6,7 @@ import { hasPersonalNumber } from "@/lib/personal-number";
 import { readFixture } from "@/lib/__fixtures__/skola24-read";
 import { readFixtureBytes } from "@/lib/__fixtures__/skola24-read";
 import { decodeCsvBytes } from "@/lib/csv-encoding";
-import { blockWithoutHeader, detectFormats, isIdentityNumber, readFormat, type Verdict } from "@/lib/skola24-format";
+import { blockWithoutHeader, detectFormats, formatAssignment, formatsOfKind, isIdentityNumber, readFormat, type Verdict } from "@/lib/skola24-format";
 import { SKOLA24_FORMATS, formatById } from "@/lib/skola24-formats";
 import type { FormatDescriptor } from "@/lib/skola24-format-types";
 
@@ -385,5 +385,30 @@ describe("writing a table with no header row", () => {
     expect(writeMappedTable(0, ["a", "b"], [["1", "2"], ["3", "4"]], [1, 3])).toBe("a;b\r\n1;2\r\n\r\n3;4\r\n");
     // With one it is as before.
     expect(writeMappedTable(2, ["a", "b"], [["1", "2"]], [3])).toBe("\r\na;b\r\n1;2\r\n");
+  });
+});
+
+describe("the descriptions of a kind, and the assignment a reading gives X2", () => {
+  it("are the three Skola24 files that read into an import of Rastra's, and none for any other kind", () => {
+    expect(formatsOfKind("teachers").map((entry) => entry.id)).toEqual(["skola24-personal-csv"]);
+    expect(formatsOfKind("guardians").map((entry) => entry.id)).toEqual(["skola24-foraldrar-csv"]);
+    expect(formatsOfKind("students").map((entry) => entry.id)).toEqual(["skola24-elever-klass"]);
+    for (const kind of ["classes", "teachingGroups", "roomTypes", "rooms", "subjects", "requirements", "teacherQualifications", "teacherDuties", "timplan", "scheduleLessons"] as const) {
+      expect(formatsOfKind(kind), kind).toEqual([]);
+    }
+  });
+
+  it("is the description's where it knows a column and the importer's own spelling where it does not", () => {
+    // 'Klass' is a column of the pupils' description; 'Telefon' is not, and the importer reads it as the telephone number.
+    const text = "Personnummer\tEfternamn\tFörnamn\tKlass\tTelefon\tAnteckning\n19000105-0001\tT\tÅ\t7A\t031-123456\tx\n";
+    const reading = readFormat(readTable(text), format("skola24-elever-klass"))!;
+    expect(reading.assignment).toEqual([null, "lastName", "firstName", "className", undefined, undefined]);
+    expect(formatAssignment(reading, "students")).toEqual([null, "lastName", "firstName", "className", "phone", undefined]);
+  });
+
+  it("does not let the importer's spelling take a column from the description: a known column that is not read stays not read", () => {
+    // The staff file's department is a column the description knows and Rastra does not read, whatever the importer would call it.
+    const reading = readFormat(table("personal.csv"), format("skola24-personal-csv"))!;
+    expect(formatAssignment(reading, "teachers")).toEqual(reading.assignment);
   });
 });

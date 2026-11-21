@@ -1670,6 +1670,40 @@
       skickas, och sammanfattningen säger att den släpptes. Har en kolumn som
       läses en enstaka cell med ett personnummer läses inte den raden in, och
       importen väntar: meddelandet nämner raden och kolumnen men aldrig numret.</li>
+    <li><strong>Filer från Skola24.</strong> För elever, vårdnadshavare och
+      lärare finns en väljare <span class="ui">Filen kommer från Skola24</span>.
+      Den känner till tre filer som Skola24:s egna supportsidor beskriver:
+      <em>Importera elever till klasser</em> (en tabell kopierad ur Excel, med
+      rubrikrad), <em>Importera föräldrar CSV</em> och
+      <em>Importera personal</em> (semikolonavgränsade, utan rubrikrad). Har
+      tabellen precis de rubriker sidan anger används beskrivningen av sig själv.
+      I alla andra fall erbjuds den, och du väljer <span class="ui">Läs den
+      så</span>. En fil utan rubrikrad läses annars med den första personen som
+      rubrik, så välj beskrivningen: då läses alla rader, och kolumnerna står där
+      Skola24 säger att de står. Ett sparat utpekande (en mall) går före: har
+      skolan sparat ett som passar används det. Rutan under väljaren säger vilken
+      av Skola24:s sidor beskrivningen bygger på och när sidan uppdaterades,
+      vilka kolumner filen saknar och vilka uppgifter Skola24:s fil aldrig har
+      som Rastras import kräver. Skola24 visar filerna som bilder och anger
+      varken teckenkodning eller kolumnbredd, och elevsidans två uppräkningar av
+      kolumnernas ordning säger emot varandra, så den filen läses bara på
+      rubrikerna. Skiljer sig din fil, välj <em>Ingen av dem</em> och peka ut
+      kolumnerna själv.</li>
+    <li><strong>Det Skola24:s filer inte har.</strong> Skola24:s elevfil har
+      ingen e-postadress, och Rastras elevimport kräver en. Vårdnadshavarfilen
+      anger eleven med personnummer, och Rastras import vill ha elevens
+      e-postadress. De filerna går därför inte att läsa in som de är: rutan
+      nämner fälten, och du pekar ut en kolumn själv eller kompletterar filen.
+      Personalfilen har namn och e-postadress och går in. Dess
+      <em>signatur</em> läses inte som standard: Rastra sparar signaturen på
+      lärarens tjänst och vägrar en signatur utan tjänstgöringsgrad, som filen
+      inte har. Väljer du fältet ändå får du importens egna ord för de rader
+      det gäller. Kolumnerna skolans namn och avdelning läses inte, och
+      skälet står under kolumnen.</li>
+    <li><strong>Sekretessmarkering.</strong> En rad med siffran 1 i kolumnen
+      <em>sekretessmarkering</em> läses inte in, som i Skola24, som inte tar in
+      personen heller. Raden nämns med sitt radnummer (aldrig med något ur
+      den), resten av filen läses, och importen stoppas inte av raden.</li>
     <li><strong>Lärare på signatur i timplansposter.</strong> I filen för
       timplansposterna kan läraren och medläraren anges med signatur
       (<em>larare_signatur</em> och <em>medlarare_signatur</em>) i stället för

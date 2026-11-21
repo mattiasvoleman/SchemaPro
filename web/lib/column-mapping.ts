@@ -410,6 +410,12 @@ export interface Applied {
    * their file rows are named here instead of vanishing.
    */
   emptied: number[];
+  /**
+   * The file rows left out because the caller said to (`ApplyOptions.held`: a person the file itself marks as confidential, which the
+   * program the file comes from does not take in either). Not an error and not a row problem, so `ok` is unaffected: the rest of the
+   * file is read. Named here, never the row's cells.
+   */
+  held: number[];
   /** The headers each placed field is written under, and the rows as cells under them. */
   headers: string[];
   rows: string[][];
@@ -433,6 +439,14 @@ export interface Applied {
 
 /** The most row problems one mapping reports; the rest are counted. */
 export const MAX_ROW_PROBLEMS = 200;
+
+export interface ApplyOptions {
+  /**
+   * File rows (as Excel numbers them) that are left out, whatever their cells say, and named in `Applied.held`. The caller knows why
+   * (lib/skola24-format.ts: a row whose confidential mark is 1); this module does not look at the cells of such a row at all.
+   */
+  held?: readonly number[];
+}
 
 const TIME_RANGE = /^(\d{1,2}[:.]\d{2})\s*[-‐-―−]\s*(\d{1,2}[:.]\d{2})$/;
 // No \s* round the separator: the parts are trimmed, and a \s* at both ends makes the split quadratic in a cell with a long run of spaces.
@@ -460,7 +474,7 @@ function splitCombined(kind: CombinedField, cell: string): { cells: [string, str
  * kind's) leave no rows: the file cannot be read as it stands. A row with a personnummer in a column that is read, or with a
  * combined cell that does not split, is held back and named; the rest are mapped, and `ok` is false.
  */
-export function applyMapping(block: Block, kind: TemplateKind, assignment: Assignment): Applied {
+export function applyMapping(block: Block, kind: TemplateKind, assignment: Assignment, options: ApplyOptions = {}): Applied {
   const dropped = personalNumberColumns(block);
   const columns = block.headers.map((_, index) => index);
   const droppedRefs = columns.filter((index) => dropped.has(index)).map((index) => refOf(block, index));
@@ -501,6 +515,7 @@ export function applyMapping(block: Block, kind: TemplateKind, assignment: Assig
     rowProblems: [],
     hiddenRowProblems: 0,
     emptied: [],
+    held: [],
     headers: [],
     rows: [],
     rowNumbers: [],
@@ -530,6 +545,8 @@ export function applyMapping(block: Block, kind: TemplateKind, assignment: Assig
   const rowNumbers: number[] = [];
   const rowProblems: RowProblem[] = [];
   const emptied: number[] = [];
+  const held: number[] = [];
+  const heldRows = new Set(options.held ?? []);
   let hidden = 0;
   const hold = (row: number, code: RowProblem["code"], message: string): void => {
     if (rowProblems.length < MAX_ROW_PROBLEMS) rowProblems.push({ row, code, message });
@@ -546,6 +563,11 @@ export function applyMapping(block: Block, kind: TemplateKind, assignment: Assig
 
   block.body.forEach((cells, at) => {
     const number = block.rowNumbers[at]!;
+    // A row the caller holds back is not looked at: not for a personnummer, not for being empty, and it is no problem of the file's.
+    if (heldRows.has(number)) {
+      held.push(number);
+      return;
+    }
     // A personnummer in a column that is read: the row is not read, and the message says where and not what.
     const numbered = read.filter((index) => hasPersonalNumber(cells[index]!) && !(index === telephoneAt && isBareTelephone(cells[index]!)));
     if (numbered.length > 0) {
@@ -586,6 +608,7 @@ export function applyMapping(block: Block, kind: TemplateKind, assignment: Assig
     rowProblems,
     hiddenRowProblems: hidden,
     emptied,
+    held,
     headers,
     rows,
     rowNumbers,
