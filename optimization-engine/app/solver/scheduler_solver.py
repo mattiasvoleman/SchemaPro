@@ -57,8 +57,11 @@ from app.solver.relaxation import (
     upper_bound,
 )
 from app.solver.servings import allowed_starts
+from app.solver.stage_clock import StageClock
 from app.schemas.schedule import (
     PlaceLimits,
+    TimeoutPhaseName,
+    TimeoutStageName,
     SubjectEdges,
     AnonymousRoomPreference,
     AnonymousConstraint,
@@ -1482,6 +1485,11 @@ class SchedulerSolver:
         # budget it asked for, or less when the clock could not hold it.
         # What a TIMEOUT says it searched for (_reported_budget).
         self._search_seconds: float | None = None
+        # WHERE THE TIME WENT (M2), the same lifetime as the clock above: set by
+        # solve(), None outside it. A TIMEOUT carries its account (_timeout_answer)
+        # and the route that gives up waiting reads the step the solve was in
+        # (stage_where). It only measures; no limit reads it.
+        self._stages: StageClock | None = None
         # What one model build cost, measured by the strict solve's own two:
         # a step that has to build again (the explanation, a probe) is not
         # started unless the clock has that much besides its own time.
@@ -1537,6 +1545,94 @@ class SchedulerSolver:
         now = time.monotonic()
         probe = self._settings.solver_probe_seconds
         return now + probe if self._deadline is None else self._deadline.probe_end(now, probe)
+
+    # ---- where the time went (M2, app/solver/stage_clock.py) -------------------
+
+    def _enter_stage(self, stage: TimeoutStageName) -> None:
+        """The solve moves on to `stage`; a step called outside solve() has no account to keep."""
+        if self._stages is not None:
+            self._stages.enter(stage, time.monotonic())
+
+    def _note_search(self, phase: TimeoutPhaseName, solver: cp_model.CpSolver) -> None:
+        """A satisfaction search has returned without a timetable: what CP-SAT says it did.
+
+        A CpSolver that never solved (the guard answered UNKNOWN for a solve
+        that threw twice) has no response to read, and says so with
+        RuntimeError: the figures are then absent, not zero.
+        """
+        if self._stages is None:
+            return
+        try:
+            conflicts: int | None = solver.NumConflicts()
+            branches: int | None = solver.NumBranches()
+        except RuntimeError:
+            conflicts = branches = None
+        self._stages.note_search(phase, time.monotonic(), conflicts=conflicts, branches=branches)
+
+    def stage_where(self) -> tuple[str, float, float] | None:
+        """The step this solve is in, the seconds in it and the seconds since entry.
+
+        Read by the route that stops waiting (optimize.run_solver) from its own
+        thread, while the solve's goes on: None outside solve() and once the
+        solve has closed its last step.
+        """
+        clock = self._stages
+        return None if clock is None else clock.where(time.monotonic())
+
+    def _timeout_answer(
+        self,
+        request: OptimizeScheduleRequest,
+        conflicts: ConflictAnalysis | None,
+        *,
+        week_load_cut: bool,
+    ) -> OptimizeScheduleResponse:
+        """The answer of a solve that found no timetable in its time, with its account.
+
+        `conflicts` are the probe's and the tight week's, as they have always
+        been; the account (TimeoutReport) is beside them. A week load that was
+        cut short adds its row (_with_uncounted_weeks) so that a reader of the
+        rows alone, an older page or a stored run, is told too.
+        """
+        if week_load_cut:
+            conflicts = self._with_uncounted_weeks(conflicts)
+        report = (
+            None
+            if self._stages is None
+            else self._stages.report(
+                time.monotonic(),
+                budget_seconds=self._reported_budget(),
+                configured_budget_seconds=round(self._settings.solver_max_time_seconds),
+                caller_wait_seconds=request.deadline_seconds,
+                week_load_cut=week_load_cut,
+            )
+        )
+        return OptimizeScheduleResponse(
+            request_id=request.request_id,
+            status="TIMEOUT",
+            lessons=[],
+            conflicts=conflicts,
+            report=report,
+        )
+
+    def _with_uncounted_weeks(self, analysis: ConflictAnalysis | None) -> ConflictAnalysis:
+        """`analysis` with the row that says the week load did not count every year.
+
+        THE COUNT STOPS AT ITS DEADLINE (WEEK_LOAD_SECONDS a week) and returns what
+        it holds: a year it did not reach has no row, and "no row" reads as "not
+        tight" unless this says otherwise. Not a bound and not a proof: only
+        that those years were not counted.
+        """
+        row = ConflictDetail(
+            category="REQUIREMENT_DEMAND",
+            code="WEEK_LOAD_NOT_COUNTED",
+            params={
+                "seconds": round(self.WEEK_LOAD_SECONDS),
+                "percent": round(self.TIGHT_WEEK_LOAD * 100),
+            },
+        )
+        if analysis is None:
+            return ConflictAnalysis(conflicts=[row])
+        return analysis.model_copy(update={"conflicts": [*analysis.conflicts, row]})
 
     def _build_model(
         self,
@@ -5983,6 +6079,8 @@ class SchedulerSolver:
             ),
         )
         self._search_seconds = None
+        # WHERE THE TIME GOES, from the same instant (stage_clock.py).
+        self._stages = StageClock(entered)
         try:
             try:
                 response = (
@@ -6006,15 +6104,22 @@ class SchedulerSolver:
         finally:
             self._deadline = None
             self._search_seconds = None
+            self._stages = None
 
     def _solve_strict(
         self, request: OptimizeScheduleRequest, entered: float,
     ) -> OptimizeScheduleResponse:
         """solve() for a request without `relaxation`: the two phases above."""
-        refusal, step, lunch_hints, nearly_full = self._prechecks(request)
+        # Whether the week load stopped at its deadline before every year was
+        # counted: a TIMEOUT says so, since a year with no row was then not counted.
+        week_load_cut: list[bool] = []
+        refusal, step, lunch_hints, nearly_full = self._prechecks(
+            request, week_load_cut=week_load_cut,
+        )
         if refusal is not None:
             return refusal
 
+        self._enter_stage("BUILD")
         rooms = request.rooms
         model, _, decisions, room_plan, lunch_full = self._build_model(
             request, use_assumptions=False, include_objective=True,
@@ -6065,6 +6170,7 @@ class SchedulerSolver:
             )
 
         def _timeout_conflicts() -> ConflictAnalysis | None:
+            self._enter_stage("PROBE")
             return self._with_tight_week(
                 self._probe_timeout(request, deadline=self._probe_deadline()),
                 tight,
@@ -6107,6 +6213,8 @@ class SchedulerSolver:
         # Capped at CLEAN_SAT_CAP_SECONDS, the clean encoding's own cap: the
         # pinned model is a clone of that build, and past mid-size schools
         # time beyond the cap is better spent on phase 1b.
+        if travel is not None:
+            self._enter_stage("SITES")
         sited = (
             self._solve_on_planned_sites(
                 request, travel, feas_model, feas_decisions, feas_plan,
@@ -6136,6 +6244,7 @@ class SchedulerSolver:
                 # always had, however small the budget.
                 phase1_code = cp_model.UNKNOWN
             else:
+                self._enter_stage("SEARCH_CLEAN")
                 phase1 = self._generation_solver(
                     request,
                     min(total_budget, self.CLEAN_SAT_CAP_SECONDS)
@@ -6145,6 +6254,8 @@ class SchedulerSolver:
                 phase1_code = _solve_guarded(
                     phase1, feas_model, what="phase 1a", request_id=request.request_id,
                 )
+                if phase1_code == cp_model.UNKNOWN:
+                    self._note_search("CLEAN", phase1)
 
             # MODEL_INVALID is a bug in model construction, not a property of
             # the school's data — surface it as a server error instead of
@@ -6210,12 +6321,10 @@ class SchedulerSolver:
                     if travel is None
                     else "the planned sites and phase 1a used the whole budget",
                 ))
-                return OptimizeScheduleResponse(
-                    request_id=request.request_id,
-                    status="TIMEOUT",
-                    lessons=[],
-                    conflicts=_timeout_conflicts(),
+                return self._timeout_answer(
+                    request, _timeout_conflicts(), week_load_cut=bool(week_load_cut),
                 )
+            self._enter_stage("SEARCH_CLONE")
             clone_model = model.Clone()
             clone_model.ClearObjective()
             phase1b = self._generation_solver(request, remaining)
@@ -6233,11 +6342,9 @@ class SchedulerSolver:
                 return self._explain_infeasible(request, deadline=started + total_budget)
             if phase1b_code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
                 logger.warning(self._timeout_diagnosis(request, "neither satisfaction encoding found a timetable"))
-                return OptimizeScheduleResponse(
-                    request_id=request.request_id,
-                    status="TIMEOUT",
-                    lessons=[],
-                    conflicts=_timeout_conflicts(),
+                self._note_search("CLONE", phase1b)
+                return self._timeout_answer(
+                    request, _timeout_conflicts(), week_load_cut=bool(week_load_cut),
                 )
             # Clone() preserves variable indices, so the full model's own
             # variables read their values straight off the clone's solver.
@@ -6362,10 +6469,14 @@ class SchedulerSolver:
                 strict = strict.model_copy(update={"deviations": []})
             return strict
         hard = strip_relaxable(request)
-        refusal, step, lunch_hints, nearly_full = self._prechecks(hard)
+        week_load_cut: list[bool] = []
+        refusal, step, lunch_hints, nearly_full = self._prechecks(
+            hard, week_load_cut=week_load_cut,
+        )
         if refusal is not None:
             return refusal
 
+        self._enter_stage("BUILD")
         rooms = request.rooms
         grid = self._grid
         full_relax = Relax(grid.slot_minutes)
@@ -6394,13 +6505,13 @@ class SchedulerSolver:
         # search ended, never past the clock's edge (_probe_deadline).
 
         def _timeout() -> OptimizeScheduleResponse:
-            return OptimizeScheduleResponse(
-                request_id=request.request_id,
-                status="TIMEOUT",
-                lessons=[],
-                conflicts=self._with_tight_week(
+            self._enter_stage("PROBE")
+            return self._timeout_answer(
+                request,
+                self._with_tight_week(
                     self._probe_timeout(hard, deadline=self._probe_deadline()), tight,
                 ),
+                week_load_cut=bool(week_load_cut),
             )
 
         self._hint_previous_lessons(feas_model, feas_decisions, request.previous_lessons)
@@ -6417,11 +6528,14 @@ class SchedulerSolver:
             # than the builds): the timeout, never a solve on a time limit at
             # or under zero.
             return _timeout()
+        self._enter_stage("SEARCH_CLEAN")
         phase1 = self._generation_solver(request, min(max(0.0, _remaining()), self.CLEAN_SAT_CAP_SECONDS))
         phase1.parameters.stop_after_first_solution = True
         phase1_code = _solve_guarded(
             phase1, feas_model, what="best-effort phase 1a", request_id=request.request_id,
         )
+        if phase1_code == cp_model.UNKNOWN:
+            self._note_search("CLEAN", phase1)
         if phase1_code == cp_model.MODEL_INVALID:
             msg = f"CP-SAT rejected the generated model: {feas_model.Validate()}"
             raise SolverBuildError(msg)
@@ -6456,6 +6570,7 @@ class SchedulerSolver:
             remaining = _remaining()
             if remaining < self.MIN_PHASE_SECONDS:
                 return _timeout()
+            self._enter_stage("SEARCH_CLONE")
             clone_model = model.Clone()
             clone_model.ClearObjective()
             phase1b = self._generation_solver(request, remaining)
@@ -6469,6 +6584,7 @@ class SchedulerSolver:
             if phase1b_code == cp_model.INFEASIBLE:
                 return self._explain_infeasible(hard, deadline=entered + total_budget)
             if phase1b_code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                self._note_search("CLONE", phase1b)
                 return _timeout()
             winner = phase1b
             winner_decisions, winner_plan, winner_lunch = decisions, room_plan, lunch_full

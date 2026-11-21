@@ -176,5 +176,6 @@
   "TIGHT_WEEK_LOAD": "{grades, select, any {The classes with unknown years need} other {Year {grades} needs}} at least {demandMinutes} of the {capacityMinutes} minutes the frame times leave ({percent} %).",
   "TIGHT_WEEK_TIMEOUT": "No timetable was found within {budget} s. The week of {grades, select, any {the classes with unknown years} other {year {grades}}} is tight: its lessons, the margins between them and the lunch breaks need at least {demandMinutes} of the {capacityMinutes} minutes the frame times leave ({percent} %). A week that tight is hard to place, and a longer budget may not be enough; free some of it as listed below.",
   "TRAVEL_PROBE_SUMMARY": "No timetable satisfies every rule, and the solver could not name which of them collide. With the travel time between the school's sites dropped a timetable was found in {seconds} s, so it is the travel time below that makes the week impossible.",
-  "TRAVEL_TIME_SHORT": "{party, select, TEACHER {{name}} other {The pupils in {name}}} cannot make it from {from} to {to}: {gap} min between the lessons, and the walk takes {minutes} min ({other} {time})."
+  "TRAVEL_TIME_SHORT": "{party, select, TEACHER {{name}} other {The pupils in {name}}} cannot make it from {from} to {to}: {gap} min between the lessons, and the walk takes {minutes} min ({other} {time}).",
+  "WEEK_LOAD_NOT_COUNTED": "The count of the week load ran out of its {seconds} s before it had counted every year. A year with no line here was not counted, which is not the same as being under {percent} %."
 }
