@@ -212,12 +212,16 @@ export function StaffingMatrix({
                   >
                     <span>{name}</span>
                     <StatusBadge status={teacher.status} />
-                    {overScope?.has(teacher.userId) ? (
+                  </button>
+                  {/* Beside the button, not in it: its aria-label ("Visa Anna Ek") is its whole name for assistive technology and
+                      a button's children are presentational, so a mark inside it is seen and never heard. */}
+                  {overScope?.has(teacher.userId) ? (
+                    <div className="mt-1">
                       <Badge variant="destructive" title={t("scopeOverBadgeTitle")}>
                         {t("scopeOverBadge")}
                       </Badge>
-                    ) : null}
-                  </button>
+                    </div>
+                  ) : null}
                   {/* A post that changes during the year (20261022120000): the
                       status above is its worst stretch, so the row says how
                       many periods there are and, for a screen reader and on

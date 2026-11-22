@@ -69,7 +69,15 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
   let verdict: string;
   if (yearReason === "NUMBERING_NOT_COVERED") verdict = t("verdictNumbering");
   else if (teacher.notJudged === "NO_POST") verdict = t("verdictNoPost");
-  else if (teacher.notJudged === "NO_STAGE") verdict = t("verdictNoStage");
+  else if (teacher.notJudged === "NO_STAGE") {
+    // None of the hours lies in a stage: förskoleklass, groups with no årskurs, or both. Say which, not förskoleklass for all.
+    verdict =
+      teacher.unknownGradeHours === 0
+        ? t("verdictNoStage")
+        : teacher.unregulatedHours === 0
+          ? t("verdictNoStageUnknown")
+          : t("verdictNoStageBoth");
+  }
   else if (teacher.verdict === "OVER_MAX") verdict = over === null ? t("verdictOverMaxHidden") : t("verdictOverMax", { over: formatPercent(over) });
   else if (teacher.verdict === "OVER_OWN") verdict = over === null ? t("verdictOverOwnHidden") : t("verdictOverOwn", { over: formatPercent(over) });
   else if (teacher.verdict === "INSIDE") verdict = t("verdictInside");
@@ -97,6 +105,10 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
       {judged && teacher.planningFits !== null ? (
         <p className="text-xs text-muted-foreground">{teacher.planningFits ? t("fits") : t("doesNotFit")}</p>
       ) : null}
+      {judged && teacher.planningFits === null ? (
+        // Not a blank: whether the floor fits is worked out for a full ferietjänst only, and left out for a reader without HR-läs.
+        <p className="text-xs text-muted-foreground">{t("fitsNotShown")}</p>
+      ) : null}
       {teacher.unknownGradeHours > 0 ? (
         <p className="text-xs text-muted-foreground">{t("unknownGradeNote")}</p>
       ) : null}
@@ -107,6 +119,7 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
             </p>
           ))
         : null}
+      <p className="text-xs text-muted-foreground">{t("notAnnual")}</p>
       <p className="text-xs text-muted-foreground">
         {t("caption", { sfs: version.sfs, from: version.validFrom })}{" "}
         <a href={version.source} target="_blank" rel="noreferrer" className="underline">

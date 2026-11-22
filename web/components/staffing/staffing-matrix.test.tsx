@@ -186,6 +186,14 @@ describe("StaffingMatrix", () => {
     expect(screen.queryByText("scopeOverBadge")).not.toBeInTheDocument();
   });
 
+  it("keeps the mark out of the row's button, whose aria-label is its whole name for a screen reader", () => {
+    renderMatrix({ overScope: new Set(["t-anna"]) });
+    const row = screen.getByText("Anna Ek").closest("tr")!;
+    // "Visa Anna Ek" names the button and a button's children are presentational: a mark inside it is seen and never heard.
+    expect(within(row).getByRole("button", { name: "openDrawer(Anna Ek)" })).toBeInTheDocument();
+    expect(within(row).getByText("scopeOverBadge").closest("button")).toBeNull();
+  });
+
   it("shows only taught subjects as columns, by code, and minutes in the cells", () => {
     renderMatrix();
     const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
