@@ -10997,8 +10997,8 @@
 
   <h3 id="s78"><span class="num">7.8</span>Skicka en exempelfil utan personuppgifter</h3>
   <p>
-    Filer ur Skola24 och andra program har personnummer, namn, e-postadresser
-    och telefonnummer i sig, och en skola kan inte skicka dem utan att skicka
+    Filer ur Skola24 och andra program har personnummer (och Skola24:s TF-nummer),
+    namn, e-postadresser och telefonnummer i sig, och en skola kan inte skicka dem utan att skicka
     med människorna. <strong>Pseudonymiseraren</strong> är ett verktyg som tar
     bort det i din egen webbläsare, innan filen lämnar dig. Du får en säker
     fil och en rapport, och det är dem du skickar. Verktyget är en öppen sida,
@@ -11040,7 +11040,7 @@
       och datum behålls. <strong>En kolumn varken rubriken eller värdena
       placerar får inget förslag</strong>, och du väljer: <em>Behåll</em>,
       <em>Ersätt med märke</em> (namn, förnamn, efternamn, signatur, e-post, telefon, personnummer
-      eller övrig text) eller <em>Töm</em> (kolumnen och rubriken finns kvar,
+      eller TF-nummer, eller övrig text) eller <em>Töm</em> (kolumnen och rubriken finns kvar,
       cellerna är tomma). Verktyget gissar aldrig vilken kolumn som har namn. En kolumn av långa tal
       (ett telefonnummer utan inledande 0 sparas som tal) och en kolumn av datum som
       sträcker sig över mer än ett år (födelsedatum ser ut som lektionsdatum) får
@@ -11071,6 +11071,7 @@
     <thead><tr><th style="width:24%">Slag</th><th style="width:22%">Märke</th><th>Hur det hittas</th></tr></thead>
     <tbody>
       <tr><td class="k">Personnummer, samordningsnummer</td><td>PNR-0001, SAM-0001</td><td>På hur de ser ut, i varje cell, rubrik och rad ovanför rubriken: tio eller tolv siffror, med eller utan sekel, med bindestreck, plus eller blanksteg. Kontrollsiffran avgör inte vad som tas bort, bara hur det räknas i rapporten (&rdquo;stämmer&rdquo; eller &rdquo;stämmer inte, ersatt ändå&rdquo;): ett felskrivet nummer är ändå någons nummer. Allt som har formen tas bort, också ett id-nummer som råkar se ut som ett datum.</td></tr>
+      <tr><td class="k">TF-nummer</td><td>TF-0001</td><td>Skola24:s eget nummer i kursfilernas id-kolumner: åtta siffror, <em>TF</em> och två siffror (<em>ÅÅÅÅMMDDTFnn</em>), med stora eller små bokstäver, och med ett blanksteg eller bindestreck före <em>TF</em>. Det har ingen kontrollsiffra och är inget personnummer, så det räknas på en egen rad i rapporten och bland sättet de skrevs på. Andra former känns inte igen, till exempel blanksteg mellan <em>TF</em> och siffrorna eller sex siffror i datumet: titta i förhandsvisningen.</td></tr>
       <tr><td class="k">E-post</td><td>epost-0001@exempel.invalid</td><td>På hur de ser ut: allt som är <em>text@text</em>.</td></tr>
       <tr><td class="k">Telefon</td><td>TEL-0001</td><td>På hur de ser ut: <em>070-123 45 67</em>, <em>08-123 456 78</em>, <em>+46 70 123 45 67</em>. Datum och tider tas inte för telefonnummer.</td></tr>
       <tr><td class="k">Namn</td><td>NAMN-0001, FORNAMN-0001, EFTERNAMN-0001</td><td>Genom rubriken (<em>Namn</em>, <em>Förnamn</em>, <em>Efternamn</em>, <em>Lärare</em>, <em>Elev</em>, <em>Vårdnadshavare</em> …) eller ditt val, aldrig genom gissning. En lista i en cell, delad på semikolon eller snedstreck, byts namn för namn.</td></tr>
@@ -11106,8 +11107,8 @@
       rubriken pekar ut. Det kan inte avgöra allt, och det säger det i sidan, i
       rapporten och här: <strong>namn i löpande text</strong> som inte finns i en
       namnkolumn eller i din lista; e-postadresser och telefonnummer skrivna med ord eller
-      delade över flera celler, och personnummer delade över två celler; siffror i andra
-      tecken än vanliga och helbredd-siffror; kolumner du själv har valt att behålla;
+      delade över flera celler, och personnummer och TF-nummer delade över två celler; siffror i andra
+      tecken än vanliga och helbredd-siffror; TF-nummer skrivna på annat sätt än <em>ÅÅÅÅMMDDTFnn</em>; kolumner du själv har valt att behålla;
       och filer med fast bredd, där märkena inte är lika långa som det de ersätter.
       Namn på färre än tre bokstäver söks inte i löpande text, om de inte står i din
       egen lista (där gränsen är två). Ett personnummer med plus (född före 1900) och

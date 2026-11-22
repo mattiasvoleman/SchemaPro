@@ -98,6 +98,21 @@ test.describe("a run, in a real browser", () => {
     expect(await context.cookies()).toEqual(cookiesBefore);
   });
 
+  test("takes Skola24's TF numbers out of a course file as TF numbers: the same number one marker however it is written, and none of them left", async ({ page }) => {
+    await page.goto(PATH);
+    // The id column says nothing in its header; the numbers in it do (ÅÅÅÅMMDDTFnn, X3's door). One of them is written twice, in another case.
+    const file = "Id;Namn;Notis\r\n19000101TF01;Anna Svensson;ok\r\n19000101TF02;Bo Ek;ok\r\n19000101tf01;Anna Svensson;ok\r\n";
+    await chooseFile(page, "kurs.csv", Buffer.from(file, "utf8"));
+    await expect(page.getByText("Innehållet är personnummer eller TF-nummer")).toBeVisible();
+    await page.getByLabel("Vad ska hända med kolumn 3?").selectOption("keep");
+    await page.getByRole("button", { name: "Ta bort personuppgifter" }).click();
+    await expect(page.getByRole("heading", { level: 2, name: "5. Resultat" })).toBeVisible();
+    await expect(page.getByRole("row", { name: /^TF-nummer\s+3\s+2$/ })).toBeVisible();
+    await page.getByLabel("Jag har tittat igenom förhandsvisningen").check();
+    const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Hämta säker fil 1" }).click()]);
+    expect(await readFile((await download.path())!, "utf8")).toBe("Id;Namn;Notis\r\nTF-0001;NAMN-0001;ok\r\nTF-0002;NAMN-0002;ok\r\nTF-0001;NAMN-0001;ok\r\n");
+  });
+
   test("writes a file saved in Windows-1252 back in Windows-1252, byte for byte where nothing was replaced", async ({ page }) => {
     await page.goto(PATH);
     // "Lärare;Klass\nÅke Öst;7A\n" with ä as E4, Å as C5 and Ö as D6.

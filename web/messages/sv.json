@@ -11729,15 +11729,15 @@
   },
   "pseudonymiserare": {
     "metaTitle": "Pseudonymisera en fil",
-    "metaDescription": "Byt personnummer, namn, e-postadresser och telefonnummer i en fil mot markörer, i din webbläsare, innan du skickar den. Ingenting lämnar din dator.",
+    "metaDescription": "Byt personnummer, TF-nummer, namn, e-postadresser och telefonnummer i en fil mot markörer, i din webbläsare, innan du skickar den. Ingenting lämnar din dator.",
     "title": "Pseudonymisera en fil",
-    "intro": "Ska du skicka en exempelfil utan att skicka med människorna i den? Verktyget byter personnummer, samordningsnummer, namn, e-postadresser och telefonnummer mot märken som PNR-0001 och NAMN-0001. Samma person får samma märke genom hela körningen, så att filens uppbyggnad syns kvar. Du får en säker fil och en rapport över vad som byttes ut.",
+    "intro": "Ska du skicka en exempelfil utan att skicka med människorna i den? Verktyget byter personnummer, samordningsnummer, TF-nummer (Skola24:s id-nummer, ÅÅÅÅMMDDTFnn), namn, e-postadresser och telefonnummer mot märken som PNR-0001, TF-0001 och NAMN-0001. Samma person får samma märke genom hela körningen, så att filens uppbyggnad syns kvar. Du får en säker fil och en rapport över vad som byttes ut.",
     "promise": {
       "heading": "Filen lämnar aldrig din dator",
       "offline": "Allt sker i den här webbläsarfliken. Filen skickas inte till Rastra eller någon annan, och ingen server ser den.",
       "policy": "Sidan har en säkerhetspolicy som gör att webbläsaren vägrar alla nätverksanrop från den (connect-src 'none'). Du eller er IT-avdelning kan läsa policyn i webbläsarens utvecklarverktyg under Nätverk, och prova själva: koppla bort nätverket när sidan har laddats, så fungerar verktyget ändå.",
       "nothingKept": "Ingenting om din fil sparas, varken i webbläsarens lagring eller i kakor. Det enda sidan kan sätta är en kaka för vilket språk du valt. När du stänger fliken eller trycker Rensa allt är allt du lagt in borta.",
-      "cannotJudge": "Verktyget hittar personnummer, samordningsnummer, e-postadresser och telefonnummer på hur de ser ut, och namn i de kolumner du eller rubriken pekar ut. Det kan inte avgöra allt: läs listan Det här kan verktyget inte bedöma, och förhandsvisningen, innan du skickar något."
+      "cannotJudge": "Verktyget hittar personnummer, samordningsnummer, TF-nummer, e-postadresser och telefonnummer på hur de ser ut, och namn i de kolumner du eller rubriken pekar ut. Det kan inte avgöra allt: läs listan Det här kan verktyget inte bedöma, och förhandsvisningen, innan du skickar något."
     },
     "formats": "Läser textfiler och CSV (.csv, .txt, .tsv), en tabell som du klistrar in från Excel eller Skola24, och Excel-filer (.xlsx). Gamla Excel-filer (.xls), Access-filer (.mdb), PDF och bilder går inte att göra säkra här. En Excel-fil blir en CSV-fil av cellernas värden: dokumentegenskaper, kommentarer, dolda blad och formler följer inte med.",
     "footer": {
@@ -11788,7 +11788,7 @@
       "heading": "Fil {n}: {name}",
       "facts": "{origin}, kodning {encoding}, {delimiter}. {rows, plural, one {# rad} other {# rader}}, {columns, plural, one {# kolumn} other {# kolumner}}.",
       "remove": "Ta bort",
-      "notTable": "Den här filen ser inte ut som en tabell, så kolumner kan inte bedömas. Bara det som ser ut som personnummer, e-postadresser och telefonnummer, och orden i listan nedan, byts ut. Titta extra noga på förhandsvisningen.",
+      "notTable": "Den här filen ser inte ut som en tabell, så kolumner kan inte bedömas. Bara det som ser ut som personnummer, TF-nummer, e-postadresser och telefonnummer, och orden i listan nedan, byts ut. Titta extra noga på förhandsvisningen.",
       "headerRow": "Rubrikraden",
       "headerNone": "Ingen rubrikrad",
       "headerRowOption": "Rad {n}: {cells}",
@@ -11808,7 +11808,7 @@
       "noHeader": "(ingen rubrik)",
       "empty": "tom",
       "shape": "{shape} {count}",
-      "hasPnr": "personnummer i {count, plural, one {# cell} other {# celler}}",
+      "hasPnr": "personnummer eller TF-nummer i {count, plural, one {# cell} other {# celler}}",
       "hasEmail": "e-postadress i {count, plural, one {# cell} other {# celler}}",
       "hasTel": "telefonnummer i {count, plural, one {# cell} other {# celler}}",
       "choiceLabel": "Vad ska hända med kolumn {n}?",
@@ -11830,7 +11830,7 @@
       "empty": "Kolumnen är tom"
     },
     "group": {
-      "pnr": "personnummer",
+      "pnr": "personnummer eller TF-nummer",
       "epost": "e-post",
       "tel": "telefon",
       "sign": "signatur",
@@ -11849,6 +11849,7 @@
     "kind": {
       "pnr": "personnummer",
       "sam": "samordningsnummer",
+      "tf": "TF-nummer",
       "epost": "e-postadress",
       "tel": "telefonnummer",
       "namn": "namn",
@@ -11880,7 +11881,7 @@
       "previewHint": "Det här är vad som skickas: titelrader, rubrikrad och de första raderna. Titta efter allt som ser personligt ut.",
       "previewOf": "Säker fil {n}",
       "sendHeading": "Hämta och skicka",
-      "checkPassed": "Kontroll: inget som ser ut som personnummer, e-postadress eller telefonnummer finns kvar i de säkra filerna. Kontrollen söker på samma sätt som verktyget själv, så den hittar inte det verktyget inte kan se: titta i förhandsvisningen.",
+      "checkPassed": "Kontroll: inget som ser ut som personnummer, TF-nummer, e-postadress eller telefonnummer finns kvar i de säkra filerna. Kontrollen söker på samma sätt som verktyget själv, så den hittar inte det verktyget inte kan se: titta i förhandsvisningen.",
       "checkFailed": "Kontrollen hittade kvar något som ser personligt ut. Ingen fil lämnas ut.",
       "checkFailedFile": "Säker fil {file}: {count, plural, one {# träff} other {# träffar}}. Pröva att tömma eller ersätta den kolumn det gäller, eller berätta för oss.",
       "confirm": "Jag har tittat igenom förhandsvisningen och ser inga personuppgifter kvar.",
@@ -11909,7 +11910,7 @@
       "kindLineShort": "{kind}: {count, plural, one {# förekomst} other {# förekomster}}",
       "nothingReplaced": "Inget byttes ut.",
       "checkDigit": "{kind}: kontrollsiffran stämde för {holds} och stämde inte för {fails} (de senare byttes ut ändå).",
-      "spellings": "Så skrevs personnummer (mönster, aldrig värden):",
+      "spellings": "Så skrevs personnummer och TF-nummer (mönster, aldrig värden):",
       "spellingLine": "{spelling}: {count, plural, one {# gång} other {# gånger}}",
       "knownNames": "Ord som söktes i löpande text, ur namnkolumner och din lista: {count}.",
       "file": "Fil {n}",
@@ -11941,13 +11942,13 @@
       "notes": "Att titta extra på",
       "limits": "Det verktyget inte kan bedöma",
       "limit1": "Namn i löpande text som inte finns i en namnkolumn eller i listan över ord som ska bort.",
-      "limit2": "E-postadresser och telefonnummer skrivna med ord, eller delade över flera celler. Personnummer delade över två celler.",
-      "limit3": "Siffror skrivna med andra tecken än vanliga siffror och helbredd-siffror.",
+      "limit2": "E-postadresser och telefonnummer skrivna med ord, eller delade över flera celler. Personnummer och TF-nummer delade över två celler.",
+      "limit3": "Siffror skrivna med andra tecken än vanliga siffror och helbredd-siffror. TF-nummer skrivna på annat sätt än ÅÅÅÅMMDDTFnn (ett blanksteg eller bindestreck före TF går bra): till exempel med blanksteg mellan TF och siffrorna, eller med sex siffror i datumet.",
       "limit4": "Kolumner du själv har valt att behålla. Titta i förhandsvisningen på det du behåller.",
       "limit5": "Fast breddformat: märkena är inte lika långa som det de ersätter, så kolumnpositioner kan ändras.",
       "limit6": "Märkenas nummer följer ordningen i filen. En fil sorterad på efternamn avslöjar därför vilken plats i bokstavsordningen en person har.",
       "limit7": "Namn på färre än tre bokstäver söks inte i löpande text, om de inte står i din egen lista (där gränsen är två bokstäver). Ett namn som Bo står annars kvar i en kommentar.",
-      "numbering": "Märkena är PNR (personnummer), SAM (samordningsnummer), TEL (telefon), NAMN, FORNAMN, EFTERNAMN, SIGN (signatur), TEXT (övrig text) och epost-…@exempel.invalid. Samma värde har samma märke i hela körningen.",
+      "numbering": "Märkena är PNR (personnummer), SAM (samordningsnummer), TF (TF-nummer), TEL (telefon), NAMN, FORNAMN, EFTERNAMN, SIGN (signatur), TEXT (övrig text) och epost-…@exempel.invalid. Samma värde har samma märke i hela körningen.",
       "offline": "Filen och den här rapporten gjordes i webbläsaren. Ingenting skickades någonstans."
     }
   }

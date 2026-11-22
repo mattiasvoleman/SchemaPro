@@ -27,7 +27,8 @@ function proposalText(column: ColumnPlan, say: Say): string {
   const { proposal } = column;
   if (proposal === null) return say("proposal.none");
   if (proposal.reason === "header") return say("proposal.header", { group: say(`group.${proposal.detail as "pnr"}`) });
-  if (proposal.reason === "content") return say("proposal.content", { kind: say(`kind.${proposal.detail as "pnr"}`) });
+  // A column of personnummer is also a column of TF numbers (the same choice replaces both, each with its own marker), so the page says both.
+  if (proposal.reason === "content") return say("proposal.content", { kind: say(proposal.detail === "pnr" ? "group.pnr" : `kind.${proposal.detail as "epost"}`) });
   return say(proposal.detail === "empty" ? "proposal.empty" : "proposal.numbers");
 }
 
@@ -163,7 +164,7 @@ export function FileCard({
                           <option value="clear">{say("choice.clear")}</option>
                           {CHOOSABLE_KINDS.map((kind) => (
                             <option key={kind} value={`mark:${kind}`}>
-                              {say("choice.mark", { kind: say(`kind.${kind}`) })}
+                              {say("choice.mark", { kind: say(kind === "pnr" ? "group.pnr" : `kind.${kind}`) })}
                             </option>
                           ))}
                         </select>
