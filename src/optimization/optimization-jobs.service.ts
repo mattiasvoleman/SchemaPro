@@ -220,6 +220,8 @@ const JOB_SELECT = {
   report: true,
   // For a run whose lease has run out before the sweep has come round (abandonedAt).
   leaseUntil: true,
+  // The last sign of life, for how long an abandoned run had gone on (lastSeenParams).
+  heartbeatAt: true,
 } as const;
 
 /** A run's row as it is read. */
@@ -243,6 +245,8 @@ interface JobRow {
   report?: unknown;
   /** Absent from a row read before the column: such a run is never read as abandoned. */
   leaseUntil?: Date | null;
+  /** The database's clock at the run's last sign of life; absent from a row read before the column. */
+  heartbeatAt?: Date | null;
 }
 
 /**
@@ -316,6 +320,22 @@ function summaryOf(job: JobRow): StoredSentence {
 function failureOf(job: JobRow): StoredSentence {
   return sentenceOf(job.errorCode, job.errorParams, job.error, subjectsOf(job.errorParams));
 }
+
+/**
+ * How long an abandoned run had gone on when it was last heard from: the seconds from its start to its last
+ * heartbeat. NOT to the end of its lease, which is the heartbeat and the lease (270 s at the production
+ * settings) later and would overstate by that much what a school is told. Null where it says nothing a school
+ * can use: a row from before the column, a run that was never heard from after it began (under five seconds),
+ * or a clock that disagrees with itself.
+ */
+function lastSeenParams(job: JobRow): Record<string, number> | null {
+  if (!job.heartbeatAt) return null;
+  const seconds = Math.round((job.heartbeatAt.getTime() - job.createdAt.getTime()) / 1000);
+  return seconds >= LAST_SEEN_MIN_SECONDS ? { lastSeenSeconds: seconds } : null;
+}
+
+/** Under this a run was abandoned as it began, and "after 0 seconds" would say nothing. */
+const LAST_SEEN_MIN_SECONDS = 5;
 
 /**
  * One part of a run as a sentence. `?? null` rather than the value: a row read
@@ -398,7 +418,19 @@ export function jobView(
 
   const abandoned = abandonedAt(job, now);
   const summary = say(summaryOf(job));
-  const failure = say(abandoned ? sentenceOf(ENGINE_RUN_ABANDONED, null, ABANDONED_MESSAGE, []) : failureOf(job));
+  // An abandoned run says how long it had gone on, whether this read gave it up (the lease has run out and the
+  // sweep has not come round) or the sweep already had: the sweep writes the code and no figure.
+  const stored = failureOf(job);
+  const failure = say(
+    abandoned || stored.code === ENGINE_RUN_ABANDONED
+      ? sentenceOf(
+          ENGINE_RUN_ABANDONED,
+          lastSeenParams(job),
+          abandoned ? ABANDONED_MESSAGE : stored.message,
+          [],
+        )
+      : stored,
+  );
 
   return {
     view: {

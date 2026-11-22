@@ -1144,6 +1144,15 @@ MESSAGES: dict[str, str] = {
         "at least {demandMinutes} of the {capacityMinutes} minutes the frame times leave "
         "({percent} %)."
     ),
+    # The week load stopped at its own deadline (SchedulerSolver.WEEK_LOAD_SECONDS) before
+    # it had counted every year, so a year without a line above is NOT counted:
+    # that is not the same as being under the threshold. Beside a TIMEOUT only
+    # (TimeoutReport.weekLoadCut says it too, for a page that reads the report).
+    "WEEK_LOAD_NOT_COUNTED": (
+        "The count of the week load ran out of its {seconds} s before it had counted every "
+        "year. A year with no line here was not counted, which is not the same as being under "
+        "{percent} %."
+    ),
     "PROBE_ONE_RULE_HELPED": (
         "No timetable was found within {budget} s, but relaxing a single rule made the same week "
         "solve. {rules, plural, one {The rule is listed below} other {The # rules are listed "

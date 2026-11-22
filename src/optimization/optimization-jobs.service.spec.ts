@@ -959,6 +959,71 @@ describe('OptimizationJobsService', () => {
         });
       });
 
+      describe('says how long it had gone on, by its last sign of life and not by the end of its lease', () => {
+        const created = new Date(Date.now() - 6 * 60 * 1000);
+        const lastHeard = (seconds: number) => new Date(created.getTime() + seconds * 1000);
+
+        it('when this read gives it up', async () => {
+          tx.optimizationJob.findUnique.mockResolvedValue(
+            running(new Date(Date.now() - 2 * 60 * 1000), { createdAt: created, heartbeatAt: lastHeard(150) }),
+          );
+
+          await expect(service.get(JOB_ID, testUser())).resolves.toMatchObject({
+            errorCode: ENGINE_RUN_ABANDONED,
+            error: ABANDONED_MESSAGE,
+            errorParams: { lastSeenSeconds: 150 },
+          });
+        });
+
+        it('when the sweep already had: it wrote the code and no figure, and its own sentence stays', async () => {
+          tx.optimizationJob.findUnique.mockResolvedValue(
+            row({
+              status: 'FAILED',
+              solverStatus: null,
+              error: 'The service restarted while the run was going.',
+              errorCode: ENGINE_RUN_ABANDONED,
+              createdAt: created,
+              finishedAt: new Date(Date.now() - 60_000),
+              heartbeatAt: lastHeard(95),
+            }),
+          );
+
+          await expect(service.get(JOB_ID, testUser())).resolves.toMatchObject({
+            status: 'FAILED',
+            errorCode: ENGINE_RUN_ABANDONED,
+            error: 'The service restarted while the run was going.',
+            errorParams: { lastSeenSeconds: 95 },
+          });
+        });
+
+        it.each([
+          ['a run last heard from four seconds in says nothing', 4, null],
+          ['and five is the least that is said', 5, { lastSeenSeconds: 5 }],
+        ])('%s', async (_name, seconds, params) => {
+          tx.optimizationJob.findUnique.mockResolvedValue(
+            running(new Date(Date.now() - 60_000), { createdAt: created, heartbeatAt: lastHeard(seconds) }),
+          );
+
+          expect((await service.get(JOB_ID, testUser())).errorParams).toEqual(params);
+        });
+
+        it('says nothing for a row with no heartbeat to read, or one that disagrees with its own start', async () => {
+          tx.optimizationJob.findUnique.mockResolvedValue(running(new Date(Date.now() - 60_000), { createdAt: created }));
+          expect((await service.get(JOB_ID, testUser())).errorParams).toBeNull();
+
+          tx.optimizationJob.findUnique.mockResolvedValue(
+            running(new Date(Date.now() - 60_000), { createdAt: created, heartbeatAt: lastHeard(-30) }),
+          );
+          expect((await service.get(JOB_ID, testUser())).errorParams).toBeNull();
+        });
+
+        it('reads the heartbeat with the run, in the one statement the poll costs', async () => {
+          tx.optimizationJob.findUnique.mockResolvedValue(row());
+          await service.get(JOB_ID, testUser());
+          expect(tx.optimizationJob.findUnique.mock.calls[0]![0].select.heartbeatAt).toBe(true);
+        });
+      });
+
       it('is shown as running while the lease holds, and when the row has no lease to read (a row from before the column)', async () => {
         tx.optimizationJob.findUnique.mockResolvedValue(running(new Date(Date.now() + 60_000)));
         await expect(service.get(JOB_ID, testUser())).resolves.toMatchObject({ status: 'RUNNING', finishedAt: null, errorCode: null });

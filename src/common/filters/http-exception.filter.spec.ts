@@ -5,6 +5,7 @@ import {
   HttpException,
   HttpStatus,
   NotFoundException,
+  ServiceUnavailableException,
   type ArgumentsHost,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -121,6 +122,19 @@ describe('HttpExceptionFilter', () => {
       code: 'STAFF_TEACHER_NOT_QUALIFIED',
       params: { role: 'TEACHER', subject: 'Matematik', grades: '7–9' },
     });
+  });
+
+  it.each([
+    [
+      'the engine’s ceiling, with the step its solve was in',
+      'ENGINE_TIMED_OUT',
+      { ceilingSeconds: 230, stage: 'SEARCH_CLONE', stageSeconds: 160, elapsedSeconds: 230 },
+    ],
+    ['the API’s own wait that ran out', 'ENGINE_WAIT_EXPIRED', { waitSeconds: 240, engineCeilingSeconds: 230 }],
+  ])('carries the figures of %s to the client whole (omgång 13, M2: only flat params reach it)', (_label, code, params) => {
+    filter.catch(new ServiceUnavailableException({ message: 'The engine did not answer.', code, params }), host);
+
+    expect(body()).toMatchObject({ status: 503, code, params });
   });
 
   it.each([

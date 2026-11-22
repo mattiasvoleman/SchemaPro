@@ -203,6 +203,31 @@ describe('Scheduling surface (e2e)', () => {
         expect(JSON.stringify(history.body)).not.toContain('injected');
       });
 
+      it('says how long an abandoned run had gone on by its last heartbeat, a figure and nothing else of the lease (omgång 13, M2)', async () => {
+        const createdAt = new Date(Date.now() - 6 * 60 * 1000);
+        harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(
+          runningRow({
+            createdAt,
+            leaseUntil: new Date(Date.now() - 90 * 1000),
+            heartbeatAt: new Date(createdAt.getTime() + 150 * 1000),
+            claimedBy: 'host:1:abcd',
+          }),
+        );
+
+        const response = await request(http())
+          .get(`/api/v1/optimization/jobs/${VERSION_ID}`)
+          .set('x-test-user', admin())
+          .expect(200);
+
+        expect(response.body).toMatchObject({
+          status: 'FAILED',
+          errorCode: 'ENGINE_RUN_ABANDONED',
+          errorParams: { lastSeenSeconds: 150 },
+        });
+        expect(JSON.stringify(response.body)).not.toContain('host:1:abcd');
+        expect(Object.keys(response.body)).not.toEqual(expect.arrayContaining(['heartbeatAt']));
+      });
+
       it('never puts the claimant or the lease on the wire', async () => {
         harness.tx['optimizationJob']!['findUnique']!.mockResolvedValue(
           runningRow({ claimedBy: 'host:1:abcd', heartbeatAt: new Date() }),
