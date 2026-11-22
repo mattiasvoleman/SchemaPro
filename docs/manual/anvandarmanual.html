@@ -6290,12 +6290,87 @@
       <tr><td class="k">Lösaren hann inte klart</td><td>Tiden tog slut innan något schema hittades. Det betyder <em>inte</em> att schemat är omöjligt. Se kapitel 9.</td></tr>
     </tbody>
   </table>
-  <p>
-    För en normalstor grundskola tar en körning från några sekunder upp till
-    någon minut. Mycket stora skolor tar längre tid — kör i så fall
-    genereringen när du har tid att invänta resultatet, förslagsvis en gång och
-    därefter med små justeringar.
+  <p id="hur-lang-tid">
+    <strong>Hur lång tid tar en körning?</strong> Det beror mindre på antalet
+    klasser än på hur skolan är upplagd: hur många ämnen som läggs i grupper som
+    blandar elever ur flera klasser, hur länge samma lärare står i rad på
+    parallella grupper, och hur många lektioner som bara går en termin. Tabellen
+    är mätt på konstruerade skolveckor som har formen hos en riktig skola
+    (aldrig riktiga namn). Varje rad säger inom hur många sekunder schemat
+    hittades i den långsammaste veckan, och i hur många veckor det hittades.
+    Tiderna är uppskattade för en processorkärna på en utvecklingsdator;
+    produktionens processor är inte mätt, och <em>tiden tar slut</em> betyder
+    här att inget schema hittades på ungefär den tid en körning får.
   </p>
+  <table>
+    <thead><tr><th style="width:62%">Skolan har …</th><th>Schema inom</th><th>I hur många veckor</th></tr></thead>
+    <tbody>
+      <tr><td class="k">varje ämne för sig per klass (språkval i grupper), 6–24 klasser, högst tre delade lärare</td><td>24 s</td><td>10 av 10</td></tr>
+      <tr><td class="k">tre ämnen (SO, NO och Idrott) i grupper över klasserna, inga delade lärare, 6–12 klasser</td><td>9 s</td><td>6 av 6</td></tr>
+      <tr><td class="k">samma, men 15 eller 18 klasser</td><td>tiden tar slut</td><td>0 av 4</td></tr>
+      <tr><td class="k">9 klasser, högst fyra ämnen i grupper över klasserna</td><td>5 s</td><td>8 av 8</td></tr>
+      <tr><td class="k">9 klasser, sex eller fler ämnen i grupper</td><td>tiden tar slut</td><td>0 av 6</td></tr>
+      <tr><td class="k">12 klasser, högst tre ämnen i grupper</td><td>9 s</td><td>6 av 6</td></tr>
+      <tr><td class="k">12 klasser, fem eller fler ämnen i grupper</td><td>tiden tar slut</td><td>0 av 8</td></tr>
+      <tr><td class="k">9–12 klasser, tre ämnen i grupper, <em>inga</em> delade lärare</td><td>9 s</td><td>4 av 4</td></tr>
+      <tr><td class="k">samma med <em>en</em> delad lärare (tre parallella grupper)</td><td>9 s</td><td>4 av 4</td></tr>
+      <tr><td class="k">samma med <em>två</em> delade lärare (tre parallella grupper var)</td><td>tiden tar slut</td><td>0 av 4</td></tr>
+      <tr><td class="k">samma med <em>fyra</em> delade lärare (två parallella grupper var)</td><td>10 s</td><td>4 av 4</td></tr>
+      <tr><td class="k">samma med <em>åtta</em> delade lärare (två parallella grupper var)</td><td>9 s</td><td>4 av 4</td></tr>
+      <tr><td class="k">12 klasser, tre ämnen i grupper, inget ämne som bara går en termin</td><td>9 s</td><td>2 av 2</td></tr>
+      <tr><td class="k">samma med tre ämnen som bara går en termin</td><td>35 s</td><td>1 av 2</td></tr>
+      <tr><td class="k">samma med fem ämnen som bara går en termin</td><td>tiden tar slut</td><td>0 av 2</td></tr>
+      <tr><td class="k">9 klasser, tio ämnen i grupper över klasserna, halvgrupper och terminsämnen</td><td>tiden tar slut</td><td>0 av 4</td></tr>
+    </tbody>
+  </table>
+  <div class="note">
+    <span class="label">Så läser du tabellen</span>
+    <p>
+      En <em>delad lärare</em> är en lärare som har två eller flera parallella
+      grupper med elever ur samma klass. Varje sådan klass måste vänta ut dem en
+      i taget, och varningen <span class="ui">Krock för lärare</span> på
+      Generera-sidan namnger dem. Det är inte antalet delade lärare som avgör
+      utan kedjan: åtta lärare med två parallella grupper var läggs på några
+      sekunder, men två lärare med tre grupper vardera gör att tiden tar slut,
+      och fyra sådana visar Rastra vara omöjliga (veckan får inte plats). Antalet
+      klasser är inte det som stoppar: ett schema där varje ämne ligger per klass
+      hittas på sekunder också för 24 klasser.
+    </p>
+    <p>
+      Tabellen är mätt med en processorkärna. Med flera kärnor flyttas gränserna
+      uppåt. En provkörning med alla åtta kärnorna på en dator gav:
+    </p>
+    <table>
+      <thead><tr><th style="width:52%">Veckan</th><th>En kärna</th><th>Åtta kärnor</th></tr></thead>
+      <tbody>
+      <tr><td class="k">15 klasser, tre ämnen i grupper över klasserna</td><td>tiden tar slut</td><td>26 s och 139 s</td></tr>
+      <tr><td class="k">18 klasser, tre ämnen i grupper över klasserna</td><td>tiden tar slut</td><td>tiden tar slut</td></tr>
+      <tr><td class="k">9 klasser, fem ämnen i grupper</td><td>1 av 2</td><td>7 s och 33 s</td></tr>
+      <tr><td class="k">9 klasser, sex ämnen i grupper</td><td>tiden tar slut</td><td>tiden tar slut och tiden tar slut</td></tr>
+      <tr><td class="k">12 klasser, fyra ämnen i grupper</td><td>1 av 2</td><td>32 s och 29 s</td></tr>
+      <tr><td class="k">12 klasser, fem ämnen i grupper</td><td>tiden tar slut</td><td>41 s (en vecka)</td></tr>
+      <tr><td class="k">12 klasser, tre ämnen som bara går en termin</td><td>1 av 2</td><td>153 s och 164 s</td></tr>
+      <tr><td class="k">12 klasser, två delade lärare med tre grupper vardera</td><td>tiden tar slut</td><td>tiden tar slut och tiden tar slut</td></tr>
+      <tr><td class="k">produktionsformen (tio ämnen i grupper, halvgrupper, terminer), 9–30 klasser</td><td>tiden tar slut</td><td>tiden tar slut och tiden tar slut och tiden tar slut</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Datorn hade annan last under provkörningen, så en tid är långsammare än på
+      en lugn dator, och en tid som tog slut bevisar ingenting för en lugn dator.
+      Två veckor av samma form kan också ge olika resultat, särskilt nära gränsen
+      (den ena får ett schema på några sekunder, den andra inget alls), så
+      tabellen räknar veckor och lovar inget för en enskild skola.
+    </p>
+    <p>
+      <strong>Tar tiden slut?</strong> Läs kortet <span class="ui">Så gick
+      tiden</span> (ovan) och gör i den här ordningen: ge varje grupp i ett ämne
+      en egen lärare och lägg ämnets grupper i ett block, så att de går samtidigt;
+      lägg färre ämnen i grupper över klasserna; korta kedjorna av parallella
+      grupper på samma lärare; lägg terminslektioner i block eller låt färre ämnen
+      gå en termin. Den första åtgärden är den som i en tidigare analys gjorde att
+      en vecka, som motorn inte lagt på tjugo minuter, lades på tio sekunder.
+    </p>
+  </div>
   <p>
     Vill du se flera alternativ innan du bestämmer dig, till exempel ett med
     färre håltimmar för lärarna, tar du fram <span class="ui">Schemaförslag</span>
