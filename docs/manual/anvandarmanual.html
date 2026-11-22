@@ -51,6 +51,8 @@
       <li><span>3.4 Klasser och undervisningsgrupper</span><span class="dots"></span><span class="pg" data-pg="s34"></span></li>
       <li><span>3.5 Personer och inbjudningar</span><span class="dots"></span><span class="pg" data-pg="s35"></span></li>
       <li><span>3.6 Importera från fil (CSV)</span><span class="dots"></span><span class="pg" data-pg="s36"></span></li>
+      <li><span>3.7 Första veckan på en ny skola</span><span class="dots"></span><span class="pg" data-pg="s37"></span></li>
+      <li><span>3.8 Flytta från Skola24, Untis, aSc eller Excel</span><span class="dots"></span><span class="pg" data-pg="s38"></span></li>
     </ol>
     <li><span>4 · Fas 2 — Planering</span><span class="dots"></span><span class="pg" data-pg="ch4"></span></li>
     <ol>
@@ -854,6 +856,11 @@
     När alla fem är klara står <span class="ui">Klart — fortsätt till
     timplanen</span> sist i guiden, med en knapp till timplanen: där börjar
     fas 2 (4.1).
+  </p>
+  <p>
+    Är det skolans första vecka finns en lista från tom skola till första
+    schemat i 3.7. Flyttar skolan från ett annat program står vad som går att
+    läsa in, och vad som inte gör det, i 3.8.
   </p>
 
   <h3 id="s31"><span class="num">3.1</span>Läsår</h3>
@@ -1817,6 +1824,190 @@
       motsvarande steg i <span class="ui">Kom igång</span> ofullständigt.
     </p>
   </div>
+
+  <h3 id="s37"><span class="num">3.7</span>Första veckan på en ny skola</h3>
+  <p>
+    Det här är vägen från en tom skola till det första genererade schemat, i
+    den ordning arbetet görs. Varje steg pekar på avsnittet som beskriver det
+    och säger vad du kontrollerar innan du går vidare. Rastra Schema lovar
+    ingen tid för något steg: hur lång tid det tar beror på hur mycket skolan
+    redan har i färdiga filer, och på hur skolan är upplagd.
+  </p>
+  <div class="warn">
+    <span class="label">Läs det här före steg 9</span>
+    <p>
+      Ett första schema är inte självklart. Hur lång tid Generera behöver
+      beror mindre på antalet klasser än på hur skolan är upplagd: hur många
+      ämnen som läggs i grupper över klasserna, hur länge samma lärare står i
+      rad på parallella grupper och hur många lektioner som bara går en
+      termin. Tabellen i 5.2 är mätt på konstruerade skolveckor och inte på
+      någon riktig skola: en skola där varje ämne ligger per klass fick ett
+      schema på sekunder, också vid 24 klasser, medan en vecka med tio ämnen i
+      grupper över klasserna, halvgrupper och terminsämnen inte fick något
+      schema inom tiden. <em>Tiden tar slut</em> betyder inte att veckan är
+      omöjlig, men det betyder att ett första schema kan kräva att du ändrar
+      underlaget. Läs tabellen i 5.2 innan du trycker på
+      <span class="ui">Generera schema</span>, och kapitel 9 om tiden tar slut.
+    </p>
+  </div>
+  <table>
+    <thead><tr><th style="width:5%">Steg</th><th style="width:20%">Gör</th><th>Hur</th><th style="width:30%">Kontrollera</th></tr></thead>
+    <tbody>
+      <tr><td class="k">1</td><td>Logga in</td><td>Skolan och den första administratören läggs upp av den som driftar Rastra Schema: det finns ingen registrering. Läs vilken profil du har (2.2).</td><td>Menyn visar bara de sidor din profil använder. Saknas något du ska ändra är det profilen, inte ett fel.</td></tr>
+      <tr><td class="k">2</td><td>Läsår</td><td>Under <span class="path">Grunddata › Kom igång</span>: skapa läsåret och slå på <span class="ui">Aktivt</span> (3.1). Den lokala timplanen finns inte än, eftersom en ny skola inte har någon: den görs i steg 7, och läsåret följer den först när du väljer den där.</td><td>Läsåret står som aktivt.</td></tr>
+      <tr><td class="k">3</td><td>Salstyper, ämnen och salar</td><td>Salstyperna först: en ny skola har inga, så lägg in dem under <span class="path">Grunddata › Salar</span> (3.3). Sedan ämnena med färg, nationell kod och salstyp, och salarna med kapacitet och typ (3.2, 3.3).</td><td>Varje ämne som kräver en salstyp har en sal av den typen.</td></tr>
+      <tr><td class="k">4</td><td>Klasser och grupper</td><td>Klasserna med årskurs, sedan undervisningsgrupperna (3.4). En grupp utan årskurs binds inte av ramtider och raster (5.2).</td><td>Varje klass har en årskurs.</td></tr>
+      <tr><td class="k">5</td><td>Personer</td><td>Lärare först, sedan elever med klass (3.5). Har skolan filer går det snabbare med importen (3.6), och kommer filerna från ett annat program står det i 3.8. Att lägga upp någon skickar inget mejl: bjud in först när allt är klart.</td><td>Varje elev tillhör en klass.</td></tr>
+      <tr><td class="k">6</td><td>Kontrollera grunddatan</td><td>Öppna <span class="path">Planering › Timplansposter</span> och försök välja klass, ämne och lärare i rullistorna (3.6).</td><td>Saknas något i en lista är motsvarande steg i <span class="ui">Kom igång</span> ofullständigt.</td></tr>
+      <tr><td class="k">7</td><td>Planering</td><td>Timplan (4.1): skapa planen, besluta den och välj den för läsåret under <span class="ui">Timplan per årskurs</span>. Läsåret följer inte planen förrän du har valt den, och först då kan <span class="ui">Skapa timplansposter</span> lägga in posterna klasserna saknar; annars skriver du posterna själv. Sedan timplansposter (4.2), tjänstefördelning (4.3), tillgänglighet (4.4) och raster (4.5), och ramtiderna under <span class="path">Planering › Ramtider</span>. Utan ramtider använder motorn en standarddag och binder ingen årskurs till sina tider.</td><td>Under <span class="ui">Förutsättningar</span> på Generera-sidan är läsår, timplansposter, lärare och salar uppfyllda, och <span class="ui">Alla timplansposter har lärare</span> är det eller står som en varning (5.2).</td></tr>
+      <tr><td class="k">8</td><td>Kontrollera veckan</td><td>Under <span class="path">Schemaläggning › Generera schema</span>: tryck <span class="ui">Kontrollera veckan</span> först. Den räknar på veckan med motorns snabba förkontroller och lägger inget schema (5.2).</td><td>Svaret säger att inget hittades som stoppar veckan, att den är trång, eller att den inte går att lägga. Ett <em>inget hittades</em> är ingen garanti.</td></tr>
+      <tr><td class="k">9</td><td>Generera</td><td>Tryck <span class="ui">Generera schema</span>. Motorn arbetar i bakgrunden, och en körning kan pågå i minuter (5.2). Vänta tills den har avslutats.</td><td>Resultatet är ett av fyra: optimal lösning, fungerande schema, inget giltigt schema möjligt eller att lösaren inte hann klart. Vad vart och ett betyder och vad du gör härnäst står i 5.2.</td></tr>
+      <tr><td class="k">10</td><td>Granska och spara</td><td>Granska grundschemat (5.3) och spara en version (5.5).</td><td>Varje klass och lärare har ett schema du kan läsa.</td></tr>
+      <tr><td class="k">11</td><td>Publicera och bjud in</td><td>Publicera schemat (5.6). Bjud in personerna först nu (3.5): då ser de ett schema när de loggar in.</td><td>En lärare du bjudit in ser sitt eget schema.</td></tr>
+    </tbody>
+  </table>
+  <div class="note">
+    <span class="label">Går något snett</span>
+    <p>
+      Är en förutsättning på Generera-sidan inte uppfylld är knappen
+      <span class="ui">Generera schema</span> avstängd, och
+      <span class="ui">Förutsättningar</span> säger vad som saknas. Vägrar
+      motorn, eller tar tiden slut, står orsaken på sidan i skolans egna ord,
+      och kapitel 9 säger vad du gör. Importerna skriver ingenting förrän du
+      har tryckt <span class="ui">Importera</span>, och rader som redan finns
+      hoppas över, utom en lärares tjänst och ett uppdrag som redan finns, som
+      uppdateras: det är riskfritt att rätta filen och läsa in den igen
+      (3.6).
+    </p>
+  </div>
+
+  <h3 id="s38"><span class="num">3.8</span>Flytta från Skola24, Untis, aSc eller Excel</h3>
+  <p>
+    En skola som flyttar hit behöver inte skriva in allt på nytt, men vad som
+    går att läsa in skiljer sig mycket mellan programmen. Det här avsnittet
+    säger vad Rastra Schema läser i dag, hur, och vad som inte följer med.
+    Det bygger på det programmet gör och inte på vad ett program <em>borde</em>
+    kunna: står det att något inte läses finns ingen läsare för det.
+  </p>
+  <h4>Ordningen vid en flytt</h4>
+  <ol>
+    <li><strong>Grunddata först.</strong> Salstyper, salar, ämnen, klasser och personer, i den ordning 3.6 anger. Schemat och tjänstefördelningen hänvisar till dem med namn, signatur eller e-postadress, och en rad vars klass, ämne, lärare eller sal inte finns vägras.</li>
+    <li><strong>Signaturer.</strong> En lärare i en schemafil hittas på signatur eller e-postadress. Lägg in signaturerna först, annars hittar raderna inte sin lärare: i filen larare.csv med kolumnerna <em>tjanst_procent</em> och <em>signatur</em> (3.6), eller under <span class="path">Planering › Tjänstefördelning</span> (4.3). En signatur sparas på lärarens tjänst, så tjänsten med sin tjänstgöringsgrad måste finnas.</li>
+    <li><strong>Tjänstefördelningen.</strong> Poster med grupp, ämne, lektioner per vecka, minuter per lektion och lärare (4.2, 4.3). En post som saknas när schemat läses in härleds ur lektionerna (7.7).</li>
+    <li><strong>Schemat</strong> som låsta lektioner (7.7). Lektionerna hör inte till Generera, så en ny körning lägger det som återstår runt dem (5.2).</li>
+    <li><strong>Kontrollera</strong> som i steg 6 och 8 i 3.7.</li>
+  </ol>
+  <p>
+    Börja gärna med en klass. Förhandsvisningen skriver ingenting: det görs
+    först när du trycker <span class="ui">Skriv in</span> (7.7).
+  </p>
+
+  <h4>Från Excel eller CSV</h4>
+  <p>
+    Listorna i 3.6 läses som CSV, sparad i Excel som semikolonavgränsad eller
+    som UTF-8, med kolumnmappning och sparad mall om kolumnerna heter något
+    annat. En
+    Excelfil (.xlsx) läses <em>inte</em> i listornas import: markera cellerna
+    och klistra in dem, eller spara filen som CSV. Schemat som tabell läses
+    däremot både som CSV och som Excel (7.7). Excel gör om ett klassnamn som
+    <em>3/4</em> till ett datum och tappar telefonnummers inledande nolla; se
+    3.6.
+  </p>
+
+  <h4>Från Skola24</h4>
+  <p>
+    Skola24:s supportsidor ger för några av filerna en lista över kolumnerna,
+    men ingen teckenkodning och ingen kolumnbredd, och för de flesta av
+    schemats filer inte ens kolumnerna. Rastra Schema känner därför bara igen de
+    filer som en av Skola24:s egna supportsidor beskriver, och för de övriga
+    pekar du ut kolumnerna själv. Personnummer och Skola24:s TF-nummer lämnar
+    aldrig webbläsaren (3.6).
+  </p>
+  <table>
+    <thead><tr><th style="width:26%">Fil i Skola24</th><th>Så läses den</th><th style="width:28%">Det du gör</th></tr></thead>
+    <tbody>
+      <tr data-source="skola24-personal-csv" data-reads="reads"><td class="k">Importera personal (CSV, utan rubrikrad)</td><td>Läses: namn och e-postadress. En rad utan e-postadress läses inte: Skola24 låter cellen vara tom, men Rastra Schemas import gör det inte. Signaturen läses inte som standard, eftersom en signatur kräver en tjänstgöringsgrad och filen har ingen. Skolans namn och avdelning läses inte.</td><td>Välj <span class="ui">Filen kommer från Skola24</span> i importen av lärare (3.6). Lägg in e-postadressen på raderna som saknar den, eller lägg upp de personerna för hand (3.5).</td></tr>
+      <tr data-source="skola24-elever-klass" data-reads="incomplete"><td class="k">Importera elever till klasser (kopierad ur Excel, med rubrikrad)</td><td>Går inte in som den är: filen har ingen e-postadress, och Rastras elevimport kräver en.</td><td>Lägg till en kolumn med e-postadress i filen och peka ut den.</td></tr>
+      <tr data-source="skola24-foraldrar-csv" data-reads="incomplete"><td class="k">Importera föräldrar CSV</td><td>Går inte in som den är: filen pekar ut eleven med personnummer, och Rastras import vill ha elevens e-postadress. En rad utan vårdnadshavarens egen e-postadress läses inte heller: Skola24 låter den vara tom, och i Skola24:s egna exempelfiler är den tom på många rader, men Rastra Schemas import kräver den.</td><td>Komplettera filen med elevens e-postadress och, där den saknas, vårdnadshavarens.</td></tr>
+      <tr data-source="skola24-grupp-elev" data-reads="unknown"><td class="k">Importera elever till grupper (Grupp/Elev)</td><td>Läses inte: filen har två lägen och pekar ut eleven med personnummer, som Rastra Schema aldrig tar emot.</td><td>Gruppmedlemmar kommer in genom filen undervisningsgrupper.csv (3.6), som pekar ut eleven med e-postadress.</td></tr>
+      <tr data-source="skola24-textfil" data-reads="unknown"><td class="k">Textfil Gr, Gy eller Vux (.txt)</td><td>Läses inte: ingen offentlig sida beskriver var fälten ligger.</td><td>Skicka oss en exempelfil utan personuppgifter (7.8), så att vi kan lära oss läsa den.</td></tr>
+      <tr data-source="skola24-mdb-extens" data-reads="unknown"><td class="k">Databasfil (.mdb), Arkiv – Export – Extens</td><td>Läses inte: det är en databasfil och ingen avgränsad text.</td><td>Samma som för textfilen (7.8).</td></tr>
+      <tr data-source="skola24-tabell-lektion" data-reads="unknown"><td class="k">Tabell ▸ Lektion, kopierad till Excel</td><td>Ingen offentlig sida ger kolumnerna, så den läses som vilken tabell som helst: du pekar ut kolumnerna under <span class="ui">Från ett annat program</span> på <span class="path">Schemaläggning › Schema som fil</span> (7.7). Lektionerna blir låsta, och inget skrivs före förhandsvisningen.</td><td>Börja med en klass, och spara mappningen som mall (<span class="ui">Spara som mall</span>).</td></tr>
+      <tr data-source="skola24-tabell-tjanstefordelning" data-reads="unknown"><td class="k">Tabell ▸ Tjänstefördelning, kopierad till Excel</td><td>Som ovan, men tabellen blir poster i timplanen. Lärarna anges på signatur. Timmar eller procent per lärare räknas aldrig om till lektioner och minuter: saknas de två fälten avvisas tabellen (7.7).</td><td>Välj <em>Tjänstefördelning</em> under <span class="ui">Vad innehåller tabellen?</span>.</td></tr>
+      <tr data-source="skola24-barn-csv" data-reads="named"><td class="k">Importera barn förskola/fritids</td><td>Känns igen och namnges, men läses inte: Rastra Schema har ingen import av förskolans eller fritidshemmets barn.</td><td>Ingenting.</td></tr>
+      <tr data-source="skola24-extens-franvaro" data-reads="named"><td class="k">Frånvarodata till Extens</td><td>Känns igen och namnges, men läses inte: Rastra Schema har ingen import av frånvarotimmar per elev.</td><td>Ingenting.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Följer skolans eller kommunens elevregister SS12000 2.1 kan Rastra Schema
+    hämta elever, personal, vårdnadshavare, klasser och undervisningsgrupper
+    därifrån (7.2). Registret är då källan, och filerna ovan behövs inte för
+    dem.
+  </p>
+
+  <h4>Från Untis</h4>
+  <p id="flytta-untis">
+    Untis GPU-filer, <em>GPU001</em> (schemat) och <em>GPU002</em>
+    (lektionerna), som två filer eller i en zip, läses som låsta
+    lektioner (7.7). GPU001 måste vara med: GPU002 ger bara veckomönster,
+    datum och grupper till lektionerna i GPU001, och en GPU002 ensam
+    vägras. Läsaren tar klass, lärare, ämne, sal, dag och tid, flera
+    klasser i samma fält, högst två lärare per lektion, A- och B-vecka ur
+    fältet <em>Gruppe</em> i GPU002 (<em>A-vecka</em> och <em>B-vecka</em>)
+    och från- och tilldatum ur GPU002. Filen får vara UTF-8 eller
+    windows-1252.
+  </p>
+  <ul>
+    <li><strong>Tider.</strong> En fil från Untis har bara periodnummer och inga tider: skriv skolans tidsraster i rutan som visas, en period per rad (<em>1 08:10-09:10</em>). Rastra Schema gissar aldrig en tid.</li>
+    <li><strong>Lärare.</strong> Läraren hittas på signatur, så signaturen i Untis ska vara samma som i Rastra Schema (steg 2 ovan).</li>
+    <li><strong>Följer inte med.</strong> Block, lärarnas namn och e-postadresser, och ämneskod.</li>
+    <li><strong>Inte prövat.</strong> Att Untis själv läser en fil härifrån är inte prövat i ett riktigt Untis.</li>
+  </ul>
+
+  <h4>Från aSc Timetables</h4>
+  <p id="flytta-asc">
+    En XML-fil från aSc Timetables läses som låsta lektioner (7.7): klasser,
+    grupper, lärare, salar, lektioner och kort.
+  </p>
+  <ul>
+    <li><strong>Veckor.</strong> I aSc är en vecka ett läge i en rotation och inget veckonummer. Rastra Schema läser det första läget som udda veckor, och förhandsvisningen säger det. En rotation som inte upprepar sig varannan vecka, till exempel en över tre veckor, läses inte: korten blir problemrader.</li>
+    <li><strong>Terminer.</strong> I aSc har en termin ett namn och inga datum. Rastra Schema läser den som datum bara om namnet är ett datumspann (<em>2026-08-17–2026-12-18</em>); annars läses lektionen som gällande hela läsåret, och en not nämner terminen.</li>
+    <li><strong>Följer inte med.</strong> Block, och rotationer som inte upprepar sig varannan vecka.</li>
+    <li><strong>Inte prövat.</strong> aSc:s egen import av en fil härifrån är inte prövad. Försök med en licensierad aSc innan skolan får veta att aSc placerar lektionerna.</li>
+  </ul>
+
+  <h4>Formaten och storleken</h4>
+  <table>
+    <thead><tr><th style="width:24%">Format</th><th>Filen</th></tr></thead>
+    <tbody>
+      <tr data-exchange="TABLE_CSV"><td class="k">Tabell, CSV</td><td>En rad per lektion, semikolonavgränsad med rubrikrad.</td></tr>
+      <tr data-exchange="TABLE_XLSX"><td class="k">Tabell, Excel</td><td>Samma tabell som en .xlsx-fil.</td></tr>
+      <tr data-exchange="UNTIS_GPU"><td class="k">Untis, GPU-filer</td><td>GPU001 och GPU002, eller en zip.</td></tr>
+      <tr data-exchange="ASC_XML"><td class="k">aSc Timetables, XML</td><td>En XML-fil.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    En schemafil som läses in får vara högst 700 kB, och en import är högst 5 000
+    lektioner (7.7). Listornas CSV-import delar upp stora filer själv (3.6). Delade lektioner, alltså flera lärare på en post,
+    härleds inte, och tjänstefördelningens varna- eller vägra-regler (4.3)
+    körs inte för de poster importen gör: se över dem under
+    <span class="path">Planering › Tjänstefördelning</span> efteråt.
+  </p>
+  <div class="check">
+    <span class="label">Kontrollera</span>
+    <p>
+      Öppna <span class="path">Schemaläggning › Grundschema</span>: lektionerna
+      står som låsta, och en klass du kontrollerat har rätt lektioner, lärare
+      och salar. Öppna <span class="path">Planering › Timplansposter</span>:
+      posterna som härletts ur lektionerna finns. Kör sedan
+      <span class="ui">Kontrollera veckan</span> (5.2) innan du genererar
+      det som återstår.
+    </p>
+  </div>
+  <p>
+    Vill du skicka oss en fil som Rastra Schema inte läser ännu, tar du först
+    bort personuppgifterna ur den med pseudonymiseraren (7.8).
+  </p>
 </section>
 
 <!-- ============================ 4 ============================ -->

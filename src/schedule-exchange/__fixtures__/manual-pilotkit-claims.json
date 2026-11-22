@@ -1,0 +1,13 @@
+{
+  "about": "What the user manual's 3.8 says about the Untis and aSc readers, in the manual's own words. web/lib/manual-pilotkit-readers.test.ts requires every phrase to stand in 3.8; src/schedule-exchange/manual-pilotkit-claims.spec.ts requires every id to be proved on the readers. A phrase changed on one side without the other turns one of them red.",
+  "claims": [
+    { "id": "untis-gpu001-required", "phrase": "GPU001 måste vara med" },
+    { "id": "untis-two-teachers", "phrase": "högst två lärare per lektion" },
+    { "id": "untis-ab-weeks", "phrase": "A- och B-vecka ur fältet Gruppe i GPU002" },
+    { "id": "untis-period-grid", "phrase": "Rastra Schema gissar aldrig en tid" },
+    { "id": "untis-encodings", "phrase": "Filen får vara UTF-8 eller windows-1252" },
+    { "id": "asc-first-week-odd", "phrase": "läser det första läget som udda veckor" },
+    { "id": "asc-rotation", "phrase": "En rotation som inte upprepar sig varannan vecka" },
+    { "id": "asc-term-span", "phrase": "läser den som datum bara om namnet är ett datumspann" }
+  ]
+}
