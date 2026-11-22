@@ -25,29 +25,52 @@
  *   node scripts/bench/bundle-size.mjs                 # report every route
  *   node scripts/bench/bundle-size.mjs --max-kb 150    # exit 1 if over budget
  *   node scripts/bench/bundle-size.mjs --json
+ *   node scripts/bench/bundle-size.mjs --warn-bytes N  # warn under N bytes left (default 2048)
+ *   node scripts/bench/bundle-size.mjs --next-dir DIR  # read DIR instead of web/.next
  *
  * Requires a completed `next build` in web/.
+ *
+ * A route or the shared runtime with under 2 KB left under its budget is
+ * WARNED about (stderr, a `::warning` annotation in GitHub Actions, and the
+ * run's step summary), so the change that makes the next one fail is seen
+ * while there is room. A warning never changes the exit code: see
+ * bundle-margin.mjs.
  */
 
 import { gzipSync } from 'node:zlib';
-import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
+import { appendFileSync, readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  WARN_MARGIN_BYTES,
+  annotationOf,
+  describe,
+  marginsOf,
+  summaryOf,
+  warningsOf,
+} from './bundle-margin.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const NEXT_DIR = join(REPO_ROOT, 'web', '.next');
 
 const args = process.argv.slice(2);
 const flag = (name) => {
   const i = args.indexOf(name);
   return i === -1 ? undefined : args[i + 1];
 };
+const NEXT_DIR = flag('--next-dir')
+  ? resolve(flag('--next-dir'))
+  : join(REPO_ROOT, 'web', '.next');
 const maxKb = flag('--max-kb') ? Number(flag('--max-kb')) : undefined;
+const warnBytes = flag('--warn-bytes') ? Number(flag('--warn-bytes')) : WARN_MARGIN_BYTES;
 const asJson = args.includes('--json');
 
 function fail(message) {
   console.error(message);
   process.exit(2);
+}
+
+if (!Number.isFinite(warnBytes) || warnBytes < 0) {
+  fail(`--warn-bytes needs a number of bytes (0 turns the warning off), got "${flag('--warn-bytes')}".`);
 }
 
 if (!existsSync(NEXT_DIR)) {
@@ -197,11 +220,15 @@ const kb = (bytes) => Math.round((bytes / 1024) * 10) / 10;
 const TIERS = [
   // measured max 22.1KB (/[locale] locale-redirect page; error pages are 3.6KB)
   { name: 'system', budgetKb: 50, match: (r) => /^\/_/.test(r) || /^\/\[locale\]\/page$/.test(r) },
-  // measured 3.6KB (/v/[token], Schemavisaren, 2026-10-10): Next's own error
-  // and not-found boundaries and nothing of ours — the page is a server
-  // component and sends the week as HTML. A login-free page a family opens on
-  // a phone; anything that makes it ship script should fail here first.
-  { name: 'public', budgetKb: 5, match: (r) => /^\/v\//.test(r) },
+  // measured 3 534 B (/v/[token], its embed and /v/, Schemavisaren, 2026-11-21):
+  // Next's own error and not-found boundaries and nothing of ours — the page is
+  // a server component and sends the week as HTML. A login-free page a family
+  // opens on a phone; anything that makes it ship script should fail here first.
+  // 6 KB since 2026-11-22 (5 KB before): those boundaries left 1 586 B, so the
+  // margin warning (bundle-margin.mjs) stood on every build for a tier no change
+  // of ours can move. 2 610 B above what Next ships is still less than any script
+  // of our own would be.
+  { name: 'public', budgetKb: 6, match: (r) => /^\/v\//.test(r) },
   // measured max 96.6KB (all four auth pages are within 1KB of each other)
   { name: 'auth', budgetKb: 110, match: (r) => r.includes('/(auth)/') },
   // measured max 177.8KB (/admin/timetable)
@@ -215,8 +242,22 @@ const TIERS = [
   { name: 'other', budgetKb: 170, match: () => true },
 ];
 
-/** The framework floor plus whatever the root layout adds. */
-const SHARED_BUDGET_KB = 130;
+/**
+ * The framework floor plus whatever the root layout adds.
+ *
+ * Today that is Next and React and nothing of ours: 131 780 B on 2026-11-21
+ * (main 1516129a), of which `next` is 127 589 B (react-dom's client alone
+ * 63 572, the Flight client 6 656, the segment cache ≈13 000), the Turbopack
+ * runtime 3 908 and @swc/helpers 192 — attributed with browser source maps, and
+ * no byte from this repository. (Those three add up to 131 689, not 131 780:
+ * the attribution is made on a source-map build of the same tree, whose shared
+ * chunks measured 131 696 B on a re-run on 2026-11-22. Repeat it on the next
+ * Next upgrade.) It therefore moves with the Next and React
+ * versions and cannot be given room by lazy-loading our code; the 130 KB it had
+ * left 1 340 B, so the margin warning stood on every build. 132 KB since
+ * 2026-11-22, which is 3 388 B above what it measures, a Next upgrade's worth.
+ */
+const SHARED_BUDGET_KB = 132;
 
 const tierFor = (route) => TIERS.find((t) => t.match(route));
 
@@ -279,6 +320,32 @@ const report = {
   })),
 };
 report.failures = report.routes.filter(overBudget).length;
+
+// Bytes left under each budget (see bundle-margin.mjs). Only in the tiered
+// mode: a flat budget on the total payload is a different question.
+const margins = flatMode
+  ? []
+  : marginsOf({
+      sharedBytes,
+      sharedBudgetKb: SHARED_BUDGET_KB,
+      sharedFailing: report.sharedOverBudget,
+      routes: routes.map((r) => ({
+        route: r.route,
+        tier: r.tier,
+        budgetKb: r.budgetKb,
+        routeOnlyBytes: r.routeOnlyBytes,
+        failing: overBudget({ routeOnlyKb: kb(r.routeOnlyBytes), budgetKb: r.budgetKb }),
+      })),
+    });
+const warnings = warnBytes > 0 ? warningsOf(margins, warnBytes) : [];
+report.sharedMarginBytes = margins.find((row) => row.kind === 'shared')?.marginBytes ?? null;
+report.warnBytes = warnBytes;
+report.nearBudget = warnings.map((row) => ({
+  scope: row.scope,
+  tier: row.tier,
+  budgetKb: row.budgetKb,
+  marginBytes: row.marginBytes,
+}));
 
 if (asJson) {
   console.log(JSON.stringify(report, null, 2));
@@ -345,13 +412,46 @@ if (report.sharedOverBudget) {
   exitCode = 1;
 }
 
-if (exitCode === 0) {
+// Not in the JSON mode: stdout there is one JSON document and nothing after it (jq, JSON.parse).
+if (exitCode === 0 && !asJson) {
   console.log(
     flatMode
       ? `\nPASS: all ${report.routeCount} routes within the ${maxKb}KB total budget.`
       : `\nPASS: all ${report.routeCount} routes within their tier budgets, ` +
           `shared runtime ${report.sharedGzipKb}/${SHARED_BUDGET_KB}KB.`,
   );
+}
+
+// Room left, tightest first. Always printed in the tiered mode, not only when
+// something is close: the number is what a reviewer wants to see before a web
+// change lands, and the warning below is only the case where it is small.
+if (!flatMode && !asJson) {
+  console.log('\nTightest margins (bytes left under the budget):');
+  for (const row of margins.slice(0, 6)) {
+    console.log(
+      `  ${String(row.marginBytes).padStart(7)} B  ${row.kind === 'shared' ? 'shared runtime' : row.scope}`,
+    );
+  }
+}
+
+for (const row of warnings) {
+  console.error(`\nWARNING: ${describe(row)}. Under ${warnBytes} B left.`);
+  // Shown on the run and on the pull request's checks, which a build log is not.
+  if (process.env.GITHUB_ACTIONS === 'true') console.error(annotationOf(row, warnBytes));
+}
+if (warnings.length > 0) {
+  console.error(
+    `\n${warnings.length} budget(s) with under ${warnBytes} B left. Not a failure: the next change that ` +
+      'adds more than that to one of them is. See scripts/bench/bundle-margin.mjs.',
+  );
+}
+
+if (process.env.GITHUB_STEP_SUMMARY && !flatMode) {
+  try {
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, summaryOf(margins));
+  } catch {
+    // The summary is a courtesy; a runner without one must not fail the gate.
+  }
 }
 
 process.exit(exitCode);

@@ -48,7 +48,7 @@ could be evaluated at all.
 | Mutation score | `stryker.conf.json` | `quality-gates.yml` → mutation (nightly) |
 | Visual regression | `web/e2e/visual.spec.ts` | `ci.yml` → web |
 | Accessibility | `web/e2e/a11y.spec.ts` (axe-core) + `web/lighthouserc.json` | `ci.yml` → web, `quality-gates.yml` → lighthouse |
-| Bundle size | `scripts/bench/bundle-size.mjs` | `ci.yml` → web |
+| Bundle size | `scripts/bench/bundle-size.mjs` (fails over a budget; warns, never fails, under 2 KB left: `bundle-margin.mjs`, tested by `bundle-margin.test.mjs`) | `ci.yml` → web |
 | Frontend performance | `web/lighthouserc.json` | `quality-gates.yml` → lighthouse (nightly) |
 | API latency | `scripts/bench/api-latency.mjs` (measures), `scripts/bench/latency-gate.mjs` (verdict) | `quality-gates.yml` → api-latency (nightly); the verdict's tests in `ci.yml` → api |
 | Solver wall clock | `optimization-engine/benchmarks/solve_2000_students.py` | `quality-gates.yml` → solver-benchmark (nightly) |
@@ -269,7 +269,8 @@ budget a page could contain 24KB of its own code and still fail, which makes
 the gate unactionable and teaches everyone to ignore CI.
 
 Budgets therefore apply to each route's **own** JavaScript, with the shared
-runtime gated separately at 130KB. The split makes both numbers actionable:
+runtime gated separately (at 130KB then, 132KB since 2026-11-22, see the comment
+on `SHARED_BUDGET_KB`). The split makes both numbers actionable:
 route budgets catch a page importing something heavy, and the shared budget
 catches application code leaking into the root layout — which is exactly how
 react-query and sonner ended up on the login page.
