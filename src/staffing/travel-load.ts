@@ -1,7 +1,7 @@
 import type { LessonRecurrence } from '@prisma/client';
 import { isoWeekNumber } from '../calendar/lesson-recurrence';
 import { hasTravel, walksOfDay, type PlacedLesson, type SiteMap } from '../common/site-travel';
-import { teachingWeeks, type ClosedRange, type YearBounds } from './teaching-weeks';
+import { teachingWeeksByDays, type ClosedRange, type YearBounds } from './teaching-weeks';
 
 /**
  * RESTID IS ARBETSTID (Skolområden och restid, 20261124090000): the minutes a
@@ -144,7 +144,9 @@ export function travelLoad(
     }
   }
 
-  const weeks = teachingWeeks({}, year, [...schoolWide], null);
+  // The year's weeks in school days, the frame an undated uppdrag is taken over (teacher-load.ts: teachingWeeksPerYear), so that the hours
+  // over the minutes per week are the weeks the card states beside them.
+  const weeks = teachingWeeksByDays({}, year, [...schoolWide], null);
   return [...annual.entries()]
     .map(([userId, minutes]) => ({
       userId,

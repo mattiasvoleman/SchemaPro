@@ -10,6 +10,7 @@ import { changesDuringYear, postStretches, type LoadPeriod, type PostStretchDate
 import {
   peakPerWeekByKey,
   teachingWeeks,
+  teachingWeeksByDays,
   type ClosedRange,
   type TeachingPeriod,
   type YearBounds,
@@ -301,6 +302,13 @@ export interface LoadDuty {
   validFrom?: string | null;
   /** Till, yyyy-mm-dd inclusive; null or absent = the year's last day. */
   validTo?: string | null;
+  /**
+   * A rastvaktspass (supervision-load.ts shiftAsDuty). A pass sits on ONE weekday and its dates are on it (the database checks
+   * it), so every week a dated pass touches holds it exactly once: its annual hours are counted in the weeks it touches
+   * (dutyWeeksPerYear), and not as a fifth of a week per school day, which would drop 0.8 of a week from every dated pass (a
+   * Wednesday pass from 2 September to 16 December runs 16 times, and 15.2 weeks of days would say 15.2).
+   */
+  weekdayPass?: boolean;
 }
 
 export interface LoadQualification {
@@ -606,6 +614,23 @@ const dutyPeriod = (duty: Pick<LoadDuty, 'validFrom' | 'validTo'>): TeachingPeri
 });
 
 /**
+ * The teaching weeks an uppdrag's annual hours are counted over: its school days as fifths of a week, as everything the report
+ * states per year, except a DATED pass, which sits on one weekday its dates fall on and so holds once in every week it touches.
+ * One function for the report's `dutyHoursPerYear` and for the rota's `hoursPerYear` (supervision-load.ts), which the card states as a
+ * part of it ("Därav rastvakt"): a part must not be more than the whole.
+ */
+export function dutyWeeksPerYear(
+  duty: Pick<LoadDuty, 'validFrom' | 'validTo' | 'weekdayPass'>,
+  year: YearBounds,
+  closures: ClosedRange[],
+): number {
+  const period = dutyPeriod(duty);
+  return duty.weekdayPass && isDated(duty)
+    ? teachingWeeks(period, year, closures, null)
+    : teachingWeeksByDays(period, year, closures, null);
+}
+
+/**
  * An uppdrag's standardvecka, before rounding: its minutes, untouched, when
  * it is undated — so every figure an undated duty reaches is the integer it
  * always was — and otherwise × its share of the year's teaching weeks, lov
@@ -906,7 +931,7 @@ export function stretchLoads(input: StretchInput, employment: LoadEmployment): S
     stretch,
     target: targetMinutesPerWeek({ ...employment, ...stretch.figures }, policy),
     counted: stretch.window ? countedInWindow(employment.userId, input, stretch.window) : 0,
-    weeks: stretch.window ? teachingWeeks(stretch.window, input.year, input.closures, null) : 0,
+    weeks: stretch.window ? teachingWeeksByDays(stretch.window, input.year, input.closures, null) : 0,
   }));
 }
 
@@ -1006,7 +1031,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   const { year, closures } = input;
   // The year's teaching weeks with school-wide lov out: the frame an undated
   // uppdrag, which runs every week, is taken over.
-  const schoolTeachingWeeks = teachingWeeks({}, year, closures, null);
+  const schoolTeachingWeeks = teachingWeeksByDays({}, year, closures, null);
 
   const employmentByUser = new Map(input.employments.map((row) => [row.userId, row]));
   const accumulators = new Map<string, Accumulator>();
@@ -1042,8 +1067,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
     acc.dutyCount += 1;
     if (duty.countsAsTeaching) acc.countedDutyMinutes += minutes;
     if (isDated(duty)) {
-      acc.datedDutyAnnualMinutes +=
-        duty.minutesPerWeek * teachingWeeks(dutyPeriod(duty), year, closures, null);
+      acc.datedDutyAnnualMinutes += duty.minutesPerWeek * dutyWeeksPerYear(duty, year, closures);
     } else {
       acc.undatedDutyMinutes += duty.minutesPerWeek;
     }
@@ -1086,7 +1110,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   for (const requirement of input.requirements) {
     const weeklyMinutes = weeklyMinutesOf(requirement);
     const charged = chargedMinutes(requirement, year, closures);
-    const weeks = teachingWeeks(requirement, year, closures, singleGrade(requirement.gradeSpan));
+    const weeks = teachingWeeksByDays(requirement, year, closures, singleGrade(requirement.gradeSpan));
     const yearMinutes = weeklyMinutes * weeks;
     lessonMinutesPerWeek += charged.lesson;
     const shared = hasShares(requirement);

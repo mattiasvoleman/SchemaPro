@@ -733,11 +733,11 @@
                 "lessonMinutesPerWeek": 96,
                 "timeMinutesPerWeek": 96,
                 "minutesPerWeek": 96,
-                "hoursPerYear": 64
+                "hoursPerYear": 62.4
               }
             ],
             "annual": {
-              "assignedHoursPerYear": 144,
+              "assignedHoursPerYear": 142.4,
               "regulatedHoursPerYear": 1360,
               "workDaysPerYear": 194,
               "contractKind": "FERIE",
@@ -746,7 +746,7 @@
               "semesterHoursPerWeek": null,
               "dutyHoursPerYear": 0,
               "teachingWeeksPerYear": 40,
-              "percentOfRegulated": 10.6
+              "percentOfRegulated": 10.5
             }
           }
         ],
@@ -942,7 +942,7 @@
                 "lessonMinutesPerWeek": 89,
                 "timeMinutesPerWeek": 89,
                 "minutesPerWeek": 89,
-                "hoursPerYear": 64
+                "hoursPerYear": 63.2
               },
               {
                 "requirementId": "req-14",
@@ -965,7 +965,7 @@
               }
             ],
             "annual": {
-              "assignedHoursPerYear": 582,
+              "assignedHoursPerYear": 581.2,
               "regulatedHoursPerYear": 1360,
               "workDaysPerYear": 194,
               "contractKind": "FERIE",
@@ -974,7 +974,7 @@
               "semesterHoursPerWeek": null,
               "dutyHoursPerYear": 0,
               "teachingWeeksPerYear": 43,
-              "percentOfRegulated": 42.8
+              "percentOfRegulated": 42.7
             }
           }
         ],
@@ -7129,7 +7129,7 @@
               "annualHours": 1767,
               "unregulatedHoursPerYear": 407,
               "semesterHoursPerWeek": null,
-              "dutyHoursPerYear": 72.4,
+              "dutyHoursPerYear": 71.5,
               "teachingWeeksPerYear": 39.4,
               "percentOfRegulated": 46.4
             }
@@ -7325,7 +7325,7 @@
               "annualHours": 1767,
               "unregulatedHoursPerYear": 407,
               "semesterHoursPerWeek": null,
-              "dutyHoursPerYear": 42.3,
+              "dutyHoursPerYear": 42.1,
               "teachingWeeksPerYear": 40.4,
               "percentOfRegulated": 50.5
             }
@@ -7482,7 +7482,7 @@
               "annualHours": null,
               "unregulatedHoursPerYear": null,
               "semesterHoursPerWeek": null,
-              "dutyHoursPerYear": 0.6,
+              "dutyHoursPerYear": 0,
               "teachingWeeksPerYear": 42,
               "percentOfRegulated": null
             }
@@ -7514,7 +7514,7 @@
               "annualHours": null,
               "unregulatedHoursPerYear": null,
               "semesterHoursPerWeek": null,
-              "dutyHoursPerYear": 11,
+              "dutyHoursPerYear": 10.4,
               "teachingWeeksPerYear": 42,
               "percentOfRegulated": null
             }
@@ -8121,7 +8121,7 @@
               "annualHours": null,
               "unregulatedHoursPerYear": null,
               "semesterHoursPerWeek": 34.7,
-              "dutyHoursPerYear": 77.1,
+              "dutyHoursPerYear": 76.5,
               "teachingWeeksPerYear": 37.4,
               "percentOfRegulated": 42.1
             }

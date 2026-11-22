@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import fixture from "../../src/staffing/__fixtures__/teaching-weeks-cases.json";
+import byDaysFixture from "../../src/staffing/__fixtures__/teaching-weeks-by-days-cases.json";
 import {
   teachingWeeks,
+  teachingWeeksByDays,
   weeksInPeriod,
   type ClosedRange,
   type TeachingPeriod,
@@ -46,5 +48,34 @@ describe("teaching weeks agree with the gateway's fixture", () => {
       entry.teachingWeeks,
       10,
     );
+  });
+});
+
+/**
+ * Weeks counted in school days (teachingWeeksByDays), replayed against the hand-worked cases the gateway replays too
+ * (src/staffing/__fixtures__/teaching-weeks-by-days-cases.json, teaching-weeks.contract.spec.ts, which also checks it day by day
+ * against the gateway's runsOn). The annual figures of the load report are counted with it on both sides, so a läsår that starts
+ * on a Saturday is the same hours in the browser as in the gateway.
+ */
+describe("teachingWeeksByDays agrees with the shared fixture", () => {
+  interface ByDaysCase {
+    name: string;
+    year: YearBounds;
+    period: TeachingPeriod;
+    closures: ClosedRange[];
+    gradeLevel: number | null;
+    teachingWeeksByDays: number;
+    teachingWeeks: number;
+  }
+  const cases = (byDaysFixture as unknown as { cases: ByDaysCase[] }).cases;
+
+  it("has cases that differ from teachingWeeks and cases that agree with it", () => {
+    expect(cases.some((entry) => entry.teachingWeeksByDays !== entry.teachingWeeks)).toBe(true);
+    expect(cases.some((entry) => entry.teachingWeeksByDays === entry.teachingWeeks)).toBe(true);
+  });
+
+  it.each(cases.map((entry) => [entry.name, entry] as const))("%s", (_name, entry) => {
+    expect(teachingWeeksByDays(entry.period, entry.year, entry.closures, entry.gradeLevel)).toBeCloseTo(entry.teachingWeeksByDays, 10);
+    expect(teachingWeeks(entry.period, entry.year, entry.closures, entry.gradeLevel)).toBeCloseTo(entry.teachingWeeks, 10);
   });
 });

@@ -1,0 +1,104 @@
+{
+  "note": "Weeks counted in school days (teachingWeeksByDays): every Mon-Fri day in the window that is not closed, in a week the recurrence runs, is a fifth of a week. Replayed by teaching-weeks.contract.spec.ts and web/lib/teaching-hours.contract.test.ts. teachingWeeks, which charges a partly covered week whole, is stated beside each case to show where the two agree and where they do not. Every figure is worked out by hand: 215 school days from Monday 2026-08-17 to Friday 2027-06-11 are 43 weeks.",
+  "cases": [
+    {
+      "name": "a year from Monday to Friday: the two counts agree, 43 weeks",
+      "year": { "startDate": "2026-08-17", "endDate": "2027-06-11" },
+      "period": {},
+      "closures": [],
+      "gradeLevel": null,
+      "teachingWeeksByDays": 43,
+      "teachingWeeks": 43
+    },
+    {
+      "name": "a year that starts on a Saturday holds no lesson in the week before its first Monday: 43, not 44",
+      "year": { "startDate": "2026-08-15", "endDate": "2027-06-11" },
+      "period": {},
+      "closures": [],
+      "gradeLevel": null,
+      "teachingWeeksByDays": 43,
+      "teachingWeeks": 44
+    },
+    {
+      "name": "a year that starts on a Sunday, the same",
+      "year": { "startDate": "2026-08-16", "endDate": "2027-06-11" },
+      "period": {},
+      "closures": [],
+      "gradeLevel": null,
+      "teachingWeeksByDays": 43,
+      "teachingWeeks": 44
+    },
+    {
+      "name": "a year that ends on a Monday holds one school day of its last week: a fifth of a week",
+      "year": { "startDate": "2026-08-17", "endDate": "2027-06-14" },
+      "period": {},
+      "closures": [],
+      "gradeLevel": null,
+      "teachingWeeksByDays": 43.2,
+      "teachingWeeks": 44
+    },
+    {
+      "name": "a term course from a Wednesday to a Friday: 3 days + 15 whole weeks = 15.6 weeks",
+      "year": { "startDate": "2026-08-17", "endDate": "2027-06-11" },
+      "period": { "startDate": "2026-09-02", "endDate": "2026-12-18" },
+      "closures": [],
+      "gradeLevel": null,
+      "teachingWeeksByDays": 15.6,
+      "teachingWeeks": 16
+    },
+    {
+      "name": "a period that is one Saturday holds no school day",
+      "year": { "startDate": "2026-08-17", "endDate": "2027-06-11" },
+      "period": { "startDate": "2026-12-05", "endDate": "2026-12-05" },
+      "closures": [],
+      "gradeLevel": null,
+      "teachingWeeksByDays": 0,
+      "teachingWeeks": 1
+    },
+    {
+      "name": "a one-day period inside a lov week holds none: the day is closed",
+      "year": { "startDate": "2026-08-17", "endDate": "2027-06-11" },
+      "period": { "startDate": "2027-02-23", "endDate": "2027-02-23" },
+      "closures": [{ "startDate": "2027-02-22", "endDate": "2027-02-26", "minGradeLevel": null, "maxGradeLevel": null }],
+      "gradeLevel": null,
+      "teachingWeeksByDays": 0,
+      "teachingWeeks": 0.8
+    },
+    {
+      "name": "one studiedag in an ordinary week: 214 days, 42.8 weeks, as teachingWeeks counts it",
+      "year": { "startDate": "2026-08-17", "endDate": "2027-06-11" },
+      "period": {},
+      "closures": [{ "startDate": "2026-10-14", "endDate": "2026-10-14", "minGradeLevel": null, "maxGradeLevel": null }],
+      "gradeLevel": null,
+      "teachingWeeksByDays": 42.8,
+      "teachingWeeks": 42.8
+    },
+    {
+      "name": "odd weeks in a year that starts on a Saturday: week 33 holds no school day, so 22 and not 23",
+      "year": { "startDate": "2026-08-15", "endDate": "2027-06-11" },
+      "period": { "recurrence": "ODD_WEEKS" },
+      "closures": [],
+      "gradeLevel": null,
+      "teachingWeeksByDays": 22,
+      "teachingWeeks": 23
+    },
+    {
+      "name": "a closure for the grades 7-9 does not close a day for a teacher of year 5",
+      "year": { "startDate": "2026-08-17", "endDate": "2027-06-11" },
+      "period": {},
+      "closures": [{ "startDate": "2026-11-02", "endDate": "2026-11-06", "minGradeLevel": 7, "maxGradeLevel": 9 }],
+      "gradeLevel": 5,
+      "teachingWeeksByDays": 43,
+      "teachingWeeks": 43
+    },
+    {
+      "name": "a period wholly outside the year holds nothing",
+      "year": { "startDate": "2026-08-17", "endDate": "2027-06-11" },
+      "period": { "startDate": "2027-08-01", "endDate": "2027-09-30" },
+      "closures": [],
+      "gradeLevel": null,
+      "teachingWeeksByDays": 0,
+      "teachingWeeks": 0
+    }
+  ]
+}

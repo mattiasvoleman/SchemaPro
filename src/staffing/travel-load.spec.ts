@@ -43,6 +43,14 @@ describe('travelLoad', () => {
     ]);
   });
 
+  it('states the minutes a week over the weeks of school days the card states beside them: 30 minutes on 43 Mondays of a year that starts on a Saturday (granskningen av #400)', () => {
+    // 15 August 2026 to 11 June 2027: the week before the first Monday holds no school day, so 43 teaching weeks and not 44. 43 × 30 minutes
+    // are 21.5 h, and 21.5 h over the 43 weeks of "Undervisningsveckor" are the 30 minutes a week; over 44 they would be 29.
+    expect(travelLoad(MAP, MONDAY, { startDate: '2026-08-15', endDate: '2027-06-11' }, [])).toEqual([
+      { userId: 'anna', minutesPerWeek: 30, peakMinutesPerWeek: 30, hoursPerYear: 21.5 },
+    ]);
+  });
+
   it('honours the weeks a lesson runs: an odd-week walk is half a walk a week, and its busiest week whole', () => {
     const odd = [master('a', 1, '08:00', '09:00', 'n1'), master('b', 1, '09:15', '10:15', 's1', { recurrence: 'ODD_WEEKS' })];
     // Weeks 37 and 39 are odd: two walks of 15 in four weeks.

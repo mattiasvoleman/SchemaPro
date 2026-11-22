@@ -49,6 +49,7 @@ import {
 import {
   peakPerWeekByKey,
   teachingWeeks,
+  teachingWeeksByDays,
   type ClosedRange,
   type TeachingPeriod,
   type YearBounds,
@@ -195,6 +196,11 @@ export interface LoadDuty {
   validFrom?: string | null;
   /** Till, yyyy-mm-dd inclusive; null or absent = the year's last day. */
   validTo?: string | null;
+  /**
+   * A rastvaktspass (the gateway's shiftAsDuty): on ONE weekday its dates fall on, so a dated one holds once in every week it
+   * touches. Mirror of the gateway's LoadDuty.weekdayPass.
+   */
+  weekdayPass?: boolean;
 }
 
 export interface LoadQualification {
@@ -469,6 +475,18 @@ const dutyPeriod = (duty: Pick<LoadDuty, "validFrom" | "validTo">): TeachingPeri
   endDate: duty.validTo ?? null,
 });
 
+/** The teaching weeks an uppdrag's annual hours are counted over: school days as fifths of a week, but a DATED rastvaktspass, which holds once in every week it touches. Mirror of the gateway's dutyWeeksPerYear. */
+function dutyWeeksPerYear(
+  duty: Pick<LoadDuty, "validFrom" | "validTo" | "weekdayPass">,
+  year: YearBounds,
+  closures: ClosedRange[],
+): number {
+  const period = dutyPeriod(duty);
+  return duty.weekdayPass && isDated(duty)
+    ? teachingWeeks(period, year, closures, null)
+    : teachingWeeksByDays(period, year, closures, null);
+}
+
 /**
  * An uppdrag's standardvecka, before rounding: its minutes untouched when
  * undated, otherwise × its share of the year's teaching weeks (school-wide
@@ -736,7 +754,7 @@ export function stretchLoads(input: StretchInput, employment: ShownEmployment): 
     stretch,
     target: targetMinutesPerWeek({ ...employment, ...stretch.figures }, policy),
     counted: stretch.window ? countedInWindow(employment.userId, input, stretch.window) : 0,
-    weeks: stretch.window ? teachingWeeks(stretch.window, input.year, input.closures, null) : 0,
+    weeks: stretch.window ? teachingWeeksByDays(stretch.window, input.year, input.closures, null) : 0,
   }));
 }
 
@@ -800,7 +818,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   const { year, closures } = input;
   // The year's teaching weeks with school-wide lov out: the frame an undated
   // uppdrag, which runs every week, is taken over.
-  const schoolTeachingWeeks = teachingWeeks({}, year, closures, null);
+  const schoolTeachingWeeks = teachingWeeksByDays({}, year, closures, null);
 
   const employmentByUser = new Map(input.employments.map((row) => [row.userId, row]));
   const accumulators = new Map<string, Accumulator>();
@@ -836,8 +854,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
     acc.dutyCount += 1;
     if (duty.countsAsTeaching) acc.countedDutyMinutes += minutes;
     if (isDated(duty)) {
-      acc.datedDutyAnnualMinutes +=
-        duty.minutesPerWeek * teachingWeeks(dutyPeriod(duty), year, closures, null);
+      acc.datedDutyAnnualMinutes += duty.minutesPerWeek * dutyWeeksPerYear(duty, year, closures);
     } else {
       acc.undatedDutyMinutes += duty.minutesPerWeek;
     }
@@ -879,7 +896,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   for (const requirement of input.requirements) {
     const weeklyMinutes = weeklyMinutesOf(requirement);
     const charged = chargedMinutes(requirement, year, closures);
-    const weeks = teachingWeeks(requirement, year, closures, singleGrade(requirement.gradeSpan));
+    const weeks = teachingWeeksByDays(requirement, year, closures, singleGrade(requirement.gradeSpan));
     const yearMinutes = weeklyMinutes * weeks;
     lessonMinutesPerWeek += charged.lesson;
     const shared = hasShares(requirement);
