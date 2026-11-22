@@ -179,6 +179,7 @@
     "dashboard": "Översikt",
     "planning": "Planering",
     "setup": "Kom igång",
+    "intake": "Vad kom in",
     "subjects": "Ämnen",
     "rooms": "Salar",
     "groups": "Klasser",
@@ -284,6 +285,147 @@
     "readStaffingHint": "Lärarnas belastning mot målen.",
     "readReports": "Rapporter",
     "readReportsHint": "Frånvaro, vikarier och undervisningstid."
+  },
+  "intake": {
+    "title": "Vad kom in",
+    "subtitle": "Vad skolans grunddata innehåller, och vad som saknas för att Generera ska kunna köra",
+    "intro": "Sidan räknar det som finns i skolan och ändrar ingenting. Den säger inte att en vecka går att lägga: det kan bara Kontrollera veckan på Generera-sidan svara på, och bara ibland.",
+    "year": "Läsår: {name}",
+    "loadFailed": "Det som kom in kunde inte hämtas",
+    "loadFailedHint": "Inga siffror visas, eftersom en tom lista inte ska läsas som en skola utan grunddata. Ladda om sidan.",
+    "retry": "Försök igen",
+    "summary": {
+      "hardTitle": "{count, plural, one {# sak stoppar} other {# saker stoppar}} Generera",
+      "hardBody": "Åtgärda dem i den ordning korten står. Därefter kan du köra Kontrollera veckan.",
+      "okTitle": "Inget som sidan räknar stoppar Generera",
+      "okBody": "Det betyder inte att veckan går att lägga. Kör Kontrollera veckan på Generera-sidan innan du genererar.",
+      "soft": "{count, plural, one {# sak ger ett sämre schema} other {# saker ger ett sämre schema}}",
+      "info": "{count, plural, one {# sak används av andra steg} other {# saker används av andra steg}}",
+      "generate": "Till Generera"
+    },
+    "levels": {
+      "HARD": "Stoppar Generera",
+      "SOFT": "Ger ett sämre schema",
+      "INFO": "För andra steg"
+    },
+    "foundHeading": "Det som kom in",
+    "missingHeading": "Det som saknas",
+    "waitsForYear": "Väntar på ett aktivt läsår: klasserna, posterna och tjänsterna hör till ett läsår.",
+    "nothingMissing": "Inget saknas.",
+    "open": "Öppna {page}",
+    "more": "och {count} till",
+    "grade": "åk {grade}",
+    "appliesTo": "Gäller: {items}",
+    "areas": {
+      "YEAR": "Läsår",
+      "SUBJECTS": "Ämnen",
+      "ROOMS": "Salar",
+      "FRAME_TIMES": "Ramtider",
+      "RASTS": "Raster",
+      "CLASSES": "Klasser",
+      "TEACHING_GROUPS": "Undervisningsgrupper",
+      "PEOPLE": "Personer",
+      "TIMPLAN": "Lokal timplan",
+      "REQUIREMENTS": "Timplansposter",
+      "STAFFING": "Tjänstefördelning"
+    },
+    "found": {
+      "years": "{count, plural, one {# läsår} other {# läsår}}",
+      "subjects": "{count, plural, one {# ämne} other {# ämnen}}",
+      "rooms": "{count, plural, one {# sal} other {# salar}}",
+      "frameTimes": "{count, plural, one {# ramtid} other {# ramtider}}",
+      "rasts": "{count, plural, one {# rast} other {# raster}}",
+      "classes": "{count, plural, one {# klass} other {# klasser}}",
+      "teachingGroups": "{count, plural, one {# undervisningsgrupp} other {# undervisningsgrupper}}",
+      "teachers": "{count, plural, one {# lärare} other {# lärare}}",
+      "students": "{count, plural, one {# elev} other {# elever}}",
+      "gradesWithTimplan": "{count, plural, one {# årskurs med lokal timplan} other {# årskurser med lokal timplan}}",
+      "requirements": "{count, plural, one {# timplanspost} other {# timplansposter}}",
+      "posts": "{count, plural, one {# tjänst} other {# tjänster}}"
+    },
+    "gaps": {
+      "NO_YEAR": {
+        "title": "Inget läsår är aktivt",
+        "hint": "Skapa läsåret och slå på Aktivt. Klasser, timplansposter och schemat hör till ett läsår."
+      },
+      "NO_SUBJECTS": {
+        "title": "Inga ämnen är inlagda",
+        "hint": "Lägg in skolans ämnen: timplansposterna hänvisar till dem."
+      },
+      "SUBJECTS_WITHOUT_POSTS": {
+        "title": "{count, plural, one {# ämne har} other {# ämnen har}} inga timplansposter i läsåret",
+        "hint": "Lektioner i ämnet läggs inte i schemat. Är det avsikten kan du låta det vara."
+      },
+      "ROOM_TYPE_WITHOUT_ROOM": {
+        "title": "{count, plural, one {# ämne kräver} other {# ämnen kräver}} en salstyp som ingen sal har",
+        "hint": "Motorn vägrar en vecka där ett ämne kräver en salstyp utan sal. Lägg till en sal av typen, eller ändra ämnets krav."
+      },
+      "NO_ROOMS": {
+        "title": "Inga salar är inlagda",
+        "hint": "Motorn vägrar en vecka utan salar. Lägg in salarna med kapacitet och typ."
+      },
+      "FRAME_TIMES_MISSING": {
+        "title": "{count, plural, one {En årskurs med klasser saknar} other {# årskurser med klasser saknar}} ramtid",
+        "hint": "Utan ramtid lägger motorn årskursen var som helst i sin standarddag. Lägg in ramtiderna för skolans stadier."
+      },
+      "NO_RASTS": {
+        "title": "Inga raster är inlagda",
+        "hint": "Lägg in skolans raster om den har några."
+      },
+      "NO_CLASSES": {
+        "title": "Läsåret har inga klasser",
+        "hint": "Skapa klasserna med årskurs. Varje klass schemaläggs som en enhet."
+      },
+      "CLASSES_WITHOUT_GRADE": {
+        "title": "{count, plural, one {# klass saknar} other {# klasser saknar}} årskurs",
+        "hint": "En klass utan årskurs binds inte av ramtider och raster."
+      },
+      "CLASSES_WITHOUT_POSTS": {
+        "title": "{count, plural, one {# klass nås} other {# klasser nås}} av ingen timplanspost",
+        "hint": "Klassen har ingen post, ingen halva av den har en, och ingen av dess elever går i en grupp som har en. Då får den inga lektioner."
+      },
+      "TEACHING_GROUPS_WITHOUT_MEMBERS": {
+        "title": "{count, plural, one {# undervisningsgrupp har} other {# undervisningsgrupper har}} inga medlemmar",
+        "hint": "En grupp utan elever binds inte av någon årskurs. Lägg till medlemmarna under Klasser."
+      },
+      "NO_TEACHERS": {
+        "title": "Inga lärare är inlagda",
+        "hint": "Generera behöver minst en lärare. Lägg in lärarna under Personer."
+      },
+      "NO_STUDENTS": {
+        "title": "Inga elever är inlagda",
+        "hint": "Generera går att köra, men salarnas kapacitet och matsalens platser prövas mot klassernas storlek, och en klass utan elever har ingen."
+      },
+      "STUDENTS_WITHOUT_CLASS": {
+        "title": "{count, plural, one {# elev tillhör} other {# elever tillhör}} ingen klass",
+        "hint": "En elev utan klass får inget schema. Importen kan inte ge en klass i efterhand: sätt den under Personer."
+      },
+      "TIMPLAN_MISSING": {
+        "title": "{count, plural, one {En årskurs med klasser saknar} other {# årskurser med klasser saknar}} lokal timplan",
+        "hint": "Utan timplan kan timplanstäckningen inte räknas för årskursen. Det stoppar inte Generera: en brist är under mål, aldrig ett nej."
+      },
+      "TIMPLAN_NOT_DECIDED": {
+        "title": "{count, plural, one {En årskurs följer} other {# årskurser följer}} en timplan som inte är beslutad",
+        "hint": "Beslutet fattas av rektor eller en fullständig administratör. Det stoppar inte Generera."
+      },
+      "NO_REQUIREMENTS": {
+        "title": "Läsåret har inga timplansposter",
+        "hint": "Utan poster finns inget att lägga: motorn vägrar en tom vecka. Lägg in posterna per klass och ämne."
+      },
+      "UNSTAFFED_POSTS": {
+        "title": "{count, plural, one {# timplanspost saknar} other {# timplansposter saknar}} lärare",
+        "hint": "Posten läggs utan lärare. Under Tjänstefördelning kan Föreslå bemanning bemanna alla poster på en gång.",
+        "hintHard": "Skolan har valt Generering utan lärare: Vägra, så knappen Generera är avstängd tills varje post har en lärare."
+      },
+      "TEACHERS_WITHOUT_POST": {
+        "title": "{count, plural, one {# lärare har} other {# lärare har}} ingen tjänst i läsåret",
+        "hint": "En lärare utan tjänst har inget mål att bemannas mot. Lägg in tjänsten under Tjänstefördelning."
+      },
+      "POSTS_WITHOUT_SIGNATURE": {
+        "title": "{count, plural, one {# tjänst saknar} other {# tjänster saknar}} signatur",
+        "hint": "Ett schema från Untis eller aSc hittar läraren på signatur eller e-postadress. Lägg in signaturerna innan du läser in ett schema."
+      }
+    }
   },
   "setup": {
     "title": "Kom igång",

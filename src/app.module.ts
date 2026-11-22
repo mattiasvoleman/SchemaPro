@@ -47,6 +47,7 @@ import { CoverModule } from './cover/cover.module';
 import { CrisisModule } from './crisis/crisis.module';
 import { AbsenceWatchModule } from './absence-watch/absence-watch.module';
 import { MealCountsModule } from './meal-counts/meal-counts.module';
+import { IntakeModule } from './intake/intake.module';
 import { ReportingRateModule } from './reporting-rate/reporting-rate.module';
 import { AbsenceStatsModule } from './absence-stats/absence-stats.module';
 import { AckModule } from './ack/ack.module';
@@ -168,6 +169,7 @@ import type { ThrottleConfig } from './config/configuration';
     SchoolExportModule,
     AbsenceWatchModule,
     MealCountsModule,
+    IntakeModule,
     ReportingRateModule,
     AbsenceStatsModule,
     AckModule,
