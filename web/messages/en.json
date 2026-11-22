@@ -4676,7 +4676,14 @@
       "notAnnual": "May differ from Teaching per school year under Annual working time, which counts whole weeks and applies percentage and factor. This figure is the lessons' own time in school days.",
       "caption": "Computed from the teaching posts: the lessons' own time over the weeks they run, unweighted and without duties. Not the target, which is the school's own measure. Source: {sfs}, in force from {from}.",
       "source": "Read the ordinance",
-      "opensInNewTab": "(opens in a new tab)"
+      "opensInNewTab": "(opens in a new tab)",
+      "own": {
+        "verdictInside": "Not over the ordinance's highest level. The ordinance sets no lowest teaching time, so being below the span breaks nothing in § 3. Where in the span you should lie is the principal's judgement, from group sizes, the number of pupils you meet and pupils needing support (§ 8).",
+        "verdictOverOwn": "Over the level set for you by {over} h, but not over the ordinance's.",
+        "verdictNoPost": "No post registered: the span holds at full time and cannot be scaled by the post, so you are not judged.",
+        "blended": "You teach in several stages, so the span is weighted by hours.",
+        "fitsNotShown": "Whether the annual working time holds the planning floor is not shown here: it is only worked out for a term-time contract."
+      }
     },
     "scopeOverBadge": "Over the ordinance",
     "scopeOverBadgeTitle": "More teaching time than the ordinance's highest level (SFS 2026:1487 § 3). Open the teacher for the figures.",

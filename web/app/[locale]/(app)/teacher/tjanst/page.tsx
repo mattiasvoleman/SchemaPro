@@ -41,7 +41,7 @@
 // and nothing from the admin drawer, whose cards carry forms this page has no
 // use for.
 
-import { useMemo } from "react";
+import { lazy, Suspense, useMemo } from "react";
 import { useTranslations } from "next-intl";
 import { CalendarClock, CalendarRange, Printer, Scale } from "lucide-react";
 import { Link } from "@/i18n/navigation";
@@ -50,6 +50,7 @@ import { useActiveYear, useGroups, useSubjects } from "@/lib/queries";
 import { useStaffingLoad, useTeacherDuties } from "@/lib/staffing-queries";
 import { travelOf } from "@/lib/staffing-travel";
 import { supervisionOf } from "@/lib/staffing-supervision";
+import { scopeCardOf } from "@/lib/assignment-scope";
 import { dutyPeriodLine, dutySlotsLine } from "@/lib/duty-lines";
 import { useLastYearTjanst } from "./use-last-year-tjanst";
 import { isJudged, postAtStart } from "@/lib/period-view";
@@ -65,6 +66,18 @@ import { LoadError } from "@/components/ui/load-error";
 import { SectionCard } from "@/components/ui/section-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TableScroll } from "@/components/ui/table-scroll";
+
+// The teacher's own omfattning under SFS 2026:1487: lazy, because this page is in the core tier and the card is only drawn for a
+// läsår the ordinance reaches (scopeCardOf is null for every year before 2027/28, which is all of them until then). And a chunk
+// that does not arrive renders nothing, as on the student's, the guardian's and the timplan page: an optional card must never take
+// the tjänst away (a rejected lazy() import is thrown at render, and there is no error boundary under this page to catch it).
+type ScopeCardProps = React.ComponentProps<typeof import("@/components/staffing/scope-card").ScopeCard>;
+const ScopeCard = lazy<React.ComponentType<ScopeCardProps>>(() =>
+  import("@/components/staffing/scope-card").then(
+    (module) => ({ default: module.ScopeCard }),
+    () => ({ default: () => null }),
+  ),
+);
 
 export default function MyStaffingPage() {
   const t = useTranslations("myStaffing");
@@ -83,6 +96,8 @@ export default function MyStaffingPage() {
     () => load.data?.teachers.find((teacher) => teacher.userId === profile.id) ?? null,
     [load.data, profile.id],
   );
+  // The ordinance's omfattning for the teacher's own row (null for a läsår it does not reach, and with no teaching to judge).
+  const scope = useMemo(() => scopeCardOf(load.data, profile.id), [load.data, profile.id]);
   const ownDuties = useMemo(
     () => (duties.data ?? []).filter((duty) => duty.userId === profile.id),
     [duties.data, profile.id],
@@ -285,6 +300,12 @@ export default function MyStaffingPage() {
           travel={travelOf(load.data, row.userId)}
           supervision={supervisionOf(load.data, row.userId)}
         />
+      ) : null}
+
+      {scope ? (
+        <Suspense fallback={null}>
+          <ScopeCard data={scope} headingLevel="h2" own />
+        </Suspense>
       ) : null}
 
       <SectionCard id="tjanst-teaching" title={t("teachingTitle")}>

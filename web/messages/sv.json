@@ -4676,7 +4676,14 @@
       "notAnnual": "Kan skilja sig från Undervisning per läsår under Årsarbetstid, som räknar hela veckor och med procent och faktor. Den här siffran är lektionernas egen tid i skoldagar.",
       "caption": "Räknat ur timplansposterna: lektionernas egen tid över de veckor de löper, oviktad och utan uppdrag. Inte riktmärket, som är skolens eget mått. Källa: {sfs}, i kraft från {from}.",
       "source": "Läs förordningen",
-      "opensInNewTab": "(öppnas i en ny flik)"
+      "opensInNewTab": "(öppnas i en ny flik)",
+      "own": {
+        "verdictInside": "Inte över förordningens högsta nivå. Förordningen sätter ingen lägsta undervisningstid, så att ligga under spannet är ingen överträdelse av 3 §. Var i spannet du ska ligga bedömer rektorn utifrån gruppernas storlek, antalet elever du möter och elever i behov av stöd (8 §).",
+        "verdictOverOwn": "Över den nivå som är satt för dig med {over} h, men inte över förordningens.",
+        "verdictNoPost": "Ingen tjänst registrerad: spannet gäller vid heltid och kan inte skalas efter tjänstens omfattning, så du prövas inte.",
+        "blended": "Du undervisar i flera stadier, så spannet är viktat efter timmar.",
+        "fitsNotShown": "Om årsarbetstiden rymmer planeringens golv visas inte här: det räknas bara för en ferietjänst."
+      }
     },
     "scopeOverBadge": "Över förordningen",
     "scopeOverBadgeTitle": "Mer undervisningstid än förordningens högsta nivå (SFS 2026:1487 3 §). Öppna läraren för siffrorna.",
