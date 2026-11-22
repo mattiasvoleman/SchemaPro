@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RoomPreferencesCard } from "./room-preferences-card";
 
 const create = vi.hoisted(() => vi.fn());
@@ -373,6 +373,84 @@ describe("RoomPreferencesCard", () => {
       const row = screen.getByRole("listitem");
       expect(row.textContent).toBe("lockSummary(NO|A12)");
     });
+  });
+});
+
+/*
+ * ?roomRule=<room rule id>, the link of Generera's card of what to change (Åtgärdsförslag vid vägran) for a lock the week cannot keep: the rule
+ * is marked and the form opens for a rule beside it, of the same subject and years, with the rooms left to pick (a lock is widened by a rule
+ * of its own: equally narrow rules are alternatives and their rooms are the union). Read from this card's own kind of rule in this school's
+ * rules: an id that is none of them opens nothing and says nothing, so that an id from another school learns nobody anything.
+ */
+describe("the ?roomRule= deep link", () => {
+  const lockRule = (id: string, over: Record<string, unknown> = {}) => ({
+    id,
+    subjectId: "s-no",
+    kind: "LOCK" as const,
+    minGradeLevel: 7,
+    maxGradeLevel: 9,
+    roomTypeId: null,
+    weight: 5,
+    rooms: [{ roomId: "r-a12" }],
+    ...over,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    preferences.data = [lockRule("p-lock")];
+    preferences.isError = false;
+  });
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  it("marks the rule and opens the form for a rule beside it, saved as a lock of the same subject and years with the rooms picked", async () => {
+    window.history.replaceState(null, "", "/?roomRule=p-lock");
+    const user = userEvent.setup();
+    render(<RoomPreferencesCard kind="LOCK" />);
+
+    expect(await screen.findByRole("button", { name: "save" })).toBeDisabled();
+    expect(screen.getByRole("listitem")).toHaveAttribute("aria-current", "true");
+    expect(screen.getByRole("combobox", { name: "preferenceSubject" })).toHaveTextContent("NO");
+
+    // The rooms are the change, and are left to the administrator: nothing is saved before one is picked.
+    await user.click(screen.getByLabelText("A14"));
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(create).toHaveBeenCalledWith({ subjectId: "s-no", roomIds: ["r-a14"], kind: "LOCK", minGradeLevel: 7, maxGradeLevel: 9 });
+  });
+
+  it("opens nothing for an id that is none of this school's rules, and shows no error", () => {
+    window.history.replaceState(null, "", "/?roomRule=an-id-from-another-school");
+    render(<RoomPreferencesCard kind="LOCK" />);
+
+    expect(screen.queryByRole("button", { name: "save" })).toBeNull();
+    expect(screen.getByRole("listitem")).not.toHaveAttribute("aria-current");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("leaves the wishes alone: a lock's id is read by the card of locks", () => {
+    window.history.replaceState(null, "", "/?roomRule=p-lock");
+    preferences.data = [lockRule("p-lock"), lockRule("p-wish", { kind: "WISH" as const })];
+    render(<RoomPreferencesCard kind="WISH" />);
+
+    expect(screen.queryByRole("button", { name: "save" })).toBeNull();
+    expect(screen.getByRole("listitem")).not.toHaveAttribute("aria-current");
+  });
+
+  it("opens nothing before the rules have been read, and then the rule's form once they are", async () => {
+    window.history.replaceState(null, "", "/?roomRule=p-lock");
+    preferences.data = undefined as unknown as unknown[];
+    const view = render(<RoomPreferencesCard kind="LOCK" />);
+    expect(screen.queryByRole("button", { name: "save" })).toBeNull();
+
+    preferences.data = [lockRule("p-lock")];
+    view.rerender(<RoomPreferencesCard kind="LOCK" />);
+    expect(await screen.findByRole("button", { name: "save" })).toBeInTheDocument();
+  });
+
+  it("marks nothing without the parameter", () => {
+    render(<RoomPreferencesCard kind="LOCK" />);
+
+    expect(screen.queryByRole("button", { name: "save" })).toBeNull();
+    expect(screen.getByRole("listitem")).not.toHaveAttribute("aria-current");
   });
 });
 

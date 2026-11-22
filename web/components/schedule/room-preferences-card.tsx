@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Loader2, Plus, Trash2 } from "lucide-react";
@@ -82,6 +82,27 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
     max: null,
   });
   const [deleting, setDeleting] = useState<RoomPreference | null>(null);
+  // ?roomRule=<room rule id> from Generera's card of what to change (Åtgärdsförslag vid vägran): marks that rule and opens the form for
+  // a rule beside it, of the same subject and years, with the rooms left to pick. A lock is widened by a rule of its own (equally narrow
+  // rules are alternatives, and their rooms are the union), so the form is what the change is made in. Read after mount, once, from the
+  // rules of THIS card's kind that this school has: an id that is none of them opens nothing and says nothing.
+  const [linkedRuleId, setLinkedRuleId] = useState<string | null>(null);
+  const [marked, setMarked] = useState<string | null>(null);
+  useEffect(() => setLinkedRuleId(new URLSearchParams(window.location.search).get("roomRule")), []);
+  useEffect(() => {
+    if (!linkedRuleId || !preferences) return;
+    const rule = preferences.find((preference) => preference.id === linkedRuleId && preference.kind === kind);
+    if (rule) {
+      setMarked(rule.id);
+      setAdding(true);
+      setSubjectId(rule.subjectId);
+      setTarget(BY_ROOMS);
+      setRoomTypeId("");
+      setRoomIds([]);
+      setSpan({ min: rule.minGradeLevel, max: rule.maxGradeLevel });
+    }
+    setLinkedRuleId(null);
+  }, [linkedRuleId, preferences, kind]);
 
   const subjectName = useMemo(
     () => new Map((subjects ?? []).map((subject) => [subject.id, subject.name])),
@@ -374,7 +395,9 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
           {rules.map((preference) => (
             <li
               key={preference.id}
-              className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
+              aria-current={marked === preference.id ? "true" : undefined}
+              ref={marked === preference.id ? (node) => node?.scrollIntoView?.({ block: "center" }) : undefined}
+              className={`flex items-center justify-between gap-3 px-3 py-2 text-sm${marked === preference.id ? " bg-accent" : ""}`}
             >
               <span className="flex min-w-0 flex-wrap items-center gap-2">
                 {summary(preference)}

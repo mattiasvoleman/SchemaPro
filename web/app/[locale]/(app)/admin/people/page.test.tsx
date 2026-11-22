@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import PeoplePage from "./page";
 
@@ -83,6 +83,8 @@ const requirements = [
  */
 const state = vi.hoisted(() => ({
   workRules: [] as unknown[],
+  /** The work rules' read still loading: react-query's data is undefined until it answers. */
+  workRulesLoading: false,
   employments: [] as unknown[],
   qualifications: [] as unknown[],
   duties: [] as unknown[],
@@ -136,7 +138,7 @@ vi.mock("@/lib/guardians-csv-export", () => ({ guardiansCsvFor }));
 
 // The working-time rules have a module of their own, for the bundle.
 vi.mock("@/lib/work-rule-queries", () => ({
-  useTeacherWorkRules: () => ({ data: state.workRules }),
+  useTeacherWorkRules: () => ({ data: state.workRulesLoading ? undefined : state.workRules }),
   useTeacherWorkRuleActions: () => ({
     save: { mutateAsync: vi.fn(), isPending: false },
     remove: { mutateAsync: vi.fn(), isPending: false },
@@ -277,6 +279,7 @@ describe("People page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.workRules = [];
+    state.workRulesLoading = false;
     state.employments = [];
     state.qualifications = [];
     state.duties = [];
@@ -845,6 +848,99 @@ describe("People page", () => {
         maxTeachingMinutesPerDay: null,
         preferredFreeDayOfWeek: null,
       };
+
+      /*
+       * ?workRule=<work rule id>, the link of Generera's card of what to change (Åtgärdsförslag vid vägran): the teacher's Arbetstid opens
+       * with the day's cap in focus. The id is looked up in the rules this school has, and one that is none of them opens nothing and says
+       * nothing, so that an id from another school, or one made up, learns nobody anything.
+       */
+      describe("the ?workRule= deep link", () => {
+        afterEach(() => window.history.replaceState(null, "", "/"));
+
+        it("opens that teacher's Arbetstid with the day's cap in focus", async () => {
+          state.workRules = [workRule];
+          window.history.replaceState(null, "", "/sv/admin/people?workRule=w-1");
+          render(<PeoplePage />);
+
+          const dialog = await screen.findByRole("dialog");
+          expect(dialog).toHaveTextContent("Karin Ek");
+          expect(within(dialog).getByLabelText("dayCapMinutes")).toHaveFocus();
+        });
+
+        it("opens it once: a dialog that has been closed is not opened again by the page reading its lists again", async () => {
+          state.workRules = [workRule];
+          window.history.replaceState(null, "", "/sv/admin/people?workRule=w-1");
+          const user = userEvent.setup();
+          const view = render(<PeoplePage />);
+          await screen.findByRole("dialog");
+
+          await user.keyboard("{Escape}");
+          await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+          // usePeople answers a new array on every read, as the real hook does after a refetch: the lists the effect reads have changed.
+          state.workRules = [{ ...workRule }];
+          view.rerender(<PeoplePage />);
+          expect(screen.queryByRole("dialog")).toBeNull();
+        });
+
+        it("waits for the work rules: with the people read but the rules still loading nothing opens, and it opens when they arrive", async () => {
+          state.workRules = [workRule];
+          state.workRulesLoading = true;
+          window.history.replaceState(null, "", "/sv/admin/people?workRule=w-1");
+          const view = render(<PeoplePage />);
+          expect(rowNames()).toHaveLength(4);
+          expect(screen.queryByRole("dialog")).toBeNull();
+
+          state.workRulesLoading = false;
+          view.rerender(<PeoplePage />);
+          expect(await screen.findByRole("dialog")).toHaveTextContent("Karin Ek");
+        });
+
+        it("keeps the focus on the cap for the link only: the dialog opened by hand afterwards starts where it always did", async () => {
+          state.workRules = [workRule];
+          window.history.replaceState(null, "", "/sv/admin/people?workRule=w-1");
+          const user = userEvent.setup();
+          render(<PeoplePage />);
+          expect(within(await screen.findByRole("dialog")).getByLabelText("dayCapMinutes")).toHaveFocus();
+
+          await user.keyboard("{Escape}");
+          await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+          await user.click(screen.getByRole("button", { name: "editFor(Karin Ek)" }));
+
+          const reopened = await screen.findByRole("dialog");
+          expect(within(reopened).getByLabelText("dayCapMinutes")).not.toHaveFocus();
+        });
+
+        it("opens nothing for an id that is none of this school's rules, and shows no error", async () => {
+          state.workRules = [workRule];
+          window.history.replaceState(null, "", "/sv/admin/people?workRule=an-id-from-another-school");
+          render(<PeoplePage />);
+
+          expect(rowNames()).toHaveLength(4);
+          expect(screen.queryByRole("dialog")).toBeNull();
+          expect(screen.queryByRole("alert")).toBeNull();
+          expect(toast.error).not.toHaveBeenCalled();
+        });
+
+        it("opens nothing for a rule whose teacher is not on the list, and for the school's people it says nothing of", async () => {
+          state.workRules = [{ ...workRule, id: "w-9", userId: "somebody-not-here" }];
+          window.history.replaceState(null, "", "/sv/admin/people?workRule=w-9");
+          render(<PeoplePage />);
+
+          expect(rowNames()).toHaveLength(4);
+          expect(screen.queryByRole("dialog")).toBeNull();
+        });
+
+        it("opens no dialog without the parameter, and the register reads as it did", async () => {
+          state.workRules = [workRule];
+          const user = userEvent.setup();
+          render(<PeoplePage />);
+          expect(screen.queryByRole("dialog")).toBeNull();
+
+          await user.click(nameButton("Karin Ek"));
+          // The summary card's own button is unchanged by the link: the page behaves as before without it.
+          expect(screen.getByText("summaryLunch(30|10:30|13:30)")).toBeInTheDocument();
+        });
+      });
 
       it("says plainly when a teacher has none — not four zeroes", async () => {
         const user = userEvent.setup();

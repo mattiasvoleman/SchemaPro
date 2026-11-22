@@ -542,6 +542,23 @@ export default function PeoplePage() {
     if (pupil) setGuardiansFor(pupil);
     setLinkedPupilId(null);
   }, [linkedPupilId, people]);
+  // ?workRule=<work rule id> opens that teacher's Arbetstid with the day's cap in focus, once: the link Generera's card of what to change
+  // gives for a cap that would let a refused week be laid (Åtgärdsförslag vid vägran). Read after mount, as ?guardians= is. The id is
+  // looked up in the rules THIS school has (a row another school's administrator cannot read is not in the list), and an id that is
+  // none of them, or whose teacher is not on this list, opens nothing and says nothing.
+  const [linkedRuleId, setLinkedRuleId] = useState<string | null>(null);
+  const [focusCap, setFocusCap] = useState(false);
+  useEffect(() => setLinkedRuleId(new URLSearchParams(window.location.search).get("workRule")), []);
+  useEffect(() => {
+    if (!linkedRuleId || !people || !workRules) return;
+    const owner = workRules.find((rule) => rule.id === linkedRuleId)?.userId;
+    const teacher = people.find((person) => person.id === owner);
+    if (teacher) {
+      setFocusCap(true);
+      setWorkTimeFor(teacher);
+    }
+    setLinkedRuleId(null);
+  }, [linkedRuleId, people, workRules]);
   const guardiansQuery = useStudentGuardians(guardiansFor?.id ?? null);
   const studentGuardians = guardiansQuery.data;
   const guardianLinks = useGuardianLinkActions();
@@ -1601,9 +1618,14 @@ export default function PeoplePage() {
           <TeacherWorkTimeDialog
             key={`${workTimeFor.id}:${workRuleOf(workTimeFor.id)?.id ?? "none"}`}
             open
-            onOpenChange={(open) => !open && setWorkTimeFor(null)}
+            onOpenChange={(open) => {
+              if (open) return;
+              setWorkTimeFor(null);
+              setFocusCap(false);
+            }}
             teacher={workTimeFor}
             rule={workRuleOf(workTimeFor.id)}
+            focusCap={focusCap}
           />
         </Suspense>
       ) : null}

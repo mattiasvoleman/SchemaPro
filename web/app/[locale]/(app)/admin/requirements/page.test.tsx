@@ -1506,6 +1506,77 @@ describe("the ?year= deep link", () => {
   });
 });
 
+// Åtgärdsförslag vid vägran: Generera's card of what to change links a spread rule to its post, ?post=<post id>. The post's cell opens once the
+// läsår has been read, in the posts this school has for the läsår the page shows; an id that is none of them (another school's, another
+// läsår's, a post since removed) opens nothing and says nothing.
+describe("the ?post= deep link", () => {
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  it("opens that post's cell, where its rule is", async () => {
+    window.history.replaceState(null, "", "/?post=r-so");
+    render(<RequirementsPage />);
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent("7A · Samhällsorientering");
+  });
+
+  it("opens it once: a cell that has been closed is not opened again by the page reading the posts again", async () => {
+    window.history.replaceState(null, "", "/?post=r-so");
+    const user = userEvent.setup();
+    const view = render(<RequirementsPage />);
+    await screen.findByRole("dialog");
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    state.requirements = loaded([...requirements]);
+    view.rerender(<RequirementsPage />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("opens the cell of the post of the läsår that the link names too", async () => {
+    twoYears();
+    window.history.replaceState(null, "", "/?year=y2&post=r-next");
+    render(<RequirementsPage />);
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent("8B");
+  });
+
+  it("opens nothing for an id that is none of this school's posts, and shows no error", async () => {
+    window.history.replaceState(null, "", "/?post=a-post-of-another-school");
+    render(<RequirementsPage />);
+
+    expect(await screen.findByText("7A")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("opens nothing for a post of another läsår than the one shown", async () => {
+    twoYears();
+    window.history.replaceState(null, "", "/?post=r-next");
+    render(<RequirementsPage />);
+
+    expect(await screen.findByText("7A")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("opens nothing before the posts have been read, and then the post's cell once they are", async () => {
+    window.history.replaceState(null, "", "/?post=r-so");
+    state.requirements = pending();
+    const view = render(<RequirementsPage />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    state.requirements = loaded(requirements);
+    view.rerender(<RequirementsPage />);
+    expect(await screen.findByRole("dialog")).toHaveTextContent("7A · Samhällsorientering");
+  });
+
+  it("opens nothing without the parameter", async () => {
+    render(<RequirementsPage />);
+
+    expect(await screen.findByText("7A")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
 describe("Timplan CSV", () => {
   it("has nothing to hand over when the timplan is empty", async () => {
     // Not a disabled-for-the-sake-of-it button: the alternative is a file with

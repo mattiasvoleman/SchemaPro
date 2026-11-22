@@ -440,10 +440,13 @@ export default function RequirementsPage() {
   /** Ämne: the subject the matrix shows alone (null: all), and "Visa grupper utan post". */
   const [subjectId, setSubjectId] = useState<string | null>(null);
   const [withoutPosts, setWithoutPosts] = useState(false);
+  /** ?post=<post id> from Generera's card of what to change (Åtgärdsförslag vid vägran): opens that post's cell once its läsår has been read. */
+  const [linkedPostId, setLinkedPostId] = useState<string | null>(null);
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
     setLinkedYearId(query.get("year"));
     setSubjectId(query.get("subject"));
+    setLinkedPostId(query.get("post"));
   }, []);
   /** A choice in the address, beside the others, so a reload or a shared link keeps it. */
   const writeQuery = (key: "year" | "subject", value: string | null) => {
@@ -1073,6 +1076,17 @@ export default function RequirementsPage() {
     // Unsaveable until the rows' module has judged them (onValidity).
     setSharesOk(!(existing && sharesOf.has(existing.id)));
   };
+
+  // The post of a link is looked up in the posts of the läsår the page shows, which are this school's alone: an id that is none of them
+  // (another school's, another läsår's, a post since removed) opens nothing and says nothing.
+  useEffect(() => {
+    if (!linkedPostId || !requirements) return;
+    const post = requirements.find((requirement) => requirement.id === linkedPostId);
+    if (post) openCell(post.studentGroupId, post.subjectId);
+    setLinkedPostId(null);
+    // openCell is rebuilt on every render and reads what is loaded; the link is consumed once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedPostId, requirements]);
 
   const submit = async () => {
     if (!cell || !activeYearId) return;
