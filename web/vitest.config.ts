@@ -51,7 +51,11 @@ export default defineConfig({
     // externalised dependency. Run through Vite instead, a module that only
     // imports @/i18n/navigation (PageHeader's back link, since the design
     // overhaul) loads in any test without a vi.mock of its own.
-    server: { deps: { inline: ["next-intl"] } },
+    //
+    // supabase-js is inlined for utils/supabase/storage-stub.test.ts: a
+    // vi.mock reaches only what Vite itself loads, and that test must see the
+    // real client built on the stub, as the browser build is.
+    server: { deps: { inline: ["next-intl", "@supabase/supabase-js"] } },
     include: ["**/*.test.{ts,tsx}"],
     exclude: ["node_modules/**", "e2e/**", ".next/**"],
     coverage: {

@@ -326,6 +326,18 @@ Two concrete leads from the per-chunk breakdown:
    but it means re-implementing the `@supabase/ssr` cookie contract; **not
    attempted, and it needs a spike before anyone commits to it.**
 
+   *Update 2026-11-21 (M6):* the one part of that SDK nothing here calls is
+   Storage, and it was costing 12.7KB gzipped on every signed-in route:
+   `storage-js` itself (5.0KB), `iceberg-js` under it (1.4KB) and, because
+   `StorageFileApi` names the Node global `Buffer`, Turbopack's `buffer`
+   polyfill (5.9KB). `web/next.config.mjs` now aliases `@supabase/storage-js`
+   to `web/utils/supabase/storage-stub.ts` for the **browser build only** (the
+   server render keeps the package). Measured on the same tree: −12 657B on
+   every one of the 53 admin and 24 student/teacher/guardian routes, nothing
+   else moved, the shared runtime (100 % Next/React) unchanged.
+   `storage-stub.test.ts` holds the stub to what the installed supabase-js
+   imports, and fails if app code ever calls `supabase.storage`.
+
 5. **`NextIntlClientProvider` is rendered with no `messages` prop**, which
    next-intl treats as "send everything" — all 32 namespaces reach the client
    on every route, so `/login` carries the admin timetable strings. That is RSC
