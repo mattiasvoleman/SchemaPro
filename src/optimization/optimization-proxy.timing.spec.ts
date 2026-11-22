@@ -483,3 +483,50 @@ describe('OptimizationProxyService: the wait and the deadline', () => {
     });
   });
 });
+
+describe('OptimizationProxyService: the HTTP client’s own timeout is the wait running out (review of #373, MEDEL-1)', () => {
+  beforeEach(() => {
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  // callAiEngine gives rxjs's timeout() and the client's `timeout` the same number of ms, and the client's fires
+  // first (measured: 40 of 40 against a server that never answers). The NEVER observable of the specs above
+  // only ever reaches rxjs's branch, so nothing showed that a real wait ended as "never reached".
+  const axiosTimedOut = (ms: number) => {
+    const error = new AxiosError(`timeout of ${ms}ms exceeded`);
+    error.code = 'ECONNABORTED';
+    return error;
+  };
+
+  it('says it as ENGINE_WAIT_EXPIRED, with the wait, and leaves the engine as possibly still solving', async () => {
+    const { call, post } = await build();
+    post.mockReturnValue(throwError(() => axiosTimedOut(240_000)));
+
+    const thrown = (await call('/v1/schedule').catch((error: unknown) => error)) as HttpException;
+
+    expect(thrown.getStatus()).toBe(503);
+    expect(thrown.getResponse()).toEqual({
+      message: 'The AI engine did not respond in time.',
+      code: 'ENGINE_WAIT_EXPIRED',
+      params: { waitSeconds: 240, engineCeilingSeconds: 230 },
+    });
+    expect(engineMayStillBeSolving(thrown)).toBe(true);
+  });
+
+  it('does not take a connect timeout of the operating system, or a refused connection, for it', async () => {
+    const { call, post } = await build();
+    const connect = new AxiosError('connect ETIMEDOUT 10.0.0.1:8000');
+    connect.code = 'ETIMEDOUT';
+    post.mockReturnValueOnce(throwError(() => connect));
+    const refused = new AxiosError('connect ECONNREFUSED 127.0.0.1:8000');
+    refused.code = 'ECONNREFUSED';
+    post.mockReturnValueOnce(throwError(() => refused));
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const thrown = (await call('/v1/schedule').catch((error: unknown) => error)) as HttpException;
+      expect(thrown.getResponse()).toEqual({ message: 'The AI engine could not be reached.', code: 'ENGINE_NOT_REACHED' });
+    }
+  });
+});
