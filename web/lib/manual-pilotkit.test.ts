@@ -5,6 +5,7 @@ import sv from "@/messages/sv.json";
 import { EXCHANGE_FORMATS, MAX_UPLOAD_BYTES } from "@/lib/schedule-exchange";
 import { unfillableFields } from "@/lib/skola24-format";
 import { SKOLA24_FORMATS } from "@/lib/skola24-formats";
+import type { FormatDescriptor } from "@/lib/skola24-format-types";
 
 /*
  * P1 Pilotkit: the user manual's 3.7 (Första veckan på en ny skola) and 3.8 (Flytta från Skola24, Untis, aSc eller
@@ -65,6 +66,47 @@ function messageTexts(node: unknown, into: Set<string> = new Set()): Set<string>
 
 const APP_TEXTS = messageTexts(sv);
 
+/** What the guide is held against besides the manual's own text; a test of the check gives it another. */
+interface World {
+  messages: typeof sv;
+  formats: readonly FormatDescriptor[];
+  /** The source of the Untis reader. */
+  untis: string;
+}
+const REAL: World = { messages: sv, formats: SKOLA24_FORMATS, untis: UNTIS_READER };
+
+/**
+ * Where each label (`<span class="ui">`) of the two sections lives. A label is a button, a switch or a heading of ONE place, and
+ * "some text of the app says it" is not that: "Generera schema" is also the menu row, the page's title and four more, so
+ * the button could be renamed and the guide go on saying "tryck Generera schema". A label with no entry here is a finding: whoever adds
+ * one says where it is.
+ */
+const LABEL_HOME: Readonly<Record<string, string>> = {
+  Aktivt: "setup.active",
+  "Alla timplansposter har lärare": "generate.preStaffed",
+  "Filen kommer från Skola24": "columnMapping.format.label",
+  "Från ett annat program": "scheduleExchange.table.title",
+  Förutsättningar: "generate.prerequisites",
+  "Generera schema": "generate.run",
+  Importera: "csvImport.import",
+  "Kom igång": "setup.title",
+  "Kontrollera veckan": "weekCheck.button",
+  "Skapa timplansposter": "timplan.generateButton",
+  "Skriv in": "scheduleExchange.preview.apply",
+  "Spara som mall": "columnMapping.save.title",
+  "Timplan per årskurs": "setup.yearTimplansButton",
+  "Vad innehåller tabellen?": "scheduleExchange.table.kindLabel",
+};
+
+/** Whether the message at a dotted path says the label, as a whole or as the start of a plural branch that goes on with a count. */
+function homeSays(messages: unknown, path: string, label: string): boolean {
+  let node: unknown = messages;
+  for (const key of path.split(".")) node = node !== null && typeof node === "object" ? (node as Record<string, unknown>)[key] : undefined;
+  if (typeof node !== "string") return false;
+  const wanted = label.toLowerCase();
+  return readable(node) === wanted || numberedStarts(node).includes(wanted);
+}
+
 /** The admin menu as `group label › row label`, read from the file that holds it (it is server-only and imports icons). */
 function adminMenuPaths(): Set<string> {
   const nav = sv.nav as Record<string, string>;
@@ -104,6 +146,18 @@ function readsOf(format: (typeof SKOLA24_FORMATS)[number]): "reads" | "incomplet
   return unfillableFields(format).length > 0 ? "incomplete" : "reads";
 }
 
+/**
+ * How a row's reading begins, per `data-reads`. The attribute is what the check compares with the code, and the words are what a school
+ * reads: a row whose attribute says "reads" and whose words say "läses inte" must not pass.
+ */
+const READS_WORDS: Readonly<Record<ReturnType<typeof readsOf>, RegExp>> = {
+  reads: /^Läses:/,
+  incomplete: /^Går inte in som den är/,
+  named: /^Känns igen och namnges, men läses inte/,
+  // "Som ovan" is the staffing table, which is read as the lesson table above it is: by columns the user points out.
+  unknown: /^(Läses inte|Ingen offentlig sida|Som ovan)/,
+};
+
 /** What a row of the guide has to say about a field the import needs and the file never has. */
 const MISSING_FIELD_WORDS: Readonly<Record<string, string>> = {
   email: "e-postadress",
@@ -116,7 +170,7 @@ function cellOf(row: string, index: number): string {
 }
 
 /** What is wrong with the guide, as sentences; empty when nothing is. */
-function problemsOf(manual: string): string[] {
+function problemsOf(manual: string, world: World = REAL): string[] {
   const problems: string[] = [];
   const section = pilotkitOf(manual);
   if (section === "") return ["the manual has no section 3.7 (id s37)"];
@@ -127,6 +181,9 @@ function problemsOf(manual: string): string[] {
   }
   for (const label of spans(section, "ui")) {
     if (!APP_TEXTS.has(label.toLowerCase())) problems.push(`the label "${label}" is not a text of the app`);
+    const home = LABEL_HOME[label];
+    if (home === undefined) problems.push(`the label "${label}" has no home in this test: say which message it is`);
+    else if (!homeSays(world.messages, home, label)) problems.push(`the label "${label}" is no longer what "${home}" says`);
   }
 
   const rows = (attribute: string): Map<string, string> => {
@@ -140,9 +197,9 @@ function problemsOf(manual: string): string[] {
 
   const skola24 = rows("data-source");
   for (const id of skola24.keys()) {
-    if (!SKOLA24_FORMATS.some((format) => format.id === id)) problems.push(`a row for "${id}", which is no description of Skola24's files`);
+    if (!world.formats.some((format) => format.id === id)) problems.push(`a row for "${id}", which is no description of Skola24's files`);
   }
-  for (const format of SKOLA24_FORMATS) {
+  for (const format of world.formats) {
     const row = skola24.get(format.id);
     if (row === undefined) {
       problems.push(`no row for the Skola24 file "${format.id}"`);
@@ -150,6 +207,7 @@ function problemsOf(manual: string): string[] {
     }
     const reads = readsOf(format);
     if (!row.includes(`data-reads="${reads}"`)) problems.push(`the row for "${format.id}" does not say "${reads}", which is what the description gives`);
+    if (!READS_WORDS[reads].test(flat(cellOf(row, 1)))) problems.push(`the words of the row for "${format.id}" do not begin as a file that "${reads}" does`);
     if (reads === "incomplete") {
       for (const field of unfillableFields(format)) {
         const words = MISSING_FIELD_WORDS[field];
@@ -157,6 +215,18 @@ function problemsOf(manual: string): string[] {
         else if (!flat(cellOf(row, 1)).includes(words)) problems.push(`the row for "${format.id}" does not say, in how the file is read, that it lacks "${words}"`);
       }
     }
+  }
+
+  // What the staff row says is NOT read, from the description's own reasons: a signature the importer refuses without a post, and two columns it has no field for.
+  const staff = world.formats.find((format) => format.id === "skola24-personal-csv");
+  const staffWords = flat(cellOf(skola24.get("skola24-personal-csv") ?? "", 1));
+  const unreadReasons = new Set((staff?.columns ?? []).map((column) => column.unread));
+  const claims: Array<[string, string, boolean]> = [
+    ["Signaturen läses inte som standard", "a signature that needs a post", unreadReasons.has("needsPost")],
+    ["Skolans namn och avdelning läses inte", "the school and the department", unreadReasons.has("school") && unreadReasons.has("department")],
+  ];
+  for (const [words, what, holds] of claims) {
+    if (staffWords.includes(words) !== holds) problems.push(`the staff row ${holds ? "does not say" : "says"} "${words}", and the description ${holds ? "leaves out" : "reads"} ${what}`);
   }
 
   const exchange = rows("data-exchange");
@@ -178,10 +248,12 @@ function problemsOf(manual: string): string[] {
   if (example === undefined || !text.includes(example)) problems.push(`the guide does not show the period example the page shows ("${example}")`);
 
   for (const marker of ["A-vecka", "B-vecka"]) {
-    if (!UNTIS_READER.includes(marker)) problems.push(`the Untis reader no longer knows "${marker}", which the guide names`);
+    if (!world.untis.includes(marker)) problems.push(`the Untis reader no longer knows "${marker}", which the guide names`);
     if (!text.includes(marker)) problems.push(`the guide does not name "${marker}"`);
   }
-  if (!UNTIS_READER.includes("GPU_TOO_MANY_TEACHERS")) problems.push("the Untis reader no longer refuses a third teacher, which the guide says");
+  // In the code: the reader's header comment names GPU_TOO_MANY_TEACHERS too, so naming it proves nothing.
+  const untisCode = world.untis.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  if (!/teachers\.length\s*>\s*2\)\s*\{\s*problem\([^)]*'GPU_TOO_MANY_TEACHERS'/.test(untisCode)) problems.push("the Untis reader no longer refuses a third teacher, which the guide says");
   return problems;
 }
 
@@ -196,6 +268,29 @@ describe("the first week and the move (3.7, 3.8) say what the program does", () 
     expect(MENU.has("Planering › Ramtider")).toBe(true);
     expect(MENU.has("Schemaläggning › Schema som fil")).toBe(true);
     expect(MENU.size).toBeGreaterThan(30);
+  });
+});
+
+describe("the check finds a change of the code that the guide does not follow", () => {
+  it("finds the button renamed while the menu row, the title and the rest keep the label", () => {
+    const messages = structuredClone(sv);
+    messages.generate.run = "Kör generering";
+    expect(problemsOf(MANUAL, { ...REAL, messages })).toContain('the label "Generera schema" is no longer what "generate.run" says');
+  });
+
+  it("finds a signature that is read where the guide says it is not", () => {
+    const formats = SKOLA24_FORMATS.map((format) =>
+      format.id !== "skola24-personal-csv"
+        ? format
+        : { ...format, columns: format.columns!.map((column) => (column.id === "signature" ? { ...column, field: "signature", unread: undefined } : column)) },
+    );
+    expect(problemsOf(MANUAL, { ...REAL, formats })).toEqual(expect.arrayContaining([expect.stringContaining("Signaturen läses inte som standard")]));
+  });
+
+  it("finds a Untis reader that takes a third teacher", () => {
+    const untis = UNTIS_READER.replace("if (e.teachers.length > 2) {", "if (e.teachers.length > 3) {");
+    expect(untis).not.toBe(UNTIS_READER);
+    expect(problemsOf(MANUAL, { ...REAL, untis })).toContain("the Untis reader no longer refuses a third teacher, which the guide says");
   });
 });
 
@@ -220,6 +315,9 @@ describe("the check finds what it is for", () => {
     ["a lesson limit that is not the code's", inSection((x) => x.replace(/högst 5 000\s+lektioner/, "högst 8 000 lektioner"))],
     ["a Untis week marker the reader does not use", inSection((x) => x.replace(/B-vecka/g, "Vecka B"))],
     ["a section that is gone", (m) => m.replace('<h3 id="s37"', '<h3 id="s37x"')],
+    ["a file whose words say the opposite of its data-reads", inSection((x) => x.replace("<td>Läses: namn och e-postadress.", "<td>Läses inte: namn och e-postadress."))],
+    ["a file that is only named, said to be read", inSection((x) => x.replace("Känns igen och namnges, men läses inte: Rastra Schema har ingen import av förskolans", "Läses in som personal: Rastra Schema har ingen import av förskolans"))],
+    ["a label that has no home in this test", inSection((x) => x.replace('<span class="ui">Kontrollera veckan</span>', '<span class="ui">Läs in tabellen</span>'))],
   ];
   for (const [name, mutate] of faults) {
     it(`finds ${name}`, () => {
