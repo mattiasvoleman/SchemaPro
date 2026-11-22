@@ -4670,7 +4670,9 @@
       "blended": "Läraren undervisar i flera stadier, så spannet är viktat efter timmar.",
       "fits": "Årsarbetstiden rymmer planeringens golv. Möten och annat som inte är undervisning eller uppdrag i Rastra Schema ingår inte, så ett ja är inget löfte.",
       "doesNotFit": "Årsarbetstiden rymmer inte planeringens golv: det som blir kvar efter undervisning och uppdrag är mindre än det som minst ska avsättas.",
+      "overOnlyWithUnregulated": "Över förordningens högsta nivå först när timmarna utanför stadierna räknas med (förskoleklass eller grupper utan årskurs). Förordningen säger inget om de timmarna, så läraren räknas inte som över: en tolkning, som står nedan.",
       "unknownGradeNote": "Timmar i grupper utan årskurs räknas i undervisningstiden men kan inte placeras i ett stadium.",
+      "unregulatedNote": "Timmar i förskoleklass räknas i undervisningstiden men ligger utanför stadierna: förordningen anger ingen nivå för dem.",
       "fitsNotShown": "Om årsarbetstiden rymmer planeringens golv visas inte här: det räknas bara för en ferietjänst, och visas bara för den som får se tjänstens omfattning.",
       "interpretation": "{note} ({section})",
       "notAnnual": "Kan skilja sig från Undervisning per läsår under Årsarbetstid, som räknar hela veckor och med procent och faktor. Den här siffran är lektionernas egen tid i skoldagar.",
@@ -4678,6 +4680,7 @@
       "source": "Läs förordningen",
       "opensInNewTab": "(öppnas i en ny flik)",
       "own": {
+        "overOnlyWithUnregulated": "Över förordningens högsta nivå först när timmarna utanför stadierna räknas med (förskoleklass eller grupper utan årskurs). Förordningen säger inget om de timmarna, så du räknas inte som över: en tolkning, som står nedan.",
         "verdictInside": "Inte över förordningens högsta nivå. Förordningen sätter ingen lägsta undervisningstid, så att ligga under spannet är ingen överträdelse av 3 §. Var i spannet du ska ligga bedömer rektorn utifrån gruppernas storlek, antalet elever du möter och elever i behov av stöd (8 §).",
         "verdictOverOwn": "Över den nivå som är satt för dig med {over} h, men inte över förordningens.",
         "verdictNoPost": "Ingen tjänst registrerad: spannet gäller vid heltid och kan inte skalas efter tjänstens omfattning, så du prövas inte.",

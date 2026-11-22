@@ -37,6 +37,7 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
   const hours = (value: number) => t("hours", { hours: formatPercent(value) });
   const judged = yearReason === null && teacher.verdict !== "NOT_JUDGED";
   const over = hoursOver(teacher);
+  const overOnly = teacher.overOnlyWithUnregulated === true;
 
   const rows: { label: string; value: string }[] = [
     { label: own ? t("teachingOwn") : t("teaching"), value: hours(teacher.teachingHours) },
@@ -89,7 +90,13 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
           ? t("own.verdictOverOwn", { over: formatPercent(over) })
           : t("verdictOverOwn", { over: formatPercent(over) });
   }
-  else if (teacher.verdict === "INSIDE") verdict = own ? t("own.verdictInside") : t("verdictInside");
+  else if (teacher.verdict === "INSIDE") {
+    // Past the edge only with the hours outside the stages (T7): "not over the highest level" would be said of someone whose total is over it,
+    // so the sentence that is the answer says how it is, and the interpretation below it.
+    verdict = overOnly
+      ? own ? t("own.overOnlyWithUnregulated") : t("overOnlyWithUnregulated")
+      : own ? t("own.verdictInside") : t("verdictInside");
+  }
   else verdict = t("verdictNone");
   const bad = teacher.verdict === "OVER_MAX" || teacher.verdict === "OVER_OWN";
   const blended = teacher.stages.length > 1;
@@ -110,6 +117,11 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
           </div>
         ))}
       </dl>
+      {overOnly && teacher.verdict !== "INSIDE" ? (
+        // Over the level the rektor set AND past the ordinance's edge only with the hours outside the stages: the verdict above is the first,
+        // and this says the second (for INSIDE the verdict sentence itself says it).
+        <p className="text-xs text-muted-foreground">{own ? t("own.overOnlyWithUnregulated") : t("overOnlyWithUnregulated")}</p>
+      ) : null}
       {blended && judged ? <p className="text-xs text-muted-foreground">{own ? t("own.blended") : t("blended")}</p> : null}
       {judged && teacher.planningFits !== null ? (
         <p className="text-xs text-muted-foreground">{teacher.planningFits ? t("fits") : t("doesNotFit")}</p>
@@ -118,12 +130,16 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
         // Not a blank: whether the floor fits is worked out for a full ferietjänst only, and left out for a reader without HR-läs.
         <p className="text-xs text-muted-foreground">{own ? t("own.fitsNotShown") : t("fitsNotShown")}</p>
       ) : null}
+      {teacher.unregulatedHours > 0 && yearReason === null ? (
+        // "(omfattas inte)" beside a figure that is counted in the total reads as if it were not: say which it is.
+        <p className="text-xs text-muted-foreground">{t("unregulatedNote")}</p>
+      ) : null}
       {teacher.unknownGradeHours > 0 ? (
         <p className="text-xs text-muted-foreground">{t("unknownGradeNote")}</p>
       ) : null}
       {interpretations.length > 0 && yearReason === null
         ? interpretations.map((one) => (
-            <p key={one.section} className="text-xs text-muted-foreground">
+            <p key={`${one.section}-${one.cause ?? ""}`} className="text-xs text-muted-foreground">
               {t("interpretation", { section: one.section, note: one.note })}
             </p>
           ))

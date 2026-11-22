@@ -3,6 +3,7 @@ import { join } from 'path';
 import {
   buildScopeReport,
   hideScopeHr,
+  UNREGULATED_HOURS_INTERPRETATION,
   placeSpan,
   versionInForce,
   type ScopeBand,
@@ -416,6 +417,83 @@ describe('a teacher\'s own level within the span (8 §)', () => {
   it('scales with the post like the span itself', () => {
     const anna = of(scope({ employments: [employment({ employmentPercent: 50 })], requirements: [row({ lessonsPerWeek: 7 })] }, [VERSION], { ownLevelHours: new Map([[ANNA, 600]]) }));
     expect(anna.highestHours).toBe(300);
+  });
+});
+
+describe('hours outside the stages are no reason to say OVER_MAX (T7, the user\'s decision on the review of #382, L-3)', () => {
+  // 15 lessons of 60 minutes over the year's 43 weeks are 645 h; a lesson a week is 43 h. The edge is 650 h in årskurs 4-6.
+  const inStage = (lessons: number) => row({ lessonsPerWeek: lessons });
+  const preschool = (lessons: number, extra: Partial<LoadRequirement> = {}) =>
+    row({ lessonsPerWeek: lessons, studentGroupId: 'g-f', groupName: 'F-klass', gradeSpan: { min: 0, max: 0 }, ...extra });
+  const noGrade = (lessons: number) => row({ lessonsPerWeek: lessons, studentGroupId: 'g-x', groupName: 'Utan årskurs', gradeSpan: null });
+
+  it('gives a teacher past the edge only with förskoleklass counted in a cause of her own: 645 h in the stage and 43 h of förskoleklass', () => {
+    const report = scope({ requirements: [inStage(15), preschool(1)] });
+    const anna = of(report);
+    expect(anna.teachingHours).toBe(688);
+    expect(anna.verdict).toBe('INSIDE');
+    expect(anna.overOnlyWithUnregulated).toBe(true);
+    expect(anna.ordinanceHighestHours).toBe(650);
+  });
+
+  it('does the same for groups with no årskurs, which are unknown and in no stage', () => {
+    const anna = of(scope({ requirements: [inStage(15), noGrade(1)] }));
+    expect(anna.verdict).toBe('INSIDE');
+    expect(anna.overOnlyWithUnregulated).toBe(true);
+    expect(anna.unknownGradeHours).toBe(43);
+  });
+
+  it('still says OVER_MAX when the hours in the stages alone pass the edge: 731 h in the stage, whatever else she teaches', () => {
+    const anna = of(scope({ requirements: [inStage(17), preschool(1)] }));
+    expect(anna.verdict).toBe('OVER_MAX');
+    expect('overOnlyWithUnregulated' in anna).toBe(false);
+  });
+
+  it('scales the edge with the post: an 80 % teacher\'s edge is 520 h, so 516 h in the stage and a lesson of förskoleklass are past it only with it', () => {
+    const part = { employments: [employment({ employmentPercent: 80 })] };
+    const at = of(scope({ ...part, requirements: [inStage(12), preschool(1)] }));
+    expect([at.verdict, at.overOnlyWithUnregulated]).toEqual(['INSIDE', true]);
+    const over = of(scope({ ...part, requirements: [inStage(13), preschool(1)] }));
+    expect(over.verdict).toBe('OVER_MAX');
+  });
+
+  it('keeps the rektor\'s own level out of it: past an own level of 600 on the total is OVER_OWN, and the cause is still said', () => {
+    const anna = of(scope({ requirements: [inStage(14), preschool(2)] }, [VERSION], { ownLevelHours: new Map([[ANNA, 560]]) }));
+    // 14 lessons are 602 h in the stage (under 650) and 86 h of förskoleklass make 688 h: past the edge only with them, and past 560.
+    expect(anna.verdict).toBe('OVER_OWN');
+    expect(anna.overOnlyWithUnregulated).toBe(true);
+  });
+
+  it('never calls a teacher over a level she was not given: without a level of her own, past the edge on the total is INSIDE and no OVER_OWN', () => {
+    expect(of(scope({ requirements: [inStage(15), preschool(1)] })).verdict).toBe('INSIDE');
+    // An own level at or above the edge is the edge: it names no line of her own either.
+    const high = of(scope({ requirements: [inStage(15), preschool(1)] }, [VERSION], { ownLevelHours: new Map([[ANNA, 900]]) }));
+    expect(high.verdict).toBe('INSIDE');
+    expect(high.overOnlyWithUnregulated).toBe(true);
+  });
+
+  it('says nothing of it for a teacher under the edge on the total, or with hours in no stage at all', () => {
+    expect('overOnlyWithUnregulated' in of(scope({ requirements: [inStage(10), preschool(1)] }))).toBe(false);
+    const only = of(scope({ requirements: [preschool(17)] }));
+    expect(only.notJudged).toBe('NO_STAGE');
+    expect('overOnlyWithUnregulated' in only).toBe(false);
+  });
+
+  it('carries the interpretation once, with its paragraphs and its cause, when some teacher has the cause, and not otherwise', () => {
+    const flagged = scope({
+      employments: [employment(), employment({ userId: BO, signature: 'BO' })],
+      requirements: [inStage(15), preschool(1), row({ teacherId: BO, lessonsPerWeek: 15 }), row({ teacherId: BO, lessonsPerWeek: 1, studentGroupId: 'g-f', gradeSpan: { min: 0, max: 0 } })],
+    });
+    expect(flagged.interpretations.filter((one) => one.cause === 'UNREGULATED_HOURS')).toEqual([UNREGULATED_HOURS_INTERPRETATION]);
+    expect(UNREGULATED_HOURS_INTERPRETATION.section).toBe('2 § och 3 §');
+    expect(UNREGULATED_HOURS_INTERPRETATION.note).toMatch(/^Tolkning \(T7\)/);
+    expect(scope({ requirements: [inStage(15)] }).interpretations.some((one) => one.cause === 'UNREGULATED_HOURS')).toBe(false);
+  });
+
+  it('keeps the cause for a reader without HR-läs: it is a verdict, like OVER_MAX', () => {
+    const hidden = hideScopeHr(of(scope({ requirements: [inStage(15), preschool(1)] })));
+    expect(hidden.overOnlyWithUnregulated).toBe(true);
+    expect(hidden.highestHours).toBeNull();
   });
 });
 

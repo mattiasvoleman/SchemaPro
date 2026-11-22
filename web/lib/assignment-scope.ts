@@ -47,6 +47,11 @@ export interface TeacherScope {
   /** Null unless a full ferietjänst, and for a reader without HR-läs. */
   remainingHours: number | null;
   planningFits: boolean | null;
+  /**
+   * True when the teacher is past the ordinance's upper edge only because hours outside every stage are counted in (förskoleklass,
+   * groups with no årskurs; T7): the verdict is then not OVER_MAX. Absent otherwise.
+   */
+  overOnlyWithUnregulated?: true;
 }
 
 export interface ScopeVersionInfo {
@@ -58,12 +63,22 @@ export interface ScopeVersionInfo {
   source: string;
 }
 
+/**
+ * What a figure rests on beyond the ordinance's own words. `cause` says whose row it explains: absent for a band's note (every card
+ * shows it), UNREGULATED_HOURS for the interpretation (T7) of a teacher marked `overOnlyWithUnregulated`, which only that card shows.
+ */
+export interface ScopeInterpretation {
+  section: string;
+  note: string;
+  cause?: "UNREGULATED_HOURS";
+}
+
 export interface ScopeReport {
   /** The lydelse the year was judged against; null when none holds on the year's first day. */
   version: ScopeVersionInfo | null;
   yearReason: ScopeYearReason | null;
   /** What the bands rest on beyond the ordinance's own words. */
-  interpretations: { section: string; note: string }[];
+  interpretations: ScopeInterpretation[];
   teachers: TeacherScope[];
 }
 
@@ -87,7 +102,9 @@ export function scopeCardOf(report: WithScope, userId: string): ScopeCardData | 
   if (!scope || scope.version === null) return null;
   const teacher = scope.teachers.find((row) => row.userId === userId);
   if (!teacher || (teacher.notJudged === "NO_TEACHING" && teacher.teachingHours === 0)) return null;
-  return { teacher, version: scope.version, yearReason: scope.yearReason, interpretations: scope.interpretations };
+  // The interpretation of the hours outside the stages explains one kind of row: the card of a teacher without it does not carry it.
+  const interpretations = scope.interpretations.filter((one) => one.cause !== "UNREGULATED_HOURS" || teacher.overOnlyWithUnregulated === true);
+  return { teacher, version: scope.version, yearReason: scope.yearReason, interpretations };
 }
 
 /** The teachers the matrix marks: over the ordinance's highest level, or over the level set for them. */
