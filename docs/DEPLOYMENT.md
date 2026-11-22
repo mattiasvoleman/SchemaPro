@@ -7166,3 +7166,116 @@ and is not started when that is under five seconds after the build. With the def
 `optimization-engine/tests/test_suggest_changes.py`: the changes by rule (pure), the changed week, the oracle (the strict solver asked cold lays the changed week for each of the
 five rules, and not one step short of `needed`), the proof's shape, the four verdicts, the route (key, validation, the payload's own 400 as `/optimize` gives it, the gate, the
 ceiling) and the OpenAPI comparison. Twenty-one hand mutants of `suggestions.py` were run against it; none survives.
+
+## 35. The solver corpus: weeks shaped like real schools as a measuring stick ("Riktiga veckor som mätstock", omgång 13, M5)
+
+Every bench school the engine had before this (`solve_2000_students.py`, `validate_schedule.py`, `hogstadium.py`, `staff_60x400.py`) gives each
+class lessons of its own; what they share is a block or a specialist room. The one filled school in production is shaped otherwise, and its week
+is the one that answered TIMEOUT on 2026-11-03 and 2026-11-17: in åk 8 and 9 every subject but Teknik is taught in groups that cut across the
+classes (12–13 groups for every pupil), twenty-one teachers stand on parallel groups that take pupils from the same class, Matematik, Engelska and
+Svenska are level groups that draw from 4.7–4.9 of a grade's five classes, and 134 of its 355 posts (28 % of the weekly minutes) run one term
+only. Production's own history says the same from the other side: of the 97 Generera runs that finished between 2026-08-31 and 2026-11-19 for that school, 21 ended
+`FEASIBLE` (all by 2026-09-30), 2 `OPTIMAL`, 18 `TIMEOUT`, 17 `INFEASIBLE` and 39 `FAILED`, and **the runs that found a timetable had 44–53 lessons**; none
+has found one for the 877-lesson school. This section is the measuring stick that tells a school, and the nightly gate, where that line runs.
+
+### 35.1 What exists
+
+| File | What it is |
+|---|---|
+| `optimization-engine/benchmarks/school_corpus.py` | The corpus: a deterministic generator `SchoolShape` → `OptimizeScheduleRequest` (fixed ids, a seeded generator, byte-identical on every machine). Axes: **N** classes, **G** subjects taught in groups across the classes (0–10), **M** shared teachers (the engine's own reading, `week_load._shared_teachers`, counted from the request alone), how far a group's pupils are mixed across the classes, språkval (teachers shared across the years, with or without a block), subjects that run one term only (`periods`, the lessons doubled in their term), blocks for groups with a teacher of their own, and the frame and lunch. `sweep_shapes()` moves one axis at a time from the base; `GATE_WEEKS` names the nightly's 16. A shape the engine would refuse (over 5,000 group pairs, over 2,000 requirements, a group no room holds) is refused by the generator with the numbers, because a corpus week the engine refused would measure the refusal. |
+| `optimization-engine/benchmarks/corpus_measure.py` | The measurer: seconds from `solve()`'s entry to the first timetable (prechecks, builds and phase 1a, or 1b where 1a gives up: what a school waits for, with phase 2 left out because it only spends the rest of the budget improving a timetable that exists), the outcome (`FIRST_SCHEDULE`, `TIMEOUT`, `INFEASIBLE`, `REFUSED`, or `ERROR` for a tree that cannot be handed the week), and the steps (`PRECHECKS`, `BUILD`, `SEARCH_CLEAN`, `SEARCH_CLONE`) from the engine's own `StageClock`. It changes nothing in the engine: a subclass of `SchedulerSolver` replaces `_generation_solver` and hands every generation search a recording `CpSolver`, which stops the solve at the first timetable. `tests/test_corpus_measure.py` keeps the hook: an engine that no longer calls it, or one that swallows the stop, is an `ERROR` and a test failure, never a silent number. |
+| `optimization-engine/benchmarks/corpus_report.py` | The tables below, from the measurements. |
+| `scripts/bench/solve-corpus-gate.mjs` | The nightly gate's verdict, pure Node. |
+| `.github/workflows/quality-gates.yml`, job `solver-corpus` | The nightly job. |
+
+Two modes. **`clock`** is how production runs: every core, wall-clock seconds, comparable only on one machine at one load (every result carries the
+load average). **`count`** is one worker and a fixed seed, so CP-SAT repeats the same search exactly, with the budget in CP-SAT's *deterministic* time
+(operations counted, not seconds: the same on every machine) and a wall-clock limit forty times the budget as a safety that never binds.
+
+### 35.2 What the first measurement says: limits a school can read
+
+Measured 2026-11-22 (the record, tables and conditions are in docs/solve-corpus-measurement.md): the `sweep` profile, 68 weeks, count mode, a budget of 4 deterministic seconds a
+search. **Seconds are estimates** ("within" is the slowest week of the row): the work times 18 s per deterministic second, which is what one worker took on this Mac when it was quiet (11 weeks, 8–25). By that figure the budget is
+about 72 s a search and 144 s for a solve's two searches, close to production's 180 s, so "no timetable" means *none in about what production gives a run, on one core of this machine*.
+**Production's processor is not measured** (§35.5), and neither is an eight-core run of the weeks one worker gave up on.
+
+| A school with … | gets a timetable within | in |
+|---|---|---|
+| every subject by class (språkval in groups), 6 to 24 classes, 0 to 3 shared teachers | 24 s | 10 of 10 weeks |
+| three subjects (SO, NO, Idrott) in groups across the classes, no shared teacher, **6 to 12 classes** | 9 s | 6 of 6 weeks |
+| the same at **15 and 18 classes** | none | 0 of 4 weeks |
+| 9 classes, **up to 4** subjects in groups | 5 s | 8 of 8 weeks |
+| 9 classes, 5 subjects in groups | 9 s | 1 of 2 weeks |
+| 9 classes, **6 to 10** subjects in groups | none | 0 of 6 weeks |
+| 12 classes, **up to 3** subjects in groups | 9 s | 6 of 6 weeks |
+| 12 classes, 4 subjects in groups | 16 s | 1 of 2 weeks |
+| 12 classes, **5 to 10** subjects in groups | none | 0 of 8 weeks |
+| 9 or 12 classes, three subjects in groups, **0 shared teachers** | 9 s | 4 of 4 weeks |
+| the same with **2 shared teachers** (three parallel groups each) | none (timeout) | 0 of 4 weeks |
+| the same with **4 or 8 shared teachers** | none: proved impossible in 0.2 s | 0 of 8 weeks |
+| 12 classes, three subjects in groups, **no term subject** | 9 s | 2 of 2 weeks |
+| the same with **3 subjects that run one term only** | 35 s | 1 of 2 weeks |
+| the same with **5 term subjects** | none | 0 of 2 weeks |
+| the production school's form (ten subjects in groups, half groups, terms), **6 or 9 classes** | none | 0 of 4 weeks |
+
+What the numbers say in order of weight:
+
+1. **The number of classes is not what stops the engine; the form of the groups is.** By class, 24 classes (546 lessons) is a matter of seconds; with three subjects in groups the
+   line is between 12 and 15 classes, and with more subjects in groups it comes down to nine classes at six subjects and twelve at five.
+2. **A shared teacher is a wall, and a low one.** A teacher who stands on three parallel groups of one subject that take pupils from the same classes means nine lessons of one person in a row
+   that every one of those classes must wait out: two such teachers already take the engine past its budget at nine and twelve classes, and four are proved impossible by the engine's
+   own year count (`DEMAND_REQUIREMENTS_EXCEED_WEEK` with `TEACHER_SHARED_BY_PARALLEL_GROUPS`, in 0.2 s). The production school has twenty-one, one of them on ten groups.
+3. **Terms cost a lot** and the cost is not smooth (three term subjects: one week solves in 35 s, its twin does not).
+4. **The same shape differs by seed, a lot near the edge** (0.26 or 3.5 work; 1.9 work or a timeout). A figure for one week is a lottery ticket; a count of weeks is a result, which is why the table counts.
+5. **The group-pair wall.** The engine takes 5,000 `groupConflicts` in a request, and the gateway refuses at that number with a named answer. The production form reaches it at about fifteen classes
+   (12 classes: 3,858 pairs; 15: 5,849); the filled school sits at 4,493.
+
+### 35.3 The nightly gate: this tree against a floor, in work and not in seconds
+
+Job `solver-corpus` in `quality-gates.yml`, 30 minutes at most, about **6 minutes of runner time a night** (measured: 1.6 minutes a tree on this Mac at a load of 28 with four searches
+at a time, two trees, and about 1.5 minutes for the install and the checkouts; the nightly `solver-benchmark` takes 2.4, the latency job about 6). The repository is public, so a standard runner
+is not billed; the figure is runtime.
+
+- **Why not seconds.** ubuntu-latest is a mixed-CPU pool (the same tree's health throughput varied 2.6x between its machines; `scripts/bench/latency-gate.mjs` has the numbers), and a search
+  takes as many seconds as the machine it drew. In count mode one worker with a fixed seed makes CP-SAT repeat the same search, so the operations it counts are the same everywhere.
+- **The floor** is `main` as it was a week ago (`git rev-list -1 --before='7 days ago' origin/main`), checked out as a second tree in the same job, or the ref a dispatch input `corpus_floor` names.
+  Nothing is stored and nothing is moved by hand. The same script and the same 16 weeks (`GATE_WEEKS`) run against both engines through `ENGINE_ROOT`, with one OR-Tools for both.
+  **Dispatched on a branch with `corpus_floor=main` it is an A/B of the branch against main** (`gh workflow run quality-gates.yml --ref <branch> -f corpus_floor=main`).
+- **What fails it** (`scripts/bench/solve-corpus-gate.mjs`, with tests that also run on every pull request): a week the floor gives a timetable and this tree refuses; weeks the floor solves and this tree
+  gives up on (one is enough when the floor was under half of what two searches may spend, and two always); and the geometric mean of this tree's work over the floor's, across the weeks both solve,
+  above 1.25. Printed, deciding nothing: refusals that changed code, weeks that gained a timetable, and the wall-clock ratio of the two trees.
+  Exit 2, not a pass, when the two cannot be compared: other weeks, another corpus version, another budget, or **a week that the two trees read differently** (an engine from before a field
+  drops it and measures another week under the same name).
+- **What it cannot see.** A regression that shows only with several workers (the portfolio production runs), and the Python time of the build (it is wall time: printed per step, not gated).
+  A floor older than the hook (`_generation_solver`, 2026-10-18) or than terms in the engine (2026-11-12) answers `ERROR` for what it does not support, which is a gain and not a failure.
+- **It is quiet, and shows the cause when it is not.** The 15 weeks of the gate measured on `main` at five points in time (2026-10-25, 11-01, 11-08, 11-14 and 11-22, 76 changes to the engine
+  between them, among them M1, M2, M3 and the time chain): **the work for the 13 weeks that solve is identical to the last digit at all five**. Search is chaotic (one week 0.05 to 1.3 times
+  as much after a change to the model), but only a change to how the model is built moves it, and the additive changes of those weeks did not. The one thing that moved was the two
+  guard weeks, which are proved impossible: TIMEOUT before 2026-11-01 and a proof since (the engine's year count, §23 and the weeks before it).
+- **Tested to see a regression.** An engine with its search made worse on purpose (`FIXED_SEARCH`, no probing, no linearization) against the floor on four weeks: exit 1, three weeks lost, a mean of 2.22. One
+  with presolve switched off scored 0.43 and passed, because the gate times the work to a first timetable and presolve is part of it.
+- **Running it by hand:** `ENGINE_ROOT=<other tree>/optimization-engine python benchmarks/corpus_measure.py --profile gate --mode count --det-budget 4 --jobs 4 --json > head.json`, the same for the floor,
+  then `node scripts/bench/solve-corpus-gate.mjs --head head.json --floor floor.json`. `corpus_report.py` turns a `--profile sweep` run into the tables of §35.2.
+
+### 35.4 What it says about M7 (the engine in parts)
+
+M7 assumes the size of `scheduler_solver.py` costs time. What can be measured is how much of the time to a first timetable is Python: the prechecks and the builds, against the search. On the 27 weeks of
+the sweep that got a timetable it is **4 % in the median (1 % to 18 %)**: 0.1 to 1.3 s of 1.5 to 40 s. The builds of the school that answered TIMEOUT on 2026-11-17 took 8 s of 213. M7 is
+not needed for the time a solve takes. (Maintainability, and the mutation gate's hour for `optimization-proxy.service.ts`, are other arguments and not measured here.)
+
+### 35.5 The production processor (roadmap decision 8, the user's)
+
+Nothing in §35.2 says how fast a production core is, and the engine runs its search on as many workers as production has cores (`num_workers` is left at its default). Not done, and
+proposed in a small form: **one calibration**, not the corpus. The production image copies only `app/`, so it takes a one-off instance (not the live service, which a school's Generera would then compete
+with for the cores) of the same plan, started from the engine image plus `benchmarks/`, running `python benchmarks/corpus_measure.py --profile gate --only n9-g5-m0-s1,n12-g3-m0-s1,n18-g0-m0-s1
+--mode count --det-budget 4 --jobs 1 --json` and `nproc`. The ratio of its wall seconds to the deterministic work is the number that replaces 18 in §35.2, and turns every figure in the table
+into production seconds without running the corpus again. About three minutes of compute. A second run in clock mode (`--mode clock --budget 180`) on the same instance answers whether
+the portfolio of its cores gets a timetable in the weeks that one worker gives up on, which this measurement left open.
+
+### 35.6 Not done
+
+- Clock mode on the whole sweep (started, stopped at a load of 125: the seconds said nothing).
+- The corpus has the production school's shape and not its details: lessons of 40 to 130 minutes (here every lesson is a högstadium lesson), one kitchen and one laboratory, and the exact group
+  lists of its pupils (110 different lists for 111 pupils; the corpus's are what `mixing` makes them). A second school is the only real second opinion.
+- The weeks the search gives up on are measured to the budget twice over (two searches) and are left out of the gate for what they cost; when one of them starts to solve, the sweep shows it and
+  the gate's weeks can be moved to follow.
