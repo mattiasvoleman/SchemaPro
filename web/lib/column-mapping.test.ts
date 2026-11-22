@@ -553,6 +553,16 @@ describe("a TF number in a table the mapping reads", () => {
     expect(applied.rows.map((row) => row[0])).toEqual(["Alma", "Eva", "Ola"]);
   });
 
+  // "Tfnr" is no personnummer header any more (a short form of "telefonnummer", the review of #383, L-3), so what a column under it holds is what decides: TF numbers drop it, telephone numbers do not.
+  it.each(["Tfnr", "TF nr", "TF-NR"])("drops a column headed %s by its values when they are TF numbers, and reads one that holds telephone numbers", (header) => {
+    const tf = block(`Namn;${header}\nÅsa;${TF1}\nBo;19000101TF02\nCia;19000101TF03\n`);
+    expect([...personalNumberColumns(tf)]).toEqual([1]);
+    expect(describeColumns(tf, "students", [undefined, undefined])[1]).toMatchObject({ status: "personalNumber", sample: [] });
+    const phone = block(`Namn;${header}\nÅsa;070-123 45 67\nBo;08-123 456 78\nCia;+46 70 123 45 68\n`);
+    expect([...personalNumberColumns(phone)]).toEqual([]);
+    expect(describeColumns(phone, "students", [undefined, undefined])[1]!.sample).toEqual(["070-123 45 67", "08-123 456 78", "+46 70 123 45 68"]);
+  });
+
   it("does not hold a row for a code a school writes that is a little like one", () => {
     const b = block("fornamn;efternamn;epost;klass\nAlma;Berg;alma@example.com;7ATF12\nNils;Ek;nils@example.com;TF2026\n");
     const applied = applyMapping(b, "students", aliasAssignment(b, "students"));

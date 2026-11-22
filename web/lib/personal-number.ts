@@ -22,7 +22,8 @@
  * Added, and our reading (TOLKAT): TF in any case, and one blank or hyphen between the date and TF (after the fold also '.', '/', '_' and the
  * dash-like characters). NOT counted, because no file has shown them: a blank inside the date or between TF and the digits, a date of six digits,
  * any other number of digits, a hyphen after TF, and any other temporary or reserve number. src/schedule-exchange/file-safety.ts says the same,
- * and the shared cases say each of these.
+ * and the shared cases say each of these. The pseudonymiser looks WIDER than this door (lib/pseudonym-detect.ts, findLooseTfNumbers): for a door a missed number is a cell read as text,
+ * for the pseudonymiser it is a number left in a file that is sent on.
  */
 
 /** The marker a redacted number is replaced with. */
@@ -47,6 +48,12 @@ function fold(text: string): string {
     .replace(/[\s­​-‏⁠﻿]/g, " ")
     .replace(/[‐-―−﹘﹣－./_]/g, "-");
 }
+
+/**
+ * The fold, for a search that must look at the same characters the shape does but wants a wider shape: the pseudonymiser's search for a TF number
+ * (lib/pseudonym-detect.ts), whose cost of a miss is a number left in a file that is sent on, and not a refused row.
+ */
+export const foldForShape = fold;
 
 /** True when the text holds a personnummer, a samordningsnummer or a TF number, whole or as a part, in any of the spellings above. */
 export function hasPersonalNumber(text: string | null | undefined): boolean {
@@ -112,8 +119,11 @@ export function findPersonalNumbers(text: string): PersonalNumberMatch[] {
   return found;
 }
 
-/** Headers of a personal-number column, as the gateway's reader knows them: exact for the short forms, contained for the long. */
-const PERSONAL_EXACT = new Set(["pnr", "personnr", "ssn", "tfnr"]);
+/**
+ * Headers of a personal-number column, as the gateway's reader knows them: exact for the short forms, contained for the long. "tfnummer" (Skola24's TF-nummer) is among the
+ * long; "tfnr" is NOT among the short: it is a common short form of "telefonnummer", and no Skola24 page or file has shown it as the name of a column of TF numbers.
+ */
+const PERSONAL_EXACT = new Set(["pnr", "personnr", "ssn"]);
 const PERSONAL_CONTAINS = ["personnummer", "samordningsnummer", "socialsecuritynumber", "civicnumber", "personalnumber", "tfnummer"];
 
 /** `normalized` is a header after normalizeHeader (lib/csv-export.ts): lower case, letters and digits only. */
