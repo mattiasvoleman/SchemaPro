@@ -13,7 +13,12 @@ This file is the record of the measurement behind them, so that it can be repeat
 | Mode | **count**: one worker, fixed seed, a budget of **4 deterministic seconds a search**, with the solve's two satisfaction searches (phase 1a, then 1b), so at most 8 deterministic seconds of work before a week is a TIMEOUT. The unit of "work" below is CP-SAT's deterministic second: operations counted, the same on every machine. |
 | What is timed | From `solve()`'s entry to the first timetable: prechecks, builds and phase 1a (or 1b). Phase 2 (improving a timetable that exists) is left out. |
 | Machine | darwin/arm64, 8 cores, shared with other sessions: **load average 4.5 to 119 during the run** (under 12 for the first dozen weeks, above 50 for most of the rest). Count mode's verdicts and work do not depend on the load; its wall-clock seconds do. |
-| Run | `corpus_measure.py --profile sweep --mode count --det-budget 4 --jobs 4`, four weeks side by side (about 30 minutes) |
+| Run | `corpus_measure.py --profile sweep --mode count --det-budget 4 --jobs 4`, four weeks side by side (about 30 minutes). The data is `docs/solve-corpus-measurement.json`; the tables below are `corpus_report.py docs/solve-corpus-measurement.json --seconds-per-work 18 --lang en`. |
+
+**A correction made before this was written down.** The first run had a wall-clock safety limit of forty times the budget, and at the load of those hours (55 to 119 for most of the run) it,
+and not the budget, ended 13 of the 33 TIMEOUTs: a search stopped at 1.5 to 3.9 of its 4 deterministic seconds is the host's verdict and not count mode's. The 13 weeks were found by reading
+`searches[].deterministic` of every TIMEOUT row, the safety was raised to a thousand times, a search that still ends before 95 % of its budget is now an `ERROR` (`WALL_LIMIT_BEFORE_BUDGET`), and the
+13 were measured again: **all 13 are TIMEOUTs on both searches' full budgets**, so the table stands, and every TIMEOUT in it is the budget's. (Their rows in the data file are the second run's.)
 
 ## Seconds
 

@@ -1,0 +1,3241 @@
+[
+ {
+  "name": "n6-g3-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 6,
+   "pupils": 132,
+   "requirements": 72,
+   "lessons": 138,
+   "groupConflicts": 120,
+   "teachers": 28,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 3,
+   "languageGroups": 6,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 1.49,
+  "firstScheduleDeterministic": 0.177,
+  "totalSeconds": 1.5,
+  "deterministicSeconds": 0.177,
+  "conflicts": 2443,
+  "stages": {
+   "PRECHECKS": 0.06,
+   "BUILD": 0.07,
+   "SEARCH_CLEAN": 1.36
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 1.36,
+    "deterministic": 0.177,
+    "conflicts": 2443,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   4.3,
+   4.5
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g3-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 259,
+   "teachers": 40,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 3.27,
+  "firstScheduleDeterministic": 0.168,
+  "totalSeconds": 3.27,
+  "deterministicSeconds": 0.168,
+  "conflicts": 921,
+  "stages": {
+   "PRECHECKS": 0.1,
+   "BUILD": 0.1,
+   "SEARCH_CLEAN": 3.06
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 3.06,
+    "deterministic": 0.168,
+    "conflicts": 921,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   4.3,
+   4.5
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g3-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 404,
+   "teachers": 50,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 8.82,
+  "firstScheduleDeterministic": 0.449,
+  "totalSeconds": 8.82,
+  "deterministicSeconds": 0.449,
+  "conflicts": 1743,
+  "stages": {
+   "PRECHECKS": 0.14,
+   "BUILD": 0.14,
+   "SEARCH_CLEAN": 8.55
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 8.55,
+    "deterministic": 0.449,
+    "conflicts": 1743,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   4.3,
+   4.8
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n15-g3-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 15,
+   "pupils": 330,
+   "requirements": 177,
+   "lessons": 339,
+   "groupConflicts": 629,
+   "teachers": 61,
+   "sharedTeachers": 3,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 3,
+   "languageGroups": 12,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 135.48,
+  "deterministicSeconds": 8.0,
+  "conflicts": 39611,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 69.55,
+    "deterministic": 4.0,
+    "conflicts": 15513,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 65.56,
+    "deterministic": 4.0,
+    "conflicts": 24098,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   4.3,
+   14.9
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n18-g3-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 18,
+   "pupils": 396,
+   "requirements": 213,
+   "lessons": 408,
+   "groupConflicts": 901,
+   "teachers": 71,
+   "sharedTeachers": 3,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 3,
+   "languageGroups": 15,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 230.17,
+  "deterministicSeconds": 8.0,
+  "conflicts": 16665,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 91.27,
+    "deterministic": 4.0,
+    "conflicts": 9775,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 138.44,
+    "deterministic": 4.0,
+    "conflicts": 6890,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   4.5,
+   20.9
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n6-g0-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 6,
+   "pupils": 132,
+   "requirements": 72,
+   "lessons": 138,
+   "groupConflicts": 12,
+   "teachers": 13,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 0,
+   "languageGroups": 6,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 1.1,
+  "firstScheduleDeterministic": 0.079,
+  "totalSeconds": 1.1,
+  "deterministicSeconds": 0.079,
+  "conflicts": 166,
+  "stages": {
+   "PRECHECKS": 0.02,
+   "BUILD": 0.08,
+   "SEARCH_CLEAN": 1.0
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 1.0,
+    "deterministic": 0.079,
+    "conflicts": 166,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   4.5,
+   4.5
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g0-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 27,
+   "teachers": 18,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 0,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 1.97,
+  "firstScheduleDeterministic": 0.127,
+  "totalSeconds": 1.97,
+  "deterministicSeconds": 0.127,
+  "conflicts": 339,
+  "stages": {
+   "PRECHECKS": 0.03,
+   "BUILD": 0.11,
+   "SEARCH_CLEAN": 1.83
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 1.83,
+    "deterministic": 0.127,
+    "conflicts": 339,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   4.5,
+   4.8
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g0-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 36,
+   "teachers": 20,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 0,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 4.65,
+  "firstScheduleDeterministic": 0.326,
+  "totalSeconds": 4.65,
+  "deterministicSeconds": 0.326,
+  "conflicts": 693,
+  "stages": {
+   "PRECHECKS": 0.04,
+   "BUILD": 0.14,
+   "SEARCH_CLEAN": 4.48
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 4.48,
+    "deterministic": 0.326,
+    "conflicts": 693,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   4.8,
+   5.6
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n18-g0-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 18,
+   "pupils": 396,
+   "requirements": 213,
+   "lessons": 408,
+   "groupConflicts": 89,
+   "teachers": 25,
+   "sharedTeachers": 3,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 0,
+   "languageGroups": 15,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 26.17,
+  "firstScheduleDeterministic": 1.325,
+  "totalSeconds": 26.18,
+  "deterministicSeconds": 1.325,
+  "conflicts": 1625,
+  "stages": {
+   "PRECHECKS": 0.06,
+   "BUILD": 0.22,
+   "SEARCH_CLEAN": 25.89
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 25.89,
+    "deterministic": 1.325,
+    "conflicts": 1625,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   4.8,
+   11.1
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n24-g0-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 24,
+   "pupils": 528,
+   "requirements": 285,
+   "lessons": 546,
+   "groupConflicts": 166,
+   "teachers": 38,
+   "sharedTeachers": 3,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 0,
+   "languageGroups": 21,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 11.17,
+  "firstScheduleDeterministic": 0.735,
+  "totalSeconds": 11.17,
+  "deterministicSeconds": 0.735,
+  "conflicts": 693,
+  "stages": {
+   "PRECHECKS": 0.12,
+   "BUILD": 0.3,
+   "SEARCH_CLEAN": 10.75
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 10.75,
+    "deterministic": 0.735,
+    "conflicts": 693,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   5.6,
+   8.9
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g2-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 155,
+   "teachers": 32,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 2,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 3.1,
+  "firstScheduleDeterministic": 0.143,
+  "totalSeconds": 3.1,
+  "deterministicSeconds": 0.143,
+  "conflicts": 1173,
+  "stages": {
+   "PRECHECKS": 0.05,
+   "BUILD": 0.11,
+   "SEARCH_CLEAN": 2.94
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 2.94,
+    "deterministic": 0.143,
+    "conflicts": 1173,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   8.9,
+   8.9
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g4-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 390,
+   "teachers": 48,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 4,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 4.13,
+  "firstScheduleDeterministic": 0.165,
+  "totalSeconds": 4.14,
+  "deterministicSeconds": 0.165,
+  "conflicts": 677,
+  "stages": {
+   "PRECHECKS": 0.23,
+   "BUILD": 0.12,
+   "SEARCH_CLEAN": 3.78
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 3.78,
+    "deterministic": 0.165,
+    "conflicts": 677,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   8.9,
+   10.8
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g5-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 547,
+   "teachers": 56,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 5,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 8.88,
+  "firstScheduleDeterministic": 0.49,
+  "totalSeconds": 8.88,
+  "deterministicSeconds": 0.49,
+  "conflicts": 5238,
+  "stages": {
+   "PRECHECKS": 0.05,
+   "BUILD": 0.11,
+   "SEARCH_CLEAN": 8.72
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 8.72,
+    "deterministic": 0.49,
+    "conflicts": 5238,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   10.8,
+   11.5
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g6-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 735,
+   "teachers": 64,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 6,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 113.1,
+  "deterministicSeconds": 8.0,
+  "conflicts": 92030,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 56.65,
+    "deterministic": 4.0,
+    "conflicts": 46396,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 56.24,
+    "deterministic": 4.0,
+    "conflicts": 45634,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   11.1,
+   14.7
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g8-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 1191,
+   "teachers": 79,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 8,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 235.71,
+  "deterministicSeconds": 8.0,
+  "conflicts": 106787,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 83.22,
+    "deterministic": 4.0,
+    "conflicts": 66670,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 152.12,
+    "deterministic": 4.0,
+    "conflicts": 40117,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   11.5,
+   22.2
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g10-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 1758,
+   "teachers": 94,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 10,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 570.61,
+  "deterministicSeconds": 8.0,
+  "conflicts": 56623,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 284.9,
+    "deterministic": 4.0,
+    "conflicts": 25775,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 285.09,
+    "deterministic": 4.0,
+    "conflicts": 30848,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   44.6,
+   75.2
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g3-m2-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 259,
+   "teachers": 36,
+   "sharedTeachers": 2,
+   "sharedTeachersAsked": 2,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [
+   "TEACHER_SHARED_BY_PARALLEL_GROUPS",
+   "TIGHT_WEEK_LOAD"
+  ],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 137.41,
+  "deterministicSeconds": 8.0,
+  "conflicts": 118291,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 77.16,
+    "deterministic": 4.0,
+    "conflicts": 62978,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 59.8,
+    "deterministic": 4.0,
+    "conflicts": 55313,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   14.7,
+   25.8
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g3-m4-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 259,
+   "teachers": 32,
+   "sharedTeachers": 4,
+   "sharedTeachersAsked": 4,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "INFEASIBLE",
+  "conflictCodes": [
+   "DEMAND_REQUIREMENTS_EXCEED_WEEK",
+   "TEACHER_SHARED_BY_PARALLEL_GROUPS"
+  ],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 0.22,
+  "deterministicSeconds": 0,
+  "conflicts": 0,
+  "stages": {},
+  "searches": [],
+  "load": [
+   20.9,
+   20.9
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g3-m8-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 259,
+   "teachers": 24,
+   "sharedTeachers": 8,
+   "sharedTeachersAsked": 8,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "INFEASIBLE",
+  "conflictCodes": [
+   "DEMAND_REQUIREMENTS_EXCEED_WEEK",
+   "TEACHER_SHARED_BY_PARALLEL_GROUPS"
+  ],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 0.22,
+  "deterministicSeconds": 0,
+  "conflicts": 0,
+  "stages": {},
+  "searches": [],
+  "load": [
+   20.9,
+   20.9
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g2-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 234,
+   "teachers": 40,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 2,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 5.17,
+  "firstScheduleDeterministic": 0.193,
+  "totalSeconds": 5.17,
+  "deterministicSeconds": 0.193,
+  "conflicts": 554,
+  "stages": {
+   "PRECHECKS": 0.28,
+   "BUILD": 0.14,
+   "SEARCH_CLEAN": 4.75
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 4.75,
+    "deterministic": 0.193,
+    "conflicts": 554,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   20.9,
+   19.8
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g4-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 623,
+   "teachers": 61,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 4,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 224.57,
+  "deterministicSeconds": 8.0,
+  "conflicts": 38521,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 136.12,
+    "deterministic": 4.0,
+    "conflicts": 14518,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 88.09,
+    "deterministic": 4.0,
+    "conflicts": 24003,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   19.8,
+   35.3
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g5-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 886,
+   "teachers": 72,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 5,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 201.41,
+  "deterministicSeconds": 8.363,
+  "conflicts": 60904,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 114.43,
+    "deterministic": 4.0,
+    "conflicts": 31829,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 86.56,
+    "deterministic": 4.363,
+    "conflicts": 29075,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   22.2,
+   34.3
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g6-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 1196,
+   "teachers": 83,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 6,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 237.48,
+  "deterministicSeconds": 8.195,
+  "conflicts": 37778,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 147.32,
+    "deterministic": 4.195,
+    "conflicts": 19486,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 89.71,
+    "deterministic": 4.0,
+    "conflicts": 18292,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   25.8,
+   44.5
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g8-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 1972,
+   "teachers": 104,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 8,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 472.42,
+  "deterministicSeconds": 8.0,
+  "conflicts": 41402,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 238.53,
+    "deterministic": 4.0,
+    "conflicts": 22762,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 233.12,
+    "deterministic": 4.0,
+    "conflicts": 18640,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   44.6,
+   86.8
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g10-m0-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 2956,
+   "teachers": 124,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 10,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 512.18,
+  "deterministicSeconds": 8.089,
+  "conflicts": 21869,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 259.07,
+    "deterministic": 4.0,
+    "conflicts": 12272,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 252.13,
+    "deterministic": 4.089,
+    "conflicts": 9597,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   44.6,
+   82.2
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g3-m2-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 404,
+   "teachers": 46,
+   "sharedTeachers": 2,
+   "sharedTeachersAsked": 2,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [
+   "TEACHER_SHARED_BY_PARALLEL_GROUPS",
+   "TIGHT_WEEK_LOAD"
+  ],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 273.11,
+  "deterministicSeconds": 8.1,
+  "conflicts": 73098,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 129.64,
+    "deterministic": 4.0,
+    "conflicts": 42488,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 142.71,
+    "deterministic": 4.1,
+    "conflicts": 30610,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   44.6,
+   67.0
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g3-m4-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 404,
+   "teachers": 42,
+   "sharedTeachers": 4,
+   "sharedTeachersAsked": 4,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "INFEASIBLE",
+  "conflictCodes": [
+   "DEMAND_REQUIREMENTS_EXCEED_WEEK",
+   "TEACHER_SHARED_BY_PARALLEL_GROUPS"
+  ],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 0.22,
+  "deterministicSeconds": 0,
+  "conflicts": 0,
+  "stages": {},
+  "searches": [],
+  "load": [
+   34.3,
+   34.3
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g3-m8-s1",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 404,
+   "teachers": 34,
+   "sharedTeachers": 8,
+   "sharedTeachersAsked": 8,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "INFEASIBLE",
+  "conflictCodes": [
+   "DEMAND_REQUIREMENTS_EXCEED_WEEK",
+   "TEACHER_SHARED_BY_PARALLEL_GROUPS"
+  ],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 0.17,
+  "deterministicSeconds": 0,
+  "conflicts": 0,
+  "stages": {},
+  "searches": [],
+  "load": [
+   34.3,
+   34.3
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g3-m0-s1-t3",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 306,
+   "groupConflicts": 404,
+   "teachers": 50,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 3,
+   "termRequirements": 36,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 93.55,
+  "firstScheduleDeterministic": 1.94,
+  "totalSeconds": 93.55,
+  "deterministicSeconds": 1.94,
+  "conflicts": 4772,
+  "stages": {
+   "PRECHECKS": 0.38,
+   "BUILD": 0.28,
+   "SEARCH_CLEAN": 92.89
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 92.89,
+    "deterministic": 1.94,
+    "conflicts": 4772,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   34.3,
+   53.6
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g3-m0-s1-t5",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 330,
+   "groupConflicts": 404,
+   "teachers": 50,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 5,
+   "termRequirements": 60,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 412.45,
+  "deterministicSeconds": 8.0,
+  "conflicts": 18357,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 300.19,
+    "deterministic": 4.0,
+    "conflicts": 6438,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 111.51,
+    "deterministic": 4.0,
+    "conflicts": 11919,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   67.0,
+   60.4
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g3-m0-s1-b",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 404,
+   "teachers": 50,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 9
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 144.06,
+  "firstScheduleDeterministic": 3.511,
+  "totalSeconds": 144.06,
+  "deterministicSeconds": 3.511,
+  "conflicts": 29173,
+  "stages": {
+   "PRECHECKS": 0.46,
+   "BUILD": 0.53,
+   "SEARCH_CLEAN": 143.07
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 143.07,
+    "deterministic": 3.511,
+    "conflicts": 29173,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   53.6,
+   76.8
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g6-m0-s1-h",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 165,
+   "lessons": 294,
+   "groupConflicts": 1749,
+   "teachers": 107,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 6,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 279.97,
+  "deterministicSeconds": 8.092,
+  "conflicts": 37453,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 149.52,
+    "deterministic": 4.0,
+    "conflicts": 20153,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 130.0,
+    "deterministic": 4.092,
+    "conflicts": 17300,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   86.8,
+   85.7
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n6-g10-m0-s1-t5-h",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 6,
+   "pupils": 132,
+   "requirements": 84,
+   "lessons": 192,
+   "groupConflicts": 1058,
+   "teachers": 75,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 10,
+   "languageGroups": 6,
+   "termSubjects": 5,
+   "termRequirements": 42,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 232.66,
+  "deterministicSeconds": 8.025,
+  "conflicts": 46664,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 103.93,
+    "deterministic": 4.001,
+    "conflicts": 23068,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 128.44,
+    "deterministic": 4.025,
+    "conflicts": 23596,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   82.2,
+   82.2
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g10-m0-s1-t5-h",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 126,
+   "lessons": 288,
+   "groupConflicts": 2326,
+   "teachers": 112,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 10,
+   "languageGroups": 9,
+   "termSubjects": 5,
+   "termRequirements": 63,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [
+   "TIGHT_WEEK_LOAD"
+  ],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 269.39,
+  "deterministicSeconds": 8.022,
+  "conflicts": 23686,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 119.81,
+    "deterministic": 4.021,
+    "conflicts": 7259,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 148.77,
+    "deterministic": 4.0,
+    "conflicts": 16427,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   75.2,
+   83.2
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n6-g3-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 6,
+   "pupils": 132,
+   "requirements": 72,
+   "lessons": 138,
+   "groupConflicts": 120,
+   "teachers": 28,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 3,
+   "languageGroups": 6,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 5.37,
+  "firstScheduleDeterministic": 0.177,
+  "totalSeconds": 5.37,
+  "deterministicSeconds": 0.177,
+  "conflicts": 2443,
+  "stages": {
+   "PRECHECKS": 0.35,
+   "BUILD": 0.19,
+   "SEARCH_CLEAN": 4.83
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 4.83,
+    "deterministic": 0.177,
+    "conflicts": 2443,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   76.8,
+   77.3
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g3-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 262,
+   "teachers": 40,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 15.4,
+  "firstScheduleDeterministic": 0.224,
+  "totalSeconds": 15.4,
+  "deterministicSeconds": 0.224,
+  "conflicts": 2059,
+  "stages": {
+   "PRECHECKS": 0.29,
+   "BUILD": 0.16,
+   "SEARCH_CLEAN": 14.96
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 14.96,
+    "deterministic": 0.224,
+    "conflicts": 2059,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   77.3,
+   73.7
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g3-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 404,
+   "teachers": 50,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 15.22,
+  "firstScheduleDeterministic": 0.3,
+  "totalSeconds": 15.22,
+  "deterministicSeconds": 0.3,
+  "conflicts": 1467,
+  "stages": {
+   "PRECHECKS": 0.23,
+   "BUILD": 0.32,
+   "SEARCH_CLEAN": 14.67
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 14.67,
+    "deterministic": 0.3,
+    "conflicts": 1467,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   73.7,
+   69.1
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n15-g3-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 15,
+   "pupils": 330,
+   "requirements": 177,
+   "lessons": 339,
+   "groupConflicts": 626,
+   "teachers": 61,
+   "sharedTeachers": 3,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 3,
+   "languageGroups": 12,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 314.39,
+  "deterministicSeconds": 8.151,
+  "conflicts": 43501,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 154.63,
+    "deterministic": 4.0,
+    "conflicts": 28260,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 158.9,
+    "deterministic": 4.151,
+    "conflicts": 15241,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   69.1,
+   52.8
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n18-g3-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 18,
+   "pupils": 396,
+   "requirements": 213,
+   "lessons": 408,
+   "groupConflicts": 908,
+   "teachers": 71,
+   "sharedTeachers": 3,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 3,
+   "languageGroups": 15,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 226.41,
+  "deterministicSeconds": 8.072,
+  "conflicts": 19142,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 106.46,
+    "deterministic": 4.0,
+    "conflicts": 8704,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 119.36,
+    "deterministic": 4.071,
+    "conflicts": 10438,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   60.4,
+   71.5
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n6-g0-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 6,
+   "pupils": 132,
+   "requirements": 72,
+   "lessons": 138,
+   "groupConflicts": 12,
+   "teachers": 13,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 0,
+   "languageGroups": 6,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 2.76,
+  "firstScheduleDeterministic": 0.079,
+  "totalSeconds": 2.76,
+  "deterministicSeconds": 0.079,
+  "conflicts": 166,
+  "stages": {
+   "PRECHECKS": 0.12,
+   "BUILD": 0.37,
+   "SEARCH_CLEAN": 2.27
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 2.27,
+    "deterministic": 0.079,
+    "conflicts": 166,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   56.6,
+   58.4
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g0-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 27,
+   "teachers": 18,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 0,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 5.13,
+  "firstScheduleDeterministic": 0.127,
+  "totalSeconds": 5.13,
+  "deterministicSeconds": 0.127,
+  "conflicts": 339,
+  "stages": {
+   "PRECHECKS": 0.12,
+   "BUILD": 0.26,
+   "SEARCH_CLEAN": 4.75
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 4.75,
+    "deterministic": 0.127,
+    "conflicts": 339,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   58.4,
+   58.7
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g0-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 36,
+   "teachers": 20,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 0,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 11.67,
+  "firstScheduleDeterministic": 0.326,
+  "totalSeconds": 11.67,
+  "deterministicSeconds": 0.326,
+  "conflicts": 693,
+  "stages": {
+   "PRECHECKS": 0.15,
+   "BUILD": 0.17,
+   "SEARCH_CLEAN": 11.34
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 11.34,
+    "deterministic": 0.326,
+    "conflicts": 693,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   58.7,
+   57.5
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n18-g0-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 18,
+   "pupils": 396,
+   "requirements": 213,
+   "lessons": 408,
+   "groupConflicts": 90,
+   "teachers": 25,
+   "sharedTeachers": 3,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 0,
+   "languageGroups": 15,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 39.81,
+  "firstScheduleDeterministic": 0.959,
+  "totalSeconds": 39.81,
+  "deterministicSeconds": 0.959,
+  "conflicts": 830,
+  "stages": {
+   "PRECHECKS": 0.06,
+   "BUILD": 0.62,
+   "SEARCH_CLEAN": 39.13
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 39.13,
+    "deterministic": 0.959,
+    "conflicts": 830,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   57.5,
+   56.0
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n24-g0-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 24,
+   "pupils": 528,
+   "requirements": 285,
+   "lessons": 546,
+   "groupConflicts": 166,
+   "teachers": 38,
+   "sharedTeachers": 3,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 0,
+   "languageGroups": 21,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 24.62,
+  "firstScheduleDeterministic": 0.833,
+  "totalSeconds": 24.63,
+  "deterministicSeconds": 0.833,
+  "conflicts": 987,
+  "stages": {
+   "PRECHECKS": 0.29,
+   "BUILD": 1.01,
+   "SEARCH_CLEAN": 23.32
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 23.32,
+    "deterministic": 0.833,
+    "conflicts": 987,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   54.8,
+   55.9
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g2-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 157,
+   "teachers": 32,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 2,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 12.27,
+  "firstScheduleDeterministic": 0.193,
+  "totalSeconds": 12.27,
+  "deterministicSeconds": 0.193,
+  "conflicts": 757,
+  "stages": {
+   "PRECHECKS": 0.51,
+   "BUILD": 0.39,
+   "SEARCH_CLEAN": 11.36
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 11.36,
+    "deterministic": 0.193,
+    "conflicts": 757,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   55.9,
+   56.3
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g4-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 396,
+   "teachers": 48,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 4,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 10.35,
+  "firstScheduleDeterministic": 0.162,
+  "totalSeconds": 10.35,
+  "deterministicSeconds": 0.162,
+  "conflicts": 621,
+  "stages": {
+   "PRECHECKS": 0.47,
+   "BUILD": 0.46,
+   "SEARCH_CLEAN": 9.42
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 9.42,
+    "deterministic": 0.162,
+    "conflicts": 621,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   56.0,
+   56.3
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g5-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 556,
+   "teachers": 56,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 5,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 165.9,
+  "deterministicSeconds": 8.0,
+  "conflicts": 93270,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 87.02,
+    "deterministic": 4.0,
+    "conflicts": 39725,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 78.35,
+    "deterministic": 4.0,
+    "conflicts": 53545,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   56.3,
+   55.5
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g6-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 740,
+   "teachers": 64,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 6,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 199.01,
+  "deterministicSeconds": 8.156,
+  "conflicts": 83812,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 91.28,
+    "deterministic": 4.0,
+    "conflicts": 38681,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 107.23,
+    "deterministic": 4.156,
+    "conflicts": 45131,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   56.3,
+   59.4
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g8-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 1195,
+   "teachers": 79,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 8,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 250.52,
+  "deterministicSeconds": 8.162,
+  "conflicts": 91727,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 130.03,
+    "deterministic": 4.162,
+    "conflicts": 33368,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 120.03,
+    "deterministic": 4.0,
+    "conflicts": 58359,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   55.8,
+   45.7
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g10-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 1762,
+   "teachers": 94,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 10,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 266.79,
+  "deterministicSeconds": 8.001,
+  "conflicts": 59869,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 146.7,
+    "deterministic": 4.001,
+    "conflicts": 28944,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 119.55,
+    "deterministic": 4.0,
+    "conflicts": 30925,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   52.8,
+   32.5
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g3-m2-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 262,
+   "teachers": 36,
+   "sharedTeachers": 2,
+   "sharedTeachersAsked": 2,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [
+   "TEACHER_SHARED_BY_PARALLEL_GROUPS",
+   "TIGHT_WEEK_LOAD"
+  ],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 98.89,
+  "deterministicSeconds": 8.02,
+  "conflicts": 102538,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 62.35,
+    "deterministic": 4.0,
+    "conflicts": 68554,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 36.34,
+    "deterministic": 4.02,
+    "conflicts": 33984,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   55.5,
+   52.5
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g3-m4-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 262,
+   "teachers": 32,
+   "sharedTeachers": 4,
+   "sharedTeachersAsked": 4,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "INFEASIBLE",
+  "conflictCodes": [
+   "DEMAND_REQUIREMENTS_EXCEED_WEEK",
+   "TEACHER_SHARED_BY_PARALLEL_GROUPS"
+  ],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 0.1,
+  "deterministicSeconds": 0,
+  "conflicts": 0,
+  "stages": {},
+  "searches": [],
+  "load": [
+   59.4,
+   59.4
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g3-m8-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 108,
+   "lessons": 207,
+   "groupConflicts": 262,
+   "teachers": 24,
+   "sharedTeachers": 8,
+   "sharedTeachersAsked": 8,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "INFEASIBLE",
+  "conflictCodes": [
+   "DEMAND_REQUIREMENTS_EXCEED_WEEK",
+   "TEACHER_SHARED_BY_PARALLEL_GROUPS"
+  ],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 0.08,
+  "deterministicSeconds": 0,
+  "conflicts": 0,
+  "stages": {},
+  "searches": [],
+  "load": [
+   59.4,
+   59.4
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g2-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 232,
+   "teachers": 40,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 2,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 11.96,
+  "firstScheduleDeterministic": 0.404,
+  "totalSeconds": 11.96,
+  "deterministicSeconds": 0.404,
+  "conflicts": 1136,
+  "stages": {
+   "PRECHECKS": 0.11,
+   "BUILD": 0.2,
+   "SEARCH_CLEAN": 11.65
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 11.65,
+    "deterministic": 0.404,
+    "conflicts": 1136,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   59.4,
+   62.5
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g4-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 620,
+   "teachers": 61,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 4,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 23.51,
+  "firstScheduleDeterministic": 0.879,
+  "totalSeconds": 23.51,
+  "deterministicSeconds": 0.879,
+  "conflicts": 2861,
+  "stages": {
+   "PRECHECKS": 0.38,
+   "BUILD": 0.21,
+   "SEARCH_CLEAN": 22.92
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 22.92,
+    "deterministic": 0.879,
+    "conflicts": 2861,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   62.5,
+   62.1
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g5-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 875,
+   "teachers": 72,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 5,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 151.12,
+  "deterministicSeconds": 8.0,
+  "conflicts": 45627,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 80.73,
+    "deterministic": 4.0,
+    "conflicts": 18212,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 70.13,
+    "deterministic": 4.0,
+    "conflicts": 27415,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   62.1,
+   28.2
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g6-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 1178,
+   "teachers": 83,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 6,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 166.9,
+  "deterministicSeconds": 8.0,
+  "conflicts": 58305,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 85.59,
+    "deterministic": 4.0,
+    "conflicts": 16778,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 81.02,
+    "deterministic": 4.0,
+    "conflicts": 41527,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   52.5,
+   31.8
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g8-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 1958,
+   "teachers": 104,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 8,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 249.36,
+  "deterministicSeconds": 8.002,
+  "conflicts": 43211,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 102.26,
+    "deterministic": 4.002,
+    "conflicts": 19951,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 146.77,
+    "deterministic": 4.0,
+    "conflicts": 23260,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   45.7,
+   55.3
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g10-m0-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 2941,
+   "teachers": 124,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 10,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 280.04,
+  "deterministicSeconds": 8.0,
+  "conflicts": 27722,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 131.86,
+    "deterministic": 4.0,
+    "conflicts": 16666,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 146.98,
+    "deterministic": 4.0,
+    "conflicts": 11056,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   82.2,
+   69.7
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g3-m2-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 404,
+   "teachers": 46,
+   "sharedTeachers": 2,
+   "sharedTeachersAsked": 2,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [
+   "TEACHER_SHARED_BY_PARALLEL_GROUPS",
+   "TIGHT_WEEK_LOAD"
+  ],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 166.74,
+  "deterministicSeconds": 8.0,
+  "conflicts": 53388,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 81.6,
+    "deterministic": 4.0,
+    "conflicts": 31440,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 84.83,
+    "deterministic": 4.0,
+    "conflicts": 21948,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   32.5,
+   80.2
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g3-m4-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 404,
+   "teachers": 42,
+   "sharedTeachers": 4,
+   "sharedTeachersAsked": 4,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "INFEASIBLE",
+  "conflictCodes": [
+   "DEMAND_REQUIREMENTS_EXCEED_WEEK",
+   "TEACHER_SHARED_BY_PARALLEL_GROUPS"
+  ],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 0.11,
+  "deterministicSeconds": 0,
+  "conflicts": 0,
+  "stages": {},
+  "searches": [],
+  "load": [
+   31.8,
+   31.8
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g3-m8-s2",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 404,
+   "teachers": 34,
+   "sharedTeachers": 8,
+   "sharedTeachersAsked": 8,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "INFEASIBLE",
+  "conflictCodes": [
+   "DEMAND_REQUIREMENTS_EXCEED_WEEK",
+   "TEACHER_SHARED_BY_PARALLEL_GROUPS"
+  ],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 0.13,
+  "deterministicSeconds": 0,
+  "conflicts": 0,
+  "stages": {},
+  "searches": [],
+  "load": [
+   31.8,
+   31.8
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g3-m0-s2-t3",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 306,
+   "groupConflicts": 404,
+   "teachers": 50,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 3,
+   "termRequirements": 36,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 237.55,
+  "deterministicSeconds": 7.973,
+  "conflicts": 26777,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 76.88,
+    "deterministic": 4.0,
+    "conflicts": 17119,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 159.98,
+    "deterministic": 3.973,
+    "conflicts": 9658,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   31.8,
+   99.2
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g3-m0-s2-t5",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 330,
+   "groupConflicts": 404,
+   "teachers": 50,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 5,
+   "termRequirements": 60,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 448.08,
+  "deterministicSeconds": 8.087,
+  "conflicts": 41692,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 329.49,
+    "deterministic": 4.087,
+    "conflicts": 9237,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 117.24,
+    "deterministic": 4.0,
+    "conflicts": 32455,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   85.7,
+   67.8
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g3-m0-s2-b",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 141,
+   "lessons": 270,
+   "groupConflicts": 404,
+   "teachers": 50,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 3,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 9
+  },
+  "status": "FIRST_SCHEDULE",
+  "conflictCodes": [],
+  "firstScheduleSeconds": 8.65,
+  "firstScheduleDeterministic": 0.26,
+  "totalSeconds": 8.65,
+  "deterministicSeconds": 0.26,
+  "conflicts": 1350,
+  "stages": {
+   "PRECHECKS": 0.19,
+   "BUILD": 0.14,
+   "SEARCH_CLEAN": 8.32
+  },
+  "searches": [
+   {
+    "status": "OPTIMAL",
+    "seconds": 8.32,
+    "deterministic": 0.26,
+    "conflicts": 1350,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   80.2,
+   83.1
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n12-g6-m0-s2-h",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 12,
+   "pupils": 264,
+   "requirements": 165,
+   "lessons": 294,
+   "groupConflicts": 1714,
+   "teachers": 107,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 6,
+   "languageGroups": 9,
+   "termSubjects": 0,
+   "termRequirements": 0,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 257.7,
+  "deterministicSeconds": 8.001,
+  "conflicts": 39365,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 132.89,
+    "deterministic": 4.001,
+    "conflicts": 18370,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 123.9,
+    "deterministic": 4.0,
+    "conflicts": 20995,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   83.1,
+   72.8
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n6-g10-m0-s2-t5-h",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 6,
+   "pupils": 132,
+   "requirements": 84,
+   "lessons": 192,
+   "groupConflicts": 1062,
+   "teachers": 75,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 10,
+   "languageGroups": 6,
+   "termSubjects": 5,
+   "termRequirements": 42,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 220.17,
+  "deterministicSeconds": 8.0,
+  "conflicts": 63019,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 115.03,
+    "deterministic": 4.0,
+    "conflicts": 26721,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 104.78,
+    "deterministic": 4.0,
+    "conflicts": 36298,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   83.2,
+   80.2
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ },
+ {
+  "name": "n9-g10-m0-s2-t5-h",
+  "facts": {
+   "corpusVersion": 1,
+   "classes": 9,
+   "pupils": 198,
+   "requirements": 126,
+   "lessons": 288,
+   "groupConflicts": 2325,
+   "teachers": 112,
+   "sharedTeachers": 0,
+   "sharedTeachersAsked": 0,
+   "groupSubjects": 10,
+   "languageGroups": 9,
+   "termSubjects": 5,
+   "termRequirements": 63,
+   "blockedRequirements": 0
+  },
+  "status": "TIMEOUT",
+  "conflictCodes": [
+   "TIGHT_WEEK_LOAD"
+  ],
+  "firstScheduleSeconds": null,
+  "firstScheduleDeterministic": null,
+  "totalSeconds": 314.65,
+  "deterministicSeconds": 8.002,
+  "conflicts": 15793,
+  "stages": {},
+  "searches": [
+   {
+    "status": "UNKNOWN",
+    "seconds": 150.03,
+    "deterministic": 4.001,
+    "conflicts": 6435,
+    "firstOnly": false
+   },
+   {
+    "status": "UNKNOWN",
+    "seconds": 162.43,
+    "deterministic": 4.0,
+    "conflicts": 9358,
+    "firstOnly": false
+   }
+  ],
+  "load": [
+   71.5,
+   48.0
+  ],
+  "mode": "count",
+  "deterministicBudget": 4.0,
+  "seed": 1
+ }
+]

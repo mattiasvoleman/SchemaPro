@@ -7190,11 +7190,11 @@ has found one for the 877-lesson school. This section is the measuring stick tha
 
 Two modes. **`clock`** is how production runs: every core, wall-clock seconds, comparable only on one machine at one load (every result carries the
 load average). **`count`** is one worker and a fixed seed, so CP-SAT repeats the same search exactly, with the budget in CP-SAT's *deterministic* time
-(operations counted, not seconds: the same on every machine) and a wall-clock limit forty times the budget as a safety that never binds.
+(operations counted, not seconds: the same on every machine) and a wall-clock limit a thousand times the budget as a safety that never binds: a search that ends before 95 % of its deterministic budget is an `ERROR` (`WALL_LIMIT_BEFORE_BUDGET`), never a TIMEOUT, because a verdict the host's load decided is not count mode's (the first sweep's 40-times limit decided 13 of its 33 TIMEOUTs at load 55–119; they were measured again, and all 13 are real).
 
 ### 35.2 What the first measurement says: limits a school can read
 
-Measured 2026-11-22 (the record, tables and conditions are in docs/solve-corpus-measurement.md): the `sweep` profile, 68 weeks, count mode, a budget of 4 deterministic seconds a
+Measured 2026-11-22 (the record, tables and conditions are in docs/solve-corpus-measurement.md, the data in docs/solve-corpus-measurement.json): the `sweep` profile, 68 weeks, count mode, a budget of 4 deterministic seconds a
 search. **Seconds are estimates** ("within" is the slowest week of the row): the work times 18 s per deterministic second, which is what one worker took on this Mac when it was quiet (11 weeks, 8–25). By that figure the budget is
 about 72 s a search and 144 s for a solve's two searches, close to production's 180 s, so "no timetable" means *none in about what production gives a run, on one core of this machine*.
 **Production's processor is not measured** (§35.5), and neither is an eight-core run of the weeks one worker gave up on.
