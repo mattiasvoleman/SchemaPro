@@ -69616,6 +69616,14 @@ ROLLBACK;
 -- tabellens övriga. Här läses kolumnen och kontrollen ur katalogen, kontrollens kanter prövas som schemaläggaren (hennes arm skriver raden),
 -- den villkorade skrivning gatewayen gör (tag över analysen som är RUNNING, skriv bara över den man själv startade) prövas som den står i
 -- koden, och PostgREST:s roll och en lärare läser inga förslag alls.
+--
+-- VEM SOM FÅR LÄSA KOLUMNEN. Tabellens rättigheter gäller den, ingen kolumn har en egen lista. API:ts roll läser och skriver den genom de fyra
+-- administratörsarmarna. PostgREST:s roll (authenticated) har tabellens rättigheter men ingen arm, så raderna den ser är noll: radsäkerheten
+-- döljer kolumnen, en rättighet gör det inte. service_role läser allt (den går förbi radsäkerheten) men skriver inget. anon, en begäran utan
+-- token, och supabase_auth_admin har ingen rättighet alls, och för dem ska svaret vara en vägran (42501), inte en tom lista: tom är också vad
+-- radsäkerheten ger en roll som har fått tabellen på nytt, och det är den regression som ska fångas (jämför section 14). Rollerna den här
+-- anslutningen kan bli prövas på riktigt (supabase_auth_admin, scripts/db-init/02-auth-hook-stand-in.sql), de den inte kan bli (anon,
+-- service_role) i katalogen.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -69768,7 +69776,46 @@ BEGIN
   IF n <> 0 THEN RAISE EXCEPTION 'ag 565: as PostgREST''s role the schemaläggare wrote % analysis(es)', n; END IF;
   SET LOCAL ROLE app_authenticated;
 
-  RAISE NOTICE 'ag 565: the suggestions column and its check hold at their edges, the claim and the write are the one press''s, and nobody but the API''s role reads or writes it';
+  -- Katalogen: ingen lista på kolumnen, och rättigheterna roll för roll. Bara SELECT och UPDATE frågas efter, så det som Postgres 17 lägger till
+  -- i ALL (MAINTAIN) inte ändrar något.
+  SELECT a.attacl::text INTO got FROM pg_attribute a WHERE a.attrelid = 'public."OptimizationJobs"'::regclass AND a.attname = 'suggestions';
+  IF got IS NOT NULL THEN
+    RAISE EXCEPTION 'ag 565: the suggestions column has a privilege list of its own: %', got;
+  END IF;
+  SELECT string_agg(r.role || ' read=' || CASE WHEN has_column_privilege(r.role, 'public."OptimizationJobs"', 'suggestions', 'SELECT') THEN 'yes' ELSE 'no' END
+                    || ' write=' || CASE WHEN has_column_privilege(r.role, 'public."OptimizationJobs"', 'suggestions', 'UPDATE') THEN 'yes' ELSE 'no' END,
+                    ', ' ORDER BY r.n) INTO got
+    FROM unnest(ARRAY['anon', 'authenticated', 'app_authenticated', 'service_role', 'supabase_auth_admin']) WITH ORDINALITY AS r(role, n);
+  IF got IS DISTINCT FROM 'anon read=no write=no, authenticated read=yes write=yes, app_authenticated read=yes write=yes, '
+                       || 'service_role read=yes write=no, supabase_auth_admin read=no write=no' THEN
+    RAISE EXCEPTION 'ag 565: who may read and write the suggestions is: %', got;
+  END IF;
+
+  -- En roll utan rättighet får en vägran, inte en tom lista. RAISE inne i blocket är ingen insufficient_privilege, men fångas ändå av
+  -- WHEN OTHERS, så svaret läses ur SQLSTATE: allt utom 42501, också "inget fel" och noll rader, fäller körningen.
+  SET LOCAL ROLE supabase_auth_admin;
+  IF current_user <> 'supabase_auth_admin' THEN RAISE EXCEPTION 'ag 565: running as %, not supabase_auth_admin', current_user; END IF;
+  BEGIN
+    PERFORM "suggestions" FROM "OptimizationJobs";
+    got := 'no error';
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM '42501' THEN
+    RAISE EXCEPTION 'ag 565: a role with no grant reading the suggestions got %, not a refusal (42501)', got;
+  END IF;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "suggestions" = '{}'::jsonb;
+    got := 'no error';
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM '42501' THEN
+    RAISE EXCEPTION 'ag 565: a role with no grant writing the suggestions got %, not a refusal (42501)', got;
+  END IF;
+  SET LOCAL ROLE app_authenticated;
+
+  RAISE NOTICE 'ag 565: the suggestions column and its check hold at their edges, the claim and the write are the one press''s, the API''s role alone reads and writes it through the arms, and a role with no grant is refused (42501)';
 END $$;
 SET LOCAL ROLE app_authenticated;
 ROLLBACK;
