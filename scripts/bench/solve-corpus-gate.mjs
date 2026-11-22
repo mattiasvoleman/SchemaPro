@@ -44,7 +44,7 @@
  * printed beside the verdict, deciding nothing.
  */
 
-import { readFileSync, appendFileSync } from 'node:fs';
+import { readFileSync, appendFileSync, realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 /** The geometric mean of head / floor over the weeks both solve, at most. */
@@ -222,6 +222,7 @@ function main() {
   return exitCodeOf(verdict);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// The real path: through a symbolic link (macOS's /tmp is one) the two would differ and nothing would run.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   process.exit(main());
 }

@@ -8,6 +8,10 @@
  */
 
 import { test } from 'node:test';
+import { mkdtempSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import {
   CLEARLY_INSIDE,
@@ -148,4 +152,13 @@ test('the same week read differently by the two trees is invalid: a ratio of two
   // A week a tree answers ERROR for has no facts to compare, and is the verdict's own business.
   const error = head.map((row) => (row.name === 'n9-m0' ? { ...row, status: 'ERROR', facts: { corpusVersion: 1 } } : row));
   assert.equal(invalidReason(error, head), null);
+});
+
+test('run through a symbolic link the script still runs (it said nothing and exited 0 when its guard compared the link with the real path)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'link-'));
+  const link = join(dir, 'solve-corpus-gate.mjs');
+  symlinkSync(new URL('./solve-corpus-gate.mjs', import.meta.url).pathname, link);
+  const run = spawnSync(process.execPath, [link], { encoding: 'utf8' });
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /usage/);
 });

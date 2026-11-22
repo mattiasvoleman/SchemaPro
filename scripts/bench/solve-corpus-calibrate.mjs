@@ -39,7 +39,7 @@
  * corpus's own, built from no school's data.
  */
 
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { loadavg } from 'node:os';
 import { pathToFileURL } from 'node:url';
 
@@ -268,6 +268,7 @@ async function main(argv = process.argv.slice(2)) {
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// The real path: through a symbolic link (macOS's /tmp is one) the two would differ and nothing would run.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   process.exit(await main());
 }

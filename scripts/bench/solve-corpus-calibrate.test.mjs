@@ -10,10 +10,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, symlinkSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { LADDER, compare, convert, measureWeek, reportOf, timingOf, withSearch, workAt } from './solve-corpus-calibrate.mjs';
 
 const KEY = 'a-key-that-must-never-appear-in-an-output';
@@ -174,4 +174,13 @@ test('convert gives seconds per deterministic second from a probe\'s conflicts a
   assert.deepEqual(result.rows.map((r) => [r.name, r.work, r.secondsPerWork]), [['a', 0.75, 26.7], ['b', 0.5, 20], ['c', null, null]]);
   assert.equal(result.secondsPerWork, 23.4);
   assert.equal(result.cores, 4);
+});
+
+test('run through a symbolic link the script still runs (it said nothing and exited 0 when its guard compared the link with the real path)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'link-'));
+  const link = join(dir, 'solve-corpus-calibrate.mjs');
+  symlinkSync(new URL('./solve-corpus-calibrate.mjs', import.meta.url).pathname, link);
+  const run = spawnSync(process.execPath, [link], { encoding: 'utf8' });
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /usage/);
 });
