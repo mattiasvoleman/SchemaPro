@@ -903,6 +903,27 @@ export interface ConflictDetail {
   resourceNames?: string[];
 }
 
+/**
+ * Where a run that ran out of time spent it and how far its search got (omgång 13, M2; the gateway's TimeoutReportView). Measured,
+ * never a rule: `conflicts` and `branches` are the work CP-SAT did and not how near it came, and a search for a timetable has no
+ * bound to report.
+ */
+export interface TimeoutReport {
+  totalSeconds: number;
+  /** What the search was given, and what the engine is set to give a run of this kind. */
+  budgetSeconds: number;
+  configuredBudgetSeconds: number;
+  /** How long the caller said it waits; null when it did not say. */
+  callerWaitSeconds: number | null;
+  stages: { stage: "PRECHECKS" | "BUILD" | "SITES" | "SEARCH_CLEAN" | "SEARCH_CLONE" | "PROBE"; seconds: number }[];
+  search: {
+    solutions: number;
+    phases: { phase: "CLEAN" | "CLONE"; seconds: number; conflicts: number | null; branches: number | null }[];
+  };
+  /** The year's week load stopped at its deadline before every year was counted: a year with no row was NOT counted. */
+  weekLoadCut: boolean;
+}
+
 export interface OptimizationJob {
   id: string;
   status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
@@ -961,6 +982,11 @@ export interface OptimizationJob {
    * is the year's batch.
    */
   supersededBy?: { appliedAt: string; ordinal: number | null; variant: string | null; runId: string | null } | null;
+  /**
+   * Where a run that ran out of time spent it, or null: every other run, a TIMEOUT from an engine older than the field, and every
+   * run before it. Absent from a gateway before it. The page then says what a TIMEOUT has always said.
+   */
+  report?: TimeoutReport | null;
   createdAt: string;
   finishedAt: string | null;
 }

@@ -564,6 +564,81 @@ describe("a run that hit the time limit", () => {
     expect(screen.getByText("conflictCategories.TIMEOUT_PROBE")).toBeInTheDocument();
     expect(screen.getByText(/changeoverMinutes\) set to 0/)).toBeInTheDocument();
   });
+
+  /*
+   * Omgång 13, M2: a run that ran out of time says where the time went, how far the search got, the likely cause and the next step
+   * (timeout-account.tsx, behind a lazy import), from the engine's report. A run without one says what it always said.
+   */
+  describe("and says where the time went", () => {
+    const timedOut = (over: Record<string, unknown> = {}) => ({
+      id: "job-t",
+      status: "SUCCEEDED",
+      solverStatus: "TIMEOUT",
+      lessonsGenerated: 0,
+      conflictSummary: null,
+      conflictSummaryCode: null,
+      conflicts: [],
+      createdAt: "2026-11-21T08:00:00.000Z",
+      finishedAt: "2026-11-21T08:03:10.000Z",
+      report: {
+        totalSeconds: 109,
+        budgetSeconds: 100,
+        configuredBudgetSeconds: 100,
+        callerWaitSeconds: null,
+        stages: [
+          { stage: "BUILD", seconds: 4 },
+          { stage: "SEARCH_CLEAN", seconds: 60 },
+        ],
+        search: { solutions: 0, phases: [{ phase: "CLEAN", seconds: 60, conflicts: 12, branches: 34 }] },
+        weekLoadCut: false,
+      },
+      ...over,
+    });
+
+    it("draws the account in place of the one-sentence hint", async () => {
+      state.job = timedOut();
+      render(<GeneratePage />);
+
+      expect(await screen.findByRole("heading", { name: "generate.timeoutAccount.title" })).toBeInTheDocument();
+      expect(screen.getByText("generate.timeoutAccount.stage(BUILD|4)")).toBeInTheDocument();
+      expect(screen.queryByText("generate.timeoutHint")).toBeNull();
+    });
+
+    it("hands the account the run's rows, so that the tight years it lists are the ones the arithmetic found", async () => {
+      state.job = timedOut({
+        conflicts: [
+          { category: "REQUIREMENT_DEMAND", code: "TIGHT_WEEK_LOAD", message: "…", params: { grades: "8", percent: 93 }, resourceNames: [] },
+        ],
+      });
+      render(<GeneratePage />);
+
+      expect(await screen.findByText("generate.timeoutAccount.tightYear(8|93)")).toBeInTheDocument();
+    });
+
+    it("says the hint, as it always did, when the run carries no report: an older engine, a run from before the field", () => {
+      state.job = timedOut({ report: null });
+      render(<GeneratePage />);
+
+      expect(screen.getByText("generate.timeoutHint")).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "generate.timeoutAccount.title" })).toBeNull();
+    });
+
+    it("says the hint of a gateway that has no such field at all", () => {
+      const { report: _none, ...without } = timedOut();
+      state.job = without;
+      render(<GeneratePage />);
+
+      expect(screen.getByText("generate.timeoutHint")).toBeInTheDocument();
+    });
+
+    it("draws no account for a run that did not run out of time, even one that carries a report", () => {
+      state.job = timedOut({ solverStatus: "INFEASIBLE" });
+      render(<GeneratePage />);
+
+      expect(screen.queryByRole("heading", { name: "generate.timeoutAccount.title" })).toBeNull();
+      expect(screen.queryByText("generate.timeoutHint")).toBeNull();
+    });
+  });
 });
 
 describe("a refusal that names classes", () => {
