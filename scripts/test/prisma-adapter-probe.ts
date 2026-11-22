@@ -106,6 +106,7 @@ import { YearRolloverService } from '../../src/year-rollover/year-rollover.servi
 import { StaffingRolloverService } from '../../src/year-rollover/staffing-rollover.service';
 import { TeacherEmploymentsService, rethrowPeriodError } from '../../src/staffing/teacher-employments.service';
 import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
+import { readScopeVersions } from '../../src/staffing/assignment-scope-reader';
 import { lockStaffRow } from '../../src/staffing/staff-lock';
 import { countHomePupils, rostersOfYear, type RosterBasis } from '../../src/year-rollover/projected-rosters';
 import { loadRosters } from '../../src/optimization/room-eligibility';
@@ -4933,10 +4934,21 @@ async function runChecks(
       // rows of two tables, the year's first day picks one or none, and the block is cut to the teacher's own row.
       assert.ok(load.scope, 'the load report carries the ordinance\'s omfattning');
       assert.ok(load.scope.teachers.every((row) => row.userId === who.id), 'a teacher reads their own omfattning and nobody else\'s');
-      assert.ok(
-        load.scope.version === null || load.scope.version.code === 'SFS2026:1487',
-        `the only lydelse there is is SFS2026:1487, got ${load.scope.version?.code}`,
-      );
+      // The year starts in 2094, long after the ordinance is in force, so the lydelse must COME BACK: a null here is the arm
+      // letting no row through (zero rows are no error), and the block would say "not in force" in a school the ordinance reaches.
+      assert.equal(load.scope.version?.code, 'SFS2026:1487', 'the lydelse did not come back to a teacher through app.current_school_id()');
+      // A year from 2028-07-01 that states no numbering is TIOARIG (the AcademicYears trigger), which the version has no band for;
+      // so the verdict path is not asked here, and the bands are read below, as the teacher and as the administrator.
+      assert.equal(load.scope.yearReason, 'NUMBERING_NOT_COVERED');
+      for (const reader of [principal, tjAdmin]) {
+        const lydelser = await api.withRls(reader, (tx) => readScopeVersions(tx));
+        assert.deepEqual(lydelser.map((one) => one.code), ['SFS2026:1487'], `${reader.role} read the lydelser`);
+        assert.deepEqual(
+          lydelser[0]!.bands.map((band) => [band.schoolForm, band.gradeNumbering, band.gradeFrom, band.gradeTo, band.teachingHoursLow, band.teachingHoursHigh, band.planningFloorPercent]),
+          [['GRUNDSKOLA', 'NIOARIG', 1, 6, 550, 650, 100], ['GRUNDSKOLA', 'NIOARIG', 7, 9, 500, 600, 110]],
+          `${reader.role} read the bands of the lydelse (the second table's own arm)`,
+        );
+      }
     }
     await clearTarget();
 

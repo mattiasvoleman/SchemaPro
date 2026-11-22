@@ -58,7 +58,7 @@ describe('toScopeVersion', () => {
 });
 
 describe('readScopeVersions', () => {
-  it('reads every lydelse with its bands in one statement, oldest first', async () => {
+  it('reads every lydelse with its bands in one call, oldest first', async () => {
     const findMany = jest.fn().mockResolvedValue([row()]);
     const tx = { assignmentScopeVersion: { findMany } } as unknown as PrismaClient;
     const versions = await readScopeVersions(tx);

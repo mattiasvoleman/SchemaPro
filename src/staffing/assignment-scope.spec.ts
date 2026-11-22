@@ -17,7 +17,7 @@ import {
   type LoadInput,
   type LoadRequirement,
 } from './teacher-load';
-import { teachingWeeks } from './teaching-weeks';
+import { teachingWeeks, teachingWeeksByDays } from './teaching-weeks';
 
 /*
  * Undervisningsuppdragets omfattning (SFS 2026:1487). Every expected figure below is worked out by hand from the
@@ -257,6 +257,15 @@ describe('the verdict against the span (3 §)', () => {
     expect(of(scope({ requirements: [row({ lessonsPerWeek: 13, gradeSpan: { min: 7, max: 9 } })] })).verdict).toBe('INSIDE');
   });
 
+  it('says INSIDE far below the lower edge too: the ordinance has no lower limit on teaching ("som mest"), so there is no UNDER', () => {
+    // 3 lessons a week is 129 h against a span of 550-650: not over, so INSIDE, and the lower edge is shown but is no floor.
+    const anna = of(scope({ requirements: [row({ lessonsPerWeek: 3 })] }));
+    expect(anna.teachingHours).toBe(129);
+    expect(anna.fullTimeLowestHours).toBe(550);
+    expect(anna.verdict).toBe('INSIDE');
+    expect(anna.notJudged).toBeNull();
+  });
+
   it('shows the lower edge too, and says INSIDE between the two edges (the rektor\'s call under 8 §)', () => {
     const anna = of(scope({ requirements: [row({ lessonsPerWeek: 13 })] }));
     expect(anna.teachingHours).toBe(559);
@@ -468,5 +477,63 @@ describe('placeSpan', () => {
     expect(placeSpan({ min: 0, max: 0 }, bands)).toEqual({ kind: 'UNREGULATED' });
     expect(placeSpan({ min: 10, max: 12 }, bands)).toEqual({ kind: 'UNREGULATED' });
     expect(placeSpan(null, bands)).toEqual({ kind: 'UNKNOWN' });
+  });
+});
+
+describe('school days, not touched weeks (a läsår need not start on a Monday)', () => {
+  // The same lessons are the same hours whatever weekday the läsår is entered to start on: ISO week 33 of 2026 (10-16 August)
+  // holds no school day of a year that starts on Saturday 15 August, and teachingWeeks charges it whole. 15 lessons of 60 minutes
+  // are 15 hours a week over the 43 weeks from Monday 17 August, 645 h, and not 660.
+  const startingOn = (startDate: string, endDate = '2027-06-11') => ({ startDate, endDate });
+
+  it.each(['2026-08-15', '2026-08-16', '2026-08-17'])('counts 645 h for a year that starts on %s', (startDate) => {
+    const anna = of(scope({ year: startingOn(startDate) }));
+    expect(anna.teachingHours).toBe(645);
+    expect(anna.verdict).toBe('INSIDE');
+  });
+
+  it('keeps a teacher at 17.5 hours a week inside the ordinance whether the year starts on Saturday or Monday: 17.5 h × 37 weeks = 647.5 h', () => {
+    // Six lov weeks out of the 43: 37 school weeks. 1 050 minutes a week is 647.5 h; with a week before the first Monday it was 665 h.
+    const lov = [
+      { startDate: '2026-10-26', endDate: '2026-10-30' },
+      { startDate: '2026-12-21', endDate: '2027-01-08' },
+      { startDate: '2027-02-22', endDate: '2027-02-26' },
+      { startDate: '2027-04-05', endDate: '2027-04-09' },
+    ];
+    const rows = [row({ lessonsPerWeek: 21, minutesPerLesson: 50 })];
+    for (const startDate of ['2026-08-15', '2026-08-17']) {
+      const anna = of(scope({ year: startingOn(startDate), requirements: rows, closures: lov }));
+      expect(anna.teachingHours).toBe(647.5);
+      expect(anna.verdict).toBe('INSIDE');
+    }
+  });
+
+  it('gives a week the fraction of its school days that are in the year: a Wednesday start has three of five', () => {
+    // 42 whole weeks and 3/5 of the first: 42.6 × 15 h = 639 h.
+    expect(of(scope({ year: startingOn('2026-08-19') })).teachingHours).toBe(639);
+    // Ending on a Monday adds the one day: 43.2 × 15 h = 648 h.
+    expect(of(scope({ year: startingOn('2026-08-17', '2027-06-14') })).teachingHours).toBe(648);
+  });
+
+  it('does not count a varannan-vecka row in a week that holds no school day: 2 × 60 min × 22 odd weeks is 44 h from a Saturday start too', () => {
+    const odd = row({ lessonsPerWeek: 2, recurrence: 'ODD_WEEKS', subjectId: 'no' });
+    expect(of(scope({ year: startingOn('2026-08-15'), requirements: [odd] })).teachingHours).toBe(44);
+    expect(of(scope({ year: startingOn('2026-08-17'), requirements: [odd] })).teachingHours).toBe(44);
+  });
+
+  it('is teachingWeeks wherever the window runs from a Monday to a Friday, lov and recurrence and all', () => {
+    const year = { startDate: '2026-08-17', endDate: '2027-06-11' };
+    const closures = [
+      { startDate: '2026-10-26', endDate: '2026-10-30' },
+      { startDate: '2026-12-23', endDate: '2027-01-08' },
+      { startDate: '2027-03-03', endDate: '2027-03-03' },
+    ];
+    for (const recurrence of ['ALL_WEEKS', 'ODD_WEEKS', 'EVEN_WEEKS'] as const) {
+      for (const [startDate, endDate] of [[null, null], ['2026-08-17', '2026-12-18'], ['2027-01-11', '2027-06-11'], ['2026-09-07', '2027-02-05']] as const) {
+        const period = { recurrence, startDate, endDate };
+        expect(teachingWeeksByDays(period, year, closures, 5)).toBeCloseTo(teachingWeeks(period, year, closures, 5), 10);
+        expect(teachingWeeksByDays(period, year, [], null)).toBeCloseTo(teachingWeeks(period, year, [], null), 10);
+      }
+    }
   });
 });

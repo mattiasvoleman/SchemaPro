@@ -11,7 +11,7 @@ import {
   type LoadInput,
   type TeacherLoadReport,
 } from './teacher-load';
-import { teachingWeeks } from './teaching-weeks';
+import { teachingWeeksByDays } from './teaching-weeks';
 
 /*
  * Undervisningsuppdragets omfattning: what the ordinance on the extent of a teacher's teaching assignment
@@ -28,6 +28,10 @@ import { teachingWeeks } from './teaching-weeks';
  *     undervisning under the ordinance; mentorskap lies outside the assignment altogether (prop. 2025/26:196 s. 41).
  *   * PLANNED, NOT HELD. A vikariat is a lesson the planned rows do not hold; the ordinance's 11 § p. 2 (a few hours a term)
  *     therefore needs no record.
+ *   * SCHOOL DAYS, NOT TOUCHED WEEKS. The report charges a week whole when the year (or a row's dates) covers any day of it,
+ *     which is right for a standard week. An annual figure counts the Mon-Fri days that are in the window (teachingWeeksByDays),
+ *     so a läsår that starts on a Saturday does not hold a week of lessons before its first Monday: 15 lessons of 60 minutes are
+ *     the same hours in a year that starts on Saturday 14 August as in one that starts on Monday the 16th.
  *
  * THE SPAN IS NOT A CAP (3 §, 8 §). "Som mest vara inom intervallet 550-650" puts the teacher's OWN highest level somewhere
  * in the span, and the rektor decides where. Only the upper edge is a limit, so only the upper edge is a verdict:
@@ -99,6 +103,13 @@ export type ScopeNotJudged =
 /** Why a year has no verdict for anybody. */
 export type ScopeYearReason = 'NOT_IN_FORCE' | 'NUMBERING_NOT_COVERED';
 
+/**
+ * OVER_MAX: over the ordinance's upper edge for the teacher (3 §), the one limit there is.
+ * OVER_OWN: over the teacher's own level (8 §) but not over the ordinance's.
+ * INSIDE: NOT OVER, at or under the upper edge. That includes a teacher far BELOW the span's lower edge: the ordinance says "som
+ *   mest" and has no lower limit on teaching, so there is no UNDER, and a screen must not read INSIDE as "within 550-650 hours".
+ * NOT_JUDGED: hours and no verdict (notJudged, or the year's yearReason says why).
+ */
 export type ScopeVerdict = 'OVER_MAX' | 'OVER_OWN' | 'INSIDE' | 'NOT_JUDGED';
 
 /** Hours in one band of the version, for one teacher. */
@@ -107,7 +118,7 @@ export interface ScopeStageHours {
   gradeTo: number;
   /** Teaching hours in the stage, one decimal. */
   hours: number;
-  /** The span's upper and lower edge for a full-time teacher, as the band states them. */
+  /** The span's upper and lower edge for a full-time teacher, as the band states them. The lower edge is no floor for teaching. */
   teachingHoursLow: number;
   teachingHoursHigh: number;
   planningFloorPercent: number;
@@ -131,7 +142,10 @@ export interface TeacherScope {
    * stage. Not a percentage of anything: it carries no part-time figure, so it is no HR data.
    */
   fullTimeHighestHours: number | null;
-  /** The lower edge, blended the same way. */
+  /**
+   * The lower edge, blended the same way. NOT a floor for teaching (3 §: "som mest"): a teacher below it is INSIDE. It is the
+   * other end of the range in which the rektor places the teacher's own level (8 §), and nothing a teacher must reach.
+   */
   fullTimeLowestHours: number | null;
   /**
    * The upper edge for THIS teacher: the blended edge × the active share of a full post, or the teacher's own level if
@@ -142,9 +156,17 @@ export interface TeacherScope {
   ordinanceHighestHours: number | null;
   /** Planning and follow-up, at least this many hours. Null when no hour lies in a stage. */
   planningFloorHours: number | null;
-  /** The part of the year's working time left after teaching and every uppdrag, in hours; null unless a full ferietjänst. */
+  /**
+   * The part of the year's working time left after teaching and every uppdrag, in hours; null unless a full ferietjänst. It is
+   * what is LEFT, not what is planned: nothing records the time a teacher puts into planning and follow-up, and meetings and
+   * the rest of the year are not modelled.
+   */
   remainingHours: number | null;
-  /** Whether remainingHours covers planningFloorHours; null where remainingHours is null. */
+  /**
+   * Whether remainingHours covers planningFloorHours; null where remainingHours is null. A NECESSARY condition and never a
+   * sufficient one: false is a certain no (the year cannot hold the floor), true only says the floor is not ruled out and is
+   * never a promise that it is met.
+   */
   planningFits: boolean | null;
 }
 
@@ -202,8 +224,8 @@ interface Hours {
 
 /**
  * Each teacher's teaching hours over the läsår, split by band: the lessons' own minutes (a shared row per teacher's own
- * lessons, a co-teacher the whole row, as the report charges them) over the weeks the row runs, / 60. Never × a
- * teacherLoadPercent, never × a factor.
+ * lessons, a co-teacher the whole row, as the report charges them) over the weeks the row runs, counted in school days, / 60.
+ * Never × a teacherLoadPercent, never × a factor.
  */
 function hoursPerTeacher(input: LoadInput, bands: readonly ScopeBand[]): Map<string, Hours> {
   const hours = new Map<string, Hours>();
@@ -216,7 +238,7 @@ function hoursPerTeacher(input: LoadInput, bands: readonly ScopeBand[]): Map<str
     return h;
   };
   for (const requirement of input.requirements) {
-    const weeks = teachingWeeks(requirement, input.year, input.closures, singleGrade(requirement.gradeSpan));
+    const weeks = teachingWeeksByDays(requirement, input.year, input.closures, singleGrade(requirement.gradeSpan));
     if (weeks === 0) continue;
     const placed = placeSpan(requirement.gradeSpan, bands);
     const parts = teacherPartsOf(requirement).map((part) => ({ userId: part.teacherId, minutes: part.minutes }));

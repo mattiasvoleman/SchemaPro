@@ -6,8 +6,9 @@ import type { ScopeBand, ScopeVersion } from './assignment-scope';
  * read in the caller's own RLS transaction.
  *
  * Global reference data, a handful of rows: every lydelse is read and the year's first day picks one (versionInForce),
- * so no date arithmetic lives in SQL and a year before the ordinance simply finds none. One statement for the lydelser
- * with their bands (Prisma joins a relation read on PostgreSQL), which every report that asks for the scope pays.
+ * so no date arithmetic lives in SQL and a year before the ordinance simply finds none. Two statements, the lydelser and then
+ * their bands (Prisma 7 reads a relation as a statement of its own, and `relationLoadStrategy: 'join'` is not on), which every
+ * report that asks for the scope pays.
  */
 
 type VersionRow = {
