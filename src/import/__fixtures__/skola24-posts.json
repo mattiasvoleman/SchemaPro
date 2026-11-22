@@ -1,0 +1,49 @@
+{
+  "_note": "What the web posts to the gateway for a file from Skola24 (Formatbeskrivare, X3). `file` is a synthetic table as Skola24's page for the staff import describes it (eight columns, no header row, the last the confidential mark); `body` is what web/lib reads out of it: the description skola24-personal-csv, X2's applyMapping with the rows the mark holds back left out, and the teachers' mapper. web/lib/skola24-posts.test.ts REGENERATES `body` from `file` and requires equality; test/import-skola24.e2e-spec.ts posts `body` through the real pipe, controller and ImportService. Change one side and the other fails. `teachersTf` is the same kind of file in the form Skola24's own course files have: TF numbers (ÅÅÅÅMMDDTFnn) in the ID column, and 0 or empty in the confidential mark.",
+  "teachers": {
+    "description": "skola24-personal-csv",
+    "path": "/api/v1/import/teachers",
+    "file": "Testskolan;Avd A;19000103-0001;Åsa;Provsson;ASP;asa.provsson@example.invalid;\r\nTestskolan;Avd B;19000103-0002;Maria;Fiktiv;MFI;maria.fiktiv@example.invalid;1\r\nTestskolan;;19000103-0003;Erik;Exempel;EEX;erik.exempel@example.invalid;\r\n",
+    "body": {
+      "rows": [
+        {
+          "firstName": "Åsa",
+          "lastName": "Provsson",
+          "email": "asa.provsson@example.invalid"
+        },
+        {
+          "firstName": "Erik",
+          "lastName": "Exempel",
+          "email": "erik.exempel@example.invalid"
+        }
+      ],
+      "rowNumbers": [
+        1,
+        3
+      ]
+    }
+  },
+  "teachersTf": {
+    "description": "skola24-personal-csv",
+    "path": "/api/v1/import/teachers",
+    "file": "Testskolan;Avd A;19000103TF01;Åsa;Provsson;ASP;asa.provsson@example.invalid;0\r\nTestskolan;;19000103TF02;Erik;Exempel;;erik.exempel@example.invalid;\r\nTestskolan;Avd B;19000103TF03;Maria;Fiktiv;MFI;maria.fiktiv@example.invalid;1\r\n",
+    "body": {
+      "rows": [
+        {
+          "firstName": "Åsa",
+          "lastName": "Provsson",
+          "email": "asa.provsson@example.invalid"
+        },
+        {
+          "firstName": "Erik",
+          "lastName": "Exempel",
+          "email": "erik.exempel@example.invalid"
+        }
+      ],
+      "rowNumbers": [
+        1,
+        2
+      ]
+    }
+  }
+}
