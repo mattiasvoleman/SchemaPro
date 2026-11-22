@@ -26,6 +26,8 @@ import { encodeText, type LineEnding, type OutputEncoding } from "@/lib/pseudony
  */
 
 const ROUNDS = 250;
+/** 250 rounds of a run each is seconds, not milliseconds: 5 s (vitest's default) is 2.5 times what the CI runner needs and less than a busy laptop does. */
+const SLOW = 60_000;
 
 /** mulberry32: a small, good PRNG from a 32-bit seed. */
 function rng(seed: number) {
@@ -257,7 +259,7 @@ const run = (inputs: ParsedInput[]): Extract<RunResult, { ok: true }> => {
 // ---------------------------------------------------------------------------
 
 describe("property 1: a person is one marker, however they are written, in every file of a run (seed 1301)", () => {
-  it("gives every spelling of a person's personnummer, address, number and name one marker, and two persons never one", async () => {
+  it("gives every spelling of a person's personnummer, address, number and name one marker, and two persons never one", { timeout: SLOW }, async () => {
     const r = rng(1301);
     for (let round = 0; round < ROUNDS; round += 1) {
       const ps = people(r, 6 + r.int(24), true);
@@ -297,7 +299,7 @@ describe("property 1: a person is one marker, however they are written, in every
 const digitsOf = (ps: Person[]): string[] => ps.map((p) => p.ten);
 
 describe("property 2: no personnummer, address, number or known name survives (seed 2302)", () => {
-  it("leaves nothing a search finds, in the decoded bytes of any file, wherever it stood and however it was written", async () => {
+  it("leaves nothing a search finds, in the decoded bytes of any file, wherever it stood and however it was written", { timeout: SLOW }, async () => {
     const r = rng(2302);
     for (let round = 0; round < ROUNDS; round += 1) {
       const ps = people(r, 4 + r.int(20), true);
@@ -392,7 +394,7 @@ describe("property 2: no personnummer, address, number or known name survives (s
 // ---------------------------------------------------------------------------
 
 describe("property 3 and 4: the structure and the form of the file stay (seed 3303)", () => {
-  it("keeps the rows on their numbers, the columns, kept cells and empty ones as they were, and the delimiter, line ending, byte order mark and encoding", async () => {
+  it("keeps the rows on their numbers, the columns, kept cells and empty ones as they were, and the delimiter, line ending, byte order mark and encoding", { timeout: SLOW }, async () => {
     const r = rng(3303);
     for (let round = 0; round < ROUNDS; round += 1) {
       const ps = people(r, 4 + r.int(12), false);
@@ -425,7 +427,7 @@ describe("property 3 and 4: the structure and the form of the file stay (seed 33
 });
 
 describe("property 5: running the safe file through again changes nothing (seed 5305)", () => {
-  it("gives the same text the second time, with the same choices", async () => {
+  it("gives the same text the second time, with the same choices", { timeout: SLOW }, async () => {
     const r = rng(5305);
     for (let round = 0; round < ROUNDS; round += 1) {
       const ps = people(r, 4 + r.int(12), false);

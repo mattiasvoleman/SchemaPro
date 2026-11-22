@@ -62,7 +62,20 @@ function defaultHeaderRow(rows: readonly (readonly string[])[], rowNumbers: read
   const filled = rows.slice(0, CANDIDATES).map((row) => row.filter((cell) => cell.trim() !== "").length);
   const most = Math.max(...filled);
   if (most < 2) return null;
-  return rowNumbers[filled.findIndex((n) => n >= Math.ceil(most * 0.8))]!;
+  const at = filled.findIndex((n) => n >= Math.ceil(most * 0.8));
+  // A header names its columns and never holds a personnummer, an address or a telephone number as a whole cell; a record does. A file with no header row
+  // would otherwise have its first person taken for the header: the names in that row are not collected as known names, the row is searched by shape
+  // only, and "Anna Svensson" in the first row is left standing. The user can still say which row is the header (FileChoices.headerRow).
+  if (rows[at]!.some(isWholePersonalValue)) return null;
+  return rowNumbers[at]!;
+}
+
+/** True when a cell is, as a whole, one personnummer, address or telephone number. */
+function isWholePersonalValue(cell: string): boolean {
+  const trimmed = cell.trim();
+  if (trimmed === "") return false;
+  const found = findPersonalData(trimmed);
+  return found.length === 1 && found[0]!.start === 0 && found[0]!.end === trimmed.length;
 }
 
 export function planFile(input: ParsedInput, headerRow?: number | null): FilePlan {

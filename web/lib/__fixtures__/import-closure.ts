@@ -30,9 +30,19 @@ const BANNED_IDENTIFIERS = new Set([
   "caches",
   "BroadcastChannel",
   "RTCPeerConnection",
+  // A way to run text as code, and the other constructors that fetch what their first argument names: found by trying to get a call past the list above.
+  "eval",
+  "Function",
+  "require",
+  "Image",
+  "Audio",
 ]);
 /** `a.<name>` that is a way out or a store, whatever `a` is: document.cookie, navigator.sendBeacon, navigator.serviceWorker, form.submit(), x.postMessage(). */
-const BANNED_PROPERTIES = new Set(["cookie", "sendBeacon", "serviceWorker", "submit", "postMessage"]);
+const BANNED_PROPERTIES = new Set(["cookie", "sendBeacon", "serviceWorker", "submit", "postMessage", "innerHTML", "outerHTML", "insertAdjacentHTML", "ping"]);
+/** The objects whose properties are the page's globals: `window["fetch"]` and `globalThis[name]` reach what the identifier list names, by a string. */
+const GLOBAL_OBJECT = /\b(window|globalThis|self|top|parent)\b/;
+/** Elements that createElement makes which load or send something; only an anchor (the download) is let through. */
+const ALLOWED_ELEMENT = "a";
 /** Navigating away with data in the address: location.href = …, location.assign(…), location.replace(…). (`anchor.href = blobUrl`, the download, is not this, and `string.replace` is not.) */
 const LOCATION_PROPERTIES = new Set(["href", "assign", "replace", "reload"]);
 /** JSX elements that load, send or frame something. `<a download>` is not one of them. */
@@ -107,6 +117,35 @@ export function closureOf(entries: readonly string[]): Closure {
         findings.push({ file: rel, what: `element <${node.tagName.getText(source)}>` });
       } else if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Image") {
         findings.push({ file: rel, what: "new Image()" });
+      } else if (ts.isNewExpression(node) && /\.(Image|Audio|Function|Worker|WebSocket|EventSource|XMLHttpRequest)$/.test(node.expression.getText(source))) {
+        findings.push({ file: rel, what: `new ${node.expression.getText(source)}()` });
+      } else if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        (node.expression.name.text === "createElement" || node.expression.name.text === "createElementNS") &&
+        !(node.arguments.length === 1 && ts.isStringLiteralLike(node.arguments[0]!) && node.arguments[0]!.text === ALLOWED_ELEMENT)
+      ) {
+        findings.push({ file: rel, what: `createElement(${node.arguments.map((argument) => argument.getText(source)).join(", ")})` });
+      } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "open") {
+        findings.push({ file: rel, what: "open()" });
+      } else if (ts.isPropertyAccessExpression(node) && /^write(ln)?$/.test(node.name.text) && /(^|\.)document$/.test(node.expression.getText(source))) {
+        findings.push({ file: rel, what: `document.${node.name.text}` });
+      } else if (ts.isElementAccessExpression(node) && GLOBAL_OBJECT.test(node.expression.getText(source)) && !ts.isStringLiteralLike(node.argumentExpression)) {
+        findings.push({ file: rel, what: "computed property of the global object" });
+      } else if (
+        ts.isElementAccessExpression(node) &&
+        ts.isStringLiteralLike(node.argumentExpression) &&
+        (BANNED_IDENTIFIERS.has(node.argumentExpression.text) || BANNED_PROPERTIES.has(node.argumentExpression.text))
+      ) {
+        findings.push({ file: rel, what: `["${node.argumentExpression.text}"]` });
+      } else if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        /(^|\.)location(\.[A-Za-z]+)?$/.test(node.left.getText(source)) &&
+        // location.href = … is the rule above's.
+        !(ts.isPropertyAccessExpression(node.left) && LOCATION_PROPERTIES.has(node.left.name.text))
+      ) {
+        findings.push({ file: rel, what: `assignment to ${node.left.getText(source)}` });
       }
       ts.forEachChild(node, visit);
     };

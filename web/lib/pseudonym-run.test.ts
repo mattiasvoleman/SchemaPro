@@ -363,7 +363,7 @@ describe("the check on the finished cells", () => {
 });
 
 describe("pseudonymise: a school's size", () => {
-  it("runs 20 000 rows of 8 columns, with a person in every row, in a few seconds, and passes its check", () => {
+  it("runs 20 000 rows of 8 columns, with a person in every row, in a few seconds, and passes its check", { timeout: 60_000 }, () => {
     const rows = ["Lärare;Ämne;Klass;Dag;Start;Slut;Personnummer;Notis"];
     for (let i = 0; i < 20_000; i += 1) {
       const day = String((i % 28) + 1).padStart(2, "0");

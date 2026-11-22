@@ -153,6 +153,8 @@ export interface ColumnStats {
   /** Different values, counted to a thousand and no further. */
   distinct: number;
   shapes: Record<ValueShape, number>;
+  /** Whole numbers of seven digits or more, counted among the `number` shapes: a telephone number whose leading 0 a spreadsheet dropped (701234567), a personnummer of someone born after 1999 in the same way. */
+  longNumbers: number;
   /** Cells that hold a personnummer or samordningsnummer, an address, a telephone number. */
   withPersonalNumber: number;
   withAddress: number;
@@ -170,6 +172,7 @@ export function columnStats(cells: readonly string[]): ColumnStats {
     filled: 0,
     distinct: 0,
     shapes: { number: 0, time: 0, date: 0, code: 0, word: 0, text: 0 },
+    longNumbers: 0,
     withPersonalNumber: 0,
     withAddress: 0,
     withTelephone: 0,
@@ -180,7 +183,9 @@ export function columnStats(cells: readonly string[]): ColumnStats {
     const cell = raw.trim();
     if (cell === "") continue;
     stats.filled += 1;
-    stats.shapes[shapeOf(cell)] += 1;
+    const shape = shapeOf(cell);
+    stats.shapes[shape] += 1;
+    if (shape === "number" && /^[+-]?\d{7,}$/.test(cell)) stats.longNumbers += 1;
     const found = findPersonalData(cell);
     if (found.some((f) => f.kind === "pnr" || f.kind === "sam")) stats.withPersonalNumber += 1;
     if (found.some((f) => f.kind === "epost")) stats.withAddress += 1;
@@ -215,7 +220,9 @@ export function proposalFor(header: string, stats: ColumnStats): Proposal | null
   if (group !== null) return { treatment: GROUP_TREATMENT[group], reason: "header", detail: group };
   if (stats.filled === 0) return { treatment: KEEP, reason: "values", detail: "empty" };
   const plain = stats.shapes.number + stats.shapes.time + stats.shapes.date;
-  if (plain === stats.filled && stats.withPersonalNumber + stats.withAddress + stats.withTelephone === 0) {
+  // A column of numbers is kept without asking only when none of them is long enough to be somebody's: Excel stores 0701234567 as the number 701234567,
+  // and a column of those under a header the lists do not know (Ring, Kontakt2) was kept, whole, with no choice for the user to make.
+  if (plain === stats.filled && stats.longNumbers === 0 && stats.withPersonalNumber + stats.withAddress + stats.withTelephone === 0) {
     return { treatment: KEEP, reason: "values", detail: "numbers" };
   }
   return null;

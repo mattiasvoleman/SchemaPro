@@ -37,10 +37,18 @@ const PREFIX: Readonly<Record<MarkerKind, string>> = {
 };
 
 /**
+ * The digits of a marker's number: four at least (the book pads to four) and six at most, which is a school with a million different persons. A marker is
+ * what the book hands out, nothing longer: "TEL-0701234567" and "PNR-198001011234" are not markers but a telephone number and a personnummer that
+ * somebody put a prefix on, and an unbounded `\d{4,}` took them for markers: left as they were in a column of personnummer (isMarker), and taken out
+ * of the cell before the check looked at it (leftIn), so that the check could not see them either.
+ */
+export const MARKER_DIGITS = "4,6";
+
+/**
  * Every marker as it stands in text. The sweep for known names and the check on the finished file both take it out first: a marker
  * is made of words a name could be (Text, Sign), and running the pseudonymiser on its own output must change nothing.
  */
-export const MARKER_PATTERN = new RegExp(`\\b(?:PNR|SAM|TEL|NAMN|FORNAMN|EFTERNAMN|SIGN|TEXT)-\\d{4,}\\b|\\bepost-\\d{4,}@${MARKER_DOMAIN.replace(/\./g, "\\.")}`, "gi");
+export const MARKER_PATTERN = new RegExp(`\\b(?:PNR|SAM|TEL|NAMN|FORNAMN|EFTERNAMN|SIGN|TEXT)-\\d{${MARKER_DIGITS}}\\b|\\bepost-\\d{${MARKER_DIGITS}}@${MARKER_DOMAIN.replace(/\./g, "\\.")}`, "gi");
 
 /** True for a text that is exactly one marker: a cell that has been through the pseudonymiser already, which is left as it is. */
 export function isMarker(text: string): boolean {

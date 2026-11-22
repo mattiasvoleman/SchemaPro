@@ -66,6 +66,26 @@ function spellingOf(folded: string, digits: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// The spellings a search looks through
+// ---------------------------------------------------------------------------
+
+/**
+ * The text as telephone numbers and addresses are looked for in it: the same length, character for character, so that a finding's place is the place
+ * in the text it came from. A copy of what personal-number.ts folds before it looks for a personnummer, and the same for the same reason: a number
+ * copied from a web page or a Word file stands with a no-break space (U+00A0) or a narrow one (U+202F) between its groups, an en dash or a
+ * non-breaking hyphen for the hyphen, and a file from a Japanese keyboard in full-width digits. Without it the shape of a personnummer was found in
+ * "070\u00a0123\u00a045\u00a067" and the telephone number "+46\u00a070\u00a0123\u00a045\u00a067" was left standing. A full stop, a slash and an underscore are
+ * NOT made hyphens here (personal-number.ts does): "0.1234567" and "07.08.2026" are told from a number by the full stop.
+ */
+function foldSpellings(text: string): string {
+  return text
+    .replace(/[\uff10-\uff19]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xff10 + 0x30))
+    .replace(/[\s\u00ad\u200b-\u200f\u2060\ufeff]/g, " ")
+    .replace(/[\u2010-\u2015\u2212\ufe58\ufe63\uff0d]/g, "-")
+    .replace(/[\uff20\ufe6b]/g, "@");
+}
+
+// ---------------------------------------------------------------------------
 // E-mail
 // ---------------------------------------------------------------------------
 
@@ -101,13 +121,29 @@ function findAddresses(text: string): { start: number; end: number; key: string 
 /** The reserved top domain the markers' addresses use: nothing can be delivered to it, so it is never somebody's address. */
 export const MARKER_DOMAIN = "exempel.invalid";
 
-/** True for an address the pseudonymiser wrote itself. */
-export const isMarkerAddress = (address: string): boolean => address.toLowerCase().endsWith(`@${MARKER_DOMAIN}`);
+/**
+ * An address as the book writes it: epost-0001@exempel.invalid. Any number of digits, because markerText is a pure function of n and its test
+ * (pseudonym-markers.test.ts) holds that no marker has a shape "whatever the number"; the prefix and the digits alone are what make it one.
+ */
+const MARKER_ADDRESS = new RegExp(`^epost-\\d{4,}@${MARKER_DOMAIN.replace(/\./g, "\\.")}$`, "i");
+
+/**
+ * True for an address the pseudonymiser wrote itself, and for nothing else. Any address that ENDS in @exempel.invalid used to count, so that
+ * "anna.svensson@exempel.invalid" (a name in an address, on a domain that cannot be delivered to but is written by whoever typed it) went through every
+ * search, and the check.
+ */
+export const isMarkerAddress = (address: string): boolean => MARKER_ADDRESS.test(address);
 
 // ---------------------------------------------------------------------------
 // Telephone
 // ---------------------------------------------------------------------------
 
+/**
+ * Two clock times written the way Untis and some Skola24 exports write them, 0800-0845: four digits each, an hour of 00-23 and minutes of 00-59, with a
+ * hyphen, a blank or a slash between. Eight digits that begin with 0 are a national telephone number's length, and every lesson of a timetable was replaced by
+ * TEL-n. A Swedish number does not have two groups of four with a valid time in both: its numbers have nine or ten digits.
+ */
+const TIME_RANGE = /^(?:[01]\d|2[0-3])[0-5]\d[ /-]{1,2}(?:[01]\d|2[0-3])[0-5]\d$/;
 const DATE_LIKE = /^(?:\d{4}-\d{2}-\d{2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})$/;
 /** A date wherever it stands in a text: 2026-08-17, and 17-08-2026 or 17.8.2026 with a year of four digits. */
 const DATE_SPAN = /\d{4}-\d{2}-\d{2}|(?<!\d)\d{1,2}[-/.]\d{1,2}[-/.]\d{4}(?!\d)/g;
@@ -137,7 +173,7 @@ function telephoneKey(candidate: string): string | null {
   const digits = candidate.replace(/\D/g, "");
   const international = candidate.startsWith("+") || digits.startsWith("00");
   if (!international && !digits.startsWith("0")) return null;
-  if (DATE_LIKE.test(candidate)) return null;
+  if (DATE_LIKE.test(candidate) || TIME_RANGE.test(candidate)) return null;
   if (!candidate.startsWith("+") && candidate.includes(".")) return null;
   const national = international ? digits.replace(/^00/, "") : digits;
   if (international ? national.length < 8 || national.length > 15 : national.length < 7 || national.length > 11) return null;
@@ -272,8 +308,9 @@ const PRIORITY: Readonly<Record<FindingKind, number>> = { epost: 0, pnr: 1, sam:
  * samordningsnummer, across two telephone numbers. Letting that one win and dropping the numbers it overlaps left the digits at both ends
  * of them in the text; the property tests found it. Merged, nothing of the span stays, and what is lost is only which of the values it was.
  */
-export function findPersonalData(text: string): Finding[] {
-  if (text.length < 4) return [];
+export function findPersonalData(original: string): Finding[] {
+  if (original.length < 4) return [];
+  const text = foldSpellings(original);
   const all: Finding[] = [];
 
   if (text.includes("@")) {
