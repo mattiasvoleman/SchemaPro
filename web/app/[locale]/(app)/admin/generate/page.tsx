@@ -275,10 +275,28 @@ export default function GeneratePage() {
   /* The year the page shows now, for a check whose answer comes after another year has been chosen (`run` below). */
   const shownYearId = useRef<string | null>(null);
   shownYearId.current = year?.id ?? null;
+  /** The run this page started: the card of the last run is this one's until the läsår is chosen again. */
   const [jobId, setJobId] = useState<string | null>(null);
-  const { data: job } = useOptimizationJob(jobId);
   const historyQuery = useOptimizationHistory(year?.id ?? null);
   const history = historyQuery.data;
+  /*
+   * D9 of Åtgärdsförslag vid vägran: A RELOAD LEAVES THE PAGE WITHOUT THE RUN IT STARTED, and with it the card of what to change, whose
+   * answer was saved on the run. A page with no run of its own shows the year's NEWEST run when it is one that card speaks of (the
+   * gateway offers the analysis for it, or it already holds one), read and polled as if the page had started it.
+   *
+   * SHOWN, NOT TAKEN: this is worked out in every render from the history as it stands, and is never copied into `jobId`. A run taken up
+   * once and kept would go on standing as the last run after the history had been read again and had another run on top of it (another
+   * administrator's Generera that laid a timetable, a newer refusal): an older refusal under a week that has been run since, with a
+   * button the gateway refuses (SUGGESTIONS_RUN_IS_OLD). A year chosen again clears `jobId` (the picker), so the old year's run cannot
+   * stand under the new one, and the new year's newest is shown when its history has been read. A run the gateway does not offer for (a
+   * timetable, an abandoned run, an older gateway) is not shown here, and a run of the page's own is never replaced.
+   */
+  const newestInHistory = history?.[0];
+  const adoptable =
+    newestInHistory !== undefined && (newestInHistory.suggestionsOffered === true || (newestInHistory.suggestions ?? null) !== null)
+      ? newestInHistory.id
+      : null;
+  const { data: job } = useOptimizationJob(jobId ?? adoptable);
   /*
    * Schemaförslag (design §6). A candidate run and a Generera run of the same
    * year would both replace the draft's generated lessons, so each waits for
@@ -486,7 +504,6 @@ export default function GeneratePage() {
    * The newest run of the year, when a reload has left this page without its own job and that run is one whose process
    * went away: the page says so as it does for a run it watched, and offers to run again.
    */
-  const newestInHistory = history?.[0];
   const abandonedBeforeReload =
     job === undefined && newestInHistory?.status === "FAILED" && newestInHistory.errorCode === "ENGINE_RUN_ABANDONED";
   /*

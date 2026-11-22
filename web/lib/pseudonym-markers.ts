@@ -7,7 +7,7 @@
  * not kept: it is the only place the values and their markers stand side by side, and nothing here writes it anywhere.
  *
  * WHAT A MARKER IS. ASCII, with a prefix that says the kind and a number that follows first appearance (the files in order,
- * then row by row): `PNR-0001`, `SAM-0001`, `epost-0001@exempel.invalid`, `TEL-0001`, `NAMN-0001`, `FORNAMN-0001`,
+ * then row by row): `PNR-0001`, `SAM-0001`, `TF-0001`, `epost-0001@exempel.invalid`, `TEL-0001`, `NAMN-0001`, `FORNAMN-0001`,
  * `EFTERNAMN-0001`, `SIGN-0001`, `TEXT-0001`. No marker has the shape of a personnummer, an address that can be delivered to
  * or a telephone number, which the finished file is checked for. A marker is NOT random: the order of the numbers is the order
  * of the file, so a file sorted on surname hands out the alphabetical rank of each person. A weak leak, said in the report;
@@ -69,16 +69,15 @@ export function normaliseText(value: string): string {
   return value.normalize("NFC").replace(/\s+/g, " ").trim().toLocaleLowerCase("sv");
 }
 
-/** The identity of a value within its kind. The text of a personnummer or telephone number is reduced to its digits. */
+/**
+ * The identity of a value within its kind. The text of a personnummer or telephone number is reduced to its digits. A TF number has no case here: its key is made
+ * where it is found (`Finding.key`, ÅÅÅÅMMDDTFNN in upper case, from lib/personal-number.ts or the wide search in pseudonym-detect.ts) and the book is given that, never
+ * the text of a cell, so a branch for it in this function would be one no path reaches (the review of #383, O-2).
+ */
 export function keyOf(kind: MarkerKind, value: string): string {
   if (kind === "pnr" || kind === "sam") {
     const digits = value.replace(/\D/g, "");
     return digits.length >= 10 ? digits.slice(-10) : normaliseText(value);
-  }
-  if (kind === "tf") {
-    // A TF number is its eight digits of date and its two after TF, as lib/personal-number.ts keys it: 19000101-tf01 and 19000101TF01 are one.
-    const folded = value.replace(/[^0-9A-Za-z]/g, "").toUpperCase();
-    return /^\d{8}TF\d{2}$/.test(folded) ? folded : normaliseText(value);
   }
   if (kind === "tel") {
     return /\d/.test(value) ? normaliseTelephone(value) : normaliseText(value);

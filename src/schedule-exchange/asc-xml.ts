@@ -902,8 +902,12 @@ const NOTE_NO_CARDS = 'Filen innehåller inga placerade kort, så det finns inge
 const NOTE_LONG_TERM_NAME = `Namnet på en termin i filen är längre än ${MAX_SPAN_NAME} tecken, så det läses inte som datum; terminen läses som hela läsåret.`;
 const NO_PERSONNUMMER = 'Rastra tar inte emot personnummer.';
 
-/** A field named like a personnummer: dropped unread (CHOICE 19 a). */
-const PERSONNUMMER_LIKE = /personnummer|personnr|pnr|ssn|civic|national[-_ ]?id|samordningsnummer|personal[-_ ]?(?:id|number)/i;
+/**
+ * A field named like a personnummer: dropped unread (CHOICE 19 a). `tf-nummer` is Skola24's name for the number it gives a pupil who has none (X3, 2026-11-22); its value is
+ * refused by what it looks like, and a field that NAMES one is dropped by name as well, for the value written in a form the shape does not know. `tfnr` is not in the list: it is
+ * most often a telephone number (X3 follow-up of the review of #383).
+ */
+const PERSONNUMMER_LIKE = /personnummer|personnr|pnr|ssn|civic|national[-_ ]?id|samordningsnummer|personal[-_ ]?(?:id|number)|tf[-_ ]?nummer/i;
 
 const WEEKDAY_PREFIXES: ReadonlyArray<RegExp> = [/^(mån|mon)/i, /^(tis|tue)/i, /^(ons|wed)/i, /^(tor|thu)/i, /^(fre|fri)/i, /^(lör|sat)/i, /^(sön|sun)/i];
 

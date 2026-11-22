@@ -1157,6 +1157,21 @@ describe('CHOICE 19: no personnummer', () => {
       expect(t9.problems.map((p) => p.code)).toEqual(['ASC_LESSON_REF_UNKNOWN']);
     });
 
+    // Skola24's TF-nummer: the value is refused by its look, and the field is dropped by its NAME as well, so that a value in a form the look does not know is dropped too.
+    // `tfnr` is not a name of one: it is most often a telephone number (the review of #383, L-3 and L-5).
+    it('drops a field named TF-nummer by its name, whatever the value looks like, and leaves a field named tfnr', () => {
+      const value = '19900101 TF 01';
+      const xml = mini({ extra: `<students><student id="X1" classid="C1" name="Pupil" tfnummer="${value}" TF-nummer="${value}" tf_nummer="${value}" tfnr="070 123 45 67"/><tf-nummer><student id="X2" name="Two"/></tf-nummer></students>` });
+      const r = readAscXml(xml);
+      expect(r.problems).toEqual([]);
+      expect(r.lessons).toHaveLength(1);
+      expect(JSON.stringify(r)).not.toContain('1990');
+      expect(JSON.stringify(r)).not.toContain(value);
+      const note = r.notes.find((n) => n.startsWith('Filen har fält som liknar personnummer'))!;
+      expect(note).toBe('Filen har fält som liknar personnummer (TF-nummer, tf_nummer, tfnummer). De läses aldrig och sparas inte.');
+      expect(note).not.toContain('tfnr');
+    });
+
     it('lists at most ten names, sorted, and counts the rest', () => {
       const attrsOf = Array.from({ length: 13 }, (_, i) => `pnr${String(i).padStart(2, '0')}="x"`).join(' ');
       const r = readAscXml(mini({ extra: `<students><student id="X1" ${attrsOf}/></students>` }));

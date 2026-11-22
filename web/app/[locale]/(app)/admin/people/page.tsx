@@ -542,6 +542,32 @@ export default function PeoplePage() {
     if (pupil) setGuardiansFor(pupil);
     setLinkedPupilId(null);
   }, [linkedPupilId, people]);
+  // ?workRule=<work rule id> opens that teacher's Arbetstid with the day's cap in focus, once: the link Generera's card of what to change
+  // gives for a cap that would let a refused week be laid (Åtgärdsförslag vid vägran). Read after mount, as ?guardians= is. The id is
+  // looked up in the rules THIS school has (a row another school's administrator cannot read is not in the list), and an id that is
+  // none of them, or whose teacher is not on this list, opens nothing and says nothing.
+  const [linkedRuleId, setLinkedRuleId] = useState<string | null>(null);
+  const [focusCap, setFocusCap] = useState(false);
+  // Read only by a profile that is offered Arbetstid on the row (writesPlanning): the link is not another way in for a läsare or an expedition.
+  useEffect(
+    () => setLinkedRuleId(writesPlanning ? new URLSearchParams(window.location.search).get("workRule") : null),
+    [writesPlanning],
+  );
+  useEffect(() => {
+    if (!linkedRuleId || !people || !workRules) return;
+    const owner = workRules.find((rule) => rule.id === linkedRuleId)?.userId;
+    const teacher = people.find((person) => person.id === owner);
+    // The row's own condition (MAY_HAVE_WORK_TIME): a rule that outlived its teacher's role is not opened.
+    if (teacher && MAY_HAVE_WORK_TIME.includes(teacher.role)) {
+      setFocusCap(true);
+      setWorkTimeFor(teacher);
+    }
+    setLinkedRuleId(null);
+    // Read once, in the address as well: left in it, the link would open the dialog again at every reload and at every step back to this entry.
+    const rest = new URLSearchParams(window.location.search);
+    rest.delete("workRule");
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${String(rest) ? `?${rest}` : ""}${window.location.hash}`);
+  }, [linkedRuleId, people, workRules]);
   const guardiansQuery = useStudentGuardians(guardiansFor?.id ?? null);
   const studentGuardians = guardiansQuery.data;
   const guardianLinks = useGuardianLinkActions();
@@ -1601,9 +1627,14 @@ export default function PeoplePage() {
           <TeacherWorkTimeDialog
             key={`${workTimeFor.id}:${workRuleOf(workTimeFor.id)?.id ?? "none"}`}
             open
-            onOpenChange={(open) => !open && setWorkTimeFor(null)}
+            onOpenChange={(open) => {
+              if (open) return;
+              setWorkTimeFor(null);
+              setFocusCap(false);
+            }}
             teacher={workTimeFor}
             rule={workRuleOf(workTimeFor.id)}
+            focusCap={focusCap}
           />
         </Suspense>
       ) : null}

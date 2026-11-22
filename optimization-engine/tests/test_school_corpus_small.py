@@ -31,10 +31,7 @@ def test_with_classes_does_not_round_a_number_of_classes_it_cannot_divide() -> N
         corpus.with_classes(corpus.BASE, 9, years=(7, 8, 9, 10))
 
 
-def test_the_gate_profile_says_it_is_empty_and_does_not_measure_nothing() -> None:
-    """A loop over an empty profile is a gate that passes."""
-    if corpus.GATE_SHAPES:
-        assert corpus.profile("gate")
-    else:
-        with pytest.raises(ValueError, match="no weeks yet"):
-            corpus.profile("gate")
+def test_the_gate_profile_has_weeks_and_an_empty_one_would_not_be_measured_as_a_pass() -> None:
+    """A loop over an empty profile is a gate that passes: the profile is the named weeks, never none."""
+    assert corpus.GATE_WEEKS
+    assert [shape.name() for shape in corpus.profile("gate")] == list(corpus.GATE_WEEKS)

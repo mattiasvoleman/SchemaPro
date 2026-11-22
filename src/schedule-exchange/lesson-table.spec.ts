@@ -440,8 +440,8 @@ describe('tableToLessons: personnummer are dropped unread', () => {
     expect(LONG_PNR).toHaveLength(12);
   });
 
-  // Skola24's own files call the column of TF numbers by these names (X3, 2026-11-22): the column is dropped by its name too.
-  it.each(['TF-nummer', 'TFnummer', 'Tfnr', 'TF nr', 'TF-NR', 'Elevens TF-nummer'])('%s: a column of TF numbers is not read, and only its header is named', (name) => {
+  // Skola24's Extens page calls the number "TF-nummer" (X3, 2026-11-22): a column with that name is dropped by its name too.
+  it.each(['TF-nummer', 'TFnummer', 'TF-NUMMER', 'Elevens TF-nummer'])('%s: a column of TF numbers is not read, and only its header is named', (name) => {
     const header = ['Klass/grupp', 'Ämne', name, 'Dag', 'Start', 'Slut'];
     const parsed = tableToLessons([header, ['7A', 'Ma', '19900101TF01', 'Mån', '08:10', '09:10']]);
     expect(parsed.problems).toEqual([]);
@@ -450,12 +450,31 @@ describe('tableToLessons: personnummer are dropped unread', () => {
     expect(JSON.stringify(parsed)).not.toMatch(/1990|TF01/);
   });
 
-  it('does not take a header that only contains the letters for a column of numbers', () => {
-    for (const name of ['TF', 'Tfn', 'Stfnr', 'Tfnrs']) {
+  // "Tfnr" is a common short form of "telefonnummer": no page or file has shown it as the name of a column of TF numbers (the review of #383, L-3).
+  it('does not take a header that only contains the letters for a column of numbers, nor "Tfnr", which is a telephone number', () => {
+    for (const name of ['TF', 'Tfn', 'Stfnr', 'Tfnrs', 'Tfnr', 'TF nr', 'TF-NR']) {
       const header = ['Klass/grupp', 'Ämne', name, 'Dag', 'Start', 'Slut'];
       const parsed = tableToLessons([header, ['7A', 'Ma', 'x', 'Mån', '08:10', '09:10']]);
       expect(parsed.notes.join(' ')).not.toContain('lästes inte: Rastra tar inte emot personnummer');
     }
+  });
+
+  // The header "Tfnr" no longer says personnummer, but a column of TF numbers under it must still not get through: it is a column the reader does not know, so it is not read at all,
+  // and a TF number written into a column that IS read holds its row back (the review of #396: the check that no column that really holds TF numbers passes the door).
+  it.each(['Tfnr', 'TF nr', 'TF-NR'])('%s: a column of TF numbers under it is not read, and its numbers are nowhere in the result', (name) => {
+    const header = ['Klass/grupp', 'Ämne', name, 'Dag', 'Start', 'Slut'];
+    const parsed = tableToLessons([header, ['7A', 'Ma', '19900101TF01', 'Mån', '08:10', '09:10'], ['7B', 'Sv', '19900102TF02', 'Tis', '08:10', '09:10']]);
+    expect(parsed.problems).toEqual([]);
+    expect(parsed.lessons).toHaveLength(2);
+    expect(JSON.stringify(parsed)).not.toMatch(/1990|TF0/);
+  });
+
+  it('holds a row back that has a TF number in a column the reader reads, under the header Tfnr or not', () => {
+    const header = ['Klass/grupp', 'Ämne', 'Tfnr', 'Dag', 'Start', 'Slut'];
+    const parsed = tableToLessons([header, ['7A', 'Ma 19900101TF01', '', 'Mån', '08:10', '09:10'], ['7B', 'Sv', '19900102TF02', 'Tis', '08:10', '09:10']]);
+    expect(parsed.lessons.map((lesson) => lesson.subject)).toEqual(['Sv']);
+    expect(parsed.problems.map((problem) => problem.code)).toEqual(['TABLE_PERSONAL_NUMBER']);
+    expect(JSON.stringify(parsed)).not.toMatch(/1990|TF0/);
   });
 
   it('never echoes the value, not even in the problem of a row that is refused', () => {

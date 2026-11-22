@@ -3,24 +3,35 @@ import en from "@/messages/en.json";
 import sv from "@/messages/sv.json";
 
 /*
- * THE CARD MAY NOT PROMISE WHAT THE PAGE DOES NOT KEEP (omgång 13, G6 del 3, granskning). "Senaste körning" is the run THIS PAGE started
- * (`jobId` in generate/page.tsx): after a reload, or after a switch of year, the page has no run and draws no card, so an answer the
- * gateway stored on the run is not reached until D9 (the page adopting the newest refused run) is built. The line shown while the engine
- * counts cannot say "you can leave the page" until then: a reader who does would come back to nothing and ask for the analysis again.
+ * THE CARD MAY PROMISE WHAT THE PAGE KEEPS, AND NOT MORE (omgång 13, G6, granskningen av #388 M-1 and D9). "Senaste körning" was the run THIS
+ * PAGE started (`jobId` in generate/page.tsx), so a reader who left the page while the engine counted came back to nothing, and the line
+ * shown while it counts could not say "you can leave the page". D9 makes the page take up the year's NEWEST run when it is offered or holds an
+ * analysis, so the line may say it again, and says the condition: the answer is on the run, and it is shown under "Senaste körning" for as
+ * long as the run is the year's newest (another run of the year started meanwhile is the newest instead).
  */
 
 const running = (messages: unknown): string => (messages as { generate: { suggestions: { running: string } } }).generate.suggestions.running;
 
 describe("the line shown while the engine counts", () => {
-  it("does not say that the page may be left, because the answer is not shown to a reader who comes back", () => {
-    expect(running(sv)).not.toMatch(/kan lämna sidan/i);
-    expect(running(en)).not.toMatch(/can leave the page/i);
+  it("says that the page may be left, and where the answer is when the reader comes back", () => {
+    expect(running(sv)).toMatch(/Du kan lämna sidan/);
+    expect(running(sv)).toMatch(/visas under Senaste körning när du kommer tillbaka/);
+    expect(running(en)).toMatch(/You can leave the page/);
+    expect(running(en)).toMatch(/shown under Last run when you come back/);
   });
 
-  it("says to stay on the page, and what happens if the reader does not", () => {
-    expect(running(sv)).toMatch(/Stanna kvar på sidan/);
-    expect(running(sv)).toMatch(/visas inte svaret när du kommer tillbaka/);
-    expect(running(en)).toMatch(/Stay on the page/);
-    expect(running(en)).toMatch(/not shown when you come back/);
+  it("says on what condition: only while the run is the year's newest", () => {
+    expect(running(sv)).toMatch(/så länge körningen är årets senaste/);
+    expect(running(en)).toMatch(/as long as the run is the year's newest/);
+  });
+
+  it("says that the läsår must be the same one: the page does not keep the läsår that was chosen, and a run made for next year is not on the active year", () => {
+    expect(running(sv)).toMatch(/när du kommer tillbaka och har samma läsår valt/);
+    expect(running(en)).toMatch(/when you come back with the same school year chosen/);
+  });
+
+  it("no longer says that the answer is lost, or asks the reader to stay", () => {
+    expect(running(sv)).not.toMatch(/Stanna kvar på sidan|visas inte svaret/);
+    expect(running(en)).not.toMatch(/Stay on the page|not shown when you come back/);
   });
 });

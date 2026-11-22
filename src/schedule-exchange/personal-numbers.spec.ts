@@ -305,7 +305,7 @@ describe('no TF number out of any reader', () => {
 
   it('does not cite a column header that is itself a TF number, nor one that names it, and reads the rest', () => {
     for (const [formName, tf] of Object.entries(TF_FORMS)) {
-      for (const hdr of ['TF-nummer', 'Tfnr', 'TF nr', 'Elevens TF-nummer', tf]) {
+      for (const hdr of ['TF-nummer', 'TFnummer', 'Elevens TF-nummer', tf]) {
         const parsed = upload('TABLE_CSV', [[...header, hdr], [...base, tf]]);
         expect({ form: formName, hdr, leaked: leaks(tf, parsed).map((s) => s.slice(0, 120)) }).toEqual({ form: formName, hdr, leaked: [] });
         expect(parsed.lessons).toHaveLength(1);

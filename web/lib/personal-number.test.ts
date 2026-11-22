@@ -128,14 +128,15 @@ describe("the kind and key of what is found", () => {
 });
 
 describe("a header that says personnummer", () => {
-  it.each(["Personnummer", "Samordningsnummer", "personnr", "PNR", "SSN", "Elevens personnummer", "Personal number", "Civic number", "Social security number", "TF-nummer", "TFnummer", "Tfnr", "TF nr", "Elevens TF-nummer"])(
+  it.each(["Personnummer", "Samordningsnummer", "personnr", "PNR", "SSN", "Elevens personnummer", "Personal number", "Civic number", "Social security number", "TF-nummer", "TFnummer", "Elevens TF-nummer"])(
     "%s is one",
     (header) => {
       expect(isPersonalNumberHeader(normalizeHeader(header))).toBe(true);
     },
   );
 
-  it.each(["Namn", "Klass", "Pnrx", "Session", "Lärare", "Nummer", "Ämnesnr", "TF", "Tfn", "Tfnrs", "Stfnr"])("%s is not", (header) => {
+  // "Tfnr" is a common short form of "telefonnummer", and no Skola24 page or file has shown it as the name of a column of TF numbers (the review of #383, L-3).
+  it.each(["Namn", "Klass", "Pnrx", "Session", "Lärare", "Nummer", "Ämnesnr", "TF", "Tfn", "Tfnr", "TF nr", "TF-NR", "Tfnrs", "Stfnr"])("%s is not", (header) => {
     expect(isPersonalNumberHeader(normalizeHeader(header))).toBe(false);
   });
 });

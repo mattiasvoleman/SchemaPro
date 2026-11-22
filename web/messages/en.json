@@ -1775,7 +1775,7 @@
       "offerTimeout": "Time ran out, so nothing is proved about the week yet. The engine can make a shorter run in which five of the school's own rules may give way, and say whether the week can then be laid and with which changes. It takes about a minute and a half, places no timetable and changes nothing.",
       "offerAction": "Work out suggestions",
       "again": "Work out again",
-      "running": "The engine is working out suggestions. It takes about a minute and a half. Stay on the page: if you leave it, the answer is not shown when you come back.",
+      "running": "The engine is working out suggestions. It takes about a minute and a half. You can leave the page: the answer is saved on the run and shown under Last run when you come back with the same school year chosen, as long as the run is the year's newest.",
       "failed": {
         "ENGINE_LACKS_SUGGESTIONS": "Suggestions cannot be worked out right now: the scheduling engine does not have that function yet. Try again in a few minutes.",
         "ENGINE_BUSY": "The engine is working out suggestions for someone else right now. Try again in a moment.",
@@ -4676,7 +4676,14 @@
       "notAnnual": "May differ from Teaching per school year under Annual working time, which counts whole weeks and applies percentage and factor. This figure is the lessons' own time in school days.",
       "caption": "Computed from the teaching posts: the lessons' own time over the weeks they run, unweighted and without duties. Not the target, which is the school's own measure. Source: {sfs}, in force from {from}.",
       "source": "Read the ordinance",
-      "opensInNewTab": "(opens in a new tab)"
+      "opensInNewTab": "(opens in a new tab)",
+      "own": {
+        "verdictInside": "Not over the ordinance's highest level. The ordinance sets no lowest teaching time, so being below the span breaks nothing in § 3. Where in the span you should lie is the principal's judgement, from group sizes, the number of pupils you meet and pupils needing support (§ 8).",
+        "verdictOverOwn": "Over the level set for you by {over} h, but not over the ordinance's.",
+        "verdictNoPost": "No post registered: the span holds at full time and cannot be scaled by the post, so you are not judged.",
+        "blended": "You teach in several stages, so the span is weighted by hours.",
+        "fitsNotShown": "Whether the annual working time holds the planning floor is not shown here: it is only worked out for a term-time contract."
+      }
     },
     "scopeOverBadge": "Over the ordinance",
     "scopeOverBadgeTitle": "More teaching time than the ordinance's highest level (SFS 2026:1487 § 3). Open the teacher for the figures.",
@@ -11943,7 +11950,7 @@
       "limits": "What the tool cannot judge",
       "limit1": "Names in running text that are not in a name column or in the list of words to remove.",
       "limit2": "E-mail addresses and phone numbers written in words, or split over several cells. Personal identity numbers and TF numbers split over two cells.",
-      "limit3": "Digits written in other characters than ordinary and full-width digits. TF numbers written in any way but ÅÅÅÅMMDDTFnn (one blank or hyphen before TF is fine): for example with blanks between TF and the digits, or with six digits in the date.",
+      "limit3": "Digits written in other characters than ordinary and full-width digits. TF numbers that do not have eight digits in the date and two after TF, for example with six digits in the date, or with more blanks or hyphens between the parts than the tool takes (more than two in the date, more than four around TF). Blanks, hyphens, full stops, slashes, a plus and line breaks around TF and inside the date are found.",
       "limit4": "Columns you chose to keep yourself. Look in the preview at what you keep.",
       "limit5": "Fixed-width formats: the markers are not as long as what they replace, so column positions may shift.",
       "limit6": "The markers' numbers follow the order of the file. A file sorted by surname therefore reveals where in the alphabet a person falls.",

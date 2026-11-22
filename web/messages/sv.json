@@ -1775,7 +1775,7 @@
       "offerTimeout": "Tiden tog slut, så ingenting är bevisat om veckan än. Motorn kan göra en kortare körning där fem av skolans egna regler får ge vika, och säga om veckan då går att lägga och med vilka ändringar. Det tar ungefär en och en halv minut, lägger inget schema och ändrar ingenting.",
       "offerAction": "Räkna fram förslag",
       "again": "Räkna om",
-      "running": "Motorn räknar fram förslag. Det tar ungefär en och en halv minut. Stanna kvar på sidan: lämnar du den visas inte svaret när du kommer tillbaka.",
+      "running": "Motorn räknar fram förslag. Det tar ungefär en och en halv minut. Du kan lämna sidan: svaret sparas på körningen och visas under Senaste körning när du kommer tillbaka och har samma läsår valt, så länge körningen är årets senaste.",
       "failed": {
         "ENGINE_LACKS_SUGGESTIONS": "Förslag kan inte räknas fram just nu: schemamotorn har inte den funktionen än. Försök igen om några minuter.",
         "ENGINE_BUSY": "Motorn räknar fram förslag åt någon annan just nu. Försök igen om en stund.",
@@ -4676,7 +4676,14 @@
       "notAnnual": "Kan skilja sig från Undervisning per läsår under Årsarbetstid, som räknar hela veckor och med procent och faktor. Den här siffran är lektionernas egen tid i skoldagar.",
       "caption": "Räknat ur timplansposterna: lektionernas egen tid över de veckor de löper, oviktad och utan uppdrag. Inte riktmärket, som är skolens eget mått. Källa: {sfs}, i kraft från {from}.",
       "source": "Läs förordningen",
-      "opensInNewTab": "(öppnas i en ny flik)"
+      "opensInNewTab": "(öppnas i en ny flik)",
+      "own": {
+        "verdictInside": "Inte över förordningens högsta nivå. Förordningen sätter ingen lägsta undervisningstid, så att ligga under spannet är ingen överträdelse av 3 §. Var i spannet du ska ligga bedömer rektorn utifrån gruppernas storlek, antalet elever du möter och elever i behov av stöd (8 §).",
+        "verdictOverOwn": "Över den nivå som är satt för dig med {over} h, men inte över förordningens.",
+        "verdictNoPost": "Ingen tjänst registrerad: spannet gäller vid heltid och kan inte skalas efter tjänstens omfattning, så du prövas inte.",
+        "blended": "Du undervisar i flera stadier, så spannet är viktat efter timmar.",
+        "fitsNotShown": "Om årsarbetstiden rymmer planeringens golv visas inte här: det räknas bara för en ferietjänst."
+      }
     },
     "scopeOverBadge": "Över förordningen",
     "scopeOverBadgeTitle": "Mer undervisningstid än förordningens högsta nivå (SFS 2026:1487 3 §). Öppna läraren för siffrorna.",
@@ -11943,7 +11950,7 @@
       "limits": "Det verktyget inte kan bedöma",
       "limit1": "Namn i löpande text som inte finns i en namnkolumn eller i listan över ord som ska bort.",
       "limit2": "E-postadresser och telefonnummer skrivna med ord, eller delade över flera celler. Personnummer och TF-nummer delade över två celler.",
-      "limit3": "Siffror skrivna med andra tecken än vanliga siffror och helbredd-siffror. TF-nummer skrivna på annat sätt än ÅÅÅÅMMDDTFnn (ett blanksteg eller bindestreck före TF går bra): till exempel med blanksteg mellan TF och siffrorna, eller med sex siffror i datumet.",
+      "limit3": "Siffror skrivna med andra tecken än vanliga siffror och helbredd-siffror. TF-nummer som inte har åtta siffror i datumet och två efter TF, till exempel med sex siffror i datumet, eller med fler blanksteg eller bindestreck mellan delarna än verktyget tar (mer än två i datumet, mer än fyra kring TF). Blanksteg, bindestreck, punkt, snedstreck, plus och radbrytning kring TF och i datumet hittas.",
       "limit4": "Kolumner du själv har valt att behålla. Titta i förhandsvisningen på det du behåller.",
       "limit5": "Fast breddformat: märkena är inte lika långa som det de ersätter, så kolumnpositioner kan ändras.",
       "limit6": "Märkenas nummer följer ordningen i filen. En fil sorterad på efternamn avslöjar därför vilken plats i bokstavsordningen en person har.",

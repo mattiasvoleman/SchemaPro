@@ -473,10 +473,22 @@ const TF_BETWEEN = ["", "", "", "-", " ", "/", "_", ".", " ", "​", "–"] as 
 /** The letters in any case, and full-width as the digits can be (the door folds both: the TF PR's review, 2026-11-22). */
 const TF_LETTERS = ["TF", "TF", "tf", "Tf", "tF", "ＴＦ", "ｔｆ"] as const;
 
-/** One of the spellings of a TF number that the door counts (the table in the TF PR): the case, the separator, full-width digits. */
+/**
+ * What may stand in the spellings only the pseudonymiser's wide search counts (lib/pseudonym-detect.ts, findLooseTfNumbers; the follow-up to the TF PR): one or two blanks or hyphens
+ * between year, month and day, up to four blanks, hyphens or a plus before TF, a line break, and up to four blanks or hyphens between TF and the two digits.
+ */
+const TF_DATE_GAP = ["", "-", " ", ".", "/", "  "] as const;
+const TF_BEFORE_WIDE = ["", " ", "-", "+", "  ", " - ", "\u00a0", "\r\n", "\t", " +"] as const;
+const TF_AFTER_WIDE = ["", " ", "-", " - ", "  ", "\r\n", "\u00a0"] as const;
+
+/** One of the spellings of a TF number: the door's (the case, the separator, full-width digits), and now and then one only the pseudonymiser's wide search counts. */
 function spellTf(p: TfPerson, r: Rng): string {
   const wide = r.bool(0.15);
   const digits = (d: string): string => (wide ? FULLWIDTH(d) : d);
+  if (r.bool(0.35)) {
+    const date = `${digits(p.tfDate.slice(0, 4))}${r.pick(TF_DATE_GAP)}${digits(p.tfDate.slice(4, 6))}${r.pick(TF_DATE_GAP)}${digits(p.tfDate.slice(6))}`;
+    return `${date}${r.pick(TF_BEFORE_WIDE)}${r.pick(TF_LETTERS)}${r.pick(TF_AFTER_WIDE)}${digits(p.tfNo)}`;
+  }
   return `${digits(p.tfDate)}${r.pick(TF_BETWEEN)}${r.pick(TF_LETTERS)}${digits(p.tfNo)}`;
 }
 
@@ -602,7 +614,7 @@ describe("property 6: a TF number is one marker, and nothing of it is left (seed
       expect(result.report.totals.pnr, where).toEqual({ occurrences: 0, distinct: 0 });
       expect(result.report.totals.sam, where).toEqual({ occurrences: 0, distinct: 0 });
       expect(result.report.checkDigit, where).toEqual({ pnr: { holds: 0, fails: 0 }, sam: { holds: 0, fails: 0 } });
-      expect(result.report.spellings.every((s) => /^ÅÅÅÅMMDD.?(?:TF|tf|Tf|tF)NN$/.test(s.spelling)), `${where}: ${JSON.stringify(result.report.spellings)}`).toBe(true);
+      expect(result.report.spellings.every((s) => /^ÅÅÅÅ[ -]*MM[ -]*DD[ +-]*(?:TF|tf|Tf|tF)[ -]*NN$/.test(s.spelling)), `${where}: ${JSON.stringify(result.report.spellings)}`).toBe(true);
     }
   });
 
@@ -674,16 +686,30 @@ describe("property 6: a TF number is one marker, and nothing of it is left (seed
 
 describe("what the page says it cannot judge about TF numbers stays true", () => {
   /*
-   * The page (limit3) says TF numbers written in any way but ÅÅÅÅMMDDTFnn are not found: with blanks between TF and the digits, or six digits in the date.
-   * The door counts what Skola24's files have shown and nothing it has guessed (X3's table). If the door learns another form, this test falls and
-   * the page text (messages: pseudonymiserare.report.limit3) is to be changed with it.
+   * The page (limit3) and the manual's row say which TF numbers are NOT found. The shared door counts what Skola24's files have shown, and the pseudonymiser looks wider than the door
+   * (lib/pseudonym-detect.ts, findLooseTfNumbers: blanks and hyphens in the date and around TF, a plus, a line break), because a number left in a file that is sent on costs more than a
+   * marker too many. What is still not found is a date of six digits and more separators than the search takes. If the search learns another form, the first test
+   * falls; if it forgets one, the second does; and the page text (messages: pseudonymiserare.report.limit3) and the manual's row are to be changed with it.
    */
-  it("leaves the forms no file has shown, in a column the user kept, and counts none", () => {
-    const forms = ["800101TF01", "19800101 TF 01", "19800101TF 01", "19800101-TF-01", "1980 0101TF01", "198001011TF01", "19800101TF123", "19800101TF1"];
+  const kept = (forms: readonly string[]) => {
     const text = ["Id;Anteckning", ...forms.map((form) => `${form};x`), ""].join("\n");
     const result = pseudonymise([parseText(text, "file", "UTF-8", false)!], { files: [{ treatments: { 0: KEEP, 1: KEEP } }] });
     if (!result.ok) throw new Error(JSON.stringify(result.undecided));
+    return result;
+  };
+
+  it("leaves the forms the wide search does not take, in a column the user kept, and counts none", () => {
+    const forms = ["800101TF01", "800101 TF 01", "19800101TF1", "19800101 TF 1", "1980   0101TF01", "19800101     TF01", "19800101TF     01", "19 800101TF01"];
+    const result = kept(forms);
     expect(result.report.totals.tf).toEqual({ occurrences: 0, distinct: 0 });
     for (const form of forms) expect(result.files[0]!.text, form).toContain(form);
+  });
+
+  it("takes the forms the page no longer lists: blanks between TF and the digits, a date written with hyphens or blanks, and counts them as TF", () => {
+    const forms = ["19800101 TF 01", "19800101TF 01", "19800101-TF-01", "1980 0101TF01", "1980-01-01-TF01", "19800101+TF01"];
+    const result = kept(forms);
+    expect(result.report.totals.tf).toEqual({ occurrences: forms.length, distinct: 1 });
+    for (const form of forms) expect(result.files[0]!.text, form).not.toContain(form);
+    expect(result.check.passed).toBe(true);
   });
 });

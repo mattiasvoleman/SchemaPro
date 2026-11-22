@@ -2593,6 +2593,13 @@
     och ämne.
   </p>
   <p>
+    <strong>Kommer du från kortet Vad kan jag ändra? på Generera</strong>
+    öppnar länken postens cell, där ämnets antal lektioner per dag och dagar
+    emellan ställs. Kortet har inte ändrat något: du gör ändringen här och
+    sparar här. Visar sidan ett annat läsår än postens, eller finns posten inte
+    i din skola, öppnas ingenting och inget fel visas; sidan ser ut som alltid.
+  </p>
+  <p>
     <strong>Välj ett ämne för att se bara det.</strong> Väljaren
     <span class="ui">Ämne</span> bredvid läsåret står på
     <span class="ui">Alla ämnen</span> tills du väljer ett. Med ett ämne valt
@@ -5130,7 +5137,10 @@
     statusen överst är den sämsta perioden. Har läsåret rullats från ett annat står
     också förra läsårets tjänst och räknade minuter. Läraren ser också sin
     <span class="ui">Årsarbetstid</span> och kan skriva ut sin egen
-    uppdragsbeskrivning. Läraren ser bara sig
+    uppdragsbeskrivning. För läsår som börjar 1 juli 2027 eller senare ser
+    läraren också kortet <span class="ui">Omfattning enligt förordningen</span>
+    (se ovan) med sin egen undervisningstid mot förordningens nivå, och bara sin
+    egen. Läraren ser bara sig
     själv och kan inte ändra något. Anställningen och behörigheterna är personaluppgifter: en
     lärare ser aldrig en kollegas.
   </p>
@@ -5206,6 +5216,16 @@
     </p>
   </div>
 
+  <p>
+    <strong>Kommer du från kortet Vad kan jag ändra? på Generera</strong> med
+    en låst sal markeras regeln under <span class="ui">Låsta salar</span> och
+    formuläret för en ny regel öppnas med samma ämne och samma årskurser, med
+    salarna ännu att välja. En låsning vidgas med en regel bredvid: lika snäva
+    regler är alternativ, och deras salar läggs ihop. Inget är sparat förrän du
+    sparar regeln. Hör regeln inte till de låsta salarna i din skola öppnas
+    ingenting.
+  </p>
+
   <h4>Lärarens dag: arbetstid, dagstak och önskad ledig dag</h4>
   <p>
     Det som gäller en enskild lärares tid ställs in per lärare under
@@ -5233,6 +5253,13 @@
       att hålla</span>, och schemaförslagens jämförelse har en rad för dem
       (5.9).</li>
   </ul>
+  <p>
+    <strong>Kommer du från kortet Vad kan jag ändra? på Generera</strong>
+    öppnas lärarens arbetstid med fältet <span class="ui">Högst minuter
+    undervisning per dag</span> i fokus. Kortet har inte ändrat något: du sätter
+    talet själv och sparar själv. Hör regeln inte till en lärare i din skola
+    öppnas ingenting.
+  </p>
   <p>
     Deltid i dagar — att en lärare undervisar högst tre eller fyra dagar i
     veckan — är en del av tjänsten och ställs in under
@@ -6289,6 +6316,16 @@
       inget själv.
     </p>
     <p>
+      <strong>Lämnar du sidan</strong> medan motorn räknar, eller laddar om den,
+      sparas svaret på körningen. Kommer du tillbaka tar sidan upp årets
+      <em>senaste</em> körning, om den är en vägran eller en timeout, och
+      <span class="ui">Senaste körning</span> visar kortet med svaret. Sidan
+      kommer inte ihåg vilket läsår du hade valt: sidan öppnas på det aktiva
+      läsåret, så gjorde du körningen för nästa läsår väljer du det igen. Har
+      någon hunnit köra Generera igen sedan dess är det den körningen som är den
+      senaste, och då visas inte den äldre vägran.
+    </p>
+    <p>
       Vad kortet säger vilar på vad motorn har visat, och orden är valda efter det:
     </p>
     <ul>
@@ -6343,12 +6380,104 @@
       <tr><td class="k">Lösaren hann inte klart</td><td>Tiden tog slut innan något schema hittades. Det betyder <em>inte</em> att schemat är omöjligt. Se kapitel 9.</td></tr>
     </tbody>
   </table>
-  <p>
-    För en normalstor grundskola tar en körning från några sekunder upp till
-    någon minut. Mycket stora skolor tar längre tid — kör i så fall
-    genereringen när du har tid att invänta resultatet, förslagsvis en gång och
-    därefter med små justeringar.
+  <p id="hur-lang-tid">
+    <strong>Hur lång tid tar en körning?</strong> Det beror mindre på antalet
+    klasser än på hur skolan är upplagd: hur många ämnen som läggs i grupper som
+    blandar elever ur flera klasser, hur länge samma lärare står i rad på
+    parallella grupper, och hur många lektioner som bara går en termin. Tabellen
+    är mätt på konstruerade skolveckor som har formen hos en riktig skola
+    (aldrig riktiga namn). Veckorna är för åk 7–9 med lika många klasser i varje
+    årskurs; bara den största, med 30 klasser, går i åk 4–9.
   </p>
+  <p>
+    <strong>Tabellen säger när det första schemat hittades, inte hur länge
+    körningen pågår.</strong> Därefter förbättrar motorn schemat och använder
+    oftast resten av den tid körningen får, så en körning som fann sitt första
+    schema på några sekunder kan ändå pågå i minuter; Generera-sidan säger hur
+    länge den kan ta. Varje rad visar tiden för den långsammaste av de uppmätta
+    veckorna och i hur många veckor som fick ett schema. Tiderna är uppskattade,
+    och kan vara en faktor två fel, för en processorkärna på en utvecklingsdator;
+    produktionens processor är inte mätt. De är inget löfte för en enskild
+    skola. <em>Tiden tar slut</em> betyder här att inget schema hittades på det
+    arbete en körning får på en kärna (ungefär två och en halv minut): det tar
+    alltså <em>minst</em> så lång tid där, och med flera kärnor kan det gå (se
+    nedan).
+  </p>
+  <table>
+    <thead><tr><th style="width:62%">Skolan har …</th><th>Första schemat inom (cirka, en kärna)</th><th>Veckor som fick schema</th></tr></thead>
+    <tbody>
+      <tr><td class="k">varje ämne för sig per klass (språkval i grupper), 6–24 klasser, högst tre delade lärare</td><td>24 s</td><td>10 av 10</td></tr>
+      <tr><td class="k">tre ämnen (SO, NO och Idrott) i grupper över klasserna, inga delade lärare, 6–12 klasser</td><td>9 s</td><td>6 av 6</td></tr>
+      <tr><td class="k">samma, men 15 eller 18 klasser, med <em>tre</em> delade lärare (språkvalets, på fyra parallella grupper var)</td><td>tiden tar slut</td><td>0 av 4</td></tr>
+      <tr><td class="k">9 klasser, högst fyra ämnen i grupper över klasserna</td><td>5 s</td><td>8 av 8</td></tr>
+      <tr><td class="k">9 klasser, sex eller fler ämnen i grupper</td><td>tiden tar slut</td><td>0 av 6</td></tr>
+      <tr><td class="k">12 klasser, högst tre ämnen i grupper</td><td>9 s</td><td>6 av 6</td></tr>
+      <tr><td class="k">12 klasser, fem eller fler ämnen i grupper</td><td>tiden tar slut</td><td>0 av 8</td></tr>
+      <tr><td class="k">9–12 klasser, tre ämnen i grupper, <em>inga</em> delade lärare</td><td>9 s</td><td>4 av 4</td></tr>
+      <tr><td class="k">samma med <em>en</em> delad lärare (tre parallella grupper)</td><td>9 s</td><td>4 av 4</td></tr>
+      <tr><td class="k">samma med <em>två</em> delade lärare (tre parallella grupper var)</td><td>tiden tar slut</td><td>0 av 4</td></tr>
+      <tr><td class="k">samma med <em>tre till fyra</em> delade lärare (två parallella grupper var; tre vid 9 klasser, fyra vid 12)</td><td>10 s</td><td>4 av 4</td></tr>
+      <tr><td class="k">samma med <em>fem till åtta</em> delade lärare (två parallella grupper var; fem vid 9 klasser, åtta vid 12)</td><td>9 s</td><td>4 av 4</td></tr>
+      <tr><td class="k">12 klasser, tre ämnen i grupper, inget ämne som bara går en termin</td><td>9 s</td><td>2 av 2</td></tr>
+      <tr><td class="k">samma med tre ämnen som bara går en termin</td><td>35 s</td><td>1 av 2</td></tr>
+      <tr><td class="k">samma med fem ämnen som bara går en termin</td><td>tiden tar slut</td><td>0 av 2</td></tr>
+      <tr><td class="k">6 eller 9 klasser, tio ämnen i grupper över klasserna, halvgrupper och terminsämnen</td><td>tiden tar slut</td><td>0 av 4</td></tr>
+    </tbody>
+  </table>
+  <div class="note">
+    <span class="label">Så läser du tabellen</span>
+    <p>
+      En <em>delad lärare</em> är en lärare som har två eller flera parallella
+      grupper med elever ur samma klass. Varje sådan klass måste vänta ut dem en
+      i taget, och varningen <span class="ui">Krock för lärare</span> på
+      Generera-sidan namnger dem. Det är inte antalet delade lärare som avgör
+      utan kedjan: upp till åtta lärare med två parallella grupper var läggs på
+      några sekunder, men två lärare med tre grupper vardera gör att tiden tar
+      slut (åk 7 blir 95 % full), och tre sådana gör veckan så full (105 %) att
+      Rastra Schema vägrar den. Det gäller de veckor som är mätta; hur många
+      kedjor en annan skola klarar beror på hur full veckan redan är. Antalet
+      klasser är inte det som stoppar: ett schema där varje ämne ligger per klass
+      hittas på sekunder också för 24 klasser.
+    </p>
+    <p>
+      Tabellen är mätt med en processorkärna. Med flera kärnor flyttas gränserna
+      uppåt. En provkörning med alla åtta kärnorna på en dator gav:
+    </p>
+    <table>
+      <thead><tr><th style="width:52%">Veckan</th><th>En kärna</th><th>Åtta kärnor (en körning, belastad dator)</th></tr></thead>
+      <tbody>
+      <tr><td class="k">15 klasser, tre ämnen i grupper över klasserna</td><td>tiden tar slut</td><td>26 s och 139 s</td></tr>
+      <tr><td class="k">18 klasser, tre ämnen i grupper över klasserna</td><td>tiden tar slut</td><td>tiden tar slut</td></tr>
+      <tr><td class="k">9 klasser, fem ämnen i grupper</td><td>1 av 2</td><td>7 s och 33 s</td></tr>
+      <tr><td class="k">9 klasser, sex ämnen i grupper</td><td>tiden tar slut</td><td>tiden tar slut och tiden tar slut</td></tr>
+      <tr><td class="k">12 klasser, fyra ämnen i grupper</td><td>1 av 2</td><td>32 s och 29 s</td></tr>
+      <tr><td class="k">12 klasser, fem ämnen i grupper</td><td>tiden tar slut</td><td>41 s (en vecka)</td></tr>
+      <tr><td class="k">12 klasser, tre ämnen som bara går en termin</td><td>1 av 2</td><td>153 s och 164 s</td></tr>
+      <tr><td class="k">12 klasser, två delade lärare med tre grupper vardera</td><td>tiden tar slut</td><td>tiden tar slut och tiden tar slut</td></tr>
+      <tr><td class="k">produktionsformen (tio ämnen i grupper, halvgrupper, terminer), 9–30 klasser</td><td>tiden tar slut</td><td>tiden tar slut och tiden tar slut och tiden tar slut</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Datorn hade annan last under provkörningen, så en tid är långsammare än på
+      en lugn dator, och en tid som tog slut bevisar ingenting för en lugn dator.
+      Två veckor av samma form kan också ge olika resultat, särskilt nära gränsen
+      (den ena får ett schema på några sekunder, den andra inget alls), så
+      tabellen räknar veckor och lovar inget för en enskild skola.
+    </p>
+    <p>
+      <strong>Tar tiden slut?</strong> Börja med <span class="ui">Kontrollera
+      veckan</span> (ovan), som på några sekunder säger om en årskurs är för full,
+      och läs kortet <span class="ui">Så gick tiden</span> (ovan). Det som skilde
+      lösta från olösta veckor i mätningen: ge varje grupp i ett ämne
+      en egen lärare (samma vecka med två lärare på tre parallella grupper vardera
+      fick inget schema inom den uppmätta tiden, och med en egen lärare per grupp
+      fick den ett på några sekunder); lägg färre ämnen i grupper över klasserna; korta kedjorna av
+      parallella grupper på samma lärare; låt färre ämnen gå en termin. Att lägga
+      gruppernas lektioner i ett parallellt block (4.2) är inte mätt som åtgärd:
+      i de två veckor där språkvalet låg i ett block krävde sökningen i den ena åtta
+      gånger så mycket arbete som utan block, och i den andra ungefär lika mycket.
+    </p>
+  </div>
   <p>
     Vill du se flera alternativ innan du bestämmer dig, till exempel ett med
     färre håltimmar för lärarna, tar du fram <span class="ui">Schemaförslag</span>
@@ -11073,7 +11202,7 @@
     <thead><tr><th style="width:24%">Slag</th><th style="width:22%">Märke</th><th>Hur det hittas</th></tr></thead>
     <tbody>
       <tr><td class="k">Personnummer, samordningsnummer</td><td>PNR-0001, SAM-0001</td><td>På hur de ser ut, i varje cell, rubrik och rad ovanför rubriken: tio eller tolv siffror, med eller utan sekel, med bindestreck, plus eller blanksteg. Kontrollsiffran avgör inte vad som tas bort, bara hur det räknas i rapporten (&rdquo;stämmer&rdquo; eller &rdquo;stämmer inte, ersatt ändå&rdquo;): ett felskrivet nummer är ändå någons nummer. Allt som har formen tas bort, också ett id-nummer som råkar se ut som ett datum.</td></tr>
-      <tr><td class="k">TF-nummer</td><td>TF-0001</td><td>Skola24:s eget nummer i kursfilernas id-kolumner: åtta siffror, <em>TF</em> och två siffror (<em>ÅÅÅÅMMDDTFnn</em>), med stora eller små bokstäver, och med ett blanksteg eller bindestreck före <em>TF</em>. Det har ingen kontrollsiffra och är inget personnummer, så det räknas på en egen rad i rapporten och bland sättet de skrevs på. Andra former känns inte igen, till exempel blanksteg mellan <em>TF</em> och siffrorna eller sex siffror i datumet: titta i förhandsvisningen.</td></tr>
+      <tr><td class="k">TF-nummer</td><td>TF-0001</td><td>Skola24:s eget nummer i kursfilernas id-kolumner: åtta siffror, <em>TF</em> och två siffror (<em>ÅÅÅÅMMDDTFnn</em>), med stora eller små bokstäver. Verktyget letar vidare än importen gör, eftersom ett nummer som blir kvar i en fil som skickas vidare kostar mer än ett märke för mycket: det tar också blanksteg, bindestreck, punkt, snedstreck, plus eller radbrytning före <em>TF</em> (upp till fyra tecken), blanksteg eller bindestreck mellan <em>TF</em> och siffrorna, och ett datum skrivet <em>ÅÅÅÅ-MM-DD</em> eller med blanksteg mellan år, månad och dag. Ett datum följt av <em>TF</em> och två siffror (<em>Prov 20261121 TF 15</em>) räknas därför också, och byts mot ett märke. Numret har ingen kontrollsiffra och är inget personnummer, så det räknas på en egen rad i rapporten och bland sättet de skrevs på. Andra former känns inte igen, till exempel sex siffror i datumet eller fler blanksteg än verktyget tar: titta i förhandsvisningen.</td></tr>
       <tr><td class="k">E-post</td><td>epost-0001@exempel.invalid</td><td>På hur de ser ut: allt som är <em>text@text</em>.</td></tr>
       <tr><td class="k">Telefon</td><td>TEL-0001</td><td>På hur de ser ut: <em>070-123 45 67</em>, <em>08-123 456 78</em>, <em>+46 70 123 45 67</em>. Datum och tider tas inte för telefonnummer.</td></tr>
       <tr><td class="k">Namn</td><td>NAMN-0001, FORNAMN-0001, EFTERNAMN-0001</td><td>Genom rubriken (<em>Namn</em>, <em>Förnamn</em>, <em>Efternamn</em>, <em>Lärare</em>, <em>Elev</em>, <em>Vårdnadshavare</em> …) eller ditt val, aldrig genom gissning. En lista i en cell, delad på semikolon eller snedstreck, byts namn för namn.</td></tr>
@@ -11110,7 +11239,7 @@
       rapporten och här: <strong>namn i löpande text</strong> som inte finns i en
       namnkolumn eller i din lista; e-postadresser och telefonnummer skrivna med ord eller
       delade över flera celler, och personnummer och TF-nummer delade över två celler; siffror i andra
-      tecken än vanliga och helbredd-siffror; TF-nummer skrivna på annat sätt än <em>ÅÅÅÅMMDDTFnn</em>; kolumner du själv har valt att behålla;
+      tecken än vanliga och helbredd-siffror; TF-nummer med sex siffror i datumet eller med fler blanksteg och bindestreck än verktyget tar; kolumner du själv har valt att behålla;
       och filer med fast bredd, där märkena inte är lika långa som det de ersätter.
       Namn på färre än tre bokstäver söks inte i löpande text, om de inte står i din
       egen lista (där gränsen är två). Ett personnummer med plus (född före 1900) och

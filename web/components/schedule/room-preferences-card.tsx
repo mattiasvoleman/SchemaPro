@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Loader2, Plus, Trash2 } from "lucide-react";
@@ -82,6 +82,38 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
     max: null,
   });
   const [deleting, setDeleting] = useState<RoomPreference | null>(null);
+  // ?roomRule=<room rule id> from Generera's card of what to change (Åtgärdsförslag vid vägran): marks that rule and opens the form for
+  // a rule beside it, of the same subject and years, with the rooms left to pick. A lock is widened by a rule of its own (equally narrow
+  // rules are alternatives, and their rooms are the union), so the form is what the change is made in. Read after mount, once, from the
+  // rules of THIS card's kind that this school has: an id that is none of them opens nothing and says nothing.
+  const [linkedRuleId, setLinkedRuleId] = useState<string | null>(null);
+  const [marked, setMarked] = useState<string | null>(null);
+  // The marked rule is brought into view when the link marks it, once. A callback ref made in the render has a new identity at every render
+  // and is called again at each of them, which scrolled the page back to the rule at every tick of a room in the form above it.
+  const markedRow = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (marked) markedRow.current?.scrollIntoView?.({ block: "center" });
+  }, [marked]);
+  useEffect(() => setLinkedRuleId(new URLSearchParams(window.location.search).get("roomRule")), []);
+  useEffect(() => {
+    if (!linkedRuleId || !preferences) return;
+    const rule = preferences.find((preference) => preference.id === linkedRuleId && preference.kind === kind);
+    if (rule) {
+      setMarked(rule.id);
+      setAdding(true);
+      setSubjectId(rule.subjectId);
+      setTarget(BY_ROOMS);
+      setRoomTypeId("");
+      setRoomIds([]);
+      setSpan({ min: rule.minGradeLevel, max: rule.maxGradeLevel });
+    }
+    setLinkedRuleId(null);
+    // Read once, in the address as well: left in it, the link would mark the rule and open the form again at every reload and at every step back
+    // to this entry. Taken out here, after both cards have read it on mount, so that the card of wishes still sees an id of its own kind.
+    const rest = new URLSearchParams(window.location.search);
+    rest.delete("roomRule");
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${String(rest) ? `?${rest}` : ""}${window.location.hash}`);
+  }, [linkedRuleId, preferences, kind]);
 
   const subjectName = useMemo(
     () => new Map((subjects ?? []).map((subject) => [subject.id, subject.name])),
@@ -199,7 +231,9 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
       }
     >
       {adding ? (
-        <div className="space-y-3 rounded-md border p-3">
+        // Planering's, wherever it opens from: the button above (marked) and ?roomRule=, which opens it with no button. A profile that
+        // does not write planering is shown neither, as the layout's readOnlyStyle hides what carries the mark.
+        <div data-writes="PLANERING" className="space-y-3 rounded-md border p-3">
           <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
             <FormField id={idOf("subject")} label={t("preferenceSubject")}>
               {(control) => (
@@ -374,7 +408,9 @@ export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) 
           {rules.map((preference) => (
             <li
               key={preference.id}
-              className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
+              aria-current={marked === preference.id ? "true" : undefined}
+              ref={marked === preference.id ? markedRow : undefined}
+              className={`flex items-center justify-between gap-3 px-3 py-2 text-sm${marked === preference.id ? " bg-accent" : ""}`}
             >
               <span className="flex min-w-0 flex-wrap items-center gap-2">
                 {summary(preference)}

@@ -56,7 +56,9 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
       value: hours(stage.hours),
     });
   }
-  if (teacher.unregulatedHours > 0) rows.push({ label: t("unregulated"), value: hours(teacher.unregulatedHours) });
+  // Förskoleklass, and only that: in a läsår the lydelse has no band for (a ten-year grundskola) the gateway files EVERY hour as
+  // unregulated (placeSpan with no bands), so the row would say a teacher in årskurs 5 teaches 645 h in förskoleklass.
+  if (teacher.unregulatedHours > 0 && yearReason === null) rows.push({ label: t("unregulated"), value: hours(teacher.unregulatedHours) });
   if (teacher.unknownGradeHours > 0) rows.push({ label: t("unknownGrade"), value: hours(teacher.unknownGradeHours) });
   if (judged && teacher.planningFloorHours !== null) {
     rows.push({ label: t("planningFloor"), value: hours(teacher.planningFloorHours) });
@@ -68,7 +70,7 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
   // The one sentence that is the answer, first under the heading: tone by the words themselves, never by colour alone.
   let verdict: string;
   if (yearReason === "NUMBERING_NOT_COVERED") verdict = t("verdictNumbering");
-  else if (teacher.notJudged === "NO_POST") verdict = t("verdictNoPost");
+  else if (teacher.notJudged === "NO_POST") verdict = own ? t("own.verdictNoPost") : t("verdictNoPost");
   else if (teacher.notJudged === "NO_STAGE") {
     // None of the hours lies in a stage: förskoleklass, groups with no årskurs, or both. Say which, not förskoleklass for all.
     verdict =
@@ -79,8 +81,15 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
           : t("verdictNoStageBoth");
   }
   else if (teacher.verdict === "OVER_MAX") verdict = over === null ? t("verdictOverMaxHidden") : t("verdictOverMax", { over: formatPercent(over) });
-  else if (teacher.verdict === "OVER_OWN") verdict = over === null ? t("verdictOverOwnHidden") : t("verdictOverOwn", { over: formatPercent(over) });
-  else if (teacher.verdict === "INSIDE") verdict = t("verdictInside");
+  else if (teacher.verdict === "OVER_OWN") {
+    verdict =
+      over === null
+        ? t("verdictOverOwnHidden")
+        : own
+          ? t("own.verdictOverOwn", { over: formatPercent(over) })
+          : t("verdictOverOwn", { over: formatPercent(over) });
+  }
+  else if (teacher.verdict === "INSIDE") verdict = own ? t("own.verdictInside") : t("verdictInside");
   else verdict = t("verdictNone");
   const bad = teacher.verdict === "OVER_MAX" || teacher.verdict === "OVER_OWN";
   const blended = teacher.stages.length > 1;
@@ -101,13 +110,13 @@ export function ScopeCard({ data, headingLevel = "h3", own = false }: ScopeCardP
           </div>
         ))}
       </dl>
-      {blended && judged ? <p className="text-xs text-muted-foreground">{t("blended")}</p> : null}
+      {blended && judged ? <p className="text-xs text-muted-foreground">{own ? t("own.blended") : t("blended")}</p> : null}
       {judged && teacher.planningFits !== null ? (
         <p className="text-xs text-muted-foreground">{teacher.planningFits ? t("fits") : t("doesNotFit")}</p>
       ) : null}
       {judged && teacher.planningFits === null ? (
         // Not a blank: whether the floor fits is worked out for a full ferietjänst only, and left out for a reader without HR-läs.
-        <p className="text-xs text-muted-foreground">{t("fitsNotShown")}</p>
+        <p className="text-xs text-muted-foreground">{own ? t("own.fitsNotShown") : t("fitsNotShown")}</p>
       ) : null}
       {teacher.unknownGradeHours > 0 ? (
         <p className="text-xs text-muted-foreground">{t("unknownGradeNote")}</p>
