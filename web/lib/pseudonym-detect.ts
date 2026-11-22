@@ -68,11 +68,13 @@ function tfSpellingOf(folded: string): string {
  * between the parts of the date and around TF, a plus before it, a date written ÅÅÅÅ-MM-DD, a line break between the date and TF (two blanks after the fold), two
  * letters with a blank between them, a hyphen or a blank after TF. THE DOOR STAYS STRICT AND THIS SEARCH IS WIDE, because the costs differ: a form the door does not
  * know is a cell read as text (a refusal that is missing), a form this search does not know is a number left in a file that is sent on, and the check on the
- * finished file looks with the same search and cannot see it either (the review of #383, L-4). What is asked of a spelling is what the door asks: eight digits
- * of a date, TF in either case, two digits, and no digit before or after. A date of six digits is NOT taken (no file has shown one), nor a code like 7ATF12,
- * TF2026, Block TF-12 or Sal TF12345678; "20261121 TF 15", a date that a school wrote and two digits, is taken, and costs a marker.
+ * finished file looks with the same search and cannot see it either (the review of #383, L-4). What is asked of a spelling is eight digits of a date, TF in either
+ * case, and two digits. A digit stuck to the number does NOT save it, as it does for the door: a record with no blank between its fields ("7A  19000101TF017A  Ma",
+ * "Ma719000101TF01") has digits next to the number, and a number left in a file that is sent on costs more than a marker too many (the review of #396). A date of six digits is
+ * NOT taken (no file has shown one), nor a code like 7ATF12, TF2026, Block TF-12 or Sal TF12345678; "20261121 TF 15", a date that a school wrote and two digits, is
+ * taken, and costs a marker.
  */
-const LOOSE_TF = /(?<!\d)\d{4}[ -]{0,2}\d{2}[ -]{0,2}\d{2}[ +-]{0,4}[Tt][ -]?[Ff][ -]{0,4}\d{2}(?!\d)/g;
+const LOOSE_TF = /\d{4}[ -]{0,2}\d{2}[ -]{0,2}\d{2}[ +-]{0,4}[Tt][ -]?[Ff][ -]{0,4}\d{2}/g;
 
 /** Every TF number in the text in the wide spellings above, with the key the shared shape gives the same number (ÅÅÅÅMMDDTFNN). */
 function findLooseTfNumbers(text: string): Finding[] {

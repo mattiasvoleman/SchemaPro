@@ -166,8 +166,8 @@ describe("a TF number in a spelling the shared shape does not know is found by t
     for (const text of [
       "7ATF12", "Ma7 TF12", "TF2026", "Block TF-12", "Sal TF12345678", "NV20TF12", "Åk 7 TF-12", "Hus 12 TF 12", "Sal 2026 TF 12", "Kurs 1900 TF 01",
       "TF 19000101", "T F 19000101", "TF-19000101-01", "1900 TF 01 01",
-      // Not eight digits before, or not two after, or a digit beside it.
-      "1900010 TF 01", "190001012 TF 01", "19000101 TF 1", "19000101 TF 123", "19000101 TF", "19000101 TFX01", "19000101 TF-X",
+      // Not eight digits before, or not two after.
+      "1900010 TF 01", "19000101 TF 1", "19000101 TF", "19000101 TFX01", "19000101 TF-X",
       // Dates and times a lesson list holds.
       "2026-11-21", "2026-11-21 Tis 08:10-09:10", "08:10 - 09:10 TF 12", "Vecka 47 TF 12 Sal 4", "19000101 Fre 12",
       // A TF number's own parts apart, and the markers.
@@ -179,6 +179,29 @@ describe("a TF number in a spelling the shared shape does not know is found by t
 
   it("costs a school a marker for a date that is followed by TF and two digits, as the shared door does: it is stated, not hidden", () => {
     expect(findPersonalData("Prov 20261121 TF 15").map((f) => [f.kind, f.key])).toEqual([["tf", "20261121TF15"]]);
+  });
+
+  // A record with no blank between its fields has digits next to the number. The door does not count such a number (a digit beside it is a longer number), and the pseudonymiser
+  // must: the number is a TF number whatever stands beside it, and what stands beside it is left as it was (the review of #396).
+  it.each([
+    ["a class code that begins with a digit after it", "7A  19000101TF017A  Ma", "19000101TF01"],
+    ["a course code that ends with a digit before it", "Ma719000101TF01", "19000101TF01"],
+    ["a digit after it", "19000101TF0123", "19000101TF01"],
+    ["digits both sides", "719000101TF0123", "19000101TF01"],
+    ["a digit after a number written with blanks", "19000101 TF 012", "19000101 TF 01"],
+    ["a digit before a number written with hyphens", "21900-01-01-TF01", "1900-01-01-TF01"],
+  ])("takes a TF number with a digit stuck to it: %s, and only the number", (_name, text, span) => {
+    const found = findPersonalData(text);
+    expect(found.map((f) => [f.kind, text.slice(f.start, f.end)]), text).toEqual([["tf", span]]);
+    expect(found[0]!.key, text).toBe(NUMBER);
+  });
+
+  it("replaces only the number when a digit stands beside it, and the rest of the cell stays", () => {
+    const result = run("Namn;Rad\nAnna;7A  19000101TF017A  Ma\nBo;Ma719000102TF02\n", { 0: mark("namn"), 1: KEEP });
+    expect(result.files[0]!.text).toBe("Namn;Rad\nNAMN-0001;7A  TF-00017A  Ma\nNAMN-0002;Ma7TF-0002\n");
+    expect(result.files[0]!.text).not.toMatch(/1900|TF0\d/);
+    expect(result.report.totals.tf).toEqual({ occurrences: 2, distinct: 2 });
+    expect(result.check.passed).toBe(true);
   });
 
   it("does not take a date of six digits: no file has shown one", () => {
@@ -201,6 +224,69 @@ describe("a TF number in a spelling the shared shape does not know is found by t
     findPersonalData("1900 01 01 ".repeat(100_000));
     findPersonalData("19000101TF 0".repeat(80_000));
     expect(Date.now() - started).toBeLessThan(8000);
+  });
+});
+
+/**
+ * THE LIMITS OF THE WIDE SEARCH (the review of #396). The PR text says what the search takes: one or two blanks or hyphens between year, month and day; up to four blanks, hyphens
+ * or a plus before TF; one blank or hyphen between T and F; up to four blanks or hyphens after TF. The matrix above only goes as far as three characters and never puts two between
+ * the parts of the date, so the limits themselves (the numbers 2 and 4 in the expression) could be moved by one without a test falling. Here each limit is stood on from both sides.
+ */
+describe("the wide search takes what the PR says it takes, and not one character more", () => {
+  const found = (text: string): unknown[] => findPersonalData(`Elev ${text} flyttad`).map((f) => [f.kind, f.key, f.end - f.start]);
+  const wholeOf = (text: string): unknown[] => [["tf", NUMBER, text.length]];
+
+  it.each([
+    ["two blanks between year and month", "1900  0101TF01"],
+    ["two hyphens between year and month", "1900--0101TF01"],
+    ["two blanks between month and day", "190001  01TF01"],
+    ["two hyphens between month and day", "190001--01TF01"],
+    ["two between every part of the date", "1900--01  01TF01"],
+    ["four blanks before TF", "19000101    TF01"],
+    ["a hyphen, a plus, a blank and a hyphen before TF", "19000101-+ -TF01"],
+    ["four blanks after TF", "19000101TF    01"],
+    ["blank, two hyphens and a blank after TF", "19000101TF -- 01"],
+    ["a Windows line break twice before TF (four blanks after the fold)", "19000101\r\n\r\nTF01"],
+    ["one blank between T and F", "19000101T F01"],
+    ["one hyphen between T and F", "19000101T-F01"],
+  ])("takes %s", (_name, text) => {
+    expect(found(text), JSON.stringify(text)).toEqual(wholeOf(text));
+  });
+
+  it.each([
+    ["three blanks between year and month", "1900   0101TF01"],
+    ["three blanks between month and day", "190001   01TF01"],
+    ["five blanks before TF", "19000101     TF01"],
+    ["five hyphens before TF", "19000101-----TF01"],
+    ["a Windows line break three times before TF", "19000101\r\n\r\n\r\nTF01"],
+    ["five blanks after TF", "19000101TF     01"],
+    ["two blanks between T and F", "19000101T  F01"],
+    ["a plus after TF", "19000101TF+01"],
+    ["a plus between the parts of the date", "1900+0101TF01"],
+    ["a blank inside the year", "19 000101TF01"],
+    ["a blank between the two digits after TF", "19000101TF0 1"],
+  ])("does not take %s", (_name, text) => {
+    expect(found(text), JSON.stringify(text)).toEqual([]);
+  });
+
+  // The pattern the report counts a spelling under: the date's digits by their place, and every separator and the letters as they stood. A test that only asks for "blanks and hyphens
+  // somewhere" cannot see a separator dropped from the pattern, or a plus turned into the default.
+  it.each([
+    ["19000101TF01", "ÅÅÅÅMMDDTFNN"],
+    ["19000101-tf01", "ÅÅÅÅMMDD-tfNN"],
+    ["19000101 TF 01", "ÅÅÅÅMMDD TF NN"],
+    ["19000101+TF01", "ÅÅÅÅMMDD+TFNN"],
+    ["19000101TF-01", "ÅÅÅÅMMDDTF-NN"],
+    ["1900-01-01TF01", "ÅÅÅÅ-MM-DDTFNN"],
+    ["1900-01-01-TF01", "ÅÅÅÅ-MM-DD-TFNN"],
+    ["1900 0101 Tf 01", "ÅÅÅÅ MMDD Tf NN"],
+    ["190001 01tF01", "ÅÅÅÅMM DDtFNN"],
+    ["1900 01 01 tf 01", "ÅÅÅÅ MM DD tf NN"],
+    ["19000101\r\nTF01", "ÅÅÅÅMMDD  TFNN"],
+    ["19000101T-F01", "ÅÅÅÅMMDDT-FNN"],
+    ["19000101 + TF - 01", "ÅÅÅÅMMDD + TF - NN"],
+  ])("writes %j as the pattern %j", (text, pattern) => {
+    expect(findPersonalData(`Elev ${text} flyttad`).map((f) => f.spelling)).toEqual([pattern]);
   });
 });
 

@@ -459,6 +459,24 @@ describe('tableToLessons: personnummer are dropped unread', () => {
     }
   });
 
+  // The header "Tfnr" no longer says personnummer, but a column of TF numbers under it must still not get through: it is a column the reader does not know, so it is not read at all,
+  // and a TF number written into a column that IS read holds its row back (the review of #396: the check that no column that really holds TF numbers passes the door).
+  it.each(['Tfnr', 'TF nr', 'TF-NR'])('%s: a column of TF numbers under it is not read, and its numbers are nowhere in the result', (name) => {
+    const header = ['Klass/grupp', 'Ämne', name, 'Dag', 'Start', 'Slut'];
+    const parsed = tableToLessons([header, ['7A', 'Ma', '19900101TF01', 'Mån', '08:10', '09:10'], ['7B', 'Sv', '19900102TF02', 'Tis', '08:10', '09:10']]);
+    expect(parsed.problems).toEqual([]);
+    expect(parsed.lessons).toHaveLength(2);
+    expect(JSON.stringify(parsed)).not.toMatch(/1990|TF0/);
+  });
+
+  it('holds a row back that has a TF number in a column the reader reads, under the header Tfnr or not', () => {
+    const header = ['Klass/grupp', 'Ämne', 'Tfnr', 'Dag', 'Start', 'Slut'];
+    const parsed = tableToLessons([header, ['7A', 'Ma 19900101TF01', '', 'Mån', '08:10', '09:10'], ['7B', 'Sv', '19900102TF02', 'Tis', '08:10', '09:10']]);
+    expect(parsed.lessons.map((lesson) => lesson.subject)).toEqual(['Sv']);
+    expect(parsed.problems.map((problem) => problem.code)).toEqual(['TABLE_PERSONAL_NUMBER']);
+    expect(JSON.stringify(parsed)).not.toMatch(/1990|TF0/);
+  });
+
   it('never echoes the value, not even in the problem of a row that is refused', () => {
     const header = ['Klass/grupp', 'Ämne', 'Personnummer', 'Dag', 'Start', 'Slut', 'Veckomönster'];
     const parsed = tableToLessons([header, ['', 'Ma', PNR, 'Mån', '08:10', '09:10', 'X'], ['7A', '', LONG_PNR, 'Sön', '10:00', '09:00', '']]);
