@@ -1757,6 +1757,41 @@ describe("Schemaförslag beside Generera (design §6)", () => {
   });
 
   /*
+   * The runs that gave no answer say as much of their figures as the gateway has (run-ending.ts, omgång 13 M2): the
+   * stub echoes a sentence's figures after its key, in the order the sentence says them.
+   */
+  describe("a run that ended without an answer from the engine", () => {
+    const ended = (errorCode: string, errorParams: Record<string, string | number> | null) => ({
+      id: "job-9", status: "FAILED", solverStatus: null, lessonsGenerated: 0, conflicts: [],
+      error: "The AI engine did not respond in time.", errorCode, errorParams,
+      createdAt: "2026-11-21T08:00:00.000Z", finishedAt: "2026-11-21T08:04:30.000Z",
+    });
+
+    it.each([
+      ["the engine's ceiling, and the step its solve was in", "ENGINE_TIMED_OUT", { ceilingSeconds: 230, stage: "SEARCH_CLONE", stageSeconds: 160, elapsedSeconds: 230 }, "ENGINE_TIMED_OUT_AT(230|SEARCH_CLONE|160|230)"],
+      ["the engine's ceiling alone", "ENGINE_TIMED_OUT", { ceilingSeconds: 230 }, "ENGINE_TIMED_OUT_CEILING(230)"],
+      ["a wait shorter than the engine says it needs", "ENGINE_WAIT_EXPIRED", { waitSeconds: 120, engineCeilingSeconds: 230 }, "ENGINE_WAIT_EXPIRED_SHORT(120|230)"],
+      ["a wait that was long enough", "ENGINE_WAIT_EXPIRED", { waitSeconds: 240, engineCeilingSeconds: 230 }, "ENGINE_WAIT_EXPIRED_AFTER(240)"],
+      ["a wait with no figure", "ENGINE_WAIT_EXPIRED", null, "ENGINE_WAIT_EXPIRED"],
+      ["an engine that was not reached", "ENGINE_NOT_REACHED", null, "ENGINE_NOT_REACHED"],
+      ["a run abandoned after it had gone on a while", "ENGINE_RUN_ABANDONED", { lastSeenSeconds: 150 }, "ENGINE_RUN_ABANDONED_AFTER(150)"],
+    ])("says %s in its own words, never the English", (_name, code, params, shown) => {
+      state.job = ended(code, params);
+      render(<GeneratePage />);
+
+      expect(screen.getByText(`scheduleCandidates.jobErrors.${shown}`)).toBeInTheDocument();
+      expect(screen.queryByText("The AI engine did not respond in time.")).toBeNull();
+    });
+
+    it("says an abandoned run's figure after a reload too, when the newest run of the year is the one that went away", () => {
+      state.history = [ended("ENGINE_RUN_ABANDONED", { lastSeenSeconds: 95 })];
+      render(<GeneratePage />);
+
+      expect(screen.getByText("scheduleCandidates.jobErrors.ENGINE_RUN_ABANDONED_AFTER(95)")).toBeInTheDocument();
+    });
+  });
+
+  /*
    * A run whose process went away (the service was restarted, or lost): its lease ran out, and the gateway reads a run
    * past its lease as FAILED ENGINE_RUN_ABANDONED before the sweep has come round. The page says what happened, in the
    * gateway's own words, and offers to run again; it never polls a dead run for ever.
