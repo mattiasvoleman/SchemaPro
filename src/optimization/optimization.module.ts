@@ -18,6 +18,8 @@ import { StaffingWeekController } from './staffing-week.controller';
 import { StaffingWeekService } from './staffing-week.service';
 import { StaffingSearchController } from './staffing-search.controller';
 import { StaffingSearchService } from './staffing-search.service';
+import { SuggestionsController } from './suggestions.controller';
+import { SuggestionsService } from './suggestions.service';
 
 @Module({
   imports: [
@@ -41,7 +43,7 @@ import { StaffingSearchService } from './staffing-search.service';
     }),
   ],
   // Kontrollera veckan has a controller of its own, beside the run's, and so has the week before and after a staffing proposal.
-  controllers: [OptimizationController, WeekCheckController, StaffingWeekController, StaffingSearchController],
+  controllers: [OptimizationController, WeekCheckController, StaffingWeekController, StaffingSearchController, SuggestionsController],
   providers: [
     // The engine's times, read from the engine (M1): the proxy waits by them.
     EngineTimingService,
@@ -57,6 +59,8 @@ import { StaffingSearchService } from './staffing-search.service';
     StaffingWeekService,
     // Lärarval F3: the search for the choice of teachers that eases the week, a job with a lease of its own (StaffingSearchRuns).
     StaffingSearchService,
+    // Åtgärdsförslag vid vägran (G6): the analysis of a run that ended without a timetable, asked for by a button.
+    SuggestionsService,
   ],
   // Provplanering (src/exams) asks the engine through the same call.
   exports: [OptimizationProxyService],

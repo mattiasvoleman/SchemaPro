@@ -256,6 +256,9 @@
       "name": "Subjects"
     },
     {
+      "name": "Suggestions"
+    },
+    {
       "name": "SupervisionAreas"
     },
     {
@@ -15408,6 +15411,65 @@
         "x-roles": [
           "SCHOOL_ADMIN"
         ]
+      }
+    },
+    "/api/v1/optimization/jobs/{id}/suggestions": {
+      "post": {
+        "tags": [
+          "Suggestions"
+        ],
+        "operationId": "SuggestionsController_start",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/SchoolId"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "x-roles": [
+          "SCHOOL_ADMIN"
+        ],
+        "x-admin-write": {
+          "areas": [
+            "SCHEMALAGGNING",
+            "DRIFT"
+          ]
+        },
+        "x-rate-limit": {
+          "limit": 3,
+          "ttlSeconds": 60
+        }
       }
     },
     "/api/v1/optimization/rooms/apply": {

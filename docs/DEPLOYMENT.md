@@ -7166,3 +7166,52 @@ and is not started when that is under five seconds after the build. With the def
 `optimization-engine/tests/test_suggest_changes.py`: the changes by rule (pure), the changed week, the oracle (the strict solver asked cold lays the changed week for each of the
 five rules, and not one step short of `needed`), the proof's shape, the four verdicts, the route (key, validation, the payload's own 400 as `/optimize` gives it, the gate, the
 ceiling) and the OpenAPI comparison. Twenty-one hand mutants of `suggestions.py` were run against it; none survives.
+
+## 34. Changes that would let a refused week be laid ("Åtgärdsförslag vid vägran", omgång 13, G6, part 2 of 3: the analysis in the gateway and its column)
+
+Part 1 is the engine's route `POST /api/v1/suggest-changes` (the engine section above this one, if it has merged). This part is what the gateway does with it: an administrator asks for the
+analysis of a run that ended without a timetable, the gateway asks the engine, and the answer is kept on the run for the page to read (part 3).
+
+### 34.1 The route and what is kept
+
+- `POST /api/v1/optimization/jobs/:id/suggestions` (`SuggestionsController`, `SuggestionsService`): school administrators with Schemaläggning or Drift, throttled at three a minute. It answers **202 at once**
+  with the analysis `RUNNING`, and the page polls the run as it polls a Generera (`GET /api/v1/optimization/jobs/:id`), which now carries `suggestions` (the stored value, read through a whitelist) and
+  `suggestionsOffered` (whether the button may be shown).
+- **Asked for, never started by itself.** It costs the engine up to a minute and a half of its cores. It may be asked for a run that ended **INFEASIBLE** or **TIMEOUT**, with a 400 named by one of the five rules
+  (`TEACHER_LESSON_LONGER_THAN_DAILY_CAP`, `TEACHER_DAILY_CAP_*`, `TEACHER_WORK_DAYS_*`, `SUBJECT_DISTRIBUTION_*`, `DISTRIBUTION_*`, `ROOM_LOCK_*`), or with the engine's own clock run out
+  (`ENGINE_TIMED_OUT`, `ENGINE_WAIT_EXPIRED`). Not for a run with a timetable, one still going, one the engine never answered (`ENGINE_NOT_REACHED`, `ENGINE_RUN_ABANDONED`) or one a rule that never gives way refused.
+  A refused start is **409** with a code the page words: `SUGGESTIONS_NOT_FOR_THIS_RUN`, `SUGGESTIONS_RUN_IS_OLD` (the year has a newer run: a Generera that is going is the year's newest, so it is this one that a press meets), `SUGGESTIONS_YEAR_BUSY` (a schemaförslag run of the year is alive; the engine's cores are shared).
+- **One solve stream per year, in both directions (D2).** The analysis claim takes the year's solve-start lock (`lockYearForSolveStart`, the one Generera's start and a schemaförslag run's start take) before it counts the year's runs, and Generera's start and a schemaförslag run's start are refused
+  **409 `SUGGESTIONS_RUNNING`** while an analysis of the year is `RUNNING` and began less than 240 s ago (`suggestions-running.ts`: it waits for the engine 200 s at most; an analysis whose process went away holds nobody off for longer than that, where a read gives it up only after six minutes).
+- **A second request to the engine, with its own budget**, not a step inside the run that ended: the week is fetched as a Generera fetches it (`prepareSchedule`, now, with the school's saved rules), and the engine is sent
+  `search {maxSeconds: 60, workers: 4}` and `deadlineSeconds: 195`, and waited for 200 s. A week the school has changed since the run is analysed as it stands.
+- It writes **only** `OptimizationJobs."suggestions"`: no timetable, no setting, no other row.
+
+### 34.2 The column and the migration (`20270305090000`)
+
+`OptimizationJobs."suggestions"` (jsonb, nullable, no default) with `OptimizationJobs_suggestions_is_a_small_object` (a JSON object, at most 8 KiB as text), under the table's own four administrator arms (RLS section 565).
+- **Deploy order:** the migration is run **before** the merge (§2). The API before this part names its columns and reads no `suggestions`, so it is unaffected; the column is NULL for every run before it.
+- **Rolling back:** revert the PR. The column can stay (nothing else reads it); dropping it is `ALTER TABLE "OptimizationJobs" DROP COLUMN "suggestions"` after the revert has deployed, with the lock the migration itself takes (NOWAIT in a loop).
+- What the value holds (`suggestions.ts`): `state` (`RUNNING`, `DONE`, `FAILED`), the verdict and `verified` of the engine, `total` (how many changes the list had), at most six changes each of at most three named posts and rooms (names cut to 80 characters),
+  and for a failure its code (`ENGINE_LACKS_SUGGESTIONS`, `ENGINE_BUSY`, `ENGINE_FAILED`, `NOTHING_TO_PLACE`, `ABANDONED`). The value is rebuilt through a whitelist on the way in and again on the way out; one that is not wholly well formed shows nothing.
+- **No person's name and no figure of a post.** A cap's teacher rides as the teacher's Users id, which no view carries on; the page reads the name as it does for a free-day note. A change to a part-timer's days is stored in its **hidden form for every reader**
+  (the rule, the price and the proof, and no post, no teacher, no number, no weekday; several are one): nothing HR is kept, and the post stays the one place the figure lives (`work-days.ts`).
+
+### 34.3 What can go wrong, and what the page then says
+
+- **`RUNNING` for ever.** A process that goes away mid-analysis (a deploy of the API happens at every merge) leaves `RUNNING`. A read treats a `RUNNING` older than six minutes as `FAILED`/`ABANDONED`, and a new press takes it over (the claim is one conditional `UPDATE`, as is the final write, which only
+  overwrites the analysis the call itself started). Nothing sweeps it.
+- **An engine older than the route** answers 404: `ENGINE_LACKS_SUGGESTIONS`, said as "not just now"; the run reads as it did. **429** from the engine (one analysis at a time in its process): `ENGINE_BUSY`. A **400** is the engine's hard rules refusing the week: not a failure but the answer
+  (`HARD_REFUSAL`, no change of the five can help). Every other error is `ENGINE_FAILED`, with nothing of its text kept.
+- **A change that was never checked** (`verified` false) is never above `MAY_HELP`, whatever the engine's changes say; the gateway lowers it. `SOLVABLE_AS_IS` is only to be said with `verified`.
+
+### 34.4 Operations
+
+- Logs: `Suggestions ended without a list [job, failure]` (a warning, with the error as text), `Suggestions answered by the gateway's pre-flight`, and on the engine `suggest_changes_requested` / `_completed` (verdict, number of changes, `verified`, elapsed ms) and `_busy` / `_timed_out`.
+- Which runs have an analysis: `SELECT id, "suggestions"->>'state', "suggestions"->>'verdict', "suggestions"->>'startedAt' FROM "OptimizationJobs" WHERE "suggestions" IS NOT NULL ORDER BY "createdAt" DESC` (as the owner; the API role reads it under RLS).
+- RLS section 565 holds it: the column and its check from the catalogue, the check's edges (an array, a number, a text, a JSON null, 8 192 characters and 8 192 **bytes**), the claim and the write as the service makes them, the four arms unchanged and not naming the column, and that a teacher and PostgREST's role read and write nothing.
+
+### 34.5 Tests
+
+`src/optimization/suggestions.spec.ts` (the stored value, the whitelist, the ranking, the bounds, abandonment), `suggestions.service.spec.ts` (what a start is refused for, a second press, the request, every way out writing the column), `suggestions.controller.spec.ts`,
+`suggestions-contract.spec.ts` (the engine's names, by hand, mirrored by `tests/test_suggest_changes.py`), `suggestions-running.spec.ts` (the analysis as a solve stream of the year) and `optimization-jobs.suggestions.spec.ts` (the run as a reader sees it); the adapter probe's `ag-f` is the one-stream rule against a real database. Twenty-three hand mutants of `suggestions.ts` and `suggestions.service.ts` were run against them; none survives (one, a comment removed, is equivalent).

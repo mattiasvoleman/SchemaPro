@@ -507,6 +507,11 @@ describe('the roster-reader inventory', () => {
       // candidate it tries: its start reads the week once, and the proposal it gives reads it again to see that it is the one
       // the search counted (the basis covers the week), so both answer the same 409 for the same year. Its status, its latest
       // run and its cancel read only its own row.
+      //
+      // Åtgärdsförslag vid vägran fetches the week by Generera's own fetch too (prepareSchedule), but in the background run it starts
+      // and not in the request, which answers 202 once the run it is asked about has been checked. A year the fetch then refuses (two
+      // steps ahead, with a run to ask about only because it was run before it was) ends the analysis as ENGINE_FAILED, written on the
+      // run, and no 409 reaches the caller: the route is listed because the walk reaches the fetch, not because it answers R6's 409.
       expect(reached.map((entry) => entry.route).sort()).toEqual([
         'AnalysisController.costBasis',
         'AnalysisController.keyFigures',
@@ -557,6 +562,7 @@ describe('the roster-reader inventory', () => {
         'StaffingSearchController.proposal',
         'StaffingSearchController.start',
         'StaffingWeekController.weekOfProposal',
+        'SuggestionsController.start',
         'SwapsController.apply',
         'SwapsController.suggest',
         'TeachingBlocksController.update',

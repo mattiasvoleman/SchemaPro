@@ -69607,3 +69607,215 @@ BEGIN
     (SELECT count(*) FROM "StaffingPolicies" WHERE "assignmentScopeMode" = 'OFF'), 'ok 0');
 END $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 565: en vägrad eller utlupen körning sparar förslagen på vad som ska ändras (20270305090000).
+--
+-- OptimizationJobs fick en kolumn, "suggestions" (jsonb, nullbar, utan standardvärde), och en CHECK: ett objekt på högst 8 KiB. Inga armar
+-- och inga rättigheter ändrades: de fyra administratörsarmarna ligger kvar hos API:ts roll ensam (section 162) och kolumnen lyds av dem som
+-- tabellens övriga. Här läses kolumnen och kontrollen ur katalogen, kontrollens kanter prövas som schemaläggaren (hennes arm skriver raden),
+-- den villkorade skrivning gatewayen gör (tag över analysen som är RUNNING, skriv bara över den man själv startade) prövas som den står i
+-- koden, och PostgREST:s roll och en lärare läser inga förslag alls.
+--
+-- VEM SOM FÅR LÄSA KOLUMNEN. Tabellens rättigheter gäller den, ingen kolumn har en egen lista. API:ts roll läser och skriver den genom de fyra
+-- administratörsarmarna. PostgREST:s roll (authenticated) har tabellens rättigheter men ingen arm, så raderna den ser är noll: radsäkerheten
+-- döljer kolumnen, en rättighet gör det inte. service_role läser allt (den går förbi radsäkerheten) men skriver inget. anon, en begäran utan
+-- token, och supabase_auth_admin har ingen rättighet alls, och för dem ska svaret vara en vägran (42501), inte en tom lista: tom är också vad
+-- radsäkerheten ger en roll som har fått tabellen på nytt, och det är den regression som ska fångas (jämför section 14). Rollerna den här
+-- anslutningen kan bli prövas på riktigt (supabase_auth_admin, scripts/db-init/02-auth-hook-stand-in.sql), de den inte kan bli (anon,
+-- service_role) i katalogen.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  yr uuid;
+  run uuid;
+  got text;
+  n bigint;
+  stale timestamptz := now() - interval '10 minutes';
+BEGIN
+  -- Kolumnen: jsonb, nullbar, utan standardvärde.
+  SELECT string_agg(a.attname || ' ' || format_type(a.atttypid, a.atttypmod) || ' ' || CASE WHEN a.attnotnull THEN 'not null' ELSE 'null' END
+                    || ' ' || coalesce(pg_get_expr(d.adbin, d.adrelid), 'no default'), ', ' ORDER BY a.attname) INTO got
+    FROM pg_attribute a
+    LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+   WHERE a.attrelid = 'public."OptimizationJobs"'::regclass AND a.attname = 'suggestions' AND NOT a.attisdropped;
+  IF got IS DISTINCT FROM 'suggestions jsonb null no default' THEN
+    RAISE EXCEPTION 'ag 565: the suggestions column is %', got;
+  END IF;
+
+  -- Kontrollen, validerad: namnet, objektet och taket (utan parenteser: Postgres 16 och 17 sätter dem olika).
+  SELECT c.convalidated::text || ' ' || translate(regexp_replace(pg_get_constraintdef(c.oid), '\s+', ' ', 'g'), '()', '') INTO got
+    FROM pg_constraint c
+   WHERE c.conrelid = 'public."OptimizationJobs"'::regclass AND c.contype = 'c' AND c.conname = 'OptimizationJobs_suggestions_is_a_small_object';
+  IF got IS NULL OR got NOT LIKE 'true CHECK suggestions IS NULL OR %' OR position('jsonb_typeof' IN got) = 0
+     OR position('''object''' IN got) = 0 OR position('octet_length' IN got) = 0 OR position('<= 8192' IN got) = 0 THEN
+    RAISE EXCEPTION 'ag 565: the check on suggestions is %', coalesce(got, 'missing');
+  END IF;
+
+  -- Armarna som förut: de fyra, API:ts rolls ensam, och ingen nämner kolumnen (en arm som gjorde det vore en ny dörr).
+  SELECT string_agg(policyname || ' ' || cmd || ' ' || roles::text, ', ' ORDER BY policyname) INTO got
+    FROM pg_policies WHERE schemaname = 'public' AND tablename = 'OptimizationJobs';
+  IF got IS DISTINCT FROM 'optimization_jobs_admin_delete DELETE {app_authenticated}, '
+                       || 'optimization_jobs_admin_insert INSERT {app_authenticated}, '
+                       || 'optimization_jobs_admin_select SELECT {app_authenticated}, '
+                       || 'optimization_jobs_admin_update UPDATE {app_authenticated}' THEN
+    RAISE EXCEPTION 'ag 565: OptimizationJobs'' arms are %', got;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'OptimizationJobs'
+                AND (coalesce(qual, '') || coalesce(with_check, '')) ~ 'suggestions') THEN
+    RAISE EXCEPTION 'ag 565: an arm of OptimizationJobs reads the suggestions';
+  END IF;
+
+  -- Schemaläggaren skriver raden: en körning som INFEASIBLE, och analysen som API:t skriver den (ett objekt), tas bort igen och skrivs över.
+  SELECT id INTO yr FROM "AcademicYears" WHERE "schoolId" = school ORDER BY "isActive" DESC, id LIMIT 1;
+  INSERT INTO "OptimizationJobs" ("schoolId", "academicYearId", "actorId", status, "solverStatus", "finishedAt")
+  VALUES (school, yr, app.current_user_id(), 'SUCCEEDED', 'INFEASIBLE', now()) RETURNING id INTO run;
+  UPDATE "OptimizationJobs"
+     SET "suggestions" = '{"version": 1, "state": "RUNNING", "startedAt": "2027-03-05T10:00:00.000Z"}'::jsonb
+   WHERE id = run;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'ag 565: the administrator''s write of an analysis changed % row(s)', n; END IF;
+  UPDATE "OptimizationJobs" SET "suggestions" = NULL WHERE id = run;
+  UPDATE "OptimizationJobs" SET "suggestions" = '{}'::jsonb WHERE id = run;
+
+  -- Kontrollens kanter, en i taget: ett objekt och inte mer än 8 192 tecken som text. `{"x": "` och `"}` är nio av dem.
+  BEGIN
+    UPDATE "OptimizationJobs" SET "suggestions" = '[1, 2]'::jsonb WHERE id = run;
+    RAISE EXCEPTION 'ag 565: an array was accepted as suggestions';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "suggestions" = '7'::jsonb WHERE id = run;
+    RAISE EXCEPTION 'ag 565: a number was accepted as suggestions';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "suggestions" = '"text"'::jsonb WHERE id = run;
+    RAISE EXCEPTION 'ag 565: a text was accepted as suggestions';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "suggestions" = 'null'::jsonb WHERE id = run;
+    RAISE EXCEPTION 'ag 565: a JSON null was accepted as suggestions (a run nobody asked about has a database NULL)';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  UPDATE "OptimizationJobs" SET "suggestions" = jsonb_build_object('x', repeat('y', 8183)) WHERE id = run;
+  IF NOT EXISTS (SELECT 1 FROM "OptimizationJobs" WHERE id = run AND octet_length("suggestions"::text) = 8192) THEN
+    RAISE EXCEPTION 'ag 565: the largest value the check accepts is not 8192 characters as text';
+  END IF;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "suggestions" = jsonb_build_object('x', repeat('y', 8184)) WHERE id = run;
+    RAISE EXCEPTION 'ag 565: a value of 8193 characters was accepted';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+  -- Och kontrollen räknar BYTES, inte tecken: en å är två, och `{"x": "` och `"}` är nio. 4 091 av dem är 8 191 byte och ryms, 4 092 är 8 193 och ryms inte.
+  UPDATE "OptimizationJobs" SET "suggestions" = jsonb_build_object('x', repeat('å', 4091)) WHERE id = run;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "suggestions" = jsonb_build_object('x', repeat('å', 4092)) WHERE id = run;
+    RAISE EXCEPTION 'ag 565: a value of 8193 bytes was accepted';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+
+  -- Gatewayens villkorade tag och skrivning, som de står i suggestions.service.ts: tag bara när ingen analys är RUNNING (eller en som varit det
+  -- längre än en analys varar), och skriv bara över analysen man själv startade.
+  UPDATE "OptimizationJobs" SET "suggestions" = NULL WHERE id = run;
+  UPDATE "OptimizationJobs"
+     SET "suggestions" = '{"version": 1, "state": "RUNNING", "startedAt": "2027-03-05T10:00:00.000Z"}'::jsonb
+   WHERE id = run AND ("suggestions" IS NULL OR "suggestions"->>'state' <> 'RUNNING'
+                       OR ("suggestions"->>'startedAt')::timestamptz < now() - make_interval(secs => 360));
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'ag 565: the claim of a run with no analysis changed % row(s)', n; END IF;
+  -- Ett andra tag medan den första är färsk tar ingenting. 'startedAt' är nu, så den är färsk.
+  UPDATE "OptimizationJobs" SET "suggestions" = jsonb_build_object('version', 1, 'state', 'RUNNING', 'startedAt', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) WHERE id = run;
+  UPDATE "OptimizationJobs"
+     SET "suggestions" = '{"version": 1, "state": "RUNNING", "startedAt": "2027-03-05T11:00:00.000Z"}'::jsonb
+   WHERE id = run AND ("suggestions" IS NULL OR "suggestions"->>'state' <> 'RUNNING'
+                       OR ("suggestions"->>'startedAt')::timestamptz < now() - make_interval(secs => 360));
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'ag 565: a second claim took a fresh analysis (% row(s))', n; END IF;
+  -- Men en analys som varit RUNNING i tio minuter tas över.
+  UPDATE "OptimizationJobs" SET "suggestions" = jsonb_build_object('version', 1, 'state', 'RUNNING', 'startedAt', to_char(stale AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) WHERE id = run;
+  UPDATE "OptimizationJobs"
+     SET "suggestions" = '{"version": 1, "state": "RUNNING", "startedAt": "2027-03-05T11:00:00.000Z"}'::jsonb
+   WHERE id = run AND ("suggestions" IS NULL OR "suggestions"->>'state' <> 'RUNNING'
+                       OR ("suggestions"->>'startedAt')::timestamptz < now() - make_interval(secs => 360));
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'ag 565: the claim of an analysis abandoned for ten minutes changed % row(s)', n; END IF;
+  -- Skrivningen över den analys man själv startade (startedAt) går igenom, och över en annans gör den inte.
+  UPDATE "OptimizationJobs"
+     SET "suggestions" = '{"version": 1, "state": "DONE", "startedAt": "2027-03-05T10:00:00.000Z"}'::jsonb
+   WHERE id = run AND "suggestions"->>'state' = 'RUNNING' AND "suggestions"->>'startedAt' = '2027-03-05T10:00:00.000Z';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'ag 565: a write over another press''s analysis changed % row(s)', n; END IF;
+  UPDATE "OptimizationJobs"
+     SET "suggestions" = '{"version": 1, "state": "DONE", "startedAt": "2027-03-05T11:00:00.000Z"}'::jsonb
+   WHERE id = run AND "suggestions"->>'state' = 'RUNNING' AND "suggestions"->>'startedAt' = '2027-03-05T11:00:00.000Z';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'ag 565: the write over its own analysis changed % row(s)', n; END IF;
+  -- Och den som är DONE skrivs inte över av en sen skrivning från en process som tappat sin analys.
+  UPDATE "OptimizationJobs"
+     SET "suggestions" = '{"version": 1, "state": "FAILED", "startedAt": "2027-03-05T11:00:00.000Z"}'::jsonb
+   WHERE id = run AND "suggestions"->>'state' = 'RUNNING' AND "suggestions"->>'startedAt' = '2027-03-05T11:00:00.000Z';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'ag 565: a late write over a finished analysis changed % row(s)', n; END IF;
+
+  -- En lärare ser ingen körning och därmed inga förslag, och ändrar inga.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000111')::text, true);
+  SELECT count(*) INTO n FROM "OptimizationJobs" WHERE "suggestions" IS NOT NULL;
+  IF n <> 0 THEN RAISE EXCEPTION 'ag 565: a teacher reads % analysis(es)', n; END IF;
+  UPDATE "OptimizationJobs" SET "suggestions" = '{}'::jsonb;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'ag 565: a teacher wrote % analysis(es)', n; END IF;
+
+  -- PostgREST:s roll, med schemaläggarens claims: ingen läsning och ingen skrivning av just den nya kolumnen.
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000107')::text, true);
+  SET LOCAL ROLE authenticated;
+  IF current_user <> 'authenticated' THEN RAISE EXCEPTION 'ag 565: could not act as authenticated'; END IF;
+  SELECT count(*) INTO n FROM (SELECT "suggestions" FROM "OptimizationJobs") AS r;
+  IF n <> 0 THEN RAISE EXCEPTION 'ag 565: as PostgREST''s role the schemaläggare reads % analysis(es)', n; END IF;
+  UPDATE "OptimizationJobs" SET "suggestions" = '{}'::jsonb;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'ag 565: as PostgREST''s role the schemaläggare wrote % analysis(es)', n; END IF;
+  SET LOCAL ROLE app_authenticated;
+
+  -- Katalogen: ingen lista på kolumnen, och rättigheterna roll för roll. Bara SELECT och UPDATE frågas efter, så det som Postgres 17 lägger till
+  -- i ALL (MAINTAIN) inte ändrar något.
+  SELECT a.attacl::text INTO got FROM pg_attribute a WHERE a.attrelid = 'public."OptimizationJobs"'::regclass AND a.attname = 'suggestions';
+  IF got IS NOT NULL THEN
+    RAISE EXCEPTION 'ag 565: the suggestions column has a privilege list of its own: %', got;
+  END IF;
+  SELECT string_agg(r.role || ' read=' || CASE WHEN has_column_privilege(r.role, 'public."OptimizationJobs"', 'suggestions', 'SELECT') THEN 'yes' ELSE 'no' END
+                    || ' write=' || CASE WHEN has_column_privilege(r.role, 'public."OptimizationJobs"', 'suggestions', 'UPDATE') THEN 'yes' ELSE 'no' END,
+                    ', ' ORDER BY r.n) INTO got
+    FROM unnest(ARRAY['anon', 'authenticated', 'app_authenticated', 'service_role', 'supabase_auth_admin']) WITH ORDINALITY AS r(role, n);
+  IF got IS DISTINCT FROM 'anon read=no write=no, authenticated read=yes write=yes, app_authenticated read=yes write=yes, '
+                       || 'service_role read=yes write=no, supabase_auth_admin read=no write=no' THEN
+    RAISE EXCEPTION 'ag 565: who may read and write the suggestions is: %', got;
+  END IF;
+
+  -- En roll utan rättighet får en vägran, inte en tom lista. RAISE inne i blocket är ingen insufficient_privilege, men fångas ändå av
+  -- WHEN OTHERS, så svaret läses ur SQLSTATE: allt utom 42501, också "inget fel" och noll rader, fäller körningen.
+  SET LOCAL ROLE supabase_auth_admin;
+  IF current_user <> 'supabase_auth_admin' THEN RAISE EXCEPTION 'ag 565: running as %, not supabase_auth_admin', current_user; END IF;
+  BEGIN
+    PERFORM "suggestions" FROM "OptimizationJobs";
+    got := 'no error';
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM '42501' THEN
+    RAISE EXCEPTION 'ag 565: a role with no grant reading the suggestions got %, not a refusal (42501)', got;
+  END IF;
+  BEGIN
+    UPDATE "OptimizationJobs" SET "suggestions" = '{}'::jsonb;
+    got := 'no error';
+  EXCEPTION WHEN OTHERS THEN
+    got := SQLSTATE;
+  END;
+  IF got IS DISTINCT FROM '42501' THEN
+    RAISE EXCEPTION 'ag 565: a role with no grant writing the suggestions got %, not a refusal (42501)', got;
+  END IF;
+  SET LOCAL ROLE app_authenticated;
+
+  RAISE NOTICE 'ag 565: the suggestions column and its check hold at their edges, the claim and the write are the one press''s, the API''s role alone reads and writes it through the arms, and a role with no grant is refused (42501)';
+END $$;
+SET LOCAL ROLE app_authenticated;
+ROLLBACK;
