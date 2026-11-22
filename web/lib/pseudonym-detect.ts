@@ -10,7 +10,12 @@
  *
  * WHAT THIS CANNOT JUDGE. A name in running text; an address written in words ("anna punkt svensson snabel-a skola punkt se"); a
  * number split over two cells ("800101" and "1234"); digits in another script than ASCII and the full-width forms the shape
- * folds. Those are said in the page, the report and the manual, not hidden.
+ * folds. Those are said in the page, the report and the manual, not hidden. (A number cut by a line break is found by lib/pseudonym-seams.ts, where there is text beside it.)
+ *
+ * WHAT THIS SEARCH TAKES THAT THE DOOR DOES NOT (the review of #398; lib/personal-number.ts and the gateway's file-safety.ts are unchanged, and hold each other equal): a colon, a comma or an
+ * apostrophe between the date and the last four of a personnummer; any number of characters that show nothing between the digits; a telephone number written with 46 and no plus, or with full stops
+ * only; an address with its local part in quotes or its domain in brackets; the wide TF search. For a door a missed number is a cell read as text, for the pseudonymiser it is a number left in a file that is
+ * sent on, and what it costs to take too much is a marker.
  *
  * ONE VALUE, ONE KEY. Two spellings of one number or address have one `key`, so that the same person is the same marker
  * however a file wrote them (see pseudonym-markers.ts): the ten last digits of a personnummer, a telephone number's digits
@@ -91,16 +96,33 @@ function findLooseTfNumbers(text: string): Finding[] {
 }
 
 /**
+ * What may stand between the date of a personnummer and its last four, besides the blanks and hyphens the shared shape takes: a colon, a comma or an apostrophe (the
+ * straight one and the typographic ones a word processor makes of it). THE DOOR DOES NOT TAKE THESE and stays as it is (lib/personal-number.ts: the review of #377 left
+ * the shape one list for both sides); this search does, and the report says how the number was written.
+ */
+const MARKS = ":,'\u2019\u2018\u00b4`\u02bc\u2032";
+const MARK = new RegExp(`[${MARKS}]`);
+
+const SPELLING_ISO = new RegExp(`^\\d{2,4}-\\d{2}-\\d{2}([- ${MARKS}])\\d{4}$`);
+const SPELLING_TAIL = new RegExp(`[ +\\-${MARKS}]{1,8}\\d{4}$`);
+const SPELLING_SEPARATOR = new RegExp(`([ +\\-${MARKS}]{1,8})\\d{4}$`);
+
+/** How a separator of MARKS is written in a pattern: a colon, a comma, or an apostrophe, whichever of the apostrophes it was. */
+const markWritten = (mark: string): string => (mark === ":" || mark === "," ? mark : "'");
+
+/**
  * How a personnummer was written, as a pattern: the century or not, the separator, and whether blanks stood between digits.
- * It holds no digit of the value, so it may be counted and reported.
+ * It holds no digit of the value, so it may be counted and reported. `folded` is the match as the shared shape folds it, which leaves the separators of MARKS as they were.
  */
 function spellingOf(folded: string, digits: string): string {
-  const iso = /^\d{2,4}-\d{2}-\d{2}([- ])\d{4}$/.exec(folded);
-  if (iso !== null) return `${digits.length === 12 ? "ÅÅÅÅ" : "ÅÅ"}-MM-DD${iso[1] === " " ? " " : "-"}NNNN`;
-  const blanks = /\d {1,2}\d/.test(folded.replace(/[ +-]{1,8}\d{4}$/, ""));
-  const separator = /([ +-]{1,8})\d{4}$/.exec(folded)?.[1] ?? "";
-  const sign = separator.includes("+") ? "+" : separator.includes("-") ? "-" : separator.length > 0 ? " " : "";
-  return `${digits.length === 12 ? "ÅÅÅÅ" : "ÅÅ"}MMDD${sign}NNNN${blanks ? " (med blanksteg i siffrorna)" : ""}`;
+  const century = digits.length === 12 ? "ÅÅÅÅ" : "ÅÅ";
+  const iso = SPELLING_ISO.exec(folded);
+  if (iso !== null) return `${century}-MM-DD${MARK.test(iso[1]!) ? markWritten(iso[1]!) : iso[1] === " " ? " " : "-"}NNNN`;
+  const blanks = /\d {1,2}\d/.test(folded.replace(SPELLING_TAIL, ""));
+  const separator = SPELLING_SEPARATOR.exec(folded)?.[1] ?? "";
+  const mark = [...separator].find((char) => MARK.test(char));
+  const sign = separator.includes("+") ? "+" : separator.includes("-") ? "-" : mark !== undefined ? markWritten(mark) : separator.length > 0 ? " " : "";
+  return `${century}MMDD${sign}NNNN${blanks ? " (med blanksteg i siffrorna)" : ""}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,11 +138,44 @@ function spellingOf(folded: string, digits: string): string {
  * NOT made hyphens here (personal-number.ts does): "0.1234567" and "07.08.2026" are told from a number by the full stop.
  */
 function foldSpellings(text: string): string {
-  return text
+  return (hasInvisible(text) ? text.replace(INVISIBLE, (char) => " ".repeat(char.length)) : text)
     .replace(/[\uff10-\uff19]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xff10 + 0x30))
-    .replace(/[\s\u00ad\u200b-\u200f\u2060\ufeff]/g, " ")
+    .replace(/[\s\u0085]/g, " ")
     .replace(/[\u2010-\u2015\u2212\ufe58\ufe63\uff0d]/g, "-")
     .replace(/[\uff20\ufe6b]/g, "@");
+}
+
+/**
+ * Characters that show nothing: the soft hyphen, the zero-width space, joiner and non-joiner, the marks that set the direction of text, the word joiner and the invisible
+ * operators, the variation selectors, the combining grapheme joiner, the Arabic letter mark, the Mongolian vowel separator, the Hangul fillers, the byte order mark, the tag
+ * characters: Unicode's own list of what is ignored when text is compared (Default_Ignorable_Code_Point), and every other format character. A reader cannot see one between two
+ * digits and a program that looks for a shape sees a gap: one of them was a blank, which a number may have between two digits, and three in a row were three, which it may not (the
+ * review of #398). The text is therefore searched TWICE when it holds one: as foldSpellings leaves it (each is a blank, which is what keeps "0701234567<ZWSP>0812345678" two
+ * numbers) and with every one taken out (which is what makes "8<ZWSP><SHY><WJ>0" two digits side by side); the findings of the second are carried back to the text as it was.
+ */
+const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}]/gu;
+const HAS_INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}]/u;
+/** Nothing from U+0000 to U+02FF shows nothing but the soft hyphen: a text of Swedish, English and digits is told so by one cheap test, and the property test is for the rest. */
+const MAYBE_INVISIBLE = /[^\u0000-\u00ac\u00ae-\u02ff]/;
+const hasInvisible = (text: string): boolean => MAYBE_INVISIBLE.test(text) && HAS_INVISIBLE.test(text);
+
+/** The text with the invisible characters taken out, folded, and where each of its characters stood in the text as it was. */
+function squeeze(original: string): { text: string; origin: Int32Array } {
+  const origin = new Int32Array(original.length + 1);
+  let kept = "";
+  let at = 0;
+  let from = 0;
+  const keep = (to: number): void => {
+    for (let i = from; i < to; i += 1) origin[at++] = i;
+    kept += original.slice(from, to);
+  };
+  for (const found of original.matchAll(INVISIBLE)) {
+    keep(found.index);
+    from = found.index + found[0].length;
+  }
+  keep(original.length);
+  origin[at] = original.length;
+  return { text: foldSpellings(kept), origin: origin.subarray(0, at + 1) };
 }
 
 // ---------------------------------------------------------------------------
@@ -130,18 +185,39 @@ function foldSpellings(text: string): string {
 /** A character that ends an address: blanks, a second @, and the punctuation that surrounds one in running text. */
 const ADDRESS_STOP = /[\s@;,<>()"'[\]{}|\\]/;
 
+/** The quotation marks a local part may stand in: the straight one and the curly ones a word processor makes of it. */
+const QUOTES = '"\u201c\u201d\u201e';
+/** The longest a quoted local part is searched for, and the longest a domain in brackets is: an address is not a paragraph. */
+const MOST_QUOTED = 64;
+const MOST_LITERAL = 48;
+
 /**
  * Every `text@text` with no blank in it. BROAD ON PURPOSE: "anna@skola" with no top domain is taken too, because it is
  * what a person typed as an address, and what is taken is a part of a cell, never a whole cell by guess. Found by walking out
  * from each @, so that a cell of a million characters with no @ costs one scan and not a quadratic number of attempts.
+ *
+ * TWO WRITINGS ARE NOT PLAIN TEXT. A local part in quotes, "anna.svensson"@skola.se (a form the standard has, and what a word processor makes of an address with a blank
+ * in it), is walked back to its opening quote, and the quotes are not part of the address's identity: it has the key of anna.svensson@skola.se. And a domain written as an address in
+ * brackets, anna@[10.0.0.1], is taken to the bracket that closes it. Both were left standing, because a quote and a bracket END an address in running text (the review of #398).
  */
 function findAddresses(text: string): { start: number; end: number; key: string }[] {
   const found: { start: number; end: number; key: string }[] = [];
   for (let at = text.indexOf("@"); at !== -1; at = text.indexOf("@", at + 1)) {
     let start = at;
-    while (start > 0 && !ADDRESS_STOP.test(text[start - 1]!)) start -= 1;
+    if (at > 0 && QUOTES.includes(text[at - 1]!)) {
+      // The opening quote: the nearest quotation mark before the closing one, on the same line and within reach.
+      let open = at - 2;
+      while (open >= 0 && at - open <= MOST_QUOTED && !QUOTES.includes(text[open]!) && text[open] !== "\n") open -= 1;
+      if (open >= 0 && QUOTES.includes(text[open]!) && at - open <= MOST_QUOTED && open < at - 2) {
+        start = open;
+        while (start > 0 && !ADDRESS_STOP.test(text[start - 1]!)) start -= 1;
+      }
+    }
+    if (start === at) while (start > 0 && !ADDRESS_STOP.test(text[start - 1]!)) start -= 1;
     let end = at + 1;
-    while (end < text.length && !ADDRESS_STOP.test(text[end]!)) end += 1;
+    const close = text[at + 1] === "[" ? text.indexOf("]", at + 2) : -1;
+    if (close !== -1 && close - at <= MOST_LITERAL && !/\s/.test(text.slice(at, close))) end = close + 1;
+    else while (end < text.length && !ADDRESS_STOP.test(text[end]!)) end += 1;
     // A full stop or a colon that ends a sentence is not the address's.
     while (end > at + 1 && /[.:!?…\-_]/.test(text[end - 1]!)) end -= 1;
     if (start === at || end === at + 1) continue;
@@ -152,7 +228,7 @@ function findAddresses(text: string): { start: number; end: number; key: string 
     }
     found.push({ start, end, key: "" });
   }
-  for (const part of found) part.key = text.slice(part.start, part.end).replace(/^mailto:/i, "").trim().toLowerCase();
+  for (const part of found) part.key = text.slice(part.start, part.end).replace(/^mailto:/i, "").replace(/[\u201c\u201d\u201e"]/g, "").trim().toLowerCase();
   return found;
 }
 
@@ -183,16 +259,28 @@ export const isMarkerAddress = (address: string): boolean => MARKER_ADDRESS.test
  */
 const TIME_RANGE = /^(?:[01]\d|2[0-3])[0-5]\d[ /-]{1,3}(?:[01]\d|2[0-3])[0-5]\d$/;
 const DATE_LIKE = /^(?:\d{4}-\d{2}-\d{2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})$/;
-/** A date wherever it stands in a text: 2026-08-17, and 17-08-2026 or 17.8.2026 with a year of four digits. */
-const DATE_SPAN = /\d{4}-\d{2}-\d{2}|(?<!\d)\d{1,2}[-/.]\d{1,2}[-/.]\d{4}(?!\d)/g;
+/**
+ * A date wherever it stands in a text: 2026-08-17, and 17-08-2026 or 17.8.2026 with a year of four digits. An ISO date has a month of 01-12 and a day of 01-31: "0046-79-691-72-10" is
+ * a telephone number written with hyphens and was masked as a date, and left standing (found by the oracle of lib/pseudonym-leak-oracle.test.ts).
+ */
+const DATE_SPAN = /\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])|(?<!\d)\d{1,2}[-/.]\d{1,2}[-/.]\d{4}(?!\d)/g;
 
 /**
- * A telephone number as the one value it is, however it was written: its digits, a national number as written (070…), +46 and 0046 as 0
+ * A telephone number written with its country code and no plus: 46701234567, 46 70 123 45 67. Ten to twelve digits that begin with 46 (46 and the eight or nine of
+ * the number: a Swedish number has no more and no fewer, and with its 0 left out); a bare number of any other length that begins with 46 is not taken for one.
+ */
+const isBareCountryCode = (candidate: string): boolean => {
+  const digits = candidate.replace(/\D/g, "");
+  return !candidate.trim().startsWith("+") && !digits.startsWith("00") && digits.startsWith("46") && !candidate.trim().startsWith("0") && digits.length >= 10 && digits.length <= 12;
+};
+
+/**
+ * A telephone number as the one value it is, however it was written: its digits, a national number as written (070…), +46, 0046 and a bare 46 as 0
  * (with a trunk 0 in brackets, +46 (0)70, counted once), any other country with a +. The marker book keys a whole cell by the same.
  */
 export function normaliseTelephone(value: string): string {
   const digits = value.replace(/\D/g, "");
-  const international = value.trim().startsWith("+") || digits.startsWith("00");
+  const international = value.trim().startsWith("+") || digits.startsWith("00") || isBareCountryCode(value);
   const national = international ? digits.replace(/^00/, "") : digits;
   if (!international) return national;
   if (national.startsWith("46")) {
@@ -203,16 +291,29 @@ export function normaliseTelephone(value: string): string {
 }
 
 /**
+ * Written with full stops only (070.123.45.67, 46.70.123.45.67): a Swedish number in the way a French or a Swiss one is written. It has at least three full stops, every group of at least
+ * two digits (the one after the country code may be a single, 46.8.123.45.67) and nine digits or more, which is what tells it from "0.1234567", "07.08.2026", "10.0.0.1", a version, and a
+ * time (08.10-09.10 has a hyphen, and 08.10.09.10 has eight digits). A number that begins with + or 00 may have full stops between its groups without it.
+ */
+const isDotted = (candidate: string): boolean => {
+  if (!/^\d[\d.]*$/.test(candidate)) return false;
+  const groups = candidate.split(".");
+  const country = groups[0] === "46";
+  return groups.length >= 4 && groups.every((group, i) => group.length >= 2 || (country && i === 1)) && candidate.replace(/\D/g, "").length >= 9;
+};
+
+/**
  * The key of a candidate that is a telephone number, or null. A number begins with 0 (the national form: 070-123 45 67,
- * 08-123 456 78) or with + or 00 (the international), has between seven and fifteen digits, and is not a date. A full stop
- * separates the groups of an international number only: "0.1234567" and "07.08.2026" are not telephone numbers.
+ * 08-123 456 78), with + or 00 (the international) or with 46 and no plus, has between seven and fifteen digits, and is not a date. A full stop
+ * separates the groups of an international number (+46.70.123.45.67) and of a number written with full stops alone (070.123.45.67); "0.1234567" and "07.08.2026" are not telephone numbers.
  */
 function telephoneKey(candidate: string): string | null {
   const digits = candidate.replace(/\D/g, "");
-  const international = candidate.startsWith("+") || digits.startsWith("00");
+  const bare = isBareCountryCode(candidate);
+  const international = candidate.startsWith("+") || digits.startsWith("00") || bare;
   if (!international && !digits.startsWith("0")) return null;
   if (DATE_LIKE.test(candidate) || TIME_RANGE.test(candidate)) return null;
-  if (!candidate.startsWith("+") && candidate.includes(".")) return null;
+  if (!candidate.startsWith("+") && !digits.startsWith("00") && candidate.includes(".") && !isDotted(candidate)) return null;
   const national = international ? digits.replace(/^00/, "") : digits;
   if (international ? national.length < 8 || national.length > 15 : national.length < 7 || national.length > 11) return null;
   return normaliseTelephone(candidate);
@@ -292,9 +393,10 @@ function findTelephones(original: string, existing: readonly { start: number; en
     for (let k = groups.length - 1; k >= 0; k -= 1) {
       best[k] = best[k + 1]!;
       const first = text[groups[k]!.start];
-      if (first !== "0" && first !== "+") continue;
-      // Written +… or 00…: the digits of its first two groups begin with 00 (the second group's, when the first is a single 0).
-      const international = first === "+" || (groups[k]!.digits >= 2 ? text.startsWith("00", groups[k]!.start) : text[groups[k + 1]?.start ?? -1] === "0");
+      const bare = first === "4" && text.startsWith("46", groups[k]!.start);
+      if (first !== "0" && first !== "+" && !bare) continue;
+      // Written +… or 00…: the digits of its first two groups begin with 00 (the second group's, when the first is a single 0). Or with 46 and no plus.
+      const international = first === "+" || bare || (groups[k]!.digits >= 2 ? text.startsWith("00", groups[k]!.start) : text[groups[k + 1]?.start ?? -1] === "0");
       const most = international ? MOST_INTERNATIONAL : MOST_NATIONAL;
       let digits = 0;
       let added = 0;
@@ -342,24 +444,23 @@ function isRatherATelephoneNumber(folded: string, digits: string, checkDigit: bo
 const PRIORITY: Readonly<Record<FindingKind, number>> = { epost: 0, pnr: 1, sam: 1, tf: 1, tel: 2 };
 
 /**
- * Every personnummer, samordningsnummer, e-mail address and telephone number in the text, in order of position and not overlapping.
- *
- * WHEN TWO FINDINGS OVERLAP THEY ARE ONE SPAN, and the lead (an address, then a personnummer, then a number) gives its kind and key. The shape
- * of a personnummer lets a blank stand between any two digits, so in "+46 78 430 19 16 074 114 72 54" twelve digits in the middle read as a
- * samordningsnummer, across two telephone numbers. Letting that one win and dropping the numbers it overlaps left the digits at both ends
- * of them in the text; the property tests found it. Merged, nothing of the span stays, and what is lost is only which of the values it was.
+ * The text as a personnummer is looked for in it: a colon, a comma or an apostrophe between the date and the last four is made a hyphen, one character to one. ONLY THERE, between a date
+ * (six or eight digits, with a blank between two of them as the shape takes, or the date written with hyphens) and four digits that nothing follows, and not anywhere in the text: "10:12:15 1234" and "5,0" are not changed, and an address
+ * ("mailto:") is not either. The door does not take these (lib/personal-number.ts) and this search does: for a door a missed number is a cell read as text, for the pseudonymiser it is a number
+ * left in a file that is sent on (the review of #398). What it costs: a date and four digits with a colon or a comma between them ("2026-11-21:0810") is a personnummer here as it is with a blank.
  */
-export function findPersonalData(original: string): Finding[] {
-  if (original.length < 4) return [];
-  const text = foldSpellings(original);
-  const all: Finding[] = [];
+const NUMBER_AFTER_DATE = new RegExp(`(?<!\\d)((?:\\d ?){7}\\d|(?:\\d ?){5}\\d|\\d{4}-\\d{2}-\\d{2}|\\d{2}-\\d{2}-\\d{2})[${MARKS}](?=\\d{4}(?!\\d))`, "g");
+const foldMarksAfterDate = (text: string): string => (MARK.test(text) ? text.replace(NUMBER_AFTER_DATE, "$1-") : text);
 
+/** Everything personal in ONE view of the text (foldSpellings' or squeeze's), in that view's places, not merged and not in order. */
+function searchIn(text: string): Finding[] {
+  const all: Finding[] = [];
   if (text.includes("@")) {
     for (const part of findAddresses(text)) {
       if (!isMarkerAddress(text.slice(part.start, part.end))) all.push({ kind: "epost", start: part.start, end: part.end, key: part.key });
     }
   }
-  for (const found of findPersonalNumbers(text)) {
+  for (const found of findPersonalNumbers(foldMarksAfterDate(text))) {
     // A TF number is no person's date and serial and has no check digit: nothing below that reads a personnummer's digits may read it.
     if (found.kind === "tf") {
       all.push({ kind: "tf", start: found.start, end: found.end, key: found.key, spelling: tfSpellingOf(found.folded) });
@@ -374,13 +475,42 @@ export function findPersonalData(original: string): Finding[] {
         continue;
       }
     }
-    all.push({ kind: found.kind === "samordning" ? "sam" : "pnr", start: found.start, end: found.end, key: found.key, checkDigit, spelling: spellingOf(found.folded, found.digits) });
+    // The spelling is read from the text as it stood, with a colon a colon: the folded match has made it a hyphen.
+    all.push({ kind: found.kind === "samordning" ? "sam" : "pnr", start: found.start, end: found.end, key: found.key, checkDigit, spelling: spellingOf(foldForShape(text.slice(found.start, found.end)), found.digits) });
   }
   // The wide search for a TF number. A number the shape found too is found twice, at one place with one key, and the merge below makes the two one.
   all.push(...findLooseTfNumbers(text));
   if (/\d/.test(text)) all.push(...findTelephones(text, all).map((found) => ({ kind: "tel" as const, ...found })));
+  return all;
+}
 
+/**
+ * Every finding of every kind in the text as the search made it, in order of position and NOT merged: two readings of the same digits are two findings. The seam search
+ * (lib/pseudonym-seams.ts) needs them apart: a personnummer wholly in the first line and a second reading of its last digits across the line break are one span once merged, and
+ * the span crosses the seam, but the number does not.
+ */
+export function findUnmerged(original: string): Finding[] {
+  if (original.length < 4) return [];
+  const all = searchIn(foldSpellings(original));
+  // A text with a character that shows nothing is looked through again without it, and what is found there is carried back to the text as it was (see INVISIBLE).
+  if (hasInvisible(original)) {
+    const squeezed = squeeze(original);
+    for (const found of searchIn(squeezed.text)) all.push({ ...found, start: squeezed.origin[found.start]!, end: squeezed.origin[found.end - 1]! + 1 });
+  }
   all.sort((a, b) => a.start - b.start || b.end - a.end);
+  return all;
+}
+
+/**
+ * Every personnummer, samordningsnummer, e-mail address and telephone number in the text, in order of position and not overlapping.
+ *
+ * WHEN TWO FINDINGS OVERLAP THEY ARE ONE SPAN, and the lead (an address, then a personnummer, then a number) gives its kind and key. The shape
+ * of a personnummer lets a blank stand between any two digits, so in "+46 78 430 19 16 074 114 72 54" twelve digits in the middle read as a
+ * samordningsnummer, across two telephone numbers. Letting that one win and dropping the numbers it overlaps left the digits at both ends
+ * of them in the text; the property tests found it. Merged, nothing of the span stays, and what is lost is only which of the values it was.
+ */
+export function findPersonalData(original: string): Finding[] {
+  const all = findUnmerged(original);
   const merged: Finding[] = [];
   let lead: Finding | null = null;
   for (const finding of all) {
