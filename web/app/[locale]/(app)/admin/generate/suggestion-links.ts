@@ -13,6 +13,8 @@ import type { SuggestionChange, SuggestionRule } from "@/lib/suggestion-types";
  *   TEACHER_DAILY_CAP   /admin/people?workRule=<work rule id>      the teacher's Arbetstid
  *   SUBJECT_PER_DAY     /admin/requirements?post=<post id>         the post's cell, where its rule is
  *   SUBJECT_DAYS_APART  /admin/requirements?post=<post id>
+ *                       (&year=<läsår id> when the run is for a läsår that is not the active one: the requirements page shows the active
+ *                       läsår without it, and a post of next läsår, which is what Generera plans before the activation, is not there)
  *   ROOM_LOCK           /admin/constraints?roomRule=<room rule id> the room rules of the subject
  *   TEACHER_WORK_DAYS   /admin/staffing                            a part-timer's days live on the post: no parameter, no row named
  */
@@ -51,8 +53,16 @@ const PATH_OF_PAGE: Record<SuggestionPage, string> = {
   staffing: "/admin/staffing",
 };
 
-/** The page and row a change is applied on. */
-export function linkOfChange(change: Pick<SuggestionChange, "rule" | "resourceIds" | "requirementIds">): SuggestionLink {
+/** A post's address: the post and, for a run of a läsår that is not the active one, the läsår (granskning av #390, M-6). */
+const withPost = (path: string, postId: string | undefined, yearId: string | null): string => {
+  const post = rowOf(postId);
+  const year = rowOf(yearId ?? undefined);
+  const query = [post === null ? null : `post=${post}`, year === null ? null : `year=${year}`].filter((part) => part !== null);
+  return query.length === 0 ? path : `${path}?${query.join("&")}`;
+};
+
+/** The page and row a change is applied on. `yearId` is the run's läsår when it is not the active one, and null otherwise. */
+export function linkOfChange(change: Pick<SuggestionChange, "rule" | "resourceIds" | "requirementIds">, yearId: string | null = null): SuggestionLink {
   const page = PAGE_OF_RULE[change.rule];
   const path = PATH_OF_PAGE[page];
   switch (change.rule) {
@@ -62,7 +72,7 @@ export function linkOfChange(change: Pick<SuggestionChange, "rule" | "resourceId
       return { page, href: withRow(path, "roomRule", change.resourceIds[0]) };
     case "SUBJECT_PER_DAY":
     case "SUBJECT_DAYS_APART":
-      return { page, href: withRow(path, "post", change.requirementIds[0]) };
+      return { page, href: withPost(path, change.requirementIds[0], yearId) };
     case "TEACHER_WORK_DAYS":
       return { page, href: path };
   }

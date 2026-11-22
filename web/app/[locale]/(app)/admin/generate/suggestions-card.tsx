@@ -66,7 +66,7 @@ const PAGE_LABEL_KEY: Record<SuggestionPage, string> = {
   staffing: "link.staffing",
 };
 
-export function SuggestionsCard({ job }: { job: OptimizationJob }) {
+export function SuggestionsCard({ job, linkYearId = null }: { job: OptimizationJob; linkYearId?: string | null }) {
   const t = useTranslations("generate.suggestions");
   const queryClient = useQueryClient();
   const suggestions = job.suggestions ?? null;
@@ -115,7 +115,7 @@ export function SuggestionsCard({ job }: { job: OptimizationJob }) {
         <p className="max-w-prose text-sm">{t(`failed.${suggestions.failure ?? "ENGINE_FAILED"}` as never)}</p>
       ) : null}
 
-      {suggestions?.state === "DONE" ? <Answer suggestions={suggestions} timedOut={job.solverStatus === "TIMEOUT"} /> : null}
+      {suggestions?.state === "DONE" ? <Answer suggestions={suggestions} timedOut={job.solverStatus === "TIMEOUT"} yearId={linkYearId} /> : null}
 
       {ask.isError ? (
         <p role="alert" className="max-w-prose text-sm text-destructive">
@@ -132,11 +132,11 @@ export function SuggestionsCard({ job }: { job: OptimizationJob }) {
   );
 }
 
-function Answer({ suggestions, timedOut }: { suggestions: Suggestions; timedOut: boolean }) {
+function Answer({ suggestions, timedOut, yearId }: { suggestions: Suggestions; timedOut: boolean; yearId: string | null }) {
   const t = useTranslations("generate.suggestions");
   switch (suggestions.verdict) {
     case "CHANGES":
-      return <ChangesList suggestions={suggestions} />;
+      return <ChangesList suggestions={suggestions} yearId={yearId} />;
     case "SOLVABLE_AS_IS":
       return (
         <p className="max-w-prose text-sm">
@@ -153,7 +153,7 @@ function Answer({ suggestions, timedOut }: { suggestions: Suggestions; timedOut:
   }
 }
 
-function ChangesList({ suggestions }: { suggestions: Suggestions }) {
+function ChangesList({ suggestions, yearId }: { suggestions: Suggestions; yearId: string | null }) {
   const t = useTranslations("generate.suggestions");
   const locale = useLocale();
   const shown = suggestions.changes.slice(0, SHOWN_CHANGES);
@@ -169,7 +169,7 @@ function ChangesList({ suggestions }: { suggestions: Suggestions }) {
       <ol className="space-y-2">
         {shown.map((change, index) => (
           <li key={`${change.rule}-${index}`}>
-            <ChangeCard change={change} index={index + 1} proof={proof} />
+            <ChangeCard change={change} index={index + 1} proof={proof} yearId={yearId} />
           </li>
         ))}
       </ol>
@@ -179,11 +179,11 @@ function ChangesList({ suggestions }: { suggestions: Suggestions }) {
   );
 }
 
-function ChangeCard({ change, index, proof }: { change: SuggestionChange; index: number; proof: SuggestionProof }) {
+function ChangeCard({ change, index, proof, yearId }: { change: SuggestionChange; index: number; proof: SuggestionProof; yearId: string | null }) {
   const t = useTranslations("generate.suggestions");
   const tDays = useTranslations("days");
   const locale = useLocale();
-  const link = linkOfChange(change);
+  const link = linkOfChange(change, yearId);
   const sentence = sentenceOf(change, t, locale);
   // A weekday in the middle of a Swedish sentence is written with a small letter; the catalogue's names stand alone, with a capital.
   const days = listOf(change.weekdays.map((day) => (locale === "en" ? tDays(String(day) as never) : tDays(String(day) as never).toLocaleLowerCase("sv-SE"))), locale);
