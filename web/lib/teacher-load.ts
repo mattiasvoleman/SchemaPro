@@ -196,6 +196,11 @@ export interface LoadDuty {
   validFrom?: string | null;
   /** Till, yyyy-mm-dd inclusive; null or absent = the year's last day. */
   validTo?: string | null;
+  /**
+   * A rastvaktspass (the gateway's shiftAsDuty): on ONE weekday its dates fall on, so a dated one holds once in every week it
+   * touches. Mirror of the gateway's LoadDuty.weekdayPass.
+   */
+  weekdayPass?: boolean;
 }
 
 export interface LoadQualification {
@@ -469,6 +474,18 @@ const dutyPeriod = (duty: Pick<LoadDuty, "validFrom" | "validTo">): TeachingPeri
   startDate: duty.validFrom ?? null,
   endDate: duty.validTo ?? null,
 });
+
+/** The teaching weeks an uppdrag's annual hours are counted over: school days as fifths of a week, but a DATED rastvaktspass, which holds once in every week it touches. Mirror of the gateway's dutyWeeksPerYear. */
+function dutyWeeksPerYear(
+  duty: Pick<LoadDuty, "validFrom" | "validTo" | "weekdayPass">,
+  year: YearBounds,
+  closures: ClosedRange[],
+): number {
+  const period = dutyPeriod(duty);
+  return duty.weekdayPass && isDated(duty)
+    ? teachingWeeks(period, year, closures, null)
+    : teachingWeeksByDays(period, year, closures, null);
+}
 
 /**
  * An uppdrag's standardvecka, before rounding: its minutes untouched when
@@ -837,8 +854,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
     acc.dutyCount += 1;
     if (duty.countsAsTeaching) acc.countedDutyMinutes += minutes;
     if (isDated(duty)) {
-      acc.datedDutyAnnualMinutes +=
-        duty.minutesPerWeek * teachingWeeksByDays(dutyPeriod(duty), year, closures, null);
+      acc.datedDutyAnnualMinutes += duty.minutesPerWeek * dutyWeeksPerYear(duty, year, closures);
     } else {
       acc.undatedDutyMinutes += duty.minutesPerWeek;
     }

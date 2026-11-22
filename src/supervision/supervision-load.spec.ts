@@ -55,8 +55,8 @@ describe('withSupervision', () => {
     expect(withSupervision(DUTIES, ANNA, YEAR)).toEqual([
       { userId: 'anna', minutesPerWeek: 90, countsAsTeaching: false },
       { userId: 'bo', minutesPerWeek: 40, countsAsTeaching: false },
-      { userId: 'anna', minutesPerWeek: 20, countsAsTeaching: false },
-      { userId: 'anna', minutesPerWeek: 30, countsAsTeaching: true },
+      { userId: 'anna', minutesPerWeek: 20, countsAsTeaching: false, weekdayPass: true },
+      { userId: 'anna', minutesPerWeek: 30, countsAsTeaching: true, weekdayPass: true },
     ]);
   });
 

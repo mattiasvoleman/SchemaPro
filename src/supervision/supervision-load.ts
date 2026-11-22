@@ -1,6 +1,6 @@
 import type { TeacherDutyKind } from '@prisma/client';
-import { dutyStandardWeekMinutes, type LoadDuty } from '../staffing/teacher-load';
-import { peakPerWeekByKey, teachingWeeks, type ClosedRange, type YearBounds } from '../staffing/teaching-weeks';
+import { dutyStandardWeekMinutes, dutyWeeksPerYear, type LoadDuty } from '../staffing/teacher-load';
+import { peakPerWeekByKey, type ClosedRange, type YearBounds } from '../staffing/teaching-weeks';
 
 /**
  * RASTVAKT I BELASTNINGEN (Rastvaktsschema, 20261207090000): what a teacher's
@@ -107,6 +107,8 @@ export function shiftAsDuty(shift: LoadShift): LoadDuty {
     // Only when dated, as readLoadInput writes an uppdrag.
     ...(shift.validFrom ? { validFrom: shift.validFrom } : {}),
     ...(shift.validTo ? { validTo: shift.validTo } : {}),
+    // On one weekday: a dated pass holds once in every week it touches (dutyWeeksPerYear).
+    weekdayPass: true,
   };
 }
 
@@ -244,16 +246,9 @@ export function supervisionOfTeachers(
       shifts.filter((shift) => shift.userId === userId),
       year,
     );
-    // An uppdrag's annual hours, as teacher-load.ts counts a dated one: its
-    // minutes over the teaching weeks it runs, school-wide lov out (a null
-    // grade applies only those).
-    const annual = own.reduce(
-      (sum, duty) =>
-        sum +
-        duty.minutesPerWeek *
-          teachingWeeks({ startDate: duty.validFrom ?? null, endDate: duty.validTo ?? null }, year, closures, null),
-      0,
-    );
+    // An uppdrag's annual hours, as teacher-load.ts counts them (dutyWeeksPerYear, the one function): its minutes over the teaching
+    // weeks it runs, school-wide lov out (a null grade applies only those). The card states this as a part of the report's uppdrag.
+    const annual = own.reduce((sum, duty) => sum + duty.minutesPerWeek * dutyWeeksPerYear(duty, year, closures), 0);
     const ram = duties.filter((duty) => duty.userId === userId && duty.kind === 'RASTVAKT');
     const ramKept = ram.flatMap((duty) =>
       uncoveredPieces(duty, spans, year).map((piece) => ({

@@ -50,6 +50,10 @@ const cases: [string, ScopeCardData][] = [
   ],
   ["on a semestertjänst", card({ remainingHours: null, planningFits: null })],
   ["over the level set for them", card({ verdict: "OVER_OWN", teachingHours: 600, highestHours: 580, ordinanceHighestHours: 650 })],
+  // The sentence beside the floor row (planningFloorOnStages) is said only for hours outside the stages, and is no case above: without
+  // these two nothing renders it in the real catalogues, so a "läraren" in it would reach the teacher's own page (granskningen av #400).
+  ["with hours in förskoleklass, beside the planning floor", card({ teachingHours: 688, unregulatedHours: 43 })],
+  ["with hours in groups with no årskurs, beside the planning floor", card({ teachingHours: 665, unknownGradeHours: 20 })],
 ];
 
 describe.each([
