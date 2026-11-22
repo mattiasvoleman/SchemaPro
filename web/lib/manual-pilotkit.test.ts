@@ -92,6 +92,10 @@ const LABEL_HOME: Readonly<Record<string, string>> = {
   Aktivt: "setup.active",
   "Alla timplansposter har lärare": "generate.preStaffed",
   "Filen kommer från Skola24": "columnMapping.format.label",
+  // Vad kom in: the three levels a gap has, as the page says them.
+  "Stoppar Generera": "intake.levels.HARD",
+  "Ger ett sämre schema": "intake.levels.SOFT",
+  "För andra steg": "intake.levels.INFO",
   "Från ett annat program": "scheduleExchange.table.title",
   Förutsättningar: "generate.prerequisites",
   "Generera schema": "generate.run",

@@ -986,13 +986,14 @@
     laborationssal och idrott i idrottshall.
   </p>
   <p>
-    <strong>Salstyperna är skolans egen lista.</strong> Varje ny skola startar
-    med de vanligaste — klassrum, laborationssal, gymnastiksal,
-    hemkunskapssal, trä- och metallslöjd, textilslöjd, musiksal, bildsal, aula
-    och övrigt — men listan redigeras fritt under
-    <span class="path">Grunddata › Salar</span>. Saknas en typ som skolan
-    använder, lägg till den där innan salarna registreras; samma lista väljs
-    sedan i ämnets fält <span class="ui">Kräver salstyp</span>.
+    <strong>Salstyperna är skolans egen lista, och en ny skola har inga.</strong>
+    Du lägger in dem under <span class="path">Grunddata › Salar</span> innan
+    salarna registreras, till exempel klassrum, laborationssal,
+    gymnastiksal, hemkunskapssal, trä- och metallslöjd, textilslöjd, musiksal,
+    bildsal, aula och övrigt, och listan redigeras fritt. Samma lista väljs
+    sedan i ämnets fält <span class="ui">Kräver salstyp</span>. Ett ämne utan
+    salstyp får vilken sal som helst, så en skola som inte lägger in några
+    salstyper kan schemaläggas, men då hålls inte slöjd i slöjdsalen.
   </p>
   <p>
     En salstyp som används av en sal eller ett ämne kan inte tas bort — då
@@ -1858,7 +1859,7 @@
       <tr><td class="k">3</td><td>Salstyper, ämnen och salar</td><td>Salstyperna först: en ny skola har inga, så lägg in dem under <span class="path">Grunddata › Salar</span> (3.3). Sedan ämnena med färg, nationell kod och salstyp, och salarna med kapacitet och typ (3.2, 3.3).</td><td>Varje ämne som kräver en salstyp har en sal av den typen.</td></tr>
       <tr><td class="k">4</td><td>Klasser och grupper</td><td>Klasserna med årskurs, sedan undervisningsgrupperna (3.4). En grupp utan årskurs binds inte av ramtider och raster (5.2).</td><td>Varje klass har en årskurs.</td></tr>
       <tr><td class="k">5</td><td>Personer</td><td>Lärare först, sedan elever med klass (3.5). Har skolan filer går det snabbare med importen (3.6), och kommer filerna från ett annat program står det i 3.8. Att lägga upp någon skickar inget mejl: bjud in först när allt är klart.</td><td>Varje elev tillhör en klass.</td></tr>
-      <tr><td class="k">6</td><td>Vad kom in</td><td>Öppna <span class="path">Grunddata › Vad kom in</span>. Sidan räknar skolans grunddata mot det Generera och stegen efter det kräver, och länkar till sidan som äger varje lucka (se nedan). Försök också välja klass, ämne och lärare i rullistorna under <span class="path">Planering › Timplansposter</span> (3.6).</td><td>Inget kort har märket <span class="ui">Stoppar Generera</span>, och rullistorna har det du lagt in. Saknas något i en lista är motsvarande steg i <span class="ui">Kom igång</span> ofullständigt.</td></tr>
+      <tr><td class="k">6</td><td>Kontrollera grunddatan</td><td>Öppna <span class="path">Grunddata › Vad kom in</span>. Sidan räknar skolans grunddata mot det Generera och stegen efter det kräver, och länkar till sidan som äger varje lucka (se nedan). Försök också välja klass, ämne och lärare i rullistorna under <span class="path">Planering › Timplansposter</span> (3.6).</td><td>Inget kort har märket <span class="ui">Stoppar Generera</span>, och rullistorna har det du lagt in. Saknas något i en lista är motsvarande steg i <span class="ui">Kom igång</span> ofullständigt.</td></tr>
       <tr><td class="k">7</td><td>Planering</td><td>Timplan (4.1): skapa planen, besluta den och välj den för läsåret under <span class="ui">Timplan per årskurs</span>. Läsåret följer inte planen förrän du har valt den, och först då kan <span class="ui">Skapa timplansposter</span> lägga in posterna klasserna saknar; annars skriver du posterna själv. Sedan timplansposter (4.2), tjänstefördelning (4.3), tillgänglighet (4.4) och raster (4.5), och ramtiderna under <span class="path">Planering › Ramtider</span>. Utan ramtider använder motorn en standarddag och binder ingen årskurs till sina tider.</td><td>Under <span class="ui">Förutsättningar</span> på Generera-sidan är läsår, timplansposter, lärare och salar uppfyllda, och <span class="ui">Alla timplansposter har lärare</span> är det eller står som en varning (5.2).</td></tr>
       <tr><td class="k">8</td><td>Kontrollera veckan</td><td>Under <span class="path">Schemaläggning › Generera schema</span>: tryck <span class="ui">Kontrollera veckan</span> först. Den räknar på veckan med motorns snabba förkontroller och lägger inget schema (5.2).</td><td>Svaret säger att inget hittades som stoppar veckan, att den är trång, eller att den inte går att lägga. Ett <em>inget hittades</em> är ingen garanti.</td></tr>
       <tr><td class="k">9</td><td>Generera</td><td>Tryck <span class="ui">Generera schema</span>. Motorn arbetar i bakgrunden, och en körning kan pågå i minuter (5.2). Vänta tills den har avslutats.</td><td>Resultatet är ett av fyra: optimal lösning, fungerande schema, inget giltigt schema möjligt eller att lösaren inte hann klart. Vad vart och ett betyder och vad du gör härnäst står i 5.2.</td></tr>
