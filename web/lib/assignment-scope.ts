@@ -116,9 +116,20 @@ export function overScopeIds(report: WithScope): ReadonlySet<string> {
   return ids;
 }
 
-/** Hours over the line the verdict was judged against, one decimal; null where the reader may not see the line. */
+/**
+ * Hours over the line the verdict was judged against, one decimal; null where the reader may not see the line.
+ *
+ * Over the ORDINANCE's line the gateway judges the hours in a stage and nothing else (T7), so the amount is the stage hours over it:
+ * a teacher with 358,3 h in årskurs 1-6 against 357,5 h and 258 h of förskoleklass is 0,8 h over, not 259,3 (the 258 h are the ones
+ * the card says the ordinance gives no level for). Over the rektor's own level the gateway judges the whole total, so that amount is
+ * the total over it. Never under 0,1 over the ordinance's line: the three figures print one decimal each, and the gateway's OVER_MAX is
+ * at least a tenth over.
+ */
 export function hoursOver(teacher: TeacherScope): number | null {
-  const line = teacher.verdict === "OVER_OWN" ? teacher.highestHours : teacher.ordinanceHighestHours;
+  const own = teacher.verdict === "OVER_OWN";
+  const line = own ? teacher.highestHours : teacher.ordinanceHighestHours;
   if (line === null) return null;
-  return Math.round((teacher.teachingHours - line) * 10) / 10;
+  const hours = own ? teacher.teachingHours : teacher.teachingHours - teacher.unregulatedHours - teacher.unknownGradeHours;
+  const over = Math.round((hours - line) * 10) / 10;
+  return own ? over : Math.max(over, 0.1);
 }

@@ -490,6 +490,10 @@ describe('hours outside the stages are no reason to say OVER_MAX (T7, the user\'
     expect(scope({ requirements: [inStage(15)] }).interpretations.some((one) => one.cause === 'UNREGULATED_HOURS')).toBe(false);
   });
 
+  it('words the interpretation so that it reads right on the teacher\'s own page too, where the card speaks to her: it names nobody', () => {
+    expect(UNREGULATED_HOURS_INTERPRETATION.note).not.toMatch(/\bläraren\b|\blärarens\b|\bdu\b|\bdig\b|\bdin\b|\bdina\b/i);
+  });
+
   it('keeps the cause for a reader without HR-läs: it is a verdict, like OVER_MAX', () => {
     const hidden = hideScopeHr(of(scope({ requirements: [inStage(15), preschool(1)] })));
     expect(hidden.overOnlyWithUnregulated).toBe(true);

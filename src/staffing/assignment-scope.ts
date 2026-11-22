@@ -193,13 +193,17 @@ export interface ScopeInterpretation {
   cause?: 'UNREGULATED_HOURS';
 }
 
-/** T7: hours outside the stages are counted, but are no reason to say OVER_MAX. Paragraphs: 2 § (what teaching time is), 3 § (which stages). */
+/**
+ * T7: hours outside the stages are counted, but are no reason to say OVER_MAX. Paragraphs: 2 § (what teaching time is), 3 § (which stages).
+ * The note is shown on the card of the teacher it explains, on the rektor's drawer AND on the teacher's own page, where every other
+ * sentence speaks to her ("din", "du"): it names nobody, so it reads right on both.
+ */
 export const UNREGULATED_HOURS_INTERPRETATION: ScopeInterpretation = {
   section: '2 § och 3 §',
   note:
     'Tolkning (T7): timmar i förskoleklass och i grupper utan årskurs ligger utanför förordningens stadier (3 § nämner årskurs 1-6 och 7-9, ' +
-    'och propositionen säger att förskoleklassen inte omfattas) men är undervisningstid enligt 2 §. Räknas de med är läraren över högsta nivån, ' +
-    'och räknas de inte med är läraren det inte. Rastra Schema säger över högsta nivån bara när timmarna i stadierna ensamma går över, ' +
+    'och propositionen säger att förskoleklassen inte omfattas) men är undervisningstid enligt 2 §. Räknas de med är undervisningstiden över högsta nivån, ' +
+    'och räknas de inte med är den det inte. Rastra Schema säger över högsta nivån bara när timmarna i stadierna ensamma går över, ' +
     'och visar annars den här orsaken.',
   cause: 'UNREGULATED_HOURS',
 };
