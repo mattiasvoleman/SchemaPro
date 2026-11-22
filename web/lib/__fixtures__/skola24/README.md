@@ -1,7 +1,10 @@
 # Fixtures för Skola24-beskrivningarna (X3)
 
 Syntetiska filer. Ingen rad är en verklig person: namnen är påhittade, e-postadresserna slutar på
-`example.invalid` och personnumren och TF-numren börjar på ÅÅÅÅ 1900 (eller ÅÅ 00), så att ingen verklig person kan ha dem.
+`example.invalid` och personnumren har formen av ett personnummer men fel kontrollsiffra, så att ingen person har dem. TF-numren
+börjar på ÅÅÅÅ 1900. (ÅÅ 00 är år 2000, och den som är född då finns: årtalet ensamt räcker inte för ett personnummer, det är kontrollsiffran
+som gör dem ogiltiga, och `skola24-fixtures-unreal.test.ts` håller fast det.) Telefonnumret 0701234567 är exemplet i X2:s egna prov och i
+gatewayens, inte ett nummer vi vet att någon har.
 Ingen cell ur Skola24:s egna kursfiler har kopierats hit: de lästes för sin form (kolumner, avgränsare, kodning) och raderades.
 
 Varje fixtur är gjord ur vad EN offentlig sida säger om filen, inte ur en fil från en skola:

@@ -3,7 +3,7 @@ import { applyMapping, chooseHeaderRow, personalNumberColumns } from "@/lib/colu
 import { readTable, writeMappedTable } from "@/lib/column-table";
 import { mapTeacherRows } from "@/lib/csv";
 import { hasPersonalNumber } from "@/lib/personal-number";
-import { readFixture } from "@/lib/__fixtures__/skola24-read";
+import { readFixture, unrealPersonalNumber } from "@/lib/__fixtures__/skola24-read";
 import { readFixtureBytes } from "@/lib/__fixtures__/skola24-read";
 import { decodeCsvBytes } from "@/lib/csv-encoding";
 import { blockWithoutHeader, detectFormats, formatAssignment, formatsOfKind, isIdentityNumber, readFormat, type Verdict } from "@/lib/skola24-format";
@@ -110,13 +110,15 @@ describe("Personal CSV", () => {
     expect(applied.headers).toEqual(["fornamn", "efternamn", "epost"]);
     expect(applied.dropped.map((column) => column.index)).toEqual([2]);
     const mapped = mapTeacherRows(applied.parsed);
-    expect(mapped.rows.map((row) => row.firstName)).toEqual(["Åsa", "Maria"]);
+    // The third row has the confidential mark and is held back (heldRows): Maria is not in the block, so not in the mapping.
+    expect(mapped.rows.map((row) => row.firstName)).toEqual(["Åsa"]);
     // The importer's own rule, not the description's: the second row has no e-mail.
     expect(mapped.errors.map((error) => error.row)).toEqual([2]);
   });
 
   it("does not place the signature by default: the importer would refuse every row that has one, as the user finds out by placing it", () => {
-    const reading = readFormat(table("personal.csv"), staff)!;
+    // The fixture's third row has the confidential mark and is held back; without the mark it is the one row that has no signature.
+    const reading = readFormat(readTable(readFixture("personal.csv").replace(/;1\r?\n?$/, ";\n")), staff)!;
     const assignment = [...reading.assignment];
     assignment[5] = "signature";
     const applied = applyMapping(reading.block, "teachers", assignment);
@@ -128,7 +130,8 @@ describe("Personal CSV", () => {
     const headers = "skolans namn;avdelning;personnummer;förnamn;efternamn;signatur;e-postadress;sekretessmarkering\n";
     const reading = readFormat(readTable(`${headers}S;A;19000103-0001;Åsa;Provsson;ASP;a@example.invalid;\n`), staff)!;
     expect(reading.by).toBe("header");
-    expect(reading.exact).toBe(true);
+    // The page shows no header row for the personnel file: these are its own words for the columns, so read on them but not `exact`.
+    expect(reading.exact).toBe(false);
     expect(reading.block.headerRowNumber).toBe(1);
     expect(reading.assignment).toEqual([null, null, null, "firstName", "lastName", null, "email", null]);
   });
@@ -140,12 +143,12 @@ describe("a file that has a header row its page does not show", () => {
     const labels = parents.columns!.map((column) => column.label.value).join(";");
     const reading = readFormat(readTable(`${labels}\n19000101-0001;19000102-0002;Åsa;Testsson;asa@example.invalid;\n`), parents)!;
     expect(reading.by).toBe("header");
-    expect(reading.exact).toBe(true);
+    expect(reading.exact).toBe(false);
     expect(reading.block.body).toHaveLength(1);
     expect(reading.assignment).toEqual([null, null, "firstName", "lastName", "email", "phone"]);
     const extens = readFormat(readTable("EnhetsID;Personnummer;Summerat antal timmar oanmäld frånvaro för perioden\n12345;000106-0001;2.5\n"), format("skola24-extens-franvaro"))!;
     expect(extens.by).toBe("header");
-    expect(extens.exact).toBe(true);
+    expect(extens.exact).toBe(false);
   });
 
   it("and is still read on position when the user says it has none, whatever its first row looks like", () => {
@@ -246,7 +249,7 @@ describe("recognising a file", () => {
   });
 
   it("looks at no more than the first rows of a long file, and one stray row does not undo a fit", () => {
-    const rows = Array.from({ length: 200 }, (_, at) => `1234${at};00010${(at % 8) + 1}-${String(1000 + at)};${at}`);
+    const rows = Array.from({ length: 200 }, (_, at) => `1234${at};${unrealPersonalNumber(at)};${at}`);
     expect(detectFormats(readTable(rows.join("\n"))).map((fit) => fit.format)).toEqual(["skola24-extens-franvaro"]);
     const stray = ["12345;000101-0001;1", "12345;000101-0002;2", "12345;000101-0003;3", "12345;000101-0004;4", "12345;;5"];
     expect(detectFormats(readTable(stray.join("\n"))).map((fit) => fit.format)).toEqual(["skola24-extens-franvaro"]);
@@ -285,7 +288,7 @@ describe("nothing is said twice or not at all", () => {
         expect(new Set(fields).size, `round ${round}`).toBe(fields.length);
         // What the description has and the file lacks is named, and nothing else.
         expect(reading.missing.length, `round ${round}`).toBe(descriptor.columns!.length - labels.length);
-        expect(reading.exact, `round ${round}`).toBe(extras.length === 0 && labels.length === descriptor.columns!.length);
+        expect(reading.exact, `round ${round}`).toBe(descriptor.headerRow?.value === "yes" && extras.length === 0 && labels.length === descriptor.columns!.length);
       }
     },
   );

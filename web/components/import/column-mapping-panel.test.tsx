@@ -183,8 +183,10 @@ describe("what the description says of a column that is not read", () => {
     const user = userEvent.setup();
     const { state } = renderPanel("teachers", STAFF);
     await user.click(screen.getByRole("button", { name: "format.use" }));
-    expect(state().applied.held).toEqual([3]);
+    // Not rows of the table the mapping reads at all: no cell of the marked person is in the block, a sample or the mapped rows.
+    expect(state().block.rowNumbers).toEqual([1, 2]);
     expect(state().applied.rows).toHaveLength(2);
+    expect(JSON.stringify(state().applied.rows)).not.toContain("Maria");
     expect(screen.getByText("held(1|3)")).toBeInTheDocument();
     expect(state().applied.ok).toBe(true);
   });
