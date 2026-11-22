@@ -243,8 +243,11 @@ for (const column of COLUMNS) {
   for (const spelling of [column.sv, column.en, ...column.aliases]) HEADER_KEY.set(normalizeHeader(spelling), column.key);
 }
 
-/** Headers of a personal-number column. Exact for the short forms (so "ssn" is not found inside a word), contained for the long. */
-const PERSONAL_EXACT = new Set(['pnr', 'personnr', 'ssn', 'tfnr']);
+/**
+ * Headers of a personal-number column. Exact for the short forms (so "ssn" is not found inside a word), contained for the long. `tfnummer` (Skola24's TF-nummer) is among the long;
+ * `tfnr` is NOT among the short: it is a common short form of "telefonnummer", and no Skola24 page or file has shown it as the name of a column of TF numbers.
+ */
+const PERSONAL_EXACT = new Set(['pnr', 'personnr', 'ssn']);
 const PERSONAL_CONTAINS = ['personnummer', 'samordningsnummer', 'socialsecuritynumber', 'civicnumber', 'personalnumber', 'tfnummer'];
 
 function isPersonalNumberHeader(normalized: string): boolean {

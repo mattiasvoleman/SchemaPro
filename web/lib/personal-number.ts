@@ -112,8 +112,11 @@ export function findPersonalNumbers(text: string): PersonalNumberMatch[] {
   return found;
 }
 
-/** Headers of a personal-number column, as the gateway's reader knows them: exact for the short forms, contained for the long. */
-const PERSONAL_EXACT = new Set(["pnr", "personnr", "ssn", "tfnr"]);
+/**
+ * Headers of a personal-number column, as the gateway's reader knows them: exact for the short forms, contained for the long. "tfnummer" (Skola24's TF-nummer) is among the
+ * long; "tfnr" is NOT among the short: it is a common short form of "telefonnummer", and no Skola24 page or file has shown it as the name of a column of TF numbers.
+ */
+const PERSONAL_EXACT = new Set(["pnr", "personnr", "ssn"]);
 const PERSONAL_CONTAINS = ["personnummer", "samordningsnummer", "socialsecuritynumber", "civicnumber", "personalnumber", "tfnummer"];
 
 /** `normalized` is a header after normalizeHeader (lib/csv-export.ts): lower case, letters and digits only. */
