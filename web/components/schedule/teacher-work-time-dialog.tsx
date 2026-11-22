@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { TriangleAlert } from "lucide-react";
@@ -62,6 +62,8 @@ export interface TeacherWorkTimeDialogProps {
   teacher: Pick<Person, "id" | "firstName" | "lastName">;
   /** The stored row, or undefined for a teacher who has none — the normal case. */
   rule: TeacherWorkRule | undefined;
+  /** Opens with the day's cap in focus: the link of a suggestion to raise it (Åtgärdsförslag vid vägran). */
+  focusCap?: boolean;
 }
 
 /**
@@ -100,11 +102,13 @@ export function TeacherWorkTimeDialog({
   onOpenChange,
   teacher,
   rule,
+  focusCap = false,
 }: TeacherWorkTimeDialogProps) {
   const t = useTranslations("teacherWorkTime");
   const tCommon = useTranslations("common");
   const tDays = useTranslations("days");
   const actions = useTeacherWorkRuleActions();
+  const capRef = useRef<HTMLInputElement>(null);
 
   const [draft, setDraft] = useState<WorkRuleDraft>(() => ruleToDraft(rule));
 
@@ -213,7 +217,18 @@ export function TeacherWorkTimeDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent
+        className="max-w-md"
+        onOpenAutoFocus={
+          focusCap
+            ? (event) => {
+                // The field a suggestion is about, and not the first one the dialog would give focus to.
+                event.preventDefault();
+                capRef.current?.focus();
+              }
+            : undefined
+        }
+      >
         <DialogHeader>
           <DialogTitle>
             {t("title", { name: `${teacher.firstName} ${teacher.lastName}` })}
@@ -309,6 +324,7 @@ export function TeacherWorkTimeDialog({
             <Label htmlFor="work-day-cap">{t("dayCapMinutes")}</Label>
             <div className="flex items-center gap-3">
               <Input
+                ref={capRef}
                 id="work-day-cap"
                 type="number"
                 inputMode="numeric"

@@ -1506,6 +1506,137 @@ describe("the ?year= deep link", () => {
   });
 });
 
+// Åtgärdsförslag vid vägran: Generera's card of what to change links a spread rule to its post, ?post=<post id>. The post's cell opens once the
+// läsår has been read, in the posts this school has for the läsår the page shows; an id that is none of them (another school's, another
+// läsår's, a post since removed) opens nothing and says nothing.
+describe("the ?post= deep link", () => {
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  it("opens that post's cell, where its rule is", async () => {
+    window.history.replaceState(null, "", "/?post=r-so");
+    render(<RequirementsPage />);
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent("7A · Samhällsorientering");
+  });
+
+  it("writes nothing by itself: the cell shows the stored post, and nothing is created, changed or removed until Spara is pressed", async () => {
+    window.history.replaceState(null, "", "/?post=r-so");
+    const user = userEvent.setup();
+    render(<RequirementsPage />);
+    await screen.findByRole("dialog");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(createMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
+    expect(removeMock).not.toHaveBeenCalled();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(createMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
+    expect(removeMock).not.toHaveBeenCalled();
+  });
+
+  it("opens it once: a cell that has been closed is not opened again by the page reading the posts again", async () => {
+    window.history.replaceState(null, "", "/?post=r-so");
+    const user = userEvent.setup();
+    const view = render(<RequirementsPage />);
+    await screen.findByRole("dialog");
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    state.requirements = loaded([...requirements]);
+    view.rerender(<RequirementsPage />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("is read once in the address too: it is gone from it when the cell opens, the other choices stay, and a reload does not open it again", async () => {
+    window.history.replaceState(null, "", "/?post=r-so&subject=s-so");
+    const first = render(<RequirementsPage />);
+    await screen.findByRole("dialog");
+
+    expect(window.location.search).toBe("?subject=s-so");
+
+    // A reload is a new mount that reads the address as it is now.
+    first.unmount();
+    render(<RequirementsPage />);
+    expect(await screen.findByText("7A")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("takes an id that opens nothing out of the address too, so that it does not stay in it", async () => {
+    window.history.replaceState(null, "", "/?post=a-post-of-another-school");
+    render(<RequirementsPage />);
+
+    expect(await screen.findByText("7A")).toBeInTheDocument();
+    await waitFor(() => expect(window.location.search).toBe(""));
+  });
+
+  it("opens the cell of the post of the läsår that the link names too", async () => {
+    twoYears();
+    window.history.replaceState(null, "", "/?year=y2&post=r-next");
+    render(<RequirementsPage />);
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent("8B");
+  });
+
+  it("opens nothing for an id that is none of this school's posts, and shows no error", async () => {
+    window.history.replaceState(null, "", "/?post=a-post-of-another-school");
+    render(<RequirementsPage />);
+
+    expect(await screen.findByText("7A")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("opens nothing for a post of another läsår than the one shown", async () => {
+    twoYears();
+    window.history.replaceState(null, "", "/?post=r-next");
+    render(<RequirementsPage />);
+
+    expect(await screen.findByText("7A")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("opens nothing before the posts have been read, and then the post's cell once they are", async () => {
+    window.history.replaceState(null, "", "/?post=r-so");
+    state.requirements = pending();
+    const view = render(<RequirementsPage />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    state.requirements = loaded(requirements);
+    view.rerender(<RequirementsPage />);
+    expect(await screen.findByRole("dialog")).toHaveTextContent("7A · Samhällsorientering");
+  });
+
+  it("opens the cell when the matrix is drawn, not before the groups and subjects it names have been read", async () => {
+    window.history.replaceState(null, "", "/?post=r-so");
+    state.groups = pending();
+    const view = render(<RequirementsPage />);
+    // The posts have been read and the groups have not: a cell opened now would be titled with two empty names.
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    state.groups = loaded(groups);
+    view.rerender(<RequirementsPage />);
+    expect(await screen.findByRole("dialog")).toHaveTextContent("7A · Samhällsorientering");
+  });
+
+  it("opens nothing on a page whose lists could not be read", async () => {
+    window.history.replaceState(null, "", "/?post=r-so");
+    state.groups = failed();
+    render(<RequirementsPage />);
+
+    await expect(screen.findByRole("dialog", {}, { timeout: 250 })).rejects.toThrow();
+  });
+
+  it("opens nothing without the parameter", async () => {
+    render(<RequirementsPage />);
+
+    expect(await screen.findByText("7A")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
 describe("Timplan CSV", () => {
   it("has nothing to hand over when the timplan is empty", async () => {
     // Not a disabled-for-the-sake-of-it button: the alternative is a file with
