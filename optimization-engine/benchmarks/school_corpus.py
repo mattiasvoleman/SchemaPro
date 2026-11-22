@@ -619,7 +619,9 @@ def build_week(shape: SchoolShape) -> CorpusWeek:
         "groupSubjects": max(shape.group_subjects_of(year) for year in years),
         "languageGroups": shape.language_groups * len(years),
         "termSubjects": shape.term_subjects,
-        "termRequirements": sum(1 for r in request.requirements if r.periods is not None),
+        # getattr: an engine from before the engine planned terms has no `periods` field, and drops
+        # the key without saying so (corpus_measure's facts then tell the gate it read another week).
+        "termRequirements": sum(1 for r in request.requirements if getattr(r, "periods", None) is not None),
         "blockedRequirements": sum(1 for r in request.requirements if r.block_id is not None),
     }
     return CorpusWeek(name=shape.name(), shape=shape, request=request, facts=facts)
@@ -761,18 +763,49 @@ def sweep_shapes(seeds: tuple[int, ...] = (1, 2)) -> list[SchoolShape]:
     return list(shapes.values())
 
 
-#: Weeks for the nightly gate, picked where a change shows (m5-design.md §5).
-GATE_SHAPES: tuple[SchoolShape, ...] = ()
+#: The nightly gate's weeks (scripts/bench/solve-corpus-gate.mjs), named as the sweep names them.
+#: Picked from the first measurement (2026-11-22, count mode, a budget of 4 deterministic seconds)
+#: as weeks that get a timetable with between 0.17 and 3.5 deterministic seconds of work: far
+#: enough from nothing that a change shows in the work, and far enough from the budget (8 seconds
+#: for the two searches a solve runs) that it does not tip into TIMEOUT on a harmless change. Three
+#: sizes and four kinds of week: by class (to 24 classes), three to five ämnen in groups, a term
+#: split, a språkval block. The weeks the search gives up on (the sweep's TIMEOUTs) are left out:
+#: they cost the whole budget twice and say nothing until one of them solves. Nor are there weeks
+#: the engine refuses on arithmetic alone: the sweep has none (a corpus week the engine refuses
+#: would measure the refusal), and a refusal that appears is the gate's "refused" verdict.
+GATE_WEEKS: tuple[str, ...] = (
+    "n9-g3-m0-s2",
+    "n9-g4-m0-s1",
+    "n9-g5-m0-s1",
+    "n12-g2-m0-s2",
+    "n12-g3-m0-s1",
+    "n12-g3-m0-s2",
+    "n12-g4-m0-s2",
+    "n12-g3-m0-s1-t3",
+    "n12-g3-m0-s1-b",
+    "n12-g3-m0-s2-b",
+    "n18-g0-m0-s1",
+    "n18-g0-m0-s2",
+    "n24-g0-m0-s1",
+    "n24-g0-m0-s2",
+)
+
+
+def gate_shapes() -> list[SchoolShape]:
+    """The gate's weeks, in GATE_WEEKS' order. A name the sweep no longer has is an error, not a shorter gate."""
+    by_name = {shape.name(): shape for shape in sweep_shapes()}
+    missing = [name for name in GATE_WEEKS if name not in by_name]
+    if missing:
+        msg = f"the gate names weeks the sweep does not have: {', '.join(missing)}"
+        raise ValueError(msg)
+    return [by_name[name] for name in GATE_WEEKS]
 
 
 def profile(name: str) -> list[SchoolShape]:
     if name == "sweep":
         return sweep_shapes()
     if name == "gate":
-        if not GATE_SHAPES:
-            msg = "the gate profile has no weeks yet (they are picked from the sweep in M5 del 2): nothing to measure"
-            raise ValueError(msg)
-        return list(GATE_SHAPES)
+        return gate_shapes()
     msg = f"profile must be 'gate' or 'sweep', not {name!r}"
     raise ValueError(msg)
 
