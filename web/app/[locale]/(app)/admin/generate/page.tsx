@@ -517,6 +517,21 @@ export default function GeneratePage() {
     if (!hasYear) return;
     if (jobStatus === "SUCCEEDED" || jobStatus === "FAILED") void refetchHistory();
   }, [jobStatus, hasYear, refetchHistory]);
+  /*
+   * D9 of Åtgärdsförslag vid vägran: A RELOAD LEAVES THE PAGE WITHOUT THE RUN IT STARTED, and with it the card of what to change, whose
+   * answer was saved on the run. The page takes up the year's newest run when it is one that card speaks of (the gateway offers the
+   * analysis for it, or it already holds one) and the page has no run of its own: the run is then read, and polled, as if the page had
+   * started it. Only the newest, so an older refusal under a timetable that has since been laid is not brought back; and never over a
+   * run of the page's own. A year chosen again clears the run (the picker), and the new year's newest is taken up when its history
+   * has been read. A run the gateway does not offer for (a timetable, an abandoned run, an older gateway) is not taken up.
+   */
+  const adoptable =
+    newestInHistory !== undefined && (newestInHistory.suggestionsOffered === true || (newestInHistory.suggestions ?? null) !== null)
+      ? newestInHistory.id
+      : null;
+  useEffect(() => {
+    if (adoptable !== null && jobId === null) setJobId(adoptable);
+  }, [adoptable, jobId]);
 
   /** The button beside Generera: the answer is shown under the prerequisites, and nothing is started. */
   const checkWeek = async () => {

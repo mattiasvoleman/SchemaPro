@@ -138,6 +138,27 @@ for (const size of VIEWPORTS) {
   }
 }
 
+test("a reload brings back the card of the year's newest refused run, and the answer saved on it (D9)", async ({ page, baseURL }) => {
+  const misses = await open(page, baseURL!, scenarioOf("refusal"), { width: 1280, height: 800 }, "light");
+  const card = page.locator(CARD);
+
+  // Generera is not pressed: the run is the year's newest in the history, and the page takes it up as it would a run it had started.
+  await expect(page.locator("#last-run")).toBeVisible();
+  await expect(card.getByRole("button", { name: "Räkna fram förslag" })).toBeVisible();
+
+  await card.getByRole("button", { name: "Räkna fram förslag" }).click();
+  await expect(card.locator(CHANGES)).toHaveCount(3, { timeout: 15_000 });
+
+  // A reload leaves the page with no run of its own: the answer saved on the run is read again, and the card is where it was.
+  await page.reload();
+  await settle(page);
+  await expect(page.locator("#last-run")).toBeVisible();
+  await expect(card.locator(CHANGES)).toHaveCount(3, { timeout: 15_000 });
+  await expect(card).toContainText("Tillåt 2 lektioner per dag för Idrott och hälsa för 8A");
+  await expect(card).toContainText("Höj dagstaket för Anna Andersson från 300 till 360 minuter");
+  expect(misses, MISSES).toEqual([]);
+});
+
 test("a timeout says what is already known, and after the press shows the one change the engine solved the week with, with its proof", async ({ page, baseURL }) => {
   const misses = await open(page, baseURL!, scenarioOf("timeout"), { width: 1280, height: 900 }, "light");
   await runGenera(page);

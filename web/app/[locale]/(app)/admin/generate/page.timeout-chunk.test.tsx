@@ -47,6 +47,12 @@ const state = vi.hoisted(() => ({
   /** The year's runs; undefined is a list never read. */
   history: [] as unknown[] | undefined,
   historyFailed: false,
+  /** The runs of a year that has its own (a year not named here gets `history`). */
+  historyOf: {} as Record<string, unknown[]>,
+  /** The run the page asked for, in order: null is the read of a page with no run of its own. */
+  jobFor: [] as (string | null)[],
+  /** The hook is disabled without a run, as the real one is: no id, no data. Off, `job` answers whatever was asked. */
+  jobNeedsId: false,
   /** The year each year-keyed read was asked for, in order. */
   requirementsFor: [] as (string | null)[],
   historyFor: [] as (string | null)[],
@@ -120,13 +126,16 @@ vi.mock("@/lib/queries", () => ({
   useGroups: () => ({ data: state.groups }),
   useGroupMemberships: () => ({ data: state.memberships }),
   useStartOptimization: () => noMutation,
-  useOptimizationJob: () => ({ data: state.job }),
+  useOptimizationJob: (jobId: string | null) => {
+    state.jobFor.push(jobId);
+    return { data: state.jobNeedsId && jobId === null ? undefined : state.job };
+  },
   useOptimizationHistory: (yearId: string | null) => {
     state.historyFor.push(yearId);
     // Disabled without a year, as the real hook is: never asked, never failed.
     return yearId === null
       ? { data: undefined, isLoading: false, isError: false, refetch: historyRefetch }
-      : { data: state.history, isLoading: false, isError: state.historyFailed, refetch: historyRefetch };
+      : { data: state.historyOf[yearId] ?? state.history, isLoading: false, isError: state.historyFailed, refetch: historyRefetch };
   },
   useLunchSettings: () => ({ data: state.lunch }),
 }));
@@ -211,6 +220,9 @@ beforeEach(() => {
   state.shares = [];
   state.history = [];
   state.historyFailed = false;
+  state.historyOf = {};
+  state.jobFor = [];
+  state.jobNeedsId = false;
   state.requirementsFor = [];
   state.historyFor = [];
   state.job = undefined;
@@ -418,3 +430,165 @@ describe("the card of what to change", () => {
   });
 });
 
+/*
+ * D9 of Åtgärdsförslag vid vägran: A RELOAD LEAVES THE PAGE WITHOUT THE RUN IT STARTED, and the analysis saved on that run was out of
+ * reach. The page takes up the year's NEWEST run when it is one the card speaks of (offered, or already holding an analysis) and the
+ * page has no run of its own. The hook is disabled without a run (`jobNeedsId`), so what is drawn is what the page asked for, and what
+ * it asked for is read from `jobFor`.
+ */
+
+const SAVED = {
+  version: 1,
+  state: "RUNNING",
+  startedAt: "2026-11-21T08:04:00.000Z",
+  finishedAt: null,
+  verdict: null,
+  verified: false,
+  total: 0,
+  searchSeconds: null,
+  verifySeconds: null,
+  changes: [],
+  failure: null,
+};
+const laidTimetable = {
+  ...refused,
+  id: "job-ok",
+  solverStatus: "OPTIMAL",
+  lessonsGenerated: 118,
+  conflicts: [],
+  suggestionsOffered: false,
+  suggestions: null,
+};
+const asked = () => state.jobFor.filter((id): id is string => id !== null);
+const lastRun = () => document.getElementById("last-run");
+
+describe("the run a reload leaves behind", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    state.jobNeedsId = true;
+  });
+  afterEach(() => {
+    vi.doUnmock("./suggestions-card");
+    vi.restoreAllMocks();
+  });
+
+  it("is taken up when it is the year's newest and the gateway offers the analysis for it: the card of what to change is there again", async () => {
+    state.history = [refused];
+    state.job = refused;
+    const Page = await pageWithTheSuggestionsCard("arrives");
+    render(<Page />);
+
+    expect(await screen.findByRole("button", { name: "generate.suggestions.offerAction" })).toBeInTheDocument();
+    expect(screen.getByText("Anna is in two rooms at once.")).toBeInTheDocument();
+    expect(asked()).toContain("job-r");
+  });
+
+  it("is taken up when it already holds an analysis, even if the gateway no longer offers the button", async () => {
+    const holding = { ...refused, suggestionsOffered: false, suggestions: SAVED };
+    state.history = [holding];
+    state.job = holding;
+    const Page = await pageWithTheSuggestionsCard("arrives");
+    render(<Page />);
+
+    expect(await screen.findByRole("heading", { name: "generate.suggestions.title" })).toBeInTheDocument();
+    expect(asked()).toContain("job-r");
+  });
+
+  it("is not taken up when the newest run laid a timetable", async () => {
+    state.history = [laidTimetable];
+    state.job = laidTimetable;
+    const Page = await pageWithTheSuggestionsCard("arrives");
+    render(<Page />);
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(asked()).toEqual([]);
+    expect(lastRun()).toBeNull();
+    expect(screen.queryByRole("heading", { name: "generate.suggestions.title" })).toBeNull();
+  });
+
+  it("does not bring back an older refusal under a run that has been made since", async () => {
+    state.history = [laidTimetable, refused];
+    state.job = refused;
+    const Page = await pageWithTheSuggestionsCard("arrives");
+    render(<Page />);
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(asked()).toEqual([]);
+    expect(lastRun()).toBeNull();
+  });
+
+  it("does not take up a refusal the gateway does not offer for and that holds nothing, nor a run an older gateway sent", async () => {
+    const { suggestionsOffered: _offered, suggestions: _suggestions, ...older } = refused;
+    state.history = [{ ...refused, suggestionsOffered: false }];
+    state.job = refused;
+    const Page = await pageWithTheSuggestionsCard("arrives");
+    const { unmount } = render(<Page />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(asked()).toEqual([]);
+    unmount();
+
+    state.history = [older];
+    render(<Page />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(asked()).toEqual([]);
+    expect(lastRun()).toBeNull();
+  });
+
+  it("never replaces a run of the page's own: another administrator's refusal that turns up in the history is left to the history", async () => {
+    state.people.push({ ...pupil("t-1", "g-41"), role: "TEACHER", studentGroupId: null });
+    const own = { ...laidTimetable, id: "job-own" };
+    state.job = own;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const Page = await pageWithTheSuggestionsCard("arrives");
+    // A new element each time: React skips the render of the very same one.
+    const tree = () => (
+      <QueryClientProvider client={client}>
+        <Page />
+      </QueryClientProvider>
+    );
+    const view = renderPlain(tree());
+    noMutation.mutateAsync.mockResolvedValueOnce({ jobId: "job-own" });
+    await userEvent.setup().click(await screen.findByRole("button", { name: "generate.run" }));
+    await waitFor(() => expect(asked()).toContain("job-own"));
+
+    state.history = [{ ...refused, id: "job-other" }];
+    view.rerender(tree());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(asked()).not.toContain("job-other");
+    expect(state.jobFor.at(-1)).toBe("job-own");
+  });
+
+  it("is the year's own: choosing another year clears it, and choosing the first again takes it up again", async () => {
+    state.years = [ACTIVE, NEXT];
+    state.historyOf = { "y-1": [refused], "y-2": [] };
+    state.job = refused;
+    apiGet.mockResolvedValue({
+      academicYearId: "y-2",
+      basis: "PROJECTED",
+      homeClasses: [],
+      counts: { moved: 0, graduates: 0, unplaced: 0 },
+      membershipsOutOfDate: { missing: 0, stale: 0 },
+    });
+    const Page = await pageWithTheSuggestionsCard("arrives");
+    render(<Page />);
+    expect(await screen.findByRole("button", { name: "generate.suggestions.offerAction" })).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "planningYear.optionNext(2027/28)" }));
+    await waitFor(() => expect(lastRun()).toBeNull());
+    expect(screen.queryByRole("button", { name: "generate.suggestions.offerAction" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "planningYear.optionActive(2026/27)" }));
+    expect(await screen.findByRole("button", { name: "generate.suggestions.offerAction" })).toBeInTheDocument();
+  });
+});
