@@ -227,6 +227,40 @@ export function teachingWeeks(
 }
 
 /**
+ * The period's weeks counted in the school days it holds: every Mon-Fri day inside the period's window that is not closed, in
+ * a week the recurrence runs, is a fifth of a week. teachingWeeks charges a week WHOLE when the window covers any day of it
+ * (a year that starts on a Saturday, a term that ends on a Monday), which is right for a standard week and wrong for an
+ * annual figure: a week with no school day in the window holds no lesson. The two agree wherever the window runs from a Monday
+ * to a Friday, so a year that does is counted as it always was. A requirement carries no weekday, so a partly covered week is
+ * the fraction of its school days, the same fifths a studiedag takes.
+ */
+export function teachingWeeksByDays(
+  period: TeachingPeriod,
+  year: YearBounds,
+  closures?: ClosedRange[],
+  gradeLevel?: number | null,
+): number {
+  const window = clampToYear(period, year);
+  if (!window) return 0;
+
+  const applicable = (closures ?? []).filter((closure) =>
+    closesForGrade(closure, gradeLevel),
+  );
+
+  let days = 0;
+  for (const monday of mondaysBetween(window.from, window.to)) {
+    if (!teachesInWeek(window, monday)) continue;
+    for (let offset = 0; offset < TEACHING_DAYS_IN_WEEK; offset += 1) {
+      const day = toDay(addDays(monday, offset));
+      if (day < window.from || day > window.to) continue;
+      if (applicable.some((closure) => day >= closure.startDate && day <= closure.endDate)) continue;
+      days += 1;
+    }
+  }
+  return days / TEACHING_DAYS_IN_WEEK;
+}
+
+/**
  * The busiest week per key — per teacher, here — summing `loadOf` over the
  * items taught in each ISO week of the year. Every key present appears, 0
  * included. Parities never add; non-overlapping terms never add; the same

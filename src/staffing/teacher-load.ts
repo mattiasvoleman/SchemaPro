@@ -592,7 +592,7 @@ export function standardWeekWeight(
   return teachingWeeks(requirement, year, closures, gradeLevel) / yearWeeks;
 }
 
-function singleGrade(span: GradeSpan | null): number | null {
+export function singleGrade(span: GradeSpan | null): number | null {
   return span !== null && span.min === span.max ? span.min : null;
 }
 
@@ -934,6 +934,26 @@ function weightedByWeeks(
 }
 
 /**
+ * The post's share of a full post over the läsår, tjänst minus nedsättning in per cent: the post's own when it does not
+ * change, else each stretch's weighted by its teaching weeks (null for no post). The report's regulated hours, annual
+ * hours and semestertjänst week all scale by it, and so does the ordinance's span for a part-time teacher
+ * (assignment-scope.ts, SFS 2026:1487 3 §): one function, so the two cannot disagree about how much of a post a teacher has.
+ */
+export function activePercentOf(
+  employment: LoadEmployment | null,
+  stretches: readonly StretchLoad[] | null,
+): number | null {
+  const base = employment ? employment.employmentPercent - employment.reductionPercent : null;
+  return stretches
+    ? weightedByWeeks(
+        stretches,
+        (stretch) => stretch.stretch.figures.employmentPercent - stretch.stretch.figures.reductionPercent,
+        base,
+      )
+    : base;
+}
+
+/**
  * A post's target for the year as the report states it (buildTeacherLoadReport):
  * a post that changes during the year has its stretches' targets weighted by
  * their teaching weeks, one that does not has its own. For a reader who may
@@ -1248,16 +1268,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       : baseTarget;
     const target = yearTarget === null ? null : Math.round(yearTarget);
     reportedTargets.set(userId, target);
-    const baseActive = employment
-      ? employment.employmentPercent - employment.reductionPercent
-      : null;
-    const activePercent = stretches
-      ? weightedByWeeks(
-          stretches,
-          (stretch) => stretch.stretch.figures.employmentPercent - stretch.stretch.figures.reductionPercent,
-          baseActive,
-        )
-      : baseActive;
+    const activePercent = activePercentOf(employment, stretches);
     const regulated =
       activePercent === null ? null : (policy.fullTimeRegulatedHoursPerYear * activePercent) / 100;
     const ferie = employment !== null && employment.contractKind === 'FERIE';
