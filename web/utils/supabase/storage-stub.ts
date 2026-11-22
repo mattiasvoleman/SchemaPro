@@ -55,4 +55,15 @@ export class StorageClient {
   deleteBucket(): never {
     return refuse();
   }
+  // The rest of what the real StorageClient has (storage-js 2.108.2): without these
+  // a use ends in "Cannot read properties of undefined", not in the refusal above.
+  throwOnError(): never {
+    return refuse();
+  }
+  get vectors(): never {
+    return refuse();
+  }
+  get analytics(): never {
+    return refuse();
+  }
 }

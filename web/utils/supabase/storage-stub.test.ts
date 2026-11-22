@@ -51,10 +51,18 @@ describe("the storage stub fits the installed supabase-js", () => {
     expect(() => client.storage.from("avatars")).toThrow(/not bundled in the browser build/);
     expect(() => client.storage.listBuckets()).toThrow(/storage-js alias in next\.config\.mjs/);
   });
+
+  it("says the same for the members the stub once left undefined (vectors, analytics, throwOnError)", () => {
+    expect(() => client.storage.vectors).toThrow(/not bundled in the browser build/);
+    expect(() => client.storage.analytics).toThrow(/not bundled in the browser build/);
+    expect(() => client.storage.throwOnError()).toThrow(/not bundled in the browser build/);
+  });
 });
 
 describe("the alias in next.config.mjs", () => {
-  it("is for the browser only and names a file that exists, this one", async () => {
+  // Loading next.config.mjs pulls in next-intl/plugin and Next's own config helpers: 2.4 s on a loaded
+  // machine, and a 5 s timeout (the default) on the first run at load 170. A test of a config file is not a speed test.
+  it("is for the browser only and names a file that exists, this one", { timeout: 30_000 }, async () => {
     const configPath = path.join(webRoot, "next.config.mjs");
     // A variable specifier: the config is plain JavaScript with no types.
     const config = (await import(/* @vite-ignore */ configPath)).default as {
@@ -70,6 +78,47 @@ describe("the alias in next.config.mjs", () => {
   });
 });
 
+/**
+ * What in one file's text reaches for Supabase Storage, which the browser build
+ * does not carry. Not only the literal `.storage.from(`: the same call is made
+ * through a destructured client, an optional chain, a bracket, a reference kept
+ * in a variable, `.vectors` or `.analytics`, or by importing the package itself,
+ * and each of those builds, passes the bundle gate and fails first in a browser.
+ */
+function storageUses(source: string): string[] {
+  const uses: string[] = [];
+  // navigator.storage is the browser's own StorageManager, nothing to do with Supabase.
+  if (/(?<!\bnavigator)(?:\?\.|\.)\s*storage\b/.test(source)) uses.push("a .storage member");
+  if (/\{[^{}]*\bstorage\b[^{}]*\}\s*=(?![=>])/.test(source)) uses.push("a destructured storage");
+  if (/\[\s*["'`]storage["'`]\s*\]/.test(source)) uses.push("a ['storage'] access");
+  if (/@supabase\/storage-js/.test(source)) uses.push("an import of @supabase/storage-js");
+  return uses;
+}
+
+describe("what counts as using Supabase Storage", () => {
+  it.each([
+    ["a call", 'const f = supabase.storage.from("a");'],
+    ["a call over three lines", "supabase\n  .storage\n  .from('a');"],
+    ["an optional chain", 'const f = supabase.storage?.from("a");'],
+    ["a destructured client", "const { auth, storage } = createClient();"],
+    ["a bracket", 'const f = supabase["storage"].from("a");'],
+    ["a reference kept in a variable", "const files = supabase.storage;"],
+    ["the vectors API", "supabase.storage.vectors.from('a');"],
+    ["the package itself", 'import { StorageClient } from "@supabase/storage-js";'],
+  ])("sees %s", (_name, source) => {
+    expect(storageUses(source)).not.toEqual([]);
+  });
+
+  it.each([
+    ["the auth session's own storage option", "createClient(url, key, { auth: { storage: cookieStorage } });"],
+    ["the browser's local storage", 'window.localStorage.getItem("a");'],
+    ["the browser's storage manager", "await navigator.storage.persist();"],
+    ["a name that only starts with storage", "const key = options.storageKey;"],
+  ])("leaves %s alone", (_name, source) => {
+    expect(storageUses(source)).toEqual([]);
+  });
+});
+
 describe("what the app asks of Supabase", () => {
   const SKIP = new Set(["node_modules", ".next", "e2e", "coverage", "playwright-report"]);
   const sources = (dir: string): string[] =>
@@ -77,15 +126,14 @@ describe("what the app asks of Supabase", () => {
       if (SKIP.has(name)) return [];
       const full = path.join(dir, name);
       if (statSync(full).isDirectory()) return sources(full);
-      return /\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name) && name !== "storage-stub.ts" ? [full] : [];
+      return /\.(ts|tsx|mts|js|jsx)$/.test(name) && !/\.test\.[mc]?[tj]sx?$/.test(name) && name !== "storage-stub.ts"
+        ? [full]
+        : [];
     });
 
-  it("never calls supabase.storage, which the browser build does not carry", () => {
-    const calls = sources(webRoot).filter((file) =>
-      /\.storage\s*\.\s*(from|listBuckets|getBucket|createBucket|updateBucket|emptyBucket|deleteBucket)\b/.test(
-        readFileSync(file, "utf8"),
-      ),
-    );
+  // Reads every source file under web/ (2 s on a loaded machine), so it gets room: the default is 5 s.
+  it("never reaches for supabase.storage, which the browser build does not carry", { timeout: 30_000 }, () => {
+    const calls = sources(webRoot).filter((file) => storageUses(readFileSync(file, "utf8")).length > 0);
     // To use Storage: remove the @supabase/storage-js alias in next.config.mjs
     // (and this stub), and accept ~12 KB on every signed-in page.
     expect(calls.map((file) => path.relative(webRoot, file))).toEqual([]);
