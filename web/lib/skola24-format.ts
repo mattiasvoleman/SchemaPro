@@ -32,8 +32,8 @@
  * a message or a CSV, and nobody has to remember to leave them out.
  */
 
-import { FIELDS } from "@/lib/column-fields";
-import { chooseHeaderRow, keysOf, labelOf, personalNumberColumns, type Assignment, type Block } from "@/lib/column-mapping";
+import { FIELDS, type TemplateKind } from "@/lib/column-fields";
+import { aliasAssignment, chooseHeaderRow, keysOf, labelOf, personalNumberColumns, type Assignment, type Block } from "@/lib/column-mapping";
 import type { RawTable } from "@/lib/column-table";
 import { hasPersonalNumber } from "@/lib/personal-number";
 import { SKOLA24_FORMATS } from "@/lib/skola24-formats";
@@ -250,6 +250,51 @@ export function readFormat(table: RawTable, descriptor: FormatDescriptor, option
   return { format: descriptor.id, by: mode === "present" ? "header" : "position", block, columns: result, missing, assignment, heldRows, exact };
 }
 
+/** The descriptions that read into a kind of Rastra's imports: the ones with columns, and a kind of their own. Empty for most kinds. */
+export function formatsOfKind(kind: TemplateKind): FormatDescriptor[] {
+  return SKOLA24_FORMATS.filter((format) => format.kind === kind && format.columns !== null);
+}
+
+/**
+ * The reading's assignment, with X2's own placement under it: a column the description does not know, whose header the importer
+ * already reads (lib/csv-aliases.ts), is placed as it would be without a description. A column the description DOES know is as the
+ * description says, whatever the importer would have made of its header.
+ */
+export function formatAssignment(reading: FormatReading, kind: TemplateKind): Assignment {
+  const alias = aliasAssignment(reading.block, kind);
+  return reading.assignment.map((entry, at) => (entry === undefined ? alias[at] : entry));
+}
+
+/** A table that has the shape of a described file, read as that file is read EXCEPT that nothing is placed on a column. */
+export interface OfferedReading {
+  /** The file as a table of data: every row a row (the first is a person, not a header), the rows `heldRows` names left out. */
+  block: Block;
+  /** Nothing placed: every column undefined, for the user to place or for the description to be chosen. */
+  assignment: Assignment;
+  /** The file's row numbers whose confidential mark is 1: held back, never read. They are not rows of `block`. */
+  heldRows: number[];
+}
+
+/**
+ * What a file with no header row is while its description is only OFFERED (a position fit of `detectFormats`, which a user has not chosen).
+ * Applying the description is the user's say, but that the first row of such a file is a PERSON and that a person marked confidential is
+ * never read do not wait for it: read as X2 reads a table, the first row is the header row, and a person's name, e-mail address and
+ * TF number are column names on screen and, once the user places a column and saves, keys and labels of a template in the school's data;
+ * a marked person further down is a row of the sample and of the mapping. So the table is read here as the described file's data (first
+ * row included, marked rows out) with no header and no placement, and only a column the description says is a personnummer column keeps
+ * its label, so that X2 drops it as one. Null when no position fit is offered.
+ */
+export function offeredReading(table: RawTable, fits: readonly FormatFit[], descriptors: readonly FormatDescriptor[]): OfferedReading | null {
+  const fit = fits.find((entry) => entry.by === "position");
+  const descriptor = fit === undefined ? undefined : descriptors.find((entry) => entry.id === fit.format);
+  if (descriptor === undefined || descriptor.columns === null) return null;
+  const reading = readFormat(table, descriptor, { header: "absent" });
+  if (reading === null) return null;
+  const headers = reading.block.headers.map((_, at) => (descriptor.columns![at]?.personalNumber === true ? descriptor.columns![at]!.label.value : ""));
+  const block: Block = { ...reading.block, headers, keys: keysOf(headers) };
+  return { block, assignment: headers.map(() => undefined), heldRows: reading.heldRows };
+}
+
 /**
  * The Rastra fields a kind cannot be imported without, that the description has no column for: what the format can NEVER give. For
  * Skola24's files this is the finding that matters most (a pupils' file has no e-mail, and Rastra's importer wants one), and it
@@ -324,7 +369,11 @@ export function detectFormats(table: RawTable, descriptors: readonly FormatDescr
     if (header !== null) {
       const placed = byHeader(header, columns);
       const matched = new Set(placed.filter((column): column is FormatColumn => column !== null).map((column) => column.id)).size;
-      if (matched >= 3 && matched * 5 >= of * 3) {
+      // Every file of Skola24's is keyed on a personnummer (or a TF number): a table that has the description's other headers and none of its
+      // personnummer headers is a school's own list, such as Rastra's own pupils' template (fornamn, efternamn, epost, telefon, klass: three of the
+      // four headers of the pupils' file), and is not offered as Skola24's.
+      const keyed = !columns.some((column) => column.personalNumber === true) || placed.some((column) => column?.personalNumber === true);
+      if (keyed && matched >= 3 && matched * 5 >= of * 3) {
         const exact = showsHeaderRow(descriptor) && matched === of && header.keys.length === of && header.keys.every((key, index) => placed[index]?.synonyms[0] === baseOf(key));
         fits.push({ format: descriptor.id, by: "header", matched, of, exact });
         continue;

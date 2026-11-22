@@ -11408,6 +11408,7 @@
       "field": "Fält",
       "fieldOf": "Fält för kolumnen {column}",
       "noHeader": "(utan rubrik)",
+      "noHeaderAt": "(utan rubrik, kolumn {number})",
       "hiddenHeader": "(rubriken visas inte)"
     },
     "option": {
@@ -11437,6 +11438,39 @@
     "skipped": "{count, plural, one {# kolumn läses inte, som du valde} other {# kolumner läses inte, som du valde}}: {names}.",
     "dropped": "{count, plural, one {# kolumn som ser ut som personnummer släpptes} other {# kolumner som ser ut som personnummer släpptes}}. Ingenting av dem lämnar webbläsaren.",
     "emptied": "{count, plural, one {# rad har inget i de kolumner som läses och hoppas över} other {# rader har inget i de kolumner som läses och hoppas över}}.",
+    "held": "{count, plural, one {Rad {rows} har} other {Rader {rows} har}} sekretessmarkering i filen och läses inte in, som i Skola24. Resten av filen läses.",
+    "format": {
+      "label": "Filen kommer från Skola24",
+      "auto": "Känn igen själv",
+      "none": "Ingen av dem",
+      "names": {
+        "skola24-foraldrar-csv": "Importera föräldrar CSV",
+        "skola24-personal-csv": "Importera personal",
+        "skola24-elever-klass": "Importera elever till klasser"
+      },
+      "recognised": "Filen känns igen som Skola24:s ”{name}”, och kolumnerna är placerade som Skola24 beskriver den.",
+      "offered": "Filen ser ut att vara Skola24:s ”{name}”.",
+      "skipped": "{count, plural, one {# kolumn läses inte} other {# kolumner läses inte}}: {names}.",
+      "use": "Läs den så",
+      "source": "Så beskriver Skola24 filen på sin egen sida (uppdaterad {date}).",
+      "sourceLink": "Öppna sidan",
+      "byPosition": "Filen har ingen rubrikrad, så kolumnerna är placerade efter den ordning Skola24 anger.",
+      "header": {
+        "label": "Har filen en rubrikrad?",
+        "auto": "Känn igen själv",
+        "present": "Ja, första raden är rubriker",
+        "absent": "Nej, första raden är en person"
+      },
+      "missing": "Filen saknar {count, plural, one {kolumnen} other {kolumnerna}} som Skola24:s beskrivning har: {names}.",
+      "gap": "Skola24:s fil har ingenting för {count, plural, one {fältet} other {fälten}} {names}, som Rastras import kräver. Peka ut en kolumn själv eller komplettera filen.",
+      "unread": {
+        "school": "Läses inte: importen gäller skolan du är inloggad på, så skolans namn behövs inte.",
+        "department": "Läses inte: Rastra har ingen avdelning (Skola24:s grupp i förskola och fritids).",
+        "confidentialMark": "Läses inte: en rad med siffran 1 här läses inte in alls.",
+        "needsPost": "Läses inte: Rastra sparar signaturen på lärarens tjänst och vägrar en signatur utan tjänstgöringsgrad, som filen inte har. Välj fältet om du ändå vill, och du får importens egna ord.",
+        "noImport": "Läses inte: Rastra har ingen import av den här uppgiften."
+      }
+    },
     "warnings": {
       "UNTERMINATED_QUOTE": "Ett citattecken i tabellen stängdes aldrig. Kontrollera de sista raderna.",
       "CELLS_RIGHT_OF_HEADER": "Rad {rows} har celler till höger om den sista rubriken. De läses inte in.",

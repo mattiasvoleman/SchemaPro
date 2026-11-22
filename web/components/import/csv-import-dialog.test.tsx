@@ -1337,3 +1337,164 @@ describe("CsvImportDialog telephone numbers written without hyphens", () => {
     expect(importButton()).toBeDisabled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Files from Skola24 (Formatbeskrivare, X3): synthetic files made from what Skola24's own pages say of its files
+// ---------------------------------------------------------------------------
+
+describe("CsvImportDialog a file from Skola24", () => {
+  // Skola24's staff file: eight columns, no header row, the last the confidential mark. The middle row is marked 1.
+  const STAFF_FILE =
+    [
+      "Testskolan;Avd A;19000103-0001;Åsa;Provsson;ASP;asa.provsson@example.invalid;",
+      "Testskolan;Avd B;19000103-0002;Maria;Fiktiv;MFI;maria.fiktiv@example.invalid;1",
+      "Testskolan;;19000103-0003;Erik;Exempel;EEX;erik.exempel@example.invalid;",
+    ].join("\r\n") + "\r\n";
+
+  it("offers the description of a file with no header row, never applies it by itself, and reads every row once it is chosen", async () => {
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["teachers"] });
+
+    await uploadCsv(user, STAFF_FILE);
+    await screen.findByText(/^format\.offered\(/);
+    // Not applied by itself: no column is placed (the import waits), but the first person is a row and not the header row.
+    expect(screen.queryByText(/^format\.recognised/)).not.toBeInTheDocument();
+    expect(importButton()).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "format.use" }));
+    await screen.findByText(/^format\.recognised\(/);
+    // Said in the same notice: there is no header row, so the columns stand where Skola24 says they stand.
+    expect(screen.getByText(/format\.byPosition/)).toBeInTheDocument();
+    // The marked row is left out and named; the other two are read, and the import is not stopped by it.
+    await screen.findByText("rowsReady(count=2)");
+    expect(screen.getByText("held(count=1|rows=2)")).toBeInTheDocument();
+    // The columns the description skips are not "as you chose": the line is its own.
+    expect(screen.getByText(/^format\.skipped\(count=4\|names=/)).toBeInTheDocument();
+    expect(screen.queryByText(/^skipped\(/)).not.toBeInTheDocument();
+    expect(importButton()).toBeEnabled();
+  });
+
+  it("says why each column that is not read is not, and posts neither the signature, the marked row nor a personnummer", async () => {
+    mockPost.mockResolvedValue({ created: 2, skipped: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["teachers"] });
+
+    await uploadCsv(user, STAFF_FILE);
+    await user.click(await screen.findByRole("button", { name: "format.use" }));
+    await screen.findByText("rowsReady(count=2)");
+    for (const reason of ["school", "department", "confidentialMark", "needsPost"]) {
+      expect(screen.getByText(`format.unread.${reason}`)).toBeInTheDocument();
+    }
+
+    await user.click(importButton());
+    await screen.findByText("resultSummary(created=2|skipped=0)");
+    expect(mockPost).toHaveBeenCalledWith("/api/v1/import/teachers", {
+      rows: [
+        { firstName: "Åsa", lastName: "Provsson", email: "asa.provsson@example.invalid" },
+        { firstName: "Erik", lastName: "Exempel", email: "erik.exempel@example.invalid" },
+      ],
+      // The file's own rows, no header row to count: the first person is row 1.
+      rowNumbers: [1, 3],
+    });
+    expect(JSON.stringify(mockPost.mock.calls)).not.toMatch(/19000|Maria|MFI|ASP/);
+  });
+
+  it("is read as before when the user says it is none of Skola24's", async () => {
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["teachers"] });
+
+    await uploadCsv(user, STAFF_FILE);
+    await user.click(await screen.findByRole("button", { name: "format.use" }));
+    await screen.findByText("rowsReady(count=2)");
+
+    await user.selectOptions(screen.getByLabelText("format.label"), "none");
+    expect(screen.queryByText(/^format\.recognised/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^held\(/)).not.toBeInTheDocument();
+    // As X2 reads a file: the first row is the header, so the columns have a person's names and nothing places them, and the panel says so.
+    await screen.findByText("summary.cannot");
+    expect(importButton()).toBeDisabled();
+  });
+
+  it("applies the pupils' file by itself on its exact headers, and says what it cannot give: Rastra's import wants an e-mail", async () => {
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["students"] });
+
+    await uploadCsv(user, "Personnummer\tEfternamn\tFörnamn\tKlass\r\n19000105-0001\tTestsson\tÅsa\t7A\r\n19000105-0002\tProvsson\tÖrjan\t7B\r\n");
+    await screen.findByText(/^format\.recognised\(/);
+    expect(screen.getByText("format.gap(count=1|names=fields.students.email)")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "format.use" })).not.toBeInTheDocument();
+    expect(importButton()).toBeDisabled();
+  });
+
+  it("does not take a mobile number for a personnummer, and names the guardians' file's gap: the pupil is its personnummer, not an e-mail", async () => {
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["guardians"] });
+
+    await uploadCsv(user, "19000101-0001;19000102-0002;Åsa;Testsson;asa@example.invalid;0701234567\r\n19000101-0003;19000102-0004;Bo;Provsson;;\r\n");
+    await user.click(await screen.findByRole("button", { name: "format.use" }));
+    await screen.findByText(/^format\.recognised\(/);
+    // Two personnummer columns are dropped; the mobile column is not a third.
+    expect(screen.getByText("dropped(count=2)")).toBeInTheDocument();
+    expect(screen.getByText("format.gap(count=1|names=fields.guardians.studentEmail)")).toBeInTheDocument();
+    expect(importButton()).toBeDisabled();
+  });
+
+  it("reads a guardians' file of TF numbers, the form Skola24's own files have, and shows none of them once it is read", async () => {
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["guardians"] });
+
+    // Five columns, no header row, ÅÅÅÅMMDDTFnn in the ID columns: nothing a personnummer test sees.
+    await uploadCsv(user, "19000101TF01;19000102TF01;Åsa;Testsson;asa@example.invalid\r\n19000101TF02;19000102TF02;Bo;Provsson;bo@example.invalid\r\n");
+    await user.click(await screen.findByRole("button", { name: "format.use" }));
+    await screen.findByText(/^format\.recognised\(/);
+    expect(screen.getByText("dropped(count=2)")).toBeInTheDocument();
+    // Both rows are rows of people: the first is not taken for a header (the surname column's examples name both), and no number is shown
+    // anywhere in the dialog. The file cannot be imported as it stands (no pupil e-mail), so there is no preview table to look in.
+    expect(screen.queryByLabelText("headerRow.label")).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/TF0/);
+    expect(screen.getByText("Testsson · Provsson")).toBeInTheDocument();
+  });
+
+  it("says nothing of Skola24 about a school's own list", async () => {
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["teachers"] });
+
+    await uploadCsv(user, TEACHERS_CSV);
+    await screen.findByText("rowsReady(count=1)");
+    expect(screen.queryByText(/^format\.(offered|recognised)/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "format.use" })).not.toBeInTheDocument();
+  });
+});
+
+describe("CsvImportDialog a file from Skola24 that is only offered", () => {
+  // The marked person is the first row; the ID column holds TF numbers, which X2's own test for a personnummer does not know.
+  const MARKED_FIRST =
+    "Testskolan;Avd A;99999001TF01;Skyddad;Person;SP;skyddad.person@example.invalid;1\r\n" + "Testskolan;;99999001TF02;Erik;Exempel;;erik.exempel@example.invalid;\r\n" + "Testskolan;Avd B;99999001TF03;Åsa;Berg;;asa.berg@example.invalid;0\r\n";
+
+  it("shows nothing of a marked first row and no TF number before the user chooses the description, and posts nothing of them after", async () => {
+    mockPost.mockResolvedValue({ created: 2, skipped: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["teachers"] });
+
+    await uploadCsv(user, MARKED_FIRST);
+    await screen.findByText(/^format\.offered\(/);
+    // Offered, not applied: the import waits. The first row is a person, so it is no column name, and the marked one is named by its row only.
+    expect(screen.getByText("held(count=1|rows=1)")).toBeInTheDocument();
+    expect(importButton()).toBeDisabled();
+    expect(document.body.textContent).not.toMatch(/Skyddad|skyddad\.person|TF0/);
+
+    await user.click(screen.getByRole("button", { name: "format.use" }));
+    await screen.findByText("rowsReady(count=2)");
+    await user.click(importButton());
+    await screen.findByText("resultSummary(created=2|skipped=0)");
+    expect(mockPost).toHaveBeenCalledWith("/api/v1/import/teachers", {
+      rows: [
+        { firstName: "Erik", lastName: "Exempel", email: "erik.exempel@example.invalid" },
+        { firstName: "Åsa", lastName: "Berg", email: "asa.berg@example.invalid" },
+      ],
+      rowNumbers: [2, 3],
+    });
+    expect(JSON.stringify(mockPost.mock.calls)).not.toMatch(/Skyddad|skyddad\.person|TF0/);
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+});
