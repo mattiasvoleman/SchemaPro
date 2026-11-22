@@ -409,6 +409,15 @@ describe('ScheduleCandidatesService', () => {
       await expect(refusal()).resolves.toEqual({ status: 409, body: expect.objectContaining({ code: CANDIDATES_RUNNING }) });
     });
 
+    it('409 SUGGESTIONS_RUNNING beside the analysis of a refused run (G6, D2), and inserts nothing', async () => {
+      const original = tx.$queryRaw.getMockImplementation()!;
+      tx.$queryRaw.mockImplementation(async (...args: unknown[]) =>
+        sqlOf(args).text.includes(`"suggestions"->>'state' = 'RUNNING'`) ? [{ active: 1 }] : original(...args),
+      );
+      await expect(refusal()).resolves.toEqual({ status: 409, body: expect.objectContaining({ code: 'SUGGESTIONS_RUNNING' }) });
+      expect(tx.scheduleCandidateRun.create).not.toHaveBeenCalled();
+    });
+
     it('409 CANDIDATES_BUSY at CANDIDATE_RUNS_MAX active runs, asked under the start lock', async () => {
       activeRuns = 2;
       await expect(refusal()).resolves.toEqual({ status: 409, body: expect.objectContaining({ code: CANDIDATES_BUSY }) });

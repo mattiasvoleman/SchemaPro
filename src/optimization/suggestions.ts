@@ -85,7 +85,7 @@ export interface SuggestionsStored {
   verdict: SuggestVerdict | null;
   /** The strict model accepted the timetable with every change of the list. */
   verified: boolean;
-  /** How many changes the engine's list had; `changes` holds the first of them. */
+  /** How many changes the engine's list had (the part-timers' days merged into one entry still count each); `changes` holds the first of them. */
   total: number;
   searchSeconds: number | null;
   verifySeconds: number | null;
@@ -123,12 +123,21 @@ const idsOf = (value: unknown, max: number): string[] | null => {
   return out;
 };
 
+/**
+ * A name cut to MAX_NAME. Never through a surrogate pair (an emoji in a room's name): half of one is a lone surrogate, which JSON writes
+ * as `\ud83c` and jsonb refuses (22P02), and the analysis that took a minute and a half would be lost to the write.
+ */
+const clip = (name: string): string => {
+  const cut = name.slice(0, MAX_NAME);
+  return name.length > MAX_NAME && /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
+};
+
 const namesOf = (value: unknown, max: number): string[] | null => {
   if (!Array.isArray(value) || value.length > max) return null;
   const out: string[] = [];
   for (const entry of value) {
     if (typeof entry !== 'string') return null;
-    out.push(entry.slice(0, MAX_NAME));
+    out.push(clip(entry));
   }
   return out;
 };
@@ -312,12 +321,16 @@ export function isAbandoned(stored: SuggestionsStored, now: Date): boolean {
 
 /** What a read shows of a stored analysis: an abandoned one is a failed one, said so. */
 export function readAs(stored: SuggestionsStored, now: Date): SuggestionsStored {
-  return isAbandoned(stored, now) ? failedSuggestions(stored.startedAt, 'ABANDONED', now) : stored;
+  // It ended when a read first has the right to say so, not when this read happens: the page polls, and a time that moved on every poll
+  // would be a different answer each time for something that finished once.
+  return isAbandoned(stored, now)
+    ? failedSuggestions(stored.startedAt, 'ABANDONED', new Date(Date.parse(stored.startedAt) + STALE_AFTER_MS))
+    : stored;
 }
 
 const RULE_ORDER = new Map<string, number>(SUGGESTION_RULES.map((rule, index) => [rule, index]));
 
-const cut = (name: string | undefined): string | null => (name === undefined || name === '' ? null : name.slice(0, MAX_NAME));
+const cut = (name: string | undefined): string | null => (name === undefined || name === '' ? null : clip(name));
 
 function realisedChange(change: AiEngineSuggestedChange, realiser: Realiser): StoredChange {
   const proof: SuggestionProof = change.proof;
@@ -371,6 +384,11 @@ export function suggestionsFromEngine(
   now: Date,
 ): SuggestionsStored {
   const verdict = response.verdict;
+  // An answer that says no verdict this file knows is not an answer: an engine of another contract, or something that is not the engine at
+  // all (a gateway page with a 200). Stored as it came it would read as an analysis that ended with nothing to say.
+  if (typeof verdict !== 'string' || !(SUGGEST_VERDICTS as readonly string[]).includes(verdict)) {
+    return failedSuggestions(startedAt, 'ENGINE_FAILED', now);
+  }
   const entries = verdict === 'CHANGES' ? response.changes : [];
   const mapped = entries.map((change) => {
     const stored = realisedChange(change, realiser);
@@ -399,7 +417,9 @@ export function suggestionsFromEngine(
     // A refusal the engine's hard rules make carries its sentence in the run's own rows; this keeps only that no change can help.
     verdict,
     verified: response.verified === true && (verdict === 'CHANGES' || verdict === 'SOLVABLE_AS_IS'),
-    total: merged.length,
+    // The engine's own count: the proof (SOLVED_TOGETHER) is about the WHOLE list, and the part-timers' days that were merged into one
+    // entry above are still each a change the school has to make. The page says "and N more belong to it" from this.
+    total: mapped.length,
     searchSeconds: secondsOrNull(response.searchSeconds) ?? null,
     verifySeconds: secondsOrNull(response.verifySeconds) ?? null,
     changes: kept,

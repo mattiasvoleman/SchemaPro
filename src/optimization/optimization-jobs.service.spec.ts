@@ -148,6 +148,25 @@ describe('OptimizationJobsService', () => {
       expect(proxy.triggerScheduling).not.toHaveBeenCalled();
     });
 
+    it('refuses 409 SUGGESTIONS_RUNNING while the year has an analysis of a refused run going, before any job row (G6, D2)', async () => {
+      // The analysis holds the engine's cores as a Generera does: it is asked under the same start lock, on the column's own state.
+      tx.$queryRaw.mockImplementation(async (sql: { strings: string[] }) =>
+        sql.strings.join('?').includes(`"suggestions"->>'state' = 'RUNNING'`) ? [{ active: 1 }] : [],
+      );
+
+      const attempt = service.start(YEAR_ID, testUser());
+      await expect(attempt).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: 'SUGGESTIONS_RUNNING' }),
+      });
+      const sql = tx.$queryRaw.mock.calls
+        .map(([call]) => call as { strings: string[]; values: unknown[] })
+        .find((call) => call.strings.join('?').includes(`"suggestions"->>'state' = 'RUNNING'`)) as { strings: string[]; values: unknown[] };
+      expect(sql.values).toEqual([YEAR_ID, 240]);
+      expect(tx.optimizationJob.create).not.toHaveBeenCalled();
+      expect(proxy.triggerScheduling).not.toHaveBeenCalled();
+    });
+
     it('asks under the year’s start lock, which a candidate start takes too, so two clicks cannot pass beside each other', async () => {
       const order: string[] = [];
       const textOf = (statement: unknown): string =>

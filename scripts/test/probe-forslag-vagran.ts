@@ -11,7 +11,9 @@
  *         new press takes it over; the late answer of the process that lost it does NOT overwrite the one that took over;
  *   ag-d  a run it may not be asked for (a timetable, an older run than the year's newest, a year with a run going) is 409 with
  *         its code, and wakes nothing; another school's administrator sees no such run (404);
- *   ag-e  the whitelist holds across the database: a column a hand edited (a part-timer's days in the open) is shown as nothing.
+ *   ag-e  the whitelist holds across the database: a column a hand edited (a part-timer's days in the open) is shown as nothing;
+ *   ag-f  the engine's cores are one stream at a time (D2): Generera's start is refused 409 SUGGESTIONS_RUNNING while an analysis of the year
+ *         is alive, and an analysis is refused 409 SUGGESTIONS_YEAR_BUSY while a schemaförslag run of the year is alive.
  */
 import { strict as assert } from 'node:assert';
 import { HttpException } from '@nestjs/common';
@@ -208,6 +210,25 @@ export async function suggestionsChecks(owner: Client, api: PrismaService, marke
       await owner.query(`DELETE FROM "OptimizationJobs" WHERE "academicYearId" = $1 AND status = 'RUNNING'`, [a.year]);
       // Another school: the run is not there for its administrator.
       await assert.rejects(service.start(newest, b.admin), (error: unknown) => error instanceof HttpException && error.getStatus() === 404);
+    });
+
+    await check('(ag-f) a Generera start is refused beside an analysis that is alive, and an analysis beside a live schemaförslag run', async () => {
+      calls.length = 0;
+      const future = (seconds: number): string => new Date(Date.now() + seconds * 1000).toISOString();
+      const newest = await plantRun(a, { createdAt: future(600) });
+      await service.start(newest, a.admin);
+      await until('the engine was asked', async () => calls.length === 1);
+      // Generera's own start: refused by name, and no job row is made.
+      await assert.rejects(jobs.start(a.year, a.admin), (error: unknown) => codeOf(error) === 'SUGGESTIONS_RUNNING');
+      assert.equal((await one<{ n: string }>(`SELECT count(*) AS n FROM "OptimizationJobs" WHERE "academicYearId" = $1 AND status IN ('PENDING', 'RUNNING')`, [a.year])).n, '0');
+      calls.shift()!(answer());
+      await until('the column is DONE', async () => (await column(newest)).state === 'DONE');
+      // A schemaförslag run of the year that is alive holds the analysis off.
+      const refusedAgain = await plantRun(a, { createdAt: future(1200) });
+      await owner.query(`INSERT INTO "ScheduleCandidateRuns" ("schoolId", "academicYearId", status, requested) VALUES ($1, $2, 'RUNNING', 2)`, [a.school, a.year]);
+      await assert.rejects(service.start(refusedAgain, a.admin), (error: unknown) => codeOf(error) === 'SUGGESTIONS_YEAR_BUSY');
+      assert.equal((await column(refusedAgain)).state, null, 'nothing was claimed');
+      await owner.query(`DELETE FROM "ScheduleCandidateRuns" WHERE "academicYearId" = $1`, [a.year]);
     });
 
     await check('(ag-e) a column a hand edited into showing a part-timer\'s days in the open is shown as nothing', async () => {

@@ -75,6 +75,9 @@ const writtenBy = (call: unknown[]): SuggestionsStored =>
 
 describe('SuggestionsService', () => {
   let tx: ReturnType<typeof createTxMock>;
+  /** The statements that touch the column (the claim, then the write), not the year's solve-start lock's two. */
+  const columnCalls = (): unknown[][] =>
+    tx.$executeRaw.mock.calls.filter((call) => ((call[0] as Prisma.Sql).sql ?? '').includes('UPDATE "OptimizationJobs"'));
   let prisma: { withRls: jest.Mock };
   let proxy: { prepareSchedule: jest.Mock; callAiEngine: jest.Mock; realiserOf: jest.Mock };
   let service: SuggestionsService;
@@ -135,7 +138,28 @@ describe('SuggestionsService', () => {
       expect(tx.optimizationJob!.count).toHaveBeenCalledWith({ where: { academicYearId: YEAR_ID, status: { in: ['PENDING', 'RUNNING'] } } });
       tx.$queryRaw.mockResolvedValue([{ active: 1 }]);
       await expect(service.start(JOB_ID, user)).rejects.toBeInstanceOf(ConflictException);
-      expect(tx.$executeRaw).not.toHaveBeenCalled();
+      expect(columnCalls()).toHaveLength(0);
+    });
+
+    it('asks under the year\'s solve-start lock, which Generera\'s start and a schemaförslag run\'s take too, before it counts the runs', async () => {
+      await service.start(JOB_ID, user);
+      await service.settled();
+      const textOf = (call: unknown[]): string => (Array.isArray(call[0]) ? (call[0] as string[]).join('?') : ((call[0] as Prisma.Sql).sql ?? ''));
+      const lock = tx.$executeRaw.mock.calls.findIndex((call) => textOf(call).includes(`pg_advisory_xact_lock(hashtext('grundschema-solve-start')`));
+      expect(lock).toBeGreaterThan(-1);
+      expect(textOf(tx.$executeRaw.mock.calls[lock - 1]!)).toContain(`SET LOCAL lock_timeout = '5s'`);
+      // Before the count of the year's jobs, and so before the claim.
+      expect(tx.$executeRaw.mock.invocationCallOrder[lock]!).toBeLessThan(tx.optimizationJob!.count!.mock.invocationCallOrder[0]!);
+      expect(tx.$executeRaw.mock.invocationCallOrder[lock]!).toBeLessThan(tx.$executeRaw.mock.invocationCallOrder[tx.$executeRaw.mock.calls.indexOf(columnCalls()[0]!)]!);
+    });
+
+    it('is 409 SCHEDULE_BUSY when the start lock is not had in 5 s, and claims nothing', async () => {
+      tx.$executeRaw.mockImplementation(async (statement: unknown) => {
+        if (Array.isArray(statement) && statement.join('?').includes('grundschema-solve-start')) throw new Error('canceling statement due to lock timeout (55P03)');
+        return 1;
+      });
+      await expect(service.start(JOB_ID, user)).rejects.toMatchObject({ response: { code: 'SCHEDULE_BUSY' } });
+      expect(columnCalls()).toHaveLength(0);
     });
 
     it.each([
@@ -163,7 +187,7 @@ describe('SuggestionsService', () => {
       const view = await service.start(JOB_ID, user);
 
       expect(view).toMatchObject({ state: 'RUNNING', verdict: null, changes: [], failure: null, finishedAt: null });
-      const claim = tx.$executeRaw.mock.calls[0]![0] as Prisma.Sql;
+      const claim = columnCalls()[0]![0] as Prisma.Sql;
       expect(claim.sql).toContain('UPDATE "OptimizationJobs"');
       expect(claim.sql).toContain(`"suggestions"->>'state' <> 'RUNNING'`);
       expect(claim.values).toContain(JOB_ID);
@@ -203,7 +227,7 @@ describe('SuggestionsService', () => {
     });
 
     it('treats a claim another press won first as that press\'s answer', async () => {
-      tx.$executeRaw.mockResolvedValueOnce(0);
+      tx.$executeRaw.mockImplementation(async (statement: unknown) => (((statement as Prisma.Sql).sql ?? '').includes('UPDATE "OptimizationJobs"') ? 0 : 1));
       const winner = runningSuggestions(new Date());
       tx.optimizationJob!.findUnique!.mockResolvedValueOnce(refused).mockResolvedValueOnce({ suggestions: winner });
 
@@ -250,7 +274,7 @@ describe('SuggestionsService', () => {
       const view = await service.start(JOB_ID, user);
       await service.settled();
 
-      const write = tx.$executeRaw.mock.calls[1]!;
+      const write = columnCalls()[1]!;
       const sql = write[0] as Prisma.Sql;
       expect(sql.sql).toContain(`"suggestions"->>'state' = 'RUNNING'`);
       expect(sql.sql).toContain(`"suggestions"->>'startedAt' =`);
@@ -276,7 +300,7 @@ describe('SuggestionsService', () => {
     const outcomeOf = async (): Promise<SuggestionsStored> => {
       await service.start(JOB_ID, user);
       await service.settled();
-      return writtenBy(tx.$executeRaw.mock.calls[1]!);
+      return writtenBy(columnCalls()[1]!);
     };
 
     it.each([
@@ -321,7 +345,12 @@ describe('SuggestionsService', () => {
     });
 
     it('does not let a write that fails take the process down: the column is then left to read as abandoned', async () => {
-      tx.$executeRaw.mockResolvedValueOnce(1).mockRejectedValueOnce(new Error('database went away'));
+      let updates = 0;
+      tx.$executeRaw.mockImplementation(async (statement: unknown) => {
+        if (!((statement as Prisma.Sql).sql ?? '').includes('UPDATE "OptimizationJobs"')) return 1;
+        if (++updates === 2) throw new Error('database went away');
+        return 1;
+      });
       await service.start(JOB_ID, user);
       await expect(service.settled()).resolves.toBeUndefined();
       expect(Logger.prototype.error).toHaveBeenCalled();

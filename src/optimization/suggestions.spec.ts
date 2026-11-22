@@ -140,7 +140,9 @@ describe('the engine answer as the column keeps it', () => {
       ['SUBJECT_PER_DAY', 20],
       ['TEACHER_WORK_DAYS', 3600],
     ]);
-    expect(result.total).toBe(2);
+    // The engine's list had three changes, and the proof is about all three: two part-timers' days are one entry but are still two changes.
+    expect(result.total).toBe(3);
+    expect(result.changes).toHaveLength(2);
   });
 
   it('ranks by proof, then price, then the rule\'s place in the engine\'s list', () => {
@@ -181,6 +183,20 @@ describe('the engine answer as the column keeps it', () => {
     expect(unnamed.changes[0]!.requirementNames).toEqual([]);
   });
 
+  it('cuts a name at its limit without leaving half of a surrogate pair, which jsonb refuses and would lose the whole analysis', () => {
+    const name = `${'x'.repeat(MAX_NAME - 1)}\u{1F3A8} Sal 4`;
+    const result = stored(answer([perDay()]), realiser({ [REQ_2]: name }));
+    const kept = result.changes[0]!.requirementNames[0]!;
+    expect(kept).toBe('x'.repeat(MAX_NAME - 1));
+    // No lone surrogate (String.prototype.isWellFormed is ES2024, past test/tsconfig.json's lib).
+    expect(kept).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    expect(JSON.stringify(result)).not.toMatch(/\\ud[89ab][0-9a-f]{2}/i);
+    expect(suggestionsOf(result)).toEqual(result);
+    // A name that is whole at the limit keeps the pair.
+    const whole = stored(answer([perDay()]), realiser({ [REQ_2]: `${'x'.repeat(MAX_NAME - 2)}\u{1F3A8}` }));
+    expect(whole.changes[0]!.requirementNames[0]).toBe(`${'x'.repeat(MAX_NAME - 2)}\u{1F3A8}`);
+  });
+
   it('drops changes from the end until the whole fits under what the column allows, and counts them', () => {
     const wordy = (index: number): AiEngineSuggestedChange =>
       lock({ cost: index, requirementIds: [randomUUID(), randomUUID(), randomUUID()], roomIds: [randomUUID(), randomUUID(), randomUUID()] });
@@ -204,6 +220,16 @@ describe('the engine answer as the column keeps it', () => {
       expect(result.verdict).toBe(verdict);
       expect(result.verified).toBe(false);
     }
+  });
+
+  it.each([
+    ['no verdict at all (a 200 that is not the engine\'s answer)', {}],
+    ['a verdict of another contract', { verdict: 'NEEDS_MORE_TIME' }],
+    ['a verdict that is not a text', { verdict: 7 }],
+  ])('is a failed analysis for %s, never a finished one with nothing to say', (_name, odd) => {
+    const result = stored({ ...answer([cap()]), verdict: undefined, ...odd } as unknown as AiEngineSuggestChangesResponse);
+    expect(result).toMatchObject({ state: 'FAILED', failure: 'ENGINE_FAILED', verdict: null, changes: [], total: 0, verified: false, startedAt: STARTED });
+    expect(suggestionsOf(result)).toEqual(result);
   });
 
   it('does not call a week solvable as it is checked unless the engine checked it', () => {
@@ -344,6 +370,11 @@ describe('an analysis whose process went away', () => {
     expect(isAbandoned(running, new Date(start + STALE_AFTER_MS + 1))).toBe(true);
     expect(readAs(running, new Date(start + STALE_AFTER_MS + 1))).toMatchObject({ state: 'FAILED', failure: 'ABANDONED', startedAt: STARTED });
     expect(readAs(running, new Date(start + 1000))).toBe(running);
+    // An abandoned analysis ended once: every poll says the same time, not the time of the poll.
+    const first = readAs(running, new Date(start + STALE_AFTER_MS + 1));
+    const later = readAs(running, new Date(start + STALE_AFTER_MS + 90_000));
+    expect(later.finishedAt).toBe(first.finishedAt);
+    expect(first.finishedAt).toBe(new Date(start + STALE_AFTER_MS).toISOString());
   });
 
   it('is never abandoned once it has ended', () => {

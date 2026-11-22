@@ -5,6 +5,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { PrismaService } from '../database/prisma.service';
 import type { AiEngineSuggestChangesResponse } from './interfaces/suggest-changes.interface';
 import { OptimizationProxyService } from './optimization-proxy.service';
+import { lockYearForSolveStart, SCHEDULE_BUSY } from './regeneration-lock';
 import { yearHasActiveCandidateRun } from './schedule-candidates.service';
 import {
   STALE_AFTER_MS,
@@ -123,7 +124,10 @@ export class SuggestionsService {
       if (held !== null && held.state === 'RUNNING' && now.getTime() - Date.parse(held.startedAt) <= STALE_AFTER_MS) {
         return { academicYearId: job.academicYearId, stored: held, started: false };
       }
-      // The engine's cores are the school's own Generera's: an analysis does not start beside one.
+      // The engine's cores are the school's own Generera's: an analysis does not start beside one. Under the year's solve-start lock, the
+      // one Generera's start and a schemaförslag run's start take, so that a start that meets this claim sees it (it is refused, see
+      // suggestions-running.ts) or is seen by it, and the two are not both let through.
+      await lockYearForSolveStart(tx, job.academicYearId, SCHEDULE_BUSY);
       const active = await tx.optimizationJob.count({
         where: { academicYearId: job.academicYearId, status: { in: ['PENDING', 'RUNNING'] } },
       });

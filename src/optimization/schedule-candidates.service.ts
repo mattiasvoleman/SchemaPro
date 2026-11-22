@@ -93,6 +93,7 @@ import {
   SCHEDULE_CANDIDATE_BUSY,
   SCHEDULE_CANDIDATE_STALE,
 } from './regeneration-lock';
+import { suggestionsRunning, yearHasRunningSuggestions } from './suggestions-running';
 
 /*
  * SCHEMAFÖRSLAG (design §3–§5): two to four private candidates of a year's
@@ -861,6 +862,8 @@ export class ScheduleCandidatesService implements OnModuleInit, OnModuleDestroy 
       // SCHEDULE_BUSY. Order: start lock, then this, then the global one.
       await lockYearForRegeneration(tx, academicYearId, SCHEDULE_BUSY);
       if (await this.generateRunning(tx, academicYearId)) throw generateRunning();
+      // Nor beside the analysis of a refused run (G6, D2): it holds the engine's cores, and takes the same year start lock.
+      if (await yearHasRunningSuggestions(tx, academicYearId)) throw suggestionsRunning();
       const active = await tx.scheduleCandidateRun.findFirst({
         where: { academicYearId, status: { in: ACTIVE } },
         select: { id: true },

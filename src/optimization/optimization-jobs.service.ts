@@ -26,6 +26,7 @@ import {
   type StoredSentence,
 } from './work-days';
 import { candidatesRunning, yearHasActiveCandidateRun } from './schedule-candidates.service';
+import { suggestionsRunning, yearHasRunningSuggestions } from './suggestions-running';
 import {
   asParams,
   conflictView,
@@ -678,6 +679,8 @@ export class OptimizationJobsService implements OnModuleInit, OnModuleDestroy {
       // never locks the button until the sweep comes round.
       await lockYearForSolveStart(tx, academicYearId, SCHEDULE_BUSY);
       if (await yearHasActiveCandidateRun(tx, academicYearId)) throw candidatesRunning();
+      // Nor beside the analysis of a refused run (G6, D2: the engine's cores are shared, and the analysis takes the same year start lock).
+      if (await yearHasRunningSuggestions(tx, academicYearId)) throw suggestionsRunning();
       try {
         return await tx.optimizationJob.create({
           data: {
