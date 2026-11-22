@@ -1020,7 +1020,11 @@ describe('StaffingLoadService', () => {
       ],
     });
     /** The ordinance in force from before the default year, so that the year is judged. */
-    const inForce = () => tx.assignmentScopeVersion.findFirst.mockResolvedValue(ordinance('2020-01-01'));
+    const inForce = () => {
+      const { bands, ...version } = ordinance('2020-01-01');
+      tx.assignmentScopeVersion.findFirst.mockResolvedValue({ id: 'version-1', ...version });
+      tx.assignmentScopeBand.findMany.mockResolvedValue(bands);
+    };
     const scopeOf = (report: Awaited<ReturnType<typeof service.load>>, userId = ME) =>
       report.scope!.teachers.find((row) => row.userId === userId)!;
 
@@ -1029,6 +1033,7 @@ describe('StaffingLoadService', () => {
       tx.assignmentScopeVersion.findFirst.mockResolvedValue(null);
       const report = await service.load(YEAR_ID, 'planned', testUser());
       expect(tx.assignmentScopeVersion.findFirst).toHaveBeenCalledTimes(1);
+      expect(tx.assignmentScopeBand.findMany).not.toHaveBeenCalled();
       expect(report.scope).toMatchObject({ version: null, yearReason: 'NOT_IN_FORCE' });
       expect(scopeOf(report)).toMatchObject({ verdict: 'NOT_JUDGED', teachingHours: 430 });
     });
@@ -1044,8 +1049,8 @@ describe('StaffingLoadService', () => {
           OR: [{ validTo: null }, { validTo: { gte: new Date('2026-08-17T00:00:00.000Z') } }],
         },
         orderBy: { validFrom: 'desc' },
-        include: { bands: true },
       });
+      expect(tx.assignmentScopeBand.findMany).toHaveBeenCalledWith({ where: { versionId: 'version-1' } });
       expect(report.scope!.version).toMatchObject({ code: 'SFS2026:1487', validFrom: '2020-01-01' });
       expect(report.scope!.yearReason).toBeNull();
       expect(scopeOf(report)).toMatchObject({

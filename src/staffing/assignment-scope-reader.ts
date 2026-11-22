@@ -61,15 +61,18 @@ export function toScopeVersion(row: VersionRow): ScopeVersion {
 
 /**
  * The lydelse that holds on a year's first day, with its bands, as a list of one; empty when none holds (every läsår that begins
- * before 2027-07-01). The database picks it, so a year the ordinance does not reach costs ONE statement and never reads a band: under
- * Prisma 7 a relation read is a statement of its own, and every report and every guarded write that asks for the scope pays it.
+ * before 2027-07-01). The database picks it, and the bands are read only when one is found: a year the ordinance does not reach costs ONE
+ * statement, and one it reaches TWO. (A relation read through `include` is a statement of its own under Prisma 7 and is sent
+ * for a parent that was not found too, with an empty set: the statement count of a year that is not reached was two,
+ * review of #404, M-3. `relationLoadStrategy: 'join'` is not on.)
  */
 export async function readScopeVersions(tx: PrismaClient, yearStart: string): Promise<ScopeVersion[]> {
   const day = new Date(`${yearStart}T00:00:00.000Z`);
-  const row = await tx.assignmentScopeVersion.findFirst({
+  const version = await tx.assignmentScopeVersion.findFirst({
     where: { validFrom: { lte: day }, OR: [{ validTo: null }, { validTo: { gte: day } }] },
     orderBy: { validFrom: 'desc' },
-    include: { bands: true },
   });
-  return row ? [toScopeVersion(row)] : [];
+  if (!version) return [];
+  const bands = await tx.assignmentScopeBand.findMany({ where: { versionId: version.id } });
+  return [toScopeVersion({ ...version, bands })];
 }

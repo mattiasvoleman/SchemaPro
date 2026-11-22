@@ -11,7 +11,7 @@ import {
   type LoadInput,
   type TeacherLoadReport,
 } from './teacher-load';
-import { teachingWeeksByDays } from './teaching-weeks';
+import { teachingWeeksByDays, type ClosedRange, type YearBounds } from './teaching-weeks';
 
 /*
  * Undervisningsuppdragets omfattning: what the ordinance on the extent of a teacher's teaching assignment
@@ -265,6 +265,48 @@ interface Hours {
  * lessons, a co-teacher the whole row, as the report charges them) over the weeks the row runs, counted in school days, / 60.
  * Never × a teacherLoadPercent, never × a factor.
  */
+/**
+ * A row's school-day weeks over the year, memoised on the row OBJECT. teachingWeeksByDays walks the year a day at a time, about 0,2 ms
+ * a row, and a write asks it of every row the teacher has, twice (before and after), once per row of a requirements file: 1 000 rows
+ * of a school with 1 800 posts cost 10 s of it, in a transaction that holds the posts' locks and times out at 15 s (review of #404, H-1).
+ * The rows of a file are the same objects from one judgement to the next (RequirementImportChecks.apply replaces the one it writes),
+ * so all but that one are found here. An entry is used only while everything the arithmetic reads is what it was: the year and the
+ * closures (by identity and length), the row's recurrence and dates, and the year it teaches (the one grade the group holds).
+ */
+const WEEKS_OF_ROW = new WeakMap<
+  object,
+  { year: YearBounds; closures: ClosedRange[] | undefined; closuresLength: number; grade: number | null; recurrence: unknown; startDate: unknown; endDate: unknown; weeks: number }
+>();
+
+function schoolDayWeeksOf(requirement: LoadInput['requirements'][number], input: LoadInput): number {
+  const grade = singleGrade(requirement.gradeSpan);
+  const kept = WEEKS_OF_ROW.get(requirement);
+  if (
+    kept !== undefined &&
+    kept.year === input.year &&
+    kept.closures === input.closures &&
+    kept.closuresLength === (input.closures?.length ?? 0) &&
+    kept.grade === grade &&
+    kept.recurrence === requirement.recurrence &&
+    kept.startDate === requirement.startDate &&
+    kept.endDate === requirement.endDate
+  ) {
+    return kept.weeks;
+  }
+  const weeks = teachingWeeksByDays(requirement, input.year, input.closures, grade);
+  WEEKS_OF_ROW.set(requirement, {
+    year: input.year,
+    closures: input.closures,
+    closuresLength: input.closures?.length ?? 0,
+    grade,
+    recurrence: requirement.recurrence,
+    startDate: requirement.startDate,
+    endDate: requirement.endDate,
+    weeks,
+  });
+  return weeks;
+}
+
 function hoursPerTeacher(input: LoadInput, bands: readonly ScopeBand[]): Map<string, Hours> {
   const hours = new Map<string, Hours>();
   const slot = (userId: string): Hours => {
@@ -276,7 +318,7 @@ function hoursPerTeacher(input: LoadInput, bands: readonly ScopeBand[]): Map<str
     return h;
   };
   for (const requirement of input.requirements) {
-    const weeks = teachingWeeksByDays(requirement, input.year, input.closures, singleGrade(requirement.gradeSpan));
+    const weeks = schoolDayWeeksOf(requirement, input);
     if (weeks === 0) continue;
     const placed = placeSpan(requirement.gradeSpan, bands);
     const parts = teacherPartsOf(requirement).map((part) => ({ userId: part.teacherId, minutes: part.minutes }));

@@ -481,7 +481,9 @@ describe('enforceRequirementWrite and RequirementImportChecks and the ordinance\
   const arrange = (policy: Record<string, unknown>, extra: { employments?: boolean; validFrom?: string } = {}) => {
     // The database picks the lydelse that holds on the year's first day (2026-08-17): none when it begins later.
     const validFrom = extra.validFrom ?? '2020-01-01';
-    tx.assignmentScopeVersion.findFirst.mockResolvedValue(validFrom <= '2026-08-17' ? ordinance(validFrom) : null);
+    const { bands, ...version } = ordinance(validFrom);
+    tx.assignmentScopeVersion.findFirst.mockResolvedValue(validFrom <= '2026-08-17' ? { id: 'version-1', ...version } : null);
+    tx.assignmentScopeBand.findMany.mockResolvedValue(bands);
     world = givenStaffingWorld(tx, {
       policy: { qualificationMode: 'OFF', overAllocationMode: 'OFF', ...policy },
       employments: extra.employments === false ? [] : [{ id: 'emp-anna', userId: ANNA }],

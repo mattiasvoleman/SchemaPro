@@ -383,8 +383,12 @@ export function overScopeFinding(args: {
   if (mode === 'OFF') return null;
   const after = args.after;
   if (after === null || after.verdict !== 'OVER_MAX' || after.ordinanceHighestHours === null) return null;
-  // The printed hours: a write that moves them by less than a tenth added nothing a person could read.
-  if (after.teachingHours <= (args.before?.teachingHours ?? 0) + 1e-9) return null;
+  // OVER_MAX is judged on the hours in a stage (T7: förskoleklass and groups with no årskurs are counted in the total and are no reason
+  // to say over), so the write is asked about those hours too: a write that adds no hour in a stage adds nothing to what makes the
+  // teacher over, and a teacher who is over only in the stages is not refused a row of förskoleklass. The printed hours: a write that
+  // moves them by less than a tenth added nothing a person could read.
+  const shown = stageHoursOf(after);
+  if (shown <= (args.before ? stageHoursOf(args.before) : 0) + 1e-9) return null;
   if (args.policy.showsPeriods === false) {
     return { code: STAFF_TEACHER_OVER_SCOPE_HIDDEN, mode, userId: args.userId, params: { role: args.role } };
   }
@@ -392,8 +396,18 @@ export function overScopeFinding(args: {
     code: STAFF_TEACHER_OVER_SCOPE,
     mode,
     userId: args.userId,
-    params: { role: args.role, hours: hoursText(after.teachingHours), limit: hoursText(after.ordinanceHighestHours) },
+    // The hours the line is judged against: the stage hours, never less than a tenth over the line (the three figures round apart).
+    params: {
+      role: args.role,
+      hours: hoursText(Math.max(shown, Math.round((after.ordinanceHighestHours + 0.1) * 10) / 10)),
+      limit: hoursText(after.ordinanceHighestHours),
+    },
   };
+}
+
+/** The hours that lie in a stage, one decimal: the total less förskoleklass and the groups with no årskurs (the same figure the card's "över med" reads). */
+function stageHoursOf(scope: TeacherScope): number {
+  return Math.round((scope.teachingHours - scope.unregulatedHours - scope.unknownGradeHours) * 10) / 10;
 }
 
 /** Hours as a sentence prints them: whole when whole, else one decimal with the Swedish comma ("602", "478,1"). */
