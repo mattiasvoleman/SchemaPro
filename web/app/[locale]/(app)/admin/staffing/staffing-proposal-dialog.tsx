@@ -9,6 +9,7 @@ import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import { warningText } from "@/lib/staffing-warnings";
 import { placementChangeSentence } from "@/lib/requirement-placement-text";
 import { DEFAULT_LOAD_POLICY } from "@/lib/teacher-load";
+import { formatPercent } from "@/lib/staffing-view";
 import type { StaffingSearchFiguresDoc } from "@/lib/staffing-search";
 import type { StaffingPolicy } from "@/lib/types";
 import { StatusBadge } from "@/components/staffing/staffing-matrix";
@@ -1126,6 +1127,21 @@ function ProposalResult({
                           {minutesText(load.minutes, load.percentOfTarget)}
                           {load.overLimit ? (
                             <span className="block text-xs text-foreground">{t("overLimitSelection")}</span>
+                          ) : null}
+                          {teacher.scope ? (
+                            // The ordinance's own measure, hours over the läsår, for the whole proposal: said in words, never by
+                            // colour alone, and beside the riktmärke's minutes and status, which it does not touch.
+                            <span className="block text-xs text-foreground">
+                              {teacher.scope.overAfter
+                                ? t(teacher.scope.overBefore ? "scopeStillOver" : "scopeNewlyOver", {
+                                    before: formatPercent(teacher.scope.hoursBefore),
+                                    after: formatPercent(teacher.scope.hoursAfter),
+                                  })
+                                : t("scopeLine", {
+                                    before: formatPercent(teacher.scope.hoursBefore),
+                                    after: formatPercent(teacher.scope.hoursAfter),
+                                  })}
+                            </span>
                           ) : null}
                         </td>
                         <td className="py-1.5">

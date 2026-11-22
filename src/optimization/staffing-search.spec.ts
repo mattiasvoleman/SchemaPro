@@ -233,6 +233,37 @@ describe('judge', () => {
 // ---------------------------------------------------------------------------
 // Moves
 
+describe('movesOf and the ordinance\'s highest level of teaching time (scopeCeilingTenths)', () => {
+  const rows = [row('p1', 'A', ['A', 'B']), row('p2', 'B', ['A', 'B'])];
+  const judged = new Set([9]);
+  const withCeiling = (ceilings: Record<string, number>, current = { A: 300, B: 100 }): SearchModel => ({
+    rows,
+    teachers: new Map(
+      Object.entries(current).map(([id, tenths]) => [
+        id,
+        { currentTenths: tenths, limitTenths: 1000, ...(ceilings[id] === undefined ? {} : { scopeCeilingTenths: ceilings[id] }) },
+      ]),
+    ),
+  });
+  const asked = (m: SearchModel) =>
+    movesOf(m, new Map(), judged).map((move) => move.changes.map((c) => `${c.requirementId}>${c.toTeacherId}`).join('+'));
+
+  it('offers a move to a teacher who ends within the ordinance\'s edge, and no more', () => {
+    // B is given p1 (100 tenths): 200, within a ceiling of 250; with a ceiling of 150 it is over it, and not offered.
+    expect(asked(withCeiling({ B: 250 }))).toContain('p1>B');
+    expect(asked(withCeiling({ B: 150 })).filter((entry) => entry.endsWith('>B') && !entry.includes('+'))).toEqual([]);
+  });
+
+  it('is the same search for a school that asks nothing: no ceiling, no change', () => {
+    expect(asked(withCeiling({}))).toEqual(asked(withCeiling({ A: 10_000, B: 10_000 })));
+  });
+
+  it('does not stop a teacher who is already over the ordinance from ending no more over: they begin no worse off', () => {
+    // B carries 100 tenths against a ceiling of 50 (over); a swap that leaves them at 100 is no more than they began with.
+    expect(asked(withCeiling({ B: 50 }))).toContain('p1>B+p2>A');
+  });
+});
+
 describe('movesOf', () => {
   const rows = [
     row('p1', 'A', ['A', 'B', 'C']),

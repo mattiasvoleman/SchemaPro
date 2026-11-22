@@ -29,8 +29,10 @@ import {
 } from '../staffing/staffing-enforcement';
 import { subjectFamiliarTeachers, type LastYearTeachers } from '../staffing/suggest-teachers';
 import { readsHr } from '../staffing/hr-visibility';
+import { scopeOfTeacher, type ScopeVersion } from '../staffing/assignment-scope';
 import { readScopeVersions } from '../staffing/assignment-scope-reader';
 import { scopeModeOf } from '../staffing/staffing-checks';
+import { teachingWeeks } from '../staffing/teaching-weeks';
 import {
   DEFAULT_LOAD_POLICY,
   chargedMinutes,
@@ -161,6 +163,13 @@ export interface ProposalTeacher {
   plannedStretch?: number;
   before: TeacherLoadPoint;
   after: TeacherLoadPoint;
+  /**
+   * The ordinance's highest level of teaching time (SFS 2026:1487 3 §, assignment-scope.ts), in clock hours over the läsår,
+   * before and after the proposal: asked when the school's mode is not OFF, absent otherwise. Whether the teacher is OVER it
+   * is the dialog's warning (WARN) or the reason the proposal gave them nothing more (REFUSE). `highestHours` is the span times
+   * the post, so null for a reader without HR-läs.
+   */
+  scope?: { hoursBefore: number; hoursAfter: number; highestHours: number | null; overBefore: boolean; overAfter: boolean };
 }
 
 /** One stretch of a changing post: its dates, weeks and target, and its minutes before and after, exact to two decimals. */
@@ -326,6 +335,11 @@ export interface StaffingState {
    * be given to somebody else. In the basis, so an apply is refused as stale when a release has been set or taken back since.
    */
   released: ReadonlySet<string>;
+  /**
+   * The ordinance's lydelser, read only when the school's assignmentScopeMode is not OFF. Under REFUSE they are in the plan (a
+   * teacher's highest level of teaching time is part of their limit) and so in the basis; under WARN they only judge the answer.
+   */
+  scopeVersions?: readonly ScopeVersion[];
 }
 
 type RowKind = 'FIXED' | 'KEPT' | 'OPEN';
@@ -365,6 +379,12 @@ export interface TeacherPlan {
   /** fixedTenths + the kept rows they lead today. */
   currentTenths: number;
   keepOrShed: boolean;
+  /**
+   * The ordinance's highest level of their teaching time as a standardvecka in tenths (scopeCeilingTenths), when the school's mode is
+   * not OFF and the level can be judged. Under REFUSE it is already part of limitTenths (the engine's hard limit); under WARN a search
+   * still never takes a teacher over it who was not over it before.
+   */
+  scopeCeilingTenths?: number;
   /**
    * A post that changes during the year: the post, and the index and dates
    * of the stretch it is planned on (planOf). Absent for one that does not.
@@ -670,13 +690,6 @@ export class StaffingProposalService {
       }
 
       const reversal = dto.undo === true ? await this.appliedBefore(tx, dto) : undefined;
-      // The ordinance's highest level of teaching time (STAFF_TEACHER_OVER_SCOPE) is asked of an apply and of an undo as of every other
-      // write that gives a teacher a row: the lydelser are read, in the apply's own transaction and under its locks, only when the
-      // school asks the question and a post was locked (a school that has turned it OFF sends the statements it always did).
-      const scopeVersions =
-        scopeModeOf(state.policy) !== 'OFF' && postsLocked > 0
-          ? await readScopeVersions(tx, state.read.input.year.startDate)
-          : undefined;
       const warnings = enforceRequirementBatch({
         input: state.read.input,
         policy: state.policy,
@@ -687,7 +700,9 @@ export class StaffingProposalService {
           return requirementName(row.subjectName, row.groupName);
         },
         restoring: reversal,
-        ...(scopeVersions ? { scopeVersions } : {}),
+        // The same lydelser the search read, so an apply is judged against the ordinance as the proposal was; absent where the
+        // school asks nothing of it.
+        ...(state.scopeVersions ? { scopeVersions: state.scopeVersions } : {}),
       });
 
       // `undo: true` is what a caller says, and the log is what proves it: only a request that reverses the apply the log holds puts
@@ -927,6 +942,9 @@ export class StaffingProposalService {
     const read = await readLoadInput(tx, user, academicYearId, schoolId);
     if (!read) throw new NotFoundException('Academic year not found.');
     const policy = await readCheckPolicy(tx, schoolId, readsHr(user));
+    // The ordinance's lydelser: only when the school asks the question (OFF reads nothing), so a school that has turned it off sends
+    // the statements it always did.
+    const scopeVersions = scopeModeOf(policy) === 'OFF' ? undefined : await readScopeVersions(tx, read.input.year.startDate);
     const { staffIds, candidateIds } = await readActiveStaff(tx, academicYearId);
     const groups = await tx.studentGroup.findMany({
       where: { academicYearId, predecessorId: { not: null } },
@@ -952,7 +970,7 @@ export class StaffingProposalService {
     });
     const yearPosts = new Set(read.input.requirements.map((row) => row.id));
     const released = new Set(releases.map((release) => release.requirementId).filter((id) => yearPosts.has(id)));
-    return { schoolId, read, policy, staffIds, candidateIds, lastYear, released };
+    return { schoolId, read, policy, staffIds, candidateIds, lastYear, released, ...(scopeVersions ? { scopeVersions } : {}) };
   }
 
   /**
@@ -1131,6 +1149,13 @@ export class StaffingProposalService {
           : `teacher ${maps.teachers.get(growth.userId)} grows past the limit`,
       );
     }
+    // The ordinance's highest level of teaching time, under REFUSE: the apply refuses a teacher who ends over it with more hours, so a
+    // proposal that gave one is refused here (the engine planned against a standardvecka edge, which is not the ordinance's exactly
+    // where a lesson is charged other than whole).
+    const overScope = scopeGrowthRefusal(state, plan, leads);
+    if (overScope !== null) {
+      throw bad(`teacher ${maps.teachers.get(overScope)} ends over the ordinance's highest level of teaching time`);
+    }
 
     // Conflicts, realised by this service from its own maps — subjects to
     // their names, rows to "Matematik för 7B", teachers to real ids in their
@@ -1215,6 +1240,22 @@ export class StaffingProposalService {
         after: round2(is[index]?.counted ?? 0),
       }));
     };
+    const scopeOf = (teacher: TeacherPlan): Pick<ProposalTeacher, 'scope'> => {
+      if (!state.scopeVersions || scopeModeOf(state.policy) === 'OFF') return {};
+      const was = scopeOfTeacher(input, state.scopeVersions, teacher.userId);
+      const is = scopeOfTeacher(afterInput, state.scopeVersions, teacher.userId);
+      if (!was || !is) return {};
+      return {
+        scope: {
+          hoursBefore: was.teachingHours,
+          hoursAfter: is.teachingHours,
+          // The span times the post gives the post back: a reader without HR-läs gets the verdict and no line.
+          highestHours: showsPeriods ? is.ordinanceHighestHours : null,
+          overBefore: was.verdict === 'OVER_MAX',
+          overAfter: is.verdict === 'OVER_MAX',
+        },
+      };
+    };
     const teachers = plan.teachers.map((teacher): ProposalTeacher => {
       if (teacher.changing && !showsPeriods) {
         const target = shownTargetOf(input, teacher, showsPeriods);
@@ -1232,6 +1273,7 @@ export class StaffingProposalService {
             loadStatus(today, target, plan.tolerance) === 'OVER',
           before: point(today, target),
           after: point(after.get(teacher.userId) ?? 0, target),
+          ...scopeOf(teacher),
         };
       }
       return {
@@ -1254,6 +1296,7 @@ export class StaffingProposalService {
           teacher.changing ? stretchMinutes(afterInput, teacher.changing) : (after.get(teacher.userId) ?? 0),
           teacher.target,
         ),
+        ...scopeOf(teacher),
       };
     });
 
@@ -1416,7 +1459,7 @@ export function toTenthsUp(minutes: number): number {
  * fixed load. Pure; the order is canonical (rows and teachers by real id).
  */
 export function planOf(
-  state: Pick<StaffingState, 'read' | 'policy' | 'staffIds' | 'candidateIds' | 'lastYear' | 'released'>,
+  state: Pick<StaffingState, 'read' | 'policy' | 'staffIds' | 'candidateIds' | 'lastYear' | 'released' | 'scopeVersions'>,
   dto: Pick<StaffingProposalDto, 'onlyUnstaffed' | 'respectQualifications' | 'pinnedRequirementIds'>,
 ): Plan {
   const input = state.read.input;
@@ -1548,7 +1591,31 @@ export function planOf(
     ...input,
     requirements: input.requirements.map((row) => (freeIds.has(row.id) ? { ...row, teacherId: null } : row)),
   };
-  const plannedByLoad = staffIds.map((userId): TeacherPlan => {
+  // The ordinance's highest level of teaching time (SFS 2026:1487 3 §), as a standardvecka. The engine counts the standardvecka in
+  // charged minutes and the ordinance counts clock hours, so the two are the same only where the school charges its lessons
+  // whole (MINUTES, 100 %): where they differ the engine plans against a slightly wrong edge and realise() judges the answer by
+  // the real one, which is a refusal of the proposal, never a silent breach.
+  const scopeMode = scopeModeOf(state.policy);
+  const scopeVersions = scopeMode === 'OFF' ? undefined : state.scopeVersions;
+  const schoolWeeks = scopeVersions ? teachingWeeks({}, input.year, input.closures, null) : 0;
+  const withScopeCeiling = (teacher: TeacherPlan): TeacherPlan => {
+    if (!scopeVersions || schoolWeeks === 0) return teacher;
+    const ceiling = scopeCeilingTenths(input, scopeVersions, teacher.userId, schoolWeeks);
+    if (ceiling === null) return teacher;
+    const noted = { ...teacher, scopeCeilingTenths: ceiling };
+    if (scopeMode !== 'REFUSE' || teacher.limitTenths === null || ceiling >= teacher.limitTenths) return noted;
+    // The engine's schema wants limit >= target >= floor, so the target and the floor come down under the new limit.
+    const targetTenths = Math.min(teacher.targetTenths ?? ceiling, ceiling);
+    return {
+      ...noted,
+      limitTenths: ceiling,
+      targetTenths,
+      floorTenths: Math.min(teacher.floorTenths ?? targetTenths, targetTenths),
+      keepOrShed: teacher.keepOrShed || teacher.currentTenths > ceiling,
+    };
+  };
+  const plannedByLoad = staffIds.map((userId): TeacherPlan => withScopeCeiling(planByLoad(userId)));
+  function planByLoad(userId: string): TeacherPlan {
     const employment = changingPost.get(userId);
     if (employment) return changingTeacherPlan(userId, employment, fixedInput, keptTenths.get(userId) ?? 0, tolerance);
     const target = targetOf.get(userId) ?? null;
@@ -1567,7 +1634,7 @@ export function planOf(
       // and today's load inside the limit. Everybody else keeps or sheds.
       keepOrShed: target === null || target <= 0 || currentTenths > limitTenths!,
     };
-  });
+  }
 
   // The engine never sees keepOrShed: it follows from the target and the load
   // above, and an administrator without the mark who has room by those would
@@ -1944,6 +2011,64 @@ export function growthRefusal(
   return null;
 }
 
+/**
+ * The ordinance's highest level of a teacher's teaching time as a standardvecka in tenths of a minute: the level in clock hours over
+ * the läsår (scopeOfTeacher, scaled by the post), over the school's teaching weeks, floored so the model never allows more than the
+ * ordinance does. A teacher with no teaching today is held to the STRICTEST band of the lydelse (they may be given a row in any stage),
+ * scaled by their post; one whose level cannot be judged (no post, the numbering the ordinance has no band for, a year before it) has
+ * none. Null: no ceiling.
+ */
+export function scopeCeilingTenths(
+  input: LoadInput,
+  versions: readonly ScopeVersion[],
+  userId: string,
+  schoolWeeks: number,
+): number | null {
+  if (schoolWeeks <= 0) return null;
+  const scope = scopeOfTeacher(input, versions, userId);
+  if (scope === null) return null;
+  // Nothing taught today: held to the strictest edge a row could put them on, scaled by their post.
+  const hours = scope.ordinanceHighestHours ?? (scope.notJudged === 'NO_TEACHING' ? strictestEdgeHours(input, versions, userId) : null);
+  if (hours === null) return null;
+  return Math.floor((10 * hours * 60) / schoolWeeks);
+}
+
+/** The lowest upper edge any band of the lydelse in force gives, scaled by the teacher's post; null where it cannot be judged. */
+function strictestEdgeHours(input: LoadInput, versions: readonly ScopeVersion[], userId: string): number | null {
+  const employment = input.employments.find((row) => row.userId === userId);
+  if (!employment) return null;
+  const numbering = input.year.gradeNumbering ?? 'NIOARIG';
+  const version = versions
+    .filter((one) => one.validFrom <= input.year.startDate && (one.validTo === null || one.validTo >= input.year.startDate))
+    .sort((a, b) => (a.validFrom < b.validFrom ? 1 : -1))[0];
+  const edges = (version?.bands ?? []).filter((band) => band.gradeNumbering === numbering).map((band) => band.teachingHoursHigh);
+  if (edges.length === 0) return null;
+  // The same scaling the report uses: tjänst minus nedsättning, here the post's base row (a changing post is weighed in scopeOfTeacher
+  // once it teaches anything; with nothing taught the base row is the estimate).
+  const share = (employment.employmentPercent - employment.reductionPercent) / 100;
+  return Math.min(...edges) * share;
+}
+
+/**
+ * The ordinance's question over a whole answer (REFUSE only): who ends OVER the highest level of teaching time with more hours than
+ * they began with, the same question the apply asks. Null when nobody; else the first teacher, in id order.
+ */
+export function scopeGrowthRefusal(
+  state: Pick<StaffingState, 'read' | 'policy' | 'scopeVersions'>,
+  plan: Plan,
+  leads: Map<string, string>,
+): string | null {
+  if (scopeModeOf(state.policy) !== 'REFUSE' || !state.scopeVersions) return null;
+  const input = state.read.input;
+  const afterInput = overlay(input, plan, leads);
+  for (const teacher of [...plan.teachers].sort((a, b) => compareIds(a.userId, b.userId))) {
+    const before = scopeOfTeacher(input, state.scopeVersions, teacher.userId);
+    const after = scopeOfTeacher(afterInput, state.scopeVersions, teacher.userId);
+    if (after?.verdict === 'OVER_MAX' && after.teachingHours > (before?.teachingHours ?? 0) + 1e-9) return teacher.userId;
+  }
+  return null;
+}
+
 /** The year with the proposal's leads laid over its free rows. */
 function overlay(input: LoadInput, plan: Plan, leads: Map<string, string>): LoadInput {
   return {
@@ -1962,7 +2087,9 @@ function overlay(input: LoadInput, plan: Plan, leads: Map<string, string>): Load
  * every apply. The options are not in it: they are the question, not the
  * state. Names are not in it: a renamed group asks nothing new.
  */
-export function basisOf(state: Pick<StaffingState, 'read' | 'policy' | 'staffIds' | 'lastYear' | 'released'>): string {
+export function basisOf(
+  state: Pick<StaffingState, 'read' | 'policy' | 'staffIds' | 'lastYear' | 'released'> & { scopeVersions?: StaffingState['scopeVersions'] },
+): string {
   const input = state.read.input;
   const loadPolicy = input.policy ?? DEFAULT_LOAD_POLICY;
   const counted = new Map<string, number>();
@@ -2049,6 +2176,12 @@ export function basisOf(state: Pick<StaffingState, 'read' | 'policy' | 'staffIds
     // it always was. The ids of the released posts: who released them and when decides nothing, and the proposal that read them
     // is refused as stale when a post is released or taken back before it is applied.
     ...(state.released.size > 0 ? { released: [...state.released].sort(compareIds) } : {}),
+    // The ordinance's highest level is part of the PLAN only under REFUSE (it is a teacher's limit), so only then is it part of what a
+    // proposal read: the basis of a school that warns or asks nothing is the digest it always was, and an undo logged before the
+    // check existed is judged against it still. The lydelser by code and dates: a new lydelse (a migration) makes an old proposal stale.
+    ...(scopeModeOf(state.policy) === 'REFUSE' && state.scopeVersions
+      ? { scope: [...state.scopeVersions].map((version) => [version.code, version.validFrom, version.validTo]).sort(byFirst) }
+      : {}),
   };
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }

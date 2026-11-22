@@ -429,6 +429,40 @@ describe("StaffingProposalDialog", () => {
       expect(screen.getByText("1 post har en lärare som har slutat.")).toBeInTheDocument();
     });
 
+    it("says, per teacher, what the proposal does to their teaching time against the ordinance's highest level (SFS 2026:1487 3 §), beside the riktmärke's minutes", async () => {
+      const user = userEvent.setup();
+      const base = proposal();
+      post.mockResolvedValue(
+        proposal({
+          teachers: base.teachers.map((teacher) => {
+            if (teacher.userId === "t-anna") {
+              return { ...teacher, scope: { hoursBefore: 559, hoursAfter: 602, highestHours: 600, overBefore: false, overAfter: true } };
+            }
+            if (teacher.userId === "t-bo") {
+              return { ...teacher, scope: { hoursBefore: 300, hoursAfter: 340, highestHours: 480, overBefore: false, overAfter: false } };
+            }
+            if (teacher.userId === "t-cilla") {
+              return { ...teacher, scope: { hoursBefore: 700, hoursAfter: 650, highestHours: 600, overBefore: true, overAfter: true } };
+            }
+            return teacher;
+          }),
+        }),
+      );
+      renderDialog();
+      await user.click(screen.getByRole("button", { name: "Beräkna förslag" }));
+      expect(await screen.findByText(/Över förordningens högsta nivå efter förslaget: 559 → 602 h/)).toBeInTheDocument();
+      expect(screen.getByText(/Enligt förordningen: 300 → 340 h undervisning \(hela förslaget\)/)).toBeInTheDocument();
+      expect(screen.getByText(/Fortfarande över förordningens högsta nivå: 700 → 650 h/)).toBeInTheDocument();
+    });
+
+    it("says nothing of the ordinance for a school that asks nothing of it (no scope in the answer)", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await computeProposal(user);
+      expect(screen.queryByText(/förordningens högsta nivå/)).toBeNull();
+      expect(screen.queryByText(/Enligt förordningen/)).toBeNull();
+    });
+
     it("says an optimal answer that changes nothing without a zero", async () => {
       const user = userEvent.setup();
       post.mockResolvedValue(proposal({ status: "OPTIMAL", assignments: [], unstaffed: [], conflicts: [] }));

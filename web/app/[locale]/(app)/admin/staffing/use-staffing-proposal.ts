@@ -90,6 +90,12 @@ export interface ProposalTeacher {
   plannedStretch?: number;
   before: TeacherLoadPoint;
   after: TeacherLoadPoint;
+  /**
+   * The ordinance's highest level of teaching time (SFS 2026:1487 3 §), in clock hours over the läsår, before and after the WHOLE
+   * proposal: present when the school's mode is not OFF. `highestHours` is the span times the post, so null without HR-läs.
+   * Computed by the gateway (src/staffing/assignment-scope.ts); the dialog does not re-judge it under a partial selection.
+   */
+  scope?: { hoursBefore: number; hoursAfter: number; highestHours: number | null; overBefore: boolean; overAfter: boolean };
 }
 
 /** One stretch of a changing post, its minutes exact to two decimals. */
