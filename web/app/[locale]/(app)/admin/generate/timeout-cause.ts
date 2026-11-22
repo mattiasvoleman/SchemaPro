@@ -10,7 +10,7 @@ import type { ConflictDetail, TimeoutReport } from "@/lib/queries";
  *   RULES_MEASURED  a rule, switched off, let the week solve in a short probe: measured, not proved
  *   TIGHT_WEEK      the year's least week is PROVED to be at least this part of its frame time: a lower bound
  *   SHORT_CLOCK     the search was given less than the engine is set to give it: a fact about this run
- *   SLOW_SETUP      the checks and the builds took a large part of the run: a fact about this run
+ *   SLOW_SETUP      the checks and the model builds took a large part of the run: a fact about this run
  *   NOTHING_FOUND   none of the above: said as exactly that, never guessed at
  *
  * THE FIGURES OF A TIGHT WEEK ARE LOWER BOUNDS, and nothing here ranks them. The count stops where it has decided whether a
@@ -50,7 +50,10 @@ export const SHORT_CLOCK_MIN_SECONDS = 5;
 export const SLOW_SETUP_SHARE = 0.25;
 export const SLOW_SETUP_MIN_SECONDS = 10;
 
-const SETUP_STAGES: readonly string[] = ["PRECHECKS", "BUILD", "SITES"];
+// The walk's planned-sites search (SITES) is a SEARCH, and the list above the cause names it as one ("Sökning med restid mellan
+// skolområden"): counted here it would turn "the checks and the preparation took 75 s" into a sentence whose figure is not the
+// sum of the two steps it names (5 s and 10 s).
+const SETUP_STAGES: readonly string[] = ["PRECHECKS", "BUILD"];
 
 const numberOf = (value: string | number | undefined): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;

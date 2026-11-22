@@ -115,6 +115,14 @@ describe("TimeoutAccount", () => {
     expect(screen.queryByText(`${NS}.weekLoadCut`)).toBeNull();
   });
 
+  it("says nothing of the caller's wait in the fold when the request did not say one", () => {
+    render(<TimeoutAccount report={report({ callerWaitSeconds: null })} conflicts={[]} />);
+
+    const fold = screen.getByText(`${NS}.technicalTitle`).closest("details") as HTMLElement;
+    expect(within(fold).queryByText(new RegExp(`^${NS.replace(".", "\\.")}\\.callerWait`))).toBeNull();
+    expect(within(fold).getByText(`${NS}.configured(100|100)`)).toBeInTheDocument();
+  });
+
   it("keeps the solver's own counts in a fold, with what they do not mean said beside them", () => {
     render(<TimeoutAccount report={report({ callerWaitSeconds: 94 })} conflicts={[]} />);
 
@@ -175,11 +183,24 @@ describe("the texts a school reads", () => {
 
   it("says a short clock with its three figures, and never asks a school to raise the engine's time limit", () => {
     expect(say(sv, "sv", ["cause", "SHORT_CLOCK_WAIT"], { budget: 94, configured: 180, wait: 99 })).toBe(
-      "Sökningen fick 94 s av de 180 s som motorn är inställd på, eftersom svaret måste komma inom 99 s.",
+      "Sökningen fick 94 s av de 180 s som motorn är inställd på. Tjänsten väntade 99 s på svaret.",
     );
     for (const messages of [sv, en]) {
       const every = JSON.stringify(texts(messages));
       expect(every).not.toMatch(/höja lösarens tidsgräns|raise the solver time limit|administratör/i);
+    }
+  });
+
+  it("does not name the caller's wait as the reason when the wait is longer than the engine needs (the production settings)", () => {
+    // Engine 180 s + probe 20 s + 30 s of headroom = a ceiling of 230 s; the gateway waits 240 s and sends deadlineSeconds 240, always.
+    // With 45 s of builds the search is given 167 s of 180 and the report says callerWaitSeconds 240: the wait did not shorten
+    // anything, the builds did, and the report cannot tell the two apart, so the sentence states the figures and no cause.
+    for (const [messages, locale] of [[sv, "sv"], [en, "en"]] as const) {
+      const sentence = say(messages, locale, ["cause", "SHORT_CLOCK_WAIT"], { budget: 167, configured: 180, wait: 240 });
+      expect(sentence).toContain("167");
+      expect(sentence).toContain("180");
+      expect(sentence).toContain("240");
+      expect(sentence).not.toMatch(/eftersom|because|måste komma|had to come/i);
     }
   });
 

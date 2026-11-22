@@ -1736,7 +1736,7 @@
       "title": "Så gick tiden",
       "whereTitle": "Var tiden gick",
       "stage": "{stage, select, PRECHECKS {Kontroller före sökningen} BUILD {Förberedelser av sökningen} SITES {Sökning med restid mellan skolområden} SEARCH_CLEAN {Första sökningen} SEARCH_CLONE {Andra sökningen} PROBE {Förklaringen av varför inget schema hittades} other {Ett steg}}: {seconds, number} s",
-      "total": "Hela körningen tog {seconds, number} s.",
+      "total": "Lösarens arbete tog {seconds, number} s.",
       "searchTitle": "Hur långt sökningen kom",
       "searchNone": "{count, plural, one {En sökning} other {# sökningar}} pågick i sammanlagt {seconds, number} s, och ingen hittade ett schema.",
       "searchNotRun": "Ingen sökning hann börja: tiden gick åt innan dess.",
@@ -1747,7 +1747,7 @@
         "RULES_MEASURED": "{count, plural, one {En regel} other {# regler}} gjorde att veckan gick att lösa när den lättades i en kort körning (raderna under Upptäckta konflikter). Det är en mätning och inget bevis.",
         "TIGHT_WEEK": "Veckan är trång. Årskursens lektioner, växlingstiden mellan dem och lunchen behöver åtminstone så här stor del av ramtiderna:",
         "SHORT_CLOCK": "Sökningen fick {budget, number} s av de {configured, number} s som motorn är inställd på, för att förberedelserna tog tid.",
-        "SHORT_CLOCK_WAIT": "Sökningen fick {budget, number} s av de {configured, number} s som motorn är inställd på, eftersom svaret måste komma inom {wait, number} s.",
+        "SHORT_CLOCK_WAIT": "Sökningen fick {budget, number} s av de {configured, number} s som motorn är inställd på. Tjänsten väntade {wait, number} s på svaret.",
         "SLOW_SETUP": "Kontrollerna och förberedelserna tog {setup, number} s av körningens {total, number} s.",
         "NOTHING_FOUND": "Ingen orsak kunde mätas."
       },
@@ -1760,13 +1760,13 @@
         "TIGHT_WEEK": "Frigör tid i de årskurserna: egen lärare per parallell grupp och block, eller vidga ramtiderna. En körning till på samma underlag ger samma besked.",
         "SHORT_CLOCK": "Kör igen: den här körningen fick kortare tid än motorn brukar ha. Upprepas det, hör av dig till den som driver tjänsten.",
         "SLOW_SETUP": "Har ni ett tidigare schema: höj Schemastabilitet, så utgår motorn från det. Annars kan Bästa möjliga schema ge ett schema med avsteg.",
-        "NOTHING_FOUND": "Kör igen, eller prova Bästa möjliga schema under Schemaförslag. Kontrollera veckan säger om veckan redan är för full innan du kör."
+        "NOTHING_FOUND": "Kör igen. Kontrollera veckan säger om veckan redan är för full innan du kör."
       },
       "technicalTitle": "Tekniska uppgifter",
       "technicalNote": "Konflikter och grenar är det arbete lösaren gjorde, inte hur nära ett schema den kom: en sökning efter ett schema har ingen gräns att nå.",
       "phase": "{phase, select, CLEAN {Första sökningen} CLONE {Andra sökningen} other {Sökning}}: {seconds, number} s, {conflicts, number} konflikter och {branches, number} grenar",
       "phaseNoFigures": "{phase, select, CLEAN {Första sökningen} CLONE {Andra sökningen} other {Sökning}}: {seconds, number} s, inga uppgifter från lösaren",
-      "callerWait": "Den som startade körningen väntade {seconds, number} s på svaret.",
+      "callerWait": "Tjänsten väntade {seconds, number} s på svaret.",
       "configured": "Motorn är inställd på {configured, number} s för sökningen, och den fick {budget, number} s."
     },
     "bestEffortOffer": "Skolan har Bästa möjliga schema på. Under Schemaförslag kan du lägga ett schema som bryter så få av skolans egna regler som möjligt och se vilka som gav vika.",

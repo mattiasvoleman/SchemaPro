@@ -144,18 +144,32 @@ describe("a setup that took a large part of the run", () => {
     expect(timeoutAccountOf(slow(9, 20), []).causes).toEqual([{ kind: "NOTHING_FOUND" }]);
   });
 
-  it("counts the walk's own search with the setup, and the two searches and the probe not at all", () => {
+  it("counts the checks and the builds as the setup, and the walk's own search, the two searches and the probe not at all", () => {
+    // The list above the cause says "Sökning med restid mellan skolområden: 60 s" for SITES: a search, so not a part of "kontrollerna
+    // och förberedelserna", and a sentence naming 5 s and 10 s must not give 75.
     const withSites = report({
-      totalSeconds: 100,
+      totalSeconds: 148,
       stages: [
         { stage: "PRECHECKS", seconds: 5 },
         { stage: "BUILD", seconds: 10 },
-        { stage: "SITES", seconds: 12 },
+        { stage: "SITES", seconds: 60 },
         { stage: "SEARCH_CLEAN", seconds: 60 },
         { stage: "PROBE", seconds: 13 },
       ],
     });
-    expect(timeoutAccountOf(withSites, []).causes).toEqual([{ kind: "SLOW_SETUP", setupSeconds: 27, totalSeconds: 100 }]);
+    expect(timeoutAccountOf(withSites, []).causes).toEqual([{ kind: "NOTHING_FOUND" }]);
+
+    const slowChecks = report({
+      totalSeconds: 100,
+      stages: [
+        { stage: "PRECHECKS", seconds: 15 },
+        { stage: "BUILD", seconds: 12 },
+        { stage: "SITES", seconds: 12 },
+        { stage: "SEARCH_CLEAN", seconds: 48 },
+        { stage: "PROBE", seconds: 13 },
+      ],
+    });
+    expect(timeoutAccountOf(slowChecks, []).causes).toEqual([{ kind: "SLOW_SETUP", setupSeconds: 27, totalSeconds: 100 }]);
   });
 
   it("is not said of a run that took no time at all", () => {
