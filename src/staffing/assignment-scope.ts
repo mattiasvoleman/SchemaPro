@@ -54,6 +54,13 @@ import { teachingWeeksByDays } from './teaching-weeks';
  * 2028-07-01), and its "årskurs 1-6" and "7-9" would move the stage boundary one step when the grades are renumbered
  * (grade-numbering.ts). A year in a numbering the version has no band for is reported with its hours and NO verdict.
  *
+ * HOURS OUTSIDE THE STAGES DO NOT MAKE A TEACHER OVER THE ORDINANCE (TOLKAT, T7; the user's decision on the review of #382, L-3). The
+ * verdict OVER_MAX is judged on the hours that lie in a stage (3 §: årskurs 1-6 and 7-9). A teacher who is past the edge only when
+ * förskoleklass or groups with no årskurs are counted in (2 § defines teaching time without a stage, prop. s. 43-44 leaves
+ * förskoleklass outside the regulation) gets no OVER_MAX: the row says `overOnlyWithUnregulated`, and the report carries the
+ * interpretation, so that an F-3 teacher is not marked over a limit the ordinance does not give her. The hours still count in
+ * the total and in the planning (time is time), and the rektor's own level (OVER_OWN) is judged on the total.
+ *
  * THE UNIT IS THE CLOCK HOUR (TOLKAT, T3): the ordinance defines no lektionstimme, and the minutes are the lessons' own.
  *
  * PLANNING (4 §, 5 §): a floor, in hours, as a share of the teaching time per stage (100 %, and 110 % for åk 7-9; the
@@ -168,7 +175,38 @@ export interface TeacherScope {
    * never a promise that it is met.
    */
   planningFits: boolean | null;
+  /**
+   * True when the teacher is past the ordinance's upper edge only because hours outside every stage are counted in (förskoleklass,
+   * groups with no årskurs; T7): the verdict is then NOT OVER_MAX, and the report carries UNREGULATED_HOURS_INTERPRETATION. Absent
+   * (not false) otherwise, so a report of a school with no such teacher is the report it was.
+   */
+  overOnlyWithUnregulated?: true;
 }
+
+/**
+ * What a figure rests on beyond the ordinance's own words. `cause` says whose row it explains: absent for a band's note (every
+ * card shows it), UNREGULATED_HOURS for the interpretation of a teacher marked `overOnlyWithUnregulated` (only that card does).
+ */
+export interface ScopeInterpretation {
+  section: string;
+  note: string;
+  cause?: 'UNREGULATED_HOURS';
+}
+
+/**
+ * T7: hours outside the stages are counted, but are no reason to say OVER_MAX. Paragraphs: 2 § (what teaching time is), 3 § (which stages).
+ * The note is shown on the card of the teacher it explains, on the rektor's drawer AND on the teacher's own page, where every other
+ * sentence speaks to her ("din", "du"): it names nobody, so it reads right on both.
+ */
+export const UNREGULATED_HOURS_INTERPRETATION: ScopeInterpretation = {
+  section: '2 § och 3 §',
+  note:
+    'Tolkning (T7): timmar i förskoleklass och i grupper utan årskurs ligger utanför förordningens stadier (3 § nämner årskurs 1-6 och 7-9, ' +
+    'och propositionen säger att förskoleklassen inte omfattas) men är undervisningstid enligt 2 §. Räknas de med är undervisningstiden över högsta nivån, ' +
+    'och räknas de inte med är den det inte. Rastra Schema säger över högsta nivån bara när timmarna i stadierna ensamma går över, ' +
+    'och visar annars den här orsaken.',
+  cause: 'UNREGULATED_HOURS',
+};
 
 export interface ScopeReport {
   /** The lydelse the year was judged against; null when none holds on the year's first day. */
@@ -176,7 +214,7 @@ export interface ScopeReport {
   /** Set when no teacher is judged because of the year itself. */
   yearReason: ScopeYearReason | null;
   /** What the bands rest on beyond the ordinance's own words, by paragraph. */
-  interpretations: { section: string; note: string }[];
+  interpretations: ScopeInterpretation[];
   teachers: TeacherScope[];
 }
 
@@ -353,8 +391,17 @@ export function buildScopeReport(
     const highest = ownHighest === null ? ordinanceHighest : Math.min(ownHighest, ordinanceHighest);
     // Judged on the printed figures: 650.04 h prints as 650.0 and is not over 650.0.
     const shown = round1(total);
-    const verdict: ScopeVerdict =
-      shown > round1(ordinanceHighest) ? 'OVER_MAX' : shown > round1(highest) ? 'OVER_OWN' : 'INSIDE';
+    // OVER_MAX is judged on the hours in a stage (T7): förskoleklass and groups with no årskurs are counted in the total but are
+    // outside the ordinance's stages, and past the edge only with them is a cause of its own and no OVER_MAX.
+    const overInStages = round1(inBands) > round1(ordinanceHighest);
+    const overOnlyWithUnregulated = !overInStages && shown > round1(ordinanceHighest);
+    // OVER_OWN needs a level of the teacher's own under the ordinance's edge: without one, "over the line that was set" would
+    // name the ordinance's own line.
+    const verdict: ScopeVerdict = overInStages
+      ? 'OVER_MAX'
+      : round1(highest) < round1(ordinanceHighest) && shown > round1(highest)
+        ? 'OVER_OWN'
+        : 'INSIDE';
 
     // Does the year's working time hold the floor? Only for a full ferietjänst, whose year is the school's own figure.
     const annual = reportByUser.get(userId)?.annual;
@@ -369,6 +416,7 @@ export function buildScopeReport(
       ordinanceHighestHours: round1(ordinanceHighest),
       remainingHours: remaining,
       planningFits: remaining === null ? null : remaining >= round1(planning),
+      ...(overOnlyWithUnregulated ? { overOnlyWithUnregulated: true as const } : {}),
     });
   }
 
@@ -380,6 +428,7 @@ export function buildScopeReport(
       interpretations.push({ section: band.planningSection, note: band.note });
     }
   }
+  if (teachers.some((teacher) => teacher.overOnlyWithUnregulated)) interpretations.push(UNREGULATED_HOURS_INTERPRETATION);
   return {
     version: version
       ? { code: version.code, sfs: version.sfs, title: version.title, validFrom: version.validFrom, validTo: version.validTo, source: version.source }

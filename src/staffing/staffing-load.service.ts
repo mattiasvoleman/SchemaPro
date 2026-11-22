@@ -219,7 +219,15 @@ export class StaffingLoadService {
       teachers: report.teachers.filter((row) => row.userId === own),
       travel: travel && { teachers: travel.teachers.filter((row) => row.userId === own) },
       supervision: supervision && { teachers: supervision.teachers.filter((row) => row.userId === own) },
-      scope: scope && { ...scope, teachers: scope.teachers.filter((row) => row.userId === own) },
+      scope: scope && {
+        ...scope,
+        teachers: scope.teachers.filter((row) => row.userId === own),
+        // An interpretation with a `cause` explains a ROW (assignment-scope.ts, UNREGULATED_HOURS): the report carries it when SOME
+        // teacher has that row, and a teacher is answered their own row alone, so whether a colleague has it is not hers to learn.
+        interpretations: scope.interpretations.filter(
+          (one) => one.cause === undefined || scope.teachers.some((row) => row.userId === own && row.overOnlyWithUnregulated === true),
+        ),
+      },
       unstaffedRequirements: [],
       unqualifiedAssignments: report.unqualifiedAssignments.filter(
         (row) => row.userId === own,

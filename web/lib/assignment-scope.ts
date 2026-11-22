@@ -47,6 +47,11 @@ export interface TeacherScope {
   /** Null unless a full ferietjänst, and for a reader without HR-läs. */
   remainingHours: number | null;
   planningFits: boolean | null;
+  /**
+   * True when the teacher is past the ordinance's upper edge only because hours outside every stage are counted in (förskoleklass,
+   * groups with no årskurs; T7): the verdict is then not OVER_MAX. Absent otherwise.
+   */
+  overOnlyWithUnregulated?: true;
 }
 
 export interface ScopeVersionInfo {
@@ -58,12 +63,22 @@ export interface ScopeVersionInfo {
   source: string;
 }
 
+/**
+ * What a figure rests on beyond the ordinance's own words. `cause` says whose row it explains: absent for a band's note (every card
+ * shows it), UNREGULATED_HOURS for the interpretation (T7) of a teacher marked `overOnlyWithUnregulated`, which only that card shows.
+ */
+export interface ScopeInterpretation {
+  section: string;
+  note: string;
+  cause?: "UNREGULATED_HOURS";
+}
+
 export interface ScopeReport {
   /** The lydelse the year was judged against; null when none holds on the year's first day. */
   version: ScopeVersionInfo | null;
   yearReason: ScopeYearReason | null;
   /** What the bands rest on beyond the ordinance's own words. */
-  interpretations: { section: string; note: string }[];
+  interpretations: ScopeInterpretation[];
   teachers: TeacherScope[];
 }
 
@@ -87,7 +102,9 @@ export function scopeCardOf(report: WithScope, userId: string): ScopeCardData | 
   if (!scope || scope.version === null) return null;
   const teacher = scope.teachers.find((row) => row.userId === userId);
   if (!teacher || (teacher.notJudged === "NO_TEACHING" && teacher.teachingHours === 0)) return null;
-  return { teacher, version: scope.version, yearReason: scope.yearReason, interpretations: scope.interpretations };
+  // The interpretation of the hours outside the stages explains one kind of row: the card of a teacher without it does not carry it.
+  const interpretations = scope.interpretations.filter((one) => one.cause !== "UNREGULATED_HOURS" || teacher.overOnlyWithUnregulated === true);
+  return { teacher, version: scope.version, yearReason: scope.yearReason, interpretations };
 }
 
 /** The teachers the matrix marks: over the ordinance's highest level, or over the level set for them. */
@@ -99,9 +116,20 @@ export function overScopeIds(report: WithScope): ReadonlySet<string> {
   return ids;
 }
 
-/** Hours over the line the verdict was judged against, one decimal; null where the reader may not see the line. */
+/**
+ * Hours over the line the verdict was judged against, one decimal; null where the reader may not see the line.
+ *
+ * Over the ORDINANCE's line the gateway judges the hours in a stage and nothing else (T7), so the amount is the stage hours over it:
+ * a teacher with 358,3 h in årskurs 1-6 against 357,5 h and 258 h of förskoleklass is 0,8 h over, not 259,3 (the 258 h are the ones
+ * the card says the ordinance gives no level for). Over the rektor's own level the gateway judges the whole total, so that amount is
+ * the total over it. Never under 0,1 over the ordinance's line: the three figures print one decimal each, and the gateway's OVER_MAX is
+ * at least a tenth over.
+ */
 export function hoursOver(teacher: TeacherScope): number | null {
-  const line = teacher.verdict === "OVER_OWN" ? teacher.highestHours : teacher.ordinanceHighestHours;
+  const own = teacher.verdict === "OVER_OWN";
+  const line = own ? teacher.highestHours : teacher.ordinanceHighestHours;
   if (line === null) return null;
-  return Math.round((teacher.teachingHours - line) * 10) / 10;
+  const hours = own ? teacher.teachingHours : teacher.teachingHours - teacher.unregulatedHours - teacher.unknownGradeHours;
+  const over = Math.round((hours - line) * 10) / 10;
+  return own ? over : Math.max(over, 0.1);
 }

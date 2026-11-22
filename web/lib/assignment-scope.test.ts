@@ -51,6 +51,16 @@ describe("scopeCardOf", () => {
     expect(card?.interpretations).toEqual(interpretations);
   });
 
+  it("carries the interpretation of the hours outside the stages (T7) to the card of the teacher it explains, and to no other", () => {
+    const band = { section: "4 § (tolkat) och 5 § p. 1", note: "Tolkning: 110 %" };
+    const t7 = { section: "2 § och 3 §", note: "Tolkning (T7): …", cause: "UNREGULATED_HOURS" as const };
+    const report = {
+      scope: scope([teacher({ overOnlyWithUnregulated: true }), teacher({ userId: "t-bo" })], { interpretations: [band, t7] }),
+    };
+    expect(scopeCardOf(report, "t-anna")?.interpretations).toEqual([band, t7]);
+    expect(scopeCardOf(report, "t-bo")?.interpretations).toEqual([band]);
+  });
+
   it("has nothing to say in a läsår the ordinance does not reach: no lydelse, no card, on any teacher", () => {
     expect(scopeCardOf({ scope: scope([teacher()], { version: null, yearReason: "NOT_IN_FORCE" }) }, "t-anna")).toBeNull();
   });

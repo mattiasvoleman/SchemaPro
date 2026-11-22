@@ -1117,6 +1117,48 @@ describe('StaffingLoadService', () => {
       // The year's lydelse is not about anybody.
       expect(report.scope!.version).toMatchObject({ code: 'SFS2026:1487' });
     });
+
+    describe('the interpretation of hours outside the stages (T7), which the report carries when SOME teacher has that cause', () => {
+      const GROUP_5A = '77777777-7777-4777-8777-777777777777';
+      const GROUP_F = '88888888-8888-4888-8888-888888888888';
+      // The colleague teaches 15 × 60 min in 5A (645 h in the stage) and one lesson in the förskoleklass (43 h): past 650 h only with it.
+      const colleaguePastOnlyWithPreschool = [
+        requirementRow({ id: 'req-5a', teacherId: COLLEAGUE, lessonsPerWeek: 15, studentGroupId: GROUP_5A, studentGroup: { name: '5A', gradeLevel: 5 } }),
+        requirementRow({ id: 'req-f', teacherId: COLLEAGUE, lessonsPerWeek: 1, studentGroupId: GROUP_F, studentGroup: { name: 'F', gradeLevel: 0 } }),
+      ];
+      const employments = [
+        { id: 'emp-me', userId: ME, employmentPercent: new Prisma.Decimal('80.000'), reductionPercent: new Prisma.Decimal('0.000'), contractKind: 'FERIE', teachingTargetMinutesPerWeek: null, signature: 'ME' },
+        { id: 'emp-co', userId: COLLEAGUE, employmentPercent: new Prisma.Decimal('100.000'), reductionPercent: new Prisma.Decimal('0.000'), contractKind: 'FERIE', teachingTargetMinutesPerWeek: null, signature: 'CO' },
+      ];
+      const cause = (report: Awaited<ReturnType<typeof service.load>>) => report.scope!.interpretations.filter((one) => one.cause === 'UNREGULATED_HOURS');
+
+      beforeEach(() => {
+        inForce();
+        tx.teacherEmployment.findMany.mockResolvedValue(employments);
+        tx.teachingRequirement.findMany.mockResolvedValue([requirementRow(), ...colleaguePastOnlyWithPreschool]);
+      });
+
+      it('is in the report for an administrator, whose rows are all there', async () => {
+        const report = await service.load(YEAR_ID, 'planned', testUser());
+        expect(scopeOf(report, COLLEAGUE)).toMatchObject({ verdict: 'INSIDE', overOnlyWithUnregulated: true, teachingHours: 688 });
+        expect(cause(report)).toHaveLength(1);
+      });
+
+      it('is not in a teacher\'s answer when the row that has the cause is a colleague\'s: a teacher is answered their own row alone', async () => {
+        const report = await service.load(YEAR_ID, 'planned', testUser({ role: Role.TEACHER, userId: ME }));
+        expect(report.scope!.teachers.map((row) => row.userId)).toEqual([ME]);
+        expect(scopeOf(report).overOnlyWithUnregulated).toBeUndefined();
+        expect(cause(report)).toEqual([]);
+        // What every card carries stays: the band's own note.
+        expect(report.scope!.interpretations).toEqual([{ section: '4 § p. 1 och 5 § p. 1', note: 'Tolkning' }]);
+      });
+
+      it('is in the answer of the teacher whose row has it', async () => {
+        const report = await service.load(YEAR_ID, 'planned', testUser({ role: Role.TEACHER, userId: COLLEAGUE }));
+        expect(scopeOf(report, COLLEAGUE).overOnlyWithUnregulated).toBe(true);
+        expect(cause(report)).toHaveLength(1);
+      });
+    });
   });
 
   describe('suggestTeachers', () => {

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ScopeCardData, TeacherScope } from "@/lib/assignment-scope";
 import { ScopeCard } from "./scope-card";
@@ -141,5 +141,51 @@ describe("ScopeCard", () => {
   it("speaks to the teacher on their own page", () => {
     render(<ScopeCard data={data({ verdict: "OVER_MAX", teachingHours: 731, ordinanceHighestHours: 650, highestHours: 650 })} own />);
     expect(rows().slice(0, 2).map((row) => row.split("=")[0])).toEqual(["teachingOwn", "highestOwn"]);
+  });
+
+  describe("hours outside the stages (T7)", () => {
+    const t7 = { section: "2 § och 3 §", note: "Tolkning (T7): …", cause: "UNREGULATED_HOURS" as const };
+
+    it("answers in its first sentence that the teacher is past the edge only with them, instead of saying 'not over', and shows the interpretation", () => {
+      render(<ScopeCard data={data({ verdict: "INSIDE", teachingHours: 688, unregulatedHours: 43, overOnlyWithUnregulated: true }, { interpretations: [t7] })} />);
+      // The one sentence that is the answer: said once, and the 'not over the highest level' sentence is not said beside it.
+      expect(screen.getAllByText("overOnlyWithUnregulated")).toHaveLength(1);
+      expect(screen.queryByText("verdictInside")).not.toBeInTheDocument();
+      expect(screen.getByText("overOnlyWithUnregulated")).not.toHaveClass("text-destructive");
+      expect(screen.getByText("interpretation(2 § och 3 §|Tolkning (T7): …)")).toBeInTheDocument();
+    });
+
+    it("speaks to the teacher on their own page", () => {
+      render(<ScopeCard data={data({ verdict: "INSIDE", teachingHours: 688, unregulatedHours: 43, overOnlyWithUnregulated: true })} own />);
+      expect(screen.getByText("own.overOnlyWithUnregulated")).toBeInTheDocument();
+      expect(screen.queryByText("overOnlyWithUnregulated")).not.toBeInTheDocument();
+    });
+
+    it("keeps the verdict over the rektor's own level first, and says the other beneath it", () => {
+      render(<ScopeCard data={data({ verdict: "OVER_OWN", teachingHours: 688, highestHours: 600, unregulatedHours: 43, overOnlyWithUnregulated: true })} />);
+      expect(screen.getByText("verdictOverOwn(88)")).toHaveClass("text-destructive");
+      expect(screen.getAllByText("overOnlyWithUnregulated")).toHaveLength(1);
+    });
+
+    it("says nothing of it for a teacher without the cause, and says no 'only with' beside a plain 'not over'", () => {
+      render(<ScopeCard data={data({ unregulatedHours: 43 })} />);
+      expect(screen.queryByText("overOnlyWithUnregulated")).not.toBeInTheDocument();
+      expect(screen.getByText("verdictInside")).toBeInTheDocument();
+    });
+
+    it("says beside the förskoleklass row that its hours count in the total but lie outside the stages", () => {
+      render(<ScopeCard data={data({ unregulatedHours: 43 })} />);
+      expect(rows()).toContain("unregulated=hours(43)");
+      expect(screen.getByText("unregulatedNote")).toBeInTheDocument();
+    });
+
+    it("says it for no teacher without such hours, and not in a ten-year grundskola, where the row itself is left out", () => {
+      render(<ScopeCard data={data({ unregulatedHours: 0 })} />);
+      expect(screen.queryByText("unregulatedNote")).not.toBeInTheDocument();
+      cleanup();
+      render(<ScopeCard data={data({ verdict: "NOT_JUDGED", unregulatedHours: 645, stages: [], fullTimeHighestHours: null, fullTimeLowestHours: null, highestHours: null, ordinanceHighestHours: null, planningFloorHours: null, remainingHours: null, planningFits: null }, { yearReason: "NUMBERING_NOT_COVERED" })} />);
+      expect(screen.queryByText("unregulatedNote")).not.toBeInTheDocument();
+      expect(rows()).toEqual(["teaching=hours(645)"]);
+    });
   });
 });
