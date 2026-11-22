@@ -144,6 +144,7 @@ export const SUBJECT_ACCESS: Readonly<Record<string, PersonTableDecision>> = {
 
   // Staff: the post, the duties, the lessons and the cover.
   TeacherEmployments: staff(['userId']),
+  AssignmentScopeAssessments: staff(['userId', 'decidedById']),
   TeacherEmploymentPeriods: staff(['userId']),
   TeacherEmploymentLogs: staff(['userId', 'actorId']),
   TeacherDuties: staff(['userId']),

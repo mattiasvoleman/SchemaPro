@@ -177,6 +177,8 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('AvailabilityConstraints', ['userId', 'schoolId'], 'CASCADE', others),
   key('TeacherWorkRules', ['userId', 'schoolId'], 'CASCADE', others),
   key('TeacherEmployments', ['userId', 'schoolId'], 'CASCADE', others),
+  // The rektor's assessment of the teacher's level and a registered exception (20270306090000): goes with the teacher.
+  key('AssignmentScopeAssessments', ['userId', 'schoolId'], 'CASCADE', others),
   key('TeacherSubjectQualifications', ['userId', 'schoolId'], 'CASCADE', others),
   key('TeacherDuties', ['userId', 'schoolId'], 'CASCADE', others),
   key('TeacherEmploymentLogs', ['userId', 'schoolId'], 'CASCADE', others),
@@ -238,6 +240,8 @@ export const STUDENT_KEYS: readonly InventoryKey<StudentKeyKind>[] = [
   key('MasterLessons', ['teacherId', 'schoolId'], 'SET NULL', kept),
   key('AttendanceRecords', ['recordedById', 'schoolId'], 'SET NULL', kept),
   key('LeaveRequests', ['decidedById', 'schoolId'], 'SET NULL', kept),
+  // Who last set a teacher's assessment (20270306090000): the assessment is about the teacher and stays, unnamed.
+  key('AssignmentScopeAssessments', ['decidedById', 'schoolId'], 'SET NULL', kept),
   key('LeaveRequests', ['referredById', 'schoolId'], 'SET NULL', kept),
   key('RoomBookings', ['decidedById', 'schoolId'], 'SET NULL', kept),
   // Lokal (20270204091000): the decider of a booking of a resource, and the one who registered a series of

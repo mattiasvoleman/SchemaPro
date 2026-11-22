@@ -144,6 +144,18 @@ describe('the figures are the ordinance\'s, and the migration puts in the same',
     expect(sql).toContain(tuple);
   });
 
+  it('corrects the planning citation for årskurs 7-9 in the migration after it, and leaves the seed as it was (granskningen av #372, L-4)', () => {
+    // 4 § p. 1 is the paragraph for årskurs 1-6; the floor for 7-9 rests on 4 § only by interpretation, and the citation says so.
+    const next = readdirSync(dir).find((entry) => entry.startsWith('20270306090000_'));
+    const later = next ? readFileSync(join(dir, next, 'migration.sql'), 'utf8') : '';
+    expect(later).toContain(`SET "planningSection" = '4 § (tolkat) och 5 § p. 1'`);
+    expect(later).toContain(`AND "planningSection" = '4 § p. 1 och 5 § p. 1'`);
+    expect(later).toContain('"gradeFrom" = 7');
+    // The first migration's checksum stands in production: its text is not touched.
+    expect(sql).toContain(`'4 § p. 1 och 5 § p. 1'`);
+    expect(sql).not.toContain('(tolkat)');
+  });
+
   it('puts the ordinance in force on the day it says: 2027-07-01', () => {
     expect(sql).toContain("DATE '2027-07-01'");
     expect(ORDINANCE.validFrom).toBe('2027-07-01');

@@ -404,6 +404,9 @@ export const TABLE_WRITE_GATES: Readonly<Record<string, TableWriteGates>> = {
   RetentionDecisions: just('DECIDES', 'insert'),
   TeacherEmploymentPeriods: only('DECIDES'),
   TeacherEmployments: only('DECIDES'),
+  // Omfattning enligt förordningen (20270306090000): rektorns bedömning av lärarens nivå och ett registrerat undantag enligt 11 §
+  // är en bedömning av en anställd, som tjänstens procent. Varje administratör läser, den som beslutar skriver.
+  AssignmentScopeAssessments: only('DECIDES'),
   // Analys och planering (20270130090000): the skoldelar a payroll is booked on
   // and the cost of an hour in a personalkategori are the school's economy,
   // decided like the tjänst % of a post. Every administrator reads both.
